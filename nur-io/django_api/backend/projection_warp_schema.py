@@ -136,6 +136,36 @@ def validate_projection_config_v2(value, trusted_manifest=None):
     return errors
 
 
+def validate_projection_config_v3(value, trusted_manifest=None):
+    from .projection_config_schema import validate_names_wall_v3
+    errors = {}
+    if not _keys(value, ['schemaVersion', 'pre', 'outputs', 'namesWall'], '', errors): return errors
+    if value.get('schemaVersion') != 3 or isinstance(value.get('schemaVersion'), bool): errors['schemaVersion'] = 'must equal 3'
+    _legacy_fields(value, errors, trusted_manifest)
+    validate_names_wall_v3(value.get('namesWall'), 'namesWall', errors)
+    return errors
+
+
+def validate_projection_config_v4(value, trusted_manifest=None):
+    from .projection_config_schema import validate_names_wall
+    errors = {}
+    if not _keys(value, ['schemaVersion', 'pre', 'outputs', 'namesWall'], '', errors): return errors
+    if value.get('schemaVersion') != 4 or isinstance(value.get('schemaVersion'), bool): errors['schemaVersion'] = 'must equal 4'
+    _legacy_fields(value, errors, trusted_manifest)
+    validate_names_wall(value.get('namesWall'), 'namesWall', errors)
+    return errors
+
+
+def validate_projection_config_v5(value, trusted_manifest=None):
+    from .projection_config_schema import validate_names_wall_v5
+    errors = {}
+    if not _keys(value, ['schemaVersion', 'pre', 'outputs', 'namesWall'], '', errors): return errors
+    if value.get('schemaVersion') != 5 or isinstance(value.get('schemaVersion'), bool): errors['schemaVersion'] = 'must equal 5'
+    _legacy_fields(value, errors, trusted_manifest)
+    validate_names_wall_v5(value.get('namesWall'), 'namesWall', errors)
+    return errors
+
+
 def _identity_baseline(side, source):
     if not isinstance(source, dict) or not source.get('assetId'):
         return {'type': 'identity', 'width': 1920, 'height': 1080, 'origin': 'top-left'}
@@ -165,4 +195,44 @@ def migrate_projection_config_to_v2(config, baselines=None):
                 'grid': {'columns': dimensions['columns'], 'rows': dimensions['rows'], 'offsets': [[0, 0] for _ in range(dimensions['columns'] * dimensions['rows'])]},
             },
         }
+    return result
+
+
+def migrate_projection_config_to_v3(config):
+    from .projection_config_schema import legacy_names_wall
+    if not isinstance(config, dict) or isinstance(config.get('schemaVersion'), bool) or config.get('schemaVersion') not in (1, 2, 3):
+        raise ValueError('projection config must be schema version 1, 2, or 3')
+    if config['schemaVersion'] == 3: return deepcopy(config)
+    result = migrate_projection_config_to_v2(config) if config['schemaVersion'] == 1 else deepcopy(config)
+    result['schemaVersion'] = 3
+    result['namesWall'] = legacy_names_wall()
+    return result
+
+
+def migrate_projection_config_to_v4(config, warnings=None):
+    if not isinstance(config, dict) or isinstance(config.get('schemaVersion'), bool) or config.get('schemaVersion') not in (1, 2, 3, 4):
+        raise ValueError('projection config must be schema version 1, 2, 3, or 4')
+    if config['schemaVersion'] == 4: return deepcopy(config)
+    result = migrate_projection_config_to_v3(config)
+    if warnings is not None:
+        for mode in ('wall', 'model'):
+            if result['namesWall']['profiles'][mode]['seamGapPx']:
+                warnings.append(f'The {mode} seam gap needs readjustment in final-output pixels.')
+    names = result['namesWall']
+    result['namesWall'] = {
+        'activeMode': names['activeMode'],
+        'innerEdgeInsetPx': {'left': 0, 'right': 0},
+        'profiles': {mode: {key: names['profiles'][mode][key] for key in ('requestedFontPx', 'spacingPx', 'edgeInsetPx')} for mode in ('wall', 'model')},
+    }
+    result['schemaVersion'] = 4
+    return result
+
+
+def migrate_projection_config_to_v5(config, warnings=None):
+    if not isinstance(config, dict) or isinstance(config.get('schemaVersion'), bool) or config.get('schemaVersion') not in (1, 2, 3, 4, 5):
+        raise ValueError('projection config must be schema version 1, 2, 3, 4, or 5')
+    if config['schemaVersion'] == 5: return deepcopy(config)
+    result = migrate_projection_config_to_v4(config, warnings)
+    result['namesWall']['profiles']['wall']['inwardShiftPercent'] = 0
+    result['schemaVersion'] = 5
     return result

@@ -68,8 +68,9 @@ describe("GIS Segev narrative scene", () => {
     expect(d.map.flyTo).toHaveBeenCalledWith({ center: NLI_NARRATIVES.segev.center, zoom: 18, essential: true, duration: 1600 });
     expect(d.personVisual.hide).toHaveBeenCalled();
     expect(d.closeArchive).toHaveBeenCalled();
-    expect(d.map.getLayer("nli-narrative-focus-halo")).toBeTruthy();
-    expect(d.map.getLayer("nli-narrative-focus-label").paint["text-halo-color"]).toBe("#000000");
+    expect(d.map.getLayer("nli-narrative-focus-halo")).toBeFalsy();
+    expect(d.map.getLayer("nli-narrative-focus-label")).toBeTruthy();
+    expect(d.map.getLayer("nli-narrative-focus-label").paint["text-halo-color"]).toBe("#c31f4f");
     expect(d.syncTimeline).toHaveBeenCalled();
     expect(d.controller.isActive()).toBe(true);
   });
@@ -102,7 +103,8 @@ describe("GIS Segev narrative scene", () => {
     const d = await setup({ storage: { getItem: () => "4", setItem: vi.fn() } });
     d.controller.apply({ id: "segev", transition: "enter", revision: 4 });
     expect(d.map.flyTo).not.toHaveBeenCalled();
-    expect(d.map.getLayer("nli-narrative-focus-halo")).toBeTruthy();
+    expect(d.map.getLayer("nli-narrative-focus-halo")).toBeFalsy();
+    expect(d.map.getLayer("nli-narrative-focus-label")).toBeTruthy();
     expect(d.controller.isActive()).toBe(true);
   });
 

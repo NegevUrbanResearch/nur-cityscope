@@ -1,5 +1,4 @@
 import { buildLegendModel, getDashBackground } from "./legend-model-builder.js";
-import { packLegendPages } from "./legend-pagination.js";
 import { escapeHtml } from "../shared/html-utils.js";
 
 function symbolMarkup(part = {}) {
@@ -55,7 +54,10 @@ function layerMarkup(layer, items = layer.items || []) {
 }
 
 function packMarkup(pack, layersMarkup) {
-  return `<section class="map-legend-group" data-legend-pack-id="${escapeHtml(pack.id || "")}"><div class="map-legend-group-title" dir="auto">${escapeHtml(pack.name || "")}</div><div class="map-legend-layers">${layersMarkup}</div></section>`;
+  const title = pack.id === "nli"
+    ? ""
+    : `<div class="map-legend-group-title" dir="auto">${escapeHtml(pack.name || "")}</div>`;
+  return `<section class="map-legend-group" data-legend-pack-id="${escapeHtml(pack.id || "")}">${title}<div class="map-legend-layers">${layersMarkup}</div></section>`;
 }
 
 function makeChildren(element) {
@@ -112,15 +114,14 @@ function mountMapLegend({ element, surface = "gis", projectionSpan = "full", dat
     holder.remove();
     return size;
   };
-  const blockHeight = (html) => measureBlock(html, "height");
   const blockWidth = (html) => content?.ownerDocument?.createElement
     ? measureBlock(html, "width")
     : Math.max(1, html.split("map-legend-item").length * 140);
-  const fitsGisTwoRows = (html, available) => {
+  const fitsTwoRowWrap = (html, available, surfaceClass) => {
     if (!content?.ownerDocument?.createElement) return Math.ceil(blockWidth(html) / 2) <= available;
     const holder = content.ownerDocument.createElement("div");
     if (!holder.querySelectorAll) return Math.ceil(blockWidth(html) / 2) <= available;
-    holder.className = "map-legend map-legend-gis map-legend-measurement";
+    holder.className = `map-legend ${surfaceClass} map-legend-measurement`;
     holder.style.width = `${available}px`;
     if (typeof getComputedStyle === "function") {
       const liveStyle = getComputedStyle(element);
@@ -133,106 +134,68 @@ function mountMapLegend({ element, surface = "gis", projectionSpan = "full", dat
       holder.querySelectorAll(".map-legend-item"),
       (node) => Math.round(node.getBoundingClientRect().top),
     ));
+    const measuredHeight = holder.getBoundingClientRect?.()?.height || holder.offsetHeight || 0;
     holder.remove();
-    return rowTops.size <= 2;
+    if (surfaceClass !== "map-legend-projection") return rowTops.size <= 2;
+    return rowTops.size <= 2 && measuredHeight <= panelHeight();
   };
-  const makeGisBlock = (pack, fragments, suffix = "") => {
-    const layersMarkup = fragments.map(({ layer, items }) => (
-      layerMarkup(layer, items)
-    )).join("");
-    const html = packMarkup(pack, layersMarkup);
-    const naturalWidth = blockWidth(html);
-    return {
-      id: `${pack.id}${suffix}`,
-      groupId: pack.id,
-      height: Math.ceil(naturalWidth / 2),
-      fits: fitsGisTwoRows(html, panelWidth()),
-      pack,
-      layers: fragments,
-      layersMarkup,
+  const packWrapPages = (blocks, availableWidth, surfaceClass) => {
+    const pages = [];
+    let page = [];
+    const htmlFor = (candidate) => {
+      const groups = [];
+      for (const block of candidate) {
+        const prior = groups.at(-1);
+        if (prior?.pack.id === block.pack.id) prior.layersMarkup += block.layersMarkup;
+        else groups.push({ pack: block.pack, layersMarkup: block.layersMarkup });
+      }
+      return groups.map(({ pack, layersMarkup }) => packMarkup(pack, layersMarkup)).join("");
     };
+    for (const block of blocks) {
+      const samePack = page.some((entry) => entry.pack.id === block.pack.id);
+      if (page.length && (samePack || !fitsTwoRowWrap(htmlFor([...page, block]), availableWidth, surfaceClass))) {
+        pages.push(page.map((entry) => entry.id));
+        page = [block];
+      } else page.push(block);
+    }
+    if (page.length) pages.push(page.map((entry) => entry.id));
+    return { pages, oversizedBlockIds: [] };
   };
   const buildBlocks = (model) => {
-    if (mode === "gis") {
-      return (model?.packs || []).flatMap((pack) => {
-        const layers = pack.layers || [];
-        const full = makeGisBlock(pack, layers.map((layer) => ({
-          layer,
-          items: layer.items || [],
-        })));
-        if (full.fits) return [full];
-        const entries = layers.flatMap((layer) => (layer.items || []).map((item) => ({ layer, item })));
-        const blocks = [];
-        let fragments = [];
-        const appendEntry = (source, entry) => {
-          const next = source.map((fragment) => ({ ...fragment, items: [...fragment.items] }));
-          const prior = next.at(-1);
-          if (prior?.layer.id === entry.layer.id) prior.items.push(entry.item);
-          else next.push({ layer: entry.layer, items: [entry.item] });
-          return next;
-        };
-        for (const entry of entries) {
-          const candidate = appendEntry(fragments, entry);
-          if (fragments.length && !makeGisBlock(pack, candidate).fits) {
-            const firstId = fragments[0]?.items[0]?.id || blocks.length;
-            blocks.push(makeGisBlock(pack, fragments, `#${firstId}`));
-            fragments = appendEntry([], entry);
-          } else {
-            fragments = candidate;
-          }
-        }
-        if (fragments.length) {
-          const firstId = fragments[0]?.items[0]?.id || blocks.length;
-          blocks.push(makeGisBlock(pack, fragments, `#${firstId}`));
-        }
-        return blocks.length ? blocks : [full];
-      });
-    }
-    const blocks = [];
-    const appendEntry = (source, entry) => {
-      const next = source.map((fragment) => ({
-        ...fragment,
-        items: [...fragment.items],
-      }));
-      const prior = next.at(-1);
-      if (prior?.layer.id === entry.layer.id) prior.items.push(entry.item);
-      else next.push({ layer: entry.layer, items: [entry.item] });
-      return next;
-    };
-    const makeProjectionBlock = (pack, fragments, suffix = "") => {
-      const layersMarkup = fragments.map(({ layer, items }) => (
-        layerMarkup(layer, items)
-      )).join("");
+    const surfaceClass = mode === "projection" ? "map-legend-projection" : "map-legend-gis";
+    const makeWrapBlock = (pack, fragments, suffix = "") => {
+      const layersMarkup = fragments.map(({ layer, items }) => layerMarkup(layer, items)).join("");
       const html = packMarkup(pack, layersMarkup);
+      const naturalWidth = blockWidth(html);
       return {
         id: `${pack.id}${suffix}`,
-        height: blockHeight(html),
+        groupId: pack.id,
+        height: Math.ceil(naturalWidth / 2),
+        fits: fitsTwoRowWrap(html, panelWidth(), surfaceClass),
         pack,
         layers: fragments,
         layersMarkup,
       };
     };
-    for (const pack of model?.packs || []) {
-      const entries = (pack.layers || []).flatMap((layer) => (
-        (layer.items || []).map((item) => ({ layer, item }))
-      ));
-      const fullFragments = (pack.layers || []).map((layer) => ({
-        layer,
-        items: layer.items || [],
-      }));
-      const full = makeProjectionBlock(pack, fullFragments);
-      const available = panelHeight();
-      if (full.height <= available || entries.length <= 1) {
-        blocks.push(full);
-        continue;
-      }
-
+    return (model?.packs || []).flatMap((pack) => {
+      const layers = pack.layers || [];
+      const full = makeWrapBlock(pack, layers.map((layer) => ({ layer, items: layer.items || [] })));
+      if (full.fits) return [full];
+      const entries = layers.flatMap((layer) => (layer.items || []).map((item) => ({ layer, item })));
+      const blocks = [];
       let fragments = [];
+      const appendEntry = (source, entry) => {
+        const next = source.map((fragment) => ({ ...fragment, items: [...fragment.items] }));
+        const prior = next.at(-1);
+        if (prior?.layer.id === entry.layer.id) prior.items.push(entry.item);
+        else next.push({ layer: entry.layer, items: [entry.item] });
+        return next;
+      };
       for (const entry of entries) {
         const candidate = appendEntry(fragments, entry);
-        if (fragments.length && makeProjectionBlock(pack, candidate).height > available) {
+        if (fragments.length && !makeWrapBlock(pack, candidate).fits) {
           const firstId = fragments[0]?.items[0]?.id || blocks.length;
-          blocks.push(makeProjectionBlock(pack, fragments, `#${firstId}`));
+          blocks.push(makeWrapBlock(pack, fragments, `#${firstId}`));
           fragments = appendEntry([], entry);
         } else {
           fragments = candidate;
@@ -240,10 +203,10 @@ function mountMapLegend({ element, surface = "gis", projectionSpan = "full", dat
       }
       if (fragments.length) {
         const firstId = fragments[0]?.items[0]?.id || blocks.length;
-        blocks.push(makeProjectionBlock(pack, fragments, `#${firstId}`));
+        blocks.push(makeWrapBlock(pack, fragments, `#${firstId}`));
       }
-    }
-    return blocks;
+      return blocks.length ? blocks : [full];
+    });
   };
   const renderPager = () => {
     if (!pager) return;
@@ -306,28 +269,11 @@ function mountMapLegend({ element, surface = "gis", projectionSpan = "full", dat
       const model = await buildModel({ surface: mode, dataContext, registry, language: current.language, summarizedGroupIds: current.summarizedGroupIds });
       if (disposed || version !== generation) return;
       const blocks = buildBlocks(model);
-      const packed = mode === "gis" ? (() => {
-        const pages = [];
-        let page = [];
-        const htmlFor = (candidate) => {
-          const groups = [];
-          for (const block of candidate) {
-            const prior = groups.at(-1);
-            if (prior?.pack.id === block.pack.id) prior.layersMarkup += block.layersMarkup;
-            else groups.push({ pack: block.pack, layersMarkup: block.layersMarkup });
-          }
-          return groups.map(({ pack, layersMarkup }) => packMarkup(pack, layersMarkup)).join("");
-        };
-        for (const block of blocks) {
-          const samePack = page.some((entry) => entry.pack.id === block.pack.id);
-          if (page.length && (samePack || !fitsGisTwoRows(htmlFor([...page, block]), panelWidth()))) {
-            pages.push(page.map((entry) => entry.id));
-            page = [block];
-          } else page.push(block);
-        }
-        if (page.length) pages.push(page.map((entry) => entry.id));
-        return { pages, oversizedBlockIds: [] };
-      })() : packLegendPages(blocks, panelHeight());
+      const packed = packWrapPages(
+        blocks,
+        panelWidth(),
+        mode === "projection" ? "map-legend-projection" : "map-legend-gis",
+      );
       currentBlocks = blocks;
       currentModel = model;
       pages = packed.pages;

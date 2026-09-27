@@ -38,7 +38,7 @@ const groupedField = () => {
   return data;
 };
 
-function setup({ profile = "projection", projectionSpan, applyProjectionConfig = true, motionMode = "reduced", snapshot = { personId: null, datasetVersion: null, revision: 0 } } = {}) {
+function setup({ profile = "projection", projectionSpan, applyProjectionConfig = true, motionMode = "reduced", snapshot = { personId: null, datasetVersion: null, revision: 0 }, onWallEnabledChange } = {}) {
   const map = createFakeMapLibreMap({ layers: [
     { id: "nli__people_names__labels", type: "symbol", layout: { visibility: "visible" } },
   ] });
@@ -66,7 +66,7 @@ function setup({ profile = "projection", projectionSpan, applyProjectionConfig =
     if (topic === "personSelection") state.snapshot = value;
     listeners.get(topic)?.(value);
   };
-  const controller = createNliNameFieldController({ map, context, displayProfile: profile, projectionSpan, loadField: loadNliNameField, motionMode });
+  const controller = createNliNameFieldController({ map, context, displayProfile: profile, projectionSpan, loadField: loadNliNameField, motionMode, onWallEnabledChange });
   if (applyProjectionConfig) controller.setProjectionConfig(DEFAULTS, 1);
   return { map, context, controller, emit, state };
 }
@@ -95,10 +95,306 @@ const markedField = (marker, datasetVersion = "v1") => {
   next.byPid.get("p-1").feature.properties.name = marker;
   return next;
 };
-beforeEach(() => loadNliNameField.mockReset());
+beforeEach(() => { loadNliNameField.mockReset(); });
 afterEach(() => vi.useRealTimers());
 
 describe("createNliNameFieldController", () => {
+  const canvasField = () => ({ ...groupedField(),
+    placements: [{ id: 'p-1', name: 'One', output: 'left', x: 0, y: 0, width: 20, height: 10 },
+      { id: 'p-2', name: 'Two', output: 'right', x: 10, y: 0, width: 20, height: 10 }],
+    logicalPlane: { heading: 17, planeScale: 1 }, digest: 'a'.repeat(64),
+    diagnostics: { state: 'valid', expected: 2, placed: 2, missing: 0, extra: 0, duplicate: 0, left: 1, right: 1 },
+  });
+  const canvasAdapter = () => {
+    let opacity = 0, revealSeconds = 0;
+    return { prepare: vi.fn(), commit: vi.fn(), rollback: vi.fn(), finalize: vi.fn(),
+      setPresentation: vi.fn(), setOpacity: vi.fn((value) => { opacity = value; }),
+      setRevealSeconds: vi.fn((value) => { revealSeconds = value; }), setSelectedPid: vi.fn(),
+      descriptor: () => ({ source: {}, opacity, revealSeconds }), getOpacity: () => opacity,
+      getRevealSeconds: () => revealSeconds };
+  };
+  it('stagger clock freezes on hide, resumes on reversal, and restarts after complete hide', async () => {
+    vi.useFakeTimers();
+    const d = setup({ applyProjectionConfig: false, projectionSpan: 'left', motionMode: 'full' });
+    const adapter = canvasAdapter(); d.controller.installProjectionCanvas(adapter);
+    await d.controller.prepareProjectionCandidate({ generation: 1, config: DEFAULTS, field: canvasField(), revision: 1 });
+    d.controller.commitProjectionCandidate(1); d.controller.finalizeProjectionCandidate(1);
+    enable(d);
+    expect(adapter.getOpacity()).toBe(1);
+    expect(adapter.getRevealSeconds()).toBe(0);
+    await vi.advanceTimersByTimeAsync(800);
+    expect(adapter.getRevealSeconds()).toBeCloseTo(0.8, 1);
+    expect(d.controller.getProjectionNameDiagnostics().canvasRevealSeconds).toBeCloseTo(0.8, 1);
+    disable(d);
+    const frozen = adapter.getRevealSeconds();
+    await vi.advanceTimersByTimeAsync(300);
+    expect(adapter.getRevealSeconds()).toBe(frozen);
+    expect(adapter.getOpacity()).toBeCloseTo(0.5, 1);
+    enable(d);
+    expect(adapter.getOpacity()).toBeCloseTo(0.5, 1);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(adapter.getRevealSeconds()).toBeGreaterThan(frozen);
+    d.map.remountStyle({ layers: [{ id: 'nli__people_names__labels', type: 'symbol' }] });
+    await vi.advanceTimersByTimeAsync(8000);
+    expect(adapter.getRevealSeconds()).toBe(8.8);
+    disable(d); await vi.advanceTimersByTimeAsync(650);
+    expect(adapter.getOpacity()).toBe(0);
+    enable(d);
+    expect(adapter.getRevealSeconds()).toBe(0);
+    expect(adapter.getOpacity()).toBe(1);
+    expect(adapter.prepare).toHaveBeenCalledOnce();
+    d.controller.dispose();
+  });
+  it('dims a selected wall name without restarting the stagger reveal', async () => {
+    vi.useFakeTimers();
+    const d = setup({ applyProjectionConfig: false, projectionSpan: 'left', motionMode: 'full' });
+    const adapter = canvasAdapter(); d.controller.installProjectionCanvas(adapter);
+    await d.controller.prepareProjectionCandidate({ generation: 1, config: DEFAULTS, field: canvasField(), revision: 1 });
+    d.controller.commitProjectionCandidate(1); d.controller.finalizeProjectionCandidate(1);
+    enable(d);
+    await vi.advanceTimersByTimeAsync(800);
+    const advancing = adapter.getRevealSeconds();
+    expect(advancing).toBeGreaterThan(0);
+    expect(adapter.getOpacity()).toBe(1);
+    d.emit('personSelection', { personId: 'p-1', datasetVersion: 'v1' });
+    expect(adapter.getRevealSeconds()).toBeGreaterThanOrEqual(advancing);
+    expect(adapter.getOpacity()).toBe(1);
+    expect(d.controller.getProjectionNameDiagnostics()).toMatchObject({
+      state: 'idle', canvasOpacity: 1,
+    });
+    expect(d.controller.getProjectionNameDiagnostics().canvasRevealSeconds).toBeGreaterThanOrEqual(advancing);
+    expect(adapter.setSelectedPid).toHaveBeenCalledWith('p-1');
+    expect(adapter.setPresentation).toHaveBeenCalled();
+    expect(adapter.prepare).toHaveBeenCalledOnce();
+    expect(d.map.getSource('nli-name-field')).toBeTruthy();
+    d.emit('personSelection', { personId: null, datasetVersion: null });
+    expect(adapter.getRevealSeconds()).toBeGreaterThanOrEqual(advancing);
+    expect(adapter.getOpacity()).toBe(1);
+    expect(adapter.setSelectedPid).toHaveBeenLastCalledWith(null);
+    expect(adapter.prepare).toHaveBeenCalledOnce();
+    d.controller.dispose();
+  });
+  it('rebuilds the canvas wall only when the catalog version actually changes', async () => {
+    vi.useFakeTimers();
+    const d = setup({ applyProjectionConfig: false, projectionSpan: 'left', motionMode: 'full',
+      snapshot: { personId: null, datasetVersion: 'v1', revision: 0 } });
+    const adapter = canvasAdapter(); d.controller.installProjectionCanvas(adapter);
+    await d.controller.prepareProjectionCandidate({ generation: 1, config: DEFAULTS, field: canvasField(), revision: 1 });
+    d.controller.commitProjectionCandidate(1); d.controller.finalizeProjectionCandidate(1);
+    enable(d);
+    await vi.advanceTimersByTimeAsync(800);
+    expect(adapter.getRevealSeconds()).toBeGreaterThan(0);
+    d.emit('personSelection', { personId: 'p-1', datasetVersion: 'v2' });
+    expect(adapter.getRevealSeconds()).toBe(0);
+    expect(adapter.getOpacity()).toBe(0);
+    expect(d.controller.getProjectionNameDiagnostics().state).toBe('pending');
+    expect(d.map.getSource('nli-name-field')).toBeNull();
+    d.controller.dispose();
+  });
+  it('keeps the latest hidden state when a committed Canvas candidate rolls back', async () => {
+    vi.useFakeTimers();
+    const d = setup({ applyProjectionConfig: false, projectionSpan: 'left', motionMode: 'full' });
+    const adapter = canvasAdapter(); d.controller.installProjectionCanvas(adapter);
+    enable(d);
+    await d.controller.prepareProjectionCandidate({ generation: 1, config: DEFAULTS, field: canvasField(), revision: 1 });
+    d.controller.commitProjectionCandidate(1); d.controller.finalizeProjectionCandidate(1);
+    await vi.advanceTimersByTimeAsync(800);
+    const oldReveal = adapter.getRevealSeconds();
+    await d.controller.prepareProjectionCandidate({ generation: 2, config: DEFAULTS, field: { ...canvasField(), datasetVersion: 'v2' }, revision: 2 });
+    d.controller.commitProjectionCandidate(2);
+    disable(d);
+    await vi.advanceTimersByTimeAsync(650);
+    expect(adapter.getOpacity()).toBe(0);
+    expect(d.controller.rollbackProjectionCandidate(2)).toBe(true);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(adapter.getOpacity()).toBe(0);
+    expect(adapter.getRevealSeconds()).toBeCloseTo(oldReveal, 1);
+    expect(d.controller.getProjectionNameDiagnostics()).toMatchObject({ canvasOpacity: 0, canvasRevealPending: false });
+    d.controller.dispose();
+  });
+  it('follows a new show request when a previously hidden Canvas candidate rolls back', async () => {
+    vi.useFakeTimers();
+    const d = setup({ applyProjectionConfig: false, projectionSpan: 'left', motionMode: 'full' });
+    const adapter = canvasAdapter(); d.controller.installProjectionCanvas(adapter);
+    await d.controller.prepareProjectionCandidate({ generation: 1, config: DEFAULTS, field: canvasField(), revision: 1 });
+    d.controller.commitProjectionCandidate(1); d.controller.finalizeProjectionCandidate(1);
+    await d.controller.prepareProjectionCandidate({ generation: 2, config: DEFAULTS, field: { ...canvasField(), datasetVersion: 'v2' }, revision: 2 });
+    d.controller.commitProjectionCandidate(2);
+    enable(d);
+    await vi.advanceTimersByTimeAsync(800);
+    expect(d.controller.rollbackProjectionCandidate(2)).toBe(true);
+    await vi.advanceTimersByTimeAsync(200);
+    expect(adapter.getOpacity()).toBe(1);
+    expect(adapter.getRevealSeconds()).toBeGreaterThan(0);
+    expect(d.controller.getProjectionNameDiagnostics().canvasRevealPending).toBe(true);
+    d.controller.dispose();
+  });
+  it('visibility toggles retain a prepared Canvas wall without starting preparation', async () => {
+    const d = setup({ applyProjectionConfig: false, projectionSpan: 'left' });
+    const adapter = canvasAdapter(); d.controller.installProjectionCanvas(adapter);
+    const wall = canvasField();
+    await d.controller.prepareProjectionCandidate({ generation: 1, config: DEFAULTS, field: wall, revision: 1 });
+    d.controller.commitProjectionCandidate(1); d.controller.finalizeProjectionCandidate(1);
+    expect(adapter.getOpacity()).toBe(0);
+    enable(d); expect(adapter.getOpacity()).toBe(1);
+    disable(d); expect(adapter.getOpacity()).toBe(0);
+    enable(d); expect(adapter.getOpacity()).toBe(1);
+    expect(adapter.prepare).toHaveBeenCalledTimes(1);
+    expect(loadNliNameField).not.toHaveBeenCalled();
+    expect(d.map.getSource('nli-name-field')).toBeTruthy();
+    d.controller.dispose();
+  });
+  it('fades out and reverses from the current opacity without preparing again', async () => {
+    vi.useFakeTimers();
+    const d = setup({ applyProjectionConfig: false, projectionSpan: 'left', motionMode: 'full',
+      snapshot: { personId: null, datasetVersion: 'v1' } });
+    const settlement = 'projector_base__שמות_יישובים__labels';
+    d.map.addLayer({ id: settlement, type: 'symbol', paint: { 'text-opacity': 0.8 } });
+    const adapter = canvasAdapter(); d.controller.installProjectionCanvas(adapter);
+    await d.controller.prepareProjectionCandidate({ generation: 1, config: DEFAULTS, field: canvasField(), revision: 1 });
+    d.controller.commitProjectionCandidate(1); d.controller.finalizeProjectionCandidate(1);
+    enable(d); await vi.advanceTimersByTimeAsync(650);
+    expect(adapter.getOpacity()).toBeCloseTo(1, 1);
+    d.emit('personSelection', { personId: 'p-1', datasetVersion: 'v1' });
+    expect(d.map.getPaintProperty(settlement, 'text-opacity')).toBe(0.08);
+    disable(d); await vi.advanceTimersByTimeAsync(300);
+    expect(adapter.getOpacity()).toBeCloseTo(0.5, 1);
+    expect(d.map.getLayer('nli-name-field-connector-line')).toBeFalsy();
+    expect(d.map.getPaintProperty(settlement, 'text-opacity')).toBeGreaterThan(0.08);
+    expect(d.map.getPaintProperty(settlement, 'text-opacity')).toBeLessThan(0.8);
+    enable(d); expect(adapter.getOpacity()).toBeCloseTo(0.5, 1);
+    await vi.advanceTimersByTimeAsync(650);
+    expect(adapter.getOpacity()).toBeCloseTo(1, 1);
+    expect(d.map.getPaintProperty(settlement, 'text-opacity')).toBe(0.08);
+    expect(adapter.prepare).toHaveBeenCalledTimes(1);
+    d.controller.dispose();
+  });
+  it('immediately clears stale Canvas pixels when a changed heading reloads the field', async () => {
+    vi.useFakeTimers();
+    const d = setup({ applyProjectionConfig: false, projectionSpan: 'left', motionMode: 'full' });
+    const adapter = canvasAdapter(); d.controller.installProjectionCanvas(adapter);
+    await d.controller.prepareProjectionCandidate({ generation: 1, config: DEFAULTS, field: canvasField(), revision: 1 });
+    d.controller.commitProjectionCandidate(1); d.controller.finalizeProjectionCandidate(1);
+    enable(d); await vi.advanceTimersByTimeAsync(650);
+    expect(adapter.getOpacity()).toBeCloseTo(1, 1);
+    d.controller.reload();
+    expect(adapter.getOpacity()).toBe(0);
+    await vi.advanceTimersByTimeAsync(650);
+    expect(adapter.getOpacity()).toBe(0);
+    expect(d.controller.getProjectionNameDiagnostics().state).toBe('pending');
+    expect(adapter.prepare).toHaveBeenCalledOnce();
+    d.controller.dispose();
+  });
+  it('restores hidden Canvas metadata and focus sources after a style reload without repainting names', async () => {
+    const d = setup({ applyProjectionConfig: false, projectionSpan: 'left',
+      snapshot: { personId: 'p-1', datasetVersion: 'v1' } });
+    const adapter = canvasAdapter(); d.controller.installProjectionCanvas(adapter);
+    await d.controller.prepareProjectionCandidate({ generation: 1, config: DEFAULTS, field: canvasField(), revision: 1 });
+    d.controller.commitProjectionCandidate(1); d.controller.finalizeProjectionCandidate(1);
+    expect(adapter.getOpacity()).toBe(0);
+    expect(d.map.getSource('nli-name-field')).toBeTruthy();
+    expect(d.map.getSource("nli-name-field-connector")).toBeFalsy();
+    const presentationCalls = adapter.setPresentation.mock.calls.length;
+    d.map.remountStyle({ layers: [{ id: 'nli__people_names__labels', type: 'symbol',
+      layout: { visibility: 'visible' } }] });
+    expect(d.map.getLayoutProperty('nli__people_names__labels', 'visibility')).toBe('none');
+    expect(d.map.getSource('nli-name-field')).toBeTruthy();
+    expect(d.map.getSource("nli-name-field-connector")).toBeFalsy();
+    expect(d.map.getLayer("nli-name-field-connector-line")).toBeFalsy();
+    expect(adapter.getOpacity()).toBe(0);
+    expect(adapter.setPresentation).toHaveBeenCalledTimes(presentationCalls);
+    enable(d);
+    expect(adapter.getOpacity()).toBe(1);
+    expect(d.map.getSource("nli-name-field-connector")).toBeFalsy();
+    expect(adapter.prepare).toHaveBeenCalledOnce();
+    expect(adapter.setPresentation).toHaveBeenCalledTimes(presentationCalls);
+    expect(loadNliNameField).not.toHaveBeenCalled();
+    d.controller.dispose();
+  });
+  it('restores a hidden place highlight after a Canvas style reload', async () => {
+    const d = setup({ applyProjectionConfig: false, projectionSpan: 'left' });
+    const adapter = canvasAdapter(); d.controller.installProjectionCanvas(adapter);
+    await d.controller.prepareProjectionCandidate({ generation: 1, config: DEFAULTS, field: canvasField(), revision: 1 });
+    d.controller.commitProjectionCandidate(1); d.controller.finalizeProjectionCandidate(1);
+    d.emit('navigationCommand', { placeId: 'custom-reim-parking' });
+    expect(JSON.parse(d.map._dataset.nliNameField).selectedGroup).toBe('nova');
+    expect(d.map.getLayer("nli-name-place-selection-point")).toBeFalsy();
+    const presentationCalls = adapter.setPresentation.mock.calls.length;
+    d.map.remountStyle({ layers: [{ id: 'nli__people_names__labels', type: 'symbol' }] });
+    expect(JSON.parse(d.map._dataset.nliNameField).selectedGroup).toBe('nova');
+    expect(d.map.getLayer("nli-name-place-selection-halo")).toBeFalsy();
+    expect(adapter.setPresentation).toHaveBeenCalledTimes(presentationCalls);
+    enable(d);
+    expect(JSON.parse(d.map._dataset.nliNameField).selectedGroup).toBe('nova');
+    expect(adapter.prepare).toHaveBeenCalledOnce();
+    d.controller.dispose();
+  });
+  it('finishes a Canvas reveal when the MapLibre style remounts during the fade', async () => {
+    vi.useFakeTimers();
+    const d = setup({ applyProjectionConfig: false, projectionSpan: 'right', motionMode: 'full' });
+    const adapter = canvasAdapter(); d.controller.installProjectionCanvas(adapter);
+    await d.controller.prepareProjectionCandidate({ generation: 1, config: DEFAULTS, field: canvasField(), revision: 1 });
+    d.controller.commitProjectionCandidate(1); d.controller.finalizeProjectionCandidate(1);
+    enable(d);
+    await vi.advanceTimersByTimeAsync(150);
+    expect(adapter.getOpacity()).toBe(1);
+    expect(adapter.getRevealSeconds()).toBeGreaterThan(0);
+    expect(adapter.getRevealSeconds()).toBeLessThan(8.8);
+    d.map.remountStyle({ layers: [{ id: 'nli__people_names__labels', type: 'symbol' }] });
+    await vi.advanceTimersByTimeAsync(650);
+    expect(adapter.getOpacity()).toBe(1);
+    expect(adapter.getRevealSeconds()).toBeGreaterThan(0.65);
+    expect(adapter.prepare).toHaveBeenCalledOnce();
+    d.controller.dispose();
+  });
+  it('publishes Canvas visibility diagnostics beside installed wall status', async () => {
+    vi.useFakeTimers();
+    const d = setup({ applyProjectionConfig: false, projectionSpan: 'right', motionMode: 'full' });
+    const adapter = canvasAdapter(); d.controller.installProjectionCanvas(adapter);
+    await d.controller.prepareProjectionCandidate({ generation: 1, config: DEFAULTS, field: canvasField(), revision: 1 });
+    d.controller.commitProjectionCandidate(1); d.controller.finalizeProjectionCandidate(1);
+    enable(d);
+    await vi.advanceTimersByTimeAsync(650);
+    expect(JSON.parse(d.map._dataset.nliNameField)).toMatchObject({
+      installedRevision: 1, canvasEnabled: true, canvasOpacity: 1, canvasFadePending: false,
+    });
+    d.controller.dispose();
+  });
+  it('keeps selection and place focus through visibility without connector chrome', async () => {
+    const d = setup({ applyProjectionConfig: false, projectionSpan: 'left', snapshot: { personId: null, datasetVersion: 'v1' } });
+    const settlement = 'projector_base__שמות_יישובים__labels';
+    d.map.addLayer({ id: settlement, type: 'symbol', paint: { 'text-opacity': 0.8 } });
+    const adapter = canvasAdapter(); d.controller.installProjectionCanvas(adapter);
+    await d.controller.prepareProjectionCandidate({ generation: 1, config: DEFAULTS, field: canvasField(), revision: 1 });
+    d.controller.commitProjectionCandidate(1); d.controller.finalizeProjectionCandidate(1);
+    enable(d);
+    d.emit('personSelection', { personId: 'p-1', datasetVersion: 'v1' });
+    expect(d.map.getSource("nli-name-field-connector")).toBeFalsy();
+    expect(d.map.getLayer("nli-name-field-connector-line")).toBeFalsy();
+    d.emit('navigationCommand', { placeId: 'custom-reim-parking' });
+    expect(JSON.parse(d.map._dataset.nliNameField).selectedGroup).toBe('nova');
+    expect(d.map.getLayer("nli-name-place-selection-point")).toBeFalsy();
+    disable(d);
+    expect(d.map.getPaintProperty(settlement, 'text-opacity')).toBe(0.8);
+    enable(d);
+    expect(adapter.prepare).toHaveBeenCalledTimes(1);
+    expect(d.map.getSource("nli-name-field-connector")).toBeFalsy();
+    d.emit('navigationCommand', { cancelFocus: true });
+    expect(adapter.setPresentation).toHaveBeenCalled();
+    d.controller.dispose();
+  });
+  it('rejects invalid candidate without replacing a complete committed Canvas field', async () => {
+    const d = setup({ applyProjectionConfig: false, projectionSpan: 'left' });
+    const adapter = canvasAdapter(); d.controller.installProjectionCanvas(adapter); enable(d);
+    await d.controller.prepareProjectionCandidate({ generation: 1, config: DEFAULTS, field: canvasField(), revision: 1 });
+    d.controller.commitProjectionCandidate(1); d.controller.finalizeProjectionCandidate(1);
+    await expect(d.controller.prepareProjectionCandidate({ generation: 2, config: DEFAULTS,
+      field: { ...canvasField(), placements: [], diagnostics: { state: 'invalid', reason: 'capacity', expected: 2, placed: 0 } }, revision: 2 }))
+      .rejects.toThrow('capacity');
+    expect(adapter.commit).toHaveBeenCalledTimes(1);
+    expect(d.map.getSource('nli-name-field').data.features).toHaveLength(2);
+    d.controller.dispose();
+  });
   it("dims settlement labels updated during the reveal without waiting for idle", async () => {
     loadNliNameField.mockResolvedValueOnce(field());
     const d = setup();
@@ -108,7 +404,7 @@ describe("createNliNameFieldController", () => {
     d.map.addLayer({ id, type: 'symbol', paint: { 'text-opacity': 0.8 } });
     d.map.setPaintProperty(id, 'text-opacity', 0.8);
     d.map.emit('styledata');
-    expect(d.map.getPaintProperty(id, 'text-opacity')).toBe(0.18);
+    expect(d.map.getPaintProperty(id, 'text-opacity')).toBe(0.08);
     d.controller.dispose();
     expect(d.map.getPaintProperty(id, 'text-opacity')).toBe(0.8);
     expect(d.map.listenerCount('styledata')).toBe(0);
@@ -134,7 +430,29 @@ describe("createNliNameFieldController", () => {
     d.emit('navigationCommand',{placeId:'custom-reim-parking'});
     d.emit('navigationCommand',{cancelFocus:true});
     expect(JSON.parse(d.map._dataset.nliNameField).selectedGroup).toBeNull();
-    expect(d.map.getSource('nli-name-place-selection').data.features).toEqual([]);
+    expect(d.map.getLayer("nli-name-place-selection-point")).toBeFalsy();
+  });
+  it('returns the overlay group properties.name for a place, never group_id', async () => {
+    loadNliNameField.mockResolvedValueOnce(groupedField());
+    const d = setup();
+    enable(d);
+    await flush();
+    expect(d.controller.placeNameForPlace('custom-reim-parking')).toBe('נובה');
+    expect(d.controller.placeNameForPlace('custom-reim-parking')).not.toBe('nova');
+    expect(d.controller.placeNameForPlace('custom-reim-parking')).not.toBe('חניון רעים');
+    d.controller.dispose();
+  });
+  it('exposes getPendingPlaceId for a live place command until cancel', async () => {
+    loadNliNameField.mockResolvedValueOnce(groupedField());
+    const d = setup();
+    enable(d);
+    await flush();
+    expect(d.controller.getPendingPlaceId()).toBeNull();
+    d.emit('navigationCommand', { placeId: 'custom-reim-parking' });
+    expect(d.controller.getPendingPlaceId()).toBe('custom-reim-parking');
+    d.emit('navigationCommand', { cancelFocus: true });
+    expect(d.controller.getPendingPlaceId()).toBeNull();
+    d.controller.dispose();
   });
   it("loads once and never restores legacy overlapping labels", async () => {
     loadNliNameField.mockResolvedValueOnce(field());
@@ -342,12 +660,12 @@ describe("createNliNameFieldController", () => {
     await flush();
     expect(d.map.getLayer("nli-name-field-labels")).toBeNull();
     expect(d.map.getSource("nli-name-field")).toBeNull();
-    expect(d.map.getSource("nli-name-field-connector")).toBeNull();
+    expect(d.map.getSource("nli-name-field-connector")).toBeFalsy();
     expect(d.map.getLayoutProperty("nli__people_names__labels", "visibility")).toBe("none");
     error.mockRestore();
   });
 
-  it("remounts on style load using cached geometry and restores selected connector", async () => {
+  it("remounts on style load using cached geometry without a connector", async () => {
     loadNliNameField.mockResolvedValueOnce(field());
     const d = setup({ projectionSpan: "right", snapshot: { personId: "p-2", datasetVersion: "v1" } });
     enable(d);
@@ -355,7 +673,8 @@ describe("createNliNameFieldController", () => {
     d.map.remountStyle({ layers: [{ id: "nli__people_names__labels", type: "symbol" }] });
     expect(loadNliNameField).toHaveBeenCalledTimes(1);
     expect(d.map.getSource("nli-name-field").data.features).toHaveLength(2);
-    expect(d.map.getSource("nli-name-field-connector").data.features[0].geometry.coordinates).toEqual([[30, 40], [3, 4]]);
+    expect(d.map.getSource("nli-name-field-connector")).toBeFalsy();
+    expect(d.map.getLayer("nli-name-field-connector-line")).toBeFalsy();
   });
 
   it("cleans a failed style-load mount and retries on the next sync", async () => {
@@ -416,14 +735,14 @@ describe("createNliNameFieldController", () => {
     expect(source.data.features[0].geometry.coordinates).toEqual([10, 20]);
   });
 
-  it("validates selection and draws an exact source connector", async () => {
+  it("validates selection and keeps projection span filters on name layers", async () => {
     loadNliNameField.mockResolvedValueOnce(field());
     const d = setup({ projectionSpan: "left", snapshot: { personId: "p-1", datasetVersion: "v1", revision: 1 } });
     enable(d);
     await flush();
     d.emit("personSelection", { personId: "p-1", datasetVersion: "v1", revision: 2 });
-    const connector = d.map.getSource("nli-name-field-connector");
-    expect(connector.data.features[0].geometry.coordinates).toEqual([[10, 20], [1, 2]]);
+    expect(d.map.getSource("nli-name-field-connector")).toBeFalsy();
+    expect(d.map.getLayer("nli-name-field-connector-line")).toBeFalsy();
     const span = ["in", "left", ["get", "visible_spans"]];
     expect(d.map.getLayer("nli-name-field-labels").filter).toEqual(["all", span, ["!=", ["get", "pid"], "p-1"]]);
     expect(d.map.getLayer("nli-name-field-selected").filter).toEqual(["all", span, ["==", ["get", "pid"], "p-1"]]);
@@ -431,24 +750,9 @@ describe("createNliNameFieldController", () => {
     d.emit("personSelection", { personId: "unknown", datasetVersion: "v1", revision: 3 });
     expect(d.map.getLayer("nli-name-field-labels").filter).toEqual(span);
     expect(d.map.getLayer("nli-name-field-selected").filter).toEqual(["all", span, ["==", ["get", "pid"], "__none__"]]);
-    expect(connector.data.features).toHaveLength(0);
     expect(d.context.clearPerson).not.toHaveBeenCalled();
     d.emit("personSelection", { personId: "p-1", datasetVersion: "old", revision: 4 });
     expect(d.context.clearPerson).not.toHaveBeenCalled();
-  });
-
-  it("draws a connector only when the selected feature belongs to the projection span", async () => {
-    loadNliNameField.mockResolvedValue(field());
-    const left = setup({ projectionSpan: "left", applyProjectionConfig: true, snapshot: { personId: "p-2", datasetVersion: "v1" } });
-    const right = setup({ projectionSpan: "right", applyProjectionConfig: true, snapshot: { personId: "p-2", datasetVersion: "v1" } });
-    enable(left);
-    enable(right);
-    await flush();
-    expect(left.map.getSource("nli-name-field-connector").data.features).toHaveLength(0);
-    expect(right.map.getSource("nli-name-field-connector").data.features[0].geometry.coordinates).toEqual([[30, 40], [3, 4]]);
-    expect(right.controller.getProjectionNameDiagnostics().owners).toEqual({ "p-1": "left", "p-2": "right" });
-    left.controller.dispose();
-    right.controller.dispose();
   });
 
   it("keeps projection span filtering on base and selected labels through selection changes", async () => {
@@ -493,23 +797,24 @@ describe("createNliNameFieldController", () => {
     d.emit('navigationCommand', { placeId: 'custom-reim-parking' });
     finishLoad(groupedField());
     await flush();
-    expect(d.map.getSource('nli-name-place-selection').data.features[0].geometry.coordinates).toEqual([11, 21]);
+    expect(d.map.getLayer("nli-name-place-selection-point")).toBeFalsy();
+    expect(d.map.getLayer("nli-name-place-selection-halo")).toBeFalsy();
+    expect(d.map.getLayer("nli-name-place-selection-label")).toBeFalsy();
+    expect(d.map.getLayer("nli-name-place-outline-line")).toBeFalsy();
     expect(d.map.getLayer('nli-name-field-labels').paint['text-color']).toBe('#ffffff');
     expect(d.map.getPaintProperty('nli-name-field-labels', 'text-opacity')).toEqual([
-      'case', ['==', ['get', 'group_id'], 'nova'], 1, 0.18,
+      'case', ['==', ['get', 'group_id'], 'nova'], 1, 0.08,
     ]);
     expect(JSON.parse(d.map._dataset.nliNameField).selectedGroup).toBe('nova');
     d.emit('personSelection', { personId: null, datasetVersion: null, revision: 1 });
     expect(JSON.parse(d.map._dataset.nliNameField).selectedGroup).toBeNull();
-    expect(d.map.getSource('nli-name-place-selection').data.features).toEqual([]);
     d.emit('navigationCommand', { placeId: 'custom-reim-parking' });
     d.emit('personSelection', { personId: 'p-1', datasetVersion: 'v1' });
     expect(d.map.getLayer('nli-name-field-labels').paint['text-color']).toBe('#ffffff');
-    expect(d.map.getSource('nli-name-place-selection').data.features).toEqual([]);
     expect(JSON.parse(d.map._dataset.nliNameField).selectedGroup).toBeNull();
     d.controller.dispose();
-    expect(d.map.getLayer('nli-name-place-selection-label')).toBeNull();
-    expect(d.map.getSource('nli-name-place-selection')).toBeNull();
+    expect(d.map.getLayer('nli-name-place-selection-label')).toBeFalsy();
+    expect(d.map.getSource('nli-name-place-selection')).toBeFalsy();
     expect(d.context.subscribe).toHaveBeenCalledWith('navigationCommand', expect.any(Function));
   });
 
@@ -519,25 +824,6 @@ describe("createNliNameFieldController", () => {
     d.emit('navigationCommand', {placeId:'custom-reim-parking'});
     disable(d); enable(d);
     expect(JSON.parse(d.map._dataset.nliNameField).selectedGroup).toBeNull();
-  });
-
-  it('keeps the selected source marker while GIS names switch to detail geometry', async () => {
-    loadNliNameField.mockResolvedValueOnce(groupedField());
-    const d = setup({ profile: 'gis' });
-    d.map.getZoom = vi.fn(() => 10);
-    enable(d);
-    await flush();
-    d.emit('navigationCommand', { placeId: 'yeshuv-0399' });
-    expect(d.map.getSource('nli-name-place-selection').data.features).toHaveLength(1);
-    expect(d.map.getLayer('nli-name-place-selection-label').filter).toEqual([
-      '!', ['in', ['get', 'group_id'], ['literal', ['beeri']]],
-    ]);
-    d.map.getZoom.mockReturnValue(11);
-    d.map.emit('zoom');
-    expect(d.map.getSource('nli-name-place-selection').data.features).toHaveLength(1);
-    d.map.getZoom.mockReturnValue(9);
-    d.map.emit('zoom');
-    expect(d.map.getSource('nli-name-place-selection').data.features).toHaveLength(1);
   });
 
   it('does not start a projection build until a projection config is available', async () => {

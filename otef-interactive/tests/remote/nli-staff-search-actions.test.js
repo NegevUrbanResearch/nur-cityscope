@@ -368,4 +368,85 @@ describe("NLI staff search event handlers", () => {
     await handlers.transitionToStep({ id: "show", steps: [{ cue: {} }] }, 0);
     expect(calls).toEqual(["cancel-cue", "cleanup"]);
   });
+
+  test("a delayed failed close blocks cleanup and leaves the source step retryable", async () => {
+    let releaseClose;
+    const clearPersonSelection = vi.fn(async () => true);
+    const transition = createNliStaffSearchTransition({
+      clearPersonSelection,
+      hasPlaceFocus: () => false,
+    });
+    const fixture = stateFixture();
+    const setDestination = vi.fn(fixture.options.setDestination);
+    const applyDestinationCue = vi.fn();
+    const createHandlers = await staffActions();
+    const handlers = createHandlers({
+      transition,
+      ...fixture.options,
+      setDestination,
+      applyDestinationCue,
+      beforeTransition: () => new Promise((resolve) => { releaseClose = resolve; }),
+    });
+
+    const task = handlers.transitionToStep({ id: "show", steps: [{ cue: {} }] }, 0);
+    await Promise.resolve();
+    expect(fixture.state.controlsDisabled).toBe(true);
+    expect(clearPersonSelection).not.toHaveBeenCalled();
+    expect(applyDestinationCue).not.toHaveBeenCalled();
+
+    releaseClose(false);
+    await expect(task).resolves.toBe(false);
+    expect(clearPersonSelection).not.toHaveBeenCalled();
+    expect(setDestination).not.toHaveBeenCalled();
+    expect(applyDestinationCue).not.toHaveBeenCalled();
+    expect(fixture.state.step).toBe(4);
+    expect(fixture.state.controlsDisabled).toBe(false);
+  });
+
+  test("a close rejection does not leave step controls pending", async () => {
+    const transition = createNliStaffSearchTransition({
+      clearPersonSelection: async () => true,
+      hasPlaceFocus: () => false,
+    });
+    const fixture = stateFixture();
+    const createHandlers = await staffActions();
+    const handlers = createHandlers({
+      transition,
+      ...fixture.options,
+      beforeTransition: async () => { throw new Error("close failed"); },
+    });
+
+    await expect(handlers.transitionToStep({ id: "show", steps: [{ cue: {} }] }, 0)).rejects.toThrow("close failed");
+    expect(fixture.state.step).toBe(4);
+    expect(fixture.state.controlsDisabled).toBe(false);
+  });
+
+  test("only the newest step proceeds after a shared close", async () => {
+    let releaseClose;
+    const close = new Promise((resolve) => { releaseClose = resolve; });
+    const applied = [];
+    const transition = createNliStaffSearchTransition({
+      clearPersonSelection: async () => true,
+      hasPlaceFocus: () => false,
+    });
+    const fixture = stateFixture();
+    const createHandlers = await staffActions();
+    const handlers = createHandlers({
+      transition,
+      ...fixture.options,
+      beforeTransition: () => close,
+      setDestination: (item) => { fixture.state.destination = item.id; },
+      applyDestinationCue: async (item) => { applied.push(item.id); },
+    });
+
+    const first = handlers.transitionToStep({ id: "memorial", steps: [{ cue: "old" }] }, 1);
+    const second = handlers.transitionToStep({ id: "home-step", steps: [{ cue: "new" }] }, 0);
+    await Promise.resolve();
+    expect(applied).toEqual([]);
+    releaseClose(true);
+    await expect(first).resolves.toBe(false);
+    await expect(second).resolves.toBe(true);
+    expect(applied).toEqual(["home-step"]);
+    expect(fixture.state.destination).toBe("home-step");
+  });
 });

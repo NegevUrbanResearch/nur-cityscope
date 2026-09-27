@@ -3,7 +3,7 @@ import os
 from django.utils import timezone
 
 from .projection_config_schema import legacy_projection_config_defaults
-from .projection_warp_schema import migrate_projection_config_to_v2
+from .projection_warp_schema import migrate_projection_config_to_v5
 
 
 def indicator_media_path(instance, filename):
@@ -392,6 +392,7 @@ class OTEFViewportState(models.Model):
 
     workshop_auto_publish = models.BooleanField(default=False)
     workshop_autopublish_started_at = models.DateTimeField(null=True, blank=True)
+    exhibit_mode = models.BooleanField(default=False)
 
     # Last projection slideshow command (start/stop + payload), replicated over otef WebSocket
     projection_slideshow = models.JSONField(default=dict, blank=True)
@@ -672,7 +673,7 @@ class LayerState(models.Model):
 
 
 def projection_config_defaults():
-    return migrate_projection_config_to_v2(legacy_projection_config_defaults())
+    return migrate_projection_config_to_v5(legacy_projection_config_defaults())
 
 
 def projection_presets_defaults():

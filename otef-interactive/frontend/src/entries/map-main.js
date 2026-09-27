@@ -2,7 +2,7 @@ import TableSwitcher from "../shared/table-switcher.js";
 import TableSwitcherPopup from "../shared/table-switcher-popup.js";
 import { createGISMap, setGISBasemap, maplibregl } from "../map/maplibre-map.js";
 import { setupViewportSync } from "../map/maplibre-viewport-sync.js";
-import { applyLayerGroupsToMap, clearAllLayers, disposeLayerManagerForMap, removeCuratedLayersByPrefix } from "../map/maplibre-layer-manager.js";
+import { applyLayerGroupsToMap, clearAllLayers, disposeLayerManagerForMap } from "../map/maplibre-layer-manager.js";
 import { raiseDarkBasemapPlaceLabels } from "../map/dark-basemap-labels.js";
 import { attachGisFeaturePopups } from "../map/maplibre-gis-popups.js";
 import { createGisPersonSelection } from "../map/maplibre-person-selection.js";
@@ -11,7 +11,8 @@ import { createGisPersonController } from "../map/maplibre-gis-person-controller
 import { createNliNameFieldController } from "../shared/nli-name-field-controller.js";
 import { createGisNarrativeController } from "../map/nli-narrative-controller.js";
 import { loadNliPresentationManifest } from "../shared/nli-presentation-manifest.js";
-import { applyNarrativePeopleFilter } from "../map/nli-people-marker-filter.js";
+import { applyNarrativeHouseOutlineFilter, applyNarrativePeopleFilter } from "../map/nli-people-marker-filter.js";
+import { applyPeopleFocusDim, clearPeopleFocusDim } from "../shared/nli-people-focus-presentation.js";
 import { createNovaEscapeCoordinator } from "../shared/nli-nova-escape-coordinator.js";
 import { createMorRouteCoordinator } from "../shared/nli-mor-route-coordinator.js";
 import { createGisBasemapStyleCoordinator } from "./map-main-style-lifecycle.js";
@@ -24,10 +25,11 @@ import { filterGroupsForGisMap } from "../shared/gis-layer-filter.js";
 import { isolateLayersWhileVictimNamesShown } from "../shared/nli-victim-name-layer-isolation.js";
 import { normalizeGisBasemap } from "../shared/gis-basemap.js";
 import OTEFDataContext from "../shared/OTEFDataContext.js";
+import { createNliVideoPlaybackPublisher } from "../shared/nli-video-playback-channel.js";
 import layerRegistry from "../shared/layer-registry.js";
 import {
-  loadCuratedLayerToMapLibre,
-  removeCuratedHtmlMarkers,
+  createCuratedDisplayGate,
+  createGisCuratedRefresh,
   syncPinkLineAxisCompanionForMapLibre,
 } from "../map/maplibre-curated-layer-loader.js";
 import {
@@ -208,6 +210,9 @@ async function bootstrapMapRuntime() {
   map.on("load", async () => {
     registerDisposer(() => disposeLayerManagerForMap(map));
     let presentationViewer = null;
+    const videoPlaybackPublisher = createNliVideoPlaybackPublisher({
+      table: OTEFDataContext._tableName || "otef",
+    });
     let presentationManifest = null;
     let activePresentationSegmentId = null;
     let activePresentationSessionId = null;
@@ -232,6 +237,7 @@ async function bootstrapMapRuntime() {
       presentationBootstrapActive = false;
       presentationViewer?.dispose?.();
       presentationViewer = null;
+      videoPlaybackPublisher.dispose();
     });
     registerDisposer(OTEFDataContext.subscribe("narrativePresentation", (command) => {
       if (!presentationViewer) {
@@ -256,31 +262,49 @@ async function bootstrapMapRuntime() {
         emitUnavailablePresentation(command);
       });
     }));
-    registerDisposer(OTEFDataContext.subscribe("narrativeState", (state) => {
-      if (!activePresentationSegmentId || !presentationManifest || !presentationViewer) return;
-      const segment = presentationManifest.segments.find(
-        (candidate) => candidate.id === activePresentationSegmentId,
-      );
-      if (segment?.requiredNarrative && state?.id !== segment.requiredNarrative) {
-        presentationViewer.close();
-        activePresentationSegmentId = null;
-        activePresentationSessionId = null;
-        activePresentationGeneration = 0;
+    let handledExitRevision = 0;
+    const narrativeStatesBeforeExitTracker = [];
+    let trackingNarrativeExits = false;
+    let applyNarrativeExit = () => {};
+    const onNarrativeState = (state) => {
+      if (!trackingNarrativeExits) {
+        narrativeStatesBeforeExitTracker.push(state);
+        return;
       }
-    }));
+      applyNarrativeExit(state);
+    };
+    registerDisposer(OTEFDataContext.subscribe("narrativeState", onNarrativeState));
     void (async () => {
       try {
         const manifest = await loadNliPresentationManifest();
-        const { createNliRevealPresentation } = await import("../map/nli-reveal-presentation.js");
+        const { createNliRevealPresentation, shouldCloseViewerForNarrative } = await import("../map/nli-reveal-presentation.js");
+        presentationManifest = manifest;
+        applyNarrativeExit = (state) => {
+          const segment = activePresentationSegmentId
+            ? presentationManifest?.segments?.find((candidate) => candidate.id === activePresentationSegmentId) || null
+            : null;
+          const decision = shouldCloseViewerForNarrative({ handledExitRevision, state, segment });
+          handledExitRevision = decision.handledExitRevision;
+          if (!presentationBootstrapActive || !presentationViewer || !decision.close) return;
+          void presentationViewer.close();
+          activePresentationSegmentId = null;
+          activePresentationSessionId = null;
+          activePresentationGeneration = 0;
+        };
+        const queuedExits = narrativeStatesBeforeExitTracker.splice(0);
+        trackingNarrativeExits = true;
+        for (const state of queuedExits) applyNarrativeExit(state);
         if (!presentationBootstrapActive) return;
         const mapContainer =
           typeof map.getContainer === "function" ? map.getContainer() : document.getElementById("map");
-        presentationManifest = manifest;
         presentationViewer = createNliRevealPresentation(mapContainer, {
           manifest,
           emitResult: (result) => { void OTEFDataContext.narrativePresentationResult(result); },
+          onVideoPlaybackChange: (playing) => videoPlaybackPublisher.setActive(playing),
         });
       } catch (error) {
+        trackingNarrativeExits = true;
+        narrativeStatesBeforeExitTracker.length = 0;
         console.error("[map-main] NLI presentation viewer failed to load", error);
       }
     })();
@@ -453,7 +477,12 @@ async function bootstrapMapRuntime() {
 
     const viewportSync = setupViewportSync(map, OTEFDataContext);
     registerDisposer(viewportSync);
-    let activeCuratedIds = new Set();
+    let gisMapAlive = true;
+    const curatedDisplay = createCuratedDisplayGate({ isMapAlive: () => gisMapAlive });
+    registerDisposer(() => {
+      gisMapAlive = false;
+      curatedDisplay.dispose();
+    });
 
     const layerGroups = OTEFDataContext.getLayerGroups();
     const rawInitialLayerGroups = Array.isArray(layerGroups)
@@ -463,11 +492,16 @@ async function bootstrapMapRuntime() {
     const applyGisLayerGroups = (groups) => {
       applyLayerGroupsToMap(map, groups);
       applyNarrativePeopleFilter(map, OTEFDataContext.getNarrativeState?.()?.id ?? null);
+      const selectedPid = OTEFDataContext.getPersonSelection?.()?.personId;
+      if (selectedPid) applyPeopleFocusDim(map, selectedPid);
+      else clearPeopleFocusDim(map);
+      applyNarrativeHouseOutlineFilter(map, OTEFDataContext.getNarrativeState?.()?.id ?? null);
       raiseDarkBasemapPlaceLabels(map);
     };
+    syncContextInvestigation();
     applyGisLayerGroups(initialGroups);
     applyStoredNliLabelHeading(map);
-    syncContextFlowAnimations();
+    syncContextRouteProgress();
     const personVisual = createGisPersonSelection({
       map,
       maplibregl,
@@ -572,79 +606,28 @@ async function bootstrapMapRuntime() {
       }
     }
 
-    const refreshCuratedLayers = async ({ affectedCuratedFullLayerIds, groupsOverride, syncFlow = true, isCurrent = () => true } = {}) => {
-      if (!isCurrent()) return;
-      const rawGroups = groupsOverride ?? OTEFDataContext.getLayerGroups();
-      const groupsAsArray = gisDisplayGroups(rawGroups);
-      const currentGroups = filterGroupsForGisMap(groupsAsArray);
-
-      // Apply non-curated layer changes via registry path.
-      if (!isCurrent()) return;
-      applyGisLayerGroups(currentGroups);
-      applyStoredNliLabelHeading(map);
-      nameFieldController.sync(currentGroups);
-      personVisual.bringToFront?.();
-      if (syncFlow) syncContextFlowAnimations();
-
-      // Determine which curated ids to refresh.
-      const enabledCuratedIds = new Set(collectEnabledCuratedIds(currentGroups));
-      const previousCuratedIds = new Set(activeCuratedIds);
-      activeCuratedIds = enabledCuratedIds;
-
-      // Disabled curated IDs must always be detached.
-      for (const fullId of previousCuratedIds) {
-        if (!isCurrent()) return;
-        if (!enabledCuratedIds.has(fullId)) {
-          removeCuratedLayersByPrefix(map, fullId);
-          removeCuratedHtmlMarkers(fullId);
-        }
-      }
-
-      let toRefresh;
-      if (Array.isArray(affectedCuratedFullLayerIds) && affectedCuratedFullLayerIds.length > 0) {
-        const affectedSet = new Set(affectedCuratedFullLayerIds.filter((id) => typeof id === "string"));
-        // Remove all affected curated layers first, then re-load affected ids that remain enabled.
-        for (const fullId of affectedSet) {
-          if (!isCurrent()) return;
-          removeCuratedLayersByPrefix(map, fullId);
-          removeCuratedHtmlMarkers(fullId);
-        }
-        toRefresh = [...enabledCuratedIds].filter((id) => affectedSet.has(id));
-      } else {
-        // Full refresh semantics: reload all enabled curated layers.
-        // Needed for Supabase pulls that omit affected layer ids.
-        toRefresh = [...enabledCuratedIds];
-      }
-
-      if (toRefresh.length === 0) {
-        if (!isCurrent()) return;
-        if (syncFlow) syncContextFlowAnimations();
-        personVisual.bringToFront?.();
-        syncPinkLineAxisCompanionForMapLibre(map, groupsAsArray);
-        if (!isCurrent()) return;
-        narrativeController.onStyleLoad?.();
-        return;
-      }
-
-      const maplibregl = await resolveMaplibregl();
-      for (const fullId of toRefresh) {
-        if (!isCurrent()) return;
-        try {
-          await loadCuratedLayerToMapLibre(map, fullId, { maplibregl, force: true });
-        } catch (err) {
-          console.warn(`[map-main] Failed to load curated layer ${fullId}`, err);
-        }
-      }
-      if (!isCurrent()) return;
-      if (syncFlow) syncContextFlowAnimations();
-      personVisual.bringToFront?.();
-      syncPinkLineAxisCompanionForMapLibre(map, groupsAsArray);
-      if (!isCurrent()) return;
-      narrativeController.onStyleLoad?.();
-    };
+    const { refreshCuratedLayers, clearActiveCuratedIds } = createGisCuratedRefresh({
+      map,
+      getLayerGroups: () => OTEFDataContext.getLayerGroups(),
+      displayGroups: gisDisplayGroups,
+      filterGroups: filterGroupsForGisMap,
+      applyLayerGroups: applyGisLayerGroups,
+      applyLabelHeading: applyStoredNliLabelHeading,
+      nameFieldController,
+      personVisual,
+      syncFlowAnimations: syncContextFlowAnimations,
+      getNarrativeController: () => narrativeController,
+      resolveMaplibregl,
+      syncPinkLine: syncPinkLineAxisCompanionForMapLibre,
+    });
 
     // Initial curated load for current layerGroups state (raw groups preserve parking toggle row).
-    await refreshCuratedLayers({ groupsOverride: rawInitialLayerGroups });
+    await refreshCuratedLayers({
+      groupsOverride: rawInitialLayerGroups,
+      isCurrent: curatedDisplay.begin(
+        collectEnabledCuratedIds(filterGroupsForGisMap(gisDisplayGroups(rawInitialLayerGroups))),
+      ),
+    });
     narrativeController.apply(OTEFDataContext.getNarrativeState?.());
 
     let legendLifecycle = null;
@@ -661,16 +644,22 @@ async function bootstrapMapRuntime() {
       onStyleLoad: refreshLegendAfterStyleLoad,
       refreshLayers: async ({ basemap, groupsOverride, syncFlow = false, isCurrent }) => {
         if (!isCurrent()) return;
+        curatedDisplay.invalidateStyle();
+        const groups = groupsOverride ?? OTEFDataContext.getLayerGroups();
+        const displayIsCurrent = curatedDisplay.begin(
+          collectEnabledCuratedIds(filterGroupsForGisMap(gisDisplayGroups(groups))),
+        );
+        const refreshIsCurrent = (fullId) => isCurrent() && displayIsCurrent(fullId);
         currentBasemap = basemap;
         clearAllLayers(map);
-        activeCuratedIds = new Set();
-        if (!isCurrent()) return;
+        clearActiveCuratedIds();
+        if (!refreshIsCurrent()) return;
         await refreshCuratedLayers({
-          groupsOverride: groupsOverride ?? OTEFDataContext.getLayerGroups(),
+          groupsOverride: groups,
           syncFlow,
-          isCurrent,
+          isCurrent: refreshIsCurrent,
         });
-        if (!isCurrent()) return;
+        if (!refreshIsCurrent()) return;
         if (!syncFlow) syncContextFlowAnimations();
       },
     });
@@ -686,7 +675,12 @@ async function bootstrapMapRuntime() {
     registerDisposer(
       OTEFDataContext.subscribe("layerGroups", (groups) => {
         syncContextFlowAnimations();
-        void refreshCuratedLayers({ groupsOverride: groups });
+        void refreshCuratedLayers({
+          groupsOverride: groups,
+          isCurrent: curatedDisplay.begin(
+            collectEnabledCuratedIds(filterGroupsForGisMap(gisDisplayGroups(groups))),
+          ),
+        });
       }),
     );
 
@@ -701,7 +695,14 @@ async function bootstrapMapRuntime() {
         const onCuratedRefresh = (ev) => {
           void syncCuratedMapLayersAfterSupabasePull({
             pullPayload: ev?.detail || {},
-            reloadCuratedOnMap: refreshCuratedLayers,
+            reloadCuratedOnMap: (options = {}) => refreshCuratedLayers({
+              ...options,
+              isCurrent: curatedDisplay.begin(
+                collectEnabledCuratedIds(filterGroupsForGisMap(gisDisplayGroups(
+                  options.groupsOverride ?? OTEFDataContext.getLayerGroups(),
+                ))),
+              ),
+            }),
             applyLayerGroupsState: (groups) => {
               applyGisLayerGroups(filterGroupsForGisMap(gisDisplayGroups(groups)));
               applyStoredNliLabelHeading(map);

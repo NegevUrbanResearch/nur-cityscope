@@ -8,7 +8,8 @@
     />
     <meta name="theme-color" content="#0f0f10" />
     <meta name="color-scheme" content="dark" />
-    <link rel="icon" href="./favicon.ico" sizes="any" />
+    <link rel="icon" href="./favicon.ico?v=urban95" sizes="any" />
+    <link rel="manifest" href="./nli-staff.webmanifest" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <title>הקרנה · הספרייה הלאומית</title>
@@ -170,6 +171,22 @@
         height: var(--header-icon);
       }
       .home-btn[hidden] { display: none; }
+      .header-action {
+        width: var(--header-btn);
+        height: var(--header-btn);
+        min-width: 44px;
+        min-height: 44px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: var(--radius-pill);
+        color: var(--text-muted);
+        background: transparent;
+      }
+      .header-action[hidden] { display: none; }
+      .header-action .icon { width: var(--header-icon); height: var(--header-icon); }
+      .header-action:disabled { opacity: 0.45; cursor: default; }
+      .fullscreen-status { min-width: 0; font-size: var(--text-kicker); color: var(--text-muted); }
 
       .staff-connection {
         display: inline-flex;
@@ -264,85 +281,49 @@
       }
 
       /* Home */
+      #home.screen { overflow-y: auto; overscroll-behavior: contain; }
       .nav-list {
-        flex: 1;
-        min-height: 0;
+        flex: 1 0 auto;
         display: grid;
-        grid-template-rows: minmax(0, 1.7fr) minmax(0, 2.7fr) auto minmax(0, 0.8fr);
+        grid-template-rows: minmax(0, 1fr) minmax(0, 4fr);
         gap: var(--gap);
       }
-      .home-show-block {
-        min-height: 100px;
+      .home-lead {
         display: grid;
-        grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
-        align-items: center;
+        grid-template-columns: minmax(0, 3fr) minmax(0, 1fr);
+        grid-auto-rows: minmax(112px, auto);
         gap: var(--gap);
-        padding: clamp(10px, 1.5vh, 16px) clamp(12px, 2vw, 24px);
-        border: 1px solid var(--line);
-        border-radius: var(--radius-lg);
-        background: linear-gradient(180deg, var(--surface-2) 0%, var(--surface) 100%);
       }
-      .home-show-block-copy h2 {
-        font-size: var(--text-ui);
-        font-weight: 500;
-        line-height: 1.2;
+      .nav-cards {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        grid-auto-rows: minmax(132px, auto);
+        gap: var(--gap);
       }
-      .home-show-block-copy p {
-        margin: 4px 0 0;
-        color: var(--text-muted);
-        font-size: var(--text-meta);
-        line-height: 1.25;
-      }
-      .home-show-actions {
-        min-width: 0;
+      .nav-card--narrative:nth-child(5) { grid-column: 1 / -1; }
+      .home-names {
+        grid-column: 1 / -1;
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: var(--gap);
-      }
-      .home-show-shortcut {
-        min-width: 0;
-        min-height: var(--tap);
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
-        padding: 8px 12px;
-        text-align: start;
-        border: 1px solid var(--line-strong);
-        border-radius: var(--radius);
-        background: var(--surface);
-      }
-      .home-show-shortcut .nav-card-title,
-      .home-show-shortcut .nav-card-meta {
-        white-space: normal;
-      }
-      .home-show-shortcut .nav-card-title { font-size: var(--text-ui); }
-      .home-show-shortcut .nav-card-meta { display: block; }
-      .home-show-shortcut:hover { background: var(--surface-3); }
-      .nav-row {
-        min-height: 0;
-        display: grid;
-        grid-template-columns: repeat(5, minmax(0, 1fr));
-        gap: var(--gap);
+        margin-block-start: var(--gap);
       }
       .nav-card {
         position: relative;
-        display: flex;
-        align-items: center;
-        gap: 12px;
+        display: grid;
+        place-items: center;
         width: 100%;
-        min-height: 0;
-        height: 100%;
-        text-align: start;
-        padding: 0 clamp(16px, 2.4vw, 28px);
+        min-height: 132px;
+        text-align: center;
+        padding: 28px clamp(14px, 2.4vw, 26px) 18px;
         border-radius: var(--radius-lg);
         background: var(--surface);
         border: 1px solid var(--line);
-        overflow: hidden;
       }
       .nav-card--quiet {
-        background: transparent;
+        background: var(--surface);
         border-color: var(--line-strong);
-        border-style: dashed;
+        opacity: 0.82;
       }
       .nav-card--primary {
         background:
@@ -352,16 +333,23 @@
         color: var(--accent-ink);
         box-shadow: 0 10px 32px rgba(255, 214, 0, 0.14);
       }
+      .nav-card--primary .nav-card-index {
+        color: var(--accent-ink-soft);
+        background: rgba(21, 19, 10, 0.12);
+      }
+      .nav-card--timeline { background: var(--surface-2); border-color: var(--line-strong); }
       .nav-card--primary .nav-card-title {
-        font-size: var(--text-status);
+        font-size: clamp(23px, 3.5vw, 38px);
         font-weight: 500;
         letter-spacing: -0.02em;
       }
-      .nav-card--primary .nav-card-meta {
-        color: var(--accent-ink-soft);
-        font-weight: 500;
-      }
       .nav-card-index {
+        position: absolute;
+        inset-block-start: 12px;
+        inset-inline-start: 14px;
+        padding: 3px 9px;
+        border-radius: var(--radius-pill);
+        background: var(--accent-soft);
         font-size: var(--text-kicker);
         font-weight: 600;
         letter-spacing: 0.1em;
@@ -370,29 +358,6 @@
         flex-shrink: 0;
       }
       .nav-card-index:empty { display: none; }
-      .nav-card-copy { flex: 1; min-width: 0; }
-      .nav-card--narrative {
-        flex-direction: column;
-        align-items: stretch;
-        justify-content: space-between;
-        padding-block: clamp(14px, 2.2vh, 24px);
-        padding-inline: clamp(14px, 1.8vw, 22px);
-        background: linear-gradient(180deg, var(--surface-2) 0%, var(--surface) 100%);
-      }
-      .nav-card--narrative .nav-card-index {
-        order: -1;
-        align-self: flex-start;
-        padding: 4px 10px;
-        border-radius: var(--radius-pill);
-        background: var(--accent-soft);
-      }
-      .nav-card--narrative .nav-card-copy {
-        display: flex;
-        flex-direction: column;
-        justify-content: flex-end;
-      }
-      .nav-card--narrative .nav-card-title,
-      .nav-card--narrative .nav-card-meta { white-space: normal; }
       .nav-card-title,
       .nav-card-meta,
       .result-name,
@@ -404,9 +369,8 @@
         font-weight: 400;
         line-height: 1.15;
         letter-spacing: -0.01em;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
+        white-space: normal;
+        overflow-wrap: anywhere;
       }
       .nav-card-meta {
         margin-top: 4px;
@@ -525,7 +489,7 @@
         color: var(--text-2);
         display: -webkit-box;
         -webkit-box-orient: vertical;
-        -webkit-line-clamp: 3;
+        -webkit-line-clamp: 2;
         overflow: hidden;
       }
       .step-note.draft-note { color: var(--text-subtle); }
@@ -574,16 +538,24 @@
       }
       .cue-status[data-status="failed"]::before { background: var(--danger); }
 
-      .kit-idle {
-        margin: 0;
-        font-size: var(--text-meta);
-        color: var(--text-subtle);
-      }
       .kit-block { flex-shrink: 0; }
-      .kit-block[hidden],
-      .kit-idle[hidden] { display: none !important; }
+      .kit-block[hidden] { display: none !important; }
       .kit-action .btn { width: 100%; }
-      .presentation-controls { display: flex; flex-direction: column; gap: 10px; }
+      .presentation-controls { display: flex; flex-direction: column; gap: 16px; margin-bottom: 24px; }
+      #kitPresentation:not([hidden]) {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+      }
+      .presentation-controls { flex: 1; min-height: 0; }
+      .presentation-controls .btn[data-presentation-action="open"] {
+        width: 100%;
+        flex: 1;
+        min-height: clamp(180px, 32dvh, 260px);
+        max-height: 340px;
+      }
+      .presentation-controls .btn { min-height: 72px; }
       .presentation-controls-heading {
         display: flex;
         justify-content: space-between;
@@ -595,10 +567,19 @@
       .presentation-counter {
         color: var(--text-muted);
         font-variant-numeric: tabular-nums;
+        direction: ltr;
+        unicode-bidi: isolate;
         white-space: nowrap;
       }
-      .presentation-slide-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-      .presentation-close { width: 100%; margin-top: 4px; border-top: 1px solid var(--line-strong); }
+      .presentation-slide-actions {
+        flex: 1;
+        min-height: clamp(148px, 22dvh, 224px);
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: clamp(16px, 2.5vw, 32px);
+      }
+      .presentation-slide-actions .btn { min-height: clamp(112px, 16dvh, 168px); }
+      .presentation-close { width: 100%; min-height: 56px; margin-top: 24px; border-top: 1px solid var(--line-strong); }
       .presentation-unavailable { margin: 0; color: var(--danger); font-size: var(--text-meta); }
       .mi {
         width: 22px;
@@ -835,50 +816,6 @@
       .nli-tl-nova-mark.is-active { width: 2px; height: 18px; margin-top: -9px; background: var(--accent); }
       .nli-tl-nova-mark-label { transform: translateX(-50%); white-space: nowrap; }
 
-      /* Screen notes */
-      .screens {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 10px;
-        margin-top: auto;
-        padding-top: var(--space);
-        flex-shrink: 0;
-      }
-      .screen-row {
-        min-width: 0;
-        padding: 12px 14px;
-        border-radius: var(--radius);
-        background: var(--surface);
-        border: 1px solid var(--line);
-      }
-      .screen-label {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        font-size: var(--text-kicker);
-        font-weight: 600;
-        letter-spacing: 0.06em;
-        text-transform: uppercase;
-        color: var(--text-subtle);
-        margin-bottom: 6px;
-      }
-      .screen-label::before {
-        content: "";
-        width: 6px;
-        height: 6px;
-        border-radius: 2px;
-        background: var(--accent-line);
-      }
-      .screen-copy {
-        margin: 0;
-        font-size: var(--text-meta);
-        color: var(--text-2);
-        display: -webkit-box;
-        -webkit-box-orient: vertical;
-        -webkit-line-clamp: 3;
-        overflow: hidden;
-      }
-
       /* Dock */
       .dock {
         flex-shrink: 0;
@@ -949,10 +886,6 @@
       .branch-btn:only-child .branch-btn-meta { color: var(--accent-ink-soft); }
 
       /* Search */
-      #freeArchiveBtn {
-        width: 100%;
-        margin-bottom: var(--gap);
-      }
       .search {
         position: relative;
         flex-shrink: 0;
@@ -1021,17 +954,18 @@
         bottom: calc(100% + 6px);
       }
       #kitSearch .search { margin-bottom: 0; }
-      #kitSearch .free-status { margin: var(--gap) 0 0; }
+      #kitSearch .search-status { margin: var(--gap) 0 0; }
+      #kitSearch #freeArchiveBtn { margin-block-start: var(--space); }
 
-      .free-status {
+      .search-status {
         min-height: 1.2em;
         margin: 0 0 var(--gap);
         font-size: var(--text-meta);
         color: var(--text-muted);
         flex-shrink: 0;
       }
-      .free-status:empty { min-height: 0; }
-      .free-status.is-live {
+      .search-status:empty { min-height: 0; }
+      .search-status.is-live {
         color: var(--text);
         display: flex;
         align-items: center;
@@ -1046,71 +980,6 @@
         box-shadow: 0 0 0 3px var(--accent-soft-2);
         animation: pulse 2s ease-in-out infinite;
       }
-
-      /* Free control */
-      .scene-list {
-        flex: 1;
-        min-height: 0;
-        display: grid;
-        grid-template-columns: 1fr;
-        grid-auto-rows: minmax(0, 1fr);
-        gap: var(--gap);
-        counter-reset: scene;
-      }
-      .free-cue-status { margin-bottom: var(--gap); }
-      .scene-btn {
-        width: 100%;
-        height: 100%;
-        min-height: 0;
-        padding: 16px clamp(16px, 2vw, 24px);
-        text-align: start;
-        border-radius: var(--radius-lg);
-        border: 1px solid var(--line);
-        background: var(--surface);
-        overflow: hidden;
-        display: flex;
-        flex-direction: column;
-        justify-content: flex-end;
-        gap: 6px;
-        counter-increment: scene;
-      }
-      .scene-btn::before {
-        content: counter(scene, decimal-leading-zero);
-        align-self: flex-start;
-        margin-bottom: auto;
-        padding: 4px 10px;
-        border-radius: var(--radius-pill);
-        background: var(--accent-soft);
-        color: var(--accent);
-        font-size: var(--text-kicker);
-        font-weight: 600;
-        letter-spacing: 0.1em;
-        font-variant-numeric: tabular-nums;
-      }
-      .scene-btn.is-active::before {
-        background: rgba(21, 19, 10, 0.12);
-        color: var(--accent-ink);
-      }
-      .scene-btn.is-active {
-        background: var(--accent);
-        border-color: var(--accent);
-        color: var(--accent-ink);
-        box-shadow: 0 10px 28px rgba(255, 214, 0, 0.14);
-      }
-      .scene-btn-title {
-        display: block;
-        font-size: var(--text-h2);
-        font-weight: 500;
-        line-height: 1.15;
-        letter-spacing: -0.01em;
-      }
-      .scene-btn-meta {
-        display: block;
-        font-size: var(--text-meta);
-        color: var(--text-muted);
-        line-height: 1.35;
-      }
-      .scene-btn.is-active .scene-btn-meta { color: var(--accent-ink-soft); }
 
       /* Layer sheet */
       .layer-sheet {
@@ -1292,11 +1161,11 @@
       }
       @media (hover: hover) {
         .home-btn:hover,
+        .header-action:not(:disabled):hover,
         .layer-sheet-close:hover,
         .nli-tl-btn:not(:disabled):not(.nli-tl-btn--play):not(.nli-tl-loop--on):hover { background: var(--surface-3); }
         .locale button:not(.is-active):hover { color: var(--text); }
-        .nav-card:not(.nav-card--primary):hover,
-        .scene-btn:not(.is-active):hover {
+        .nav-card:not(.nav-card--primary):hover {
           background: var(--surface-2);
           border-color: var(--line-strong);
         }
@@ -1325,21 +1194,16 @@
         }
       }
 
-      @media (max-width: 599px) {
-        .home-show-block {
-          grid-template-columns: minmax(0, 1fr);
-          align-content: center;
-          gap: 8px;
-        }
-        .home-show-actions { grid-template-columns: minmax(0, 1fr); }
+      @media (min-width: 900px) and (orientation: landscape) {
+        .home-lead { grid-auto-rows: minmax(124px, auto); }
       }
 
-      @media (min-width: 600px) {
-        .step-note { -webkit-line-clamp: 5; }
-        .screen-copy { -webkit-line-clamp: 4; }
+      @media (orientation: landscape) {
+        .nav-card { min-height: 112px; }
+        .nav-cards { grid-auto-rows: minmax(112px, auto); }
       }
 
-      /* Galaxy Tab 11 portrait: ~800×1280 CSS px */
+      /* Tall tablet layouts */
       @media (min-width: 720px) and (min-height: 1000px) {
         :root {
           --text-ui: 19px;
@@ -1347,8 +1211,6 @@
           --text-status: 44px;
           --text-meta: 15px;
           --text-kicker: 13px;
-          --tap: 60px;
-          --header-btn: 56px;
           --header-icon: 26px;
           --pad: 32px;
           --gap: 14px;
@@ -1359,16 +1221,18 @@
           min-height: 46px;
         }
         .staff-connection { height: 42px; padding-inline: 16px; }
-        .nav-card { padding-inline: 28px; }
-        .step-note,
-        .screen-copy {
-          display: block;
-          -webkit-line-clamp: unset;
-          overflow: visible;
+        .nav-card { min-height: 170px; }
+        .home-lead { grid-auto-rows: minmax(170px, auto); }
+        .nav-cards { grid-auto-rows: minmax(170px, auto); }
+        .kit { justify-content: flex-start; }
+        .presentation-controls { margin-bottom: 32px; }
+        .presentation-slide-actions { gap: 32px; }
+        .presentation-close {
+          min-height: 56px;
+          margin-top: 32px;
         }
       }
 
-      /* Galaxy Tab 11 landscape: ~1280×800 CSS px */
       @media (min-width: 1000px) and (max-height: 900px) {
         :root {
           --text-ui: 18px;
@@ -1376,8 +1240,6 @@
           --text-status: 40px;
           --text-meta: 14px;
           --text-kicker: 12px;
-          --tap: 54px;
-          --header-btn: 50px;
           --header-icon: 24px;
           --pad: 28px;
           --gap: 12px;
@@ -1385,22 +1247,20 @@
         }
         .kicker,
         .lede,
-        .nav-card-meta,
-        .scene-btn-meta { display: block; }
+        .nav-card-meta { display: block; }
         .nav-card { padding-inline: 24px; }
         .lede { max-width: 52ch; }
-        .scene-list { grid-template-columns: repeat(5, 1fr); }
         .player-body {
           display: grid;
           grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr);
           grid-template-rows: auto auto auto auto auto minmax(148px, 1fr);
           grid-template-areas:
-            "top screens"
-            "ticks screens"
-            "clock screens"
-            "title screens"
-            "note screens"
-            "kit screens";
+            "top kit"
+            "ticks kit"
+            "clock kit"
+            "title kit"
+            "note kit"
+            ". kit";
           column-gap: 28px;
           align-content: stretch;
         }
@@ -1408,33 +1268,14 @@
         .ticks { grid-area: ticks; margin-bottom: 14px; }
         .clock { grid-area: clock; }
         .step-title { grid-area: title; }
-        .step-note { grid-area: note; }
+        .step-note { grid-area: note; max-width: none; }
         .kit {
           grid-area: kit;
           margin-top: 8px;
           min-height: 148px;
+          justify-content: flex-start;
         }
-        .step-note {
-          max-width: none;
-          display: block;
-          -webkit-line-clamp: unset;
-          overflow: visible;
-        }
-        .screens {
-          grid-area: screens;
-          grid-template-columns: 1fr;
-          grid-auto-rows: min-content;
-          align-content: start;
-          gap: 12px;
-          margin-top: 0;
-          padding-top: 0;
-        }
-        .screen-row { padding: 16px 18px; }
-        .screen-copy {
-          display: block;
-          -webkit-line-clamp: unset;
-          overflow: visible;
-        }
+        .presentation-controls { margin-bottom: 24px; }
         .dock {
           grid-template-columns: minmax(180px, 1fr) minmax(280px, 1.8fr);
           gap: 12px;
@@ -1443,13 +1284,28 @@
       }
 
       @media (max-height: 700px) and (max-width: 500px) {
-        .nav-card-meta,
-        .scene-btn-meta { display: none; }
+        .nav-card-meta { display: none; }
         .step-note { -webkit-line-clamp: 2; }
-        .screen-copy { -webkit-line-clamp: 2; }
         .nli-tl-hours { display: none; }
         .nli-tl-scrub-row { padding-top: 8px; }
         .cue-status { display: none; }
+      }
+
+      @media (orientation: landscape) and (max-height: 700px) {
+        .player-body {
+          overflow-y: auto;
+          overscroll-behavior-y: contain;
+          scroll-padding-block: 24px;
+        }
+        .kit {
+          flex: 0 0 auto;
+          min-height: max-content;
+          justify-content: flex-start;
+        }
+        #kitPresentation:not([hidden]),
+        .presentation-controls {
+          flex: 0 0 auto;
+        }
       }
 
     </style>
@@ -1458,6 +1314,12 @@
     <div class="app">
       <header class="header">
         <div class="header-side header-side--start">
+          <button type="button" class="header-action" id="homeLayersBtn" hidden data-i18n-aria="layersTitle" aria-label="שכבות" aria-expanded="false" aria-controls="staffPackMenus">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="m12 3 9 5-9 5-9-5 9-5Z" />
+              <path d="m3 12 9 5 9-5M3 16l9 5 9-5" />
+            </svg>
+          </button>
           <button
             type="button"
             class="home-btn"
@@ -1474,6 +1336,12 @@
           </button>
         </div>
         <div class="header-side header-side--end">
+          <span class="fullscreen-status" id="fullscreenStatus" role="status" hidden></span>
+          <button type="button" class="header-action" id="fullscreenBtn" aria-label="מסך מלא" aria-pressed="false" data-i18n-aria="fullscreenEnter">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M8 3H5a2 2 0 0 0-2 2v3m13-5h3a2 2 0 0 1 2 2v3M3 16v3a2 2 0 0 0 2 2h3m13-5v3a2 2 0 0 1-2 2h-3" />
+            </svg>
+          </button>
           <span class="staff-connection" id="staffConnection"></span>
           <div class="locale" role="group" aria-label="Language">
             <button type="button" id="localeHe" data-locale="he" class="is-active" aria-pressed="true">עב</button>
@@ -1484,6 +1352,8 @@
 
       <main class="main">
         <section class="screen is-active" id="home" data-screen="home">
+          <p class="cue-status" id="homeCueStatus" role="status" hidden></p>
+          <button type="button" class="btn" id="homeRetry" hidden data-i18n="homeRetry">Retry</button>
           <div class="nav-list" id="narrativeList"></div>
         </section>
 
@@ -1510,7 +1380,7 @@
                     <input id="searchInput" type="search" autocomplete="off" data-i18n-placeholder="searchPlaceholder" placeholder="חיפוש שם או מקום" />
                     <ul class="results" id="searchResults"></ul>
                   </div>
-                  <p class="free-status" id="freeStatus" role="status" hidden></p>
+                  <p class="search-status" id="searchStatus" role="status" hidden></p>
                   <button type="button" class="btn" id="freeArchiveBtn" hidden>פתיחת ארכיון הספרייה</button>
                 </div>
               </div>
@@ -1519,17 +1389,6 @@
               <div class="kit-block" id="kitTimeline" hidden></div>
               <div class="kit-block kit-action" id="kitArchive" hidden>
                 <button type="button" class="btn" id="archiveBtn">פתיחת ארכיון הספרייה</button>
-              </div>
-              <p class="kit-idle" id="kitIdle" hidden></p>
-            </div>
-            <div class="screens">
-              <div class="screen-row">
-                <span class="screen-label" data-i18n="gisLabel">מסך GIS</span>
-                <p class="screen-copy" id="stepGis"></p>
-              </div>
-              <div class="screen-row">
-                <span class="screen-label" data-i18n="modelLabel">הקרנה / מודל</span>
-                <p class="screen-copy" id="stepModel"></p>
               </div>
             </div>
           </div>
@@ -1540,10 +1399,6 @@
           </div>
         </section>
 
-        <section class="screen" id="free" data-screen="free" hidden>
-          <p class="cue-status free-cue-status" id="freeCueStatus" role="status"></p>
-          <div class="scene-list" id="sceneList"></div>
-        </section>
       </main>
       <div class="layer-sheet" id="staffPackMenus" hidden></div>
       <div id="table-switcher" hidden></div>

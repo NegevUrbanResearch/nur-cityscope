@@ -279,7 +279,7 @@ export function syncProjectionLayers(map, layerGroups, options = {}) {
   const groups = asArrayLayerGroups(layerGroups);
   const groupsWithoutWmts = cloneGroupsWithWmtsDisabled(groups);
   const opts = options && typeof options === "object" ? options : {};
-  const { transition, ...restLayerStyleOptions } = opts;
+  const { transition, suppressCanvasNameSymbols = false, ...restLayerStyleOptions } = opts;
   const layerStyleOptions = {
     applyProjectionHatchPresentation: true,
     ...restLayerStyleOptions,
@@ -288,6 +288,9 @@ export function syncProjectionLayers(map, layerGroups, options = {}) {
     layerStyleOptions.transition = { ...transition };
   }
   applyLayerGroupsToMap(map, groupsWithoutWmts, layerStyleOptions);
+  if (suppressCanvasNameSymbols) for (const id of ['nli__people_names__labels', 'nli-name-field-labels', 'nli-name-field-selected']) {
+    if (map.getLayer?.(id)) map.setLayoutProperty(id, 'visibility', 'none');
+  }
 
   const wmtsState = getOrCreateWmtsState(map);
   const enabledWmts = resolveEnabledWmtsFullIds(groups);

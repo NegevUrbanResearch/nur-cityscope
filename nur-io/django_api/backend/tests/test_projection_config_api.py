@@ -9,9 +9,36 @@ from django.test import Client, TestCase, TransactionTestCase
 
 from backend.models import OTEFProjectionCalibration, Table
 from backend.projection_config_service import get_projection_state, mutate_projection_state, ProjectionConflict
+from backend.projection_config_schema import legacy_projection_config_defaults
+from backend.projection_warp_schema import migrate_projection_config_to_v2
 
 
 class ProjectionConfigApiTests(TestCase):
+    def test_legacy_preview_is_normalized_to_v3_before_persistence(self):
+        self.state()
+        for legacy in (legacy_projection_config_defaults(), migrate_projection_config_to_v2(legacy_projection_config_defaults())):
+            response = self.post_action('preview', revision=self.state()['revision'], config=legacy)
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()['config']['schemaVersion'], 5)
+            self.assertEqual(response.json()['config']['pre'], legacy['pre'])
+            self.assertEqual(response.json()['config']['outputs']['left']['crop'], legacy['outputs']['left']['crop'])
+            self.assertEqual(OTEFProjectionCalibration.objects.get(table__name='otef').working_config, response.json()['config'])
+
+    @patch('backend.projection_config_service.load_trusted_projection_asset')
+    def test_v3_td_baseline_still_checks_trusted_manifest(self, loader):
+        original = self.state()
+        config = copy.deepcopy(original['config'])
+        config['outputs']['left']['warp']['baseline'] = {
+            'type': 'tdMesh', 'assetId': 'untrusted', 'sha256': 'a' * 64,
+            'width': 1920, 'height': 1080, 'origin': 'top-left',
+        }
+        loader.return_value = (None, {'assets': {'left': {'assetId': 'trusted', 'sha256': 'b' * 64}}}, None)
+        response = self.post_action('preview', config=config)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('outputs.left.baseline.assetId', response.json()['fields'])
+        self.assertIn('outputs.left.baseline.sha256', response.json()['fields'])
+        self.assertEqual(self.state(), original)
+
     def setUp(self):
         Table.objects.create(name="otef")
         self.source = str(uuid.uuid4())

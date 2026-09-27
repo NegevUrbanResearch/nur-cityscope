@@ -1,6 +1,18 @@
 import { expect, test } from 'vitest';
 import { DEFAULT_PROJECTION_CONFIG as DEFAULTS } from '../../frontend/src/shared/projection-config-schema.js';
-import { containsUv, outputToT3, t3ToOutput, visibleT3Rect } from '../../frontend/src/shared/projection-config-geometry.js';
+import { containsUv, outputToT3, t3ToOutput, visibleT3Rect, planeToOutputUv } from '../../frontend/src/shared/projection-config-geometry.js';
+
+test('maps the heading-aligned plane through pre-rotation and asymmetric output camera', () => {
+  const center = planeToOutputUv([0, 0], DEFAULTS, 'left', { heading: 41 });
+  const branch = DEFAULTS.outputs.left;
+  const t3 = outputToT3(center, branch);
+  const angle = -DEFAULTS.pre.rotateDeg * Math.PI / 180;
+  expect(t3.u).toBeCloseTo(0.5 + DEFAULTS.pre.tx * DEFAULTS.pre.scale * Math.cos(angle));
+  expect(t3.v).toBeCloseTo(0.5 + DEFAULTS.pre.tx * DEFAULTS.pre.scale * 1920 / 1080 * Math.sin(angle));
+  const right = planeToOutputUv([100, 0], DEFAULTS, 'right', { heading: 41 });
+  expect(Number.isFinite(right.u)).toBe(true);
+  expect(right).not.toEqual(center);
+});
 
 test('legacy visible centers and inverse agree', () => {
   const left = DEFAULTS.outputs.left;

@@ -163,12 +163,13 @@ describe("OTEFDataContext investigation clock", () => {
   test("PATCH applies investigation_clock from the response", async () => {
     vi.spyOn(Date, "now").mockReturnValue(40_000);
     const api = await import("../../frontend/src/shared/api-client.js");
+    const requested = wireClock({ phase: "paused", revision: 8 });
     vi.spyOn(api.OTEF_API, "updateInvestigationClock").mockResolvedValue({
-      investigation_clock: wireClock({
-        phase: "paused",
+      investigation_clock: {
+        ...requested,
         revision: 9,
         serverNowMs: 41_000,
-      }),
+      },
     });
 
     const { default: OTEFDataContext } = await import(
@@ -177,16 +178,15 @@ describe("OTEFDataContext investigation clock", () => {
     OTEFDataContext._tableName = "otef";
     OTEFDataContext._clientId = "clock-client";
 
-    await OTEFDataContext.patchInvestigationClock(
-      wireClock({ phase: "playing", revision: 8, positionMs: 0, anchorMs: 1 }),
-    );
+    const result = await OTEFDataContext.patchInvestigationClock(requested);
+    expect(result).toMatchObject({ ok: true, clock: { phase: "paused", revision: 9 } });
 
     expect(api.OTEF_API.updateInvestigationClock.mock.calls[0][1]).not.toHaveProperty(
       "serverNowMs",
     );
     expect(api.OTEF_API.updateInvestigationClock).toHaveBeenCalledWith(
       "otef",
-      expect.objectContaining({ phase: "playing" }),
+      expect.objectContaining({ phase: "paused" }),
       expect.objectContaining({ sourceId: "clock-client" }),
     );
     expect(OTEFDataContext.getInvestigationClock()).toMatchObject({
@@ -214,5 +214,231 @@ describe("OTEFDataContext investigation clock", () => {
     expect(body.investigation_clock).toEqual({ phase: "idle", loop: true });
     expect(body.sourceId).toBe("remote-1");
     expect(body.timestamp).toBe(42);
+  });
+
+  test("a matching clock acknowledgement returns the adopted clock", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(40_000);
+    const api = await import("../../frontend/src/shared/api-client.js");
+    const requested = wireClock({
+      phase: "playing",
+      revision: 8,
+      positionMs: 0,
+      anchorMs: 1,
+      seekKind: "none",
+    });
+    vi.spyOn(api.OTEF_API, "updateInvestigationClock").mockResolvedValue({
+      investigation_clock: {
+        ...requested,
+        revision: 9,
+        serverNowMs: 41_000,
+      },
+    });
+    const { default: OTEFDataContext } = await import(
+      "../../frontend/src/shared/OTEFDataContext.js"
+    );
+    OTEFDataContext._tableName = "otef";
+    OTEFDataContext._clientId = "clock-client";
+
+    const result = await OTEFDataContext.patchInvestigationClock(requested);
+
+    expect(result).toMatchObject({
+      ok: true,
+      clock: { phase: "playing", revision: 9, positionMs: 0, serverNowMs: 41_000 },
+    });
+    expect(api.OTEF_API.updateInvestigationClock.mock.calls[0][1]).not.toHaveProperty("isCurrent");
+    expect(api.OTEF_API.updateInvestigationClock.mock.calls[0][2]).not.toHaveProperty("isCurrent");
+    expect(OTEFDataContext.getInvestigationClock()).toMatchObject({ phase: "playing", revision: 9 });
+  });
+
+  test("missing table fails the clock patch without a request", async () => {
+    const api = await import("../../frontend/src/shared/api-client.js");
+    const update = vi.spyOn(api.OTEF_API, "updateInvestigationClock");
+    const actions = await import(
+      "../../frontend/src/shared/otef-data-context/OTEFDataContext-actions.js"
+    );
+    const { default: OTEFDataContext } = await import(
+      "../../frontend/src/shared/OTEFDataContext.js"
+    );
+    OTEFDataContext._tableName = "";
+
+    const missingTable = await OTEFDataContext.patchInvestigationClock(wireClock());
+    const missingContext = await actions.patchInvestigationClock(null, wireClock()).catch((error) => error);
+
+    expect(missingTable).toEqual({ ok: false, error: "Missing table" });
+    expect(missingContext).toEqual({ ok: false, error: "Missing table" });
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  test("an absent response clock is not success when the phase already matches", async () => {
+    const api = await import("../../frontend/src/shared/api-client.js");
+    vi.spyOn(api.OTEF_API, "updateInvestigationClock").mockResolvedValue({});
+    const { default: OTEFDataContext } = await import(
+      "../../frontend/src/shared/OTEFDataContext.js"
+    );
+    OTEFDataContext._tableName = "otef";
+    OTEFDataContext._clientId = "clock-client";
+    const requested = wireClock({ phase: "playing", revision: 4, positionMs: 0, anchorMs: 1, seekKind: "none" });
+    OTEFDataContext._setInvestigationClock(requested);
+
+    const result = await OTEFDataContext.patchInvestigationClock(requested);
+
+    expect(result?.ok).toBe(false);
+    expect(result?.stale).not.toBe(true);
+    expect(OTEFDataContext.getInvestigationClock().revision).toBe(4);
+  });
+
+  test("a malformed or mismatched response clock is not applied", async () => {
+    const api = await import("../../frontend/src/shared/api-client.js");
+    const requested = wireClock({ phase: "playing", revision: 4, positionMs: 0, anchorMs: 1, seekKind: "none" });
+    vi.spyOn(api.OTEF_API, "updateInvestigationClock").mockResolvedValue({
+      investigation_clock: { phase: "paused", revision: 9, serverNowMs: 41_000 },
+    });
+    const { default: OTEFDataContext } = await import(
+      "../../frontend/src/shared/OTEFDataContext.js"
+    );
+    OTEFDataContext._tableName = "otef";
+    OTEFDataContext._clientId = "clock-client";
+    OTEFDataContext._setInvestigationClock(wireClock({ phase: "idle", revision: 1 }));
+
+    const result = await OTEFDataContext.patchInvestigationClock(requested);
+
+    expect(result?.ok).toBe(false);
+    expect(OTEFDataContext.getInvestigationClock()).toMatchObject({ phase: "idle", revision: 1 });
+  });
+
+  test("a narrative change during the request makes the old clock stale", async () => {
+    const api = await import("../../frontend/src/shared/api-client.js");
+    const { default: OTEFDataContext } = await import(
+      "../../frontend/src/shared/OTEFDataContext.js"
+    );
+    const requested = wireClock({ phase: "playing", revision: 4, positionMs: 0, anchorMs: 1, seekKind: "none" });
+    vi.spyOn(api.OTEF_API, "updateInvestigationClock").mockImplementation(async () => {
+      OTEFDataContext._narrativeState = { id: "nova", transition: "enter", revision: 3 };
+      return { investigation_clock: { ...requested, revision: 5, serverNowMs: 9_000 } };
+    });
+    OTEFDataContext._tableName = "otef";
+    OTEFDataContext._clientId = "clock-client";
+    OTEFDataContext._narrativeState = { id: "segev", transition: "enter", revision: 2 };
+    OTEFDataContext._setInvestigationClock(wireClock({ phase: "idle", revision: 1 }));
+
+    const result = await OTEFDataContext.patchInvestigationClock(requested);
+
+    expect(result).toMatchObject({ ok: false, stale: true });
+    expect(OTEFDataContext.getInvestigationClock()).toMatchObject({ phase: "idle", revision: 1 });
+  });
+
+  test("a newer incompatible clock adopted during the request is stale", async () => {
+    const api = await import("../../frontend/src/shared/api-client.js");
+    const { default: OTEFDataContext } = await import(
+      "../../frontend/src/shared/OTEFDataContext.js"
+    );
+    const requested = wireClock({ phase: "playing", revision: 4, positionMs: 0, anchorMs: 1, seekKind: "none" });
+    vi.spyOn(api.OTEF_API, "updateInvestigationClock").mockImplementation(async () => {
+      OTEFDataContext._setInvestigationClock(wireClock({
+        phase: "paused",
+        revision: 20,
+        positionMs: 10,
+        anchorMs: 2,
+        seekKind: "jump",
+      }));
+      return { investigation_clock: { ...requested, revision: 21, serverNowMs: 9_000 } };
+    });
+    OTEFDataContext._tableName = "otef";
+    OTEFDataContext._clientId = "clock-client";
+    OTEFDataContext._setInvestigationClock(wireClock({ phase: "idle", revision: 1 }));
+
+    const result = await OTEFDataContext.patchInvestigationClock(requested);
+
+    expect(result).toMatchObject({ ok: false, stale: true });
+    expect(OTEFDataContext.getInvestigationClock()).toMatchObject({ phase: "paused", revision: 20 });
+  });
+
+  test("a matching websocket clock adopted before HTTP is success", async () => {
+    const api = await import("../../frontend/src/shared/api-client.js");
+    const { default: OTEFDataContext } = await import(
+      "../../frontend/src/shared/OTEFDataContext.js"
+    );
+    const requested = wireClock({ phase: "playing", revision: 4, positionMs: 0, anchorMs: 1, seekKind: "none" });
+    vi.spyOn(api.OTEF_API, "updateInvestigationClock").mockImplementation(async () => {
+      OTEFDataContext._setInvestigationClock({ ...requested, revision: 8, serverNowMs: 70_000 });
+      return {};
+    });
+    OTEFDataContext._tableName = "otef";
+    OTEFDataContext._clientId = "clock-client";
+    OTEFDataContext._setInvestigationClock(wireClock({ phase: "idle", revision: 1 }));
+
+    const result = await OTEFDataContext.patchInvestigationClock(requested);
+
+    expect(result).toMatchObject({
+      ok: true,
+      clock: { phase: "playing", revision: 8, positionMs: 0, serverNowMs: 70_000 },
+    });
+  });
+
+  test("a failed HTTP clock patch is not success", async () => {
+    const api = await import("../../frontend/src/shared/api-client.js");
+    const failure = new Error("offline");
+    vi.spyOn(api.OTEF_API, "updateInvestigationClock").mockRejectedValue(failure);
+    const { default: OTEFDataContext } = await import(
+      "../../frontend/src/shared/OTEFDataContext.js"
+    );
+    OTEFDataContext._tableName = "otef";
+    OTEFDataContext._clientId = "clock-client";
+
+    const result = await OTEFDataContext.patchInvestigationClock(wireClock()).catch((error) => error);
+
+    expect(result?.ok).toBe(false);
+    expect(result?.error).toBe(failure);
+  });
+
+  test("a stale predicate skips the send and a queued predicate is checked before send", async () => {
+    const api = await import("../../frontend/src/shared/api-client.js");
+    const resolvers = [];
+    const update = vi.spyOn(api.OTEF_API, "updateInvestigationClock").mockImplementation(
+      () => new Promise((resolve) => {
+        resolvers.push(resolve);
+      }),
+    );
+    const { default: OTEFDataContext } = await import(
+      "../../frontend/src/shared/OTEFDataContext.js"
+    );
+    OTEFDataContext._tableName = "otef";
+    OTEFDataContext._clientId = "clock-client";
+    const firstClock = wireClock({ phase: "playing", revision: 1, positionMs: 0, anchorMs: 1, seekKind: "none" });
+    const secondClock = wireClock({
+      phase: "idle",
+      revision: 1,
+      membership: [],
+      beats: [],
+      positionMs: 0,
+      anchorMs: null,
+    });
+
+    const skipped = OTEFDataContext.patchInvestigationClock(firstClock, { isCurrent: () => false });
+    await Promise.resolve();
+    expect(update).not.toHaveBeenCalled();
+    await expect(skipped).resolves.toMatchObject({ ok: false, stale: true });
+
+    const first = OTEFDataContext.patchInvestigationClock(firstClock);
+    await vi.waitFor(() => expect(update).toHaveBeenCalledTimes(1));
+    let secondCurrent = true;
+    const second = OTEFDataContext.patchInvestigationClock(secondClock, {
+      isCurrent: () => secondCurrent,
+    });
+    secondCurrent = false;
+    resolvers[0]({
+      investigation_clock: { ...firstClock, revision: 2, serverNowMs: 9_000 },
+    });
+    await first;
+    if (resolvers[1]) {
+      resolvers[1]({
+        investigation_clock: { ...secondClock, revision: 3, serverNowMs: 9_000 },
+      });
+    }
+    const queued = await second;
+
+    expect(update).toHaveBeenCalledTimes(1);
+    expect(queued).toMatchObject({ ok: false, stale: true });
+    expect(OTEFDataContext.getInvestigationClock()).toMatchObject({ phase: "playing", revision: 2 });
   });
 });

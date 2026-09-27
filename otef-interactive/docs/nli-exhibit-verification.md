@@ -1,5 +1,7 @@
 # NLI exhibit verification
 
+After moving the PC or changing projectors, complete the [video playback commissioning check](nli-video-playback-commissioning.md), including all six videos on the actual fullscreen displays. Laboratory playback results do not replace this check.
+
 ## Local Reveal presentation setup and acceptance
 
 From an elevated PowerShell session on the GIS exhibit machine, install the
@@ -19,7 +21,7 @@ at their first slide and Previous/Next stop at the segment boundaries:
 Segev 1–8, Mor Levy 9–11, Nova memorial 12–16, Sderot 17–21, Shura 22–28,
 and Hostages 29–34.
 
-Check audible autoplay with the remote on video slides 2, 10, 18, 23, and 24.
+Check audible autoplay with the remote on video slides 2, 10, 18, 21, 23, and 24.
 Confirm audio stops and rewinds when leaving each video slide or closing the
 presentation. Confirm Shura opens after its cue and its explicit Close resumes
 the parent choice; Hostages explicit Close advances to Nir Oz people, while
@@ -36,7 +38,7 @@ hardware/browser result below; automated tests do not count as exhibit checks.
 | Six segment starts and boundary clamping |  |  |  | pending |  |
 | Slides remain on GIS, not projection |  |  |  | pending |  |
 | Open/close causes no GIS reload or application switch |  |  |  | pending |  |
-| Slides 2, 10, 18, 23, 24 autoplay audibly |  |  |  | pending |  |
+| Slides 2, 10, 18, 21, 23, 24 autoplay audibly |  |  |  | pending |  |
 | Leaving a video slide or closing stops and rewinds audio |  |  |  | pending |  |
 | Shura and Hostages explicit Close destinations |  |  |  | pending |  |
 | Scene Back/Next and Home force-close without special destination |  |  |  | pending |  |
@@ -44,8 +46,8 @@ hardware/browser result below; automated tests do not count as exhibit checks.
 
 After the exhibit and when the source terms require removal, delete
 `otef-interactive/public/local/presentations/nli/` and the retained downloaded
-source files `C:\Users\owner\Downloads\מצגת מודל נור.pdf` and
-`C:\Users\owner\Downloads\מצגת מודל נור (2).pptx`.
+source files `C:\Users\owner\Downloads\מצגת מודל נור (1).pdf` and
+`C:\Users\owner\Downloads\מצגת מודל נור (3).pptx`.
 
 Use this checklist on the normal exhibit browser and physical display. Unit
 tests cannot prove popup permission, window placement, foreground focus,
@@ -254,7 +256,9 @@ Leave every row unchecked until it has been observed by the exhibit operator.
 - [ ] Confirm the Hebrew `משפחת שגב` focus label is legible on both GIS and
   projection.
 - [ ] Confirm Be'eri is bright while other settlement outlines remain dim.
-- [ ] Confirm the projection viewport highlight is centered on the house.
+- [ ] Confirm Be'eri glows on projection while Segev is active (no house viewport quad).
+- [ ] Staff/exhibit: the traveling GIS viewport quad is not shown on projection.
+- [ ] Regular remote: the projection viewport quad is still shown (zoom-13 fade).
 - [ ] While Segev is active, Play/Pause/Stop/Loop/step/scrub
   the NLI timeline and confirm polygons, alarms, and routes develop around the
   house without the GIS leaving zoom 18.
@@ -296,7 +300,9 @@ Leave every row unchecked until it has been observed by the exhibit operator.
 - Segev no Mila victim popup/archive state: pass / fail
 - Segev GIS + projection Hebrew label: pass / fail
 - Segev Be'eri focus and dim other settlements: pass / fail
-- Segev projection house highlight: pass / fail
+- Segev Be'eri glow on projection (no house viewport quad): pass / fail
+- Staff/exhibit: no projection viewport quad: pass / fail
+- Regular remote: projection viewport quad still shown: pass / fail
 - Segev house-locked timeline Play/Pause/Stop/Loop/step/scrub at zoom 18: pass / fail
 - Segev exit returns to dark bounds center zoom 10: pass / fail
 - Segev refresh/reconnect convergence: pass / fail
@@ -361,6 +367,40 @@ Lab filled these cells on 2026-09-06 from live TD webrender `projection.html?spa
 Zikim T3 `0.7829905, 0.292619` is inside `getProjectionSpanRect("right")` and outside left. Do **not** edit `PROJECTION_SPAN`, Tesuga, or `model-bounds` for this miss of the 2.5 km west sea point. Zikim base/sea and name-edge tradeoffs are deferred, not a Tesuga edit.
 
 **Deferred:** `POST_TY` / `POST_SCALE` (and any later projection-crop pass over Tesuga / AABB / `PROJECTION_SPAN`) are out of scope until a later projection board. This record does not authorize those edits.
+
+## Staff remote scene sequence (2026-09-27)
+
+The live nginx/browser pass was not performed. Remote, GIS, and projection were not opened together. The roughly 800×1280 and 1280×800 Hebrew/English viewport inspection was not performed. Physical Galaxy Tab 11 touch and mis-tap acceptance was not performed. Normal-motion, reduced-motion, and cold-asset transitions were not observed on a display. Those gates stay open. The hardware rows already in this document stay pending and are unchanged.
+
+Automated checks from the worktree, 2026-09-27:
+
+| Command | Result |
+|---|---|
+| `npx vitest run tests/remote/nli-staff-scene-integration.test.js` | 6 passed |
+| `npx vitest run tests/remote tests/shared tests/map tests/projection tests/contracts` | 213 files passed, 8 failed; 2400 tests passed, 5 failed, 1 skipped; 1 unhandled rejection |
+| `python -m pytest backend/tests/test_otef_escape_overlay_api.py backend/tests/test_otef_narrative_api.py backend/tests/test_otef_investigation_clock_api.py -q` | 51 passed, 5 failed, 1 skipped, 21 subtests passed |
+| `npm run build:frontend` | passed |
+| `git diff --check` | passed (existing git attribute warnings only) |
+
+The five Django failures are environment failures, not a pass. Four presentation tests miss `nli-presentation-manifest.json` and then Python 3.14 crashes while logging that error. `test_exit_leaves_playing_clock_unchanged` cannot reach Redis at `redis:6379`. The remaining frontend failures are missing processed style or GeoJSON files, a missing memorial-wall snapshot, a Nova index CLI timeout, a legend dash assertion, and an unhandled `Failed to update state: 500` from the data-context actions file. Those files were not edited for this sequence check. The Nova compounds five-beat contract is not outstanding: commit `779ee4d` restored the compounds note, and `tests/contracts/nli-nova-narrative-contract.test.js` passed.
+
+## Staff remote repair verification — 2026-09-27 follow-up
+
+This follow-up supersedes the earlier staff-sequence paragraph saying that no live browser pass was performed. The owner authorized tests against the running PC. Codex exercised the nginx staff remote, GIS and projection follower without restarting services or changing TouchDesigner/projection configuration.
+
+- Home → first minutes → complete timeline → Home worked. Pending transport buttons disabled and became available after the scene command completed.
+- Segev's combined scene opened its presentation on GIS; Home removed it. Nova was left during its second playback beat, and GIS reached the terminal state before the routes scene. Routes and Mor exposed only their own controls. Memorial opened its presentation automatically; the projection follower rendered the memorial scene without console errors. Home cleared the presentation.
+- Live GIS revealed an invalid no-match house-outline filter that the old mocked test missed. The corrected filter passes the installed MapLibre compiler and the repeated Home/timeline journey produced no new GIS filter errors.
+- Home was measured in Hebrew and English at simulated CSS sizes 480×800, 600×900, 800×1280, 960×540 and 1280×800. All ten cases had complete labels, equal narrative/victim card widths, a 3:1 lead row, and no horizontal overflow. Short-landscape presentation content scrolls; an actual scroll and pointer Close succeeded with the scene dock remaining visible.
+- Home Layers preserved a manual layer choice through close/reopen, and the test choice was restored. The control is absent on scene pages. A browser fullscreen enter/exit gesture cycle updated its accessible state.
+
+Final combined frontend run: `npx vitest run tests/remote tests/shared tests/map tests/projection tests/contracts` — **2593 passed, 1 failed**, across 225 passing files and one failing file. The sole failure is the unchanged baseline `tests/map/legend-content.test.js:181` dash expectation (`[6,6]` versus `[9,12]`), also present before this repair. No new failure appeared. The focused remote/contracts run passed all 420 tests. `npm run build:frontend` and `git diff --check` passed; the existing MapLibre chunk-size warning remains. Built manifest, start URL, scope and unchanged 100×100 icon were resolved against the emitted files, rather than relying only on the build exit code. No backend code changed in this repair, so backend tests were not rerun.
+
+After that combined run, a small fullscreen-error translation fix passed all 31 focused fullscreen/locale tests, including its new regression. The frontend build and whitespace check were rerun successfully afterward.
+
+Evidence: `../../docs/reviews/2026-09-27-nli-review/layout-metrics.json`, `home-after-*.png`, `presentation-slides-*.png`, `live-segev-presentation.png`, `live-nova-memorial-projection.png`, and before/after GIS error records in that directory. Detailed task reports and the final test log are in `../../.superpowers/sdd/nli-remote-repair-20260927/`.
+
+The device is a **Galaxy Tab A11**; these browser dimensions are simulations, not measurements of its Chrome viewport. Physical tablet touch/install acceptance, physical TD output, reduced-motion display observation and frame-by-frame cold-load WebGL capture remain unverified. Unit tests cover delayed renderer assets and reduced-motion lifecycle behavior; sampled browser frames cannot prove that no single-frame flash ever occurs. The current HTTP tablet URL does not establish promoted PWA installation: HTTPS and suitable larger original icons may still be needed. No offline service worker or certificate/deployment change was added.
 
 ## Recorded exhibit gates (Task 14)
 

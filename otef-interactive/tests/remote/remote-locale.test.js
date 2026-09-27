@@ -321,28 +321,14 @@ describe("remote-locale", () => {
     setLocale("he", { force: true });
     expect(t("basemapSatelliteColor")).toBe("\u05e6\u05d1\u05e2");
     expect(t("basemapSatelliteBw")).toBe("\u05e9\u05d7\u05d5\u05e8\u05be\u05dc\u05d1\u05df");
-    expect(t("nliNarrativesTitle")).toBe("\u05e0\u05e8\u05d8\u05d9\u05d1\u05d9\u05dd");
-    expect(t("nliNarrativeSegev")).toBe("\u05de\u05e9\u05e4\u05d7\u05ea \u05e9\u05d2\u05d1");
-    expect(t("nliNarrativeSderot")).toBe("\u05e9\u05d3\u05e8\u05d5\u05ea");
-    expect(t("nliNarrativeHostages")).toBe("\u05d7\u05d8\u05d5\u05e4\u05d9\u05dd");
     expect(t("slideshowStartFailed")).toBe("\u05dc\u05d0 \u05e0\u05d9\u05ea\u05df \u05dc\u05d4\u05e4\u05e2\u05d9\u05dc \u05d0\u05ea \u05de\u05e6\u05d2\u05ea \u05d4\u05d4\u05e7\u05e8\u05e0\u05d4");
-    expect(t("nliPackPaneLayers")).toBe("\u05e9\u05db\u05d1\u05d5\u05ea");
-    expect(t("nliPackPaneTimeline")).toBe("\u05e6\u05d9\u05e8 \u05d6\u05de\u05df");
-    expect(t("nliPackPaneAria")).toBe(
-      "\u05d1\u05d7\u05d9\u05e8\u05ea \u05ea\u05e6\u05d5\u05d2\u05ea \u05d7\u05d1\u05d9\u05dc\u05ea \u05d4\u05e1\u05e4\u05e8\u05d9\u05d9\u05d4 \u05d4\u05dc\u05d0\u05d5\u05de\u05d9\u05ea",
-    );
+    expect(t("nliNovaEscapeIndividual")).toBe("צירי בריחה");
 
     setLocale("en", { force: true });
     expect(t("basemapSatelliteColor")).toBe("Color");
     expect(t("basemapSatelliteBw")).toBe("B&W");
-    expect(t("nliNarrativesTitle")).toBe("Narratives");
-    expect(t("nliNarrativeSegev")).toBe("Segev family");
-    expect(t("nliNarrativeSderot")).toBe("Sderot");
-    expect(t("nliNarrativeHostages")).toBe("Hostages");
     expect(t("slideshowStartFailed")).toBe("Could not start the projection slideshow");
-    expect(t("nliPackPaneLayers")).toBe("Layers");
-    expect(t("nliPackPaneTimeline")).toBe("Timeline");
-    expect(t("nliPackPaneAria")).toBe("National Library pack view");
+    expect(t("nliNovaEscapeIndividual")).toBe("Fleeing routes");
   });
 
   test("setLocale dispatches otef:locale with detail.locale after apply", async () => {

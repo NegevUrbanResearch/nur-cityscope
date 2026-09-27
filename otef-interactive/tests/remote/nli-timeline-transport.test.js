@@ -2,11 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import {
-  LayerSheetController,
-  renderLayerRow,
-  renderNliTimelineTransport,
-} from "../../frontend/src/remote/layer-sheet-controller.js";
+import { createNliStaffTimelineHost } from "../../frontend/src/remote/nli-staff-timeline-host.js";
 import {
   nliAxisMarksFromBeats,
   nliBeatIndexFromOccupiedHourPct,
@@ -15,8 +11,8 @@ import {
   isNliRouteFlowActive,
   bindNliTimelinePointerListeners,
   consumeNliTimelineButtonClick,
+  renderNliTimelineTransport,
 } from "../../frontend/src/remote/nli-timeline-transport.js";
-import { LOCALE_EVENT } from "../../frontend/src/remote/remote-locale.js";
 import {
   clockPositionMs,
   endNliClock,
@@ -31,15 +27,15 @@ import {
   TIMELINE_HOLD_MS,
   timelineBeatDurationMs,
   timelineSpanMs,
+  INVESTIGATION_ALARMS_FULL_ID,
   INVESTIGATION_POLYGONS_FULL_ID,
+  NLI_PLAYABLE_IDS,
 } from "../../frontend/src/shared/nli-investigation-beats.js";
 import { NLI_NARRATIVES } from "../../frontend/src/shared/nli-narratives.js";
 import { NLI_NOVA_STORY } from "../../frontend/src/shared/nli-nova-story.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const LINES_ID = "nli.lines";
-const PEOPLE_ID = "nli.people";
-const PEOPLE_NAMES_ID = "nli.people_names";
 
 function lineFeatures() {
   return [
@@ -82,7 +78,7 @@ function nliGroups(extra = {}) {
 }
 
 function stubContext(overrides = {}) {
-  const patchInvestigationClock = vi.fn(async (next) => next);
+  const patchInvestigationClock = vi.fn(async (next) => ({ ok: true, clock: next }));
   globalThis.OTEFDataContext = {
     getInvestigationClock: () => idleNliClock(),
     correctedNow: () => 1000,
@@ -102,22 +98,23 @@ function stubContext(overrides = {}) {
 }
 
 function makeController(overrides = {}) {
-  const c = Object.create(LayerSheetController.prototype);
-  c._nliEndTimer = null;
-  c._nliPlayheadTimer = null;
-  c._nliFeatureCache = { [LINES_ID]: lineFeatures() };
-  c._nliScrub = null;
-  c._nliScrubEl = null;
-  c._nliOptimisticClock = null;
-  c._nliPackPane = "layers";
-  c._nliCacheFetchInflight = false;
-  c.focusedGroupId = "nli";
-  c.primaryTileIdsJson = null;
-  c.sheet = null;
-  c.render = vi.fn();
-  c.getEffectiveGroupsForView = () => nliGroups();
-  Object.assign(c, overrides);
-  return c;
+  const render = overrides.render || vi.fn();
+  const host = createNliStaffTimelineHost({
+    sheet: overrides.sheet ?? null,
+    getGroups: overrides.getEffectiveGroupsForView || (() => nliGroups()),
+    render,
+  });
+  Object.assign(host, {
+    _nliFeatureCache: { [LINES_ID]: lineFeatures() },
+    _nliScrub: null,
+    _nliScrubEl: null,
+    _nliOptimisticClock: null,
+    _nliCacheFetchInflight: false,
+    focusedGroupId: "nli",
+    sheet: overrides.sheet ?? null,
+    render,
+  }, overrides);
+  return host;
 }
 
 function mockScrubTrack(options = {}) {
@@ -155,21 +152,6 @@ function mockScrubTrack(options = {}) {
   return track;
 }
 
-test("nli rows do not render anim-btn", () => {
-  const html = renderLayerRow(
-    {
-      baseName: "lines",
-      displayLabel: "צירי חדירה",
-      fullLayerIds: ["nli.lines"],
-      layers: [{ id: "lines", name: "צירי חדירה", enabled: true, style: { animation: { type: "timeline" } } }],
-      enabled: true,
-    },
-    { groupId: "nli", animations: {} },
-  );
-  expect(html).not.toContain("data-animation-toggle");
-  expect(html).not.toContain("anim-btn");
-});
-
 test("transport has loop icon not LOOP text", () => {
   const html = renderNliTimelineTransport(idleNliClock(), {
     playDisabled: false,
@@ -180,21 +162,6 @@ test("transport has loop icon not LOOP text", () => {
   expect(html).not.toMatch(/>\s*LOOP\s*</i);
   expect(html).toContain("data-nli-tl-loop");
   expect(html).toContain("data-nli-tl-scrub");
-});
-
-test("locked playable row includes layer-tile--locked", () => {
-  const clock = playNliClock(idleNliClock(), ["nli.lines"], [400], 0);
-  const html = renderLayerRow(
-    {
-      baseName: "lines",
-      displayLabel: "צירי חדירה",
-      fullLayerIds: ["nli.lines"],
-      layers: [{ id: "lines", name: "צירי חדירה", enabled: true, style: { animation: { type: "timeline" } } }],
-      enabled: true,
-    },
-    { groupId: "nli", animations: {}, investigationClock: clock },
-  );
-  expect(html).toContain("layer-tile--locked");
 });
 
 describe("nli timeline transport", () => {
@@ -287,21 +254,6 @@ describe("nli timeline transport", () => {
     expect(html).toContain("data-nli-tl-play");
     expect(html).toContain("data-nli-tl-stop");
     expect(html).toContain("data-nli-tl-scrub");
-  });
-
-  test("people row stays unlocked while clock is playing", () => {
-    const clock = playNliClock(idleNliClock(), ["nli.lines"], [400], 0);
-    const html = renderLayerRow(
-      {
-        baseName: "people",
-        displayLabel: "אנשים",
-        fullLayerIds: [PEOPLE_ID],
-        layers: [{ id: "people", name: "אנשים", enabled: true }],
-        enabled: true,
-      },
-      { groupId: "nli", animations: {}, investigationClock: clock },
-    );
-    expect(html).not.toContain("layer-tile--locked");
   });
 
   test("hour labels cover min/max displayed beats as whole hours", () => {
@@ -557,48 +509,6 @@ describe("nli timeline transport", () => {
     expect(ctx.patchInvestigationClock).toHaveBeenCalled();
   });
 
-  test("nli sheet HTML stays enabled while segev narrative is active", () => {
-    stubContext({
-      getNarrativeState: () => ({ id: "segev", transition: "enter", revision: 2 }),
-    });
-    const c = makeController();
-    c._nliPackPane = "timeline";
-    const html = c.renderLayersTabContent(nliGroups(), {});
-    expect(html).toContain("data-nli-tl-play");
-    expect(html).toContain("data-nli-tl-stop");
-    expect(html).toContain("data-nli-tl-loop");
-    expect(html).toContain("data-nli-tl-step-back");
-    expect(html).toContain("data-nli-tl-step-forward");
-    expect(html).toContain("data-nli-tl-scrub");
-    expect(html).not.toMatch(/data-nli-tl-(?:play|stop|loop|step-back|step-forward)[^>]*\sdisabled/);
-    expect(html).toMatch(/class="nli-tl-sheet" aria-disabled="false"/);
-  });
-
-  test("LayerSheet destroy releases context, presentation, locale, and timer resources", () => {
-    const disposeNarrative = vi.fn();
-    const disposeClock = vi.fn();
-    const removeEventListener = vi.fn();
-    vi.stubGlobal("window", { removeEventListener });
-    const ctx = stubContext({
-      subscribe: vi.fn((topic) => topic === "narrativeState" ? disposeNarrative : disposeClock),
-    });
-    const c = makeController({
-      _subscriptions: [],
-      _remoteLocaleHandler: vi.fn(),
-      _nliEndTimer: setTimeout(() => {}, 10_000),
-      _nliPlayheadTimer: setTimeout(() => {}, 10_000),
-    });
-    c._subscribeDataContext("narrativeState", vi.fn());
-    c._subscribeDataContext("investigationClock", vi.fn());
-    c.destroy();
-    expect(ctx.subscribe).toHaveBeenCalledTimes(2);
-    expect(disposeNarrative).toHaveBeenCalledTimes(1);
-    expect(disposeClock).toHaveBeenCalledTimes(1);
-    expect(removeEventListener).toHaveBeenCalledWith(LOCALE_EVENT, c._remoteLocaleHandler);
-    expect(c._nliEndTimer).toBeNull();
-    expect(c._nliPlayheadTimer).toBeNull();
-  });
-
   test("play matrix: idle plays, playing pauses, paused resumes, ended replays", async () => {
     const ctx = stubContext();
     const c = makeController();
@@ -724,7 +634,7 @@ describe("nli timeline transport", () => {
     expect(select).toHaveBeenLastCalledWith(0);
   });
 
-  test("Nova selection and scrub use virtual playable membership when every raw chip is off", async () => {
+  test("Nova selection and scrub arm every staff playable id when raw chips are off", async () => {
     const ctx = stubContext({ getNarrativeState: () => ({ id: "nova", revision: 4 }) });
     const offGroups = [{ id: "nli", layers: [
       { id: "lines", enabled: false },
@@ -734,6 +644,7 @@ describe("nli timeline transport", () => {
     const cachedIds = [];
     const makeNovaController = () => makeController({
       getEffectiveGroupsForView: () => offGroups,
+      getPlaybackConfig: () => ({ membership: [...NLI_PLAYABLE_IDS] }),
       _nliCacheReady: (ids) => { cachedIds.push([...ids]); return true; },
     });
 
@@ -760,10 +671,15 @@ describe("nli timeline transport", () => {
       positionMs: 3 * NLI_NOVA_STORY.beatDurationMs,
     });
     expect(cachedIds).toEqual([
-      [INVESTIGATION_POLYGONS_FULL_ID, LINES_ID],
-      [INVESTIGATION_POLYGONS_FULL_ID, LINES_ID],
-      [INVESTIGATION_POLYGONS_FULL_ID, LINES_ID],
-      [INVESTIGATION_POLYGONS_FULL_ID, LINES_ID],
+      [...NLI_PLAYABLE_IDS],
+      [...NLI_PLAYABLE_IDS],
+      [...NLI_PLAYABLE_IDS],
+      [...NLI_PLAYABLE_IDS],
+    ]);
+    expect(NLI_PLAYABLE_IDS).toEqual([
+      INVESTIGATION_POLYGONS_FULL_ID,
+      LINES_ID,
+      INVESTIGATION_ALARMS_FULL_ID,
     ]);
   });
 
@@ -784,6 +700,57 @@ describe("nli timeline transport", () => {
     expect(c._nliOptimisticClock).toBeNull();
   });
 
+  test("a playing Step cannot adopt a newer epoch after its cache wait", async () => {
+    const playing = playNliClock(idleNliClock(), [LINES_ID], [400, 740], 1000);
+    const ctx = stubContext({ getInvestigationClock: () => playing });
+    let resolveCache;
+    const cacheLoad = new Promise((resolve) => { resolveCache = resolve; });
+    let cacheReady = false;
+    const c = makeController({
+      _nliCacheReady: () => cacheReady,
+      _ensureNliFeatureCache: async () => { await cacheLoad; cacheReady = true; },
+    });
+
+    const pendingStep = c.handleNliTimelineStep(1);
+    await Promise.resolve();
+    expect(ctx.patchInvestigationClock).not.toHaveBeenCalled();
+    c.invalidateTransport();
+    resolveCache();
+    await pendingStep;
+
+    expect(ctx.patchInvestigationClock).not.toHaveBeenCalled();
+  });
+
+  test("Nova idle Play keeps its entry epoch through the cache wait", async () => {
+    const ctx = stubContext({ getNarrativeState: () => ({ id: "nova", revision: 4 }) });
+    let resolveCache;
+    const cacheLoad = new Promise((resolve) => { resolveCache = resolve; });
+    let cacheReady = false;
+    const c = makeController({
+      _nliCacheReady: () => cacheReady,
+      _ensureNliFeatureCache: async () => { await cacheLoad; cacheReady = true; },
+    });
+
+    const pendingPlay = c.handleNliTimelinePlay();
+    await Promise.resolve();
+    c.invalidateTransport();
+    resolveCache();
+    await pendingPlay;
+
+    expect(ctx.patchInvestigationClock).not.toHaveBeenCalled();
+  });
+
+  test("a busy cue renders every timeline mutation control disabled", () => {
+    const html = renderNliTimelineTransport(idleNliClock(), {
+      displayBeats: [400, 740],
+      controlsBusy: true,
+    });
+    for (const control of ["stop", "play", "loop", "step-back", "step-forward"]) {
+      expect(html).toMatch(new RegExp(`data-nli-tl-${control}[^>]* disabled`));
+    }
+    expect(html).toContain('data-nli-tl-scrub dir="ltr"');
+    expect(html).toContain('aria-disabled="true"');
+  });
   test("Nova Play drops its pending command when narrative exits during cache load", async () => {
     let narrative = { id: "nova", transition: "enter", revision: 12 };
     const ctx = stubContext({ getNarrativeState: () => narrative });
@@ -1053,51 +1020,6 @@ describe("nli timeline transport", () => {
     });
   });
 
-  test("bulk visibility while not idle toggles only people and names", async () => {
-    const playing = playNliClock(idleNliClock(), [LINES_ID], [400], 0);
-    const ctx = stubContext({ getInvestigationClock: () => playing });
-    const c = makeController();
-    await c.toggleGroupEnabled("nli", false);
-    expect(ctx.toggleGroup).not.toHaveBeenCalled();
-    expect(ctx.setLayersEnabled).toHaveBeenCalledWith([PEOPLE_ID, PEOPLE_NAMES_ID], false);
-  });
-
-  test("bulk visibility while idle still toggles the whole group", async () => {
-    const ctx = stubContext();
-    const c = makeController();
-    await c.toggleGroupEnabled("nli", true);
-    expect(ctx.toggleGroup).toHaveBeenCalledWith("nli", true);
-  });
-
-  test("locked playable tile click does not toggle", async () => {
-    const ctx = stubContext();
-    const c = makeController();
-    const tile = {
-      classList: { contains: (name) => name === "layer-tile--locked" || name === "is-on" },
-      getAttribute: () => JSON.stringify([LINES_ID]),
-    };
-    await c.runLayerTileToggleFromElement(tile);
-    expect(ctx.setLayersEnabled).not.toHaveBeenCalled();
-  });
-
-  test("nli pack html includes the transport sheet only on timeline pane; other packs do not", () => {
-    const c = makeController();
-    const nliLayers = c.renderLayersTabContent(nliGroups(), {});
-    expect(nliLayers).not.toContain("nli-tl-sheet");
-    expect(nliLayers).toContain("nli-pack-panes");
-    c._nliPackPane = "timeline";
-    const nliTimeline = c.renderLayersTabContent(nliGroups(), {});
-    expect(nliTimeline).toContain("nli-tl-sheet");
-    expect(nliTimeline).toContain("data-nli-tl-play");
-    c.focusedGroupId = "october_7th";
-    const octHtml = c.renderLayersTabContent(
-      [{ id: "october_7th", name: "Oct", layers: [{ id: "route", enabled: true, name: "route" }] }],
-      {},
-    );
-    expect(octHtml).not.toContain("nli-tl-sheet");
-    expect(octHtml).not.toContain("nli-pack-panes");
-  });
-
   test("scrub pointerdown while playing does not render the captured track", () => {
     const playing = playNliClock(idleNliClock(), [LINES_ID], [400, 740], 1000);
     stubContext({ getInvestigationClock: () => playing });
@@ -1128,24 +1050,6 @@ describe("nli timeline transport", () => {
     await c.handleNliTimelineScrubPointerUp(index);
     expect(ctx.patchInvestigationClock).toHaveBeenCalledTimes(2);
     expect(ctx.patchInvestigationClock.mock.calls[1][0].positionMs).toBe(0);
-  });
-
-  test("render does not replace sheet-content while scrub pointer is captured", () => {
-    stubContext();
-    const content = { innerHTML: "KEEP", querySelector: () => null };
-    const c = makeController({
-      sheet: {
-        querySelector: (sel) => (sel === ".sheet-content" ? content : null),
-      },
-      _nliScrub: { fromPlaying: true },
-      _nliScrubEl: mockScrubTrack(),
-    });
-    try {
-      LayerSheetController.prototype.render.call(c);
-    } catch {
-      // node has no HTMLInputElement once innerHTML was already replaced
-    }
-    expect(content.innerHTML).toBe("KEEP");
   });
 
   test("scrub pointermove updates thumb and bubble locally without PATCH", () => {
@@ -1259,7 +1163,7 @@ describe("nli timeline transport", () => {
     c.handleNliTimelineScrubPointerDown();
     const pausedAtDown = c._nliScrub.restoreClock;
     await c.handleNliTimelineScrubPointerCancel();
-    expect(ctx.patchInvestigationClock).toHaveBeenLastCalledWith(pausedAtDown);
+    expect(ctx.patchInvestigationClock.mock.calls.at(-1)[0]).toEqual(pausedAtDown);
     expect(ctx.patchInvestigationClock.mock.calls.at(-1)[0]).toMatchObject({ phase: "paused", positionMs: 3750 });
   });
 
@@ -1287,7 +1191,7 @@ describe("nli timeline transport", () => {
 
     await c.handleNliTimelineScrubPointerCancel();
     expect(ctx.patchInvestigationClock).toHaveBeenCalledTimes(1);
-    expect(ctx.patchInvestigationClock).toHaveBeenCalledWith(pausedStart);
+    expect(ctx.patchInvestigationClock.mock.calls[0][0]).toEqual(pausedStart);
     expect(ctx.patchInvestigationClock.mock.calls[0][0]).toMatchObject({
       phase: "paused",
       beats: NLI_NOVA_STORY.representativeMinutes,
@@ -1341,7 +1245,7 @@ describe("nli timeline transport", () => {
       },
     });
     const upSpy = vi.spyOn(c, "handleNliTimelineScrubPointerUp");
-    LayerSheetController.prototype.setupEventListeners.call(c);
+    bindNliTimelinePointerListeners(content, c);
     expect(c._nliScrub).toBeNull();
     listeners.pointerup({ clientX: 150, target: null });
     await Promise.all(
@@ -1574,93 +1478,396 @@ describe("nli timeline transport", () => {
     expect(ctx.patchInvestigationClock).not.toHaveBeenCalled();
   });
 
-  test("layer sheet calls playhead ticker from clock subscribe and nli render", () => {
-    const src = fs.readFileSync(
-      path.resolve(__dirname, "../../frontend/src/remote/layer-sheet-controller.js"),
-      "utf8",
-    );
-    expect(src).toMatch(/_subscribeDataContext\("investigationClock"[\s\S]*_syncNliPlayheadTicker/);
-    expect(src).toMatch(/focusedGroupId === "nli"[\s\S]*_syncNliPlayheadTicker/);
+  test("explicit start plays a hidden scene window and clears an old loop", async () => {
+    const ctx = stubContext({
+      getInvestigationClock: () => ({ ...idleNliClock(), loop: true }),
+      patchInvestigationClock: vi.fn(async (next) => ({ ok: true, clock: next })),
+    });
+    const c = makeController({
+      getEffectiveGroupsForView: () => [{ id: "nli", layers: [
+        { id: "lines", enabled: false },
+        { id: "investigation_polygons", enabled: false },
+        { id: "alarms", enabled: false },
+      ] }],
+      _nliFeatureCache: {
+        [LINES_ID]: [389, 395, 400, 410, 740].map((minutes) => ({ properties: { timeline_minutes: minutes } })),
+        [INVESTIGATION_POLYGONS_FULL_ID]: [],
+        [INVESTIGATION_ALARMS_FULL_ID]: [],
+      },
+    });
+    const membership = [LINES_ID];
+
+    await expect(c.startNliTimelineWindow({ membership, to: 401, loop: false })).resolves.toBe(true);
+    expect(ctx.patchInvestigationClock.mock.calls[0][0]).toMatchObject({
+      phase: "playing",
+      membership,
+      beats: [389, 395, 400],
+      loop: false,
+    });
+    expect(ctx.patchInvestigationClock.mock.calls[0][0].leadInMinutes).toBeUndefined();
+
+    ctx.getInvestigationClock = () => idleNliClock();
+    await c.startNliTimelineWindow({ membership, from: 402, loop: false });
+    expect(ctx.patchInvestigationClock.mock.calls[1][0]).toMatchObject({
+      phase: "playing",
+      membership,
+      beats: [389, 395, 400, 410, 740],
+      leadInMinutes: 402,
+      loop: false,
+    });
   });
 
-  test("nli layers pane omits extras; timeline pane omits tiles", () => {
-    stubContext();
+  test("explicit Nova start uses Nova beats while playable rows are hidden", async () => {
+    const ctx = stubContext({
+      getNarrativeState: () => ({ id: "nova", revision: 3 }),
+      patchInvestigationClock: vi.fn(async (next) => ({ ok: true, clock: next })),
+    });
+    const c = makeController({
+      getEffectiveGroupsForView: () => [{ id: "nli", layers: [
+        { id: "lines", enabled: false },
+        { id: "investigation_polygons", enabled: false },
+        { id: "alarms", enabled: false },
+      ] }],
+      _nliFeatureCache: Object.fromEntries(NLI_PLAYABLE_IDS.map((id) => [id, []])),
+    });
+
+    await expect(c.startNliTimelineWindow({
+      membership: [...NLI_PLAYABLE_IDS],
+      loop: false,
+    })).resolves.toBe(true);
+    expect(ctx.patchInvestigationClock.mock.calls[0][0]).toMatchObject({
+      phase: "playing",
+      beats: NLI_NOVA_STORY.representativeMinutes,
+      loop: false,
+    });
+  });
+
+  test("explicit start rejects empty, invalid, beatless, and unacknowledged windows", async () => {
+    const ctx = stubContext({
+      patchInvestigationClock: vi.fn(async () => ({ ok: false, error: new Error("clock rejected") })),
+    });
+    const c = makeController({
+      _nliFeatureCache: {
+        [LINES_ID]: [],
+        [INVESTIGATION_POLYGONS_FULL_ID]: [],
+        [INVESTIGATION_ALARMS_FULL_ID]: [],
+      },
+    });
+
+    await expect(c.startNliTimelineWindow({ membership: [] })).rejects.toThrow();
+    await expect(c.startNliTimelineWindow({ membership: ["projector_base.SEA"] })).rejects.toThrow();
+    await expect(c.startNliTimelineWindow({ membership: [LINES_ID] })).rejects.toThrow();
+    c._nliFeatureCache[LINES_ID] = [{ properties: { timeline_minutes: 400 } }];
+    await expect(c.startNliTimelineWindow({ membership: [LINES_ID] })).rejects.toThrow(/clock rejected/);
+    expect(ctx.patchInvestigationClock).toHaveBeenCalledTimes(1);
+  });
+
+  test("explicit start does not pause a timeline that is already playing", async () => {
+    const playing = playNliClock(idleNliClock(), [LINES_ID], [400], 1000);
+    const ctx = stubContext({ getInvestigationClock: () => playing });
     const c = makeController();
-    c._nliPackPane = "layers";
-    const layersHtml = c.renderLayersTabContent(nliGroups(), {});
-    expect(layersHtml).toContain("nli-pack-panes");
-    expect(layersHtml).toContain("layer-tile-grid");
-    expect(layersHtml).toContain("data-layers-bulk-visibility");
-    expect(layersHtml).not.toContain("nli-tl-sheet");
-    expect(layersHtml).not.toContain("nli-narrative-sheet");
-    expect(layersHtml).not.toContain("nli-bottom-dock");
-    c._nliPackPane = "timeline";
-    const timelineHtml = c.renderLayersTabContent(nliGroups(), {});
-    expect(timelineHtml).toContain("nli-tl-sheet");
-    expect(timelineHtml).toContain("nli-narrative-sheet");
-    expect(timelineHtml).not.toContain("layer-tile-grid");
-    expect(timelineHtml).not.toContain("data-layers-bulk-visibility");
-    expect(timelineHtml).toContain("layerPanelCount");
+
+    await expect(c.startNliTimelineWindow({ membership: [LINES_ID] })).rejects.toThrow();
+    expect(ctx.patchInvestigationClock).not.toHaveBeenCalled();
   });
 
-  function bindRealRender(c) {
-    c.render = LayerSheetController.prototype.render;
-    c.updatePanelChrome = () => {};
-    c._syncNliEndedTimer = () => {};
-    c._syncNliPlayheadTicker = () => {};
-    c._ensureNliFeatureCache = () => {};
-    c._liveNliClock = () => idleNliClock();
-    const content = {
-      innerHTML: "",
-      classList: { toggle: vi.fn(), remove: vi.fn() },
-      querySelector: () => null,
+  test("cancellation during cache load does not publish a playing clock", async () => {
+    let release;
+    vi.stubGlobal("fetch", () => new Promise((resolve) => { release = resolve; }));
+    globalThis.layerRegistry = { getLayerDataUrl: () => "/nli-lines.json" };
+    const ctx = stubContext();
+    const c = makeController({ _nliFeatureCache: Object.create(null) });
+    let current = true;
+    const pending = c.startNliTimelineWindow({
+      membership: [LINES_ID],
+      isCurrent: () => current,
+    });
+    await Promise.resolve();
+    current = false;
+    release({ ok: true, json: async () => ({ features: lineFeatures() }) });
+
+    await expect(pending).resolves.toBe(false);
+    expect(ctx.patchInvestigationClock).not.toHaveBeenCalled();
+  });
+
+  test("a stalled feature load times out and a late response cannot replace the retry", async () => {
+    vi.useFakeTimers();
+    const lines = [{ properties: { timeline_minutes: 400 } }];
+    const stale = [{ properties: { timeline_minutes: 1 } }];
+    let releaseStale;
+    const stalled = new Promise((resolve) => { releaseStale = resolve; });
+    let calls = 0;
+    vi.stubGlobal("fetch", vi.fn(() => {
+      calls += 1;
+      if (calls === 1) {
+        return stalled.then(() => ({ ok: true, json: async () => ({ features: stale }) }));
+      }
+      return Promise.resolve({ ok: true, json: async () => ({ features: lines }) });
+    }));
+    globalThis.layerRegistry = { getLayerDataUrl: () => "/nli-lines.json" };
+    const ctx = stubContext({
+      patchInvestigationClock: vi.fn(async (next) => ({ ok: true, clock: next })),
+    });
+    const c = makeController({ _nliFeatureCache: Object.create(null) });
+    const pending = c.startNliTimelineWindow({ membership: [LINES_ID], loop: false });
+    const rejected = expect(pending).rejects.toThrow(/timed out/i);
+    await vi.advanceTimersByTimeAsync(4000);
+    await rejected;
+    expect(c._nliCacheFetchInflight).toBeFalsy();
+
+    await expect(c.startNliTimelineWindow({ membership: [LINES_ID], loop: false })).resolves.toBe(true);
+    expect(ctx.patchInvestigationClock.mock.calls[0][0].beats).toEqual([400]);
+    releaseStale();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(c._nliFeatureCache[LINES_ID]).toEqual(lines);
+  });
+
+  test("playback config follows the scene while idle and the armed clock while playing", async () => {
+    const host = await import("../../frontend/src/remote/nli-staff-timeline-host.js");
+    const groups = [{ id: "nli", layers: [
+      { id: "lines", enabled: true },
+      { id: "investigation_polygons", enabled: false },
+      { id: "alarms", enabled: false },
+    ] }];
+    const firstMinutes = host.staffPlaybackConfig({
+      clock: idleNliClock(),
+      cue: { layers: ["projector_base.SEA", LINES_ID, INVESTIGATION_POLYGONS_FULL_ID], clock: { to: 401 } },
+      groups,
+    });
+    expect(firstMinutes).toEqual({
+      membership: [LINES_ID, INVESTIGATION_POLYGONS_FULL_ID],
+      to: 401,
+    });
+    expect(host.staffPlaybackConfig({
+      clock: idleNliClock(),
+      cue: null,
+      groups,
+      manualFree: true,
+    })).toEqual({ membership: [LINES_ID] });
+    expect(host.staffPlaybackConfig({
+      clock: idleNliClock(),
+      cue: { layers: ["projector_base.SEA"], clock: "idle" },
+      groups,
+    })).toEqual({ membership: [] });
+    expect(host.staffPlaybackConfig({
+      clock: { ...playNliClock(idleNliClock(), [LINES_ID], [410, 740], 0, { leadInMinutes: 402 }), phase: "playing" },
+      cue: { layers: [LINES_ID, INVESTIGATION_POLYGONS_FULL_ID], clock: { to: 401 } },
+      groups,
+    })).toMatchObject({ membership: [LINES_ID], from: 402 });
+  });
+
+  test("manual Play after Stop keeps the scene window and the selected loop", async () => {
+    const ctx = stubContext({
+      getInvestigationClock: () => ({ ...idleNliClock(), loop: true }),
+      patchInvestigationClock: vi.fn(async (next) => ({ ok: true, clock: next })),
+    });
+    const beats = [389, 395, 400, 410, 740].map((minutes) => ({ properties: { timeline_minutes: minutes } }));
+    const c = makeController({
+      getEffectiveGroupsForView: () => [{ id: "nli", layers: [{ id: "lines", enabled: false }] }],
+      getPlaybackConfig: () => ({ membership: [LINES_ID], to: 401 }),
+      _nliFeatureCache: { [LINES_ID]: beats },
+    });
+
+    await c.handleNliTimelinePlay();
+    expect(ctx.patchInvestigationClock.mock.calls[0][0]).toMatchObject({
+      beats: [389, 395, 400],
+      loop: true,
+    });
+    ctx.getInvestigationClock = () => idleNliClock({ loop: true });
+    c.getPlaybackConfig = () => ({ membership: [LINES_ID], from: 402 });
+    await c.handleNliTimelinePlay();
+    expect(ctx.patchInvestigationClock.mock.calls[1][0]).toMatchObject({
+      beats: [389, 395, 400, 410, 740],
+      leadInMinutes: 402,
+      loop: true,
+    });
+  });
+
+  test("rendered playable rows follow playback membership instead of enabling every id", async () => {
+    const host = await import("../../frontend/src/remote/nli-staff-timeline-host.js");
+    const group = {
+      id: "nli",
+      layers: [
+        { id: "lines", enabled: false },
+        { id: "investigation_polygons", enabled: false },
+        { id: "people", enabled: true },
+      ],
     };
-    c.sheet = { querySelector: () => content };
-    return content;
-  }
-
-  test("clock-driven render while timeline pane does not reset to layers", () => {
-    stubContext();
-    const c = makeController();
-    const content = bindRealRender(c);
-    c._nliPackPane = "timeline";
-    c.focusedGroupId = "nli";
-    c.render();
-    expect(c._nliPackPane).toBe("timeline");
-    expect(content.innerHTML).toContain("nli-tl-sheet");
-    expect(content.innerHTML).not.toContain("layer-tile-grid");
+    expect(host.nliGroupWithPlaybackMembership(group, [LINES_ID]).layers).toEqual([
+      { id: "lines", enabled: true },
+      { id: "investigation_polygons", enabled: false },
+      { id: "people", enabled: true },
+    ]);
+    expect(host.nliGroupWithPlaybackMembership(group, []).layers[0].enabled).toBe(false);
   });
 
-  test("selecting another pack then nli again yields layers pane", () => {
-    const c = makeController();
-    c._nliPackPane = "timeline";
-    c.focusOnGroup("october_7th");
-    expect(c._nliPackPane).toBe("timeline");
-    c.focusOnGroup("nli");
-    expect(c._nliPackPane).toBe("layers");
-  });
-
-  test("clicking already-selected nli pack does not change pane", () => {
-    const c = makeController();
-    c._nliPackPane = "timeline";
-    c.focusedGroupId = "nli";
-    c.focusOnGroup("nli");
-    expect(c._nliPackPane).toBe("timeline");
-  });
-
-  test("setNliPackPane cancels scrub then renders (does not hit render skip)", async () => {
-    stubContext();
-    const c = makeController();
-    const content = bindRealRender(c);
-    c._nliPackPane = "timeline";
-    c.focusedGroupId = "nli";
-    c._nliScrub = { fromPlaying: false };
-    c._nliScrubEl = { releasePointerCapture: vi.fn() };
-    await c.setNliPackPane("layers");
+  test("manual timeline mutations wait while a cue is busy, and navigation drops a scrub restore", async () => {
+    const playing = playNliClock(idleNliClock(), [LINES_ID], [400, 740], 1000);
+    const ctx = stubContext({ getInvestigationClock: () => playing });
+    const c = makeController({ isManualMutationAllowed: () => false });
+    await c.handleNliTimelinePlay();
+    c.handleNliTimelineScrubPointerDown();
+    expect(ctx.patchInvestigationClock).not.toHaveBeenCalled();
     expect(c._nliScrub).toBeNull();
-    expect(c._nliScrubEl).toBeNull();
-    expect(c._nliPackPane).toBe("layers");
-    expect(content.innerHTML).toContain("layer-tile-grid");
-    expect(content.innerHTML).not.toContain("nli-tl-sheet");
+
+    c.isManualMutationAllowed = () => true;
+    const releasePointerCapture = vi.fn();
+    c._nliScrubEl = { releasePointerCapture };
+    c._nliScrubPointerId = 4;
+    c.handleNliTimelineScrubPointerDown();
+    const callsAfterDown = ctx.patchInvestigationClock.mock.calls.length;
+    c.invalidateTransport();
+    expect(releasePointerCapture).toHaveBeenCalledWith(4);
+    await c.handleNliTimelineScrubPointerCancel();
+    expect(c._nliScrub).toBeNull();
+    expect(c._nliOptimisticClock).toBeNull();
+    expect(ctx.patchInvestigationClock.mock.calls.length).toBe(callsAfterDown);
   });
+
+  test("an end timer already queued behind a clock write is dropped when navigation invalidates the epoch", async () => {
+    vi.useFakeTimers();
+    const api = await import("../../frontend/src/shared/api-client.js");
+    const resolvers = [];
+    vi.spyOn(api.OTEF_API, "updateInvestigationClock").mockImplementation(
+      () => new Promise((resolve) => { resolvers.push(resolve); }),
+    );
+    const { default: OTEFDataContext } = await import("../../frontend/src/shared/OTEFDataContext.js");
+    const playing = playNliClock(idleNliClock(), [LINES_ID], [400], 1000);
+    OTEFDataContext._tableName = "otef";
+    OTEFDataContext._clientId = "clock-client";
+    OTEFDataContext._setInvestigationClock(playing);
+    globalThis.OTEFDataContext = OTEFDataContext;
+    const c = makeController();
+    const held = OTEFDataContext.patchInvestigationClock({ ...playing, phase: "paused" });
+    await vi.waitFor(() => expect(resolvers).toHaveLength(1));
+    c._syncNliEndedTimer(playing);
+    await vi.advanceTimersByTimeAsync(clockStoryDurationMs(playing.beats));
+    expect(resolvers).toHaveLength(1);
+    c.invalidateTransport();
+    resolvers[0]({});
+    await held;
+    await Promise.resolve();
+    expect(api.OTEF_API.updateInvestigationClock).toHaveBeenCalledTimes(1);
+    expect(OTEFDataContext.getInvestigationClock().phase).toBe("playing");
+    OTEFDataContext._tableName = null;
+  });
+
+  test("a cue starts the hidden destination timeline instead of toggling from an idle snapshot", async () => {
+    const { createCueRunner } = await import("../../frontend/src/remote/nli-staff-cues.js");
+    const ctx = stubContext();
+    const host = makeController({
+      _nliFeatureCache: { [LINES_ID]: lineFeatures() },
+    });
+    const layers = [];
+    const runner = createCueRunner({
+      dataContext: {
+        getNarrativeState: () => ({ id: null }),
+        getPersonSelection: () => ({ personId: null }),
+        setNarrative: vi.fn(async () => ({ ok: true })),
+        setEscapeOverlay: vi.fn(async () => ({ ok: true })),
+        getInvestigationClock: () => ctx.getInvestigationClock(),
+      },
+      commitLayers: async (ids) => { layers.push(ids); },
+      stopClock: async () => {},
+      startClock: (window, membership, isCurrent) => host.startNliTimelineWindow({
+        membership,
+        from: window?.from,
+        to: window?.to,
+        loop: window?.loop === true,
+        isCurrent,
+      }),
+      endClock: async () => { throw new Error("end was not part of play entry"); },
+    });
+    const result = await runner.apply({
+      layers: ["projector_base.SEA", LINES_ID],
+      clock: { to: 401 },
+      escape: {},
+    }, null);
+    expect(result).toEqual({ status: "ready" });
+    expect(layers[0]).toEqual(["projector_base.SEA"]);
+    expect(layers.at(-1)).toEqual(["projector_base.SEA", LINES_ID]);
+    const started = ctx.patchInvestigationClock.mock.calls.at(-1)[0];
+    expect(started).toMatchObject({
+      phase: "playing",
+      membership: [LINES_ID],
+      loop: false,
+    });
+    expect(started.beats.every((beat) => beat <= 401)).toBe(true);
+    expect(ctx.getInvestigationClock().phase).toBe("idle");
+  });
+
+  test("a queued Stop or scrub release does not publish after navigation", async () => {
+    vi.useFakeTimers();
+    const api = await import("../../frontend/src/shared/api-client.js");
+    const resolvers = [];
+    vi.spyOn(api.OTEF_API, "updateInvestigationClock").mockImplementation(
+      () => new Promise((resolve) => { resolvers.push(resolve); }),
+    );
+    const { default: OTEFDataContext } = await import("../../frontend/src/shared/OTEFDataContext.js");
+    const playing = playNliClock(idleNliClock(), [LINES_ID], [400, 740], 1000);
+    OTEFDataContext._tableName = "otef";
+    OTEFDataContext._clientId = "clock-client";
+    OTEFDataContext.correctedNow = () => 1000;
+    OTEFDataContext._setInvestigationClock(playing);
+    globalThis.OTEFDataContext = OTEFDataContext;
+    const c = makeController({
+      getPlaybackConfig: () => ({ membership: [LINES_ID] }),
+      _nliFeatureCache: { [LINES_ID]: lineFeatures() },
+    });
+
+    const held = OTEFDataContext.patchInvestigationClock({ ...playing, phase: "paused" });
+    await vi.waitFor(() => expect(resolvers).toHaveLength(1));
+    void c.handleNliTimelineStop();
+    await Promise.resolve();
+    c.invalidateTransport();
+    resolvers[0]({});
+    await held;
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(api.OTEF_API.updateInvestigationClock).toHaveBeenCalledTimes(1);
+
+    const heldAgain = OTEFDataContext.patchInvestigationClock({ ...playing, phase: "paused" });
+    await vi.waitFor(() => expect(resolvers).toHaveLength(2));
+    void c.handleNliTimelineScrubPointerUp(1);
+    await Promise.resolve();
+    c.invalidateTransport();
+    resolvers[1]({});
+    await heldAgain;
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(api.OTEF_API.updateInvestigationClock).toHaveBeenCalledTimes(2);
+    expect(OTEFDataContext.getInvestigationClock().phase).toBe("playing");
+    OTEFDataContext._tableName = null;
+  });
+
+  test("a late failed feature response does not clear the retry cache", async () => {
+    vi.useFakeTimers();
+    const lines = [{ properties: { timeline_minutes: 400 } }];
+    let releaseStale;
+    const stalled = new Promise((resolve) => { releaseStale = resolve; });
+    let calls = 0;
+    vi.stubGlobal("fetch", vi.fn(() => {
+      calls += 1;
+      if (calls === 1) return stalled.then(() => ({ ok: false, status: 500, json: async () => ({}) }));
+      return Promise.resolve({ ok: true, json: async () => ({ features: lines }) });
+    }));
+    globalThis.layerRegistry = { getLayerDataUrl: () => "/nli-lines.json" };
+    const ctx = stubContext({
+      patchInvestigationClock: vi.fn(async (next) => ({ ok: true, clock: next })),
+    });
+    const c = makeController({ _nliFeatureCache: Object.create(null) });
+    const pending = c.startNliTimelineWindow({ membership: [LINES_ID], loop: false });
+    const rejected = expect(pending).rejects.toThrow(/timed out/i);
+    await vi.advanceTimersByTimeAsync(4000);
+    await rejected;
+    await expect(c.startNliTimelineWindow({ membership: [LINES_ID], loop: false })).resolves.toBe(true);
+    expect(ctx.patchInvestigationClock.mock.calls[0][0].beats).toEqual([400]);
+    releaseStale();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(c._nliFeatureCache[LINES_ID]).toEqual(lines);
+  });
+
+
 });

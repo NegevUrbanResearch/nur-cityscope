@@ -17,12 +17,24 @@ const locationFilter = (location) => Object.freeze(["==", Object.freeze(["get", 
 
 export const NOVA_PEOPLE_FILTER = locationFilter("Nova");
 export const NIR_OZ_PEOPLE_FILTER = locationFilter("Nir Oz");
+const NO_HOUSE_FILTER = Object.freeze([
+  "==",
+  Object.freeze(["literal", 1]),
+  Object.freeze(["literal", 0]),
+]);
 
 export function peopleFilterForNarrative(narrativeId) {
   if (narrativeId === "nova") return NOVA_PEOPLE_FILTER;
   if (narrativeId === "hostages") return NIR_OZ_PEOPLE_FILTER;
   if (narrativeId === "hostages_all") return HOSTAGES_PEOPLE_FILTER;
   return EXCLUDE_SURVIVOR_FILTER;
+}
+
+export function houseOutlineFilterForNarrative(id) {
+  if (id === "segev") return ["==", ["get", "note"], "בית משפחת שגב"];
+  if (id === "sderot") return ["==", ["get", "note"], "תחנת משטרה שדרות"];
+  if (id === "hostages") return ["==", ["get", "note"], "בית משפחת פרי"];
+  return NO_HOUSE_FILTER;
 }
 
 export function peopleLegendClassVisible(narrativeId, classValue) {
@@ -34,7 +46,7 @@ export function peopleLegendClassVisible(narrativeId, classValue) {
   return value !== KIDNAP_SURVIVOR_STATUS;
 }
 
-export function applyNarrativePeopleFilter(map, narrativeId) {
+function applyNarrativeSourceFilter(map, sourceId, filter) {
   if (!map || typeof map.getStyle !== "function" || typeof map.getLayer !== "function" ||
     typeof map.setFilter !== "function") return 0;
 
@@ -46,10 +58,9 @@ export function applyNarrativePeopleFilter(map, narrativeId) {
   }
   if (!Array.isArray(style?.layers)) return 0;
 
-  const filter = peopleFilterForNarrative(narrativeId);
   let updated = 0;
   for (const layer of style.layers) {
-    if (!layer || layer.source !== "nli.people" || typeof layer.id !== "string") continue;
+    if (!layer || layer.source !== sourceId || typeof layer.id !== "string") continue;
     let currentLayer;
     try {
       currentLayer = map.getLayer(layer.id);
@@ -61,4 +72,24 @@ export function applyNarrativePeopleFilter(map, narrativeId) {
     updated += 1;
   }
   return updated;
+}
+
+function asGroupList(layerGroups) {
+  if (Array.isArray(layerGroups)) return layerGroups;
+  if (layerGroups && typeof layerGroups === "object") return Object.values(layerGroups);
+  return [];
+}
+
+/** True when the nli.people chip is enabled (Identity / people-as-points scenes). */
+export function peopleMarkersAreShown(layerGroups) {
+  return asGroupList(layerGroups).some((group) => group?.id === "nli"
+    && (group.layers || []).some((layer) => layer?.id === "people" && layer.enabled === true));
+}
+
+export function applyNarrativePeopleFilter(map, narrativeId) {
+  return applyNarrativeSourceFilter(map, "nli.people", peopleFilterForNarrative(narrativeId));
+}
+
+export function applyNarrativeHouseOutlineFilter(map, narrativeId) {
+  return applyNarrativeSourceFilter(map, "nli.narrative_polygon", houseOutlineFilterForNarrative(narrativeId));
 }

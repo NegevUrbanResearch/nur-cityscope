@@ -82,6 +82,7 @@ async function initialize() {
 
   // Initialize shared DataContext (single WS + API state)
   await OTEFDataContext.init(TABLE_NAME);
+  OTEFDataContext.setExhibitMode(false);
 
   zoomController = createRemoteZoomController({
     slider: document.getElementById("zoomSlider"),

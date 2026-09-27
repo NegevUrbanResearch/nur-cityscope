@@ -24,30 +24,6 @@ import {
   PINK_LINE_ROUTE_LAYER_ID,
 } from "../map-utils/curated-pink-axis-state.js";
 import {
-  bindNliTimelinePointerListeners,
-  consumeNliTimelineButtonClick,
-  isNliPlayableLayerLocked,
-  nliTimelineHostMethods,
-  nliTransportSheetHtml,
-  renderNliTimelineTransport,
-} from "./nli-timeline-transport.js";
-import { pauseNliClock } from "../shared/nli-investigation-clock.js";
-import {
-  consumeNliPackPaneClick,
-  NLI_PACK_PANE_DEFAULT,
-  nliPackPaneSwitchHtml,
-  normalizeNliPackPane,
-} from "./nli-pack-panes.js";
-import { normalizeNarrativeState } from "../shared/nli-narratives.js";
-import {
-  consumeNliNarrativeButtonClick,
-  nliNarrativeControlsHtml,
-} from "./nli-narrative-controls.js";
-import {
-  consumeNliNovaEscapeClick,
-  nliNovaEscapeTogglesHtml,
-} from "./nli-nova-escape-toggles.js";
-import {
   ensureWorkshopSubmissionColorsLoaded,
   pickWorkshopRowSwatchCssColor,
 } from "./layer-sheet-workshop-swatches.js";
@@ -241,6 +217,25 @@ function fullLayerIdsForGroup(group) {
   return ids;
 }
 
+function isNliOwnedLayerId(fullId) {
+  const id = String(fullId ?? "");
+  return id === "nli" || id.startsWith("nli.");
+}
+
+function regularGroupsFrom(groups) {
+  return (groups || []).filter((group) => group && group.id !== "nli");
+}
+
+function allowedRegularLayerIds(groups) {
+  const allowed = new Set();
+  for (const group of regularGroupsFrom(groups)) {
+    for (const id of fullLayerIdsForGroup(group)) {
+      if (!isNliOwnedLayerId(id)) allowed.add(String(id));
+    }
+  }
+  return allowed;
+}
+
 function isPinkLineRouteSheetRow(row, groupId) {
   if (!row) return false;
   if (groupId && groupId !== MORESHET_AXIS_GROUP_ID) return false;
@@ -367,9 +362,6 @@ function renderLayerRow(row, options = {}) {
     checked && !isPrimary ? " is-visible" : "";
   const animTileClass = hasAnimationToggle ? " layer-tile--anim" : "";
   const pinkLineClass = isPinkLineRow ? " layer-tile--pink-line" : "";
-  const clock = options.investigationClock;
-  const playableLocked = isNliPlayableLayerLocked(clock, row.fullLayerIds);
-  const lockedClass = playableLocked ? " layer-tile--locked" : "";
   const animStateClass = `${animationEnabled ? "active" : ""} ${
     animationMixed ? "mixed" : ""
   }`.trim();
@@ -398,7 +390,7 @@ function renderLayerRow(row, options = {}) {
   }
   return `
     <div
-      class="layer-tile ${stateClass}${visibleClass}${primaryClass}${animTileClass}${pinkLineClass}${lockedClass}"
+      class="layer-tile ${stateClass}${visibleClass}${primaryClass}${animTileClass}${pinkLineClass}"
       role="button"
       tabindex="0"
       aria-pressed="${checked ? "true" : "false"}"
@@ -418,17 +410,6 @@ class LayerSheetController {
     this.isOpen = false;
     this.focusedGroupId = null;
     this.primaryTileIdsJson = null;
-    this._nliEndTimer = null;
-    this._nliPlayheadTimer = null;
-    this._nliFeatureCache = Object.create(null);
-    this._nliScrub = null;
-    this._nliScrubEl = null;
-    this._nliScrubPointerId = null;
-    this._nliOptimisticClock = null;
-    this._nliPackPane = NLI_PACK_PANE_DEFAULT;
-    this._nliCacheFetchInflight = false;
-    this._nliNarrativeTransitionPending = false;
-    this._nliNarrativeFeedback = "";
     this._subscriptions = [];
     this._remoteLocaleHandler = null;
 
@@ -465,20 +446,6 @@ class LayerSheetController {
     if (typeof OTEFDataContext !== "undefined") {
       this._subscribeDataContext("layerGroups", () => this.render());
       this._subscribeDataContext("animations", () => this.render());
-      this._subscribeDataContext("investigationClock", (clock) => {
-        this._nliOptimisticClock = null;
-        this._syncNliEndedTimer(clock);
-        this._syncNliPlayheadTicker(clock);
-        this.render();
-      });
-      this._subscribeDataContext("projectionSlideshow", () => this.render());
-      this._subscribeDataContext("narrativeState", (state) => {
-        this._clearNliScrubOnNarrativeChange();
-        this._nliNarrativeTransitionPending = false;
-        this._nliNarrativeFeedback = "";
-        this.render();
-      });
-      this._subscribeDataContext("escapeOverlay", () => this.render());
       this._subscribeDataContext("legendSettings", () => this.render());
     }
 
@@ -499,51 +466,9 @@ class LayerSheetController {
   }
 
   destroy() {
-    if (this._nliEndTimer !== null) clearTimeout(this._nliEndTimer);
-    if (this._nliPlayheadTimer !== null) clearTimeout(this._nliPlayheadTimer);
-    this._nliEndTimer = null;
-    this._nliPlayheadTimer = null;
-    this._nliScrub = null;
-    this._nliScrubEl = null;
     for (const unsubscribe of this._subscriptions.splice(0)) unsubscribe();
     if (typeof window !== "undefined" && this._remoteLocaleHandler) {
       window.removeEventListener(LOCALE_EVENT, this._remoteLocaleHandler);
-    }
-  }
-
-  _cancelNliScrubForDomReplaceSync() {
-    const captured = this._nliScrubEl;
-    const fromPlaying = !!(this._nliScrub && this._nliScrub.fromPlaying);
-    if (captured && typeof captured.releasePointerCapture === "function") {
-      try {
-        captured.releasePointerCapture(this._nliScrubPointerId);
-      } catch {
-        // invalid pointer id after detach is fine
-      }
-    }
-    this._nliScrub = null;
-    this._nliScrubEl = null;
-    this._nliOptimisticClock = null;
-    return fromPlaying;
-  }
-
-  async setNliPackPane(pane) {
-    const next = normalizeNliPackPane(pane);
-    if (this.focusedGroupId !== "nli") return;
-    if (next === this._nliPackPane) return;
-    const fromPlaying = this._cancelNliScrubForDomReplaceSync();
-    this._nliPackPane = next;
-    this.render();
-    if (fromPlaying) {
-      const now = typeof OTEFDataContext !== "undefined" &&
-        typeof OTEFDataContext.correctedNow === "function"
-        ? OTEFDataContext.correctedNow()
-        : Date.now();
-      await this._patchNliClock(pauseNliClock(this._liveNliClock(), now));
-    }
-    if (next === "timeline") {
-      this._paintNliPlayhead?.(this._liveNliClock());
-      this._syncNliPlayheadTicker(this._liveNliClock());
     }
   }
 
@@ -574,11 +499,6 @@ class LayerSheetController {
         }
         return;
       }
-
-      if (consumeNliPackPaneClick(e, this)) return;
-      if (consumeNliNovaEscapeClick(e, this)) return;
-      if (consumeNliNarrativeButtonClick(e, this)) return;
-      if (consumeNliTimelineButtonClick(e, this)) return;
 
       const animBtn = e.target.closest("[data-animation-toggle]");
       if (animBtn) {
@@ -631,8 +551,6 @@ class LayerSheetController {
         void this.setLegendGroupSummarized(t.value, t.checked);
       }
     });
-
-    bindNliTimelinePointerListeners(content, this);
   }
 
   onLayersTabHidden() {
@@ -649,15 +567,8 @@ class LayerSheetController {
   }
 
   focusOnGroup(groupId) {
-    const prev = this.focusedGroupId;
     this.primaryTileIdsJson = null;
     this.focusedGroupId = String(groupId);
-    if (this.focusedGroupId === "nli" && prev !== "nli") {
-      this._nliPackPane = NLI_PACK_PANE_DEFAULT;
-    }
-    if (this.focusedGroupId !== prev) {
-      this._cancelNliScrubForDomReplaceSync();
-    }
     this.render();
   }
 
@@ -666,56 +577,12 @@ class LayerSheetController {
     this.render();
   }
 
-  _readNarrativeState() {
-    if (
-      typeof OTEFDataContext !== "undefined" &&
-      typeof OTEFDataContext.getNarrativeState === "function"
-    ) {
-      return normalizeNarrativeState(OTEFDataContext.getNarrativeState());
-    }
-    return normalizeNarrativeState(null);
+  _regularGroups() {
+    return regularGroupsFrom(this.getEffectiveGroupsForView());
   }
 
-  _isNarrativeActive() {
-    return this._readNarrativeState().id !== null;
-  }
-
-  async setNarrative(id) {
-    if (this._nliNarrativeTransitionPending || this._isPresentationActive()) return;
-    if (
-      typeof OTEFDataContext === "undefined" ||
-      typeof OTEFDataContext.setNarrative !== "function"
-    ) return;
-    const acknowledged = this._readNarrativeState();
-    const targetId = acknowledged.id === id ? null : id;
-    this._nliNarrativeTransitionPending = true;
-    this._nliNarrativeFeedback = "";
-    this.render();
-    try {
-      const response = await OTEFDataContext.setNarrative(targetId);
-      if (response?.ok === false) throw new Error("narrative transition rejected");
-    } catch {
-      this._nliNarrativeFeedback = t("nliNarrativeTransitionFailed");
-    } finally {
-      this._nliNarrativeTransitionPending = false;
-      this.render();
-    }
-  }
-
-  async setEscapeOverlay(patch) {
-    if (
-      typeof OTEFDataContext === "undefined" ||
-      typeof OTEFDataContext.setEscapeOverlay !== "function"
-    ) return;
-    const current =
-      (typeof OTEFDataContext.getEscapeOverlay === "function" &&
-        OTEFDataContext.getEscapeOverlay()) ||
-      { individual: false, overlap: false, mor: false };
-    await OTEFDataContext.setEscapeOverlay({
-      individual: patch?.individual ?? current.individual,
-      overlap: patch?.overlap ?? current.overlap,
-      mor: patch?.mor ?? current.mor,
-    });
+  _allowedRegularLayerIds() {
+    return allowedRegularLayerIds(this.getEffectiveGroupsForView());
   }
 
   async runLayerTileToggleFromElement(layerTile) {
@@ -748,13 +615,12 @@ class LayerSheetController {
   async toggleGroupEnabled(groupId, enabled) {
     if (typeof OTEFDataContext === "undefined") return;
     try {
-      const groups = this.getEffectiveGroupsForView();
+      const groups = this._regularGroups();
       const group = groups.find((g) => g && g.id === groupId);
-      const allIds = fullLayerIdsForGroup(group);
-      const clock = this._readNliClock();
-      const unlockedIds = allIds.filter(
-        (id) => !isNliPlayableLayerLocked(clock, [id]),
-      );
+      if (!group) return;
+      const allIds = fullLayerIdsForGroup(group).map(String);
+      const allowed = this._allowedRegularLayerIds();
+      const unlockedIds = allIds.filter((id) => allowed.has(id));
       if (unlockedIds.length < allIds.length) {
         if (unlockedIds.length === 0) return;
         const result = await OTEFDataContext.setLayersEnabled(unlockedIds, enabled);
@@ -780,7 +646,9 @@ class LayerSheetController {
             curatedIds.push(...fullIds);
           }
         }
-        const deduped = Array.from(new Set(curatedIds));
+        const rawIds = Array.from(new Set(curatedIds.map(String)));
+        const deduped = rawIds.filter((id) => !isNliOwnedLayerId(id));
+        if (rawIds.length > 0 && deduped.length === 0) return;
         if (deduped.length > 0) {
           const result = await OTEFDataContext.setLayersEnabled(deduped, enabled);
           if (!result || !result.ok) {
@@ -820,24 +688,31 @@ class LayerSheetController {
     if (!Array.isArray(fullLayerIds) || fullLayerIds.length === 0) {
       return { ok: false };
     }
+    const allowed = this._allowedRegularLayerIds();
+    const ids = fullLayerIds.map(String).filter((id) => allowed.has(id));
+    if (ids.length === 0) return { ok: false };
     if (typeof OTEFDataContext !== "undefined") {
-      return await OTEFDataContext.setLayersEnabled(fullLayerIds, enabled, options);
+      return await OTEFDataContext.setLayersEnabled(ids, enabled, options);
     }
     return { ok: false };
   }
 
   async toggleLayerRowAnimations(animatableFullLayerIds, rowVisibilityFullLayerIds, enabled) {
     if (!Array.isArray(animatableFullLayerIds) || animatableFullLayerIds.length === 0) return;
-    const visibility =
+    const allowed = this._allowedRegularLayerIds();
+    const animIds = animatableFullLayerIds.map(String).filter((id) => allowed.has(id));
+    if (animIds.length === 0) return;
+    const visibilitySource =
       Array.isArray(rowVisibilityFullLayerIds) && rowVisibilityFullLayerIds.length > 0
         ? rowVisibilityFullLayerIds
         : animatableFullLayerIds;
+    const visibility = visibilitySource.map(String).filter((id) => allowed.has(id));
     if (typeof OTEFDataContext !== "undefined") {
-      if (enabled) {
+      if (enabled && visibility.length > 0) {
         const vis = await OTEFDataContext.setLayersEnabled(visibility, true);
         if (!vis || vis.ok === false) return;
       }
-      await OTEFDataContext.setLayerAnimations(animatableFullLayerIds, enabled);
+      await OTEFDataContext.setLayerAnimations(animIds, enabled);
       this.render();
     }
   }
@@ -946,7 +821,6 @@ class LayerSheetController {
           groupId: group.id,
           animations: anims,
           primaryTileIdsJson: this.primaryTileIdsJson,
-          investigationClock: this._readNliClock(),
         }),
       )
       .join("");
@@ -992,47 +866,8 @@ class LayerSheetController {
     const row1 = groups.slice(0, mid).map(chipForGroup).join("");
     const row2 = groups.slice(mid).map(chipForGroup).join("");
 
-    const clock = this._readNliClock();
-    const presentationActive = this._isPresentationActive();
-    const pane = selected.id === "nli"
-      ? normalizeNliPackPane(this._nliPackPane)
-      : "layers";
     const variantClass = "layers-variant-c";
-    const paneSwitch = nliPackPaneSwitchHtml(selected, pane);
-    const nliSheet = selected.id === "nli" && pane === "timeline"
-      ? nliTransportSheetHtml(
-          selected,
-          clock,
-          this._nliFeatureCache,
-          presentationActive,
-          false,
-          this._readNarrativeState().id,
-        )
-      : "";
-    const narrativeState = {
-      ...this._readNarrativeState(),
-      transitionPending: this._nliNarrativeTransitionPending,
-      feedback: this._nliNarrativeFeedback,
-    };
-    const narrativeDisabledReason = presentationActive
-      ? t("nliNarrativeSlideshowDisabled")
-      : null;
-    const narrativeSheet = nliNarrativeControlsHtml(
-      selected,
-      narrativeState,
-      narrativeDisabledReason,
-    );
-    const escapeToggles = nliNovaEscapeTogglesHtml(
-      this._readNarrativeState(),
-      (typeof OTEFDataContext !== "undefined" &&
-        OTEFDataContext.getEscapeOverlay?.()) ||
-        { individual: false, overlap: false, mor: false },
-    );
-    const extras = selected.id === "nli" && pane === "timeline"
-      ? `${narrativeSheet}${escapeToggles}${nliSheet}`
-      : "";
-    const bulkAndTiles = !(selected.id === "nli" && pane === "timeline")
-      ? `<div class="focused-pack-toolbar">
+    const bulkAndTiles = `<div class="focused-pack-toolbar">
         <span class="focused-pack-toolbar__label" data-i18n="layersBulkVisibility">${escapeHtmlSafe(t("layersBulkVisibility"))}</span>
         <label class="group-toggle layer-bulk-visibility">
           <input
@@ -1055,8 +890,7 @@ class LayerSheetController {
         <div class="layer-tile-grid">
         ${this.buildLayerRowsHtml(selected, animations)}
         </div>
-      </div>`
-      : "";
+      </div>`;
 
     return `
     <div class="${variantClass}">
@@ -1074,7 +908,6 @@ class LayerSheetController {
           </div>
         </div>
       </div>
-      ${paneSwitch}
       <div class="layers-active-summary" role="status">
         <span
           class="layer-count"
@@ -1084,7 +917,6 @@ class LayerSheetController {
         ></span>
       </div>
       ${bulkAndTiles}
-      ${extras}
     </div>
   `;
   }
@@ -1104,19 +936,13 @@ class LayerSheetController {
   render() {
     const content = this.sheet && this.sheet.querySelector(".sheet-content");
     if (!content) return;
-    if (this._nliScrub && this._nliScrubEl) return;
 
-    const prevFocused = this.focusedGroupId;
-    const groups = this.getEffectiveGroupsForView();
+    const groups = this._regularGroups();
     if (groups.length === 0) {
       this.focusedGroupId = null;
     } else {
       this.focusedGroupId = this.resolveSelectedPackId(groups);
     }
-    if (this.focusedGroupId === "nli" && prevFocused !== "nli") {
-      this._nliPackPane = NLI_PACK_PANE_DEFAULT;
-    }
-    content.classList?.remove?.("sheet-content--nli");
 
     const animations =
       typeof OTEFDataContext !== "undefined" &&
@@ -1157,15 +983,8 @@ class LayerSheetController {
 
     this.updatePanelChrome(groups);
     applyRemoteChromeI18n();
-    if (this.focusedGroupId === "nli") {
-      this._syncNliEndedTimer(this._liveNliClock());
-      this._syncNliPlayheadTicker(this._liveNliClock());
-      void this._ensureNliFeatureCache();
-    }
   }
 }
-
-Object.assign(LayerSheetController.prototype, nliTimelineHostMethods);
 
 let layerSheetController = null;
 if (typeof document !== "undefined" && typeof window !== "undefined") {
@@ -1183,5 +1002,4 @@ export {
   mergeLegendMetadataFromRegistry,
   renderLayerRow,
   renderLegendSummaryControl,
-  renderNliTimelineTransport,
 };

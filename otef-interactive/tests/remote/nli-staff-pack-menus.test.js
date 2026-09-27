@@ -50,7 +50,7 @@ function menusFor(root, extras = {}) {
       },
       {
         id: "projector_base",
-        layers: [{ id: "רקע_שחור", name: "Black", enabled: true }],
+        layers: [{ id: "SEA", name: "Sea", enabled: true }],
       },
     ],
     getClock: () => ({ phase: "idle" }),
@@ -78,15 +78,17 @@ describe("staff pack menus", () => {
           enabled: true,
           fullLayerIds: ["projector_base.שמות_יישובים", "projector_base.Locations_Lines"],
         },
-        { id: "רקע_שחור", name: "Black", enabled: false },
+        { id: "SEA", name: "Sea", enabled: false },
+        { id: "רקע_שחור", name: "Black", enabled: true },
       ],
     });
     expect(rows[0].fullLayerIds).toEqual([
       "projector_base.שמות_יישובים",
       "projector_base.Locations_Lines",
     ]);
-    expect(rows[1].fullLayerIds).toEqual(["projector_base.רקע_שחור"]);
-    expect(labelForPackRow(rows[1], "en")).toBe("Black background");
+    expect(rows.map((row) => row.id)).toEqual(["שמות_יישובים", "SEA"]);
+    expect(rows[1].fullLayerIds).toEqual(["projector_base.SEA"]);
+    expect(labelForPackRow(rows[1], "en")).toBe("Sea");
   });
 
   test("opens one popup with both packs and toggles a layer row", async () => {
@@ -141,6 +143,43 @@ describe("staff pack menus", () => {
     menus.open();
     expect(root.innerHTML).toContain("is-locked");
     expect(root.innerHTML).toContain("disabled");
+    menus.destroy();
+  });
+
+  test("keeps the NLI pack and does not toggle a locked playable row", async () => {
+    setLocale("en");
+    const root = htmlRoot();
+    const setLayersEnabled = vi.fn().mockResolvedValue(undefined);
+    const menus = menusFor(root, {
+      setLayersEnabled,
+      getGroups: () => [
+        {
+          id: "nli",
+          layers: [{ id: "lines", name: "Lines", enabled: true }],
+        },
+        {
+          id: "projector_base",
+          layers: [{ id: "SEA", name: "Sea", enabled: true }],
+        },
+      ],
+      getClock: () => ({ phase: "playing" }),
+    });
+    menus.open();
+    expect(root.innerHTML).toContain('data-pack="nli"');
+    expect(root.innerHTML).toContain("nli.lines");
+    root.emit("click", {
+      target: {
+        disabled: true,
+        closest(selector) {
+          return selector === "[data-layer-ids]" ? this : null;
+        },
+        getAttribute() {
+          return JSON.stringify(["nli.lines"]);
+        },
+      },
+    });
+    await Promise.resolve();
+    expect(setLayersEnabled).not.toHaveBeenCalled();
     menus.destroy();
   });
 

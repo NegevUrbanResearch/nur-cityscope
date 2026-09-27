@@ -291,6 +291,10 @@ const LAYER_DISPLAY_LABELS = {
     he: "צירי חדירה",
     en: "Infiltration routes",
   },
+  "nli.lines.unconfirmed": {
+    he: "גישה לא מאומתת",
+    en: "Unconfirmed approach",
+  },
   "nli.alarms": {
     he: "אזעקות",
     en: "Alarms",
@@ -298,6 +302,10 @@ const LAYER_DISPLAY_LABELS = {
   "nli.ציר_232": {
     he: "כביש 232",
     en: "Highway 232",
+  },
+  "nli.narrative_polygon": {
+    he: "קווי מתאר של בתים",
+    en: "House outlines",
   },
 };
 

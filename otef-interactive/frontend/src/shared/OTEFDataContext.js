@@ -101,6 +101,7 @@ class OTEFDataContextClass {
     this._animations = null;
     this._basemap = "osm";
     this._independentBasemapGeneration = 0;
+    this._exhibitMode = false;
     this._bounds = null;
     this._viewerAngleDeg = 0;
     this._isConnected = false;
@@ -111,6 +112,7 @@ class OTEFDataContextClass {
       layerGroups: new Set(),
       animations: new Set(),
       basemap: new Set(),
+      exhibitMode: new Set(),
       bounds: new Set(),
       connection: new Set(),
       connectionStatus: new Set(),
@@ -143,7 +145,7 @@ class OTEFDataContextClass {
     this._layerPatchLastAcked = null;
     /** Serializes coalesced PATCH flush so rapid toggles share one queue. */
     this._layerPatchMutex = null;
-    /** Monotonic counter: latest user layer mutation intent (setLayersEnabled / toggleLayerInGroups / toggleGroup). */
+    /** Monotonic counter: latest user layer mutation intent (setLayersEnabled / setEnabledLayerIds / toggleLayerInGroups / toggleGroup). */
     this._layerOpGeneration = 0;
     this._pendingAnimationOps = 0;
     this._viewportSeq = 0;
@@ -319,6 +321,13 @@ class OTEFDataContextClass {
     this._notify("basemap", this._basemap);
   }
 
+  _setExhibitMode(next) {
+    const value = next === true;
+    if (this._exhibitMode === value) return;
+    this._exhibitMode = value;
+    this._notify("exhibitMode", this._exhibitMode);
+  }
+
   _setConfirmedBasemap(basemap) {
     this._independentBasemapGeneration += 1;
     this._setBasemap(basemap);
@@ -386,16 +395,20 @@ class OTEFDataContextClass {
   /**
    * Push an investigation clock through the OTEF API (WebSocket fan-out).
    * Patches serialize on `_clockPatchQueue` (one in flight).
+   * `isCurrent` is checked immediately before send and stays off the payload.
    *
    * @param {unknown} next
+   * @param {{ isCurrent?: () => boolean }} [options]
+   * @returns {Promise<{ok: true, clock: object} | {ok: false, stale?: boolean, error?: unknown}>}
    */
-  async patchInvestigationClock(next) {
+  async patchInvestigationClock(next, options = {}) {
     const actions = OTEFDataContextInternals.actions;
     if (!actions || typeof actions.patchInvestigationClock !== "function") {
       getLogger().error("[OTEFDataContext] Missing patchInvestigationClock action helper");
-      return;
+      return { ok: false, error: "Missing patchInvestigationClock action helper" };
     }
-    return actions.patchInvestigationClock(this, next);
+    const isCurrent = typeof options?.isCurrent === "function" ? options.isCurrent : () => true;
+    return actions.patchInvestigationClock(this, next, { isCurrent });
   }
 
   /**
@@ -703,6 +716,10 @@ class OTEFDataContextClass {
     return this._basemap || "osm";
   }
 
+  getExhibitMode() {
+    return this._exhibitMode === true;
+  }
+
   getBounds() {
     return this._bounds;
   }
@@ -787,6 +804,15 @@ class OTEFDataContextClass {
     return actions.setLayersEnabled(this, fullLayerIds, enabled, options);
   }
 
+  async setEnabledLayerIds(fullLayerIds, options = undefined) {
+    const actions = OTEFDataContextInternals.actions;
+    if (!actions || typeof actions.setEnabledLayerIds !== "function") {
+      getLogger().error("[OTEFDataContext] Missing action helpers");
+      return { ok: false, error: "Missing action helpers" };
+    }
+    return actions.setEnabledLayerIds(this, fullLayerIds, options);
+  }
+
   async _toggleLayerInGroups(layerId, enabled) {
     const actions = OTEFDataContextInternals.actions;
     if (!actions || typeof actions.toggleLayerInGroups !== "function") {
@@ -830,6 +856,15 @@ class OTEFDataContextClass {
       return { ok: false, error: "Missing action helpers" };
     }
     return actions.setBasemap(this, basemap);
+  }
+
+  async setExhibitMode(next) {
+    const actions = OTEFDataContextInternals.actions;
+    if (!actions || typeof actions.setExhibitMode !== "function") {
+      getLogger().error("[OTEFDataContext] Missing action helpers");
+      return { ok: false, error: "Missing action helpers" };
+    }
+    return actions.setExhibitMode(this, next);
   }
 
   _computePanViewport(viewport, direction, delta) {
@@ -890,6 +925,9 @@ class OTEFDataContextClass {
         break;
       case "basemap":
         current = this._basemap;
+        break;
+      case "exhibitMode":
+        current = this._exhibitMode;
         break;
       case "bounds":
         current = this._bounds;

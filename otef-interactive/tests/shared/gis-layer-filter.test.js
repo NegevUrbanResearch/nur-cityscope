@@ -23,7 +23,7 @@ describe("gis-layer-filter: isCuratedPackFullLayerId", () => {
 describe("gis-layer-filter: shouldShowLayerOnGisMap", () => {
   test("returns false for projector_base layers outside the GIS allowlist", () => {
     expect(shouldShowLayerOnGisMap("projector_base", "model_base")).toBe(false);
-    expect(shouldShowLayerOnGisMap("projector_base", "SEA")).toBe(false);
+    expect(shouldShowLayerOnGisMap("projector_base", "רקע_שחור")).toBe(false);
     expect(shouldShowLayerOnGisMap("projector_base", "other_layer")).toBe(
       false
     );
@@ -35,11 +35,13 @@ describe("gis-layer-filter: shouldShowLayerOnGisMap", () => {
     );
   });
 
-  test("returns true for projector_base settlement outlines on GIS, not names or leaders", () => {
+  test("keeps only the intended settlement base and Tkuma boundary on GIS", () => {
     expect(shouldShowLayerOnGisMap("projector_base", "ישובים")).toBe(true);
     expect(shouldShowLayerOnGisMap("projector_base", "Tkuma_Area_LIne")).toBe(true);
     expect(shouldShowLayerOnGisMap("projector_base", "שמות_יישובים")).toBe(false);
     expect(shouldShowLayerOnGisMap("projector_base", "Locations_Lines")).toBe(false);
+    expect(shouldShowLayerOnGisMap("projector_base", "SEA")).toBe(false);
+    expect(shouldShowLayerOnGisMap("projector_base", "רקע_שחור")).toBe(false);
   });
 
   test("returns true for all other groups", () => {
@@ -73,6 +75,7 @@ describe("gis-layer-filter: filterGroupsForGisMap", () => {
           { id: "שמות_יישובים", enabled: true },
           { id: "Locations_Lines", enabled: true },
           { id: "SEA", enabled: true },
+          { id: "רקע_שחור", enabled: true },
         ],
       },
       {
@@ -99,12 +102,16 @@ describe("gis-layer-filter: filterGroupsForGisMap", () => {
           { id: "ישובים", enabled: false },
           { id: "שמות_יישובים", enabled: false },
           { id: "Locations_Lines", enabled: false },
+          { id: "SEA", enabled: false },
+          { id: "רקע_שחור", enabled: false },
         ],
       },
     ];
     const filtered = filterGroupsForGisMap(layerGroups);
-    expect(filtered[0].layers.map((layer) => layer.id)).toEqual(["ישובים"]);
-    expect(filtered[0].layers[0].enabled).toBe(false);
+    expect(filtered[0].layers.map((layer) => layer.id)).toEqual([
+      "ישובים",
+    ]);
+    expect(filtered[0].layers.every((layer) => layer.enabled === false)).toBe(true);
   });
 
   test("returns empty layers for projector_base when only non-GIS layers", () => {

@@ -186,6 +186,7 @@ export const OTEF_API = {
       individual: overlay.individual === true,
       overlap: overlay.overlap === true,
       mor: overlay.mor === true,
+      settled: overlay.settled === true,
       ...meta,
     });
   },

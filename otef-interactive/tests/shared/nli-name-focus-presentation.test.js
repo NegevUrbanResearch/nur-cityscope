@@ -1,5 +1,5 @@
 import { test, expect } from 'vitest';
-import { createNliNameFocusPresentation, getNameFocusOpacity, getRelevantPlaceGroup } from '../../frontend/src/shared/nli-name-focus-presentation.js';
+import { createNliNameFocusPresentation, getNameFocusOpacity, getNameFocusAlpha, getRelevantPlaceGroup } from '../../frontend/src/shared/nli-name-focus-presentation.js';
 import { applySettlementOrientationPaint, collectOrientationTargets } from '../../frontend/src/shared/nli-settlement-orientation.js';
 
 const field = {
@@ -9,11 +9,19 @@ const field = {
 
 test('person and place focus retain relevant memorial names', () => {
   expect(getRelevantPlaceGroup(field, 'person-1', null)).toBe('group-1');
-  expect(getNameFocusOpacity({ selectedPid: 'person-1', field })).toEqual(
+    expect(getNameFocusOpacity({ selectedPid: 'person-1', field })).toEqual(
     ['case', ['==', ['get', 'pid'], 'person-1'], 1, 0.18]);
-  expect(getNameFocusOpacity({ selectedGroup: 'group-1', field })).toEqual(
+    expect(getNameFocusOpacity({ selectedGroup: 'group-1', field })).toEqual(
     ['case', ['==', ['get', 'group_id'], 'group-1'], 1, 0.18]);
   expect(getNameFocusOpacity({ field })).toBe(1);
+});
+
+test('numeric Canvas focus matches person and group MapLibre focus policy', () => {
+  expect(getNameFocusAlpha({ selectedPid: 'person-1', field }, 'person-1')).toBe(1);
+  expect(getNameFocusAlpha({ selectedPid: 'person-1', field }, 'other')).toBe(.18);
+  expect(getNameFocusAlpha({ selectedGroup: 'group-1', field }, 'person-1')).toBe(1);
+  expect(getNameFocusAlpha({ selectedGroup: 'group-2', field }, 'person-1')).toBe(.18);
+  expect(getNameFocusAlpha({ field }, 'person-1')).toBe(1);
 });
 
 test('focus only changes settlement names and outlines and restores their original paint', () => {
@@ -32,8 +40,8 @@ test('focus only changes settlement names and outlines and restores their origin
   presentation.update({ selectedPid: 'person-1' });
   expect(paints.get('projector_base__שמות_יישובים__labels:text-opacity')).toEqual(
     ['case', ['==', ['get', 'cityname'], 'מקום'], 1, 0.18]);
-  expect(paints.get('projector_base__ישובים__outline:line-opacity')).toBe(0.18);
-  expect(paints.get('projector_base__Locations_Lines:line-opacity')).toBe(0.18);
+  expect(paints.get('projector_base__ישובים__outline:line-opacity')).toBe(0.08);
+  expect(paints.get('projector_base__Locations_Lines:line-opacity')).toBe(0.08);
   const firstWrites = writes.length;
   presentation.update({ selectedPid: 'person-1' });
   expect(writes).toHaveLength(firstWrites);
@@ -84,11 +92,14 @@ test('timeline requests cannot blink memorial settlement paint and release resto
   applySettlementOrientationPaint(map, { phase: 'paused', layers: collectOrientationTargets(map).layers });
   focus.update({ selectedGroup: 'group-1' });
   expect(writes).toHaveLength(afterFocus);
-  expect(paints.get('projector_base__Locations_Lines__line:line-opacity')).toBe(0.18);
+  expect(paints.get('projector_base__Locations_Lines__line:line-opacity')).toBe(0.08);
   focus.dispose();
-  expect(paints.get('projector_base__ישובים__outline:line-opacity')).toBe(0.28);
-  expect(paints.get('projector_base__ישובים__outline:line-opacity-transition')).toBeNull();
-  expect(paints.get('projector_base__Locations_Lines__line:line-opacity')).toBe(0.28);
+  expect(paints.get('projector_base__ישובים__outline:line-opacity')).toBe(0.08);
+  expect(paints.get('projector_base__ישובים__outline:line-opacity-transition')).toEqual({
+    duration: 400,
+    delay: 0,
+  });
+  expect(paints.get('projector_base__Locations_Lines__line:line-opacity')).toBe(0.08);
   expect(paints.get('projector_base__שמות_יישובים__labels:text-opacity')).toEqual(
-    ['case', ['in', ['get', 'cityname'], ['literal', []]], 1, 0.35]);
+    ['case', ['in', ['get', 'cityname'], ['literal', []]], 1, 0.18]);
 });

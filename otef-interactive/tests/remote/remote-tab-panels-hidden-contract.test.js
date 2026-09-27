@@ -99,29 +99,24 @@ test("basemap state keeps durable active selection independent from the popover"
   expect(deriveBasemapControlState("dark", false).parentActive).toBe(false);
 });
 
-test("remote-styles: NLI pack panes do not use an absolute overlay dock", () => {
+test("regular layer sheet does not host NLI panes, narrative controls, or timeline timers", () => {
   const css = readRemoteStyles();
   expect(css).not.toMatch(/\.nli-bottom-dock\s*\{/);
   expect(css).not.toMatch(/\.layers-variant-c--nli\s*\{/);
   expect(css).not.toMatch(/\.sheet-content--nli\s*\{/);
-  expect(css).not.toMatch(/--nli-bottom-dock-height,\s*14\.5rem/);
-  const panes = cssBlock(css, ".nli-pack-panes");
-  const paneBtn = cssBlock(css, ".nli-pack-pane");
-  expect(panes).toMatch(/display:\s*grid/);
-  expect(paneBtn).toMatch(/min-height:\s*44px/);
-  expect(panes).not.toMatch(/direction:\s*ltr/);
+  expect(css).not.toMatch(/\.nli-pack-panes\s*\{/);
+  expect(css).not.toMatch(/\.nli-narrative-sheet\s*\{/);
+  expect(css).toMatch(/\.nli-tl-sheet\s*\{/);
+  expect(css).toMatch(/\.nli-nova-escape-toggles\s*\{/);
 
   const source = fs.readFileSync(
     path.resolve(__dirname, "../../frontend/src/remote/layer-sheet-controller.js"),
     "utf8",
   );
-  expect(source).toMatch(/nliPackPaneSwitchHtml/);
-  expect(source).toMatch(/setNliPackPane/);
-  expect(source).toMatch(/nliNarrativeControlsHtml\(/);
-  expect(source).toMatch(/focusedGroupId === "nli"[\s\S]*_syncNliPlayheadTicker/);
-  expect(source).not.toMatch(/_syncNliDockMeasurement/);
-  expect(source.indexOf("${narrativeSheet}")).toBeLessThan(source.indexOf("${escapeToggles}"));
-  expect(source.indexOf("${escapeToggles}")).toBeLessThan(source.indexOf("${nliSheet}"));
+  expect(source).not.toMatch(/nliPackPaneSwitchHtml|setNliPackPane|nliNarrativeControlsHtml|nliTimelineHostMethods/);
+  expect(source).not.toMatch(/_subscribeDataContext\("investigationClock"/);
+  expect(source).not.toMatch(/_syncNliPlayheadTicker|_syncNliEndedTimer|_ensureNliFeatureCache/);
+  expect(source).toMatch(/group\.id !== "nli"/);
 });
 
 test("remote teardown destroys the LayerSheet-owned narrative lifecycle", () => {

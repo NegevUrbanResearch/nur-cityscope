@@ -1,15 +1,17 @@
 import { createProjectionSurfaceCompositor } from "./projection-surface-compositor.js";
 import { createProjectionWarpRenderer } from "./projection-warp-renderer.js";
 import { evaluateWarpMesh } from "../shared/projection-warp-geometry.js";
-import { validateProjectionConfig } from "../shared/projection-config-schema.js";
+import { createProjectionNameCanvasAdapter } from "./projection-name-canvas-adapter.js";
 import { migrateProjectionConfigToV2 } from "../shared/projection-warp-schema.js";
-import { validateProjectionBaselineMesh } from "../shared/projection-warp-assets.js";
+import { migrateNamesWallToV5 } from "../shared/nli-name-wall-config.js";
 import {
   DEFAULT_PROJECTION_BASELINE,
   loadCapturedProjectionAsset,
   loadCapturedProjectionFraming,
 } from "./projection-captured-baseline.js";
 import { visibleProjectionBrowserError } from "./projection-browser-error.js";
+import { prepareProjectionPairMeshes, prepareProjectionSideMesh } from "./projection-candidate-validation.js";
+import { createProjectionDrawScheduler } from "./projection-draw-scheduler.js";
 
 export function resolveProjectionOutputMode(search = "") {
   const params = new URLSearchParams(String(search).replace(/^\?/, ""));
@@ -130,6 +132,7 @@ export async function createProjectionBrowserSurface({
   signal,
   rendererFactory = (options) => createProjectionWarpRenderer(options),
   initialConfig = null,
+  search = globalThis.location?.search || '',
   onError,
   onContextLost: onContextLostCallback,
   onContextRestored: onContextRestoredCallback,
@@ -137,22 +140,29 @@ export async function createProjectionBrowserSurface({
   let baseline;
   let canvas;
   let compositor;
+  let drawScheduler;
   let restoreSources = () => {};
   let hidden = false;
   let disposed = false;
   let statusElement = null;
   let onContextLost;
   let onContextRestored;
+  let videoPlaybackActive = false;
+  let contextLost = false;
+  let nameAdapter;
+  let peerBaseline;
+  let activeMesh;
+  let previousPair = null;
   try {
     try {
       baseline = await loadCapturedProjectionFraming({ fetchImpl, signal });
     } catch (error) {
-      const fallbackWarp = initialConfig?.schemaVersion === 2 ? initialConfig.outputs?.[spanId]?.warp : null;
+      const fallbackWarp = [2, 3, 4, 5].includes(initialConfig?.schemaVersion) ? initialConfig.outputs?.[spanId]?.warp : null;
       if (error?.name === "AbortError" || !fallbackWarp || (fallbackWarp.enabled !== false && fallbackWarp.baseline?.type !== "identity")) throw error;
       baseline = { manifest: { width: 1920, height: 1080, assets: {}, framing: {} }, framing: initialConfig };
     }
-    const initialV2 = initialConfig?.schemaVersion === 1 ? migrateProjectionConfigToV2(initialConfig) : initialConfig;
-    const startupConfig = initialV2 || (baseline.framing?.schemaVersion === 1 ? migrateProjectionConfigToV2(baseline.framing) : baseline.framing);
+    const initialV5 = initialConfig ? migrateNamesWallToV5(initialConfig) : null;
+    const startupConfig = initialV5 || (baseline.framing ? migrateNamesWallToV5(baseline.framing) : null);
     const initialWarp = startupConfig?.outputs?.[spanId]?.warp;
     try {
       baseline = await loadCapturedProjectionAsset({ fetchImpl, spanId, captured: baseline, signal });
@@ -177,32 +187,31 @@ export async function createProjectionBrowserSurface({
     const baseScene = {};
     if (image && !getScene) baseScene.image = { source: image };
     if (mapCanvas && !getScene) baseScene.map = { source: mapCanvas };
-    const readScene = () => ({ ...baseScene, ...(typeof getScene === "function" ? getScene() : scene) });
+    const readScene = () => ({ ...baseScene, ...(typeof getScene === "function" ? getScene() : scene),
+      ...(nameAdapter?.descriptor() ? { names: nameAdapter.descriptor() } : {}),
+      });
     const initialMesh = initialWarp?.baseline?.type === "identity" || initialWarp?.enabled === false
       ? evaluateWarpMesh(null, initialWarp)
       : (baseline.mesh || evaluateWarpMesh(null, migrateProjectionConfigToV2(baseline.framing).outputs[spanId].warp));
     const renderer = rendererFactory({ canvas, mesh: initialMesh });
+    activeMesh = initialMesh;
     compositor = createProjectionSurfaceCompositor({ renderer, sources: readScene() });
-    let activeConfig = initialConfig?.schemaVersion === 1
-      ? migrateProjectionConfigToV2(initialConfig)
-      : (initialConfig || migrateProjectionConfigToV2(baseline.framing));
-    const prepareConfig = (candidate) => {
-      if (Object.keys(validateProjectionConfig(candidate)).length) throw new Error("Invalid projection calibration");
-      const config = candidate.schemaVersion === 1 ? migrateProjectionConfigToV2(candidate) : candidate;
-      const warp = config.outputs?.[spanId]?.warp;
-      if (!warp) throw new Error(`Projection calibration has no ${spanId} warp`);
-      let sourceMesh = null;
-      if (warp.enabled !== false && warp.baseline?.type === "tdMesh") {
-        const errors = validateProjectionBaselineMesh(baseline.mesh, { side: spanId, manifest: baseline.manifest, baseline: warp.baseline });
-        if (Object.keys(errors).length) throw new Error(`Projection baseline rejected: ${Object.entries(errors).map(([path, message]) => `${path} ${message}`).join("; ")}`);
-        sourceMesh = baseline.mesh;
-      }
-      const mesh = evaluateWarpMesh(sourceMesh, warp);
-      return { config, mesh };
+    let activeConfig = initialConfig ? migrateNamesWallToV5(initialConfig) : migrateNamesWallToV5(baseline.framing);
+    const prepareConfig = (candidate) => prepareProjectionSideMesh(candidate, spanId, baseline);
+    const preparePair = async (candidate) => {
+      const peer = spanId === 'left' ? 'right' : 'left';
+      const meshes = await prepareProjectionPairMeshes({ config: candidate, signal, loadBaseline: async (side, requestSignal) => {
+        if (side === spanId) return baseline;
+        if (!peerBaseline) peerBaseline = await loadCapturedProjectionAsset({ fetchImpl, spanId: peer, captured: baseline, signal: requestSignal });
+        return peerBaseline;
+      } });
+      return { config: migrateNamesWallToV5(candidate), mesh: meshes[spanId], meshes };
     };
+    nameAdapter = createProjectionNameCanvasAdapter({ document: doc, output: spanId });
     const applyConfig = (candidate) => {
       const prepared = prepareConfig(candidate);
       renderer.setMesh(prepared.mesh);
+      activeMesh = prepared.mesh;
       activeConfig = prepared.config;
       return true;
     };
@@ -214,19 +223,23 @@ export async function createProjectionBrowserSurface({
     };
     onContextLost = (event) => {
       event?.preventDefault?.();
+      contextLost = true;
+      drawScheduler?.cancel();
       onContextLostCallback?.();
       statusElement?.remove?.();
       statusElement = visibleError(host, new Error("WebGL context lost; restoring browser projection"));
     };
     onContextRestored = () => {
+      contextLost = false;
       onContextRestoredCallback?.();
       statusElement?.remove?.();
       statusElement = null;
+      drawScheduler?.drawNow();
     };
     canvas.addEventListener?.("webglcontextlost", onContextLost);
     canvas.addEventListener?.("webglcontextrestored", onContextRestored);
-    const draw = () => {
-      if (disposed || renderer.isContextLost?.()) return false;
+    const drawNow = () => {
+      if (disposed || contextLost || renderer.isContextLost?.()) return false;
       try {
         compositor.setScene(readScene());
         if (compositor.draw() === false) return false;
@@ -241,24 +254,61 @@ export async function createProjectionBrowserSurface({
       }
       return true;
     };
-    draw();
+    drawScheduler = createProjectionDrawScheduler({
+      draw: drawNow,
+      shouldThrottle: () => videoPlaybackActive,
+      shouldPause: () => contextLost,
+      maxFps: 20,
+    });
+    canvas.dataset ||= {};
+    canvas.dataset.videoPlaybackProtection = "inactive";
+    drawScheduler.drawNow();
     return {
       canvas,
       renderer,
       compositor,
       baseline,
-      draw,
+      draw: () => drawScheduler.drawNow(),
+      requestDraw: () => drawScheduler.requestDraw(),
+      setVideoPlaybackActive(active) {
+        videoPlaybackActive = active === true;
+        if (canvas?.dataset) canvas.dataset.videoPlaybackProtection = videoPlaybackActive ? "active" : "inactive";
+        if (!videoPlaybackActive) drawScheduler?.flush();
+      },
       prepareConfig,
+      preparePair,
+      getNameAdapter: () => nameAdapter,
+      commitPair(prepared) {
+        previousPair = { candidate: prepared, config: activeConfig, mesh: activeMesh };
+        renderer.setMesh(prepared.mesh);
+        activeMesh = prepared.mesh;
+        activeConfig = prepared.config;
+      },
+      rollbackPair(prepared) {
+        if (!previousPair || previousPair.candidate !== prepared) return false;
+        renderer.setMesh(previousPair.mesh);
+        activeMesh = previousPair.mesh;
+        activeConfig = previousPair.config;
+        previousPair = null;
+        return true;
+      },
+      finalizePair(prepared) {
+        if (previousPair?.candidate !== prepared) return false;
+        previousPair = null;
+        return true;
+      },
       applyConfig,
       getConfig: () => activeConfig,
       getBaselineIdentity: baselineIdentity,
       dispose() {
         if (disposed) return;
         disposed = true;
+        drawScheduler?.dispose();
         restoreSources();
         canvas?.removeEventListener?.("webglcontextlost", onContextLost);
         canvas?.removeEventListener?.("webglcontextrestored", onContextRestored);
         statusElement?.remove?.();
+        nameAdapter?.dispose();
         compositor?.dispose?.();
         canvas?.remove?.();
       },

@@ -30,14 +30,23 @@ without a clock does not stop or restart a timeline that is already playing.
 
 If you move to a new step while a cue is still being applied, the old cue is
 abandoned and only the latest one completes. The status line under the step
-shows *applying*, *ready*, or *failed*.
+shows *sending*, *sent*, or *failed*. A failed send stays on the current step.
+Press the same control again to retry. A failed presentation close also stays
+on the current step and does not take the special Close destination.
 
 Presentation steps show GIS slide controls in the staff remote. Use Previous
 and Next for slides and the separate Close button to leave the presentation.
 Scene Back, Scene Next, and Home close the presentation before changing the
 run-of-show step. Only the presentation Close button runs a special destination:
 Shura resumes the parent choice, and Hostages advances to Nir Oz people.
-Returning Home also cancels any pending cue and closes the archive.
+Returning Home cancels any pending cue, closes a known presentation only after
+that close is acknowledged, clears search focus, and applies the Home cue:
+the six Home layers, overview narrative, idle clock, and no escape routes.
+Black ground, narrative houses, people, the name wall, and investigation rows
+turn off. If that reset fails, the remote stays on the previous screen and
+shows *failed*; press Home again to retry. The projection camera does not move.
+The first connected, hydrated Home applies this reset once. A later reconnect
+does not send it again.
 
 ## Home shortcuts
 
@@ -86,7 +95,7 @@ The legend matches the people filter.
 
 | Set | Layers |
 | :--- | :--- |
-| Focus | Settlement names, settlement outlines, settlements, Route 232, black ground |
+| Focus | Settlement names, settlement outlines, settlements, Route 232 |
 | Opening | Focus + SEA + Gaza roads |
 | Timeline | Opening + investigation polygons, infiltration routes, alarms |
 | Nova timeline | Focus + investigation polygons, infiltration routes, alarms (no SEA, no Gaza roads) |
@@ -98,17 +107,20 @@ the visitor remote.
 
 ## Main show
 
-The main show has no narrative, so any step with a cue exits the current
-narrative.
+The full projection sequence has eight steps and no separate opening slide.
+Home is that opening state. The show has no narrative, so any step with a cue
+exits the current narrative.
 
 | # | Step | Layers | Clock | Other | Remote controls |
 | :---: | :--- | :--- | :--- | :--- | :--- |
-| 1 | Opening | Opening | Stopped (idle) | | |
-| 2 | The opening minutes | Timeline | Plays from the first event up to 06:41 | | Timeline; Next becomes **Start the story: Segev family** |
+| 1 | The opening minutes | Timeline | Plays from the first event up to 06:41 | | Timeline; Next becomes **Start the story: Segev family** |
+| 2 | Segev family | Unchanged until the story starts | Unchanged | Junction, not a slide | One choice: Segev |
 | 3 | The rest of the day | Timeline | Plays from 06:42 to the end (earlier events already shown) | | Timeline; Next becomes **Start the story: Nova and Mor Levy** |
-| 4 | Identity database | Identity | Stopped (idle) | | Name search |
-| 5 | Wall of names | Wall | Stopped (idle) | | Name search |
-| 6 | Back to the start | Opening | Stopped (idle) | | |
+| 4 | Nova and Mor Levy | Unchanged until the story starts | Unchanged | Junction, not a slide | One choice: Nova |
+| 5 | Narratives | Unchanged until a story starts | Unchanged | Junction, not a slide | Sderot, Shura Camp, Hostages |
+| 6 | Identity database | Identity | Stopped (idle) | | Name search |
+| 7 | Wall of names | Wall | Stopped (idle) | | Name search |
+| 8 | Back to the start | Home layers | Stopped (idle) | Same reset as Home, while the remote stays on this step | |
 
 The narratives are not separate slides. On the slide before a narrative, the
 Next button is replaced by a button that starts it, so the show cannot skip
@@ -119,22 +131,39 @@ the chosen narrative, the show continues with the identity database.
 **Previous** on a narrative's first slide returns to the show slide before it.
 A narrative opened from the home screen ends with **Finish**.
 
-## Segev family (`segev`)
+## The timeline
+
+The home screen opens a direct three-step timeline. It is not part of the
+eight-step sequence. The first two steps are the same opening-minutes and
+rest-of-day cues. The third step, **The full timeline**, shows the complete
+idle story immediately: timeline layers, overview narrative, idle clock, and
+no escape routes. It does not keep playing and it does not use the Nova ended
+clock. Next finishes to Home. Back starts the rest of the day again from 06:42.
 
 | # | Step | Layers | Clock | Remote controls |
 | :---: | :--- | :--- | :--- | :--- |
-| 1 | The house in Be'eri | Focus | Idle after entry (caption 06:41) | |
-| 2 | Presentation | Focus | No change | Open the Segev slides from the remote; Close stays on this step. |
+| 1 | The opening minutes | Timeline | Plays up to 06:41 | Timeline |
+| 2 | The rest of the day | Timeline | Plays from 06:42 to the end | Timeline |
+| 3 | The full timeline | Timeline | Stopped (idle), complete story | Next returns Home |
+
+## Segev family (`segev`)
+
+Segev is one step. The house and the manual presentation controls are on that
+same step. Close stays on the step.
+
+| # | Step | Layers | Clock | Remote controls |
+| :---: | :--- | :--- | :--- | :--- |
+| 1 | The house in Be'eri | Focus | Idle after entry (caption 06:41) | Open the Segev slides from the remote; Close stays on this step. |
 
 ## Nova and Mor Levy (`nova`)
 
 | # | Step | Layers | Clock | Escape routes | Remote controls |
 | :---: | :--- | :--- | :--- | :--- | :--- |
 | 1 | The Nova site | Focus + open spaces | Stopped; previews beat 1 and shows 08:03 | All off | |
-| 2 | The Nova story | Nova timeline | Five authored beats, 4 seconds each (20 seconds total); play starts beat 1 at 0% | All off | Five-mark scrubber and beat navigation |
-| 3 | Escape routes | Nova timeline | No change | Individual routes on | Escape toggles |
-| 4 | Mor Levy | Nova timeline | No change | Mor's route only | Escape toggles, archive (מור לוי), and Mor Levy slides; Close stays on this step. |
-| 5 | Memorial | Focus + people (Nova people only) | No change | Individual routes on | Escape toggles and Nova memorial slides; Close stays on this step. |
+| 2 | The compounds | Nova timeline | Five authored beats, 4 seconds each (20 seconds total); play starts beat 1 at 0% | All off | Five-mark scrubber and beat navigation |
+| 3 | Escape routes | Nova timeline | Ended; leaves a partial play unfinished | Individual routes on | Individual route control only |
+| 4 | Mor Levy | Nova timeline | Ended | Mor's route only | Mor route control and Mor Levy slides; Close stays on this step. |
+| 5 | Memorial | Focus + people (Nova people only) | Ended Nova clock; compounds stay visible through Nova virtual membership even when the stored rows have no playable layers | Settled intersections; route ribbons off | Memorial slides open automatically after the cue is sent; Close stays on this step. No escape toggles and no route replay. |
 
 The Nova timeline uses five authored beats, not source-timestamp grouping:
 
@@ -154,12 +183,19 @@ and Left/Right, Home, and End keyboard controls select a beat without wrapping;
 the first and last marks sit at the scrubber ends. Polygon 107 is excluded
 pending source review and its source record is unchanged.
 
+The compounds step starts playback. Next leaves that playback before it
+finishes and ends the Nova clock on the escape-routes step. Routes expose only
+the individual-route control. Mor exposes only Mor's route, plus manual slides.
+Memorial does not replay routes.
+
 ## Sderot (`sderot`)
+
+Sderot is one step. The station and the manual presentation controls are on
+that same step. Close stays on the step.
 
 | # | Step | Layers | Clock | Remote controls |
 | :---: | :--- | :--- | :--- | :--- |
-| 1 | Sderot | Focus | Idle after entry | |
-| 2 | Presentation | Focus | No change | Open the Sderot slides from the remote; Close stays on this step. |
+| 1 | Sderot | Focus | Idle after entry | Open the Sderot slides from the remote; Close stays on this step. |
 
 ## Shura Camp (`shura`; no separate entry scene)
 
@@ -185,9 +221,10 @@ GIS; the projection continues to show the narrative scene.
 
 ## Archive
 
-- **Archive button** (Nova step 4, Hostages step 1): selects the named person
-  and opens their NLI record in the archive window on the GIS machine. Pressing
-  it again closes the archive.
+- **Archive button** (Hostages step 1): selects חיים פרי and opens their NLI
+  record in the archive window on the GIS machine. Pressing it again closes
+  the archive. Nova step 4, Mor Levy, has no archive and no person query. It
+  has the Mor route toggle and manual slides.
 - **Name search** (identity database and wall of names): picking a person
   selects them. The GIS map flies to the point and shows a name pop-up, and
   the model marks the point.

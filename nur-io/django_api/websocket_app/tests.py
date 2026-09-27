@@ -66,6 +66,20 @@ class ProjectionTransientRelayTests(IsolatedAsyncioTestCase):
             await consumer.handle_otef_message(message)
         consumer.channel_layer.group_send.assert_not_awaited()
 
+    async def test_wall_ack_relays_only_bounded_exact_diagnostics(self):
+        consumer = GeneralConsumer()
+        consumer.room_group_name = 'otef_channel'
+        consumer.channel_layer = type('Layer', (), {'group_send': AsyncMock()})()
+        base = {'type': 'otef_projection_applied', 'table': 'otef', 'output': 'left', 'revision': 8,
+                'instanceId': '11111111-1111-4111-8111-111111111111', 'success': True}
+        wall = {'datasetVersion': 'nli-release', 'mode': 'wall', 'digest': 'a' * 64, 'expected': 1228, 'placed': 1228}
+        await consumer.handle_otef_message({**base, 'wall': wall})
+        self.assertEqual(consumer.channel_layer.group_send.await_args.args[1]['message']['wall'], wall)
+        for bad in ({**wall, 'placed': 1229}, {**wall, 'expected': True}, {**wall, 'digest': 'short'},
+                    {**wall, 'extra': 1}, {**wall, 'datasetVersion': 'x' * 129}):
+            await consumer.handle_otef_message({**base, 'wall': bad})
+        self.assertEqual(consumer.channel_layer.group_send.await_count, 1)
+
 
 class TransientViewportRelayTests(IsolatedAsyncioTestCase):
     async def test_transient_viewport_is_broadcast_without_database_save(self):

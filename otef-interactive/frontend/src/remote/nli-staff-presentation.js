@@ -9,10 +9,11 @@ function uuid() {
 }
 
 export function createNliStaffPresentationController({ dataContext, onStateChange = () => {} } = {}) {
-  let state = { phase: "closed", segmentId: null, sessionId: null, slide: null, range: null };
+  let state = { phase: "closed", segmentId: null, sessionId: null, slide: null, range: null, retryOpenSegmentId: null };
   let session = null;
   let priorGeneration = 0;
   let pending = null;
+  let openObservation = null;
   let forcedClosePromise = null;
   let destroyed = false;
   const unsubscribe = dataContext?.subscribe?.("narrativePresentationResult", onResult);
@@ -29,28 +30,74 @@ export function createNliStaffPresentationController({ dataContext, onStateChang
       result?.sequence === command.sequence && result?.requestId === command.requestId;
   }
 
+  function rememberOpenedResponder(request, result) {
+    if (session?.id !== request.command.presentationSessionId ||
+        session.generation !== request.command.presentationGeneration) return;
+    const responderId = result.sourceId ?? null;
+    const newResponder = !session.responderIds.has(responderId);
+    session.responderIds.add(responderId);
+    if (pending?.command.presentationAction === "close" &&
+        pending.command.presentationSessionId === session.id &&
+        pending.closeRequiresKnownResponders && newResponder) {
+      pending.closeResponders.add(responderId);
+    }
+  }
+
   function onResult(result) {
-    if (!pending || !matches(result, pending.command)) return;
-    const request = pending;
-    pending = null;
-    clearTimeout(request.timer);
-    if (result.outcome === "unavailable") {
-      session = null;
-      publish({ phase: "failed", sessionId: null, segmentId: request.command.segmentId, slide: null, range: null });
-      request.resolve(false);
+    if (!pending || !matches(result, pending.command)) {
+      if (openObservation && matches(result, openObservation.command) && result.outcome === "opened") {
+        rememberOpenedResponder(openObservation, result);
+      }
       return;
     }
+    const request = pending;
     const successful = (request.command.presentationAction === "open" && result.outcome === "opened") ||
       (["next", "previous"].includes(request.command.presentationAction) && result.outcome === "ready") ||
       (request.command.presentationAction === "close" && result.outcome === "closed");
+    const responderId = result.sourceId ?? null;
+    const knownResponder = session?.responderIds?.has(responderId) === true;
+
+    // A GIS without this session can report `closed` as a no-op. It cannot
+    // confirm that a viewer which actually opened the session has closed.
+    if (request.command.presentationAction === "close" && successful) {
+      if (request.closeRequiresKnownResponders && !knownResponder) return;
+      if (request.closeRequiresKnownResponders) {
+        request.closeResponders.delete(responderId);
+        if (request.closeResponders.size > 0) return;
+      }
+    }
+
     if (!successful) {
-      publish({ phase: "failed", segmentId: request.command.segmentId, sessionId: null, slide: null, range: null });
-      request.resolve(false);
+      if (request.command.presentationAction === "close") {
+        if (request.closeRequiresKnownResponders && !knownResponder) return;
+        request.lastFailure = result;
+        return;
+      }
+      // Keep Open and navigation requests pending so a later correlated
+      // success from another GIS can win. The existing deadline settles a
+      // request that receives only unsuccessful replies.
+      request.lastFailure = result;
       return;
+    }
+
+    pending = null;
+    if (request.command.presentationAction === "open") {
+      rememberOpenedResponder(request, result);
+      openObservation = request;
+    } else {
+      clearTimeout(request.timer);
+      session?.responderIds?.add(responderId);
     }
     if (request.command.presentationAction === "close") {
       session = null;
-      publish({ phase: "closed", sessionId: null, segmentId: null, slide: null, range: null });
+      publish({
+        phase: "closed",
+        sessionId: null,
+        segmentId: null,
+        slide: null,
+        range: null,
+        retryOpenSegmentId: request.command.segmentId,
+      });
     } else {
       publish({
         phase: "open",
@@ -58,14 +105,38 @@ export function createNliStaffPresentationController({ dataContext, onStateChang
         sessionId: request.command.presentationSessionId,
         slide: Number.isInteger(result.slide) ? result.slide : state.slide,
         range: Array.isArray(result.range) ? result.range : state.range,
+        retryOpenSegmentId: request.command.presentationAction === "open" ? null : state.retryOpenSegmentId,
       });
     }
     request.resolve(true);
   }
 
+  function finishWithResult(request) {
+    if (pending !== request) return;
+    pending = null;
+    clearTimeout(request.timer);
+    const action = request.command.presentationAction;
+    const retainSession = action !== "open";
+    if (action === "open") state = { ...state, retryOpenSegmentId: request.command.segmentId };
+    if (!retainSession) session = null;
+    publish({
+      phase: "failed",
+      segmentId: request.command.segmentId,
+      sessionId: retainSession ? session?.id ?? null : null,
+      slide: null,
+      range: null,
+    });
+    request.resolve(false);
+  }
+
   function setFailed(retainSession = true) {
     if (!retainSession) session = null;
-    publish({ phase: "failed", sessionId: null, slide: null, range: null });
+    publish({
+      phase: "failed",
+      sessionId: retainSession ? session?.id ?? null : null,
+      slide: null,
+      range: null,
+    });
   }
 
   function dispatch(action, segmentId) {
@@ -75,10 +146,12 @@ export function createNliStaffPresentationController({ dataContext, onStateChang
     }
     if (pending) return pending.promise;
     if (action === "open") {
+      if (openObservation) clearTimeout(openObservation.timer);
+      openObservation = null;
       const id = uuid();
       const generation = Math.max(Date.now(), priorGeneration + 1);
       priorGeneration = generation;
-      session = { id, generation, segmentId, sequence: 0 };
+      session = { id, generation, segmentId, sequence: 0, responderIds: new Set() };
     }
     if (!session || (segmentId && segmentId !== session.segmentId)) return Promise.resolve(false);
     const targetSegment = session.segmentId;
@@ -94,20 +167,41 @@ export function createNliStaffPresentationController({ dataContext, onStateChang
     publish({ phase, segmentId: targetSegment, sessionId: session.id });
     let resolveRequest;
     const promise = new Promise((resolve) => { resolveRequest = resolve; });
-    const request = { command, promise, resolve: resolveRequest, timer: null };
+    const closeResponders = action === "close" ? new Set(session.responderIds) : null;
+    const request = {
+      command,
+      promise,
+      resolve: resolveRequest,
+      timer: null,
+      closeResponders,
+      closeRequiresKnownResponders: Boolean(closeResponders?.size),
+    };
     pending = request;
     request.timer = setTimeout(() => {
-      if (pending !== request) return;
-      pending = null;
-      setFailed(true);
-      request.resolve(false);
+      if (pending === request) {
+        if (request.lastFailure) {
+          finishWithResult(request);
+        } else {
+          pending = null;
+          if (request.command.presentationAction === "open") {
+            state = { ...state, retryOpenSegmentId: request.command.segmentId };
+          }
+          setFailed(true);
+          request.resolve(false);
+        }
+      }
+      if (openObservation === request) openObservation = null;
     }, COMMAND_TIMEOUT_MS);
     Promise.resolve(dataContext.narrativePresentationCommand(command)).catch(() => {
       if (pending !== request) return;
       pending = null;
       clearTimeout(request.timer);
+      if (request.command.presentationAction === "open") {
+        state = { ...state, retryOpenSegmentId: request.command.segmentId };
+      }
       setFailed(true);
       request.resolve(false);
+      if (openObservation === request) openObservation = null;
     });
     return promise;
   }
@@ -162,14 +256,37 @@ export function createNliStaffPresentationController({ dataContext, onStateChang
         pending.resolve(false);
         pending = null;
       }
+      if (openObservation) clearTimeout(openObservation.timer);
+      openObservation = null;
       session = null;
     },
   };
 }
 
-export function presentationControlsHtml(step, state, locale) {
+function slideControls(step, state, locale, labels, disabled) {
+  const range = state?.range;
+  const relative = Array.isArray(range) && Number.isInteger(state.slide)
+    ? `${state.slide - range[0] + 1} / ${range[1] - range[0] + 1}`
+    : "";
+  const title = step.title?.[locale] || step.title?.he || "";
+  const disabledAttr = disabled ? " disabled" : "";
+  return `<section class="presentation-controls" aria-label="${title}">
+    <div class="presentation-controls-heading"><span>${title}</span><span class="presentation-counter">${relative}</span></div>
+    <div class="presentation-slide-actions">
+      <button type="button" class="btn btn--outline" data-presentation-action="previous"${disabledAttr}>${labels.previous}</button>
+      <button type="button" class="btn" data-presentation-action="next"${disabledAttr}>${labels.next}</button>
+    </div>
+    <button type="button" class="btn btn--outline presentation-close" data-presentation-action="close"${disabledAttr}>${labels.close}</button>
+  </section>`;
+}
+
+export function nliPresentationUsesRemoteControls(presentation) {
+  return Boolean(presentation) && presentation.controls !== false;
+}
+
+export function presentationControlsHtml(step, state, locale, mutationBusy = false) {
   const presentation = step?.presentation;
-  if (!presentation) return "";
+  if (!nliPresentationUsesRemoteControls(presentation)) return "";
   const labels = {
     open: messageForLocale(locale, "presentationOpen"),
     previous: messageForLocale(locale, "presentationPrevious"),
@@ -177,27 +294,21 @@ export function presentationControlsHtml(step, state, locale) {
     close: messageForLocale(locale, "presentationClose"),
     unavailable: messageForLocale(locale, "presentationUnavailable"),
   };
-  if (state?.phase === "failed" && state.segmentId === presentation.segmentId) {
-    return `<p class="presentation-unavailable" role="status">${labels.unavailable}</p>`;
+  const sameSegment = state?.segmentId === presentation.segmentId;
+  if (["opening", "applying", "closing"].includes(state?.phase) && sameSegment) {
+    return slideControls(step, state, locale, labels, true);
   }
-  const active = state?.phase === "open" && state.segmentId === presentation.segmentId;
+  if (state?.phase === "failed" && sameSegment) {
+    const retryAction = state.sessionId ? "close" : "open";
+    const retryLabel = retryAction === "close" ? labels.close : labels.open;
+    return `<p class="presentation-unavailable" role="status">${labels.unavailable}</p><div class="presentation-controls"><button type="button" class="btn" data-presentation-action="${retryAction}">${retryLabel}</button></div>`;
+  }
+  const active = state?.phase === "open" && sameSegment;
   if (!active) {
-    if (presentation.open !== "manual" || state?.phase !== "closed") return "";
-    return `<div class="presentation-controls"><button type="button" class="btn" data-presentation-action="open">${labels.open}</button></div>`;
+    if ((presentation.open !== "manual" && state?.retryOpenSegmentId !== presentation.segmentId) || state?.phase !== "closed") return "";
+    return `<div class="presentation-controls"><button type="button" class="btn" data-presentation-action="open"${mutationBusy ? " disabled" : ""}>${labels.open}</button></div>`;
   }
-  const range = state.range;
-  const relative = Array.isArray(range) && Number.isInteger(state.slide)
-    ? `${state.slide - range[0] + 1} / ${range[1] - range[0] + 1}`
-    : "";
-  const title = step.title?.[locale] || step.title?.he || "";
-  return `<section class="presentation-controls" aria-label="${title}">
-    <div class="presentation-controls-heading"><span>${title}</span><span class="presentation-counter">${relative}</span></div>
-    <div class="presentation-slide-actions">
-      <button type="button" class="btn btn--outline" data-presentation-action="previous">${labels.previous}</button>
-      <button type="button" class="btn" data-presentation-action="next">${labels.next}</button>
-    </div>
-    <button type="button" class="btn btn--outline presentation-close" data-presentation-action="close">${labels.close}</button>
-  </section>`;
+  return slideControls(step, state, locale, labels, mutationBusy);
 }
 
 export function createNliStaffPresentationButtonHandler({

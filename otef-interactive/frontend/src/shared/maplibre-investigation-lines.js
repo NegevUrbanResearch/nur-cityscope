@@ -20,19 +20,29 @@ import {
   NOVA_PARALLEL_IMPACT_KIND_LINE,
   novaParallelImpactObjectIds,
 } from "./nli-nova-escape-impact.js";
+import {
+  clipFeatureToProgress,
+  splitCompositeLineFrame,
+} from "./nli-unconfirmed-route-progress.js";
 
 export const INVESTIGATION_LINE_SOURCE_IDS = Object.freeze({
   future: "nli-investigation-line-future",
+  unconfirmedCompleted: "nli-investigation-line-unconfirmed-completed",
+  unconfirmedActive: "nli-investigation-line-unconfirmed-active",
   completedCarrier: "nli-investigation-line-completed-carrier",
   completedMotion: "nli-investigation-line-completed-motion",
+  compositeActive: "nli-investigation-line-composite-active",
   active: "nli-investigation-line-active",
   head: "nli-investigation-line-head",
 });
 
 export const INVESTIGATION_LINE_LAYER_IDS = Object.freeze({
   future: "nli-investigation-line-future-line",
+  unconfirmedCompleted: "nli-investigation-line-unconfirmed-completed-line",
+  unconfirmedActive: "nli-investigation-line-unconfirmed-active-line",
   completedCarrier: "nli-investigation-line-completed-carrier-line",
   completedMotion: "nli-investigation-line-completed-motion-line",
+  compositeActive: "nli-investigation-line-composite-active-line",
   active: "nli-investigation-line-active-line",
   head: "nli-investigation-line-head-circle",
 });
@@ -46,16 +56,22 @@ export const LINE_HEAD_LAYER_ID = INVESTIGATION_LINE_LAYER_IDS.head;
 const OWNED = Object.freeze([
   [INVESTIGATION_LINE_LAYER_IDS.head, INVESTIGATION_LINE_SOURCE_IDS.head],
   [INVESTIGATION_LINE_LAYER_IDS.active, INVESTIGATION_LINE_SOURCE_IDS.active],
+  [INVESTIGATION_LINE_LAYER_IDS.compositeActive, INVESTIGATION_LINE_SOURCE_IDS.compositeActive],
+  [INVESTIGATION_LINE_LAYER_IDS.unconfirmedActive, INVESTIGATION_LINE_SOURCE_IDS.unconfirmedActive],
   [INVESTIGATION_LINE_LAYER_IDS.completedMotion, INVESTIGATION_LINE_SOURCE_IDS.completedMotion],
   [INVESTIGATION_LINE_LAYER_IDS.completedCarrier, INVESTIGATION_LINE_SOURCE_IDS.completedCarrier],
+  [INVESTIGATION_LINE_LAYER_IDS.unconfirmedCompleted, INVESTIGATION_LINE_SOURCE_IDS.unconfirmedCompleted],
   [INVESTIGATION_LINE_LAYER_IDS.future, INVESTIGATION_LINE_SOURCE_IDS.future],
 ]);
 
 const OVERLAY = new Set([
   INVESTIGATION_LINE_LAYER_IDS.head,
   INVESTIGATION_LINE_LAYER_IDS.active,
+  INVESTIGATION_LINE_LAYER_IDS.compositeActive,
+  INVESTIGATION_LINE_LAYER_IDS.unconfirmedActive,
   INVESTIGATION_LINE_LAYER_IDS.completedMotion,
   INVESTIGATION_LINE_LAYER_IDS.completedCarrier,
+  INVESTIGATION_LINE_LAYER_IDS.unconfirmedCompleted,
 ]);
 
 const COMPLETED_OPACITY = 1;
@@ -152,10 +168,14 @@ function pointsFeatureCollection(points) {
         const coordinates = item?.coordinates;
         if (!finiteCoordinate(coordinates)) return null;
         const objectId = item?.properties?.OBJECTID ?? item?.OBJECTID;
+        const headKind = item?.properties?.headKind;
+        const properties = {};
+        if (objectId != null) properties.OBJECTID = objectId;
+        if (typeof headKind === "string") properties.headKind = headKind;
         return {
           type: "Feature",
           id: `head-${index}`,
-          properties: objectId == null ? {} : { OBJECTID: objectId },
+          properties,
           geometry: { type: "Point", coordinates },
         };
       })
@@ -201,6 +221,15 @@ export function lineHeadCoordinatesAt(features, clock, beatElapsedMs) {
 function profileValue(profile, key, fallback) {
   const value = Number(profile?.[key]);
   return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function unconfirmedRoutePaint(profile, width, routeScale, carrierWidth) {
+  const widthScale = profileValue(profile, "unconfirmedWidthScale", NLI_VISUAL_TOKENS.routeUnconfirmedWidthScale || 1);
+  const lineWidth = carrierWidth * width * routeScale * widthScale;
+  return {
+    lineWidth,
+    opacity: NLI_VISUAL_TOKENS.routeUnconfirmedOpacity * profileValue(profile, "unconfirmedOpacityMultiplier", 1),
+  };
 }
 
 function safelyGetSource(map, id) {
@@ -249,8 +278,16 @@ function sourceData(map, sourceId, data) {
   if (source && typeof source.setData === "function") source.setData(data);
 }
 
-function featureSignature(features) {
-  return features.map((feature) => `${feature.id}:${JSON.stringify(feature.geometry)}`).join("|");
+function lightFeatureSignature(features) {
+  return (Array.isArray(features) ? features : []).map((feature) => {
+    const coords = feature?.geometry?.type === "LineString"
+      ? feature.geometry.coordinates
+      : feature?.geometry?.type === "MultiLineString"
+        ? feature.geometry.coordinates?.[0]
+        : [];
+    const last = Array.isArray(coords) && coords.length ? coords[coords.length - 1] : [];
+    return `${feature?.id}:${feature?.properties?.OBJECTID}:${Array.isArray(coords) ? coords.length : 0}:${last?.[0]},${last?.[1]}`;
+  }).join("|");
 }
 
 function sameFeatureList(previous, next) {
@@ -269,31 +306,6 @@ function dataFor(data, key, fallback = []) {
     if (Array.isArray(data[alias])) return data[alias];
   }
   return fallback;
-}
-
-function buildHeadPoints(features, progress, metricsByObjectId) {
-  if (!(Number(progress) >= 0) || Number(progress) >= HEAD_HIDE_AT) return [];
-  const points = [];
-  for (const feature of Array.isArray(features) ? features : []) {
-    const id = featureId(feature, points.length);
-    let metrics = metricsByObjectId.get(id);
-    const path = metrics?.path || lineCoordinates(feature);
-    if (path.length < 2) continue;
-    if (!metrics) {
-      metrics = { ...buildLinePathMetrics(path), path };
-      metricsByObjectId.set(id, metrics);
-    }
-    const point = pointAtLineProgress(path, metrics, progress);
-    if (point) {
-      points.push({
-        coordinates: point,
-        properties: {
-          OBJECTID: feature?.properties?.OBJECTID ?? feature?.id,
-        },
-      });
-    }
-  }
-  return points;
 }
 
 function dataInvalidationKey(data) {
@@ -329,6 +341,11 @@ export function buildCompletedRouteFlowDasharray(flow, motionMode, lineWidthPx) 
   return maplibreLineDashFromLeafletPx(lineWidthPx, [dashPx, gapPx], -pixelStep);
 }
 
+// Confidence is encoded by stationary gaps, independently of the narrative reveal.
+export function buildUnconfirmedRouteDasharray(_flow, _motionMode, lineWidthPx) {
+  return maplibreLineDashFromLeafletPx(lineWidthPx, NLI_VISUAL_TOKENS.routeUnconfirmedDashPx);
+}
+
 export function buildDirectionalFlowGradient(
   flow,
   motionMode,
@@ -360,7 +377,6 @@ export function buildDirectionalFlowGradient(
  */
 export function createInvestigationLineRenderer(map, profile = NLI_DISPLAY_PROFILES.gis) {
   const resolvedProfile = typeof profile === "string" ? NLI_DISPLAY_PROFILES[profile] || NLI_DISPLAY_PROFILES.gis : profile || NLI_DISPLAY_PROFILES.gis;
-  const metricsByObjectId = new Map();
   const signatures = new Map();
   const collectionCache = new Map();
   let normalizedFeatureCache = new WeakMap();
@@ -394,6 +410,34 @@ export function createInvestigationLineRenderer(map, profile = NLI_DISPLAY_PROFI
       mounted = true;
       return;
     }
+    const unconfirmed = unconfirmedRoutePaint(resolvedProfile, width, routeScale, carrierWidth);
+    const unconfirmedDash = buildUnconfirmedRouteDasharray({}, "full", unconfirmed.lineWidth);
+    addSourceAndLayer(map, INVESTIGATION_LINE_SOURCE_IDS.unconfirmedCompleted, {
+      id: INVESTIGATION_LINE_LAYER_IDS.unconfirmedCompleted,
+      type: "line",
+      source: INVESTIGATION_LINE_SOURCE_IDS.unconfirmedCompleted,
+      layout: { "line-cap": "butt", "line-join": "round" },
+      paint: {
+        "line-color": NLI_VISUAL_TOKENS.incidentRed,
+        "line-opacity": unconfirmed.opacity,
+        "line-width": unconfirmed.lineWidth,
+        "line-dasharray": unconfirmedDash,
+        "line-dasharray-transition": { duration: 0, delay: 0 },
+      },
+    }, { type: "geojson", data: featureCollection([]) }, beforeId);
+    addSourceAndLayer(map, INVESTIGATION_LINE_SOURCE_IDS.unconfirmedActive, {
+      id: INVESTIGATION_LINE_LAYER_IDS.unconfirmedActive,
+      type: "line",
+      source: INVESTIGATION_LINE_SOURCE_IDS.unconfirmedActive,
+      layout: { "line-cap": "butt", "line-join": "round" },
+      paint: {
+        "line-color": NLI_VISUAL_TOKENS.incidentRed,
+        "line-opacity": unconfirmed.opacity,
+        "line-width": unconfirmed.lineWidth,
+        "line-dasharray": unconfirmedDash,
+        "line-dasharray-transition": { duration: 0, delay: 0 },
+      },
+    }, { type: "geojson", data: featureCollection([]) }, beforeId);
     addSourceAndLayer(map, INVESTIGATION_LINE_SOURCE_IDS.completedCarrier, {
       id: INVESTIGATION_LINE_LAYER_IDS.completedCarrier,
       type: "line",
@@ -413,6 +457,17 @@ export function createInvestigationLineRenderer(map, profile = NLI_DISPLAY_PROFI
         "line-dasharray-transition": { duration: 0, delay: 0 },
       },
     }, { type: "geojson", data: featureCollection([]) }, beforeId);
+    addSourceAndLayer(map, INVESTIGATION_LINE_SOURCE_IDS.compositeActive, {
+      id: INVESTIGATION_LINE_LAYER_IDS.compositeActive,
+      type: "line",
+      source: INVESTIGATION_LINE_SOURCE_IDS.compositeActive,
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: {
+        "line-color": NLI_VISUAL_TOKENS.incidentRed,
+        "line-opacity": ACTIVE_OPACITY,
+        "line-width": carrierWidth * width * routeScale,
+      },
+    }, { type: "geojson", data: featureCollection([]) }, beforeId);
     addSourceAndLayer(map, INVESTIGATION_LINE_SOURCE_IDS.active, {
       id: INVESTIGATION_LINE_LAYER_IDS.active,
       type: "line",
@@ -424,7 +479,13 @@ export function createInvestigationLineRenderer(map, profile = NLI_DISPLAY_PROFI
       id: INVESTIGATION_LINE_LAYER_IDS.head,
       type: "circle",
       source: INVESTIGATION_LINE_SOURCE_IDS.head,
-      paint: { "circle-color": NLI_VISUAL_TOKENS.routeReveal, "circle-radius": Math.max(2.25, HEAD_RADIUS * width), "circle-opacity": 0.95, "circle-stroke-color": NLI_VISUAL_TOKENS.annotationInk, "circle-stroke-width": 1.1 },
+      paint: {
+        "circle-color": ["case", ["==", ["get", "headKind"], "comet"], "rgba(0, 0, 0, 0)", NLI_VISUAL_TOKENS.routeReveal],
+        "circle-radius": Math.max(2.25, HEAD_RADIUS * width),
+        "circle-opacity": 0.95,
+        "circle-stroke-color": ["case", ["==", ["get", "headKind"], "comet"], NLI_VISUAL_TOKENS.incidentRed, NLI_VISUAL_TOKENS.annotationInk],
+        "circle-stroke-width": ["case", ["==", ["get", "headKind"], "comet"], 2, 1.1],
+      },
     }, { type: "geojson", data: pointsFeatureCollection([]) }, beforeId);
     mounted = true;
   }
@@ -433,7 +494,6 @@ export function createInvestigationLineRenderer(map, profile = NLI_DISPLAY_PROFI
     if (disposed) return;
     const nextDataInvalidationKey = dataInvalidationKey(data);
     if (lastDataInvalidationKey !== undefined && nextDataInvalidationKey !== lastDataInvalidationKey) {
-      metricsByObjectId.clear();
       signatures.clear();
       collectionCache.clear();
       normalizedFeatureCache = new WeakMap();
@@ -465,7 +525,7 @@ export function createInvestigationLineRenderer(map, profile = NLI_DISPLAY_PROFI
           return normalized;
         })
         .filter((feature) => feature?.geometry && validLineCoordinates(feature.geometry).length > 0);
-      collectionCache.set(key, { raw: sourceFeatures, features, signature: featureSignature(features) });
+      collectionCache.set(key, { raw: sourceFeatures, features, signature: lightFeatureSignature(features) });
       return features;
     }
     const normalized = {
@@ -473,17 +533,46 @@ export function createInvestigationLineRenderer(map, profile = NLI_DISPLAY_PROFI
       completed: normalizeCollection("completed", completed),
       active: normalizeCollection("active", active),
     };
+    const split = splitCompositeLineFrame({
+      activeFeatures: normalized.active,
+      completedFeatures: normalized.completed,
+      activeProgress: Number(frame.activeProgress) || 0,
+    });
+    const gradientActive = split.confirmedActive
+      .filter((item) => !item.clipGeometry)
+      .map((item) => item.feature);
+    const clippedConfirmed = split.confirmedActive
+      .filter((item) => item.clipGeometry)
+      .map((item) => clipFeatureToProgress(item.feature, item.progress))
+      .filter(Boolean);
+    const clippedUnconfirmed = split.unconfirmedActive
+      .map((item) => clipFeatureToProgress(item.feature, item.progress))
+      .filter(Boolean);
+    const bags = {
+      future: normalized.future,
+      completed: split.confirmedCompleted,
+      active: gradientActive,
+      unconfirmedCompleted: split.unconfirmedCompleted,
+      unconfirmedActive: clippedUnconfirmed,
+      compositeActive: clippedConfirmed,
+    };
+    const sourceByKey = {
+      future: INVESTIGATION_LINE_SOURCE_IDS.future,
+      completed: INVESTIGATION_LINE_SOURCE_IDS.completedCarrier,
+      active: INVESTIGATION_LINE_SOURCE_IDS.active,
+      unconfirmedCompleted: INVESTIGATION_LINE_SOURCE_IDS.unconfirmedCompleted,
+      unconfirmedActive: INVESTIGATION_LINE_SOURCE_IDS.unconfirmedActive,
+      compositeActive: INVESTIGATION_LINE_SOURCE_IDS.compositeActive,
+    };
     const changed = {};
-    for (const [key, features] of Object.entries(normalized)) {
-      const signature = collectionCache.get(key)?.signature || "";
+    for (const [key, features] of Object.entries(bags)) {
+      const signature = lightFeatureSignature(features);
       changed[key] = signatures.get(key) !== signature;
-      if (signatures.get(key) !== signature) {
-        const sourceId = key === "future" ? INVESTIGATION_LINE_SOURCE_IDS.future : key === "completed" ? INVESTIGATION_LINE_SOURCE_IDS.completedCarrier : INVESTIGATION_LINE_SOURCE_IDS.active;
-        const collection = { type: "FeatureCollection", features };
-        sourceData(map, sourceId, collection);
-        if (key === "completed") sourceData(map, INVESTIGATION_LINE_SOURCE_IDS.completedMotion, collection);
-        signatures.set(key, signature);
-      }
+      if (!changed[key]) continue;
+      const collection = { type: "FeatureCollection", features };
+      sourceData(map, sourceByKey[key], collection);
+      if (key === "completed") sourceData(map, INVESTIGATION_LINE_SOURCE_IDS.completedMotion, collection);
+      signatures.set(key, signature);
     }
     const motion = frame.completedRouteFlow || {};
     const motionMode = frame.motionMode || "full";
@@ -500,9 +589,18 @@ export function createInvestigationLineRenderer(map, profile = NLI_DISPLAY_PROFI
       motionMode === "full" &&
       flowProgress(motion, motionMode) !== flowProgress(previousFrame?.completedRouteFlow, previousFrame?.motionMode || motionMode)
     );
+    const unconfirmed = unconfirmedRoutePaint(resolvedProfile, width, routeScale, carrierWidth);
     const parallelOpacity = projectionNovaDim
       ? ["case", ["in", ["to-string", ["get", "OBJECTID"]], ["literal", impactIds]], 1, NOVA_PARALLEL_DIM_OPACITY]
       : null;
+    const unconfirmedImpactMatch = [
+      "in",
+      ["coalesce", ["to-string", ["get", "parent_objectid"]], ["to-string", ["get", "OBJECTID"]]],
+      ["literal", impactIds],
+    ];
+    const unconfirmedOpacity = projectionNovaDim
+      ? ["case", unconfirmedImpactMatch, unconfirmed.opacity, NOVA_PARALLEL_DIM_OPACITY]
+      : unconfirmed.opacity;
     try {
       if (staticPaintChanged && safelyGetLayer(map, INVESTIGATION_LINE_LAYER_IDS.future) && typeof map.setPaintProperty === "function") {
         map.setPaintProperty(INVESTIGATION_LINE_LAYER_IDS.future, "line-color", NLI_VISUAL_TOKENS.incidentRed);
@@ -524,6 +622,18 @@ export function createInvestigationLineRenderer(map, profile = NLI_DISPLAY_PROFI
           );
         }
       }
+      if (staticPaintChanged && typeof map.setPaintProperty === "function") {
+        for (const lineId of [INVESTIGATION_LINE_LAYER_IDS.unconfirmedCompleted, INVESTIGATION_LINE_LAYER_IDS.unconfirmedActive]) {
+          if (!safelyGetLayer(map, lineId)) continue;
+          map.setPaintProperty(lineId, "line-color", NLI_VISUAL_TOKENS.incidentRed);
+          map.setPaintProperty(lineId, "line-width", unconfirmed.lineWidth);
+          map.setPaintProperty(lineId, "line-dasharray", buildUnconfirmedRouteDasharray(null, null, unconfirmed.lineWidth));
+        }
+      }
+      if (staticPaintChanged && safelyGetLayer(map, INVESTIGATION_LINE_LAYER_IDS.compositeActive) && typeof map.setPaintProperty === "function") {
+        map.setPaintProperty(INVESTIGATION_LINE_LAYER_IDS.compositeActive, "line-color", NLI_VISUAL_TOKENS.incidentRed);
+        map.setPaintProperty(INVESTIGATION_LINE_LAYER_IDS.compositeActive, "line-width", carrierWidth * width * routeScale);
+      }
       if ((!paintInitialized || changed.active || Number(frame.activeProgress) !== Number(previousFrame?.activeProgress)) && safelyGetLayer(map, INVESTIGATION_LINE_LAYER_IDS.active) && typeof map.setPaintProperty === "function") {
         map.setPaintProperty(INVESTIGATION_LINE_LAYER_IDS.active, "line-color", NLI_VISUAL_TOKENS.incidentRed);
         map.setPaintProperty(INVESTIGATION_LINE_LAYER_IDS.active, "line-gradient", buildLineProgressGradient(frame.activeProgress, NLI_VISUAL_TOKENS.incidentRed, "rgba(195,31,79,0)"));
@@ -543,6 +653,27 @@ export function createInvestigationLineRenderer(map, profile = NLI_DISPLAY_PROFI
             parallelOpacity ?? 1,
           );
         }
+        if (safelyGetLayer(map, INVESTIGATION_LINE_LAYER_IDS.compositeActive)) {
+          map.setPaintProperty(
+            INVESTIGATION_LINE_LAYER_IDS.compositeActive,
+            "line-opacity",
+            parallelOpacity ?? ACTIVE_OPACITY,
+          );
+        }
+        if (safelyGetLayer(map, INVESTIGATION_LINE_LAYER_IDS.unconfirmedCompleted)) {
+          map.setPaintProperty(
+            INVESTIGATION_LINE_LAYER_IDS.unconfirmedCompleted,
+            "line-opacity",
+            unconfirmedOpacity,
+          );
+        }
+        if (safelyGetLayer(map, INVESTIGATION_LINE_LAYER_IDS.unconfirmedActive)) {
+          map.setPaintProperty(
+            INVESTIGATION_LINE_LAYER_IDS.unconfirmedActive,
+            "line-opacity",
+            unconfirmedOpacity,
+          );
+        }
         if (safelyGetLayer(map, INVESTIGATION_LINE_LAYER_IDS.active)) {
           map.setPaintProperty(
             INVESTIGATION_LINE_LAYER_IDS.active,
@@ -556,12 +687,17 @@ export function createInvestigationLineRenderer(map, profile = NLI_DISPLAY_PROFI
             "circle-opacity",
             parallelOpacity ?? 0.95,
           );
+          map.setPaintProperty(
+            INVESTIGATION_LINE_LAYER_IDS.head,
+            "circle-stroke-opacity",
+            ["case", ["==", ["get", "headKind"], "comet"], parallelOpacity ?? 1, 1],
+          );
         }
       }
     } catch (_) {
       // Style reload can invalidate an individual layer handle.
     }
-    const headPoints = buildHeadPoints(normalized.active, frame.activeProgress, metricsByObjectId);
+    const headPoints = Number(frame.activeProgress) >= HEAD_HIDE_AT ? [] : split.headPoints;
     const headData = pointsFeatureCollection(headPoints);
     const headSignature = headPoints.map((point) => {
       const coords = finiteCoordinate(point) ? point : point?.coordinates;
@@ -584,7 +720,6 @@ export function createInvestigationLineRenderer(map, profile = NLI_DISPLAY_PROFI
     }
     signatures.clear();
     collectionCache.clear();
-    metricsByObjectId.clear();
     normalizedFeatureCache = new WeakMap();
     lastHeadSignature = null;
     lastMotionMode = null;
@@ -613,7 +748,6 @@ export function createInvestigationLineRenderer(map, profile = NLI_DISPLAY_PROFI
     if (disposed) return;
     disposed = true;
     for (const [layerId, sourceId] of OWNED) removeLayerAndSource(map, layerId, sourceId);
-    metricsByObjectId.clear();
     signatures.clear();
     collectionCache.clear();
     lastHeadSignature = null;

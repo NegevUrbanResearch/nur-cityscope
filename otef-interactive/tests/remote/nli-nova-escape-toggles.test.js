@@ -60,30 +60,67 @@ describe("remote Nova fleeing overlay toggles", () => {
     setLocale("en", { force: true });
     const html = nliNovaEscapeTogglesHtml(
       { id: "nova", transition: "enter", revision: 1 },
-      { individual: true, overlap: false, mor: true },
+      { individual: true, overlap: true, mor: false, settled: false },
+      ["individual"],
     );
     expect(html).toContain('data-nli-nova-escape="individual"');
-    expect(html).toContain('data-nli-nova-escape="overlap"');
-    expect(html).toContain('data-nli-nova-escape="mor"');
+    expect(html).not.toContain('data-nli-nova-escape="overlap"');
+    expect(html).not.toContain('data-nli-nova-escape="mor"');
     expect(html).toContain("Fleeing routes");
-    expect(html).toContain("Fleeing density (overlap count)");
-    expect(html).toContain("Mor Levy route");
+    expect(html).not.toContain("Fleeing density (overlap count)");
     expect(html).toContain("Routes from Nova");
     expect(html).toContain('aria-pressed="true"');
-    expect(html).toMatch(/data-nli-nova-escape="overlap"[^>]*aria-pressed="false"/);
     expect(html).not.toContain("data-nli-narrative");
     expect(html).not.toMatch(/\bEscape\b|survived|people count|COUNT_/);
-    expect(nliNovaEscapeTogglesHtml({ id: "segev", transition: "enter", revision: 1 }, { individual: true })).toBe("");
+    expect(nliNovaEscapeTogglesHtml(
+      { id: "segev", transition: "enter", revision: 1 },
+      { individual: true },
+      ["individual"],
+    )).toBe("");
+    expect(nliNovaEscapeTogglesHtml(
+      { id: "nova", transition: "enter", revision: 1 },
+      { settled: true },
+    )).toBe("");
     setLocale("he", { force: true });
     const he = nliNovaEscapeTogglesHtml(
       { id: "nova", transition: "enter", revision: 1 },
       { individual: true, overlap: false },
+      ["individual"],
     );
-    expect(he).toContain("צירי בריחה לפי צפיפות");
+    expect(he).toContain("צירי בריחה");
+    expect(he).not.toContain("צירי בריחה לפי צפיפות");
     const heCopy = [
       ...(he.matchAll(/aria-label="([^"]*)"/g)),
     ].map((match) => match[1]).join(" ") + he.replace(/<[^>]+>/g, " ");
     expect(heCopy).not.toMatch(/Escape|survived/i);
+  });
+
+  test("explicit individual and Mor kinds render even when the live flag is off", async () => {
+    const { setLocale } = await import("../../frontend/src/remote/remote-locale.js");
+    const { nliNovaEscapeTogglesHtml } = await import(
+      "../../frontend/src/remote/nli-nova-escape-toggles.js"
+    );
+    setLocale("en", { force: true });
+    const individual = nliNovaEscapeTogglesHtml(
+      { id: "nova", transition: "enter", revision: 1 },
+      { individual: false, overlap: true, mor: true, settled: false },
+      ["individual"],
+    );
+    expect(individual).toContain('data-nli-nova-escape="individual"');
+    expect(individual).toContain('aria-pressed="false"');
+    expect(individual).not.toContain("Fleeing density (overlap count)");
+    expect(individual).not.toContain('data-nli-nova-escape="mor"');
+
+    const mor = nliNovaEscapeTogglesHtml(
+      { id: "nova", transition: "enter", revision: 1 },
+      { individual: true, overlap: true, mor: false, settled: false },
+      ["mor"],
+    );
+    expect(mor).toContain('data-nli-nova-escape="mor"');
+    expect(mor).toContain("Mor Levy route");
+    expect(mor).toContain('aria-pressed="false"');
+    expect(mor).not.toContain('data-nli-nova-escape="individual"');
+    expect(mor).not.toContain('data-nli-nova-escape="overlap"');
   });
 
   test("click PATCHes overlay and does not setNarrative", async () => {
@@ -99,22 +136,21 @@ describe("remote Nova fleeing overlay toggles", () => {
     expect(event.stopPropagation).toHaveBeenCalled();
   });
 
-  test("timeline extras concatenate narrative then fleeing toggles then transport, in-flow", () => {
+  test("staff remote keeps in-flow Nova escape toggles after the regular panel drops them", () => {
+    const staffRemote = fs.readFileSync(
+      path.resolve(here, "../../frontend/src/remote/nli-staff-remote.js"),
+      "utf8",
+    );
     const layerSheet = fs.readFileSync(
       path.resolve(here, "../../frontend/src/remote/layer-sheet-controller.js"),
       "utf8",
     );
-    const extras = layerSheet.indexOf("`${narrativeSheet}${escapeToggles}${nliSheet}`");
-    expect(extras).toBeGreaterThan(-1);
-    expect(layerSheet.indexOf("${narrativeSheet}")).toBeLessThan(layerSheet.indexOf("${escapeToggles}"));
-    expect(layerSheet.indexOf("${escapeToggles}")).toBeLessThan(layerSheet.indexOf("${nliSheet}"));
-    expect(layerSheet.indexOf("consumeNliPackPaneClick(e, this)"))
-      .toBeLessThan(layerSheet.indexOf("consumeNliNovaEscapeClick(e, this)"));
-    expect(layerSheet.indexOf("consumeNliNovaEscapeClick(e, this)"))
-      .toBeLessThan(layerSheet.indexOf("consumeNliNarrativeButtonClick(e, this)"));
-    expect(layerSheet).toContain("setEscapeOverlay");
-    expect(layerSheet).toContain("mor: patch?.mor ?? current.mor");
-    expect(layerSheet).toContain('_subscribeDataContext("escapeOverlay"');
+    expect(staffRemote).toContain("nliNovaEscapeTogglesHtml(");
+    expect(staffRemote).toContain("escapeKinds");
+    expect(staffRemote).toContain("consumeNliNovaEscapeClick(");
+    expect(layerSheet).not.toContain("nliNovaEscapeTogglesHtml(");
+    expect(layerSheet).not.toContain("consumeNliNovaEscapeClick(");
+    expect(layerSheet).not.toContain("setEscapeOverlay");
 
     const css = fs.readFileSync(
       path.resolve(here, "../../frontend/css/remote-styles.css"),

@@ -24,6 +24,73 @@ test("selects browser mode only for the explicit outputMode query", () => {
   expect(resolveProjectionOutputMode("?span=left&outputMode=browser")).toBe("browser");
 });
 
+test('production output ignores the seam-proof query', async () => {
+  vi.stubEnv('DEV', false);
+  const oldDocument = globalThis.document;
+  let nameCanvases = 0;
+  const draws = [];
+  globalThis.document = { createElement() { return { style: {}, setAttribute() {}, addEventListener() {}, removeEventListener() {}, remove() {}, getContext() { nameCanvases++; return {}; } }; } };
+  try {
+    const surface = await createProjectionBrowserSurface({
+      host: { appendChild() {} }, spanId: 'left', search: '?outputMode=browser',
+      image: { complete: true, naturalWidth: 10, style: {} },
+      initialConfig: structuredClone(DEFAULT_PROJECTION_CONFIG),
+      fetchImpl: async () => ({ ok: false }),
+      rendererFactory: () => ({ draw(scene) { draws.push(scene); }, isContextLost: () => false, dispose() {} }),
+    });
+    expect(draws.at(-1).layers.some((layer) => layer.id === 'names')).toBe(false);
+    expect(nameCanvases).toBe(0);
+    surface.dispose();
+  } finally {
+    globalThis.document = oldDocument;
+    vi.unstubAllEnvs();
+  }
+});
+
+test('an explicit unready image removes a previously drawn image layer', async () => {
+  const oldDocument = globalThis.document;
+  const draws = [];
+  let imageReady = true;
+  const image = { complete: true, naturalWidth: 10, naturalHeight: 10, style: {} };
+  globalThis.document = { createElement() { return { style: {}, setAttribute() {}, addEventListener() {}, removeEventListener() {}, remove() {} }; } };
+  try {
+    const surface = await createProjectionBrowserSurface({
+      host: { appendChild() {} }, spanId: 'left', image,
+      getScene: () => ({ image: imageReady ? { source: image, contentVersion: 1 } : null, map: null }),
+      initialConfig: structuredClone(DEFAULT_PROJECTION_CONFIG), fetchImpl: async () => ({ ok: false }),
+      rendererFactory: () => ({ draw(scene) { draws.push(scene); }, isContextLost: () => false, dispose() {} }),
+    });
+    expect(draws.at(-1).layers.some((layer) => layer.id === 'image')).toBe(true);
+    imageReady = false;
+    surface.draw();
+    expect(draws.at(-1).layers.some((layer) => layer.id === 'image')).toBe(false);
+    surface.dispose();
+  } finally { globalThis.document = oldDocument; }
+});
+
+test('a stale local pair rollback cannot replace the newer browser mesh', async () => {
+  const oldDocument = globalThis.document;
+  globalThis.document = { createElement() { return { style: {}, setAttribute() {}, addEventListener() {}, removeEventListener() {}, remove() {} }; } };
+  let currentMesh;
+  try {
+    const surface = await createProjectionBrowserSurface({
+      host: { appendChild() {} }, spanId: 'left', image: { complete: true, naturalWidth: 10, style: {} },
+      initialConfig: structuredClone(DEFAULT_PROJECTION_CONFIG), fetchImpl: async () => ({ ok: false }),
+      rendererFactory: ({ mesh }) => { currentMesh = mesh; return { draw: () => true, setMesh: (next) => { currentMesh = next; }, isContextLost: () => false, dispose() {} }; },
+    });
+    const first = { config: { first: true }, mesh: { tag: 'first' } };
+    const second = { config: { second: true }, mesh: { tag: 'second' } };
+    surface.commitPair(first); surface.finalizePair(first);
+    surface.commitPair(second);
+    surface.rollbackPair(first);
+    expect(currentMesh).toBe(second.mesh);
+    expect(surface.getConfig()).toBe(second.config);
+    surface.rollbackPair(second);
+    expect(currentMesh).toBe(first.mesh);
+    surface.dispose();
+  } finally { globalThis.document = oldDocument; }
+});
+
 test("uses geographic projective placement and viewport normalization for the image layer", () => {
   const map = {
     _otefProjectionImage: { corners: [[0, 0], [1, 0], [1, 1], [0, 1]], width: 800, height: 400 },
@@ -65,7 +132,8 @@ test("loads the captured 1920x1080 asset for the requested span", async () => {
   const manifest = { width: 1920, height: 1080, assets: { left: { path: "left.json", sha256: await sha256Hex(mesh) } }, framing: { path: "../td-source-config.json", sha256: await sha256Hex(framing) } };
   const fetchImpl = vi.fn(async (url) => ({ ok: true, async arrayBuffer() { return url.endsWith("manifest.json") ? new TextEncoder().encode(JSON.stringify(manifest)).buffer : (url.endsWith("td-source-config.json") ? framing : mesh).buffer; } }));
   const result = await loadCapturedProjectionBaseline({ fetchImpl, spanId: "left", base: "/baseline/" });
-  expect(result.manifest.width).toBe(1920); expect(fetchImpl).toHaveBeenLastCalledWith("/baseline/left.json");
+  expect(result.manifest.width).toBe(1920); expect(fetchImpl).toHaveBeenLastCalledWith("/baseline/left.json", { cache: "no-store" });
+  expect(fetchImpl.mock.calls.every(([, options]) => options.cache === "no-store")).toBe(true);
 });
 
 test("verifies the manifest-selected mesh and pinned framing bytes", async () => {
@@ -172,15 +240,21 @@ test("identity startup survives unavailable framing and manifest bytes", async (
   const image = { complete: true, naturalWidth: 10, style: { visibility: "visible" } };
   const oldDocument = globalThis.document;
   globalThis.document = { createElement() { return { style: {}, setAttribute() {}, addEventListener() {}, removeEventListener() {}, remove() {} }; } };
-  let initialMesh;
-  const surface = await createProjectionBrowserSurface({
-    host, spanId: "left", image, initialConfig: structuredClone(DEFAULT_PROJECTION_CONFIG),
-    fetchImpl: async () => ({ ok: false }),
-    rendererFactory: ({ mesh }) => { initialMesh = mesh; return { draw: () => true, setMesh: vi.fn(), isContextLost: () => false, dispose() {} }; },
-  });
-  expect(initialMesh.vertices).toHaveLength(49);
-  expect(surface.getBaselineIdentity()).toEqual({ type: "identity" });
-  surface.dispose();
+  for (const disabled of [false, true]) {
+    let initialMesh;
+    const initialConfig = structuredClone(DEFAULT_PROJECTION_CONFIG);
+    initialConfig.outputs.left.warp.enabled = !disabled;
+    expect(initialConfig.schemaVersion).toBe(5);
+    const surface = await createProjectionBrowserSurface({
+      host, spanId: "left", image, initialConfig,
+      fetchImpl: async () => ({ ok: false }),
+      rendererFactory: ({ mesh }) => { initialMesh = mesh; return { draw: () => true, setMesh: vi.fn(), isContextLost: () => false, dispose() {} }; },
+    });
+    expect(initialMesh.vertices.length).toBeGreaterThan(0);
+    expect(surface.getBaselineIdentity()).toEqual({ type: "identity" });
+    expect(surface.draw()).toBe(true);
+    surface.dispose();
+  }
   globalThis.document = oldDocument;
 });
 
@@ -278,7 +352,7 @@ test("cancels pending baseline readiness before creating a browser surface", asy
     rendererFactory: vi.fn(),
   });
   await Promise.resolve();
-  expect(fetchImpl.mock.calls[0][1]).toEqual({ signal: controller.signal });
+  expect(fetchImpl.mock.calls[0][1]).toEqual({ signal: controller.signal, cache: "no-store" });
   controller.abort();
   resolveManifest({ ok: false });
   await expect(pending).rejects.toMatchObject({ name: "AbortError" });
@@ -341,4 +415,69 @@ test("surfaces baseline failures before a renderer or canvas exists", async () =
   })).rejects.toThrow(/baseline manifest unavailable/i);
   expect(children).toContain(errorElement);
   expect(errorElement.className).toBe("projection-browser-error");
+});
+
+test("browser surface exposes video protection state and schedules map redraws only while playback is active", async () => {
+  vi.useFakeTimers();
+  const oldDocument = globalThis.document;
+  const draws = [];
+  globalThis.document = { createElement() { return { style: {}, dataset: {}, setAttribute() {}, addEventListener() {}, removeEventListener() {}, remove() {} }; } };
+  try {
+    const surface = await createProjectionBrowserSurface({
+      host: { appendChild() {} }, spanId: "left", image: { complete: true, naturalWidth: 10, style: {} },
+      initialConfig: structuredClone(DEFAULT_PROJECTION_CONFIG), fetchImpl: async () => ({ ok: false }),
+      rendererFactory: () => ({ draw(scene) { draws.push(scene); return true; }, isContextLost: () => false, dispose() {} }),
+    });
+    expect(surface.canvas.dataset.videoPlaybackProtection).toBe("inactive");
+    surface.setVideoPlaybackActive(true);
+    surface.requestDraw();
+    surface.requestDraw();
+    expect(draws).toHaveLength(1);
+    vi.advanceTimersByTime(49);
+    expect(draws).toHaveLength(1);
+    vi.advanceTimersByTime(1);
+    expect(draws).toHaveLength(2);
+    expect(surface.canvas.dataset.videoPlaybackProtection).toBe("active");
+    surface.setVideoPlaybackActive(false);
+    surface.requestDraw();
+    expect(draws).toHaveLength(3);
+    expect(surface.canvas.dataset.videoPlaybackProtection).toBe("inactive");
+    surface.dispose();
+  } finally {
+    globalThis.document = oldDocument;
+    vi.useRealTimers();
+  }
+});
+
+test("cancels capped draws during context loss and redraws the latest scene on restoration", async () => {
+  vi.useFakeTimers();
+  const oldDocument = globalThis.document;
+  const listeners = new Map(); const draws = [];
+  let contextLost = false;
+  globalThis.document = { createElement() { return {
+    style: {}, dataset: {}, setAttribute() {}, remove() {},
+    addEventListener(type, callback) { listeners.set(type, callback); },
+    removeEventListener(type) { listeners.delete(type); },
+  }; } };
+  try {
+    const surface = await createProjectionBrowserSurface({
+      host: { appendChild() {} }, spanId: "left", image: { complete: true, naturalWidth: 10, style: {} },
+      initialConfig: structuredClone(DEFAULT_PROJECTION_CONFIG), fetchImpl: async () => ({ ok: false }),
+      rendererFactory: () => ({ draw(scene) { draws.push(scene); return true; }, isContextLost: () => contextLost, dispose() {} }),
+    });
+    surface.setVideoPlaybackActive(true);
+    surface.requestDraw();
+    contextLost = true;
+    listeners.get("webglcontextlost")?.({ preventDefault() {} });
+    surface.requestDraw();
+    vi.advanceTimersByTime(100);
+    expect(draws).toHaveLength(1);
+    contextLost = false;
+    listeners.get("webglcontextrestored")?.();
+    expect(draws).toHaveLength(2);
+    surface.dispose();
+  } finally {
+    globalThis.document = oldDocument;
+    vi.useRealTimers();
+  }
 });

@@ -169,7 +169,7 @@ describe("projection Segev narrative focus", () => {
     expect(map.getSource(NARRATIVE_FOCUS_RENDERER_IDS.source)).toBeNull();
   });
 
-  test("keeps the Be'eri outline after rebuilt projection layers without a Segev family marker", async () => {
+  test("does not inject a Be'eri impact outline after rebuilt projection layers and never mounts a Segev family marker", async () => {
     const map = createFakeMapLibreMap();
     const hiddenGroups = [{ id: "nli", layers: [
       { id: "investigation_polygons", enabled: false },
@@ -196,20 +196,20 @@ describe("projection Segev narrative focus", () => {
 
     controller.apply({ id: "segev", transition: "enter", revision: 1 });
     await Promise.all(pendingSyncs);
-    expect(map.getSource("nli-investigation-settlement-impact").data.features).toEqual([beeriOutline]);
-    expect(map.getLayer("nli-investigation-settlement-impact-outline")).toBeTruthy();
+    expect(map.getSource("nli-investigation-settlement-impact")).toBeFalsy();
+    expect(map.getLayer("nli-investigation-settlement-impact-outline")).toBeFalsy();
     expect(map.getLayer(NARRATIVE_FOCUS_RENDERER_IDS.halo)).toBeFalsy();
     expect(map.getLayer(NARRATIVE_FOCUS_RENDERER_IDS.label)).toBeFalsy();
 
     map.addLayer({ id: "curated-after-narrative", type: "fill", source: "curated" });
     controller.onStyleLoad();
     await Promise.all(pendingSyncs);
-    expect(map.getSource("nli-investigation-settlement-impact").data.features).toEqual([beeriOutline]);
+    expect(map.getSource("nli-investigation-settlement-impact")).toBeFalsy();
     expect(map.getSource(NARRATIVE_FOCUS_RENDERER_IDS.source)).toBeFalsy();
 
     controller.dispose();
     await Promise.all(pendingSyncs);
-    expect(map.getSource("nli-investigation-settlement-impact")).toBeNull();
+    expect(map.getSource("nli-investigation-settlement-impact")).toBeFalsy();
     expect(map.getSource(NARRATIVE_FOCUS_RENDERER_IDS.source)).toBeNull();
   });
 

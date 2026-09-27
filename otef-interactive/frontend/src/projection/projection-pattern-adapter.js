@@ -21,7 +21,9 @@ export function createProjectionPatternAdapter({ spanId, canvasFactory } = {}) {
   let fontFamily = DEFAULT_FONT_FAMILY;
   let dirty = true;
   let disposed = false;
-  const clear = () => { command = null; dirty = true; context.clearRect(0, 0, WIDTH, HEIGHT); };
+  let signature = null;
+  let contentVersion = 0;
+  const clear = () => { command = null; signature = null; dirty = true; context.clearRect(0, 0, WIDTH, HEIGHT); };
   const sync = (next = {}) => {
     if (disposed) return;
     if (next.config && Object.keys(validateProjectionConfig(next.config)).length === 0) config = next.config;
@@ -30,7 +32,8 @@ export function createProjectionPatternAdapter({ spanId, canvasFactory } = {}) {
     const incoming = next.command || next;
     if (!incoming?.pattern || !["grid", "output_id"].includes(incoming.pattern)) return;
     command = { pattern: incoming.pattern };
-    dirty = true;
+    const nextSignature = JSON.stringify([command, config, fontFamily]);
+    if (nextSignature !== signature) { signature = nextSignature; dirty = true; }
   };
   const draw = () => {
     if (disposed || !command) return null;
@@ -52,8 +55,9 @@ export function createProjectionPatternAdapter({ spanId, canvasFactory } = {}) {
       }
       context.restore?.();
       dirty = false;
+      contentVersion += 1;
     }
-    return { source: canvas };
+    return { source: canvas, contentVersion };
   };
   return { canvas, sync, draw, dispose() { disposed = true; clear(); } };
 }

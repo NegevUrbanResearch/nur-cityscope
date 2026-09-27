@@ -35,6 +35,116 @@ function fakeGl() {
 function canvasFor(gl) { const listeners = {}; return { width: 1920, height: 1080, getContext: () => gl, addEventListener: (name, cb) => { listeners[name] = cb; }, removeEventListener: vi.fn(), listeners }; }
 
 describe("projection warp renderer", () => {
+  test('reuses static pixels while still drawing a changed transform', () => {
+    const gl = fakeGl();
+    const renderer = createProjectionWarpRenderer({ canvas: canvasFor(gl), mesh });
+    const source = { width: 64, height: 64 };
+    const layer = { id: 'caption', source, contentVersion: 0 };
+    renderer.draw({ layers: [layer] });
+    renderer.draw({ layers: [{ ...layer, opacity: 0.5 }] });
+    expect(gl.texImage2D.mock.calls.filter((args) => args.at(-1) === source)).toHaveLength(1);
+    expect(gl.drawArrays).toHaveBeenCalledTimes(2);
+  });
+
+  test('does not upload or draw transparent non-name layers', () => {
+    const gl = fakeGl();
+    const renderer = createProjectionWarpRenderer({ canvas: canvasFor(gl), mesh });
+    const source = { width: 64, height: 64 };
+    renderer.draw({ layers: [{ id: 'image', source, contentVersion: 0, opacity: 0 }] });
+    expect(gl.texImage2D.mock.calls.filter((args) => args.at(-1) === source)).toHaveLength(0);
+    expect(gl.drawArrays).not.toHaveBeenCalled();
+    expect(gl.drawElements).toHaveBeenCalledTimes(1);
+  });
+
+  test('retains hidden layers until scene removal, then deletes their texture once', () => {
+    const gl = fakeGl();
+    const renderer = createProjectionWarpRenderer({ canvas: canvasFor(gl), mesh });
+    const source = { width: 64, height: 64 };
+    const layer = { id: 'legend', source, contentVersion: 0 };
+    renderer.draw({ layers: [layer] });
+    const texture = gl.bindTexture.mock.calls.at(-2)[1];
+    renderer.draw({ layers: [{ ...layer, contentVersion: 1, opacity: 0 }] });
+    expect(gl.texImage2D.mock.calls.filter((args) => args.at(-1) === source)).toHaveLength(1);
+    expect(gl.deleteTexture).not.toHaveBeenCalledWith(texture);
+    renderer.draw({ layers: [{ ...layer, contentVersion: 1 }] });
+    expect(gl.texImage2D.mock.calls.filter((args) => args.at(-1) === source)).toHaveLength(2);
+    renderer.draw({ layers: [] });
+    expect(gl.deleteTexture).toHaveBeenCalledExactlyOnceWith(texture);
+    expect(gl.drawElements).toHaveBeenCalledTimes(4);
+    renderer.dispose();
+    expect(gl.deleteTexture.mock.calls.filter(([deleted]) => deleted === texture)).toHaveLength(1);
+  });
+
+  test('creates a fresh layer texture after context recovery', () => {
+    const gl = fakeGl(), canvas = canvasFor(gl);
+    const renderer = createProjectionWarpRenderer({ canvas, mesh });
+    const source = { width: 64, height: 64 };
+    renderer.draw({ layers: [{ id: 'caption', source, contentVersion: 0 }] });
+    canvas.listeners.webglcontextlost({ preventDefault: vi.fn() });
+    canvas.listeners.webglcontextrestored();
+    expect(gl.texImage2D.mock.calls.filter((args) => args.at(-1) === source)).toHaveLength(2);
+  });
+
+  test('disposes retained textures on manual context replacement', () => {
+    const gl = fakeGl(), canvas = canvasFor(gl);
+    const renderer = createProjectionWarpRenderer({ canvas, mesh });
+    const source = { width: 64, height: 64 };
+    renderer.draw({ layers: [{ id: 'caption', source, contentVersion: 0 }] });
+    const texture = gl.bindTexture.mock.calls.at(-2)[1];
+    const replacement = fakeGl();
+    renderer.recoverContext(replacement);
+    expect(gl.deleteTexture.mock.calls.filter(([deleted]) => deleted === texture)).toHaveLength(1);
+    expect(replacement.texImage2D.mock.calls.filter((args) => args.at(-1) === source)).toHaveLength(1);
+  });
+  test('restores the names texture once and then reuses it', () => {
+    const gl = fakeGl(), canvas = canvasFor(gl);
+    const renderer = createProjectionWarpRenderer({ canvas, mesh });
+    const name = { id:'names', source:{}, contentVersion:1, opacity:1 };
+    const nameUploads = () => gl.texImage2D.mock.calls.filter((args) => args.at(-1) === name.source).length;
+    renderer.draw({ layers:[name] });
+    expect(nameUploads()).toBe(1);
+    renderer.draw({ layers:[{ ...name, opacity:0.5 }] });
+    expect(nameUploads()).toBe(1);
+    canvas.listeners.webglcontextlost({ preventDefault:vi.fn() });
+    canvas.listeners.webglcontextrestored();
+    expect(nameUploads()).toBe(2);
+    renderer.draw({ layers:[{ ...name, opacity:0.3 }] });
+    expect(nameUploads()).toBe(2);
+    renderer.dispose();
+    expect(gl.deleteTexture).toHaveBeenCalled();
+  });
+  test('draws static name quads once per frame with clock uniforms and no visibility uploads', () => {
+    const gl = fakeGl(), canvas = canvasFor(gl);
+    const renderer = createProjectionWarpRenderer({ canvas, mesh });
+    const vertices = new Float32Array([
+      0,0,0,0, 1,0,0,0, 0,1,0,0,
+      0,1,0,0, 1,0,0,0, 1,1,0,0,
+    ]);
+    const source = {};
+    const layer = { id: 'names', source, contentVersion: 1, opacity: 1,
+      revealVertices: vertices, revealSeconds: 0.8, selectedIndex: -1 };
+    renderer.draw({ layers: [layer] });
+    const uploads = gl.bufferData.mock.calls.length;
+    const textureUploads = gl.texImage2D.mock.calls.filter((args) => args.at(-1) === source).length;
+    for (const seconds of [1.2, 4.4, 8.8, 3.1]) renderer.draw({ layers: [{ ...layer, revealSeconds: seconds, opacity: 0.4 }] });
+    expect(gl.bufferData).toHaveBeenCalledTimes(uploads);
+    expect(gl.texImage2D.mock.calls.filter((args) => args.at(-1) === source)).toHaveLength(textureUploads);
+    expect(gl.drawArrays).toHaveBeenLastCalledWith(gl.TRIANGLES, 0, 6);
+    expect(gl.uniform1f).toHaveBeenCalledWith('uRevealSeconds', 4.4);
+    expect(gl.shaderSource.mock.calls.some(([, sourceCode]) => sourceCode.includes('uRevealSeconds') && sourceCode.includes('aDelay'))).toBe(true);
+    expect(gl.shaderSource.mock.calls.some(([, sourceCode]) => sourceCode.includes('aNameIndex-uSelectedIndex'))).toBe(true);
+    renderer.draw({ layers: [{ ...layer, contentVersion: 2, selectedIndex: 0 }] });
+    expect(gl.bufferData).toHaveBeenCalledTimes(uploads);
+    expect(gl.texImage2D.mock.calls.filter((args) => args.at(-1) === source)).toHaveLength(textureUploads + 1);
+    const replacement = new Float32Array(vertices);
+    renderer.draw({ layers: [{ ...layer, revealVertices: replacement }] });
+    expect(gl.bufferData).toHaveBeenCalledTimes(uploads + 1);
+    canvas.listeners.webglcontextlost({ preventDefault: vi.fn() });
+    canvas.listeners.webglcontextrestored();
+    expect(gl.bufferData).toHaveBeenCalledTimes(uploads + 6);
+    renderer.dispose();
+    expect(gl.deleteBuffer).toHaveBeenCalled();
+  });
   test("rejects invalid destination winding and out-of-range destination coordinates", () => {
     expect(() => validateProjectionMesh({ ...mesh, triangles: [0, 2, 1] })).toThrow(/triangle/i);
     expect(() => validateProjectionMesh({ ...mesh, vertices: mesh.vertices.map((v, i) => i === 3 ? { ...v, x: 2.1 } : v) })).toThrow(/destination/i);

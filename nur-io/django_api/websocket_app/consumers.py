@@ -43,6 +43,18 @@ def _valid_projection_baseline(value):
     return isinstance(asset_id, str) and 0 < len(asset_id) <= 128 and isinstance(digest, str) and bool(_PROJECTION_SHA256.fullmatch(digest))
 
 
+def _valid_projection_wall(value):
+    if not isinstance(value, dict) or set(value) != {'datasetVersion', 'mode', 'digest', 'expected', 'placed'}:
+        return False
+    version = value['datasetVersion']
+    if not isinstance(version, str) or not 0 < len(version) <= 128:
+        return False
+    if value['mode'] not in ('wall', 'model') or not isinstance(value['digest'], str) or not re.fullmatch(r'[0-9a-f]{64}', value['digest'], re.IGNORECASE):
+        return False
+    expected, placed = value['expected'], value['placed']
+    return type(expected) is int and type(placed) is int and 0 < expected <= 100000 and 0 <= placed <= expected
+
+
 def _valid_projection_transient(data):
     if not isinstance(data, dict) or data.get("table") != "otef":
         return None
@@ -62,7 +74,7 @@ def _valid_projection_transient(data):
             return None
         return {key: data[key] for key in ("type", "table", "sourceId")}
     if message_type == "otef_projection_applied":
-        allowed = {"type", "table", "output", "revision", "instanceId", "success", "error", "route", "baseline"}
+        allowed = {"type", "table", "output", "revision", "instanceId", "success", "error", "route", "baseline", "wall"}
         if set(data) - allowed or not {"type", "table", "output", "revision", "instanceId", "success"}.issubset(data):
             return None
         if not isinstance(data.get("output"), str) or data["output"] not in _PROJECTION_OUTPUTS:
@@ -78,6 +90,8 @@ def _valid_projection_transient(data):
             return None
         if "baseline" in data and not _valid_projection_baseline(data["baseline"]):
             return None
+        if "wall" in data and not _valid_projection_wall(data["wall"]):
+            return None
         payload = {key: data[key] for key in ("type", "table", "output", "revision", "instanceId", "success")}
         if "error" in data:
             payload["error"] = data["error"]
@@ -85,6 +99,8 @@ def _valid_projection_transient(data):
             payload["route"] = data["route"]
         if "baseline" in data:
             payload["baseline"] = data["baseline"]
+        if "wall" in data:
+            payload["wall"] = data["wall"]
         return payload
     return None
 

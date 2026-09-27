@@ -3,6 +3,7 @@ import { isNliPlayableLayerLocked } from "./nli-timeline-transport.js";
 import { getLocale, formatActiveLayerCount } from "./remote-locale.js";
 
 export const STAFF_PACK_IDS = ["nli", "projector_base"];
+const RETIRED_PACK_FULL_LAYER_IDS = new Set(["projector_base.רקע_שחור"]);
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -21,6 +22,7 @@ export function packRowsFromGroup(group) {
       Array.isArray(layer.fullLayerIds) && layer.fullLayerIds.length
         ? layer.fullLayerIds.map(String)
         : [`${group.id}.${layer.id}`];
+    if (fullLayerIds.some((id) => RETIRED_PACK_FULL_LAYER_IDS.has(id))) continue;
     rows.push({
       id: layer.id,
       enabled: !!layer.enabled,

@@ -15,3 +15,16 @@ export function visibleT3Rect(branch) {
   return x1 - x0 > 0 && y1 - y0 > 0 ? { x0, x1, y0, y1 } : null;
 }
 export function containsUv(rect, { u, v }) { return Boolean(rect && u >= rect.x0 && u <= rect.x1 && v >= rect.y0 && v <= rect.y1); }
+
+/** Existing name-field reference plane to the composed texture for one output. */
+export function planeToOutputUv([x, y], config, side, logicalPlane = {}) {
+  const pre = config.pre;
+  const planeScale = logicalPlane.planeScale ?? pre.scale * Math.min(config.outputs.left.post.scale, config.outputs.right.post.scale);
+  const heading = (logicalPlane.heading ?? 41) * Math.PI / 180;
+  if (![x, y, planeScale, heading].every(Number.isFinite) || planeScale <= 0) throw new Error('invalid name plane coordinate');
+  const rotate = ([a, b], angle) => [a * Math.cos(angle) - b * Math.sin(angle), a * Math.sin(angle) + b * Math.cos(angle)];
+  const headed = rotate([x / planeScale, y / planeScale], heading);
+  const translated = [headed[0] + pre.tx * 1920, headed[1] + pre.ty * 1080];
+  const scaled = rotate(translated, -pre.rotateDeg * Math.PI / 180);
+  return t3ToOutput({ u: 0.5 + scaled[0] * pre.scale / 1920, v: 0.5 + scaled[1] * pre.scale / 1080 }, config.outputs[side]);
+}

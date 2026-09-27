@@ -6,14 +6,17 @@ import { createFakeMapLibreMap } from "../helpers/fake-maplibre-map.js";
 import { bindProjectionPersonHalo } from "../../frontend/src/projection/projection-person-halo.js";
 
 function createFakeMap() {
-  const map = createFakeMapLibreMap();
+  const map = createFakeMapLibreMap({
+    layers: [{ id: "nli__people__circle", type: "circle", source: "nli.people" }],
+  });
+  map.setPaintProperty("nli__people__circle", "circle-opacity", 1);
   map.flyTo = vi.fn();
   vi.spyOn(map, "addLayer");
   return map;
 }
 
 describe("bindProjectionPersonHalo", () => {
-  it("subscribes, mounts halo, remounts on style.load, clears, and never flyTo", async () => {
+  it("subscribes, dims without a halo overlay, remounts on style.load, clears, and never flyTo", async () => {
     const map = createFakeMap();
     const resolve = vi.fn(() => ({ pid: "11", coordinates: [34.5, 31.4] }));
     let handler;
@@ -27,12 +30,17 @@ describe("bindProjectionPersonHalo", () => {
     expect(subscribe).toHaveBeenCalledWith("personSelection", expect.any(Function));
     handler({ pid: "11" });
     await vi.waitFor(() => {
-      expect(map.addLayer).toHaveBeenCalled();
+      expect(map.getPaintProperty("nli__people__circle", "circle-opacity")[0]).toBe("case");
     });
+    expect(map.addLayer).not.toHaveBeenCalled();
+    expect(map.getLayer("otef-person-selection-halo")).toBeNull();
     expect(map.flyTo).not.toHaveBeenCalled();
     map.emit("style.load");
-    expect(map.addLayer.mock.calls.length).toBeGreaterThan(1);
+    expect(map.addLayer).not.toHaveBeenCalled();
+    expect(map.getLayer("otef-person-selection-halo")).toBeNull();
+    expect(map.getPaintProperty("nli__people__circle", "circle-opacity")[0]).toBe("case");
     handler(null);
+    expect(map.getPaintProperty("nli__people__circle", "circle-opacity")).toBe(1);
     dispose();
   });
 

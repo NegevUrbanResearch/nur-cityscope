@@ -10,6 +10,13 @@ export const PROJECTION_HIGHLIGHT_SOURCE_ID = "projection-highlight-source";
 export const PROJECTION_HIGHLIGHT_FILL_LAYER_ID = "projection-highlight-fill";
 export const PROJECTION_HIGHLIGHT_LINE_LAYER_ID = "projection-highlight-line";
 
+export function shouldShowProjectionViewportHighlight({
+  slideshowActive = false,
+  exhibitMode = false,
+} = {}) {
+  return slideshowActive !== true && exhibitMode !== true;
+}
+
 const maplibregl =
   (typeof globalThis !== "undefined" && globalThis.maplibregl) ||
   (typeof window !== "undefined" && window.maplibregl);

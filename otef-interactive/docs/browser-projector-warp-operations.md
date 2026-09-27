@@ -4,7 +4,9 @@ TD remains available until the owner accepts browser alignment by eye and separa
 
 ## Switch between TD and browser output
 
-Use the workstation's `/otef-interactive/projection-config.html` page. **Identify displays**, assign the two projectors by name and position, and save the assignment. Phones and tablets edit calibration; launch output windows from the workstation.
+Use the workstation's `/otef-interactive/projection-config.html` page. Connected displays appear automatically as **Display 1**, **Display 2**, etc. **Identify displays** shows a large matching number on each screen for five seconds; Escape or Close dismisses a number early. Select the number for each projector and save the assignment. These are app numbers, not Windows display numbers. Phones and tablets edit calibration; launch output windows from the workstation.
+
+Display numbers follow desktop position and update when displays are connected or disconnected. Saved assignments retain their screen identity. If display access is denied, allow it in the browser's site settings and reload. If identification popups are blocked, allow popups for this site and press Identify displays again. The temporary number windows do not change calibration or switch TD/projector output on or off.
 
 For browser output:
 
@@ -37,6 +39,16 @@ Select the left or right **Keystone** or **Grid Warp** node in the existing cali
 Select a corner, grid point, row, column or edge, then drag or use the arrows. **Fine** moves 0.25 output pixels per tap; **Coarse** moves 1 pixel. The X/Y fields show output pixels. Keystone corners control the output plane; grid points start at the imported TD mesh positions.
 
 With **Live** enabled, accepted edits reach the projectors. Turn Live off to try a local draft, then use **Apply once** when ready. **Undo/Redo** changes the selected output's warp. **Reset to imported TD baseline** clears browser corrections while retaining the imported mesh; **Revert** restores the loaded preset. Save a new preset to retain an adjustment without replacing the protected baseline.
+
+## Adjust the names wall
+
+Select **Names wall** in the calibration graph. Choose **Wall** or **Model**. The status shows the requested and effective font sizes and the total, left, and right name counts. Confirm that the placed count equals the expected count before using the browser outputs. Each included name is assigned wholly to one output in either mode.
+
+**Requested font** is the preferred maximum. The layout can reduce it to fit both outputs, down to a technical 1 px floor. Check the effective size on the actual projectors; a valid result does not establish physical readability. **Name spacing** and **Edge inset** use name-plane units. Edge inset also keeps model names inside the projected model boundary.
+
+**Left projector: right-edge inset** and **Right projector: left-edge inset** use final 1920×1080 output pixels. Increase each independently to move names away from that screen's inner edge. Inspect the physical seam on the installed projectors when adjusting these values. Browser previews verify the calculated safe placement, but cannot establish projector overlap or legibility on the surface.
+
+Changing the mode, font, spacing, or either inset prepares a new matching wall even while names are hidden. Wait for complete counts on both outputs before saving or relying on an edit. Showing or hiding prepared names fades the layer without repacking it. A saved V3 configuration with a nonzero seam gap reports that the gap needs readjustment after conversion to V4; the new inner insets start at zero.
 
 ## Workstation setup and recovery
 

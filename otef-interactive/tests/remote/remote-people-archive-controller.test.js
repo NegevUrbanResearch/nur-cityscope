@@ -7,6 +7,57 @@ function deferred() {
   return { promise, resolve };
 }
 
+async function createArchiveFixture({
+  archiveWindowCommand = vi.fn().mockResolvedValue({ acknowledged: true }),
+  archiveResultTimeoutMs = 6000,
+  isNarrativeActive = () => false,
+} = {}) {
+  const { createRemotePeopleArchiveController } = await import(
+    "../../frontend/src/remote/remote-people-archive-controller.js"
+  );
+  const people = [
+    { pid: "11", name: "Ada", hasArchiveRecord: true, datasetVersion: "v1" },
+    { pid: "12", name: "Bea", hasArchiveRecord: true, datasetVersion: "v1" },
+  ];
+  const subscriptions = {};
+  const status = document.getElementById("placeSearchStatus");
+  const dataContext = {
+    getInvestigationClock: () => ({ phase: "idle" }),
+    subscribe: vi.fn((topic, handler) => { subscriptions[topic] = handler; return vi.fn(); }),
+    archiveWindowCommand,
+  };
+  const root = document.getElementById("placeSearchGroup");
+  const controller = createRemotePeopleArchiveController({
+    root,
+    input: document.getElementById("placeSearchInput"),
+    clear: document.getElementById("placeSearchClear"),
+    list: document.getElementById("placeSuggestions"),
+    status,
+    navigationSection: root,
+    dataContext,
+    peopleRuntime: {
+      load: vi.fn().mockResolvedValue(undefined),
+      resolve: (pid, datasetVersion) => people.find((item) => item.pid === pid && item.datasetVersion === datasetVersion),
+    },
+    getMode: () => "people",
+    setMode: vi.fn(),
+    renderSuggestions: vi.fn(),
+    setStatus: (message) => { status.textContent = message; },
+    setRootClass: vi.fn(),
+    setHidden: vi.fn(),
+    syncInputDirection: vi.fn(),
+    archiveResultTimeoutMs,
+    isNarrativeActive,
+  });
+  const selectPerson = async (pid, revision) => {
+    controller.handlePersonSnapshot({ personId: pid, datasetVersion: "v1", revision });
+    for (let index = 0; index < 4; index += 1) await Promise.resolve();
+  };
+  await selectPerson("11", 1);
+  const archiveButton = root.children.find((child) => child.className === "place-search-archive-button");
+  return { controller, dataContext, subscriptions, people, root, status, archiveButton, selectPerson };
+}
+
 describe("remote People and archive controller", () => {
   beforeEach(() => {
     vi.resetModules();
@@ -458,6 +509,149 @@ describe("remote People and archive controller", () => {
     expect(status.textContent).toBe("");
   });
 
+  test("a successful GIS tab wins when another tab reports the same open unavailable", async () => {
+    const [{ initRemotePlaceNavigation }, { t }] = await Promise.all([
+      import("../../frontend/src/remote/remote-place-navigation.js"),
+      import("../../frontend/src/remote/remote-locale.js"),
+    ]);
+    const modeButton = createElement("peopleMode");
+    modeButton.dataset = { searchMode: "people" };
+    const root = document.getElementById("placeSearchGroup");
+    const originalQuerySelectorAll = root.querySelectorAll;
+    root.querySelectorAll = (selector) => selector === "[data-search-mode]"
+      ? [modeButton]
+      : originalQuerySelectorAll(selector);
+    const person = { pid: "11", name: "Ada", hasArchiveRecord: true, datasetVersion: "v1" };
+    const peopleRuntime = { load: vi.fn().mockResolvedValue(undefined), resolve: vi.fn(() => person) };
+    const subscriptions = {};
+    const dataContext = {
+      subscribe: (topic, fn) => { subscriptions[topic] = fn; return () => {}; },
+      archiveWindowCommand: vi.fn().mockResolvedValue({ acknowledged: true }),
+    };
+    initRemotePlaceNavigation({ dataContext, peopleRuntime, isConnected: () => true });
+    modeButton.dispatchEvent({ type: "click" });
+    subscriptions.personSelection({ personId: "11", datasetVersion: "v1", revision: 1 });
+    for (let i = 0; i < 4; i += 1) await Promise.resolve();
+
+    const archiveButton = root.children.find((child) => child.className === "place-search-archive-button");
+    archiveButton.click();
+    await Promise.resolve();
+    const requestId = dataContext.archiveWindowCommand.mock.calls[0][3];
+    const response = { requestId, personId: "11", datasetVersion: "v1" };
+    subscriptions.archiveWindowResult({ ...response, outcome: "unavailable", sourceId: "gis-blocked" });
+    expect(archiveButton.textContent).not.toBe(t("backToMap"));
+
+    subscriptions.archiveWindowResult({ ...response, outcome: "navigation_attempted", sourceId: "gis-opened" });
+    expect(archiveButton.textContent).toBe(t("backToMap"));
+  });
+
+  test("a late success cannot reopen after archive presentation cancellation", async () => {
+    const { t } = await import("../../frontend/src/remote/remote-locale.js");
+    let narrativeActive = false;
+    const fixture = await createArchiveFixture({ isNarrativeActive: () => narrativeActive });
+    await fixture.controller.openArchive();
+    const requestId = fixture.dataContext.archiveWindowCommand.mock.calls[0][3];
+    fixture.controller.handleArchiveResult({ requestId, personId: "11", datasetVersion: "v1", outcome: "unavailable" });
+
+    narrativeActive = true;
+    fixture.subscriptions.narrativeState();
+    narrativeActive = false;
+    fixture.controller.syncArchiveButton();
+    fixture.controller.handleArchiveResult({ requestId, personId: "11", datasetVersion: "v1", outcome: "navigation_attempted" });
+
+    expect(fixture.controller.getArchivePhase()).toBe("closed");
+    expect(fixture.archiveButton.textContent).not.toBe(t("backToMap"));
+    fixture.controller.destroy();
+  });
+
+  test.each([
+    ["failed acknowledgment", vi.fn().mockResolvedValue({ acknowledged: false })],
+    ["transport rejection", vi.fn().mockRejectedValue(new Error("transport failed"))],
+  ])("a late success cannot reopen after %s", async (_kind, archiveWindowCommand) => {
+    const { t } = await import("../../frontend/src/remote/remote-locale.js");
+    const fixture = await createArchiveFixture({ archiveWindowCommand });
+    await fixture.controller.openArchive();
+    const requestId = archiveWindowCommand.mock.calls[0][3];
+    fixture.controller.handleArchiveResult({ requestId, personId: "11", datasetVersion: "v1", outcome: "navigation_attempted" });
+
+    expect(fixture.controller.getArchivePhase()).toBe("closed");
+    expect(fixture.archiveButton.textContent).not.toBe(t("backToMap"));
+    fixture.controller.destroy();
+  });
+
+  test("a late success cannot reopen after an archive open times out", async () => {
+    vi.useFakeTimers();
+    try {
+      const [{ t }, fixture] = await Promise.all([
+        import("../../frontend/src/remote/remote-locale.js"),
+        createArchiveFixture({ archiveResultTimeoutMs: 10 }),
+      ]);
+      await fixture.controller.openArchive();
+      const requestId = fixture.dataContext.archiveWindowCommand.mock.calls[0][3];
+      await vi.advanceTimersByTimeAsync(11);
+      fixture.controller.handleArchiveResult({ requestId, personId: "11", datasetVersion: "v1", outcome: "navigation_attempted" });
+
+      expect(fixture.controller.getArchivePhase()).toBe("closed");
+      expect(fixture.archiveButton.textContent).not.toBe(t("backToMap"));
+      fixture.controller.destroy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("a person selection invalidates recovery even if that person is selected again", async () => {
+    const { t } = await import("../../frontend/src/remote/remote-locale.js");
+    const fixture = await createArchiveFixture();
+    await fixture.controller.openArchive();
+    const oldRequestId = fixture.dataContext.archiveWindowCommand.mock.calls[0][3];
+    fixture.controller.handleArchiveResult({ requestId: oldRequestId, personId: "11", datasetVersion: "v1", outcome: "unavailable" });
+
+    await fixture.selectPerson("12", 2);
+    await fixture.selectPerson("11", 3);
+    fixture.controller.handleArchiveResult({ requestId: oldRequestId, personId: "11", datasetVersion: "v1", outcome: "navigation_attempted" });
+    expect(fixture.controller.getArchivePhase()).toBe("closed");
+    expect(fixture.archiveButton.textContent).not.toBe(t("backToMap"));
+    fixture.controller.destroy();
+  });
+
+  test("a newer archive request invalidates prior unavailable recovery", async () => {
+    const { t } = await import("../../frontend/src/remote/remote-locale.js");
+    const fixture = await createArchiveFixture();
+    await fixture.controller.openArchive();
+    const oldRequestId = fixture.dataContext.archiveWindowCommand.mock.calls[0][3];
+    fixture.controller.handleArchiveResult({ requestId: oldRequestId, personId: "11", datasetVersion: "v1", outcome: "unavailable" });
+
+    await fixture.controller.openArchive();
+    const newerRequestId = fixture.dataContext.archiveWindowCommand.mock.calls[1][3];
+    fixture.controller.handleArchiveResult({ requestId: oldRequestId, personId: "11", datasetVersion: "v1", outcome: "navigation_attempted" });
+    expect(fixture.controller.getArchivePhase()).toBe("opening");
+    fixture.controller.handleArchiveResult({ requestId: newerRequestId, personId: "11", datasetVersion: "v1", outcome: "navigation_attempted" });
+    expect(fixture.archiveButton.textContent).toBe(t("backToMap"));
+    fixture.controller.destroy();
+  });
+
+  test("late success after unavailable is rejected at the original open deadline", async () => {
+    vi.useFakeTimers();
+    try {
+      const { t } = await import("../../frontend/src/remote/remote-locale.js");
+      const fixture = await createArchiveFixture({ archiveResultTimeoutMs: 10 });
+      await fixture.controller.openArchive();
+      const requestId = fixture.dataContext.archiveWindowCommand.mock.calls[0][3];
+
+      await vi.advanceTimersByTimeAsync(8);
+      fixture.controller.handleArchiveResult({ requestId, personId: "11", datasetVersion: "v1", outcome: "unavailable" });
+      await vi.advanceTimersByTimeAsync(3);
+      fixture.controller.handleArchiveResult({ requestId, personId: "11", datasetVersion: "v1", outcome: "navigation_attempted" });
+
+      expect(fixture.controller.getArchivePhase()).toBe("closed");
+      expect(fixture.archiveButton.textContent).not.toBe(t("backToMap"));
+      expect(fixture.dataContext.archiveWindowCommand).toHaveBeenLastCalledWith("close", "11", "v1", requestId);
+      fixture.controller.destroy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test("timeout cancels a slow GIS resolve and prevents late navigation", async () => {
     vi.useFakeTimers();
     try {
@@ -547,6 +741,119 @@ describe("remote People and archive controller", () => {
     expect(dataContext.archiveWindowCommand).toHaveBeenCalledWith("open", "11", "v1", expect.any(String));
     expect(controller.getAcknowledgedPerson()).toEqual(person);
     expect(controller.getArchivePhase()).toBe("opening");
+  });
+
+  test("a cancelled queued stop does not treat the old idle snapshot as acknowledgement", async () => {
+    const { waitForInvestigationClockIdle } = await import(
+      "../../frontend/src/remote/remote-people-archive-controller.js"
+    );
+    let cancelled = false;
+    const patchInvestigationClock = vi.fn(async () => ({ ok: false, stale: true, error: "Superseded" }));
+    const dataContext = {
+      getInvestigationClock: () => ({ phase: "playing", revision: 2 }),
+      patchInvestigationClock,
+      subscribe: vi.fn(() => () => {}),
+    };
+    cancelled = true;
+
+    await expect(waitForInvestigationClockIdle(dataContext, {
+      forceStop: true,
+      timeoutMs: 50,
+      isCancelled: () => cancelled,
+    })).resolves.toBeUndefined();
+    expect(patchInvestigationClock).toHaveBeenCalledTimes(1);
+    expect(patchInvestigationClock.mock.calls[0][1]?.isCurrent?.()).toBe(false);
+  });
+
+  test("a failed stop rejects even when the local snapshot is already idle", async () => {
+    const { waitForInvestigationClockIdle } = await import(
+      "../../frontend/src/remote/remote-people-archive-controller.js"
+    );
+    const failure = new Error("stop rejected");
+    const dataContext = {
+      getInvestigationClock: () => ({ phase: "idle", revision: 3 }),
+      patchInvestigationClock: vi.fn(async () => ({ ok: false, error: failure })),
+      subscribe: vi.fn(() => () => {}),
+    };
+
+    await expect(waitForInvestigationClockIdle(dataContext, { forceStop: true })).rejects.toBe(failure);
+    expect(dataContext.patchInvestigationClock).toHaveBeenCalledTimes(1);
+  });
+
+  test("an idle clock returned before HTTP settles the forced stop", async () => {
+    const { waitForInvestigationClockIdle } = await import(
+      "../../frontend/src/remote/remote-people-archive-controller.js"
+    );
+    const idle = { phase: "idle", revision: 6, membership: [], beats: [], loop: false };
+    const dataContext = {
+      getInvestigationClock: () => ({ phase: "playing", revision: 5 }),
+      patchInvestigationClock: vi.fn(async () => ({ ok: true, clock: idle })),
+      subscribe: vi.fn(() => () => {}),
+    };
+
+    await expect(waitForInvestigationClockIdle(dataContext, {
+      forceStop: true,
+      timeoutMs: 50,
+    })).resolves.toBeUndefined();
+  });
+
+  test("a forced stop follows an already-sent play and leaves the clock idle", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(10_000);
+    const api = await import("../../frontend/src/shared/api-client.js");
+    const sent = [];
+    let releasePlay;
+    vi.spyOn(api.OTEF_API, "updateInvestigationClock").mockImplementation(async (_table, clock) => {
+      sent.push(clock.phase);
+      if (clock.phase === "playing") {
+        await new Promise((resolve) => { releasePlay = resolve; });
+      }
+      return {
+        investigation_clock: {
+          ...clock,
+          revision: clock.phase === "playing" ? 2 : 3,
+          serverNowMs: 11_000,
+        },
+      };
+    });
+    const { default: OTEFDataContext } = await import("../../frontend/src/shared/OTEFDataContext.js");
+    const { waitForInvestigationClockIdle } = await import(
+      "../../frontend/src/remote/remote-people-archive-controller.js"
+    );
+    OTEFDataContext._tableName = "otef";
+    OTEFDataContext._clientId = "clock-client";
+    OTEFDataContext._setInvestigationClock({
+      phase: "idle",
+      membership: [],
+      beats: [],
+      loop: false,
+      positionMs: 0,
+      anchorMs: null,
+      seekKind: "none",
+      revision: 1,
+    });
+    const play = {
+      phase: "playing",
+      membership: ["nli.lines"],
+      beats: [400],
+      loop: false,
+      positionMs: 0,
+      anchorMs: 10_000,
+      seekKind: "none",
+      revision: 1,
+    };
+
+    const playing = OTEFDataContext.patchInvestigationClock(play);
+    await vi.waitFor(() => expect(sent).toEqual(["playing"]));
+    expect(OTEFDataContext.getInvestigationClock().phase).toBe("idle");
+    const home = waitForInvestigationClockIdle(OTEFDataContext, { forceStop: true });
+    await Promise.resolve();
+    expect(sent).toEqual(["playing"]);
+    releasePlay();
+    await playing;
+    await home;
+
+    expect(sent).toEqual(["playing", "idle"]);
+    expect(OTEFDataContext.getInvestigationClock().phase).toBe("idle");
   });
 
 });

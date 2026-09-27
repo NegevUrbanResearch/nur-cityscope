@@ -299,8 +299,27 @@ function getEffectiveLayerGroups() {
   }
 
   return finalizeMoreshetAxisPackForRemote(
-    coalesceCuratedGroups(mergeProjectorBaseShemotWithLocationsLine(groups)),
+    coalesceCuratedGroups(
+      mergeProjectorBaseShemotWithLocationsLine(omitRetiredProjectorLayers(groups)),
+    ),
   );
+}
+
+const PROJECTOR_BLACK_BACKGROUND_LAYER_ID = "רקע_שחור";
+
+function omitRetiredProjectorLayers(groups) {
+  if (!Array.isArray(groups)) return groups;
+  return groups.map((group) => {
+    if (group == null || group.id !== "projector_base" || !Array.isArray(group.layers)) {
+      return group;
+    }
+    return {
+      ...group,
+      layers: group.layers.filter(
+        (layer) => layer && layer.id !== PROJECTOR_BLACK_BACKGROUND_LAYER_ID,
+      ),
+    };
+  });
 }
 
 const _PROJECTOR_SHEMOT_LAYER_ID = "שמות_יישובים";

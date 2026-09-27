@@ -836,6 +836,9 @@ FLEEING_ROUTE_LYRX_MEMBER = "Fleeing_route.lyrx"
 FLEEING_ROUTE_OVERLAPP_LYRX_MEMBER = "fleeing_route_overlapp.lyrx"
 MOR_ROUTE_STEM = "mor_levy_route"
 MOR_ROUTE_URL = "/otef-interactive/public/processed/layers/nli/mor_levy_route.geojson"
+NARRATIVE_POLYGON_STEM = "narrative_polygon"
+NARRATIVE_POLYGON_STROKE_COLOR = OCT7_STRUGGLE_LINE_COLOR
+NARRATIVE_POLYGON_STROKE_WIDTH_PT = OCT7_STRUGGLE_LINE_WIDTH
 MOR_ROUTE_ZIP_SHA256 = "8e16adaae212a6dc47fe96599a6c8045cb45eb0c0de63023a75aff2d7dcdd93e"
 MOR_ROUTE_GEOJSON_MEMBER = "Mor_levy.geojson"
 NOVA_FACILITY_WGS84 = (34.46975, 31.39851)
@@ -854,6 +857,7 @@ NLI_KEEP_STEMS = set(ZIP_LAYER_MAP.values()) | {
     FLEEING_ROUTE_STEM,
     FLEEING_ROUTE_OVERLAPP_STEM,
     MOR_ROUTE_STEM,
+    NARRATIVE_POLYGON_STEM,
 }
 
 PROJECTED_STEMS = {"investigation_polygons", "lines"}
@@ -914,6 +918,15 @@ NLI_POPUP_CONFIG = {
                     {"label": "Name", "key": "NAME"},
                     {"label": "Number", "key": "NUM"},
                     {"label": "Plan name", "key": "MAVAT_NAME"},
+                ],
+            },
+            NARRATIVE_POLYGON_STEM: {
+                "titleField": "note",
+                "hideEmpty": True,
+                "legendLabel": "House outlines",
+                "fields": [
+                    {"label": "Name", "key": "note"},
+                    {"label": "Object ID", "key": "OBJECTID"},
                 ],
             },
         }
@@ -1209,6 +1222,77 @@ def install_nli_route_232_overlay(
         "source_lyrx": str(lyrx_path),
         "lyrx_match": match_method,
         "stroke_width_pt": ROUTE_232_STROKE_WIDTH_PT,
+    }
+
+
+def _collection_is_web_mercator(collection: Dict[str, Any]) -> bool:
+    crs = collection.get("crs") if isinstance(collection, dict) else None
+    name = ""
+    if isinstance(crs, dict):
+        name = str((crs.get("properties") or {}).get("name") or crs.get("name") or "")
+    if "3857" in name:
+        return True
+    for feature in collection.get("features") or []:
+        geometry = feature.get("geometry") or {}
+        coords = geometry.get("coordinates")
+        if not coords:
+            continue
+        sample = coords
+        while isinstance(sample, list) and sample and isinstance(sample[0], list):
+            sample = sample[0]
+        if isinstance(sample, list) and sample and isinstance(sample[0], (int, float)):
+            return abs(float(sample[0])) > 180.0
+    return False
+
+
+def _retint_enabled_polygon_strokes(
+    obj: Any,
+    color: Sequence[int],
+    width_pt: Optional[float] = None,
+) -> None:
+    if isinstance(obj, dict):
+        if obj.get("type") == "CIMSolidStroke" and obj.get("enable", True):
+            obj["color"] = _rgb(color)
+            if width_pt is not None:
+                obj["width"] = width_pt
+        for value in obj.values():
+            _retint_enabled_polygon_strokes(value, color, width_pt)
+        return
+    if isinstance(obj, list):
+        for item in obj:
+            _retint_enabled_polygon_strokes(item, color, width_pt)
+
+
+def install_nli_narrative_polygon_overlay(
+    pack_dir: Path,
+    geojson_path: Optional[Path] = None,
+    lyrx_path: Optional[Path] = None,
+) -> Dict[str, Any]:
+    source_geo = Path(geojson_path) if geojson_path is not None else None
+    source_lyrx = Path(lyrx_path) if lyrx_path is not None else None
+    if source_geo is None or source_lyrx is None or not source_geo.is_file() or not source_lyrx.is_file():
+        return {"installed": False, "reason": "missing_source"}
+    collection = json.loads(source_geo.read_text(encoding="utf-8"))
+    if _collection_is_web_mercator(collection):
+        reproject_web_mercator_collection_to_wgs84(collection)
+    lyrx = json.loads(source_lyrx.read_text(encoding="utf-8"))
+    _retint_enabled_polygon_strokes(
+        lyrx,
+        NARRATIVE_POLYGON_STROKE_COLOR,
+        NARRATIVE_POLYGON_STROKE_WIDTH_PT,
+    )
+    gis_dir = pack_dir / "gis"
+    styles_dir = pack_dir / "styles"
+    gis_dir.mkdir(parents=True, exist_ok=True)
+    styles_dir.mkdir(parents=True, exist_ok=True)
+    _write_json(gis_dir / f"{NARRATIVE_POLYGON_STEM}.geojson", collection)
+    _write_json(styles_dir / f"{NARRATIVE_POLYGON_STEM}.lyrx", lyrx)
+    return {
+        "installed": True,
+        "stem": NARRATIVE_POLYGON_STEM,
+        "source_geojson": str(source_geo),
+        "source_lyrx": str(source_lyrx),
+        "stroke_color": list(NARRATIVE_POLYGON_STROKE_COLOR),
     }
 
 
@@ -1712,6 +1796,8 @@ def prepare_nli_pack(
     investigation_polygons_lyrx: Optional[Path] = None,
     mazal_records: Optional[Dict[str, dict]] = None,
     mazal_xlsx: Optional[Path] = None,
+    narrative_polygon_geojson: Optional[Path] = None,
+    narrative_polygon_lyrx: Optional[Path] = None,
 ) -> Dict[str, Any]:
     authored_polygon_lyrx = Path(investigation_polygons_lyrx) if investigation_polygons_lyrx is not None else None
     if authored_polygon_lyrx is not None and not authored_polygon_lyrx.is_file():
@@ -1835,7 +1921,12 @@ def prepare_nli_pack(
     summary["overlays"] = {
         "route_232": install_nli_route_232_overlay(
             pack_dir, overlay_source_root=overlay_source_root or pack_dir.parent
-        )
+        ),
+        "narrative_polygon": install_nli_narrative_polygon_overlay(
+            pack_dir,
+            geojson_path=narrative_polygon_geojson,
+            lyrx_path=narrative_polygon_lyrx,
+        ),
     }
     keep_stems = NLI_KEEP_STEMS
     removed = []
@@ -1902,6 +1993,8 @@ def main() -> None:
     fleeing_geojson_zip = Path.home() / "Downloads" / "fleeing_route_geojson.zip"
     fleeing_lyrx_zip = Path.home() / "Downloads" / "Fleeing_route_lyrx.zip"
     mor_route_zip = Path.home() / "Downloads" / "Mor_levy.zip"
+    narrative_polygon_geojson = Path.home() / "Downloads" / "narrative_polygon.geojson"
+    narrative_polygon_lyrx = Path.home() / "Downloads" / "narrative_polygon.lyrx"
     if not zip_path.is_file() and downloads_zip.is_file():
         zip_path = downloads_zip
     summary = prepare_nli_pack(
@@ -1918,6 +2011,12 @@ def main() -> None:
         mor_route_zip=mor_route_zip if mor_route_zip.is_file() else None,
         mor_route_sha256=MOR_ROUTE_ZIP_SHA256 if mor_route_zip.is_file() else None,
         investigation_polygons_lyrx=args.investigation_polygons_lyrx,
+        narrative_polygon_geojson=(
+            narrative_polygon_geojson if narrative_polygon_geojson.is_file() else None
+        ),
+        narrative_polygon_lyrx=(
+            narrative_polygon_lyrx if narrative_polygon_lyrx.is_file() else None
+        ),
     )
     print(json.dumps(summary, ensure_ascii=False, indent=2))
 

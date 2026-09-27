@@ -13,15 +13,16 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_PDF_SHA256 = "1ce060dd9bb53d155c95f70f95b86e9ae36d013d3b4535fbb27c5fa8e4054b8c"
-EXPECTED_PPTX_SHA256 = "6ed3d98badcaf8d48dc17334a599783349e008dfd04ea1c59e4b420e33a86837"
+EXPECTED_PDF_SHA256 = "11407bdf1bda0de131609f247a985be2d2e2fc35bb98129b08892edc55ac826a"
+EXPECTED_PPTX_SHA256 = "ea82b69fe15c0dcab9166e1d0f736daa234db637532543b552648c9c490f12ba"
 EXPECTED_SLIDES = tuple(f"ppt/slides/slide{number}.xml" for number in range(1, 35))
 VIDEO_MEMBERS = {
     2: "ppt/media/media1.mp4",
     10: "ppt/media/media2.mp4",
     18: "ppt/media/media3.mp4",
-    23: "ppt/media/media4.mp4",
-    24: "ppt/media/media5.mp4",
+    21: "ppt/media/media4.mp4",
+    23: "ppt/media/media5.mp4",
+    24: "ppt/media/media6.mp4",
 }
 
 

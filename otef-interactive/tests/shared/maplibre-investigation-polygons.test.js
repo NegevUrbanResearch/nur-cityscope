@@ -288,7 +288,7 @@ describe("investigation polygon renderer", () => {
         "case",
         ["in", ["to-string", ["get", "OBJECTID"]], ["literal", []]],
         reveal,
-        ["*", reveal, 0.28],
+        ["*", reveal, 0.08],
       ]);
   });
 
@@ -711,7 +711,7 @@ describe("investigation polygon renderer", () => {
       "case",
       ["in", ["to-string", ["get", "OBJECTID"]], ["literal", []]],
       0.5,
-      ["*", 0.5, 0.28],
+      ["*", 0.5, 0.08],
     ]);
   });
 
@@ -752,7 +752,7 @@ describe("investigation polygon renderer", () => {
       "case",
       ["in", ["to-string", ["get", "OBJECTID"]], ["literal", []]],
       0.6,
-      ["*", 0.6, 0.28],
+      ["*", 0.6, 0.08],
     ]);
   });
 
@@ -867,7 +867,7 @@ describe("investigation polygon renderer", () => {
         "case",
         ["in", ["to-string", ["get", "OBJECTID"]], ["literal", []]],
         opacity,
-        ["*", opacity, 0.28],
+        ["*", opacity, 0.08],
       ]);
     }
   });
@@ -993,7 +993,7 @@ describe("investigation polygon renderer", () => {
         "case",
         ["in", ["to-string", ["get", "OBJECTID"]], ["literal", []]],
         0.55,
-        ["*", 0.55, 0.28],
+        ["*", 0.55, 0.08],
       ]);
     }
   });
@@ -1091,28 +1091,19 @@ describe("investigation polygon renderer", () => {
     fetchSpy.mockRestore();
   });
 
-  it("paints the narrative focus settlement outline white and leaves other impact outlines red", () => {
+  it("paints impact outlines red when the narrative focus outline is not injected", () => {
     const map = makeMap();
     const renderer = createInvestigationPolygonRenderer(map, {});
     renderer.render({
       achievedPolygonBeats: [],
       achievedSettlementOutlineIds: [32, 20],
-      narrativeFocusOutlineId: 32,
+      narrativeFocusOutlineId: null,
       narrative: { phase: "idle" },
     }, {
       settlementFeatures: [settlement(32), settlement(20)],
       settlementFeaturesByOutlineId: { 32: settlement(32), 20: settlement(20) },
     });
-    expect(map.getPaintProperty("nli-investigation-settlement-impact-outline", "line-color")).toEqual([
-      "case",
-      [
-        "any",
-        ["==", ["to-string", ["get", "outlineObjectId"]], "32"],
-        ["==", ["to-string", ["get", "OBJECTID"]], "32"],
-      ],
-      "#ffffff",
-      "#c31f4f",
-    ]);
+    expect(map.getPaintProperty("nli-investigation-settlement-impact-outline", "line-color")).toBe("#c31f4f");
   });
 
   it("defers settlement paint across the host-style remount gap", () => {
@@ -1579,7 +1570,7 @@ describe("investigation polygon renderer", () => {
 
   it("re-raises owned overlays above a pack layer after an unchanged-frame render", () => {
     const map = makeMap();
-    map.layers.push({ id: "projector_base__רקע_שחור__fill__0", type: "fill", source: "projector_base.רקע_שחור" });
+    map.layers.push({ id: "land_use__שטחים_פתוחים__fill__0", type: "fill", source: "land_use.שטחים_פתוחים" });
     const renderer = createInvestigationPolygonRenderer(map, {});
     const data = {
       ...processedOverlayData([polygon(1, 400, "עלומים", "מרחב לחימה - קרב")]),
@@ -1587,16 +1578,16 @@ describe("investigation polygon renderer", () => {
       settlementFeaturesByOutlineId: { 20: settlement(20) },
     };
     renderer.render(frame([400], { achievedSettlementOutlineIds: [20] }), data);
-    map.moveLayer("projector_base__רקע_שחור__fill__0");
-    const blackIndexAfterRaise = map.layers.findIndex((layer) => layer.id === "projector_base__רקע_שחור__fill__0");
+    map.moveLayer("land_use__שטחים_פתוחים__fill__0");
+    const packIndexAfterRaise = map.layers.findIndex((layer) => layer.id === "land_use__שטחים_פתוחים__fill__0");
     const impactBefore = map.layers.findIndex((layer) => layer.id === "nli-investigation-settlement-impact-outline");
-    expect(blackIndexAfterRaise).toBeGreaterThan(impactBefore);
+    expect(packIndexAfterRaise).toBeGreaterThan(impactBefore);
     renderer.render(frame([400], { achievedSettlementOutlineIds: [20] }), data);
     const impactAfter = map.layers.findIndex((layer) => layer.id === "nli-investigation-settlement-impact-outline");
     const fillAfter = map.layers.findIndex((layer) => layer.id === "nli-investigation-polygon-category-fill-battle");
-    const blackAfter = map.layers.findIndex((layer) => layer.id === "projector_base__רקע_שחור__fill__0");
+    const packAfter = map.layers.findIndex((layer) => layer.id === "land_use__שטחים_פתוחים__fill__0");
     expect(impactAfter).toBeGreaterThan(fillAfter);
-    expect(impactAfter).toBeGreaterThan(blackAfter);
+    expect(impactAfter).toBeGreaterThan(packAfter);
   });
 
   it("re-hides raw host polygons after an external retained-layer restore on an unchanged frame", () => {

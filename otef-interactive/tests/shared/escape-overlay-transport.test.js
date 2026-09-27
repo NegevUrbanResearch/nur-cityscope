@@ -20,7 +20,7 @@ const NOVA_SCENE = {
   basemap: "satellite_bw",
   investigationClock: IDLE_CLOCK,
   personSelection: EMPTY_PERSON,
-  escapeOverlay: { individual: true, overlap: false, mor: false },
+  escapeOverlay: { individual: true, overlap: false, mor: false, settled: false },
 };
 
 const NOVA_REST = {
@@ -80,6 +80,7 @@ describe("escape overlay transport", () => {
       individual: false,
       overlap: true,
       mor: false,
+      settled: false,
       sourceId: "remote-a",
       timestamp: 10,
     });
@@ -98,7 +99,12 @@ describe("escape overlay transport", () => {
 
     expect(context.getNarrativeState()).toMatchObject({ id: "nova", revision: 3 });
     expect(context.getNarrativeState()).not.toHaveProperty("escapeOverlay");
-    expect(context.getEscapeOverlay()).toEqual({ individual: false, overlap: true, mor: true });
+    expect(context.getEscapeOverlay()).toEqual({
+      individual: false,
+      overlap: true,
+      mor: true,
+      settled: false,
+    });
   });
 
   test("REST snapshot missing escape_overlay still hydrates a normalized overlay", async () => {
@@ -116,7 +122,12 @@ describe("escape overlay transport", () => {
 
     expect(context.getNarrativeState()).toMatchObject({ id: "nova", revision: 3 });
     expect(context.getNarrativeState()).not.toHaveProperty("escapeOverlay");
-    expect(context.getEscapeOverlay()).toEqual({ individual: false, overlap: false, mor: false });
+    expect(context.getEscapeOverlay()).toEqual({
+      individual: false,
+      overlap: false,
+      mor: false,
+      settled: false,
+    });
   });
 
   test("setEscapeOverlay PATCHes without set_narrative and notifies escapeOverlay", async () => {
@@ -131,7 +142,7 @@ describe("escape overlay transport", () => {
     vi.spyOn(api.OTEF_API, "executeCommand").mockResolvedValue({
       status: "ok",
       action: "set_escape_overlay",
-      escapeOverlay: { individual: false, overlap: true, mor: true },
+      escapeOverlay: { individual: false, overlap: true, mor: true, settled: false },
     });
 
     await context.setEscapeOverlay({ individual: false, overlap: true, mor: true });
@@ -141,11 +152,22 @@ describe("escape overlay transport", () => {
       individual: false,
       overlap: true,
       mor: true,
+      settled: false,
     }));
     expect(context.getNarrativeState().revision).toBe(3);
     expect(context.getNarrativeState()).not.toHaveProperty("escapeOverlay");
-    expect(context.getEscapeOverlay()).toEqual({ individual: false, overlap: true, mor: true });
-    expect(seen.at(-1)).toEqual({ individual: false, overlap: true, mor: true });
+    expect(context.getEscapeOverlay()).toEqual({
+      individual: false,
+      overlap: true,
+      mor: true,
+      settled: false,
+    });
+    expect(seen.at(-1)).toEqual({
+      individual: false,
+      overlap: true,
+      mor: true,
+      settled: false,
+    });
   });
 
   test("setEscapeOverlay partial patch preserves the other overlay flags", async () => {
@@ -157,7 +179,7 @@ describe("escape overlay transport", () => {
     vi.spyOn(api.OTEF_API, "executeCommand").mockResolvedValue({
       status: "ok",
       action: "set_escape_overlay",
-      escapeOverlay: { individual: false, overlap: true, mor: true },
+      escapeOverlay: { individual: false, overlap: true, mor: true, settled: false },
     });
 
     await context.setEscapeOverlay({ individual: false });
@@ -167,7 +189,40 @@ describe("escape overlay transport", () => {
       individual: false,
       overlap: true,
       mor: true,
+      settled: false,
     }));
+  });
+
+  test("settled outbound request clears animated flags", async () => {
+    const api = await import("../../frontend/src/shared/api-client.js");
+    const { default: context } = await import("../../frontend/src/shared/OTEFDataContext.js");
+    vi.spyOn(context, "_setupWebSocket").mockImplementation(() => {});
+    vi.spyOn(api.OTEF_API, "getState").mockResolvedValue({
+      ...NOVA_REST,
+      escape_overlay: { individual: true, overlap: true, mor: true, settled: false },
+    });
+    await context.init("otef");
+    vi.spyOn(api.OTEF_API, "executeCommand").mockResolvedValue({
+      status: "ok",
+      action: "set_escape_overlay",
+      escapeOverlay: { individual: false, overlap: false, mor: false, settled: true },
+    });
+
+    await context.setEscapeOverlay({ settled: true });
+
+    expect(api.OTEF_API.executeCommand).toHaveBeenCalledWith("otef", expect.objectContaining({
+      action: "set_escape_overlay",
+      individual: false,
+      overlap: false,
+      mor: false,
+      settled: true,
+    }));
+    expect(context.getEscapeOverlay()).toEqual({
+      individual: false,
+      overlap: false,
+      mor: false,
+      settled: true,
+    });
   });
 
   test("otef_escape_overlay_changed updates overlay only", async () => {
@@ -183,12 +238,17 @@ describe("escape overlay transport", () => {
 
     handler({
       table: "otef",
-      escapeOverlay: { individual: false, overlap: true, mor: true },
+      escapeOverlay: { individual: true, overlap: true, mor: true, settled: true },
       sourceId: "remote-a",
       timestamp: 123,
     });
 
-    expect(context.getEscapeOverlay()).toEqual({ individual: false, overlap: true, mor: true });
+    expect(context.getEscapeOverlay()).toEqual({
+      individual: false,
+      overlap: false,
+      mor: false,
+      settled: true,
+    });
     expect(context.getNarrativeState()).toEqual(NOVA_SCENE.narrativeState);
     expect(context.getNarrativeState()).not.toHaveProperty("escapeOverlay");
   });
@@ -203,6 +263,11 @@ describe("escape overlay transport", () => {
       personSelection: EMPTY_PERSON,
     })).toBe(false);
     expect(context.getNarrativeState().revision).toBe(0);
-    expect(context.getEscapeOverlay()).toEqual({ individual: false, overlap: false, mor: false });
+    expect(context.getEscapeOverlay()).toEqual({
+      individual: false,
+      overlap: false,
+      mor: false,
+      settled: false,
+    });
   });
 });

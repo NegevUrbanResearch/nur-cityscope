@@ -16,18 +16,23 @@ function hash(id) {
   return value >>> 0;
 }
 
+/** Stable global PID order, independent of input order and projector ownership. */
+export function nameRevealSchedule(pids) {
+  const ids = [...new Set(pids.map(String))];
+  ids.sort((a, b) => hash(a) - hash(b) || a.localeCompare(b));
+  return new Map(ids.map((id, index) => [
+    id, { index, delayMs: index / Math.max(1, ids.length - 1) * NAME_FIELD_MOTION.spreadMs },
+  ]));
+}
+
 /** Stable random-looking reveal order, independent of display order and projector. */
 export function withNameRevealDelays(geojson) {
-  const ids = geojson.features.map((feature) => String(feature.properties.pid));
-  ids.sort((a, b) => hash(a) - hash(b) || a.localeCompare(b));
-  const delays = new Map(ids.map((id, index) => [
-    id, index / Math.max(1, ids.length - 1) * NAME_FIELD_MOTION.spreadMs,
-  ]));
+  const schedule = nameRevealSchedule(geojson.features.map((feature) => feature.properties.pid));
   return {
     ...geojson,
     features: geojson.features.map((feature) => ({
       ...feature,
-      properties: { ...feature.properties, reveal_delay: delays.get(String(feature.properties.pid)) },
+      properties: { ...feature.properties, reveal_delay: schedule.get(String(feature.properties.pid)).delayMs },
     })),
   };
 }
@@ -46,6 +51,8 @@ export function createNameFieldAnimation({ apply, motionMode = 'full', now = () 
   let visibilityStart = 0;
   let focus = 1;
   let fromFocus = 1;
+  let numericFocus = () => 1;
+  let fromNumericFocus = () => 1;
   let focusStart = 0;
   let focusMix = 1;
   let onHidden = null;
@@ -73,10 +80,15 @@ export function createNameFieldAnimation({ apply, motionMode = 'full', now = () 
     if (focusMix === 1) interruptedFocusTransitions = 0;
     const reveal = revealAt(time);
     const alpha = product(reveal, visibility);
+    const elapsed = frozenReveal ?? Math.max(0, time - revealStart);
+    const alphaFor = (pid, delay = 0) => {
+      const revealed = reduced ? 1 : clamp((elapsed - delay) / NAME_FIELD_MOTION.revealMs);
+      return revealed * visibility * (fromNumericFocus(pid) * (1 - focusMix) + numericFocus(pid) * focusMix);
+    };
     apply({
       baseOpacity: product(alpha, blend(fromFocus, focus, focusMix)),
       selectedOpacity: visibility,
-      connectorOpacity: visibility,
+      alphaFor,
     });
     if (targetVisibility === 0 && visibilityMix === 1 && onHidden) {
       const complete = onHidden;
@@ -107,12 +119,16 @@ export function createNameFieldAnimation({ apply, motionMode = 'full', now = () 
       visibilityStart = now();
       tick();
     },
-    setFocus(next) {
+    setFocus(next, numericNext = () => 1) {
       if (disposed || JSON.stringify(next) === JSON.stringify(focus)) return;
       // Bound expression depth when a presenter changes focus repeatedly mid-fade.
       fromFocus = interruptedFocusTransitions >= 3 ? focus : blend(fromFocus, focus, focusMix);
+      const oldNumeric = fromNumericFocus, oldTarget = numericFocus, oldMix = focusMix;
+      fromNumericFocus = interruptedFocusTransitions >= 3 ? numericFocus
+        : (pid) => oldNumeric(pid) * (1 - oldMix) + oldTarget(pid) * oldMix;
       interruptedFocusTransitions = interruptedFocusTransitions >= 3 ? 0 : interruptedFocusTransitions + 1;
       focus = next;
+      numericFocus = numericNext;
       focusStart = now();
       tick();
     },

@@ -9,3 +9,10 @@ describe("investigation clock protocol", () => {
     expect(validateMessage({ type: "otef_investigation_clock_changed" })).toBe(true);
   });
 });
+
+describe("exhibit mode protocol", () => {
+  it("accepts otef_exhibit_mode_changed", () => {
+    expect(OTEF_MESSAGE_TYPES.EXHIBIT_MODE_CHANGED).toBe("otef_exhibit_mode_changed");
+    expect(validateMessage({ type: "otef_exhibit_mode_changed" })).toBe(true);
+  });
+});

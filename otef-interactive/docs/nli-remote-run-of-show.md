@@ -3,8 +3,9 @@
 This document began as an English translation of the NLI-authored Hebrew run
 of show received on 2026-09-22. It now also incorporates the exhibit owner's
 2026-09-24 decisions about the revised 34-slide deck, presentation controls,
-and Shura. The tables describe intended behavior, including steps still to be
-implemented; they do not claim that the application already behaves this way.
+and Shura, and the 2026-09-27 staff-remote sequence. The tables describe the
+current operating sequence. Hardware and browser acceptance stay in the
+[NLI exhibit verification guide](nli-exhibit-verification.md).
 
 Empty placeholder rows from the source have been removed. Cells without content
 remain only where the source specifies no additional screen behavior. The
@@ -26,26 +27,40 @@ inclusive. Presentation Previous/Next stays within the active segment.
 
 ## Projection sequence and screen content
 
+Home, before this sequence, is the six-layer overview: settlement names,
+outlines, settlements, Route 232, SEA, and Gaza roads, with an idle clock and
+no narrative house. The projection camera stays fixed. The sequence itself has
+eight steps and starts at the opening minutes.
+
 | GIS screen | Projection / model | Stage | Order |
 | :--- | :--- | :--- | :---: |
-| Settlement names and outlines, Route 232, SEA, and Gaza roads | Settlement names and outlines, Route 232, SEA, and Gaza roads | Opening | 1 |
-| Settlements and their names dim. Polygons, infiltration routes, and NLI alarms appear as time advances. Settlements are revealed and turn red when active infiltration routes or polygons intersect them. The clock appears below Gaza. Ashkelon, Netivot, and Ofakim are visible. | Settlements and their names dim. Polygons, infiltration routes, and NLI alarms appear as time advances. Settlements are revealed and turn red when active infiltration routes or polygons intersect them. The clock appears below Gaza. | Timeline: the first hour (06:29–06:41, when the Segev family events begin) | 2 |
-| See the [Segev family table](#segev-family). |  | [Segev family](#segev-family) | 3 |
-| Settlements and their names dim. Polygons, infiltration routes, and NLI alarms appear as time advances. Settlements are revealed and turn red when active infiltration routes or polygons intersect them. The clock appears below Gaza. Ashkelon, Netivot, and Ofakim are visible. | Settlements and their names dim. Polygons, infiltration routes, and NLI alarms appear as time advances. Settlements are revealed and turn red when active infiltration routes or polygons intersect them. The clock appears below Gaza. | Timeline: the rest of the day (06:42–end of day); zoom out from the Segev family and return to the full Negev view | 4 |
-| See the [Nova table](#nova-and-mor-levy). |  | [Nova and Mor Levy](#nova-and-mor-levy) | 5 |
-| See each narrative table. The narrative names are links. |  | Narratives (free choice): [Sderot](#sderot), [Shura Camp](#shura-camp), and [Hostages (Haim Peri of Nir Oz)](#hostages-haim-peri) | 6 |
-| Settlement names and outlines, Route 232, and people shown as points. After a name search, zoom in on the point and show a pop-up with the name above it. Do not show Gaza roads. A remote action opens that person's archive record. | Settlement names and outlines, Route 232, and people shown as points. After a name search, zoom in on the point and mark it with a square of light. Dim the other points or make the selected point more prominent. Do not show Gaza roads. | Identity database | 7 |
-| All names appear on the model as a wall. All other layers are dimmed; no layer other than the names is visible. The operator can search for a specific name or place. Associated names light up while the others dim, and the selected place lights up. | All names appear on the model as a wall. All other layers are dimmed; no layer other than the names is visible. The operator can search for a specific name or place. Associated names light up while the others dim, and the selected place lights up. | Wall of names | 8 |
-|  |  | Return to the opening | 9 |
+| Settlements and their names dim. Polygons, infiltration routes, and NLI alarms appear as time advances. Settlements are revealed and turn red when active infiltration routes or polygons intersect them. The clock appears below Gaza. Ashkelon, Netivot, and Ofakim are visible. | Settlements and their names dim. Polygons, infiltration routes, and NLI alarms appear as time advances. Settlements are revealed and turn red when active infiltration routes or polygons intersect them. The clock appears below Gaza. | Timeline: the first hour (06:29–06:41, when the Segev family events begin) | 1 |
+| See the [Segev family table](#segev-family). |  | [Segev family](#segev-family) | 2 |
+| Settlements and their names dim. Polygons, infiltration routes, and NLI alarms appear as time advances. Settlements are revealed and turn red when active infiltration routes or polygons intersect them. The clock appears below Gaza. Ashkelon, Netivot, and Ofakim are visible. | Settlements and their names dim. Polygons, infiltration routes, and NLI alarms appear as time advances. Settlements are revealed and turn red when active infiltration routes or polygons intersect them. The clock appears below Gaza. | Timeline: the rest of the day (06:42–end of day); zoom out from the Segev family and return to the full Negev view | 3 |
+| See the [Nova table](#nova-and-mor-levy). |  | [Nova and Mor Levy](#nova-and-mor-levy) | 4 |
+| See each narrative table. The narrative names are links. |  | Narratives (free choice): [Sderot](#sderot), [Shura Camp](#shura-camp), and [Hostages (Haim Peri of Nir Oz)](#hostages-haim-peri) | 5 |
+| Settlement names and outlines, Route 232, and people shown as points. After a name search, zoom in on the point and show a pop-up with the name above it. Do not show Gaza roads. A remote action opens that person's archive record. | Settlement names and outlines, Route 232, and people shown as points. After a name search, zoom in on the point and mark it with a square of light. Dim the other points or make the selected point more prominent. Do not show Gaza roads. | Identity database | 6 |
+| All names appear on the model as a wall. All other layers are dimmed; no layer other than the names is visible. The operator can search for a specific name or place. Associated names stay bright and the others dim. | All names appear on the model as a wall. All other layers are dimmed; no layer other than the names is visible. The operator can search for a specific name or place. Associated names stay bright and the others dim. | Wall of names | 7 |
+| The six Home layers return and the clock is idle. The remote stays on this step. | The six Home layers return and the clock is idle. The projection camera stays fixed. | Back to the start | 8 |
+
+The home screen also opens **The timeline**, three steps that are not extra
+rows in the sequence above: the opening minutes, the rest of the day, and
+**The full timeline**. That last view is the complete idle story, including
+finished routes and investigation polygons, with no playing clock. Next
+returns Home. Back starts the rest of the day again. A failed scene send or a
+failed presentation close stays on the current step; press the same control
+again to retry.
 
 ## Narratives and screen content
 
 ### Segev family
 
+Segev is one step. The house view and the manual slides share it. Close stays
+on this step. A failed open or close can be retried without leaving the step.
+
 | Notes | GIS screen | Projection / model | Order |
 | :--- | :--- | :--- | :---: |
-|  | Zoom in on the Segev family home in black-and-white aerial imagery. Show the clock at 06:41. Mark the house with a pink/red square and the label “Segev family home.” | Focus on Be'eri. Dim the other settlements. Only Be'eri remains prominent, with a square of light and a halo around it. | 1 |
-| Open the presentation from the staff remote. | Cover the GIS map with the presentation and advance through slides 1–8. | Keep the Be'eri-focused model view from step 1; do not show slides on the projection. | 2 |
+| Open the presentation from the staff remote when the guide is ready. | Zoom in on the Segev family home in black-and-white aerial imagery. Show the clock at 06:41. Mark the house with a pink/red square and the label “Segev family home.” Opening the presentation covers the GIS map with slides 1–8. | Focus on Be'eri. Dim the other settlements. Only Be'eri remains prominent, with a square of light and a halo around it. Do not show slides on the projection. | 1 |
 
 [Return to the sequence](#projection-sequence-and-screen-content)
 
@@ -57,16 +72,19 @@ inclusive. Presentation Previous/Next stays within the active segment.
 | The GIS map stays framed on the Nova site during the beats. | Remove the open-spaces layer. Play five authored beats in order, four seconds each (20 seconds total). Show only the active beat's time, title, and presenter copy; animate its polygons as they appear. | Show the Nova polygons in chronological order. The five scrubber marks run from 0% to 100%. Play begins at beat 1; natural completion holds beat 5 at 100%. Back/forward and scrub selection clamp at the first and last beat. | 2 |
 | The first part describes what happened collectively. Now move to Mor Levy's individual story. |  | Show the escape routes taken by people from Nova. Settlements light up when the escape routes intersect them. | 3 |
 | Begin Mor's story. The guide describes her background and the route she took. Open the presentation from the staff remote. | Cover the GIS map with slides 9–11. | Show Mor's route on the model: Nova, one of the lemon groves, and then the Midburn staging site. | 4 |
-| Open the presentation from the staff remote. | Cover the GIS map with slides 12–16: images from the Nova site archive with memorial points. | Dim the model except for the settlements and settlement names intersected by Nova escape routes. Show points for people murdered at Nova only, as well as people kidnapped and murdered or kidnapped and returned alive. | 5 |
+| Memorial slides open automatically after the scene is sent. Close stays on this step. Do not replay the escape routes. Settled intersections stay on the completed route crossings. A failed open or close can be retried on this step. | Cover the GIS map with slides 12–16: images from the Nova site archive with memorial points. | Dim the model except for the settlements and settlement names intersected by Nova escape routes. Show points for people murdered at Nova only, as well as people kidnapped and murdered or kidnapped and returned alive. Completed Nova compounds remain visible even though this step stores no playable timeline rows. | 5 |
 
 [Return to the sequence](#projection-sequence-and-screen-content)
 
 ### Sderot
 
+Sderot is one step. The station view and the manual slides share it. Close
+stays on this step. A failed open or close can be retried without leaving the
+step.
+
 | Notes | GIS screen | Projection / model | Order |
 | :--- | :--- | :--- | :---: |
-|  | Zoom in on Sderot in black-and-white aerial imagery. Place a point on the Sderot police station. | Dim the model and focus on Sderot. Dim the other settlements. Only Sderot remains prominent, with a square of light and a halo around it. | 1 |
-| Open the presentation from the staff remote. | Cover the GIS map with slides 17–21. | Keep the Sderot-focused model view from step 1; do not show slides on the projection. | 2 |
+| Open the presentation from the staff remote when the guide is ready. | Zoom in on Sderot in black-and-white aerial imagery. Place a point on the Sderot police station. Opening the presentation covers the GIS map with slides 17–21. | Dim the model and focus on Sderot. Dim the other settlements. Only Sderot remains prominent, with a square of light and a halo around it. Do not show slides on the projection. | 1 |
 
 [Return to the sequence](#projection-sequence-and-screen-content)
 
@@ -94,8 +112,9 @@ inclusive. Presentation Previous/Next stays within the active segment.
 - The presentation is a full-screen overlay on the GIS page; the GIS map stays
   open underneath. Opening and closing it must not visibly minimize or switch
   the GIS window. The presenter uses only the staff remote, never GIS directly.
-  Except for Shura, the presentation opens only when the presenter chooses
-  **Open presentation** at the indicated narrative step. Presentation slides
+  Shura and the Nova memorial open automatically after their cue is sent.
+  Segev, Mor Levy, and Sderot open only when the presenter chooses
+  **Open presentation**. Hostages still opens manually. Presentation slides
   and videos appear on GIS only; the projection continues showing its model
   content as specified in the table.
 - Remote slide Previous/Next and Close are distinct from scene Back/Next.
@@ -107,7 +126,7 @@ inclusive. Presentation Previous/Next stays within the active segment.
   keeps the remote on the current run-of-show step. Closing Hostages both
   reveals the map and advances immediately to the Nir Oz people step. Closing
   Shura returns directly to the narrative-choice step.
-- Videos on slides 2, 10, 18, 23, and 24 are intended to start automatically
+- Videos on slides 2, 10, 18, 21, 23, and 24 are intended to start automatically
   with sound on entering the slide. Leaving the slide or closing the
   presentation stops and rewinds its video. Video completion does not advance
   the slide. No Play button or normal-playback indicator is part of the default

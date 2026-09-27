@@ -2,9 +2,11 @@ import { describe, expect, test, vi } from "vitest";
 import { DEFAULT_PROJECTION_CONFIG as DEFAULTS } from "../../frontend/src/shared/projection-config-schema.js";
 import {
   FIELD_DESCRIPTORS,
+  NAMES_WALL_DESCRIPTORS,
   fieldValueFromInput,
   fineStepFor,
   mountProjectionConfig,
+  projectionAppliedStatus,
   statusText,
 } from "../../frontend/src/projection-config/config-controller.js";
 
@@ -51,9 +53,12 @@ function fakeClient(initialSnapshot) {
   const savedDrafts = [];
   const notify = () => listeners.forEach((listener) => listener({ ...state, snapshot: clone(state.snapshot), draft: clone(state.draft) }));
   if (initialSnapshot === null) state = { ...state, snapshot: null, draft: null };
+  let validateCandidate;
   return {
     state,
     savedDrafts,
+    setValidateCandidate(handler) { validateCandidate = handler; },
+    validateCandidate(args) { return validateCandidate(args); },
     hydrate(snapshot) { state = { ...state, snapshot: clone(snapshot), draft: clone(snapshot.config) }; notify(); },
     report(changes) { state = { ...state, ...changes }; notify(); },
     subscribe(listener) { listeners.add(listener); listener(state); return () => listeners.delete(listener); },
@@ -77,6 +82,101 @@ function fakeClient(initialSnapshot) {
 }
 
 describe("projection config controller", () => {
+  test('uses an injected validator for inspection and mutations without preview frames', async () => {
+    const previousDocument = globalThis.document;
+    globalThis.document = documentStub();
+    const root = element('main'); const client = fakeClient();
+    const config = clone(client.getState().draft);
+    const candidateValidator = { validateCandidate: vi.fn(async ({ identity }) => ({ identity, valid: true,
+      wall: { datasetVersion: 'release', mode: 'wall', digest: 'a'.repeat(64), expected: 1, placed: 1 },
+      diagnostics: { state: 'valid', datasetVersion: 'release', mode: 'wall', requestedFontPx: 12, effectiveFontPx: 12, expected: 1, placed: 1 },
+    })), dispose: vi.fn() };
+    const api = mountProjectionConfig(root, { client, candidateValidator });
+    const frames = []; const collect = (node) => { if (node.tagName === 'IFRAME') frames.push(node); for (const child of node.children || []) collect(child); };
+    collect(root); expect(frames).toHaveLength(0);
+    await vi.waitFor(() => expect(candidateValidator.validateCandidate).toHaveBeenCalled());
+    expect((await client.validateCandidate({ config, identity: JSON.stringify(config), generation: 1, revision: 3 })).valid).toBe(true);
+    await vi.waitFor(() => expect(find(root, (node) => node.className === 'names-wall-status').textContent).toContain('Valid'));
+    api.dispose(); expect(candidateValidator.dispose).toHaveBeenCalledOnce(); globalThis.document = previousDocument;
+  });
+  test("missing candidate validation remains unconfirmed and mutation preflight is fresh", async () => {
+    const previousDocument = globalThis.document;
+    globalThis.document = documentStub();
+    const root = element("main");
+    const client = fakeClient();
+    const api = mountProjectionConfig(root, { client });
+    const status = find(root, (node) => node.className === "names-wall-status");
+    await vi.waitFor(() => expect(status.textContent).toContain("Building"));
+    expect(status.textContent).not.toContain("Invalid");
+    expect(status.textContent).not.toContain("Draft is unsaved");
+    expect(status.textContent).not.toContain("retain their previous complete wall");
+
+    const config = clone(client.getState().draft);
+    const identity = JSON.stringify(config);
+    const first = await client.validateCandidate({ config, identity, generation: 1, revision: 3 });
+    const second = await client.validateCandidate({ config, identity, generation: 2, revision: 4 });
+    expect(first).not.toBe(second);
+    expect(second.reason).toBe("Candidate validator unavailable");
+    api.dispose(); globalThis.document = previousDocument;
+  });
+  test('dataset event revalidates an identical draft only when current inputs change', async () => {
+    const previousDocument = globalThis.document;
+    const doc = documentStub(); const handlers = new Map();
+    doc.defaultView.addEventListener = (type, fn) => handlers.set(type, fn);
+    doc.defaultView.removeEventListener = (type) => handlers.delete(type);
+    globalThis.document = doc;
+    const socketHandlers = new Map();
+    const socket = { on: (type, fn) => socketHandlers.set(type, fn), off: (type) => socketHandlers.delete(type) };
+    let datasetVersion = 'release';
+    const candidateValidator = {
+      readInputs: vi.fn(async () => ({ heading: 35, datasetVersion })),
+      getLastInputs: () => ({ heading: 35, datasetVersion }),
+      validateCandidate: vi.fn(async ({ identity }) => ({ identity, valid: true,
+        wall: { datasetVersion, mode: 'wall', digest: 'a'.repeat(64), expected: 1, placed: 1 },
+        diagnostics: { state: 'valid', datasetVersion, mode: 'wall', requestedFontPx: 12, effectiveFontPx: 12, expected: 1, placed: 1 },
+      })), dispose: vi.fn(),
+    };
+    const api = mountProjectionConfig(element('main'), { client: fakeClient(), socket, candidateValidator });
+    await vi.waitFor(() => expect(candidateValidator.validateCandidate).toHaveBeenCalledTimes(1));
+    socketHandlers.get('otef_person_selection_changed')({ personSelection: { datasetVersion } });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(candidateValidator.validateCandidate).toHaveBeenCalledTimes(1);
+    datasetVersion = 'next-release';
+    socketHandlers.get('otef_narrative_scene_changed')({ datasetVersion });
+    await vi.waitFor(() => expect(candidateValidator.validateCandidate).toHaveBeenCalledTimes(2));
+    expect(candidateValidator.validateCandidate.mock.calls[1][0].identity).toBe(candidateValidator.validateCandidate.mock.calls[0][0].identity);
+    api.dispose(); expect(socketHandlers.has('otef_person_selection_changed')).toBe(false);
+    expect(handlers.has('storage')).toBe(false); globalThis.document = previousDocument;
+  });
+  test('paired wall status requires matching revision, digest, dataset, and all duplicate instances', () => {
+    const wall = { datasetVersion: 'release', mode: 'wall', digest: 'a'.repeat(64), expected: 1228, placed: 1228 };
+    const left = { output: 'left', instanceId: 'left-a', revision: 8, success: true, wall };
+    const right = { output: 'right', instanceId: 'right-a', revision: 8, success: true, wall };
+    expect(projectionAppliedStatus([left], 8)).toBe('Pending');
+    expect(projectionAppliedStatus([left, right], 8)).toBe('Applied');
+    expect(projectionAppliedStatus([left, { ...right, wall: { ...wall, digest: 'b'.repeat(64) } }], 8)).toBe('Unconfirmed');
+    expect(projectionAppliedStatus([left, right, { ...left, instanceId: 'left-b', wall: { ...wall, datasetVersion: 'other' } }], 8)).toBe('Unconfirmed');
+    expect(projectionAppliedStatus([left, { ...right, revision: 7 }], 8)).toBe('Pending');
+    expect(projectionAppliedStatus([left, { ...right, success: false, error: 'draw failed' }], 8)).toBe('Failed');
+    expect(projectionAppliedStatus([{ ...left, wall: undefined }, { ...right, wall: undefined }], 8)).toBe('Renderer applied');
+  });
+  test('editor clears paired wall Applied on duplicate conflict and reconnect', () => {
+    const previousDocument = globalThis.document;
+    globalThis.document = documentStub();
+    const root = element('main'); const listeners = new Map();
+    const socket = { on: (event, handler) => listeners.set(event, handler), off: (event) => listeners.delete(event), send: vi.fn(), getConnected: () => true };
+    const api = mountProjectionConfig(root, { client: fakeClient(), socket });
+    const wall = { datasetVersion: 'release', mode: 'wall', digest: 'a'.repeat(64), expected: 1228, placed: 1228 };
+    const ack = (output, instanceId, nextWall = wall) => listeners.get('otef_projection_applied')({ table: 'otef', output, instanceId, revision: 2, success: true, route: 'browser', baseline: { type: 'identity' }, wall: nextWall });
+    ack('left', 'left-a'); ack('right', 'right-a');
+    expect(find(root, (node) => node.className === 'applied-summary').textContent).toBe('Applied');
+    ack('left', 'left-b', { ...wall, digest: 'b'.repeat(64) });
+    expect(api.getStatusRows()).toHaveLength(3);
+    expect(find(root, (node) => node.className === 'applied-summary').textContent).toBe('Unconfirmed');
+    listeners.get('disconnect')();
+    expect(find(root, (node) => node.className === 'applied-summary').textContent).toBe('Pending');
+    api.dispose(); globalThis.document = previousDocument;
+  });
   test("shows hydration failure with a retry action and automatic preview errors", async () => {
     const previousDocument = globalThis.document;
     globalThis.document = documentStub();
@@ -177,7 +277,7 @@ describe("projection config controller", () => {
     api.dispose(); globalThis.document = previousDocument; vi.useRealTimers();
   });
 
-  test("Live off stages edits and import; Save as new keeps its own ID for Load and Revert", async () => {
+  test("Live off stages edits and import; Save, Load, and Apply work without preview frames", async () => {
     const previousDocument = globalThis.document;
     globalThis.document = documentStub();
     const root = element("main");
@@ -210,9 +310,13 @@ describe("projection config controller", () => {
     preset.value = "original"; preset.dispatch("change");
     action("load").dispatch("click");
     await vi.waitFor(() => expect(client.load).toHaveBeenCalledWith("original"));
+    action('apply').dispatch('click');
+    await vi.waitFor(() => expect(client.apply).toHaveBeenCalledTimes(1));
     action("revert").dispatch("click");
     await vi.waitFor(() => expect(client.revert).toHaveBeenCalledTimes(1));
     expect(client.getState().snapshot.presets.find((item) => item.id === "original").readOnly).toBe(true);
+    const frames = []; const collect = (node) => { if (node.tagName === 'IFRAME') frames.push(node); for (const child of node.children || []) collect(child); };
+    collect(root); expect(frames).toHaveLength(0);
     api.dispose(); globalThis.document = previousDocument;
   });
 
@@ -230,7 +334,7 @@ describe("projection config controller", () => {
     const api = mountProjectionConfig(root, { client, onImport: async () => ({ name: "Legacy checkpoint", config: legacy }) });
     const importedInput = find(root, (node) => node.attributes?.["aria-label"] === "Import calibration");
     importedInput.files = [{}]; importedInput.dispatch("change");
-    await vi.waitFor(() => expect(client.getState().draft.schemaVersion).toBe(2));
+    await vi.waitFor(() => expect(client.getState().draft.schemaVersion).toBe(5));
     expect(client.getState().draft.pre).toEqual(legacy.pre);
     expect(client.getState().draft.outputs.left.warp.baseline.type).toBe("identity");
     expect(client.getState().draft.outputs.right.warp.grid.offsets).toHaveLength(56);
@@ -383,13 +487,15 @@ describe("projection config controller", () => {
     globalThis.document = documentStub();
     const root = element("main");
     const screens = [
-      { key: "left-screen", label: "Left screen", left: -100, top: 0, width: 1920, height: 1080 },
-      { key: "right-screen", label: "Right screen", left: 1820, top: 0, width: 1920, height: 1080 },
+      { key: "left-screen", displayNumber: 1, label: "Left screen", left: -100, top: 0, width: 1920, height: 1080 },
+      { key: "right-screen", displayNumber: 2, label: "Right screen", left: 1820, top: 0, width: 1920, height: 1080 },
     ];
     let outputState = { screens: [], assignments: { left: null, right: null }, message: "Identify displays", error: "", ownedSpans: [] };
     const outputListeners = new Set();
     const outputController = {
-      identifyDisplays: vi.fn(async () => { outputState = { ...outputState, screens, message: "Displays identified" }; outputListeners.forEach((listener) => listener(outputState)); return screens; }),
+      refreshDisplays: vi.fn(async () => { outputState = { ...outputState, screens, message: "Displays detected" }; outputListeners.forEach((listener) => listener(outputState)); return screens; }),
+      identifyDisplays: vi.fn(() => { outputListeners.forEach((listener) => listener(outputState)); return screens; }),
+      dispose: vi.fn(),
       assignDisplays: vi.fn((selection) => { outputState = { ...outputState, assignments: selection, message: "Assignment saved" }; outputListeners.forEach((listener) => listener(outputState)); return outputState; }),
       openBoth: vi.fn(async () => { outputState = { ...outputState, ownedSpans: ["left", "right"], message: "Browser outputs opened" }; outputListeners.forEach((listener) => listener(outputState)); return outputState.ownedSpans; }),
       closeBoth: vi.fn(() => { outputState = { ...outputState, ownedSpans: [], message: "Browser outputs closed" }; outputListeners.forEach((listener) => listener(outputState)); return outputState; }),
@@ -399,13 +505,16 @@ describe("projection config controller", () => {
     const client = fakeClient();
     const api = mountProjectionConfig(root, { client, outputController });
     const action = (name) => find(root, (node) => node.dataset?.action === name);
+    await vi.waitFor(() => expect(outputController.refreshDisplays).toHaveBeenCalledTimes(1));
+    expect(outputController.identifyDisplays).not.toHaveBeenCalled();
     action("output-identify").dispatch("click");
     await vi.waitFor(() => expect(outputController.identifyDisplays).toHaveBeenCalledTimes(1));
     const left = find(root, (node) => node.dataset?.action === "output-left-display");
     const right = find(root, (node) => node.dataset?.action === "output-right-display");
-    expect(left.children.map((option) => option.textContent).join(" ")).toContain("-100,0");
-    expect(right.children.map((option) => option.textContent).join(" ")).toContain("1820,0");
+    expect(left.children.map((option) => option.textContent)).toEqual(["Display 1", "Display 2"]);
+    expect(right.children.map((option) => option.textContent)).toEqual(["Display 1", "Display 2"]);
     left.value = "left-screen"; right.value = "right-screen"; left.dispatch("change"); right.dispatch("change");
+    action("output-identify").dispatch("click");
     client.report({ previewError: "unrelated preview refresh" });
     expect(left.value).toBe("left-screen");
     expect(right.value).toBe("right-screen");
@@ -415,6 +524,188 @@ describe("projection config controller", () => {
     await vi.waitFor(() => expect(outputController.openBoth).toHaveBeenCalledTimes(1));
     action("output-close-both").dispatch("click");
     expect(outputController.closeBoth).toHaveBeenCalledTimes(1);
+    api.dispose(); expect(outputController.dispose).toHaveBeenCalledTimes(1); globalThis.document = previousDocument;
+  });
+
+  test("authoritative rebase discards an active drag without publishing its rollback", () => {
+    const previousDocument = globalThis.document;
+    globalThis.document = documentStub();
+    const root = element("main");
+    const client = fakeClient();
+    const api = mountProjectionConfig(root, { client });
+    client.setLive(false);
+    find(root, (node) => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-keystone").dispatch("click");
+    const surface = find(root, (node) => node.attributes?.class === "warp-edit-surface");
+    surface.getBoundingClientRect = () => ({ left: 0, top: 0, width: 2064, height: 1224 });
+    surface.dispatch("pointerdown", { pointerId: 1, isPrimary: true, button: 0, clientX: 72, clientY: 72, preventDefault() {} });
+    surface.dispatch("pointermove", { pointerId: 1, clientX: 92, clientY: 72 });
+    expect(client.getState().draft.outputs.left.warp.keystone.corners[0][0]).toBeCloseTo(20 / 1920);
+    const authoritative = clone(client.getState().draft);
+    authoritative.outputs.left.warp.keystone.corners[0][0] = 0.02;
+    const before = client.setDraft.mock.calls.length;
+    client.report({ draft: authoritative, hasLocalDraft: false });
+    surface.dispatch("pointerdown", { pointerId: 2, isPrimary: true, button: 0, clientX: 72 + 0.02 * 1920, clientY: 72, preventDefault() {} });
+    surface.dispatch("pointermove", { pointerId: 2, clientX: 72 + 0.02 * 1920 + 10, clientY: 72 });
+    expect(client.getState().draft.outputs.left.warp.keystone.corners[0][0]).toBeCloseTo(0.02 + 10 / 1920);
+    surface.dispatch("pointercancel", { pointerId: 2 });
+    surface.dispatch("lostpointercapture", { pointerId: 1 });
+    expect(client.setDraft.mock.calls.length).toBeGreaterThan(before);
+    expect(client.getState().draft.outputs.left.warp.keystone.corners[0][0]).toBe(0.02);
+    api.dispose(); globalThis.document = previousDocument;
+  });
+
+  test("pointer-up displacement commits a drag even without a pointermove event", () => {
+    const previousDocument = globalThis.document;
+    globalThis.document = documentStub();
+    const root = element("main"); const client = fakeClient();
+    const api = mountProjectionConfig(root, { client });
+    client.setLive(false);
+    find(root, (node) => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-keystone").dispatch("click");
+    const surface = find(root, (node) => node.attributes?.class === "warp-edit-surface");
+    surface.getBoundingClientRect = () => ({ left: 0, top: 0, width: 2064, height: 1224 });
+    surface.dispatch("pointerdown", { pointerId: 1, isPrimary: true, button: 0, clientX: 72, clientY: 72, preventDefault() {} });
+    surface.dispatch("pointerup", { pointerId: 1, clientX: 92, clientY: 72 });
+    expect(client.getState().draft.outputs.left.warp.keystone.corners[0][0]).toBeCloseTo(20 / 1920);
+    find(root, (node) => node.dataset?.action === "warp-undo").dispatch("click");
+    expect(client.getState().draft.outputs.left.warp.keystone.corners[0][0]).toBe(0);
+    api.dispose(); globalThis.document = previousDocument;
+  });
+
+  test("pointer-up position supersedes the last pointermove position", () => {
+    const previousDocument = globalThis.document;
+    globalThis.document = documentStub();
+    const root = element("main"); const client = fakeClient();
+    const api = mountProjectionConfig(root, { client });
+    client.setLive(false);
+    find(root, (node) => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-keystone").dispatch("click");
+    const surface = find(root, (node) => node.attributes?.class === "warp-edit-surface");
+    surface.getBoundingClientRect = () => ({ left: 0, top: 0, width: 2064, height: 1224 });
+    surface.dispatch("pointerdown", { pointerId: 1, isPrimary: true, button: 0, clientX: 72, clientY: 72, preventDefault() {} });
+    surface.dispatch("pointermove", { pointerId: 1, clientX: 82, clientY: 72 });
+    surface.dispatch("pointerup", { pointerId: 1, clientX: 92, clientY: 72 });
+    expect(client.getState().draft.outputs.left.warp.keystone.corners[0][0]).toBeCloseTo(20 / 1920);
+    find(root, (node) => node.dataset?.action === "warp-undo").dispatch("click");
+    expect(client.getState().draft.outputs.left.warp.keystone.corners[0][0]).toBe(0);
+    api.dispose(); globalThis.document = previousDocument;
+  });
+
+  test("an invalid release keeps the last valid drag position and one undo entry", () => {
+    const previousDocument = globalThis.document;
+    globalThis.document = documentStub();
+    const root = element("main"); const client = fakeClient();
+    const api = mountProjectionConfig(root, { client });
+    client.setLive(false);
+    find(root, (node) => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-keystone").dispatch("click");
+    const surface = find(root, (node) => node.attributes?.class === "warp-edit-surface");
+    surface.getBoundingClientRect = () => ({ left: 0, top: 0, width: 2064, height: 1224 });
+    surface.dispatch("pointerdown", { pointerId: 1, isPrimary: true, button: 0, clientX: 72, clientY: 72, preventDefault() {} });
+    surface.dispatch("pointermove", { pointerId: 1, clientX: 82, clientY: 72 });
+    surface.dispatch("pointerup", { pointerId: 1, clientX: 10000, clientY: 72 });
+    expect(client.getState().draft.outputs.left.warp.keystone.corners[0][0]).toBeCloseTo(10 / 1920);
+    find(root, (node) => node.dataset?.action === "warp-undo").dispatch("click");
+    expect(client.getState().draft.outputs.left.warp.keystone.corners[0][0]).toBe(0);
+    api.dispose(); globalThis.document = previousDocument;
+  });
+
+  test('import reports a nonzero historical seam gap conversion notice', async () => {
+    const previousDocument = globalThis.document;
+    globalThis.document = documentStub();
+    const root = element('main'); const client = fakeClient();
+    const api = mountProjectionConfig(root, { client, onImport: async () => ({
+      name: 'Old wall', config: clone(DEFAULTS), warnings: ['The wall seam gap needs readjustment in final-output pixels.'],
+    }) });
+    const importedInput = find(root, (node) => node.attributes?.['aria-label'] === 'Import calibration');
+    importedInput.files = [{}]; importedInput.dispatch('change');
+    const notice = find(root, (node) => node.className === 'conflict-banner');
+    await vi.waitFor(() => expect(notice.textContent).toContain('seam gap needs readjustment'));
+    api.dispose(); globalThis.document = previousDocument;
+  });
+
+  test('hydration presents a historical seam-gap readjustment notice', () => {
+    const previousDocument = globalThis.document;
+    globalThis.document = documentStub();
+    const root = element('main'); const client = fakeClient();
+    const api = mountProjectionConfig(root, { client });
+    client.report({ migrationWarnings: ['The wall seam gap needs readjustment in final-output pixels.'] });
+    const notice = find(root, (node) => node.className === 'conflict-banner');
+    expect(notice.textContent).toContain('seam gap needs readjustment');
+    api.dispose(); globalThis.document = previousDocument;
+  });
+
+  test("Names wall edits the active profile and preserves the other profile", () => {
+    const previousDocument = globalThis.document;
+    globalThis.document = documentStub();
+    const root = element("main");
+    const client = fakeClient();
+    const api = mountProjectionConfig(root, { client });
+    const node = find(root, (item) => item.dataset?.node === "names-wall");
+    expect(node).not.toBeNull();
+    const mode = find(node, (item) => item.attributes?.["aria-label"] === "Names wall profile");
+    mode.value = "model";
+    mode.dispatch("change");
+    expect(client.getState().draft.namesWall.activeMode).toBe("model");
+    const inset = find(node, (item) => item.dataset?.field === "namesWall.innerEdgeInsetPx.left" && item.dataset.input === "number");
+    inset.value = "60";
+    inset.dispatch("blur");
+    const font = find(node, (item) => item.dataset?.field === "namesWall.requestedFontPx" && item.dataset.input === "number");
+    font.value = "6";
+    font.dispatch("blur");
+    expect(client.getState().draft.namesWall.profiles.model.requestedFontPx).toBe(6);
+    expect(client.getState().draft.namesWall.profiles.wall.requestedFontPx).toBe(12);
+    expect(client.getState().draft.namesWall.innerEdgeInsetPx.left).toBe(60);
+    const spacing = find(node, (item) => item.dataset?.field === "namesWall.spacingPx" && item.dataset.input === "number");
+    spacing.value = "1";
+    spacing.dispatch("blur");
+    expect(client.getState().draft.namesWall.profiles.model.spacingPx).toBe(1);
+    expect(client.getState().draft.namesWall.profiles.wall.spacingPx).toBe(2);
+    api.dispose(); globalThis.document = previousDocument;
+  });
+
+  test("Names wall numeric descriptors use the shared integer bounds", () => {
+    expect(NAMES_WALL_DESCRIPTORS.map(({ path, min, max, step }) => [path, min, max, step])).toEqual([
+      ["namesWall.requestedFontPx", 1, 48, 1],
+      ["namesWall.spacingPx", 0, 32, 1], ["namesWall.edgeInsetPx", 0, 256, 1],
+      ["namesWall.inwardShiftPercent", 0, 100, 1],
+      ["namesWall.innerEdgeInsetPx.left", 0, 960, 1], ["namesWall.innerEdgeInsetPx.right", 0, 960, 1],
+    ]);
+  });
+
+  test("Names wall settings survive Live, preset, import, export, conflict, and Revert paths", async () => {
+    const previousDocument = globalThis.document;
+    globalThis.document = documentStub();
+    const root = element("main"); const client = fakeClient(); const exported = vi.fn();
+    const api = mountProjectionConfig(root, { client, onExport: exported, onImport: async () => ({ name: "Wall profile", config: {
+      ...clone(DEFAULTS), namesWall: { ...clone(DEFAULTS.namesWall), activeMode: "model", profiles: {
+        wall: { ...clone(DEFAULTS.namesWall.profiles.wall) }, model: { ...clone(DEFAULTS.namesWall.profiles.model), requestedFontPx: 7, spacingPx: 1, edgeInsetPx: 12 },
+      } },
+    } }) });
+    const action = (name) => find(root, (item) => item.dataset?.action === name);
+    const node = find(root, (item) => item.dataset?.node === "names-wall");
+    const live = action("live"); live.checked = false; live.dispatch("change");
+    const setField = (path, value) => { const input = find(node, (item) => item.dataset?.field === path && item.dataset.input === "number"); input.value = String(value); input.dispatch("blur"); };
+    setField("namesWall.inwardShiftPercent", 50);
+    const mode = find(node, (item) => item.attributes?.["aria-label"] === "Names wall profile"); mode.value = "model"; mode.dispatch("change");
+    setField("namesWall.innerEdgeInsetPx.left", 60); setField("namesWall.requestedFontPx", 6); setField("namesWall.spacingPx", 1);
+    action("apply").dispatch("click");
+    await vi.waitFor(() => expect(client.apply).toHaveBeenCalledTimes(1));
+    action("export").dispatch("click");
+    const exportValue = JSON.parse(exported.mock.calls.at(-1)[0]);
+    expect(exportValue.config.namesWall.profiles.model).toMatchObject({ requestedFontPx: 6, spacingPx: 1 });
+    expect(exportValue.config.namesWall.profiles.wall.inwardShiftPercent).toBe(50);
+    expect(exportValue.config.namesWall.innerEdgeInsetPx.left).toBe(60);
+    const name = find(root, (item) => item.attributes?.["aria-label"] === "Preset name"); name.value = "Wall profile";
+    action("save-new").dispatch("click");
+    await vi.waitFor(() => expect(client.savedDrafts.at(-1).namesWall.profiles.model.requestedFontPx).toBe(6));
+    expect(client.savedDrafts.at(-1).namesWall.profiles.wall.inwardShiftPercent).toBe(50);
+    const importInput = find(root, (item) => item.attributes?.["aria-label"] === "Import calibration"); importInput.files = [{}]; importInput.dispatch("change");
+    await vi.waitFor(() => expect(client.getState().draft.namesWall.profiles.model.requestedFontPx).toBe(7));
+    expect(client.getState().draft.namesWall.profiles.model).toMatchObject({ spacingPx: 1, edgeInsetPx: 12 });
+    api.setConflict("Remote update");
+    expect(client.getState().draft.namesWall.profiles.model.requestedFontPx).toBe(7);
+    action("revert").dispatch("click");
+    await vi.waitFor(() => expect(client.revert).toHaveBeenCalledTimes(1));
+    expect(client.getState().draft.namesWall).toEqual(client.getState().snapshot.config.namesWall);
+    expect(client.getState().draft.namesWall.profiles.wall.inwardShiftPercent).toBe(50);
     api.dispose(); globalThis.document = previousDocument;
   });
 

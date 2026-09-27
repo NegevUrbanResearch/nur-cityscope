@@ -38,18 +38,18 @@ describe("projection overlay adapters", () => {
     expect(c.context.calls.some(([name, value]) => name === "fillText" && value === "06:36")).toBe(true);
   });
 
-  test("legend lays out a wrapped two-column page with direction and CSS symbol semantics", () => {
+  test("legend lays out a wrapping row with direction and CSS symbol semantics", () => {
     const c = canvasFactory(); const adapter = createProjectionLegendAdapter({ canvasFactory: () => c });
     adapter.sync({
       layout: { ...layout, widthPct: 40, heightPct: 40, fontPx: 16 }, language: "he", spanId: "left", visible: true,
-      pages: [["pack"]], pageIndex: 0, blocks: [{ id: "pack", pack: { name: "קבוצה" }, layers: [{ items: [
+      pages: [["pack"]], pageIndex: 0, blocks: [{ id: "pack", pack: { id: "roads", name: "קבוצה" }, layers: [{ items: [
         { label: "תווית ארוכה נעטפת", components: [{ shape: "line", stroke: "#fff", dash: [4, 2], carrier: "#000", strokeWidth: 2 }] },
         { label: "ריבוע", components: [{ shape: "square", fill: "#123456", fillOpacity: 0.4, stroke: "#fff", strokeOpacity: 0.6 }] },
         { label: "יהלום", components: [{ shape: "diamond", fill: "#654321", hatchStyle: "repeating-linear-gradient(45deg, #fff, #fff 1px, transparent 1px, transparent 8px)" }] },
       ] }] }] });
     expect(adapter.draw(500).source).toBe(c);
+    expect(c.context.calls.some(([name, value]) => name === "fillText" && value === "קבוצה")).toBe(true);
     expect(c.context.calls.some(([name, value]) => name === "fillText" && value === "תווית ארוכה נעטפת")).toBe(true);
-    expect(c.context.calls.filter(([name]) => name === "fillText").length).toBeGreaterThan(2);
     expect(c.context.calls.some(([name]) => name === "setLineDash")).toBe(true);
     expect(c.context.calls.some(([name]) => name === "clip")).toBe(true);
     expect(c.context.direction).toBe("rtl");
@@ -61,27 +61,65 @@ describe("projection overlay adapters", () => {
   });
 
   test("legend allocates CSS outer symbol slots and intrinsic mixed-direction labels", () => {
-    const c = canvasFactory(); const adapter = createProjectionLegendAdapter({ canvasFactory: () => c });
+    const c = canvasFactory();
+    const adapter = createProjectionLegendAdapter({ canvasFactory: () => c });
     adapter.sync({
-      layout: { ...layout, widthPct: 40, heightPct: 40, fontPx: 28, rotateDeg: 0 }, language: "en", spanId: "left", visible: true,
-      pages: [["pack"]], pageIndex: 0, blocks: [{ id: "pack", pack: { name: "Group" }, layers: [{ items: [
+      layout: { ...layout, widthPct: 40, heightPct: 40, fontPx: 28, rotateDeg: 0 },
+      language: "en",
+      spanId: "left",
+      visible: true,
+      pages: [["pack"]],
+      pageIndex: 0,
+      blocks: [{ id: "pack", pack: { id: "roads", name: "Group" }, layers: [{ items: [
         { label: "אב", components: [{ shape: "point", fill: "#123456" }] },
         { label: "Square", components: [{ shape: "square", fill: "#123456" }] },
-      ] }] }] });
+      ] }] }],
+    });
     adapter.draw();
     const point = c.context.calls.find(([name]) => name === "arc");
+    const square = c.context.calls.find(([name]) => name === "rect");
     const label = c.context.calls.find(([name, value]) => name === "fillText" && value === "אב");
     const title = c.context.calls.find(([name, value]) => name === "fillText" && value === "Group");
-    const width = 1920 * 0.4;
     const padding = 28 * 0.5;
-    const columnWidth = (width - padding * 2 - 28 * 0.64) / 2;
+    const canvasWidth = 1920 * 0.4;
     const expectedPointCenter = padding + 28 * 0.32 + 28 * 0.55 / 2;
-    const expectedLabelRight = padding + 28 * 1.23 + 28 * 0.36 + 12 + 28 * 0.01;
-    const expectedTitleBaseline = 28 * 0.4 + ((28 * 0.55 * 1.35) - 12 - 3) / 2 + 12;
+    const itemGap = 28 * 18 / 16;
+    const firstWidth = Math.max(28 * 1.23, 28 * 0.55 + 28 * 0.32 * 2) + 28 * 0.36
+      + (12 + Math.max(0, "אב".length - 1) * 28 * 0.01);
+    const squareCenterX = square[1] + square[3] / 2;
     expect(point?.[1]).toBeCloseTo(expectedPointCenter, 3);
-    expect(label?.[2]).toBeCloseTo(expectedLabelRight, 3);
-    expect(title?.[3]).toBeCloseTo(expectedTitleBaseline, 3);
-    expect(columnWidth).toBeGreaterThan(0);
+    expect(label?.[2]).toBeGreaterThan(point?.[1]);
+    expect(title?.[2]).toBeCloseTo(padding, 3);
+    expect(squareCenterX).toBeGreaterThan(point[1]);
+    expect(squareCenterX).toBeCloseTo(padding + firstWidth + itemGap + 28 * 0.32 + 28 * 0.55 / 2, 1);
+    expect(square[1]).toBeLessThan(canvasWidth / 2);
+  });
+
+  test("legend places the first RTL item at inline-start", () => {
+    const c = canvasFactory();
+    const adapter = createProjectionLegendAdapter({ canvasFactory: () => c });
+    adapter.sync({
+      layout: { ...layout, widthPct: 40, heightPct: 40, fontPx: 28, rotateDeg: 0 },
+      language: "he",
+      spanId: "left",
+      visible: true,
+      pages: [["pack"]],
+      pageIndex: 0,
+      blocks: [{ id: "pack", pack: { id: "roads", name: "קבוצה" }, layers: [{ items: [
+        { label: "א", components: [{ shape: "point", fill: "#123456" }] },
+        { label: "ב", components: [{ shape: "square", fill: "#123456" }] },
+      ] }] }],
+    });
+    adapter.draw();
+    const point = c.context.calls.find(([name]) => name === "arc");
+    const square = c.context.calls.find(([name]) => name === "rect");
+    const canvasWidth = 1920 * 0.4;
+    const squareCenterX = square[1] + square[3] / 2;
+    const squareCenterY = square[2] + square[4] / 2;
+    expect(point?.[1]).toBeGreaterThan(canvasWidth / 2);
+    expect(squareCenterX).toBeLessThan(point[1]);
+    expect(point[1] - squareCenterX).toBeLessThan(canvasWidth / 2);
+    expect(squareCenterY).toBeCloseTo(point[2], 0);
   });
 
   test("legend renders structured gradient bands as nested canvas fills", () => {
@@ -113,5 +151,74 @@ describe("projection overlay adapters", () => {
     adapter.draw();
     expect(c.context.font).toContain('0.08px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif');
     expect(c.context.lineWidth).toBeCloseTo(0.003);
+  });
+
+  test("caption revisions follow painted pixels, not placement", () => {
+    const c = canvasFactory(); const adapter = createProjectionCaptionAdapter({ canvasFactory: () => c });
+    const snapshot = { visible: true, model: { clockLabel: "07:05" } };
+    adapter.sync({ snapshot, layout });
+    const first = adapter.draw();
+    expect(first.contentVersion).toBeGreaterThan(0);
+    expect(adapter.draw().contentVersion).toBe(first.contentVersion);
+    adapter.sync({ snapshot, layout: { ...layout, leftPct: 20, rotateDeg: 0 } });
+    const placed = adapter.draw();
+    expect(placed.contentVersion).toBe(first.contentVersion);
+    expect(placed.matrix).not.toEqual(first.matrix);
+    adapter.sync({ snapshot: { visible: true, model: { clockLabel: "07:06" } }, layout });
+    expect(adapter.draw().contentVersion).toBeGreaterThan(first.contentVersion);
+    adapter.sync({ snapshot, layout: { ...layout, widthPct: 40 } });
+    expect(adapter.draw().contentVersion).toBeGreaterThan(placed.contentVersion);
+  });
+
+  test("legend revisions follow painted content and local size", () => {
+    const c = canvasFactory(); const adapter = createProjectionLegendAdapter({ canvasFactory: () => c });
+    const base = { layout, language: "en", spanId: "left", visible: true, blocks: [] };
+    adapter.sync(base);
+    const first = adapter.draw();
+    expect(first.contentVersion).toBeGreaterThan(0);
+    adapter.sync({ ...base, layout: { ...layout, leftPct: 25 } });
+    const placed = adapter.draw();
+    expect(placed.contentVersion).toBe(first.contentVersion);
+    expect(placed.matrix).not.toEqual(first.matrix);
+    adapter.sync({ ...base, blocks: [{ id: "x", pack: { name: "Changed" }, layers: [] }] });
+    const changed = adapter.draw();
+    expect(changed.contentVersion).toBeGreaterThan(first.contentVersion);
+    expect(adapter.draw().contentVersion).toBe(changed.contentVersion);
+    adapter.sync({ ...base, layout: { ...layout, heightPct: 20 } });
+    expect(adapter.draw().contentVersion).toBeGreaterThan(changed.contentVersion);
+  });
+
+  test("pattern revisions stay stable across repeated syncs and change after painting", () => {
+    const c = canvasFactory(); const adapter = createProjectionPatternAdapter({ spanId: "left", canvasFactory: () => c });
+    adapter.sync({ active: true, pattern: "grid", config: DEFAULT_PROJECTION_CONFIG });
+    const first = adapter.draw();
+    expect(first.contentVersion).toBeGreaterThan(0);
+    adapter.sync({ active: true, pattern: "grid", config: DEFAULT_PROJECTION_CONFIG });
+    expect(adapter.draw().contentVersion).toBe(first.contentVersion);
+    adapter.sync({ active: true, pattern: "output_id", config: DEFAULT_PROJECTION_CONFIG });
+    const changed = adapter.draw();
+    expect(changed.contentVersion).toBeGreaterThan(first.contentVersion);
+    expect(adapter.draw().contentVersion).toBe(changed.contentVersion);
+  });
+
+  test("legend omits the NLI pack title on the canvas", () => {
+    const c = canvasFactory();
+    const adapter = createProjectionLegendAdapter({ canvasFactory: () => c });
+    adapter.sync({
+      layout: { ...layout, widthPct: 40, heightPct: 40, fontPx: 16 },
+      language: "en",
+      spanId: "left",
+      visible: true,
+      pages: [["nli"]],
+      pageIndex: 0,
+      blocks: [{
+        id: "nli",
+        pack: { id: "nli", name: "October 7th" },
+        layers: [{ items: [{ label: "Murdered", components: [{ shape: "point", fill: "#123456" }] }] }],
+      }],
+    });
+    adapter.draw();
+    expect(c.context.calls.some(([name, value]) => name === "fillText" && value === "Murdered")).toBe(true);
+    expect(c.context.calls.some(([name, value]) => name === "fillText" && value === "October 7th")).toBe(false);
   });
 });

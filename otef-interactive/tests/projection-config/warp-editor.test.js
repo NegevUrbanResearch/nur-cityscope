@@ -51,6 +51,43 @@ test("drag coalesces history and cancel restores the previewed start", () => {
   expect(editor.getConfig()).toEqual(start);
 });
 
+test.each([
+  ["fine", "up", 0, -0.25], ["fine", "down", 0, 0.25], ["fine", "left", -0.25, 0], ["fine", "right", 0.25, 0],
+  ["coarse", "up", 0, -1], ["coarse", "down", 0, 1], ["coarse", "left", -1, 0], ["coarse", "right", 1, 0],
+])("%s %s nudge changes the selected point by output pixels", (step, direction, dx, dy) => {
+  const editor = createWarpEditor({ config: clone(DEFAULT_PROJECTION_CONFIG), output: "left" });
+  editor.setStep(step);
+  expect(editor.nudge(direction)).toBe(true);
+  const point = editor.getConfig().outputs.left.warp.keystone.corners[0];
+  expect(point[0] * 1920).toBeCloseTo(dx);
+  expect(point[1] * 1080).toBeCloseTo(dy);
+});
+
+test("a group nudge retains selection through undo and redo", () => {
+  const editor = createWarpEditor({ config: clone(DEFAULT_PROJECTION_CONFIG), output: "left" });
+  editor.select(gridSelection("row", 0)); editor.setStep("coarse");
+  expect(editor.nudge("right")).toBe(true);
+  expect(editor.getState().selection).toMatchObject({ kind: "row", index: 0 });
+  expect(editor.getConfig().outputs.left.warp.grid.offsets.slice(0, 7).every(([x]) => x === 1 / 1920)).toBe(true);
+  expect(editor.undo()).toBe(true);
+  expect(editor.getConfig().outputs.left.warp.grid.offsets.slice(0, 7).every(([x]) => x === 0)).toBe(true);
+  expect(editor.redo()).toBe(true);
+  expect(editor.getConfig().outputs.left.warp.grid.offsets.slice(0, 7).every(([x]) => x === 1 / 1920)).toBe(true);
+});
+
+test("a zero-distance or repeated move does not publish a duplicate drag preview", () => {
+  const onChange = vi.fn();
+  const editor = createWarpEditor({ config: clone(DEFAULT_PROJECTION_CONFIG), output: "left", onChange });
+  editor.pointerStart({ x: 100, y: 100 });
+  editor.pointerMove({ x: 100, y: 100 });
+  expect(onChange).not.toHaveBeenCalled();
+  editor.pointerMove({ x: 110, y: 100 });
+  editor.pointerMove({ x: 110, y: 100 });
+  expect(onChange).toHaveBeenCalledTimes(1);
+  editor.pointerEnd();
+  expect(editor.getState().historyDepth).toBe(1);
+});
+
 test("group numeric position uses an anchor delta and residual reset preserves baseline", () => {
   const config = clone(DEFAULT_PROJECTION_CONFIG);
   config.outputs.right.warp.baseline = { type: "tdMesh", assetId: "mesh", sha256: "a".repeat(64), width: 1920, height: 1080, origin: "top-left" };

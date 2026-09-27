@@ -1,8 +1,8 @@
 import { DEFAULT_PROJECTION_CONFIG } from "../shared/projection-config-schema.js";
 import { visibleT3Rect } from "../shared/projection-config-geometry.js";
 import { createNodeCanvas } from "./node-canvas.js";
-import { createActiveOutputPreview } from "./active-output-preview.js";
-import { warpPointFromClient } from "./warp-viewport.js";
+import { createWarpEditorDialog } from "./warp-editor-dialog.js";
+import { bindWarpPointerInput } from "./warp-pointer-input.js";
 
 const docFor = (root) => root?.ownerDocument || globalThis.document;
 const WARP_OUTPUT_WIDTH = 1920;
@@ -69,7 +69,7 @@ function renderField(doc, descriptor, onField, onNudge, compact = false) {
   wrap.appendChild(label);
   const row = make(doc, "div", { className: "config-field-row" });
   const range = make(doc, "input", { type: "range", min: descriptor.displayMin, max: descriptor.displayMax, step: descriptor.displayStep, ariaLabel: descriptor.label, dataset: { field: descriptor.path, input: "range" } });
-  const number = compact ? null : make(doc, "input", { type: "number", min: descriptor.displayMin, max: descriptor.displayMax, step: "any", inputMode: "decimal", ariaLabel: descriptor.label, dataset: { field: descriptor.path, input: "number" } });
+  const number = compact ? null : make(doc, "input", { type: "number", min: descriptor.displayMin, max: descriptor.displayMax, step: descriptor.integer ? descriptor.displayStep : "any", inputMode: descriptor.integer ? "numeric" : "decimal", ariaLabel: descriptor.label, dataset: { field: descriptor.path, input: "number" } });
   const value = make(doc, "output", { className: "config-field-value", htmlFor: descriptor.path });
   const unit = make(doc, "span", { className: "config-field-unit" }, descriptor.unit || "");
   const fineMinus = button(doc, "−", "fine-nudge", "nudge");
@@ -82,13 +82,14 @@ function renderField(doc, descriptor, onField, onNudge, compact = false) {
   fineMinus.dataset.path = descriptor.path; fineMinus.dataset.direction = "-1";
   finePlus.dataset.path = descriptor.path; finePlus.dataset.direction = "1";
   if (compact) row.append(range, value);
-  else row.append(range, number, unit, fineMinus, finePlus);
+  else row.append(range, number, unit, fineMinus, finePlus, ...(descriptor.commitOnChange ? [value] : []));
   wrap.appendChild(row);
   const error = make(doc, "small", { className: "config-field-error", role: "alert", dataset: { errorFor: descriptor.path } });
   wrap.appendChild(error);
   const onInput = (event) => onField(descriptor.path, event.currentTarget.value, event.currentTarget.dataset.input);
   const commitNumber = () => onField(descriptor.path, number.value, "number");
-  range.addEventListener("input", onInput);
+  range.addEventListener("input", descriptor.commitOnChange ? () => { value.textContent = range.value; } : onInput);
+  if (descriptor.commitOnChange) range.addEventListener("change", onInput);
   number?.addEventListener("input", () => { value.textContent = number.value; });
   number?.addEventListener("blur", commitNumber);
   number?.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); if (number.blur) number.blur(); else commitNumber(); } });
@@ -102,6 +103,7 @@ export function createProjectionConfigView(root, {
   onOutputAction = () => {},
   onField = () => {},
   onNudge = () => {},
+  onNamesMode = () => {},
   onNode = () => {},
   onWarpAction = () => {},
   onWarpPointer = () => {},
@@ -165,7 +167,7 @@ export function createProjectionConfigView(root, {
   const rightLabel = make(doc, "label", { className: "output-display-label" }, "Right projector"); rightLabel.appendChild(controls.outputRightDisplay);
   outputToolbar.append(outputTitle, controls.outputIdentify, leftLabel, rightLabel, controls.outputAssign, controls.outputOpenBoth, controls.outputCloseBoth, controls.outputStatus, controls.outputHandoff);
   const outputAction = (action, value) => { if (!touchOnlySurface) onOutputAction(action, value); };
-  controls.outputIdentify.addEventListener("click", () => { outputSelection = { left: "", right: "" }; outputScreensSignature = null; outputAction("identify"); });
+  controls.outputIdentify.addEventListener("click", () => outputAction("identify"));
   controls.outputAssign.addEventListener("click", () => outputAction("assign", { left: controls.outputLeftDisplay.value, right: controls.outputRightDisplay.value }));
   controls.outputOpenBoth.addEventListener("click", () => outputAction("open"));
   controls.outputCloseBoth.addEventListener("click", () => outputAction("close"));
@@ -202,7 +204,7 @@ export function createProjectionConfigView(root, {
   graphControls.append(zoomOut, zoomReset, zoomOne, zoomIn);
   graphViewport.append(graphControls, graph);
   const graphNodes = [
-    ["content", "Content", "Feeds both projector outputs"], ["pre", "Shared pre-transform", "Affects both projectors"],
+    ["content", "Content", "Feeds both projector outputs"], ["names-wall", "Names wall", "NLI memorial-name profile; does not change projection geometry"], ["pre", "Shared pre-transform", "Affects both projectors"],
     ["left-crop", "Left Crop", "Left projector"], ["right-crop", "Right Crop", "Right projector"],
     ["left-fit", "Left Fit / post", "Left projector"], ["right-fit", "Right Fit / post", "Right projector"],
     ["left-keystone", "Left Keystone", "Projective corners"], ["right-keystone", "Right Keystone", "Projective corners"],
@@ -210,7 +212,33 @@ export function createProjectionConfigView(root, {
     ["left-output", "Left Output", "Left projector"], ["right-output", "Right Output", "Right projector"],
   ];
   const nodeMap = new Map();
-  const nodePreviewHosts = new Map();
+  const namesModeControls = [];
+  const namesStatusControls = [];
+  const pageSpacingResetControls = [];
+  const namesWallUnitsHelp = "Font, spacing, and edge inset use reference-plane pixels. Inner-edge clearances reserve final-output pixels in both modes and repack names.";
+  function pageSpacingReset() {
+    const reset = button(doc, "Reset page spacing to 0%", "reset-page-spacing");
+    reset.addEventListener("click", (event) => {
+      event.stopPropagation?.();
+      onField("namesWall.inwardShiftPercent", "0", "number");
+    });
+    pageSpacingResetControls.push(reset);
+    return reset;
+  }
+  function namesModeControl() {
+    const label = make(doc, "label", { className: "names-wall-mode-label" }, "Profile");
+    const select = make(doc, "select", { className: "names-wall-mode", ariaLabel: "Names wall profile" });
+    select.append(make(doc, "option", { value: "wall" }, "Regular wall"), make(doc, "option", { value: "model" }, "Model-oriented"));
+    select.addEventListener("change", () => onNamesMode(select.value));
+    label.appendChild(select);
+    namesModeControls.push(select);
+    return label;
+  }
+  function namesStatus() {
+    const status = make(doc, "p", { className: "names-wall-status", role: "status", ariaLive: "polite", title: "Font, spacing, and edge inset use reference-plane pixels; the two inner-edge insets use final-output pixels." });
+    namesStatusControls.push(status);
+    return status;
+  }
   const svg = svgNode(doc, "svg", { class: "graph-connectors", "aria-hidden": "true" });
   const wirePath = svgNode(doc, "path", { "vector-effect": "non-scaling-stroke" });
   svg.appendChild(wirePath);
@@ -220,17 +248,23 @@ export function createProjectionConfigView(root, {
     const handle = make(doc, "h3", { title: "Drag to move node" });
     handle.append(make(doc, "span", { className: "node-grip", ariaHidden: "true" }, "⋮⋮"), make(doc, "span", {}, label));
     card.append(handle, make(doc, "p", { className: "node-description" }, description));
+    if (id === "names-wall") {
+      card.append(namesModeControl(), make(doc, "p", { className: "names-wall-units" }, namesWallUnitsHelp));
+    }
     const nodeFields = descriptors.filter((item) => item.node === id);
     for (const descriptor of nodeFields) { const control = renderField(doc, descriptor, onField, onNudge, false); fields.set(`${id}:${descriptor.path}`, control); card.appendChild(control.wrap); }
+    if (id === "names-wall") card.append(make(doc, "p", { className: "names-wall-units" }, "0 keeps the current positions. Increase to move the pages inward where space allows."), pageSpacingReset(), namesStatus());
     if (id.endsWith("-keystone") || id.endsWith("-grid")) card.appendChild(make(doc, "p", { className: "warp-node-summary" }, "Select to edit corners, points, and residuals."));
-    const previewHost = id.endsWith("-keystone") || id.endsWith("-grid") ? null : make(doc, "div", { className: "output-preview-host" });
-    const previewButton = button(doc, "Enlarge preview", "preview-expand", "preview-button");
-    previewButton.addEventListener("click", (event) => { event.stopPropagation?.(); onNode(id); activePreview.show(id); });
-    if (previewHost) { card.append(previewHost); nodePreviewHosts.set(id, previewHost); }
-    card.append(previewButton);
-    const portIn = make(doc, "span", { className: "node-port port-in", ariaHidden: "true", dataset: { port: "in" } });
-    const portOut = make(doc, "span", { className: "node-port port-out", ariaHidden: "true", dataset: { port: "out" } });
-    card.append(portIn, portOut);
+    if (id.endsWith("-keystone") || id.endsWith("-grid")) {
+      const openButton = button(doc, "Open fullscreen editor", "warp-editor-open", "warp-open-button");
+      openButton.addEventListener("click", (event) => { event.stopPropagation?.(); cancelActiveDrag(); onNode(id); dialog.open({ side: id.startsWith("right-") ? "right" : "left", mode: id.endsWith("-grid") ? "grid" : "keystone", opener: openButton }); });
+      card.appendChild(openButton);
+    }
+    if (id !== "names-wall") {
+      const portIn = make(doc, "span", { className: "node-port port-in", ariaHidden: "true", dataset: { port: "in" } });
+      const portOut = make(doc, "span", { className: "node-port port-out", ariaHidden: "true", dataset: { port: "out" } });
+      card.append(portIn, portOut);
+    }
     card.addEventListener("click", () => onNode(id));
     card.addEventListener("keydown", (event) => {
       if (event.target !== card || (event.key !== "Enter" && event.key !== " ")) return;
@@ -243,7 +277,9 @@ export function createProjectionConfigView(root, {
   const selector = make(doc, "select", { className: "node-selector", ariaLabel: "Calibration node" });
   for (const [id, label] of graphNodes) selector.appendChild(make(doc, "option", { value: id }, label));
   selector.addEventListener("change", () => onNode(selector.value));
-  graphColumn.appendChild(selector);
+  const mobileOpen = button(doc, "Open fullscreen editor", "warp-editor-open-mobile", "mobile-warp-open");
+  mobileOpen.addEventListener("click", () => { const id = selector.value; if (!id.endsWith("-keystone") && !id.endsWith("-grid")) return; cancelActiveDrag(); onNode(id); dialog.open({ side: id.startsWith("right-") ? "right" : "left", mode: id.endsWith("-grid") ? "grid" : "keystone", opener: mobileOpen }); });
+  graphColumn.append(selector, mobileOpen);
   workspace.appendChild(graphColumn);
 
   const inspector = make(doc, "details", { className: "inspector", ariaLabel: "Calibration diagnostics" });
@@ -254,10 +290,10 @@ export function createProjectionConfigView(root, {
   controls.inspectorTitle = make(doc, "summary", { className: "inspector-title" }, "Controls and diagnostics · ");
   controls.inspectorNode = make(doc, "span", {}, "Shared pre-transform");
   controls.inspectorTitle.append(controls.inspectorNode);
-  controls.previewOutput = button(doc, "Enlarge selected preview", "preview-expand", "preview-button");
-  controls.previewOutput.addEventListener("click", () => activePreview.show(selector.value));
-  const mobilePreviewHost = make(doc, "div", { className: "mobile-preview-host" });
   controls.inspectorFields = make(doc, "div", { className: "inspector-fields" });
+  controls.namesWallInspector = make(doc, "section", { className: "names-wall-inspector", ariaLabel: "Names wall profile controls" });
+  controls.namesWallInspector.append(namesModeControl(), make(doc, "p", { className: "names-wall-units" }, namesWallUnitsHelp),
+    make(doc, "p", { className: "names-wall-units" }, "0 keeps the current positions. Increase to move the pages inward where space allows."), pageSpacingReset(), namesStatus());
   for (const descriptor of descriptors) { const control = renderField(doc, descriptor, onField, onNudge); fields.set(`inspector:${descriptor.path}`, control); controls.inspectorFields.appendChild(control.wrap); }
   controls.warpPanel = make(doc, "section", { className: "warp-inspector", ariaLabel: "Warp editor" });
   controls.warpHeading = make(doc, "h3", {}, "Warp editor");
@@ -274,33 +310,37 @@ export function createProjectionConfigView(root, {
   controls.warpPositionY = make(doc, "input", { type: "number", step: "0.25", inputMode: "decimal", ariaLabel: "Selected warp Y position" });
   controls.warpNumeric.append(make(doc, "label", {}, "X px"), controls.warpPositionX, make(doc, "label", {}, "Y px"), controls.warpPositionY);
   controls.warpActions = make(doc, "div", { className: "warp-actions" });
-  const warpActionButton = (label, action, value = {}) => { const item = button(doc, label, action, "warp-action"); item.dataset.warpAction = action; Object.assign(item.dataset, Object.fromEntries(Object.entries(value).map(([key, itemValue]) => [key, String(itemValue)]))); item.addEventListener("click", () => onWarpAction(action, value)); return item; };
+  const warpActionButton = (label, action, value = {}) => { const item = button(doc, label, action, "warp-action"); item.dataset.warpAction = action; Object.assign(item.dataset, Object.fromEntries(Object.entries(value).map(([key, itemValue]) => [key, String(itemValue)]))); item.addEventListener("click", (event) => { onWarpAction(action, value); if (action === "warp-nudge" && event.detail > 0) controls.warpSurface.focus?.(); }); return item; };
   controls.warpActions.append(warpActionButton("Reset selection", "warp-reset-selection"), warpActionButton("Reset residuals", "warp-reset-residuals"), warpActionButton("Undo", "warp-undo"), warpActionButton("Redo", "warp-redo"));
   controls.warpArrows = make(doc, "div", { className: "warp-arrows", ariaLabel: "Warp nudge controls" });
   for (const [label, direction] of [["↑", "up"], ["↓", "down"], ["←", "left"], ["→", "right"]]) controls.warpArrows.append(warpActionButton(label, "warp-nudge", { direction }));
   controls.warpStep = make(doc, "select", { className: "warp-step", ariaLabel: "Warp nudge step" });
   controls.warpStep.append(make(doc, "option", { value: "fine" }, "Fine · 0.25 px"), make(doc, "option", { value: "coarse" }, "Coarse · 1 px"));
-  controls.warpPanel.append(controls.warpHeading, warpEnabledLabel, controls.warpMode, controls.warpStep, controls.warpArrows, controls.warpSelection, controls.warpSurface, controls.warpStatus, controls.warpNumeric, controls.warpActions);
+  const finePrimary = make(doc, "div", { className: "warp-fine-primary" });
+  finePrimary.append(controls.warpStep, controls.warpArrows);
+  const fineSecondary = make(doc, "div", { className: "warp-fine-secondary" });
+  fineSecondary.append(warpEnabledLabel, controls.warpMode, controls.warpSelection, controls.warpStatus, controls.warpNumeric, controls.warpActions);
+  controls.warpPanel.append(controls.warpHeading, finePrimary, fineSecondary, controls.warpSurface);
   controls.warpEnabled.addEventListener("change", () => onWarpAction("warp-enabled", { enabled: controls.warpEnabled.checked }));
   controls.warpMode.addEventListener("change", () => {
     const output = selectedGraphNode.startsWith("right-") ? "right" : "left";
+    cancelActiveDrag();
     onNode(`${output}-${controls.warpMode.value === "grid" ? "grid" : "keystone"}`);
+    if (dialog.isOpen()) dialog.open({ side: output, mode: controls.warpMode.value, opener: controls.warpMode });
   });
   controls.warpStep.addEventListener("change", () => onWarpAction("warp-step", { mode: controls.warpStep.value }));
   const commitWarpPosition = (axis, input) => { const value = Number(input.value); if (Number.isFinite(value)) onWarpAction("warp-set-position", { axis, pixels: value }); };
   controls.warpPositionX.addEventListener("change", () => commitWarpPosition("x", controls.warpPositionX));
   controls.warpPositionY.addEventListener("change", () => commitWarpPosition("y", controls.warpPositionY));
-  let pointerId = null;
-  let pointerViewBox = null;
-  const pointerPosition = (event, viewBox = pointerViewBox || warpViewBox) => { const rect = controls.warpSurface.getBoundingClientRect?.() || { left: 0, top: 0, width: 1920, height: 1080 }; return warpPointFromClient(event, rect, viewBox); };
-  controls.warpSurface.addEventListener("pointerdown", (event) => { if (event.button !== undefined && event.button !== 0) return; event.preventDefault?.(); pointerViewBox = { ...warpViewBox }; controls.warpSurface.setAttribute("viewBox", warpViewBoxValue(pointerViewBox)); const point = pointerPosition(event); const index = Number(event.target?.dataset?.index); if (Number.isInteger(index)) onWarpAction("warp-select", { selection: { mode: controls.warpMode.value, kind: controls.warpMode.value === "grid" ? "point" : "corner", index } }); pointerId = event.pointerId ?? 1; controls.warpSurface.setPointerCapture?.(pointerId); onWarpPointer("start", point); });
-  controls.warpSurface.addEventListener("pointermove", (event) => { if (pointerId === null || (event.pointerId !== undefined && event.pointerId !== pointerId)) return; onWarpPointer("move", pointerPosition(event)); });
-  controls.warpSurface.addEventListener("pointerup", (event) => { if (pointerId === null) return; const point = pointerPosition(event); controls.warpSurface.releasePointerCapture?.(pointerId); pointerId = null; pointerViewBox = null; onWarpPointer("end", point); });
-  controls.warpSurface.addEventListener("pointercancel", () => { if (pointerId === null) return; pointerId = null; pointerViewBox = null; onWarpPointer("cancel"); });
+  let currentHandles = [];
+  let currentSelection = null;
+  let pointerInput;
+  function cancelActiveDrag(options) { pointerInput?.cancel(options); }
   const onKeyDown = (event) => {
-    if (!(selectedGraphNode.endsWith("-keystone") || selectedGraphNode.endsWith("-grid"))) return;
+    if (!dialog.isOpen() || !(selectedGraphNode.endsWith("-keystone") || selectedGraphNode.endsWith("-grid"))) return;
+    if (event.target !== controls.warpSurface && !controls.warpSurface.contains?.(event.target)) return;
     const tag = String(event.target?.tagName || "").toLowerCase();
-    if (["input", "textarea", "select", "button"].includes(tag) || event.target?.isContentEditable) return;
+    if (["input", "textarea", "select", "button"].includes(tag) || event.target?.isContentEditable || event.target?.closest?.("[contenteditable]")) return;
     const direction = { ArrowUp: "up", ArrowDown: "down", ArrowLeft: "left", ArrowRight: "right" }[event.key];
     if (!direction) return;
     event.preventDefault?.();
@@ -326,13 +366,25 @@ export function createProjectionConfigView(root, {
   controls.pattern.addEventListener("change", () => onAction("pattern", { pattern: controls.pattern.value, branch: controls.patternBranch.value }));
   controls.patternBranch.addEventListener("change", () => onAction("pattern", { pattern: controls.pattern.value, branch: controls.patternBranch.value }));
   controls.applied = make(doc, "div", { className: "applied-status" });
-  inspector.append(controls.inspectorTitle, controls.previewOutput, mobilePreviewHost, controls.inspectorFields, controls.warpPanel, controls.diagram, controls.patternBranch, controls.pattern, controls.applied);
+  inspector.append(controls.inspectorTitle, controls.namesWallInspector, controls.inspectorFields, controls.warpPanel, controls.diagram, controls.patternBranch, controls.pattern, controls.applied);
   workspace.appendChild(inspector);
   app.appendChild(workspace);
-  const enlargedPreviewHost = make(doc, "div", { className: "projection-preview-enlarged-host", hidden: true, ariaLabel: "Enlarged projection preview" });
-  app.appendChild(enlargedPreviewHost);
   root.appendChild(app);
-  const activePreview = createActiveOutputPreview({ document: doc, nodeHosts: nodePreviewHosts, mobileHost: mobilePreviewHost, mobileQuery, enlargedHost: enlargedPreviewHost, enlargedEditor: controls.warpPanel });
+  const dialog = createWarpEditorDialog({ document: doc, host: root, editorPanel: controls.warpPanel, overlay: controls.warpSurface,
+    onBeforeClose: cancelActiveDrag,
+    onBeforeSwitch: cancelActiveDrag,
+    onFineToggle: cancelActiveDrag,
+    onBeforeResize: cancelActiveDrag,
+    onApply: () => onAction("apply"), onLive: (live) => onAction("live", live) });
+  pointerInput = bindWarpPointerInput({
+    surface: controls.warpSurface,
+    readGeometry: () => dialog.isOpen() ? { rect: controls.warpSurface.getBoundingClientRect?.() || { left: 0, top: 0, width: 1920, height: 1080 }, viewBox: warpViewBox, handles: currentHandles, selection: currentSelection, mode: controls.warpMode.value, side: selectedGraphNode.startsWith("right-") ? "right" : "left" } : null,
+    onSelect: ({ output, selection }) => onWarpAction("warp-select", { output, selection }),
+    onStart: (point) => onWarpPointer("start", point),
+    onMove: (point) => onWarpPointer("move", point),
+    onEnd: (point) => onWarpPointer("end", point),
+    onCancel: (point) => onWarpPointer("cancel", point),
+  });
   const canvas = createNodeCanvas({ document: doc, viewport: graphViewport, graph, svg, wire: wirePath, nodeMap, controls: { zoomIn, zoomOut, zoomReset, zoomOne } });
   canvas.mount();
 
@@ -342,10 +394,7 @@ export function createProjectionConfigView(root, {
     selector.value = selected;
     canvas.setSelected(selected);
     controls.inspectorNode.textContent = graphNodes.find(([id]) => id === selected)?.[1] || selected;
-    controls.previewOutput.hidden = false;
-    activePreview.select(selected);
-    const warpNode = selected.endsWith("-keystone") || selected.endsWith("-grid") ? selected : null;
-    activePreview.setWarpOverlay?.(warpNode, warpNode ? controls.warpSurface : null);
+    mobileOpen.hidden = !(selected.endsWith("-keystone") || selected.endsWith("-grid"));
     if (selected.endsWith("-keystone") || selected.endsWith("-grid")) inspector.open = true;
     for (const [id, card] of nodeMap) card.classList?.toggle("selected", id === selected);
     for (const descriptor of descriptors) {
@@ -369,6 +418,8 @@ export function createProjectionConfigView(root, {
     controls.warpStatus.textContent = `${output[0].toUpperCase() + output.slice(1)} · ${mode === "grid" ? "Grid Warp" : "Keystone"} · ${warpState.selection?.kind || "point"} ${Number(warpState.selection?.index ?? 0) + 1} · ${warpState.stepMode === "coarse" ? "1 px" : "0.25 px"}${baselineStatus}`;
     const warp = warpState.config.outputs?.[output]?.warp;
     const allHandles = Array.isArray(warpState.handles) ? warpState.handles : [];
+    currentHandles = allHandles;
+    currentSelection = warpState.selection;
     const columns = warp?.grid?.columns || (output === "right" ? 8 : 7);
     const rows = warp?.grid?.rows || 7;
     const selectedIndices = new Set(warpState.selection?.indices || []);
@@ -397,7 +448,7 @@ export function createProjectionConfigView(root, {
     }
     const viewPoints = allHandles;
     warpViewBox = warpViewport(viewPoints);
-    const displayViewBox = pointerViewBox || warpViewBox;
+    const displayViewBox = pointerInput.activeViewBox() || warpViewBox;
     controls.warpSurface.setAttribute("viewBox", warpViewBoxValue(displayViewBox));
     controls.warpSurface.replaceChildren();
     controls.warpSurface.appendChild(svgNode(doc, "rect", { class: "warp-output-rect", x: "0", y: "0", width: String(WARP_OUTPUT_WIDTH), height: String(WARP_OUTPUT_HEIGHT) }));
@@ -413,9 +464,9 @@ export function createProjectionConfigView(root, {
       const circle = svgNode(doc, "circle", { cx: point.x * WARP_OUTPUT_WIDTH, cy: point.y * WARP_OUTPUT_HEIGHT, r: selected ? "18" : "12", class: `warp-handle${selected ? " selected" : ""}`, "data-index": String(index) });
       controls.warpSurface.appendChild(circle);
     });
-    activePreview.setWarpOverlay?.(node, controls.warpSurface, displayViewBox);
+    dialog.setViewBox(displayViewBox);
   };
-  const update = ({ state = {}, errors = {}, conflict = "", statusText = "", selectedNode = "pre", statusRows = [], outputState = {}, warpStates = {} } = {}) => {
+  const update = ({ state = {}, errors = {}, conflict = "", statusText = "", selectedNode = "pre", statusRows = [], appliedSummary = 'Pending', outputState = {}, warpStates = {}, namesWallStatus = null } = {}) => {
     controls.live.checked = Boolean(state.live);
     controls.status.textContent = statusText;
     controls.conflict.textContent = conflict;
@@ -426,9 +477,10 @@ export function createProjectionConfigView(root, {
     controls.connectionStatus.textContent = state.hydrationError ? `Settings check failed: ${state.hydrationError}` : state.hydrating ? "Checking current settings…" : "";
     controls.connectionStatus.hidden = !state.hydrating && !state.hydrationError;
     controls.retryHydration.hidden = !state.hydrationError;
-    const screens = Array.isArray(outputState.screens) ? outputState.screens : [];
+    const screens = Array.isArray(outputState.screens) ? [...outputState.screens].sort((a, b) => a.displayNumber - b.displayNumber) : [];
     const assignments = outputState.assignments || {};
-    const optionFor = (screen) => make(doc, "option", { value: screen.key }, `${screen.label?.trim() || "Display"} · ${screen.left},${screen.top} · ${screen.width}×${screen.height}`);
+    const optionFor = (screen) => make(doc, "option", { value: screen.key }, `Display ${screen.displayNumber}`);
+    controls.outputIdentify.disabled = touchOnlySurface || screens.length === 0;
     const selectedKey = (assignment) => screens.find((screen) => assignment?.key === screen.key || (assignment?.label === screen.label && ["left", "top", "width", "height"].every((key) => Number(assignment?.bounds?.[key]) === Number(screen[key]))))?.key || "";
     const screensSignature = screens.map((screen) => screen.key).join("|");
     const assignmentsSignature = JSON.stringify(assignments);
@@ -446,32 +498,65 @@ export function createProjectionConfigView(root, {
     controls.presets.value = selectedPreset;
     const draft = state.draft || DEFAULT_PROJECTION_CONFIG;
     setNode(selectedNode);
+    controls.namesWallInspector.hidden = selectedNode !== "names-wall";
+    const wallConfig = draft.namesWall;
+    for (const select of namesModeControls) select.value = wallConfig?.activeMode || "wall";
+    for (const reset of pageSpacingResetControls) reset.hidden = wallConfig?.activeMode !== "wall";
+    const wallStatus = namesWallStatus || { state: "building", expected: null, placed: null };
+    const requested = wallStatus.requestedFontPx ?? wallConfig?.profiles?.[wallConfig?.activeMode]?.requestedFontPx ?? "—";
+    const effective = wallStatus.effectiveFontPx;
+    const counts = Number.isSafeInteger(wallStatus.expected) && Number.isSafeInteger(wallStatus.placed) ? `${wallStatus.placed} of ${wallStatus.expected}; left ${wallStatus.left ?? "—"}, right ${wallStatus.right ?? "—"}` : "counts pending";
+    let wallMessage = `Building · requested ${requested} px; effective pending; ${counts}.`;
+    if (wallStatus.state === "valid" || wallStatus.state === "auto-reduced") {
+      wallMessage = wallStatus.state === "auto-reduced"
+        ? `Auto-reduced · requested ${requested} px; using ${effective} px; ${counts}.`
+        : `Valid · requested ${requested} px; effective ${effective ?? requested} px; ${counts}.`;
+    } else if (wallStatus.state === "invalid") {
+      const unsaved = state.hasLocalDraft || (state.draft && state.snapshot && JSON.stringify(state.draft) !== JSON.stringify(state.snapshot.config));
+      const context = unsaved ? "Draft is unsaved; output state is unconfirmed." : "Saved calibration cannot display a complete names wall; output state is unconfirmed.";
+      wallMessage = `Invalid · requested ${requested} px; effective none; ${counts}. ${context}${wallStatus.reason ? ` ${wallStatus.reason}` : ""}`;
+    } else if (wallStatus.reason) {
+      wallMessage = `Building · requested ${requested} px; effective pending; ${counts}. ${wallStatus.reason}`;
+    }
+    for (const status of namesStatusControls) {
+      status.textContent = wallMessage;
+      status.dataset.state = wallStatus.state || "building";
+      status.classList?.toggle("is-invalid", wallStatus.state === "invalid");
+      status.classList?.toggle("is-reduced", wallStatus.state === "auto-reduced");
+    }
     renderWarpPanel(warpStates, selectedNode);
-    activePreview.update(draft);
+    dialog.update(draft, { live: state.live, appliedSummary });
     const setDiagramRect = (element, rect) => { if (!element) return; element.hidden = !rect; element.setAttribute("visibility", rect ? "visible" : "hidden"); if (!rect) { element.setAttribute("width", "0"); element.setAttribute("height", "0"); return; } element.setAttribute("x", String(4 + rect.x0 * 92)); element.setAttribute("y", String(8 + rect.y0 * 26)); element.setAttribute("width", String(Math.max(0, (rect.x1 - rect.x0) * 92))); element.setAttribute("height", String(Math.max(0, (rect.y1 - rect.y0) * 26))); };
     const left = draft.outputs?.left; const right = draft.outputs?.right;
     setDiagramRect(controls.cropSvg?.leftRect, left?.crop); setDiagramRect(controls.cropSvg?.rightRect, right?.crop);
     setDiagramRect(controls.cropSvg?.leftVisibleRect, left ? visibleT3Rect(left) : null);
     setDiagramRect(controls.cropSvg?.rightVisibleRect, right ? visibleT3Rect(right) : null);
     for (const descriptor of descriptors) {
-      const value = readPath(draft, descriptor.path);
+      const value = descriptor.path.startsWith("namesWall.") && !descriptor.path.startsWith("namesWall.innerEdgeInsetPx.")
+        ? draft.namesWall?.profiles?.[descriptor.wallOnly ? "wall" : draft.namesWall?.activeMode]?.[descriptor.path.slice("namesWall.".length)]
+        : readPath(draft, descriptor.path);
       for (const prefix of [descriptor.node, "inspector"]) {
         const control = fields.get(`${prefix}:${descriptor.path}`);
         if (!control) continue;
+        control.wrap.hidden = Boolean(descriptor.wallOnly && draft.namesWall?.activeMode !== "wall");
         const display = displayValue(descriptor, value);
         for (const input of [control.range, control.number]) if (input && doc.activeElement !== input) input.value = display;
         control.value.textContent = `${display}${descriptor.unit ? ` ${descriptor.unit}` : ""}`;
-        const fieldError = errors[descriptor.path] || Object.entries(errors).find(([key]) => descriptor.path.startsWith(`${key}.`))?.[1] || "";
+        const errorPath = descriptor.path.startsWith("namesWall.") && !descriptor.path.startsWith("namesWall.innerEdgeInsetPx.") && draft.namesWall?.activeMode
+          ? `namesWall.profiles.${descriptor.wallOnly ? "wall" : draft.namesWall.activeMode}.${descriptor.path.slice("namesWall.".length)}`
+          : descriptor.path;
+        const fieldError = errors[errorPath] || Object.entries(errors).find(([key]) => errorPath.startsWith(`${key}.`))?.[1] || "";
         control.error.textContent = fieldError;
         control.wrap.classList?.toggle("has-error", Boolean(fieldError));
       }
     }
-    controls.applied.replaceChildren(...statusRows.map((row) => make(doc, "p", { className: row.success ? "applied" : "not-confirmed" }, row.text)));
+    controls.applied.replaceChildren(make(doc, 'strong', { className: 'applied-summary' }, appliedSummary), ...statusRows.map((row) => make(doc, "p", { className: row.success ? "applied" : "not-confirmed" }, row.text)));
   };
   setNode("pre");
   return {
-    update, controls, fields, nodeMap,
-    dispose() { mobileQuery?.removeEventListener?.("change", openOnPhone); doc.removeEventListener?.("keydown", onKeyDown); activePreview.dispose(); canvas.dispose(); },
+    update, controls, fields, nodeMap, canManageDisplays: !touchOnlySurface,
+    cancelWarpPointer: cancelActiveDrag,
+    dispose() { mobileQuery?.removeEventListener?.("change", openOnPhone); doc.removeEventListener?.("keydown", onKeyDown); dialog.dispose(); pointerInput.dispose(); canvas.dispose(); },
   };
 }
 

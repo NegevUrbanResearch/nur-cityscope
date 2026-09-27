@@ -200,4 +200,36 @@ describe("getEffectiveLayerGroups: projector_base שמות + Locations_Lines row
     expect(yishuvim.enabled).toBe(true);
     expect(yishuvim.name).toBe("יישובים");
   });
+
+  test("omits black background from the projector_base pack", () => {
+    globalThis.layerRegistry = {
+      _initialized: true,
+      getGroups: () => [
+        {
+          id: "projector_base",
+          name: "Projector",
+          layers: [
+            { id: "SEA", name: "Sea" },
+            { id: "רקע_שחור", name: "Black" },
+          ],
+        },
+      ],
+    };
+    globalThis.OTEFDataContext = {
+      getLayerGroups: () => [
+        {
+          id: "projector_base",
+          enabled: true,
+          layers: [
+            { id: "SEA", enabled: true },
+            { id: "רקע_שחור", enabled: true, displayName: "Black" },
+          ],
+        },
+      ],
+    };
+
+    const groups = getEffectiveLayerGroups();
+    const pb = groups.find((g) => g.id === "projector_base");
+    expect(pb.layers.map((layer) => layer.id)).toEqual(["SEA"]);
+  });
 });

@@ -5,6 +5,8 @@ import {
   TD_MIGRATION_PRESET_NAME,
   validateProjectionConfig,
 } from './projection-config-schema.js';
+import { migrateNamesWallToV5 } from './nli-name-wall-config.js';
+import { migrateProjectionConfigToV2 } from './projection-warp-schema.js';
 
 const API_URL = '/api/otef/projection-config/';
 const TABLE = 'otef';
@@ -26,6 +28,7 @@ export function equalProjectionConfig(a, b) {
   return aKeys.every((key) => equalProjectionConfig(a[key], b[key]));
 }
 const equal = equalProjectionConfig;
+const V2_DEFAULT_PROJECTION_CONFIG = migrateProjectionConfigToV2(LEGACY_DEFAULT_PROJECTION_CONFIG);
 const isUuid = (value) => typeof value === 'string' && UUID.test(value);
 
 function validSnapshot(value) {
@@ -45,13 +48,21 @@ function validSnapshot(value) {
     ids.add(preset.id);
     if (preset.id === 'original') {
       originalCount += 1;
-      if (!preset.readOnly || preset.name !== 'Original calibration' || (!equal(preset.config, DEFAULT_PROJECTION_CONFIG) && !equal(preset.config, LEGACY_DEFAULT_PROJECTION_CONFIG))) return false;
+      if (!preset.readOnly || preset.name !== 'Original calibration' || (![DEFAULT_PROJECTION_CONFIG, V2_DEFAULT_PROJECTION_CONFIG, LEGACY_DEFAULT_PROJECTION_CONFIG].some((baseline) => equal(migrateNamesWallToV5(preset.config), migrateNamesWallToV5(baseline))))) return false;
     } else if (preset.id === TD_MIGRATION_PRESET_ID) {
       if (!preset.readOnly || preset.name !== TD_MIGRATION_PRESET_NAME) return false;
     } else if (!isUuid(preset.id) || preset.readOnly) return false;
   }
   if (originalCount !== 1 || typeof value.selectedPresetId !== 'string' || !ids.has(value.selectedPresetId)) return false;
   return true;
+}
+
+function normalizeSnapshot(value, warnings = []) {
+  return {
+    ...clone(value),
+    config: migrateNamesWallToV5(value.config, warnings),
+    presets: value.presets.map((preset) => ({ ...clone(preset), config: migrateNamesWallToV5(preset.config, warnings) })),
+  };
 }
 
 function responseBody(response) {
@@ -68,6 +79,7 @@ export function createProjectionConfigClient({
   onState,
   onConflict,
   onConnection,
+  validateCandidate = null,
 } = {}) {
   if (!isUuid(sourceId)) throw new Error('sourceId must be a UUID');
   if (typeof fetchImpl !== 'function') throw new Error('fetchImpl is required');
@@ -83,12 +95,14 @@ export function createProjectionConfigClient({
   let timer = null;
   let lastSendAt = -Infinity;
   let inFlight = null;
+  let preflighting = null;
   let intent = null;
   let hydrationGeneration = 0;
   let hydrationPromise = null;
   let hydrating = false;
   let hydrationError = null;
   let previewError = null;
+  let migrationWarnings = [];
   let conflictGeneration = 0;
   const subscribers = new Set();
   const handlers = [];
@@ -103,11 +117,12 @@ export function createProjectionConfigClient({
       draft: draft ? clone(draft) : null,
       live,
       connected,
-      pending: Boolean(inFlight || timer || intent),
+      pending: Boolean(inFlight || preflighting || timer || intent),
       hasLocalDraft,
       hydrating,
       hydrationError,
       previewError,
+      migrationWarnings: [...migrationWarnings],
     };
   }
 
@@ -124,6 +139,7 @@ export function createProjectionConfigClient({
       if (timer !== null) { clearTimer(timer); timer = null; }
       queuedPreview = null;
       live = false;
+      if (preflighting) { preflighting.operation.reject(new Error('projection config connection lost')); preflighting = null; }
       if (intent) {
         intent.reject(new Error('projection config connection lost'));
         intent = null;
@@ -152,13 +168,18 @@ export function createProjectionConfigClient({
     cancelQueuedPreviews();
     live = false;
     conflictGeneration += 1;
+    if (preflighting) { preflighting.operation.reject(new Error('projection config conflict')); preflighting = null; }
     if (intent) {
       intent.reject(new Error('projection config conflict'));
       intent = null;
     }
     hasLocalDraft = Boolean(draft) || hasLocalDraft;
     if (typeof onConflict === 'function') onConflict(CONFLICT_MESSAGE);
-    if (validSnapshot(next) && (!snapshot || next.revision > snapshot.revision)) snapshot = clone(next);
+    if (validSnapshot(next) && (!snapshot || next.revision > snapshot.revision)) {
+      const warnings = [];
+      snapshot = normalizeSnapshot(next, warnings);
+      migrationWarnings = [...new Set(warnings)];
+    }
     notify();
   }
 
@@ -167,9 +188,11 @@ export function createProjectionConfigClient({
     if (snapshot && next.revision <= snapshot.revision) return false;
     const foreign = origin !== undefined && origin !== null && origin !== sourceId;
     if (foreign && (hasLocalDraft || inFlight || queuedPreview || intent)) markConflict(next);
-    snapshot = clone(next);
+    const warnings = [];
+    snapshot = normalizeSnapshot(next, warnings);
+    migrationWarnings = [...new Set(warnings)];
     if (!hasLocalDraft) {
-      draft = clone(next.config);
+      draft = clone(snapshot.config);
       hasLocalDraft = false;
     } else if (fromHydrate) {
       live = false;
@@ -216,7 +239,7 @@ export function createProjectionConfigClient({
 
   function schedulePreview() {
     if (!started || stopped || !connected || hydrating || !live || !draft || !snapshot || intent) return;
-    queuedPreview = { config: clone(draft) };
+    queuedPreview = { config: clone(draft), version: draftVersion };
     scheduleDrain();
   }
 
@@ -292,9 +315,9 @@ export function createProjectionConfigClient({
       previewError = null;
       const adopted = receiveSnapshot(bodyResponse, { origin: sourceId });
       if (request.action === 'load' || request.action === 'revert') {
-        const responseIsCurrent = equal(snapshot, bodyResponse);
+        const responseIsCurrent = equal(snapshot, normalizeSnapshot(bodyResponse));
         if ((adopted || responseIsCurrent) && conflictGeneration === request.conflictGeneration && draftVersion === sentVersion) {
-          draft = clone(bodyResponse.config);
+          draft = migrateNamesWallToV5(bodyResponse.config);
           hasLocalDraft = false;
         }
       } else if (draftVersion === sentVersion && snapshot && equal(draft, snapshot.config)) {
@@ -322,7 +345,7 @@ export function createProjectionConfigClient({
   }
 
   function scheduleDrain() {
-    if (timer !== null || inFlight || !started || stopped || !connected || hydrating || !snapshot) return;
+    if (timer !== null || inFlight || preflighting || !started || stopped || !connected || hydrating || !snapshot) return;
     if (!intent && (!queuedPreview || !live)) return;
     const wait = Math.max(0, WRITE_INTERVAL - (now() - lastSendAt));
     if (wait === 0 && intent) {
@@ -334,22 +357,75 @@ export function createProjectionConfigClient({
   }
 
   function drain() {
-    if (inFlight || !started || stopped || !connected || hydrating || !snapshot) return;
+    if (inFlight || preflighting || !started || stopped || !connected || hydrating || !snapshot) return;
     const wait = WRITE_INTERVAL - (now() - lastSendAt);
     if (wait > 0) { scheduleDrain(); return; }
     if (intent) {
       const next = intent;
       intent = null;
-      postMutation(next);
+      if (typeof validateCandidate === 'function') preflightMutation(next);
+      else postMutation(next);
     } else if (queuedPreview && live) {
       const queued = queuedPreview;
       queuedPreview = null;
-      postMutation({ action: 'preview', config: queued.config, resolve: () => {}, reject: () => {} });
+      const operation = { action: 'preview', config: queued.config, version: queued.version, resolve: () => {}, reject: () => {} };
+      if (typeof validateCandidate === 'function') preflightMutation(operation);
+      else postMutation(operation);
     }
+  }
+
+  function cancelPreflight(reason) {
+    if (!preflighting) return;
+    const pending = preflighting;
+    preflighting = null;
+    pending.operation.reject(new Error(reason));
+  }
+
+  function preflightMutation(operation) {
+    const target = operation.action === 'load'
+      ? snapshot.presets.find((preset) => preset.id === operation.presetId)?.config
+      : operation.action === 'revert' ? snapshot.config : operation.dynamicDraft ? draft : operation.config;
+    if (!target) { operation.reject(new Error('projection preset unavailable')); scheduleDrain(); return; }
+    const config = clone(target);
+    const identity = JSON.stringify(config);
+    const revision = snapshot.revision;
+    const check = { operation, version: operation.version, revision, conflictGeneration, identity };
+    preflighting = check;
+    notify();
+    Promise.resolve().then(() => typeof validateCandidate === 'function'
+      ? validateCandidate({ config: clone(config), generation: operation.version, identity, revision: revision + 1 })
+      : { identity, valid: true }).then((result) => {
+      if (preflighting !== check) return;
+      preflighting = null;
+      const stale = stopped || !connected || hydrating || snapshot?.revision !== revision ||
+        conflictGeneration !== check.conflictGeneration || draftVersion !== check.version || intent ||
+        (operation.action === 'preview' && !live);
+      if (stale) {
+        operation.reject(new Error('projection config operation superseded'));
+        if (live) schedulePreview();
+      } else if (!result?.valid || result.identity !== identity) {
+        const message = result?.reason || 'complete names wall preview unavailable';
+        previewError = message;
+        operation.reject(new Error(message));
+      } else {
+        previewError = null;
+        postMutation({ ...operation, config, dynamicDraft: false });
+      }
+      notify();
+      scheduleDrain();
+    }).catch((error) => {
+      if (preflighting !== check) return;
+      preflighting = null;
+      previewError = error?.message || 'complete names wall preview unavailable';
+      operation.reject(error);
+      notify();
+      scheduleDrain();
+    });
   }
 
   function waitForMutation(operation) {
     cancelQueuedPreviews();
+    cancelPreflight('projection config operation superseded');
     if (intent) intent.reject(new Error('projection config operation superseded'));
     intent = operation;
     scheduleDrain();
@@ -358,7 +434,8 @@ export function createProjectionConfigClient({
 
   function setDraft(config) {
     if (!config || Object.keys(validateProjectionConfig(config)).length) throw new Error('invalid projection config');
-    draft = clone(config);
+    cancelPreflight('projection config operation superseded');
+    draft = migrateNamesWallToV5(config);
     draftVersion += 1;
     hasLocalDraft = !snapshot || !equal(draft, snapshot.config);
     if (live) schedulePreview();
@@ -435,6 +512,7 @@ export function createProjectionConfigClient({
     hydrationGeneration += 1;
     if (timer !== null) { clearTimer(timer); timer = null; }
     queuedPreview = null;
+    if (preflighting) { preflighting.operation.reject(new Error('projection config client stopped')); preflighting = null; }
     if (intent) {
       intent.reject(new Error('projection config client stopped'));
       intent = null;
@@ -451,7 +529,12 @@ export function createProjectionConfigClient({
     return () => subscribers.delete(listener);
   }
 
-  return { start, stop, retryHydration, setDraft, setLive, apply, save, load, revert, getState, subscribe };
+  function setValidateCandidate(callback) {
+    if (callback !== null && typeof callback !== 'function') throw new TypeError('candidate validator must be a function');
+    validateCandidate = callback;
+  }
+
+  return { start, stop, retryHydration, setDraft, setLive, apply, save, load, revert, getState, subscribe, setValidateCandidate };
 }
 
 export { TD_MIGRATION_PRESET_ID, TD_MIGRATION_PRESET_NAME, validSnapshot as validateProjectionConfigSnapshot };

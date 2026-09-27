@@ -154,6 +154,28 @@ describe("settlement outline achievement", () => {
     expect(ids.has("18")).toBe(false);
   });
 
+  it("ignores unconfirmed approach lines when lighting settlements", () => {
+    const unconfirmed = {
+      type: "Feature",
+      properties: {
+        OBJECTID: 1001,
+        route_confidence: "unconfirmed",
+        parent_objectid: 10,
+      },
+      geometry: { type: "LineString", coordinates: [[0, 0], [10, 0]] },
+    };
+    const index = buildRouteSettlementCollisionIndex(
+      [unconfirmed],
+      [settlement(20, square(4, 6))],
+    );
+    expect(index.has("1001")).toBe(false);
+    const ids = deriveAchievedSettlementOutlineIds({
+      collisionIndex: index,
+      completedRouteFeatures: [unconfirmed],
+    });
+    expect(ids.size).toBe(0);
+  });
+
   it("an infiltration line that enters the Nova site polygon lights 100", () => {
     const polygons = loadProcessedFeatures(POLYGONS_PATH);
     const sidecar = loadProcessedFeatures(SETTLEMENTS_PATH);

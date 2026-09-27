@@ -2,16 +2,23 @@ export const EMPTY_ESCAPE_OVERLAY = Object.freeze({
   individual: false,
   overlap: false,
   mor: false,
+  settled: false,
 });
 
 export const NOVA_ENTER_ESCAPE_OVERLAY = Object.freeze({
   individual: false,
   overlap: false,
   mor: false,
+  settled: false,
 });
 
-function asBool(value) {
-  return value === true;
+function requireBool(raw, key) {
+  if (!Object.prototype.hasOwnProperty.call(raw, key)) return false;
+  const value = raw[key];
+  if (typeof value !== "boolean") {
+    throw new TypeError(`${key} must be a boolean`);
+  }
+  return value;
 }
 
 export function normalizeEscapeOverlay(raw, narrativeId, options = {}) {
@@ -21,11 +28,16 @@ export function normalizeEscapeOverlay(raw, narrativeId, options = {}) {
       ? { ...NOVA_ENTER_ESCAPE_OVERLAY }
       : { ...EMPTY_ESCAPE_OVERLAY };
   }
-  return {
-    individual: asBool(raw.individual),
-    overlap: asBool(raw.overlap),
-    mor: asBool(raw.mor),
+  const overlay = {
+    individual: requireBool(raw, "individual"),
+    overlap: requireBool(raw, "overlap"),
+    mor: requireBool(raw, "mor"),
+    settled: requireBool(raw, "settled"),
   };
+  if (overlay.settled) {
+    return { individual: false, overlap: false, mor: false, settled: true };
+  }
+  return overlay;
 }
 
 export function getEscapeOverlay(raw, narrativeId) {

@@ -183,9 +183,12 @@ body {
 .map-legend-page-controls { display: flex; align-items: center; gap: 8px; }
 .map-legend-pager button { color: var(--legend-ink); background: transparent; border: 0; padding: 1px 3px; font: inherit; font-size: 14px; cursor: pointer; }
 .map-legend-measurement { position: absolute; visibility: hidden; pointer-events: none; }
-.map-legend-projection .map-legend-layers { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 .64em; }
+.map-legend-projection .map-legend-content { display: flex; gap: 22px; overflow: hidden; max-width: 100%; }
+.map-legend-projection .map-legend-group { flex: 0 1 max-content; min-width: 0; }
+.map-legend-projection .map-legend-layers { display: flex; flex-flow: row wrap; align-items: center; gap: 0 18px; }
 .map-legend-projection .map-legend-layer { display: contents; }
-.map-legend-projection .map-legend-layer-title { grid-column: 1 / -1; }
+.map-legend-projection .map-legend-item { flex: 0 0 auto; }
+.map-legend-projection .map-legend-group + .map-legend-group { margin-top: 0; padding: 0; padding-inline-start: 20px; border-top: 0; border-inline-start: 1px solid var(--legend-edge); }
 .map-legend-projection .map-legend-group-title,
 .map-legend-projection .map-legend-layer-title,
 .map-legend-projection .map-legend-label,
@@ -379,7 +382,7 @@ body {
 }
 
 .gis-person-bubble-popup .maplibregl-popup-content {
-  --gis-person-selection-color: #c31f4f;
+  --gis-person-selection-color: #d4d4d4;
   --gis-person-selection-halo: 2px;
   --gis-person-selection-padding: 8px 10px;
   --gis-person-selection-contrast: #171717;
@@ -658,6 +661,8 @@ body {
   inset: 0;
   z-index: 11000;
   background: #000;
+  opacity: 0;
+  transition: opacity 600ms linear;
 }
 .nli-reveal-overlay .reveal {
   width: 100%;

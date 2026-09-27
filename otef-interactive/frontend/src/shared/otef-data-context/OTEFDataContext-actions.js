@@ -8,6 +8,7 @@ import {
 import { generateTraceId, recordTraceEvent } from "../otef-trace.js";
 import { isNliPlayableFullId } from "../nli-investigation-beats.js";
 import { normalizeNliClock } from "../nli-investigation-clock.js";
+import { normalizeEscapeOverlay } from "../nli-escape-overlay.js";
 import { getNliNarrative, normalizeNarrativeState } from "../nli-narratives.js";
 import { OTEFDataContextInternals } from "./index.js";
 import {
@@ -640,6 +641,77 @@ async function setLayersEnabled(ctx, fullLayerIds, enabled, options = {}) {
   }
 }
 
+async function setEnabledLayerIds(ctx, fullLayerIds, options = {}) {
+  if (!ctx || !ctx._tableName) {
+    return { ok: false, error: "Missing table" };
+  }
+  if (!Array.isArray(fullLayerIds)) {
+    return { ok: false, error: "Invalid layer ids" };
+  }
+
+  ensureLayerPatchBaseline(ctx);
+  const wanted = new Set(fullLayerIds);
+  const disabledIds = [];
+  const previous = ensureMoreshetAxisCompanionRows(
+    JSON.parse(JSON.stringify(ctx._layerGroups || [])),
+  );
+  let next = previous.map((group) => ({
+    ...group,
+    layers: group.layers.map((layer) => {
+      const fullId = `${group.id}.${layer.id}`;
+      const enabled = wanted.has(fullId);
+      if (layer.enabled && !enabled) disabledIds.push(fullId);
+      return { ...layer, enabled };
+    }),
+  }));
+  next = applyMoreshetParkingCoherenceToLayerGroups(next);
+  const acknowledged = flattenLayerEnabledByFullId(ctx._layerPatchLastAcked);
+  for (const group of next) {
+    const prevGroup = previous.find((item) => item && item.id === group.id);
+    for (const layer of group.layers || []) {
+      const fullId = `${group.id}.${layer.id}`;
+      if (disabledIds.includes(fullId) || layer.enabled) continue;
+      const prevLayer = prevGroup?.layers?.find((item) => item && item.id === layer.id);
+      if (prevLayer?.enabled || acknowledged.get(fullId)) disabledIds.push(fullId);
+    }
+  }
+
+  const traceId =
+    options && typeof options.traceId === "string"
+      ? options.traceId
+      : generateTraceId("layer");
+  ctx._setActiveLayerTrace({
+    traceId,
+    source: "setEnabledLayerIds",
+    fullLayerIds,
+  });
+  recordTraceEvent(traceId, "context.layer.optimistic_set", {
+    fullLayerIds,
+  });
+  ctx._setLayerGroups(next);
+  ctx._pendingLayerOps++;
+  const callGen = nextLayerOpGeneration(ctx);
+  try {
+    await enqueueLayerGroupsCoalescedFlush(ctx);
+    if (callGen !== ctx._layerOpGeneration) {
+      return { ok: true, stale: true };
+    }
+    await clearAnimationsForDisabledLayerIds(ctx, disabledIds);
+    return { ok: true };
+  } catch (err) {
+    if (callGen !== ctx._layerOpGeneration) {
+      return { ok: false, error: err, stale: true };
+    }
+    getLogger().error("[OTEFDataContext] Failed to update layer groups:", err);
+    return { ok: false, error: err };
+  } finally {
+    ctx._pendingLayerOps--;
+    if (typeof ctx._clearActiveLayerTrace === "function") {
+      setTimeout(() => ctx._clearActiveLayerTrace(traceId), 1200);
+    }
+  }
+}
+
 async function toggleGroup(ctx, groupId, enabled) {
   if (!ctx._tableName || !groupId) return { ok: false, error: "Missing groupId" };
   if (!ctx._layerGroups) return { ok: false, error: "Layer groups not available" };
@@ -769,25 +841,84 @@ async function setBasemap(ctx, basemap) {
   }
 }
 
-async function patchInvestigationClock(ctx, next) {
+async function setExhibitMode(ctx, next) {
+  if (!ctx._tableName) return { ok: false, error: "Missing table" };
+  const previous = ctx._exhibitMode === true;
+  const value = Boolean(next);
+  ctx._setExhibitMode(value);
+  try {
+    await OTEF_API.updateState(ctx._tableName, { exhibit_mode: value });
+    return { ok: true };
+  } catch (err) {
+    getLogger().error("[OTEFDataContext] Failed to update exhibit mode:", err);
+    ctx._setExhibitMode(previous);
+    return { ok: false, error: err };
+  }
+}
+
+function clockAcknowledgementContent(clock) {
+  const content = { ...normalizeNliClock(clock) };
+  delete content.revision;
+  delete content.serverNowMs;
+  return content;
+}
+
+function sameClockAcknowledgement(requested, actual) {
+  return JSON.stringify(clockAcknowledgementContent(requested))
+    === JSON.stringify(clockAcknowledgementContent(actual));
+}
+
+async function patchInvestigationClock(ctx, next, { isCurrent = () => true } = {}) {
+  if (!ctx?._tableName) return { ok: false, error: "Missing table" };
+  const predicate = typeof isCurrent === "function" ? isCurrent : () => true;
   const run = async () => {
-    if (!ctx._tableName) return;
-    const narrativeRevision = normalizeNarrativeState(ctx._narrativeState).revision;
-    const clockRevision = normalizeNliClock(ctx._investigationClock).revision;
-    const writeClock = { ...next };
+    if (!ctx._tableName) return { ok: false, error: "Missing table" };
+    if (!predicate()) return { ok: false, stale: true, error: "Superseded" };
+    const narrativeAtSend = normalizeNarrativeState(ctx._narrativeState);
+    const revisionAtSend = normalizeNliClock(ctx._investigationClock).revision;
+    const writeClock = { ...(next && typeof next === "object" ? next : {}) };
     delete writeClock.serverNowMs;
-    const state = await OTEF_API.updateInvestigationClock(ctx._tableName, writeClock, {
-      sourceId: ctx._clientId,
-      timestamp: Date.now(),
-    });
-    if (state?.investigation_clock && typeof state.investigation_clock === "object") {
-      const responseClock = normalizeNliClock(state.investigation_clock);
-      const currentClock = normalizeNliClock(ctx._investigationClock);
-      const sameNarrative = normalizeNarrativeState(ctx._narrativeState).revision === narrativeRevision;
-      if (sameNarrative && currentClock.revision <= clockRevision && responseClock.revision >= currentClock.revision) {
-        ctx._setInvestigationClock(responseClock);
-      }
+    delete writeClock.isCurrent;
+    let state;
+    try {
+      state = await OTEF_API.updateInvestigationClock(ctx._tableName, writeClock, {
+        sourceId: ctx._clientId,
+        timestamp: Date.now(),
+      });
+    } catch (error) {
+      getLogger().error("[OTEFDataContext] Failed to update investigation clock:", error);
+      return { ok: false, error };
     }
+    if (!predicate()) return { ok: false, stale: true, error: "Superseded" };
+    const narrativeNow = normalizeNarrativeState(ctx._narrativeState);
+    if (
+      narrativeNow.id !== narrativeAtSend.id
+      || narrativeNow.revision !== narrativeAtSend.revision
+    ) {
+      return { ok: false, stale: true, error: "Superseded narrative" };
+    }
+    const local = normalizeNliClock(ctx._investigationClock);
+    if (local.revision > revisionAtSend) {
+      if (sameClockAcknowledgement(next, local)) return { ok: true, clock: local };
+      return { ok: false, stale: true, error: "Superseded clock" };
+    }
+    const raw = state?.investigation_clock;
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+      return { ok: false, error: "Invalid clock response" };
+    }
+    const responseClock = normalizeNliClock(raw);
+    if (!sameClockAcknowledgement(next, responseClock)) {
+      return { ok: false, error: "Invalid clock response" };
+    }
+    const currentClock = normalizeNliClock(ctx._investigationClock);
+    if (currentClock.revision <= revisionAtSend && responseClock.revision >= currentClock.revision) {
+      ctx._setInvestigationClock(responseClock);
+    }
+    const adopted = normalizeNliClock(ctx._investigationClock);
+    if (!sameClockAcknowledgement(next, adopted)) {
+      return { ok: false, error: "Invalid clock response" };
+    }
+    return { ok: true, clock: adopted };
   };
   const queued = (ctx._clockPatchQueue || Promise.resolve()).then(run, run);
   ctx._clockPatchQueue = queued.then(
@@ -855,17 +986,15 @@ async function setEscapeOverlay(ctx, overlay) {
   if (!ctx._tableName) return { ok: false, reason: "missing_table" };
   const current = ctx.getEscapeOverlay?.() || {};
   const patch = overlay && typeof overlay === "object" ? overlay : {};
-  const nextOverlay = {
-    individual: Object.prototype.hasOwnProperty.call(patch, "individual")
-      ? patch.individual === true
-      : current.individual === true,
-    overlap: Object.prototype.hasOwnProperty.call(patch, "overlap")
-      ? patch.overlap === true
-      : current.overlap === true,
-    mor: Object.prototype.hasOwnProperty.call(patch, "mor")
-      ? patch.mor === true
-      : current.mor === true,
-  };
+  const flag = (key) => (
+    Object.prototype.hasOwnProperty.call(patch, key) ? patch[key] : current[key] === true
+  );
+  const nextOverlay = normalizeEscapeOverlay({
+    individual: flag("individual"),
+    overlap: flag("overlap"),
+    mor: flag("mor"),
+    settled: flag("settled"),
+  }, ctx.getNarrativeState?.()?.id);
   const response = await OTEF_API.setEscapeOverlay(
     ctx._tableName,
     nextOverlay,
@@ -1065,10 +1194,12 @@ OTEFDataContextInternals.actions = {
   toggleLayer,
   toggleLayerInGroups,
   setLayersEnabled,
+  setEnabledLayerIds,
   toggleGroup,
   toggleAnimation,
   setLayerAnimations,
   setBasemap,
+  setExhibitMode,
   patchInvestigationClock,
   navigateToPlace,
   cancelNavigationFocus,
@@ -1095,10 +1226,12 @@ export {
   toggleLayer,
   toggleLayerInGroups,
   setLayersEnabled,
+  setEnabledLayerIds,
   toggleGroup,
   toggleAnimation,
   setLayerAnimations,
   setBasemap,
+  setExhibitMode,
   patchInvestigationClock,
   navigateToPlace,
   cancelNavigationFocus,

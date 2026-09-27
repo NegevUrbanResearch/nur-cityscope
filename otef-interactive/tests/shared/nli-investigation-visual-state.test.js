@@ -63,13 +63,21 @@ describe("nli-investigation-theme", () => {
       alarmRadiusStops: [[1, 4], [7, 8], [26, 14], [77, 19]],
       personZoom: 16,
       highlightMinZoom: 13,
+      dimOpacity: 0.08,
+      dimTextOpacity: 0.18,
       highlightOpacityTransitionMs: 400,
       highlightFillOpacity: 0.05,
       highlightLineColor: "rgba(255,255,255,0.35)",
       personGlowFillOpacity: 0.25,
+      personGlowFillColor: "#ffffff",
       personGlowRadius: 14,
       personGlowStrokeWidth: 2.5,
       personGlowPulseMs: 2400,
+      settlementGlowAuraOpacity: 0.28,
+      settlementGlowCoreOpacity: 0.16,
+      settlementGlowAuraBlur: 0.85,
+      settlementGlowCoreBlur: 0.55,
+      settlementGlowAuraPad: 1.3,
     });
     expect(NLI_VISUAL_TOKENS).not.toHaveProperty("polygonCategories");
     expect(NLI_VISUAL_TOKENS).not.toHaveProperty("polygonFallbackFill");
@@ -644,12 +652,12 @@ describe("deriveInvestigationFrame", () => {
     expect(frame.achievedPolygonBeats).toEqual(beats);
   });
 
-  it("personGlowActive keeps needsNextFrame true when no investigation layers are enabled", () => {
+  it("personGlowActive does not keep needsNextFrame true without a halo overlay", () => {
     const frame = deriveInvestigationFrame(idleNliClock(), 99_000, [], {
       motionMode: "full",
       personGlowActive: true,
     });
-    expect(frame.needsNextFrame).toBe(true);
+    expect(frame.needsNextFrame).toBe(false);
   });
 
   it("finishes an alarm ripple from corrected wall time at its shared onset", () => {

@@ -7,6 +7,7 @@ import {
   resizeLegendLayout,
   rotateLegendLayout,
   chooseLegendInitialLayout,
+  isLegacyPortraitLegendLayout,
   findLegendSnap,
   legendSpanKey,
   installLegendLayout,
@@ -99,14 +100,45 @@ const viewport = { width: 1920, height: 1080 };
 const base = { leftPct: 40, topPct: 30, widthPct: 20, heightPct: 20, fontPx: 22, rotateDeg: 0, dwellSeconds: 8 };
 
 describe("legend layout projection geometry", () => {
-  it("uses the compact first-run legend box", () => {
+  it("uses the short-wide first-run legend box", () => {
     expect(LEGEND_LAYOUT_DEFAULT).toMatchObject({
-      leftPct: 68,
-      topPct: 18,
-      widthPct: 20,
-      heightPct: 32,
+      leftPct: 26,
+      topPct: 84,
+      widthPct: 48,
+      heightPct: 14,
       fontPx: 16,
     });
+  });
+
+  it("places a first-run rail in the bottom band beside a centered clock", () => {
+    const placed = chooseLegendInitialLayout({
+      viewport: { width: 1920, height: 1080 },
+      clockBounds: { left: 700, top: 200, right: 1100, bottom: 600 },
+    });
+    expect(placed.topPct).toBeGreaterThanOrEqual(70);
+    expect(placed.widthPct).toBe(48);
+    expect(placed.heightPct).toBe(14);
+  });
+
+  it("remigrates any saved 20x32 portrait slot and keeps a custom slot", () => {
+    expect(isLegacyPortraitLegendLayout({ leftPct: 68, topPct: 18, widthPct: 20, heightPct: 32, fontPx: 22 })).toBe(true);
+    expect(isLegacyPortraitLegendLayout({ leftPct: 10, topPct: 10, widthPct: 20, heightPct: 32 })).toBe(true);
+    expect(isLegacyPortraitLegendLayout({ leftPct: 40, topPct: 30, widthPct: 20, heightPct: 20 })).toBe(false);
+    const migrated = installFixture({
+      settings: { projection: { full: { leftPct: 10, topPct: 10, widthPct: 20, heightPct: 32, fontPx: 22, rotateDeg: 5, dwellSeconds: 10 } } },
+    });
+    expect(migrated.instance.getLayout().widthPct).toBe(LEGEND_LAYOUT_DEFAULT.widthPct);
+    expect(migrated.instance.getLayout().heightPct).toBe(LEGEND_LAYOUT_DEFAULT.heightPct);
+    expect(migrated.instance.getLayout().fontPx).toBe(22);
+    expect(migrated.instance.getLayout().dwellSeconds).toBe(10);
+    expect(migrated.instance.getLayout().rotateDeg).toBe(5);
+    expect(migrated.instance.getLayout().topPct).toBeGreaterThanOrEqual(70);
+    migrated.instance.dispose();
+    const custom = installFixture({
+      settings: { projection: { full: { leftPct: 40, topPct: 30, widthPct: 20, heightPct: 20, fontPx: 22, rotateDeg: 0, dwellSeconds: 8 } } },
+    });
+    expect(custom.instance.getLayout()).toMatchObject({ leftPct: 40, topPct: 30, widthPct: 20, heightPct: 20, fontPx: 22 });
+    custom.instance.dispose();
   });
 
   it("clamps geometry and dwell using the clock layout limits", () => {
@@ -166,7 +198,7 @@ describe("legend layout projection geometry", () => {
     const config = { outputs: { left: { crop: { x0: 0, x1: 0.5, y0: 0, y1: 1 } }, right: { crop: { x0: 0.5, x1: 1, y0: 0, y1: 1 } } } };
     expect(legendSpanKey("right")).toBe("right");
     expect(chooseLegendInitialLayout({ spanKey: "left", viewport, clockBounds: { left: 100, top: 100, right: 500, bottom: 500 }, projectionConfig: config }).leftPct).toBeGreaterThanOrEqual(0);
-    expect(chooseLegendInitialLayout({ spanKey: "right", viewport, clockBounds: null, projectionConfig: config }).leftPct).toBeGreaterThan(50);
+    expect(chooseLegendInitialLayout({ spanKey: "right", viewport, clockBounds: null, projectionConfig: config }).topPct).toBeGreaterThanOrEqual(70);
   });
 });
 
@@ -401,12 +433,37 @@ describe("legend layout installation", () => {
     const initial = hiddenClock.instance.getLayout();
     expect(initial.widthPct).toBe(LEGEND_LAYOUT_DEFAULT.widthPct);
     expect(initial.heightPct).toBe(LEGEND_LAYOUT_DEFAULT.heightPct);
-    expect(initial).not.toMatchObject({ leftPct: 68, topPct: 18 });
+    expect(initial).not.toMatchObject({
+      leftPct: LEGEND_LAYOUT_DEFAULT.leftPct,
+      topPct: LEGEND_LAYOUT_DEFAULT.topPct,
+    });
     hiddenClock.instance.dispose();
   });
 
   it("suppresses arithmetic snap candidates inside overlap exclusion", () => {
     const snap = findLegendSnap({ left: 100, top: 100, right: 300, bottom: 300 }, { left: 308, top: 100, right: 600, bottom: 300 }, viewport, { left: 80, top: 80, right: 400, bottom: 400 });
     expect(snap).toBe(null);
+  });
+
+  it("remigrates a replayed 20x32 server slot instead of restoring the portrait box", () => {
+    const fixture = installFixture();
+    fixture.instance.applyServerSettings({
+      leftPct: 68,
+      topPct: 18,
+      widthPct: 20,
+      heightPct: 32,
+      fontPx: 22,
+      dwellSeconds: 11,
+      rotateDeg: 4,
+    });
+    expect(fixture.instance.getLayout()).toMatchObject({
+      widthPct: 48,
+      heightPct: 14,
+      fontPx: 22,
+      dwellSeconds: 11,
+      rotateDeg: 4,
+    });
+    expect(fixture.instance.getLayout().topPct).toBeGreaterThanOrEqual(70);
+    fixture.instance.dispose();
   });
 });

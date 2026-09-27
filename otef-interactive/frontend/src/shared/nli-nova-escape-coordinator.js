@@ -34,7 +34,12 @@ export const NOVA_ESCAPE_OVERLAP_LAYER_ID = "nli-nova-escape-overlap";
 export const NOVA_SITE_POLYGONS_URL =
   "/otef-interactive/public/processed/layers/nli/investigation_polygons.geojson";
 
-const EMPTY_OVERLAY = Object.freeze({ individual: false, overlap: false });
+const EMPTY_OVERLAY = Object.freeze({
+  individual: false,
+  overlap: false,
+  mor: false,
+  settled: false,
+});
 
 function globalRequestAnimationFrame() {
   const raf = globalThis.requestAnimationFrame;
@@ -139,6 +144,12 @@ export function createNovaEscapeCoordinator({
     if (hadIds) emitParallelImpact(parallelImpactIds);
   };
 
+  const resetParallelImpactIds = () => {
+    if (parallelImpactIds.size === 0) return;
+    parallelImpactIds = new Set();
+    emitParallelImpact(parallelImpactIds);
+  };
+
   const warnImpactIndexOnce = (reason) => {
     if (impactIndexWarned) return;
     impactIndexWarned = true;
@@ -168,7 +179,11 @@ export function createNovaEscapeCoordinator({
       warnImpactIndexOnce("schema or route IDs");
       return;
     }
-    if (narrative?.id === "nova" && overlay?.individual === true) scheduleImpactTick();
+    if (overlay?.settled === true) {
+      publishSettledImpact(token);
+      return;
+    }
+    if (narrative?.id === "nova" && overlay?.individual === true && ribbonsAllowed) scheduleImpactTick();
   };
 
   const absorbParallelImpactIds = (next) => {
@@ -181,6 +196,7 @@ export function createNovaEscapeCoordinator({
   };
 
   const featureProgress = (feature, stagger) => {
+    if (overlay?.settled === true) return 1;
     if (revealOverride != null) return clamp01(revealOverride);
     if (!stagger || resolveMotionMode() === "reduced") return 1;
     if (staggerOriginMs == null) return 0;
@@ -247,23 +263,25 @@ export function createNovaEscapeCoordinator({
       .filter((id) => id && id !== "100");
     const source = map?.getSource?.(NOVA_ESCAPE_IMPACT_LAYER_ID);
     if (source && typeof source.setData === "function") {
-      const features = outlineIds.map((id) => {
+      const features = [];
+      const drawnIds = [];
+      for (const id of outlineIds) {
         const found = settlementFeatures.find((feature) => (
           String(feature?.properties?.outlineObjectId ?? feature?.properties?.OBJECTID ?? feature?.id) === id
         ));
-        return found || {
-          type: "Feature",
-          properties: { outlineObjectId: id, OBJECTID: Number(id) },
-          geometry: { type: "Polygon", coordinates: [] },
-        };
-      });
+        if (!found) continue;
+        features.push(found);
+        drawnIds.push(id);
+      }
       source.setData({ type: "FeatureCollection", features });
+      setEscapeImpactOrientationIds(map, drawnIds, settlementFeatures);
+      return;
     }
     setEscapeImpactOrientationIds(map, outlineIds, settlementFeatures);
   };
 
   const refreshImpactFromProgress = () => {
-    if (!individualData || overlay?.individual !== true) return;
+    if (!individualData || (overlay?.settled !== true && overlay?.individual !== true)) return;
     if (!parsedImpactIndex) {
       clearImpactState();
       return;
@@ -287,7 +305,7 @@ export function createNovaEscapeCoordinator({
 
   const runImpactTick = () => {
     impactRaf = null;
-    if (disposed || narrative?.id !== "nova" || overlay?.individual !== true) return;
+    if (disposed || narrative?.id !== "nova" || overlay?.individual !== true || !ribbonsAllowed) return;
     if (!parsedImpactIndex) {
       clearImpactState();
       return;
@@ -303,7 +321,7 @@ export function createNovaEscapeCoordinator({
 
   const scheduleImpactTick = () => {
     cancelImpactRaf();
-    if (disposed || narrative?.id !== "nova" || overlay?.individual !== true) return;
+    if (disposed || narrative?.id !== "nova" || overlay?.individual !== true || !ribbonsAllowed) return;
     if (!parsedImpactIndex) {
       clearImpactState();
       return;
@@ -315,6 +333,14 @@ export function createNovaEscapeCoordinator({
     }
     map?.triggerRepaint?.();
     impactRaf = raf;
+  };
+
+  const publishSettledImpact = (token) => {
+    if (disposed || token !== generation) return;
+    if (narrative?.id !== "nova" || overlay?.settled !== true) return;
+    if (!individualData || !parsedImpactIndex || !settlementsData) return;
+    mountImpactOutline();
+    refreshImpactFromProgress();
   };
 
   const updateStagger = (individualOn) => {
@@ -333,6 +359,7 @@ export function createNovaEscapeCoordinator({
     if (!lastIndividualOn) {
       staggerOriginMs = null;
       pendingRevealOriginReset = true;
+      resetParallelImpactIds();
     }
     lastIndividualOn = true;
   };
@@ -345,13 +372,14 @@ export function createNovaEscapeCoordinator({
     if (disposed) return;
     const active = narrative?.id === "nova";
     const flags = overlay || EMPTY_OVERLAY;
+    const needsImpact = flags.settled === true || (ribbonsAllowed && flags.individual === true);
     if (!active) {
       updateStagger(false);
       setEscapeImpactOrientationIds(map, []);
       clearParallelImpact();
       return;
     }
-    if (!ribbonsAllowed) {
+    if (!ribbonsAllowed && !needsImpact) {
       const loadedSite = await loadCollection(
         NOVA_SITE_POLYGONS_URL,
         investigationPolygonFeatures,
@@ -365,8 +393,10 @@ export function createNovaEscapeCoordinator({
     }
     if (!flags.individual) {
       updateStagger(false);
-      setEscapeImpactOrientationIds(map, []);
-      clearParallelImpact();
+      if (flags.settled !== true) {
+        setEscapeImpactOrientationIds(map, []);
+        clearParallelImpact();
+      }
     }
 
     const individualRequest = loadCollection(
@@ -377,7 +407,7 @@ export function createNovaEscapeCoordinator({
       if (disposed || token !== generation) return loaded;
       if (!loaded) return loaded;
       individualData = loaded;
-      if (flags.individual) {
+      if (flags.individual && ribbonsAllowed) {
         updateStagger(true);
         addRibbon(NOVA_ESCAPE_INDIVIDUAL_LAYER_ID, individualData, {
           opacity: 0.6,
@@ -390,28 +420,31 @@ export function createNovaEscapeCoordinator({
       return loaded;
     });
 
-    const overlapRequest = loadCollection(
-      NOVA_FLEEING_OVERLAP_URL,
-      overlapData,
-      inflight,
-    ).then((loaded) => {
-      if (disposed || token !== generation) return loaded;
-      if (!loaded) return loaded;
-      overlapData = loaded;
-      if (flags.overlap) {
-        addRibbon(NOVA_ESCAPE_OVERLAP_LAYER_ID, overlapData, { opacity: 1, stagger: false });
-      }
-      return loaded;
-    });
+    const overlapRequest = ribbonsAllowed
+      ? loadCollection(
+        NOVA_FLEEING_OVERLAP_URL,
+        overlapData,
+        inflight,
+      ).then((loaded) => {
+        if (disposed || token !== generation) return loaded;
+        if (!loaded) return loaded;
+        overlapData = loaded;
+        if (flags.overlap) {
+          addRibbon(NOVA_ESCAPE_OVERLAP_LAYER_ID, overlapData, { opacity: 1, stagger: false });
+        }
+        return loaded;
+      })
+      : null;
 
-    const settlementRequest = flags.individual
+    const settlementRequest = needsImpact
       ? loadCollection(DEFAULT_INVESTIGATION_SETTLEMENTS_URL, settlementsData, inflight)
         .then((loaded) => {
           if (disposed || token !== generation) return loaded;
           if (!loaded) return loaded;
           settlementsData = loaded;
           settlementFeatures = loaded.features || [];
-          if (parsedImpactIndex && overlay?.individual === true) scheduleImpactTick();
+          if (overlay?.settled === true) publishSettledImpact(token);
+          else if (parsedImpactIndex && overlay?.individual === true && ribbonsAllowed) scheduleImpactTick();
           return loaded;
         })
       : null;
@@ -431,9 +464,16 @@ export function createNovaEscapeCoordinator({
       maybeAdoptImpactIndex(token);
     });
 
+    if (flags.settled === true) {
+      await Promise.all([individualRequest, settlementRequest, impactIndexPromise]);
+      if (disposed || token !== generation) return;
+      publishSettledImpact(token);
+      return;
+    }
+
     const required = [];
     if (flags.individual) required.push(individualRequest);
-    else if (flags.overlap) required.push(overlapRequest);
+    else if (flags.overlap && overlapRequest) required.push(overlapRequest);
     await Promise.all(required.filter(Boolean));
   }
 

@@ -31,11 +31,22 @@ import {
   registerCuratedLayerIds,
   removeCuratedLayersByPrefix,
   stageLayerHidden,
+  syncTimelineBaseLayerVisibility,
 } from "../../frontend/src/map/maplibre-layer-manager.js";
+import {
+  INVESTIGATION_ALARMS_FULL_ID,
+  INVESTIGATION_LINES_FULL_ID,
+  syncInvestigationTimelineToMap,
+} from "../../frontend/src/shared/maplibre-investigation-timeline.js";
+import {
+  idleNliClock,
+  playNliClock,
+} from "../../frontend/src/shared/nli-investigation-clock.js";
 
 function createMapMock() {
-  const sources = new Set();
+  const sources = new Map();
   const layers = new Set();
+  const layerDefsById = new Map();
   const images = new Set();
   /** @type {Map<string, Record<string, unknown>>} */
   const paintByLayerId = new Map();
@@ -49,11 +60,9 @@ function createMapMock() {
       if (sources.has(sourceId)) {
         throw new Error(`source already exists: ${sourceId}`);
       }
-      sources.add(sourceId);
+      sources.set(sourceId, { id: sourceId, setData: vi.fn() });
     }),
-    getSource: vi.fn((sourceId) =>
-      sources.has(sourceId) ? { id: sourceId } : undefined,
-    ),
+    getSource: vi.fn((sourceId) => sources.get(sourceId)),
     removeSource: vi.fn((sourceId) => {
       sources.delete(sourceId);
     }),
@@ -67,12 +76,16 @@ function createMapMock() {
     }),
     addLayer: vi.fn((layerDef) => {
       layers.add(layerDef.id);
+      layerDefsById.set(layerDef.id, { ...layerDef, layout: { ...(layerDef.layout || {}) } });
+      paintByLayerId.set(layerDef.id, { ...(layerDef.paint || {}) });
       mutations.push({ type: "layer", id: layerDef.id });
       layoutByLayerId.set(layerDef.id, { ...(layerDef.layout || {}) });
     }),
-    getLayer: vi.fn((layerId) => (layers.has(layerId) ? { id: layerId } : undefined)),
+    getLayer: vi.fn((layerId) => layers.has(layerId) ? layerDefsById.get(layerId) || { id: layerId } : undefined),
+    getStyle: vi.fn(() => ({ layers: [...layerDefsById.values()] })),
     removeLayer: vi.fn((layerId) => {
       layers.delete(layerId);
+      layerDefsById.delete(layerId);
       paintByLayerId.delete(layerId);
       layoutByLayerId.delete(layerId);
     }),
@@ -81,6 +94,8 @@ function createMapMock() {
         layoutByLayerId.set(layerId, {});
       }
       layoutByLayerId.get(layerId)[name] = value;
+      const layer = layerDefsById.get(layerId);
+      if (layer) layer.layout = { ...(layer.layout || {}), [name]: value };
     }),
     setPaintProperty: vi.fn((layerId, name, value) => {
       if (!paintByLayerId.has(layerId)) {
@@ -89,6 +104,9 @@ function createMapMock() {
       paintByLayerId.get(layerId)[name] = value;
     }),
     getPaintProperty: vi.fn((layerId, name) => paintByLayerId.get(layerId)?.[name]),
+    getLayoutProperty: vi.fn((layerId, name) => layoutByLayerId.get(layerId)?.[name]),
+    setFeatureState: vi.fn(),
+    getContainer: vi.fn(() => ({ querySelector: () => null, appendChild: vi.fn() })),
     on: vi.fn((event, listener) => {
       if (!listenersByEvent.has(event)) listenersByEvent.set(event, new Set());
       listenersByEvent.get(event).add(listener);
@@ -444,6 +462,147 @@ describe("maplibre-layer-manager", () => {
     expect(map.setLayoutProperty).toHaveBeenCalledWith(layerId, "visibility", "visible");
     expect(map._layoutByLayerId.get(layerId)?.visibility).toBe("visible");
     expect(map.getSource(fullId)).toBeDefined();
+  });
+
+  it("keeps renderer-owned timeline bases hidden on creation and retained re-enable", () => {
+    const map = createMapMock();
+    const groups = [{ id: "nli", layers: [
+      { id: "investigation_polygons", enabled: true },
+      { id: "lines", enabled: true },
+      { id: "alarms", enabled: true },
+      { id: "unrelated", enabled: true },
+    ] }];
+    const lifecycle = { lifecycle: { retainDisabled: true } };
+    bridgeMock.irToMapLibreLayers.mockImplementation((fullId) => [
+      { id: `${fullId.replace(/\./g, "__")}__authored`, type: "line", layout: { visibility: "visible" } },
+    ]);
+
+    syncTimelineBaseLayerVisibility(map, {
+      suppressedFullIds: ["nli.investigation_polygons", "nli.lines", "nli.alarms"],
+      enabledFullIds: ["nli.investigation_polygons", "nli.lines", "nli.alarms", "nli.unrelated"],
+    });
+    applyLayerGroupsToMap(map, groups, lifecycle);
+
+    for (const id of ["nli__investigation_polygons__authored", "nli__lines__authored", "nli__alarms__authored"]) {
+      expect(map._layoutByLayerId.get(id)?.visibility).toBe("none");
+    }
+    expect(map._layoutByLayerId.get("nli__unrelated__authored")?.visibility).toBe("visible");
+
+    applyLayerGroupsToMap(map, [{ id: "nli", layers: [] }], lifecycle);
+    applyLayerGroupsToMap(map, groups, lifecycle);
+
+    for (const id of ["nli__investigation_polygons__authored", "nli__lines__authored", "nli__alarms__authored"]) {
+      expect(map._layoutByLayerId.get(id)?.visibility).toBe("none");
+    }
+    expect(map._layoutByLayerId.get("nli__unrelated__authored")?.visibility).toBe("visible");
+  });
+
+  it("applies a playing clock before layer creation while timeline assets are deferred", async () => {
+    const map = createMapMock();
+    const groups = [{ id: "nli", layers: [
+      { id: "lines", enabled: true },
+      { id: "alarms", enabled: true },
+    ] }];
+    const disabledGroups = [{ id: "nli", layers: [
+      { id: "lines", enabled: false },
+      { id: "alarms", enabled: true },
+    ] }];
+    const playingClock = playNliClock(
+      idleNliClock(),
+      [INVESTIGATION_LINES_FULL_ID, INVESTIGATION_ALARMS_FULL_ID],
+      [400],
+      0,
+    );
+    const lineUrl = "https://example.test/deferred-route.geojson";
+    let releaseLines;
+    let assetsResolved = false;
+    const deferredLines = new Promise((resolve) => { releaseLines = resolve; });
+    bridgeMock.irToMapLibreLayers.mockImplementation((fullId) => [{
+      id: `${fullId.replace(/\./g, "__")}__authored`,
+      type: fullId === INVESTIGATION_ALARMS_FULL_ID ? "circle" : "line",
+      layout: { visibility: "visible" },
+      paint: fullId === INVESTIGATION_ALARMS_FULL_ID
+        ? { "circle-opacity": 0.5, "circle-radius": 4 }
+        : { "line-opacity": 1 },
+    }]);
+    const pending = syncInvestigationTimelineToMap(
+      map,
+      playingClock,
+      groups,
+      {
+        getLayerDataUrl: (fullId) => fullId === INVESTIGATION_LINES_FULL_ID ? lineUrl : null,
+        investigationSettlementsUrl: null,
+        featuresById: {
+          [INVESTIGATION_ALARMS_FULL_ID]: [{
+            properties: { city: "Test", alarm_minutes: [400] },
+            geometry: { type: "Point", coordinates: [34, 31] },
+          }],
+        },
+        fetchJson: (url) => url === lineUrl
+          ? deferredLines.then((data) => { assetsResolved = true; return data; })
+          : Promise.resolve({ features: [] }),
+        now: () => 0,
+      },
+    );
+
+    applyLayerGroupsToMap(map, groups);
+    expect(assetsResolved).toBe(false);
+    expect(map.getLayoutProperty("nli__lines__authored", "visibility")).toBe("none");
+    expect(map.getLayoutProperty("nli__alarms__authored", "visibility")).toBe("none");
+
+    clearAllLayers(map);
+    applyLayerGroupsToMap(map, groups);
+    expect(map.getLayoutProperty("nli__lines__authored", "visibility")).toBe("none");
+    expect(map.getLayoutProperty("nli__alarms__authored", "visibility")).toBe("none");
+
+    applyLayerGroupsToMap(map, disabledGroups);
+    const disabledSync = syncInvestigationTimelineToMap(map, playingClock, disabledGroups, {
+      investigationSettlementsUrl: null,
+      featuresById: {
+        [INVESTIGATION_ALARMS_FULL_ID]: [{
+          properties: { city: "Test", alarm_minutes: [400] },
+          geometry: { type: "Point", coordinates: [34, 31] },
+        }],
+      },
+      getLayerDataUrl: (fullId) => fullId === INVESTIGATION_LINES_FULL_ID ? lineUrl : null,
+      fetchJson: (url) => url === lineUrl ? deferredLines : Promise.resolve({ features: [] }),
+      now: () => 0,
+    });
+    applyLayerGroupsToMap(map, groups);
+    expect(map.getLayoutProperty("nli__lines__authored", "visibility")).toBe("none");
+    expect(map.getLayoutProperty("nli__alarms__authored", "visibility")).toBe("none");
+    const reenabledSync = syncInvestigationTimelineToMap(map, playingClock, groups, {
+      investigationSettlementsUrl: null,
+      featuresById: {
+        [INVESTIGATION_ALARMS_FULL_ID]: [{
+          properties: { city: "Test", alarm_minutes: [400] },
+          geometry: { type: "Point", coordinates: [34, 31] },
+        }],
+      },
+      getLayerDataUrl: (fullId) => fullId === INVESTIGATION_LINES_FULL_ID ? lineUrl : null,
+      fetchJson: (url) => url === lineUrl ? deferredLines : Promise.resolve({ features: [] }),
+      now: () => 0,
+    });
+    expect(map.getLayoutProperty("nli__lines__authored", "visibility")).toBe("none");
+    expect(map.getLayoutProperty("nli__alarms__authored", "visibility")).toBe("none");
+
+    releaseLines({ features: [{ properties: { OBJECTID: 1, timeline_minutes: 400 }, geometry: { type: "LineString", coordinates: [[34, 31], [34.1, 31.1]] } }] });
+    await Promise.all([pending, disabledSync, reenabledSync]);
+    expect(map.getLayer("nli-investigation-line-active-line")).toBeTruthy();
+    expect(map.getLayer("nli-investigation-alarm-circles")).toBeTruthy();
+
+    await syncInvestigationTimelineToMap(map, idleNliClock(), groups, {
+      featuresById: {
+        [INVESTIGATION_LINES_FULL_ID]: [{ properties: { OBJECTID: 1, timeline_minutes: 400 }, geometry: { type: "LineString", coordinates: [[34, 31], [34.1, 31.1]] } }],
+        [INVESTIGATION_ALARMS_FULL_ID]: [{
+          properties: { city: "Test", alarm_minutes: [400] },
+          geometry: { type: "Point", coordinates: [34, 31] },
+        }],
+      },
+      now: () => 0,
+    });
+    expect(map.getLayoutProperty("nli__lines__authored", "visibility")).toBe("visible");
+    expect(map.getLayoutProperty("nli__alarms__authored", "visibility")).toBe("visible");
   });
 
   it("fadeOutAndRemoveEnabledFullIds can retain outgoing full ids warm", async () => {

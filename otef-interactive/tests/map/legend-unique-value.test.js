@@ -156,6 +156,8 @@ describe("legendLayerFromConfig uniqueValue", () => {
     expect(String(survivor.fill).toLowerCase()).toBe("#ffd100");
     expect(String(captivity.fill).toLowerCase()).not.toBe("#7a2222");
     expect(captivity.captivityBleed === true || Boolean(captivity.swatchDataUrl)).toBe(true);
+    expect(String(captivity.fill).toLowerCase()).toBe("#ffd100");
+    expect(layer.items.some((item) => /bibas/i.test(String(item.label || "")))).toBe(false);
   });
 
   it("does not filter uniqueValue classes for unrelated layers", () => {

@@ -226,61 +226,99 @@ function drawLabel(context, lines, x, y, font, direction) {
   return Math.max(1, lines.length) * lineHeight;
 }
 
-function drawGroup(context, group, startY, width, height, font, direction) {
+function measureItem(context, item, font) {
+  const parts = components(item);
+  const symbols = symbolMetrics(parts, font);
+  const label = String(item.label || "");
+  context.font = `${font}px ${FONT}`;
+  const labelBoxWidth = Math.max(1, textWidth(context, label, font * 0.01));
+  return {
+    item,
+    parts,
+    symbols,
+    label,
+    labelBoxWidth,
+    width: symbols.width + font * 0.36 + labelBoxWidth,
+    height: Math.max(font * 1.14, symbols.height, font * 1.35),
+  };
+}
+
+function paintItem(context, box, slotLeft, top, font, panelDirection, innerPanelWidth) {
+  const labelDirection = textDirection(box.label, panelDirection);
+  const slotFree = box.symbols.height;
+  const symbolTop = top + font * 0.18;
+  let cursor = panelDirection === "rtl" ? slotLeft + box.symbols.width : slotLeft;
+  box.symbols.children.forEach(({ part, width: partWidth, height: partHeight, margin, marginTop }) => {
+    const partX = panelDirection === "rtl"
+      ? (cursor -= margin) - partWidth / 2
+      : (cursor += margin) + partWidth / 2;
+    const partY = symbolTop + (slotFree - marginTop - partHeight) / 2 + marginTop + partHeight / 2;
+    drawSymbol(context, part, partX, partY, font);
+    if (panelDirection === "rtl") cursor -= partWidth + margin + box.symbols.gap;
+    else cursor += partWidth + margin + box.symbols.gap;
+  });
+  const labelLeft = panelDirection === "rtl" ? slotLeft - font * 0.36 - box.labelBoxWidth : slotLeft + box.symbols.width + font * 0.36;
+  const labelRight = panelDirection === "rtl" ? slotLeft - font * 0.36 : labelLeft + box.labelBoxWidth;
+  const textX = labelDirection === "rtl" ? labelRight : labelLeft;
+  const lines = box.width >= innerPanelWidth
+    ? wrapLabel(context, box.label, Math.max(1, innerPanelWidth - box.symbols.width - font * 0.36), font * 0.01)
+    : [box.label || ""];
+  drawLabel(context, lines, textX, top + font, font, labelDirection);
+}
+
+function drawGroup(context, group, startY, startX, groupWidth, height, font, direction) {
   const paddingX = font * 0.5;
-  const columnGap = font * 0.64;
-  const columnWidth = (width - paddingX * 2 - columnGap) / 2;
+  const innerLeft = startX + paddingX;
+  const innerRight = startX + groupWidth - paddingX;
+  const innerWidth = Math.max(1, innerRight - innerLeft);
   const titleFont = font * 0.55;
   const titleLine = titleFont * 1.35;
-  const titleDirection = textDirection(group.name, direction);
-  const titleX = titleDirection === "rtl" ? width - paddingX : paddingX;
-  context.font = `600 ${titleFont}px ${FONT}`;
-  context.fillStyle = SUB;
-  context.direction = titleDirection;
-  context.textAlign = titleDirection === "rtl" ? "right" : "left";
-  context.textBaseline = "alphabetic";
-  setShadow(context);
-  context.fillText(group.name || "", titleX, startY + lineBoxBaseline(context, group.name || "", titleFont, titleLine));
-  let y = startY + titleLine + titleFont * 0.55;
-  const items = group.items || [];
-  for (let index = 0; index < items.length; index += 2) {
-    const row = items.slice(index, index + 2);
-    const measured = row.map((item) => {
-      const parts = components(item);
-      const symbols = symbolMetrics(parts, font);
-      const labelWidth = Math.max(1, columnWidth - symbols.width - font * 0.36);
-      context.font = `${font}px ${FONT}`;
-      const label = String(item.label || "");
-      const labelBoxWidth = Math.min(labelWidth, Math.max(1, textWidth(context, label, font * 0.01)));
-      return { item, parts, symbols, lines: wrapLabel(context, label, labelWidth, font * 0.01), labelBoxWidth };
-    });
-    const rowHeight = Math.max(font * 1.14, ...measured.map(({ lines }) => lines.length * font * 1.35)) + font * 0.64;
-    measured.forEach(({ item, parts, symbols, lines, labelBoxWidth }, rowIndex) => {
-      const visualColumn = direction === "rtl" ? 1 - rowIndex : rowIndex;
-      const columnLeft = paddingX + visualColumn * (columnWidth + columnGap);
-      const top = y + font * 0.32;
-      const labelDirection = textDirection(item.label, direction);
-      const slotLeft = direction === "rtl" ? columnLeft + columnWidth - symbols.width : columnLeft;
-      const labelLeft = direction === "rtl" ? slotLeft - font * 0.36 - labelBoxWidth : slotLeft + symbols.width + font * 0.36;
-      const labelRight = direction === "rtl" ? slotLeft - font * 0.36 : labelLeft + labelBoxWidth;
-      const textX = labelDirection === "rtl" ? labelRight : labelLeft;
-      let cursor = direction === "rtl" ? slotLeft + symbols.width : slotLeft;
-      const symbolTop = top + font * 0.18;
-      const slotFree = symbols.height;
-      symbols.children.forEach(({ part, width: partWidth, height: partHeight, margin, marginTop }) => {
-        const partX = direction === "rtl"
-          ? (cursor -= margin) - partWidth / 2
-          : (cursor += margin) + partWidth / 2;
-        const partY = symbolTop + (slotFree - marginTop - partHeight) / 2 + marginTop + partHeight / 2;
-        drawSymbol(context, part, partX, partY, font);
-        if (direction === "rtl") cursor -= partWidth + margin + symbols.gap;
-        else cursor += partWidth + margin + symbols.gap;
-      });
-      drawLabel(context, lines, textX, top + font, font, labelDirection);
-    });
-    y += rowHeight;
+  const itemGap = font * 18 / 16;
+  let y = startY;
+  if (group.id !== "nli") {
+    const titleDirection = textDirection(group.name, direction);
+    const titleX = titleDirection === "rtl" ? innerRight : innerLeft;
+    context.font = `600 ${titleFont}px ${FONT}`;
+    context.fillStyle = SUB;
+    context.direction = titleDirection;
+    context.textAlign = titleDirection === "rtl" ? "right" : "left";
+    context.textBaseline = "alphabetic";
+    setShadow(context);
+    context.fillText(group.name || "", titleX, startY + lineBoxBaseline(context, group.name || "", titleFont, titleLine));
+    y = startY + titleLine + titleFont * 0.55;
   }
-  return Math.min(height, y + font * 0.35);
+  const boxes = (group.items || []).map((item) => measureItem(context, item, font));
+  let cursor = direction === "rtl" ? innerRight : innerLeft;
+  let rowHeight = 0;
+  const beginRow = () => {
+    y += rowHeight;
+    rowHeight = 0;
+    cursor = direction === "rtl" ? innerRight : innerLeft;
+  };
+  for (const box of boxes) {
+    const needed = Math.min(innerWidth, box.width);
+    const remaining = direction === "rtl" ? cursor - innerLeft : innerRight - cursor;
+    if (rowHeight > 0 && needed - remaining > 0.01) beginRow();
+    const slotLeft = direction === "rtl" ? cursor - box.symbols.width : cursor;
+    const top = y + font * 0.32;
+    const painted = box.width > innerWidth
+      ? { ...box, labelBoxWidth: Math.max(1, innerWidth - box.symbols.width - font * 0.36), width: innerWidth }
+      : box;
+    paintItem(context, painted, slotLeft, top, font, direction, innerWidth);
+    const step = painted.width + itemGap;
+    cursor = direction === "rtl" ? cursor - step : cursor + step;
+    rowHeight = Math.max(rowHeight, painted.height + font * 0.64);
+  }
+  return Math.min(height, y + rowHeight + font * 0.35);
+}
+
+function groupNaturalWidth(context, group, font) {
+  const paddingX = font * 0.5;
+  const itemGap = font * 18 / 16;
+  const boxes = (group.items || []).map((item) => measureItem(context, item, font));
+  const itemsWidth = boxes.reduce((sum, box, index) => sum + box.width + (index ? itemGap : 0), 0);
+  const titleWidth = group.id === "nli" ? 0 : Math.max(1, textWidth(context, group.name || "", (font * 0.55) * 0.01));
+  return paddingX * 2 + Math.max(titleWidth, itemsWidth);
 }
 
 export function createProjectionLegendAdapter({ canvasFactory } = {}) {
@@ -291,12 +329,17 @@ export function createProjectionLegendAdapter({ canvasFactory } = {}) {
   let layout = {};
   let dirty = true;
   let disposed = false;
+  let signature = null;
+  let contentVersion = 0;
 
   const sync = (next = {}) => {
     if (disposed) return;
     snapshot = next.snapshot || next;
     layout = snapshot.layout || layout;
     const size = localSize(layout);
+    const nextSignature = JSON.stringify([snapshot.language, snapshot.blocks, snapshot.pages, snapshot.pageIndex, Number(layout.fontPx) || 22, size.width, size.height]);
+    if (nextSignature === signature) return;
+    signature = nextSignature;
     if (canvas.width !== size.width || canvas.height !== size.height) {
       canvas.width = size.width;
       canvas.height = size.height;
@@ -317,8 +360,26 @@ export function createProjectionLegendAdapter({ canvasFactory } = {}) {
         if (prior?.id === groupId) prior.items.push(...(block.layers || []).flatMap((layer) => layer.items || []));
         else groups.push({ id: groupId, name: block.pack?.name || "", items: (block.layers || []).flatMap((layer) => layer.items || []) });
       }
+      const paddingX = font * 0.5;
+      const packGap = font * 22 / 16;
       let y = font * 0.4;
-      for (const group of groups) y = drawGroup(context, group, y, canvas.width, canvas.height, font, direction);
+      let x = direction === "rtl" ? canvas.width : 0;
+      let rowHeight = 0;
+      const rowStart = () => (direction === "rtl" ? canvas.width : 0);
+      for (const group of groups) {
+        const natural = Math.min(canvas.width, Math.max(paddingX * 2 + font, groupNaturalWidth(context, group, font)));
+        const remaining = direction === "rtl" ? x : canvas.width - x;
+        if (rowHeight > 0 && natural - remaining > 0.01) {
+          y += rowHeight;
+          rowHeight = 0;
+          x = rowStart();
+        }
+        const groupWidth = Math.min(natural, direction === "rtl" ? x : canvas.width - x);
+        const startX = direction === "rtl" ? x - groupWidth : x;
+        const bottom = drawGroup(context, group, y, startX, groupWidth, canvas.height, font, direction);
+        rowHeight = Math.max(rowHeight, bottom - y);
+        x = direction === "rtl" ? startX - packGap : startX + groupWidth + packGap;
+      }
       if ((snapshot.pages || []).length > 1) {
         context.fillStyle = SUB;
         context.font = "11px Arial";
@@ -329,8 +390,9 @@ export function createProjectionLegendAdapter({ canvasFactory } = {}) {
         context.fillText(`${Number(snapshot.pageIndex || 0) + 1} / ${snapshot.pages.length}`, direction === "rtl" ? 5 : canvas.width - 5, canvas.height - 3);
       }
       dirty = false;
+      contentVersion += 1;
     }
-    return { source: canvas, matrix: projectionOverlayMatrix(layout) };
+    return { source: canvas, contentVersion, matrix: projectionOverlayMatrix(layout) };
   };
 
   return {

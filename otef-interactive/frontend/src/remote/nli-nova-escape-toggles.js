@@ -7,22 +7,24 @@ function escape(value) {
   return escapeHtml(String(value ?? ""));
 }
 
-function toggleButtonHtml(kind, pressed) {
-  const labelKey = kind === "overlap"
-    ? "nliNovaEscapeOverlap"
-    : kind === "mor" ? "nliNovaEscapeMor" : "nliNovaEscapeIndividual";
+const STAFF_ESCAPE_KINDS = new Set(["individual", "mor"]);
+
+function toggleButtonHtml(kind, pressed, disabled) {
+  const labelKey = kind === "mor" ? "nliNovaEscapeMor" : "nliNovaEscapeIndividual";
   const activeClass = pressed ? " is-active" : "";
-  return `<button type="button" class="nli-narrative-button nli-nova-escape-toggle${activeClass}" data-nli-nova-escape="${escape(kind)}" aria-pressed="${pressed ? "true" : "false"}">${escape(t(labelKey))}</button>`;
+  return `<button type="button" class="nli-narrative-button nli-nova-escape-toggle${activeClass}" data-nli-nova-escape="${escape(kind)}" aria-pressed="${pressed ? "true" : "false"}"${disabled ? " disabled" : ""}>${escape(t(labelKey))}</button>`;
 }
 
-export function nliNovaEscapeTogglesHtml(narrativeState, overlayState) {
+export function nliNovaEscapeTogglesHtml(narrativeState, overlayState, kinds, disabled = false) {
   const acknowledged = normalizeNarrativeState(narrativeState);
   if (acknowledged.id !== "nova") return "";
+  const requested = Array.isArray(kinds)
+    ? kinds.filter((kind) => STAFF_ESCAPE_KINDS.has(kind))
+    : [];
+  if (requested.length === 0) return "";
   const overlay = getEscapeOverlay(overlayState, acknowledged.id);
   return `<section class="nli-nova-escape-toggles" aria-label="${escape(t("nliNovaEscapeTogglesAria"))}">
-    ${toggleButtonHtml("individual", overlay.individual === true)}
-    ${toggleButtonHtml("overlap", overlay.overlap === true)}
-    ${toggleButtonHtml("mor", overlay.mor === true)}
+    ${requested.map((kind) => toggleButtonHtml(kind, overlay[kind] === true, disabled)).join("")}
   </section>`;
 }
 

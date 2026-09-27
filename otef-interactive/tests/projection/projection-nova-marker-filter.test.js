@@ -9,7 +9,7 @@ describe("projection Nova marker filter wiring", () => {
       "utf8",
     );
     expect(source).toMatch(
-      /function syncProjectionLayersWithNarrative\(targetMap, groups, options\) \{\s*syncProjectionLayers\(targetMap, groups, options\);\s*applyNarrativePeopleFilter\(targetMap, OTEFDataContext\.getNarrativeState\?\.\(\)\?\.id \?\? null\);\s*\}/,
+      /function syncProjectionLayersWithNarrative\(targetMap, groups, options\) \{\s*syncProjectionLayers\(targetMap, groups, \{ \.\.\.options, suppressCanvasNameSymbols: Boolean\(browserSurface\?\.getNameAdapter\(\)\) \}\);\s*applyNarrativePeopleFilter\(targetMap, OTEFDataContext\.getNarrativeState\?\.\(\)\?\.id \?\? null\);\s*const selectedPid = OTEFDataContext\.getPersonSelection\?\.\(\)\?\.personId;\s*if \(selectedPid\) applyPeopleFocusDim\(targetMap, selectedPid\);\s*else clearPeopleFocusDim\(targetMap\);\s*applyNarrativeHouseOutlineFilter\(targetMap, OTEFDataContext\.getNarrativeState\?\.\(\)\?\.id \?\? null\);\s*\}/,
     );
   });
 });

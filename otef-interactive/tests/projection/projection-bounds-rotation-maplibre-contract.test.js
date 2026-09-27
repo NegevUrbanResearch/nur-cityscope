@@ -234,7 +234,12 @@ test("projection entry does not consume place catalog or navigation command inpu
   expect(src).not.toContain("place-catalog");
   expect(src).not.toContain("searchPlaces");
   expect(src).not.toContain("cameraHint");
-  expect(src).not.toContain("navigationCommand");
+  const highlightStart = src.indexOf("const syncProjectionHighlight = (viewport) => {");
+  const highlightSlice = highlightStart >= 0
+    ? src.slice(highlightStart, src.indexOf("};", highlightStart) + 2)
+    : "";
+  expect(highlightSlice).toContain("shouldShowProjectionViewportHighlight");
+  expect(highlightSlice).not.toContain("navigationCommand");
 });
 
 test("viewportToHighlightGeoJSON returns Polygon feature for bbox viewport", async () => {
@@ -426,6 +431,15 @@ test("highlight layers fade opacity across zoom 13 instead of emptying the sourc
   );
   void fill;
   delete globalThis.proj4;
+});
+
+test("viewport highlight stays on for the regular remote and hides in exhibit or slideshow", async () => {
+  const { shouldShowProjectionViewportHighlight } = await loadProjectionHighlightModule();
+  expect(shouldShowProjectionViewportHighlight({})).toBe(true);
+  expect(shouldShowProjectionViewportHighlight({ exhibitMode: false, slideshowActive: false })).toBe(true);
+  expect(shouldShowProjectionViewportHighlight({ exhibitMode: true })).toBe(false);
+  expect(shouldShowProjectionViewportHighlight({ slideshowActive: true })).toBe(false);
+  expect(shouldShowProjectionViewportHighlight({ exhibitMode: true, slideshowActive: true })).toBe(false);
 });
 
 test("MapLibre projection highlight: GeoJSON path calls setData with FeatureCollection when highlight source exists", async () => {

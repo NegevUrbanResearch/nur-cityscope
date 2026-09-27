@@ -2,7 +2,7 @@ import { createNarrativeFocusRenderer } from "../shared/maplibre-narrative-focus
 import { getNliNarrative, normalizeNarrativeState } from "../shared/nli-narratives.js";
 import { NLI_NOVA_STORY } from "../shared/nli-nova-story.js";
 import { evaluateClock } from "../shared/nli-investigation-clock.js";
-import { applyNarrativePeopleFilter } from "./nli-people-marker-filter.js";
+import { applyNarrativeHouseOutlineFilter, applyNarrativePeopleFilter } from "./nli-people-marker-filter.js";
 
 const EXIT_CENTER = Object.freeze([34.5, 31.4]);
 // Reviewed Mor route extent, in WGS84. Padding keeps the route head and tail
@@ -142,6 +142,7 @@ export function createGisNarrativeController({
       state = normalized;
       activeDefinition = definition;
       applyNarrativePeopleFilter(map, activeDefinition?.id ?? null);
+      applyNarrativeHouseOutlineFilter(map, activeDefinition?.id ?? null);
       if (normalized.revision === 0) return false;
       if (normalized.revision <= handledRevision) {
         if (definition) {
@@ -180,6 +181,7 @@ export function createGisNarrativeController({
       const generation = styleGeneration;
       if (activeDefinition && generation === styleGeneration) focus.onStyleLoad();
       applyNarrativePeopleFilter(map, activeDefinition?.id ?? null);
+      applyNarrativeHouseOutlineFilter(map, activeDefinition?.id ?? null);
       onStyleLoadOverlay?.();
     },
     isActive: () => !disposed && !!activeDefinition,

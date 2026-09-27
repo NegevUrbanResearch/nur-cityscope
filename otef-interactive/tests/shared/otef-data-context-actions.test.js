@@ -8,6 +8,7 @@ let setBasemap;
 let updateViewportFromUI;
 let computePanViewport;
 let computeZoomViewport;
+let setEnabledLayerIds;
 
 beforeEach(async () => {
   vi.resetModules();
@@ -25,6 +26,7 @@ beforeEach(async () => {
   updateViewportFromUI = mod.updateViewportFromUI;
   computePanViewport = mod.computePanViewport;
   computeZoomViewport = mod.computeZoomViewport;
+  setEnabledLayerIds = mod.setEnabledLayerIds;
 });
 
 afterEach(() => {
@@ -818,5 +820,385 @@ describe('OTEFDataContext actions', () => {
     expect(body.basemap).toBe('dark');
   });
 
+});
+
+function splitFullLayerId(fullId) {
+  const dot = fullId.indexOf(".");
+  return [fullId.slice(0, dot), fullId.slice(dot + 1)];
+}
+
+function layerRow(groups, fullId) {
+  const [groupId, layerId] = splitFullLayerId(fullId);
+  const group = (groups || []).find((item) => item && item.id === groupId);
+  return group?.layers?.find((layer) => layer && String(layer.id) === layerId);
+}
+
+function isFullLayerEnabled(groups, fullId) {
+  return !!layerRow(groups, fullId)?.enabled;
+}
+
+function makeExclusiveLayerContext(layerGroups, extras = {}) {
+  const snapshots = [];
+  const ctx = {
+    _tableName: "otef",
+    _clientId: "test-client",
+    _pendingLayerOps: 0,
+    _pendingAnimationOps: 0,
+    _layerOpGeneration: 0,
+    _layerGroups: layerGroups,
+    _animations: {},
+    _setActiveLayerTrace: vi.fn(),
+    _clearActiveLayerTrace: vi.fn(),
+    _setAnimations(next) {
+      this._animations = next;
+    },
+    ...extras,
+  };
+  ctx._setLayerGroups = (next) => {
+    if (!Array.isArray(next)) return;
+    snapshots.push(JSON.parse(JSON.stringify(next)));
+    ctx._layerGroups = next;
+  };
+  ctx.snapshots = snapshots;
+  return ctx;
+}
+
+function fetchBodies() {
+  return global.fetch.mock.calls.map((call) => {
+    const init = call[1] || {};
+    return {
+      url: String(call[0]),
+      body: init.body ? JSON.parse(init.body) : null,
+    };
+  });
+}
+
+function toggleCommands() {
+  return fetchBodies().filter((call) => call.body && call.body.action === "set_layer_toggles");
+}
+
+function jsonResult(body, ok = true) {
+  return {
+    ok,
+    status: ok ? 200 : 500,
+    json: async () => body,
+  };
+}
+
+describe("setEnabledLayerIds", () => {
+  const sharedId = "nli.shared";
+  const oldId = "nli.old_story";
+  const newId = "nli.new_story";
+
+  function storyGroups() {
+    return [
+      {
+        id: "nli",
+        enabled: true,
+        layers: [
+          { id: "shared", displayName: "Shared", enabled: true },
+          { id: "old_story", displayName: "Old story", enabled: true },
+          { id: "new_story", displayName: "New story", enabled: false },
+        ],
+      },
+    ];
+  }
+
+  test("rejects missing context and non-array ids", async () => {
+    const missingTable = await setEnabledLayerIds({ _tableName: "" }, []);
+    const missingContext = await setEnabledLayerIds(null, ["nli.shared"]);
+    const invalidIds = await setEnabledLayerIds(
+      { _tableName: "otef", _layerGroups: storyGroups() },
+      "nli.shared",
+    );
+
+    expect(missingTable).toMatchObject({ ok: false });
+    expect(missingTable.error).toBeTruthy();
+    expect(missingContext).toMatchObject({ ok: false });
+    expect(missingContext.error).toBeTruthy();
+    expect(invalidIds).toMatchObject({ ok: false });
+    expect(invalidIds.error).toBeTruthy();
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  test("keeps a shared row enabled while old and new rows change in one snapshot", async () => {
+    const ctx = makeExclusiveLayerContext(storyGroups());
+    global.fetch = vi.fn(async () => jsonResult({
+      ok: true,
+      layerGroups: JSON.parse(JSON.stringify(ctx._layerGroups)),
+    }));
+
+    const result = await setEnabledLayerIds(ctx, [sharedId, newId], { traceId: "exclusive-shared" });
+
+    expect(result).toEqual({ ok: true });
+    expect(ctx.snapshots.length).toBeGreaterThan(0);
+    for (const snapshot of ctx.snapshots) {
+      expect(isFullLayerEnabled(snapshot, sharedId)).toBe(true);
+      expect(isFullLayerEnabled(snapshot, oldId)).toBe(false);
+      expect(isFullLayerEnabled(snapshot, newId)).toBe(true);
+    }
+    expect(isFullLayerEnabled(ctx._layerPatchLastAcked, sharedId)).toBe(true);
+    expect(isFullLayerEnabled(ctx._layerGroups, oldId)).toBe(false);
+    expect(isFullLayerEnabled(ctx._layerGroups, newId)).toBe(true);
+    expect(layerRow(ctx._layerGroups, sharedId).displayName).toBe("Shared");
+
+    const commands = toggleCommands();
+    expect(commands).toHaveLength(1);
+    expect(commands[0].body.changes).toEqual([
+      { full_layer_id: oldId, enabled: false },
+      { full_layer_id: newId, enabled: true },
+    ]);
+    expect(commands[0].body.changes.some((change) => change.full_layer_id === sharedId)).toBe(false);
+    expect(fetchBodies().some((call) => call.body && call.body.action === "set_layers_enabled")).toBe(false);
+    expect(ctx._setActiveLayerTrace).toHaveBeenCalledWith(expect.objectContaining({
+      traceId: "exclusive-shared",
+      source: "setEnabledLayerIds",
+      fullLayerIds: [sharedId, newId],
+    }));
+    expect(ctx._pendingLayerOps).toBe(0);
+  });
+
+  test("disables every known row when the desired set is empty", async () => {
+    const ctx = makeExclusiveLayerContext([
+      {
+        id: "nli",
+        enabled: true,
+        layers: [
+          { id: "shared", displayName: "Shared", enabled: true },
+          { id: "old_story", displayName: "Old story", enabled: true },
+        ],
+      },
+    ]);
+
+    const result = await setEnabledLayerIds(ctx, []);
+
+    expect(result).toEqual({ ok: true });
+    expect(isFullLayerEnabled(ctx._layerGroups, sharedId)).toBe(false);
+    expect(isFullLayerEnabled(ctx._layerGroups, oldId)).toBe(false);
+    expect(layerRow(ctx._layerGroups, sharedId).displayName).toBe("Shared");
+    const commands = toggleCommands();
+    expect(commands).toHaveLength(1);
+    expect(commands[0].body.changes).toEqual([
+      { full_layer_id: sharedId, enabled: false },
+      { full_layer_id: oldId, enabled: false },
+    ]);
+    expect(ctx._pendingLayerOps).toBe(0);
+  });
+
+  test("preserves raw row metadata and turns parking off when no content stays on", async () => {
+    const contentId = "curated_moresht_axis.101";
+    const parkingId = "curated_moresht_axis.pink_line_parking";
+    const ctx = makeExclusiveLayerContext([
+      {
+        id: "curated_moresht_axis",
+        enabled: true,
+        label: "Axis pack",
+        layers: [
+          { id: "101", displayName: "Demo", enabled: true, sourceKey: "workshop-101" },
+          { id: "pink_line_parking", displayName: "Parking lots", enabled: true, note: "keep-me" },
+        ],
+      },
+    ]);
+    ctx._animations = {
+      [contentId]: true,
+      [parkingId]: true,
+    };
+
+    const result = await setEnabledLayerIds(ctx, [parkingId]);
+
+    expect(result).toEqual({ ok: true });
+    const axis = ctx._layerGroups.find((group) => group.id === "curated_moresht_axis");
+    expect(axis.label).toBe("Axis pack");
+    const content = layerRow(ctx._layerGroups, contentId);
+    const parking = layerRow(ctx._layerGroups, parkingId);
+    const route = axis.layers.find((layer) => layer.id === "pink_line_route");
+    expect(content.enabled).toBe(false);
+    expect(content.displayName).toBe("Demo");
+    expect(content.sourceKey).toBe("workshop-101");
+    expect(parking.enabled).toBe(false);
+    expect(parking.displayName).toBe("Parking lots");
+    expect(parking.note).toBe("keep-me");
+    expect(route).toMatchObject({ id: "pink_line_route", displayName: "Pink line", enabled: false });
+    expect(route.fullLayerIds).toBeUndefined();
+    expect(route.name).toBeUndefined();
+    expect(ctx._animations[contentId]).toBe(false);
+    expect(ctx._animations[parkingId]).toBe(false);
+    expect(ctx._pendingLayerOps).toBe(0);
+    expect(ctx._pendingAnimationOps).toBe(0);
+  });
+
+  test("clears animations only for rows that changed from enabled to disabled", async () => {
+    const alreadyOffId = "nli.already_off";
+    const ctx = makeExclusiveLayerContext([
+      {
+        id: "nli",
+        enabled: true,
+        layers: [
+          { id: "shared", displayName: "Shared", enabled: true },
+          { id: "old_story", displayName: "Old story", enabled: true },
+          { id: "already_off", displayName: "Already off", enabled: false },
+        ],
+      },
+    ]);
+    ctx._animations = {
+      [sharedId]: true,
+      [oldId]: true,
+      [alreadyOffId]: true,
+    };
+
+    const result = await setEnabledLayerIds(ctx, [sharedId]);
+
+    expect(result).toEqual({ ok: true });
+    expect(ctx._animations[oldId]).toBe(false);
+    expect(ctx._animations[sharedId]).toBe(true);
+    expect(ctx._animations[alreadyOffId]).toBe(true);
+    const animationCall = fetchBodies().find((call) => call.body && call.body.animations);
+    expect(animationCall.body.animations[oldId]).toBe(false);
+    expect(animationCall.body.animations[sharedId]).toBe(true);
+    expect(animationCall.body.animations[alreadyOffId]).toBe(true);
+    expect(ctx._pendingLayerOps).toBe(0);
+    expect(ctx._pendingAnimationOps).toBe(0);
+  });
+
+  test("rolls back the optimistic snapshot when the command and fallback both fail", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const initial = storyGroups();
+    const ctx = makeExclusiveLayerContext(initial);
+    ctx._animations = { [oldId]: true, [sharedId]: true };
+    global.fetch = vi.fn(async (url) => {
+      if (String(url).includes("/command/")) return jsonResult({ error: "command failed" }, false);
+      return jsonResult({ error: "patch failed" }, false);
+    });
+
+    const result = await setEnabledLayerIds(ctx, [sharedId, newId]);
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toBeTruthy();
+    expect(result.stale).toBeUndefined();
+    expect(isFullLayerEnabled(ctx._layerGroups, sharedId)).toBe(true);
+    expect(isFullLayerEnabled(ctx._layerGroups, oldId)).toBe(true);
+    expect(isFullLayerEnabled(ctx._layerGroups, newId)).toBe(false);
+    expect(ctx._animations[oldId]).toBe(true);
+    expect(ctx._pendingLayerOps).toBe(0);
+    expect(ctx._pendingAnimationOps).toBe(0);
+    expect(toggleCommands()).toHaveLength(1);
+    expect(fetchBodies().some((call) => !call.url.includes("/command/"))).toBe(true);
+    errorSpy.mockRestore();
+    warnSpy.mockRestore();
+  });
+
+  test("does not roll back a newer desired set when an older flush fails", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const ctx = makeExclusiveLayerContext(storyGroups());
+    ctx._animations = { [oldId]: true, [sharedId]: true };
+    let releaseFirst;
+    let commandCount = 0;
+    global.fetch = vi.fn((url, init) => {
+      const isCommand = String(url).includes("/command/");
+      const body = init?.body ? JSON.parse(init.body) : null;
+      if (isCommand) {
+        commandCount += 1;
+        if (commandCount === 1) {
+          return new Promise((resolve) => {
+            releaseFirst = () => resolve(jsonResult({ error: "command failed" }, false));
+          });
+        }
+        return Promise.resolve(jsonResult({
+          ok: true,
+          layerGroups: JSON.parse(JSON.stringify(ctx._layerGroups)),
+        }));
+      }
+      if (body && body.animations) return Promise.resolve(jsonResult({ ok: true }));
+      return Promise.resolve(jsonResult({ error: "patch failed" }, false));
+    });
+
+    const first = setEnabledLayerIds(ctx, [sharedId]);
+    await vi.waitFor(() => expect(global.fetch).toHaveBeenCalled());
+    const second = setEnabledLayerIds(ctx, [sharedId, newId]);
+    releaseFirst();
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+
+    expect(firstResult.ok).toBe(false);
+    expect(firstResult.stale).toBe(true);
+    expect(firstResult.error).toBeTruthy();
+    expect(secondResult).toEqual({ ok: true });
+    for (const snapshot of ctx.snapshots) {
+      expect(isFullLayerEnabled(snapshot, sharedId)).toBe(true);
+    }
+    expect(isFullLayerEnabled(ctx._layerGroups, sharedId)).toBe(true);
+    expect(isFullLayerEnabled(ctx._layerGroups, oldId)).toBe(false);
+    expect(isFullLayerEnabled(ctx._layerGroups, newId)).toBe(true);
+    expect(isFullLayerEnabled(ctx._layerPatchLastAcked, sharedId)).toBe(true);
+    expect(ctx._animations[oldId]).toBe(false);
+    expect(ctx._animations[sharedId]).toBe(true);
+    expect(ctx._pendingLayerOps).toBe(0);
+    errorSpy.mockRestore();
+    warnSpy.mockRestore();
+  });
+
+  test("reports a superseded success without applying a stale snapshot", async () => {
+    const ctx = makeExclusiveLayerContext(storyGroups());
+    ctx._animations = { [oldId]: true, [sharedId]: true };
+    let releaseFirst;
+    let commandCount = 0;
+    global.fetch = vi.fn((url) => {
+      if (!String(url).includes("/command/")) {
+        return Promise.resolve(jsonResult({ ok: true }));
+      }
+      commandCount += 1;
+      if (commandCount === 1) {
+        return new Promise((resolve) => {
+          releaseFirst = () => resolve(jsonResult({
+            ok: true,
+            layerGroups: [
+              {
+                id: "nli",
+                enabled: false,
+                layers: [
+                  { id: "shared", displayName: "Shared", enabled: false },
+                  { id: "old_story", displayName: "Old story", enabled: false },
+                  { id: "new_story", displayName: "New story", enabled: false },
+                ],
+              },
+            ],
+          }));
+        });
+      }
+      return Promise.resolve(jsonResult({
+        ok: true,
+        layerGroups: JSON.parse(JSON.stringify(ctx._layerGroups)),
+      }));
+    });
+
+    const first = setEnabledLayerIds(ctx, [sharedId]);
+    await vi.waitFor(() => expect(global.fetch).toHaveBeenCalled());
+    const second = setEnabledLayerIds(ctx, [sharedId, oldId, newId]);
+    releaseFirst();
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+
+    expect(firstResult).toEqual({ ok: true, stale: true });
+    expect(secondResult).toEqual({ ok: true });
+    for (const snapshot of ctx.snapshots) {
+      expect(isFullLayerEnabled(snapshot, sharedId)).toBe(true);
+    }
+    expect(isFullLayerEnabled(ctx._layerGroups, sharedId)).toBe(true);
+    expect(isFullLayerEnabled(ctx._layerGroups, oldId)).toBe(true);
+    expect(isFullLayerEnabled(ctx._layerGroups, newId)).toBe(true);
+    expect(isFullLayerEnabled(ctx._layerPatchLastAcked, sharedId)).toBe(true);
+    expect(ctx._animations[oldId]).toBe(true);
+    expect(ctx._animations[sharedId]).toBe(true);
+    expect(ctx._pendingLayerOps).toBe(0);
+  });
+
+  test("facade delegates to the action and fails when the table is missing", async () => {
+    const mod = await import("../../frontend/src/shared/OTEFDataContext.js");
+    const result = await mod.OTEFDataContext.setEnabledLayerIds([sharedId]);
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toBeTruthy();
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
 });
 

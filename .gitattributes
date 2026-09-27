@@ -20,6 +20,9 @@ docker-compose*.yml text
 *.env text
 *.env.* text
 *.json text
+# Captured projector assets are verified byte-for-byte against SHA-256 hashes.
+otef-interactive/public/projection-calibration/**/*.json text eol=lf
+otef-interactive/public/projection-calibration/*.json text eol=lf
 *.yaml text
 *.yml text
 
@@ -40,4 +43,4 @@ media/ -text
 
 # Keep migrations
 !**/migrations/*.py text
-**/migrations/__init__.py text 
+**/migrations/__init__.py text

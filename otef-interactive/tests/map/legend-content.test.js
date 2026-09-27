@@ -171,11 +171,15 @@ describe("legend content model", () => {
       },
     }, { id: "lines" }, { fullId: "nli.lines", language: "he", surface: "gis" });
 
-    expect(layer.items).toHaveLength(1);
+    expect(layer.items).toHaveLength(2);
     expect(layer.items[0].carrier).toBe("#c31f4f");
     expect(layer.items[0].stroke).toBe("#000000");
     expect(layer.items[0].halo).toBe("#ffffff");
     expect(layer.items[0].dash.array).toEqual([24 * 0.45, 24 * 0.55]);
+    expect(layer.items[1].stroke).toBe("#c31f4f");
+    expect(layer.items[1].carrier).toBeUndefined();
+    expect(layer.items[1].dash.array).toEqual([6, 6]);
+    expect(layer.items[1].strokeOpacity).toBe(0.95);
 
     const projection = legendLayerFromConfig({
       id: "lines",
@@ -189,6 +193,7 @@ describe("legend content model", () => {
       },
     }, { id: "lines" }, { fullId: "nli.lines", language: "he", surface: "projection" });
     expect(projection.items[0].halo).toBe("#ffffff");
+    expect(projection.items[1].strokeOpacity).toBe(0.95);
   });
 
   it("draws alarms as a yellow marker with a static shockwave ring", () => {

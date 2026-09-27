@@ -103,4 +103,13 @@ describe("layer sheet workshop pink-line control", () => {
       PINK_LINE_ROUTE_FULL_LAYER_ID,
     );
   });
+
+  test("pink-line tile stays a workshop row and not an NLI transport control", () => {
+    const html = renderLayerRow(makePinkLineRow(true), {
+      groupId: "curated_moresht_axis",
+    });
+    expect(html).toContain("layer-tile--pink-line");
+    expect(html).not.toContain("layer-tile--locked");
+    expect(html).not.toContain("nli-tl-sheet");
+  });
 });

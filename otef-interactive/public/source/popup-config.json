@@ -119,6 +119,21 @@
             "key": "MAVAT_NAME"
           }
         ]
+      },
+      "narrative_polygon": {
+        "titleField": "note",
+        "hideEmpty": true,
+        "legendLabel": "House outlines",
+        "fields": [
+          {
+            "label": "Name",
+            "key": "note"
+          },
+          {
+            "label": "Object ID",
+            "key": "OBJECTID"
+          }
+        ]
       }
     }
   }

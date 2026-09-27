@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import {
   NAME_FIELD_MOTION,
   withNameRevealDelays,
+  nameRevealSchedule,
   createNameFieldAnimation,
 } from '../../frontend/src/shared/nli-name-field-animation.js';
 
@@ -64,6 +65,37 @@ describe('memorial name animation', () => {
     expect(apply.mock.lastCall[0]).toMatchObject({baseOpacity:.18,selectedOpacity:1});
     animation.hide(removed); expect(removed).toHaveBeenCalledOnce();
     animation.dispose();
+  });
+  it('uses the same global PID schedule for each Canvas output and either input order', () => {
+    const ids = Array.from({ length: 1228 }, (_, index) => String(index + 1));
+    const source = { type: 'FeatureCollection', features: ids.map((pid) => ({ properties: { pid } })) };
+    const td = withNameRevealDelays(source);
+    const first = nameRevealSchedule(ids);
+    const reversed = nameRevealSchedule([...ids].reverse());
+    for (const feature of td.features) {
+      const pid = feature.properties.pid;
+      expect(first.get(pid)).toEqual(reversed.get(pid));
+      expect(first.get(pid).delayMs).toBe(feature.properties.reveal_delay);
+    }
+    expect(new Set([...first.values()].map((entry) => entry.index)).size).toBe(1228);
+    expect(Math.max(...[...first.values()].map((entry) => entry.delayMs))).toBe(NAME_FIELD_MOTION.spreadMs);
+  });
+  it('publishes numeric per-PID reveal and focus without evaluating MapLibre expressions', () => {
+    vi.useFakeTimers();
+    const apply = vi.fn();
+    const animation = createNameFieldAnimation({ apply, now: () => Date.now() });
+    animation.show();
+    expect(apply.mock.lastCall[0].alphaFor('p1', 0)).toBe(0);
+    vi.advanceTimersByTime(800);
+    expect(apply.mock.lastCall[0].alphaFor('p1', 0)).toBeGreaterThan(0.48);
+    expect(apply.mock.lastCall[0].alphaFor('p2', 1000)).toBe(0);
+    animation.setFocus(['case', ['==', ['get', 'pid'], 'p1'], 1, .18], (pid) => pid === 'p1' ? 1 : .18);
+    vi.advanceTimersByTime(350);
+    expect(apply.mock.lastCall[0].alphaFor('p1', 0)).toBeGreaterThan(0.7);
+    expect(apply.mock.lastCall[0].alphaFor('p2', 0)).toBeCloseTo(.18 * (1150 / 1600), 1);
+    animation.hide(); vi.advanceTimersByTime(650);
+    expect(apply.mock.lastCall[0].alphaFor('p1', 0)).toBe(0);
+    animation.dispose(); vi.useRealTimers();
   });
   it('keeps opacity expressions bounded during rapid repeated focus changes',()=>{
     vi.useFakeTimers();

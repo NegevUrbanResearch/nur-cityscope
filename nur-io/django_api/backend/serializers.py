@@ -247,6 +247,7 @@ class OTEFViewportStateSerializer(serializers.ModelSerializer):
             "legend_settings",
             "workshop_auto_publish",
             "workshop_autopublish_started_at",
+            "exhibit_mode",
             "updated_at",
         ]
         read_only_fields = [

@@ -1,0 +1,17 @@
+{
+  "valid": {
+    "activeMode": "wall",
+    "profiles": {
+      "wall": { "requestedFontPx": 12, "minimumFontPx": 8, "spacingPx": 2, "edgeInsetPx": 0, "seamGapPx": 0 },
+      "model": { "requestedFontPx": 12, "minimumFontPx": 8, "spacingPx": 2, "edgeInsetPx": 0, "seamGapPx": 0 }
+    }
+  },
+  "cases": [
+    { "path": "profiles.wall.requestedFontPx", "value": true, "error": "namesWall.profiles.wall.requestedFontPx" },
+    { "path": "profiles.wall.minimumFontPx", "value": 13, "error": "namesWall.profiles.wall.minimumFontPx" },
+    { "path": "profiles.model.spacingPx", "value": 33, "error": "namesWall.profiles.model.spacingPx" },
+    { "path": "profiles.model.edgeInsetPx", "value": -1, "error": "namesWall.profiles.model.edgeInsetPx" },
+    { "path": "profiles.wall.seamGapPx", "value": 257, "error": "namesWall.profiles.wall.seamGapPx" },
+    { "path": "profiles.model.extra", "value": 1, "error": "namesWall.profiles.model.extra" }
+  ]
+}

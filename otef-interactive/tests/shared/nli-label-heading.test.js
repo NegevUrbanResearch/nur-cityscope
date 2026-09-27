@@ -12,10 +12,10 @@ import {
 } from "../../frontend/src/shared/nli-label-heading.js";
 
 describe("nli shared label heading", () => {
-  it("snaps to integer degrees with committed heading 41", () => {
-    expect(snapNliLabelHeadingDeg(undefined)).toBe(41);
-    expect(snapNliLabelHeadingDeg(NLI_LABEL_HEADING_DEFAULT)).toBe(41);
-    expect(NLI_LABEL_HEADING_DEFAULT).toBe(41);
+  it("defaults new sessions to 35 degrees without overriding explicit values", () => {
+    expect(snapNliLabelHeadingDeg(undefined)).toBe(35);
+    expect(snapNliLabelHeadingDeg(NLI_LABEL_HEADING_DEFAULT)).toBe(35);
+    expect(NLI_LABEL_HEADING_DEFAULT).toBe(35);
     expect(snapNliLabelHeadingDeg(14.4)).toBe(14);
     expect(snapNliLabelHeadingDeg(14.6)).toBe(15);
     expect(snapNliLabelHeadingDeg(-0.6)).toBe(-1);
@@ -23,7 +23,7 @@ describe("nli shared label heading", () => {
 
   it("persists one heading and exports a single headingDeg", () => {
     const storage = { getItem: vi.fn(() => null), setItem: vi.fn() };
-    expect(readNliLabelHeading(storage)).toBe(41);
+    expect(readNliLabelHeading(storage)).toBe(35);
     writeNliLabelHeading(91.2, storage);
     expect(storage.setItem).toHaveBeenCalledWith(NLI_LABEL_HEADING_STORAGE_KEY, "91");
     storage.getItem = vi.fn(() => "91");
