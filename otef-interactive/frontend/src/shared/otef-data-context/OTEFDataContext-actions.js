@@ -640,6 +640,77 @@ async function setLayersEnabled(ctx, fullLayerIds, enabled, options = {}) {
   }
 }
 
+async function setEnabledLayerIds(ctx, fullLayerIds, options = {}) {
+  if (!ctx || !ctx._tableName) {
+    return { ok: false, error: "Missing table" };
+  }
+  if (!Array.isArray(fullLayerIds)) {
+    return { ok: false, error: "Invalid layer ids" };
+  }
+
+  ensureLayerPatchBaseline(ctx);
+  const wanted = new Set(fullLayerIds);
+  const disabledIds = [];
+  const previous = ensureMoreshetAxisCompanionRows(
+    JSON.parse(JSON.stringify(ctx._layerGroups || [])),
+  );
+  let next = previous.map((group) => ({
+    ...group,
+    layers: group.layers.map((layer) => {
+      const fullId = `${group.id}.${layer.id}`;
+      const enabled = wanted.has(fullId);
+      if (layer.enabled && !enabled) disabledIds.push(fullId);
+      return { ...layer, enabled };
+    }),
+  }));
+  next = applyMoreshetParkingCoherenceToLayerGroups(next);
+  const acknowledged = flattenLayerEnabledByFullId(ctx._layerPatchLastAcked);
+  for (const group of next) {
+    const prevGroup = previous.find((item) => item && item.id === group.id);
+    for (const layer of group.layers || []) {
+      const fullId = `${group.id}.${layer.id}`;
+      if (disabledIds.includes(fullId) || layer.enabled) continue;
+      const prevLayer = prevGroup?.layers?.find((item) => item && item.id === layer.id);
+      if (prevLayer?.enabled || acknowledged.get(fullId)) disabledIds.push(fullId);
+    }
+  }
+
+  const traceId =
+    options && typeof options.traceId === "string"
+      ? options.traceId
+      : generateTraceId("layer");
+  ctx._setActiveLayerTrace({
+    traceId,
+    source: "setEnabledLayerIds",
+    fullLayerIds,
+  });
+  recordTraceEvent(traceId, "context.layer.optimistic_set", {
+    fullLayerIds,
+  });
+  ctx._setLayerGroups(next);
+  ctx._pendingLayerOps++;
+  const callGen = nextLayerOpGeneration(ctx);
+  try {
+    await enqueueLayerGroupsCoalescedFlush(ctx);
+    if (callGen !== ctx._layerOpGeneration) {
+      return { ok: true, stale: true };
+    }
+    await clearAnimationsForDisabledLayerIds(ctx, disabledIds);
+    return { ok: true };
+  } catch (err) {
+    if (callGen !== ctx._layerOpGeneration) {
+      return { ok: false, error: err, stale: true };
+    }
+    getLogger().error("[OTEFDataContext] Failed to update layer groups:", err);
+    return { ok: false, error: err };
+  } finally {
+    ctx._pendingLayerOps--;
+    if (typeof ctx._clearActiveLayerTrace === "function") {
+      setTimeout(() => ctx._clearActiveLayerTrace(traceId), 1200);
+    }
+  }
+}
+
 async function toggleGroup(ctx, groupId, enabled) {
   if (!ctx._tableName || !groupId) return { ok: false, error: "Missing groupId" };
   if (!ctx._layerGroups) return { ok: false, error: "Layer groups not available" };
@@ -1065,6 +1136,7 @@ OTEFDataContextInternals.actions = {
   toggleLayer,
   toggleLayerInGroups,
   setLayersEnabled,
+  setEnabledLayerIds,
   toggleGroup,
   toggleAnimation,
   setLayerAnimations,
@@ -1095,6 +1167,7 @@ export {
   toggleLayer,
   toggleLayerInGroups,
   setLayersEnabled,
+  setEnabledLayerIds,
   toggleGroup,
   toggleAnimation,
   setLayerAnimations,

@@ -143,7 +143,7 @@ class OTEFDataContextClass {
     this._layerPatchLastAcked = null;
     /** Serializes coalesced PATCH flush so rapid toggles share one queue. */
     this._layerPatchMutex = null;
-    /** Monotonic counter: latest user layer mutation intent (setLayersEnabled / toggleLayerInGroups / toggleGroup). */
+    /** Monotonic counter: latest user layer mutation intent (setLayersEnabled / setEnabledLayerIds / toggleLayerInGroups / toggleGroup). */
     this._layerOpGeneration = 0;
     this._pendingAnimationOps = 0;
     this._viewportSeq = 0;
@@ -785,6 +785,15 @@ class OTEFDataContextClass {
       return { ok: false, error: "Missing action helpers" };
     }
     return actions.setLayersEnabled(this, fullLayerIds, enabled, options);
+  }
+
+  async setEnabledLayerIds(fullLayerIds, options = undefined) {
+    const actions = OTEFDataContextInternals.actions;
+    if (!actions || typeof actions.setEnabledLayerIds !== "function") {
+      getLogger().error("[OTEFDataContext] Missing action helpers");
+      return { ok: false, error: "Missing action helpers" };
+    }
+    return actions.setEnabledLayerIds(this, fullLayerIds, options);
   }
 
   async _toggleLayerInGroups(layerId, enabled) {
