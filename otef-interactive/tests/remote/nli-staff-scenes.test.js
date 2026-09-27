@@ -86,6 +86,19 @@ test("Shura auto-opens only after its current step cue succeeds", () => {
   })).toBe(false);
 });
 
+test("Wall of Names auto-opens the names_wall blackout when its cue is ready", () => {
+  const index = showStepIndex(SHOW_STEP_IDS.WALL);
+  const wall = SHOW.steps[index];
+  expect(wall.kit).toEqual(["search", "presentation"]);
+  expect(wall.presentation).toEqual({ segmentId: "names_wall", open: "auto", onClose: "stay" });
+  expect(shouldAutoOpenNliPresentation({
+    item: SHOW, index, currentScript: SHOW, currentStep: wall, cueStatus: "ready",
+  })).toBe(true);
+  expect(shouldAutoOpenNliPresentation({
+    item: SHOW, index, currentScript: SHOW, currentStep: wall, cueStatus: "failed",
+  })).toBe(false);
+});
+
 test("Home shortcuts target the canonical final show steps", () => {
   expect(new Set(SHOW.steps.map((step) => step.id)).size).toBe(SHOW.steps.length);
   expect(HOME_SHOW_SHORTCUTS.map((item) => item.id)).toEqual([
@@ -192,8 +205,9 @@ describe("NLI staff run of show", () => {
     expect(hostages.steps[3].cue.narrative).toBe("hostages_all");
   });
 
-  test("presentation segments use the approved six-segment GIS mapping", () => {
+  test("presentation segments use the approved GIS mapping including names_wall", () => {
     const expected = [
+      ["names_wall", "auto", "stay"],
       ["segev", "manual", "stay"],
       ["nova_mor", "manual", "stay"],
       ["nova_memorial", "auto", "stay"],

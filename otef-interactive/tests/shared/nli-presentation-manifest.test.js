@@ -33,6 +33,7 @@ describe("NLI presentation manifest", () => {
         { id: "sderot", requiredNarrative: "sderot", range: [17, 21] },
         { id: "shura", requiredNarrative: null, range: [22, 28] },
         { id: "hostages", requiredNarrative: "hostages", range: [29, 34] },
+        { id: "names_wall", requiredNarrative: null, kind: "blackout", range: [0, 0] },
       ],
     });
     expect(Object.isFrozen(manifest)).toBe(true);
@@ -52,6 +53,20 @@ describe("NLI presentation manifest", () => {
     const value = structuredClone(approvedManifest);
     mutate(value);
     expect(() => validateNliPresentationManifest(value)).toThrow();
+  });
+
+  it("defaults a blackout segment range to [0, 0] and keeps kind", () => {
+    const value = structuredClone(approvedManifest);
+    value.segments = value.segments.filter((segment) => segment.id !== "names_wall");
+    value.segments.push({ id: "names_wall", requiredNarrative: null, kind: "blackout" });
+    const manifest = validateNliPresentationManifest(value);
+    expect(getNliPresentationSegment(manifest, "names_wall")).toEqual({
+      id: "names_wall",
+      requiredNarrative: null,
+      kind: "blackout",
+      range: [0, 0],
+    });
+    expect(manifest.segments).toHaveLength(7);
   });
 
   it("loads and validates JSON fetched from the shared manifest URL", async () => {

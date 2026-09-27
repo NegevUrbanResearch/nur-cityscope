@@ -20,6 +20,7 @@
     { "id": "nova_memorial", "requiredNarrative": "nova", "range": [12, 16] },
     { "id": "sderot", "requiredNarrative": "sderot", "range": [17, 21] },
     { "id": "shura", "requiredNarrative": null, "range": [22, 28] },
-    { "id": "hostages", "requiredNarrative": "hostages", "range": [29, 34] }
+    { "id": "hostages", "requiredNarrative": "hostages", "range": [29, 34] },
+    { "id": "names_wall", "requiredNarrative": null, "kind": "blackout" }
   ]
 }

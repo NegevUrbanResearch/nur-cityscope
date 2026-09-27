@@ -59,6 +59,13 @@ export function validateNliPresentationManifest(value) {
     if (segment.requiredNarrative !== null && typeof segment.requiredNarrative !== "string") {
       throw new TypeError("presentation required narrative must be a string or null");
     }
+    if (segment.kind === "blackout") {
+      const range = Array.isArray(segment.range) ? segment.range : [0, 0];
+      if (range.length !== 2 || !range.every(Number.isInteger)) {
+        throw new TypeError("presentation segment range must contain two integers");
+      }
+      return { ...segment, kind: "blackout", range: [...range] };
+    }
     if (
       !Array.isArray(segment.range) ||
       segment.range.length !== 2 ||

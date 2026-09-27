@@ -201,7 +201,8 @@ export const SHOW = {
         en: "Search a name or place — associated names light up, the rest dim, and the chosen place lights up.",
       },
       cue: WALL_CUE,
-      kit: ["search"],
+      kit: ["search", "presentation"],
+      presentation: { segmentId: "names_wall", open: "auto", onClose: "stay" },
     },
     {
       id: "back-to-start",

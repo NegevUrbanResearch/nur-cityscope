@@ -325,6 +325,10 @@ export function createNliRevealPresentation(container, {
   const buildOverlay = (segment) => {
     const overlay = element("div", "nli-reveal-overlay");
     overlay.style.opacity = "0";
+    if (segment.kind === "blackout") {
+      container.append(overlay);
+      return { overlay, revealRoot: null, sections: new Map(), cancels: [] };
+    }
     const revealRoot = element("div", "reveal");
     const slides = element("div", "slides");
     const sections = new Map();
@@ -396,6 +400,14 @@ export function createNliRevealPresentation(container, {
       fail(command, state, token, "Presentation open timed out");
     }, OPEN_DEADLINE_MS);
     try {
+      if (segment.kind === "blackout") {
+        const faded = await fadeOverlay(state, token, 1);
+        if (!isCurrent(state, token) || !faded) return;
+        clearTimeout(state.deadlineTimer);
+        emitOnce(command, "opened", state);
+        emit(command, "ready", state);
+        return;
+      }
       state.reveal = new RevealClass(state.revealRoot, { ...REVEAL_OPTIONS });
       let initError = null;
       let initPromise;

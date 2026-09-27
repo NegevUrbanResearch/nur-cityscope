@@ -896,6 +896,46 @@ describe("presentation open and close lifecycle", () => {
     expect(overlay()).toBeNull();
   });
 
+  test("opens names_wall as a black overlay without images and emits opened then ready", async () => {
+    vi.useFakeTimers();
+    if (typeof HTMLImageElement.prototype.decode !== "function") {
+      Object.defineProperty(HTMLImageElement.prototype, "decode", {
+        configurable: true,
+        writable: true,
+        value() { return Promise.resolve(); },
+      });
+    }
+    const decode = vi.spyOn(HTMLImageElement.prototype, "decode").mockResolvedValue();
+    const blackoutManifest = {
+      ...manifest,
+      segments: [
+        ...manifest.segments.filter((segment) => segment.id !== "names_wall"),
+        { id: "names_wall", requiredNarrative: null, kind: "blackout", range: [0, 0] },
+      ],
+    };
+    const results = [];
+    const viewer = createNliRevealPresentation(root, {
+      manifest: blackoutManifest,
+      RevealClass: FakeReveal,
+      emitResult: (result) => results.push(result),
+    });
+    const opening = viewer.handleCommand(command("open", {
+      segmentId: "names_wall", presentationGeneration: 10, presentationSessionId: "wall",
+    }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(overlay()).not.toBeNull();
+    expect(overlay().querySelector("img")).toBeNull();
+    expect(results).toEqual([]);
+    await vi.advanceTimersByTimeAsync(16);
+    expect(overlay().style.opacity).toBe("1");
+    endOpacityFade();
+    await vi.advanceTimersByTimeAsync(600);
+    await opening;
+    expect(results.map((result) => result.outcome)).toEqual(["opened", "ready"]);
+    expect(decode).not.toHaveBeenCalled();
+    viewer.dispose();
+  });
+
   test("fresh narrative exits close any viewer once per revision, including Shura", async () => {
     const mod = await import("../../frontend/src/map/nli-reveal-presentation.js");
     expect(mod.nextHandledExitRevision).toEqual(expect.any(Function));

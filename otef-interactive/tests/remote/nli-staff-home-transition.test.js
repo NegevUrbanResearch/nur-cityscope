@@ -226,14 +226,23 @@ describe("NLI staff Home transitions", () => {
 
     await h.openCard('[data-show-step="names-wall"]');
     expect(el("stepTitle").textContent).toBe("Wall of names");
+    await vi.waitFor(() => expect(h.commands.at(-1)?.presentationAction).toBe("open"));
+    expect(h.commands.at(-1)?.segmentId).toBe("names_wall");
+    h.emit("narrativePresentationResult", {
+      ...h.commands.at(-1),
+      outcome: "opened",
+      slide: 0,
+      range: [0, 0],
+    });
     const nullCallsBefore = h.narratives.filter((id) => id === null).length;
     el("homeBtn").click();
+    await vi.waitFor(() => expect(h.commands.at(-1)?.presentationAction).toBe("close"));
+    h.emit("narrativePresentationResult", { ...h.commands.at(-1), outcome: "closed" });
     await vi.waitFor(() => {
       expect(h.narratives.filter((id) => id === null).length).toBeGreaterThan(nullCallsBefore);
       expect(activeScreen()).toBe("home");
     });
     expect(h.layers.at(-1)).toEqual([...HOME_LAYER_IDS]);
-    expect(h.commands).toEqual([]);
 
     await h.openCard('[data-open="segev"]');
     h.failNull = true;
