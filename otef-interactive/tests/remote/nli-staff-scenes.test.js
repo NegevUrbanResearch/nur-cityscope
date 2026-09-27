@@ -90,7 +90,9 @@ test("Wall of Names auto-opens the names_wall blackout when its cue is ready", (
   const index = showStepIndex(SHOW_STEP_IDS.WALL);
   const wall = SHOW.steps[index];
   expect(wall.kit).toEqual(["search", "presentation"]);
-  expect(wall.presentation).toEqual({ segmentId: "names_wall", open: "auto", onClose: "stay" });
+  expect(wall.presentation).toEqual({
+    segmentId: "names_wall", open: "auto", onClose: "stay", controls: false,
+  });
   expect(shouldAutoOpenNliPresentation({
     item: SHOW, index, currentScript: SHOW, currentStep: wall, cueStatus: "ready",
   })).toBe(true);
@@ -207,19 +209,20 @@ describe("NLI staff run of show", () => {
 
   test("presentation segments use the approved GIS mapping including names_wall", () => {
     const expected = [
-      ["names_wall", "auto", "stay"],
-      ["segev", "manual", "stay"],
-      ["nova_mor", "manual", "stay"],
-      ["nova_memorial", "auto", "stay"],
-      ["sderot", "manual", "stay"],
-      ["shura", "auto", "resume"],
-      ["hostages", "manual", "next"],
+      ["names_wall", "auto", "stay", false],
+      ["segev", "manual", "stay", true],
+      ["nova_mor", "manual", "stay", true],
+      ["nova_memorial", "auto", "stay", true],
+      ["sderot", "manual", "stay", true],
+      ["shura", "auto", "stay", true],
+      ["hostages", "manual", "stay", true],
     ];
     const presentationSteps = allSteps().filter(({ step }) => step.presentation);
     expect(presentationSteps.map(({ step }) => [
       step.presentation.segmentId,
       step.presentation.open,
       step.presentation.onClose,
+      step.presentation.controls !== false,
     ])).toEqual(expected);
     expect(presentationSteps.every(({ step }) => step.kit.includes("presentation"))).toBe(true);
     expect(presentationSteps.map(({ step }) => step.presentation.segmentId)).toEqual(
@@ -237,7 +240,7 @@ describe("NLI staff run of show", () => {
     expect(sderot.steps[0].kit).toEqual(["presentation"]);
     expect(shura.steps).toHaveLength(1);
     expect(shuraPresentation.cue).toEqual({ layers: TIMELINE_LAYER_IDS, clock: "idle" });
-    expect(shuraPresentation.presentation).toEqual({ segmentId: "shura", open: "auto", onClose: "resume" });
+    expect(shuraPresentation.presentation).toEqual({ segmentId: "shura", open: "auto", onClose: "stay" });
   });
 
   test("every step declares known kits and bilingual titles without map cards", () => {
@@ -275,7 +278,7 @@ describe("NLI staff run of show", () => {
     expect(hostages.title).toEqual({ he: "חיים פרי וחטופים", en: "Haim Peri and hostages" });
     expect(hostages.steps).toHaveLength(4);
     expect(hostages.steps.map((step) => step.cue.clock)).toEqual(["idle", "idle", "idle", "idle"]);
-    expect(hostages.steps[1].presentation).toEqual({ segmentId: "hostages", open: "manual", onClose: "next" });
+    expect(hostages.steps[1].presentation).toEqual({ segmentId: "hostages", open: "manual", onClose: "stay" });
     for (const step of hostages.steps) {
       expect(step.note?.he ?? "").not.toContain("צריך לראות");
       expect(step.note?.en ?? "").not.toContain("Determine which presentation");

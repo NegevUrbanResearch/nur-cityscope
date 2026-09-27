@@ -90,7 +90,14 @@ export function createNliStaffPresentationController({ dataContext, onStateChang
     }
     if (request.command.presentationAction === "close") {
       session = null;
-      publish({ phase: "closed", sessionId: null, segmentId: null, slide: null, range: null });
+      publish({
+        phase: "closed",
+        sessionId: null,
+        segmentId: null,
+        slide: null,
+        range: null,
+        retryOpenSegmentId: request.command.segmentId,
+      });
     } else {
       publish({
         phase: "open",
@@ -273,9 +280,13 @@ function slideControls(step, state, locale, labels, disabled) {
   </section>`;
 }
 
+export function nliPresentationUsesRemoteControls(presentation) {
+  return Boolean(presentation) && presentation.controls !== false;
+}
+
 export function presentationControlsHtml(step, state, locale, mutationBusy = false) {
   const presentation = step?.presentation;
-  if (!presentation) return "";
+  if (!nliPresentationUsesRemoteControls(presentation)) return "";
   const labels = {
     open: messageForLocale(locale, "presentationOpen"),
     previous: messageForLocale(locale, "presentationPrevious"),

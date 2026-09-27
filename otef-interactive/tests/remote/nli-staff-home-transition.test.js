@@ -234,6 +234,8 @@ describe("NLI staff Home transitions", () => {
       slide: 0,
       range: [0, 0],
     });
+    expect(el("kitPresentation").hidden).toBe(true);
+    expect(el("kitPresentation").innerHTML).not.toContain("data-presentation-action");
     const nullCallsBefore = h.narratives.filter((id) => id === null).length;
     el("homeBtn").click();
     await vi.waitFor(() => expect(h.commands.at(-1)?.presentationAction).toBe("close"));
@@ -261,6 +263,32 @@ describe("NLI staff Home transitions", () => {
     await vi.waitFor(() => expect(el("cueStatus").dataset.status).toBe("ready"));
     expect(h.layers.at(-1)).toEqual([...HOME_LAYER_IDS]);
     expect(activeScreen()).toBe("home");
+  });
+
+  test("Shura Close stays on the step and restores Open presentation", async () => {
+    setLocale("en", { persist: false });
+    session = mount();
+    await bootRemote(session);
+    const { h } = session;
+
+    await h.openCard('[data-open="shura"]');
+    await vi.waitFor(() => expect(h.commands.at(-1)?.presentationAction).toBe("open"));
+    expect(h.commands.at(-1)?.segmentId).toBe("shura");
+    h.emit("narrativePresentationResult", {
+      ...h.commands.at(-1),
+      outcome: "opened",
+      slide: 22,
+      range: [22, 28],
+    });
+    await vi.waitFor(() => expect(el("kitPresentation").innerHTML).toContain('data-presentation-action="close"'));
+    el("kitPresentation").querySelector('[data-presentation-action="close"]').click();
+    await vi.waitFor(() => expect(h.commands.at(-1)?.presentationAction).toBe("close"));
+    h.emit("narrativePresentationResult", { ...h.commands.at(-1), outcome: "closed" });
+    await vi.waitFor(() => {
+      expect(el("kitPresentation").innerHTML).toContain('data-presentation-action="open"');
+    });
+    expect(el("stepTitle").textContent).toBe("Shura Camp");
+    expect(el("kitPresentation").querySelector('[data-presentation-action="close"]')).toBeNull();
   });
 
   test("a delayed close blocks Home cleanup, and a failed close leaves the step and its retry", async () => {

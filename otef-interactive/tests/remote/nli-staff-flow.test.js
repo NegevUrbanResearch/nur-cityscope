@@ -193,11 +193,11 @@ describe("NLI staff show flow", () => {
     }).kind).toBe("choose");
   });
 
-  test("closing the Hostages presentation advances through Nir Oz people to all hostages", () => {
+  test("closing the Hostages presentation stays on that step; scene next still reaches Nir Oz people", () => {
     const hostages = NARRATIVES.find((item) => item.id === "hostages");
     const presentationIndex = hostages.steps.findIndex((step) => step.presentation);
     const presentation = hostages.steps[presentationIndex];
-    expect(presentation.presentation).toEqual({ segmentId: "hostages", open: "manual", onClose: "next" });
+    expect(presentation.presentation).toEqual({ segmentId: "hostages", open: "manual", onClose: "stay" });
     expect(hostages.steps[presentationIndex + 1].title.en).toBe("Nir Oz victims and hostages");
     expect(hostages.steps[presentationIndex + 1].cue.layers).toContain("nli.people");
     expect(hostages.steps[presentationIndex + 2].title.en).toBe("All hostages");

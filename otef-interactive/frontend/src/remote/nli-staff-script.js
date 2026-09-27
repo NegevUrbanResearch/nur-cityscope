@@ -202,7 +202,7 @@ export const SHOW = {
       },
       cue: WALL_CUE,
       kit: ["search", "presentation"],
-      presentation: { segmentId: "names_wall", open: "auto", onClose: "stay" },
+      presentation: { segmentId: "names_wall", open: "auto", onClose: "stay", controls: false },
     },
     {
       id: "back-to-start",
@@ -330,7 +330,7 @@ export const NARRATIVES = [
         title: { he: "מחנה שורה", en: "Shura Camp" },
         cue: { layers: TIMELINE_LAYER_IDS, clock: "idle" },
         kit: ["presentation"],
-        presentation: { segmentId: "shura", open: "auto", onClose: "resume" },
+        presentation: { segmentId: "shura", open: "auto", onClose: "stay" },
       },
     ],
   },
@@ -351,7 +351,7 @@ export const NARRATIVES = [
         title: { he: "מצגת", en: "Presentation" },
         cue: { layers: FOCUS_LAYER_IDS, clock: "idle" },
         kit: ["presentation"],
-        presentation: { segmentId: "hostages", open: "manual", onClose: "next" },
+        presentation: { segmentId: "hostages", open: "manual", onClose: "stay" },
       },
       {
         title: { he: "נרצחים וחטופים בניר עוז", en: "Nir Oz victims and hostages" },

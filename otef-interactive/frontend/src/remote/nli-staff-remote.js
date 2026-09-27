@@ -28,6 +28,7 @@ import { searchPlaces } from "../shared/place-navigation/place-catalog.js";
 import {
   createNliStaffPresentationButtonHandler,
   createNliStaffPresentationController,
+  nliPresentationUsesRemoteControls,
   presentationControlsHtml,
   shouldAutoOpenNliPresentation,
 } from "./nli-staff-presentation.js";
@@ -476,7 +477,7 @@ export function initNliStaffRemote(dataContext) {
       kitArchive: kits.includes("archive"),
       kitSearch: kits.includes("search"),
       kitEscape: kits.includes("escape"),
-      kitPresentation: Boolean(step?.presentation),
+      kitPresentation: nliPresentationUsesRemoteControls(step?.presentation),
     };
     Object.entries(show).forEach(([id, on]) => {
       const el = $(id);

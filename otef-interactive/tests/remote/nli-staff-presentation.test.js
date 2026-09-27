@@ -6,7 +6,7 @@ import {
 } from "../../frontend/src/remote/nli-staff-presentation.js";
 
 const step = { presentation: { segmentId: "nova_mor", open: "manual", onClose: "stay" } };
-const shuraStep = { presentation: { segmentId: "shura", open: "auto", onClose: "resume" } };
+const shuraStep = { presentation: { segmentId: "shura", open: "auto", onClose: "stay" } };
 const novaMemorialStep = { presentation: { segmentId: "nova_memorial", open: "auto", onClose: "stay" } };
 
 function makeControllerHarness() {
@@ -55,6 +55,38 @@ describe("NLI staff presentation controller", () => {
       .toContain('data-presentation-action="open"');
     expect(presentationControlsHtml(shuraStep, { phase: "closed" }, "en"))
       .not.toContain("data-presentation-action");
+  });
+
+  test("explicit Close of an auto segment offers Open again on the same step", async () => {
+    for (const [segmentId, autoStep] of [
+      ["shura", shuraStep],
+      ["nova_memorial", novaMemorialStep],
+    ]) {
+      const h = makeControllerHarness();
+      await h.openAndReply(segmentId);
+      const closing = h.controller.run("close", segmentId);
+      h.reply({ outcome: "closed" });
+      await closing;
+      const html = presentationControlsHtml(autoStep, h.controller.getState(), "en");
+      expect(html).toContain('data-presentation-action="open"');
+      expect(html).toContain("Open presentation");
+      expect(html).not.toContain('data-presentation-action="close"');
+    }
+  });
+
+  test("names wall never renders presentation controls", () => {
+    const wall = { presentation: { segmentId: "names_wall", open: "auto", onClose: "stay", controls: false } };
+    const states = [
+      { phase: "closed" },
+      { phase: "opening", segmentId: "names_wall" },
+      { phase: "open", segmentId: "names_wall", slide: 0, range: [0, 0] },
+      { phase: "closing", segmentId: "names_wall" },
+      { phase: "failed", segmentId: "names_wall", sessionId: null },
+      { phase: "failed", segmentId: "names_wall", sessionId: "wall" },
+    ];
+    for (const state of states) {
+      expect(presentationControlsHtml(wall, state, "en")).toBe("");
+    }
   });
 
   test("navigation waits for a pending slide command, then sends one Close", async () => {
