@@ -1,4 +1,4 @@
-import { NLI_DISPLAY_PROFILES, NLI_VISUAL_TOKENS } from "../shared/nli-investigation-theme.js";
+import { NLI_VISUAL_TOKENS } from "../shared/nli-investigation-theme.js";
 import { applyPeopleFocusDim, clearPeopleFocusDim } from "../shared/nli-people-focus-presentation.js";
 
 export const PEOPLE_SOURCE_ID = "otef-person-selection";
@@ -147,66 +147,13 @@ function coordinatesOf(person) {
   return Array.isArray(coordinates) && coordinates.slice(0, 2).every(Number.isFinite) ? coordinates.slice(0, 2) : null;
 }
 
-function resolveHaloProfile(value) {
-  if (typeof value === "string") return NLI_DISPLAY_PROFILES[value] || NLI_DISPLAY_PROFILES.gis;
-  return value && typeof value === "object" ? value : NLI_DISPLAY_PROFILES.gis;
-}
-
-function haloRadius(profile) {
-  return NLI_VISUAL_TOKENS.personGlowRadius * (Number(profile?.radiusMultiplier) || 1);
-}
-
-function glowFillOpacity(motionMode, nowMs) {
-  const base = NLI_VISUAL_TOKENS.personGlowFillOpacity;
-  if (motionMode !== "full") return base;
-  const period = NLI_VISUAL_TOKENS.personGlowPulseMs;
-  const t = (((Number(nowMs) % period) + period) % period) / period;
-  const wave = 0.5 - 0.5 * Math.cos(t * Math.PI * 2);
-  const min = base * 0.48;
-  const max = Math.min(1, base * 1.6);
-  return min + (max - min) * wave;
-}
-
-/** Shared person halo source/layer. No RAF, Popup, or camera. */
-export function mountPersonHalo(map, person, { displayProfile } = {}) {
+/** Dim unselected people. Do not add a halo overlay. */
+export function mountPersonHalo(map, person) {
   const coordinates = coordinatesOf(person);
   if (!map || !coordinates) return;
-  const profile = resolveHaloProfile(displayProfile);
-  const data = {
-    type: "FeatureCollection",
-    features: [{
-      type: "Feature",
-      properties: { pid: person.pid },
-      geometry: { type: "Point", coordinates },
-    }],
-  };
-  if (!map.getSource?.(PEOPLE_SOURCE_ID)) {
-    map.addSource?.(PEOPLE_SOURCE_ID, { type: "geojson", data });
-  }
-  map.getSource?.(PEOPLE_SOURCE_ID)?.setData?.(data);
-  if (!map.getLayer?.(PEOPLE_HALO_LAYER_ID)) {
-    map.addLayer?.({
-      id: PEOPLE_HALO_LAYER_ID,
-      type: "circle",
-      source: PEOPLE_SOURCE_ID,
-      paint: {
-        "circle-radius": haloRadius(profile),
-        "circle-color": NLI_VISUAL_TOKENS.personGlowFillColor,
-        "circle-opacity": NLI_VISUAL_TOKENS.personGlowFillOpacity,
-        "circle-stroke-color": NLI_VISUAL_TOKENS.personGlowFillColor,
-        "circle-stroke-width": NLI_VISUAL_TOKENS.personGlowStrokeWidth,
-        "circle-stroke-opacity": 0,
-      },
-    });
-  }
-  if (map.getLayer?.(PEOPLE_HALO_LAYER_ID) && typeof map.moveLayer === "function") {
-    try { map.moveLayer(PEOPLE_HALO_LAYER_ID); } catch {}
-  }
-  if (map.getLayer?.(PEOPLE_HALO_LAYER_ID) && typeof map.setPaintProperty === "function") {
-    map.setPaintProperty(PEOPLE_HALO_LAYER_ID, "circle-color", NLI_VISUAL_TOKENS.personGlowFillColor);
-    map.setPaintProperty(PEOPLE_HALO_LAYER_ID, "circle-stroke-opacity", 0);
-  }
   applyPeopleFocusDim(map, person.pid);
+  if (map.getLayer?.(PEOPLE_HALO_LAYER_ID)) map.removeLayer(PEOPLE_HALO_LAYER_ID);
+  if (map.getSource?.(PEOPLE_SOURCE_ID)) map.removeSource(PEOPLE_SOURCE_ID);
 }
 
 export function clearPersonHalo(map) {
@@ -215,9 +162,8 @@ export function clearPersonHalo(map) {
   clearPeopleFocusDim(map);
 }
 
-export function syncPersonHaloPaint(map, { motionMode = "full", nowMs = 0 } = {}) {
-  if (!map?.getLayer?.(PEOPLE_HALO_LAYER_ID) || typeof map.setPaintProperty !== "function") return;
-  map.setPaintProperty(PEOPLE_HALO_LAYER_ID, "circle-opacity", glowFillOpacity(motionMode, nowMs));
+export function syncPersonHaloPaint() {
+  return;
 }
 
 /** Own one reusable MapLibre halo and bubble. */

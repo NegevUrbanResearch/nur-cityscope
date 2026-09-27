@@ -16,7 +16,7 @@ function createFakeMap() {
 }
 
 describe("bindProjectionPersonHalo", () => {
-  it("subscribes, mounts halo, remounts on style.load, clears, and never flyTo", async () => {
+  it("subscribes, dims without a halo overlay, remounts on style.load, clears, and never flyTo", async () => {
     const map = createFakeMap();
     const resolve = vi.fn(() => ({ pid: "11", coordinates: [34.5, 31.4] }));
     let handler;
@@ -30,14 +30,17 @@ describe("bindProjectionPersonHalo", () => {
     expect(subscribe).toHaveBeenCalledWith("personSelection", expect.any(Function));
     handler({ pid: "11" });
     await vi.waitFor(() => {
-      expect(map.addLayer).toHaveBeenCalled();
+      expect(map.getPaintProperty("nli__people__circle", "circle-opacity")[0]).toBe("case");
     });
+    expect(map.addLayer).not.toHaveBeenCalled();
+    expect(map.getLayer("otef-person-selection-halo")).toBeNull();
     expect(map.flyTo).not.toHaveBeenCalled();
-    expect(map.getPaintProperty("nli__people__circle", "circle-opacity")[0]).toBe("case");
     map.emit("style.load");
-    expect(map.addLayer.mock.calls.length).toBeGreaterThan(1);
+    expect(map.addLayer).not.toHaveBeenCalled();
+    expect(map.getLayer("otef-person-selection-halo")).toBeNull();
     expect(map.getPaintProperty("nli__people__circle", "circle-opacity")[0]).toBe("case");
     handler(null);
+    expect(map.getPaintProperty("nli__people__circle", "circle-opacity")).toBe(1);
     dispose();
   });
 

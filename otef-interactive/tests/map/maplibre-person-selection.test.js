@@ -7,12 +7,13 @@ import {
   PEOPLE_RELEASE_METADATA_URL,
   PEOPLE_RUNTIME_URL,
   PEOPLE_SOURCE_ID,
+  clearPersonHalo,
   createGisPersonSelection,
   mountPersonHalo,
   normalizePeopleRuntime,
   syncPersonHaloPaint,
 } from "../../frontend/src/map/maplibre-person-selection.js";
-import { NLI_DISPLAY_PROFILES, NLI_VISUAL_TOKENS } from "../../frontend/src/shared/nli-investigation-theme.js";
+import { NLI_VISUAL_TOKENS } from "../../frontend/src/shared/nli-investigation-theme.js";
 
 const geojson = (coordinates = [30, 20]) => ({
   type: "FeatureCollection",
@@ -116,17 +117,15 @@ describe("GIS person selection visual", () => {
     await expect(d.visual.load()).rejects.toThrow(/hash|bytes/i);
   });
 
-  test("show mounts one transparent-fill halo and escaped name/location popup", async () => {
+  test("show dims other people without a halo overlay and escaped name/location popup", async () => {
     const d = setup();
+    d.map.addLayer({ id: "nli__people__circle", type: "circle", source: "nli.people" });
+    d.map.setPaintProperty("nli__people__circle", "circle-opacity", 1);
     const person = await d.visual.resolve("11", "v1");
     d.visual.show(person);
-    expect(d.map.getSource(PEOPLE_SOURCE_ID)).toBeTruthy();
-    expect(d.map.getLayer(PEOPLE_HALO_LAYER_ID).paint["circle-opacity"]).toBe(0.25);
-    expect(d.map.getLayer(PEOPLE_HALO_LAYER_ID).paint["circle-color"]).toBe("#ffffff");
-    expect(d.map.getLayer(PEOPLE_HALO_LAYER_ID).paint["circle-stroke-opacity"]).toBe(0);
-    expect(d.map.getLayer(PEOPLE_HALO_LAYER_ID).paint["circle-radius"]).toBe(
-      NLI_VISUAL_TOKENS.personGlowRadius * (NLI_DISPLAY_PROFILES.gis.radiusMultiplier || 1),
-    );
+    expect(d.map.getLayer(PEOPLE_HALO_LAYER_ID)).toBeNull();
+    expect(d.map.getSource(PEOPLE_SOURCE_ID)).toBeNull();
+    expect(d.map.getPaintProperty("nli__people__circle", "circle-opacity")[0]).toBe("case");
     expect(d.bubble.setHTML.mock.calls[0][0]).toContain("&lt;Ada&gt;");
     expect(d.bubble.setHTML.mock.calls[0][0]).toContain("Alumim");
     expect(d.bubble.setHTML.mock.calls[0][0].match(/dir="auto"/g)).toHaveLength(3);
@@ -176,7 +175,7 @@ describe("GIS person selection visual", () => {
     d.visual.hide();
     expect(d.map.getLayer(PEOPLE_HALO_LAYER_ID)).toBeNull();
     d.visual.show(person);
-    expect(d.map.getLayer(PEOPLE_HALO_LAYER_ID)).toBeTruthy();
+    expect(d.map.getLayer(PEOPLE_HALO_LAYER_ID)).toBeNull();
   });
 
   test("clearing a focused person flies back to the pre-focus camera", async () => {
@@ -223,7 +222,7 @@ describe("GIS person selection visual", () => {
     d.visual.show(person);
     d.map.wipeStyle();
     d.map.emit("style.load");
-    expect(d.map.getLayer(PEOPLE_HALO_LAYER_ID)).toBeTruthy();
+    expect(d.map.getLayer(PEOPLE_HALO_LAYER_ID)).toBeNull();
     d.visual.dispose();
     d.map.emit("style.load");
     expect(d.map.getLayer(PEOPLE_HALO_LAYER_ID)).toBeNull();
@@ -265,24 +264,47 @@ describe("GIS person selection visual", () => {
     expect(d.map.listenerCount("moveend")).toBe(0);
   });
 
-  test("halo helper does not start its own RAF", () => {
+  test("halo helper does not start its own RAF or add a halo layer", () => {
     const map = createFakeMapLibreMap();
     const raf = vi.fn();
+    vi.spyOn(map, "addLayer");
     vi.stubGlobal("requestAnimationFrame", raf);
     mountPersonHalo(map, { pid: "11", coordinates: [34.5, 31.4] }, { motionMode: "full" });
     syncPersonHaloPaint(map, { motionMode: "full", nowMs: 1000 });
     expect(raf).not.toHaveBeenCalled();
+    expect(map.addLayer).not.toHaveBeenCalled();
+    expect(map.getLayer(PEOPLE_HALO_LAYER_ID)).toBeNull();
   });
 
-  test("halo radius scales by display-profile radiusMultiplier", () => {
+  test("mountPersonHalo removes a leftover halo overlay and dims others", () => {
     const map = createFakeMapLibreMap();
-    mountPersonHalo(map, { pid: "11", coordinates: [34.5, 31.4] }, {
-      motionMode: "full",
-      displayProfile: NLI_DISPLAY_PROFILES.projection,
+    map.addSource(PEOPLE_SOURCE_ID, { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+    map.addLayer({ id: PEOPLE_HALO_LAYER_ID, type: "circle", source: PEOPLE_SOURCE_ID });
+    map.addLayer({ id: "nli__people__circle", type: "circle", source: "nli.people" });
+    map.setPaintProperty("nli__people__circle", "circle-opacity", 1);
+    vi.spyOn(map, "addLayer");
+    mountPersonHalo(map, { pid: "11", coordinates: [34.5, 31.4] });
+    expect(map.addLayer).not.toHaveBeenCalled();
+    expect(map.getLayer(PEOPLE_HALO_LAYER_ID)).toBeNull();
+    expect(map.getSource(PEOPLE_SOURCE_ID)).toBeNull();
+    expect(map.getPaintProperty("nli__people__circle", "circle-opacity")[0]).toBe("case");
+    clearPersonHalo(map);
+    expect(map.getPaintProperty("nli__people__circle", "circle-opacity")).toBe(1);
+  });
+
+  test("syncPersonHaloPaint does not pulse leftover halo opacity", () => {
+    const map = createFakeMapLibreMap();
+    map.addSource(PEOPLE_SOURCE_ID, { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+    map.addLayer({
+      id: PEOPLE_HALO_LAYER_ID,
+      type: "circle",
+      source: PEOPLE_SOURCE_ID,
+      paint: { "circle-opacity": 0.25 },
     });
-    expect(map.getLayer(PEOPLE_HALO_LAYER_ID).paint["circle-radius"]).toBe(
-      14 * (NLI_DISPLAY_PROFILES.projection.radiusMultiplier || 1),
-    );
+    vi.spyOn(map, "setPaintProperty");
+    syncPersonHaloPaint(map, { motionMode: "full", nowMs: 1000 });
+    expect(map.setPaintProperty).not.toHaveBeenCalled();
+    expect(map.getPaintProperty(PEOPLE_HALO_LAYER_ID, "circle-opacity")).toBe(0.25);
   });
 
   test("moveend snapshot replacement keeps the current camera listener alive", async () => {

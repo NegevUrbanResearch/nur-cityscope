@@ -916,9 +916,8 @@ describe("syncInvestigationTimelineToMap", () => {
     expect(src).toMatch(/getPersonSelection/);
   });
 
-  it("idle lines-off still RAF-paints person glow via the shared frame", async () => {
+  it("idle lines-off does not RAF-paint a person glow overlay", async () => {
     const map = makeMap();
-    map.addLayer({ id: PEOPLE_HALO_LAYER_ID, type: "circle", source: "otef-person-selection" });
     const queued = [];
     vi.stubGlobal("requestAnimationFrame", (callback) => {
       queued.push(callback);
@@ -940,20 +939,13 @@ describe("syncInvestigationTimelineToMap", () => {
         getPersonSelection: () => ({ personId: "11", datasetVersion: "v1", revision: 1 }),
       },
     );
-    expect(queued.length).toBeGreaterThan(0);
-    map.setPaintProperty.mockClear();
-    queued[0]();
-    expect(map.setPaintProperty).toHaveBeenCalledWith(
-      PEOPLE_HALO_LAYER_ID,
-      "circle-opacity",
-      expect.any(Number),
-    );
+    expect(queued).toHaveLength(0);
+    expect(map.getLayer(PEOPLE_HALO_LAYER_ID)).toBeFalsy();
     disposeInvestigationTimelineForMap(map);
   });
 
-  it("selecting a person after idle lines-off wakes shared glow RAF", async () => {
+  it("selecting a person after idle lines-off does not wake glow RAF without a halo layer", async () => {
     const map = makeMap();
-    map.addLayer({ id: PEOPLE_HALO_LAYER_ID, type: "circle", source: "otef-person-selection" });
     const queued = [];
     vi.stubGlobal("requestAnimationFrame", (callback) => {
       queued.push(callback);
@@ -976,14 +968,8 @@ describe("syncInvestigationTimelineToMap", () => {
     expect(queued).toHaveLength(0);
     selection = { personId: "11", datasetVersion: "v1", revision: 1 };
     wakeInvestigationTimelinePersonGlow(map);
-    expect(queued.length).toBeGreaterThan(0);
-    map.setPaintProperty.mockClear();
-    queued[0]();
-    expect(map.setPaintProperty).toHaveBeenCalledWith(
-      PEOPLE_HALO_LAYER_ID,
-      "circle-opacity",
-      expect.any(Number),
-    );
+    expect(queued).toHaveLength(0);
+    expect(map.getLayer(PEOPLE_HALO_LAYER_ID)).toBeFalsy();
     disposeInvestigationTimelineForMap(map);
   });
 

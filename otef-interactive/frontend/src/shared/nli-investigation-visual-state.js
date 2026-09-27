@@ -297,8 +297,7 @@ export function deriveInvestigationFrame(
       (beat) => !polygonEntries.some((entry) => entry.beat === Number(beat)),
     );
   const polygonMotionNeedsFrames = completedPolygonAmbientActive;
-  const personGlowNeedsFrames =
-    options.personGlowActive === true && motionMode === "full";
+  const personGlowNeedsFrames = false;
   return {
     cycleKey,
     narrative: {

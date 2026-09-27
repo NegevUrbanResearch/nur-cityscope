@@ -650,12 +650,12 @@ describe("deriveInvestigationFrame", () => {
     expect(frame.achievedPolygonBeats).toEqual(beats);
   });
 
-  it("personGlowActive keeps needsNextFrame true when no investigation layers are enabled", () => {
+  it("personGlowActive does not keep needsNextFrame true without a halo overlay", () => {
     const frame = deriveInvestigationFrame(idleNliClock(), 99_000, [], {
       motionMode: "full",
       personGlowActive: true,
     });
-    expect(frame.needsNextFrame).toBe(true);
+    expect(frame.needsNextFrame).toBe(false);
   });
 
   it("finishes an alarm ripple from corrected wall time at its shared onset", () => {
