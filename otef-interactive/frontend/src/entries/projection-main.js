@@ -3,8 +3,11 @@ import TableSwitcherPopup from "../shared/table-switcher-popup.js";
 import {
   createProjectionMap,
   ensureProjectionHighlightLayers,
+  PROJECTION_HIGHLIGHT_FILL_LAYER_ID,
+  PROJECTION_HIGHLIGHT_LINE_LAYER_ID,
   raiseProjectionHighlightLayers,
   setProjectionHighlightVisibility,
+  shouldShowProjectionViewportHighlight,
   updateHighlightFromViewport,
 } from "../projection/maplibre-projection.js";
 import { installProjectionRenderDebugOverlay } from "../projection/projection-render-debug-overlay.js";
@@ -432,13 +435,20 @@ async function bootstrapProjectionRuntime() {
   let slideshowRuntime = null;
 
   const syncProjectionHighlight = (viewport) => {
-    if (slideshowRuntime?.shouldSuppressProjectionHighlight?.()) {
-      setProjectionHighlightVisibility(map, false);
-      return;
-    }
-    setProjectionHighlightVisibility(map, true);
+    const exhibitMode = OTEFDataContext.getExhibitMode?.() === true;
+    const slideshowActive = slideshowRuntime?.shouldSuppressProjectionHighlight?.() === true;
+    const show = shouldShowProjectionViewportHighlight({ slideshowActive, exhibitMode });
+    setProjectionHighlightVisibility(map, show);
     if (viewport) {
       updateHighlightFromViewport(map, viewport, modelBounds, null);
+    }
+    if (!show) {
+      if (map.getLayer(PROJECTION_HIGHLIGHT_FILL_LAYER_ID)) {
+        map.setPaintProperty(PROJECTION_HIGHLIGHT_FILL_LAYER_ID, "fill-opacity", 0);
+      }
+      if (map.getLayer(PROJECTION_HIGHLIGHT_LINE_LAYER_ID)) {
+        map.setPaintProperty(PROJECTION_HIGHLIGHT_LINE_LAYER_ID, "line-opacity", 0);
+      }
     }
   };
 
@@ -1169,6 +1179,11 @@ async function bootstrapProjectionRuntime() {
       OTEFDataContext.subscribe("viewport", (viewport) => {
         lastViewport = viewport;
         syncProjectionHighlight(viewport);
+      }),
+    );
+    registerDisposer(
+      OTEFDataContext.subscribe("exhibitMode", () => {
+        syncProjectionHighlight(lastViewport);
       }),
     );
 

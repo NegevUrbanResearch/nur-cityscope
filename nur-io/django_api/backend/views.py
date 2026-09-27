@@ -1325,6 +1325,18 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                         'traceId': trace_id,
                     },
                 }
+            elif field == 'exhibit_mode':
+                message = {
+                    'type': 'broadcast_message',
+                    'message': {
+                        'type': 'otef_exhibit_mode_changed',
+                        'exhibitMode': bool(state.exhibit_mode) if state else False,
+                        'table': table_name,
+                        'sourceId': source_id,
+                        'timestamp': int(timestamp),
+                        'traceId': trace_id,
+                    },
+                }
             else:
                 continue
 
@@ -1509,6 +1521,16 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                 state.workshop_auto_publish = wap
                 changed_fields.append('workshop_auto_publish')
 
+            if 'exhibit_mode' in request.data:
+                exhibit_mode = request.data['exhibit_mode']
+                if not isinstance(exhibit_mode, bool):
+                    return Response(
+                        {'error': 'exhibit_mode must be a boolean'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                state.exhibit_mode = exhibit_mode
+                changed_fields.append('exhibit_mode')
+
             if 'projection_slideshow' in request.data:
                 normalized = validated_projection
                 prev = state.projection_slideshow or {}
@@ -1593,6 +1615,7 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
             'bounds_polygon': state.get_bounds_polygon(),
             'viewer_angle_deg': state.viewer_angle_deg,
             'workshop_auto_publish': state.workshop_auto_publish,
+            'exhibit_mode': state.exhibit_mode,
             'workshop_autopublish_started_at': (
                 state.workshop_autopublish_started_at.isoformat()
                 if state.workshop_autopublish_started_at

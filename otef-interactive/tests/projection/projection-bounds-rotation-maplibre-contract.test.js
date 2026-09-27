@@ -428,6 +428,15 @@ test("highlight layers fade opacity across zoom 13 instead of emptying the sourc
   delete globalThis.proj4;
 });
 
+test("viewport highlight stays on for the regular remote and hides in exhibit or slideshow", async () => {
+  const { shouldShowProjectionViewportHighlight } = await loadProjectionHighlightModule();
+  expect(shouldShowProjectionViewportHighlight({})).toBe(true);
+  expect(shouldShowProjectionViewportHighlight({ exhibitMode: false, slideshowActive: false })).toBe(true);
+  expect(shouldShowProjectionViewportHighlight({ exhibitMode: true })).toBe(false);
+  expect(shouldShowProjectionViewportHighlight({ slideshowActive: true })).toBe(false);
+  expect(shouldShowProjectionViewportHighlight({ exhibitMode: true, slideshowActive: true })).toBe(false);
+});
+
 test("MapLibre projection highlight: GeoJSON path calls setData with FeatureCollection when highlight source exists", async () => {
   globalThis.proj4 = (from, to, coords) => {
     if (from === "EPSG:2039" && to === "EPSG:4326")

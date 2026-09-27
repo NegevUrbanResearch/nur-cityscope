@@ -287,6 +287,7 @@ function mount() {
       listeners.set(topic, list);
       return () => {};
     },
+    setExhibitMode: vi.fn(),
   };
 
   globalThis.OTEFDataContext = dataContext;

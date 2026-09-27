@@ -173,6 +173,10 @@ export function initNliStaffLocaleControls(dataContext, { onFailure } = {}) {
 }
 
 export function initNliStaffRemote(dataContext) {
+  dataContext.setExhibitMode(true);
+  window.addEventListener("pagehide", () => {
+    dataContext.setExhibitMode(false);
+  });
   const peopleSearch = createPeopleSearchRuntime();
   const placeFocusOwnership = createNliStaffPlaceFocusOwnership();
   void peopleSearch.load().catch(() => {});

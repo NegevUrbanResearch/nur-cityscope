@@ -841,6 +841,21 @@ async function setBasemap(ctx, basemap) {
   }
 }
 
+async function setExhibitMode(ctx, next) {
+  if (!ctx._tableName) return { ok: false, error: "Missing table" };
+  const previous = ctx._exhibitMode === true;
+  const value = Boolean(next);
+  ctx._setExhibitMode(value);
+  try {
+    await OTEF_API.updateState(ctx._tableName, { exhibit_mode: value });
+    return { ok: true };
+  } catch (err) {
+    getLogger().error("[OTEFDataContext] Failed to update exhibit mode:", err);
+    ctx._setExhibitMode(previous);
+    return { ok: false, error: err };
+  }
+}
+
 function clockAcknowledgementContent(clock) {
   const content = { ...normalizeNliClock(clock) };
   delete content.revision;
@@ -1184,6 +1199,7 @@ OTEFDataContextInternals.actions = {
   toggleAnimation,
   setLayerAnimations,
   setBasemap,
+  setExhibitMode,
   patchInvestigationClock,
   navigateToPlace,
   cancelNavigationFocus,
@@ -1215,6 +1231,7 @@ export {
   toggleAnimation,
   setLayerAnimations,
   setBasemap,
+  setExhibitMode,
   patchInvestigationClock,
   navigateToPlace,
   cancelNavigationFocus,

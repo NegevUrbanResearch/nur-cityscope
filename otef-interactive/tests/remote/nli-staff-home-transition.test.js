@@ -148,6 +148,7 @@ function mount(options = {}) {
       listeners.set(topic, list);
       return () => {};
     },
+    setExhibitMode: vi.fn(),
   };
 
   return { h, dataContext, listeners };

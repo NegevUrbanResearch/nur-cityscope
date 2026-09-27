@@ -254,7 +254,9 @@ Leave every row unchecked until it has been observed by the exhibit operator.
 - [ ] Confirm the Hebrew `משפחת שגב` focus label is legible on both GIS and
   projection.
 - [ ] Confirm Be'eri is bright while other settlement outlines remain dim.
-- [ ] Confirm the projection viewport highlight is centered on the house.
+- [ ] Confirm Be'eri glows on projection while Segev is active (no house viewport quad).
+- [ ] Staff/exhibit: the traveling GIS viewport quad is not shown on projection.
+- [ ] Regular remote: the projection viewport quad is still shown (zoom-13 fade).
 - [ ] While Segev is active, Play/Pause/Stop/Loop/step/scrub
   the NLI timeline and confirm polygons, alarms, and routes develop around the
   house without the GIS leaving zoom 18.
@@ -296,7 +298,9 @@ Leave every row unchecked until it has been observed by the exhibit operator.
 - Segev no Mila victim popup/archive state: pass / fail
 - Segev GIS + projection Hebrew label: pass / fail
 - Segev Be'eri focus and dim other settlements: pass / fail
-- Segev projection house highlight: pass / fail
+- Segev Be'eri glow on projection (no house viewport quad): pass / fail
+- Staff/exhibit: no projection viewport quad: pass / fail
+- Regular remote: projection viewport quad still shown: pass / fail
 - Segev house-locked timeline Play/Pause/Stop/Loop/step/scrub at zoom 18: pass / fail
 - Segev exit returns to dark bounds center zoom 10: pass / fail
 - Segev refresh/reconnect convergence: pass / fail

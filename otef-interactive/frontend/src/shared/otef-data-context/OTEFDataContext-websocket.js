@@ -171,6 +171,13 @@ function applyStateFromApi(ctx, state, options = {}) {
   if (Object.prototype.hasOwnProperty.call(state, "legend_settings") && typeof ctx._applyLegendSettings === "function") {
     ctx._applyLegendSettings(state.legend_settings);
   }
+  if (Object.prototype.hasOwnProperty.call(state, "exhibit_mode")) {
+    if (notify && typeof ctx._setExhibitMode === "function") {
+      ctx._setExhibitMode(state.exhibit_mode === true);
+    } else {
+      ctx._exhibitMode = state.exhibit_mode === true;
+    }
+  }
 }
 
 function setupWebSocket(ctx) {
@@ -358,6 +365,15 @@ function setupWebSocket(ctx) {
       }
     } catch (err) {
       getLogger().error("[OTEFDataContext] Failed to refresh basemap after BASEMAP_CHANGED:", err);
+    }
+  });
+
+  ctx._wsClient.on(OTEF_MESSAGE_TYPES.EXHIBIT_MODE_CHANGED, (msg = {}) => {
+    if (msg && msg.sourceId === ctx._clientId) return;
+    if (typeof ctx._setExhibitMode === "function") {
+      ctx._setExhibitMode(msg.exhibitMode === true);
+    } else {
+      ctx._exhibitMode = msg.exhibitMode === true;
     }
   });
 

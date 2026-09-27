@@ -101,6 +101,7 @@ class OTEFDataContextClass {
     this._animations = null;
     this._basemap = "osm";
     this._independentBasemapGeneration = 0;
+    this._exhibitMode = false;
     this._bounds = null;
     this._viewerAngleDeg = 0;
     this._isConnected = false;
@@ -111,6 +112,7 @@ class OTEFDataContextClass {
       layerGroups: new Set(),
       animations: new Set(),
       basemap: new Set(),
+      exhibitMode: new Set(),
       bounds: new Set(),
       connection: new Set(),
       connectionStatus: new Set(),
@@ -317,6 +319,13 @@ class OTEFDataContextClass {
     if (this._basemap === next) return;
     this._basemap = next;
     this._notify("basemap", this._basemap);
+  }
+
+  _setExhibitMode(next) {
+    const value = next === true;
+    if (this._exhibitMode === value) return;
+    this._exhibitMode = value;
+    this._notify("exhibitMode", this._exhibitMode);
   }
 
   _setConfirmedBasemap(basemap) {
@@ -707,6 +716,10 @@ class OTEFDataContextClass {
     return this._basemap || "osm";
   }
 
+  getExhibitMode() {
+    return this._exhibitMode === true;
+  }
+
   getBounds() {
     return this._bounds;
   }
@@ -845,6 +858,15 @@ class OTEFDataContextClass {
     return actions.setBasemap(this, basemap);
   }
 
+  async setExhibitMode(next) {
+    const actions = OTEFDataContextInternals.actions;
+    if (!actions || typeof actions.setExhibitMode !== "function") {
+      getLogger().error("[OTEFDataContext] Missing action helpers");
+      return { ok: false, error: "Missing action helpers" };
+    }
+    return actions.setExhibitMode(this, next);
+  }
+
   _computePanViewport(viewport, direction, delta) {
     const actions = OTEFDataContextInternals.actions;
     if (!actions || typeof actions.computePanViewport !== "function") {
@@ -903,6 +925,9 @@ class OTEFDataContextClass {
         break;
       case "basemap":
         current = this._basemap;
+        break;
+      case "exhibitMode":
+        current = this._exhibitMode;
         break;
       case "bounds":
         current = this._bounds;
