@@ -3,9 +3,9 @@ import { NLI_PLAYABLE_IDS } from "../shared/nli-investigation-beats.js";
 import {
   bindNliTimelinePointerListeners,
   consumeNliTimelineButtonClick,
-  nliTimelineHostMethods,
   nliTransportSheetHtml,
 } from "./nli-timeline-transport.js";
+import { createNliStaffTimelineHost } from "./nli-staff-timeline-host.js";
 import { consumeNliNovaEscapeClick, nliNovaEscapeTogglesHtml } from "./nli-nova-escape-toggles.js";
 import { createCueRunner } from "./nli-staff-cues.js";
 import { createNliStaffSearchTransition } from "./nli-staff-search-transition.js";
@@ -186,39 +186,19 @@ export function initNliStaffRemote(dataContext) {
   let presentation = null;
   let navigationGeneration = 0;
 
-  const timelineHost = Object.assign(
-    {
-      focusedGroupId: "nli",
-      _nliFeatureCache: Object.create(null),
-      _nliOptimisticClock: null,
-      _nliScrub: null,
-      _nliScrubEl: null,
-      _nliPlayheadTimer: null,
-      _nliEndTimer: null,
-      sheet: $("kitTimeline"),
-      getEffectiveGroupsForView() {
-        try {
-          return getEffectiveLayerGroups() || [];
-        } catch {
-          return [];
-        }
-      },
-      render() {
-        paintTimelineMounts();
-      },
+  const timelineHost = createNliStaffTimelineHost({
+    sheet: $("kitTimeline"),
+    getGroups() {
+      try {
+        return getEffectiveLayerGroups() || [];
+      } catch {
+        return [];
+      }
     },
-    nliTimelineHostMethods,
-    {
-      _visibleNliPlayableIds() {
-        return NLI_PLAYABLE_IDS.slice();
-      },
-      _nliCacheReady(ids) {
-        const wanted = Array.isArray(ids) && ids.length ? ids : NLI_PLAYABLE_IDS;
-        const cache = this._nliFeatureCache || {};
-        return wanted.some((id) => Array.isArray(cache[id]) && cache[id].length > 0);
-      },
+    render() {
+      paintTimelineMounts();
     },
-  );
+  });
 
   const escapeHost = {
     setEscapeOverlay: (patch) =>
