@@ -82,7 +82,7 @@ function renderField(doc, descriptor, onField, onNudge, compact = false) {
   fineMinus.dataset.path = descriptor.path; fineMinus.dataset.direction = "-1";
   finePlus.dataset.path = descriptor.path; finePlus.dataset.direction = "1";
   if (compact) row.append(range, value);
-  else row.append(range, number, unit, fineMinus, finePlus);
+  else row.append(range, number, unit, fineMinus, finePlus, ...(descriptor.commitOnChange ? [value] : []));
   wrap.appendChild(row);
   const error = make(doc, "small", { className: "config-field-error", role: "alert", dataset: { errorFor: descriptor.path } });
   wrap.appendChild(error);

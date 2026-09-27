@@ -1,6 +1,6 @@
 import { loadNliNameField as defaultLoadNliNameField } from "./nli-name-field-data.js";
 import { createNameGroupOverlay } from "./nli-name-field-group-overlay.js";
-import { createNameFieldAnimation, withNameRevealDelays } from './nli-name-field-animation.js';
+import { createNameFieldAnimation, withNameRevealDelays, NAME_FIELD_MOTION } from './nli-name-field-animation.js';
 import { createNliNameFocusPresentation, getNameFocusOpacity, getNameFocusAlpha, getRelevantPlaceGroup } from './nli-name-focus-presentation.js';
 import { DEFAULT_PROJECTION_CONFIG, validateProjectionConfig } from "./projection-config-schema.js";
 import { equalProjectionConfig } from "./projection-config-client.js";
@@ -146,8 +146,43 @@ export function createNliNameFieldController({
   let canvasRequestToken = 0;
   let observedDatasetVersion = context.getPersonSelection?.()?.datasetVersion || null;
   let fadeFrame = null, fadeStart = 0, fadeFrom = 0, fadeTarget = 0, fadeOpacity = 0;
+  let revealFrame = null, revealStart = 0, revealElapsedMs = 0, revealRunning = false;
   const frame = globalThis.requestAnimationFrame?.bind(globalThis) || ((fn) => setTimeout(() => fn(Date.now()), 16));
   const cancelFrame = globalThis.cancelAnimationFrame?.bind(globalThis) || clearTimeout;
+  const revealDurationMs = NAME_FIELD_MOTION.spreadMs + NAME_FIELD_MOTION.revealMs;
+  const publishReveal = () => {
+    canvasAdapter?.setRevealSeconds?.(revealElapsedMs / 1000);
+    map.triggerRepaint?.();
+  };
+  const freezeReveal = () => {
+    if (revealRunning) revealElapsedMs = Math.min(revealDurationMs, Math.max(0, Date.now() - revealStart));
+    revealRunning = false;
+    if (revealFrame != null) { cancelFrame(revealFrame); revealFrame = null; }
+    publishReveal();
+  };
+  const clearReveal = () => { freezeReveal(); revealElapsedMs = 0; publishReveal(); };
+  const startReveal = ({ restart = false } = {}) => {
+    if (!canvasAdapter || !ready) return;
+    if (revealRunning && !restart) revealElapsedMs = Math.min(revealDurationMs, Math.max(0, Date.now() - revealStart));
+    if (revealFrame != null) { cancelFrame(revealFrame); revealFrame = null; }
+    if (motionMode === 'reduced') {
+      revealRunning = false;
+      revealElapsedMs = revealDurationMs;
+      publishReveal();
+      return;
+    }
+    if (restart) revealElapsedMs = 0;
+    revealStart = Date.now() - revealElapsedMs;
+    revealRunning = true;
+    const tick = () => {
+      if (!revealRunning || disposed) return;
+      revealElapsedMs = Math.min(revealDurationMs, Math.max(0, Date.now() - revealStart));
+      publishReveal();
+      if (revealElapsedMs < revealDurationMs) revealFrame = frame(tick);
+      else { revealFrame = null; revealRunning = false; publishDiagnostics(); }
+    };
+    tick();
+  };
   const setCanvasOpacity = (value) => {
     fadeOpacity = value;
     canvasAdapter?.setOpacity(value);
@@ -164,18 +199,31 @@ export function createNliNameFieldController({
   };
   const fadeTo = (target) => {
     if (!canvasAdapter) return;
-    if (fadeFrame != null) { cancelFrame(fadeFrame); fadeFrame = null; }
+    if (fadeFrame != null) {
+      setCanvasOpacity(fadeFrom + (fadeTarget - fadeFrom) * Math.min(1, (Date.now() - fadeStart) / NAME_FIELD_MOTION.hideMs));
+      cancelFrame(fadeFrame); fadeFrame = null;
+    }
     if (motionMode === 'reduced' || !ready) { setCanvasOpacity(ready ? target : 0); return; }
     fadeFrom = fadeOpacity; fadeTarget = target; fadeStart = Date.now();
     if (fadeFrom === target) return;
     const tick = () => {
-      const fraction = Math.min(1, (Date.now() - fadeStart) / 600);
+      const fraction = Math.min(1, (Date.now() - fadeStart) / NAME_FIELD_MOTION.hideMs);
       setCanvasOpacity(fadeFrom + (fadeTarget - fadeFrom) * fraction);
       fadeFrame = fraction < 1 ? frame(tick) : null;
       if (fadeFrame === null) publishDiagnostics();
     };
     fadeFrame = frame(tick);
   };
+  const showCanvas = ({ restart = false } = {}) => {
+    if (!ready || !canvasAdapter) return;
+    const fresh = restart || (fadeOpacity <= 0 && fadeFrame === null);
+    startReveal({ restart: fresh });
+    if (fresh || motionMode === 'reduced') {
+      if (fadeFrame != null) { cancelFrame(fadeFrame); fadeFrame = null; }
+      setCanvasOpacity(1);
+    } else fadeTo(1);
+  };
+  const hideCanvas = () => { freezeReveal(); fadeTo(0); };
   const projectionSpanFilter = () => displayProfile === "projection" && ["left", "right"].includes(projectionSpan)
     ? ["in", projectionSpan, ["get", "visible_spans"]] : null;
   const packedProjectionOwners = () => Object.fromEntries((field?.geojson?.features || [])
@@ -220,7 +268,8 @@ export function createNliNameFieldController({
       rebuildState,
       rebuildError,
       ...(canvasAdapter ? { canvasEnabled: enabled, canvasOpacity: fadeOpacity,
-        canvasFadePending: fadeFrame !== null } : {}),
+        canvasFadePending: fadeFrame !== null, canvasRevealSeconds: revealElapsedMs / 1000,
+        canvasRevealPending: revealFrame !== null } : {}),
       owned,
       ...(rebuildState === "idle" ? { unowned: 0 } : {}),
       fontSize: diagnosticsField?.fontSize,
@@ -276,7 +325,7 @@ export function createNliNameFieldController({
       geometry: { type: "LineString", coordinates },
     }] : []));
   };
-  const applySelection = (snapshot = context.getPersonSelection()) => {
+  const applySelection = (snapshot = context.getPersonSelection(), { repaintCanvas = true } = {}) => {
     const pid = snapshot?.personId;
     const version = snapshot?.datasetVersion;
     const validVersion = field && (!field.datasetVersion || !version || field.datasetVersion === version);
@@ -295,18 +344,19 @@ export function createNliNameFieldController({
       map.setFilter(SELECTED_LABEL_ID, withSpan(["==", ["get", "pid"], selected]));
     }
     updateConnector();
-    updateGroupHighlight();
+    updateGroupHighlight({ repaintCanvas });
     publishDiagnostics();
   };
-  const updateGroupHighlight = () => {
+  const updateGroupHighlight = ({ repaintCanvas = true } = {}) => {
     groupOverlay?.update(getRelevantPlaceGroup(field, selectedPid, selectedGroup));
     refreshBackground();
     const focus = { selectedPid, selectedGroup, field };
     animation?.setFocus(getNameFocusOpacity(focus), (pid) => getNameFocusAlpha(focus, pid));
-    if (canvasAdapter && ready) {
+    if (canvasAdapter && ready && repaintCanvas) {
       canvasAdapter.setPresentation({ alphaFor: (pid) => getNameFocusAlpha(focus, pid) });
       map.triggerRepaint?.();
     }
+    canvasAdapter?.setSelectedPid?.(selectedPid);
   };
   const applyPlace = (placeId) => {
     pendingPlaceId = placeId || null;
@@ -315,7 +365,7 @@ export function createNliNameFieldController({
     updateGroupHighlight();
     publishDiagnostics();
   };
-  const mountInstalledField = () => {
+  const mountInstalledField = ({ repaintCanvas = true } = {}) => {
     if (disposed || (!enabled && !canvasAdapter) || !ready || !field) return;
     removeOwned({ preserveFade: Boolean(canvasAdapter) });
     try {
@@ -357,7 +407,7 @@ export function createNliNameFieldController({
         },
       });
       animation?.show();
-      applySelection();
+      applySelection(undefined, { repaintCanvas });
       publishDiagnostics();
     } catch (error) {
       removeOwned();
@@ -456,10 +506,10 @@ export function createNliNameFieldController({
     refreshBackground();
   };
   const handleStyleLoad = () => {
-    if (!disposed && enabled) hideLegacyLabels(map);
-    if (!disposed && enabled) suppressCanvasSymbols();
-    if (!disposed && enabled && ready && rebuildState === "idle" && installedGeneration === requestGeneration) {
-      mountInstalledField();
+    if (!disposed && (enabled || canvasAdapter)) hideLegacyLabels(map);
+    if (!disposed && (enabled || canvasAdapter)) suppressCanvasSymbols();
+    if (!disposed && (enabled || canvasAdapter) && ready && rebuildState === "idle" && installedGeneration === requestGeneration) {
+      mountInstalledField({ repaintCanvas: !canvasAdapter });
     }
   };
   const onSelection = (snapshot) => {
@@ -475,7 +525,8 @@ export function createNliNameFieldController({
       installedRevision = null;
       rebuildState = 'pending';
       hideProjectionField();
-      fadeTo(0);
+      clearReveal();
+      setCanvasOpacity(0);
     }
     observedDatasetVersion = nextVersion;
     selectedGroup = null;
@@ -555,7 +606,8 @@ export function createNliNameFieldController({
     },
     commitProjectionCandidate(generation) {
       if (!preparedCanvas || preparedCanvas.generation !== generation || disposed) throw new Error('stale projection Canvas commit');
-      previousCanvas = { generation, field, ready, installedRevision, installedGeneration, requestedConfig, requestedRevision };
+      previousCanvas = { generation, field, ready, installedRevision, installedGeneration, requestedConfig, requestedRevision,
+        revealElapsedMs };
       const next = preparedCanvas;
       canvasAdapter.commit();
       field = next.field;
@@ -568,7 +620,11 @@ export function createNliNameFieldController({
       preparedCanvas = null;
       try {
         mountInstalledField();
-        fadeTo(enabled ? 1 : 0);
+        if (enabled) showCanvas({ restart: !previousCanvas.ready ||
+          previousCanvas.field?.datasetVersion !== next.field?.datasetVersion });
+        else if (!previousCanvas.ready || previousCanvas.field?.datasetVersion !== next.field?.datasetVersion) {
+          clearReveal(); setCanvasOpacity(0);
+        } else hideCanvas();
       } catch (error) {
         api.rollbackProjectionCandidate(generation);
         throw error;
@@ -581,10 +637,17 @@ export function createNliNameFieldController({
       if (preparedCanvas?.generation === generation) preparedCanvas = null;
       canvasAdapter?.rollback?.();
       if (previousCanvas) {
-        ({ field, ready, installedRevision, installedGeneration, requestedConfig, requestedRevision } = previousCanvas);
+        const old = previousCanvas;
+        const sameDataset = old.field?.datasetVersion === field?.datasetVersion;
+        freezeReveal();
+        ({ field, ready, installedRevision, installedGeneration, requestedConfig, requestedRevision } = old);
         previousCanvas = null;
         if (ready && field) mountInstalledField();
         else removeOwned();
+        if (!sameDataset) revealElapsedMs = old.revealElapsedMs;
+        publishReveal();
+        if (!ready) { clearReveal(); setCanvasOpacity(0); }
+        else if (enabled) startReveal();
       }
       publishDiagnostics();
       return true;
@@ -654,6 +717,8 @@ export function createNliNameFieldController({
         owners: packedProjectionOwners(),
         state: rebuildState,
         error: rebuildError,
+        ...(canvasAdapter ? { canvasOpacity: fadeOpacity, canvasRevealSeconds: revealElapsedMs / 1000,
+          canvasRevealPending: revealFrame !== null } : {}),
       };
     },
     sync(groups) {
@@ -664,7 +729,8 @@ export function createNliNameFieldController({
         enabled = nextEnabled;
         hideLegacyLabels(map);
         suppressCanvasSymbols();
-        fadeTo(enabled ? 1 : 0);
+        if (enabled) showCanvas();
+        else hideCanvas();
         publishDiagnostics();
         return;
       }
@@ -712,7 +778,7 @@ export function createNliNameFieldController({
       if (canvasAdapter) canvasRequestToken++;
       requestGeneration += 1;
       removeOwned();
-      if (canvasAdapter) setCanvasOpacity(0);
+      if (canvasAdapter) { clearReveal(); setCanvasOpacity(0); }
       hideLegacyLabels(map);
       field = null;
       ready = false;
@@ -728,6 +794,7 @@ export function createNliNameFieldController({
       if (disposed) return;
       disposed = true;
       if (fadeFrame != null) { cancelFrame(fadeFrame); fadeFrame = null; }
+      freezeReveal();
       requestGeneration += 1;
       enabled = false;
       unsubscribe();

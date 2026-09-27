@@ -16,18 +16,23 @@ function hash(id) {
   return value >>> 0;
 }
 
+/** Stable global PID order, independent of input order and projector ownership. */
+export function nameRevealSchedule(pids) {
+  const ids = [...new Set(pids.map(String))];
+  ids.sort((a, b) => hash(a) - hash(b) || a.localeCompare(b));
+  return new Map(ids.map((id, index) => [
+    id, { index, delayMs: index / Math.max(1, ids.length - 1) * NAME_FIELD_MOTION.spreadMs },
+  ]));
+}
+
 /** Stable random-looking reveal order, independent of display order and projector. */
 export function withNameRevealDelays(geojson) {
-  const ids = geojson.features.map((feature) => String(feature.properties.pid));
-  ids.sort((a, b) => hash(a) - hash(b) || a.localeCompare(b));
-  const delays = new Map(ids.map((id, index) => [
-    id, index / Math.max(1, ids.length - 1) * NAME_FIELD_MOTION.spreadMs,
-  ]));
+  const schedule = nameRevealSchedule(geojson.features.map((feature) => feature.properties.pid));
   return {
     ...geojson,
     features: geojson.features.map((feature) => ({
       ...feature,
-      properties: { ...feature.properties, reveal_delay: delays.get(String(feature.properties.pid)) },
+      properties: { ...feature.properties, reveal_delay: schedule.get(String(feature.properties.pid)).delayMs },
     })),
   };
 }

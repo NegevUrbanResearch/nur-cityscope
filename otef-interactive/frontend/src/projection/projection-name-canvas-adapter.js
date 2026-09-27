@@ -1,4 +1,5 @@
 import { planeToOutputUv } from '../shared/projection-config-geometry.js';
+import { nameRevealSchedule, NAME_FIELD_MOTION } from '../shared/nli-name-field-animation.js';
 
 const WIDTH = 1920;
 const HEIGHT = 1080;
@@ -7,7 +8,8 @@ const HEIGHT = 1080;
 export function createProjectionNameCanvasAdapter({ document = globalThis.document, output } = {}) {
   if (!['left', 'right'].includes(output)) throw new Error('name adapter output must be left or right');
   let pending = null, active = null, previous = null, hasRollback = false, disposed = false;
-  let opacity = 0, presentation = { alphaFor: () => 1 }, version = 0;
+  let opacity = 0, revealSeconds = 0, selectedPid = null;
+  let presentation = { alphaFor: () => 1 }, version = 0;
   const paint = (entry) => {
     const { canvas, ctx, placements, matrix, fontPx, fontFamily, color } = entry;
     ctx.save();
@@ -54,7 +56,25 @@ export function createProjectionNameCanvasAdapter({ document = globalThis.docume
       const own = placements.filter((item) => item.output === output);
       if (own.some((item) => !item.id || !item.name || ![item.x, item.y, item.width, item.height].every(Number.isFinite)))
         throw new Error('invalid name canvas placement');
-      pending = { canvas, ctx, placements: own, matrix, fontPx, fontFamily, color };
+      const schedule = nameRevealSchedule(placements.map((item) => item.id));
+      const vertices = [];
+      const indexByPid = new Map();
+      for (const item of own) {
+        const identity = schedule.get(String(item.id));
+        const left = item.x - item.width / 2, right = item.x + item.width / 2;
+        const top = item.y - item.height / 2, bottom = item.y + item.height / 2;
+        const corners = [[left, top], [right, top], [left, bottom], [right, bottom]]
+          .map((point) => planeToOutputUv(point, config, output, logicalPlane));
+        if (corners.some(({ u, v }) => !Number.isFinite(u) || !Number.isFinite(v)))
+          throw new Error('invalid name canvas reveal quad');
+        for (const corner of [0, 1, 2, 2, 1, 3]) {
+          const { u, v } = corners[corner];
+          vertices.push(u, v, identity.delayMs / 1000, identity.index);
+        }
+        indexByPid.set(String(item.id), identity.index);
+      }
+      pending = { canvas, ctx, placements: own, matrix, fontPx, fontFamily, color,
+        revealVertices: new Float32Array(vertices), indexByPid };
       paint(pending);
       return { source: canvas };
     },
@@ -68,6 +88,12 @@ export function createProjectionNameCanvasAdapter({ document = globalThis.docume
       if (!Number.isFinite(value) || value < 0 || value > 1) throw new Error('invalid Canvas name opacity');
       opacity = value;
     },
+    setRevealSeconds(value) {
+      if (!Number.isFinite(value) || value < 0 || value > (NAME_FIELD_MOTION.spreadMs + NAME_FIELD_MOTION.revealMs) / 1000)
+        throw new Error('invalid Canvas name reveal time');
+      revealSeconds = value;
+    },
+    setSelectedPid(value) { selectedPid = value == null ? null : String(value); },
     commit() {
       if (!pending) throw new Error('no prepared name canvas');
       previous = active; hasRollback = true; active = pending; pending = null;
@@ -75,7 +101,9 @@ export function createProjectionNameCanvasAdapter({ document = globalThis.docume
     },
     rollback() { if (hasRollback) { active = previous; previous = null; hasRollback = false; } else pending = null; },
     finalize() { previous = null; hasRollback = false; },
-    descriptor() { return active ? { source: active.canvas, opacity, contentVersion: active.contentVersion } : null; },
+    descriptor() { return active ? { source: active.canvas, opacity, contentVersion: active.contentVersion,
+      revealVertices: active.revealVertices, revealSeconds,
+      selectedIndex: active.indexByPid.get(selectedPid) ?? -1 } : null; },
     dispose() { disposed = true; pending = null; previous = null; hasRollback = false; active = null; },
   };
 }

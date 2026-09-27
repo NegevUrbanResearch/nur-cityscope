@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import proj4 from 'proj4';
-import { test, expect } from 'vitest';
+import { test, expect, vi } from 'vitest';
 import { evaluateWarpMesh } from '../../frontend/src/shared/projection-warp-geometry.js';
 import { evaluateNameWallCoverage, rectCoveredByPieces, ringContainsGuardedRect } from '../../frontend/src/shared/nli-name-wall-coverage.js';
 import { createNameFieldGeometry } from '../../frontend/src/shared/nli-name-field-geometry.js';
@@ -8,6 +8,9 @@ import { prepareMemorialNameRecords } from '../../frontend/src/shared/nli-name-f
 import { buildNamesWallLayout } from '../../frontend/src/shared/nli-name-wall-layout.js';
 import { migrateNamesWallToV5 } from '../../frontend/src/shared/nli-name-wall-config.js';
 import { sha256Hex } from '../../frontend/src/shared/sha256-hex.js';
+import { nameRevealSchedule } from '../../frontend/src/shared/nli-name-field-animation.js';
+import { createProjectionNameCanvasAdapter } from '../../frontend/src/projection/projection-name-canvas-adapter.js';
+import { planeToOutputUv } from '../../frontend/src/shared/projection-config-geometry.js';
 
 const snapshotPath = '../.superpowers/sdd/memorial-wall-revision-699-snapshot.json';
 const metricsPaths = [
@@ -125,6 +128,38 @@ test('captured current wall keeps every PID whole, safe, and stable in both mode
     packMs: Math.round(modeled.diagnostics.packMs), state: modeled.diagnostics.state,
     reason: modeled.diagnostics.reason, fontPx: modeled.fontSize, placed: modeled.diagnostics.placed });
   assertComplete(modeled, 'model');
+  const schedule = nameRevealSchedule(records.map((record) => record.pid));
+  for (const field of [first, modeled]) for (const side of ['left', 'right']) {
+    const ctx = { save: vi.fn(), restore: vi.fn(), setTransform: vi.fn(), clearRect: vi.fn(),
+      strokeText: vi.fn(), fillText: vi.fn() };
+    const adapter = createProjectionNameCanvasAdapter({ output: side, document: {
+      createElement: () => ({ width: 0, height: 0, getContext: () => ctx }),
+    } });
+    adapter.prepare({ config, placements: field.placements, fontPx: field.fontSize, logicalPlane });
+    adapter.commit();
+    const descriptor = adapter.descriptor();
+    const own = field.placements.filter((placement) => placement.output === side);
+    expect(own).toHaveLength(614);
+    expect(descriptor.revealVertices).toHaveLength(own.length * 24);
+    expect(ctx.fillText).toHaveBeenCalledTimes(own.length);
+    for (let index = 0; index < own.length; index++) {
+      const placement = own[index];
+      const identity = schedule.get(placement.id);
+      const offset = index * 24;
+      const topLeft = planeToOutputUv([placement.x - placement.width / 2,
+        placement.y - placement.height / 2], config, side, logicalPlane);
+      expect(Array.from(descriptor.revealVertices.slice(offset, offset + 4))).toEqual([
+        Math.fround(topLeft.u), Math.fround(topLeft.v), Math.fround(identity.delayMs / 1000), identity.index,
+      ]);
+    }
+    const painted = ctx.fillText.mock.calls.length;
+    const staticVertices = descriptor.revealVertices;
+    adapter.setRevealSeconds(4.4); adapter.setOpacity(0.5);
+    expect(adapter.descriptor().revealVertices).toBe(staticVertices);
+    expect(adapter.descriptor().contentVersion).toBe(descriptor.contentVersion);
+    expect(ctx.fillText).toHaveBeenCalledTimes(painted);
+    adapter.dispose();
+  }
   const modelWithMovedWall = await buildNamesWallLayout({ ...input, namesWall: { ...modelWall,
     profiles: { ...modelWall.profiles, wall: { ...modelWall.profiles.wall, inwardShiftPercent: 100 } } }, ring, ringHash });
   expect(modelWithMovedWall.placements).toEqual(modeled.placements);

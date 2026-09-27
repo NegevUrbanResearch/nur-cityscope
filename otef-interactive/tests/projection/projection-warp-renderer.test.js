@@ -52,6 +52,38 @@ describe("projection warp renderer", () => {
     renderer.dispose();
     expect(gl.deleteTexture).toHaveBeenCalled();
   });
+  test('draws static name quads once per frame with clock uniforms and no visibility uploads', () => {
+    const gl = fakeGl(), canvas = canvasFor(gl);
+    const renderer = createProjectionWarpRenderer({ canvas, mesh });
+    const vertices = new Float32Array([
+      0,0,0,0, 1,0,0,0, 0,1,0,0,
+      0,1,0,0, 1,0,0,0, 1,1,0,0,
+    ]);
+    const source = {};
+    const layer = { id: 'names', source, contentVersion: 1, opacity: 1,
+      revealVertices: vertices, revealSeconds: 0.8, selectedIndex: -1 };
+    renderer.draw({ layers: [layer] });
+    const uploads = gl.bufferData.mock.calls.length;
+    const textureUploads = gl.texImage2D.mock.calls.filter((args) => args.at(-1) === source).length;
+    for (const seconds of [1.2, 4.4, 8.8, 3.1]) renderer.draw({ layers: [{ ...layer, revealSeconds: seconds, opacity: 0.4 }] });
+    expect(gl.bufferData).toHaveBeenCalledTimes(uploads);
+    expect(gl.texImage2D.mock.calls.filter((args) => args.at(-1) === source)).toHaveLength(textureUploads);
+    expect(gl.drawArrays).toHaveBeenLastCalledWith(gl.TRIANGLES, 0, 6);
+    expect(gl.uniform1f).toHaveBeenCalledWith('uRevealSeconds', 4.4);
+    expect(gl.shaderSource.mock.calls.some(([, sourceCode]) => sourceCode.includes('uRevealSeconds') && sourceCode.includes('aDelay'))).toBe(true);
+    expect(gl.shaderSource.mock.calls.some(([, sourceCode]) => sourceCode.includes('aNameIndex-uSelectedIndex'))).toBe(true);
+    renderer.draw({ layers: [{ ...layer, contentVersion: 2, selectedIndex: 0 }] });
+    expect(gl.bufferData).toHaveBeenCalledTimes(uploads);
+    expect(gl.texImage2D.mock.calls.filter((args) => args.at(-1) === source)).toHaveLength(textureUploads + 1);
+    const replacement = new Float32Array(vertices);
+    renderer.draw({ layers: [{ ...layer, revealVertices: replacement }] });
+    expect(gl.bufferData).toHaveBeenCalledTimes(uploads + 1);
+    canvas.listeners.webglcontextlost({ preventDefault: vi.fn() });
+    canvas.listeners.webglcontextrestored();
+    expect(gl.bufferData).toHaveBeenCalledTimes(uploads + 6);
+    renderer.dispose();
+    expect(gl.deleteBuffer).toHaveBeenCalled();
+  });
   test("rejects invalid destination winding and out-of-range destination coordinates", () => {
     expect(() => validateProjectionMesh({ ...mesh, triangles: [0, 2, 1] })).toThrow(/triangle/i);
     expect(() => validateProjectionMesh({ ...mesh, vertices: mesh.vertices.map((v, i) => i === 3 ? { ...v, x: 2.1 } : v) })).toThrow(/destination/i);

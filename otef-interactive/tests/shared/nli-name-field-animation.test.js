@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import {
   NAME_FIELD_MOTION,
   withNameRevealDelays,
+  nameRevealSchedule,
   createNameFieldAnimation,
 } from '../../frontend/src/shared/nli-name-field-animation.js';
 
@@ -64,6 +65,20 @@ describe('memorial name animation', () => {
     expect(apply.mock.lastCall[0]).toMatchObject({baseOpacity:.18,selectedOpacity:1});
     animation.hide(removed); expect(removed).toHaveBeenCalledOnce();
     animation.dispose();
+  });
+  it('uses the same global PID schedule for each Canvas output and either input order', () => {
+    const ids = Array.from({ length: 1228 }, (_, index) => String(index + 1));
+    const source = { type: 'FeatureCollection', features: ids.map((pid) => ({ properties: { pid } })) };
+    const td = withNameRevealDelays(source);
+    const first = nameRevealSchedule(ids);
+    const reversed = nameRevealSchedule([...ids].reverse());
+    for (const feature of td.features) {
+      const pid = feature.properties.pid;
+      expect(first.get(pid)).toEqual(reversed.get(pid));
+      expect(first.get(pid).delayMs).toBe(feature.properties.reveal_delay);
+    }
+    expect(new Set([...first.values()].map((entry) => entry.index)).size).toBe(1228);
+    expect(Math.max(...[...first.values()].map((entry) => entry.delayMs))).toBe(NAME_FIELD_MOTION.spreadMs);
   });
   it('publishes numeric per-PID reveal and focus without evaluating MapLibre expressions', () => {
     vi.useFakeTimers();

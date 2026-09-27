@@ -26,6 +26,30 @@ test('draws whole names only for the owned output with the exact logical plane',
   const yUnit = planeToOutputUv([0,1], DEFAULT_PROJECTION_CONFIG, 'left', plane);
   expect(f.ctx.setTransform).toHaveBeenCalledWith((xUnit.u-origin.u)*1920, (xUnit.v-origin.v)*1080,
     (yUnit.u-origin.u)*1920, (yUnit.v-origin.v)*1080, origin.u*1920, origin.v*1080);
+  const descriptor = adapter.descriptor();
+  expect(descriptor.revealVertices).toBeInstanceOf(Float32Array);
+  expect(descriptor.revealVertices).toHaveLength(24);
+  const topLeft = planeToOutputUv([-20, -10], DEFAULT_PROJECTION_CONFIG, 'left', plane);
+  expect(Array.from(descriptor.revealVertices.slice(0, 2))).toEqual([Math.fround(topLeft.u), Math.fround(topLeft.v)]);
+  expect(new Set(Array.from({ length: 6 }, (_, i) => descriptor.revealVertices[i * 4 + 2])).size).toBe(1);
+  expect(new Set(Array.from({ length: 6 }, (_, i) => descriptor.revealVertices[i * 4 + 3])).size).toBe(1);
+});
+
+test('global delays, selected bypass, and reveal clock change no painted pixels or static vertices', () => {
+  const f = fakeCanvas();
+  const adapter = createProjectionNameCanvasAdapter({ document: { createElement: () => f.canvas }, output: 'right' });
+  adapter.prepare({ config: DEFAULT_PROJECTION_CONFIG, placements, logicalPlane: plane });
+  adapter.commit();
+  const first = adapter.descriptor();
+  const paintCount = f.ctx.fillText.mock.calls.length;
+  adapter.setRevealSeconds(3.2);
+  adapter.setSelectedPid('b');
+  expect(adapter.descriptor()).toMatchObject({ contentVersion: first.contentVersion, revealSeconds: 3.2 });
+  expect(adapter.descriptor().selectedIndex).toBeGreaterThanOrEqual(0);
+  expect(adapter.descriptor().revealVertices).toBe(first.revealVertices);
+  adapter.setOpacity(0.5);
+  expect(f.ctx.fillText).toHaveBeenCalledTimes(paintCount);
+  expect(adapter.descriptor().revealVertices).toBe(first.revealVertices);
 });
 
 test('opacity reuses the canvas without painting text', () => {

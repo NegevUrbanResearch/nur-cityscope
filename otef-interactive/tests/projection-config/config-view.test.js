@@ -36,6 +36,7 @@ test("view renders draggable node workspace and preserves an existing focused in
   view.update({ state: { draft: namesDraft }, selectedNode: "names-wall", namesWallStatus: { state: "auto-reduced", requestedFontPx: 12, effectiveFontPx: 9, minimumFontPx: 8, expected: 1228, placed: 1228 } });
   const closeness = view.fields.get("names-wall:namesWall.inwardShiftPercent");
   expect(closeness.wrap.hidden).toBe(false);
+  expect(closeness.value.parentElement).toBe(closeness.range.parentElement);
   closeness.range.value = "50";
   closeness.range.dispatch("input");
   expect(closeness.value.textContent).toBe("50");

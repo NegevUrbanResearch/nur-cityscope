@@ -25,6 +25,8 @@ export function validateProjectionMesh(mesh) {
 
 const COMPOSE_VERTEX = `attribute vec2 aSource; uniform mat3 uMatrix; varying vec2 vUv; void main(){ vec3 p=uMatrix*vec3(aSource,1.0); gl_Position=vec4(2.0*p.x-p.z,p.z-2.0*p.y,0.0,p.z); vUv=aSource; }`;
 const COMPOSE_FRAGMENT = `precision mediump float; varying vec2 vUv; uniform sampler2D uSource; uniform float uOpacity; uniform vec4 uClip; void main(){ vec2 outputUv=vec2((gl_FragCoord.x+0.5)/1920.0,1.0-(gl_FragCoord.y+0.5)/1080.0); if(outputUv.x<uClip.x||outputUv.y<uClip.y||outputUv.x>uClip.z||outputUv.y>uClip.w) discard; vec4 color=texture2D(uSource,vUv); gl_FragColor=vec4(color.rgb,color.a*uOpacity); }`;
+const NAMES_VERTEX = `attribute vec2 aSource; attribute float aDelay; attribute float aNameIndex; uniform mat3 uMatrix; uniform float uRevealSeconds; uniform float uSelectedIndex; varying vec2 vUv; varying float vReveal; void main(){ vec3 p=uMatrix*vec3(aSource,1.0); gl_Position=vec4(2.0*p.x-p.z,p.z-2.0*p.y,0.0,p.z); vUv=aSource; vReveal=abs(aNameIndex-uSelectedIndex)<0.5?1.0:clamp((uRevealSeconds-aDelay)/1.6,0.0,1.0); }`;
+const NAMES_FRAGMENT = `precision mediump float; varying vec2 vUv; varying float vReveal; uniform sampler2D uSource; uniform float uOpacity; uniform vec4 uClip; void main(){ vec2 outputUv=vec2((gl_FragCoord.x+0.5)/1920.0,1.0-(gl_FragCoord.y+0.5)/1080.0); if(outputUv.x<uClip.x||outputUv.y<uClip.y||outputUv.x>uClip.z||outputUv.y>uClip.w) discard; vec4 color=texture2D(uSource,vUv); gl_FragColor=vec4(color.rgb,color.a*uOpacity*vReveal); }`;
 const FINAL_VERTEX = `attribute vec2 aPosition; attribute vec2 aUv; varying vec2 vUv; void main(){vUv=vec2(aUv.x,1.0-aUv.y);gl_Position=vec4(aPosition,0.0,1.0);}`;
 const FINAL_FRAGMENT = `precision mediump float; varying vec2 vUv; uniform sampler2D uTexture; void main(){gl_FragColor=texture2D(uTexture,vUv);}`;
 
@@ -76,8 +78,18 @@ function descriptor(item) {
   if (!Array.isArray(clip) || clip.length !== 4 || !clip.every(finite) || clip[0] < 0 || clip[1] < 0 || clip[2] > 1 || clip[3] > 1 || clip[2] <= clip[0] || clip[3] <= clip[1]) throw new Error("projection layer clip is invalid");
   const opacity = item.opacity == null ? 1 : item.opacity;
   if (!finite(opacity) || opacity < 0 || opacity > 1) throw new Error("projection layer opacity is invalid");
+  const revealVertices = item.revealVertices;
+  if (revealVertices != null && (item.id !== 'names' || !(revealVertices instanceof Float32Array) ||
+      revealVertices.length % 24 !== 0 || Array.from(revealVertices).some((value) => !finite(value))))
+    throw new Error('projection names reveal vertices are invalid');
+  const revealSeconds = item.revealSeconds ?? 8.8;
+  const selectedIndex = item.selectedIndex ?? -1;
+  if (revealVertices != null && (!finite(revealSeconds) || revealSeconds < 0 || revealSeconds > 8.8 ||
+      !Number.isInteger(selectedIndex) || selectedIndex < -1))
+    throw new Error('projection names reveal clock is invalid');
   return { id: item.id, source, contentVersion: item.contentVersion,
-    matrix: matrix9(item.matrix), clip: [...clip], opacity };
+    matrix: matrix9(item.matrix), clip: [...clip], opacity,
+    ...(revealVertices != null ? { revealVertices, revealSeconds, selectedIndex } : {}) };
 }
 
 function meshArrays(mesh) {
@@ -136,10 +148,10 @@ export function createProjectionWarpRenderer({ canvas, mesh, gl: suppliedGl } = 
 
   const release = () => {
     if (!resources) return;
-    for (const key of ["quad", "position", "uv", "index"]) if (resources[key]) gl.deleteBuffer?.(resources[key]);
+    for (const key of ["quad", "nameQuad", "position", "uv", "index"]) if (resources[key]) gl.deleteBuffer?.(resources[key]);
     for (const key of ["composed", "sourceTexture", "nameTexture"]) if (resources[key]) gl.deleteTexture?.(resources[key]);
     if (resources.framebuffer) gl.deleteFramebuffer?.(resources.framebuffer);
-    for (const key of ["compose", "final"]) if (resources[key]) gl.deleteProgram?.(resources[key]);
+    for (const key of ["compose", "nameCompose", "final"]) if (resources[key]) gl.deleteProgram?.(resources[key]);
     resources = null;
   };
 
@@ -150,10 +162,13 @@ export function createProjectionWarpRenderer({ canvas, mesh, gl: suppliedGl } = 
     const created = {};
     try {
       created.compose = createProgram(gl, COMPOSE_VERTEX, COMPOSE_FRAGMENT, { aSource: 0 });
+      created.nameCompose = createProgram(gl, NAMES_VERTEX, NAMES_FRAGMENT,
+        { aSource: 0, aDelay: 1, aNameIndex: 2 });
       created.final = createProgram(gl, FINAL_VERTEX, FINAL_FRAGMENT, { aPosition: 0, aUv: 1 });
       created.quad = gl.createBuffer();
       gl.bindBuffer(gl.ARRAY_BUFFER, created.quad);
       gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 0, 1, 0, 0, 1, 1, 1]), gl.STATIC_DRAW);
+      created.nameQuad = gl.createBuffer();
       Object.assign(created, createMeshBuffers(gl, currentMesh));
       created.composed = gl.createTexture();
       configureTexture(gl, created.composed);
@@ -192,10 +207,6 @@ export function createProjectionWarpRenderer({ canvas, mesh, gl: suppliedGl } = 
     gl.viewport(0, 0, WIDTH, HEIGHT);
     gl.clearColor(0, 0, 0, 0);
     gl.clear(gl.COLOR_BUFFER_BIT);
-    gl.useProgram(r.compose);
-    setAttribute(gl, r.compose, "aSource", r.quad, 2);
-    gl.disableVertexAttribArray?.(r.finalUv);
-    gl.uniform1i?.(gl.getUniformLocation?.(r.compose, "uSource"), 0);
     for (const layer of valid) {
       gl.activeTexture?.(gl.TEXTURE0);
       if (layer.id === 'names') {
@@ -215,10 +226,34 @@ export function createProjectionWarpRenderer({ canvas, mesh, gl: suppliedGl } = 
         gl.bindTexture(gl.TEXTURE_2D, r.sourceTexture);
         gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, layer.source);
       }
-      gl.uniformMatrix3fv?.(gl.getUniformLocation?.(r.compose, "uMatrix"), false, new Float32Array(layer.matrix));
-      gl.uniform4fv?.(gl.getUniformLocation?.(r.compose, "uClip"), new Float32Array(layer.clip));
-      gl.uniform1f?.(gl.getUniformLocation?.(r.compose, "uOpacity"), layer.opacity);
-      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      const names = layer.id === 'names' && layer.revealVertices;
+      const program = names ? r.nameCompose : r.compose;
+      gl.useProgram(program);
+      if (names) {
+        if (r.nameVertices !== layer.revealVertices) {
+          gl.bindBuffer(gl.ARRAY_BUFFER, r.nameQuad);
+          gl.bufferData(gl.ARRAY_BUFFER, layer.revealVertices, gl.STATIC_DRAW);
+          r.nameVertices = layer.revealVertices;
+        }
+        gl.bindBuffer(gl.ARRAY_BUFFER, r.nameQuad);
+        for (const [attribute, size, offset] of [['aSource', 2, 0], ['aDelay', 1, 8], ['aNameIndex', 1, 12]]) {
+          const location = gl.getAttribLocation?.(program, attribute);
+          if (location == null || location < 0) throw new Error(`projection shader attribute missing: ${attribute}`);
+          gl.enableVertexAttribArray(location);
+          gl.vertexAttribPointer(location, size, gl.FLOAT, false, 16, offset);
+        }
+        gl.uniform1f?.(gl.getUniformLocation?.(program, 'uRevealSeconds'), layer.revealSeconds);
+        gl.uniform1f?.(gl.getUniformLocation?.(program, 'uSelectedIndex'), layer.selectedIndex);
+      } else {
+        gl.disableVertexAttribArray?.(1);
+        gl.disableVertexAttribArray?.(2);
+        setAttribute(gl, program, 'aSource', r.quad, 2);
+      }
+      gl.uniform1i?.(gl.getUniformLocation?.(program, 'uSource'), 0);
+      gl.uniformMatrix3fv?.(gl.getUniformLocation?.(program, "uMatrix"), false, new Float32Array(layer.matrix));
+      gl.uniform4fv?.(gl.getUniformLocation?.(program, "uClip"), new Float32Array(layer.clip));
+      gl.uniform1f?.(gl.getUniformLocation?.(program, "uOpacity"), layer.opacity);
+      gl.drawArrays(names ? gl.TRIANGLES : gl.TRIANGLE_STRIP, 0, names ? layer.revealVertices.length / 4 : 4);
     }
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.viewport(0, 0, canvas?.width || WIDTH, canvas?.height || HEIGHT);
@@ -226,6 +261,7 @@ export function createProjectionWarpRenderer({ canvas, mesh, gl: suppliedGl } = 
     gl.clearColor(0, 0, 0, 0);
     gl.clear(gl.COLOR_BUFFER_BIT);
     gl.useProgram(r.final);
+    gl.disableVertexAttribArray?.(2);
     setAttribute(gl, r.final, "aPosition", r.position, 2);
     setAttribute(gl, r.final, "aUv", r.uv, 2);
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, r.index);
