@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  BIBAS_BALLOON_ORANGE,
+  BIBAS_CAPTIVITY_PIDS,
   CAPTIVITY_BLEED_GRADIENT_STOPS,
   CAPTIVITY_BLOOD_RGB,
   RIBBON_YELLOW,
+  buildCaptivityBleedImageSpec,
   createCaptivityBleedImageData,
   paintCaptivityBleedMarker,
 } from "../../frontend/src/shared/captivity-bleed-marker.js";
@@ -113,5 +116,66 @@ describe("captivity bleed marker painter", () => {
     expect(strokeAt).toBeGreaterThan(gradientAt);
     expect(calls[strokeAt][1].toLowerCase()).toBe("#ffffff");
     expect(calls[strokeAt][2]).toBeCloseTo(8 * 0.125);
+  });
+
+  it("exports the Bibas balloon orange and closed captivity pids", () => {
+    expect(BIBAS_BALLOON_ORANGE).toBe("#FF8C00");
+    expect(BIBAS_CAPTIVITY_PIDS).toEqual(["551", "552", "553"]);
+  });
+
+  it("paints the provided disc fill before the blood stain", () => {
+    const calls = [];
+    const gradient = {
+      addColorStop(offset, color) {
+        calls.push(["stop", offset, color]);
+      },
+    };
+    const ctx = {
+      beginPath() {
+        calls.push(["beginPath"]);
+      },
+      arc(...args) {
+        calls.push(["arc", ...args]);
+      },
+      fill() {
+        calls.push(["fill", this.fillStyle]);
+      },
+      stroke() {
+        calls.push(["stroke", this.strokeStyle, this.lineWidth]);
+      },
+      clip() {
+        calls.push(["clip"]);
+      },
+      save() {
+        calls.push(["save"]);
+      },
+      restore() {
+        calls.push(["restore"]);
+      },
+      createRadialGradient(...args) {
+        calls.push(["gradient", ...args]);
+        return gradient;
+      },
+      fillStyle: null,
+      strokeStyle: null,
+      lineWidth: 0,
+    };
+
+    paintCaptivityBleedMarker(ctx, { cx: 10, cy: 10, r: 8, fillColor: BIBAS_BALLOON_ORANGE });
+
+    const fillOrange = calls.findIndex(
+      (entry) => entry[0] === "fill" && String(entry[1]).toUpperCase() === BIBAS_BALLOON_ORANGE,
+    );
+    const clipAt = calls.findIndex((entry) => entry[0] === "clip");
+    expect(fillOrange).toBeGreaterThanOrEqual(0);
+    expect(clipAt).toBeGreaterThan(fillOrange);
+  });
+
+  it("gives balloon-orange bleed a distinct image id from ribbon yellow", () => {
+    const yellow = buildCaptivityBleedImageSpec({ radius: 8 });
+    const orange = buildCaptivityBleedImageSpec({ radius: 8, fillColor: BIBAS_BALLOON_ORANGE });
+    expect(yellow.imageId).not.toBe(orange.imageId);
+    expect(orange.fillColor.toUpperCase()).toBe(BIBAS_BALLOON_ORANGE);
+    expect(orange.imageId.toUpperCase()).toContain("FF8C00");
   });
 });

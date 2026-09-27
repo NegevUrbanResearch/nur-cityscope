@@ -12,6 +12,8 @@ import {
   PROJECTION_MAPLIBRE_STROKE_WIDTH_SCALE,
 } from "./hatch-projection-presentation.js";
 import {
+  BIBAS_BALLOON_ORANGE,
+  BIBAS_CAPTIVITY_PIDS,
   buildCaptivityBleedImageSpec,
   KIDNAP_SURVIVOR_STATUS,
   MURDERED_IN_CAPTIVITY_STATUS,
@@ -222,8 +224,18 @@ function numericCircleRadius(paintRadius) {
   return null;
 }
 
+function matchClosedPids(value, fallback) {
+  const expr = ["match", uniqueValueClassificationInputExpression("pid")];
+  for (const pid of BIBAS_CAPTIVITY_PIDS) {
+    expr.push(pid, value);
+  }
+  expr.push(fallback);
+  return expr;
+}
+
 /**
  * People-status hook: ribbon-yellow survivors; captivity uses a bleed symbol, not a flat circle.
+ * Bibas captivity pids stay a solid balloon-orange circle with no bleed.
  * Only applies to unique-value people circles (match expressions), not simple markers.
  * @param {object[]} layers
  * @param {string} fullLayerId
@@ -248,15 +260,16 @@ function applyNliPeopleStatusPresentation(layers, fullLayerId, idBase) {
       continue;
     }
 
-    paint["circle-color"] = remapUniqueValueMatchPaint(color, (status, value) => {
+    const statusColor = remapUniqueValueMatchPaint(color, (status, value) => {
       if (status === KIDNAP_SURVIVOR_STATUS) return ribbonYellow;
       return value;
     });
+    paint["circle-color"] = matchClosedPids(BIBAS_BALLOON_ORANGE, statusColor);
 
     const opacityExpr = ["match", uniqueValueClassificationInputExpression("status")];
     opacityExpr.push(MURDERED_IN_CAPTIVITY_STATUS, 0, 1);
-    paint["circle-opacity"] = opacityExpr;
-    paint["circle-stroke-opacity"] = opacityExpr;
+    paint["circle-opacity"] = matchClosedPids(1, opacityExpr);
+    paint["circle-stroke-opacity"] = matchClosedPids(1, opacityExpr);
 
     const radius = numericCircleRadius(paint["circle-radius"]);
     if (radius != null && !captivitySpec) {
@@ -272,7 +285,13 @@ function applyNliPeopleStatusPresentation(layers, fullLayerId, idBase) {
       id: `${idBase}__captivity_bleed`,
       type: "symbol",
       paint: {
-        "icon-opacity": ["match", statusInput, MURDERED_IN_CAPTIVITY_STATUS, 1, 0],
+        "icon-opacity": matchClosedPids(0, [
+          "match",
+          statusInput,
+          MURDERED_IN_CAPTIVITY_STATUS,
+          1,
+          0,
+        ]),
       },
       layout: {
         "icon-image": captivitySpec.imageId,

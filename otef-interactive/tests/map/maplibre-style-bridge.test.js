@@ -494,12 +494,13 @@ describe("irToMapLibreLayers", () => {
     expect(symbol).toBeDefined();
 
     const color = circle.paint["circle-color"];
-    expect(color).toContain("Murdered");
-    expect(color).toContain("#b42318");
-    expect(color).toContain("Kidnap survivor");
-    expect(String(color[color.indexOf("Kidnap survivor") + 1]).toLowerCase()).toBe("#ffd100");
+    const statusColor = color.at(-1);
+    expect(statusColor).toContain("Murdered");
+    expect(statusColor).toContain("#b42318");
+    expect(statusColor).toContain("Kidnap survivor");
+    expect(String(statusColor[statusColor.indexOf("Kidnap survivor") + 1]).toLowerCase()).toBe("#ffd100");
 
-    const opacity = circle.paint["circle-opacity"];
+    const opacity = circle.paint["circle-opacity"].at(-1);
     expect(Array.isArray(opacity)).toBe(true);
     expect(opacity).toContain("Murdered in captivity");
     expect(opacity[opacity.indexOf("Murdered in captivity") + 1]).toBe(0);
@@ -509,6 +510,40 @@ describe("irToMapLibreLayers", () => {
     expect(symbol.layout["icon-rotation-alignment"]).toBe("map");
     expect(symbol.layout["icon-image"]).toBe(symbol._captivityBleedPattern.imageId);
     expect(symbol._captivityBleedPattern.radius).toBeCloseTo(circle.paint["circle-radius"]);
+  });
+
+  it("paints Bibas captivity pids as solid balloon orange with no bleed", () => {
+    const style = structuredClone(nliStyles.people);
+    const result = irToMapLibreLayers("nli.people", "nli__people", {
+      geometryType: style.type,
+      style,
+    });
+    const circle = result.find((layer) => layer.type === "circle");
+    const symbol = result.find((layer) => layer.type === "symbol" && layer._captivityBleedPattern);
+    expect(circle).toBeDefined();
+    expect(symbol).toBeDefined();
+
+    const color = circle.paint["circle-color"];
+    expect(color[0]).toBe("match");
+    expect(color[1][0]).toBe("to-string");
+    expect(JSON.stringify(color)).toContain("551");
+    expect(JSON.stringify(color)).toContain("552");
+    expect(JSON.stringify(color)).toContain("553");
+    expect(JSON.stringify(color)).not.toContain("554");
+    expect(String(color[color.indexOf("551") + 1]).toUpperCase()).toBe("#FF8C00");
+    expect(color.at(-1)[0]).toBe("match");
+
+    const opacity = circle.paint["circle-opacity"];
+    expect(opacity[0]).toBe("match");
+    expect(opacity[opacity.indexOf("551") + 1]).toBe(1);
+    expect(opacity.at(-1)).toContain("Murdered in captivity");
+    expect(opacity.at(-1)[opacity.at(-1).indexOf("Murdered in captivity") + 1]).toBe(0);
+
+    const iconOpacity = symbol.paint["icon-opacity"];
+    expect(iconOpacity[0]).toBe("match");
+    expect(iconOpacity[iconOpacity.indexOf("551") + 1]).toBe(0);
+    expect(iconOpacity.at(-1)).toContain("Murdered in captivity");
+    expect(symbol.layout["icon-image"]).toBe(symbol._captivityBleedPattern.imageId);
   });
 
   it("keeps markerLine squares un-rotated when catalog points are squares", () => {

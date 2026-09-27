@@ -1,9 +1,12 @@
 /**
  * Shared canvas painter for Murdered-in-captivity people markers and legends.
- * Ribbon-yellow disc with a top-entry dried-blood radial stain.
+ * Disc fill with a top-entry dried-blood radial stain.
  */
 
 export const RIBBON_YELLOW = "#FFD100";
+export const BIBAS_BALLOON_ORANGE = "#FF8C00";
+/** Ariel, Kfir, and Shiri. Closed memorial fill; not a legend class. */
+export const BIBAS_CAPTIVITY_PIDS = Object.freeze(["551", "552", "553"]);
 export const CAPTIVITY_BLOOD_RGB = Object.freeze({ r: 154, g: 36, b: 30 });
 export const KIDNAP_SURVIVOR_STATUS = "Kidnap survivor";
 export const MURDERED_IN_CAPTIVITY_STATUS = "Murdered in captivity";
@@ -19,6 +22,13 @@ export const CAPTIVITY_BLEED_GRADIENT_STOPS = Object.freeze([
 ]);
 
 const SPEC_REV = "v1";
+
+function normalizeFillColor(fillColor) {
+  const raw = typeof fillColor === "string" ? fillColor.trim() : "";
+  if (!raw) return RIBBON_YELLOW;
+  const hex = raw.startsWith("#") ? raw : `#${raw}`;
+  return hex.toUpperCase();
+}
 
 function createCanvas2DContext(size) {
   if (typeof document !== "undefined" && document.createElement) {
@@ -39,19 +49,20 @@ function createCanvas2DContext(size) {
 }
 
 /**
- * Paint yellow disc + top-bleed stain + white stroke.
+ * Paint disc + top-bleed stain + white stroke.
  * `r` is the disc radius the stroke is centered on.
  *
  * @param {CanvasRenderingContext2D} ctx
- * @param {{ cx: number, cy: number, r: number }} geometry
+ * @param {{ cx: number, cy: number, r: number, fillColor?: string }} geometry
  */
-export function paintCaptivityBleedMarker(ctx, { cx, cy, r }) {
+export function paintCaptivityBleedMarker(ctx, { cx, cy, r, fillColor } = {}) {
   if (!ctx || !(r > 0)) return;
   const strokeWidth = r * CAPTIVITY_STROKE_TO_RADIUS;
+  const fill = normalizeFillColor(fillColor);
 
   ctx.beginPath();
   ctx.arc(cx, cy, r, 0, Math.PI * 2);
-  ctx.fillStyle = RIBBON_YELLOW;
+  ctx.fillStyle = fill;
   ctx.fill();
 
   ctx.save();
@@ -79,20 +90,22 @@ export function paintCaptivityBleedMarker(ctx, { cx, cy, r }) {
 }
 
 /**
- * @param {{ radius: number }} options
- * @returns {{ imageId: string, radius: number, side: number, pad: number }}
+ * @param {{ radius: number, fillColor?: string }} options
+ * @returns {{ imageId: string, radius: number, side: number, pad: number, fillColor: string }}
  */
-export function buildCaptivityBleedImageSpec({ radius } = {}) {
+export function buildCaptivityBleedImageSpec({ radius, fillColor } = {}) {
   const r = Number(radius);
   if (!Number.isFinite(r) || r <= 0) return null;
+  const fill = normalizeFillColor(fillColor);
   const strokeWidth = r * CAPTIVITY_STROKE_TO_RADIUS;
   const pad = Math.max(1, Math.ceil(strokeWidth / 2) + 1);
   const side = Math.max(1, Math.ceil(2 * r + 2 * pad));
-  const imageId = `otef_captivity_bleed_${SPEC_REV}_${String(r)}_${String(side)}`.replace(
-    /[^a-zA-Z0-9_#.]/g,
+  const fillKey = fill.replace(/#/g, "");
+  const imageId = `otef_captivity_bleed_${SPEC_REV}_${String(r)}_${String(side)}_${fillKey}`.replace(
+    /[^a-zA-Z0-9_.]/g,
     "_",
   );
-  return { imageId, radius: r, side, pad };
+  return { imageId, radius: r, side, pad, fillColor: fill };
 }
 
 /**
@@ -116,7 +129,12 @@ export function createCaptivityBleedImageData(spec) {
   }
   const { ctx, getImageData } = ctx2d;
   ctx.clearRect(0, 0, side, side);
-  paintCaptivityBleedMarker(ctx, { cx: side / 2, cy: side / 2, r });
+  paintCaptivityBleedMarker(ctx, {
+    cx: side / 2,
+    cy: side / 2,
+    r,
+    fillColor: spec.fillColor,
+  });
   return getImageData();
 }
 
