@@ -64,6 +64,7 @@ import {
 } from "./nli-settlement-orientation.js";
 import { shouldIncludeNarrativeSettlementOutline } from "./nli-nova-escape-impact.js";
 import { syncPersonHaloPaint } from "../map/maplibre-person-selection.js";
+import { syncTimelineBaseLayerVisibility } from "../map/maplibre-layer-manager.js";
 
 export {
   INVESTIGATION_ALARMS_FULL_ID,
@@ -1145,6 +1146,22 @@ export async function syncInvestigationTimelineToMap(map, clockInput, layerGroup
   applyCaptionDeps(state, map, deps);
   const narrativeId = state.narrativeFocus?.id ?? null;
   const nextMembership = effectiveMembership(clock, visibilityGroups, narrativeId);
+  const armedMembership = new Set(Array.isArray(clock.membership) ? clock.membership.map(String) : []);
+  const suppressedTimelineFullIds = clock.phase === "idle"
+    ? []
+    : [...new Set([...armedMembership, ...nextMembership.ids])].filter((fullId) =>
+        fullId !== INVESTIGATION_ALARMS_FULL_ID ||
+        armedMembership.has(INVESTIGATION_ALARMS_FULL_ID) ||
+        nextMembership.alarmVisible,
+      );
+  if (clock.phase !== "idle" && nextMembership.alarmVisible &&
+      !suppressedTimelineFullIds.includes(INVESTIGATION_ALARMS_FULL_ID)) {
+    suppressedTimelineFullIds.push(INVESTIGATION_ALARMS_FULL_ID);
+  }
+  syncTimelineBaseLayerVisibility(map, {
+    suppressedFullIds: suppressedTimelineFullIds,
+    enabledFullIds: nextMembership.visible,
+  });
   publishClockOnlyCaptionRelevance(state, nextMembership.visible);
 
   // A setStyle call can fire style.load before the host has re-synced its base

@@ -421,7 +421,7 @@ export function renderNliTimelineTransport(clock, options = {}) {
   const stepScrubDisabled = !!options.stepScrubDisabled;
   const presentationActive = !!options.presentationActive;
   const displayBeats = Array.isArray(options.displayBeats) ? options.displayBeats : [];
-  const allOff = presentationActive;
+  const allOff = presentationActive || !!options.controlsBusy;
   const playOff = allOff || playDisabled;
   const stepOff = allOff || stepScrubDisabled;
   const isNova = options.narrativeId === "nova";
@@ -503,6 +503,7 @@ export function nliTransportSheetHtml(
   presentationActive,
   narrativeActive = false,
   narrativeId = null,
+  mutationBusy = false,
 ) {
   if (!selected || selected.id !== "nli") return "";
   const isNova = narrativeId === "nova";
@@ -515,11 +516,12 @@ export function nliTransportSheetHtml(
     : clock && clock.phase !== "idle" && Array.isArray(clock.beats) && clock.beats.length > 0
       ? clock.beats
       : beatsForMembership(visible, nliFeatureBagsFromCache(cache));
-  const controlsOff = presentationActive || visible.length === 0 || !cacheReady;
+  const controlsOff = presentationActive || mutationBusy || visible.length === 0 || !cacheReady;
   return renderNliTimelineTransport(clock, {
     playDisabled: controlsOff,
     stepScrubDisabled: controlsOff,
     presentationActive,
+    controlsBusy: mutationBusy,
     displayBeats,
     visibleMembership: visible,
     lineFeatures: nliFeatureBagsFromCache(cache).lineFeatures,
@@ -957,7 +959,9 @@ export const nliTimelineHostMethods = {
 
   /** `from` starts playback at that minute; `to` drops later beats; a boolean `loop` sets looping. All apply only when arming from idle. */
   async handleNliTimelinePlay({ from, to, loop } = {}) {
-    if (!this._manualMutationsOpen()) return;
+    const epoch = this._nliTransportEpoch || 0;
+    const isCurrent = () => (this._nliTransportEpoch || 0) === epoch && this._manualMutationsOpen();
+    if (!isCurrent()) return;
     const clock = this._nliOptimisticClock || this._liveNliClock();
     const now = nliNowMs();
     const narrativeId = nliNarrativeId();
@@ -971,15 +975,15 @@ export const nliTimelineHostMethods = {
       await this._patchNliClock(replayNliClock(clock, now, {
         ...clockOptions,
         ...(!clockOptions.narrativeId && { leadInMinutes: clock.leadInMinutes ?? leadInMinutes }),
-      }));
+      }), { isCurrent });
       return;
     }
     if (clock.phase === "playing") {
-      await this._patchNliClock(pauseNliClock(clock, now, clockOptions));
+      await this._patchNliClock(pauseNliClock(clock, now, clockOptions), { isCurrent });
       return;
     }
     if (clock.phase === "paused") {
-      await this._patchNliClock(resumeNliClock(clock, now));
+      await this._patchNliClock(resumeNliClock(clock, now), { isCurrent });
       return;
     }
     const playback = this._playbackWindow();
@@ -991,7 +995,7 @@ export const nliTimelineHostMethods = {
         from: windowFrom,
         to: windowTo,
         loop: typeof loop === "boolean" ? loop : clock.loop,
-        isCurrent: () => this._manualMutationsOpen()
+        isCurrent: () => isCurrent()
           && sameNarrativeBoundary(narrativeBoundary, nliNarrativeBoundary()),
       });
     } catch {
@@ -1000,8 +1004,10 @@ export const nliTimelineHostMethods = {
   },
 
   async handleNliTimelineStop() {
-    if (!this._manualMutationsOpen()) return;
-    await this._patchNliClock(stopNliClock(this._liveNliClock()));
+    const epoch = this._nliTransportEpoch || 0;
+    const isCurrent = () => (this._nliTransportEpoch || 0) === epoch && this._manualMutationsOpen();
+    if (!isCurrent()) return;
+    await this._patchNliClock(stopNliClock(this._liveNliClock()), { isCurrent });
   },
 
   async handleNliTimelineLoop() {
@@ -1011,7 +1017,9 @@ export const nliTimelineHostMethods = {
   },
 
   async handleNliTimelineStep(delta) {
-    if (!this._manualMutationsOpen()) return;
+    const epoch = this._nliTransportEpoch || 0;
+    const isCurrent = () => (this._nliTransportEpoch || 0) === epoch && this._manualMutationsOpen();
+    if (!isCurrent()) return;
     if (nliNarrativeId() === "nova") {
       const clock = this._liveNliClock();
       const vis = evaluateClock(clock, nliNowMs(), { narrativeId: "nova" });
@@ -1027,28 +1035,30 @@ export const nliTimelineHostMethods = {
     if (visible.length === 0 && !(clock.membership?.length)) return;
     const cacheIds = clock.phase === "idle" ? visible : clock.membership.length ? clock.membership : visible;
     if (!this._nliCacheReady(cacheIds)) {
-      await this._ensureNliFeatureCache();
-      if (!this._manualMutationsOpen()) return;
+      await this._ensureNliFeatureCache(cacheIds, { isCurrent });
+      if (!isCurrent()) return;
       if (!this._nliCacheReady(cacheIds)) return;
     }
     const arm = clock.phase === "idle" ? this._nliArmPayload() : undefined;
     if (clock.phase === "idle" && (!arm.beats || arm.beats.length === 0)) return;
     const next = stepNliClock(clock, delta, nliNowMs(), arm);
     if (next === clock || next.phase === "idle") return;
-    await this._patchNliClock(next);
+    await this._patchNliClock(next, { isCurrent });
   },
 
   async handleNliTimelineSelectBeat(index) {
+    const epoch = this._nliTransportEpoch || 0;
+    const isCurrent = () => (this._nliTransportEpoch || 0) === epoch && this._manualMutationsOpen();
     const narrativeId = nliNarrativeId();
-    if (!this._manualMutationsOpen() || narrativeId !== "nova") return;
+    if (!isCurrent() || narrativeId !== "nova") return;
     const narrativeBoundary = nliNarrativeBoundary();
     const clock = this._nliOptimisticClock || this._liveNliClock();
     const visible = this._playbackWindow().membership;
     const arm = clock.phase === "idle" ? this._nliArmPayload() : undefined;
     const cacheIds = nliCacheIdsForTransport(visible, clock, "nova", arm);
     if (cacheIds.length === 0 || !this._nliCacheReady(cacheIds)) {
-      await this._ensureNliFeatureCache();
-      if (!this._manualMutationsOpen()) return;
+      await this._ensureNliFeatureCache(cacheIds, { isCurrent });
+      if (!isCurrent()) return;
       if (nliNarrativeId() !== narrativeId
           || !sameNarrativeBoundary(narrativeBoundary, nliNarrativeBoundary())) return;
       if (cacheIds.length === 0 || !this._nliCacheReady(cacheIds)) return;
@@ -1058,11 +1068,12 @@ export const nliTimelineHostMethods = {
     if (next.phase === "idle") return;
     this._nliScrub = null;
     this._nliOptimisticClock = null;
-    await this._patchNliClock(next);
+    await this._patchNliClock(next, { isCurrent });
   },
 
   handleNliTimelineScrubPointerDown(clientX) {
     if (!this._manualMutationsOpen()) return;
+    const epoch = this._nliTransportEpoch || 0;
     const clock = this._liveNliClock();
     const visible = this._playbackWindow().membership;
     const narrativeId = nliNarrativeId();
@@ -1093,6 +1104,7 @@ export const nliTimelineHostMethods = {
       this._nliOptimisticClock = clock;
     }
     this._nliScrub = {
+      epoch,
       fromPlaying: clock.phase === "playing",
       restoreClock,
       narrativeId,
@@ -1117,8 +1129,10 @@ export const nliTimelineHostMethods = {
   },
 
   async handleNliTimelineScrubPointerUp(beatIndex) {
+    const epoch = this._nliScrub?.epoch ?? (this._nliTransportEpoch || 0);
+    const isCurrent = () => (this._nliTransportEpoch || 0) === epoch && this._manualMutationsOpen();
     if (this._clearNliScrubOnNarrativeChange()) return;
-    if (!this._manualMutationsOpen()) return;
+    if (!isCurrent()) return;
     if (nliNarrativeId() === "nova") {
       const index = Math.max(0, Math.min(NLI_NOVA_STORY.beats.length - 1, Math.trunc(Number(beatIndex) || 0)));
       return this.handleNliTimelineSelectBeat(index);
@@ -1127,8 +1141,8 @@ export const nliTimelineHostMethods = {
     const visible = this._playbackWindow().membership;
     const cacheIds = clock.phase === "idle" ? visible : clock.membership.length ? clock.membership : visible;
     if (visible.length === 0 || !this._nliCacheReady(cacheIds)) {
-      await this._ensureNliFeatureCache();
-      if (!this._manualMutationsOpen()) {
+      await this._ensureNliFeatureCache(cacheIds, { isCurrent });
+      if (!isCurrent()) {
         this._nliScrub = null;
         this._nliOptimisticClock = null;
         return;
@@ -1149,7 +1163,7 @@ export const nliTimelineHostMethods = {
     this._nliScrub = null;
     this._nliOptimisticClock = null;
     if (next.phase === "idle") return;
-    await this._patchNliClock(next);
+    await this._patchNliClock(next, { isCurrent });
   },
 
   async handleNliTimelineScrubPointerCancel() {

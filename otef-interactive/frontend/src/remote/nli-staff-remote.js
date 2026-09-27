@@ -18,10 +18,11 @@ import {
   waitForInvestigationClockIdle,
 } from "./remote-people-archive-controller.js";
 import { createStaffPackMenus } from "./nli-staff-pack-menus.js";
+import { createStaffFullscreenControl } from "./nli-staff-fullscreen.js";
 import { labelForPlace, placeIsWithinRemoteBounds } from "./remote-place-navigation.js";
 import { applyServerLocale, bindLocaleButtons, getLocale, t, LOCALE_EVENT } from "./remote-locale.js";
 import { homeListHtml } from "./nli-staff-home.js";
-import { COPY, HOME_CUE, NARRATIVES, SCENES, SCRIPTS, SHOW } from "./nli-staff-script.js";
+import { COPY, HOME_CUE, NARRATIVES, SCRIPTS, SHOW } from "./nli-staff-script.js";
 import { nextAction, prevAction, showStepIndex, slideIndexes } from "./nli-staff-flow.js";
 import { searchPlaces } from "../shared/place-navigation/place-catalog.js";
 import {
@@ -91,6 +92,7 @@ export function createNliStaffSearchEventHandlers({
   renderDestination = () => {},
   applyDestinationCue = () => {},
   beforeTransition = () => {},
+  onNavigationCleanupComplete = () => {},
   afterDestinationCue = () => {},
 } = {}) {
   function failClear(token) {
@@ -117,6 +119,7 @@ export function createNliStaffSearchEventHandlers({
       if (!transition.isCurrent(token)) return false;
       if (!cleared) return failClear(token);
       clearSearchUi();
+      onNavigationCleanupComplete();
       setPending(false);
       renderPending();
       setDestination(item, index, returnTo);
@@ -183,10 +186,12 @@ export function initNliStaffRemote(dataContext) {
     connected: false,
     connectionStatus: "disconnected",
     scene: null,
-    freeError: null,
+    searchError: null,
     placeName: null,
     searchPending: false,
+    navigationPending: false,
     presentationClosePending: false,
+    homeFailure: false,
   };
 
   let lastPlaces = [];
@@ -196,6 +201,13 @@ export function initNliStaffRemote(dataContext) {
   let searchActions = null;
   let packMenus = null;
   let presentation = null;
+  const fullscreenLabels = { enter: "", exit: "", unavailable: "" };
+  const fullscreen = createStaffFullscreenControl({
+    root: document.querySelector(".app"),
+    button: $("fullscreenBtn"),
+    status: $("fullscreenStatus"),
+    labels: fullscreenLabels,
+  });
   let navigationGeneration = 0;
 
   const timelineHost = createNliStaffTimelineHost({
@@ -272,6 +284,8 @@ export function initNliStaffRemote(dataContext) {
     onStatus: (status) => {
       state.cueStatus = status;
       renderCueStatus();
+      if (state.screen === "player") renderKit();
+      if (state.screen === "home") renderHome();
     },
   });
   const applyCue = (cue, narrativeId) => cues.apply(cue, narrativeId);
@@ -284,79 +298,6 @@ export function initNliStaffRemote(dataContext) {
     const clock = dataContext?.getInvestigationClock?.() || null;
     timelineHost._syncNliPlayheadTicker?.(clock);
     timelineHost._syncNliEndedTimer?.(clock);
-  }
-
-  async function applyOpeningPreset() {
-    const turningOff = state.scene === "open";
-    navigationGeneration += 1;
-    const generation = navigationGeneration;
-    timelineHost.invalidateTransport();
-    packMenus?.close({ silent: true });
-    const token = searchTransition.begin();
-    cues.cancel();
-    state.searchPending = true;
-    const paintPending = () => {
-      if (state.screen === "player") renderPlayer();
-      else if (state.screen === "free") renderFree();
-    };
-    paintPending();
-    try {
-      state.presentationClosePending = true;
-      paintPending();
-      let closed = true;
-      try {
-        closed = await presentation?.closeForStepChange();
-      } finally {
-        state.presentationClosePending = false;
-        if (searchTransition.isCurrent(token)) paintPending();
-      }
-      if (!searchTransition.isCurrent(token) || generation !== navigationGeneration || closed === false) return false;
-      const cleared = await searchTransition.clearAll(token);
-      if (!searchTransition.isCurrent(token) || generation !== navigationGeneration) return false;
-      if (!cleared) return failSearchClear(token);
-      state.searchPending = false;
-      clearSearchUi();
-      if (peopleArchive?.getArchivePhase?.() === "open") void peopleArchive.closeArchive();
-      state.scene = turningOff ? null : "open";
-      state.freeError = null;
-      if (state.screen === "free") renderFree();
-      const result = await applyCue(HOME_CUE, null);
-      if (!searchTransition.isCurrent(token) || generation !== navigationGeneration) return false;
-      if (result?.status !== "ready") {
-        state.scene = turningOff ? "open" : null;
-        paintPending();
-        return false;
-      }
-      return true;
-    } finally {
-      if (searchTransition.isCurrent(token)) {
-        state.presentationClosePending = false;
-        state.searchPending = false;
-        paintPending();
-      }
-      if (generation === navigationGeneration) rearmTransport();
-    }
-  }
-
-  function applyScene(id) {
-    if (!manualMutationsOpen()) return;
-    const scene = SCENES.find((item) => item.id === id);
-    if (!scene) return;
-    if (id === "layers") {
-      if (packMenus?.isOpen()) packMenus.close();
-      else packMenus?.open();
-      renderFree();
-      return;
-    }
-    if (id === "open") return applyOpeningPreset();
-    timelineHost.invalidateTransport();
-    packMenus?.close({ silent: true });
-    const turningOff = state.scene === id;
-    state.scene = turningOff ? null : id;
-    state.freeError = null;
-    state.placeName = null;
-    renderFree();
-    return applyCue(turningOff ? { layers: [], clock: "idle" } : scene.cue);
   }
 
   function applyChrome() {
@@ -376,6 +317,10 @@ export function initNliStaffRemote(dataContext) {
     document.querySelectorAll("[data-i18n-placeholder]").forEach((el) => {
       el.setAttribute("placeholder", txt(el.dataset.i18nPlaceholder));
     });
+    fullscreenLabels.enter = txt("fullscreenEnter");
+    fullscreenLabels.exit = txt("fullscreenExit");
+    fullscreenLabels.unavailable = txt("fullscreenUnavailable");
+    fullscreen.render();
     document.title = getLocale() === "he" ? "הקרנה · הספרייה הלאומית" : "Projection · National Library";
     renderConnection();
   }
@@ -396,18 +341,28 @@ export function initNliStaffRemote(dataContext) {
       el.hidden = !on;
     });
     $("homeBtn").hidden = name === "home";
-    if (name !== "free") packMenus?.close({ silent: true });
+    $("homeLayersBtn").hidden = name !== "home";
+    if (name !== "home") {
+      packMenus?.close({ silent: true });
+      $("homeLayersBtn").setAttribute("aria-expanded", "false");
+    }
   }
 
   function renderHome() {
+    const busy = state.searchPending || state.navigationPending || state.cueStatus === "applying";
     $("narrativeList").innerHTML = homeListHtml({ locale: getLocale(), pending: state.searchPending });
+    const layersButton = $("homeLayersBtn");
+    layersButton.hidden = state.screen !== "home";
+    layersButton.disabled = busy;
+    layersButton.setAttribute("aria-expanded", String(packMenus?.isOpen() === true));
+    packMenus?.render();
+    $("staffPackMenus").querySelectorAll("[data-layer-ids]").forEach((button) => {
+      button.disabled = button.disabled || busy;
+    });
   }
 
   function sceneCue() {
     if (state.screen === "player") return currentStep()?.cue || null;
-    if (state.screen === "free" && state.scene) {
-      return SCENES.find((item) => item.id === state.scene)?.cue || null;
-    }
     return null;
   }
 
@@ -415,9 +370,13 @@ export function initNliStaffRemote(dataContext) {
     clock: dataContext?.getInvestigationClock?.() || null,
     cue: sceneCue(),
     groups: timelineHost.getEffectiveGroupsForView(),
-    manualFree: state.screen === "free" && !state.scene,
+    manualFree: false,
   });
   timelineHost.isManualMutationAllowed = () => state.cueStatus !== "applying" && !state.searchPending;
+
+  function canReplaceNavigation() {
+    return !state.searchPending || state.navigationPending || state.presentationClosePending;
+  }
 
   function nliSelectedGroup() {
     const live = timelineHost.getEffectiveGroupsForView().find((group) => group?.id === "nli");
@@ -434,6 +393,7 @@ export function initNliStaffRemote(dataContext) {
       false,
       false,
       dataContext.getNarrativeState?.()?.id ?? null,
+      state.cueStatus === "applying" || state.searchPending,
     );
     $("kitTimeline").innerHTML = html;
     timelineHost._syncNliPlayheadTicker?.(clock);
@@ -465,28 +425,37 @@ export function initNliStaffRemote(dataContext) {
   function renderDock() {
     const next = nextAction(state);
     const choices = next.kind === "choose";
-    $("prevBtn").disabled = (state.searchPending && !state.presentationClosePending) || !prevAction(state);
+    $("prevBtn").disabled = !canReplaceNavigation() || !prevAction(state);
     $("nextBtn").hidden = choices;
     $("nextBtn").textContent = txt({ step: "next", resume: "backToShow", finish: "done" }[next.kind] || "next");
-    $("nextBtn").disabled = state.searchPending && !state.presentationClosePending;
+    $("nextBtn").disabled = !canReplaceNavigation();
     $("nextChoices").hidden = !choices;
     $("nextChoices").innerHTML = !choices ? "" : next.ids
       .map((id) => {
         const item = NARRATIVES.find((narrative) => narrative.id === id);
         const title = next.ids.length === 1 ? txt("startStory", { title: loc(item.title) }) : loc(item.title);
-        return `<button type="button" class="branch-btn" data-branch="${id}"${state.searchPending ? " disabled" : ""}><span class="branch-btn-title">${title}</span></button>`;
+        return `<button type="button" class="branch-btn" data-branch="${id}"${canReplaceNavigation() ? "" : " disabled"}><span class="branch-btn-title">${title}</span></button>`;
       })
       .join("");
   }
 
   function renderCueStatus() {
     const key = { applying: "cueApplying", ready: "cueReady", failed: "cueFailed" }[state.cueStatus];
-    ["cueStatus", "freeCueStatus"].forEach((id) => {
-      const el = $(id);
-      if (!el) return;
-      el.textContent = key ? txt(key) : "";
-      el.dataset.status = state.cueStatus || "";
-    });
+    const cueStatus = $("cueStatus");
+    if (cueStatus) {
+      cueStatus.textContent = key ? txt(key) : "";
+      cueStatus.dataset.status = state.cueStatus || "";
+    }
+    const homeFailure = state.screen === "home" && (state.cueStatus === "failed" || state.homeFailure);
+    const homeStatus = $("homeCueStatus");
+    const homeRetry = $("homeRetry");
+    if (homeStatus) {
+      homeStatus.hidden = !homeFailure;
+      homeStatus.textContent = homeFailure
+        ? txt(state.cueStatus === "failed" ? "cueFailed" : "searchClearFailed")
+        : "";
+    }
+    if (homeRetry) homeRetry.hidden = !homeFailure;
   }
 
   function renderKit() {
@@ -504,7 +473,7 @@ export function initNliStaffRemote(dataContext) {
       if (el) el.hidden = !on;
     });
     if (show.kitPresentation) {
-      $("kitPresentation").innerHTML = presentationControlsHtml(step, presentation?.getState(), getLocale());
+      $("kitPresentation").innerHTML = presentationControlsHtml(step, presentation?.getState(), getLocale(), state.cueStatus === "applying" || state.searchPending);
     } else {
       $("kitPresentation").innerHTML = "";
     }
@@ -518,6 +487,7 @@ export function initNliStaffRemote(dataContext) {
         dataContext?.getNarrativeState?.(),
         dataContext?.getEscapeOverlay?.(),
         step?.escapeKinds,
+        state.cueStatus === "applying" || state.searchPending,
       );
     }
     if (show.kitArchive) {
@@ -535,8 +505,6 @@ export function initNliStaffRemote(dataContext) {
       );
       $("archiveBtn").disabled = state.searchPending || !state.connected || pending;
     }
-    const archivePhase = peopleArchive?.getArchivePhase?.() || "closed";
-    $("freeArchiveBtn").disabled = state.searchPending || !state.connected || archivePhase === "opening" || archivePhase === "closing";
     $("searchInput").disabled = state.searchPending;
     $("searchResults").querySelectorAll("button").forEach((button) => { button.disabled = state.searchPending; });
     $("narrativeList").querySelectorAll("button").forEach((button) => { button.disabled = state.searchPending; });
@@ -583,8 +551,8 @@ export function initNliStaffRemote(dataContext) {
     box.innerHTML = html;
   }
 
-  function paintFreeStatus(message) {
-    const status = $("freeStatus");
+  function paintSearchStatus(message) {
+    const status = $("searchStatus");
     if (!status) return;
     status.replaceChildren();
     status.hidden = !message;
@@ -593,33 +561,19 @@ export function initNliStaffRemote(dataContext) {
   }
 
   function renderSearchStatus() {
-    paintFreeStatus(state.searchPending ? txt("searchClearing") : state.freeError || "");
-  }
-
-  function renderFree() {
-    $("sceneList").innerHTML = SCENES.map((scene) => {
-      const active = scene.id === "layers" ? packMenus?.isOpen() : state.scene === scene.id;
-      return `
-            <button type="button" class="scene-btn${active ? " is-active" : ""}" data-scene="${scene.id}">
-              <span class="scene-btn-title">${loc(scene.title)}</span>
-              <span class="scene-btn-meta">${loc(scene.meta)}</span>
-            </button>`;
-    }).join("");
-    packMenus?.render();
-    renderCueStatus();
+    paintSearchStatus(state.searchPending ? txt("searchClearing") : state.searchError || "");
   }
 
   function render() {
     applyChrome();
     renderHome();
     if (state.screen === "player") renderPlayer();
-    if (state.screen === "free") renderFree();
   }
 
   function clearSearchUi() {
     $("searchInput").value = "";
     renderResults("");
-    state.freeError = null;
+    state.searchError = null;
     state.placeName = null;
   }
 
@@ -633,11 +587,17 @@ export function initNliStaffRemote(dataContext) {
   async function transitionToStep(item, index, { returnTo = state.returnTo } = {}) {
     navigationGeneration += 1;
     const generation = navigationGeneration;
+    state.navigationPending = true;
+    if (state.screen === "home") renderHome();
     timelineHost.invalidateTransport();
     try {
       return await searchActions.transitionToStep(item, index, returnTo);
     } finally {
-      if (generation === navigationGeneration) rearmTransport();
+      if (generation === navigationGeneration) {
+        state.navigationPending = false;
+        if (state.screen === "player") renderPlayer();
+        rearmTransport();
+      }
     }
   }
 
@@ -655,9 +615,9 @@ export function initNliStaffRemote(dataContext) {
     if (!searchTransition.isCurrent(token)) return false;
     state.searchPending = false;
     restoreLiveSearchLabel();
-    state.freeError = txt("searchClearFailed");
+    state.searchError = txt("searchClearFailed");
+    if (state.screen === "home") state.homeFailure = true;
     if (state.screen === "player") renderPlayer();
-    else if (state.screen === "free") renderFree();
     else renderKit();
     return false;
   }
@@ -666,7 +626,8 @@ export function initNliStaffRemote(dataContext) {
     if (state.searchPending) return;
     const token = searchTransition.begin();
     state.searchPending = true;
-    renderKit();
+    if (state.screen === "player") renderPlayer();
+    else renderKit();
     const cleared = await searchTransition.clearAll(token);
     if (!searchTransition.isCurrent(token)) return;
     if (!cleared) {
@@ -675,7 +636,7 @@ export function initNliStaffRemote(dataContext) {
     }
     state.searchPending = false;
     state.placeName = null;
-    state.freeError = null;
+    state.searchError = null;
     renderResults("");
     if (state.screen === "player") renderPlayer();
     else renderKit();
@@ -684,7 +645,7 @@ export function initNliStaffRemote(dataContext) {
   function selectPersonResult(person) {
     return searchActions.selectPerson(person, async (selectedPerson) => {
       state.placeName = null;
-      state.freeError = null;
+      state.searchError = null;
       $("searchInput").value = selectedPerson.name;
       renderResults("");
       const selected = await peopleArchive.selectPerson(selectedPerson);
@@ -695,7 +656,7 @@ export function initNliStaffRemote(dataContext) {
 
   function selectPlaceResult(place, name) {
     return searchActions.selectPlace(place, async (selectedPlace, token) => {
-      state.freeError = null;
+      state.searchError = null;
       $("searchInput").value = name;
       renderResults("");
       let request;
@@ -711,7 +672,7 @@ export function initNliStaffRemote(dataContext) {
         if (!searchTransition.isCurrent(token)) return false;
         if (request) placeFocusOwnership.release(request);
         restoreLiveSearchLabel();
-        state.freeError = t("placeSearchFailed");
+        state.searchError = t("placeSearchFailed");
         return false;
       }
     });
@@ -719,8 +680,6 @@ export function initNliStaffRemote(dataContext) {
 
   let bootArmed = true;
   let hydrated = false;
-  let homeFlight = null;
-
   function maybeBootHome() {
     if (!bootArmed || !hydrated || !state.connected) return;
     if (state.screen !== "home" || state.scriptId) {
@@ -733,19 +692,20 @@ export function initNliStaffRemote(dataContext) {
 
   function exitToHome() {
     bootArmed = false;
-    if (!homeFlight) homeFlight = performHomeExit().finally(() => { homeFlight = null; });
-    return homeFlight;
+    state.homeFailure = false;
+    renderCueStatus();
+    return performHomeExit();
   }
 
   async function performHomeExit() {
     navigationGeneration += 1;
     const generation = navigationGeneration;
+    state.navigationPending = true;
     const previous = {
       screen: state.screen,
       scriptId: state.scriptId,
       step: state.step,
       returnTo: state.returnTo,
-      scene: state.scene,
     };
     timelineHost.invalidateTransport();
     const token = searchTransition.begin();
@@ -753,7 +713,7 @@ export function initNliStaffRemote(dataContext) {
     state.searchPending = true;
     const paintPending = () => {
       if (state.screen === "player") renderPlayer();
-      else renderKit();
+      else renderHome();
     };
     paintPending();
     try {
@@ -770,13 +730,13 @@ export function initNliStaffRemote(dataContext) {
       const cleared = await searchTransition.clearAll(token);
       if (!searchTransition.isCurrent(token)) return false;
       if (!cleared) return failSearchClear(token);
+      state.navigationPending = false;
       state.searchPending = false;
       clearSearchUi();
       if (peopleArchive?.getArchivePhase?.() === "open") void peopleArchive.closeArchive();
       state.scriptId = null;
       state.step = 0;
       state.returnTo = null;
-      state.scene = null;
       showScreen("home");
       renderHome();
       const result = await applyCue(HOME_CUE, null);
@@ -785,10 +745,8 @@ export function initNliStaffRemote(dataContext) {
         state.scriptId = previous.scriptId;
         state.step = previous.step;
         state.returnTo = previous.returnTo;
-        state.scene = previous.scene;
         showScreen(previous.screen);
         if (previous.screen === "player") renderPlayer();
-        else if (previous.screen === "free") renderFree();
         else renderHome();
         return false;
       }
@@ -798,10 +756,14 @@ export function initNliStaffRemote(dataContext) {
         state.presentationClosePending = false;
         state.searchPending = false;
         if (state.screen === "player") renderPlayer();
-        else if (state.screen === "free") renderFree();
         else renderHome();
       }
-      if (generation === navigationGeneration) rearmTransport();
+      if (generation === navigationGeneration) {
+        state.navigationPending = false;
+        if (state.screen === "player") renderPlayer();
+        else if (state.screen === "home") renderHome();
+        rearmTransport();
+      }
     }
   }
 
@@ -814,13 +776,13 @@ export function initNliStaffRemote(dataContext) {
     try {
       await peopleSearch.load();
     } catch {
-      state.freeError = txt("archiveMissing");
+      state.searchError = txt("archiveMissing");
       renderKit();
       return;
     }
     const person = findPerson(query);
     if (!person) {
-      state.freeError = txt("archiveMissing");
+      state.searchError = txt("archiveMissing");
       renderKit();
       return;
     }
@@ -842,8 +804,15 @@ export function initNliStaffRemote(dataContext) {
     sheetLede: () => txt("layersSheetLede"),
     closeLabel: () => txt("layersClose"),
     onClose: () => {
-      if (state.screen === "free") renderFree();
+      $("homeLayersBtn").setAttribute("aria-expanded", "false");
     },
+  });
+
+  $("homeLayersBtn").addEventListener("click", () => {
+    if (state.screen !== "home" || state.searchPending || state.cueStatus === "applying" || state.navigationPending) return;
+    if (packMenus.isOpen()) packMenus.close();
+    else packMenus.open();
+    $("homeLayersBtn").setAttribute("aria-expanded", String(packMenus.isOpen()));
   });
 
   peopleArchive = createRemotePeopleArchiveController({
@@ -858,7 +827,7 @@ export function initNliStaffRemote(dataContext) {
     setMode: () => {},
     renderSuggestions: () => renderResults(""),
     setStatus: (message) => {
-      state.freeError = message || null;
+      state.searchError = message || null;
       renderSearchStatus();
     },
     setRootClass: () => {},
@@ -913,7 +882,7 @@ export function initNliStaffRemote(dataContext) {
       else renderKit();
     },
     restoreLiveSearchLabel,
-    showClearFailed: () => { state.freeError = txt("searchClearFailed"); },
+    showClearFailed: () => { state.searchError = txt("searchClearFailed"); },
     clearSearchUi,
     beforeTransition: async () => {
       state.presentationClosePending = true;
@@ -925,6 +894,7 @@ export function initNliStaffRemote(dataContext) {
         if (state.screen === "player") renderPlayer();
       }
     },
+    onNavigationCleanupComplete: () => { state.navigationPending = false; },
     setDestination: (item, index, returnTo) => {
       const nextIndex = Math.max(0, Math.min(index, item.steps.length - 1));
       const step = item.steps[nextIndex];
@@ -967,18 +937,15 @@ export function initNliStaffRemote(dataContext) {
       enterScript(SHOW.id, { step: showStepIndex(shortcut.dataset.showStep) });
       return;
     }
-    const free = event.target.closest("[data-open-free]");
-    if (free) {
-      showScreen("free");
-      renderFree();
-      void timelineHost._ensureNliFeatureCache?.();
-      return;
-    }
     const card = event.target.closest("[data-open]");
     if (card) enterScript(card.dataset.open);
   });
 
   $("homeBtn").addEventListener("click", () => {
+    void exitToHome();
+  });
+
+  $("homeRetry")?.addEventListener("click", () => {
     void exitToHome();
   });
 
@@ -989,7 +956,7 @@ export function initNliStaffRemote(dataContext) {
   });
 
   $("prevBtn").addEventListener("click", () => {
-    if (state.searchPending && !state.presentationClosePending) return;
+    if (!canReplaceNavigation()) return;
     const prev = prevAction(state);
     if (!prev) return;
     if (prev.scriptId === state.scriptId) goToStep(prev.step);
@@ -997,7 +964,7 @@ export function initNliStaffRemote(dataContext) {
   });
 
   $("nextBtn").addEventListener("click", () => {
-    if (state.searchPending && !state.presentationClosePending) return;
+    if (!canReplaceNavigation()) return;
     const next = nextAction(state);
     if (next.kind === "step") goToStep(next.step);
     else if (next.kind === "resume") enterScript(next.scriptId, { step: next.step });
@@ -1005,7 +972,7 @@ export function initNliStaffRemote(dataContext) {
   });
 
   $("nextChoices").addEventListener("click", (event) => {
-    if (state.searchPending && !state.presentationClosePending) return;
+    if (!canReplaceNavigation()) return;
     const btn = event.target.closest("[data-branch]");
     const next = nextAction(state);
     if (!btn || next.kind !== "choose") return;
@@ -1052,7 +1019,7 @@ export function initNliStaffRemote(dataContext) {
       renderResults("");
       if (!place) return;
       if (placeIsWithinRemoteBounds(place, dataContext) === false) {
-        state.freeError = t("placeSearchEmpty");
+        state.searchError = t("placeSearchEmpty");
         renderSearchStatus();
         return;
       }
@@ -1070,14 +1037,10 @@ export function initNliStaffRemote(dataContext) {
     void selectPersonResult(person);
   });
 
-  $("sceneList")?.addEventListener("click", (event) => {
-    const btn = event.target.closest("[data-scene]");
-    if (btn?.dataset.scene) void applyScene(btn.dataset.scene);
-  });
 
   initNliStaffLocaleControls(dataContext, {
     onFailure: () => {
-      state.freeError = t("statusError");
+      state.searchError = t("statusError");
       renderSearchStatus();
     },
   });
@@ -1100,7 +1063,6 @@ export function initNliStaffRemote(dataContext) {
     renderConnection();
     peopleArchive.syncArchiveButton();
     renderKit();
-    if (state.screen === "free") renderFree();
     maybeBootHome();
   });
   dataContext?.subscribe?.("connectionStatus", (status) => {
@@ -1109,7 +1071,7 @@ export function initNliStaffRemote(dataContext) {
   });
   dataContext?.subscribe?.("investigationClock", () => {
     paintTimelineMounts();
-    if (state.screen === "free") packMenus?.render();
+    if (state.screen === "home" && packMenus?.isOpen()) renderHome();
   });
   dataContext?.subscribe?.("narrativeState", () => {
     hydrated = true;
@@ -1121,7 +1083,7 @@ export function initNliStaffRemote(dataContext) {
     renderKit();
   });
   dataContext?.subscribe?.("layerGroups", () => {
-    if (state.screen === "free") renderFree();
+    if (state.screen === "home" && packMenus?.isOpen()) renderHome();
   });
   state.connected = dataContext?.isConnected?.() !== false;
   render();

@@ -406,6 +406,14 @@ export function createNliRevealPresentation(container, {
     if (active === state && state.token === token && !disposed) removeState(state, { mediaStopped: true });
   };
 
+  const beginClose = (state) => {
+    if (state.closePromise) return state.closePromise;
+    state.closing = true;
+    const token = beginOperation(state);
+    state.closePromise = hide(state, token);
+    return state.closePromise;
+  };
+
   const closeCommand = async (command) => {
     if (!isValidatedClose(command)) {
       emitOnce(command, "ignored", active);
@@ -426,14 +434,8 @@ export function createNliRevealPresentation(container, {
       return;
     }
     state.lastSequence = command.sequence;
-    const token = beginOperation(state);
-    await hide(state, token);
-    if (!isCurrent(state, token) && active !== state) {
-      emitOnce(command, "closed", state);
-      return;
-    }
+    await beginClose(state);
     emitOnce(command, "closed", state);
-    if (active === state && state.token === token) removeState(state);
   };
 
   const handleCommand = async (command) => {
@@ -446,7 +448,7 @@ export function createNliRevealPresentation(container, {
       await closeCommand(command);
       return;
     }
-    if (!active ||
+    if (!active || active.closing ||
         command.segmentId !== active.segment.id ||
         command.presentationSessionId !== active.sessionId ||
         command.presentationGeneration !== active.generation ||
@@ -481,8 +483,7 @@ export function createNliRevealPresentation(container, {
       if (disposed) return Promise.resolve();
       const state = active;
       if (!state) return Promise.resolve();
-      const token = beginOperation(state);
-      return hide(state, token);
+      return beginClose(state);
     },
     dispose() {
       if (disposed) return;

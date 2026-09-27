@@ -9,13 +9,13 @@ function escape(value) {
 
 const STAFF_ESCAPE_KINDS = new Set(["individual", "mor"]);
 
-function toggleButtonHtml(kind, pressed) {
+function toggleButtonHtml(kind, pressed, disabled) {
   const labelKey = kind === "mor" ? "nliNovaEscapeMor" : "nliNovaEscapeIndividual";
   const activeClass = pressed ? " is-active" : "";
-  return `<button type="button" class="nli-narrative-button nli-nova-escape-toggle${activeClass}" data-nli-nova-escape="${escape(kind)}" aria-pressed="${pressed ? "true" : "false"}">${escape(t(labelKey))}</button>`;
+  return `<button type="button" class="nli-narrative-button nli-nova-escape-toggle${activeClass}" data-nli-nova-escape="${escape(kind)}" aria-pressed="${pressed ? "true" : "false"}"${disabled ? " disabled" : ""}>${escape(t(labelKey))}</button>`;
 }
 
-export function nliNovaEscapeTogglesHtml(narrativeState, overlayState, kinds) {
+export function nliNovaEscapeTogglesHtml(narrativeState, overlayState, kinds, disabled = false) {
   const acknowledged = normalizeNarrativeState(narrativeState);
   if (acknowledged.id !== "nova") return "";
   const requested = Array.isArray(kinds)
@@ -24,7 +24,7 @@ export function nliNovaEscapeTogglesHtml(narrativeState, overlayState, kinds) {
   if (requested.length === 0) return "";
   const overlay = getEscapeOverlay(overlayState, acknowledged.id);
   return `<section class="nli-nova-escape-toggles" aria-label="${escape(t("nliNovaEscapeTogglesAria"))}">
-    ${requested.map((kind) => toggleButtonHtml(kind, overlay[kind] === true)).join("")}
+    ${requested.map((kind) => toggleButtonHtml(kind, overlay[kind] === true, disabled)).join("")}
   </section>`;
 }
 

@@ -529,6 +529,75 @@ describe("presentation open and close lifecycle", () => {
     expect(h.results.filter((result) => result.outcome === "closed")).toHaveLength(0);
   });
 
+  test("public close owns teardown through the fade and ignores later slide commands", async () => {
+    vi.useFakeTimers();
+    const gates = deferDecode();
+    const h = makeHarness();
+    const opening = h.start("open", {
+      segmentId: "shura", presentationSessionId: "shura-session", presentationGeneration: 10, sequence: 1,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    gates[0].resolve();
+    await vi.advanceTimersByTimeAsync(16);
+    endOpacityFade();
+    await opening;
+
+    const advancing = h.start("next", { segmentId: "shura", presentationSessionId: "shura-session", sequence: 2 });
+    await vi.advanceTimersByTimeAsync(0);
+    gates.at(-1).resolve();
+    await advancing;
+    const video = root.querySelector("section.present video");
+    expect(video).not.toBeNull();
+    const readyBeforeClose = h.results.filter((result) => result.outcome === "ready").length;
+
+    const closing = h.viewer.close();
+    expect(h.viewer.close()).toBe(closing);
+    expect(video.pause).toHaveBeenCalled();
+    const lateNext = h.start("next", { segmentId: "shura", presentationSessionId: "shura-session", sequence: 3 });
+    const latePrevious = h.start("previous", { segmentId: "shura", presentationSessionId: "shura-session", sequence: 4 });
+    const matchingClose = h.start("close", { segmentId: "shura", presentationSessionId: "shura-session", sequence: 5 });
+    await vi.advanceTimersByTimeAsync(16);
+    await vi.advanceTimersByTimeAsync(600);
+    await Promise.all([closing, lateNext, latePrevious, matchingClose]);
+
+    expect(overlay()).toBeNull();
+    expect(h.results.filter((result) => result.outcome === "ready")).toHaveLength(readyBeforeClose);
+    expect(h.results.filter((result) => result.outcome === "closed")).toHaveLength(1);
+    expect(h.reveal.destroyed).toBe(true);
+  });
+
+  test("a newer Open survives completion of a public close", async () => {
+    vi.useFakeTimers();
+    const gates = deferDecode();
+    const h = makeHarness();
+    const first = h.start("open", { segmentId: "shura", presentationGeneration: 10, sequence: 1 });
+    await vi.advanceTimersByTimeAsync(0);
+    gates[0].resolve();
+    await vi.advanceTimersByTimeAsync(16);
+    endOpacityFade();
+    await first;
+
+    const closing = h.viewer.close();
+    await vi.advanceTimersByTimeAsync(16);
+    const newerGates = deferDecode();
+    const newer = h.start("open", {
+      segmentId: "nova_memorial", presentationSessionId: "newer", presentationGeneration: 11, sequence: 1,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    endOpacityFade();
+    await vi.advanceTimersByTimeAsync(600);
+    await closing;
+    newerGates.at(-1).resolve();
+    await vi.advanceTimersByTimeAsync(16);
+    endOpacityFade();
+    await vi.advanceTimersByTimeAsync(600);
+    await newer;
+
+    expect(overlay()).not.toBeNull();
+    expect(h.reveal.slideNumbers()).toEqual([12, 13, 14, 15, 16]);
+    expect(h.results.map((result) => result.outcome)).toEqual(["opened", "opened"]);
+  });
+
   test("a new open during close survives the old fade completion", async () => {
     vi.useFakeTimers();
     const gates = deferDecode();

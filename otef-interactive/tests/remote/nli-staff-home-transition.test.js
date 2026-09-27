@@ -10,10 +10,15 @@ import { setLocale } from "../../frontend/src/remote/remote-locale.js";
 const FIXTURE = `
   <div class="app">
     <button type="button" id="homeBtn" hidden></button>
+    <button type="button" id="homeLayersBtn" aria-label="Layers"></button>
+    <button type="button" id="fullscreenBtn"></button>
+    <p id="fullscreenStatus" hidden></p>
     <button type="button" id="localeHe"></button>
     <button type="button" id="localeEn"></button>
     <span id="staffConnection"></span>
     <section class="screen is-active" data-screen="home">
+      <p id="homeCueStatus" hidden role="status"></p>
+      <button id="homeRetry" hidden></button>
       <div id="narrativeList"></div>
     </section>
     <section class="screen" data-screen="player" hidden>
@@ -31,7 +36,7 @@ const FIXTURE = `
           <div id="searchKit">
             <input id="searchInput" />
             <ul id="searchResults"></ul>
-            <p id="freeStatus" hidden></p>
+            <p id="searchStatus" hidden></p>
             <button type="button" id="freeArchiveBtn"></button>
           </div>
         </div>
@@ -44,10 +49,6 @@ const FIXTURE = `
       <button type="button" id="prevBtn"></button>
       <button type="button" id="nextBtn"></button>
       <div id="nextChoices" hidden></div>
-    </section>
-    <section class="screen" data-screen="free" hidden>
-      <p id="freeCueStatus"></p>
-      <div id="sceneList"></div>
     </section>
     <div id="staffPackMenus" hidden></div>
   </div>
@@ -122,6 +123,7 @@ function mount(options = {}) {
       return { ok: true };
     },
     setEnabledLayerIds: async (ids) => {
+      if (h.layerGate) await h.layerGate;
       h.layers.push([...ids]);
       return { ok: true };
     },
@@ -178,7 +180,7 @@ describe("NLI staff Home transitions", () => {
     expect(COPY.en.disconnected).toBe("Map is disconnected");
   });
 
-  test("header Home, narrative finish, Free, and a selected person apply the Home cue", async () => {
+  test("header Home, narrative finish, and a selected person apply the Home cue", async () => {
     setLocale("en", { persist: false });
     session = mount();
     await bootRemote(session);
@@ -208,13 +210,7 @@ describe("NLI staff Home transitions", () => {
     });
     expect(h.layers.at(-1)).toEqual([...HOME_LAYER_IDS]);
 
-    await h.openCard('[data-open-free="1"]');
-    expect(activeScreen()).toBe("free");
-    el("homeBtn").click();
-    await vi.waitFor(() => {
-      expect(h.layers.at(-1)).toEqual([...HOME_CUE.layers]);
-      expect(activeScreen()).toBe("home");
-    });
+    expect(activeScreen()).toBe("home");
   });
 
   test("name-wall Home resets to the Home cue and a null narrative failure stays failed and retryable", async () => {
@@ -315,9 +311,10 @@ describe("NLI staff Home transitions", () => {
     });
     await vi.waitFor(() => expect(el("kitPresentation").innerHTML).toContain('data-presentation-action="next"'));
 
-    el("nextBtn").click();
+    el("homeBtn").click();
     await vi.waitFor(() => expect(h.commands.at(-1)?.presentationAction).toBe("close"));
     const layersAtClose = h.layers.length;
+    el("nextBtn").click();
     el("homeBtn").click();
     h.emit("narrativePresentationResult", { ...h.commands.at(-1), outcome: "closed" });
     await vi.waitFor(() => {
@@ -327,6 +324,158 @@ describe("NLI staff Home transitions", () => {
     expect(h.layers).toHaveLength(layersAtClose + 1);
   });
 
+  test("Next can replace Home while navigation-owned person cleanup is pending", async () => {
+    setLocale("en", { persist: false });
+    session = mount();
+    await bootRemote(session);
+    await session.h.openCard('[data-open="nova"]');
+    el("ticks").querySelector('[data-step="3"]').click();
+    await vi.waitFor(() => expect(el("stepTitle").textContent).toBe("Mor Levy"));
+
+    let releaseClear;
+    const clearGate = new Promise((resolve) => { releaseClear = resolve; });
+    session.h.person = { personId: "ada", revision: 2, datasetVersion: "v", name: "Ada" };
+    session.h.clearPerson = vi.fn(async () => {
+      await clearGate;
+      session.h.person = { personId: null, revision: 3, datasetVersion: "v" };
+      return session.h.person;
+    });
+    el("homeBtn").click();
+    await vi.waitFor(() => expect(session.h.clearPerson).toHaveBeenCalled());
+    expect(el("prevBtn").disabled).toBe(false);
+    expect(el("nextBtn").disabled).toBe(false);
+    el("nextBtn").click();
+    releaseClear();
+    await vi.waitFor(() => expect(el("stepTitle").textContent).not.toBe("Mor Levy"));
+    expect(activeScreen()).toBe("player");
+  });
+
+  test("ordinary search cleanup continues to block Next and Back", async () => {
+    setLocale("en", { persist: false });
+    session = mount();
+    await bootRemote(session);
+    await session.h.openCard('[data-show-step="identity-database"]');
+
+    let releaseClear;
+    const clearGate = new Promise((resolve) => { releaseClear = resolve; });
+    session.h.person = { personId: "ada", revision: 2, datasetVersion: "v", name: "Ada" };
+    session.h.clearPerson = vi.fn(async () => {
+      await clearGate;
+      session.h.person = { personId: null, revision: 3, datasetVersion: "v" };
+      return session.h.person;
+    });
+    el("searchInput").value = "";
+    el("searchInput").dispatchEvent(new Event("input", { bubbles: true }));
+    await vi.waitFor(() => expect(session.h.clearPerson).toHaveBeenCalled());
+    expect(el("prevBtn").disabled).toBe(true);
+    expect(el("nextBtn").disabled).toBe(true);
+    releaseClear();
+    await vi.waitFor(() => expect(el("searchInput").disabled).toBe(false));
+  });
+
+  test("ordinary search cleanup blocks Next after navigation cleanup while its cue is pending", async () => {
+    setLocale("en", { persist: false });
+    session = mount();
+    await bootRemote(session);
+    let releaseCue;
+    const cueGate = new Promise((resolve) => { releaseCue = resolve; });
+    session.h.layerGate = cueGate;
+    el("narrativeList").querySelector('[data-show-step="identity-database"]').click();
+    await vi.waitFor(() => expect(el("cueStatus").dataset.status).toBe("applying"));
+
+    let releaseClear;
+    const clearGate = new Promise((resolve) => { releaseClear = resolve; });
+    session.h.person = { personId: "ada", revision: 2, datasetVersion: "v", name: "Ada" };
+    session.h.clearPerson = vi.fn(async () => {
+      await clearGate;
+      session.h.person = { personId: null, revision: 3, datasetVersion: "v" };
+      return session.h.person;
+    });
+    el("searchInput").value = "";
+    el("searchInput").dispatchEvent(new Event("input", { bubbles: true }));
+    await vi.waitFor(() => expect(session.h.clearPerson).toHaveBeenCalled());
+    expect(el("nextBtn").disabled).toBe(true);
+    releaseClear();
+    await vi.waitFor(() => expect(el("searchInput").disabled).toBe(false));
+    releaseCue();
+    await vi.waitFor(() => expect(el("cueStatus").dataset.status).not.toBe("applying"));
+  });
+
+  test("Home releases navigation ownership before its destination cue applies", async () => {
+    setLocale("en", { persist: false });
+    session = mount();
+    await bootRemote(session);
+    let releaseCue;
+    session.h.layerGate = new Promise((resolve) => { releaseCue = resolve; });
+    session.h.emit("narrativeState", session.h.narrative);
+    session.h.emit("connection", true);
+    await vi.waitFor(() => expect(el("cueStatus").dataset.status).toBe("applying"));
+
+    el("narrativeList").querySelector('[data-open="nova"]').click();
+    await vi.waitFor(() => {
+      expect(activeScreen()).toBe("player");
+      expect(el("stepTitle").textContent).toBe("The Nova site");
+    });
+    releaseCue();
+    await vi.waitFor(() => expect(el("cueStatus").dataset.status).toBe("ready"));
+    expect(session.h.narrative.id).toBe("nova");
+    expect(session.h.layers.at(-1)).not.toEqual([...HOME_LAYER_IDS]);
+  });
+
+  test("failed initial Home person cleanup shows failure and Retry", async () => {
+    setLocale("en", { persist: false });
+    session = mount({ person: { personId: "ada", revision: 1, datasetVersion: "v", name: "Ada" } });
+    await bootRemote(session);
+    session.h.clearPerson = vi.fn(async () => session.h.person);
+    session.h.emit("narrativeState", session.h.narrative);
+    session.h.emit("connection", true);
+    await vi.waitFor(() => expect(session.h.clearPerson).toHaveBeenCalled());
+    await vi.waitFor(() => expect(el("homeCueStatus").hidden).toBe(false));
+    expect(el("homeCueStatus").textContent).toBe(COPY.en.searchClearFailed);
+    expect(el("homeRetry").hidden).toBe(false);
+
+    session.h.clearPerson = vi.fn(async () => {
+      session.h.person = { personId: null, revision: 2, datasetVersion: "v" };
+      return session.h.person;
+    });
+    el("homeRetry").click();
+    await vi.waitFor(() => expect(el("homeCueStatus").hidden).toBe(true));
+    await vi.waitFor(() => expect(session.h.layers.at(-1)).toEqual([...HOME_LAYER_IDS]));
+  });
+  test("initial Home failure is visible and Retry applies the Home cue", async () => {
+    setLocale("en", { persist: false });
+    session = mount();
+    await bootRemote(session);
+    session.h.failNull = true;
+    session.h.emit("narrativeState", session.h.narrative);
+    session.h.emit("connection", true);
+    await vi.waitFor(() => expect(session.h.narratives).toContain(null));
+    await vi.waitFor(() => expect(el("homeCueStatus")?.hidden).toBe(false));
+    expect(el("homeCueStatus").textContent).toBe("Could not send the scene");
+    expect(el("homeRetry").hidden).toBe(false);
+
+    const failedCalls = session.h.narratives.length;
+    session.h.failNull = false;
+    el("homeRetry").click();
+    await vi.waitFor(() => expect(session.h.narratives.length).toBeGreaterThan(failedCalls));
+    await vi.waitFor(() => expect(el("homeRetry").hidden).toBe(true));
+    expect(session.h.layers.at(-1)).toEqual([...HOME_LAYER_IDS]);
+  });
+
+  test("cue busy state disables the rendered escape and presentation controls", async () => {
+    setLocale("en", { persist: false });
+    session = mount();
+    await bootRemote(session);
+    await session.h.openCard('[data-open="nova"]');
+    let releaseNova;
+    session.h.layerGate = new Promise((resolve) => { releaseNova = resolve; });
+    el("ticks").querySelector('[data-step="3"]').click();
+    await vi.waitFor(() => expect(el("cueStatus").dataset.status).toBe("applying"));
+    expect(el("kitEscape").querySelector("button").disabled).toBe(true);
+    expect(el("kitPresentation").querySelector('[data-presentation-action="open"]').disabled).toBe(true);
+    releaseNova();
+    await vi.waitFor(() => expect(el("cueStatus").dataset.status).toBe("ready"));
+  });
   test("sessionless hydrated Home exits once, including over a null narrative, and reconnect or locale does not reset", async () => {
     setLocale("en", { persist: false });
     session = mount({ narrative: { id: null, revision: 4, transition: "steady" } });
@@ -385,113 +534,56 @@ describe("NLI staff Home transitions", () => {
     expect(h.layers.at(-1)).not.toEqual([...HOME_LAYER_IDS]);
   });
 
-  test("turning the Free opening preset off applies Home, and turning the loop off still clears layers", async () => {
+  test("Home layer sheet opens and closes without resetting the scene, then closes on navigation", async () => {
     setLocale("en", { persist: false });
     session = mount();
     await bootRemote(session);
     const { h } = session;
+    const narrativesBefore = h.narratives.length;
+    const layersBefore = h.layers.length;
 
-    el("narrativeList").querySelector("[data-open-free]").click();
-    await vi.waitFor(() => expect(el("sceneList").querySelector('[data-scene="open"]')).toBeTruthy());
-    el("sceneList").querySelector('[data-scene="open"]').click();
-    await vi.waitFor(() => expect(h.layers.at(-1)).toEqual([...HOME_LAYER_IDS]));
-    el("sceneList").querySelector('[data-scene="open"]').click();
-    await vi.waitFor(() => expect(h.layers).toHaveLength(2));
-    expect(h.layers.at(-1)).toEqual([...HOME_LAYER_IDS]);
-    expect(h.narratives.at(-1)).toBe(null);
+    el("homeLayersBtn").click();
+    expect(activeScreen()).toBe("home");
+    expect(el("staffPackMenus").hidden).toBe(false);
+    expect(el("staffPackMenus").querySelector('[role="dialog"]')).toBeTruthy();
+    el("staffPackMenus").querySelector(".layer-sheet-close").click();
+    expect(el("staffPackMenus").hidden).toBe(true);
+    expect(h.narratives).toHaveLength(narrativesBefore);
+    expect(h.layers).toHaveLength(layersBefore);
 
-    h.clock = { phase: "playing", revision: 9 };
-    el("sceneList").querySelector('[data-scene="loop"]').click();
-    await vi.waitFor(() => expect(el("cueStatus").dataset.status).toBe("failed"));
-    el("sceneList").querySelector('[data-scene="loop"]').click();
-    await vi.waitFor(() => expect(h.layers.at(-1)).toEqual([]));
+    el("homeLayersBtn").click();
+    await h.openCard('[data-open="segev"]');
+    expect(activeScreen()).toBe("player");
+    expect(el("staffPackMenus").hidden).toBe(true);
+    expect(el("homeLayersBtn").hidden).toBe(true);
   });
 
-  test("Free opening closes a known presentation and clears search before Home", async () => {
+  test("Home layer access is disabled while the Home reset is applying", async () => {
+    setLocale("en", { persist: false });
+    session = mount();
+    await bootRemote(session);
+    let releaseLayers;
+    session.h.layerGate = new Promise((resolve) => { releaseLayers = resolve; });
+    session.h.emit("narrativeState", session.h.narrative);
+    session.h.emit("connection", true);
+    await vi.waitFor(() => expect(el("cueStatus").dataset.status).toBe("applying"));
+    expect(el("homeLayersBtn").disabled).toBe(true);
+    el("homeLayersBtn").click();
+    expect(el("staffPackMenus").hidden).toBe(true);
+    releaseLayers();
+    await vi.waitFor(() => expect(el("cueStatus").dataset.status).toBe("ready"));
+  });
+
+  test("a rendered Segev presentation button dispatches the open command", async () => {
     setLocale("en", { persist: false });
     session = mount();
     await bootRemote(session);
     const { h } = session;
-
-    el("narrativeList").querySelector("[data-open-free]").click();
-    await vi.waitFor(() => expect(el("sceneList").querySelector('[data-scene="open"]')).toBeTruthy());
-    h.person = { personId: "ada", revision: 3, datasetVersion: "v" };
-    const layersBefore = h.layers.length;
-    const narrativesBefore = h.narratives.length;
-    h.clearPerson = vi.fn(async () => {
-      expect(h.layers).toHaveLength(layersBefore);
-      expect(h.narratives).toHaveLength(narrativesBefore);
-      h.person = { personId: null, revision: 4, datasetVersion: "v" };
-      return h.person;
-    });
-    el("sceneList").querySelector('[data-scene="open"]').click();
-    await vi.waitFor(() => expect(h.clearPerson).toHaveBeenCalled());
-    await vi.waitFor(() => expect(h.layers.at(-1)).toEqual([...HOME_LAYER_IDS]));
-    expect(h.narratives.at(-1)).toBeNull();
-    expect(activeScreen()).toBe("free");
-    expect(el("sceneList").querySelector('[data-scene="open"]').classList.contains("is-active")).toBe(true);
-
-    h.person = { personId: "bea", revision: 5, datasetVersion: "v" };
-    h.clearPerson = vi.fn(async () => ({ personId: "bea", revision: 5, datasetVersion: "v" }));
-    const layersAtFailure = h.layers.length;
-    const narrativesAtFailure = h.narratives.length;
-    el("sceneList").querySelector('[data-scene="open"]').click();
-    await vi.waitFor(() => expect(h.clearPerson).toHaveBeenCalled());
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(h.layers).toHaveLength(layersAtFailure);
-    expect(h.narratives).toHaveLength(narrativesAtFailure);
-    expect(h.person.personId).toBe("bea");
-    expect(activeScreen()).toBe("free");
-    expect(el("sceneList").querySelector('[data-scene="open"]').classList.contains("is-active")).toBe(true);
-
-    h.clearPerson = vi.fn(async () => {
-      h.person = { personId: null, revision: h.person.revision + 1, datasetVersion: "v" };
-      return h.person;
-    });
-    el("homeBtn").click();
-    await vi.waitFor(() => expect(activeScreen()).toBe("home"));
-    await h.openCard('[data-open="nova"]');
-    el("ticks").querySelector('[data-step="3"]').click();
-    await vi.waitFor(() => {
-      expect(el("stepTitle").textContent).toBe("Mor Levy");
-      expect(el("cueStatus").dataset.status).toBe("ready");
-    });
-    el("kitPresentation").querySelector('[data-presentation-action="open"]').click();
+    await h.openCard('[data-open="segev"]');
+    const open = el("kitPresentation").querySelector('[data-presentation-action="open"]');
+    expect(open).toBeTruthy();
+    open.click();
     await vi.waitFor(() => expect(h.commands.at(-1)?.presentationAction).toBe("open"));
-    h.emit("narrativePresentationResult", {
-      ...h.commands.at(-1),
-      outcome: "opened",
-      slide: 9,
-      range: [9, 11],
-    });
-    await vi.waitFor(() => expect(el("kitPresentation").innerHTML).toContain('data-presentation-action="close"'));
-
-    h.person = { personId: "ada", revision: 8, datasetVersion: "v" };
-    h.clearPerson = vi.fn(async () => {
-      h.person = { personId: null, revision: 9, datasetVersion: "v" };
-      return h.person;
-    });
-    const layersAtClose = h.layers.length;
-    const narrativesAtClose = h.narratives.length;
-    el("sceneList").querySelector('[data-scene="open"]').click();
-    await vi.waitFor(() => expect(h.commands.at(-1)?.presentationAction).toBe("close"));
-    expect(h.clearPerson).not.toHaveBeenCalled();
-    expect(h.layers).toHaveLength(layersAtClose);
-    expect(h.narratives).toHaveLength(narrativesAtClose);
-    h.emit("narrativePresentationResult", { ...h.commands.at(-1), outcome: "unavailable" });
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(h.clearPerson).not.toHaveBeenCalled();
-    expect(h.layers).toHaveLength(layersAtClose);
-    expect(h.narratives).toHaveLength(narrativesAtClose);
-    expect(activeScreen()).not.toBe("home");
-
-    el("sceneList").querySelector('[data-scene="open"]').click();
-    await vi.waitFor(() => expect(h.commands.at(-1)?.presentationAction).toBe("close"));
-    h.emit("narrativePresentationResult", { ...h.commands.at(-1), outcome: "closed" });
-    await vi.waitFor(() => expect(h.layers.at(-1)).toEqual([...HOME_LAYER_IDS]));
-    expect(h.clearPerson).toHaveBeenCalled();
-    expect(h.narratives.at(-1)).toBeNull();
-    expect(activeScreen()).not.toBe("home");
   });
 
   test("a failed close or search clear on a junction rearms the end timer from the latest clock", async () => {

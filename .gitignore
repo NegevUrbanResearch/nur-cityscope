@@ -99,6 +99,9 @@ setup-config.csv
 # Project specific folders and files
 external_files/
 .superpowers/
+# Local agent attachments and NLI repair review evidence.
+.codex-remote-attachments/
+/docs/reviews/2026-09-27-nli-review/
 **/docs/superpowers/
 _nli_geojson_inspect/
 geojson-*.zip

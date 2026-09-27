@@ -9,6 +9,17 @@ import { createMarkerLineSquareImageData } from "../shared/markerline-square-ima
 import { createCaptivityBleedImageData } from "../shared/captivity-bleed-marker.js";
 import { irToMapLibreLayers } from "../shared/maplibre-style-bridge.js";
 import layerRegistry from "../shared/layer-registry.js";
+import {
+  INVESTIGATION_ALARMS_FULL_ID,
+  INVESTIGATION_LINES_FULL_ID,
+  INVESTIGATION_POLYGONS_FULL_ID,
+} from "../shared/nli-investigation-beats.js";
+
+const TIMELINE_RENDERER_FULL_IDS = new Set([
+  INVESTIGATION_POLYGONS_FULL_ID,
+  INVESTIGATION_LINES_FULL_ID,
+  INVESTIGATION_ALARMS_FULL_ID,
+]);
 
 /**
  * Opacity paint keys that slideshow staging can force to 0. Only when the
@@ -401,6 +412,7 @@ function getOrCreateMapState(map) {
       loadedSources: new Map(), // fullId -> sourceId
       loadedLayerIds: new Map(), // fullId -> string[]
       retainedHiddenFullIds: new Map(), // fullId -> true, insertion order tracks hide age
+      timelineSuppressedFullIds: new Set(),
       hatchPatternIdsByFullId: new Map(), // fullId -> string[]
       hatchPatternRefCounts: new Map(), // patternId -> number
       ownedImageFactories: new Map(), // imageId -> { create, options }
@@ -604,6 +616,10 @@ function hideRetainedFullId(map, fullId, state, lifecycleOptions) {
   return true;
 }
 
+function timelineBaseVisibility(fullId, state) {
+  return state.timelineSuppressedFullIds.has(fullId) ? "none" : "visible";
+}
+
 function restoreRetainedFullId(map, fullId, state) {
   if (!state.retainedHiddenFullIds.has(fullId)) {
     return false;
@@ -624,7 +640,7 @@ function restoreRetainedFullId(map, fullId, state) {
     }
   }
   for (const layerId of mlLayerIds) {
-    map.setLayoutProperty(layerId, "visibility", "visible");
+    map.setLayoutProperty(layerId, "visibility", timelineBaseVisibility(fullId, state));
   }
   state.retainedHiddenFullIds.delete(fullId);
   return true;
@@ -973,6 +989,9 @@ function addLayerToMap(map, fullId, state, layerStyleOptions, stagedMeta) {
       );
     }
     const layerDef = { ...styleRest, source: sourceId };
+    if (state.timelineSuppressedFullIds.has(fullId)) {
+      layerDef.layout = { ...(layerDef.layout || {}), visibility: "none" };
+    }
 
     if (usesVectorSource && pmtilesVectorSourceLayer) {
       layerDef["source-layer"] = pmtilesVectorSourceLayer;
@@ -1068,6 +1087,39 @@ function syncLayerGroupsToMap(map, layerGroups, layerStyleOptions, stagedMeta) {
 
 export function applyLayerGroupsToMap(map, layerGroups, layerStyleOptions) {
   syncLayerGroupsToMap(map, layerGroups, layerStyleOptions, null);
+}
+
+/** Apply the synchronous renderer-ownership visibility rule for authored NLI bases. */
+export function syncTimelineBaseLayerVisibility(map, { suppressedFullIds = [], enabledFullIds = [] } = {}) {
+  if (!map) return;
+  const state = getOrCreateMapState(map);
+  const nextSuppressed = new Set(
+    [...suppressedFullIds].filter((fullId) => TIMELINE_RENDERER_FULL_IDS.has(fullId)),
+  );
+  const enabled = new Set(
+    [...enabledFullIds].filter((fullId) => TIMELINE_RENDERER_FULL_IDS.has(fullId)),
+  );
+  const changed = new Set([...state.timelineSuppressedFullIds, ...nextSuppressed]);
+  state.timelineSuppressedFullIds = nextSuppressed;
+  for (const fullId of changed) {
+    const layerIds = new Set(state.loadedLayerIds.get(fullId) || []);
+    try {
+      for (const layer of map.getStyle?.()?.layers || []) {
+        if (layer?.source === fullId && typeof layer.id === "string") layerIds.add(layer.id);
+      }
+    } catch {
+      // A style can be unavailable during replacement; newly added layers use the saved rule.
+    }
+    if (nextSuppressed.has(fullId)) {
+      for (const layerId of layerIds) {
+        if (map.getLayer?.(layerId)) map.setLayoutProperty?.(layerId, "visibility", "none");
+      }
+    } else if (enabled.has(fullId)) {
+      for (const layerId of layerIds) {
+        if (map.getLayer?.(layerId)) map.setLayoutProperty?.(layerId, "visibility", "visible");
+      }
+    }
+  }
 }
 
 export function clearAllLayers(map) {

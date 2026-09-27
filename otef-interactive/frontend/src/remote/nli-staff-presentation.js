@@ -9,7 +9,7 @@ function uuid() {
 }
 
 export function createNliStaffPresentationController({ dataContext, onStateChange = () => {} } = {}) {
-  let state = { phase: "closed", segmentId: null, sessionId: null, slide: null, range: null };
+  let state = { phase: "closed", segmentId: null, sessionId: null, slide: null, range: null, retryOpenSegmentId: null };
   let session = null;
   let priorGeneration = 0;
   let pending = null;
@@ -36,6 +36,7 @@ export function createNliStaffPresentationController({ dataContext, onStateChang
     clearTimeout(request.timer);
     if (result.outcome === "unavailable") {
       const retainSession = request.command.presentationAction === "close";
+      if (request.command.presentationAction === "open") state = { ...state, retryOpenSegmentId: request.command.segmentId };
       if (!retainSession) session = null;
       publish({
         phase: "failed",
@@ -65,6 +66,7 @@ export function createNliStaffPresentationController({ dataContext, onStateChang
         sessionId: request.command.presentationSessionId,
         slide: Number.isInteger(result.slide) ? result.slide : state.slide,
         range: Array.isArray(result.range) ? result.range : state.range,
+        retryOpenSegmentId: request.command.presentationAction === "open" ? null : state.retryOpenSegmentId,
       });
     }
     request.resolve(true);
@@ -111,6 +113,9 @@ export function createNliStaffPresentationController({ dataContext, onStateChang
     request.timer = setTimeout(() => {
       if (pending !== request) return;
       pending = null;
+      if (request.command.presentationAction === "open") {
+        state = { ...state, retryOpenSegmentId: request.command.segmentId };
+      }
       setFailed(true);
       request.resolve(false);
     }, COMMAND_TIMEOUT_MS);
@@ -118,6 +123,9 @@ export function createNliStaffPresentationController({ dataContext, onStateChang
       if (pending !== request) return;
       pending = null;
       clearTimeout(request.timer);
+      if (request.command.presentationAction === "open") {
+        state = { ...state, retryOpenSegmentId: request.command.segmentId };
+      }
       setFailed(true);
       request.resolve(false);
     });
@@ -196,7 +204,7 @@ function slideControls(step, state, locale, labels, disabled) {
   </section>`;
 }
 
-export function presentationControlsHtml(step, state, locale) {
+export function presentationControlsHtml(step, state, locale, mutationBusy = false) {
   const presentation = step?.presentation;
   if (!presentation) return "";
   const labels = {
@@ -217,10 +225,10 @@ export function presentationControlsHtml(step, state, locale) {
   }
   const active = state?.phase === "open" && sameSegment;
   if (!active) {
-    if (presentation.open !== "manual" || state?.phase !== "closed") return "";
-    return `<div class="presentation-controls"><button type="button" class="btn" data-presentation-action="open">${labels.open}</button></div>`;
+    if ((presentation.open !== "manual" && state?.retryOpenSegmentId !== presentation.segmentId) || state?.phase !== "closed") return "";
+    return `<div class="presentation-controls"><button type="button" class="btn" data-presentation-action="open"${mutationBusy ? " disabled" : ""}>${labels.open}</button></div>`;
   }
-  return slideControls(step, state, locale, labels, false);
+  return slideControls(step, state, locale, labels, mutationBusy);
 }
 
 export function createNliStaffPresentationButtonHandler({

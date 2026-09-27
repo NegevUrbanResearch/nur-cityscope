@@ -36,6 +36,7 @@ const PLAYABLE_LAYER_IDS = ["investigation_polygons", "lines", "alarms"];
 const FIXTURE = `
   <div class="app">
     <button type="button" id="homeBtn" hidden></button>
+    <button type="button" id="homeLayersBtn" hidden></button>
     <button type="button" id="localeHe"></button>
     <button type="button" id="localeEn"></button>
     <span id="staffConnection"></span>
@@ -55,7 +56,7 @@ const FIXTURE = `
           <div id="searchKit">
             <input id="searchInput" />
             <ul id="searchResults"></ul>
-            <p id="freeStatus" hidden></p>
+            <p id="searchStatus" hidden></p>
             <button type="button" id="freeArchiveBtn"></button>
           </div>
         </div>
@@ -68,10 +69,6 @@ const FIXTURE = `
       <button type="button" id="prevBtn"></button>
       <button type="button" id="nextBtn"></button>
       <div id="nextChoices" hidden></div>
-    </section>
-    <section class="screen" data-screen="free" hidden>
-      <p id="freeCueStatus"></p>
-      <div id="sceneList"></div>
     </section>
     <div id="staffPackMenus" hidden></div>
   </div>

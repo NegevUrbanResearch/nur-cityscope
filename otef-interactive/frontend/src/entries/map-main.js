@@ -488,9 +488,10 @@ async function bootstrapMapRuntime() {
       applyNarrativeHouseOutlineFilter(map, OTEFDataContext.getNarrativeState?.()?.id ?? null);
       raiseDarkBasemapPlaceLabels(map);
     };
+    syncContextInvestigation();
     applyGisLayerGroups(initialGroups);
     applyStoredNliLabelHeading(map);
-    syncContextFlowAnimations();
+    syncContextRouteProgress();
     const personVisual = createGisPersonSelection({
       map,
       maplibregl,

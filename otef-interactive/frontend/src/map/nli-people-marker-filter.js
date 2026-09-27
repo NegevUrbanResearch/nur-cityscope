@@ -17,6 +17,11 @@ const locationFilter = (location) => Object.freeze(["==", Object.freeze(["get", 
 
 export const NOVA_PEOPLE_FILTER = locationFilter("Nova");
 export const NIR_OZ_PEOPLE_FILTER = locationFilter("Nir Oz");
+const NO_HOUSE_FILTER = Object.freeze([
+  "==",
+  Object.freeze(["literal", 1]),
+  Object.freeze(["literal", 0]),
+]);
 
 export function peopleFilterForNarrative(narrativeId) {
   if (narrativeId === "nova") return NOVA_PEOPLE_FILTER;
@@ -29,7 +34,7 @@ export function houseOutlineFilterForNarrative(id) {
   if (id === "segev") return ["==", ["get", "note"], "בית משפחת שגב"];
   if (id === "sderot") return ["==", ["get", "note"], "תחנת משטרה שדרות"];
   if (id === "hostages") return ["==", ["get", "note"], "בית משפחת פרי"];
-  return ["==", 1, 0];
+  return NO_HOUSE_FILTER;
 }
 
 export function peopleLegendClassVisible(narrativeId, classValue) {

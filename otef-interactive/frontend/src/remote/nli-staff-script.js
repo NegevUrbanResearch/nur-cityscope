@@ -12,17 +12,16 @@ export const COPY = {
     cueApplying: "שולח את הסצנה…",
     cueReady: "הסצנה נשלחה",
     cueFailed: "שליחת הסצנה נכשלה",
+    homeRetry: "ניסיון נוסף",
     stepAria: "מעבר לשלב {{n}}",
     showTitle: "רצף ההקרנה המלא",
     showMeta: "הרצף המלא, שלב אחר שלב",
-    freeTitle: "שליטה חופשית",
     searchLabel: "חיפוש שם או מקום",
     searchPlaceholder: "חיפוש שם או מקום",
     searchClearing: "מנקה את החיפוש…",
     searchClearFailed: "לא ניתן לנקות את החיפוש במפה. הבחירה הנוכחית נשמרה.",
     draft: "התוכן לשלב זה עדיין נכתב.",
     steps: "שלבים",
-    freeMeta: "סצנות מוכנות ושכבות",
     disconnected: "אין חיבור למפה",
     connected: "מחובר",
     connecting: "מתחבר…",
@@ -30,7 +29,9 @@ export const COPY = {
     packBase: "שכבות בסיס",
     packEmpty: "אין שכבות בחבילה זו",
     layersTitle: "שכבות",
-    layersMeta: "בחירה ידנית של שכבות",
+    fullscreenEnter: "מעבר למסך מלא",
+    fullscreenExit: "יציאה ממסך מלא",
+    fullscreenUnavailable: "המסך המלא אינו זמין בדפדפן הזה",
     layersSheetTitle: "שליטה בשכבות",
     layersSheetLede: "בחירה ידנית של שכבות",
     layersClose: "סגירה",
@@ -48,17 +49,16 @@ export const COPY = {
     cueApplying: "Sending the scene…",
     cueReady: "Scene sent",
     cueFailed: "Could not send the scene",
+    homeRetry: "Retry",
     stepAria: "Go to step {{n}}",
     showTitle: "Full projection sequence",
     showMeta: "The full sequence, step by step",
-    freeTitle: "Free control",
     searchLabel: "Search a name or place",
     searchPlaceholder: "Search a name or place",
     searchClearing: "Clearing search…",
     searchClearFailed: "Could not clear the map search. The current selection was kept.",
     draft: "This step is still being written.",
     steps: "steps",
-    freeMeta: "Preset scenes and layers",
     disconnected: "Map is disconnected",
     connected: "Connected",
     connecting: "Connecting…",
@@ -66,7 +66,9 @@ export const COPY = {
     packBase: "Base Layers",
     packEmpty: "No layers in this pack",
     layersTitle: "Layers",
-    layersMeta: "Manually select layers",
+    fullscreenEnter: "Enter fullscreen",
+    fullscreenExit: "Exit fullscreen",
+    fullscreenUnavailable: "Fullscreen is unavailable in this browser",
     layersSheetTitle: "Layer Control",
     layersSheetLede: "Manually select layers",
     layersClose: "Close",
@@ -214,11 +216,13 @@ export const SHOW = {
 export const HOME_SHOW_SHORTCUTS = Object.freeze([
   {
     id: SHOW_STEP_IDS.IDENTITY,
+    index: "07",
     title: { he: "מאגר הזהויות", en: "Identity database" },
     meta: { he: "אנשים כנקודות וחיפוש", en: "People as points and search" },
   },
   {
     id: SHOW_STEP_IDS.WALL,
+    index: "08",
     title: { he: "קיר השמות", en: "Names wall" },
     meta: { he: "כל השמות וחיפוש", en: "All names and search" },
   },
@@ -226,6 +230,7 @@ export const HOME_SHOW_SHORTCUTS = Object.freeze([
 
 export const TIMELINE = {
   id: "timeline",
+  index: "00",
   narrative: null,
   title: { he: "ציר הזמן", en: "The timeline" },
   steps: [OPENING_MINUTES, REST_OF_DAY, TIMELINE_COMPLETE],
@@ -363,23 +368,3 @@ export const NARRATIVES = [
 ];
 
 export const SCRIPTS = [SHOW, TIMELINE, ...NARRATIVES];
-
-export const SCENES = [
-  {
-    id: "open",
-    title: { he: "פתיחה", en: "Opening" },
-    meta: { he: "יישובים, כביש 232, SEA, דרכי עזה", en: "Settlements, Road 232, SEA, Gaza roads" },
-    cue: HOME_CUE,
-  },
-  {
-    id: "loop",
-    title: { he: "ציר זמן בלולאה", en: "Loop timeline" },
-    meta: { he: "כל היום, מתנגן ברצף", en: "The whole day, playing on repeat" },
-    cue: { layers: TIMELINE_LAYER_IDS, clock: { loop: true } },
-  },
-  {
-    id: "layers",
-    title: { he: COPY.he.layersTitle, en: COPY.en.layersTitle },
-    meta: { he: COPY.he.layersMeta, en: COPY.en.layersMeta },
-  },
-];

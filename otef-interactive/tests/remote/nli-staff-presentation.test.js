@@ -7,6 +7,7 @@ import {
 
 const step = { presentation: { segmentId: "nova_mor", open: "manual", onClose: "stay" } };
 const shuraStep = { presentation: { segmentId: "shura", open: "auto", onClose: "resume" } };
+const novaMemorialStep = { presentation: { segmentId: "nova_memorial", open: "auto", onClose: "stay" } };
 
 function makeControllerHarness() {
   const sent = [];
@@ -182,6 +183,31 @@ describe("NLI staff presentation controller", () => {
     });
     h.reply({ outcome: "closed" });
     await closing;
+  });
+
+  test("timed-out Nova memorial offers a manual Open after recovery Close", async () => {
+    vi.useFakeTimers();
+    const h = makeControllerHarness();
+    const opening = h.controller.run("open", "nova_memorial");
+    const sessionId = h.sent[0].presentationSessionId;
+    await vi.advanceTimersByTimeAsync(6000);
+    await expect(opening).resolves.toBe(false);
+    expect(h.controller.getState().sessionId).toBe(sessionId);
+
+    const recoveryClose = h.controller.closeForStepChange();
+    expect(h.sent.at(-1)).toMatchObject({ presentationAction: "close", segmentId: "nova_memorial", presentationSessionId: sessionId });
+    h.reply({ outcome: "closed" });
+    await expect(recoveryClose).resolves.toBe(true);
+    expect(h.controller.getState().phase).toBe("closed");
+    expect(presentationControlsHtml(novaMemorialStep, h.controller.getState(), "en"))
+      .toContain('data-presentation-action="open"');
+
+    const retry = h.controller.run("open", "nova_memorial");
+    expect(h.sent.at(-1)).toMatchObject({ presentationAction: "open", segmentId: "nova_memorial" });
+    h.reply({ outcome: "opened", slide: 12, range: [12, 16] });
+    await expect(retry).resolves.toBe(true);
+    expect(h.controller.getState()).toMatchObject({ phase: "open", segmentId: "nova_memorial" });
+    expect(h.sent.map((command) => command.presentationAction)).toEqual(["open", "close", "open"]);
   });
 
   test("opening, applying, and closing keep the control actions present and disabled", async () => {

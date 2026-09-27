@@ -10,7 +10,6 @@ import {
   FOCUS_LAYER_IDS,
   OPENING_LAYER_IDS,
   PEOPLE_NAMES_LAYER_IDS,
-  SCENES,
   SCRIPTS,
   SHOW,
   SHOW_STEP_IDS,
@@ -31,7 +30,6 @@ const KITS = new Set(["timeline", "archive", "branch", "search", "escape", "pres
 const allSteps = () => SCRIPTS.flatMap((script) => script.steps.map((step) => ({ script, step })));
 const allCues = () => [
   ...allSteps().map(({ step }) => step.cue),
-  ...SCENES.map((scene) => scene.cue),
 ].filter(Boolean);
 
 test("names wall keeps people_names on the black model ground", () => {
@@ -84,12 +82,6 @@ test("Home shortcuts target the canonical final show steps", () => {
   expect(SHOW.steps[showStepIndex(SHOW_STEP_IDS.WALL)].kit).toContain("search");
 });
 
-test("Free control no longer duplicates identity and wall", () => {
-  expect(SCENES.map((scene) => scene.id)).not.toEqual(
-    expect.arrayContaining(["identity", "wall"]),
-  );
-});
-
 describe("NLI staff run of show", () => {
   test("follows the eight-stage sequence, starts at the opening minutes, and returns Home", () => {
     expect(SHOW.steps).toHaveLength(8);
@@ -123,7 +115,6 @@ describe("NLI staff run of show", () => {
     });
     expect(catalog.HOME_LAYER_IDS).not.toEqual(FOCUS_LAYER_IDS);
     expect(catalog.HOME_LAYER_IDS).not.toEqual(TIMELINE_LAYER_IDS);
-    expect(SCENES.find((scene) => scene.id === "open").cue).toBe(catalog.HOME_CUE);
   });
 
   test("opening shows SEA and Gaza roads; the identity database hides Gaza roads", () => {
@@ -169,11 +160,6 @@ describe("NLI staff run of show", () => {
       kit: [],
     });
     expect(catalog.TIMELINE.steps[2].kit).not.toEqual(expect.arrayContaining(["timeline", "presentation"]));
-  });
-
-  test("free control offers a looping timeline preset and the layers sheet", () => {
-    expect(SCENES.find((scene) => scene.id === "loop").cue.clock).toEqual({ loop: true });
-    expect(SCENES.some((scene) => scene.id === "layers")).toBe(true);
   });
 
   test("script narratives resolve to registered map scenes or the overview", () => {

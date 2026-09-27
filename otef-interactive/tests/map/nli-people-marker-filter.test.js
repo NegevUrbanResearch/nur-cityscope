@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, test, vi } from "vitest";
+import { featureFilter } from "@maplibre/maplibre-gl-style-spec";
 import {
   applyNarrativeHouseOutlineFilter,
   applyNarrativePeopleFilter,
@@ -129,7 +130,7 @@ describe("narrative people marker filter", () => {
 const SEGEV_HOUSE = ["==", ["get", "note"], "בית משפחת שגב"];
 const SDEROT_HOUSE = ["==", ["get", "note"], "תחנת משטרה שדרות"];
 const HOSTAGES_HOUSE = ["==", ["get", "note"], "בית משפחת פרי"];
-const NO_HOUSE = ["==", 1, 0];
+const NO_HOUSE = ["==", ["literal", 1], ["literal", 0]];
 
 function houseMap(layers, { style = { layers }, getLayer } = {}) {
   return {
@@ -150,6 +151,12 @@ describe("narrative house outline filter", () => {
     for (const id of [null, "nova", "hostages_all", "shura", "unknown"]) {
       expect(houseOutlineFilterForNarrative(id)).toEqual(NO_HOUSE);
     }
+  });
+
+  test("no-match filters compile with MapLibre and reject every feature", () => {
+    const filter = houseOutlineFilterForNarrative("nova");
+    const compiled = featureFilter(filter);
+    expect(compiled.filter({ zoom: 0 }, { type: 1, id: 1, properties: { note: "בית משפחת שגב" } })).toBe(false);
   });
 
   test("filters every current narrative polygon layer and skips unrelated sources", () => {

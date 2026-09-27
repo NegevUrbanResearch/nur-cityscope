@@ -868,6 +868,7 @@ async function bootstrapProjectionRuntime() {
       syncProjectionHighlight(lastViewport);
     }
 
+    syncContextInvestigation();
     await loadProjectionCuratedLayers(map);
     if (!isRuntimeAlive()) return;
 

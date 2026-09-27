@@ -378,6 +378,24 @@ Automated checks from the worktree, 2026-09-27:
 
 The five Django failures are environment failures, not a pass. Four presentation tests miss `nli-presentation-manifest.json` and then Python 3.14 crashes while logging that error. `test_exit_leaves_playing_clock_unchanged` cannot reach Redis at `redis:6379`. The remaining frontend failures are missing processed style or GeoJSON files, a missing memorial-wall snapshot, a Nova index CLI timeout, a legend dash assertion, and an unhandled `Failed to update state: 500` from the data-context actions file. Those files were not edited for this sequence check. The Nova compounds five-beat contract is not outstanding: commit `779ee4d` restored the compounds note, and `tests/contracts/nli-nova-narrative-contract.test.js` passed.
 
+## Staff remote repair verification — 2026-09-27 follow-up
+
+This follow-up supersedes the earlier staff-sequence paragraph saying that no live browser pass was performed. The owner authorized tests against the running PC. Codex exercised the nginx staff remote, GIS and projection follower without restarting services or changing TouchDesigner/projection configuration.
+
+- Home → first minutes → complete timeline → Home worked. Pending transport buttons disabled and became available after the scene command completed.
+- Segev's combined scene opened its presentation on GIS; Home removed it. Nova was left during its second playback beat, and GIS reached the terminal state before the routes scene. Routes and Mor exposed only their own controls. Memorial opened its presentation automatically; the projection follower rendered the memorial scene without console errors. Home cleared the presentation.
+- Live GIS revealed an invalid no-match house-outline filter that the old mocked test missed. The corrected filter passes the installed MapLibre compiler and the repeated Home/timeline journey produced no new GIS filter errors.
+- Home was measured in Hebrew and English at simulated CSS sizes 480×800, 600×900, 800×1280, 960×540 and 1280×800. All ten cases had complete labels, equal narrative/victim card widths, a 3:1 lead row, and no horizontal overflow. Short-landscape presentation content scrolls; an actual scroll and pointer Close succeeded with the scene dock remaining visible.
+- Home Layers preserved a manual layer choice through close/reopen, and the test choice was restored. The control is absent on scene pages. A browser fullscreen enter/exit gesture cycle updated its accessible state.
+
+Final combined frontend run: `npx vitest run tests/remote tests/shared tests/map tests/projection tests/contracts` — **2593 passed, 1 failed**, across 225 passing files and one failing file. The sole failure is the unchanged baseline `tests/map/legend-content.test.js:181` dash expectation (`[6,6]` versus `[9,12]`), also present before this repair. No new failure appeared. The focused remote/contracts run passed all 420 tests. `npm run build:frontend` and `git diff --check` passed; the existing MapLibre chunk-size warning remains. Built manifest, start URL, scope and unchanged 100×100 icon were resolved against the emitted files, rather than relying only on the build exit code. No backend code changed in this repair, so backend tests were not rerun.
+
+After that combined run, a small fullscreen-error translation fix passed all 31 focused fullscreen/locale tests, including its new regression. The frontend build and whitespace check were rerun successfully afterward.
+
+Evidence: `../../docs/reviews/2026-09-27-nli-review/layout-metrics.json`, `home-after-*.png`, `presentation-slides-*.png`, `live-segev-presentation.png`, `live-nova-memorial-projection.png`, and before/after GIS error records in that directory. Detailed task reports and the final test log are in `../../.superpowers/sdd/nli-remote-repair-20260927/`.
+
+The device is a **Galaxy Tab A11**; these browser dimensions are simulations, not measurements of its Chrome viewport. Physical tablet touch/install acceptance, physical TD output, reduced-motion display observation and frame-by-frame cold-load WebGL capture remain unverified. Unit tests cover delayed renderer assets and reduced-motion lifecycle behavior; sampled browser frames cannot prove that no single-frame flash ever occurs. The current HTTP tablet URL does not establish promoted PWA installation: HTTPS and suitable larger original icons may still be needed. No offline service worker or certificate/deployment change was added.
+
 ## Recorded exhibit gates (Task 14)
 
 Spec exhibit gates that unit tests cannot replace. Every cell below is a

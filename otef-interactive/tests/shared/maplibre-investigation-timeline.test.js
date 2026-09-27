@@ -205,10 +205,10 @@ describe("syncInvestigationTimelineToMap", () => {
       },
     };
     const layers = [
-      { id: fillId, type: "fill", source: "nli__investigation_polygons", layout: { visibility: "visible" } },
-      { id: lineId, type: "line", source: "nli__investigation_polygons", layout: { visibility: "visible" } },
-      { id: routeId, type: "line", source: "nli__lines", layout: { visibility: "visible" } },
-      { id: alarmId, type: "circle", source: "nli__alarms", layout: { visibility: "visible" } },
+      { id: fillId, type: "fill", source: "nli.investigation_polygons", layout: { visibility: "visible" } },
+      { id: lineId, type: "line", source: "nli.investigation_polygons", layout: { visibility: "visible" } },
+      { id: routeId, type: "line", source: "nli.lines", layout: { visibility: "visible" } },
+      { id: alarmId, type: "circle", source: "nli.alarms", layout: { visibility: "visible" } },
     ];
     const sources = {};
     return {
@@ -1115,6 +1115,40 @@ describe("syncInvestigationTimelineToMap", () => {
       (call) => call[0] === "nli__lines__line__0" && call[1] === "line-opacity" && call[2] === 0,
     );
     expect(hiddenBase).toEqual([]);
+  });
+
+  it("hides authored routes before deferred assets, then renders playback and restores idle story", async () => {
+    const map = makeMap();
+    let releaseLines;
+    const deferredLines = new Promise((resolve) => { releaseLines = resolve; });
+    const lineUrl = "https://example.test/first-frame-lines.geojson";
+    const pending = syncInvestigationTimelineToMap(
+      map,
+      playClock([INVESTIGATION_LINES_FULL_ID], LINE_BEATS),
+      [{ id: "nli", layers: [{ id: "lines", enabled: true }] }],
+      {
+        getLayerDataUrl: (fullId) => fullId === INVESTIGATION_LINES_FULL_ID ? lineUrl : null,
+        investigationSettlementsUrl: null,
+        fetchJson: (url) => url === lineUrl ? deferredLines : Promise.resolve({ features: [] }),
+        now: () => 0,
+      },
+    );
+
+    expect(map.getLayoutProperty("nli__lines__line__0", "visibility")).toBe("none");
+    releaseLines({ features: LINE_FEATURES });
+    await pending;
+
+    expect(map.getLayer("nli-investigation-line-active-line")).toBeTruthy();
+    expect(map.getLayoutProperty("nli__lines__line__0", "visibility")).toBe("none");
+
+    await syncInvestigationTimelineToMap(
+      map,
+      idleNliClock(),
+      [{ id: "nli", layers: [{ id: "lines", enabled: true }] }],
+      { featuresById: featureBags(), now: () => 0 },
+    );
+    expect(map.getLayoutProperty("nli__lines__line__0", "visibility")).toBe("visible");
+    disposeInvestigationTimelineForMap(map);
   });
 
   it("explicit disposal restores resting red routes on a live map", async () => {
