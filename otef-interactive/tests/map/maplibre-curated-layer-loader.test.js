@@ -1,9 +1,13 @@
 import { readFileSync } from "fs";
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
+import * as curatedService from "../../frontend/src/shared/curated-layer-service.js";
+import { createFakeMapLibreMap } from "../helpers/fake-maplibre-map.js";
 import {
   leafletStyleToMapLibre,
+  loadCuratedLayerToMapLibre,
   maplibreLineDashFromLeafletPx,
   maplibreLineDashWithLeafletOffset,
+  removeCuratedHtmlMarkers,
 } from "../../frontend/src/map/maplibre-curated-layer-loader.js";
 import {
   pinkProjectionFallbackLineStyle,
@@ -42,10 +46,211 @@ describe("maplibreLineDashWithLeafletOffset (Colab dual proposed)", () => {
 });
 
 describe("curated loader force cleanup contract", () => {
-  test("force cleanup hard-removes before same-id reload", () => {
+  test("force cleanup hard-removes at replacement commit after both fetches", () => {
     const src = readFileSync("frontend/src/map/maplibre-curated-layer-loader.js", "utf8");
-    expect(src).toContain("removeCuratedLayersByPrefix(map, fullLayerId)");
-    expect(src).not.toContain("removeCuratedLayersByPrefix(map, fullLayerId, opts.layerStyleOptions)");
+    const body = src.slice(src.indexOf("export async function loadCuratedLayerToMapLibre"));
+    const fetchData = body.indexOf("await fetchCuratedLayerData");
+    const fetchPink = body.indexOf("await fetchPinkLinePaths");
+    const remove = body.indexOf("commitReplacement()");
+    expect(fetchData).toBeGreaterThan(-1);
+    expect(fetchPink).toBeGreaterThan(fetchData);
+    expect(remove).toBeGreaterThan(fetchPink);
+    expect(body).toContain("removeCuratedLayersByPrefix(map, fullLayerId)");
+    expect(body).not.toContain("removeCuratedLayersByPrefix(map, fullLayerId, opts.layerStyleOptions)");
+  });
+});
+
+function polygonCollection() {
+  return {
+    type: "FeatureCollection",
+    features: [{
+      type: "Feature",
+      properties: {},
+      geometry: { type: "Polygon", coordinates: [[[34.4, 31.3], [34.5, 31.3], [34.5, 31.4], [34.4, 31.3]]] },
+    }],
+  };
+}
+
+function pointCollection() {
+  return {
+    type: "FeatureCollection",
+    features: [{
+      type: "Feature",
+      properties: { pink_node_order: 1, name: "node" },
+      geometry: { type: "Point", coordinates: [34.5, 31.4] },
+    }],
+  };
+}
+
+function lineCollection() {
+  return {
+    type: "FeatureCollection",
+    features: [{
+      type: "Feature",
+      properties: {},
+      geometry: { type: "LineString", coordinates: [[34.4, 31.3], [34.5, 31.4]] },
+    }],
+  };
+}
+
+function defer() {
+  let resolve;
+  const promise = new Promise((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+function markerNamespace(added, removed) {
+  class Marker {
+    setLngLat() { return this; }
+    setPopup() { return this; }
+    addTo() { added.push(this); return this; }
+    remove() { removed.push(this); }
+  }
+  class Popup {
+    setHTML() { return this; }
+  }
+  return { Marker, Popup };
+}
+
+describe("curated loader display freshness", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    removeCuratedHtmlMarkers("curated.1");
+    removeCuratedHtmlMarkers("curated.2");
+    delete globalThis.document;
+  });
+
+  test("a current load removes the previous layer only after both fetches resolve", async () => {
+    const data = defer();
+    const pink = defer();
+    vi.spyOn(curatedService, "fetchCuratedLayerData").mockReturnValue(data.promise);
+    vi.spyOn(curatedService, "fetchPinkLinePaths").mockReturnValue(pink.promise);
+    const map = createFakeMapLibreMap({ layers: [{ id: "curated.1__old", type: "fill" }] });
+    const pending = loadCuratedLayerToMapLibre(map, "curated.1", { force: true });
+    await Promise.resolve();
+    expect(map.getLayer("curated.1__old")).toBeTruthy();
+    expect(map.calls.filter((call) => call.method === "addLayer")).toHaveLength(0);
+
+    data.resolve({ geojson: polygonCollection(), layerData: {} });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(map.getLayer("curated.1__old")).toBeTruthy();
+    expect(map.calls.filter((call) => call.method === "addLayer")).toHaveLength(0);
+
+    pink.resolve({ basePaths: [], pinkGeojson: null });
+    await pending;
+    expect(map.getLayer("curated.1__old")).toBeFalsy();
+    expect(map.getLayer("curated.1__plain__fill")).toBeTruthy();
+  });
+
+  test("a load that goes stale during fetchCuratedLayerData does not add, remove, or touch markers", async () => {
+    const data = defer();
+    vi.spyOn(curatedService, "fetchCuratedLayerData").mockReturnValue(data.promise);
+    vi.spyOn(curatedService, "fetchPinkLinePaths").mockResolvedValue({ basePaths: [], pinkGeojson: null });
+    const added = [];
+    const removed = [];
+    globalThis.document = { createElement: () => ({ style: {}, innerHTML: "", className: "" }) };
+    const map = createFakeMapLibreMap({ layers: [{ id: "curated.1__old", type: "fill" }] });
+    let current = true;
+    const pending = loadCuratedLayerToMapLibre(map, "curated.1", {
+      force: true,
+      maplibregl: markerNamespace(added, removed),
+      isCurrent: () => current,
+    });
+    await Promise.resolve();
+    current = false;
+    data.resolve({ geojson: pointCollection(), layerData: {} });
+    await pending;
+    expect(map.getLayer("curated.1__old")).toBeTruthy();
+    expect(map.calls.filter((call) => call.method === "addLayer" || call.method === "removeLayer")).toHaveLength(0);
+    expect(added).toHaveLength(0);
+    expect(removed).toHaveLength(0);
+  });
+
+  test("a load that goes stale during fetchPinkLinePaths does not add or remove", async () => {
+    const pink = defer();
+    vi.spyOn(curatedService, "fetchCuratedLayerData").mockResolvedValue({
+      geojson: polygonCollection(),
+      layerData: {},
+    });
+    vi.spyOn(curatedService, "fetchPinkLinePaths").mockReturnValue(pink.promise);
+    const map = createFakeMapLibreMap({ layers: [{ id: "curated.1__old", type: "fill" }] });
+    let current = true;
+    const pending = loadCuratedLayerToMapLibre(map, "curated.1", {
+      force: true,
+      isCurrent: () => current,
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    current = false;
+    pink.resolve({ basePaths: [], pinkGeojson: null });
+    await pending;
+    expect(map.getLayer("curated.1__old")).toBeTruthy();
+    expect(map.calls.filter((call) => call.method === "addLayer" || call.method === "removeLayer")).toHaveLength(0);
+  });
+
+  test("a stale same-id finalizer cannot remove the newer replacement", async () => {
+    const oldData = defer();
+    const newData = defer();
+    vi.spyOn(curatedService, "fetchCuratedLayerData")
+      .mockReturnValueOnce(oldData.promise)
+      .mockReturnValueOnce(newData.promise);
+    vi.spyOn(curatedService, "fetchPinkLinePaths").mockResolvedValue({ basePaths: [], pinkGeojson: null });
+    const map = createFakeMapLibreMap({ layers: [{ id: "curated.1__old", type: "fill" }] });
+    const mutations = [];
+    const addLayer = map.addLayer.bind(map);
+    const removeLayer = map.removeLayer.bind(map);
+    const addSource = map.addSource.bind(map);
+    const removeSource = map.removeSource.bind(map);
+    map.addLayer = (layer, beforeId) => { mutations.push(`add:${layer.id}`); return addLayer(layer, beforeId); };
+    map.removeLayer = (id) => { mutations.push(`remove:${id}`); return removeLayer(id); };
+    map.addSource = (id, spec) => { mutations.push(`addSource:${id}`); return addSource(id, spec); };
+    map.removeSource = (id) => { mutations.push(`removeSource:${id}`); return removeSource(id); };
+    let oldCurrent = true;
+    const oldLoad = loadCuratedLayerToMapLibre(map, "curated.1", {
+      force: true,
+      isCurrent: () => oldCurrent,
+    });
+    await Promise.resolve();
+    oldCurrent = false;
+    const replacement = loadCuratedLayerToMapLibre(map, "curated.1", {
+      force: true,
+      isCurrent: () => true,
+    });
+    newData.resolve({ geojson: polygonCollection(), layerData: {} });
+    await replacement;
+    expect(map.getLayer("curated.1__plain__fill")).toBeTruthy();
+    const mutationsAfterReplacement = mutations.length;
+    oldData.resolve({ geojson: polygonCollection(), layerData: {} });
+    await oldLoad;
+    expect(mutations.length).toBe(mutationsAfterReplacement);
+    expect(map.getLayer("curated.1__plain__fill")).toBeTruthy();
+    expect(map.getLayer("curated.1__old")).toBeFalsy();
+  });
+
+  test("a stale pink-base fetch cannot add the base layer or the curated fallback", async () => {
+    const innerPink = defer();
+    vi.spyOn(curatedService, "fetchCuratedLayerData").mockResolvedValue({
+      geojson: lineCollection(),
+      layerData: {},
+    });
+    vi.spyOn(curatedService, "fetchPinkLinePaths")
+      .mockResolvedValueOnce({ basePaths: [[[31.3, 34.4], [31.4, 34.5]]], pinkGeojson: null })
+      .mockReturnValueOnce(innerPink.promise);
+    const map = createFakeMapLibreMap();
+    let current = true;
+    const pending = loadCuratedLayerToMapLibre(map, "curated.1", {
+      force: true,
+      isCurrent: () => current,
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    current = false;
+    innerPink.resolve({ basePaths: [[[31.3, 34.4], [31.4, 34.5]]], pinkGeojson: null });
+    await pending;
+    expect(map.getLayer("pink_line_base__line")).toBeFalsy();
+    expect(map.getLayer("curated.1__fallback__0")).toBeFalsy();
+    expect(map.calls.filter((call) => call.method === "addLayer" || call.method === "removeLayer")).toHaveLength(0);
   });
 });
 

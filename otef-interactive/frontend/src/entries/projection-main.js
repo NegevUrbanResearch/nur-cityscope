@@ -9,13 +9,12 @@ import {
 } from "../projection/maplibre-projection.js";
 import { installProjectionRenderDebugOverlay } from "../projection/projection-render-debug-overlay.js";
 import { syncProjectionLayers } from "../projection/maplibre-projection-layers.js";
-import { applyNarrativePeopleFilter } from "../map/nli-people-marker-filter.js";
+import { applyNarrativeHouseOutlineFilter, applyNarrativePeopleFilter } from "../map/nli-people-marker-filter.js";
 import {
-  loadCuratedLayerToMapLibre,
-  removeCuratedHtmlMarkers,
+  createCuratedDisplayGate,
+  createProjectionCuratedRefresh,
   syncPinkLineAxisCompanionForMapLibre,
 } from "../map/maplibre-curated-layer-loader.js";
-import { removeCuratedLayersByPrefix } from "../map/maplibre-layer-manager.js";
 import {
   disposeRouteProgressOverlaysForMap,
   syncRouteProgressOverlaysToMap,
@@ -776,7 +775,14 @@ async function bootstrapProjectionRuntime() {
       },
     }));
 
-    let activeCuratedIds = new Set();
+    let projectionMapAlive = true;
+    const projectionDisplay = createCuratedDisplayGate({
+      isMapAlive: () => projectionMapAlive && isRuntimeAlive(),
+    });
+    registerDisposer(() => {
+      projectionMapAlive = false;
+      projectionDisplay.dispose();
+    });
 
     function asLayerGroupsArray(raw) {
       if (Array.isArray(raw)) return raw;
@@ -795,12 +801,6 @@ async function bootstrapProjectionRuntime() {
       return ids;
     }
 
-    function hasMapLibreLayerWithPrefix(targetMap, prefix) {
-      if (!targetMap || !prefix || typeof targetMap.getStyle !== "function") return false;
-      const style = targetMap.getStyle();
-      return (style?.layers || []).some((layer) => layer?.id?.startsWith(prefix));
-    }
-
     async function resolveMaplibregl() {
       if (typeof window !== "undefined" && window.maplibregl) return window.maplibregl;
       try {
@@ -810,103 +810,37 @@ async function bootstrapProjectionRuntime() {
       }
     }
 
-    const runProjectionCuratedRefresh = async ({
-      affectedCuratedFullLayerIds,
-      fromSlideshowTick,
-      groupsOverride,
-      layerStyleOptions,
-    } = {}) => {
-      if (!isRuntimeAlive()) return;
-      const rawGroups = groupsOverride ?? getEffectiveProjectionLayerGroups();
-      const currentGroups = asLayerGroupsArray(rawGroups);
-
-      updateModelBaseImageVisibility(rawGroups, modelImgEl);
-
-      syncProjectionLayersWithNarrative(map, currentGroups, layerStyleOptions);
-      applyStoredNliLabelHeading(map);
-      nameFieldController.sync(currentGroups);
-      syncContextFlowAnimations();
-
-      const enabledCuratedIds = new Set(collectEnabledCuratedIds(currentGroups));
-      const previousCuratedIds = new Set(activeCuratedIds);
-      activeCuratedIds = enabledCuratedIds;
-
-      for (const fullId of previousCuratedIds) {
-        if (!enabledCuratedIds.has(fullId)) {
-          removeCuratedLayersByPrefix(map, fullId, layerStyleOptions);
-          removeCuratedHtmlMarkers(fullId);
-        }
-      }
-
-      let toRefresh;
-      if (Array.isArray(affectedCuratedFullLayerIds) && affectedCuratedFullLayerIds.length > 0) {
-        const affectedSet = new Set(
-          affectedCuratedFullLayerIds.filter((id) => typeof id === "string"),
-        );
-        for (const fullId of affectedSet) {
-          removeCuratedHtmlMarkers(fullId);
-        }
-        toRefresh = [...enabledCuratedIds].filter((id) => affectedSet.has(id));
-      } else {
-        toRefresh = [...enabledCuratedIds];
-      }
-
-      if (toRefresh.length === 0) {
-        syncContextFlowAnimations();
-        syncPinkLineAxisCompanionForMapLibre(map, currentGroups);
-        projectionNarrativeController?.onStyleLoad();
-        refreshLegendAfterStyleLoad();
-        raiseProjectionHighlightLayers(map);
-        return;
-      }
-
-      const maplibregl = await resolveMaplibregl();
-      if (!isRuntimeAlive()) return;
-      for (const fullId of toRefresh) {
-        if (fromSlideshowTick && hasMapLibreLayerWithPrefix(map, fullId)) {
-          continue;
-        }
-        try {
-          await loadCuratedLayerToMapLibre(map, fullId, {
-            maplibregl,
-            force: true,
-          });
-        } catch (err) {
-          console.warn(`[projection-main] Failed to load curated layer ${fullId}`, err);
-        }
-      }
-      syncContextFlowAnimations();
-      syncPinkLineAxisCompanionForMapLibre(map, currentGroups);
-      projectionNarrativeController?.onStyleLoad();
-      refreshLegendAfterStyleLoad();
-      raiseProjectionHighlightLayers(map);
-    };
     const shouldSkipLiveProjectionRefresh = () =>
       !!(
         slideshowRuntime?.isActive() &&
         MapProjectionConfig.PROJECTION_SLIDESHOW?.ignoreLiveLayerUpdatesWhileActive
       );
-    const applyProjectionRefresh = ({
-      groupsOverride,
-      affectedCuratedFullLayerIds,
-      fromSlideshowTick,
-      layerStyleOptions,
-    } = {}) => {
-      if (!fromSlideshowTick && shouldSkipLiveProjectionRefresh()) {
-        return Promise.resolve();
-      }
-      return runProjectionCuratedRefresh({
-        groupsOverride,
-        affectedCuratedFullLayerIds,
-        fromSlideshowTick,
-        layerStyleOptions,
-      });
-    };
+    const { applyProjectionRefresh } = createProjectionCuratedRefresh({
+      map,
+      isRuntimeAlive,
+      getLayerGroups: getEffectiveProjectionLayerGroups,
+      asLayerGroups: asLayerGroupsArray,
+      updateModelVisibility: (rawGroups) => updateModelBaseImageVisibility(rawGroups, modelImgEl),
+      syncProjectionLayersWithNarrative,
+      applyLabelHeading: applyStoredNliLabelHeading,
+      nameFieldController,
+      syncFlowAnimations: syncContextFlowAnimations,
+      getNarrativeController: () => projectionNarrativeController,
+      refreshLegend: refreshLegendAfterStyleLoad,
+      raiseHighlight: raiseProjectionHighlightLayers,
+      resolveMaplibregl,
+      syncPinkLine: syncPinkLineAxisCompanionForMapLibre,
+      shouldSkipLiveRefresh: shouldSkipLiveProjectionRefresh,
+    });
     let projectionCuratedRefreshChain = Promise.resolve();
     const refreshProjectionCuratedLayers = (options = {}) => {
+      const groups = options.groupsOverride ?? getEffectiveProjectionLayerGroups();
+      const isCurrent = typeof options.isCurrent === "function"
+        ? options.isCurrent
+        : projectionDisplay.begin(collectEnabledCuratedIds(asLayerGroupsArray(groups)));
       projectionCuratedRefreshChain = projectionCuratedRefreshChain
         .catch(() => {})
-        .then(() => applyProjectionRefresh(options));
+        .then(() => applyProjectionRefresh({ ...options, isCurrent }));
       return projectionCuratedRefreshChain;
     };
 
@@ -1123,6 +1057,7 @@ async function bootstrapProjectionRuntime() {
     function syncProjectionLayersWithNarrative(targetMap, groups, options) {
       syncProjectionLayers(targetMap, groups, { ...options, suppressCanvasNameSymbols: Boolean(browserSurface?.getNameAdapter()) });
       applyNarrativePeopleFilter(targetMap, OTEFDataContext.getNarrativeState?.()?.id ?? null);
+      applyNarrativeHouseOutlineFilter(targetMap, OTEFDataContext.getNarrativeState?.()?.id ?? null);
     }
 
     const syncProjectionLayersAndRaiseHighlight = (projectionMap, groups, options) => {
@@ -1207,11 +1142,24 @@ async function bootstrapProjectionRuntime() {
         // Raw `groups` from the event omit LayerStateHelper merge rules (e.g. שמות_יישובים
         // + Locations_Lines → one row with fullLayerIds). Sync must use the same effective
         // groups as loadProjectionCuratedLayers or Locations_Lines never loads on toggle.
+        const groups = getEffectiveProjectionLayerGroups();
         void applyProjectionRefresh({
-          groupsOverride: getEffectiveProjectionLayerGroups(),
+          groupsOverride: groups,
+          isCurrent: projectionDisplay.begin(collectEnabledCuratedIds(asLayerGroupsArray(groups))),
         });
       }),
     );
+    const refreshProjectionAfterStyleLoad = () => {
+      if (!isRuntimeAlive()) return;
+      projectionDisplay.invalidateStyle();
+      const groups = getEffectiveProjectionLayerGroups();
+      void applyProjectionRefresh({
+        groupsOverride: groups,
+        isCurrent: projectionDisplay.begin(collectEnabledCuratedIds(asLayerGroupsArray(groups))),
+      });
+    };
+    map.on("style.load", refreshProjectionAfterStyleLoad);
+    registerDisposer(() => map.off?.("style.load", refreshProjectionAfterStyleLoad));
 
     registerDisposer(
       OTEFDataContext.subscribe("viewport", (viewport) => {

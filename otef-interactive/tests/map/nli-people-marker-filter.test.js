@@ -1,6 +1,10 @@
+import fs from "node:fs";
+import path from "node:path";
 import { describe, expect, test, vi } from "vitest";
 import {
+  applyNarrativeHouseOutlineFilter,
   applyNarrativePeopleFilter,
+  houseOutlineFilterForNarrative,
   peopleFilterForNarrative,
   peopleLegendClassVisible,
   KIDNAP_SURVIVOR_STATUS,
@@ -119,5 +123,109 @@ describe("narrative people marker filter", () => {
     ]);
     expect(applyNarrativePeopleFilter(map, "nova")).toBe(0);
     expect(map.setFilter).not.toHaveBeenCalled();
+  });
+});
+
+const SEGEV_HOUSE = ["==", ["get", "note"], "בית משפחת שגב"];
+const SDEROT_HOUSE = ["==", ["get", "note"], "תחנת משטרה שדרות"];
+const HOSTAGES_HOUSE = ["==", ["get", "note"], "בית משפחת פרי"];
+const NO_HOUSE = ["==", 1, 0];
+
+function houseMap(layers, { style = { layers }, getLayer } = {}) {
+  return {
+    getStyle: vi.fn(() => style),
+    getLayer: getLayer || vi.fn((id) => (style?.layers || []).find((layer) => layer.id === id) || null),
+    setFilter: vi.fn(),
+  };
+}
+
+describe("narrative house outline filter", () => {
+  test("matches the Segev, Sderot, and Peri house notes", () => {
+    expect(houseOutlineFilterForNarrative("segev")).toEqual(SEGEV_HOUSE);
+    expect(houseOutlineFilterForNarrative("sderot")).toEqual(SDEROT_HOUSE);
+    expect(houseOutlineFilterForNarrative("hostages")).toEqual(HOSTAGES_HOUSE);
+  });
+
+  test("matches nothing for null, Nova, all hostages, Shura, and unknown narratives", () => {
+    for (const id of [null, "nova", "hostages_all", "shura", "unknown"]) {
+      expect(houseOutlineFilterForNarrative(id)).toEqual(NO_HOUSE);
+    }
+  });
+
+  test("filters every current narrative polygon layer and skips unrelated sources", () => {
+    const map = houseMap([
+      { id: "house-fill", source: "nli.narrative_polygon" },
+      { id: "house-line", source: "nli.narrative_polygon" },
+      { id: "people", source: "nli.people" },
+      { id: "other", source: "nli.something_else" },
+    ]);
+    expect(applyNarrativeHouseOutlineFilter(map, "segev")).toBe(2);
+    expect(map.setFilter).toHaveBeenCalledTimes(2);
+    expect(map.setFilter).toHaveBeenCalledWith("house-fill", SEGEV_HOUSE);
+    expect(map.setFilter).toHaveBeenCalledWith("house-line", SEGEV_HOUSE);
+  });
+
+  test("returns zero without setting a filter when style or the outline layer is missing", () => {
+    const thrown = houseMap([], {
+      style: null,
+      getLayer: vi.fn(() => { throw new Error("style gone"); }),
+    });
+    thrown.getStyle.mockImplementation(() => { throw new Error("style gone"); });
+    expect(applyNarrativeHouseOutlineFilter(thrown, "sderot")).toBe(0);
+    expect(thrown.setFilter).not.toHaveBeenCalled();
+
+    const absent = houseMap([{ id: "missing", source: "nli.narrative_polygon" }], {
+      getLayer: vi.fn(() => null),
+    });
+    expect(applyNarrativeHouseOutlineFilter(absent, "hostages")).toBe(0);
+    expect(absent.setFilter).not.toHaveBeenCalled();
+
+    const exploded = houseMap([{ id: "house-fill", source: "nli.narrative_polygon" }], {
+      getLayer: vi.fn(() => { throw new Error("layer gone"); }),
+    });
+    expect(applyNarrativeHouseOutlineFilter(exploded, "segev")).toBe(0);
+    expect(exploded.setFilter).not.toHaveBeenCalled();
+  });
+
+  test("reapplies the current narrative after the outline layer is recreated", () => {
+    let style = null;
+    const map = houseMap([], { style: null });
+    map.getStyle.mockImplementation(() => style);
+    map.getLayer.mockImplementation((id) => style?.layers?.find((layer) => layer.id === id) || null);
+
+    expect(applyNarrativeHouseOutlineFilter(map, "segev")).toBe(0);
+    expect(map.setFilter).not.toHaveBeenCalled();
+
+    style = { layers: [{ id: "house-fill", source: "nli.narrative_polygon" }] };
+    expect(applyNarrativeHouseOutlineFilter(map, "sderot")).toBe(1);
+    expect(map.setFilter).toHaveBeenCalledWith("house-fill", SDEROT_HOUSE);
+  });
+
+  test("places the house filter beside all six people-filter calls", () => {
+    const root = path.resolve(import.meta.dirname, "../../frontend/src");
+    const files = [
+      "entries/map-main.js",
+      "map/nli-narrative-controller.js",
+      "projection/projection-narrative-controller.js",
+      "entries/projection-main.js",
+    ];
+    const peopleCalls = [];
+    const houseCalls = [];
+    for (const file of files) {
+      const source = fs.readFileSync(path.join(root, file), "utf8");
+      const people = [...source.matchAll(/applyNarrativePeopleFilter\(([^;]*)\);/g)];
+      const houses = [...source.matchAll(/applyNarrativeHouseOutlineFilter\(([^;]*)\);/g)];
+      expect(houses.map((match) => match[1]), file).toEqual(people.map((match) => match[1]));
+      for (const match of people) {
+        const after = source.slice(match.index, match.index + match[0].length + 160);
+        expect(after, file).toMatch(
+          /applyNarrativePeopleFilter\([^;]*\);\s*applyNarrativeHouseOutlineFilter\(/,
+        );
+      }
+      peopleCalls.push(...people);
+      houseCalls.push(...houses);
+    }
+    expect(peopleCalls).toHaveLength(6);
+    expect(houseCalls).toHaveLength(6);
   });
 });

@@ -25,6 +25,13 @@ export function peopleFilterForNarrative(narrativeId) {
   return EXCLUDE_SURVIVOR_FILTER;
 }
 
+export function houseOutlineFilterForNarrative(id) {
+  if (id === "segev") return ["==", ["get", "note"], "בית משפחת שגב"];
+  if (id === "sderot") return ["==", ["get", "note"], "תחנת משטרה שדרות"];
+  if (id === "hostages") return ["==", ["get", "note"], "בית משפחת פרי"];
+  return ["==", 1, 0];
+}
+
 export function peopleLegendClassVisible(narrativeId, classValue) {
   const value = String(classValue ?? "");
   if (narrativeId === "hostages_all") {
@@ -34,7 +41,7 @@ export function peopleLegendClassVisible(narrativeId, classValue) {
   return value !== KIDNAP_SURVIVOR_STATUS;
 }
 
-export function applyNarrativePeopleFilter(map, narrativeId) {
+function applyNarrativeSourceFilter(map, sourceId, filter) {
   if (!map || typeof map.getStyle !== "function" || typeof map.getLayer !== "function" ||
     typeof map.setFilter !== "function") return 0;
 
@@ -46,10 +53,9 @@ export function applyNarrativePeopleFilter(map, narrativeId) {
   }
   if (!Array.isArray(style?.layers)) return 0;
 
-  const filter = peopleFilterForNarrative(narrativeId);
   let updated = 0;
   for (const layer of style.layers) {
-    if (!layer || layer.source !== "nli.people" || typeof layer.id !== "string") continue;
+    if (!layer || layer.source !== sourceId || typeof layer.id !== "string") continue;
     let currentLayer;
     try {
       currentLayer = map.getLayer(layer.id);
@@ -61,4 +67,12 @@ export function applyNarrativePeopleFilter(map, narrativeId) {
     updated += 1;
   }
   return updated;
+}
+
+export function applyNarrativePeopleFilter(map, narrativeId) {
+  return applyNarrativeSourceFilter(map, "nli.people", peopleFilterForNarrative(narrativeId));
+}
+
+export function applyNarrativeHouseOutlineFilter(map, narrativeId) {
+  return applyNarrativeSourceFilter(map, "nli.narrative_polygon", houseOutlineFilterForNarrative(narrativeId));
 }

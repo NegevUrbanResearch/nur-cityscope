@@ -142,6 +142,8 @@ function ensurePinkLineBaseLayer(map, options = {}) {
 }
 
 async function ensurePinkLineBaseLayerWork(map, options = {}) {
+  const isCurrent = typeof options.isCurrent === "function" ? options.isCurrent : () => true;
+  if (!isCurrent()) return;
   const removedPaths = options.removedPaths;
   const clip =
     Array.isArray(removedPaths) &&
@@ -150,6 +152,7 @@ async function ensurePinkLineBaseLayerWork(map, options = {}) {
   try {
     if (clip) {
       // Remove base layer if present; rely on overlay solidLine for kept segments.
+      if (!isCurrent()) return;
       if (map.getLayer(PINK_BASE_LAYER_ID)) map.removeLayer(PINK_BASE_LAYER_ID);
       if (map.getSource(PINK_BASE_SOURCE_ID)) map.removeSource(PINK_BASE_SOURCE_ID);
       return;
@@ -161,6 +164,7 @@ async function ensurePinkLineBaseLayerWork(map, options = {}) {
       fetchPinkLinePaths(),
       resolvePinkLinePackStyleBundle(),
     ]);
+    if (!isCurrent()) return;
     if (map.getLayer(PINK_BASE_LAYER_ID)) return;
     if (!basePaths || basePaths.length === 0) return;
 
@@ -704,12 +708,46 @@ function createNodeMarker(maplibregl, latLng, feature, nodeFillHex, fullLayerId)
 // ---------------------------------------------------------------------------
 
 /**
+ * Generation, style, liveness, and desired-id gate shared by GIS and projection.
+ * `begin` captures the desired ids for this refresh. A later begin, style
+ * invalidation, or dispose makes the previous checker false.
+ *
+ * @param {{ isMapAlive?: () => boolean }} [options]
+ */
+export function createCuratedDisplayGate({ isMapAlive = () => true } = {}) {
+  let refreshGeneration = 0;
+  let styleGeneration = 0;
+  let disposed = false;
+
+  return {
+    begin(desiredIds) {
+      const token = ++refreshGeneration;
+      const styleToken = styleGeneration;
+      const desired = new Set(desiredIds || []);
+      return (fullId) => !disposed
+        && isMapAlive()
+        && token === refreshGeneration
+        && styleToken === styleGeneration
+        && (fullId == null || desired.has(fullId));
+    },
+    invalidateStyle() {
+      styleGeneration += 1;
+    },
+    dispose() {
+      disposed = true;
+      refreshGeneration += 1;
+      styleGeneration += 1;
+    },
+  };
+}
+
+/**
  * Load a curated layer for MapLibre GIS display.
  * Mirrors leaflet-curated-layer-loader.js `loadCuratedLayerFromAPI`.
  *
  * @param {object} map - MapLibre map instance
  * @param {string} fullLayerId - e.g. "curated.42"
- * @param {{ maplibregl?: object; force?: boolean }} [opts]
+ * @param {{ maplibregl?: object; force?: boolean; isCurrent?: () => boolean }} [opts]
  */
 export async function loadCuratedLayerToMapLibre(map, fullLayerId, opts = {}) {
   const maplibregl =
@@ -717,14 +755,21 @@ export async function loadCuratedLayerToMapLibre(map, fullLayerId, opts = {}) {
     (typeof window !== "undefined" && window.maplibregl) ||
     null;
   const force = opts && opts.force === true;
+  const isCurrent = typeof opts.isCurrent === "function" ? opts.isCurrent : () => true;
+  const commitReplacement = () => {
+    if (!isCurrent()) return false;
+    if (force && map && fullLayerId) {
+      removeCuratedLayersByPrefix(map, fullLayerId);
+      removeCuratedHtmlMarkers(fullLayerId);
+    }
+    return isCurrent();
+  };
 
-  if (force && map && fullLayerId) {
-    removeCuratedLayersByPrefix(map, fullLayerId);
-    removeCuratedHtmlMarkers(fullLayerId);
-  }
+  if (!isCurrent()) return;
 
   // --- Shared data fetch ---
   const result = await fetchCuratedLayerData(fullLayerId);
+  if (!isCurrent()) return;
   if (!result) return;
   let { geojson, layerData } = result;
 
@@ -751,6 +796,7 @@ export async function loadCuratedLayerToMapLibre(map, fullLayerId, opts = {}) {
 
   assignPinkNodeDisplayOrders(pointItems.map((item) => item.feature));
   const { basePaths } = await fetchPinkLinePaths();
+  if (!isCurrent()) return;
 
   const hasAnyLineGeometryInGeojson = geojson.features.some(
     (f) =>
@@ -860,7 +906,12 @@ export async function loadCuratedLayerToMapLibre(map, fullLayerId, opts = {}) {
       const clipRemoved =
         Array.isArray(removed) &&
         removed.some((p) => Array.isArray(p) && p.length >= 2);
-      await ensurePinkLineBaseLayer(map, clipRemoved ? { removedPaths: removed } : {});
+      if (!isCurrent()) return;
+      await ensurePinkLineBaseLayer(map, {
+        ...(clipRemoved ? { removedPaths: removed } : {}),
+        isCurrent,
+      });
+      if (!isCurrent()) return;
     }
 
     const hasDetourPoints =
@@ -902,6 +953,8 @@ export async function loadCuratedLayerToMapLibre(map, fullLayerId, opts = {}) {
 
     const registeredLayerIds = [];
     const registeredSourceIds = [];
+
+    if (!commitReplacement()) return;
 
     // Add polyline groups as sources + layers in draw order
     let styleKeyIndex = 0;
@@ -962,8 +1015,10 @@ export async function loadCuratedLayerToMapLibre(map, fullLayerId, opts = {}) {
 
     // Node + memorial markers
     if (maplibregl && pointItems.length > 0) {
+      if (!isCurrent()) return;
       const markers = htmlMarkersByLayer.get(fullLayerId) || [];
       for (const { feature, latlng } of pointItems) {
+        if (!isCurrent()) return;
         const marker = createNodeMarker(maplibregl, latlng, feature, nodeFillHex, fullLayerId);
         if (!marker) continue;
         marker.addTo(map);
@@ -979,7 +1034,9 @@ export async function loadCuratedLayerToMapLibre(map, fullLayerId, opts = {}) {
 
   // --- Fallback: pink projection without detour points ---
   if (usePinkLineProjection && basePaths.length > 0 && routingLatLng.length === 0) {
-    await ensurePinkLineBaseLayer(map, {});
+    if (!isCurrent()) return;
+    await ensurePinkLineBaseLayer(map, { isCurrent });
+    if (!isCurrent() || !commitReplacement()) return;
     const layerColor = getCuratedLayerColor(fullLayerId, layerData);
     const lineFeatures = geojson.features
       .filter(
@@ -1028,9 +1085,11 @@ export async function loadCuratedLayerToMapLibre(map, fullLayerId, opts = {}) {
 
   // --- Fallback: point-only curated layers ---
   if (maplibregl && pointItems.length > 0) {
+    if (!commitReplacement()) return;
     const layerColor = getCuratedLayerColor(fullLayerId, layerData);
     const markers = [];
     for (const { feature, latlng } of pointItems) {
+      if (!isCurrent()) return;
       const marker = createNodeMarker(maplibregl, latlng, feature, layerColor || "#FF69B4", fullLayerId);
       if (!marker) continue;
       marker.addTo(map);
@@ -1044,6 +1103,7 @@ export async function loadCuratedLayerToMapLibre(map, fullLayerId, opts = {}) {
   }
 
   // --- Final fallback: plain GeoJSON rendered with geometry-appropriate layers ---
+  if (!commitReplacement()) return;
   const fallbackSourceId = `${fullLayerId}__plain__src`;
   const fallbackFillLayerId = `${fullLayerId}__plain__fill`;
   const fallbackLineLayerId = `${fullLayerId}__plain__line`;
@@ -1110,4 +1170,252 @@ export async function loadCuratedLayerToMapLibre(map, fullLayerId, opts = {}) {
       registerCuratedLayerIds(map, fullLayerId, fallbackSourceId, addedFallbackLayerIds);
     }
   }
+}
+
+function collectEnabledCuratedIds(groups) {
+  const ids = [];
+  for (const group of groups || []) {
+    if (!group || !group.id || !group.id.startsWith("curated")) continue;
+    for (const layer of group.layers || []) {
+      if (layer && layer.enabled) ids.push(`${group.id}.${layer.id}`);
+    }
+  }
+  return ids;
+}
+
+function hasMapLibreLayerWithPrefix(targetMap, prefix) {
+  if (!targetMap || !prefix || typeof targetMap.getStyle !== "function") return false;
+  const style = targetMap.getStyle();
+  return (style?.layers || []).some((layer) => layer?.id?.startsWith(prefix));
+}
+
+/**
+ * GIS curated refresh used by the live layerGroups subscriber.
+ * Disabled ids are removed immediately. Still-enabled ids stay until the
+ * loader commits their replacement.
+ */
+export function createGisCuratedRefresh({
+  map,
+  getLayerGroups = () => [],
+  displayGroups = (raw) => (Array.isArray(raw) ? raw : Object.values(raw || {})),
+  filterGroups = (groups) => groups,
+  applyLayerGroups = () => {},
+  applyLabelHeading = () => {},
+  nameFieldController = { sync() {} },
+  personVisual = {},
+  syncFlowAnimations = () => {},
+  getNarrativeController = () => null,
+  resolveMaplibregl = async () => null,
+  syncPinkLine = () => {},
+} = {}) {
+  let activeCuratedIds = new Set();
+
+  const refreshCuratedLayers = async ({
+    affectedCuratedFullLayerIds,
+    groupsOverride,
+    syncFlow = true,
+    isCurrent = () => true,
+  } = {}) => {
+    if (!isCurrent()) return;
+    const rawGroups = groupsOverride ?? getLayerGroups();
+    const groupsAsArray = displayGroups(rawGroups);
+    const currentGroups = filterGroups(groupsAsArray);
+
+    if (!isCurrent()) return;
+    applyLayerGroups(currentGroups);
+    applyLabelHeading(map);
+    nameFieldController.sync(currentGroups);
+    personVisual.bringToFront?.();
+    if (syncFlow) syncFlowAnimations();
+
+    const enabledCuratedIds = new Set(collectEnabledCuratedIds(currentGroups));
+    const previousCuratedIds = new Set(activeCuratedIds);
+    activeCuratedIds = enabledCuratedIds;
+
+    for (const fullId of previousCuratedIds) {
+      if (!isCurrent()) return;
+      if (!enabledCuratedIds.has(fullId)) {
+        removeCuratedLayersByPrefix(map, fullId);
+        removeCuratedHtmlMarkers(fullId);
+      }
+    }
+
+    let toRefresh;
+    if (Array.isArray(affectedCuratedFullLayerIds) && affectedCuratedFullLayerIds.length > 0) {
+      const affectedSet = new Set(affectedCuratedFullLayerIds.filter((id) => typeof id === "string"));
+      for (const fullId of affectedSet) {
+        if (!isCurrent()) return;
+        if (enabledCuratedIds.has(fullId)) continue;
+        removeCuratedLayersByPrefix(map, fullId);
+        removeCuratedHtmlMarkers(fullId);
+      }
+      toRefresh = [...enabledCuratedIds].filter((id) => affectedSet.has(id));
+    } else {
+      toRefresh = [...enabledCuratedIds];
+    }
+
+    if (toRefresh.length === 0) {
+      if (!isCurrent()) return;
+      if (syncFlow) syncFlowAnimations();
+      personVisual.bringToFront?.();
+      syncPinkLine(map, groupsAsArray);
+      if (!isCurrent()) return;
+      getNarrativeController()?.onStyleLoad?.();
+      return;
+    }
+
+    const maplibregl = await resolveMaplibregl();
+    for (const fullId of toRefresh) {
+      if (!isCurrent()) return;
+      try {
+        await loadCuratedLayerToMapLibre(map, fullId, {
+          maplibregl,
+          force: true,
+          isCurrent: () => isCurrent(fullId),
+        });
+      } catch (err) {
+        console.warn(`[map-main] Failed to load curated layer ${fullId}`, err);
+      }
+    }
+    if (!isCurrent()) return;
+    if (syncFlow) syncFlowAnimations();
+    personVisual.bringToFront?.();
+    syncPinkLine(map, groupsAsArray);
+    if (!isCurrent()) return;
+    getNarrativeController()?.onStyleLoad?.();
+  };
+
+  return {
+    refreshCuratedLayers,
+    clearActiveCuratedIds() {
+      activeCuratedIds = new Set();
+    },
+  };
+}
+
+/**
+ * Projection curated refresh used by the live layerGroups path.
+ * `applyProjectionRefresh` is the subscriber entry and does not join the
+ * projection queue.
+ */
+export function createProjectionCuratedRefresh({
+  map,
+  isRuntimeAlive = () => true,
+  getLayerGroups = () => [],
+  asLayerGroups = (raw) => (Array.isArray(raw) ? raw : Object.values(raw || {})),
+  updateModelVisibility = () => {},
+  syncProjectionLayersWithNarrative = () => {},
+  applyLabelHeading = () => {},
+  nameFieldController = { sync() {} },
+  syncFlowAnimations = () => {},
+  getNarrativeController = () => null,
+  refreshLegend = () => {},
+  raiseHighlight = () => {},
+  resolveMaplibregl = async () => null,
+  syncPinkLine = () => {},
+  shouldSkipLiveRefresh = () => false,
+} = {}) {
+  let activeCuratedIds = new Set();
+
+  const runProjectionCuratedRefresh = async ({
+    affectedCuratedFullLayerIds,
+    fromSlideshowTick,
+    groupsOverride,
+    layerStyleOptions,
+    isCurrent = () => true,
+  } = {}) => {
+    if (!isRuntimeAlive() || !isCurrent()) return;
+    const rawGroups = groupsOverride ?? getLayerGroups();
+    const currentGroups = asLayerGroups(rawGroups);
+
+    updateModelVisibility(rawGroups);
+
+    syncProjectionLayersWithNarrative(map, currentGroups, layerStyleOptions);
+    applyLabelHeading(map);
+    nameFieldController.sync(currentGroups);
+    syncFlowAnimations();
+
+    const enabledCuratedIds = new Set(collectEnabledCuratedIds(currentGroups));
+    const previousCuratedIds = new Set(activeCuratedIds);
+    activeCuratedIds = enabledCuratedIds;
+
+    for (const fullId of previousCuratedIds) {
+      if (!isCurrent()) return;
+      if (!enabledCuratedIds.has(fullId)) {
+        removeCuratedLayersByPrefix(map, fullId, layerStyleOptions);
+        removeCuratedHtmlMarkers(fullId);
+      }
+    }
+
+    let toRefresh;
+    if (Array.isArray(affectedCuratedFullLayerIds) && affectedCuratedFullLayerIds.length > 0) {
+      const affectedSet = new Set(
+        affectedCuratedFullLayerIds.filter((id) => typeof id === "string"),
+      );
+      for (const fullId of affectedSet) {
+        if (!isCurrent()) return;
+        if (enabledCuratedIds.has(fullId)) continue;
+        removeCuratedHtmlMarkers(fullId);
+      }
+      toRefresh = [...enabledCuratedIds].filter((id) => affectedSet.has(id));
+    } else {
+      toRefresh = [...enabledCuratedIds];
+    }
+
+    if (toRefresh.length === 0) {
+      if (!isCurrent()) return;
+      syncFlowAnimations();
+      syncPinkLine(map, currentGroups);
+      getNarrativeController()?.onStyleLoad();
+      refreshLegend();
+      raiseHighlight(map);
+      return;
+    }
+
+    const maplibregl = await resolveMaplibregl();
+    if (!isRuntimeAlive() || !isCurrent()) return;
+    for (const fullId of toRefresh) {
+      if (!isCurrent(fullId)) return;
+      if (fromSlideshowTick && hasMapLibreLayerWithPrefix(map, fullId)) {
+        continue;
+      }
+      try {
+        await loadCuratedLayerToMapLibre(map, fullId, {
+          maplibregl,
+          force: true,
+          isCurrent: () => isCurrent(fullId),
+        });
+      } catch (err) {
+        console.warn(`[projection-main] Failed to load curated layer ${fullId}`, err);
+      }
+      if (!isCurrent(fullId)) return;
+    }
+    if (!isCurrent()) return;
+    syncFlowAnimations();
+    syncPinkLine(map, currentGroups);
+    getNarrativeController()?.onStyleLoad();
+    refreshLegend();
+    raiseHighlight(map);
+  };
+
+  const applyProjectionRefresh = ({
+    groupsOverride,
+    affectedCuratedFullLayerIds,
+    fromSlideshowTick,
+    layerStyleOptions,
+    isCurrent,
+  } = {}) => {
+    if (!fromSlideshowTick && shouldSkipLiveRefresh()) {
+      return Promise.resolve();
+    }
+    return runProjectionCuratedRefresh({
+      groupsOverride,
+      affectedCuratedFullLayerIds,
+      fromSlideshowTick,
+      layerStyleOptions,
+      isCurrent,
+    });
+  };
+
+  return { runProjectionCuratedRefresh, applyProjectionRefresh };
 }

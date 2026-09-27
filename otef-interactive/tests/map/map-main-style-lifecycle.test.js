@@ -1,8 +1,10 @@
-import { describe, expect, test, vi } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import { createFakeMapLibreMap } from "../helpers/fake-maplibre-map.js";
 import { installGisStyleReload } from "../../frontend/src/entries/map-main-style-lifecycle.js";
+import { createCuratedDisplayGate, createGisCuratedRefresh, loadCuratedLayerToMapLibre, removeCuratedHtmlMarkers } from "../../frontend/src/map/maplibre-curated-layer-loader.js";
+import * as curatedService from "../../frontend/src/shared/curated-layer-service.js";
 
 describe("map-main GIS style reload lifecycle", () => {
   test("wraps every GIS layer-group apply with a synchronous Nova victim filter", () => {
@@ -11,7 +13,7 @@ describe("map-main GIS style reload lifecycle", () => {
       "utf8",
     );
     expect(source).toMatch(
-      /const applyGisLayerGroups = \(groups\) => \{\s*applyLayerGroupsToMap\(map, groups\);\s*applyNarrativePeopleFilter\(map, OTEFDataContext\.getNarrativeState\?\.\(\)\?\.id \?\? null\);\s*raiseDarkBasemapPlaceLabels\(map\);\s*\};/,
+      /const applyGisLayerGroups = \(groups\) => \{\s*applyLayerGroupsToMap\(map, groups\);\s*applyNarrativePeopleFilter\(map, OTEFDataContext\.getNarrativeState\?\.\(\)\?\.id \?\? null\);\s*applyNarrativeHouseOutlineFilter\(map, OTEFDataContext\.getNarrativeState\?\.\(\)\?\.id \?\? null\);\s*raiseDarkBasemapPlaceLabels\(map\);\s*\};/,
     );
     expect(source.match(/applyLayerGroupsToMap\(/g)).toHaveLength(1);
   });
@@ -129,10 +131,174 @@ describe("map-main GIS style reload lifecycle", () => {
       path.resolve(import.meta.dirname, "../../frontend/src/entries/map-main.js"),
       "utf8",
     );
-    const curatedRefresh = entry.slice(
-      entry.indexOf("const refreshCuratedLayers"),
-      entry.indexOf("// Initial curated load"),
+    const loader = fs.readFileSync(
+      path.resolve(import.meta.dirname, "../../frontend/src/map/maplibre-curated-layer-loader.js"),
+      "utf8",
     );
-    expect(curatedRefresh).toMatch(/syncPinkLineAxisCompanionForMapLibre[\s\S]*isCurrent\(\)[\s\S]*narrativeController\.onStyleLoad/);
+    const refreshStart = loader.indexOf("const refreshCuratedLayers = async");
+    const curatedRefresh = loader.slice(refreshStart, loader.indexOf("return {", refreshStart));
+    expect(curatedRefresh).toMatch(/syncPinkLine\(map, groupsAsArray\);\s*if \(!isCurrent\(\)\) return;\s*getNarrativeController\(\)\?\.onStyleLoad/);
+    expect(entry).toMatch(/getNarrativeController:\s*\(\)\s*=>\s*narrativeController/);
+  });
+
+  test("the live layerGroups subscriber carries generation, liveness, and desired-id checks into the loader", () => {
+    const source = fs.readFileSync(
+      path.resolve(import.meta.dirname, "../../frontend/src/entries/map-main.js"),
+      "utf8",
+    );
+    const subscriber = source.slice(
+      source.indexOf('OTEFDataContext.subscribe("layerGroups"'),
+      source.indexOf("// Curated layers (Supabase-synced overlays"),
+    );
+    expect(subscriber).toMatch(/isCurrent:\s*curatedDisplay\.begin\(/);
+    expect(subscriber).toMatch(/refreshCuratedLayers\(\{[\s\S]*isCurrent:/);
+    expect(source).toMatch(/createGisCuratedRefresh\(/);
+    const loader = fs.readFileSync(
+      path.resolve(import.meta.dirname, "../../frontend/src/map/maplibre-curated-layer-loader.js"),
+      "utf8",
+    );
+    const refreshStart = loader.indexOf("const refreshCuratedLayers = async");
+    const loaderCall = loader.slice(loader.indexOf("await loadCuratedLayerToMapLibre", refreshStart));
+    expect(loaderCall.slice(0, 240)).toMatch(/isCurrent:\s*\(\)\s*=>\s*isCurrent\(fullId\)/);
+    expect(source).toMatch(/curatedDisplay\.invalidateStyle\(\)/);
+    expect(source).toMatch(/curatedDisplay\.dispose\(\)/);
+    const applyAt = loader.indexOf("applyLayerGroups(", refreshStart);
+    const awaitAt = loader.indexOf("await ", refreshStart);
+    expect(applyAt).toBeGreaterThan(refreshStart);
+    expect(applyAt).toBeLessThan(awaitAt);
   });
 });
+
+function polygonCollection(label) {
+  return {
+    type: "FeatureCollection",
+    features: [{
+      type: "Feature",
+      properties: { label },
+      geometry: { type: "Polygon", coordinates: [[[34.4, 31.3], [34.5, 31.3], [34.5, 31.4], [34.4, 31.3]]] },
+    }],
+  };
+}
+
+function defer() {
+  let resolve;
+  const promise = new Promise((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+describe("GIS live curated display freshness", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    removeCuratedHtmlMarkers("curated.scene");
+    removeCuratedHtmlMarkers("curated.home");
+  });
+
+  test("enable then Home drops the stale fetch and still mounts the desired Home load", async () => {
+    const sceneData = defer();
+    const homeData = defer();
+    vi.spyOn(curatedService, "fetchCuratedLayerData")
+      .mockReturnValueOnce(sceneData.promise)
+      .mockReturnValueOnce(homeData.promise);
+    vi.spyOn(curatedService, "fetchPinkLinePaths").mockResolvedValue({ basePaths: [], pinkGeojson: null });
+    const map = createFakeMapLibreMap();
+    let alive = true;
+    const gate = createCuratedDisplayGate({ isMapAlive: () => alive });
+    const sceneCurrent = gate.begin(["curated.scene"]);
+    const sceneLoad = loadCuratedLayerToMapLibre(map, "curated.scene", {
+      force: true,
+      isCurrent: () => sceneCurrent("curated.scene"),
+    });
+    const homeCurrent = gate.begin(["curated.home"]);
+    const homeLoad = loadCuratedLayerToMapLibre(map, "curated.home", {
+      force: true,
+      isCurrent: () => homeCurrent("curated.home"),
+    });
+    homeData.resolve({ geojson: polygonCollection("home"), layerData: {} });
+    await homeLoad;
+    sceneData.resolve({ geojson: polygonCollection("scene"), layerData: {} });
+    await sceneLoad;
+    expect(map.getLayer("curated.scene__plain__fill")).toBeFalsy();
+    expect(map.getLayer("curated.home__plain__fill")).toBeTruthy();
+  });
+
+  test("style reload and dispose drop an in-flight load, then the current desired load mounts", async () => {
+    const staleData = defer();
+    vi.spyOn(curatedService, "fetchCuratedLayerData")
+      .mockReturnValueOnce(staleData.promise)
+      .mockResolvedValueOnce({ geojson: polygonCollection("next"), layerData: {} });
+    vi.spyOn(curatedService, "fetchPinkLinePaths").mockResolvedValue({ basePaths: [], pinkGeojson: null });
+    const map = createFakeMapLibreMap();
+    let alive = true;
+    const gate = createCuratedDisplayGate({ isMapAlive: () => alive });
+    const first = gate.begin(["curated.scene"]);
+    const staleLoad = loadCuratedLayerToMapLibre(map, "curated.scene", {
+      force: true,
+      isCurrent: () => first("curated.scene"),
+    });
+    gate.invalidateStyle();
+    const next = gate.begin(["curated.scene"]);
+    await loadCuratedLayerToMapLibre(map, "curated.scene", {
+      force: true,
+      isCurrent: () => next("curated.scene"),
+    });
+    staleData.resolve({ geojson: polygonCollection("stale"), layerData: {} });
+    await staleLoad;
+    expect(map.getLayer("curated.scene__plain__fill")).toBeTruthy();
+
+    const disposedData = defer();
+    curatedService.fetchCuratedLayerData.mockReturnValueOnce(disposedData.promise);
+    const beforeDispose = gate.begin(["curated.home"]);
+    const disposedLoad = loadCuratedLayerToMapLibre(map, "curated.home", {
+      force: true,
+      isCurrent: () => beforeDispose("curated.home"),
+    });
+    alive = false;
+    gate.dispose();
+    disposedData.resolve({ geojson: polygonCollection("disposed"), layerData: {} });
+    await disposedLoad;
+    expect(map.getLayer("curated.home__plain__fill")).toBeFalsy();
+  });
+
+  test("an affected refresh keeps a still-wanted layer until replacement and a stale fetch cannot restore a dropped layer", async () => {
+    const sceneData = defer();
+    vi.spyOn(curatedService, "fetchCuratedLayerData").mockImplementation((fullId) => {
+      if (fullId === "curated.scene") return sceneData.promise;
+      return Promise.resolve({ geojson: polygonCollection("home"), layerData: {} });
+    });
+    vi.spyOn(curatedService, "fetchPinkLinePaths").mockResolvedValue({ basePaths: [], pinkGeojson: null });
+    const map = createFakeMapLibreMap({ layers: [{ id: "curated.scene__old", type: "fill" }] });
+    const gate = createCuratedDisplayGate({ isMapAlive: () => true });
+    const { refreshCuratedLayers } = createGisCuratedRefresh({ map });
+    const sceneCurrent = gate.begin(["curated.scene"]);
+    const staleRefresh = refreshCuratedLayers({
+      affectedCuratedFullLayerIds: ["curated.scene"],
+      groupsOverride: [curatedGroup("curated.scene", true)],
+      syncFlow: false,
+      isCurrent: sceneCurrent,
+    });
+    expect(map.getLayer("curated.scene__old")).toBeTruthy();
+    expect(map.calls.filter((call) => call.method === "removeLayer")).toHaveLength(0);
+
+    const homeCurrent = gate.begin(["curated.home"]);
+    await refreshCuratedLayers({
+      groupsOverride: [curatedGroup("curated.home", true), curatedGroup("curated.scene", false)],
+      syncFlow: false,
+      isCurrent: homeCurrent,
+    });
+    expect(map.getLayer("curated.scene__old")).toBeFalsy();
+    expect(map.getLayer("curated.home__plain__fill")).toBeTruthy();
+
+    sceneData.resolve({ geojson: polygonCollection("scene"), layerData: {} });
+    await staleRefresh;
+    expect(map.getLayer("curated.scene__plain__fill")).toBeFalsy();
+    expect(map.getLayer("curated.scene__old")).toBeFalsy();
+    expect(map.getLayer("curated.home__plain__fill")).toBeTruthy();
+    expect(sceneCurrent("curated.scene")).toBe(false);
+    expect(homeCurrent("curated.home")).toBe(true);
+  });
+});
+
+function curatedGroup(fullId, enabled) {
+  const [groupId, layerId] = fullId.split(".");
+  return { id: groupId, layers: [{ id: layerId, enabled }] };
+}

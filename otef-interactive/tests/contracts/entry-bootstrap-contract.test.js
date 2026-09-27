@@ -44,9 +44,11 @@ test("entrypoints do not require window.TableSwitcher constructor", () => {
 
 test("projection entry wires MapLibre curated pipeline (manual Supabase sync via workshop)", () => {
   const src = read("frontend/src/entries/projection-main.js");
-  expect(src.includes("loadCuratedLayerToMapLibre")).toBe(true);
-  expect(src.includes("removeCuratedHtmlMarkers")).toBe(true);
-  expect(src.includes("removeCuratedLayersByPrefix")).toBe(true);
+  const refreshSrc = read("frontend/src/map/maplibre-curated-layer-loader.js");
+  expect(src.includes("createProjectionCuratedRefresh")).toBe(true);
+  expect(refreshSrc.includes("loadCuratedLayerToMapLibre")).toBe(true);
+  expect(refreshSrc.includes("removeCuratedHtmlMarkers")).toBe(true);
+  expect(refreshSrc.includes("removeCuratedLayersByPrefix")).toBe(true);
   expect(src.includes("refreshProjectionCuratedLayers")).toBe(true);
   expect(src.includes("loadProjectionCuratedLayers")).toBe(true);
   expect(src.includes("startCuratedSupabaseHeartbeat")).toBe(false);
@@ -54,16 +56,16 @@ test("projection entry wires MapLibre curated pipeline (manual Supabase sync via
   expect(src.includes("syncCuratedMapLayersAfterSupabasePull")).toBe(true);
   expect(src.includes("otef-curated-geojson-refresh")).toBe(true);
   expect(src.includes("projectionCuratedRefreshChain")).toBe(true);
-  expect(src.includes("layerStyleOptions")).toBe(true);
-  expect(src.includes("syncProjectionLayersWithNarrative(map, currentGroups, layerStyleOptions)")).toBe(true);
+  expect(refreshSrc.includes("layerStyleOptions")).toBe(true);
+  expect(refreshSrc.includes("syncProjectionLayersWithNarrative(map, currentGroups, layerStyleOptions)")).toBe(true);
   expect(src).toMatch(/nameFieldController\.setProjectionConfig\(\s*DEFAULT_PROJECTION_CONFIG\s*\)/);
   expect(src).toMatch(/if \(map\.loaded\(\) \|\| map\._loaded\) map\.fire\("load"\)/);
-  expect(src.includes("removeCuratedLayersByPrefix(map, fullId, layerStyleOptions)")).toBe(true);
-  expect(src.includes("hasMapLibreLayerWithPrefix(map, fullId)")).toBe(true);
-  expect(src.includes("fromSlideshowTick,")).toBe(true);
-  expect(src.includes("loadCuratedLayerToMapLibre(map, fullId,")).toBe(true);
+  expect(refreshSrc.includes("removeCuratedLayersByPrefix(map, fullId, layerStyleOptions)")).toBe(true);
+  expect(refreshSrc.includes("hasMapLibreLayerWithPrefix(map, fullId)")).toBe(true);
+  expect(refreshSrc.includes("fromSlideshowTick,")).toBe(true);
+  expect(refreshSrc.includes("loadCuratedLayerToMapLibre(map, fullId,")).toBe(true);
   expect(src.includes("skipInitialVectorLayerSync")).toBe(false);
-  const curatedSubscription = /OTEFDataContext\.subscribe\(\s*["']layerGroups["']\s*,\s*\(\)\s*=>\s*\{[\s\S]{0,800}?groupsOverride:\s*getEffectiveProjectionLayerGroups\(\)/;
+  const curatedSubscription = /OTEFDataContext\.subscribe\(\s*["']layerGroups["']\s*,\s*\(\)\s*=>\s*\{[\s\S]{0,900}?getEffectiveProjectionLayerGroups\(\)[\s\S]{0,400}?groupsOverride:\s*groups/;
   expect(src).toMatch(curatedSubscription);
   expect(src).not.toMatch(/OTEFDataContext\.subscribe\(\s*["']layerGroups["']\s*,\s*\(\s*groups\s*\)[\s\S]{0,800}?groupsOverride:\s*groups/);
 });
