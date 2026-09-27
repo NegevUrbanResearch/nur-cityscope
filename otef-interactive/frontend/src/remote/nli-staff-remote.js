@@ -20,7 +20,7 @@ import {
 import { createStaffPackMenus } from "./nli-staff-pack-menus.js";
 import { labelForPlace, placeIsWithinRemoteBounds } from "./remote-place-navigation.js";
 import { applyServerLocale, bindLocaleButtons, getLocale, t, LOCALE_EVENT } from "./remote-locale.js";
-import { COPY, HOME_SHOW_SHORTCUTS, NARRATIVES, SCENES, SCRIPTS, SHOW } from "./nli-staff-script.js";
+import { COPY, HOME_CUE, HOME_SHOW_SHORTCUTS, NARRATIVES, SCENES, SCRIPTS, SHOW } from "./nli-staff-script.js";
 import { nextAction, prevAction, showStepIndex, slideIndexes } from "./nli-staff-flow.js";
 import { searchPlaces } from "../shared/place-navigation/place-catalog.js";
 import {
@@ -107,21 +107,29 @@ export function createNliStaffSearchEventHandlers({
     cancelCues();
     setPending(true);
     renderPending();
-    const before = beforeTransition();
-    if (before && typeof before.then === "function") await before;
-    if (!transition.isCurrent(token)) return false;
-    const cleared = await transition.clearAll(token);
-    if (!transition.isCurrent(token)) return false;
-    if (!cleared) return failClear(token);
-    clearSearchUi();
-    setPending(false);
-    renderPending();
-    setDestination(item, index, returnTo);
-    renderDestination();
-    await applyDestinationCue(item, index);
-    if (!transition.isCurrent(token)) return false;
-    afterDestinationCue(item, index);
-    return true;
+    try {
+      const before = beforeTransition();
+      const closed = before && typeof before.then === "function" ? await before : before;
+      if (!transition.isCurrent(token)) return false;
+      if (closed === false) return false;
+      const cleared = await transition.clearAll(token);
+      if (!transition.isCurrent(token)) return false;
+      if (!cleared) return failClear(token);
+      clearSearchUi();
+      setPending(false);
+      renderPending();
+      setDestination(item, index, returnTo);
+      renderDestination();
+      const cueResult = await applyDestinationCue(item, index);
+      if (!transition.isCurrent(token)) return false;
+      afterDestinationCue(item, index, cueResult);
+      return true;
+    } finally {
+      if (transition.isCurrent(token)) {
+        setPending(false);
+        renderPending();
+      }
+    }
   }
 
   async function selectWithClear(kind, value, action) {
@@ -294,6 +302,7 @@ export function initNliStaffRemote(dataContext) {
     state.freeError = null;
     state.placeName = null;
     renderFree();
+    if (turningOff && id === "open") return applyCue(HOME_CUE, null);
     return applyCue(turningOff ? { layers: [], clock: "idle" } : scene.cue);
   }
 
@@ -687,48 +696,90 @@ export function initNliStaffRemote(dataContext) {
     });
   }
 
-  async function exitToHome() {
+  let bootArmed = true;
+  let hydrated = false;
+  let homeFlight = null;
+
+  function maybeBootHome() {
+    if (!bootArmed || !hydrated || !state.connected) return;
+    if (state.screen !== "home" || state.scriptId) {
+      bootArmed = false;
+      return;
+    }
+    bootArmed = false;
+    void exitToHome();
+  }
+
+  function exitToHome() {
+    bootArmed = false;
+    if (!homeFlight) homeFlight = performHomeExit().finally(() => { homeFlight = null; });
+    return homeFlight;
+  }
+
+  async function performHomeExit() {
     navigationGeneration += 1;
     const generation = navigationGeneration;
+    const previous = {
+      screen: state.screen,
+      scriptId: state.scriptId,
+      step: state.step,
+      returnTo: state.returnTo,
+      scene: state.scene,
+    };
     timelineHost.invalidateTransport();
+    const token = searchTransition.begin();
+    cues.cancel();
+    state.searchPending = true;
+    const paintPending = () => {
+      if (state.screen === "player") renderPlayer();
+      else renderKit();
+    };
+    paintPending();
     try {
-      const token = searchTransition.begin();
-      cues.cancel();
-      state.searchPending = true;
-      renderKit();
       state.presentationClosePending = true;
-      renderKit();
+      paintPending();
+      let closed = true;
       try {
-        await presentation?.closeForStepChange();
+        closed = await presentation?.closeForStepChange();
       } finally {
         state.presentationClosePending = false;
-        renderKit();
+        if (searchTransition.isCurrent(token)) paintPending();
       }
-      if (!searchTransition.isCurrent(token)) return false;
+      if (!searchTransition.isCurrent(token) || closed === false) return false;
       const cleared = await searchTransition.clearAll(token);
       if (!searchTransition.isCurrent(token)) return false;
       if (!cleared) return failSearchClear(token);
+      state.searchPending = false;
+      clearSearchUi();
+      if (peopleArchive?.getArchivePhase?.() === "open") void peopleArchive.closeArchive();
       state.scriptId = null;
       state.step = 0;
       state.returnTo = null;
       state.scene = null;
-      state.cueStatus = null;
-      state.searchPending = false;
-      clearSearchUi();
-      if (peopleArchive?.getArchivePhase?.() === "open") {
-        void peopleArchive.closeArchive();
-      }
       showScreen("home");
       renderHome();
-      if (dataContext?.setNarrative) {
-        try {
-          await dataContext.setNarrative(null);
-        } catch {
-          // ignore
-        }
+      const result = await applyCue(HOME_CUE, null);
+      if (!searchTransition.isCurrent(token)) return false;
+      if (result?.status !== "ready") {
+        state.scriptId = previous.scriptId;
+        state.step = previous.step;
+        state.returnTo = previous.returnTo;
+        state.scene = previous.scene;
+        showScreen(previous.screen);
+        if (previous.screen === "player") renderPlayer();
+        else if (previous.screen === "free") renderFree();
+        else renderHome();
+        return false;
       }
       return true;
     } finally {
+      if (searchTransition.isCurrent(token)) {
+        state.presentationClosePending = false;
+        state.searchPending = false;
+        if (state.screen === "player") renderPlayer();
+        else if (state.screen === "free") renderFree();
+        else renderHome();
+      }
       if (generation === navigationGeneration) rearmTransport();
     }
   }
@@ -847,7 +898,7 @@ export function initNliStaffRemote(dataContext) {
       state.presentationClosePending = true;
       if (state.screen === "player") renderPlayer();
       try {
-        await presentation?.closeForStepChange();
+        return await presentation?.closeForStepChange();
       } finally {
         state.presentationClosePending = false;
         if (state.screen === "player") renderPlayer();
@@ -874,10 +925,13 @@ export function initNliStaffRemote(dataContext) {
         if (generation === navigationGeneration) rearmTransport();
       }
     },
-    afterDestinationCue: (item, index) => {
-      const destination = item.steps[Math.max(0, Math.min(index, item.steps.length - 1))];
+    afterDestinationCue: (item, index, cueResult) => {
+      if (cueResult?.status !== "ready") return;
+      const nextIndex = Math.max(0, Math.min(index, item.steps.length - 1));
+      if (state.scriptId !== item.id || state.step !== nextIndex) return;
+      const destination = item.steps[nextIndex];
       if (shouldAutoOpenNliPresentation({
-        item, index, currentScript: script(), currentStep: currentStep(), cueStatus: state.cueStatus,
+        item, index: nextIndex, currentScript: script(), currentStep: currentStep(), cueStatus: "ready",
       })) {
         void presentation.run("open", destination.presentation.segmentId);
       }
@@ -1026,6 +1080,7 @@ export function initNliStaffRemote(dataContext) {
     peopleArchive.syncArchiveButton();
     renderKit();
     if (state.screen === "free") renderFree();
+    maybeBootHome();
   });
   dataContext?.subscribe?.("connectionStatus", (status) => {
     state.connectionStatus = status;
@@ -1036,8 +1091,10 @@ export function initNliStaffRemote(dataContext) {
     if (state.screen === "free") packMenus?.render();
   });
   dataContext?.subscribe?.("narrativeState", () => {
+    hydrated = true;
     timelineHost._clearNliScrubOnNarrativeChange?.();
     renderKit();
+    maybeBootHome();
   });
   dataContext?.subscribe?.("escapeOverlay", () => {
     renderKit();

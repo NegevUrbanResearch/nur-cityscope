@@ -76,6 +76,40 @@ describe("NLI staff show flow", () => {
     expect(events).toEqual([]);
   });
 
+  test("a false close acknowledgement stops before clear and the cue", async () => {
+    let generation = 0;
+    const events = [];
+    const handlers = createNliStaffSearchEventHandlers({
+      transition: {
+        begin: () => ++generation,
+        isCurrent: (token) => token === generation,
+        clearAll: async () => { events.push("clear"); return true; },
+      },
+      beforeTransition: async () => { events.push("close"); return false; },
+      setDestination: () => events.push("destination"),
+      applyDestinationCue: async () => { events.push("cue"); },
+      afterDestinationCue: () => events.push("after-cue"),
+    });
+    await expect(handlers.transitionToStep({ steps: [{}] }, 0, null)).resolves.toBe(false);
+    expect(events).toEqual(["close"]);
+  });
+
+  test("the post-cue hook receives the cue result and does not infer success from status alone", async () => {
+    let generation = 0;
+    const seen = [];
+    const handlers = createNliStaffSearchEventHandlers({
+      transition: {
+        begin: () => ++generation,
+        isCurrent: (token) => token === generation,
+        clearAll: async () => true,
+      },
+      applyDestinationCue: async () => ({ status: "failed" }),
+      afterDestinationCue: (_item, _index, result) => { seen.push(result); },
+    });
+    await handlers.transitionToStep({ id: "shura", steps: [{}] }, 0, null);
+    expect(seen).toEqual([{ status: "failed" }]);
+  });
+
   test("home search shortcuts point to canonical SHOW step IDs", () => {
     expect(HOME_SHOW_SHORTCUTS.every((item) => SHOW.steps[showStepIndex(item.id)]?.id === item.id)).toBe(true);
   });
