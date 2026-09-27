@@ -774,9 +774,15 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
         individual = payload.get("individual")
         overlap = payload.get("overlap")
         mor = payload.get("mor", False)
-        if not isinstance(individual, bool) or not isinstance(overlap, bool) or not isinstance(mor, bool):
+        settled = payload.get("settled", False)
+        if (
+            not isinstance(individual, bool)
+            or not isinstance(overlap, bool)
+            or not isinstance(mor, bool)
+            or not isinstance(settled, bool)
+        ):
             return Response(
-                {"error": "individual, overlap, and mor must be booleans"},
+                {"error": "individual, overlap, mor, and settled must be booleans"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -785,7 +791,12 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
             narrative_id = normalize_narrative_state(locked.narrative_state)["id"]
             if narrative_id == "nova":
                 overlay = normalize_escape_overlay(
-                    {"individual": individual, "overlap": overlap, "mor": mor},
+                    {
+                        "individual": individual,
+                        "overlap": overlap,
+                        "mor": mor,
+                        "settled": settled,
+                    },
                     "nova",
                 )
             else:

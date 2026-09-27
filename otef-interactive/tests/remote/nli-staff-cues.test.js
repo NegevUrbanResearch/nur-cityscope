@@ -48,7 +48,7 @@ describe("NLI staff cue runner", () => {
     ]);
     expect(calls[0][1]).toEqual([BASE]);
     expect(calls[1][1]).toBe("nova");
-    expect(calls[2][1]).toEqual({ individual: false, overlap: false, mor: true });
+    expect(calls[2][1]).toEqual({ individual: false, overlap: false, mor: true, settled: false });
     expect(calls[4][1]).toEqual({ to: 401 });
     expect(calls[4][2]).toEqual([LINES]);
     expect(typeof calls[4][3]).toBe("function");
@@ -82,7 +82,7 @@ describe("NLI staff cue runner", () => {
       escape: { individual: true },
     }, "nova");
     expect(calls.map(([name]) => name)).toEqual(["end", "escape"]);
-    expect(calls[1][1]).toEqual({ individual: true, overlap: false, mor: false });
+    expect(calls[1][1]).toEqual({ individual: true, overlap: false, mor: false, settled: false });
     expect(calls.some(([name]) => name === "stop" || name === "start")).toBe(false);
   });
 

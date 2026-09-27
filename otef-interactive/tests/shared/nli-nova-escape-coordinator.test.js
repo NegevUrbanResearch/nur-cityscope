@@ -1291,3 +1291,375 @@ describe("Nova escape overlay coordinator", () => {
     coordinator.dispose();
   });
 });
+
+const SETTLED_OVERLAY = Object.freeze({
+  individual: false,
+  overlap: false,
+  mor: false,
+  settled: true,
+});
+
+const INDIVIDUAL_OVERLAY = Object.freeze({
+  individual: true,
+  overlap: false,
+  mor: false,
+  settled: false,
+});
+
+const memorialGeometry = {
+  type: "Polygon",
+  coordinates: [[[34.4, 31.3], [34.5, 31.3], [34.5, 31.4], [34.4, 31.4], [34.4, 31.3]]],
+};
+
+const memorialSettlement = {
+  type: "Feature",
+  properties: { OBJECTID: 18, outlineObjectId: 18, locations: ["בארי"] },
+  geometry: memorialGeometry,
+};
+
+const memorialRoute = {
+  type: "Feature",
+  properties: { OBJECTID: 1 },
+  geometry: { type: "LineString", coordinates: [[34.41, 31.31], [34.49, 31.39]] },
+};
+
+function memorialMap() {
+  const map = createFakeMapLibreMap({
+    layers: [
+      { id: "projector_base__שמות_יישובים__labels", type: "symbol", source: "projector_base.שמות_יישובים" },
+      { id: "projector_base__Locations_Lines__line__0", type: "line", source: "projector_base.Locations_Lines" },
+    ],
+    sources: {
+      "projector_base.שמות_יישובים": {
+        type: "geojson",
+        data: {
+          type: "FeatureCollection",
+          features: [
+            {
+              type: "Feature",
+              properties: { cityname: "בארי", OBJECTID: 77 },
+              geometry: { type: "Point", coordinates: [0, 0] },
+            },
+          ],
+        },
+      },
+    },
+  });
+  map.flushAnimationFrames = (timestamp = Date.now()) => {
+    let guard = 0;
+    while (map.pendingAnimationFrameCount() && guard < 50) {
+      map.driveAnimationFrame(timestamp);
+      guard += 1;
+    }
+  };
+  return map;
+}
+
+function installMemorialFetch({
+  routeGate,
+  indexGate,
+  settlementGate,
+  indexBody,
+  settlements,
+} = {}) {
+  vi.stubGlobal("fetch", vi.fn(async (url) => {
+    const href = String(url);
+    if (href === INDIVIDUAL_URL) {
+      if (routeGate) await routeGate.promise;
+      return jsonResponse({ type: "FeatureCollection", features: [memorialRoute] });
+    }
+    if (href === IMPACT_INDEX_URL) {
+      if (indexGate) await indexGate.promise;
+      return indexBody || impactIndex(["1"], [["1", "line", "232", 0]], [["1", "18", 0]]);
+    }
+    if (href === DEFAULT_INVESTIGATION_SETTLEMENTS_URL) {
+      if (settlementGate) await settlementGate.promise;
+      return settlements || jsonResponse({ type: "FeatureCollection", features: [memorialSettlement] });
+    }
+    return jsonResponse({ type: "FeatureCollection", features: [] });
+  }));
+}
+
+function expectSettledMemorial(map) {
+  const features = map.getSource(NOVA_ESCAPE_IMPACT_LAYER_ID)?.data?.features || [];
+  expect(features).toHaveLength(1);
+  expect(features[0].geometry).toEqual(memorialGeometry);
+  expect(features[0].properties.outlineObjectId).toBe(18);
+  expect(map.getPaintProperty("projector_base__שמות_יישובים__labels", "text-opacity"))
+    .toEqual(["case", ["in", ["get", "cityname"], ["literal", ["בארי"]]], 1, 0.35]);
+  expect(map.getPaintProperty("projector_base__Locations_Lines__line__0", "line-opacity"))
+    .toEqual(["case", ["in", ["get", "OBJECTID"], ["literal", [77]]], 1, 0.35]);
+  expect(map.getLayer("nli-nova-escape-individual")).toBeFalsy();
+  expect(map.getLayer("nli-nova-escape-overlap")).toBeFalsy();
+  expect(map.pendingAnimationFrameCount()).toBe(0);
+}
+
+function arrivalOrders(steps) {
+  if (steps.length <= 1) return [steps];
+  return steps.flatMap((step, index) => arrivalOrders([
+    ...steps.slice(0, index),
+    ...steps.slice(index + 1),
+  ]).map((rest) => [step, ...rest]));
+}
+
+function startSettledCoordinator(surface) {
+  const map = memorialMap();
+  const onParallelImpactIdsChanged = vi.fn();
+  const coordinator = createNovaEscapeCoordinator({
+    map,
+    dataContext: createFakeDataContext(),
+    profile: surface,
+    surface,
+    onParallelImpactIdsChanged,
+  });
+  return { map, coordinator, onParallelImpactIdsChanged };
+}
+
+describe("settled Nova intersections", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  test.each(["gis", "projection"])(
+    "cold-cache %s memorial mounts settlement geometry without ribbons or repeating frames",
+    async (surface) => {
+      installMemorialFetch();
+      const { map, coordinator, onParallelImpactIdsChanged } = startSettledCoordinator(surface);
+      await coordinator.sync({ id: "nova" }, SETTLED_OVERLAY);
+      expectSettledMemorial(map);
+      expect(coordinator.debugFeatureProgress(memorialRoute)).toBe(1);
+      map.flushAnimationFrames();
+      expect(map.pendingAnimationFrameCount()).toBe(0);
+      expectSettledMemorial(map);
+      if (surface === "projection") {
+        expect(onParallelImpactIdsChanged.mock.calls.at(-1)?.[0]).toEqual(new Set(["line:232"]));
+      } else {
+        expect(onParallelImpactIdsChanged).not.toHaveBeenCalled();
+      }
+      coordinator.dispose();
+    },
+  );
+
+  test.each(arrivalOrders(["route", "index", "settlement"]).flatMap((steps) => (
+    ["gis", "projection"].map((surface) => ({
+      surface,
+      order: steps.join(" then "),
+      steps,
+    }))
+  )))(
+    "$surface reaches the same settled memorial when $order arrives",
+    async ({ surface, steps }) => {
+      const gates = {
+        route: deferred(),
+        index: deferred(),
+        settlement: deferred(),
+      };
+      installMemorialFetch({
+        routeGate: gates.route,
+        indexGate: gates.index,
+        settlementGate: gates.settlement,
+      });
+      const { map, coordinator } = startSettledCoordinator(surface);
+      const pending = coordinator.sync({ id: "nova" }, SETTLED_OVERLAY);
+      await Promise.resolve();
+      const urls = fetch.mock.calls.map((call) => String(call[0]));
+      expect(urls).toEqual(expect.arrayContaining([
+        INDIVIDUAL_URL,
+        IMPACT_INDEX_URL,
+        DEFAULT_INVESTIGATION_SETTLEMENTS_URL,
+      ]));
+      for (const step of steps) gates[step].resolve();
+      await pending;
+      expectSettledMemorial(map);
+      expect(coordinator.debugFeatureProgress(memorialRoute)).toBe(1);
+      coordinator.dispose();
+    },
+  );
+
+  test.each(["gis", "projection"])(
+    "settled %s invalid index does not fabricate settlement geometry",
+    async (surface) => {
+      const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+      installMemorialFetch({
+        indexBody: jsonResponse({
+          schemaVersion: 2,
+          routeIds: ["1"],
+          parallelCrossings: [],
+          settlementCrossings: [["1", "18", 0]],
+        }),
+      });
+      const { map, coordinator } = startSettledCoordinator(surface);
+      await coordinator.sync({ id: "nova" }, SETTLED_OVERLAY);
+      expect(warning).toHaveBeenCalled();
+      expect(map.getSource(NOVA_ESCAPE_IMPACT_LAYER_ID)?.data?.features || []).toEqual([]);
+      expect(map.pendingAnimationFrameCount()).toBe(0);
+      expect(JSON.stringify(map.getPaintProperty("projector_base__שמות_יישובים__labels", "text-opacity") || ""))
+        .not.toMatch(/בארי/);
+      coordinator.dispose();
+    },
+  );
+
+  test.each(["gis", "projection"])(
+    "settled %s missing settlement geometry is not replaced with an empty polygon",
+    async (surface) => {
+      installMemorialFetch({
+        settlements: jsonResponse({
+          type: "FeatureCollection",
+          features: [{
+            type: "Feature",
+            properties: { OBJECTID: 18, outlineObjectId: 18, locations: ["בארי"] },
+            geometry: null,
+          }],
+        }),
+      });
+      const { map, coordinator } = startSettledCoordinator(surface);
+      await coordinator.sync({ id: "nova" }, SETTLED_OVERLAY);
+      const urls = fetch.mock.calls.map((call) => String(call[0]));
+      expect(urls).toContain(DEFAULT_INVESTIGATION_SETTLEMENTS_URL);
+      const features = map.getSource(NOVA_ESCAPE_IMPACT_LAYER_ID)?.data?.features || [];
+      expect(features.filter((feature) => feature.geometry?.coordinates?.length)).toEqual([]);
+      expect(features).not.toContainEqual(expect.objectContaining({
+        geometry: { type: "Polygon", coordinates: [] },
+      }));
+      expect(map.pendingAnimationFrameCount()).toBe(0);
+      coordinator.dispose();
+    },
+  );
+
+  test.each(["gis", "projection"])(
+    "Home during settled loading ignores a late dependency completion",
+    async (surface) => {
+      const gates = {
+        route: deferred(),
+        index: deferred(),
+        settlement: deferred(),
+      };
+      installMemorialFetch({
+        routeGate: gates.route,
+        indexGate: gates.index,
+        settlementGate: gates.settlement,
+      });
+      const { map, coordinator } = startSettledCoordinator(surface);
+      const loading = coordinator.sync({ id: "nova" }, SETTLED_OVERLAY);
+      await Promise.resolve();
+      expect(fetch.mock.calls.map((call) => String(call[0]))).toEqual(expect.arrayContaining([
+        INDIVIDUAL_URL,
+        IMPACT_INDEX_URL,
+        DEFAULT_INVESTIGATION_SETTLEMENTS_URL,
+      ]));
+      const home = coordinator.sync({ id: null }, {
+        individual: false,
+        overlap: false,
+        mor: false,
+        settled: false,
+      });
+      gates.route.resolve();
+      gates.index.resolve();
+      gates.settlement.resolve();
+      await loading;
+      await home;
+      expect(map.getLayer(NOVA_ESCAPE_IMPACT_LAYER_ID)).toBeFalsy();
+      expect(map.getSource(NOVA_ESCAPE_IMPACT_LAYER_ID)?.data?.features || []).toEqual([]);
+      coordinator.dispose();
+    },
+  );
+
+  test.each(["gis", "projection"])(
+    "%s style reload restores settled outlines without replaying ribbons",
+    async (surface) => {
+      installMemorialFetch();
+      const { map, coordinator } = startSettledCoordinator(surface);
+      await coordinator.sync({ id: "nova" }, SETTLED_OVERLAY);
+      expectSettledMemorial(map);
+      map.wipeStyle();
+      await coordinator.onStyleLoad({ styleLoss: true });
+      expectSettledMemorial(map);
+      expect(coordinator.debugFeatureProgress(memorialRoute)).toBe(1);
+      map.flushAnimationFrames();
+      expect(map.pendingAnimationFrameCount()).toBe(0);
+      expect(map.getLayer("nli-nova-escape-individual")).toBeFalsy();
+      coordinator.dispose();
+    },
+  );
+
+  test("settled then individual starts a fresh stagger below full progress", async () => {
+    let now = 1_000_000;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    installMemorialFetch();
+    const { map, coordinator } = startSettledCoordinator("projection");
+    await coordinator.sync({ id: "nova" }, SETTLED_OVERLAY);
+    expect(coordinator.debugFeatureProgress(memorialRoute)).toBe(1);
+    await coordinator.sync({ id: "nova" }, INDIVIDUAL_OVERLAY);
+    expect(map.getLayer("nli-nova-escape-individual")?.type).toBe("custom");
+    expect(coordinator.debugFeatureProgress(memorialRoute)).toBe(0);
+    coordinator.debugNoteRibbonDrawable();
+    now += 800;
+    const progress = coordinator.debugFeatureProgress(memorialRoute);
+    expect(progress).toBeGreaterThan(0);
+    expect(progress).toBeLessThan(1);
+    coordinator.dispose();
+  });
+
+  test("settled then individual clears parallel-impact ids until stagger reaches them", async () => {
+    let now = 1_000_000;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    installMemorialFetch({
+      indexBody: impactIndex(["1"], [["1", "line", "232", 0.8]], [["1", "18", 0]]),
+    });
+    const { map, coordinator, onParallelImpactIdsChanged } = startSettledCoordinator("projection");
+    await coordinator.sync({ id: "nova" }, SETTLED_OVERLAY);
+    expect(coordinator.debugParallelImpactIds()).toEqual(new Set(["line:232"]));
+    expect(onParallelImpactIdsChanged.mock.calls.at(-1)?.[0]).toEqual(new Set(["line:232"]));
+
+    await coordinator.sync({ id: "nova" }, INDIVIDUAL_OVERLAY);
+    expect(coordinator.debugFeatureProgress(memorialRoute)).toBe(0);
+    expect(coordinator.debugParallelImpactIds()).toEqual(new Set());
+    expect(onParallelImpactIdsChanged.mock.calls.at(-1)?.[0]).toEqual(new Set());
+    map.flushAnimationFrames(now);
+    expect(coordinator.debugParallelImpactIds()).toEqual(new Set());
+
+    coordinator.debugNoteRibbonDrawable();
+    now += 800;
+    map.flushAnimationFrames(now);
+    expect(coordinator.debugFeatureProgress(memorialRoute)).toBeGreaterThan(0);
+    expect(coordinator.debugFeatureProgress(memorialRoute)).toBeLessThan(0.8);
+    expect(coordinator.debugParallelImpactIds()).toEqual(new Set());
+
+    now += 5000;
+    map.flushAnimationFrames(now);
+    expect(coordinator.debugParallelImpactIds()).toEqual(new Set(["line:232"]));
+    coordinator.dispose();
+  });
+
+  test("individual then settled cancels repeating frames and shows the completed intersection", async () => {
+    installMemorialFetch();
+    const { map, coordinator } = startSettledCoordinator("projection");
+    await coordinator.sync({ id: "nova" }, INDIVIDUAL_OVERLAY);
+    expect(map.getLayer("nli-nova-escape-individual")?.type).toBe("custom");
+    expect(map.pendingAnimationFrameCount()).toBeGreaterThan(0);
+    await coordinator.sync({ id: "nova" }, SETTLED_OVERLAY);
+    expect(map.getLayer("nli-nova-escape-individual")).toBeFalsy();
+    expect(map.pendingAnimationFrameCount()).toBe(0);
+    map.flushAnimationFrames();
+    expect(map.pendingAnimationFrameCount()).toBe(0);
+    expectSettledMemorial(map);
+    expect(coordinator.debugFeatureProgress(memorialRoute)).toBe(1);
+    coordinator.dispose();
+  });
+
+  test("GIS individual still does not mount ribbons or schedule impact frames", async () => {
+    installMemorialFetch();
+    const { map, coordinator } = startSettledCoordinator("gis");
+    await coordinator.sync({ id: "nova" }, INDIVIDUAL_OVERLAY);
+    expect(map.getLayer("nli-nova-escape-individual")).toBeFalsy();
+    expect(map.getLayer(NOVA_ESCAPE_IMPACT_LAYER_ID)).toBeFalsy();
+    expect(map.pendingAnimationFrameCount()).toBe(0);
+    map.flushAnimationFrames();
+    expect(map.pendingAnimationFrameCount()).toBe(0);
+    expect(fetch.mock.calls.map((call) => String(call[0]))).not.toContain(
+      DEFAULT_INVESTIGATION_SETTLEMENTS_URL,
+    );
+    coordinator.dispose();
+  });
+});

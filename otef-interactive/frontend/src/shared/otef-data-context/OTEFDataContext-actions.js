@@ -8,6 +8,7 @@ import {
 import { generateTraceId, recordTraceEvent } from "../otef-trace.js";
 import { isNliPlayableFullId } from "../nli-investigation-beats.js";
 import { normalizeNliClock } from "../nli-investigation-clock.js";
+import { normalizeEscapeOverlay } from "../nli-escape-overlay.js";
 import { getNliNarrative, normalizeNarrativeState } from "../nli-narratives.js";
 import { OTEFDataContextInternals } from "./index.js";
 import {
@@ -970,17 +971,15 @@ async function setEscapeOverlay(ctx, overlay) {
   if (!ctx._tableName) return { ok: false, reason: "missing_table" };
   const current = ctx.getEscapeOverlay?.() || {};
   const patch = overlay && typeof overlay === "object" ? overlay : {};
-  const nextOverlay = {
-    individual: Object.prototype.hasOwnProperty.call(patch, "individual")
-      ? patch.individual === true
-      : current.individual === true,
-    overlap: Object.prototype.hasOwnProperty.call(patch, "overlap")
-      ? patch.overlap === true
-      : current.overlap === true,
-    mor: Object.prototype.hasOwnProperty.call(patch, "mor")
-      ? patch.mor === true
-      : current.mor === true,
-  };
+  const flag = (key) => (
+    Object.prototype.hasOwnProperty.call(patch, key) ? patch[key] : current[key] === true
+  );
+  const nextOverlay = normalizeEscapeOverlay({
+    individual: flag("individual"),
+    overlap: flag("overlap"),
+    mor: flag("mor"),
+    settled: flag("settled"),
+  }, ctx.getNarrativeState?.()?.id);
   const response = await OTEF_API.setEscapeOverlay(
     ctx._tableName,
     nextOverlay,

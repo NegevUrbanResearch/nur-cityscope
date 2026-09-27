@@ -30,7 +30,7 @@ import {
   shouldAutoOpenNliPresentation,
 } from "./nli-staff-presentation.js";
 
-const NO_ESCAPE = Object.freeze({ individual: false, overlap: false, mor: false });
+const NO_ESCAPE = Object.freeze({ individual: false, overlap: false, mor: false, settled: false });
 const STAFF_PEOPLE_SEARCH_OPTIONS = { excludeStatuses: ["Kidnap survivor"] };
 
 const $ = (id) => document.getElementById(id);
@@ -493,6 +493,7 @@ export function initNliStaffRemote(dataContext) {
       $("kitEscape").innerHTML = nliNovaEscapeTogglesHtml(
         dataContext?.getNarrativeState?.(),
         dataContext?.getEscapeOverlay?.(),
+        step?.escapeKinds,
       );
     }
     if (show.kitArchive) {

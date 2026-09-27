@@ -2,7 +2,7 @@ import { isNliPlayableFullId, NLI_PLAYABLE_IDS } from "../shared/nli-investigati
 import { endNliClock, idleNliClock } from "../shared/nli-investigation-clock.js";
 import { NLI_NOVA_STORY } from "../shared/nli-nova-story.js";
 
-const NO_ESCAPE = Object.freeze({ individual: false, overlap: false, mor: false });
+const NO_ESCAPE = Object.freeze({ individual: false, overlap: false, mor: false, settled: false });
 
 export function buildNovaEndedClock() {
   return endNliClock({
