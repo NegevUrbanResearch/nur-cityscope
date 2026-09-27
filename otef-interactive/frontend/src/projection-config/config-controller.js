@@ -135,7 +135,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     onField: handleField,
     onNudge: handleNudge,
     onNamesMode: handleNamesMode,
-    onNode: (node) => { selectedNode = node; if (node.endsWith("-keystone") || node.endsWith("-grid")) warpEditors[node.startsWith("right-") ? "right" : "left"].setMode(node.endsWith("-grid") ? "grid" : "keystone"); refresh(); },
+    onNode: (node) => { view.cancelWarpPointer(); selectedNode = node; if (node.endsWith("-keystone") || node.endsWith("-grid")) warpEditors[node.startsWith("right-") ? "right" : "left"].setMode(node.endsWith("-grid") ? "grid" : "keystone"); refresh(); },
     onAction: handleAction,
     onOutputAction: handleOutputAction,
     onWarpAction: handleWarpAction,
@@ -245,12 +245,15 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     const previousDraft = state.draft;
     const revision = nextState.snapshot?.revision;
     const firstHydration = expectedRevision === null && Number.isSafeInteger(revision);
+    const draftChanged = !equalProjectionConfig(previousDraft, nextState.draft);
+    const nextSelected = nextState.snapshot?.selectedPresetId;
+    const selectionChanged = nextSelected && nextSelected !== previousSelected;
+    const acceptedReplacement = !localDraftNotification && (firstHydration || (!nextState.hasLocalDraft && (draftChanged || selectionChanged)));
+    if (acceptedReplacement) view.cancelWarpPointer({ notify: false });
     state = nextState;
     const snapshotSelected = state.snapshot?.selectedPresetId;
     const snapshotSelectionChanged = snapshotSelected && snapshotSelected !== previousSelected;
     if (state.draft) {
-      const draftChanged = !equalProjectionConfig(previousDraft, state.draft);
-      const acceptedReplacement = !localDraftNotification && (firstHydration || (!state.hasLocalDraft && (draftChanged || snapshotSelectionChanged)));
       const rebase = acceptedReplacement;
       for (const output of ["left", "right"]) warpEditors[output].setConfig(state.draft, { rebase });
     }
@@ -259,7 +262,6 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     if (!selectedPresetId || (snapshotSelectionChanged && (!previousSelected || selectedPresetId === previousSelected))) selectedPresetId = snapshotSelected || "original";
     if (!loadedPresetId || (snapshotSelectionChanged && (!previousSelected || loadedPresetId === previousSelected))) loadedPresetId = snapshotSelected || loadedPresetId;
     expectRevision(state);
-    const draftChanged = !equalProjectionConfig(previousDraft, state.draft);
     if (firstHydration || draftChanged || (Number.isSafeInteger(revision) && revision !== previousRevision)) checkDraftWall();
     const advancedAfterReconnect = reconnectStatusRevision !== null && revision !== reconnectStatusRevision;
     if ((firstHydration || advancedAfterReconnect) && Number.isSafeInteger(revision) && (socket?.getConnected?.() || socket?.isConnected === true)) {
@@ -332,7 +334,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     if (!editor) return;
     if (action === "start") editor.pointerStart(value);
     if (action === "move") editor.pointerMove(value);
-    if (action === "end") editor.pointerEnd();
+    if (action === "end") { editor.pointerMove(value); editor.pointerEnd(); }
     if (action === "cancel") editor.pointerCancel();
     refresh();
   }

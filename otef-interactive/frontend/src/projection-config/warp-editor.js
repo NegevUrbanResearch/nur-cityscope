@@ -179,11 +179,12 @@ export function createWarpEditor({
   }
   function pointerStart(point) {
     if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return false;
-    drag = { startWarp: clone(configWarp(current, output)), x: point.x, y: point.y, moved: false };
+    drag = { startWarp: clone(configWarp(current, output)), x: point.x, y: point.y, lastX: point.x, lastY: point.y, moved: false };
     return true;
   }
   function pointerMove(point) {
     if (!drag || !point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return false;
+    if (point.x === drag.lastX && point.y === drag.lastY) return true;
     const dx = (point.x - drag.x) / OUTPUT_WIDTH;
     const dy = (point.y - drag.y) / OUTPUT_HEIGHT;
     const candidate = clone(current);
@@ -193,6 +194,7 @@ export function createWarpEditor({
     for (const index of indices) { points[index][0] += dx; points[index][1] += dy; }
     if (!valid(candidate)) return false;
     drag.moved = drag.moved || dx !== 0 || dy !== 0;
+    drag.lastX = point.x; drag.lastY = point.y;
     emit(candidate, { reason: "drag", flush: false });
     return true;
   }

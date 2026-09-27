@@ -527,6 +527,86 @@ describe("projection config controller", () => {
     api.dispose(); expect(outputController.dispose).toHaveBeenCalledTimes(1); globalThis.document = previousDocument;
   });
 
+  test("authoritative rebase discards an active drag without publishing its rollback", () => {
+    const previousDocument = globalThis.document;
+    globalThis.document = documentStub();
+    const root = element("main");
+    const client = fakeClient();
+    const api = mountProjectionConfig(root, { client });
+    client.setLive(false);
+    find(root, (node) => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-keystone").dispatch("click");
+    const surface = find(root, (node) => node.attributes?.class === "warp-edit-surface");
+    surface.getBoundingClientRect = () => ({ left: 0, top: 0, width: 2064, height: 1224 });
+    surface.dispatch("pointerdown", { pointerId: 1, isPrimary: true, button: 0, clientX: 72, clientY: 72, preventDefault() {} });
+    surface.dispatch("pointermove", { pointerId: 1, clientX: 92, clientY: 72 });
+    expect(client.getState().draft.outputs.left.warp.keystone.corners[0][0]).toBeCloseTo(20 / 1920);
+    const authoritative = clone(client.getState().draft);
+    authoritative.outputs.left.warp.keystone.corners[0][0] = 0.02;
+    const before = client.setDraft.mock.calls.length;
+    client.report({ draft: authoritative, hasLocalDraft: false });
+    surface.dispatch("pointerdown", { pointerId: 2, isPrimary: true, button: 0, clientX: 72 + 0.02 * 1920, clientY: 72, preventDefault() {} });
+    surface.dispatch("pointermove", { pointerId: 2, clientX: 72 + 0.02 * 1920 + 10, clientY: 72 });
+    expect(client.getState().draft.outputs.left.warp.keystone.corners[0][0]).toBeCloseTo(0.02 + 10 / 1920);
+    surface.dispatch("pointercancel", { pointerId: 2 });
+    surface.dispatch("lostpointercapture", { pointerId: 1 });
+    expect(client.setDraft.mock.calls.length).toBeGreaterThan(before);
+    expect(client.getState().draft.outputs.left.warp.keystone.corners[0][0]).toBe(0.02);
+    api.dispose(); globalThis.document = previousDocument;
+  });
+
+  test("pointer-up displacement commits a drag even without a pointermove event", () => {
+    const previousDocument = globalThis.document;
+    globalThis.document = documentStub();
+    const root = element("main"); const client = fakeClient();
+    const api = mountProjectionConfig(root, { client });
+    client.setLive(false);
+    find(root, (node) => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-keystone").dispatch("click");
+    const surface = find(root, (node) => node.attributes?.class === "warp-edit-surface");
+    surface.getBoundingClientRect = () => ({ left: 0, top: 0, width: 2064, height: 1224 });
+    surface.dispatch("pointerdown", { pointerId: 1, isPrimary: true, button: 0, clientX: 72, clientY: 72, preventDefault() {} });
+    surface.dispatch("pointerup", { pointerId: 1, clientX: 92, clientY: 72 });
+    expect(client.getState().draft.outputs.left.warp.keystone.corners[0][0]).toBeCloseTo(20 / 1920);
+    find(root, (node) => node.dataset?.action === "warp-undo").dispatch("click");
+    expect(client.getState().draft.outputs.left.warp.keystone.corners[0][0]).toBe(0);
+    api.dispose(); globalThis.document = previousDocument;
+  });
+
+  test("pointer-up position supersedes the last pointermove position", () => {
+    const previousDocument = globalThis.document;
+    globalThis.document = documentStub();
+    const root = element("main"); const client = fakeClient();
+    const api = mountProjectionConfig(root, { client });
+    client.setLive(false);
+    find(root, (node) => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-keystone").dispatch("click");
+    const surface = find(root, (node) => node.attributes?.class === "warp-edit-surface");
+    surface.getBoundingClientRect = () => ({ left: 0, top: 0, width: 2064, height: 1224 });
+    surface.dispatch("pointerdown", { pointerId: 1, isPrimary: true, button: 0, clientX: 72, clientY: 72, preventDefault() {} });
+    surface.dispatch("pointermove", { pointerId: 1, clientX: 82, clientY: 72 });
+    surface.dispatch("pointerup", { pointerId: 1, clientX: 92, clientY: 72 });
+    expect(client.getState().draft.outputs.left.warp.keystone.corners[0][0]).toBeCloseTo(20 / 1920);
+    find(root, (node) => node.dataset?.action === "warp-undo").dispatch("click");
+    expect(client.getState().draft.outputs.left.warp.keystone.corners[0][0]).toBe(0);
+    api.dispose(); globalThis.document = previousDocument;
+  });
+
+  test("an invalid release keeps the last valid drag position and one undo entry", () => {
+    const previousDocument = globalThis.document;
+    globalThis.document = documentStub();
+    const root = element("main"); const client = fakeClient();
+    const api = mountProjectionConfig(root, { client });
+    client.setLive(false);
+    find(root, (node) => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-keystone").dispatch("click");
+    const surface = find(root, (node) => node.attributes?.class === "warp-edit-surface");
+    surface.getBoundingClientRect = () => ({ left: 0, top: 0, width: 2064, height: 1224 });
+    surface.dispatch("pointerdown", { pointerId: 1, isPrimary: true, button: 0, clientX: 72, clientY: 72, preventDefault() {} });
+    surface.dispatch("pointermove", { pointerId: 1, clientX: 82, clientY: 72 });
+    surface.dispatch("pointerup", { pointerId: 1, clientX: 10000, clientY: 72 });
+    expect(client.getState().draft.outputs.left.warp.keystone.corners[0][0]).toBeCloseTo(10 / 1920);
+    find(root, (node) => node.dataset?.action === "warp-undo").dispatch("click");
+    expect(client.getState().draft.outputs.left.warp.keystone.corners[0][0]).toBe(0);
+    api.dispose(); globalThis.document = previousDocument;
+  });
+
   test('import reports a nonzero historical seam gap conversion notice', async () => {
     const previousDocument = globalThis.document;
     globalThis.document = documentStub();
