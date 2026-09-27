@@ -1,6 +1,6 @@
 # NLI exhibit verification
 
-After moving the PC or changing projectors, complete the [video playback commissioning check](nli-video-playback-commissioning.md), including all five videos on the actual fullscreen displays. Laboratory playback results do not replace this check.
+After moving the PC or changing projectors, complete the [video playback commissioning check](nli-video-playback-commissioning.md), including all six videos on the actual fullscreen displays. Laboratory playback results do not replace this check.
 
 ## Local Reveal presentation setup and acceptance
 
@@ -21,7 +21,7 @@ at their first slide and Previous/Next stop at the segment boundaries:
 Segev 1–8, Mor Levy 9–11, Nova memorial 12–16, Sderot 17–21, Shura 22–28,
 and Hostages 29–34.
 
-Check audible autoplay with the remote on video slides 2, 10, 18, 23, and 24.
+Check audible autoplay with the remote on video slides 2, 10, 18, 21, 23, and 24.
 Confirm audio stops and rewinds when leaving each video slide or closing the
 presentation. Confirm Shura opens after its cue and its explicit Close resumes
 the parent choice; Hostages explicit Close advances to Nir Oz people, while
@@ -38,7 +38,7 @@ hardware/browser result below; automated tests do not count as exhibit checks.
 | Six segment starts and boundary clamping |  |  |  | pending |  |
 | Slides remain on GIS, not projection |  |  |  | pending |  |
 | Open/close causes no GIS reload or application switch |  |  |  | pending |  |
-| Slides 2, 10, 18, 23, 24 autoplay audibly |  |  |  | pending |  |
+| Slides 2, 10, 18, 21, 23, 24 autoplay audibly |  |  |  | pending |  |
 | Leaving a video slide or closing stops and rewinds audio |  |  |  | pending |  |
 | Shura and Hostages explicit Close destinations |  |  |  | pending |  |
 | Scene Back/Next and Home force-close without special destination |  |  |  | pending |  |
@@ -46,8 +46,8 @@ hardware/browser result below; automated tests do not count as exhibit checks.
 
 After the exhibit and when the source terms require removal, delete
 `otef-interactive/public/local/presentations/nli/` and the retained downloaded
-source files `C:\Users\owner\Downloads\מצגת מודל נור.pdf` and
-`C:\Users\owner\Downloads\מצגת מודל נור (2).pptx`.
+source files `C:\Users\owner\Downloads\מצגת מודל נור (1).pdf` and
+`C:\Users\owner\Downloads\מצגת מודל נור (3).pptx`.
 
 Use this checklist on the normal exhibit browser and physical display. Unit
 tests cannot prove popup permission, window placement, foreground focus,

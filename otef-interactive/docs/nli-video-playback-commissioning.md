@@ -20,7 +20,7 @@ The playback signal is local to the Chrome origin/profile. It does not depend on
 - An output opened during playback learns the current state. A closed/crashed GIS source stops retaining the limit after the short stale-source timeout (approximately six seconds).
 - Static image slides and other scenes retain their normal projection cadence. The presenter has no additional controls to operate.
 
-## Five-video acceptance — do this before opening day
+## Six-video acceptance — do this before opening day
 
 Use the staff remote and the actual fullscreen displays. Let **each** video finish. Confirm picture advances continuously, audio is audible from the exhibit speakers, controls remain available, and no idle timeline flashes or unexpected layer changes occur.
 
@@ -28,7 +28,8 @@ Use the staff remote and the actual fullscreen displays. Let **each** video fini
 |---|---:|---:|---|
 | Segev | 2 | 65 s | pending |
 | Nova / Mor Levi | 10 | 46 s | pending |
-| Sderot | 18 | 78 s | pending |
+| Sderot, testimony | 18 | 78 s | pending |
+| Sderot, Yad Ben Zvi | 21 | 18 s | pending |
 | Shura, first video | 23 | 40 s | pending |
 | Shura, second video | 24 | 16 s | pending |
 

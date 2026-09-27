@@ -126,7 +126,7 @@ step.
   keeps the remote on the current run-of-show step. Closing Hostages both
   reveals the map and advances immediately to the Nir Oz people step. Closing
   Shura returns directly to the narrative-choice step.
-- Videos on slides 2, 10, 18, 23, and 24 are intended to start automatically
+- Videos on slides 2, 10, 18, 21, 23, and 24 are intended to start automatically
   with sound on entering the slide. Leaving the slide or closing the
   presentation stops and rewinds its video. Video completion does not advance
   the slide. No Play button or normal-playback indicator is part of the default

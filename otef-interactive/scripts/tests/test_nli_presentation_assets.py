@@ -80,8 +80,8 @@ class NliPresentationAssetsTests(unittest.TestCase):
                 assets.prepare_assets(self.pdf, self.pptx, self.output, self.fake_pdfinfo(pages), self.fake_pdftoppm(34))
 
     def test_rejects_missing_known_video_member(self):
-        deck = self.deck_without("ppt/media/media5.mp4")
-        with self.approved_fixture_hashes(pptx=deck), self.assertRaisesRegex(ValueError, "slide 24"):
+        deck = self.deck_without("ppt/media/media4.mp4")
+        with self.approved_fixture_hashes(pptx=deck), self.assertRaisesRegex(ValueError, "slide 21"):
             assets.prepare_assets(self.pdf, deck, self.output, self.fake_pdfinfo(34), self.fake_pdftoppm(34))
 
     def test_publishes_exact_runtime_names_only_after_complete_staging(self):
@@ -89,7 +89,7 @@ class NliPresentationAssetsTests(unittest.TestCase):
             result = assets.prepare_assets(self.pdf, self.pptx, self.output, self.fake_pdfinfo(34), self.fake_pdftoppm(34))
         self.assertEqual([path.name for path in result["slides"]], [f"slide-{n:02}.png" for n in range(1, 35)])
         self.assertEqual([path.name for path in result["videos"]], [
-            "slide-02.mp4", "slide-10.mp4", "slide-18.mp4", "slide-23.mp4", "slide-24.mp4",
+            "slide-02.mp4", "slide-10.mp4", "slide-18.mp4", "slide-21.mp4", "slide-23.mp4", "slide-24.mp4",
         ])
 
     @unittest.skipUnless(os.name == "nt" and shutil.which("node"), "Windows Node ACL check")
