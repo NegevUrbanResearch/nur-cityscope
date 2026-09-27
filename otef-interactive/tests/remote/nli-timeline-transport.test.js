@@ -2,10 +2,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import {
-  LayerSheetController,
-  renderLayerRow,
-} from "../../frontend/src/remote/layer-sheet-controller.js";
 import { createNliStaffTimelineHost } from "../../frontend/src/remote/nli-staff-timeline-host.js";
 import {
   nliAxisMarksFromBeats,
@@ -17,7 +13,6 @@ import {
   consumeNliTimelineButtonClick,
   renderNliTimelineTransport,
 } from "../../frontend/src/remote/nli-timeline-transport.js";
-import { LOCALE_EVENT } from "../../frontend/src/remote/remote-locale.js";
 import {
   clockPositionMs,
   endNliClock,
@@ -41,8 +36,6 @@ import { NLI_NOVA_STORY } from "../../frontend/src/shared/nli-nova-story.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const LINES_ID = "nli.lines";
-const PEOPLE_ID = "nli.people";
-const PEOPLE_NAMES_ID = "nli.people_names";
 
 function lineFeatures() {
   return [
@@ -124,25 +117,6 @@ function makeController(overrides = {}) {
   return host;
 }
 
-function makeSheetController(overrides = {}) {
-  const c = Object.create(LayerSheetController.prototype);
-  c._nliEndTimer = null;
-  c._nliPlayheadTimer = null;
-  c._nliFeatureCache = { [LINES_ID]: lineFeatures() };
-  c._nliScrub = null;
-  c._nliScrubEl = null;
-  c._nliOptimisticClock = null;
-  c._nliPackPane = "layers";
-  c._nliCacheFetchInflight = false;
-  c.focusedGroupId = "nli";
-  c.primaryTileIdsJson = null;
-  c.sheet = null;
-  c.render = vi.fn();
-  c.getEffectiveGroupsForView = () => nliGroups();
-  Object.assign(c, overrides);
-  return c;
-}
-
 function mockScrubTrack(options = {}) {
   const left = options.left ?? 100;
   const width = options.width ?? 200;
@@ -178,21 +152,6 @@ function mockScrubTrack(options = {}) {
   return track;
 }
 
-test("nli rows do not render anim-btn", () => {
-  const html = renderLayerRow(
-    {
-      baseName: "lines",
-      displayLabel: "צירי חדירה",
-      fullLayerIds: ["nli.lines"],
-      layers: [{ id: "lines", name: "צירי חדירה", enabled: true, style: { animation: { type: "timeline" } } }],
-      enabled: true,
-    },
-    { groupId: "nli", animations: {} },
-  );
-  expect(html).not.toContain("data-animation-toggle");
-  expect(html).not.toContain("anim-btn");
-});
-
 test("transport has loop icon not LOOP text", () => {
   const html = renderNliTimelineTransport(idleNliClock(), {
     playDisabled: false,
@@ -203,21 +162,6 @@ test("transport has loop icon not LOOP text", () => {
   expect(html).not.toMatch(/>\s*LOOP\s*</i);
   expect(html).toContain("data-nli-tl-loop");
   expect(html).toContain("data-nli-tl-scrub");
-});
-
-test("locked playable row includes layer-tile--locked", () => {
-  const clock = playNliClock(idleNliClock(), ["nli.lines"], [400], 0);
-  const html = renderLayerRow(
-    {
-      baseName: "lines",
-      displayLabel: "צירי חדירה",
-      fullLayerIds: ["nli.lines"],
-      layers: [{ id: "lines", name: "צירי חדירה", enabled: true, style: { animation: { type: "timeline" } } }],
-      enabled: true,
-    },
-    { groupId: "nli", animations: {}, investigationClock: clock },
-  );
-  expect(html).toContain("layer-tile--locked");
 });
 
 describe("nli timeline transport", () => {
@@ -310,21 +254,6 @@ describe("nli timeline transport", () => {
     expect(html).toContain("data-nli-tl-play");
     expect(html).toContain("data-nli-tl-stop");
     expect(html).toContain("data-nli-tl-scrub");
-  });
-
-  test("people row stays unlocked while clock is playing", () => {
-    const clock = playNliClock(idleNliClock(), ["nli.lines"], [400], 0);
-    const html = renderLayerRow(
-      {
-        baseName: "people",
-        displayLabel: "אנשים",
-        fullLayerIds: [PEOPLE_ID],
-        layers: [{ id: "people", name: "אנשים", enabled: true }],
-        enabled: true,
-      },
-      { groupId: "nli", animations: {}, investigationClock: clock },
-    );
-    expect(html).not.toContain("layer-tile--locked");
   });
 
   test("hour labels cover min/max displayed beats as whole hours", () => {
@@ -578,48 +507,6 @@ describe("nli timeline transport", () => {
     c.handleNliTimelineScrubPointerDown();
     await c.handleNliTimelineScrubPointerUp(1);
     expect(ctx.patchInvestigationClock).toHaveBeenCalled();
-  });
-
-  test("nli sheet HTML stays enabled while segev narrative is active", () => {
-    stubContext({
-      getNarrativeState: () => ({ id: "segev", transition: "enter", revision: 2 }),
-    });
-    const c = makeSheetController();
-    c._nliPackPane = "timeline";
-    const html = c.renderLayersTabContent(nliGroups(), {});
-    expect(html).toContain("data-nli-tl-play");
-    expect(html).toContain("data-nli-tl-stop");
-    expect(html).toContain("data-nli-tl-loop");
-    expect(html).toContain("data-nli-tl-step-back");
-    expect(html).toContain("data-nli-tl-step-forward");
-    expect(html).toContain("data-nli-tl-scrub");
-    expect(html).not.toMatch(/data-nli-tl-(?:play|stop|loop|step-back|step-forward)[^>]*\sdisabled/);
-    expect(html).toMatch(/class="nli-tl-sheet" aria-disabled="false"/);
-  });
-
-  test("LayerSheet destroy releases context, presentation, locale, and timer resources", () => {
-    const disposeNarrative = vi.fn();
-    const disposeClock = vi.fn();
-    const removeEventListener = vi.fn();
-    vi.stubGlobal("window", { removeEventListener });
-    const ctx = stubContext({
-      subscribe: vi.fn((topic) => topic === "narrativeState" ? disposeNarrative : disposeClock),
-    });
-    const c = makeSheetController({
-      _subscriptions: [],
-      _remoteLocaleHandler: vi.fn(),
-      _nliEndTimer: setTimeout(() => {}, 10_000),
-      _nliPlayheadTimer: setTimeout(() => {}, 10_000),
-    });
-    c._subscribeDataContext("narrativeState", vi.fn());
-    c._subscribeDataContext("investigationClock", vi.fn());
-    c.destroy();
-    expect(ctx.subscribe).toHaveBeenCalledTimes(2);
-    expect(disposeNarrative).toHaveBeenCalledTimes(1);
-    expect(disposeClock).toHaveBeenCalledTimes(1);
-    expect(removeEventListener).toHaveBeenCalledWith(LOCALE_EVENT, c._remoteLocaleHandler);
-    expect(c._nliEndTimer).toBeNull();
-    expect(c._nliPlayheadTimer).toBeNull();
   });
 
   test("play matrix: idle plays, playing pauses, paused resumes, ended replays", async () => {
@@ -1081,51 +968,6 @@ describe("nli timeline transport", () => {
     });
   });
 
-  test("bulk visibility while not idle toggles only people and names", async () => {
-    const playing = playNliClock(idleNliClock(), [LINES_ID], [400], 0);
-    const ctx = stubContext({ getInvestigationClock: () => playing });
-    const c = makeSheetController();
-    await c.toggleGroupEnabled("nli", false);
-    expect(ctx.toggleGroup).not.toHaveBeenCalled();
-    expect(ctx.setLayersEnabled).toHaveBeenCalledWith([PEOPLE_ID, PEOPLE_NAMES_ID], false);
-  });
-
-  test("bulk visibility while idle still toggles the whole group", async () => {
-    const ctx = stubContext();
-    const c = makeSheetController();
-    await c.toggleGroupEnabled("nli", true);
-    expect(ctx.toggleGroup).toHaveBeenCalledWith("nli", true);
-  });
-
-  test("locked playable tile click does not toggle", async () => {
-    const ctx = stubContext();
-    const c = makeSheetController();
-    const tile = {
-      classList: { contains: (name) => name === "layer-tile--locked" || name === "is-on" },
-      getAttribute: () => JSON.stringify([LINES_ID]),
-    };
-    await c.runLayerTileToggleFromElement(tile);
-    expect(ctx.setLayersEnabled).not.toHaveBeenCalled();
-  });
-
-  test("nli pack html includes the transport sheet only on timeline pane; other packs do not", () => {
-    const c = makeSheetController();
-    const nliLayers = c.renderLayersTabContent(nliGroups(), {});
-    expect(nliLayers).not.toContain("nli-tl-sheet");
-    expect(nliLayers).toContain("nli-pack-panes");
-    c._nliPackPane = "timeline";
-    const nliTimeline = c.renderLayersTabContent(nliGroups(), {});
-    expect(nliTimeline).toContain("nli-tl-sheet");
-    expect(nliTimeline).toContain("data-nli-tl-play");
-    c.focusedGroupId = "october_7th";
-    const octHtml = c.renderLayersTabContent(
-      [{ id: "october_7th", name: "Oct", layers: [{ id: "route", enabled: true, name: "route" }] }],
-      {},
-    );
-    expect(octHtml).not.toContain("nli-tl-sheet");
-    expect(octHtml).not.toContain("nli-pack-panes");
-  });
-
   test("scrub pointerdown while playing does not render the captured track", () => {
     const playing = playNliClock(idleNliClock(), [LINES_ID], [400, 740], 1000);
     stubContext({ getInvestigationClock: () => playing });
@@ -1156,24 +998,6 @@ describe("nli timeline transport", () => {
     await c.handleNliTimelineScrubPointerUp(index);
     expect(ctx.patchInvestigationClock).toHaveBeenCalledTimes(2);
     expect(ctx.patchInvestigationClock.mock.calls[1][0].positionMs).toBe(0);
-  });
-
-  test("render does not replace sheet-content while scrub pointer is captured", () => {
-    stubContext();
-    const content = { innerHTML: "KEEP", querySelector: () => null };
-    const c = makeSheetController({
-      sheet: {
-        querySelector: (sel) => (sel === ".sheet-content" ? content : null),
-      },
-      _nliScrub: { fromPlaying: true },
-      _nliScrubEl: mockScrubTrack(),
-    });
-    try {
-      LayerSheetController.prototype.render.call(c);
-    } catch {
-      // node has no HTMLInputElement once innerHTML was already replaced
-    }
-    expect(content.innerHTML).toBe("KEEP");
   });
 
   test("scrub pointermove updates thumb and bubble locally without PATCH", () => {
@@ -1602,93 +1426,4 @@ describe("nli timeline transport", () => {
     expect(ctx.patchInvestigationClock).not.toHaveBeenCalled();
   });
 
-  test("layer sheet calls playhead ticker from clock subscribe and nli render", () => {
-    const src = fs.readFileSync(
-      path.resolve(__dirname, "../../frontend/src/remote/layer-sheet-controller.js"),
-      "utf8",
-    );
-    expect(src).toMatch(/_subscribeDataContext\("investigationClock"[\s\S]*_syncNliPlayheadTicker/);
-    expect(src).toMatch(/focusedGroupId === "nli"[\s\S]*_syncNliPlayheadTicker/);
-  });
-
-  test("nli layers pane omits extras; timeline pane omits tiles", () => {
-    stubContext();
-    const c = makeSheetController();
-    c._nliPackPane = "layers";
-    const layersHtml = c.renderLayersTabContent(nliGroups(), {});
-    expect(layersHtml).toContain("nli-pack-panes");
-    expect(layersHtml).toContain("layer-tile-grid");
-    expect(layersHtml).toContain("data-layers-bulk-visibility");
-    expect(layersHtml).not.toContain("nli-tl-sheet");
-    expect(layersHtml).not.toContain("nli-narrative-sheet");
-    expect(layersHtml).not.toContain("nli-bottom-dock");
-    c._nliPackPane = "timeline";
-    const timelineHtml = c.renderLayersTabContent(nliGroups(), {});
-    expect(timelineHtml).toContain("nli-tl-sheet");
-    expect(timelineHtml).toContain("nli-narrative-sheet");
-    expect(timelineHtml).not.toContain("layer-tile-grid");
-    expect(timelineHtml).not.toContain("data-layers-bulk-visibility");
-    expect(timelineHtml).toContain("layerPanelCount");
-  });
-
-  function bindRealRender(c) {
-    c.render = LayerSheetController.prototype.render;
-    c.updatePanelChrome = () => {};
-    c._syncNliEndedTimer = () => {};
-    c._syncNliPlayheadTicker = () => {};
-    c._ensureNliFeatureCache = () => {};
-    c._liveNliClock = () => idleNliClock();
-    const content = {
-      innerHTML: "",
-      classList: { toggle: vi.fn(), remove: vi.fn() },
-      querySelector: () => null,
-    };
-    c.sheet = { querySelector: () => content };
-    return content;
-  }
-
-  test("clock-driven render while timeline pane does not reset to layers", () => {
-    stubContext();
-    const c = makeSheetController();
-    const content = bindRealRender(c);
-    c._nliPackPane = "timeline";
-    c.focusedGroupId = "nli";
-    c.render();
-    expect(c._nliPackPane).toBe("timeline");
-    expect(content.innerHTML).toContain("nli-tl-sheet");
-    expect(content.innerHTML).not.toContain("layer-tile-grid");
-  });
-
-  test("selecting another pack then nli again yields layers pane", () => {
-    const c = makeSheetController();
-    c._nliPackPane = "timeline";
-    c.focusOnGroup("october_7th");
-    expect(c._nliPackPane).toBe("timeline");
-    c.focusOnGroup("nli");
-    expect(c._nliPackPane).toBe("layers");
-  });
-
-  test("clicking already-selected nli pack does not change pane", () => {
-    const c = makeSheetController();
-    c._nliPackPane = "timeline";
-    c.focusedGroupId = "nli";
-    c.focusOnGroup("nli");
-    expect(c._nliPackPane).toBe("timeline");
-  });
-
-  test("setNliPackPane cancels scrub then renders (does not hit render skip)", async () => {
-    stubContext();
-    const c = makeSheetController();
-    const content = bindRealRender(c);
-    c._nliPackPane = "timeline";
-    c.focusedGroupId = "nli";
-    c._nliScrub = { fromPlaying: false };
-    c._nliScrubEl = { releasePointerCapture: vi.fn() };
-    await c.setNliPackPane("layers");
-    expect(c._nliScrub).toBeNull();
-    expect(c._nliScrubEl).toBeNull();
-    expect(c._nliPackPane).toBe("layers");
-    expect(content.innerHTML).toContain("layer-tile-grid");
-    expect(content.innerHTML).not.toContain("nli-tl-sheet");
-  });
 });

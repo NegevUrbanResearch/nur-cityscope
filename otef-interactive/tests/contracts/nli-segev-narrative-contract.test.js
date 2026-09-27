@@ -62,7 +62,6 @@ const gisNarrativeController = readSource("../../frontend/src/map/nli-narrative-
 const projectionNarrativeController = readSource("../../frontend/src/projection/projection-narrative-controller.js");
 const focusRenderer = readSource("../../frontend/src/shared/maplibre-narrative-focus.js");
 const layerSheet = readSource("../../frontend/src/remote/layer-sheet-controller.js");
-const narrativeControls = readSource("../../frontend/src/remote/nli-narrative-controls.js");
 const styles = readSource("../../frontend/css/styles.css");
 const projectionImportGraph = collectImportGraph("entries/projection-main.js");
 const narrativeModules = {
@@ -70,7 +69,6 @@ const narrativeModules = {
   gisNarrativeController,
   projectionNarrativeController,
   focusRenderer,
-  narrativeControls,
 };
 
 describe("NLI Segev narrative cross-surface contract", () => {
@@ -107,7 +105,6 @@ describe("NLI Segev narrative cross-surface contract", () => {
       "gisNarrativeController",
       "projectionNarrativeController",
       "focusRenderer",
-      "narrativeControls",
     ]);
     for (const [name, source] of Object.entries(narrativeModules)) {
       expect(source, name).not.toMatch(/maplibre-acrossline-ribbon/);
@@ -149,8 +146,7 @@ describe("NLI Segev narrative cross-surface contract", () => {
       filePath.endsWith(`${path.sep}nli-reveal-presentation.js`),
     )).toBe(false);
     expect(registry).not.toContain("canva.com");
-    expect(narrativeControls).not.toMatch(/presentation|iframe|canva/i);
-    expect(layerSheet).not.toMatch(/runNarrativePresentation|createNliNarrativePresentationController/);
+    expect(layerSheet).not.toMatch(/runNarrativePresentation|createNliNarrativePresentationController|nliNarrativeControlsHtml/);
   });
 
   test("stacks the local presentation above GIS controls and popup layers", () => {
@@ -169,10 +165,10 @@ describe("NLI Segev narrative cross-surface contract", () => {
     expect(cleanMapEntry).toContain("narrativeController.apply(OTEFDataContext.getNarrativeState?.())");
     expect(cleanProjectionEntry).toMatch(/subscribe\("narrativeState",\s*\(state\)\s*=>\s*\{[\s\S]{0,200}?projectionNarrativeController\?\.apply\(state\);/);
     expect(cleanProjectionEntry).toContain("projectionNarrativeController.apply(OTEFDataContext.getNarrativeState())");
-    expect(layerSheet).toContain("nliNarrativeControlsHtml(");
-    expect(layerSheet).toContain("consumeNliNarrativeButtonClick(e, this)");
+    expect(layerSheet).not.toContain("nliNarrativeControlsHtml(");
+    expect(layerSheet).not.toContain("consumeNliNarrativeButtonClick(e, this)");
+    expect(layerSheet).not.toContain("setNarrative(");
     expect(layerSheet).not.toContain("runNarrativePresentation(action, id)");
-    expect(narrativeControls).not.toContain("host?.runNarrativePresentation?.(action, id)");
     expect(cleanMapEntry).not.toMatch(/\b(runNarrativePresentation)\s*\(/);
     expect(cleanProjectionEntry).not.toMatch(/\b(runNarrativePresentation)\s*\(/);
   });

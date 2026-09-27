@@ -99,22 +99,20 @@ describe("remote Nova fleeing overlay toggles", () => {
     expect(event.stopPropagation).toHaveBeenCalled();
   });
 
-  test("timeline extras concatenate narrative then fleeing toggles then transport, in-flow", () => {
+  test("staff remote keeps in-flow Nova escape toggles after the regular panel drops them", () => {
+    const staffRemote = fs.readFileSync(
+      path.resolve(here, "../../frontend/src/remote/nli-staff-remote.js"),
+      "utf8",
+    );
     const layerSheet = fs.readFileSync(
       path.resolve(here, "../../frontend/src/remote/layer-sheet-controller.js"),
       "utf8",
     );
-    const extras = layerSheet.indexOf("`${narrativeSheet}${escapeToggles}${nliSheet}`");
-    expect(extras).toBeGreaterThan(-1);
-    expect(layerSheet.indexOf("${narrativeSheet}")).toBeLessThan(layerSheet.indexOf("${escapeToggles}"));
-    expect(layerSheet.indexOf("${escapeToggles}")).toBeLessThan(layerSheet.indexOf("${nliSheet}"));
-    expect(layerSheet.indexOf("consumeNliPackPaneClick(e, this)"))
-      .toBeLessThan(layerSheet.indexOf("consumeNliNovaEscapeClick(e, this)"));
-    expect(layerSheet.indexOf("consumeNliNovaEscapeClick(e, this)"))
-      .toBeLessThan(layerSheet.indexOf("consumeNliNarrativeButtonClick(e, this)"));
-    expect(layerSheet).toContain("setEscapeOverlay");
-    expect(layerSheet).toContain("mor: patch?.mor ?? current.mor");
-    expect(layerSheet).toContain('_subscribeDataContext("escapeOverlay"');
+    expect(staffRemote).toContain("nliNovaEscapeTogglesHtml(");
+    expect(staffRemote).toContain("consumeNliNovaEscapeClick(");
+    expect(layerSheet).not.toContain("nliNovaEscapeTogglesHtml(");
+    expect(layerSheet).not.toContain("consumeNliNovaEscapeClick(");
+    expect(layerSheet).not.toContain("setEscapeOverlay");
 
     const css = fs.readFileSync(
       path.resolve(here, "../../frontend/css/remote-styles.css"),

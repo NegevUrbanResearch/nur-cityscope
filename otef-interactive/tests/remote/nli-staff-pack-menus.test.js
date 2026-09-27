@@ -144,6 +144,43 @@ describe("staff pack menus", () => {
     menus.destroy();
   });
 
+  test("keeps the NLI pack and does not toggle a locked playable row", async () => {
+    setLocale("en");
+    const root = htmlRoot();
+    const setLayersEnabled = vi.fn().mockResolvedValue(undefined);
+    const menus = menusFor(root, {
+      setLayersEnabled,
+      getGroups: () => [
+        {
+          id: "nli",
+          layers: [{ id: "lines", name: "Lines", enabled: true }],
+        },
+        {
+          id: "projector_base",
+          layers: [{ id: "רקע_שחור", name: "Black", enabled: true }],
+        },
+      ],
+      getClock: () => ({ phase: "playing" }),
+    });
+    menus.open();
+    expect(root.innerHTML).toContain('data-pack="nli"');
+    expect(root.innerHTML).toContain("nli.lines");
+    root.emit("click", {
+      target: {
+        disabled: true,
+        closest(selector) {
+          return selector === "[data-layer-ids]" ? this : null;
+        },
+        getAttribute() {
+          return JSON.stringify(["nli.lines"]);
+        },
+      },
+    });
+    await Promise.resolve();
+    expect(setLayersEnabled).not.toHaveBeenCalled();
+    menus.destroy();
+  });
+
   test("dismisses the popup from the backdrop without changing layer state", () => {
     setLocale("en");
     const root = htmlRoot();

@@ -1,6 +1,6 @@
 /**
  * NLI pack transport: render, scrub paint, and play/stop/loop/step/scrub handlers.
- * LayerSheetController mounts the HTML when the selected pack is `nli` and forwards events.
+ * The staff timeline host mounts the HTML and forwards events.
  */
 
 import { t } from "./remote-locale.js";

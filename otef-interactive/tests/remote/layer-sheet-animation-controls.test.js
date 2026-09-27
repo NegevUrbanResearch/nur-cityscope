@@ -179,5 +179,25 @@ describe('layer sheet animation controls', () => {
     );
     expect(octoberWithColor).not.toContain('layer-tile__swatch');
   });
+
+  test('nli rows do not render an animation button', () => {
+    const html = renderLayerRow(
+      {
+        baseName: 'lines',
+        displayLabel: 'lines',
+        fullLayerIds: ['nli.lines'],
+        layers: [{
+          id: 'lines',
+          name: 'lines',
+          enabled: true,
+          style: { animation: { type: 'timeline' } },
+        }],
+        enabled: true,
+      },
+      { groupId: 'nli', animations: {} },
+    );
+    expect(html).not.toContain('data-animation-toggle');
+    expect(html).not.toContain('anim-btn');
+  });
 });
 
