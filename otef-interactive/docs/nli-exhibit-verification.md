@@ -362,6 +362,22 @@ Zikim T3 `0.7829905, 0.292619` is inside `getProjectionSpanRect("right")` and ou
 
 **Deferred:** `POST_TY` / `POST_SCALE` (and any later projection-crop pass over Tesuga / AABB / `PROJECTION_SPAN`) are out of scope until a later projection board. This record does not authorize those edits.
 
+## Staff remote scene sequence (2026-09-27)
+
+The live nginx/browser pass was not performed. Remote, GIS, and projection were not opened together. The roughly 800×1280 and 1280×800 Hebrew/English viewport inspection was not performed. Physical Galaxy Tab 11 touch and mis-tap acceptance was not performed. Normal-motion, reduced-motion, and cold-asset transitions were not observed on a display. Those gates stay open. The hardware rows already in this document stay pending and are unchanged.
+
+Automated checks from the worktree, 2026-09-27:
+
+| Command | Result |
+|---|---|
+| `npx vitest run tests/remote/nli-staff-scene-integration.test.js` | 6 passed |
+| `npx vitest run tests/remote tests/shared tests/map tests/projection tests/contracts` | 213 files passed, 8 failed; 2400 tests passed, 5 failed, 1 skipped; 1 unhandled rejection |
+| `python -m pytest backend/tests/test_otef_escape_overlay_api.py backend/tests/test_otef_narrative_api.py backend/tests/test_otef_investigation_clock_api.py -q` | 51 passed, 5 failed, 1 skipped, 21 subtests passed |
+| `npm run build:frontend` | passed |
+| `git diff --check` | passed (existing git attribute warnings only) |
+
+The five Django failures are environment failures, not a pass. Four presentation tests miss `nli-presentation-manifest.json` and then Python 3.14 crashes while logging that error. `test_exit_leaves_playing_clock_unchanged` cannot reach Redis at `redis:6379`. The remaining frontend failures are missing processed style or GeoJSON files, a missing memorial-wall snapshot, a Nova index CLI timeout, a legend dash assertion, and an unhandled `Failed to update state: 500` from the data-context actions file. Those files were not edited for this sequence check. The Nova compounds five-beat contract is not outstanding: commit `779ee4d` restored the compounds note, and `tests/contracts/nli-nova-narrative-contract.test.js` passed.
+
 ## Recorded exhibit gates (Task 14)
 
 Spec exhibit gates that unit tests cannot replace. Every cell below is a

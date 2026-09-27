@@ -263,6 +263,10 @@ export const NARRATIVES = [
       },
       {
         title: { he: "המתחמים", en: "The compounds" },
+        note: {
+          he: "פוליגוני הנובה עולים בחמישה ביטים בני ארבע שניות, לפי הרצף המתועד.",
+          en: "Nova polygons appear in five four-second beats, following the documented sequence.",
+        },
         cue: { layers: NOVA_TIMELINE_LAYER_IDS, clock: {}, escape: {} },
         kit: ["timeline"],
       },

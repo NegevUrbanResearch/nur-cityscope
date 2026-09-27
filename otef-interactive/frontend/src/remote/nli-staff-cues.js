@@ -112,7 +112,7 @@ export function createCueRunner({
     if (kind === "ended") {
       await endClock(live);
       if (!live()) throw cancelled();
-      if (stagePartial) {
+      if (Array.isArray(cue.layers)) {
         await commitLayers(layers.all);
         if (!live()) throw cancelled();
       }

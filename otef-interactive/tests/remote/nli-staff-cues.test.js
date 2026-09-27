@@ -74,6 +74,24 @@ describe("NLI staff cue runner", () => {
     expect(calls.some(([name]) => name === "start")).toBe(false);
   });
 
+  test("an ended memorial cue inside Nova replaces the play-window layers", async () => {
+    const { runner, calls } = setup({ narrativeId: "nova" });
+    const PEOPLE = "nli.people";
+    await runner.apply({ layers: [BASE, LINES], clock: {}, escape: {} }, "nova");
+    const before = calls.length;
+    await expect(runner.apply({
+      layers: [BASE, PEOPLE],
+      clock: "ended",
+      escape: { settled: true },
+    }, "nova")).resolves.toEqual({ status: "ready" });
+    const rest = calls.slice(before);
+    expect(rest.map(([name]) => name)).toEqual(["end", "layers", "escape"]);
+    expect(rest[1][1]).toEqual([BASE, PEOPLE]);
+    expect(rest[1][1]).not.toContain(LINES);
+    expect(rest[2][1]).toEqual({ individual: false, overlap: false, mor: false, settled: true });
+    expect(rest.some(([name]) => name === "start" || name === "stop")).toBe(false);
+  });
+
   test("an ended Nova cue completes the clock before escape and does not play or stop", async () => {
     const { runner, calls } = setup({ narrativeId: "nova" });
     await runner.apply({
@@ -81,8 +99,9 @@ describe("NLI staff cue runner", () => {
       clock: "ended",
       escape: { individual: true },
     }, "nova");
-    expect(calls.map(([name]) => name)).toEqual(["end", "escape"]);
-    expect(calls[1][1]).toEqual({ individual: true, overlap: false, mor: false, settled: false });
+    expect(calls.map(([name]) => name)).toEqual(["end", "layers", "escape"]);
+    expect(calls[1][1]).toEqual([BASE, LINES]);
+    expect(calls[2][1]).toEqual({ individual: true, overlap: false, mor: false, settled: false });
     expect(calls.some(([name]) => name === "stop" || name === "start")).toBe(false);
   });
 
