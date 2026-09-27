@@ -43,7 +43,7 @@ import {
   isolateLayersWhileVictimNamesShown,
   victimNamesAreShown,
 } from "../shared/nli-victim-name-layer-isolation.js";
-import { DEFAULT_INVESTIGATION_SETTLEMENTS_URL } from "../shared/nli-investigation-timeline-data.js";
+import { loadSettlementFeatures } from "../shared/nli-investigation-timeline-data.js";
 import { installProjectionPreviewBridge } from "../projection/projection-preview-bridge.js";
 import { bindProjectionHeadingStorage } from "../projection/projection-heading-storage.js";
 import { createProjectionConfigClient } from "../shared/projection-config-client.js";
@@ -551,11 +551,7 @@ async function bootstrapProjectionRuntime() {
     const motionMode = resolveMotionMode();
     const settlementGlow = createProjectionSettlementGlow({
       map,
-      loadSettlements: () => fetch(DEFAULT_INVESTIGATION_SETTLEMENTS_URL)
-        .then((response) => {
-          if (!response.ok) throw new Error(`NLI settlement outlines HTTP ${response.status}`);
-          return response.json();
-        }),
+      loadSettlements: () => loadSettlementFeatures({}),
       motionMode,
     });
     registerDisposer(() => settlementGlow.dispose());

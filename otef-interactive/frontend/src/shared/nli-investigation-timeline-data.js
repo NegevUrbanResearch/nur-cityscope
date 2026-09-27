@@ -74,7 +74,7 @@ function asNovaYeshuvSettlementFeature(feature) {
   };
 }
 
-function mergeNovaYeshuvOutlineFeature(settlementFeatures, yeshuvFeatures) {
+export function mergeNovaYeshuvOutlineFeature(settlementFeatures, yeshuvFeatures) {
   const outlineId = String(NLI_NARRATIVES.nova.focusSettlementOutlineId);
   const list = Array.isArray(settlementFeatures) ? [...settlementFeatures] : [];
   const already = list.some((feature) => {
@@ -211,7 +211,7 @@ async function loadLayerFeatures(deps, fullId) {
   return url ? featureList(await fetchJsonSafely(deps, url)) : [];
 }
 
-async function loadSettlementFeatures(deps) {
+export async function loadSettlementFeatures(deps) {
   if (Object.prototype.hasOwnProperty.call(deps, "settlementFeatures")) return featureList(deps.settlementFeatures);
   let url = null;
   try {

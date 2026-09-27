@@ -6,12 +6,16 @@ import { PEOPLE_HALO_LAYER_ID } from "../../frontend/src/map/maplibre-person-sel
 import { shouldIncludeNarrativeSettlementOutline } from "../../frontend/src/shared/nli-nova-escape-impact.js";
 import { NLI_VISUAL_TOKENS } from "../../frontend/src/shared/nli-investigation-theme.js";
 import {
-  PROJECTION_SETTLEMENT_GLOW_FILL_LAYER_ID,
-  PROJECTION_SETTLEMENT_GLOW_INNER_LAYER_ID,
-  PROJECTION_SETTLEMENT_GLOW_OUTER_LAYER_ID,
+  loadSettlementFeatures,
+  mergeNovaYeshuvOutlineFeature,
+} from "../../frontend/src/shared/nli-investigation-timeline-data.js";
+import {
+  PROJECTION_SETTLEMENT_GLOW_AURA_LAYER_ID,
+  PROJECTION_SETTLEMENT_GLOW_CORE_LAYER_ID,
   PROJECTION_SETTLEMENT_GLOW_SOURCE_ID,
   createProjectionSettlementGlow,
   resolveSettlementGlowFeature,
+  settlementAuraPoint,
   syncProjectionSettlementGlow,
 } from "../../frontend/src/projection/projection-settlement-glow.js";
 
@@ -27,9 +31,13 @@ const settlements = {
 
 const GLOW_IDS = [
   PROJECTION_SETTLEMENT_GLOW_SOURCE_ID,
-  PROJECTION_SETTLEMENT_GLOW_FILL_LAYER_ID,
-  PROJECTION_SETTLEMENT_GLOW_OUTER_LAYER_ID,
-  PROJECTION_SETTLEMENT_GLOW_INNER_LAYER_ID,
+  PROJECTION_SETTLEMENT_GLOW_AURA_LAYER_ID,
+  PROJECTION_SETTLEMENT_GLOW_CORE_LAYER_ID,
+];
+const LEGACY_GLOW_LAYER_IDS = [
+  "projection-settlement-glow-fill",
+  "projection-settlement-glow-outer",
+  "projection-settlement-glow-inner",
 ];
 
 describe("resolveSettlementGlowFeature", () => {
@@ -53,9 +61,77 @@ describe("resolveSettlementGlowFeature", () => {
     expect(resolveSettlementGlowFeature(withSite, { locationName: "Nova" }).properties.OBJECTID).toBe(43);
     expect(resolveSettlementGlowFeature(withSite.features, { outlineObjectId: 100 }).properties.OBJECTID).toBe(43);
   });
+
+  it("loads Nova 43 from sidecar+yeshuv merge, not site 100", async () => {
+    const sidecar = { type: "FeatureCollection", features: [poly(100, ["נובה"])] };
+    const yeshuv = { type: "Feature", properties: { OBJECTID: 43 }, geometry: poly(43).geometry };
+    expect(resolveSettlementGlowFeature(sidecar.features, { outlineObjectId: 43 })).toBeNull();
+    const merged = mergeNovaYeshuvOutlineFeature(sidecar.features, [yeshuv]);
+    expect(resolveSettlementGlowFeature(merged, { outlineObjectId: 43 }).properties.OBJECTID).toBe(43);
+    const loaded = await loadSettlementFeatures({
+      investigationSettlementsUrl: "/sidecar.json",
+      getLayerDataUrl: (id) => (id === "projector_base.ישובים" ? "/yeshuvim.json" : null),
+      fetchJson: async (url) => {
+        if (url === "/sidecar.json") return sidecar;
+        if (url === "/yeshuvim.json") return { features: [yeshuv] };
+        return null;
+      },
+    });
+    expect(resolveSettlementGlowFeature(loaded, { outlineObjectId: 43 }).properties.OBJECTID).toBe(43);
+    expect(resolveSettlementGlowFeature(loaded, { outlineObjectId: 43 }).properties.OBJECTID).not.toBe(100);
+    const { createFakeMapLibreMap } = await import("../helpers/fake-maplibre-map.js");
+    const map = createFakeMapLibreMap();
+    const glow = createProjectionSettlementGlow({
+      map,
+      loadSettlements: async () => loaded,
+      motionMode: "reduced",
+    });
+    await syncProjectionSettlementGlow(glow, { exhibitMode: true, narrativeId: "nova" });
+    expect(map.getSource(PROJECTION_SETTLEMENT_GLOW_SOURCE_ID).data.features[0].properties.OBJECTID).toBe(43);
+    glow.dispose();
+  });
+});
+
+describe("settlementAuraPoint", () => {
+  it("centers a Point on the polygon bbox with padded hypot radius", () => {
+    const feature = poly(19, ["בארי"]);
+    const aura = settlementAuraPoint(feature);
+    expect(aura.geometry.type).toBe("Point");
+    expect(aura.geometry.coordinates[0]).toBeCloseTo(34.05);
+    expect(aura.geometry.coordinates[1]).toBeCloseTo(31.05);
+    const lat = 31.05;
+    const widthM = 0.1 * 111320 * Math.cos((lat * Math.PI) / 180);
+    const heightM = 0.1 * 110540;
+    expect(aura.properties.radiusMeters).toBeCloseTo(
+      0.5 * Math.hypot(widthM, heightM) * NLI_VISUAL_TOKENS.settlementGlowAuraPad,
+    );
+    expect(aura.properties.OBJECTID).toBe(19);
+  });
 });
 
 describe("createProjectionSettlementGlow", () => {
+  it("paints a Point circle aura, not the polygon outline", async () => {
+    const { createFakeMapLibreMap } = await import("../helpers/fake-maplibre-map.js");
+    const map = createFakeMapLibreMap();
+    const glow = createProjectionSettlementGlow({
+      map,
+      loadSettlements: async () => settlements,
+      motionMode: "reduced",
+    });
+    await glow.setFocus({ outlineObjectId: 19 });
+    const focused = map.getSource(PROJECTION_SETTLEMENT_GLOW_SOURCE_ID).data.features[0];
+    expect(focused.geometry.type).toBe("Point");
+    expect(map.getLayer(PROJECTION_SETTLEMENT_GLOW_AURA_LAYER_ID).type).toBe("circle");
+    expect(map.getLayer(PROJECTION_SETTLEMENT_GLOW_CORE_LAYER_ID).type).toBe("circle");
+    expect(map.getPaintProperty(PROJECTION_SETTLEMENT_GLOW_AURA_LAYER_ID, "circle-blur"))
+      .toBe(NLI_VISUAL_TOKENS.settlementGlowAuraBlur);
+    expect(NLI_VISUAL_TOKENS.settlementGlowAuraBlur).toBe(0.85);
+    for (const id of LEGACY_GLOW_LAYER_IDS) {
+      expect(map.getLayer(id)).toBeNull();
+    }
+    glow.dispose();
+  });
+
   it("dissolves one outline in and keeps geometry on clear", async () => {
     const { createFakeMapLibreMap } = await import("../helpers/fake-maplibre-map.js");
     const map = createFakeMapLibreMap();
@@ -66,17 +142,16 @@ describe("createProjectionSettlementGlow", () => {
     });
     await glow.setFocus({ outlineObjectId: 19 });
     expect(map.getSource(PROJECTION_SETTLEMENT_GLOW_SOURCE_ID).data.features[0].properties.OBJECTID).toBe(19);
-    expect(map.getPaintProperty(PROJECTION_SETTLEMENT_GLOW_OUTER_LAYER_ID, "line-opacity"))
-      .toBe(NLI_VISUAL_TOKENS.settlementGlowOuterOpacity);
-    expect(map.getPaintProperty(PROJECTION_SETTLEMENT_GLOW_INNER_LAYER_ID, "line-opacity"))
-      .toBe(NLI_VISUAL_TOKENS.settlementGlowInnerOpacity);
-    expect(map.getPaintProperty(PROJECTION_SETTLEMENT_GLOW_FILL_LAYER_ID, "fill-opacity"))
-      .toBe(NLI_VISUAL_TOKENS.settlementGlowFillOpacity);
+    expect(map.getPaintProperty(PROJECTION_SETTLEMENT_GLOW_AURA_LAYER_ID, "circle-opacity"))
+      .toBe(NLI_VISUAL_TOKENS.settlementGlowAuraOpacity);
+    expect(map.getPaintProperty(PROJECTION_SETTLEMENT_GLOW_CORE_LAYER_ID, "circle-opacity"))
+      .toBe(NLI_VISUAL_TOKENS.settlementGlowCoreOpacity);
     await glow.setFocus({});
     expect(map.getSource(PROJECTION_SETTLEMENT_GLOW_SOURCE_ID).data.features).toHaveLength(1);
-    expect(map.getPaintProperty(PROJECTION_SETTLEMENT_GLOW_OUTER_LAYER_ID, "line-opacity")).toBe(0);
+    expect(map.getSource(PROJECTION_SETTLEMENT_GLOW_SOURCE_ID).data.features[0].geometry.type).toBe("Point");
+    expect(map.getPaintProperty(PROJECTION_SETTLEMENT_GLOW_AURA_LAYER_ID, "circle-opacity")).toBe(0);
     await glow.setFocus({ outlineObjectId: 19, suppressed: true });
-    expect(map.getPaintProperty(PROJECTION_SETTLEMENT_GLOW_OUTER_LAYER_ID, "line-opacity")).toBe(0);
+    expect(map.getPaintProperty(PROJECTION_SETTLEMENT_GLOW_AURA_LAYER_ID, "circle-opacity")).toBe(0);
     glow.dispose();
   });
 
@@ -85,12 +160,11 @@ describe("createProjectionSettlementGlow", () => {
       expect(id).not.toMatch(/highlight/i);
     }
     expect(PROJECTION_SETTLEMENT_GLOW_SOURCE_ID).toBe("projection-settlement-glow-source");
-    expect(PROJECTION_SETTLEMENT_GLOW_FILL_LAYER_ID).toBe("projection-settlement-glow-fill");
-    expect(PROJECTION_SETTLEMENT_GLOW_OUTER_LAYER_ID).toBe("projection-settlement-glow-outer");
-    expect(PROJECTION_SETTLEMENT_GLOW_INNER_LAYER_ID).toBe("projection-settlement-glow-inner");
+    expect(PROJECTION_SETTLEMENT_GLOW_AURA_LAYER_ID).toBe("projection-settlement-glow-aura");
+    expect(PROJECTION_SETTLEMENT_GLOW_CORE_LAYER_ID).toBe("projection-settlement-glow-core");
   });
 
-  it("paints a white fill and blurred line stack from glow tokens", async () => {
+  it("paints a white circle aura and core from glow tokens", async () => {
     const { createFakeMapLibreMap } = await import("../helpers/fake-maplibre-map.js");
     const map = createFakeMapLibreMap();
     const glow = createProjectionSettlementGlow({
@@ -99,17 +173,18 @@ describe("createProjectionSettlementGlow", () => {
       motionMode: "reduced",
     });
     glow.ensureLayers(map);
-    expect(map.getPaintProperty(PROJECTION_SETTLEMENT_GLOW_FILL_LAYER_ID, "fill-color")).toBe("#ffffff");
-    expect(map.getPaintProperty(PROJECTION_SETTLEMENT_GLOW_FILL_LAYER_ID, "fill-opacity")).toBe(0);
-    expect(map.getPaintProperty(PROJECTION_SETTLEMENT_GLOW_OUTER_LAYER_ID, "line-color")).toBe("#ffffff");
-    expect(map.getPaintProperty(PROJECTION_SETTLEMENT_GLOW_OUTER_LAYER_ID, "line-width"))
-      .toBe(NLI_VISUAL_TOKENS.settlementGlowOuterWidth);
-    expect(map.getPaintProperty(PROJECTION_SETTLEMENT_GLOW_OUTER_LAYER_ID, "line-blur"))
-      .toBe(NLI_VISUAL_TOKENS.settlementGlowOuterBlur);
-    expect(map.getPaintProperty(PROJECTION_SETTLEMENT_GLOW_INNER_LAYER_ID, "line-width"))
-      .toBe(NLI_VISUAL_TOKENS.settlementGlowInnerWidth);
-    expect(map.getPaintProperty(PROJECTION_SETTLEMENT_GLOW_INNER_LAYER_ID, "line-blur"))
-      .toBe(NLI_VISUAL_TOKENS.settlementGlowInnerBlur);
+    expect(map.getPaintProperty(PROJECTION_SETTLEMENT_GLOW_AURA_LAYER_ID, "circle-color")).toBe("#ffffff");
+    expect(map.getPaintProperty(PROJECTION_SETTLEMENT_GLOW_AURA_LAYER_ID, "circle-opacity")).toBe(0);
+    expect(map.getPaintProperty(PROJECTION_SETTLEMENT_GLOW_AURA_LAYER_ID, "circle-blur"))
+      .toBe(NLI_VISUAL_TOKENS.settlementGlowAuraBlur);
+    expect(map.getPaintProperty(PROJECTION_SETTLEMENT_GLOW_CORE_LAYER_ID, "circle-blur"))
+      .toBe(NLI_VISUAL_TOKENS.settlementGlowCoreBlur);
+    expect(map.getPaintProperty(PROJECTION_SETTLEMENT_GLOW_AURA_LAYER_ID, "circle-pitch-alignment")).toBe("map");
+    expect(map.getPaintProperty(PROJECTION_SETTLEMENT_GLOW_CORE_LAYER_ID, "circle-pitch-alignment")).toBe("map");
+    const radius = map.getPaintProperty(PROJECTION_SETTLEMENT_GLOW_AURA_LAYER_ID, "circle-radius");
+    expect(radius[0]).toBe("interpolate");
+    expect(radius[1]).toEqual(["exponential", 2]);
+    expect(radius[2]).toEqual(["zoom"]);
     glow.dispose();
   });
 
@@ -127,9 +202,8 @@ describe("createProjectionSettlementGlow", () => {
     glow.raise(map);
     const ids = map.getStyle().layers.map((layer) => layer.id);
     const haloIndex = ids.indexOf(PEOPLE_HALO_LAYER_ID);
-    expect(ids.indexOf(PROJECTION_SETTLEMENT_GLOW_FILL_LAYER_ID)).toBeLessThan(haloIndex);
-    expect(ids.indexOf(PROJECTION_SETTLEMENT_GLOW_OUTER_LAYER_ID)).toBeLessThan(haloIndex);
-    expect(ids.indexOf(PROJECTION_SETTLEMENT_GLOW_INNER_LAYER_ID)).toBe(haloIndex - 1);
+    expect(ids.indexOf(PROJECTION_SETTLEMENT_GLOW_AURA_LAYER_ID)).toBeLessThan(haloIndex);
+    expect(ids.indexOf(PROJECTION_SETTLEMENT_GLOW_CORE_LAYER_ID)).toBe(haloIndex - 1);
     glow.dispose();
   });
 
@@ -157,9 +231,10 @@ describe("createProjectionSettlementGlow", () => {
     ));
     expect(firstOpacity.value).toBe(0);
     expect(setData.data.features[0].properties.OBJECTID).toBe(43);
+    expect(setData.data.features[0].geometry.type).toBe("Point");
     expect(relevant.indexOf(firstOpacity)).toBeLessThan(relevant.indexOf(setData));
     expect(relevant.indexOf(setData)).toBeLessThan(relevant.indexOf(fadeIn));
-    expect(map.getPaintProperty(PROJECTION_SETTLEMENT_GLOW_OUTER_LAYER_ID, "line-opacity-transition"))
+    expect(map.getPaintProperty(PROJECTION_SETTLEMENT_GLOW_AURA_LAYER_ID, "circle-opacity-transition"))
       .toEqual({ duration: NLI_VISUAL_TOKENS.highlightOpacityTransitionMs, delay: 0 });
     glow.dispose();
   });
@@ -188,19 +263,18 @@ describe("createProjectionSettlementGlow", () => {
       motionMode: "reduced",
     });
     await glow.setFocus({ outlineObjectId: 19 });
-    expect(map.getPaintProperty(PROJECTION_SETTLEMENT_GLOW_OUTER_LAYER_ID, "line-opacity"))
-      .toBe(NLI_VISUAL_TOKENS.settlementGlowOuterOpacity);
+    expect(map.getPaintProperty(PROJECTION_SETTLEMENT_GLOW_AURA_LAYER_ID, "circle-opacity"))
+      .toBe(NLI_VISUAL_TOKENS.settlementGlowAuraOpacity);
     for (const id of [
-      PROJECTION_SETTLEMENT_GLOW_FILL_LAYER_ID,
-      PROJECTION_SETTLEMENT_GLOW_OUTER_LAYER_ID,
-      PROJECTION_SETTLEMENT_GLOW_INNER_LAYER_ID,
+      PROJECTION_SETTLEMENT_GLOW_AURA_LAYER_ID,
+      PROJECTION_SETTLEMENT_GLOW_CORE_LAYER_ID,
     ]) {
       map.removeLayer(id);
     }
     glow.ensureLayers(map);
     await glow.setFocus({ outlineObjectId: 19 });
-    expect(map.getPaintProperty(PROJECTION_SETTLEMENT_GLOW_OUTER_LAYER_ID, "line-opacity"))
-      .toBe(NLI_VISUAL_TOKENS.settlementGlowOuterOpacity);
+    expect(map.getPaintProperty(PROJECTION_SETTLEMENT_GLOW_AURA_LAYER_ID, "circle-opacity"))
+      .toBe(NLI_VISUAL_TOKENS.settlementGlowAuraOpacity);
     glow.dispose();
   });
 
@@ -216,24 +290,52 @@ describe("createProjectionSettlementGlow", () => {
     });
     await glow.setFocus({ outlineObjectId: 19 });
     for (const id of [
-      PROJECTION_SETTLEMENT_GLOW_FILL_LAYER_ID,
-      PROJECTION_SETTLEMENT_GLOW_OUTER_LAYER_ID,
-      PROJECTION_SETTLEMENT_GLOW_INNER_LAYER_ID,
+      PROJECTION_SETTLEMENT_GLOW_AURA_LAYER_ID,
+      PROJECTION_SETTLEMENT_GLOW_CORE_LAYER_ID,
     ]) {
       map.removeLayer(id);
     }
     map.calls.length = 0;
     await glow.setFocus({ outlineObjectId: 19 });
-    expect(map.getLayer(PROJECTION_SETTLEMENT_GLOW_FILL_LAYER_ID)).toBeTruthy();
-    expect(map.getLayer(PROJECTION_SETTLEMENT_GLOW_OUTER_LAYER_ID)).toBeTruthy();
-    expect(map.getLayer(PROJECTION_SETTLEMENT_GLOW_INNER_LAYER_ID)).toBeTruthy();
+    expect(map.getLayer(PROJECTION_SETTLEMENT_GLOW_AURA_LAYER_ID)).toBeTruthy();
+    expect(map.getLayer(PROJECTION_SETTLEMENT_GLOW_CORE_LAYER_ID)).toBeTruthy();
     const moveCalls = map.calls.filter((call) => call.method === "moveLayer");
     expect(moveCalls).toEqual([
-      { method: "moveLayer", id: PROJECTION_SETTLEMENT_GLOW_FILL_LAYER_ID, beforeId: PEOPLE_HALO_LAYER_ID },
-      { method: "moveLayer", id: PROJECTION_SETTLEMENT_GLOW_OUTER_LAYER_ID, beforeId: PEOPLE_HALO_LAYER_ID },
-      { method: "moveLayer", id: PROJECTION_SETTLEMENT_GLOW_INNER_LAYER_ID, beforeId: PEOPLE_HALO_LAYER_ID },
+      { method: "moveLayer", id: PROJECTION_SETTLEMENT_GLOW_AURA_LAYER_ID, beforeId: PEOPLE_HALO_LAYER_ID },
+      { method: "moveLayer", id: PROJECTION_SETTLEMENT_GLOW_CORE_LAYER_ID, beforeId: PEOPLE_HALO_LAYER_ID },
     ]);
     glow.dispose();
+  });
+
+  it("removes leftover fill and line glow layers on mount and dispose", async () => {
+    const { createFakeMapLibreMap } = await import("../helpers/fake-maplibre-map.js");
+    const map = createFakeMapLibreMap();
+    map.addSource(PROJECTION_SETTLEMENT_GLOW_SOURCE_ID, {
+      type: "geojson",
+      data: { type: "FeatureCollection", features: [] },
+    });
+    for (const id of LEGACY_GLOW_LAYER_IDS) {
+      map.addLayer({
+        id,
+        type: id.endsWith("fill") ? "fill" : "line",
+        source: PROJECTION_SETTLEMENT_GLOW_SOURCE_ID,
+      });
+    }
+    const glow = createProjectionSettlementGlow({
+      map,
+      loadSettlements: async () => settlements,
+      motionMode: "reduced",
+    });
+    glow.ensureLayers(map);
+    for (const id of LEGACY_GLOW_LAYER_IDS) {
+      expect(map.getLayer(id)).toBeNull();
+    }
+    expect(map.getLayer(PROJECTION_SETTLEMENT_GLOW_AURA_LAYER_ID)).toBeTruthy();
+    glow.dispose();
+    for (const id of [...LEGACY_GLOW_LAYER_IDS, PROJECTION_SETTLEMENT_GLOW_AURA_LAYER_ID, PROJECTION_SETTLEMENT_GLOW_CORE_LAYER_ID]) {
+      expect(map.getLayer(id)).toBeNull();
+    }
+    expect(map.getSource(PROJECTION_SETTLEMENT_GLOW_SOURCE_ID)).toBeNull();
   });
 });
 
@@ -266,6 +368,10 @@ test("glow sync prefers narrative outline, then person, and suppresses off-exhib
     exhibitMode: false, narrativeId: "segev", personLocation: "Alumim", wallEnabled: false,
   });
   expect(calls.at(-1)).toEqual({ suppressed: true });
+  await syncProjectionSettlementGlow(glow, {
+    exhibitMode: true, narrativeId: "nova", personLocation: null, placeName: null, wallEnabled: false,
+  });
+  expect(calls.at(-1)).toEqual({ outlineObjectId: 43 });
 });
 
 test("projection glow seeds lastPlaceId from the name-field pending place", () => {
@@ -275,4 +381,13 @@ test("projection glow seeds lastPlaceId from the name-field pending place", () =
   );
   expect(src).toMatch(/lastPlaceId\s*=\s*nameFieldController\.getPendingPlaceId\?\.\(\)/);
   expect(src).toMatch(/nameFieldController\.sync\(groups\);\s*void syncSettlementGlow\(\)/);
+});
+
+test("projection glow loadSettlements uses the GIS yeshuv merge", () => {
+  const src = fs.readFileSync(
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../frontend/src/entries/projection-main.js"),
+    "utf8",
+  );
+  expect(src).toMatch(/loadSettlements:\s*\(\)\s*=>\s*loadSettlementFeatures\(\{\}\)/);
+  expect(src).not.toMatch(/shouldIncludeNarrativeSettlementOutline/);
 });

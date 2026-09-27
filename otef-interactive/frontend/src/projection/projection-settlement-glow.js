@@ -6,16 +6,21 @@ import { getNliNarrative } from "../shared/nli-narratives.js";
 import { NLI_VISUAL_TOKENS } from "../shared/nli-investigation-theme.js";
 
 export const PROJECTION_SETTLEMENT_GLOW_SOURCE_ID = "projection-settlement-glow-source";
-export const PROJECTION_SETTLEMENT_GLOW_FILL_LAYER_ID = "projection-settlement-glow-fill";
-export const PROJECTION_SETTLEMENT_GLOW_OUTER_LAYER_ID = "projection-settlement-glow-outer";
-export const PROJECTION_SETTLEMENT_GLOW_INNER_LAYER_ID = "projection-settlement-glow-inner";
+export const PROJECTION_SETTLEMENT_GLOW_AURA_LAYER_ID = "projection-settlement-glow-aura";
+export const PROJECTION_SETTLEMENT_GLOW_CORE_LAYER_ID = "projection-settlement-glow-core";
 
+const LEGACY_GLOW_LAYER_IDS = [
+  "projection-settlement-glow-fill",
+  "projection-settlement-glow-outer",
+  "projection-settlement-glow-inner",
+];
 const GLOW_COLOR = "#ffffff";
 const GLOW_LAYER_IDS = [
-  PROJECTION_SETTLEMENT_GLOW_FILL_LAYER_ID,
-  PROJECTION_SETTLEMENT_GLOW_OUTER_LAYER_ID,
-  PROJECTION_SETTLEMENT_GLOW_INNER_LAYER_ID,
+  PROJECTION_SETTLEMENT_GLOW_AURA_LAYER_ID,
+  PROJECTION_SETTLEMENT_GLOW_CORE_LAYER_ID,
 ];
+const DISPOSE_LAYER_IDS = [...GLOW_LAYER_IDS, ...LEGACY_GLOW_LAYER_IDS];
+const METERS_PER_PIXEL_AT_ZOOM_0 = (2 * Math.PI * 6378137) / 512;
 
 function featureId(feature) {
   const props = feature?.properties || {};
@@ -64,60 +69,107 @@ export function resolveSettlementGlowFeature(settlements, { outlineObjectId, loc
   return featureForOutlineId(settlementFeaturesByOutlineId, resolvedId);
 }
 
+function collectPositions(value, into = []) {
+  if (!value) return into;
+  if (typeof value[0] === "number") {
+    into.push(value);
+    return into;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) collectPositions(item, into);
+  }
+  return into;
+}
+
+export function settlementAuraPoint(feature) {
+  const positions = collectPositions(feature?.geometry?.coordinates);
+  let minLon = Infinity;
+  let minLat = Infinity;
+  let maxLon = -Infinity;
+  let maxLat = -Infinity;
+  for (const position of positions) {
+    const lon = Number(position?.[0]);
+    const lat = Number(position?.[1]);
+    if (!Number.isFinite(lon) || !Number.isFinite(lat)) continue;
+    if (lon < minLon) minLon = lon;
+    if (lat < minLat) minLat = lat;
+    if (lon > maxLon) maxLon = lon;
+    if (lat > maxLat) maxLat = lat;
+  }
+  const cx = (minLon + maxLon) / 2;
+  const cy = (minLat + maxLat) / 2;
+  const widthM = (maxLon - minLon) * 111320 * Math.cos((cy * Math.PI) / 180);
+  const heightM = (maxLat - minLat) * 110540;
+  const radiusMeters = 0.5 * Math.hypot(widthM, heightM) * NLI_VISUAL_TOKENS.settlementGlowAuraPad;
+  return {
+    type: "Feature",
+    properties: { ...(feature?.properties || {}), radiusMeters },
+    geometry: { type: "Point", coordinates: [cx, cy] },
+  };
+}
+
+function glowCircleRadiusExpression() {
+  return [
+    "interpolate",
+    ["exponential", 2],
+    ["zoom"],
+    0,
+    ["/", ["get", "radiusMeters"], METERS_PER_PIXEL_AT_ZOOM_0],
+    24,
+    ["/", ["get", "radiusMeters"], METERS_PER_PIXEL_AT_ZOOM_0 / 2 ** 24],
+  ];
+}
+
 function paintGlow(map, opacityScale, { immediate = false } = {}) {
   const duration = immediate ? 0 : NLI_VISUAL_TOKENS.highlightOpacityTransitionMs;
   const transition = { duration, delay: 0 };
   const pairs = [
-    [PROJECTION_SETTLEMENT_GLOW_FILL_LAYER_ID, "fill-opacity", NLI_VISUAL_TOKENS.settlementGlowFillOpacity],
-    [PROJECTION_SETTLEMENT_GLOW_OUTER_LAYER_ID, "line-opacity", NLI_VISUAL_TOKENS.settlementGlowOuterOpacity],
-    [PROJECTION_SETTLEMENT_GLOW_INNER_LAYER_ID, "line-opacity", NLI_VISUAL_TOKENS.settlementGlowInnerOpacity],
+    [PROJECTION_SETTLEMENT_GLOW_AURA_LAYER_ID, NLI_VISUAL_TOKENS.settlementGlowAuraOpacity],
+    [PROJECTION_SETTLEMENT_GLOW_CORE_LAYER_ID, NLI_VISUAL_TOKENS.settlementGlowCoreOpacity],
   ];
-  for (const [id, property, peak] of pairs) {
+  for (const [id, peak] of pairs) {
     if (!map.getLayer(id)) continue;
-    map.setPaintProperty(id, `${property}-transition`, transition);
-    map.setPaintProperty(id, property, peak * opacityScale);
+    map.setPaintProperty(id, "circle-opacity-transition", transition);
+    map.setPaintProperty(id, "circle-opacity", peak * opacityScale);
+  }
+}
+
+function removeGlowLayers(map, ids) {
+  for (const id of ids) {
+    if (map.getLayer?.(id)) map.removeLayer(id);
   }
 }
 
 function addGlowLayers(map) {
   const opacityTransition = { duration: NLI_VISUAL_TOKENS.highlightOpacityTransitionMs };
-  if (!map.getLayer(PROJECTION_SETTLEMENT_GLOW_FILL_LAYER_ID)) {
+  const radius = glowCircleRadiusExpression();
+  if (!map.getLayer(PROJECTION_SETTLEMENT_GLOW_AURA_LAYER_ID)) {
     map.addLayer({
-      id: PROJECTION_SETTLEMENT_GLOW_FILL_LAYER_ID,
-      type: "fill",
+      id: PROJECTION_SETTLEMENT_GLOW_AURA_LAYER_ID,
+      type: "circle",
       source: PROJECTION_SETTLEMENT_GLOW_SOURCE_ID,
       paint: {
-        "fill-color": GLOW_COLOR,
-        "fill-opacity": 0,
-        "fill-opacity-transition": opacityTransition,
+        "circle-color": GLOW_COLOR,
+        "circle-opacity": 0,
+        "circle-opacity-transition": opacityTransition,
+        "circle-blur": NLI_VISUAL_TOKENS.settlementGlowAuraBlur,
+        "circle-radius": radius,
+        "circle-pitch-alignment": "map",
       },
     });
   }
-  if (!map.getLayer(PROJECTION_SETTLEMENT_GLOW_OUTER_LAYER_ID)) {
+  if (!map.getLayer(PROJECTION_SETTLEMENT_GLOW_CORE_LAYER_ID)) {
     map.addLayer({
-      id: PROJECTION_SETTLEMENT_GLOW_OUTER_LAYER_ID,
-      type: "line",
+      id: PROJECTION_SETTLEMENT_GLOW_CORE_LAYER_ID,
+      type: "circle",
       source: PROJECTION_SETTLEMENT_GLOW_SOURCE_ID,
       paint: {
-        "line-color": GLOW_COLOR,
-        "line-width": NLI_VISUAL_TOKENS.settlementGlowOuterWidth,
-        "line-blur": NLI_VISUAL_TOKENS.settlementGlowOuterBlur,
-        "line-opacity": 0,
-        "line-opacity-transition": opacityTransition,
-      },
-    });
-  }
-  if (!map.getLayer(PROJECTION_SETTLEMENT_GLOW_INNER_LAYER_ID)) {
-    map.addLayer({
-      id: PROJECTION_SETTLEMENT_GLOW_INNER_LAYER_ID,
-      type: "line",
-      source: PROJECTION_SETTLEMENT_GLOW_SOURCE_ID,
-      paint: {
-        "line-color": GLOW_COLOR,
-        "line-width": NLI_VISUAL_TOKENS.settlementGlowInnerWidth,
-        "line-blur": NLI_VISUAL_TOKENS.settlementGlowInnerBlur,
-        "line-opacity": 0,
-        "line-opacity-transition": opacityTransition,
+        "circle-color": GLOW_COLOR,
+        "circle-opacity": 0,
+        "circle-opacity-transition": opacityTransition,
+        "circle-blur": NLI_VISUAL_TOKENS.settlementGlowCoreBlur,
+        "circle-radius": radius,
+        "circle-pitch-alignment": "map",
       },
     });
   }
@@ -131,6 +183,7 @@ export function createProjectionSettlementGlow({ map, loadSettlements, motionMod
 
   function ensureLayers(targetMap = map) {
     if (!targetMap || typeof targetMap.getSource !== "function") return;
+    removeGlowLayers(targetMap, LEGACY_GLOW_LAYER_IDS);
     const missingLayer = GLOW_LAYER_IDS.some((id) => !targetMap.getLayer?.(id));
     if (!targetMap.getSource(PROJECTION_SETTLEMENT_GLOW_SOURCE_ID)) {
       targetMap.addSource(PROJECTION_SETTLEMENT_GLOW_SOURCE_ID, {
@@ -172,20 +225,18 @@ export function createProjectionSettlementGlow({ map, loadSettlements, motionMod
       return;
     }
     paintGlow(map, 0, { immediate: true });
-    lastFeature = feature;
+    lastFeature = settlementAuraPoint(feature);
     currentId = nextId;
     map.getSource(PROJECTION_SETTLEMENT_GLOW_SOURCE_ID)?.setData({
       type: "FeatureCollection",
-      features: [feature],
+      features: [lastFeature],
     });
     paintGlow(map, 1, { immediate: reduced });
   }
 
   function dispose() {
     if (!map) return;
-    for (const id of GLOW_LAYER_IDS) {
-      if (map.getLayer?.(id)) map.removeLayer(id);
-    }
+    removeGlowLayers(map, DISPOSE_LAYER_IDS);
     if (map.getSource?.(PROJECTION_SETTLEMENT_GLOW_SOURCE_ID)) {
       map.removeSource(PROJECTION_SETTLEMENT_GLOW_SOURCE_ID);
     }
