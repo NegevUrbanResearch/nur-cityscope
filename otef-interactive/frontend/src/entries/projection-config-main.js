@@ -6,6 +6,9 @@ import { renderQr } from "../shared/qr-code.js";
 import { OTEFWebSocketClient } from "../shared/websocket-client.js";
 import { mountProjectionConfig } from "../projection-config/config-controller.js";
 import { createOutputWindowController } from "../projection-config/output-window-controller.js";
+import { loadCapturedProjectionAsset, loadCapturedProjectionFraming } from '../projection/projection-captured-baseline.js';
+import { createProjectionCandidateValidator, readProjectionCandidateInputs } from '../projection/projection-candidate-validation.js';
+import { disposeProjectionNameWallPreparation, prepareProjectionNameWall } from '../shared/nli-name-field-data.js';
 
 function downloadExport(content, name) {
   if (typeof document === "undefined" || typeof URL?.createObjectURL !== "function") return;
@@ -43,7 +46,21 @@ export function bootProjectionConfig({ document = globalThis.document, location 
   const client = createProjectionConfigClient({ fetchImpl, socket: ws, sourceId: createUuid(), onConflict: (message) => mounted?.setConflict?.(message) });
   const outputLocation = location?.href ? new URL("./projection.html", location.href).href : "projection.html";
   const outputController = createOutputWindowController({ location: outputLocation, open: globalThis.open, screenApi: globalThis, navigatorApi: globalThis.navigator, storage: (() => { try { return globalThis.localStorage; } catch { return null; } })() });
-  mounted = mountProjectionConfig(root, { client, socket: ws, outputController, share: () => shareConfigUrl({ location, fetchImpl, document }), onExport: downloadExport, onImport: readImportFile });
+  const capturedBySignal = new WeakMap();
+  const candidateValidator = createProjectionCandidateValidator({
+    loadBaseline: async (side, signal) => {
+      let captured = capturedBySignal.get(signal);
+      if (!captured) {
+        captured = loadCapturedProjectionFraming({ fetchImpl, signal });
+        capturedBySignal.set(signal, captured);
+      }
+      return loadCapturedProjectionAsset({ fetchImpl, spanId: side, captured: await captured, signal });
+    },
+    prepareWall: prepareProjectionNameWall,
+    readInputs: (signal) => readProjectionCandidateInputs({ storage: globalThis.localStorage, fetchImpl, signal }),
+    disposePreparation: disposeProjectionNameWallPreparation,
+  });
+  mounted = mountProjectionConfig(root, { client, socket: ws, outputController, candidateValidator, share: () => shareConfigUrl({ location, fetchImpl, document }), onExport: downloadExport, onImport: readImportFile });
   return () => { mounted.dispose(); if (ownsSocket) ws.disconnect?.(); };
 }
 

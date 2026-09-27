@@ -10,6 +10,7 @@ import { createProjectionConfigView } from "./config-view.js";
 import { createWarpEditor } from "./warp-editor.js";
 import { loadCapturedProjectionAsset } from "../projection/projection-captured-baseline.js";
 import { migrateNamesWallToV5 } from "../shared/nli-name-wall-config.js";
+import { NLI_LABEL_HEADING_STORAGE_KEY } from "../shared/nli-label-heading.js";
 
 const FIELD_DESCRIPTORS = [
   { path: "pre.scale", node: "pre", label: "Scale", min: 0.1, max: 8, step: 0.01, fine: 0.001, unit: "×", decimals: 3 },
@@ -99,7 +100,7 @@ export function projectionAppliedStatus(rows, revision) {
   return new Set(walls.map(identity)).size === 1 ? 'Applied' : 'Unconfirmed';
 }
 
-export function mountProjectionConfig(root, { client, share, onExport, onImport, socket, outputController } = {}) {
+export function mountProjectionConfig(root, { client, share, onExport, onImport, socket, outputController, candidateValidator } = {}) {
   if (!client) throw new Error("projection config client is required");
   const sourceId = createUuid();
   let selectedNode = "pre";
@@ -119,6 +120,10 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
   let wallValidation = { identity: "", revision: null, pending: false, result: null };
   let wallInspectionId = 0;
   let wallMutationId = 0;
+  let inputCheckId = 0;
+  let validatedInputs = null;
+  const validator = candidateValidator || { validateCandidate: async ({ identity }) => ({ identity, valid: false, reason: 'Candidate validator unavailable' }), dispose() {} };
+  const win = root?.ownerDocument?.defaultView || globalThis.document?.defaultView;
   let activePattern = { pattern: "off", branch: "left" };
   let patternTimer = null;
   const warpEditors = {
@@ -169,7 +174,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     if (wallValidation.identity !== identity || (wallValidation.revision !== expectedRevision && wallValidation.targetRevision !== expectedRevision) || wallValidation.pending) return { state: "building", ...profile, expected: null, placed: null };
     const result = wallValidation.result;
     if (!result) return { state: "building", ...profile, expected: null, placed: null };
-    if (!result.valid && result.diagnostics?.state !== "invalid") return { ...profile, state: "building", expected: null, placed: null, reason: `Preview unavailable: ${result.reason || "paired check failed"}. Waiting for both final previews.` };
+    if (!result.valid && result.diagnostics?.state !== "invalid") return { ...profile, state: "building", expected: null, placed: null, reason: `Validation unavailable: ${result.reason || "preflight failed"}.` };
     return { ...profile, ...(result.diagnostics || {}), state: result.valid ? (Number(result.diagnostics?.effectiveFontPx) < profile.requestedFontPx ? "auto-reduced" : "valid") : "invalid", reason: result.reason || result.diagnostics?.reason || "" };
   }
   function validateWallCandidate({ config, generation, identity, revision }) {
@@ -181,33 +186,33 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     if (JSON.stringify(state.draft) === exactIdentity) { wallValidation = { identity: exactIdentity, revision: expectedRevision, pending: true, result: null }; refresh(); }
     const currentCandidate = () => mutationId === wallMutationId && JSON.stringify(state.draft) === exactIdentity &&
       (!Number.isSafeInteger(expectedRevision) || revision === expectedRevision || revision === expectedRevision + 1);
-    return Promise.resolve().then(() => view.validateCandidate({ config, generation, identity: exactIdentity, revision })).then((result) => {
-      if (currentCandidate()) { wallValidation = { identity: exactIdentity, revision: expectedRevision, targetRevision: result.valid ? revision : null, pending: false, result }; refresh(); }
+    return Promise.resolve().then(() => validator.validateCandidate({ config, generation, identity: exactIdentity, revision })).then((result) => {
+      if (currentCandidate()) { validatedInputs = validator.getLastInputs?.() || validatedInputs; wallValidation = { identity: exactIdentity, revision: expectedRevision, targetRevision: result.valid ? revision : null, pending: false, result }; refresh(); }
       return result;
     }, (error) => {
-      if (currentCandidate()) { wallValidation = { identity: exactIdentity, revision: expectedRevision, pending: false, result: { valid: false, identity: exactIdentity, reason: error?.message || "Wall preview unavailable" } }; refresh(); }
+      if (currentCandidate()) { wallValidation = { identity: exactIdentity, revision: expectedRevision, pending: false, result: { valid: false, identity: exactIdentity, reason: error?.message || "Wall validation unavailable" } }; refresh(); }
       throw error;
     });
   }
-  function checkDraftWall({ retryUnavailable = false } = {}) {
+  function checkDraftWall() {
     if (!state.draft || Object.keys(validateProjectionConfig(state.draft)).length) return;
     const identity = JSON.stringify(state.draft);
     const revision = expectedRevision;
     if (wallValidation.identity === identity && (wallValidation.revision === revision || wallValidation.targetRevision === revision)) {
       if (wallValidation.pending) return;
-      const result = wallValidation.result;
-      if (!retryUnavailable || result?.valid || result?.diagnostics?.state === "invalid") return;
+      return;
     }
     const inspectionId = ++wallInspectionId;
     wallValidation = { identity, revision, pending: true, result: null };
     refresh();
-    Promise.resolve().then(() => view.validateCandidate({ config: clone(state.draft), generation: -1, identity, revision })).then((result) => {
+    Promise.resolve().then(() => validator.validateCandidate({ config: clone(state.draft), generation: -1, identity, revision })).then((result) => {
       if (inspectionId !== wallInspectionId || JSON.stringify(state.draft) !== identity || expectedRevision !== revision) return;
+      validatedInputs = validator.getLastInputs?.() || validatedInputs;
       wallValidation = { identity, revision, pending: false, result };
       refresh();
     }, (error) => {
       if (inspectionId !== wallInspectionId || JSON.stringify(state.draft) !== identity || expectedRevision !== revision) return;
-      wallValidation = { identity, revision, pending: false, result: { valid: false, identity, reason: error?.message || "Wall preview unavailable" } };
+      wallValidation = { identity, revision, pending: false, result: { valid: false, identity, reason: error?.message || "Wall validation unavailable" } };
       refresh();
     });
   }
@@ -396,24 +401,51 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     statusRows.set(`${message.output}:${message.instanceId}`, message); refresh();
   }
   function requestStatus() { socket?.send?.({ type: "otef_projection_status_request", table: "otef", sourceId }); }
+  async function recheckInputs() {
+    if (disposed || typeof validator.readInputs !== 'function') return;
+    const checkId = ++inputCheckId;
+    let inputs;
+    try { inputs = await validator.readInputs(); }
+    catch { inputs = null; }
+    if (disposed || checkId !== inputCheckId) return;
+    const before = JSON.stringify(validatedInputs);
+    const after = JSON.stringify(inputs);
+    if (validatedInputs === null && inputs !== null) { validatedInputs = inputs; return; }
+    if (before === after) return;
+    validatedInputs = inputs;
+    wallInspectionId += 1;
+    wallMutationId += 1;
+    wallValidation = { identity: '', revision: null, pending: false, result: null };
+    checkDraftWall();
+  }
+  const onHeadingStorage = (event) => { if (event.key === NLI_LABEL_HEADING_STORAGE_KEY) void recheckInputs(); };
+  const onDatasetEvent = () => { void recheckInputs(); };
+  const onPageReturn = () => { void recheckInputs(); };
+  const onVisibility = () => { if (globalThis.document?.visibilityState === 'visible') void recheckInputs(); };
   const unsubscribe = client.subscribe(handleState);
-  const unsubscribeFinalOutputsReady = view.onFinalOutputsReady?.(() => checkDraftWall({ retryUnavailable: true }));
   const unsubscribeOutput = outputController?.subscribe?.((nextState) => { outputState = nextState; refresh(); });
   if (view.canManageDisplays) outputController?.refreshDisplays?.().catch(() => {});
   socket?.on?.("otef_projection_applied", statusMessage);
-  const onConnect = () => { reconnectStatusRevision = expectedRevision; expectRevision(state, true); requestStatus(); if (activePattern.pattern !== "off") setPattern(activePattern); refresh(); };
+  const onConnect = () => { reconnectStatusRevision = expectedRevision; expectRevision(state, true); requestStatus(); void recheckInputs(); if (activePattern.pattern !== "off") setPattern(activePattern); refresh(); };
   socket?.on?.("connect", onConnect);
   const onDisconnect = () => { reconnectStatusRevision = null; socket?.send?.({ type: "otef_projection_pattern", table: "otef", output: activePattern.branch, pattern: "off", sourceId }); statusRows = new Map(); if (patternTimer !== null) { clearInterval(patternTimer); patternTimer = null; } refresh(); };
   socket?.on?.("disconnect", onDisconnect);
+  socket?.on?.('otef_person_selection_changed', onDatasetEvent);
+  socket?.on?.('otef_narrative_scene_changed', onDatasetEvent);
+  win?.addEventListener?.('storage', onHeadingStorage);
+  win?.addEventListener?.('pageshow', onPageReturn);
+  win?.addEventListener?.('focus', onPageReturn);
+  globalThis.document?.addEventListener?.('visibilitychange', onVisibility);
   if (socket?.getConnected?.() || socket?.isConnected === true) requestStatus();
   checkDraftWall();
+  void recheckInputs();
   void client.start?.();
   refresh();
   return {
     sourceId,
     getStatusRows: () => [...statusRows.values()].map((row) => ({ ...row })),
     setConflict,
-    dispose() { disposed = true; if (confirmationTimer !== null) clearTimeout(confirmationTimer); if (patternTimer !== null) clearInterval(patternTimer); socket?.send?.({ type: "otef_projection_pattern", table: "otef", output: activePattern.branch, pattern: "off", sourceId }); socket?.off?.("otef_projection_applied", statusMessage); socket?.off?.("connect", onConnect); socket?.off?.("disconnect", onDisconnect); unsubscribe?.(); unsubscribeFinalOutputsReady?.(); unsubscribeOutput?.(); outputController?.dispose?.(); view.dispose(); client.stop?.(); },
+    dispose() { if (disposed) return; disposed = true; inputCheckId += 1; wallInspectionId += 1; wallMutationId += 1; if (confirmationTimer !== null) clearTimeout(confirmationTimer); if (patternTimer !== null) clearInterval(patternTimer); socket?.send?.({ type: "otef_projection_pattern", table: "otef", output: activePattern.branch, pattern: "off", sourceId }); socket?.off?.("otef_projection_applied", statusMessage); socket?.off?.("connect", onConnect); socket?.off?.("disconnect", onDisconnect); socket?.off?.('otef_person_selection_changed', onDatasetEvent); socket?.off?.('otef_narrative_scene_changed', onDatasetEvent); win?.removeEventListener?.('storage', onHeadingStorage); win?.removeEventListener?.('pageshow', onPageReturn); win?.removeEventListener?.('focus', onPageReturn); globalThis.document?.removeEventListener?.('visibilitychange', onVisibility); unsubscribe?.(); unsubscribeOutput?.(); outputController?.dispose?.(); validator.dispose?.(); view.dispose(); client.stop?.(); },
   };
 }
 

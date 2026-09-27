@@ -2,16 +2,15 @@ import { createProjectionSurfaceCompositor } from "./projection-surface-composit
 import { createProjectionWarpRenderer } from "./projection-warp-renderer.js";
 import { evaluateWarpMesh } from "../shared/projection-warp-geometry.js";
 import { createProjectionNameCanvasAdapter } from "./projection-name-canvas-adapter.js";
-import { validateProjectionConfig } from "../shared/projection-config-schema.js";
 import { migrateProjectionConfigToV2 } from "../shared/projection-warp-schema.js";
 import { migrateNamesWallToV5 } from "../shared/nli-name-wall-config.js";
-import { validateProjectionBaselineMesh } from "../shared/projection-warp-assets.js";
 import {
   DEFAULT_PROJECTION_BASELINE,
   loadCapturedProjectionAsset,
   loadCapturedProjectionFraming,
 } from "./projection-captured-baseline.js";
 import { visibleProjectionBrowserError } from "./projection-browser-error.js";
+import { prepareProjectionPairMeshes, prepareProjectionSideMesh } from "./projection-candidate-validation.js";
 
 export function resolveProjectionOutputMode(search = "") {
   const params = new URLSearchParams(String(search).replace(/^\?/, ""));
@@ -147,7 +146,7 @@ export async function createProjectionBrowserSurface({
   let onContextLost;
   let onContextRestored;
   let nameAdapter;
-  let peerBaselineMesh;
+  let peerBaseline;
   let activeMesh;
   let previousPair = null;
   try {
@@ -194,36 +193,15 @@ export async function createProjectionBrowserSurface({
     activeMesh = initialMesh;
     compositor = createProjectionSurfaceCompositor({ renderer, sources: readScene() });
     let activeConfig = initialConfig ? migrateNamesWallToV5(initialConfig) : migrateNamesWallToV5(baseline.framing);
-    const prepareConfig = (candidate) => {
-      if (Object.keys(validateProjectionConfig(candidate)).length) throw new Error("Invalid projection calibration");
-      const config = migrateNamesWallToV5(candidate);
-      const warp = config.outputs?.[spanId]?.warp;
-      if (!warp) throw new Error(`Projection calibration has no ${spanId} warp`);
-      let sourceMesh = null;
-      if (warp.enabled !== false && warp.baseline?.type === "tdMesh") {
-        const errors = validateProjectionBaselineMesh(baseline.mesh, { side: spanId, manifest: baseline.manifest, baseline: warp.baseline });
-        if (Object.keys(errors).length) throw new Error(`Projection baseline rejected: ${Object.entries(errors).map(([path, message]) => `${path} ${message}`).join("; ")}`);
-        sourceMesh = baseline.mesh;
-      }
-      const mesh = evaluateWarpMesh(sourceMesh, warp);
-      return { config, mesh };
-    };
+    const prepareConfig = (candidate) => prepareProjectionSideMesh(candidate, spanId, baseline);
     const preparePair = async (candidate) => {
-      const prepared = prepareConfig(candidate);
-      const meshes = { [spanId]: prepared.mesh };
       const peer = spanId === 'left' ? 'right' : 'left';
-      const peerWarp = prepared.config.outputs[peer].warp;
-      if (peerWarp.enabled !== false && peerWarp.baseline?.type === 'tdMesh' && !peerBaselineMesh) {
-        const loaded = await loadCapturedProjectionAsset({ fetchImpl, spanId: peer, captured: baseline, signal });
-        peerBaselineMesh = loaded.mesh;
-      }
-      let source = peerWarp.enabled !== false && peerWarp.baseline?.type === 'tdMesh' ? peerBaselineMesh : null;
-      if (source) {
-        const errors = validateProjectionBaselineMesh(source, { side: peer, manifest: baseline.manifest, baseline: peerWarp.baseline });
-        if (Object.keys(errors).length) throw new Error(`Projection peer baseline rejected: ${Object.entries(errors).map(([path, message]) => `${path} ${message}`).join('; ')}`);
-      }
-      meshes[peer] = evaluateWarpMesh(source, peerWarp);
-      return { ...prepared, meshes };
+      const meshes = await prepareProjectionPairMeshes({ config: candidate, signal, loadBaseline: async (side, requestSignal) => {
+        if (side === spanId) return baseline;
+        if (!peerBaseline) peerBaseline = await loadCapturedProjectionAsset({ fetchImpl, spanId: peer, captured: baseline, signal: requestSignal });
+        return peerBaseline;
+      } });
+      return { config: migrateNamesWallToV5(candidate), mesh: meshes[spanId], meshes };
     };
     nameAdapter = createProjectionNameCanvasAdapter({ document: doc, output: spanId });
     const applyConfig = (candidate) => {

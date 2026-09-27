@@ -89,6 +89,7 @@ import { createProjectionPatternAdapter } from "../projection/projection-pattern
 import { getInvestigationTimelineRenderSnapshot } from "../shared/maplibre-investigation-timeline.js";
 import { loadCapturedProjectionFraming } from "../projection/projection-captured-baseline.js";
 import { visibleProjectionBrowserError } from "../projection/projection-browser-error.js";
+import { projectionCandidateResult } from '../projection/projection-candidate-validation.js';
 import { createProjectionLifecycle } from "../projection/projection-lifecycle.js";
 import {
   createLegendStyleLoadRefresh,
@@ -974,22 +975,9 @@ async function bootstrapProjectionRuntime() {
         const field = await prepareProjectionNameWall({ config, meshes: prepared.meshes,
           datasetVersion: OTEFDataContext.getPersonSelection?.()?.datasetVersion || undefined,
           heading: readNliLabelHeading(window.localStorage), signal });
-        const diagnostics = field?.diagnostics;
-        const displayDiagnostics = {
-          state: diagnostics?.state === 'valid' && diagnostics.expected === diagnostics.placed && !diagnostics.missing &&
-            !diagnostics.extra && !diagnostics.duplicate && Boolean(field?.digest) ? 'valid' : 'invalid',
-          datasetVersion: String(field?.datasetVersion || '').slice(0, 128), mode: config.namesWall.activeMode,
-          requestedFontPx: diagnostics?.requestedFontPx ?? config.namesWall.profiles[config.namesWall.activeMode].requestedFontPx,
-          effectiveFontPx: Number.isSafeInteger(diagnostics?.effectiveFontPx) ? diagnostics.effectiveFontPx : null,
-          expected: Number.isSafeInteger(diagnostics?.expected) ? diagnostics.expected : 0,
-          placed: Number.isSafeInteger(diagnostics?.placed) ? diagnostics.placed : 0,
-          left: Number.isSafeInteger(diagnostics?.left) ? diagnostics.left : 0,
-          right: Number.isSafeInteger(diagnostics?.right) ? diagnostics.right : 0,
-          ...(diagnostics?.reason ? { reason: String(diagnostics.reason).slice(0, 240) } : {}),
-        };
-        if (displayDiagnostics.state !== 'valid') return { diagnostics: displayDiagnostics };
-        return { datasetVersion: field.datasetVersion, mode: config.namesWall.activeMode,
-          digest: field.digest, expected: diagnostics.expected, placed: diagnostics.placed, diagnostics: displayDiagnostics };
+        const result = projectionCandidateResult(config, field, JSON.stringify(config));
+        if (!result.valid) return { reason: result.reason, diagnostics: result.diagnostics };
+        return { ...result.wall, diagnostics: result.diagnostics };
       } : null,
     }));
 

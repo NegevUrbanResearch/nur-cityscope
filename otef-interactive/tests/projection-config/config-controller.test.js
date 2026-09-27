@@ -82,7 +82,24 @@ function fakeClient(initialSnapshot) {
 }
 
 describe("projection config controller", () => {
-  test("saved wall preview failures remain unconfirmed and mutation preflight is fresh", async () => {
+  test('uses an injected validator for inspection and mutations without preview frames', async () => {
+    const previousDocument = globalThis.document;
+    globalThis.document = documentStub();
+    const root = element('main'); const client = fakeClient();
+    const config = clone(client.getState().draft);
+    const candidateValidator = { validateCandidate: vi.fn(async ({ identity }) => ({ identity, valid: true,
+      wall: { datasetVersion: 'release', mode: 'wall', digest: 'a'.repeat(64), expected: 1, placed: 1 },
+      diagnostics: { state: 'valid', datasetVersion: 'release', mode: 'wall', requestedFontPx: 12, effectiveFontPx: 12, expected: 1, placed: 1 },
+    })), dispose: vi.fn() };
+    const api = mountProjectionConfig(root, { client, candidateValidator });
+    const frames = []; const collect = (node) => { if (node.tagName === 'IFRAME') frames.push(node); for (const child of node.children || []) collect(child); };
+    collect(root); expect(frames).toHaveLength(0);
+    await vi.waitFor(() => expect(candidateValidator.validateCandidate).toHaveBeenCalled());
+    expect((await client.validateCandidate({ config, identity: JSON.stringify(config), generation: 1, revision: 3 })).valid).toBe(true);
+    await vi.waitFor(() => expect(find(root, (node) => node.className === 'names-wall-status').textContent).toContain('Valid'));
+    api.dispose(); expect(candidateValidator.dispose).toHaveBeenCalledOnce(); globalThis.document = previousDocument;
+  });
+  test("missing candidate validation remains unconfirmed and mutation preflight is fresh", async () => {
     const previousDocument = globalThis.document;
     globalThis.document = documentStub();
     const root = element("main");
@@ -99,60 +116,37 @@ describe("projection config controller", () => {
     const first = await client.validateCandidate({ config, identity, generation: 1, revision: 3 });
     const second = await client.validateCandidate({ config, identity, generation: 2, revision: 4 });
     expect(first).not.toBe(second);
-    expect(second.reason).toBe("final output previews unavailable");
+    expect(second.reason).toBe("Candidate validator unavailable");
     api.dispose(); globalThis.document = previousDocument;
   });
-  test.each(["load-before-ready", "ready-before-load"])("a reloaded final preview retries after %s startup ordering", async (order) => {
+  test('dataset event revalidates an identical draft only when current inputs change', async () => {
     const previousDocument = globalThis.document;
-    const messages = new Map();
-    const doc = documentStub();
-    doc.defaultView.location = { origin: "http://localhost" };
-    doc.defaultView.addEventListener = (name, handler) => messages.set(name, handler);
-    doc.defaultView.removeEventListener = (name) => messages.delete(name);
-    doc.createElement = (tag) => {
-      const node = element(tag);
-      if (tag === "iframe") node.contentWindow = { postMessage: vi.fn() };
-      return node;
-    };
+    const doc = documentStub(); const handlers = new Map();
+    doc.defaultView.addEventListener = (type, fn) => handlers.set(type, fn);
+    doc.defaultView.removeEventListener = (type) => handlers.delete(type);
     globalThis.document = doc;
-    const root = element("main");
-    const client = fakeClient();
-    const api = mountProjectionConfig(root, { client });
-    const frames = [];
-    const collect = (node) => { if (node.className === "active-preview-frame") frames.push(node); for (const child of node.children || []) collect(child); };
-    collect(root);
-    const pair = frames.filter((frame) => frame.src.includes("outputMode=browser"));
-    expect(pair).toHaveLength(2);
-    const outputFor = (frame) => frame.src.includes("span=right") ? "right" : "left";
-    const status = find(root, (node) => node.className === "names-wall-status");
-    const ready = () => { for (const frame of pair) messages.get("message")({
-      source: frame.contentWindow, origin: "http://localhost", data: { type: "otef_projection_preview_ready", output: outputFor(frame) },
-    }); };
-    const requests = () => pair.map((frame) => frame.contentWindow.postMessage.mock.calls.map(([message]) => message).filter((message) => message.type === "otef_projection_preview_validate").at(-1));
+    const socketHandlers = new Map();
+    const socket = { on: (type, fn) => socketHandlers.set(type, fn), off: (type) => socketHandlers.delete(type) };
+    let datasetVersion = 'release';
+    const candidateValidator = {
+      readInputs: vi.fn(async () => ({ heading: 35, datasetVersion })),
+      getLastInputs: () => ({ heading: 35, datasetVersion }),
+      validateCandidate: vi.fn(async ({ identity }) => ({ identity, valid: true,
+        wall: { datasetVersion, mode: 'wall', digest: 'a'.repeat(64), expected: 1, placed: 1 },
+        diagnostics: { state: 'valid', datasetVersion, mode: 'wall', requestedFontPx: 12, effectiveFontPx: 12, expected: 1, placed: 1 },
+      })), dispose: vi.fn(),
+    };
+    const api = mountProjectionConfig(element('main'), { client: fakeClient(), socket, candidateValidator });
+    await vi.waitFor(() => expect(candidateValidator.validateCandidate).toHaveBeenCalledTimes(1));
+    socketHandlers.get('otef_person_selection_changed')({ personSelection: { datasetVersion } });
     await new Promise((resolve) => setTimeout(resolve, 0));
-    if (order === "ready-before-load") {
-      ready();
-      await vi.waitFor(() => expect(requests().every(Boolean)).toBe(true));
-    }
-    const firstRequestIds = requests().map((request) => request?.requestId || 0);
-    pair[0].dispatch("load");
-    if (order === "ready-before-load") pair[1].dispatch("load");
-    if (order === "load-before-ready") await vi.waitFor(() => expect(status.textContent).toContain("Preview unavailable"));
-    expect(status.dataset.state).toBe("building");
-    if (order === "load-before-ready") ready();
-    await vi.waitFor(() => expect(requests().every((request, index) => request?.requestId > firstRequestIds[index])).toBe(true));
-    const wall = { datasetVersion: "test-data", mode: "wall", digest: "a".repeat(64), expected: 1228, placed: 1228 };
-    const diagnostics = { state: "valid", datasetVersion: "test-data", mode: "wall", requestedFontPx: 12, effectiveFontPx: 12, minimumFontPx: 8, expected: 1228, placed: 1228 };
-    for (const [index, frame] of pair.entries()) {
-      const request = requests()[index];
-      messages.get("message")({ source: frame.contentWindow, origin: "http://localhost", data: {
-        type: "otef_projection_preview_validated", output: outputFor(frame), requestId: request.requestId,
-        identity: request.identity, valid: true, wall, diagnostics,
-      } });
-    }
-    await vi.waitFor(() => expect(status.textContent).toContain("Valid"));
-    expect(status.textContent).toContain("1228 of 1228");
-    api.dispose(); globalThis.document = previousDocument;
+    expect(candidateValidator.validateCandidate).toHaveBeenCalledTimes(1);
+    datasetVersion = 'next-release';
+    socketHandlers.get('otef_narrative_scene_changed')({ datasetVersion });
+    await vi.waitFor(() => expect(candidateValidator.validateCandidate).toHaveBeenCalledTimes(2));
+    expect(candidateValidator.validateCandidate.mock.calls[1][0].identity).toBe(candidateValidator.validateCandidate.mock.calls[0][0].identity);
+    api.dispose(); expect(socketHandlers.has('otef_person_selection_changed')).toBe(false);
+    expect(handlers.has('storage')).toBe(false); globalThis.document = previousDocument;
   });
   test('paired wall status requires matching revision, digest, dataset, and all duplicate instances', () => {
     const wall = { datasetVersion: 'release', mode: 'wall', digest: 'a'.repeat(64), expected: 1228, placed: 1228 };
@@ -283,7 +277,7 @@ describe("projection config controller", () => {
     api.dispose(); globalThis.document = previousDocument; vi.useRealTimers();
   });
 
-  test("Live off stages edits and import; Save as new keeps its own ID for Load and Revert", async () => {
+  test("Live off stages edits and import; Save, Load, and Apply work without preview frames", async () => {
     const previousDocument = globalThis.document;
     globalThis.document = documentStub();
     const root = element("main");
@@ -316,9 +310,13 @@ describe("projection config controller", () => {
     preset.value = "original"; preset.dispatch("change");
     action("load").dispatch("click");
     await vi.waitFor(() => expect(client.load).toHaveBeenCalledWith("original"));
+    action('apply').dispatch('click');
+    await vi.waitFor(() => expect(client.apply).toHaveBeenCalledTimes(1));
     action("revert").dispatch("click");
     await vi.waitFor(() => expect(client.revert).toHaveBeenCalledTimes(1));
     expect(client.getState().snapshot.presets.find((item) => item.id === "original").readOnly).toBe(true);
+    const frames = []; const collect = (node) => { if (node.tagName === 'IFRAME') frames.push(node); for (const child of node.children || []) collect(child); };
+    collect(root); expect(frames).toHaveLength(0);
     api.dispose(); globalThis.document = previousDocument;
   });
 
