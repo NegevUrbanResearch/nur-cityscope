@@ -35,8 +35,15 @@ export function createNliStaffPresentationController({ dataContext, onStateChang
     pending = null;
     clearTimeout(request.timer);
     if (result.outcome === "unavailable") {
-      session = null;
-      publish({ phase: "failed", sessionId: null, segmentId: request.command.segmentId, slide: null, range: null });
+      const retainSession = request.command.presentationAction === "close";
+      if (!retainSession) session = null;
+      publish({
+        phase: "failed",
+        sessionId: retainSession ? session?.id ?? null : null,
+        segmentId: request.command.segmentId,
+        slide: null,
+        range: null,
+      });
       request.resolve(false);
       return;
     }
@@ -65,7 +72,12 @@ export function createNliStaffPresentationController({ dataContext, onStateChang
 
   function setFailed(retainSession = true) {
     if (!retainSession) session = null;
-    publish({ phase: "failed", sessionId: null, slide: null, range: null });
+    publish({
+      phase: "failed",
+      sessionId: retainSession ? session?.id ?? null : null,
+      slide: null,
+      range: null,
+    });
   }
 
   function dispatch(action, segmentId) {
@@ -167,6 +179,23 @@ export function createNliStaffPresentationController({ dataContext, onStateChang
   };
 }
 
+function slideControls(step, state, locale, labels, disabled) {
+  const range = state?.range;
+  const relative = Array.isArray(range) && Number.isInteger(state.slide)
+    ? `${state.slide - range[0] + 1} / ${range[1] - range[0] + 1}`
+    : "";
+  const title = step.title?.[locale] || step.title?.he || "";
+  const disabledAttr = disabled ? " disabled" : "";
+  return `<section class="presentation-controls" aria-label="${title}">
+    <div class="presentation-controls-heading"><span>${title}</span><span class="presentation-counter">${relative}</span></div>
+    <div class="presentation-slide-actions">
+      <button type="button" class="btn btn--outline" data-presentation-action="previous"${disabledAttr}>${labels.previous}</button>
+      <button type="button" class="btn" data-presentation-action="next"${disabledAttr}>${labels.next}</button>
+    </div>
+    <button type="button" class="btn btn--outline presentation-close" data-presentation-action="close"${disabledAttr}>${labels.close}</button>
+  </section>`;
+}
+
 export function presentationControlsHtml(step, state, locale) {
   const presentation = step?.presentation;
   if (!presentation) return "";
@@ -177,27 +206,21 @@ export function presentationControlsHtml(step, state, locale) {
     close: messageForLocale(locale, "presentationClose"),
     unavailable: messageForLocale(locale, "presentationUnavailable"),
   };
-  if (state?.phase === "failed" && state.segmentId === presentation.segmentId) {
-    return `<p class="presentation-unavailable" role="status">${labels.unavailable}</p>`;
+  const sameSegment = state?.segmentId === presentation.segmentId;
+  if (["opening", "applying", "closing"].includes(state?.phase) && sameSegment) {
+    return slideControls(step, state, locale, labels, true);
   }
-  const active = state?.phase === "open" && state.segmentId === presentation.segmentId;
+  if (state?.phase === "failed" && sameSegment) {
+    const retryAction = state.sessionId ? "close" : "open";
+    const retryLabel = retryAction === "close" ? labels.close : labels.open;
+    return `<p class="presentation-unavailable" role="status">${labels.unavailable}</p><div class="presentation-controls"><button type="button" class="btn" data-presentation-action="${retryAction}">${retryLabel}</button></div>`;
+  }
+  const active = state?.phase === "open" && sameSegment;
   if (!active) {
     if (presentation.open !== "manual" || state?.phase !== "closed") return "";
     return `<div class="presentation-controls"><button type="button" class="btn" data-presentation-action="open">${labels.open}</button></div>`;
   }
-  const range = state.range;
-  const relative = Array.isArray(range) && Number.isInteger(state.slide)
-    ? `${state.slide - range[0] + 1} / ${range[1] - range[0] + 1}`
-    : "";
-  const title = step.title?.[locale] || step.title?.he || "";
-  return `<section class="presentation-controls" aria-label="${title}">
-    <div class="presentation-controls-heading"><span>${title}</span><span class="presentation-counter">${relative}</span></div>
-    <div class="presentation-slide-actions">
-      <button type="button" class="btn btn--outline" data-presentation-action="previous">${labels.previous}</button>
-      <button type="button" class="btn" data-presentation-action="next">${labels.next}</button>
-    </div>
-    <button type="button" class="btn btn--outline presentation-close" data-presentation-action="close">${labels.close}</button>
-  </section>`;
+  return slideControls(step, state, locale, labels, false);
 }
 
 export function createNliStaffPresentationButtonHandler({

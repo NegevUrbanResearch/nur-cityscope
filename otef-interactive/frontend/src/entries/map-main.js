@@ -256,31 +256,48 @@ async function bootstrapMapRuntime() {
         emitUnavailablePresentation(command);
       });
     }));
-    registerDisposer(OTEFDataContext.subscribe("narrativeState", (state) => {
-      if (!activePresentationSegmentId || !presentationManifest || !presentationViewer) return;
-      const segment = presentationManifest.segments.find(
-        (candidate) => candidate.id === activePresentationSegmentId,
-      );
-      if (segment?.requiredNarrative && state?.id !== segment.requiredNarrative) {
-        presentationViewer.close();
-        activePresentationSegmentId = null;
-        activePresentationSessionId = null;
-        activePresentationGeneration = 0;
+    let handledExitRevision = 0;
+    const narrativeStatesBeforeExitTracker = [];
+    let trackingNarrativeExits = false;
+    let applyNarrativeExit = () => {};
+    const onNarrativeState = (state) => {
+      if (!trackingNarrativeExits) {
+        narrativeStatesBeforeExitTracker.push(state);
+        return;
       }
-    }));
+      applyNarrativeExit(state);
+    };
+    registerDisposer(OTEFDataContext.subscribe("narrativeState", onNarrativeState));
     void (async () => {
       try {
         const manifest = await loadNliPresentationManifest();
-        const { createNliRevealPresentation } = await import("../map/nli-reveal-presentation.js");
+        const { createNliRevealPresentation, shouldCloseViewerForNarrative } = await import("../map/nli-reveal-presentation.js");
+        presentationManifest = manifest;
+        applyNarrativeExit = (state) => {
+          const segment = activePresentationSegmentId
+            ? presentationManifest?.segments?.find((candidate) => candidate.id === activePresentationSegmentId) || null
+            : null;
+          const decision = shouldCloseViewerForNarrative({ handledExitRevision, state, segment });
+          handledExitRevision = decision.handledExitRevision;
+          if (!presentationBootstrapActive || !presentationViewer || !decision.close) return;
+          void presentationViewer.close();
+          activePresentationSegmentId = null;
+          activePresentationSessionId = null;
+          activePresentationGeneration = 0;
+        };
+        const queuedExits = narrativeStatesBeforeExitTracker.splice(0);
+        trackingNarrativeExits = true;
+        for (const state of queuedExits) applyNarrativeExit(state);
         if (!presentationBootstrapActive) return;
         const mapContainer =
           typeof map.getContainer === "function" ? map.getContainer() : document.getElementById("map");
-        presentationManifest = manifest;
         presentationViewer = createNliRevealPresentation(mapContainer, {
           manifest,
           emitResult: (result) => { void OTEFDataContext.narrativePresentationResult(result); },
         });
       } catch (error) {
+        trackingNarrativeExits = true;
+        narrativeStatesBeforeExitTracker.length = 0;
         console.error("[map-main] NLI presentation viewer failed to load", error);
       }
     })();
