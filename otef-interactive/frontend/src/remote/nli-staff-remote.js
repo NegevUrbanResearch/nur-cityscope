@@ -20,7 +20,8 @@ import {
 import { createStaffPackMenus } from "./nli-staff-pack-menus.js";
 import { labelForPlace, placeIsWithinRemoteBounds } from "./remote-place-navigation.js";
 import { applyServerLocale, bindLocaleButtons, getLocale, t, LOCALE_EVENT } from "./remote-locale.js";
-import { COPY, HOME_CUE, HOME_SHOW_SHORTCUTS, NARRATIVES, SCENES, SCRIPTS, SHOW } from "./nli-staff-script.js";
+import { homeListHtml } from "./nli-staff-home.js";
+import { COPY, HOME_CUE, NARRATIVES, SCENES, SCRIPTS, SHOW } from "./nli-staff-script.js";
 import { nextAction, prevAction, showStepIndex, slideIndexes } from "./nli-staff-flow.js";
 import { searchPlaces } from "../shared/place-navigation/place-catalog.js";
 import {
@@ -346,41 +347,8 @@ export function initNliStaffRemote(dataContext) {
     if (name !== "free") packMenus?.close({ silent: true });
   }
 
-  function navCard(item, variant) {
-    return `
-            <button type="button" class="nav-card nav-card--${variant}" data-open="${item.id}"${state.searchPending ? " disabled" : ""}>
-              <span class="nav-card-copy">
-                <span class="nav-card-title">${loc(item.title)}</span>
-                <span class="nav-card-meta">${loc(item.meta)} · ${item.steps.length} ${txt("steps")}</span>
-              </span>
-              <span class="nav-card-index">${item.index || ""}</span>
-            </button>`;
-  }
-
   function renderHome() {
-    const shortcutButtons = HOME_SHOW_SHORTCUTS.map((item) => `
-          <button type="button" class="home-show-shortcut" data-show-step="${item.id}"${state.searchPending ? " disabled" : ""}>
-            <span class="nav-card-title">${loc(item.title)}</span>
-            <span class="nav-card-meta">${loc(item.meta)}</span>
-          </button>`).join("");
-    $("narrativeList").innerHTML =
-      navCard(SHOW, "primary") +
-      `<div class="nav-row">${NARRATIVES.map((item) => navCard(item, "narrative")).join("")}</div>` +
-      `
-          <section class="home-show-block" aria-labelledby="homeNamesTitle">
-            <div class="home-show-block-copy">
-              <h2 id="homeNamesTitle">${txt("namesHomeTitle")}</h2>
-              <p>${txt("namesHomeMeta")}</p>
-            </div>
-            <div class="home-show-actions">${shortcutButtons}</div>
-          </section>` +
-      `
-          <button type="button" class="nav-card nav-card--quiet" data-open-free="1"${state.searchPending ? " disabled" : ""}>
-            <span class="nav-card-copy">
-              <span class="nav-card-title">${txt("freeTitle")}</span>
-              <span class="nav-card-meta">${txt("freeMeta")}</span>
-            </span>
-          </button>`;
+    $("narrativeList").innerHTML = homeListHtml({ locale: getLocale(), pending: state.searchPending });
   }
 
   function sceneCue() {
@@ -438,8 +406,6 @@ export function initNliStaffRemote(dataContext) {
     $("stepTitle").textContent = loc(step.title);
     $("stepNote").textContent = loc(step.note);
     $("stepNote").classList.toggle("draft-note", Boolean(step.draft));
-    $("stepGis").textContent = loc(step.gis);
-    $("stepModel").textContent = loc(step.model);
     renderDock();
     renderKit();
   }
@@ -456,10 +422,7 @@ export function initNliStaffRemote(dataContext) {
       .map((id) => {
         const item = NARRATIVES.find((narrative) => narrative.id === id);
         const title = next.ids.length === 1 ? txt("startStory", { title: loc(item.title) }) : loc(item.title);
-        return `<button type="button" class="branch-btn" data-branch="${id}"${state.searchPending ? " disabled" : ""}>
-              <span class="branch-btn-title">${title}</span>
-              <span class="branch-btn-meta">${loc(item.meta)} · ${item.steps.length} ${txt("steps")}</span>
-            </button>`;
+        return `<button type="button" class="branch-btn" data-branch="${id}"${state.searchPending ? " disabled" : ""}><span class="branch-btn-title">${title}</span></button>`;
       })
       .join("");
   }
@@ -486,8 +449,6 @@ export function initNliStaffRemote(dataContext) {
     Object.entries(show).forEach(([id, on]) => {
       $(id).hidden = !on;
     });
-    $("kitIdle").hidden = Object.values(show).some(Boolean);
-    $("kitIdle").textContent = txt("kitIdle");
     if (show.kitPresentation) {
       $("kitPresentation").innerHTML = presentationControlsHtml(step, presentation?.getState(), getLocale());
     } else {

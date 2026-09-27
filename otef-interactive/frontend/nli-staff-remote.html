@@ -268,56 +268,36 @@
         flex: 1;
         min-height: 0;
         display: grid;
-        grid-template-rows: minmax(0, 1.7fr) minmax(0, 2.7fr) auto minmax(0, 0.8fr);
+        grid-template-rows: minmax(0, 2fr) minmax(0, 2.4fr) auto minmax(0, 0.8fr);
         gap: var(--gap);
       }
-      .home-show-block {
-        min-height: 100px;
+      .home-lead {
+        min-height: 0;
         display: grid;
-        grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
-        align-items: center;
+        grid-template-rows: minmax(0, 1.15fr) minmax(0, 0.85fr);
         gap: var(--gap);
-        padding: clamp(10px, 1.5vh, 16px) clamp(12px, 2vw, 24px);
-        border: 1px solid var(--line);
-        border-radius: var(--radius-lg);
-        background: linear-gradient(180deg, var(--surface-2) 0%, var(--surface) 100%);
       }
-      .home-show-block-copy h2 {
-        font-size: var(--text-ui);
-        font-weight: 500;
-        line-height: 1.2;
-      }
-      .home-show-block-copy p {
-        margin: 4px 0 0;
-        color: var(--text-muted);
-        font-size: var(--text-meta);
-        line-height: 1.25;
-      }
-      .home-show-actions {
-        min-width: 0;
+      .home-names {
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: var(--gap);
       }
-      .home-show-shortcut {
+      .home-names-btn {
         min-width: 0;
         min-height: var(--tap);
         display: flex;
-        flex-direction: column;
-        justify-content: center;
+        align-items: center;
         padding: 8px 12px;
         text-align: start;
         border: 1px solid var(--line-strong);
         border-radius: var(--radius);
         background: var(--surface);
       }
-      .home-show-shortcut .nav-card-title,
-      .home-show-shortcut .nav-card-meta {
+      .home-names-btn .nav-card-title {
+        font-size: var(--text-ui);
         white-space: normal;
       }
-      .home-show-shortcut .nav-card-title { font-size: var(--text-ui); }
-      .home-show-shortcut .nav-card-meta { display: block; }
-      .home-show-shortcut:hover { background: var(--surface-3); }
+      .home-names-btn:hover { background: var(--surface-3); }
       .nav-row {
         min-height: 0;
         display: grid;
@@ -525,7 +505,7 @@
         color: var(--text-2);
         display: -webkit-box;
         -webkit-box-orient: vertical;
-        -webkit-line-clamp: 3;
+        -webkit-line-clamp: 2;
         overflow: hidden;
       }
       .step-note.draft-note { color: var(--text-subtle); }
@@ -574,14 +554,8 @@
       }
       .cue-status[data-status="failed"]::before { background: var(--danger); }
 
-      .kit-idle {
-        margin: 0;
-        font-size: var(--text-meta);
-        color: var(--text-subtle);
-      }
       .kit-block { flex-shrink: 0; }
-      .kit-block[hidden],
-      .kit-idle[hidden] { display: none !important; }
+      .kit-block[hidden] { display: none !important; }
       .kit-action .btn { width: 100%; }
       .presentation-controls { display: flex; flex-direction: column; gap: 10px; }
       .presentation-controls-heading {
@@ -834,50 +808,6 @@
       .nli-tl-nova-mark { position: absolute; top: 50%; width: 1px; height: 10px; margin-top: -5px; background: rgba(255, 255, 255, 0.16); transform: translateX(-50%); }
       .nli-tl-nova-mark.is-active { width: 2px; height: 18px; margin-top: -9px; background: var(--accent); }
       .nli-tl-nova-mark-label { transform: translateX(-50%); white-space: nowrap; }
-
-      /* Screen notes */
-      .screens {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 10px;
-        margin-top: auto;
-        padding-top: var(--space);
-        flex-shrink: 0;
-      }
-      .screen-row {
-        min-width: 0;
-        padding: 12px 14px;
-        border-radius: var(--radius);
-        background: var(--surface);
-        border: 1px solid var(--line);
-      }
-      .screen-label {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        font-size: var(--text-kicker);
-        font-weight: 600;
-        letter-spacing: 0.06em;
-        text-transform: uppercase;
-        color: var(--text-subtle);
-        margin-bottom: 6px;
-      }
-      .screen-label::before {
-        content: "";
-        width: 6px;
-        height: 6px;
-        border-radius: 2px;
-        background: var(--accent-line);
-      }
-      .screen-copy {
-        margin: 0;
-        font-size: var(--text-meta);
-        color: var(--text-2);
-        display: -webkit-box;
-        -webkit-box-orient: vertical;
-        -webkit-line-clamp: 3;
-        overflow: hidden;
-      }
 
       /* Dock */
       .dock {
@@ -1326,17 +1256,11 @@
       }
 
       @media (max-width: 599px) {
-        .home-show-block {
-          grid-template-columns: minmax(0, 1fr);
-          align-content: center;
-          gap: 8px;
-        }
-        .home-show-actions { grid-template-columns: minmax(0, 1fr); }
+        .home-names { grid-template-columns: minmax(0, 1fr); }
       }
 
       @media (min-width: 600px) {
-        .step-note { -webkit-line-clamp: 5; }
-        .screen-copy { -webkit-line-clamp: 4; }
+        .home-lead { min-width: 0; }
       }
 
       /* Galaxy Tab 11 portrait: ~800×1280 CSS px */
@@ -1360,11 +1284,17 @@
         }
         .staff-connection { height: 42px; padding-inline: 16px; }
         .nav-card { padding-inline: 28px; }
-        .step-note,
-        .screen-copy {
-          display: block;
-          -webkit-line-clamp: unset;
-          overflow: visible;
+        .kit { justify-content: flex-start; }
+        .presentation-controls { margin-bottom: 32px; }
+        .presentation-controls .btn[data-presentation-action="open"] {
+          min-height: 72px;
+          width: 100%;
+        }
+        .presentation-slide-actions { gap: 32px; }
+        .presentation-slide-actions .btn { min-height: 72px; }
+        .presentation-close {
+          min-height: 56px;
+          margin-top: 32px;
         }
       }
 
@@ -1395,12 +1325,12 @@
           grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr);
           grid-template-rows: auto auto auto auto auto minmax(148px, 1fr);
           grid-template-areas:
-            "top screens"
-            "ticks screens"
-            "clock screens"
-            "title screens"
-            "note screens"
-            "kit screens";
+            "top kit"
+            "ticks kit"
+            "clock kit"
+            "title kit"
+            "note kit"
+            ". kit";
           column-gap: 28px;
           align-content: stretch;
         }
@@ -1408,32 +1338,23 @@
         .ticks { grid-area: ticks; margin-bottom: 14px; }
         .clock { grid-area: clock; }
         .step-title { grid-area: title; }
-        .step-note { grid-area: note; }
+        .step-note { grid-area: note; max-width: none; }
         .kit {
           grid-area: kit;
           margin-top: 8px;
           min-height: 148px;
+          justify-content: flex-start;
         }
-        .step-note {
-          max-width: none;
-          display: block;
-          -webkit-line-clamp: unset;
-          overflow: visible;
+        .presentation-controls { margin-bottom: 32px; }
+        .presentation-controls .btn[data-presentation-action="open"] {
+          min-height: 72px;
+          width: 100%;
         }
-        .screens {
-          grid-area: screens;
-          grid-template-columns: 1fr;
-          grid-auto-rows: min-content;
-          align-content: start;
-          gap: 12px;
-          margin-top: 0;
-          padding-top: 0;
-        }
-        .screen-row { padding: 16px 18px; }
-        .screen-copy {
-          display: block;
-          -webkit-line-clamp: unset;
-          overflow: visible;
+        .presentation-slide-actions { gap: 32px; }
+        .presentation-slide-actions .btn { min-height: 72px; }
+        .presentation-close {
+          min-height: 56px;
+          margin-top: 32px;
         }
         .dock {
           grid-template-columns: minmax(180px, 1fr) minmax(280px, 1.8fr);
@@ -1446,7 +1367,6 @@
         .nav-card-meta,
         .scene-btn-meta { display: none; }
         .step-note { -webkit-line-clamp: 2; }
-        .screen-copy { -webkit-line-clamp: 2; }
         .nli-tl-hours { display: none; }
         .nli-tl-scrub-row { padding-top: 8px; }
         .cue-status { display: none; }
@@ -1519,17 +1439,6 @@
               <div class="kit-block" id="kitTimeline" hidden></div>
               <div class="kit-block kit-action" id="kitArchive" hidden>
                 <button type="button" class="btn" id="archiveBtn">פתיחת ארכיון הספרייה</button>
-              </div>
-              <p class="kit-idle" id="kitIdle" hidden></p>
-            </div>
-            <div class="screens">
-              <div class="screen-row">
-                <span class="screen-label" data-i18n="gisLabel">מסך GIS</span>
-                <p class="screen-copy" id="stepGis"></p>
-              </div>
-              <div class="screen-row">
-                <span class="screen-label" data-i18n="modelLabel">הקרנה / מודל</span>
-                <p class="screen-copy" id="stepModel"></p>
               </div>
             </div>
           </div>
