@@ -145,6 +145,52 @@ describe("createNliNameFieldController", () => {
     expect(adapter.prepare).toHaveBeenCalledOnce();
     d.controller.dispose();
   });
+  it('dims a selected wall name without restarting the stagger reveal', async () => {
+    vi.useFakeTimers();
+    const d = setup({ applyProjectionConfig: false, projectionSpan: 'left', motionMode: 'full' });
+    const adapter = canvasAdapter(); d.controller.installProjectionCanvas(adapter);
+    await d.controller.prepareProjectionCandidate({ generation: 1, config: DEFAULTS, field: canvasField(), revision: 1 });
+    d.controller.commitProjectionCandidate(1); d.controller.finalizeProjectionCandidate(1);
+    enable(d);
+    await vi.advanceTimersByTimeAsync(800);
+    const advancing = adapter.getRevealSeconds();
+    expect(advancing).toBeGreaterThan(0);
+    expect(adapter.getOpacity()).toBe(1);
+    d.emit('personSelection', { personId: 'p-1', datasetVersion: 'v1' });
+    expect(adapter.getRevealSeconds()).toBeGreaterThanOrEqual(advancing);
+    expect(adapter.getOpacity()).toBe(1);
+    expect(d.controller.getProjectionNameDiagnostics()).toMatchObject({
+      state: 'idle', canvasOpacity: 1,
+    });
+    expect(d.controller.getProjectionNameDiagnostics().canvasRevealSeconds).toBeGreaterThanOrEqual(advancing);
+    expect(adapter.setSelectedPid).toHaveBeenCalledWith('p-1');
+    expect(adapter.setPresentation).toHaveBeenCalled();
+    expect(adapter.prepare).toHaveBeenCalledOnce();
+    expect(d.map.getSource('nli-name-field')).toBeTruthy();
+    d.emit('personSelection', { personId: null, datasetVersion: null });
+    expect(adapter.getRevealSeconds()).toBeGreaterThanOrEqual(advancing);
+    expect(adapter.getOpacity()).toBe(1);
+    expect(adapter.setSelectedPid).toHaveBeenLastCalledWith(null);
+    expect(adapter.prepare).toHaveBeenCalledOnce();
+    d.controller.dispose();
+  });
+  it('rebuilds the canvas wall only when the catalog version actually changes', async () => {
+    vi.useFakeTimers();
+    const d = setup({ applyProjectionConfig: false, projectionSpan: 'left', motionMode: 'full',
+      snapshot: { personId: null, datasetVersion: 'v1', revision: 0 } });
+    const adapter = canvasAdapter(); d.controller.installProjectionCanvas(adapter);
+    await d.controller.prepareProjectionCandidate({ generation: 1, config: DEFAULTS, field: canvasField(), revision: 1 });
+    d.controller.commitProjectionCandidate(1); d.controller.finalizeProjectionCandidate(1);
+    enable(d);
+    await vi.advanceTimersByTimeAsync(800);
+    expect(adapter.getRevealSeconds()).toBeGreaterThan(0);
+    d.emit('personSelection', { personId: 'p-1', datasetVersion: 'v2' });
+    expect(adapter.getRevealSeconds()).toBe(0);
+    expect(adapter.getOpacity()).toBe(0);
+    expect(d.controller.getProjectionNameDiagnostics().state).toBe('pending');
+    expect(d.map.getSource('nli-name-field')).toBeNull();
+    d.controller.dispose();
+  });
   it('keeps the latest hidden state when a committed Canvas candidate rolls back', async () => {
     vi.useFakeTimers();
     const d = setup({ applyProjectionConfig: false, projectionSpan: 'left', motionMode: 'full' });

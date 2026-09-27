@@ -498,7 +498,8 @@ export function createNliNameFieldController({
   const onSelection = (snapshot) => {
     if (disposed) return;
     const nextVersion = snapshot?.datasetVersion || null;
-    if (canvasAdapter && nextVersion !== observedDatasetVersion) {
+    const catalogSwap = Boolean(observedDatasetVersion && nextVersion && nextVersion !== observedDatasetVersion);
+    if (canvasAdapter && catalogSwap) {
       canvasRequestToken++;
       if (preparedCanvas || previousCanvas) canvasAdapter.rollback?.();
       preparedCanvas = null;
@@ -511,7 +512,7 @@ export function createNliNameFieldController({
       clearReveal();
       setCanvasOpacity(0);
     }
-    observedDatasetVersion = nextVersion;
+    if (nextVersion) observedDatasetVersion = nextVersion;
     selectedGroup = null;
     pendingPlaceId = null;
     applySelection(snapshot);

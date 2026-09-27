@@ -406,10 +406,14 @@ export function createProjectionConfigRuntime({
 
   function datasetChanged() {
     const nextVersion = currentDatasetVersion();
-    if (nextVersion === observedDatasetVersion) return false;
+    if (!nextVersion || nextVersion === observedDatasetVersion) return false;
+    if (!observedDatasetVersion) {
+      observedDatasetVersion = nextVersion;
+      return false;
+    }
     observedDatasetVersion = nextVersion;
     if (suspended) { appliedWall = null; awaitingReapply = true; return true; }
-    restartLatest('name dataset changed; rebuilding wall');
+    restartLatest("name dataset changed; rebuilding wall");
     return true;
   }
 

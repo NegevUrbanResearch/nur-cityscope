@@ -184,6 +184,28 @@ describe("projection config runtime", () => {
     expect(h.sent().filter((item) => item.type === 'otef_projection_applied').at(-1).wall?.datasetVersion).toBe('v2');
     h.runtime.stop();
   });
+  test('datasetChanged adopts null→v1 without restart and still restarts v1→v2', async () => {
+    let version = null;
+    const h = makeHarness('left', '11111111-1111-4111-8111-111111111111', {
+      drawCompletion: () => true, getDatasetVersion: () => version,
+    });
+    await h.runtime.start();
+    h.state(8); h.frame(); h.render();
+    const sentBefore = h.sent().length;
+    version = 'v1';
+    expect(h.runtime.datasetChanged()).toBe(false);
+    expect(h.sent()).toHaveLength(sentBefore);
+    expect(h.runtime.datasetChanged()).toBe(false);
+    version = null;
+    expect(h.runtime.datasetChanged()).toBe(false);
+    expect(h.sent()).toHaveLength(sentBefore);
+    version = 'v2';
+    expect(h.runtime.datasetChanged()).toBe(true);
+    expect(h.sent().filter((item) => item.type === 'otef_projection_applied').at(-1)).toMatchObject({
+      success: false, error: expect.stringMatching(/dataset changed/),
+    });
+    h.runtime.stop();
+  });
   test.each(['prepare', 'render'])('reconnect restarts the same first revision abandoned during %s', async (phase) => {
     const pending = [];
     const prepare = vi.fn(() => new Promise((resolve) => pending.push(resolve)));
