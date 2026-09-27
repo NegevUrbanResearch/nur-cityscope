@@ -1,13 +1,16 @@
 import { getEffectiveLayerGroups } from "../shared/layer-state-helper.js";
-import { NLI_PLAYABLE_IDS } from "../shared/nli-investigation-beats.js";
 import {
   bindNliTimelinePointerListeners,
   consumeNliTimelineButtonClick,
   nliTransportSheetHtml,
 } from "./nli-timeline-transport.js";
-import { createNliStaffTimelineHost } from "./nli-staff-timeline-host.js";
+import {
+  createNliStaffTimelineHost,
+  nliGroupWithPlaybackMembership,
+  staffPlaybackConfig,
+} from "./nli-staff-timeline-host.js";
 import { consumeNliNovaEscapeClick, nliNovaEscapeTogglesHtml } from "./nli-nova-escape-toggles.js";
-import { createCueRunner } from "./nli-staff-cues.js";
+import { buildNovaEndedClock, commitSceneLayers, createCueRunner } from "./nli-staff-cues.js";
 import { createNliStaffSearchTransition } from "./nli-staff-search-transition.js";
 import { createPeopleSearchRuntime } from "./remote-people-search.js";
 import {
@@ -227,61 +230,35 @@ export function initNliStaffRemote(dataContext) {
     }
   }
 
-  async function waitForNliCache(timeoutMs = 4000) {
-    const started = Date.now();
-    while (Date.now() - started < timeoutMs) {
-      if (timelineHost._nliCacheReady?.(NLI_PLAYABLE_IDS)) return true;
-      await timelineHost._ensureNliFeatureCache?.();
-      if (timelineHost._nliCacheReady?.(NLI_PLAYABLE_IDS)) return true;
-      await new Promise((resolve) => setTimeout(resolve, 80));
-    }
-    return false;
-  }
-
-  function collectAllFullLayerIds() {
-    const ids = new Set();
-    const addGroups = (groups) => {
-      for (const group of groups || []) {
-        if (!group?.id) continue;
-        for (const layer of group.layers || []) {
-          if (!layer?.id) continue;
-          ids.add(`${group.id}.${layer.id}`);
-          if (Array.isArray(layer.fullLayerIds)) {
-            for (const fullId of layer.fullLayerIds) {
-              if (fullId) ids.add(String(fullId));
-            }
-          }
-        }
-      }
-    };
-    addGroups(dataContext?.getLayerGroups?.());
-    addGroups(timelineHost.getEffectiveGroupsForView());
-    return [...ids];
-  }
-
-  async function commitSceneLayers(enabledIds) {
-    const want = [...new Set(enabledIds)];
-    const wantSet = new Set(want);
-    const off = collectAllFullLayerIds().filter((id) => !wantSet.has(id));
-    if (off.length) await setLayerSet(off, false);
-    if (want.length) await setLayerSet(want, true);
-  }
-
-  async function ensureClockIdle() {
-    try {
-      await waitForInvestigationClockIdle(dataContext);
-    } catch {
-      return;
+  async function ensureClockIdle(isCurrent = () => true) {
+    await waitForInvestigationClockIdle(dataContext, {
+      forceStop: true,
+      isCancelled: () => !isCurrent(),
+    });
+    if (!isCurrent()) return;
+    const clock = dataContext?.getInvestigationClock?.();
+    if (clock && clock.phase !== "idle") {
+      throw new Error("Investigation clock did not become idle");
     }
   }
 
   const cues = createCueRunner({
     dataContext,
-    commitLayers: commitSceneLayers,
-    stopClock: ensureClockIdle,
-    playClock: async (window, live) => {
-      await waitForNliCache();
-      if (live()) await timelineHost.handleNliTimelinePlay({ loop: false, ...window });
+    commitLayers: (ids) => commitSceneLayers(dataContext, ids),
+    stopClock: (isCurrent) => ensureClockIdle(isCurrent),
+    startClock: (window, membership, isCurrent) => timelineHost.startNliTimelineWindow({
+      membership,
+      from: window?.from,
+      to: window?.to,
+      loop: window?.loop === true,
+      isCurrent,
+    }),
+    endClock: async (isCurrent) => {
+      const result = await dataContext.patchInvestigationClock(buildNovaEndedClock(), { isCurrent });
+      if (typeof isCurrent === "function" && !isCurrent()) return;
+      if (!result?.ok || result.stale) {
+        throw result?.error || new Error("Clock update was not acknowledged");
+      }
     },
     onStatus: (status) => {
       state.cueStatus = status;
@@ -290,7 +267,18 @@ export function initNliStaffRemote(dataContext) {
   });
   const applyCue = (cue, narrativeId) => cues.apply(cue, narrativeId);
 
+  function manualMutationsOpen() {
+    return timelineHost.isManualMutationAllowed?.() !== false;
+  }
+
+  function rearmTransport() {
+    const clock = dataContext?.getInvestigationClock?.() || null;
+    timelineHost._syncNliPlayheadTicker?.(clock);
+    timelineHost._syncNliEndedTimer?.(clock);
+  }
+
   function applyScene(id) {
+    if (!manualMutationsOpen()) return;
     const scene = SCENES.find((item) => item.id === id);
     if (!scene) return;
     if (id === "layers") {
@@ -299,6 +287,7 @@ export function initNliStaffRemote(dataContext) {
       renderFree();
       return;
     }
+    timelineHost.invalidateTransport();
     packMenus?.close({ silent: true });
     const turningOff = state.scene === id;
     state.scene = turningOff ? null : id;
@@ -385,23 +374,25 @@ export function initNliStaffRemote(dataContext) {
           </button>`;
   }
 
+  function sceneCue() {
+    if (state.screen === "player") return currentStep()?.cue || null;
+    if (state.screen === "free" && state.scene) {
+      return SCENES.find((item) => item.id === state.scene)?.cue || null;
+    }
+    return null;
+  }
+
+  timelineHost.getPlaybackConfig = () => staffPlaybackConfig({
+    clock: dataContext?.getInvestigationClock?.() || null,
+    cue: sceneCue(),
+    groups: timelineHost.getEffectiveGroupsForView(),
+    manualFree: state.screen === "free" && !state.scene,
+  });
+  timelineHost.isManualMutationAllowed = () => state.cueStatus !== "applying" && !state.searchPending;
+
   function nliSelectedGroup() {
     const live = timelineHost.getEffectiveGroupsForView().find((group) => group?.id === "nli");
-    if (live && Array.isArray(live.layers) && live.layers.length) {
-      return {
-        ...live,
-        layers: live.layers.map((layer) =>
-          NLI_PLAYABLE_IDS.includes(`nli.${layer.id}`) ? { ...layer, enabled: true } : layer,
-        ),
-      };
-    }
-    return {
-      id: "nli",
-      layers: NLI_PLAYABLE_IDS.map((fullId) => ({
-        id: fullId.replace(/^nli\./, ""),
-        enabled: true,
-      })),
-    };
+    return nliGroupWithPlaybackMembership(live, timelineHost.getPlaybackConfig()?.membership);
   }
 
   function paintTimelineMounts() {
@@ -616,6 +607,7 @@ export function initNliStaffRemote(dataContext) {
 
   function transitionToStep(item, index, { returnTo = state.returnTo } = {}) {
     navigationGeneration += 1;
+    timelineHost.invalidateTransport();
     return searchActions.transitionToStep(item, index, returnTo);
   }
 
@@ -696,42 +688,48 @@ export function initNliStaffRemote(dataContext) {
 
   async function exitToHome() {
     navigationGeneration += 1;
-    const token = searchTransition.begin();
-    cues.cancel();
-    state.searchPending = true;
-    renderKit();
-    state.presentationClosePending = true;
-    renderKit();
+    const generation = navigationGeneration;
+    timelineHost.invalidateTransport();
     try {
-      await presentation?.closeForStepChange();
-    } finally {
-      state.presentationClosePending = false;
+      const token = searchTransition.begin();
+      cues.cancel();
+      state.searchPending = true;
       renderKit();
-    }
-    if (!searchTransition.isCurrent(token)) return false;
-    const cleared = await searchTransition.clearAll(token);
-    if (!searchTransition.isCurrent(token)) return false;
-    if (!cleared) return failSearchClear(token);
-    state.scriptId = null;
-    state.step = 0;
-    state.returnTo = null;
-    state.scene = null;
-    state.cueStatus = null;
-    state.searchPending = false;
-    clearSearchUi();
-    if (peopleArchive?.getArchivePhase?.() === "open") {
-      void peopleArchive.closeArchive();
-    }
-    showScreen("home");
-    renderHome();
-    if (dataContext?.setNarrative) {
+      state.presentationClosePending = true;
+      renderKit();
       try {
-        await dataContext.setNarrative(null);
-      } catch {
-        // ignore
+        await presentation?.closeForStepChange();
+      } finally {
+        state.presentationClosePending = false;
+        renderKit();
       }
+      if (!searchTransition.isCurrent(token)) return false;
+      const cleared = await searchTransition.clearAll(token);
+      if (!searchTransition.isCurrent(token)) return false;
+      if (!cleared) return failSearchClear(token);
+      state.scriptId = null;
+      state.step = 0;
+      state.returnTo = null;
+      state.scene = null;
+      state.cueStatus = null;
+      state.searchPending = false;
+      clearSearchUi();
+      if (peopleArchive?.getArchivePhase?.() === "open") {
+        void peopleArchive.closeArchive();
+      }
+      showScreen("home");
+      renderHome();
+      if (dataContext?.setNarrative) {
+        try {
+          await dataContext.setNarrative(null);
+        } catch {
+          // ignore
+        }
+      }
+      return true;
+    } finally {
+      if (generation === navigationGeneration) rearmTransport();
     }
-    return true;
   }
 
   function findPerson(query) {
@@ -760,7 +758,10 @@ export function initNliStaffRemote(dataContext) {
     root: $("staffPackMenus"),
     getGroups: () => timelineHost.getEffectiveGroupsForView(),
     getClock: () => dataContext?.getInvestigationClock?.() || null,
-    setLayersEnabled: (ids, enabled) => setLayerSet(ids, enabled),
+    setLayersEnabled: (ids, enabled) => {
+      if (!manualMutationsOpen()) return;
+      return setLayerSet(ids, enabled);
+    },
     isConnected: () => state.connected,
     titleForPack: (id) => (id === "nli" ? txt("packLibrary") : txt("packBase")),
     emptyLabel: () => txt("packEmpty"),
@@ -863,9 +864,14 @@ export function initNliStaffRemote(dataContext) {
       renderPlayer();
       void timelineHost._ensureNliFeatureCache?.();
     },
-    applyDestinationCue: (item, index) => {
-      const destination = item.steps[Math.max(0, Math.min(index, item.steps.length - 1))];
-      return applyCue(destination.cue, item.narrative);
+    applyDestinationCue: async (item, index) => {
+      const generation = navigationGeneration;
+      try {
+        const destination = item.steps[Math.max(0, Math.min(index, item.steps.length - 1))];
+        return await applyCue(destination?.cue, item.narrative);
+      } finally {
+        if (generation === navigationGeneration) rearmTransport();
+      }
     },
     afterDestinationCue: (item, index) => {
       const destination = item.steps[Math.max(0, Math.min(index, item.steps.length - 1))];
@@ -931,11 +937,13 @@ export function initNliStaffRemote(dataContext) {
   });
 
   $("kitPresentation").addEventListener("click", (event) => {
+    if (!manualMutationsOpen()) return;
     const button = event.target.closest("[data-presentation-action]");
     if (button) void handlePresentationButton(button.dataset.presentationAction);
   });
 
   $("kitEscape").addEventListener("click", (event) => {
+    if (!manualMutationsOpen()) return;
     consumeNliNovaEscapeClick(event, escapeHost);
   });
 

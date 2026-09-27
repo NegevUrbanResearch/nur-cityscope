@@ -386,16 +386,20 @@ class OTEFDataContextClass {
   /**
    * Push an investigation clock through the OTEF API (WebSocket fan-out).
    * Patches serialize on `_clockPatchQueue` (one in flight).
+   * `isCurrent` is checked immediately before send and stays off the payload.
    *
    * @param {unknown} next
+   * @param {{ isCurrent?: () => boolean }} [options]
+   * @returns {Promise<{ok: true, clock: object} | {ok: false, stale?: boolean, error?: unknown}>}
    */
-  async patchInvestigationClock(next) {
+  async patchInvestigationClock(next, options = {}) {
     const actions = OTEFDataContextInternals.actions;
     if (!actions || typeof actions.patchInvestigationClock !== "function") {
       getLogger().error("[OTEFDataContext] Missing patchInvestigationClock action helper");
-      return;
+      return { ok: false, error: "Missing patchInvestigationClock action helper" };
     }
-    return actions.patchInvestigationClock(this, next);
+    const isCurrent = typeof options?.isCurrent === "function" ? options.isCurrent : () => true;
+    return actions.patchInvestigationClock(this, next, { isCurrent });
   }
 
   /**

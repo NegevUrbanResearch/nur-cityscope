@@ -549,4 +549,117 @@ describe("remote People and archive controller", () => {
     expect(controller.getArchivePhase()).toBe("opening");
   });
 
+  test("a cancelled queued stop does not treat the old idle snapshot as acknowledgement", async () => {
+    const { waitForInvestigationClockIdle } = await import(
+      "../../frontend/src/remote/remote-people-archive-controller.js"
+    );
+    let cancelled = false;
+    const patchInvestigationClock = vi.fn(async () => ({ ok: false, stale: true, error: "Superseded" }));
+    const dataContext = {
+      getInvestigationClock: () => ({ phase: "playing", revision: 2 }),
+      patchInvestigationClock,
+      subscribe: vi.fn(() => () => {}),
+    };
+    cancelled = true;
+
+    await expect(waitForInvestigationClockIdle(dataContext, {
+      forceStop: true,
+      timeoutMs: 50,
+      isCancelled: () => cancelled,
+    })).resolves.toBeUndefined();
+    expect(patchInvestigationClock).toHaveBeenCalledTimes(1);
+    expect(patchInvestigationClock.mock.calls[0][1]?.isCurrent?.()).toBe(false);
+  });
+
+  test("a failed stop rejects even when the local snapshot is already idle", async () => {
+    const { waitForInvestigationClockIdle } = await import(
+      "../../frontend/src/remote/remote-people-archive-controller.js"
+    );
+    const failure = new Error("stop rejected");
+    const dataContext = {
+      getInvestigationClock: () => ({ phase: "idle", revision: 3 }),
+      patchInvestigationClock: vi.fn(async () => ({ ok: false, error: failure })),
+      subscribe: vi.fn(() => () => {}),
+    };
+
+    await expect(waitForInvestigationClockIdle(dataContext, { forceStop: true })).rejects.toBe(failure);
+    expect(dataContext.patchInvestigationClock).toHaveBeenCalledTimes(1);
+  });
+
+  test("an idle clock returned before HTTP settles the forced stop", async () => {
+    const { waitForInvestigationClockIdle } = await import(
+      "../../frontend/src/remote/remote-people-archive-controller.js"
+    );
+    const idle = { phase: "idle", revision: 6, membership: [], beats: [], loop: false };
+    const dataContext = {
+      getInvestigationClock: () => ({ phase: "playing", revision: 5 }),
+      patchInvestigationClock: vi.fn(async () => ({ ok: true, clock: idle })),
+      subscribe: vi.fn(() => () => {}),
+    };
+
+    await expect(waitForInvestigationClockIdle(dataContext, {
+      forceStop: true,
+      timeoutMs: 50,
+    })).resolves.toBeUndefined();
+  });
+
+  test("a forced stop follows an already-sent play and leaves the clock idle", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(10_000);
+    const api = await import("../../frontend/src/shared/api-client.js");
+    const sent = [];
+    let releasePlay;
+    vi.spyOn(api.OTEF_API, "updateInvestigationClock").mockImplementation(async (_table, clock) => {
+      sent.push(clock.phase);
+      if (clock.phase === "playing") {
+        await new Promise((resolve) => { releasePlay = resolve; });
+      }
+      return {
+        investigation_clock: {
+          ...clock,
+          revision: clock.phase === "playing" ? 2 : 3,
+          serverNowMs: 11_000,
+        },
+      };
+    });
+    const { default: OTEFDataContext } = await import("../../frontend/src/shared/OTEFDataContext.js");
+    const { waitForInvestigationClockIdle } = await import(
+      "../../frontend/src/remote/remote-people-archive-controller.js"
+    );
+    OTEFDataContext._tableName = "otef";
+    OTEFDataContext._clientId = "clock-client";
+    OTEFDataContext._setInvestigationClock({
+      phase: "idle",
+      membership: [],
+      beats: [],
+      loop: false,
+      positionMs: 0,
+      anchorMs: null,
+      seekKind: "none",
+      revision: 1,
+    });
+    const play = {
+      phase: "playing",
+      membership: ["nli.lines"],
+      beats: [400],
+      loop: false,
+      positionMs: 0,
+      anchorMs: 10_000,
+      seekKind: "none",
+      revision: 1,
+    };
+
+    const playing = OTEFDataContext.patchInvestigationClock(play);
+    await vi.waitFor(() => expect(sent).toEqual(["playing"]));
+    expect(OTEFDataContext.getInvestigationClock().phase).toBe("idle");
+    const home = waitForInvestigationClockIdle(OTEFDataContext, { forceStop: true });
+    await Promise.resolve();
+    expect(sent).toEqual(["playing"]);
+    releasePlay();
+    await playing;
+    await home;
+
+    expect(sent).toEqual(["playing", "idle"]);
+    expect(OTEFDataContext.getInvestigationClock().phase).toBe("idle");
+  });
+
 });

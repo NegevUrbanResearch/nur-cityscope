@@ -41,13 +41,16 @@ export async function waitForInvestigationClockIdle(dataContext, {
     );
   });
   try {
-    const stop = Promise.resolve().then(() => dataContext.patchInvestigationClock(stopNliClock(current)));
-    stop.catch(() => {});
+    const stop = Promise.resolve().then(() => dataContext.patchInvestigationClock(stopNliClock(current), {
+      isCurrent: () => !isCancelled(),
+    }));
     const operation = (async () => {
       const result = await stop;
       if (isCancelled()) return;
-      onClock(result?.investigation_clock || result?.investigationClock);
-      onClock(dataContext?.getInvestigationClock?.());
+      if (result && (result.ok === false || result.stale === true)) {
+        throw result.error || new Error("Investigation clock stop was not acknowledged");
+      }
+      if (result?.ok === true && result.clock?.phase === "idle") onClock(result.clock);
       if (!idleObserved) await idle;
     })();
     await Promise.race([operation, timeout]);

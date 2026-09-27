@@ -840,25 +840,69 @@ async function setBasemap(ctx, basemap) {
   }
 }
 
-async function patchInvestigationClock(ctx, next) {
+function clockAcknowledgementContent(clock) {
+  const content = { ...normalizeNliClock(clock) };
+  delete content.revision;
+  delete content.serverNowMs;
+  return content;
+}
+
+function sameClockAcknowledgement(requested, actual) {
+  return JSON.stringify(clockAcknowledgementContent(requested))
+    === JSON.stringify(clockAcknowledgementContent(actual));
+}
+
+async function patchInvestigationClock(ctx, next, { isCurrent = () => true } = {}) {
+  if (!ctx?._tableName) return { ok: false, error: "Missing table" };
+  const predicate = typeof isCurrent === "function" ? isCurrent : () => true;
   const run = async () => {
-    if (!ctx._tableName) return;
-    const narrativeRevision = normalizeNarrativeState(ctx._narrativeState).revision;
-    const clockRevision = normalizeNliClock(ctx._investigationClock).revision;
-    const writeClock = { ...next };
+    if (!ctx._tableName) return { ok: false, error: "Missing table" };
+    if (!predicate()) return { ok: false, stale: true, error: "Superseded" };
+    const narrativeAtSend = normalizeNarrativeState(ctx._narrativeState);
+    const revisionAtSend = normalizeNliClock(ctx._investigationClock).revision;
+    const writeClock = { ...(next && typeof next === "object" ? next : {}) };
     delete writeClock.serverNowMs;
-    const state = await OTEF_API.updateInvestigationClock(ctx._tableName, writeClock, {
-      sourceId: ctx._clientId,
-      timestamp: Date.now(),
-    });
-    if (state?.investigation_clock && typeof state.investigation_clock === "object") {
-      const responseClock = normalizeNliClock(state.investigation_clock);
-      const currentClock = normalizeNliClock(ctx._investigationClock);
-      const sameNarrative = normalizeNarrativeState(ctx._narrativeState).revision === narrativeRevision;
-      if (sameNarrative && currentClock.revision <= clockRevision && responseClock.revision >= currentClock.revision) {
-        ctx._setInvestigationClock(responseClock);
-      }
+    delete writeClock.isCurrent;
+    let state;
+    try {
+      state = await OTEF_API.updateInvestigationClock(ctx._tableName, writeClock, {
+        sourceId: ctx._clientId,
+        timestamp: Date.now(),
+      });
+    } catch (error) {
+      getLogger().error("[OTEFDataContext] Failed to update investigation clock:", error);
+      return { ok: false, error };
     }
+    if (!predicate()) return { ok: false, stale: true, error: "Superseded" };
+    const narrativeNow = normalizeNarrativeState(ctx._narrativeState);
+    if (
+      narrativeNow.id !== narrativeAtSend.id
+      || narrativeNow.revision !== narrativeAtSend.revision
+    ) {
+      return { ok: false, stale: true, error: "Superseded narrative" };
+    }
+    const local = normalizeNliClock(ctx._investigationClock);
+    if (local.revision > revisionAtSend) {
+      if (sameClockAcknowledgement(next, local)) return { ok: true, clock: local };
+      return { ok: false, stale: true, error: "Superseded clock" };
+    }
+    const raw = state?.investigation_clock;
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+      return { ok: false, error: "Invalid clock response" };
+    }
+    const responseClock = normalizeNliClock(raw);
+    if (!sameClockAcknowledgement(next, responseClock)) {
+      return { ok: false, error: "Invalid clock response" };
+    }
+    const currentClock = normalizeNliClock(ctx._investigationClock);
+    if (currentClock.revision <= revisionAtSend && responseClock.revision >= currentClock.revision) {
+      ctx._setInvestigationClock(responseClock);
+    }
+    const adopted = normalizeNliClock(ctx._investigationClock);
+    if (!sameClockAcknowledgement(next, adopted)) {
+      return { ok: false, error: "Invalid clock response" };
+    }
+    return { ok: true, clock: adopted };
   };
   const queued = (ctx._clockPatchQueue || Promise.resolve()).then(run, run);
   ctx._clockPatchQueue = queued.then(
