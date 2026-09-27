@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it, test } from "vitest";
 import { PEOPLE_HALO_LAYER_ID } from "../../frontend/src/map/maplibre-person-selection.js";
 import { shouldIncludeNarrativeSettlementOutline } from "../../frontend/src/shared/nli-nova-escape-impact.js";
@@ -263,4 +266,13 @@ test("glow sync prefers narrative outline, then person, and suppresses off-exhib
     exhibitMode: false, narrativeId: "segev", personLocation: "Alumim", wallEnabled: false,
   });
   expect(calls.at(-1)).toEqual({ suppressed: true });
+});
+
+test("projection glow seeds lastPlaceId from the name-field pending place", () => {
+  const src = fs.readFileSync(
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../frontend/src/entries/projection-main.js"),
+    "utf8",
+  );
+  expect(src).toMatch(/lastPlaceId\s*=\s*nameFieldController\.getPendingPlaceId\?\.\(\)/);
+  expect(src).toMatch(/nameFieldController\.sync\(groups\);\s*void syncSettlementGlow\(\)/);
 });

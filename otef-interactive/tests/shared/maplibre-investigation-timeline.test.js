@@ -681,6 +681,38 @@ describe("syncInvestigationTimelineToMap", () => {
     }
   });
 
+  it("does not inject Be'eri outline 19 for Segev when polygons are on unless the clock achieved it", async () => {
+    const map = makeOrientationMap();
+    const visible = [{ id: "nli", layers: [
+      { id: "investigation_polygons", enabled: true },
+      { id: "lines", enabled: false },
+    ] }];
+    const beeriOutline = {
+      type: "Feature",
+      properties: { outlineObjectId: 19, OBJECTID: 19, locations: ["בארי"] },
+      geometry: { type: "Polygon", coordinates: [[[34.45, 31.42], [34.46, 31.42], [34.46, 31.43], [34.45, 31.42]]] },
+    };
+    const labelsSourceId = map.getStyle().layers.find((layer) => layer.id === SHEMOT_LABEL_ID).source;
+    map.getSource(labelsSourceId).data = {
+      type: "FeatureCollection",
+      features: [{
+        type: "Feature",
+        properties: { cityname: "בארי" },
+        geometry: { type: "Point", coordinates: [34.45, 31.42] },
+      }],
+    };
+    const clock = playClock([INVESTIGATION_POLYGONS_FULL_ID], [400]);
+    await syncInvestigationTimelineToMap(map, clock, visible, withProcessedPolygons({
+      featuresById: { [INVESTIGATION_POLYGONS_FULL_ID]: [STORY_POLYGON_A] },
+      settlementFeatures: [beeriOutline],
+      narrativeFocus: { id: "segev", focusSettlement: "בארי", focusSettlementOutlineId: 19 },
+      now: () => 0,
+    }));
+    const impactFeatures = map.getSource("nli-investigation-settlement-impact")?.setData.mock.calls.at(-1)?.[0]?.features || [];
+    expect(impactFeatures.map((feature) => String(feature.properties?.outlineObjectId ?? feature.properties?.OBJECTID)))
+      .not.toContain("19");
+  });
+
   it("does not remount the polygon overlay when the polygons row is off after Stop", async () => {
     const map = makeMap();
     const visible = [{ id: "nli", layers: [{ id: "investigation_polygons", enabled: true }] }];

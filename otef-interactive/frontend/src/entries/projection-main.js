@@ -565,6 +565,9 @@ async function bootstrapProjectionRuntime() {
       settlementGlow.raise(targetMap);
     };
     const syncSettlementGlow = () => {
+      if (lastPlaceId == null) {
+        lastPlaceId = nameFieldController.getPendingPlaceId?.() ?? null;
+      }
       const exhibitMode = OTEFDataContext.getExhibitMode?.() === true;
       const narrativeId = OTEFDataContext.getNarrativeState?.()?.id ?? null;
       const selection = OTEFDataContext.getPersonSelection?.();
@@ -1135,6 +1138,7 @@ async function bootstrapProjectionRuntime() {
     const syncProjectionLayersAndRaiseHighlight = (projectionMap, groups, options) => {
       syncProjectionLayersWithNarrative(projectionMap, groups, options);
       nameFieldController.sync(groups);
+      void syncSettlementGlow();
       applyStoredNliLabelHeading(projectionMap);
       syncContextFlowAnimations();
       projectionNarrativeController?.onStyleLoad();
@@ -1274,6 +1278,7 @@ async function bootstrapProjectionRuntime() {
               );
               applyStoredNliLabelHeading(map);
               nameFieldController.sync(Array.isArray(groups) ? groups : Object.values(groups || {}));
+              void syncSettlementGlow();
               syncContextFlowAnimations();
               projectionNarrativeController?.onStyleLoad();
               refreshLegendAfterStyleLoad();

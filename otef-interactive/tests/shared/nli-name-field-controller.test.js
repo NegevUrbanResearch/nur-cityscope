@@ -396,6 +396,18 @@ describe("createNliNameFieldController", () => {
     expect(d.controller.placeNameForPlace('custom-reim-parking')).not.toBe('חניון רעים');
     d.controller.dispose();
   });
+  it('exposes getPendingPlaceId for a live place command until cancel', async () => {
+    loadNliNameField.mockResolvedValueOnce(groupedField());
+    const d = setup();
+    enable(d);
+    await flush();
+    expect(d.controller.getPendingPlaceId()).toBeNull();
+    d.emit('navigationCommand', { placeId: 'custom-reim-parking' });
+    expect(d.controller.getPendingPlaceId()).toBe('custom-reim-parking');
+    d.emit('navigationCommand', { cancelFocus: true });
+    expect(d.controller.getPendingPlaceId()).toBeNull();
+    d.controller.dispose();
+  });
   it("loads once and never restores legacy overlapping labels", async () => {
     loadNliNameField.mockResolvedValueOnce(field());
     const d = setup();

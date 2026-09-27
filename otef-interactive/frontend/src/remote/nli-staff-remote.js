@@ -174,9 +174,11 @@ export function initNliStaffLocaleControls(dataContext, { onFailure } = {}) {
 
 export function initNliStaffRemote(dataContext) {
   dataContext.setExhibitMode(true);
-  window.addEventListener("pagehide", () => {
+  const releaseExhibitMode = () => {
     dataContext.setExhibitMode(false);
-  });
+  };
+  window.addEventListener("pagehide", releaseExhibitMode);
+  window.addEventListener("beforeunload", releaseExhibitMode);
   const peopleSearch = createPeopleSearchRuntime();
   const placeFocusOwnership = createNliStaffPlaceFocusOwnership();
   void peopleSearch.load().catch(() => {});
@@ -292,7 +294,10 @@ export function initNliStaffRemote(dataContext) {
       if (state.screen === "home") renderHome();
     },
   });
-  const applyCue = (cue, narrativeId) => cues.apply(cue, narrativeId);
+  const applyCue = (cue, narrativeId) => {
+    dataContext.setExhibitMode(true);
+    return cues.apply(cue, narrativeId);
+  };
 
   function manualMutationsOpen() {
     return timelineHost.isManualMutationAllowed?.() !== false;
@@ -338,6 +343,7 @@ export function initNliStaffRemote(dataContext) {
   }
 
   function showScreen(name) {
+    dataContext.setExhibitMode(true);
     state.screen = name;
     document.querySelectorAll(".screen").forEach((el) => {
       const on = el.dataset.screen === name;

@@ -546,6 +546,9 @@ export function createNliNameFieldController({
 
   const api = {
     placeNameForPlace,
+    getPendingPlaceId() {
+      return pendingPlaceId;
+    },
     isCanvasWallEnabled() { return Boolean(canvasAdapter && enabled); },
     installProjectionCanvas(adapter) {
       if (displayProfile !== 'projection' || !adapter?.prepare || !adapter?.commit || !adapter?.setOpacity) throw new Error('invalid projection Canvas adapter');

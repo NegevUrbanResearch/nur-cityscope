@@ -357,6 +357,8 @@ describe("NLI staff scene integration", () => {
     setLocale("en", { persist: false });
     session = mount();
     await boot(session);
+    expect(session.dataContext.setExhibitMode).toHaveBeenCalledWith(true);
+    const trueCallsAfterBoot = session.dataContext.setExhibitMode.mock.calls.filter(([value]) => value === true).length;
 
     await openCard('[data-open="show"]');
     expect(el("stepTitle").textContent).toBe("The opening minutes");
@@ -386,6 +388,8 @@ describe("NLI staff scene integration", () => {
     }
 
     await clickNextReady("The rest of the day");
+    expect(session.dataContext.setExhibitMode.mock.calls.filter(([value]) => value === true).length)
+      .toBeGreaterThan(trueCallsAfterBoot);
     for (const view of views(session)) {
       expect(view.narrativeId).toBeNull();
       expect(view.clock.phase).toBe("playing");

@@ -680,10 +680,19 @@ function narrativeSettlementOutlineId(state) {
 }
 
 function includeNarrativeSettlementOutline(outlineIds, state) {
+  if (!shouldIncludeNarrativeSettlementOutline(state?.narrativeFocus)) return outlineIds;
   const focusOutlineId = narrativeSettlementOutlineId(state);
   if (focusOutlineId == null) return outlineIds;
   const merged = Array.isArray(outlineIds) ? [...outlineIds] : [];
   if (!merged.some((id) => String(id) === String(focusOutlineId))) merged.push(focusOutlineId);
+  return merged;
+}
+
+function includeNovaSiteOverlayOutline(outlineIds) {
+  const novaId = getNliNarrative("nova")?.focusSettlementOutlineId;
+  if (novaId == null) return outlineIds;
+  const merged = Array.isArray(outlineIds) ? [...outlineIds] : [];
+  if (!merged.some((id) => String(id) === String(novaId))) merged.push(novaId);
   return merged;
 }
 
@@ -739,6 +748,9 @@ function applyPlayingVisuals(map, state, phase, frame = null, targetAlarmMode = 
       ),
     ];
     achievedSettlementOutlineIds = includeNarrativeSettlementOutline(achievedSettlementOutlineIds, state);
+    if (novaSiteOverlay) {
+      achievedSettlementOutlineIds = includeNovaSiteOverlayOutline(achievedSettlementOutlineIds);
+    }
     const projectionNovaDim = isNovaNarrative(state) && isProjectionDisplayProfile(state.rendererDeps);
     const parallelImpactIds = state.rendererDeps?.parallelImpactIds;
     const polygonFrame = {

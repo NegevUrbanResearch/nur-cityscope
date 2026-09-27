@@ -186,6 +186,8 @@ describe("NLI staff Home transitions", () => {
     session = mount();
     await bootRemote(session);
     const { h } = session;
+    expect(session.dataContext.setExhibitMode).toHaveBeenCalledWith(true);
+    const trueCallsAfterInit = session.dataContext.setExhibitMode.mock.calls.filter(([value]) => value === true).length;
 
     await h.openCard('[data-open="segev"]');
     h.clock = { phase: "playing", revision: 4 };
@@ -201,6 +203,8 @@ describe("NLI staff Home transitions", () => {
     expect(h.clearPerson).toHaveBeenCalled();
     expect(el("cueStatus").textContent).toBe("Scene sent");
     expect(el("staffConnection").textContent).toBe("Map is disconnected");
+    expect(session.dataContext.setExhibitMode.mock.calls.filter(([value]) => value === true).length)
+      .toBeGreaterThan(trueCallsAfterInit);
 
     await h.openCard('[data-open="segev"]');
     const layersBeforeFinish = h.layers.length;
