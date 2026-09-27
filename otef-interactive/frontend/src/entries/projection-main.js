@@ -56,6 +56,7 @@ import {
   restoreProjectionSpanBase,
   runWhenMapIdle,
   createProjectionImageDescriptor,
+  createProjectionImageReadiness,
   createProjectionMapDescriptor,
 } from "../projection/projection-span-view.js";
 import {
@@ -311,7 +312,6 @@ async function bootstrapProjectionRuntime() {
     modelBoundsData.model_image || layerRegistry.getLayerDataUrl("projector_base.model_base");
   const modelImgEl = document.getElementById("displayedImage");
   if (modelImgEl && modelImageUrl) {
-    modelImgEl.src = modelImageUrl;
     modelImgEl.__otefProjectionImage = {
       bounds: modelBounds.bounds,
       corners: imageGeoCorners,
@@ -371,6 +371,17 @@ async function bootstrapProjectionRuntime() {
       : {}),
   });
   let browserSurface = null;
+  const imageReadiness = browserMode && modelImgEl ? createProjectionImageReadiness({
+    imageEl: modelImgEl,
+    onReady: () => map.triggerRepaint?.(),
+    onInvalidate: () => map.triggerRepaint?.(),
+    onError: (error) => visibleProjectionBrowserError(displayContainerEl, error),
+  }) : null;
+  if (imageReadiness) registerDisposer(() => imageReadiness.dispose());
+  if (modelImgEl && modelImageUrl) {
+    if (imageReadiness) imageReadiness.setSource(modelImageUrl);
+    else modelImgEl.src = modelImageUrl;
+  }
   if (typeof window !== "undefined") {
     window._maplibreMap = map;
   }
@@ -872,7 +883,7 @@ async function bootstrapProjectionRuntime() {
             layout: currentCaptionLayout,
           });
           return {
-          image: createProjectionImageDescriptor({ map, imageEl: modelImgEl, config: effectiveProjectionConfig, spanId: projectionSpanId }),
+          image: imageReadiness?.contentVersion() == null ? null : createProjectionImageDescriptor({ map, imageEl: modelImgEl, contentVersion: imageReadiness.contentVersion(), config: effectiveProjectionConfig, spanId: projectionSpanId }),
           map: createProjectionMapDescriptor({ map, config: effectiveProjectionConfig, spanId: projectionSpanId }),
           caption: captionAdapter?.draw?.(),
           pattern: patternAdapter?.draw?.(),

@@ -44,17 +44,17 @@ function drawClock(context, text, fontPx, width, height) {
 export function createProjectionCaptionAdapter({ canvasFactory } = {}) {
   const canvas = makeCanvas(canvasFactory); const context = canvas.getContext?.("2d");
   if (!context) throw new Error("projection caption adapter requires a 2d canvas");
-  let snapshot = null; let layout = {}; let signature = null; let dirty = true; let disposed = false;
+  let snapshot = null; let layout = {}; let signature = null; let dirty = true; let disposed = false; let contentVersion = 0;
   const sync = (next = {}) => {
     if (disposed) return;
     const nextSnapshot = next.snapshot || next;
     const nextLayout = next.layout || layout;
-    const nextSignature = JSON.stringify([nextSnapshot, nextLayout]);
-    if (nextSignature === signature) return;
-    signature = nextSignature;
+    const size = localSize(nextLayout);
+    const nextSignature = JSON.stringify([nextSnapshot?.model?.clockLabel || "", Number(nextLayout.fontPx) || 22, size.width, size.height]);
     snapshot = nextSnapshot;
     layout = nextLayout;
-    const size = localSize(layout);
+    if (nextSignature === signature) return;
+    signature = nextSignature;
     if (canvas.width !== size.width || canvas.height !== size.height) {
       canvas.width = size.width;
       canvas.height = size.height;
@@ -67,8 +67,9 @@ export function createProjectionCaptionAdapter({ canvasFactory } = {}) {
       context.clearRect(0, 0, canvas.width, canvas.height);
       drawClock(context, snapshot.model.clockLabel || "", Number(layout.fontPx) || 22, canvas.width, canvas.height);
       dirty = false;
+      contentVersion += 1;
     }
-    return { source: canvas, matrix: projectionOverlayMatrix(layout) };
+    return { source: canvas, contentVersion, matrix: projectionOverlayMatrix(layout) };
   };
   return { canvas, sync, draw, dispose() { disposed = true; context.clearRect(0, 0, canvas.width, canvas.height); snapshot = null; signature = null; } };
 }

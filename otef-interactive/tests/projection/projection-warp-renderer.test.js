@@ -35,6 +35,67 @@ function fakeGl() {
 function canvasFor(gl) { const listeners = {}; return { width: 1920, height: 1080, getContext: () => gl, addEventListener: (name, cb) => { listeners[name] = cb; }, removeEventListener: vi.fn(), listeners }; }
 
 describe("projection warp renderer", () => {
+  test('reuses static pixels while still drawing a changed transform', () => {
+    const gl = fakeGl();
+    const renderer = createProjectionWarpRenderer({ canvas: canvasFor(gl), mesh });
+    const source = { width: 64, height: 64 };
+    const layer = { id: 'caption', source, contentVersion: 0 };
+    renderer.draw({ layers: [layer] });
+    renderer.draw({ layers: [{ ...layer, opacity: 0.5 }] });
+    expect(gl.texImage2D.mock.calls.filter((args) => args.at(-1) === source)).toHaveLength(1);
+    expect(gl.drawArrays).toHaveBeenCalledTimes(2);
+  });
+
+  test('does not upload or draw transparent non-name layers', () => {
+    const gl = fakeGl();
+    const renderer = createProjectionWarpRenderer({ canvas: canvasFor(gl), mesh });
+    const source = { width: 64, height: 64 };
+    renderer.draw({ layers: [{ id: 'image', source, contentVersion: 0, opacity: 0 }] });
+    expect(gl.texImage2D.mock.calls.filter((args) => args.at(-1) === source)).toHaveLength(0);
+    expect(gl.drawArrays).not.toHaveBeenCalled();
+    expect(gl.drawElements).toHaveBeenCalledTimes(1);
+  });
+
+  test('retains hidden layers until scene removal, then deletes their texture once', () => {
+    const gl = fakeGl();
+    const renderer = createProjectionWarpRenderer({ canvas: canvasFor(gl), mesh });
+    const source = { width: 64, height: 64 };
+    const layer = { id: 'legend', source, contentVersion: 0 };
+    renderer.draw({ layers: [layer] });
+    const texture = gl.bindTexture.mock.calls.at(-2)[1];
+    renderer.draw({ layers: [{ ...layer, contentVersion: 1, opacity: 0 }] });
+    expect(gl.texImage2D.mock.calls.filter((args) => args.at(-1) === source)).toHaveLength(1);
+    expect(gl.deleteTexture).not.toHaveBeenCalledWith(texture);
+    renderer.draw({ layers: [{ ...layer, contentVersion: 1 }] });
+    expect(gl.texImage2D.mock.calls.filter((args) => args.at(-1) === source)).toHaveLength(2);
+    renderer.draw({ layers: [] });
+    expect(gl.deleteTexture).toHaveBeenCalledExactlyOnceWith(texture);
+    expect(gl.drawElements).toHaveBeenCalledTimes(4);
+    renderer.dispose();
+    expect(gl.deleteTexture.mock.calls.filter(([deleted]) => deleted === texture)).toHaveLength(1);
+  });
+
+  test('creates a fresh layer texture after context recovery', () => {
+    const gl = fakeGl(), canvas = canvasFor(gl);
+    const renderer = createProjectionWarpRenderer({ canvas, mesh });
+    const source = { width: 64, height: 64 };
+    renderer.draw({ layers: [{ id: 'caption', source, contentVersion: 0 }] });
+    canvas.listeners.webglcontextlost({ preventDefault: vi.fn() });
+    canvas.listeners.webglcontextrestored();
+    expect(gl.texImage2D.mock.calls.filter((args) => args.at(-1) === source)).toHaveLength(2);
+  });
+
+  test('disposes retained textures on manual context replacement', () => {
+    const gl = fakeGl(), canvas = canvasFor(gl);
+    const renderer = createProjectionWarpRenderer({ canvas, mesh });
+    const source = { width: 64, height: 64 };
+    renderer.draw({ layers: [{ id: 'caption', source, contentVersion: 0 }] });
+    const texture = gl.bindTexture.mock.calls.at(-2)[1];
+    const replacement = fakeGl();
+    renderer.recoverContext(replacement);
+    expect(gl.deleteTexture.mock.calls.filter(([deleted]) => deleted === texture)).toHaveLength(1);
+    expect(replacement.texImage2D.mock.calls.filter((args) => args.at(-1) === source)).toHaveLength(1);
+  });
   test('restores the names texture once and then reuses it', () => {
     const gl = fakeGl(), canvas = canvasFor(gl);
     const renderer = createProjectionWarpRenderer({ canvas, mesh });

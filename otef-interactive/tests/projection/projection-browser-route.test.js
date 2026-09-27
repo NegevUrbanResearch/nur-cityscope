@@ -47,6 +47,27 @@ test('production output ignores the seam-proof query', async () => {
   }
 });
 
+test('an explicit unready image removes a previously drawn image layer', async () => {
+  const oldDocument = globalThis.document;
+  const draws = [];
+  let imageReady = true;
+  const image = { complete: true, naturalWidth: 10, naturalHeight: 10, style: {} };
+  globalThis.document = { createElement() { return { style: {}, setAttribute() {}, addEventListener() {}, removeEventListener() {}, remove() {} }; } };
+  try {
+    const surface = await createProjectionBrowserSurface({
+      host: { appendChild() {} }, spanId: 'left', image,
+      getScene: () => ({ image: imageReady ? { source: image, contentVersion: 1 } : null, map: null }),
+      initialConfig: structuredClone(DEFAULT_PROJECTION_CONFIG), fetchImpl: async () => ({ ok: false }),
+      rendererFactory: () => ({ draw(scene) { draws.push(scene); }, isContextLost: () => false, dispose() {} }),
+    });
+    expect(draws.at(-1).layers.some((layer) => layer.id === 'image')).toBe(true);
+    imageReady = false;
+    surface.draw();
+    expect(draws.at(-1).layers.some((layer) => layer.id === 'image')).toBe(false);
+    surface.dispose();
+  } finally { globalThis.document = oldDocument; }
+});
+
 test('a stale local pair rollback cannot replace the newer browser mesh', async () => {
   const oldDocument = globalThis.document;
   globalThis.document = { createElement() { return { style: {}, setAttribute() {}, addEventListener() {}, removeEventListener() {}, remove() {} }; } };

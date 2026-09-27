@@ -3,6 +3,9 @@ import { MapProjectionConfig } from "../../frontend/src/shared/map-projection-co
 import {
   applyProjectionSpanView,
   clearProjectionSpanView,
+  createProjectionImageDescriptor,
+  createProjectionImageReadiness,
+  createProjectionMapDescriptor,
   computeSpanJumpTo,
   computeTesugaPostFillJumpTo,
   computeTesugaPreT3JumpTo,
@@ -15,6 +18,64 @@ import {
   spanWidthZoomDelta,
   uvInsideSpanRect,
 } from "../../frontend/src/projection/projection-span-view.js";
+
+test("image readiness publishes a generation and requests repaint after decode", async () => {
+  let resolveDecode;
+  const listeners = new Map();
+  const image = { complete: false, naturalWidth: 0, naturalHeight: 0, src: "", decode: () => new Promise((resolve) => { resolveDecode = resolve; }), addEventListener: (type, fn) => listeners.set(type, fn), removeEventListener: (type) => listeners.delete(type) };
+  const repaint = vi.fn();
+  const readiness = createProjectionImageReadiness({ imageEl: image, onReady: repaint });
+  readiness.setSource("model.png");
+  expect(readiness.contentVersion()).toBeNull();
+  image.complete = true; image.naturalWidth = 100; image.naturalHeight = 50;
+  listeners.get("load")();
+  resolveDecode();
+  await Promise.resolve(); await Promise.resolve();
+  expect(readiness.contentVersion()).toBeGreaterThan(0);
+  expect(repaint).toHaveBeenCalledTimes(1);
+  readiness.dispose();
+  expect(listeners.size).toBe(0);
+});
+
+test("same URL reload clears old pixels and ignores replaced or disposed decodes", async () => {
+  const resolves = [];
+  const listeners = new Map();
+  const image = { complete: true, naturalWidth: 100, naturalHeight: 50, src: "", decode: () => new Promise((resolve) => resolves.push(resolve)), addEventListener: (type, fn) => listeners.set(type, fn), removeEventListener: (type) => listeners.delete(type) };
+  const repaint = vi.fn();
+  const readiness = createProjectionImageReadiness({ imageEl: image, onReady: repaint });
+  readiness.setSource("model.png");
+  resolves.shift()(); await Promise.resolve(); await Promise.resolve();
+  const first = readiness.contentVersion();
+  readiness.setSource("model.png");
+  expect(readiness.contentVersion()).toBeNull();
+  resolves.shift()(); await Promise.resolve(); await Promise.resolve();
+  expect(readiness.contentVersion()).toBeGreaterThan(first);
+  readiness.setSource("other.png");
+  readiness.setSource("last.png");
+  resolves.shift()(); await Promise.resolve(); await Promise.resolve();
+  expect(readiness.contentVersion()).toBeNull();
+  readiness.dispose();
+  resolves.shift()(); await Promise.resolve(); await Promise.resolve();
+  expect(readiness.contentVersion()).toBeNull();
+});
+
+test("failed image decode stays unready and reports an error", async () => {
+  const error = vi.fn();
+  const image = { complete: true, naturalWidth: 100, naturalHeight: 50, src: "", decode: () => Promise.reject(new Error("decode failed")), addEventListener() {}, removeEventListener() {} };
+  const readiness = createProjectionImageReadiness({ imageEl: image, onError: error });
+  readiness.setSource("bad.png");
+  await Promise.resolve(); await Promise.resolve();
+  expect(readiness.contentVersion()).toBeNull();
+  expect(error).toHaveBeenCalledTimes(1);
+  readiness.dispose();
+});
+
+test("map descriptors stay volatile while ready images carry supplied revisions", () => {
+  const map = { getCanvas: () => ({ width: 1920, height: 1080 }), getContainer: () => ({ clientWidth: 1920, clientHeight: 1080 }), project: ([x, y]) => ({ x, y }), _otefProjectionImage: { corners: [[0, 0], [100, 0], [100, 50], [0, 50]], width: 100, height: 50 } };
+  const imageEl = { complete: true, naturalWidth: 100, naturalHeight: 50, style: {} };
+  expect(createProjectionImageDescriptor({ map, imageEl, spanId: "left", contentVersion: 4 })?.contentVersion).toBe(4);
+  expect(createProjectionMapDescriptor({ map, spanId: "left" })).not.toHaveProperty("contentVersion");
+});
 
 function createDomNode(tag = "div", id = "") {
   const node = {

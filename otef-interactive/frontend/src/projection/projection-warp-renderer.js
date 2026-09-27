@@ -1,3 +1,5 @@
+import { createProjectionLayerTextures } from './projection-layer-textures.js';
+
 const WIDTH = 1920;
 const HEIGHT = 1080;
 const EPSILON = 1e-5;
@@ -100,9 +102,13 @@ function meshArrays(mesh) {
   };
 }
 
-function setAttribute(gl, program, name, buffer, size) {
+function attributeLocation(gl, program, name) {
   const location = gl.getAttribLocation?.(program, name);
   if (location == null || location < 0) throw new Error(`projection shader attribute missing: ${name}`);
+  return location;
+}
+
+function setAttribute(gl, location, buffer, size) {
   gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
   gl.enableVertexAttribArray(location);
   gl.vertexAttribPointer(location, size, gl.FLOAT, false, 0, 0);
@@ -148,6 +154,7 @@ export function createProjectionWarpRenderer({ canvas, mesh, gl: suppliedGl } = 
 
   const release = () => {
     if (!resources) return;
+    resources.layerTextures?.dispose();
     for (const key of ["quad", "nameQuad", "position", "uv", "index"]) if (resources[key]) gl.deleteBuffer?.(resources[key]);
     for (const key of ["composed", "sourceTexture", "nameTexture"]) if (resources[key]) gl.deleteTexture?.(resources[key]);
     if (resources.framebuffer) gl.deleteFramebuffer?.(resources.framebuffer);
@@ -165,6 +172,31 @@ export function createProjectionWarpRenderer({ canvas, mesh, gl: suppliedGl } = 
       created.nameCompose = createProgram(gl, NAMES_VERTEX, NAMES_FRAGMENT,
         { aSource: 0, aDelay: 1, aNameIndex: 2 });
       created.final = createProgram(gl, FINAL_VERTEX, FINAL_FRAGMENT, { aPosition: 0, aUv: 1 });
+      created.locations = {
+        compose: {
+          aSource: attributeLocation(gl, created.compose, 'aSource'),
+          uSource: gl.getUniformLocation?.(created.compose, 'uSource'),
+          uMatrix: gl.getUniformLocation?.(created.compose, 'uMatrix'),
+          uClip: gl.getUniformLocation?.(created.compose, 'uClip'),
+          uOpacity: gl.getUniformLocation?.(created.compose, 'uOpacity'),
+        },
+        nameCompose: {
+          aSource: attributeLocation(gl, created.nameCompose, 'aSource'),
+          aDelay: attributeLocation(gl, created.nameCompose, 'aDelay'),
+          aNameIndex: attributeLocation(gl, created.nameCompose, 'aNameIndex'),
+          uSource: gl.getUniformLocation?.(created.nameCompose, 'uSource'),
+          uMatrix: gl.getUniformLocation?.(created.nameCompose, 'uMatrix'),
+          uClip: gl.getUniformLocation?.(created.nameCompose, 'uClip'),
+          uOpacity: gl.getUniformLocation?.(created.nameCompose, 'uOpacity'),
+          uRevealSeconds: gl.getUniformLocation?.(created.nameCompose, 'uRevealSeconds'),
+          uSelectedIndex: gl.getUniformLocation?.(created.nameCompose, 'uSelectedIndex'),
+        },
+        final: {
+          aPosition: attributeLocation(gl, created.final, 'aPosition'),
+          aUv: attributeLocation(gl, created.final, 'aUv'),
+          uTexture: gl.getUniformLocation?.(created.final, 'uTexture'),
+        },
+      };
       created.quad = gl.createBuffer();
       gl.bindBuffer(gl.ARRAY_BUFFER, created.quad);
       gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 0, 1, 0, 0, 1, 1, 1]), gl.STATIC_DRAW);
@@ -179,7 +211,7 @@ export function createProjectionWarpRenderer({ canvas, mesh, gl: suppliedGl } = 
       if (gl.checkFramebufferStatus && gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) throw new Error("projection composition framebuffer is incomplete");
       created.sourceTexture = gl.createTexture();
       configureTexture(gl, created.sourceTexture);
-      created.finalUv = gl.getAttribLocation?.(created.final, "aUv");
+      created.layerTextures = createProjectionLayerTextures(gl);
       resources = created;
       return resources;
     } catch (error) {
@@ -200,6 +232,7 @@ export function createProjectionWarpRenderer({ canvas, mesh, gl: suppliedGl } = 
     const valid = input.map(descriptor);
     latest = valid;
     const r = createResources();
+    r.layerTextures.prune(new Set(valid.map((layer) => layer.id)));
     gl.enable?.(gl.BLEND);
     gl.blendFuncSeparate?.(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
     gl.pixelStorei?.(gl.UNPACK_FLIP_Y_WEBGL, false);
@@ -208,6 +241,7 @@ export function createProjectionWarpRenderer({ canvas, mesh, gl: suppliedGl } = 
     gl.clearColor(0, 0, 0, 0);
     gl.clear(gl.COLOR_BUFFER_BIT);
     for (const layer of valid) {
+      if (layer.id !== 'names' && layer.opacity === 0) continue;
       gl.activeTexture?.(gl.TEXTURE0);
       if (layer.id === 'names') {
         if (r.nameSource !== layer.source) {
@@ -222,12 +256,15 @@ export function createProjectionWarpRenderer({ canvas, mesh, gl: suppliedGl } = 
           gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, layer.source);
           r.nameVersion = layer.contentVersion;
         }
-      } else {
+      } else if (!layer.id) {
         gl.bindTexture(gl.TEXTURE_2D, r.sourceTexture);
         gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, layer.source);
+      } else if (!r.layerTextures.bind(layer)) {
+        continue;
       }
       const names = layer.id === 'names' && layer.revealVertices;
       const program = names ? r.nameCompose : r.compose;
+      const locations = names ? r.locations.nameCompose : r.locations.compose;
       gl.useProgram(program);
       if (names) {
         if (r.nameVertices !== layer.revealVertices) {
@@ -237,22 +274,21 @@ export function createProjectionWarpRenderer({ canvas, mesh, gl: suppliedGl } = 
         }
         gl.bindBuffer(gl.ARRAY_BUFFER, r.nameQuad);
         for (const [attribute, size, offset] of [['aSource', 2, 0], ['aDelay', 1, 8], ['aNameIndex', 1, 12]]) {
-          const location = gl.getAttribLocation?.(program, attribute);
-          if (location == null || location < 0) throw new Error(`projection shader attribute missing: ${attribute}`);
+          const location = locations[attribute];
           gl.enableVertexAttribArray(location);
           gl.vertexAttribPointer(location, size, gl.FLOAT, false, 16, offset);
         }
-        gl.uniform1f?.(gl.getUniformLocation?.(program, 'uRevealSeconds'), layer.revealSeconds);
-        gl.uniform1f?.(gl.getUniformLocation?.(program, 'uSelectedIndex'), layer.selectedIndex);
+        gl.uniform1f?.(locations.uRevealSeconds, layer.revealSeconds);
+        gl.uniform1f?.(locations.uSelectedIndex, layer.selectedIndex);
       } else {
         gl.disableVertexAttribArray?.(1);
         gl.disableVertexAttribArray?.(2);
-        setAttribute(gl, program, 'aSource', r.quad, 2);
+        setAttribute(gl, locations.aSource, r.quad, 2);
       }
-      gl.uniform1i?.(gl.getUniformLocation?.(program, 'uSource'), 0);
-      gl.uniformMatrix3fv?.(gl.getUniformLocation?.(program, "uMatrix"), false, new Float32Array(layer.matrix));
-      gl.uniform4fv?.(gl.getUniformLocation?.(program, "uClip"), new Float32Array(layer.clip));
-      gl.uniform1f?.(gl.getUniformLocation?.(program, "uOpacity"), layer.opacity);
+      gl.uniform1i?.(locations.uSource, 0);
+      gl.uniformMatrix3fv?.(locations.uMatrix, false, new Float32Array(layer.matrix));
+      gl.uniform4fv?.(locations.uClip, new Float32Array(layer.clip));
+      gl.uniform1f?.(locations.uOpacity, layer.opacity);
       gl.drawArrays(names ? gl.TRIANGLES : gl.TRIANGLE_STRIP, 0, names ? layer.revealVertices.length / 4 : 4);
     }
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -262,12 +298,12 @@ export function createProjectionWarpRenderer({ canvas, mesh, gl: suppliedGl } = 
     gl.clear(gl.COLOR_BUFFER_BIT);
     gl.useProgram(r.final);
     gl.disableVertexAttribArray?.(2);
-    setAttribute(gl, r.final, "aPosition", r.position, 2);
-    setAttribute(gl, r.final, "aUv", r.uv, 2);
+    setAttribute(gl, r.locations.final.aPosition, r.position, 2);
+    setAttribute(gl, r.locations.final.aUv, r.uv, 2);
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, r.index);
     gl.activeTexture?.(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, r.composed);
-    gl.uniform1i?.(gl.getUniformLocation?.(r.final, "uTexture"), 0);
+    gl.uniform1i?.(r.locations.final.uTexture, 0);
     gl.drawElements(gl.TRIANGLES, r.count, gl.UNSIGNED_SHORT, 0);
     return true;
   }

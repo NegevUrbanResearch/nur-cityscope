@@ -291,12 +291,17 @@ export function createProjectionLegendAdapter({ canvasFactory } = {}) {
   let layout = {};
   let dirty = true;
   let disposed = false;
+  let signature = null;
+  let contentVersion = 0;
 
   const sync = (next = {}) => {
     if (disposed) return;
     snapshot = next.snapshot || next;
     layout = snapshot.layout || layout;
     const size = localSize(layout);
+    const nextSignature = JSON.stringify([snapshot.language, snapshot.blocks, snapshot.pages, snapshot.pageIndex, Number(layout.fontPx) || 22, size.width, size.height]);
+    if (nextSignature === signature) return;
+    signature = nextSignature;
     if (canvas.width !== size.width || canvas.height !== size.height) {
       canvas.width = size.width;
       canvas.height = size.height;
@@ -329,8 +334,9 @@ export function createProjectionLegendAdapter({ canvasFactory } = {}) {
         context.fillText(`${Number(snapshot.pageIndex || 0) + 1} / ${snapshot.pages.length}`, direction === "rtl" ? 5 : canvas.width - 5, canvas.height - 3);
       }
       dirty = false;
+      contentVersion += 1;
     }
-    return { source: canvas, matrix: projectionOverlayMatrix(layout) };
+    return { source: canvas, contentVersion, matrix: projectionOverlayMatrix(layout) };
   };
 
   return {

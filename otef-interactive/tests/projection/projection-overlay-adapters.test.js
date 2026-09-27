@@ -114,4 +114,52 @@ describe("projection overlay adapters", () => {
     expect(c.context.font).toContain('0.08px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif');
     expect(c.context.lineWidth).toBeCloseTo(0.003);
   });
+
+  test("caption revisions follow painted pixels, not placement", () => {
+    const c = canvasFactory(); const adapter = createProjectionCaptionAdapter({ canvasFactory: () => c });
+    const snapshot = { visible: true, model: { clockLabel: "07:05" } };
+    adapter.sync({ snapshot, layout });
+    const first = adapter.draw();
+    expect(first.contentVersion).toBeGreaterThan(0);
+    expect(adapter.draw().contentVersion).toBe(first.contentVersion);
+    adapter.sync({ snapshot, layout: { ...layout, leftPct: 20, rotateDeg: 0 } });
+    const placed = adapter.draw();
+    expect(placed.contentVersion).toBe(first.contentVersion);
+    expect(placed.matrix).not.toEqual(first.matrix);
+    adapter.sync({ snapshot: { visible: true, model: { clockLabel: "07:06" } }, layout });
+    expect(adapter.draw().contentVersion).toBeGreaterThan(first.contentVersion);
+    adapter.sync({ snapshot, layout: { ...layout, widthPct: 40 } });
+    expect(adapter.draw().contentVersion).toBeGreaterThan(placed.contentVersion);
+  });
+
+  test("legend revisions follow painted content and local size", () => {
+    const c = canvasFactory(); const adapter = createProjectionLegendAdapter({ canvasFactory: () => c });
+    const base = { layout, language: "en", spanId: "left", visible: true, blocks: [] };
+    adapter.sync(base);
+    const first = adapter.draw();
+    expect(first.contentVersion).toBeGreaterThan(0);
+    adapter.sync({ ...base, layout: { ...layout, leftPct: 25 } });
+    const placed = adapter.draw();
+    expect(placed.contentVersion).toBe(first.contentVersion);
+    expect(placed.matrix).not.toEqual(first.matrix);
+    adapter.sync({ ...base, blocks: [{ id: "x", pack: { name: "Changed" }, layers: [] }] });
+    const changed = adapter.draw();
+    expect(changed.contentVersion).toBeGreaterThan(first.contentVersion);
+    expect(adapter.draw().contentVersion).toBe(changed.contentVersion);
+    adapter.sync({ ...base, layout: { ...layout, heightPct: 20 } });
+    expect(adapter.draw().contentVersion).toBeGreaterThan(changed.contentVersion);
+  });
+
+  test("pattern revisions stay stable across repeated syncs and change after painting", () => {
+    const c = canvasFactory(); const adapter = createProjectionPatternAdapter({ spanId: "left", canvasFactory: () => c });
+    adapter.sync({ active: true, pattern: "grid", config: DEFAULT_PROJECTION_CONFIG });
+    const first = adapter.draw();
+    expect(first.contentVersion).toBeGreaterThan(0);
+    adapter.sync({ active: true, pattern: "grid", config: DEFAULT_PROJECTION_CONFIG });
+    expect(adapter.draw().contentVersion).toBe(first.contentVersion);
+    adapter.sync({ active: true, pattern: "output_id", config: DEFAULT_PROJECTION_CONFIG });
+    const changed = adapter.draw();
+    expect(changed.contentVersion).toBeGreaterThan(first.contentVersion);
+    expect(adapter.draw().contentVersion).toBe(changed.contentVersion);
+  });
 });

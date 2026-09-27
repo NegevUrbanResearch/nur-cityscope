@@ -420,6 +420,7 @@ function cssMatrix3dToNormalized(matrix3d, width, height, outputWidth, outputHei
 export function createProjectionImageDescriptor({
   map,
   imageEl,
+  contentVersion,
   config = DEFAULT_PROJECTION_CONFIG,
   spanId,
   outputWidth = 1920,
@@ -440,9 +441,72 @@ export function createProjectionImageDescriptor({
   const opacity = Number(imageEl?.style?.opacity);
   return {
     source: imageEl,
+    ...(Number.isSafeInteger(contentVersion) && contentVersion >= 0 ? { contentVersion } : {}),
     matrix,
     clip: [clip.x0, clip.y0, clip.x1, clip.y1],
     opacity: Number.isFinite(opacity) ? Math.max(0, Math.min(1, opacity)) : 1,
+  };
+}
+
+export function createProjectionImageReadiness({ imageEl, onReady, onError, onInvalidate } = {}) {
+  let generation = 0;
+  let readyGeneration = null;
+  let disposed = false;
+  let decoding = false;
+  const hasPixels = () => imageEl?.complete === true && Number(imageEl.naturalWidth) > 0 && Number(imageEl.naturalHeight) > 0;
+  const invalidate = () => {
+    generation += 1;
+    readyGeneration = null;
+    decoding = false;
+    onInvalidate?.();
+  };
+  const decode = () => {
+    if (disposed || decoding || !hasPixels()) return;
+    decoding = true;
+    const current = generation;
+    let result;
+    try { result = imageEl.decode?.(); } catch (error) { result = Promise.reject(error); }
+    Promise.resolve(result).then(() => {
+      if (disposed || current !== generation) return;
+      decoding = false;
+      if (!hasPixels()) throw new Error("browser projection image has no pixels");
+      readyGeneration = current;
+      onReady?.();
+    }).catch((error) => {
+      if (disposed || current !== generation) return;
+      decoding = false;
+      readyGeneration = null;
+      onError?.(error);
+    });
+  };
+  const onLoad = () => {
+    if (disposed) return;
+    if (readyGeneration !== null || decoding) invalidate();
+    decode();
+  };
+  const onImageError = () => {
+    if (disposed) return;
+    invalidate();
+    onError?.(new Error("browser projection image failed to load"));
+  };
+  imageEl?.addEventListener?.("load", onLoad);
+  imageEl?.addEventListener?.("error", onImageError);
+  return {
+    setSource(url) {
+      if (disposed || !imageEl) return;
+      invalidate();
+      imageEl.src = url;
+      decode();
+    },
+    contentVersion: () => disposed ? null : readyGeneration,
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      readyGeneration = null;
+      generation += 1;
+      imageEl?.removeEventListener?.("load", onLoad);
+      imageEl?.removeEventListener?.("error", onImageError);
+    },
   };
 }
 
