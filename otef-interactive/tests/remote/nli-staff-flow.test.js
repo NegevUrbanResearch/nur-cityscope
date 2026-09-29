@@ -220,7 +220,7 @@ describe("NLI staff show flow", () => {
   });
 });
 
-const STORY_BEATS = [389, 400, 410, 740];
+const STORY_BEATS = [389, 400, 402, 410, 740];
 const ROUTE_BEATS = [400, 740];
 const NO_ESCAPE = { individual: false, overlap: false, mor: false, settled: false };
 
@@ -314,6 +314,8 @@ function installSceneHarness(initialClock) {
       from: window?.from,
       to: window?.to,
       loop: window?.loop === true,
+      playLeadIn: true,
+      replace: true,
       isCurrent,
     }),
     endClock: async () => {

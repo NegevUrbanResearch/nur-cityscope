@@ -66,13 +66,21 @@ export function createCueRunner({
   let queue = Promise.resolve();
   let token = 0;
 
-  async function applyNarrative(target, live) {
+  async function applyNarrative(target, live, { force = false } = {}) {
     const currentId = dataContext?.getNarrativeState?.()?.id ?? null;
-    if (target === null || currentId !== target) {
+    if (force || currentId !== target) {
       assertAcknowledged(await dataContext?.setNarrative?.(target), "Narrative update was not acknowledged");
     } else if (dataContext?.getPersonSelection?.()?.personId) {
       assertAcknowledged(await dataContext.clearPerson?.(), "Person clear was not acknowledged");
     }
+    if (!live()) throw cancelled();
+  }
+
+  async function applyEscape(cue, live) {
+    assertAcknowledged(
+      await dataContext?.setEscapeOverlay?.({ ...NO_ESCAPE, ...(cue.escape || {}) }),
+      "Escape update was not acknowledged",
+    );
     if (!live()) throw cancelled();
   }
 
@@ -82,29 +90,36 @@ export function createCueRunner({
     const currentId = dataContext?.getNarrativeState?.()?.id ?? null;
     const target = "narrative" in cue ? cue.narrative : narrativeId;
     const enteringNova = target === "nova" && currentId !== "nova";
-    const stagePartial = kind === "play" || (kind === "ended" && enteringNova);
+    const stagePartial = kind === "ended" && enteringNova;
+    const playWhileHoldingNarrative = kind === "play" && target == null && currentId != null;
     if (!live()) throw cancelled();
 
     if (stagePartial) await commitLayers(layers.rest);
     else if (kind === "idle" && Array.isArray(cue.layers)) await commitLayers(layers.all);
     if (!live()) throw cancelled();
 
-    await applyNarrative(target, live);
-
-    if (kind === "play" || kind === "idle") {
-      assertAcknowledged(
-        await dataContext?.setEscapeOverlay?.({ ...NO_ESCAPE, ...(cue.escape || {}) }),
-        "Escape update was not acknowledged",
-      );
+    if (kind === "play") {
+      if (playWhileHoldingNarrative) {
+        await applyEscape(cue, live);
+        const started = await startClock(cue.clock, layers.playable, live);
+        if (!live() || started === false) throw cancelled();
+        await applyNarrative(target, live);
+      } else {
+        await applyNarrative(target, live);
+        await applyEscape(cue, live);
+        const started = await startClock(cue.clock, layers.playable, live);
+        if (!live() || started === false) throw cancelled();
+      }
+      await commitLayers(layers.all);
       if (!live()) throw cancelled();
-      await stopClock(live);
-      if (!live()) throw cancelled();
+      return;
     }
 
-    if (kind === "play") {
-      const started = await startClock(cue.clock, layers.playable, live);
-      if (!live() || started === false) throw cancelled();
-      await commitLayers(layers.all);
+    await applyNarrative(target, live, { force: kind === "idle" && target == null });
+
+    if (kind === "idle") {
+      await applyEscape(cue, live);
+      await stopClock(live);
       if (!live()) throw cancelled();
       return;
     }
@@ -116,11 +131,7 @@ export function createCueRunner({
         await commitLayers(layers.all);
         if (!live()) throw cancelled();
       }
-      assertAcknowledged(
-        await dataContext?.setEscapeOverlay?.({ ...NO_ESCAPE, ...(cue.escape || {}) }),
-        "Escape update was not acknowledged",
-      );
-      if (!live()) throw cancelled();
+      await applyEscape(cue, live);
     }
   }
 

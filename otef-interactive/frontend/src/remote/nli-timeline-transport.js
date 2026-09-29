@@ -916,13 +916,16 @@ export const nliTimelineHostMethods = {
     from,
     to,
     loop = false,
+    playLeadIn = false,
+    replace = false,
     isCurrent = () => true,
   } = {}) {
     const current = typeof isCurrent === "function" ? isCurrent : () => true;
     if (!current()) return false;
     if (this._isPresentationActive()) throw new Error("Slideshow is active");
     const clock = this._liveNliClock();
-    if (!clock || clock.phase !== "idle") throw new Error("Timeline is not idle");
+    if (!clock) throw new Error("Timeline is not idle");
+    if (clock.phase !== "idle" && replace !== true) throw new Error("Timeline is not idle");
     const boundary = nliNarrativeBoundary();
     const narrativeId = boundary.id;
     const requested = playableMembership(membership);
@@ -950,7 +953,10 @@ export const nliTimelineHostMethods = {
     const leadInMinutes = Number.isFinite(windowFrom) ? windowFrom : undefined;
     const result = await this._patchNliClock(playNliClock(setNliLoop(clock, loop), ids, beats, now, {
       ...clockOptions,
-      ...(!clockOptions.narrativeId && leadInMinutes != null ? { leadInMinutes } : {}),
+      ...(!clockOptions.narrativeId && leadInMinutes != null ? {
+        leadInMinutes,
+        ...(playLeadIn === true ? { playLeadIn: true } : {}),
+      } : {}),
     }), { isCurrent: current });
     if (!current()) return false;
     if (!sameNarrativeBoundary(boundary, nliNarrativeBoundary())) return false;

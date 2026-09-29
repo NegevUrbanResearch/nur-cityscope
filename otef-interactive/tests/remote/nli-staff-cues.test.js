@@ -35,7 +35,7 @@ function setup({ narrativeId = null, personId = null, layers, stop, start, end }
 }
 
 describe("NLI staff cue runner", () => {
-  test("a play window stages non-playables, then narrative, escape, idle, start, and final layers", async () => {
+  test("a play window starts without idling Home, then enables playables", async () => {
     const { runner, calls, statuses } = setup();
     const result = await runner.apply({
       layers: [BASE, LINES],
@@ -44,16 +44,80 @@ describe("NLI staff cue runner", () => {
     }, "nova");
     expect(result).toEqual({ status: "ready" });
     expect(calls.map(([name]) => name)).toEqual([
-      "layers", "narrative", "escape", "stop", "start", "layers",
+      "narrative", "escape", "start", "layers",
     ]);
-    expect(calls[0][1]).toEqual([BASE]);
-    expect(calls[1][1]).toBe("nova");
-    expect(calls[2][1]).toEqual({ individual: false, overlap: false, mor: true, settled: false });
-    expect(calls[4][1]).toEqual({ to: 401 });
-    expect(calls[4][2]).toEqual([LINES]);
-    expect(typeof calls[4][3]).toBe("function");
-    expect(calls[5][1]).toEqual([BASE, LINES]);
+    expect(calls[0][1]).toBe("nova");
+    expect(calls[1][1]).toEqual({ individual: false, overlap: false, mor: true, settled: false });
+    expect(calls[2][1]).toEqual({ to: 401 });
+    expect(calls[2][2]).toEqual([LINES]);
+    expect(typeof calls[2][3]).toBe("function");
+    expect(calls[3][1]).toEqual([BASE, LINES]);
     expect(statuses).toEqual(["applying", "ready"]);
+  });
+
+  test("switching play windows does not idle between scenes", async () => {
+    const { runner, calls } = setup();
+    await runner.apply({ layers: [BASE, LINES], clock: { to: 401 }, escape: {} }, null);
+    const before = calls.length;
+    await runner.apply({ layers: [BASE, LINES], clock: { from: 402 }, escape: {} }, null);
+    expect(calls.slice(before).map(([name]) => name)).toEqual(["escape", "start", "layers"]);
+    expect(calls.slice(before).some(([name]) => name === "stop")).toBe(false);
+    expect(calls.slice(before).some(([name]) => name === "narrative")).toBe(false);
+    expect(calls.slice(before).find(([name]) => name === "start")[1]).toEqual({ from: 402 });
+  });
+
+  test("Segev idle to rest-of-day starts the clock before clearing narrative", async () => {
+    const { runner, calls } = setup({ narrativeId: "segev" });
+    await runner.apply({ layers: [BASE, LINES], clock: { from: 402 }, escape: {} }, null);
+    expect(calls.map(([name]) => name)).toEqual(["escape", "start", "narrative", "layers"]);
+    expect(calls.find(([name]) => name === "start")[1]).toEqual({ from: 402 });
+    expect(calls.find(([name]) => name === "narrative")[1]).toBeNull();
+    expect(calls.some(([name]) => name === "stop")).toBe(false);
+    expect(calls.findIndex(([name]) => name === "start"))
+      .toBeLessThan(calls.findIndex(([name]) => name === "narrative"));
+  });
+
+  test("rest-of-day play to Nova idle publishes Nova before dropping timeline layers", async () => {
+    let narrativeId = null;
+    let phase = "playing";
+    const seen = [];
+    const note = () => { seen.push({ phase, narrativeId }); };
+    const { runner, calls, dataContext } = setup({
+      layers: () => { note(); },
+      stop: () => { phase = "idle"; note(); },
+    });
+    dataContext.getNarrativeState = () => ({ id: narrativeId });
+    dataContext.setNarrative = vi.fn(async (id) => {
+      narrativeId = id;
+      if (id != null) phase = "idle";
+      calls.push(["narrative", id]);
+      note();
+    });
+    await runner.apply({ layers: [BASE, LINES], clock: "idle", escape: {} }, "nova");
+    expect(calls.map(([name]) => name)).toEqual(["layers", "narrative", "escape", "stop"]);
+    expect(calls[0][1]).toEqual([BASE, LINES]);
+    expect(calls[1][1]).toBe("nova");
+    expect(calls.findIndex(([name]) => name === "layers"))
+      .toBeLessThan(calls.findIndex(([name]) => name === "narrative"));
+    expect(calls.findIndex(([name]) => name === "narrative"))
+      .toBeLessThan(calls.findIndex(([name]) => name === "stop"));
+    expect(seen.some((snapshot) => snapshot.phase === "idle" && snapshot.narrativeId == null)).toBe(false);
+    expect(seen.at(-1)).toEqual({ phase: "idle", narrativeId: "nova" });
+  });
+
+  test("Segev idle from play commits focus layers before narrative and stop", async () => {
+    const { runner, calls } = setup();
+    await runner.apply({ layers: [BASE, LINES], clock: { to: 401 }, escape: {} }, null);
+    const before = calls.length;
+    await runner.apply({ layers: [BASE], clock: "idle", escape: {} }, "segev");
+    const rest = calls.slice(before);
+    expect(rest.map(([name]) => name)).toEqual(["layers", "narrative", "escape", "stop"]);
+    expect(rest[0][1]).toEqual([BASE]);
+    expect(rest[1][1]).toBe("segev");
+    expect(rest.findIndex(([name]) => name === "layers"))
+      .toBeLessThan(rest.findIndex(([name]) => name === "narrative"));
+    expect(rest.findIndex(([name]) => name === "narrative"))
+      .toBeLessThan(rest.findIndex(([name]) => name === "stop"));
   });
 
   test("Home commits destination layers, including disabled playables, before idle", async () => {
@@ -147,14 +211,13 @@ describe("NLI staff cue runner", () => {
     expect(statuses).toEqual(["applying", "failed"]);
   });
 
-  test("a failed stop prevents the timeline start and final layers", async () => {
+  test("a failed idle stop still prevents Home from reporting ready", async () => {
     const { runner, calls, statuses } = setup({
       stop: async () => { throw new Error("stop failed"); },
     });
-    await expect(runner.apply({ layers: [BASE, LINES], clock: { to: 401 }, escape: {} }, null))
+    await expect(runner.apply({ layers: [BASE], clock: "idle", escape: {} }, null))
       .resolves.toEqual({ status: "failed" });
     expect(calls.some(([name]) => name === "start")).toBe(false);
-    expect(calls.filter(([name]) => name === "layers")).toHaveLength(1);
     expect(statuses).toEqual(["applying", "failed"]);
   });
 
@@ -164,7 +227,7 @@ describe("NLI staff cue runner", () => {
     });
     await expect(runner.apply({ layers: [BASE, LINES], clock: {}, escape: {} }, null))
       .resolves.toEqual({ status: "cancelled" });
-    expect(calls.filter(([name]) => name === "layers").map(([, ids]) => ids)).toEqual([[BASE]]);
+    expect(calls.filter(([name]) => name === "layers")).toEqual([]);
     expect(statuses).toEqual(["applying"]);
   });
 

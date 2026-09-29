@@ -2367,4 +2367,86 @@ describe("ordinary live settlement ownership", () => {
     expect(map.getLayer(extraLayer)).toBeTruthy();
     expect(map.getLayer(`${outgoing}-fill`)).toBeFalsy();
   });
+
+  it("snaps leaving people and playables to hidden while a settlement fade stays in flight", () => {
+    const map = createMapMock();
+    const hooks = createLifecycleHooks();
+    getLayerLifecycleRuntime(map, hooks);
+    const peopleId = "nli.people";
+    const playableId = "nli.investigation_polygons";
+    const settlementId = "settlements.names";
+    const peopleLayer = "nli__people__circle";
+    const playableLayer = "nli__investigation_polygons__fill";
+    const settlementLayer = "settlements.names-fill";
+    bridgeMock.irToMapLibreLayers.mockImplementation((fullId) => {
+      if (fullId === peopleId) {
+        return [{ id: peopleLayer, type: "circle", paint: { "circle-opacity": 1 }, layout: {} }];
+      }
+      if (fullId === playableId) {
+        return [{ id: playableLayer, type: "fill", paint: { "fill-opacity": 1 }, layout: {} }];
+      }
+      return [{ id: `${fullId}-fill`, type: "fill", paint: { "fill-opacity": 1 }, layout: {} }];
+    });
+
+    applyLayerGroupsToMap(map, groupsFor([peopleId, playableId, settlementId]));
+    hooks.setTime(300);
+    hooks.flushFrame();
+    expect(map.getPaintProperty(settlementLayer, "fill-opacity")).toBeCloseTo(0.5);
+    expect(map.getPaintProperty(peopleLayer, "circle-opacity")).toBeCloseTo(0.5);
+
+    applyLayerGroupsToMap(map, groupsFor([settlementId]));
+
+    expect(map.getLayer(peopleLayer)).toBeFalsy();
+    expect(map.getLayer(playableLayer)).toBeFalsy();
+    expect(map.getPaintProperty(settlementLayer, "fill-opacity")).toBeCloseTo(0.5);
+
+    hooks.setTime(600);
+    hooks.flushFrame();
+    expect(map.getPaintProperty(settlementLayer, "fill-opacity")).toBe(1);
+    expect(map.getLayer(settlementLayer)).toBeTruthy();
+  });
+
+  it("snaps leaving people and playables inside an open joined batch without sealing it", () => {
+    const map = createMapMock();
+    const hooks = createLifecycleHooks();
+    const runtime = getLayerLifecycleRuntime(map, hooks);
+    const peopleId = "nli.people";
+    const playableId = "nli.investigation_polygons";
+    const settlementId = "settlements.names";
+    const peopleLayer = "nli__people__circle";
+    const playableLayer = "nli__investigation_polygons__fill";
+    const settlementLayer = "settlements.names-fill";
+    bridgeMock.irToMapLibreLayers.mockImplementation((fullId) => {
+      if (fullId === peopleId) {
+        return [{ id: peopleLayer, type: "circle", paint: { "circle-opacity": 1 }, layout: {} }];
+      }
+      if (fullId === playableId) {
+        return [{ id: playableLayer, type: "fill", paint: { "fill-opacity": 1 }, layout: {} }];
+      }
+      return [{ id: `${fullId}-fill`, type: "fill", paint: { "fill-opacity": 1 }, layout: {} }];
+    });
+
+    applyLayerGroupsToMap(map, groupsFor([peopleId, playableId, settlementId]));
+    hooks.setTime(300);
+    hooks.flushFrame();
+    expect(map.getPaintProperty(settlementLayer, "fill-opacity")).toBeCloseTo(0.5);
+
+    runtime.setDesiredIds([settlementId], { durationMs: LAYER_FADE_MS });
+    const batch = runtime.getPendingBatch();
+    expect(batch?.sealed).toBe(false);
+
+    applyLayerGroupsToMap(map, groupsFor([settlementId]), { lifecycle: { joinBatch: true } });
+
+    expect(map.getLayer(peopleLayer)).toBeFalsy();
+    expect(map.getLayer(playableLayer)).toBeFalsy();
+    expect(map.getPaintProperty(settlementLayer, "fill-opacity")).toBeCloseTo(0.5);
+    expect(runtime.getPendingBatch()).toBe(batch);
+    expect(batch.sealed).toBe(false);
+
+    runtime.commitBatch();
+    hooks.setTime(600);
+    hooks.flushFrame();
+    expect(map.getPaintProperty(settlementLayer, "fill-opacity")).toBe(1);
+    expect(map.getLayer(settlementLayer)).toBeTruthy();
+  });
 });

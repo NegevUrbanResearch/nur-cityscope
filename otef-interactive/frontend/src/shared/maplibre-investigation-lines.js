@@ -8,7 +8,7 @@
  */
 
 import { NLI_DISPLAY_PROFILES, NLI_VISUAL_TOKENS } from "./nli-investigation-theme.js";
-import { timelineBeatDurationMs } from "./nli-investigation-beats.js";
+import { INVESTIGATION_LINES_FULL_ID, timelineBeatDurationMs } from "./nli-investigation-beats.js";
 import { maplibreLineDashFromLeafletPx } from "./maplibre-line-dash.js";
 import {
   buildLinePathMetrics,
@@ -24,6 +24,13 @@ import {
   clipFeatureToProgress,
   splitCompositeLineFrame,
 } from "./nli-unconfirmed-route-progress.js";
+import {
+  addInvestigationOverlayLayer,
+  completeInvestigationOverlayMount,
+  fadeInvestigationOverlayLayer,
+  isOverlayOpacityProperty,
+  publishInvestigationOverlayOpacity,
+} from "./investigation-overlay-lifecycle.js";
 
 export const INVESTIGATION_LINE_SOURCE_IDS = Object.freeze({
   future: "nli-investigation-line-future",
@@ -264,18 +271,25 @@ function removeLayerAndSource(map, layerId, sourceId) {
 function addSourceAndLayer(map, sourceId, layer, sourceSpec, beforeId) {
   if (typeof map?.addSource !== "function" || typeof map?.addLayer !== "function") return;
   if (!safelyGetSource(map, sourceId)) map.addSource(sourceId, sourceSpec);
-  if (safelyGetLayer(map, layer.id)) return;
-  try {
-    if (beforeId) map.addLayer(layer, beforeId);
-    else map.addLayer(layer);
-  } catch (_) {
-    // A style can disappear while a renderer is being mounted.
-  }
+  addInvestigationOverlayLayer(map, INVESTIGATION_LINES_FULL_ID, layer, beforeId);
 }
 
 function sourceData(map, sourceId, data) {
   const source = safelyGetSource(map, sourceId);
   if (source && typeof source.setData === "function") source.setData(data);
+}
+
+function setOwnedPaint(map, layerId, property, value) {
+  if (isOverlayOpacityProperty(property)) {
+    publishInvestigationOverlayOpacity(map, INVESTIGATION_LINES_FULL_ID, layerId, property, value);
+    return;
+  }
+  if (typeof map?.setPaintProperty !== "function") return;
+  try {
+    map.setPaintProperty(layerId, property, value);
+  } catch (_) {
+    // Style reload can invalidate an individual layer handle.
+  }
 }
 
 function lightFeatureSignature(features) {
@@ -390,6 +404,7 @@ export function createInvestigationLineRenderer(map, profile = NLI_DISPLAY_PROFI
   let paintInitialized = false;
   let overlaysSuppressed = false;
   let lastDataInvalidationKey;
+  let hideGeneration = 0;
 
   const width = profileValue(resolvedProfile, "lineWidthMultiplier", 1);
   const routeScale = profileValue(resolvedProfile, "routeScale", 1);
@@ -397,8 +412,17 @@ export function createInvestigationLineRenderer(map, profile = NLI_DISPLAY_PROFI
   const motionWidth = NLI_VISUAL_TOKENS.routeFlowWidth * width * routeScale;
   const beforeId = resolvedProfile.beforeId || resolvedProfile.beforeLayerId;
 
+  function ownedLineLayersMissing() {
+    if (!safelyGetLayer(map, INVESTIGATION_LINE_LAYER_IDS.future)) return true;
+    for (const layerId of OVERLAY) {
+      if (!safelyGetLayer(map, layerId)) return true;
+    }
+    return false;
+  }
+
   function mount() {
     if (disposed) return;
+    hideGeneration += 1;
     addSourceAndLayer(map, INVESTIGATION_LINE_SOURCE_IDS.future, {
       id: INVESTIGATION_LINE_LAYER_IDS.future,
       type: "line",
@@ -488,6 +512,7 @@ export function createInvestigationLineRenderer(map, profile = NLI_DISPLAY_PROFI
       },
     }, { type: "geojson", data: pointsFeatureCollection([]) }, beforeId);
     mounted = true;
+    completeInvestigationOverlayMount(map, INVESTIGATION_LINES_FULL_ID);
   }
 
   function render(frame = {}, data = {}) {
@@ -502,7 +527,7 @@ export function createInvestigationLineRenderer(map, profile = NLI_DISPLAY_PROFI
     lastDataInvalidationKey = nextDataInvalidationKey;
     const wasSuppressed = overlaysSuppressed;
     overlaysSuppressed = false;
-    if (!mounted || wasSuppressed) {
+    if (!mounted || wasSuppressed || ownedLineLayersMissing()) {
       mounted = false;
       mount();
     }
@@ -603,19 +628,19 @@ export function createInvestigationLineRenderer(map, profile = NLI_DISPLAY_PROFI
       : unconfirmed.opacity;
     try {
       if (staticPaintChanged && safelyGetLayer(map, INVESTIGATION_LINE_LAYER_IDS.future) && typeof map.setPaintProperty === "function") {
-        map.setPaintProperty(INVESTIGATION_LINE_LAYER_IDS.future, "line-color", NLI_VISUAL_TOKENS.incidentRed);
+        setOwnedPaint(map, INVESTIGATION_LINE_LAYER_IDS.future, "line-color", NLI_VISUAL_TOKENS.incidentRed);
       }
       if (staticPaintChanged && safelyGetLayer(map, INVESTIGATION_LINE_LAYER_IDS.completedCarrier) && typeof map.setPaintProperty === "function") {
-        map.setPaintProperty(INVESTIGATION_LINE_LAYER_IDS.completedCarrier, "line-color", NLI_VISUAL_TOKENS.incidentRed);
-        map.setPaintProperty(INVESTIGATION_LINE_LAYER_IDS.completedCarrier, "line-width", carrierWidth * width * routeScale);
+        setOwnedPaint(map, INVESTIGATION_LINE_LAYER_IDS.completedCarrier, "line-color", NLI_VISUAL_TOKENS.incidentRed);
+        setOwnedPaint(map, INVESTIGATION_LINE_LAYER_IDS.completedCarrier, "line-width", carrierWidth * width * routeScale);
       }
       if (safelyGetLayer(map, INVESTIGATION_LINE_LAYER_IDS.completedMotion) && typeof map.setPaintProperty === "function") {
         if (staticPaintChanged) {
-          map.setPaintProperty(INVESTIGATION_LINE_LAYER_IDS.completedMotion, "line-color", NLI_VISUAL_TOKENS.routeFlowColor);
-          map.setPaintProperty(INVESTIGATION_LINE_LAYER_IDS.completedMotion, "line-width", motionWidth);
+          setOwnedPaint(map, INVESTIGATION_LINE_LAYER_IDS.completedMotion, "line-color", NLI_VISUAL_TOKENS.routeFlowColor);
+          setOwnedPaint(map, INVESTIGATION_LINE_LAYER_IDS.completedMotion, "line-width", motionWidth);
         }
         if (flowPaintChanged) {
-          map.setPaintProperty(
+          setOwnedPaint(map, 
             INVESTIGATION_LINE_LAYER_IDS.completedMotion,
             "line-dasharray",
             buildCompletedRouteFlowDasharray(motion, motionMode, motionWidth),
@@ -625,69 +650,69 @@ export function createInvestigationLineRenderer(map, profile = NLI_DISPLAY_PROFI
       if (staticPaintChanged && typeof map.setPaintProperty === "function") {
         for (const lineId of [INVESTIGATION_LINE_LAYER_IDS.unconfirmedCompleted, INVESTIGATION_LINE_LAYER_IDS.unconfirmedActive]) {
           if (!safelyGetLayer(map, lineId)) continue;
-          map.setPaintProperty(lineId, "line-color", NLI_VISUAL_TOKENS.incidentRed);
-          map.setPaintProperty(lineId, "line-width", unconfirmed.lineWidth);
-          map.setPaintProperty(lineId, "line-dasharray", buildUnconfirmedRouteDasharray(null, null, unconfirmed.lineWidth));
+          setOwnedPaint(map, lineId, "line-color", NLI_VISUAL_TOKENS.incidentRed);
+          setOwnedPaint(map, lineId, "line-width", unconfirmed.lineWidth);
+          setOwnedPaint(map, lineId, "line-dasharray", buildUnconfirmedRouteDasharray(null, null, unconfirmed.lineWidth));
         }
       }
       if (staticPaintChanged && safelyGetLayer(map, INVESTIGATION_LINE_LAYER_IDS.compositeActive) && typeof map.setPaintProperty === "function") {
-        map.setPaintProperty(INVESTIGATION_LINE_LAYER_IDS.compositeActive, "line-color", NLI_VISUAL_TOKENS.incidentRed);
-        map.setPaintProperty(INVESTIGATION_LINE_LAYER_IDS.compositeActive, "line-width", carrierWidth * width * routeScale);
+        setOwnedPaint(map, INVESTIGATION_LINE_LAYER_IDS.compositeActive, "line-color", NLI_VISUAL_TOKENS.incidentRed);
+        setOwnedPaint(map, INVESTIGATION_LINE_LAYER_IDS.compositeActive, "line-width", carrierWidth * width * routeScale);
       }
       if ((!paintInitialized || changed.active || Number(frame.activeProgress) !== Number(previousFrame?.activeProgress)) && safelyGetLayer(map, INVESTIGATION_LINE_LAYER_IDS.active) && typeof map.setPaintProperty === "function") {
-        map.setPaintProperty(INVESTIGATION_LINE_LAYER_IDS.active, "line-color", NLI_VISUAL_TOKENS.incidentRed);
-        map.setPaintProperty(INVESTIGATION_LINE_LAYER_IDS.active, "line-gradient", buildLineProgressGradient(frame.activeProgress, NLI_VISUAL_TOKENS.incidentRed, "rgba(195,31,79,0)"));
+        setOwnedPaint(map, INVESTIGATION_LINE_LAYER_IDS.active, "line-color", NLI_VISUAL_TOKENS.incidentRed);
+        setOwnedPaint(map, INVESTIGATION_LINE_LAYER_IDS.active, "line-gradient", buildLineProgressGradient(frame.activeProgress, NLI_VISUAL_TOKENS.incidentRed, "rgba(195,31,79,0)"));
       }
       if ((staticPaintChanged || parallelDimChanged) && typeof map.setPaintProperty === "function") {
         if (safelyGetLayer(map, INVESTIGATION_LINE_LAYER_IDS.completedCarrier)) {
-          map.setPaintProperty(
+          setOwnedPaint(map,
             INVESTIGATION_LINE_LAYER_IDS.completedCarrier,
             "line-opacity",
             parallelOpacity ?? COMPLETED_OPACITY,
           );
         }
         if (safelyGetLayer(map, INVESTIGATION_LINE_LAYER_IDS.completedMotion)) {
-          map.setPaintProperty(
+          setOwnedPaint(map,
             INVESTIGATION_LINE_LAYER_IDS.completedMotion,
             "line-opacity",
             parallelOpacity ?? 1,
           );
         }
         if (safelyGetLayer(map, INVESTIGATION_LINE_LAYER_IDS.compositeActive)) {
-          map.setPaintProperty(
+          setOwnedPaint(map,
             INVESTIGATION_LINE_LAYER_IDS.compositeActive,
             "line-opacity",
             parallelOpacity ?? ACTIVE_OPACITY,
           );
         }
         if (safelyGetLayer(map, INVESTIGATION_LINE_LAYER_IDS.unconfirmedCompleted)) {
-          map.setPaintProperty(
+          setOwnedPaint(map,
             INVESTIGATION_LINE_LAYER_IDS.unconfirmedCompleted,
             "line-opacity",
             unconfirmedOpacity,
           );
         }
         if (safelyGetLayer(map, INVESTIGATION_LINE_LAYER_IDS.unconfirmedActive)) {
-          map.setPaintProperty(
+          setOwnedPaint(map,
             INVESTIGATION_LINE_LAYER_IDS.unconfirmedActive,
             "line-opacity",
             unconfirmedOpacity,
           );
         }
         if (safelyGetLayer(map, INVESTIGATION_LINE_LAYER_IDS.active)) {
-          map.setPaintProperty(
+          setOwnedPaint(map,
             INVESTIGATION_LINE_LAYER_IDS.active,
             "line-opacity",
             parallelOpacity ?? ACTIVE_OPACITY,
           );
         }
         if (safelyGetLayer(map, INVESTIGATION_LINE_LAYER_IDS.head)) {
-          map.setPaintProperty(
+          setOwnedPaint(map,
             INVESTIGATION_LINE_LAYER_IDS.head,
             "circle-opacity",
             parallelOpacity ?? 0.95,
           );
-          map.setPaintProperty(
+          setOwnedPaint(map,
             INVESTIGATION_LINE_LAYER_IDS.head,
             "circle-stroke-opacity",
             ["case", ["==", ["get", "headKind"], "comet"], parallelOpacity ?? 1, 1],
@@ -713,10 +738,27 @@ export function createInvestigationLineRenderer(map, profile = NLI_DISPLAY_PROFI
     paintInitialized = true;
   }
 
-  function reset({ preserveBasePaints = false } = {}) {
+  function reset({ preserveBasePaints = false, immediate = false } = {}) {
     if (disposed) return;
-    for (const [layerId, sourceId] of OWNED) {
-      if (OVERLAY.has(layerId)) removeLayerAndSource(map, layerId, sourceId);
+    const overlayPairs = OWNED.filter(([layerId]) => OVERLAY.has(layerId));
+    const generation = ++hideGeneration;
+    const finish = () => {
+      if (generation !== hideGeneration) return;
+      for (const [layerId, sourceId] of overlayPairs) removeLayerAndSource(map, layerId, sourceId);
+    };
+    const present = overlayPairs.filter(([layerId]) => safelyGetLayer(map, layerId));
+    if (immediate || !present.length) {
+      finish();
+    } else {
+      let remaining = present.length;
+      let started = false;
+      for (const [layerId] of present) {
+        started = fadeInvestigationOverlayLayer(map, INVESTIGATION_LINES_FULL_ID, layerId, () => {
+          remaining -= 1;
+          if (remaining <= 0) finish();
+        }) || started;
+      }
+      if (!started) finish();
     }
     signatures.clear();
     collectionCache.clear();
@@ -732,11 +774,11 @@ export function createInvestigationLineRenderer(map, profile = NLI_DISPLAY_PROFI
     try {
       if (preserveBasePaints) return;
       if (safelyGetLayer(map, INVESTIGATION_LINE_LAYER_IDS.future) && typeof map.setPaintProperty === "function") {
-        map.setPaintProperty(INVESTIGATION_LINE_LAYER_IDS.future, "line-color", NLI_VISUAL_TOKENS.incidentRed);
+        setOwnedPaint(map, INVESTIGATION_LINE_LAYER_IDS.future, "line-color", NLI_VISUAL_TOKENS.incidentRed);
         // The application's canonical base line layer becomes visible again
         // after reset. Keep this owned source mounted for a cheap remount but
         // hide it so reset cannot double-paint routes.
-        map.setPaintProperty(INVESTIGATION_LINE_LAYER_IDS.future, "line-opacity", 0);
+        setOwnedPaint(map, INVESTIGATION_LINE_LAYER_IDS.future, "line-opacity", 0);
       }
     } catch (_) {
       // Ignore a style that is already gone.
@@ -747,6 +789,7 @@ export function createInvestigationLineRenderer(map, profile = NLI_DISPLAY_PROFI
   function dispose() {
     if (disposed) return;
     disposed = true;
+    hideGeneration += 1;
     for (const [layerId, sourceId] of OWNED) removeLayerAndSource(map, layerId, sourceId);
     signatures.clear();
     collectionCache.clear();

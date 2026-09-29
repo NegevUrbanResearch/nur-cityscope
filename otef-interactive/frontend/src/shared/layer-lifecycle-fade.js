@@ -324,6 +324,24 @@ function createLayerLifecycleRuntime(map, hooks) {
       channel.effectiveLeaves = leaves;
       channel.effective = emitOpacityMix(leaves);
     }
+    notifyHideListeners(member);
+  }
+
+  function notifyHideListeners(member, { forceHidden = false } = {}) {
+    const listeners = member.hideListeners;
+    if (!Array.isArray(listeners) || listeners.length === 0) return;
+    member.hideListeners = listeners.filter((entry) => {
+      const channels = member.channels.filter((channel) =>
+        channel.kind === "paint" && channel.layerId === entry.layerId);
+      const stillTweening = !forceHidden && channels.some((channel) => channel.effectiveTween);
+      if (stillTweening) return true;
+      const hidden = forceHidden || channels.every((channel) => {
+        const value = hasEffectiveOverride(channel) ? channel.effective : channel.base;
+        return value === 0;
+      });
+      if (hidden && typeof entry.onHidden === "function") entry.onHidden();
+      return !hidden;
+    });
   }
 
   function settleMemberEffective(member) {
@@ -379,13 +397,35 @@ function createLayerLifecycleRuntime(map, hooks) {
     }
   }
 
+  function removeMemberOverlayLayers(member) {
+    const layerIds = [];
+    for (const channel of member.channels) {
+      if (channel.kind !== "paint" || channel.overlay !== true || !channel.layerId) continue;
+      if (layerIds.includes(channel.layerId)) continue;
+      layerIds.push(channel.layerId);
+    }
+    member.channels = member.channels.filter((channel) => !(channel.kind === "paint" && channel.overlay === true));
+    if (typeof map.removeLayer !== "function") return;
+    for (const layerId of layerIds) {
+      if (typeof map.getLayer === "function" && !map.getLayer(layerId)) continue;
+      try {
+        map.removeLayer(layerId);
+      } catch (_) {
+        // Style can disappear while the member is torn down.
+      }
+    }
+  }
+
   function teardown(member) {
     if (!member || member.tornDown) return;
     if (desired.has(member.fullId) && !member.invalidated) return;
+    notifyHideListeners(member, { forceHidden: true });
     member.tornDown = true;
+    member.ready = false;
     member.trajectory = null;
     clearMemberTweens(member);
     unsubscribe(member);
+    removeMemberOverlayLayers(member);
     if (typeof member.onTeardown === "function") member.onTeardown();
   }
 
@@ -525,7 +565,7 @@ function createLayerLifecycleRuntime(map, hooks) {
       if (!member || !member.staged || member.tornDown || member.invalidated || member.failed) continue;
       const waiting = incoming.has(id) && !member.ready;
       if (waiting && preserve) continue;
-      if (preserve && member.trajectory && member.trajectory.to === 1) continue;
+      if ((preserve || batch.preserveKeptTrajectories) && member.trajectory && member.trajectory.to === 1) continue;
       beginTrajectory(member, sampleFactor(member, time), 1, batch.durationMs, time);
     }
     for (const [id, member] of members) {
@@ -618,14 +658,42 @@ function createLayerLifecycleRuntime(map, hooks) {
     const previous = desired;
     desired = next;
     beginBatch(durationMs);
+    if (pending && options.preserveKeptTrajectories === true) {
+      pending.preserveKeptTrajectories = true;
+    }
     for (const id of previous) {
       if (!next.has(id)) dropDesired(id);
     }
     if (durationMs <= 0) {
-      settleMountedEffective(false);
-      settleUnchangedTrajectories();
+      if (options.preserveKeptTrajectories === true) {
+        const time = now();
+        for (const [id, member] of members) {
+          if (desired.has(id) || member.tornDown || member.invalidated || !member.staged) continue;
+          beginTrajectory(member, sampleFactor(member, time), 0, 0, time);
+        }
+      } else {
+        settleMountedEffective(false);
+        settleUnchangedTrajectories();
+      }
     }
     return pending;
+  }
+
+  function settleHiddenIds(fullIds) {
+    if (disposed || !fullIds) return;
+    const ids = normalizeIds(fullIds);
+    const time = now();
+    for (const id of ids) {
+      desired.delete(id);
+      const member = members.get(id);
+      if (!member || member.tornDown) {
+        removeMembership(id);
+        continue;
+      }
+      dropDesired(id);
+      if (member.tornDown || member.invalidated || !member.staged) continue;
+      beginTrajectory(member, sampleFactor(member, time), 0, 0, time);
+    }
   }
 
   function stagedPaint(member, layerType, paint, factor, mountAtZero, layerId) {
@@ -706,6 +774,7 @@ function createLayerLifecycleRuntime(map, hooks) {
     }
     const atZero = desired.has(member.fullId) && !member.revealed && !member.trajectory && member.factor === 0;
     rememberPaintChannels(member, layerDef);
+    beginOverlayIntroFade(member, layerDef, bindings);
     if (pending && (atZero || (adoptVisible && desired.has(member.fullId)))) addMembership(member.fullId);
     subscribeReady(member, bindings);
     if (adoptVisible) return { stagedLayerDef: layerDef };
@@ -715,6 +784,38 @@ function createLayerLifecycleRuntime(map, hooks) {
         paint: stagedPaint(member, layerDef?.type, layerDef?.paint, member.factor, atZero, layerDef?.id),
       },
     };
+  }
+
+  function beginOverlayIntroFade(member, layerDef, bindings) {
+    if (bindings?.introFade !== true) return;
+    const layerId = layerDef?.id;
+    for (const channel of member.channels) {
+      if (channel.kind === "paint" && channel.layerId === layerId) channel.overlay = true;
+    }
+    if (resolveMotionMode() === "reduced") return;
+    const entering = !member.revealed || !!member.trajectory || member.factor !== 1;
+    if (entering) return;
+    const time = now();
+    let started = false;
+    for (const channel of member.channels) {
+      if (channel.kind !== "paint" || channel.layerId !== layerId) continue;
+      const goal = channel.present ? channel.authored : channel.base;
+      channel.goal = goal;
+      channel.effective = 0;
+      channel.effectiveLeaves = [{ value: 0, weight: 1 }];
+      channel.effectiveTween = {
+        fromLeaves: [{ value: 0, weight: 1 }],
+        to: goal,
+        start: time,
+        duration: LAYER_FADE_MS,
+        intro: true,
+      };
+      started = true;
+    }
+    if (started) {
+      writeMember(member, member.factor, false);
+      ensureFrame();
+    }
   }
 
   function registerElement(fullId, element, bindings = {}) {
@@ -826,8 +927,15 @@ function createLayerLifecycleRuntime(map, hooks) {
   function dropChannels(fullId) {
     const member = members.get(String(fullId));
     if (!member) return;
-    member.channels = [];
+    member.channels = member.channels.filter((channel) => channel.kind === "paint" && channel.overlay === true);
     cancelIdleFrame();
+  }
+
+  function needsOverlayRestage(fullId, layerId) {
+    const member = members.get(String(fullId));
+    if (!member || member.tornDown || member.invalidated) return true;
+    return !member.channels.some((channel) =>
+      channel.kind === "paint" && channel.overlay === true && channel.layerId === layerId);
   }
 
   function readAuthoredOpacity(fullId, property) {
@@ -872,19 +980,31 @@ function createLayerLifecycleRuntime(map, hooks) {
     const reduced = resolveMotionMode() === "reduced";
     const hasGoal = Object.prototype.hasOwnProperty.call(channel, "goal");
     if (!reduced && hasGoal && goalsEqual(channel.goal, value)) return true;
+    const time = now();
     const instant = reduced
       || typeof tweenMs !== "number"
       || !Number.isFinite(tweenMs)
       || tweenMs <= 0;
+    const intro = channel.effectiveTween?.intro === true;
+    if (intro && !reduced && instant) {
+      channel.goal = value;
+      channel.effectiveTween.to = value;
+      const leaves = sampleEffectiveLeaves(channel, time);
+      channel.effectiveLeaves = leaves;
+      channel.effective = emitOpacityMix(leaves);
+      member.factor = sampleFactor(member, time);
+      writeMember(member, member.factor, false);
+      ensureFrame();
+      return true;
+    }
     if (instant) {
       commitEffectiveGoal(channel, value);
-      const factor = sampleFactor(member, now());
+      const factor = sampleFactor(member, time);
       member.factor = factor;
       writeMember(member, factor, factor === 1 && !member.trajectory);
       cancelIdleFrame();
       return true;
     }
-    const time = now();
     const fromLeaves = sampleEffectiveLeaves(channel, time);
     channel.goal = value;
     channel.effectiveLeaves = fromLeaves;
@@ -896,6 +1016,42 @@ function createLayerLifecycleRuntime(map, hooks) {
       duration: tweenMs,
     };
     ensureFrame();
+    return true;
+  }
+
+  function fadePaintLayer(fullId, layerId, { durationMs = LAYER_FADE_MS, onHidden } = {}) {
+    if (disposed) {
+      if (typeof onHidden === "function") onHidden();
+      return false;
+    }
+    const member = members.get(String(fullId));
+    if (!member || member.invalidated || member.tornDown) {
+      if (typeof onHidden === "function") onHidden();
+      return false;
+    }
+    const channels = member.channels.filter((channel) =>
+      channel.kind === "paint" && channel.layerId === layerId);
+    if (!channels.length) {
+      if (typeof onHidden === "function") onHidden();
+      return false;
+    }
+    const reduced = resolveMotionMode() === "reduced";
+    const duration = reduced ? 0 : durationMs;
+    for (const channel of channels) {
+      if (channel.effectiveTween) channel.effectiveTween.intro = false;
+    }
+    if (!(duration > 0)) {
+      for (const channel of channels) {
+        updateEffectivePaint(fullId, layerId, channel.property, 0, { tweenMs: 0 });
+      }
+      if (typeof onHidden === "function") onHidden();
+      return true;
+    }
+    if (!Array.isArray(member.hideListeners)) member.hideListeners = [];
+    member.hideListeners.push({ layerId, onHidden });
+    for (const channel of channels) {
+      updateEffectivePaint(fullId, layerId, channel.property, 0, { tweenMs: duration });
+    }
     return true;
   }
 
@@ -962,6 +1118,7 @@ function createLayerLifecycleRuntime(map, hooks) {
     getPendingBatch: () => pending,
     commitBatch,
     setDesiredIds,
+    settleHiddenIds,
     stageMapLayer,
     registerElement,
     markMemberReady,
@@ -969,10 +1126,12 @@ function createLayerLifecycleRuntime(map, hooks) {
     subscribeMemberReady,
     invalidateMember,
     dropChannels,
+    needsOverlayRestage,
     readAuthoredOpacity,
     hasPaintChannel,
     updateEffectiveOpacity,
     updateEffectivePaint,
+    fadePaintLayer,
     beginRequest,
     isRequestCurrent,
     getDesiredIds: () => [...desired],

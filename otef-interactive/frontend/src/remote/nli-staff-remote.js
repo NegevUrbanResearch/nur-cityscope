@@ -260,8 +260,9 @@ export function initNliStaffRemote(dataContext) {
   }
 
   async function ensureClockIdle(isCurrent = () => true) {
+    const current = dataContext?.getInvestigationClock?.();
     await waitForInvestigationClockIdle(dataContext, {
-      forceStop: true,
+      forceStop: current?.phase !== "idle",
       isCancelled: () => !isCurrent(),
     });
     if (!isCurrent()) return;
@@ -280,6 +281,8 @@ export function initNliStaffRemote(dataContext) {
       from: window?.from,
       to: window?.to,
       loop: window?.loop === true,
+      playLeadIn: true,
+      replace: true,
       isCurrent,
     }),
     endClock: async (isCurrent) => {

@@ -17,6 +17,7 @@ import {
 } from "../../frontend/src/shared/nli-investigation-beats.js";
 import {
   endNliClock,
+  evaluateClock,
   idleNliClock,
   pauseNliClock,
   playNliClock,
@@ -902,6 +903,22 @@ describe("deriveInvestigationFrame", () => {
     const b = deriveInvestigationFrame({ ...clock }, 123_456, enabled, {});
     expect(a.completedRouteFlow.phase).toBe(b.completedRouteFlow.phase);
     expect(a.narrative.completedBeats).toEqual(b.narrative.completedBeats);
+  });
+
+  it("rest-of-day lead-in keeps the opening-minutes end state", () => {
+    const clock = playNliClock(
+      idleNliClock(),
+      membership,
+      [389, 401, 402, 740],
+      0,
+      { leadInMinutes: 402, playLeadIn: true },
+    );
+    const frame = deriveInvestigationFrame(clock, 100, enabled, {
+      routeBeats: [389, 401, 402, 740],
+    });
+    expect(evaluateClock(clock, 100)).toMatchObject({ leadIn: true, clock: 402 });
+    expect(frame.achievedPolygonBeats).toEqual([389, 401]);
+    expect(frame.polygonEntries).toEqual([]);
   });
 
   it("Nova lead-in achieves every polygon/line minute strictly less than 483", () => {

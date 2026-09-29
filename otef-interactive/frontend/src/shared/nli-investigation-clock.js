@@ -188,7 +188,7 @@ export function beatsForMembership(membership, featureBags = {}) {
 
 /**
  * @param {number[]} beats
- * @param {{ leadInMinutes?: number }} [options]
+ * @param {{ leadInMinutes?: number, playLeadIn?: boolean }} [options]
  * @returns {{ positionMs: number, leadInMinutes?: number }}
  */
 function playStartFields(beats, options = {}) {
@@ -196,7 +196,9 @@ function playStartFields(beats, options = {}) {
   if (!Number.isFinite(leadInMinutes)) return { positionMs: 0 };
   return {
     leadInMinutes,
-    positionMs: beats.includes(leadInMinutes) ? timelineBeatDurationMs(leadInMinutes) : 0,
+    positionMs: options.playLeadIn === true || !beats.includes(leadInMinutes)
+      ? 0
+      : timelineBeatDurationMs(leadInMinutes),
   };
 }
 
@@ -205,7 +207,7 @@ function playStartFields(beats, options = {}) {
  * @param {string[]} membership
  * @param {number[]} beats
  * @param {number} nowMs
- * @param {{ leadInMinutes?: number }} [options]
+ * @param {{ leadInMinutes?: number, playLeadIn?: boolean }} [options]
  * @returns {NliInvestigationClock}
  */
 export function playNliClock(prev, membership, beats, nowMs, options = {}) {

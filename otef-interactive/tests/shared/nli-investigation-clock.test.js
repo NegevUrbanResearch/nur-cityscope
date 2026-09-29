@@ -460,6 +460,30 @@ describe("Nova fixed-duration clock", () => {
 describe("window that starts on a real beat", () => {
   const restBeats = [389, 401, 402, 659, 660, 740];
 
+  it("a fresh rest-of-day start holds opening-minutes beats as lead-in, then plays 06:42", () => {
+    const start = 5_000;
+    const playing = playNliClock(
+      idleNliClock(),
+      [polygons],
+      restBeats,
+      start,
+      { leadInMinutes: 402, playLeadIn: true },
+    );
+    expect(playing).toMatchObject({
+      leadInMinutes: 402,
+      positionMs: 0,
+    });
+    expect(evaluateClock(playing, start)).toMatchObject({
+      clock: 402, index: -1, leadIn: true, beatElapsedMs: 0,
+    });
+    expect(evaluateClock(playing, start + timelineBeatDurationMs(402) - 1)).toMatchObject({
+      clock: 402, index: -1, leadIn: true,
+    });
+    expect(evaluateClock(playing, start + timelineBeatDurationMs(402))).toMatchObject({
+      clock: 402, index: 2, leadIn: false, beatElapsedMs: 0,
+    });
+  });
+
   it("plays 06:42 once, then 2.5s until 11:00 and 1s through the end of the day", () => {
     const start = 5_000;
     const playing = playNliClock(

@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { createInvestigationPolygonRenderer } from "../../frontend/src/shared/maplibre-investigation-polygons.js";
+import { getLayerLifecycleRuntime, LAYER_FADE_MS } from "../../frontend/src/shared/layer-lifecycle-fade.js";
 import { NLI_DISPLAY_PROFILES } from "../../frontend/src/shared/nli-investigation-theme.js";
 import { buildInvestigationSettlementIndexes } from "../../frontend/src/shared/nli-investigation-timeline-data.js";
 
@@ -1708,5 +1709,218 @@ describe("investigation polygon renderer", () => {
     expect(map.setPaintProperty).not.toHaveBeenCalled();
     expect(map.removeLayer).not.toHaveBeenCalled();
     expect(map.removeSource).not.toHaveBeenCalled();
+  });
+
+  it("intro-fades the settlement outline onto a revealed lifecycle member", () => {
+    const map = makeMap();
+    let time = 0;
+    let frameHandle = null;
+    const runtime = getLayerLifecycleRuntime(map, {
+      now: () => time,
+      requestFrame: (callback) => {
+        frameHandle = callback;
+        return 1;
+      },
+      cancelFrame: () => {
+        frameHandle = null;
+      },
+    });
+    runtime.setDesiredIds(["nli.investigation_polygons"], { durationMs: 0 });
+    runtime.stageMapLayer("nli.investigation_polygons", {
+      id: "nli__investigation_polygons__line__1",
+      type: "line",
+      paint: { "line-opacity": 1 },
+    });
+    runtime.markMemberReady("nli.investigation_polygons");
+    runtime.commitBatch();
+
+    const renderer = createInvestigationPolygonRenderer(map, {});
+    renderer.render(frame([]), { polygonFeatures: [], settlementFeatures: [settlement(20)] });
+    const added = map.addLayer.mock.calls.find(([layer]) => layer.id === "nli-investigation-settlement-impact-outline")[0];
+    expect(added.paint["line-opacity"]).toBe(0);
+
+    time = 300;
+    frameHandle?.(time);
+    expect(map.getPaintProperty("nli-investigation-settlement-impact-outline", "line-opacity")).toBeCloseTo(0.475);
+
+    time = 600;
+    frameHandle?.(time);
+    expect(map.getPaintProperty("nli-investigation-settlement-impact-outline", "line-opacity")).toBe(0.95);
+  });
+
+  it("does not yank category overlays when processed style changes under lifecycle", () => {
+    const map = makeMap();
+    let time = 0;
+    const runtime = getLayerLifecycleRuntime(map, {
+      now: () => time,
+      requestFrame: () => 1,
+      cancelFrame: () => {},
+    });
+    runtime.setDesiredIds(["nli.investigation_polygons"], { durationMs: 0 });
+    runtime.stageMapLayer("nli.investigation_polygons", {
+      id: "nli__investigation_polygons__fill__0",
+      type: "fill",
+      paint: { "fill-opacity": 1 },
+    });
+    runtime.markMemberReady("nli.investigation_polygons");
+    runtime.commitBatch();
+
+    const renderer = createInvestigationPolygonRenderer(map, {});
+    const battle = polygon(1, 400, "עלומים", "מרחב לחימה - קרב");
+    renderer.render(frame([400]), processedOverlayData([battle]));
+    expect(map.getLayer("nli-investigation-polygon-category-fill-battle")).toBeTruthy();
+    map.removeLayer.mockClear();
+
+    const nextStyle = processedNotesStyle();
+    nextStyle.uniqueValues.classes[0].symbol.symbolLayers[0].color = "#111111";
+    renderer.render(frame([400]), processedOverlayData([battle], { polygonStyle: nextStyle }));
+    expect(map.removeLayer).not.toHaveBeenCalled();
+    expect(map.getLayer("nli-investigation-polygon-category-fill-battle")).toBeTruthy();
+  });
+
+  function battleBandOverlayData() {
+    const battle = polygon(1, 400, "עלומים", "מרחב לחימה - קרב");
+    const style = {
+      renderer: "uniqueValue",
+      uniqueValues: { field: "Notes", classes: [{
+        value: "מרחב לחימה - קרב",
+        symbol: { symbolLayers: [{
+          type: "fill", fillType: "gradient", interval: 2,
+          resolvedColors: ["#111111", "#333333"],
+          resolvedOpacities: [0.2, 0.8],
+        }] },
+      }] },
+    };
+    return {
+      polygonFeatures: [battle],
+      bufferedGradientFeatures: [0, 1].map((ordinal) => ({
+        ...battle,
+        properties: { ...battle.properties, __cim_gradient_band: ordinal },
+      })),
+      bufferedGradientSidecarStatus: "ready",
+      polygonStyle: style,
+    };
+  }
+
+  function revealedPolygonLifecycle(map) {
+    let time = 0;
+    let frameHandle = null;
+    const runtime = getLayerLifecycleRuntime(map, {
+      now: () => time,
+      requestFrame: (callback) => {
+        frameHandle = callback;
+        return 1;
+      },
+      cancelFrame: () => {
+        frameHandle = null;
+      },
+    });
+    runtime.setDesiredIds(["nli.investigation_polygons"], { durationMs: 0 });
+    runtime.stageMapLayer("nli.investigation_polygons", {
+      id: "nli__investigation_polygons__fill__0",
+      type: "fill",
+      paint: { "fill-opacity": 1 },
+    });
+    runtime.markMemberReady("nli.investigation_polygons");
+    runtime.commitBatch();
+    return {
+      flush(at) {
+        time = at;
+        const current = frameHandle;
+        frameHandle = null;
+        current?.(time);
+      },
+    };
+  }
+
+  function refuseRemoveSourceWhileInUse(map) {
+    const errors = [];
+    map.removeSource.mockImplementation((id) => {
+      const using = map.layers.filter((layer) => layer.source === id);
+      if (using.length) {
+        errors.push(`Source "${id}" cannot be removed while layer "${using[0].id}" is using it`);
+        return;
+      }
+      map.sources.delete(id);
+    });
+    return errors;
+  }
+
+  it("removes gradient band layers before the buffered source after a delayed reset", () => {
+    const map = makeMap();
+    const errors = refuseRemoveSourceWhileInUse(map);
+    const hooks = revealedPolygonLifecycle(map);
+    const renderer = createInvestigationPolygonRenderer(map, {});
+    const data = battleBandOverlayData();
+    renderer.render(frame([400]), data);
+    const bandId = "nli-investigation-polygon-category-fill-battle-band-1";
+    const sourceId = "nli-investigation-polygon-buffered-gradient";
+    expect(map.getLayer(bandId)).toBeTruthy();
+
+    renderer.reset();
+    expect(map.getLayer(bandId)).toBeTruthy();
+
+    hooks.flush(LAYER_FADE_MS);
+    const bandCall = map.removeLayer.mock.calls.findIndex(([id]) => id === bandId);
+    const sourceCall = map.removeSource.mock.calls.findIndex(([id]) => id === sourceId);
+    expect(bandCall).toBeGreaterThanOrEqual(0);
+    expect(sourceCall).toBeGreaterThanOrEqual(0);
+    expect(map.removeLayer.mock.invocationCallOrder[bandCall])
+      .toBeLessThan(map.removeSource.mock.invocationCallOrder[sourceCall]);
+    expect(map.getLayer(bandId)).toBeFalsy();
+    expect(errors).toEqual([]);
+  });
+
+  it("remounts category sources when render follows reset before the fade ends", () => {
+    const map = makeMap();
+    const hooks = revealedPolygonLifecycle(map);
+    const renderer = createInvestigationPolygonRenderer(map, {});
+    const data = battleBandOverlayData();
+    renderer.render(frame([400]), data);
+
+    renderer.reset();
+    renderer.render(frame([400]), data);
+    hooks.flush(LAYER_FADE_MS);
+
+    const source = map.getSource("nli-investigation-polygon-category");
+    expect(source).toBeTruthy();
+    expect(source.setData).toHaveBeenCalled();
+    expect(source.setData.mock.calls.at(-1)[0].features.length).toBeGreaterThan(0);
+  });
+
+  it("finishes an in-flight hide before remount so bands do not stay faded out", () => {
+    const map = makeMap();
+    const errors = refuseRemoveSourceWhileInUse(map);
+    const hooks = revealedPolygonLifecycle(map);
+    const renderer = createInvestigationPolygonRenderer(map, {});
+    const data = battleBandOverlayData();
+    const bandId = "nli-investigation-polygon-category-fill-battle-band-1";
+    const fillId = "nli-investigation-polygon-category-fill-battle";
+    const sourceId = "nli-investigation-polygon-buffered-gradient";
+    renderer.render(frame([400]), data);
+    hooks.flush(LAYER_FADE_MS);
+    expect(map.getPaintProperty(bandId, "fill-opacity")).toBeCloseTo(0.8);
+    expect(map.getPaintProperty(fillId, "fill-opacity")).toBeCloseTo(0.2);
+
+    map.removeLayer.mockClear();
+    map.removeSource.mockClear();
+    renderer.reset();
+    renderer.render(frame([400]), data);
+    hooks.flush(LAYER_FADE_MS * 2);
+
+    const outlineId = "nli-investigation-settlement-impact-outline";
+    expect(map.getLayer(bandId)).toBeTruthy();
+    expect(map.getLayer(fillId)).toBeTruthy();
+    expect(map.getLayer(outlineId)).toBeTruthy();
+    expect(map.getPaintProperty(bandId, "fill-opacity")).toBeCloseTo(0.8);
+    expect(map.getPaintProperty(fillId, "fill-opacity")).toBeCloseTo(0.2);
+    expect(map.getPaintProperty(outlineId, "line-opacity")).toBeCloseTo(0.95);
+    const bandCall = map.removeLayer.mock.calls.findIndex(([id]) => id === bandId);
+    const sourceCall = map.removeSource.mock.calls.findIndex(([id]) => id === sourceId);
+    expect(bandCall).toBeGreaterThanOrEqual(0);
+    expect(sourceCall).toBeGreaterThanOrEqual(0);
+    expect(map.removeLayer.mock.invocationCallOrder[bandCall])
+      .toBeLessThan(map.removeSource.mock.invocationCallOrder[sourceCall]);
+    expect(errors).toEqual([]);
   });
 });

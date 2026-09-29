@@ -1402,3 +1402,185 @@ describe("effective paint tweens", () => {
     expect(writes.length).toBe(before);
   });
 });
+
+describe("investigation overlay intro fade", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("intro-fades a new overlay channel on an already revealed member", () => {
+    const map = createMap();
+    const hooks = createHooks();
+    const runtime = getLayerLifecycleRuntime(map, hooks);
+    const fullId = "nli.investigation_polygons";
+    reveal(runtime, map, fullId, layerDef("nli__investigation_polygons__line__1", { "line-opacity": 1 }, "line"));
+
+    const staged = runtime.stageMapLayer(fullId, layerDef("nli-investigation-settlement-impact-outline", {
+      "line-opacity": 0.95,
+    }, "line"), { introFade: true });
+    map.addLayer(staged.stagedLayerDef);
+
+    expect(staged.stagedLayerDef.paint["line-opacity"]).toBe(0);
+    expect(paintOf(map, "nli-investigation-settlement-impact-outline", "line-opacity")).toBe(0);
+    expect(paintOf(map, "nli__investigation_polygons__line__1", "line-opacity")).toBe(1);
+
+    hooks.setTime(300);
+    hooks.flushFrame();
+    expect(paintOf(map, "nli-investigation-settlement-impact-outline", "line-opacity")).toBeCloseTo(0.475);
+    expect(paintOf(map, "nli__investigation_polygons__line__1", "line-opacity")).toBe(1);
+
+    hooks.setTime(LAYER_FADE_MS);
+    hooks.flushFrame();
+    expect(paintOf(map, "nli-investigation-settlement-impact-outline", "line-opacity")).toBe(0.95);
+  });
+
+  it("does not double-ease overlay channels while the member factor is still entering", () => {
+    const map = createMap();
+    const hooks = createHooks();
+    const runtime = getLayerLifecycleRuntime(map, hooks);
+    runtime.setDesiredIds(["nli.lines"], { durationMs: LAYER_FADE_MS });
+    const staged = runtime.stageMapLayer("nli.lines", layerDef("nli-investigation-line-completed-carrier-line", {
+      "line-opacity": 1,
+    }, "line"), { introFade: true });
+    map.addLayer(staged.stagedLayerDef);
+    runtime.markMemberReady("nli.lines");
+    runtime.commitBatch();
+
+    expect(staged.stagedLayerDef.paint["line-opacity"]).toBe(0);
+    hooks.setTime(300);
+    hooks.flushFrame();
+    expect(paintOf(map, "nli-investigation-line-completed-carrier-line", "line-opacity")).toBeCloseTo(0.5);
+
+    runtime.updateEffectivePaint(
+      "nli.lines",
+      "nli-investigation-line-completed-carrier-line",
+      "line-opacity",
+      1,
+      { tweenMs: 0 },
+    );
+    expect(paintOf(map, "nli-investigation-line-completed-carrier-line", "line-opacity")).toBeCloseTo(0.5);
+
+    hooks.setTime(LAYER_FADE_MS);
+    hooks.flushFrame();
+    expect(paintOf(map, "nli-investigation-line-completed-carrier-line", "line-opacity")).toBe(1);
+  });
+
+  it("keeps overlay intro running when a later pulse publishes an immediate goal", () => {
+    const map = createMap();
+    const hooks = createHooks();
+    const runtime = getLayerLifecycleRuntime(map, hooks);
+    const fullId = "nli.alarms";
+    reveal(runtime, map, fullId, layerDef("nli__alarms__circle__0", { "circle-opacity": 0.4 }, "circle"));
+    const staged = runtime.stageMapLayer(fullId, layerDef("nli-investigation-alarm-circle", {
+      "circle-opacity": 0.4,
+    }, "circle"), { introFade: true });
+    map.addLayer(staged.stagedLayerDef);
+
+    runtime.updateEffectivePaint(fullId, "nli-investigation-alarm-circle", "circle-opacity", 0.4, { tweenMs: 0 });
+    expect(paintOf(map, "nli-investigation-alarm-circle", "circle-opacity")).toBe(0);
+
+    hooks.setTime(300);
+    hooks.flushFrame();
+    expect(paintOf(map, "nli-investigation-alarm-circle", "circle-opacity")).toBeCloseTo(0.2);
+
+    runtime.updateEffectivePaint(fullId, "nli-investigation-alarm-circle", "circle-opacity", 1, { tweenMs: 0 });
+    expect(paintOf(map, "nli-investigation-alarm-circle", "circle-opacity")).toBeCloseTo(0.5);
+
+    hooks.setTime(LAYER_FADE_MS);
+    hooks.flushFrame();
+    expect(paintOf(map, "nli-investigation-alarm-circle", "circle-opacity")).toBe(1);
+  });
+
+  it("writes overlay intro goals immediately under reduced motion", () => {
+    vi.stubGlobal("window", {
+      matchMedia: (query) => ({ matches: query === "(prefers-reduced-motion: reduce)" }),
+    });
+    const map = createMap();
+    const runtime = getLayerLifecycleRuntime(map, createHooks());
+    const fullId = "nli.investigation_polygons";
+    reveal(runtime, map, fullId, layerDef("nli__investigation_polygons__fill__0", { "fill-opacity": 1 }));
+    const staged = runtime.stageMapLayer(fullId, layerDef("nli-investigation-settlement-impact-outline", {
+      "line-opacity": 0.95,
+    }, "line"), { introFade: true });
+    map.addLayer(staged.stagedLayerDef);
+    expect(staged.stagedLayerDef.paint["line-opacity"]).toBe(0.95);
+  });
+
+  it("fades an overlay channel to 0 before onHidden runs", () => {
+    const map = createMap();
+    const hooks = createHooks();
+    const runtime = getLayerLifecycleRuntime(map, hooks);
+    const fullId = "nli.lines";
+    reveal(runtime, map, fullId, layerDef("nli__lines__line__0", { "line-opacity": 1 }, "line"));
+    const staged = runtime.stageMapLayer(fullId, layerDef("nli-investigation-line-completed-carrier-line", {
+      "line-opacity": 1,
+    }, "line"), { introFade: true });
+    map.addLayer(staged.stagedLayerDef);
+    hooks.setTime(LAYER_FADE_MS);
+    hooks.flushFrame();
+    expect(paintOf(map, "nli-investigation-line-completed-carrier-line", "line-opacity")).toBe(1);
+
+    const hidden = [];
+    runtime.fadePaintLayer(fullId, "nli-investigation-line-completed-carrier-line", {
+      durationMs: LAYER_FADE_MS,
+      onHidden: () => hidden.push(hooks.now()),
+    });
+    expect(paintOf(map, "nli-investigation-line-completed-carrier-line", "line-opacity")).toBe(1);
+    expect(hidden).toEqual([]);
+    hooks.setTime(LAYER_FADE_MS + 300);
+    hooks.flushFrame();
+    expect(paintOf(map, "nli-investigation-line-completed-carrier-line", "line-opacity")).toBeCloseTo(0.5);
+    expect(hidden).toEqual([]);
+    hooks.setTime(LAYER_FADE_MS * 2);
+    hooks.flushFrame();
+    expect(paintOf(map, "nli-investigation-line-completed-carrier-line", "line-opacity")).toBe(0);
+    expect(hidden).toEqual([LAYER_FADE_MS * 2]);
+  });
+
+  it("keeps overlay channels when dropChannels replaces authored paint", () => {
+    const map = createMap();
+    const hooks = createHooks();
+    const runtime = getLayerLifecycleRuntime(map, hooks);
+    const fullId = "nli.lines";
+    reveal(runtime, map, fullId, layerDef("nli__lines__line__0", { "line-opacity": 1 }, "line"));
+    const staged = runtime.stageMapLayer(fullId, layerDef("nli-investigation-line-head-circle", {
+      "circle-opacity": 0.95,
+    }, "circle"), { introFade: true });
+    map.addLayer(staged.stagedLayerDef);
+    hooks.setTime(LAYER_FADE_MS);
+    hooks.flushFrame();
+    expect(paintOf(map, "nli-investigation-line-head-circle", "circle-opacity")).toBe(0.95);
+
+    runtime.dropChannels(fullId);
+    expect(runtime.updateEffectivePaint(fullId, "nli-investigation-line-head-circle", "circle-opacity", 0.4, { tweenMs: 0 })).toBe(true);
+    expect(paintOf(map, "nli-investigation-line-head-circle", "circle-opacity")).toBe(0.4);
+    stage(runtime, map, fullId, layerDef("nli__lines__line__0", { "line-opacity": 0.2 }, "line"));
+    expect(paintOf(map, "nli-investigation-line-head-circle", "circle-opacity")).toBe(0.4);
+  });
+
+  it("runs overlay onHidden when the member factor reaches 0 mid-outro", () => {
+    const map = createMap();
+    const hooks = createHooks();
+    const runtime = getLayerLifecycleRuntime(map, hooks);
+    const fullId = "nli.alarms";
+    reveal(runtime, map, fullId, layerDef("nli__alarms__circle__0", { "circle-opacity": 0.4 }, "circle"));
+    const staged = runtime.stageMapLayer(fullId, layerDef("nli-investigation-alarm-circles", {
+      "circle-opacity": 0.4,
+    }, "circle"), { introFade: true });
+    map.addLayer(staged.stagedLayerDef);
+    hooks.setTime(LAYER_FADE_MS);
+    hooks.flushFrame();
+
+    const hidden = [];
+    runtime.fadePaintLayer(fullId, "nli-investigation-alarm-circles", {
+      durationMs: LAYER_FADE_MS,
+      onHidden: () => hidden.push("overlay"),
+    });
+    runtime.setDesiredIds([], { durationMs: 200 });
+    runtime.commitBatch();
+    hooks.setTime(LAYER_FADE_MS + 200);
+    hooks.flushFrame();
+    expect(paintOf(map, "nli-investigation-alarm-circles", "circle-opacity")).toBe(0);
+    expect(hidden).toEqual(["overlay"]);
+  });
+});

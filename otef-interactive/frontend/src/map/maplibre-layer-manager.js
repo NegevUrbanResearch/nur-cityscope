@@ -13,6 +13,7 @@ import {
   INVESTIGATION_ALARMS_FULL_ID,
   INVESTIGATION_LINES_FULL_ID,
   INVESTIGATION_POLYGONS_FULL_ID,
+  NLI_PLAYABLE_IDS,
 } from "../shared/nli-investigation-beats.js";
 import { getLayerLifecycleRuntime, resolveLayerFadeMs } from "../shared/layer-lifecycle-fade.js";
 import { opacityChannelsForLayerType } from "../shared/layer-opacity-expression.js";
@@ -23,6 +24,8 @@ const TIMELINE_RENDERER_FULL_IDS = new Set([
   INVESTIGATION_LINES_FULL_ID,
   INVESTIGATION_ALARMS_FULL_ID,
 ]);
+const PEOPLE_FULL_ID = "nli.people";
+const INSTANT_HIDE_FULL_IDS = new Set([PEOPLE_FULL_ID, ...NLI_PLAYABLE_IDS]);
 
 /**
  * Opacity paint keys that slideshow staging can force to 0. Only when the
@@ -1315,6 +1318,19 @@ function syncLayerGroupsToMap(map, layerGroups, layerStyleOptions, stagedMeta) {
   }
 }
 
+function dropInstantHideMembers(runtime, state, next) {
+  const drop = [];
+  for (const id of state.lifecycleDesiredIds) {
+    if (!next.has(id) && INSTANT_HIDE_FULL_IDS.has(id)) drop.push(id);
+  }
+  if (!drop.length) return;
+  runtime.settleHiddenIds(drop);
+  const dropSet = new Set(drop);
+  state.lifecycleDesiredIds = new Set(
+    [...state.lifecycleDesiredIds].filter((id) => !dropSet.has(id)),
+  );
+}
+
 export function applyLayerGroupsToMap(map, layerGroups, layerStyleOptions) {
   if (!map) return;
   const joinBatch = layerStyleOptions?.lifecycle?.joinBatch === true;
@@ -1328,6 +1344,7 @@ export function applyLayerGroupsToMap(map, layerGroups, layerStyleOptions) {
   }
   const runtime = getLayerLifecycleRuntime(map);
   const next = new Set(registryFullIds(enabledFullIds));
+  if (joinBatch || durationMs > 0) dropInstantHideMembers(runtime, state, next);
   if (joinBatch) {
     if (durationMs > 0) adoptMountedIntoPending(map, state);
     state.lifecycleDesiredIds = next;
