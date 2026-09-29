@@ -112,10 +112,39 @@ export function migrateNamesWallToV4(config, warnings = []) {
 }
 
 export function migrateNamesWallToV5(config, warnings = []) {
-  if (!config || ![1, 2, 3, 4, 5].includes(config.schemaVersion)) throw new Error('projection config must be schema version 1, 2, 3, 4, or 5');
-  if (config.schemaVersion === 5) return structuredClone(config);
+  if (!config || typeof config.schemaVersion !== 'number' || ![1, 2, 3, 4, 5, 6].includes(config.schemaVersion)) {
+    throw new Error('projection config must be schema version 1, 2, 3, 4, 5, or 6');
+  }
+  if (config.schemaVersion === 6 || config.schemaVersion === 5) return structuredClone(config);
   const result = migrateNamesWallToV4(config, warnings);
   result.namesWall.profiles.wall.inwardShiftPercent = 0;
   result.schemaVersion = 5;
+  return result;
+}
+
+export function normalizeRotationDeg(value) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) throw new TypeError('invalid rotation');
+  return ((value + 180) % 360 + 360) % 360 - 180;
+}
+
+export function validateNamesWallV6(value, path = 'namesWall', errors = {}) {
+  if (!keys(value, ['activeMode', 'innerEdgeInsetPx', 'profiles', 'rotateDeg'], path, errors)) return errors;
+  const angle = value.rotateDeg;
+  if (typeof angle !== 'number' || !Number.isFinite(angle) || angle < -180 || angle > 180) errors[`${path}.rotateDeg`] = 'must be a finite number between -180 and 180';
+  const rest = { ...value };
+  delete rest.rotateDeg;
+  validateNamesWallV5(rest, path, errors);
+  return errors;
+}
+
+export function migrateNamesWallToV6(config, rotateDeg, warnings = []) {
+  if (!config || typeof config.schemaVersion !== 'number' || ![1, 2, 3, 4, 5, 6].includes(config.schemaVersion)) {
+    throw new Error('projection config must be schema version 1, 2, 3, 4, 5, or 6');
+  }
+  if (config.schemaVersion === 6) return structuredClone(config);
+  const angle = normalizeRotationDeg(rotateDeg);
+  const result = migrateNamesWallToV5(config, warnings);
+  result.namesWall.rotateDeg = angle;
+  result.schemaVersion = 6;
   return result;
 }

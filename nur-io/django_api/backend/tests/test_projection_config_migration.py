@@ -12,6 +12,12 @@ from backend.models import OTEFProjectionCalibration, Table
 
 
 class ProjectionConfigMigrationTests(SimpleTestCase):
+    def test_0030_does_not_guess_a_heading(self):
+        import importlib
+        migration = importlib.import_module('backend.migrations.0030_otefviewportstate_settlement_names').Migration
+        self.assertFalse(any(operation.__class__.__name__ == 'RunPython' for operation in migration.operations))
+        self.assertEqual(migration.dependencies, [('backend', '0029_otefviewportstate_clock_legend_layout_revisions')])
+
     def test_v5_conversion_preserves_envelope_and_historical_v4(self):
         legacy = legacy_projection_config_defaults()
         original = {'id': 'original', 'name': 'Original calibration', 'config': legacy, 'readOnly': True}

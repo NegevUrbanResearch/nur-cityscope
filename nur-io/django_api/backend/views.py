@@ -1,3 +1,4 @@
+from django.core.exceptions import RequestDataTooBig
 from django.shortcuts import render
 from django.db import models, transaction
 from django.db.models import Q
@@ -65,6 +66,18 @@ from .otef_legend_settings import (
     LEGEND_SPANS,
     normalize_legend_settings,
     validate_legend_slot_layout,
+)
+from .otef_settlement_names import (
+    SettlementNameConflict,
+    SettlementNameInitializationRequired,
+    SettlementNameRejected,
+    normalize_settlement_name_settings,
+    write_settlement_name_settings,
+)
+from .projection_name_initialization import (
+    InitializationConflict,
+    InitializationRejected,
+    initialize_projection_name_settings,
 )
 from .otef_narrative import (
     NARRATIVE_IDS,
@@ -573,6 +586,10 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
         return queryset
 
     def update(self, request, *args, **kwargs):
+        data = request.data if isinstance(request.data, dict) else {}
+        if {"settlement_name_settings", "settlement_name_revision"} & set(data):
+            serializer = self.get_serializer(self.get_object(), data=data, partial=kwargs.get("partial", False))
+            serializer.is_valid(raise_exception=True)
         return Response(
             {"error": "Use the by-table endpoint for viewport state updates"},
             status=status.HTTP_405_METHOD_NOT_ALLOWED,
@@ -1021,6 +1038,125 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
             metadata = {"sourceId": payload.get("sourceId"), "timestamp": payload.get("timestamp")}
             transaction.on_commit(lambda: self._broadcast_legend_settings(table.name, dict(change), metadata))
         return Response({"status": "ok", "action": "set_legend_settings", **change})
+
+    def _broadcast_settlement_names(self, table_name, settings, revision, metadata):
+        channel_layer = get_channel_layer()
+        if not channel_layer:
+            return
+        meta = metadata or {}
+        async_to_sync(channel_layer.group_send)("otef_channel", {
+            "type": "broadcast_message",
+            "message": {
+                "type": "otef_settlement_names_changed",
+                "table": table_name,
+                "sourceId": meta.get("sourceId"),
+                "timestamp": meta.get("timestamp"),
+                "settlementNameSettings": settings,
+                "settlementNameRevision": revision,
+            },
+        })
+
+    def _read_bounded(self, reader, limit):
+        if not callable(reader):
+            return b""
+        chunks = []
+        total = 0
+        while total <= limit:
+            want = min(65536, limit + 1 - total)
+            try:
+                piece = reader(want)
+            except AssertionError:
+                owner = getattr(reader, "__self__", None)
+                try:
+                    available = len(owner)
+                except TypeError:
+                    break
+                if not isinstance(available, int) or available <= 0:
+                    break
+                piece = reader(min(available, want))
+            if not piece:
+                break
+            if isinstance(piece, str):
+                piece = piece.encode("utf-8")
+            chunks.append(piece)
+            total += len(piece)
+        return b"".join(chunks)
+
+    def _json_body_bytes(self, request):
+        django_request = getattr(request, "_request", request)
+        cached = getattr(django_request, "_json_body_bytes_cache", None)
+        if cached is not None:
+            return cached
+        header = django_request.META.get("CONTENT_LENGTH")
+        try:
+            declared = int(header) if header not in (None, "") else None
+        except (TypeError, ValueError):
+            declared = None
+        if declared not in (None, 0):
+            try:
+                raw = django_request.body
+            except RequestDataTooBig:
+                raw = b"\0" * (256 * 1024 + 1)
+        elif getattr(django_request, "_read_started", False):
+            raw = getattr(django_request, "_body", b"") or b""
+        else:
+            reader = getattr(getattr(django_request, "_stream", None), "_read", None)
+            raw = self._read_bounded(reader, 256 * 1024)
+        if not isinstance(raw, (bytes, bytearray)):
+            raw = b""
+        django_request._json_body_bytes_cache = bytes(raw)
+        return django_request._json_body_bytes_cache
+
+    def _body_too_large(self, request):
+        return len(self._json_body_bytes(request)) > 256 * 1024
+
+    def _set_settlement_names_command(self, table, request):
+        if self._body_too_large(request):
+            return Response({"error": "body too large"}, status=status.HTTP_400_BAD_REQUEST)
+        payload = request.data if isinstance(request.data, dict) else {}
+        try:
+            with transaction.atomic():
+                settings, revision = write_settlement_name_settings(
+                    table.name,
+                    payload,
+                    payload.get("baseRevision"),
+                    payload.get("sourceId"),
+                    payload.get("timestamp"),
+                )
+                metadata = {"sourceId": payload.get("sourceId"), "timestamp": payload.get("timestamp")}
+                transaction.on_commit(lambda: self._broadcast_settlement_names(table.name, settings, revision, metadata))
+        except SettlementNameInitializationRequired:
+            return Response({
+                "error": "initialization_required",
+                "settlementNameSettings": {},
+                "settlementNameRevision": 0,
+            }, status=status.HTTP_409_CONFLICT)
+        except SettlementNameConflict as exc:
+            return Response({
+                "error": "conflict",
+                "settlementNameSettings": exc.settings,
+                "settlementNameRevision": exc.revision,
+            }, status=status.HTTP_409_CONFLICT)
+        except SettlementNameRejected as exc:
+            return Response({"error": exc.error}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({
+            "status": "ok",
+            "action": "set_settlement_names",
+            "settlementNameSettings": settings,
+            "settlementNameRevision": revision,
+        })
+
+    def _initialize_projection_name_settings_command(self, table, request):
+        if self._body_too_large(request):
+            return Response({"error": "body too large"}, status=status.HTTP_400_BAD_REQUEST)
+        payload = request.data if isinstance(request.data, dict) else {}
+        try:
+            result = initialize_projection_name_settings(table.name, payload)
+        except InitializationConflict as exc:
+            return Response({"error": "conflict", **exc.snapshots}, status=status.HTTP_409_CONFLICT)
+        except InitializationRejected as exc:
+            return Response({"error": exc.error}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(result)
 
     def _narrative_presentation_command(self, table, request):
         payload = request.data if isinstance(request.data, dict) else {}
@@ -1501,6 +1637,7 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
             protected_layout_fields = {
                 "nli_clock_layout", "nli_clock_layout_revision",
                 "legend_settings", "legend_layout_revision",
+                "settlement_name_settings", "settlement_name_revision",
             }
             if protected_layout_fields.intersection(request.data.keys()):
                 return Response(
@@ -1747,6 +1884,8 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
             'nli_clock_layout_revision': state.nli_clock_layout_revision,
             'legend_settings': normalize_legend_settings(state.legend_settings),
             'legend_layout_revision': state.legend_layout_revision,
+            'settlement_name_settings': normalize_settlement_name_settings(state.settlement_name_settings),
+            'settlement_name_revision': state.settlement_name_revision,
             'updated_at': state.updated_at.isoformat() if state.updated_at else None,
         }
 
@@ -2353,6 +2492,9 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
         """
         from django.shortcuts import get_object_or_404
 
+        if self._body_too_large(request):
+            return Response({"error": "body too large"}, status=status.HTTP_400_BAD_REQUEST)
+
         table = get_object_or_404(Table, name=table_name)
         state, created = OTEFViewportState.objects.get_or_create(
             table=table,
@@ -2385,6 +2527,12 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
 
         if action == "set_legend_settings":
             return self._set_legend_settings_command(table, request)
+
+        if action == "set_settlement_names":
+            return self._set_settlement_names_command(table, request)
+
+        if action == "initialize_projection_name_settings":
+            return self._initialize_projection_name_settings_command(table, request)
 
         if action == "narrative_presentation":
             return self._narrative_presentation_command(table, request)

@@ -1,5 +1,6 @@
 import { describe, expect, test, vi } from "vitest";
-import { DEFAULT_PROJECTION_CONFIG as DEFAULTS } from "../../frontend/src/shared/projection-config-schema.js";
+import { DEFAULT_PROJECTION_CONFIG as DEFAULTS, LEGACY_DEFAULT_PROJECTION_CONFIG } from "../../frontend/src/shared/projection-config-schema.js";
+import { migrateNamesWallToV5 } from "../../frontend/src/shared/nli-name-wall-config.js";
 import {
   FIELD_DESCRIPTORS,
   NAMES_WALL_DESCRIPTORS,
@@ -183,6 +184,7 @@ describe("projection config controller", () => {
     socketHandlers.get('otef_narrative_scene_changed')({ datasetVersion });
     await vi.waitFor(() => expect(candidateValidator.validateCandidate).toHaveBeenCalledTimes(2));
     expect(candidateValidator.validateCandidate.mock.calls[1][0].identity).toBe(candidateValidator.validateCandidate.mock.calls[0][0].identity);
+    expect(handlers.has('storage')).toBe(false);
     api.dispose(); expect(socketHandlers.has('otef_person_selection_changed')).toBe(false);
     expect(handlers.has('storage')).toBe(false); globalThis.document = previousDocument;
   });
@@ -428,6 +430,7 @@ describe("projection config controller", () => {
     globalThis.document = documentStub();
     const legacy = clone(DEFAULTS);
     legacy.schemaVersion = 1;
+    legacy.pre.tx = 0.044;
     for (const output of ["left", "right"]) {
       delete legacy.outputs[output].presentationEffect;
       delete legacy.outputs[output].warp;
@@ -437,7 +440,9 @@ describe("projection config controller", () => {
     const api = mountProjectionConfig(root, { client, onImport: async () => ({ name: "Legacy checkpoint", config: legacy }) });
     const importedInput = find(root, (node) => node.attributes?.["aria-label"] === "Import calibration");
     importedInput.files = [{}]; importedInput.dispatch("change");
-    await vi.waitFor(() => expect(client.getState().draft.schemaVersion).toBe(5));
+    await vi.waitFor(() => expect(client.getState().draft.pre.tx).toBe(0.044));
+    expect(client.getState().draft.schemaVersion).toBe(6);
+    expect(client.getState().draft.namesWall.rotateDeg).toBe(DEFAULTS.namesWall.rotateDeg);
     expect(client.getState().draft.pre).toEqual(legacy.pre);
     expect(client.getState().draft.outputs.left.warp.baseline.type).toBe("identity");
     expect(client.getState().draft.outputs.right.warp.grid.offsets).toHaveLength(56);
@@ -735,6 +740,92 @@ describe("projection config controller", () => {
     api.dispose(); globalThis.document = previousDocument;
   });
 
+  test('wall rotation is a shared top-level field and obeys Live off', () => {
+    const previousDocument = globalThis.document;
+    globalThis.document = documentStub();
+    const root = element('main');
+    const client = fakeClient();
+    client.setLive(false);
+    const before = clone(client.getState().snapshot.config.outputs);
+    const api = mountProjectionConfig(root, { client });
+    try {
+      const node = find(root, item => item.dataset?.node === 'names-wall');
+      const input = find(node, item => item.dataset?.field === 'namesWall.rotateDeg' && item.dataset.input === 'number');
+      expect(input.value).toBe('35');
+      input.value = '70'; input.dispatch('blur');
+      expect(client.getState().draft.namesWall.rotateDeg).toBe(70);
+      expect(client.getState().draft.namesWall.profiles.wall.rotateDeg).toBeUndefined();
+      expect(client.getState().draft.namesWall.profiles.model.rotateDeg).toBeUndefined();
+      expect(client.getState().snapshot.config.namesWall.rotateDeg).toBe(35);
+      expect(client.getState().snapshot.config.outputs).toEqual(before);
+      expect(client.getState().draft.pre.rotateDeg).toBe(DEFAULTS.pre.rotateDeg);
+      expect(client.apply).not.toHaveBeenCalled();
+      const mode = find(node, (item) => item.attributes?.['aria-label'] === 'Names wall profile');
+      mode.value = 'model'; mode.dispatch('change');
+      expect(input.value).toBe('70');
+      expect(client.getState().draft.namesWall.rotateDeg).toBe(70);
+    } finally {
+      api.dispose(); globalThis.document = previousDocument;
+    }
+  });
+
+  test('empty and out-of-range wall rotation keeps the previous draft', () => {
+    const previousDocument = globalThis.document;
+    globalThis.document = documentStub();
+    const root = element('main');
+    const client = fakeClient();
+    const api = mountProjectionConfig(root, { client });
+    try {
+      const node = find(root, (item) => item.dataset?.node === 'names-wall');
+      const input = find(node, (item) => item.dataset?.field === 'namesWall.rotateDeg' && item.dataset.input === 'number');
+      const error = find(node, (item) => item.dataset?.errorFor === 'namesWall.rotateDeg');
+      input.value = ''; input.dispatch('blur');
+      expect(client.getState().draft.namesWall.rotateDeg).toBe(35);
+      expect(error.textContent).toMatch(/finite number/i);
+      input.value = '181'; input.dispatch('blur');
+      expect(client.getState().draft.namesWall.rotateDeg).toBe(35);
+      expect(error.textContent).toMatch(/between -180 and 180/);
+      expect(client.getState().snapshot.config.namesWall.rotateDeg).toBe(35);
+    } finally {
+      api.dispose(); globalThis.document = previousDocument;
+    }
+  });
+
+  test('preset load and a V6 import use the saved wall rotation', async () => {
+    const previousDocument = globalThis.document;
+    globalThis.document = documentStub();
+    const root = element('main');
+    const client = fakeClient();
+    const turned = clone(DEFAULTS);
+    turned.namesWall.rotateDeg = 12;
+    const snapshot = clone(client.getState().snapshot);
+    snapshot.presets.push({ id: 'turned', name: 'Turned', config: turned, readOnly: false });
+    client.hydrate(snapshot);
+    const imported = clone(DEFAULTS);
+    imported.namesWall.rotateDeg = 80;
+    const api = mountProjectionConfig(root, { client, onImport: async () => JSON.stringify({
+      schemaVersion: 6, name: 'Turned file', config: imported,
+    }) });
+    try {
+      const presets = find(root, (item) => item.attributes?.['aria-label'] === 'Preset');
+      presets.value = 'turned';
+      presets.dispatch('change');
+      find(root, (item) => item.dataset?.action === 'load').dispatch('click');
+      await vi.waitFor(() => expect(client.getState().draft.namesWall.rotateDeg).toBe(12));
+      const input = find(root, (item) => item.dataset?.field === 'namesWall.rotateDeg' && item.dataset.input === 'number');
+      expect(input.value).toBe('12');
+      expect(client.getState().draft.pre.rotateDeg).toBe(DEFAULTS.pre.rotateDeg);
+      const importedInput = find(root, (item) => item.attributes?.['aria-label'] === 'Import calibration');
+      importedInput.files = [{}];
+      importedInput.dispatch('change');
+      await vi.waitFor(() => expect(client.getState().draft.namesWall.rotateDeg).toBe(80));
+      expect(client.getState().draft.namesWall.profiles.wall.rotateDeg).toBeUndefined();
+      expect(client.getState().snapshot.config.namesWall.rotateDeg).toBe(35);
+    } finally {
+      api.dispose(); globalThis.document = previousDocument;
+    }
+  });
+
   test("Names wall edits the active profile and preserves the other profile", () => {
     const previousDocument = globalThis.document;
     globalThis.document = documentStub();
@@ -766,6 +857,7 @@ describe("projection config controller", () => {
 
   test("Names wall numeric descriptors use the shared integer bounds", () => {
     expect(NAMES_WALL_DESCRIPTORS.map(({ path, min, max, step }) => [path, min, max, step])).toEqual([
+      ["namesWall.rotateDeg", -180, 180, 1],
       ["namesWall.requestedFontPx", 1, 48, 1],
       ["namesWall.spacingPx", 0, 32, 1], ["namesWall.edgeInsetPx", 0, 256, 1],
       ["namesWall.inwardShiftPercent", 0, 100, 1],
@@ -829,5 +921,51 @@ describe("projection config controller", () => {
     expect(outputController.identifyDisplays).not.toHaveBeenCalled();
     expect(status.textContent).toMatch(/workstation-only/i);
     api.dispose(); globalThis.document = previousDocument;
+  });
+
+  test("initialized import converts a V5 checkpoint with the acknowledged wall angle", async () => {
+    const previousDocument = globalThis.document;
+    globalThis.document = documentStub();
+    const root = element("main");
+    const client = fakeClient();
+    const snapshot = clone(client.getState().snapshot);
+    snapshot.config.namesWall.rotateDeg = 70;
+    snapshot.presets[0].config.namesWall.rotateDeg = 70;
+    client.hydrate(snapshot);
+    const v5 = migrateNamesWallToV5(clone(LEGACY_DEFAULT_PROJECTION_CONFIG));
+    v5.pre.tx = 0.21;
+    v5.namesWall.profiles.wall.inwardShiftPercent = 40;
+    const api = mountProjectionConfig(root, { client, onImport: async () => ({ name: "Old desk", config: v5 }) });
+    const importedInput = find(root, (node) => node.attributes?.["aria-label"] === "Import calibration");
+    importedInput.files = [{}];
+    importedInput.dispatch("change");
+    await vi.waitFor(() => expect(client.getState().draft.pre.tx).toBe(0.21));
+    expect(client.getState().draft.schemaVersion).toBe(6);
+    expect(client.getState().draft.namesWall.rotateDeg).toBe(70);
+    expect(client.getState().draft.namesWall.profiles.wall.inwardShiftPercent).toBe(40);
+    api.dispose();
+    globalThis.document = previousDocument;
+  });
+
+  test("initialized file import converts a V1 document with the acknowledged wall angle", async () => {
+    const previousDocument = globalThis.document;
+    globalThis.document = documentStub();
+    const root = element("main");
+    const client = fakeClient();
+    const snapshot = clone(client.getState().snapshot);
+    snapshot.config.namesWall.rotateDeg = 70;
+    snapshot.presets[0].config.namesWall.rotateDeg = 70;
+    client.hydrate(snapshot);
+    const legacy = clone(LEGACY_DEFAULT_PROJECTION_CONFIG);
+    legacy.pre.tx = 0.033;
+    const api = mountProjectionConfig(root, { client });
+    const importedInput = find(root, (node) => node.attributes?.["aria-label"] === "Import calibration");
+    importedInput.files = [{ text: async () => JSON.stringify({ schemaVersion: 1, name: "Legacy file", config: legacy }) }];
+    importedInput.dispatch("change");
+    await vi.waitFor(() => expect(client.getState().draft.pre.tx).toBe(0.033));
+    expect(client.getState().draft.schemaVersion).toBe(6);
+    expect(client.getState().draft.namesWall.rotateDeg).toBe(70);
+    api.dispose();
+    globalThis.document = previousDocument;
   });
 });

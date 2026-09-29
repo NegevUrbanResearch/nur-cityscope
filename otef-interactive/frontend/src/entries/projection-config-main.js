@@ -11,6 +11,9 @@ import { createProjectionCandidateValidator, readProjectionCandidateInputs } fro
 import { disposeProjectionNameWallPreparation, prepareProjectionNameWall } from '../shared/nli-name-field-data.js';
 import { OTEF_API } from "../shared/api-client.js";
 import { createClockLayoutClient } from "../projection-config/clock-layout-client.js";
+import { createSettlementNameClient } from "../projection-config/settlement-name-client.js";
+import { loadSettlementNameCatalog } from "../shared/settlement-name-catalog.js";
+import layerRegistry from "../shared/layer-registry.js";
 
 function downloadExport(content, name) {
   if (typeof document === "undefined" || typeof URL?.createObjectURL !== "function") return;
@@ -54,6 +57,17 @@ export async function bootProjectionConfig({ document = globalThis.document, loc
     socket: ws,
   });
   try { await layoutClient.hydrate({ forceFresh: true }); } catch { /* The client retains hydration health for the editor's Retry action. */ }
+  const settlementClient = createSettlementNameClient({
+    getSnapshot: (options) => OTEF_API.getState("otef", options),
+    writeOperation: (body) => OTEF_API.setSettlementNames("otef", body, { sourceId: createUuid() }),
+    socket: ws,
+  });
+  try { await settlementClient.hydrate({ forceFresh: true }); } catch { /* Retry stays available when settings are missing or uninitialized. */ }
+  let catalog = { entries: [] };
+  try {
+    await layerRegistry.init();
+    catalog = await loadSettlementNameCatalog({ registry: layerRegistry, fetchImpl });
+  } catch { catalog = { entries: [] }; }
   const client = createProjectionConfigClient({ fetchImpl, socket: ws, sourceId: createUuid(), onConflict: (message) => mounted?.setConflict?.(message) });
   const outputLocation = location?.href ? new URL("./projection.html", location.href).href : "projection.html";
   const outputController = createOutputWindowController({ location: outputLocation, open: globalThis.open, screenApi: globalThis, navigatorApi: globalThis.navigator, storage: (() => { try { return globalThis.localStorage; } catch { return null; } })() });
@@ -68,11 +82,11 @@ export async function bootProjectionConfig({ document = globalThis.document, loc
       return loadCapturedProjectionAsset({ fetchImpl, spanId: side, captured: await captured, signal });
     },
     prepareWall: prepareProjectionNameWall,
-    readInputs: (signal) => readProjectionCandidateInputs({ storage: globalThis.localStorage, fetchImpl, signal }),
+    readInputs: (signal) => readProjectionCandidateInputs({ fetchImpl, signal }),
     disposePreparation: disposeProjectionNameWallPreparation,
   });
-  mounted = mountProjectionConfig(root, { client, socket: ws, layoutClient, outputController, candidateValidator, share: () => shareConfigUrl({ location, fetchImpl, document }), onExport: downloadExport, onImport: readImportFile });
-  return () => { mounted.dispose(); layoutClient.destroy(); if (ownsSocket) ws.disconnect?.(); };
+  mounted = mountProjectionConfig(root, { client, socket: ws, layoutClient, settlementClient, catalog, outputController, candidateValidator, share: () => shareConfigUrl({ location, fetchImpl, document }), onExport: downloadExport, onImport: readImportFile });
+  return () => { mounted.dispose(); layoutClient.destroy(); settlementClient.destroy(); if (ownsSocket) ws.disconnect?.(); };
 }
 
 if (typeof document !== "undefined") void bootProjectionConfig().catch((error) => console.error("[projection-config] boot failed", error));

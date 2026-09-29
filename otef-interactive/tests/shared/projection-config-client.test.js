@@ -1,7 +1,7 @@
 import { beforeEach, expect, test, vi } from 'vitest';
 import { DEFAULT_PROJECTION_CONFIG as DEFAULTS, LEGACY_DEFAULT_PROJECTION_CONFIG } from '../../frontend/src/shared/projection-config-schema.js';
 import { migrateProjectionConfigToV2 } from '../../frontend/src/shared/projection-warp-schema.js';
-import { migrateNamesWallToV3 } from '../../frontend/src/shared/nli-name-wall-config.js';
+import { migrateNamesWallToV3, migrateNamesWallToV5 } from '../../frontend/src/shared/nli-name-wall-config.js';
 import { createProjectionConfigClient, TD_MIGRATION_PRESET_ID, validateProjectionConfigSnapshot } from '../../frontend/src/shared/projection-config-client.js';
 
 const clone = (value) => JSON.parse(JSON.stringify(value));
@@ -616,6 +616,49 @@ for (const [label, body, status] of [
     await applied;
   });
 }
+
+test('a V5 snapshot requires initialization and does not seed wall rotation or write', async () => {
+  const h = harness();
+  const v5 = migrateNamesWallToV5(LEGACY_DEFAULT_PROJECTION_CONFIG);
+  const snapshot = h.stateFor(4, v5);
+  snapshot.presets[0].config = clone(v5);
+  const started = h.client.start();
+  h.resolveNext(snapshot);
+  await started;
+  const state = h.client.getState();
+  expect(state.initializationRequired).toBe(true);
+  expect(state.draft?.namesWall?.rotateDeg).toBeUndefined();
+  expect(h.pendingRequests()).toHaveLength(0);
+  await expect(h.client.apply()).rejects.toThrow(/initialization/i);
+  expect(h.pendingRequests()).toHaveLength(0);
+  h.client.stop();
+});
+
+test('schema_changed keeps the unsaved draft and does not retry', async () => {
+  const h = harness();
+  const started = h.client.start();
+  h.resolveNext(h.stateFor(0));
+  await started;
+  h.client.setLive(false);
+  const edited = clone(DEFAULTS);
+  edited.pre = { ...edited.pre, tx: 0.44 };
+  h.client.setDraft(edited);
+  const pending = h.client.apply();
+  const result = pending.catch((error) => error);
+  await h.advance(100);
+  expect(h.pendingRequests()).toHaveLength(1);
+  h.resolveNext({ error: 'schema_changed', requiredSchemaVersion: 6, state: h.stateFor(1) }, 409);
+  await h.flushPromises();
+  const error = await result;
+  expect(error.schemaChanged).toBe(true);
+  const state = h.client.getState();
+  expect(state.schemaChanged).toBe(true);
+  expect(state.hasLocalDraft).toBe(true);
+  expect(state.draft.pre.tx).toBe(0.44);
+  await h.advance(1000);
+  expect(h.pendingRequests()).toHaveLength(0);
+  h.client.stop();
+});
 
 test('a deferred control timer cannot start a second POST during Apply', async () => {
   const h = harness();

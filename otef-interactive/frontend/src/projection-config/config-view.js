@@ -4,6 +4,7 @@ import { createNodeCanvas } from "./node-canvas.js";
 import { createWarpEditorDialog } from "./warp-editor-dialog.js";
 import { bindWarpPointerInput } from "./warp-pointer-input.js";
 import { createClockLayoutParameters, createClockLayoutStatus } from "./clock-layout-controls.js";
+import { createSettlementNameControls } from "./settlement-name-controls.js";
 
 const docFor = (root) => root?.ownerDocument || globalThis.document;
 const WARP_OUTPUT_WIDTH = 1920;
@@ -40,6 +41,9 @@ function button(doc, label, action, className = "") {
 
 function pathParts(path) { return path.split("."); }
 function readPath(config, path) { return pathParts(path).reduce((value, key) => value?.[key], config); }
+function namesWallProfileScoped(path) {
+  return path.startsWith("namesWall.") && path !== "namesWall.rotateDeg" && !path.startsWith("namesWall.innerEdgeInsetPx.");
+}
 
 function displayValue(descriptor, value) {
   if (!Number.isFinite(Number(value))) return "";
@@ -108,6 +112,12 @@ export function createProjectionConfigView(root, {
   onNamesMode = () => {},
   onNode = () => {},
   onOpenClockEditor = () => {},
+  onOpenSettlementEditor = () => {},
+  onSettlementOutput = () => {},
+  onSettlementCitycode = () => {},
+  onSettlementPosition = () => {},
+  onSettlementStyle = () => {},
+  onSettlementRecovery = () => {},
   onClockScene = () => {},
   onClockElement = () => {},
   onClockField = () => {},
@@ -216,6 +226,7 @@ export function createProjectionConfigView(root, {
   graphViewport.append(graphControls, graph);
   const graphNodes = [
     ["content", "Content", "Feeds both projector outputs"], ["names-wall", "Names wall", "NLI memorial-name profile; does not change projection geometry"],
+    ["settlement-names", "Settlement names", "Place settlement labels on the left and right projectors"],
     ["clock-gis", "GIS Clock", "Clock layouts for GIS scenes"], ["clock-projection", "Projection Clock / Legend", "Shared left projection overlays"],
     ["pre", "Shared pre-transform", "Affects both projectors"],
     ["left-crop", "Left Crop", "Left projector"], ["right-crop", "Right Crop", "Right projector"],
@@ -230,6 +241,7 @@ export function createProjectionConfigView(root, {
   const modelSpacingHelpControls = [];
   const pageSpacingResetControls = [];
   const namesWallUnitsHelp = "Font, spacing, and edge inset use reference-plane pixels. Inner-edge clearances reserve final-output pixels in both modes and repack names.";
+  const namesWallRotationHelp = "Rotation applies to both wall and model profiles and follows Live, Apply, and Save.";
   function pageSpacingReset() {
     const reset = button(doc, "Reset page spacing to 0%", "reset-page-spacing");
     reset.addEventListener("click", (event) => {
@@ -268,7 +280,8 @@ export function createProjectionConfigView(root, {
     handle.append(make(doc, "span", { className: "node-grip", ariaHidden: "true" }, "⋮⋮"), make(doc, "span", {}, label));
     card.append(handle, make(doc, "p", { className: "node-description" }, description));
     if (id === "names-wall") {
-      card.append(namesModeControl(), make(doc, "p", { className: "names-wall-units" }, namesWallUnitsHelp));
+      card.append(namesModeControl(), make(doc, "p", { className: "names-wall-units" }, namesWallUnitsHelp),
+        make(doc, "p", { className: "names-wall-units names-wall-rotation" }, namesWallRotationHelp));
     }
     let sceneControl = null;
     let elementControl = null;
@@ -297,6 +310,11 @@ export function createProjectionConfigView(root, {
       openButton.addEventListener("click", (event) => { event.stopPropagation?.(); cancelActiveDrag(); onNode(id); dialog.open({ side: id.startsWith("right-") ? "right" : "left", mode: id.endsWith("-grid") ? "grid" : "keystone", opener: openButton }); });
       card.appendChild(openButton);
     }
+    if (id === "settlement-names") {
+      const openButton = button(doc, "Open editor", "settlement-editor-open", "settlement-open-button");
+      openButton.addEventListener("click", (event) => { event.stopPropagation?.(); cancelActiveDrag(); onNode(id); onOpenSettlementEditor(); });
+      card.appendChild(openButton);
+    }
     if (id === "clock-gis" || id === "clock-projection") {
       const layoutStatus = createClockLayoutStatus(doc, {
         onRetry: () => onClockRecovery("retry", id), onLoad: () => onClockRecovery("load", id),
@@ -310,7 +328,7 @@ export function createProjectionConfigView(root, {
       });
       card.appendChild(openButton);
     }
-    if (id !== "names-wall") {
+    if (id !== "names-wall" && id !== "settlement-names") {
       const portIn = make(doc, "span", { className: "node-port port-in", ariaHidden: "true", dataset: { port: "in" } });
       const portOut = make(doc, "span", { className: "node-port port-out", ariaHidden: "true", dataset: { port: "out" } });
       card.append(portIn, portOut);
@@ -321,6 +339,7 @@ export function createProjectionConfigView(root, {
       event.preventDefault();
       onNode(id);
       if (event.key === "Enter" && (id === "clock-gis" || id === "clock-projection")) onOpenClockEditor(id);
+      if (event.key === "Enter" && id === "settlement-names") onOpenSettlementEditor();
     });
     nodeMap.set(id, card); graph.appendChild(card);
   }
@@ -332,6 +351,7 @@ export function createProjectionConfigView(root, {
   mobileOpen.addEventListener("click", () => {
     const id = selector.value;
     if (id === "clock-gis" || id === "clock-projection") { cancelActiveDrag(); onNode(id); onOpenClockEditor(id); return; }
+    if (id === "settlement-names") { cancelActiveDrag(); onNode(id); onOpenSettlementEditor(); return; }
     if (!id.endsWith("-keystone") && !id.endsWith("-grid")) return;
     cancelActiveDrag(); onNode(id); dialog.open({ side: id.startsWith("right-") ? "right" : "left", mode: id.endsWith("-grid") ? "grid" : "keystone", opener: mobileOpen });
   });
@@ -349,6 +369,7 @@ export function createProjectionConfigView(root, {
   controls.inspectorFields = make(doc, "div", { className: "inspector-fields" });
   controls.namesWallInspector = make(doc, "section", { className: "names-wall-inspector", ariaLabel: "Names wall profile controls" });
   controls.namesWallInspector.append(namesModeControl(), make(doc, "p", { className: "names-wall-units" }, namesWallUnitsHelp),
+    make(doc, "p", { className: "names-wall-units names-wall-rotation" }, namesWallRotationHelp),
     modelSpacingHelp(), make(doc, "p", { className: "names-wall-units" }, "0 keeps the current positions. Increase to move the pages inward where space allows."), pageSpacingReset(), namesStatus());
   for (const descriptor of descriptors) { const control = renderField(doc, descriptor, onField, onNudge); fields.set(`inspector:${descriptor.path}`, control); controls.inspectorFields.appendChild(control.wrap); }
   controls.warpPanel = make(doc, "section", { className: "warp-inspector", ariaLabel: "Warp editor" });
@@ -457,7 +478,17 @@ export function createProjectionConfigView(root, {
     onRetry: () => onClockRecovery("retry", selectedGraphNode), onLoad: () => onClockRecovery("load", selectedGraphNode),
   });
   controls.clockSettings.append(clockParameters.element, clockInspectorStatus.element);
-  inspector.append(controls.inspectorTitle, controls.clockSettings, controls.namesWallInspector, controls.inspectorFields, controls.warpPanel, controls.diagram, controls.patternBranch, controls.pattern, controls.applied);
+  controls.settlementSettings = make(doc, "section", { className: "settlement-settings-inspector", ariaLabel: "Settlement name settings", hidden: true });
+  const settlementControls = createSettlementNameControls(doc, {
+    onOutput: onSettlementOutput,
+    onCitycode: onSettlementCitycode,
+    onPosition: onSettlementPosition,
+    onStyle: onSettlementStyle,
+    onRetry: () => onSettlementRecovery("retry"),
+    onLoad: () => onSettlementRecovery("load"),
+  });
+  controls.settlementSettings.appendChild(settlementControls.element);
+  inspector.append(controls.inspectorTitle, controls.clockSettings, controls.settlementSettings, controls.namesWallInspector, controls.inspectorFields, controls.warpPanel, controls.diagram, controls.patternBranch, controls.pattern, controls.applied);
   workspace.appendChild(inspector);
   app.appendChild(workspace);
   root.appendChild(app);
@@ -486,12 +517,14 @@ export function createProjectionConfigView(root, {
     canvas.setSelected(selected);
     controls.inspectorNode.textContent = graphNodes.find(([id]) => id === selected)?.[1] || selected;
     const isClockNode = selected === "clock-gis" || selected === "clock-projection";
-    mobileOpen.hidden = !(isClockNode || selected.endsWith("-keystone") || selected.endsWith("-grid"));
-    mobileOpen.textContent = isClockNode ? "Open editor" : "Open fullscreen editor";
+    const isSettlementNode = selected === "settlement-names";
+    mobileOpen.hidden = !(isClockNode || isSettlementNode || selected.endsWith("-keystone") || selected.endsWith("-grid"));
+    mobileOpen.textContent = isClockNode || isSettlementNode ? "Open editor" : "Open fullscreen editor";
     controls.clockSettings.hidden = !isClockNode;
+    controls.settlementSettings.hidden = !isSettlementNode;
     controls.clockSceneInspector.hidden = selected !== "clock-gis";
     controls.clockElementInspector.hidden = selected !== "clock-projection";
-    if (isClockNode || selected.endsWith("-keystone") || selected.endsWith("-grid")) inspector.open = true;
+    if (isClockNode || isSettlementNode || selected.endsWith("-keystone") || selected.endsWith("-grid")) inspector.open = true;
     for (const [id, card] of nodeMap) card.classList?.toggle("selected", id === selected);
     for (const descriptor of descriptors) {
       const control = fields.get(`inspector:${descriptor.path}`);
@@ -570,7 +603,7 @@ export function createProjectionConfigView(root, {
     });
     dialog.setViewBox(displayViewBox);
   };
-  const update = ({ state = {}, errors = {}, conflict = "", statusText = "", selectedNode = "pre", loadedPresetId = null, loadedPresetLoadToken = 0, statusRows = [], appliedSummary = 'Pending', outputState = {}, warpStates = {}, namesWallStatus = null, clockScene = "home", clockElement = "clock", clockLayouts = {}, clockHydration = { status: "Loading" } } = {}) => {
+  const update = ({ state = {}, errors = {}, conflict = "", statusText = "", selectedNode = "pre", loadedPresetId = null, loadedPresetLoadToken = 0, statusRows = [], appliedSummary = 'Pending', outputState = {}, warpStates = {}, namesWallStatus = null, clockScene = "home", clockElement = "clock", clockLayouts = {}, clockHydration = { status: "Loading" }, settlement = null } = {}) => {
     controls.live.checked = Boolean(state.live);
     const dirtyLocalDraft = Boolean(state.hasLocalDraft || (state.draft && state.snapshot && JSON.stringify(state.draft) !== JSON.stringify(state.snapshot.config)));
     controls.status.textContent = dirtyLocalDraft && !state.live
@@ -621,6 +654,7 @@ export function createProjectionConfigView(root, {
     const selectedClock = clockLayouts[selectedNode];
     clockInspectorStatus.render(selectedClock?.record, clockHydration);
     clockParameters.render(selectedClock?.layout, { enabled: clockHydration.status === "Saved", legend: selectedNode === "clock-projection" && clockElement === "legend" });
+    settlementControls.render(settlement || { hydration: { status: "Loading" }, enabled: false });
     controls.namesWallInspector.hidden = selectedNode !== "names-wall";
     const wallConfig = draft.namesWall;
     for (const help of modelSpacingHelpControls) help.hidden = wallConfig?.activeMode !== "model";
@@ -656,7 +690,7 @@ export function createProjectionConfigView(root, {
     setDiagramRect(controls.cropSvg?.leftVisibleRect, left ? visibleT3Rect(left) : null);
     setDiagramRect(controls.cropSvg?.rightVisibleRect, right ? visibleT3Rect(right) : null);
     for (const descriptor of descriptors) {
-      const value = descriptor.path.startsWith("namesWall.") && !descriptor.path.startsWith("namesWall.innerEdgeInsetPx.")
+      const value = namesWallProfileScoped(descriptor.path)
         ? draft.namesWall?.profiles?.[descriptor.wallOnly ? "wall" : draft.namesWall?.activeMode]?.[descriptor.path.slice("namesWall.".length)]
         : readPath(draft, descriptor.path);
       for (const prefix of [descriptor.node, "inspector"]) {
@@ -667,7 +701,7 @@ export function createProjectionConfigView(root, {
         const display = displayValue(descriptor, value);
         for (const input of [control.range, control.number]) if (input && doc.activeElement !== input) input.value = display;
         control.value.textContent = `${display}${descriptor.unit ? ` ${descriptor.unit}` : ""}`;
-        const errorPath = descriptor.path.startsWith("namesWall.") && !descriptor.path.startsWith("namesWall.innerEdgeInsetPx.") && draft.namesWall?.activeMode
+        const errorPath = namesWallProfileScoped(descriptor.path) && draft.namesWall?.activeMode
           ? `namesWall.profiles.${descriptor.wallOnly ? "wall" : draft.namesWall.activeMode}.${descriptor.path.slice("namesWall.".length)}`
           : descriptor.path;
         const fieldError = errors[errorPath] || Object.entries(errors).find(([key]) => errorPath.startsWith(`${key}.`))?.[1] || "";
@@ -683,6 +717,10 @@ export function createProjectionConfigView(root, {
     getClockEditorOpener(node) {
       if (mobileQuery?.matches && selectedGraphNode === node && !mobileOpen.hidden) return mobileOpen;
       return nodeMap.get(node)?.querySelector?.('[data-action="clock-editor-open"]') || null;
+    },
+    getSettlementEditorOpener() {
+      if (mobileQuery?.matches && selectedGraphNode === "settlement-names" && !mobileOpen.hidden) return mobileOpen;
+      return nodeMap.get("settlement-names")?.querySelector?.('[data-action="settlement-editor-open"]') || null;
     },
     cancelWarpPointer: cancelActiveDrag,
     closeWarpEditor: dialog.close,

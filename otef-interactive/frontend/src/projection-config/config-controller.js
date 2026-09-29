@@ -9,9 +9,10 @@ import { createUuid } from "../shared/uuid.js";
 import { createProjectionConfigView } from "./config-view.js";
 import { createWarpEditor } from "./warp-editor.js";
 import { loadCapturedProjectionAsset } from "../projection/projection-captured-baseline.js";
-import { migrateNamesWallToV5 } from "../shared/nli-name-wall-config.js";
-import { NLI_LABEL_HEADING_STORAGE_KEY } from "../shared/nli-label-heading.js";
+import { migrateNamesWallToV5, migrateNamesWallToV6 } from "../shared/nli-name-wall-config.js";
 import { openClockLayoutEditor } from "./clock-layout-editor-dialog.js";
+import { openSettlementNameEditor } from "./settlement-name-editor-dialog.js";
+import { shownSettlementPosition } from "./settlement-name-controls.js";
 import { createClockExhibitCueAction } from "./clock-exhibit-cue.js";
 import { OTEF_API } from "../shared/api-client.js";
 import { resourceFor, layoutFor, layoutFieldEdit } from "./clock-layout-controls.js";
@@ -37,6 +38,7 @@ const FIELD_DESCRIPTORS = [
   { path: "outputs.right.post.ty", node: "right-fit", label: "Y offset (down +)", min: -2, max: 2, step: 0.001, fine: 0.0001, unit: "%", display: "percentage", displayMin: -200, displayMax: 200, displayStep: 0.1, decimals: 2 },
 ].map((descriptor) => ({ ...descriptor, displayMin: descriptor.displayMin ?? descriptor.min, displayMax: descriptor.displayMax ?? descriptor.max, displayStep: descriptor.displayStep ?? descriptor.step }));
 const NAMES_WALL_DESCRIPTORS = [
+  { path: "namesWall.rotateDeg", node: "names-wall", label: "Rotation", min: -180, max: 180, step: 1, fine: 1, unit: "°" },
   { path: "namesWall.requestedFontPx", node: "names-wall", label: "Requested font", min: 1, max: 48, step: 1, fine: 1, unit: "px" },
   { path: "namesWall.spacingPx", node: "names-wall", label: "Name spacing", min: 0, max: 32, step: 1, fine: 1, unit: "px" },
   { path: "namesWall.edgeInsetPx", node: "names-wall", label: "Edge inset", min: 0, max: 256, step: 1, fine: 1, unit: "px" },
@@ -53,15 +55,19 @@ function setPath(value, path, next) {
   target[parts.at(-1)] = next; return result;
 }
 function descriptorFor(path) { return ALL_FIELD_DESCRIPTORS.find((descriptor) => descriptor.path === path); }
+function namesWallProfileScoped(path) {
+  return path.startsWith("namesWall.") && path !== "namesWall.rotateDeg" && !path.startsWith("namesWall.innerEdgeInsetPx.");
+}
 function resolvedFieldPath(config, path) {
   if (!path.startsWith("namesWall.")) return path;
   const field = path.slice("namesWall.".length);
   if (field === "activeMode") return "namesWall.activeMode";
+  if (field === "rotateDeg") return "namesWall.rotateDeg";
   if (field.startsWith("innerEdgeInsetPx.")) return path;
   if (field === "inwardShiftPercent") return "namesWall.profiles.wall.inwardShiftPercent";
   return `namesWall.profiles.${config.namesWall.activeMode}.${field}`;
 }
-function readField(config, path) { return path.split(".").reduce((target, key) => target?.[key], path.startsWith("namesWall.") && !path.startsWith("namesWall.innerEdgeInsetPx.") ? { namesWall: config?.namesWall?.profiles?.[path === "namesWall.inwardShiftPercent" ? "wall" : config?.namesWall?.activeMode] } : config); }
+function readField(config, path) { return path.split(".").reduce((target, key) => target?.[key], namesWallProfileScoped(path) ? { namesWall: config?.namesWall?.profiles?.[path === "namesWall.inwardShiftPercent" ? "wall" : config?.namesWall?.activeMode] } : config); }
 function normalizeConfig(config) { return config && [1, 2, 3, 4].includes(config.schemaVersion) ? migrateNamesWallToV5(config) : config; }
 function normalizeState(value) {
   if (!value || typeof value !== "object") return value;
@@ -104,7 +110,7 @@ export function projectionAppliedStatus(rows, revision) {
   return new Set(walls.map(identity)).size === 1 ? 'Applied' : 'Unconfirmed';
 }
 
-export function mountProjectionConfig(root, { client, share, onExport, onImport, socket, outputController, candidateValidator, layoutClient, clockEditorFactory = openClockLayoutEditor } = {}) {
+export function mountProjectionConfig(root, { client, share, onExport, onImport, socket, outputController, candidateValidator, layoutClient, settlementClient = null, catalog = { entries: [] }, clockEditorFactory = openClockLayoutEditor, settlementEditorFactory = openSettlementNameEditor } = {}) {
   if (!client) throw new Error("projection config client is required");
   const sourceId = createUuid();
   let selectedNode = "pre";
@@ -120,6 +126,9 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
   let activeClockEditorNode = null;
   const clockEditors = new Set();
   const clockCueActions = new Set();
+  let settlementOutput = "left";
+  let settlementCitycode = catalog.entries?.find((entry) => entry?.citycode)?.citycode || "";
+  let activeSettlementEditor = null;
   let localDraftNotification = false;
   let outputState = outputController?.getState?.() || { screens: [], assignments: { left: null, right: null }, error: "", message: "Workstation output controls unavailable." };
   let statusRows = new Map();
@@ -138,10 +147,10 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
   const win = root?.ownerDocument?.defaultView || globalThis.document?.defaultView;
   let layoutUnloadAttached = false;
   const layoutBeforeUnload = (event) => {
-    if (layoutClient?.hasUnsavedWork?.()) { event.preventDefault?.(); event.returnValue = ""; }
+    if (layoutClient?.hasUnsavedWork?.() || settlementClient?.hasUnsavedWork?.()) { event.preventDefault?.(); event.returnValue = ""; }
   };
   function syncLayoutUnload() {
-    const pending = !disposed && layoutClient?.hasUnsavedWork?.() === true;
+    const pending = !disposed && (layoutClient?.hasUnsavedWork?.() === true || settlementClient?.hasUnsavedWork?.() === true);
     if (pending === layoutUnloadAttached) return;
     layoutUnloadAttached = pending;
     if (pending) win?.addEventListener?.("beforeunload", layoutBeforeUnload);
@@ -158,8 +167,20 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     onField: handleField,
     onNudge: handleNudge,
     onNamesMode: handleNamesMode,
-    onNode: (node) => { view.cancelWarpPointer(); selectedNode = node; if (node === "clock-gis" || node === "clock-projection") syncClockEditor(node); else closeClockEditor(); if (node.endsWith("-keystone") || node.endsWith("-grid")) warpEditors[node.startsWith("right-") ? "right" : "left"].setMode(node.endsWith("-grid") ? "grid" : "keystone"); refresh(); },
+    onNode: (node) => { view.cancelWarpPointer(); selectedNode = node; if (node === "clock-gis" || node === "clock-projection") syncClockEditor(node); else closeClockEditor(); if (node === "settlement-names") syncSettlementEditor(); else closeSettlementEditor(); if (node.endsWith("-keystone") || node.endsWith("-grid")) warpEditors[node.startsWith("right-") ? "right" : "left"].setMode(node.endsWith("-grid") ? "grid" : "keystone"); refresh(); },
     onOpenClockEditor: openClockEditor,
+    onOpenSettlementEditor: openSettlementEditor,
+    onSettlementOutput: (output) => { settlementOutput = output === "right" ? "right" : "left"; activeSettlementEditor?.setSelection({ output: settlementOutput, citycode: settlementCitycode }); refresh(); },
+    onSettlementCitycode: (citycode) => { settlementCitycode = citycode; activeSettlementEditor?.setSelection({ output: settlementOutput, citycode }); refresh(); },
+    onSettlementPosition: (position) => { if (!settlementClient || !settlementCitycode) return; void settlementClient.commit({ kind: "position", output: settlementOutput, citycode: settlementCitycode }, position, { numeric: true }).catch(() => {}); },
+    onSettlementStyle: (style) => { if (!settlementClient) return; void settlementClient.commit({ kind: "style" }, style, { numeric: true }).catch(() => {}); },
+    onSettlementRecovery: (action) => {
+      if (!settlementClient || !settlementCitycode) return;
+      const target = { kind: "position", output: settlementOutput, citycode: settlementCitycode };
+      if (action === "load") settlementClient.loadSaved(target);
+      else void (settlementClient.getHydrationState?.().status === "Failed" ? settlementClient.hydrate({ forceFresh: true }) : settlementClient.retry(target)).catch(() => {});
+      refresh();
+    },
     onClockScene: (sceneId) => { clockSceneId = sceneId; activeClockEditor?.setSelection({ nodeId: "clock-gis", sceneId: clockSceneId, element: clockElement }); refresh(); },
     onClockElement: (nextElement) => { clockElement = nextElement; activeClockEditor?.setSelection({ nodeId: "clock-projection", sceneId: clockSceneId, element: clockElement }); refresh(); },
     onClockField: (key, raw) => {
@@ -207,7 +228,8 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
       appliedSummary: projectionAppliedStatus(rows, expectedRevision), outputState, warpStates,
       namesWallStatus: wallStatusForDraft(), clockScene: clockSceneId, clockElement,
       clockLayouts: layoutClient ? Object.fromEntries(["clock-gis", "clock-projection"].map((node) => [node, layoutFor(layoutClient, resourceFor(node, clockSceneId, clockElement))])) : {},
-      clockHydration: layoutClient?.getHydrationState?.() || { status: layoutClient ? "Saved" : "Loading" } });
+      clockHydration: layoutClient?.getHydrationState?.() || { status: layoutClient ? "Saved" : "Loading" },
+      settlement: settlementViewState() });
   }
   function syncClockEditor(node = activeClockEditorNode) {
     if (!activeClockEditor) return;
@@ -222,10 +244,58 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     activeClockEditor = null; activeClockEditorNode = null;
     editor.close();
   }
+  function settlementViewState() {
+    if (!settlementClient) return null;
+    const settings = settlementClient.getSnapshot()?.settings || null;
+    const positionRecord = settlementCitycode ? settlementClient.getTarget({ kind: "position", output: settlementOutput, citycode: settlementCitycode }) : null;
+    const styleRecord = settlementClient.getTarget({ kind: "style" });
+    return {
+      output: settlementOutput,
+      citycode: settlementCitycode,
+      catalog,
+      position: shownSettlementPosition(settings, positionRecord, settlementOutput, settlementCitycode),
+      style: styleRecord?.draft || styleRecord?.acknowledged || settings?.style || null,
+      positionRecord,
+      styleRecord,
+      hydration: settlementClient.getHydrationState?.() || { status: "Loading" },
+    };
+  }
+  function syncSettlementEditor() {
+    activeSettlementEditor?.setSelection({ output: settlementOutput, citycode: settlementCitycode });
+  }
+  function closeSettlementEditor() {
+    if (!activeSettlementEditor) return;
+    const editor = activeSettlementEditor;
+    activeSettlementEditor = null;
+    editor.close();
+  }
+  function openSettlementEditor() {
+    if (!settlementClient) return;
+    view.cancelWarpPointer();
+    view.closeWarpEditor();
+    closeClockEditor();
+    selectedNode = "settlement-names";
+    if (activeSettlementEditor) { syncSettlementEditor(); refresh(); return; }
+    const editor = settlementEditorFactory({
+      nodeId: "settlement-names",
+      output: settlementOutput,
+      citycode: settlementCitycode,
+      settingsClient: settlementClient,
+      catalog,
+      manageBeforeUnload: false,
+      document: root?.ownerDocument || globalThis.document,
+      onSelection: ({ output, citycode }) => { settlementOutput = output; settlementCitycode = citycode; refresh(); },
+      restoreFocus: () => view.getSettlementEditorOpener(),
+      onClose: () => { if (activeSettlementEditor === editor) activeSettlementEditor = null; },
+    });
+    activeSettlementEditor = editor;
+    refresh();
+  }
   function openClockEditor(nodeId) {
     if (!layoutClient || !["clock-gis", "clock-projection"].includes(nodeId)) return;
     view.cancelWarpPointer();
     view.closeWarpEditor();
+    closeSettlementEditor();
     selectedNode = nodeId;
     if (activeClockEditor) { syncClockEditor(nodeId); refresh(); return; }
     const editor = clockEditorFactory({ nodeId, sceneId: clockSceneId, element: clockElement, layoutClient,
@@ -321,6 +391,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     if (incomingCalibration && JSON.stringify(incomingCalibration) !== JSON.stringify(lastCalibrationConfig)) {
       lastCalibrationConfig = structuredClone(incomingCalibration);
       if (activeClockEditor && activeClockEditorNode === "clock-projection") activeClockEditor.calibrationChanged();
+      activeSettlementEditor?.calibrationChanged();
     }
     const previousRevision = state.snapshot?.revision;
     const previousSelected = state.snapshot?.selectedPresetId;
@@ -424,11 +495,15 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
   async function handleImport(file) {
     if (!file) return;
     try {
+      const rotateDeg = state.snapshot?.config?.namesWall?.rotateDeg;
       const imported = typeof onImport === "function" ? await onImport(file) : await file.text();
-      const parsed = typeof imported === "string" ? parseProjectionImport(imported) : imported?.config ? imported : parseProjectionImport(String(imported));
+      const parsed = typeof imported === "string" ? parseProjectionImport(imported, rotateDeg) : imported?.config ? imported : parseProjectionImport(String(imported), rotateDeg);
       const warnings = [...(parsed?.warnings || [])];
-      const config = parsed?.config && [1, 2, 3, 4].includes(parsed.config.schemaVersion)
-        ? migrateNamesWallToV5(parsed.config, warnings) : normalizeConfig(parsed?.config);
+      let config = parsed?.config;
+      if (config && config.schemaVersion < 6) {
+        if ([1, 2, 3, 4].includes(config.schemaVersion)) migrateNamesWallToV5(config, warnings);
+        config = migrateNamesWallToV6(config, rotateDeg);
+      } else config = normalizeConfig(config);
       const importErrors = validateProjectionConfig(config);
       if (Object.keys(importErrors).length) throw new Error(`invalid imported projection config: ${Object.entries(importErrors).map(([path, message]) => `${path} ${message}`).join("; ")}`);
       client.setLive(false); setClientDraft(config); view.setPresetName(parsed.name || ""); fieldErrors = {}; conflict = [...new Set(warnings)].join(" "); refresh();
@@ -502,12 +577,12 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     wallValidation = { identity: '', revision: null, pending: false, result: null };
     checkDraftWall();
   }
-  const onHeadingStorage = (event) => { if (event.key === NLI_LABEL_HEADING_STORAGE_KEY) void recheckInputs(); };
   const onDatasetEvent = () => { void recheckInputs(); };
   const onPageReturn = () => { void recheckInputs(); };
   const onVisibility = () => { if (globalThis.document?.visibilityState === 'visible') void recheckInputs(); };
   const unsubscribe = client.subscribe(handleState);
   const unsubscribeLayout = layoutClient?.subscribe?.(refresh);
+  const unsubscribeSettlement = settlementClient?.subscribe?.(() => { syncLayoutUnload(); refresh(); });
   const unsubscribeOutput = outputController?.subscribe?.((nextState) => { outputState = nextState; refresh(); });
   if (view.canManageDisplays) outputController?.refreshDisplays?.().catch(() => {});
   socket?.on?.("otef_projection_applied", statusMessage);
@@ -517,7 +592,6 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
   socket?.on?.("disconnect", onDisconnect);
   socket?.on?.('otef_person_selection_changed', onDatasetEvent);
   socket?.on?.('otef_narrative_scene_changed', onDatasetEvent);
-  win?.addEventListener?.('storage', onHeadingStorage);
   win?.addEventListener?.('pageshow', onPageReturn);
   win?.addEventListener?.('focus', onPageReturn);
   globalThis.document?.addEventListener?.('visibilitychange', onVisibility);
@@ -530,7 +604,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     sourceId,
     getStatusRows: () => [...statusRows.values()].map((row) => ({ ...row })),
     setConflict,
-    dispose() { if (disposed) return; disposed = true; syncLayoutUnload(); closeClockEditor(); for (const action of clockCueActions) action.cancel(); clockCueActions.clear(); inputCheckId += 1; wallInspectionId += 1; wallMutationId += 1; for (const editor of clockEditors) editor.dispose(); clockEditors.clear(); activeClockEditor = null; activeClockEditorNode = null; if (confirmationTimer !== null) clearTimeout(confirmationTimer); if (patternTimer !== null) clearInterval(patternTimer); socket?.send?.({ type: "otef_projection_pattern", table: "otef", output: activePattern.branch, pattern: "off", sourceId }); socket?.off?.("otef_projection_applied", statusMessage); socket?.off?.("connect", onConnect); socket?.off?.("disconnect", onDisconnect); socket?.off?.('otef_person_selection_changed', onDatasetEvent); socket?.off?.('otef_narrative_scene_changed', onDatasetEvent); win?.removeEventListener?.('storage', onHeadingStorage); win?.removeEventListener?.('pageshow', onPageReturn); win?.removeEventListener?.('focus', onPageReturn); globalThis.document?.removeEventListener?.('visibilitychange', onVisibility); unsubscribe?.(); unsubscribeLayout?.(); unsubscribeOutput?.(); outputController?.dispose?.(); validator.dispose?.(); view.dispose(); client.stop?.(); },
+    dispose() { if (disposed) return; disposed = true; syncLayoutUnload(); closeSettlementEditor(); closeClockEditor(); for (const action of clockCueActions) action.cancel(); clockCueActions.clear(); inputCheckId += 1; wallInspectionId += 1; wallMutationId += 1; for (const editor of clockEditors) editor.dispose(); clockEditors.clear(); activeClockEditor = null; activeClockEditorNode = null; activeSettlementEditor = null; if (confirmationTimer !== null) clearTimeout(confirmationTimer); if (patternTimer !== null) clearInterval(patternTimer); socket?.send?.({ type: "otef_projection_pattern", table: "otef", output: activePattern.branch, pattern: "off", sourceId }); socket?.off?.("otef_projection_applied", statusMessage); socket?.off?.("connect", onConnect); socket?.off?.("disconnect", onDisconnect); socket?.off?.('otef_person_selection_changed', onDatasetEvent); socket?.off?.('otef_narrative_scene_changed', onDatasetEvent); win?.removeEventListener?.('pageshow', onPageReturn); win?.removeEventListener?.('focus', onPageReturn); globalThis.document?.removeEventListener?.('visibilitychange', onVisibility); unsubscribe?.(); unsubscribeLayout?.(); unsubscribeSettlement?.(); unsubscribeOutput?.(); outputController?.dispose?.(); validator.dispose?.(); view.dispose(); client.stop?.(); },
   };
 }
 

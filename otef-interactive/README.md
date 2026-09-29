@@ -81,14 +81,13 @@ otef-interactive/
 │   ├── layers/         # Full-resolution GeoJSON
 │   └── model/          # Source model files
 └── frontend/data/      # Static files served to browser
-    ├── model-bounds.json
-    └── model.png
+    └── model-bounds.json
 ```
 
 **Summary:**
 - Import data: `nur-io/django_api/public/processed/otef/` (same location as climate/mobility data)
 - Source files: `otef-interactive/public/source/` (original files, not imported)
-- Static assets: `otef-interactive/frontend/data/` (model images served directly)
+- Static assets: `otef-interactive/frontend/data/` (`model-bounds.json` for table georeferencing)
 
 ## Layer Processing
 

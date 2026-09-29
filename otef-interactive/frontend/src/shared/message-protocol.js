@@ -21,6 +21,7 @@ export const OTEF_MESSAGE_TYPES = {
   ESCAPE_OVERLAY_CHANGED: "otef_escape_overlay_changed",
   NLI_CLOCK_LAYOUT_CHANGED: "otef_nli_clock_layout_changed",
   LEGEND_SETTINGS_CHANGED: "otef_legend_settings_changed",
+  SETTLEMENT_NAMES_CHANGED: "otef_settlement_names_changed",
   EXHIBIT_MODE_CHANGED: "otef_exhibit_mode_changed",
 };
 

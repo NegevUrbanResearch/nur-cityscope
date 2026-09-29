@@ -17,7 +17,7 @@ import { createProjectionCaptionAdapter } from "./projection-caption-adapter.js"
 import { createProjectionLegendAdapter } from "./projection-legend-adapter.js";
 import { resolveLegendLayout } from "./legend-layout.js";
 import { applyNliExplainerLayout, ensureNliExplainerHost } from "./nli-explainer-overlay.js";
-import { applyProjectionSpanView, createProjectionImageDescriptor, createProjectionMapDescriptor } from "./projection-span-view.js";
+import { applyProjectionSpanView, createProjectionMapDescriptor } from "./projection-span-view.js";
 import { syncInvestigationTimelineToMap, getInvestigationTimelineRenderSnapshot, disposeInvestigationTimelineForMap } from "../shared/maplibre-investigation-timeline.js";
 import { installProjectionClockPreviewBridge } from "./projection-preview-bridge.js";
 import { copyProjectionMesh } from "../projection-config/clock-layout-geometry.js";
@@ -132,7 +132,7 @@ export async function bootProjectionClockPreview({ window: win, document: doc, f
     }
     legendElement.style.visibility = "hidden";
     image.__otefProjectionImage = geometry.image;
-    image.src = bounds.model_image || layerRegistry.getLayerDataUrl("projector_base.model_base");
+    image.removeAttribute?.("src");
     image.style.transition = "none";
     image.style.opacity = "0";
     if (doc.fonts?.load) { await doc.fonts.load("11px 'Guttman Hatzvi'"); alive(); }
@@ -169,7 +169,7 @@ export async function bootProjectionClockPreview({ window: win, document: doc, f
     const getScene = () => {
       captionAdapter.sync({ snapshot: getInvestigationTimelineRenderSnapshot(map), layout: activeClockLayout });
       if (legendSnapshot) legendAdapter.sync(legendSnapshot);
-      return { image: createProjectionImageDescriptor({ map, imageEl: image, config, spanId: "left" }),
+      return { image: null,
         map: createProjectionMapDescriptor({ map, config, spanId: "left" }), caption: captionAdapter.draw(), legend: legendAdapter.draw() };
     };
     const surface = await createProjectionBrowserSurface({ host, spanId: "left", image, mapCanvas: map.getCanvas?.(), getScene,

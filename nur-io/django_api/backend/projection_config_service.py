@@ -12,7 +12,7 @@ from .models import OTEFProjectionCalibration, Table, projection_config_defaults
 from .projection_config_schema import validate_projection_config
 from .projection_warp_assets import load_trusted_projection_asset
 from .projection_warp_geometry import evaluate_warp_mesh
-from .projection_warp_schema import validate_projection_config_v2, validate_projection_config_v3, validate_projection_config_v4, validate_projection_config_v5, migrate_projection_config_to_v5
+from .projection_warp_schema import validate_projection_config_v2, validate_projection_config_v3, validate_projection_config_v4, validate_projection_config_v5, validate_projection_config_v6, migrate_projection_config_to_v5
 
 
 class ProjectionConfigError(Exception):
@@ -32,6 +32,12 @@ class ProjectionConflict(ProjectionConfigError):
         super().__init__("conflict")
 
 
+class ProjectionSchemaChanged(ProjectionConfigError):
+    def __init__(self, state):
+        self.state = state
+        super().__init__("schema_changed")
+
+
 def projection_baseline_root():
     configured = os.environ.get('OTEF_PROJECTION_BASELINE_ROOT')
     if configured:
@@ -43,7 +49,7 @@ def validate_projection_config_for_persistence(config):
     errors = validate_projection_config(config)
     if errors:
         return errors
-    if config.get('schemaVersion') not in (2, 3, 4, 5):
+    if config.get('schemaVersion') not in (2, 3, 4, 5, 6):
         return {}
     manifest = None
     for side in ('left', 'right'):
@@ -58,7 +64,7 @@ def validate_projection_config_for_persistence(config):
             except (OSError, ValueError, TypeError) as error:
                 return {f'outputs.{side}.warp.baseline': str(error)}
         if baseline['type'] == 'tdMesh':
-            validator = {2: validate_projection_config_v2, 3: validate_projection_config_v3, 4: validate_projection_config_v4, 5: validate_projection_config_v5}[config['schemaVersion']]
+            validator = {2: validate_projection_config_v2, 3: validate_projection_config_v3, 4: validate_projection_config_v4, 5: validate_projection_config_v5, 6: validate_projection_config_v6}[config['schemaVersion']]
             errors = validator(config, trusted_manifest=manifest)
             if errors:
                 return errors
@@ -115,6 +121,34 @@ def _validate_uuid(value, path):
     return {}
 
 
+def _stored_version(row):
+    config = row.working_config
+    if isinstance(config, dict) and not isinstance(config.get("schemaVersion"), bool):
+        return config.get("schemaVersion")
+    return None
+
+
+def _accept_config(row, config):
+    if not isinstance(config, dict):
+        raise ProjectionConfigError("invalid", {"config": "is required"})
+    incoming = config.get("schemaVersion")
+    if isinstance(incoming, bool):
+        incoming = None
+    stored = _stored_version(row)
+    if stored == 6 and incoming != 6:
+        raise ProjectionSchemaChanged(_snapshot(row))
+    if stored != 6 and incoming == 6:
+        raise ProjectionConfigError("invalid", {"schemaVersion": "must match the installed schema"})
+    try:
+        accepted = copy.deepcopy(config) if stored == 6 else migrate_projection_config_to_v5(config)
+    except ValueError as error:
+        raise ProjectionConfigError("invalid", {"config": str(error)}) from error
+    errors = validate_projection_config_for_persistence(accepted)
+    if errors:
+        raise ProjectionConfigError("invalid", errors)
+    return accepted
+
+
 def mutate_projection_state(table_name, base_revision, action, source_id, **payload):
     errors = {}
     if isinstance(base_revision, bool) or not isinstance(base_revision, int) or not 0 <= base_revision <= 2 ** 53 - 1:
@@ -147,13 +181,7 @@ def mutate_projection_state(table_name, base_revision, action, source_id, **payl
         presets = copy.deepcopy(row.presets)
         changed = False
         if action in {"preview", "save"}:
-            config = payload.get("config")
-            if not isinstance(config, dict):
-                raise ProjectionConfigError("invalid", {"config": "is required"})
-            config_errors = validate_projection_config_for_persistence(config)
-            if config_errors:
-                raise ProjectionConfigError("invalid", config_errors)
-            config = migrate_projection_config_to_v5(config)
+            config = _accept_config(row, payload.get("config"))
             if action == "preview":
                 changed = config != row.working_config
                 row.working_config = copy.deepcopy(config)
@@ -193,20 +221,14 @@ def mutate_projection_state(table_name, base_revision, action, source_id, **payl
             target = next((p for p in presets if p["id"] == preset_id), None)
             if target is None:
                 raise ProjectionConfigError("invalid", {"presetId": "preset not found"})
-            row.working_config = migrate_projection_config_to_v5(target["config"])
-            config_errors = validate_projection_config_for_persistence(row.working_config)
-            if config_errors:
-                raise ProjectionConfigError("invalid", config_errors)
+            row.working_config = _accept_config(row, target["config"])
             row.selected_preset_id = preset_id
             changed = True
         else:
             target = next((p for p in presets if p["id"] == row.selected_preset_id), None)
             if target is None:
                 raise ProjectionConfigError("invalid", {"selectedPresetId": "preset not found"})
-            row.working_config = migrate_projection_config_to_v5(target["config"])
-            config_errors = validate_projection_config_for_persistence(row.working_config)
-            if config_errors:
-                raise ProjectionConfigError("invalid", config_errors)
+            row.working_config = _accept_config(row, target["config"])
             changed = True
 
         if not changed:

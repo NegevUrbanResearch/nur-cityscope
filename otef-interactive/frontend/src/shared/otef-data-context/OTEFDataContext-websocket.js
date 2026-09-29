@@ -172,6 +172,11 @@ function applyStateFromApi(ctx, state, options = {}) {
       ctx._applyNliClockLayout(state.nli_clock_layout);
     }
   }
+  if (Object.prototype.hasOwnProperty.call(state, "settlement_name_settings") && typeof ctx._applySettlementNamesVersioned === "function") {
+    if (Number.isInteger(state.settlement_name_revision)) {
+      ctx._applySettlementNamesVersioned(state.settlement_name_settings, state.settlement_name_revision);
+    }
+  }
   if (Object.prototype.hasOwnProperty.call(state, "legend_settings") && typeof ctx._applyLegendSettings === "function") {
     if (Number.isInteger(state.legend_layout_revision) && typeof ctx._applyLegendProjectionVersioned === "function") {
       ctx._applyLegendMetadataPatch({
@@ -455,6 +460,13 @@ function setupWebSocket(ctx) {
       ctx._applyNliClockLayoutVersioned(msg.nliClockLayout, msg.nliClockLayoutRevision);
     } else if (!(ctx._nliClockLayoutRevision >= 0)) {
       ctx._applyNliClockLayout(msg.nliClockLayout);
+    }
+  });
+  ctx._wsClient.on(OTEF_MESSAGE_TYPES.SETTLEMENT_NAMES_CHANGED, (msg = {}) => {
+    if (msg.table && msg.table !== ctx._tableName) return;
+    if (typeof ctx._applySettlementNamesVersioned !== "function") return;
+    if (Number.isInteger(msg.settlementNameRevision)) {
+      ctx._applySettlementNamesVersioned(msg.settlementNameSettings, msg.settlementNameRevision);
     }
   });
   ctx._wsClient.on(OTEF_MESSAGE_TYPES.LEGEND_SETTINGS_CHANGED, (msg = {}) => {

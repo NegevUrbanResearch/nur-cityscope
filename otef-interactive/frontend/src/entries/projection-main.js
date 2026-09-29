@@ -65,6 +65,8 @@ import {
 import { subscribeSlideshowProjection } from "../shared/slideshow-projection-channel.js";
 import OTEFDataContext from "../shared/OTEFDataContext.js";
 import layerRegistry from "../shared/layer-registry.js";
+import { loadSettlementNameCatalog } from "../shared/settlement-name-catalog.js";
+import { bindProjectionSettlementNames } from "../projection/projection-settlement-name-runtime.js";
 import {
   applyProjectionSpanView,
   clearProjectionSpanBase,
@@ -321,10 +323,8 @@ async function bootstrapProjectionRuntime() {
     itm: itmBounds,
   };
 
-  const modelImageUrl =
-    modelBoundsData.model_image || layerRegistry.getLayerDataUrl("projector_base.model_base");
   const modelImgEl = document.getElementById("displayedImage");
-  if (modelImgEl && modelImageUrl) {
+  if (modelImgEl) {
     modelImgEl.__otefProjectionImage = {
       bounds: modelBounds.bounds,
       corners: imageGeoCorners,
@@ -384,6 +384,10 @@ async function bootstrapProjectionRuntime() {
   });
   attachSettlementOrientationRuntime(map);
   let browserSurface = null;
+  if (modelImgEl) {
+    modelImgEl.removeAttribute?.("src");
+    modelImgEl.style.opacity = "0";
+  }
   const imageReadiness = browserMode && modelImgEl ? createProjectionImageReadiness({
     imageEl: modelImgEl,
     onReady: () => {
@@ -397,10 +401,6 @@ async function bootstrapProjectionRuntime() {
     },
   }) : null;
   if (imageReadiness) registerDisposer(() => imageReadiness.dispose());
-  if (modelImgEl && modelImageUrl) {
-    if (imageReadiness) imageReadiness.setSource(modelImageUrl);
-    else modelImgEl.src = modelImageUrl;
-  }
   if (typeof window !== "undefined") {
     window._maplibreMap = map;
   }
@@ -781,15 +781,17 @@ async function bootstrapProjectionRuntime() {
     }));
     let applyPreviewProjectionConfig = null;
     let previewApplySequence = 0;
-    registerDisposer(bindProjectionHeadingStorage({ win: window, browserMode, previewMode,
-      applyHeading: () => applyStoredNliLabelHeading(map), disposePreparation: disposeProjectionNameWallPreparation,
-      controller: nameFieldController,
-      reapplyRuntime: () => projectionRuntime?.reapply('name heading changed; rebuilding wall'),
-      repreparePreview: (signal) => applyPreviewProjectionConfig?.(browserSurface.getConfig(), { signal }),
-      onError: (error) => {
-        if (isRuntimeAlive() && error?.name !== 'AbortError') visibleProjectionBrowserError(displayContainer, error);
-      },
-    }));
+    if (!browserMode) {
+      registerDisposer(bindProjectionHeadingStorage({ win: window, browserMode, previewMode,
+        applyHeading: () => applyStoredNliLabelHeading(map), disposePreparation: disposeProjectionNameWallPreparation,
+        controller: nameFieldController,
+        reapplyRuntime: () => projectionRuntime?.reapply('name heading changed; rebuilding wall'),
+        repreparePreview: (signal) => applyPreviewProjectionConfig?.(browserSurface.getConfig(), { signal }),
+        onError: (error) => {
+          if (isRuntimeAlive() && error?.name !== 'AbortError') visibleProjectionBrowserError(displayContainer, error);
+        },
+      }));
+    }
 
     let projectionMapAlive = true;
     const projectionDisplay = createCuratedDisplayGate({
@@ -838,7 +840,7 @@ async function bootstrapProjectionRuntime() {
           : undefined,
       }),
       syncProjectionLayersWithNarrative,
-      applyLabelHeading: applyStoredNliLabelHeading,
+      applyLabelHeading: (targetMap) => { if (!browserMode) applyStoredNliLabelHeading(targetMap); },
       nameFieldController,
       syncFlowAnimations: syncContextFlowAnimations,
       getNarrativeController: () => projectionNarrativeController,
@@ -918,6 +920,20 @@ async function bootstrapProjectionRuntime() {
           return;
         }
         nameFieldController.installProjectionCanvas(browserSurface.getNameAdapter());
+        try {
+          const settlementCatalog = await loadSettlementNameCatalog({ registry: layerRegistry, fetchImpl: window.fetch.bind(window), signal: projectionLifecycle.signal });
+          if (isRuntimeAlive()) registerDisposer(bindProjectionSettlementNames({
+            dataContext: OTEFDataContext,
+            adapter: browserSurface.getSettlementAdapter(),
+            catalog: settlementCatalog,
+            getGroups: () => OTEFDataContext.getLayerGroups(),
+            onDraw: () => { browserSurface?.draw?.(); },
+            onError: (error) => visibleProjectionBrowserError(displayContainer, error),
+            host: displayContainer,
+          }));
+        } catch (error) {
+          if (error?.name !== "AbortError") console.warn("Settlement names unavailable:", error?.message || error);
+        }
         registerDisposer(disposeProjectionNameWallPreparation);
         const unsubscribeVideoPlayback = subscribeNliVideoPlayback({
           table: OTEFDataContext._tableName || "otef",
@@ -946,8 +962,7 @@ async function bootstrapProjectionRuntime() {
         const pair = await browserSurface.preparePair(config);
         checkCurrent();
         const field = await prepareProjectionNameWall({ config, meshes: pair.meshes,
-          datasetVersion: OTEFDataContext.getPersonSelection?.()?.datasetVersion || undefined,
-          heading: readNliLabelHeading(window.localStorage), signal });
+          datasetVersion: OTEFDataContext.getPersonSelection?.()?.datasetVersion || undefined, signal });
         checkCurrent();
         await nameFieldController.prepareProjectionCandidate({ generation, identity: JSON.stringify(config),
           config, field, signal });
@@ -980,11 +995,10 @@ async function bootstrapProjectionRuntime() {
         const prepared = await browserSurface.preparePair(config);
         if (signal?.aborted) throw new Error('Wall preview superseded');
         const field = await prepareProjectionNameWall({ config, meshes: prepared.meshes,
-          datasetVersion: OTEFDataContext.getPersonSelection?.()?.datasetVersion || undefined,
-          heading: readNliLabelHeading(window.localStorage), signal });
+          datasetVersion: OTEFDataContext.getPersonSelection?.()?.datasetVersion || undefined, signal });
         const result = projectionCandidateResult(config, field, JSON.stringify(config));
         if (!result.valid) return { reason: result.reason, diagnostics: result.diagnostics };
-        return { ...result.wall, diagnostics: result.diagnostics };
+        return { ...result.wall, heading: field.heading, diagnostics: result.diagnostics };
       } : null,
     }));
 
@@ -1012,8 +1026,7 @@ async function bootstrapProjectionRuntime() {
           const surfacePair = await browserSurface.preparePair(config);
           if (signal?.aborted) throw Object.assign(new Error('projection preparation cancelled'), { name: 'AbortError' });
           const field = await prepareProjectionNameWall({ config, meshes: surfacePair.meshes,
-            datasetVersion: OTEFDataContext.getPersonSelection?.()?.datasetVersion || undefined,
-            heading: readNliLabelHeading(window.localStorage), signal });
+            datasetVersion: OTEFDataContext.getPersonSelection?.()?.datasetVersion || undefined, signal });
           const wall = await nameFieldController.prepareProjectionCandidate({ generation,
             identity: JSON.stringify(config), config, field, revision, signal });
           return { surfacePair, wall, generation };
@@ -1061,7 +1074,7 @@ async function bootstrapProjectionRuntime() {
     }
 
     function syncProjectionLayersWithNarrative(targetMap, groups, options) {
-      syncProjectionLayers(targetMap, groups, { ...options, suppressCanvasNameSymbols: Boolean(browserSurface?.getNameAdapter()) });
+      syncProjectionLayers(targetMap, groups, { ...options, suppressCanvasNameSymbols: Boolean(browserSurface?.getNameAdapter()), suppressSettlementSymbols: Boolean(browserSurface?.getSettlementAdapter()) });
       applyNarrativePeopleFilter(targetMap, OTEFDataContext.getNarrativeState?.()?.id ?? null);
       const selectedPid = OTEFDataContext.getPersonSelection?.()?.personId;
       if (selectedPid) applyPeopleFocusDim(targetMap, selectedPid);
@@ -1073,7 +1086,7 @@ async function bootstrapProjectionRuntime() {
       syncProjectionLayersWithNarrative(projectionMap, groups, options);
       nameFieldController.sync(groups);
       void syncSettlementGlow();
-      applyStoredNliLabelHeading(projectionMap);
+      if (!browserMode) applyStoredNliLabelHeading(projectionMap);
       syncContextFlowAnimations();
       projectionNarrativeController?.onStyleLoad();
       refreshLegendAfterStyleLoad();
@@ -1214,7 +1227,7 @@ async function bootstrapProjectionRuntime() {
                 map,
                 Array.isArray(groups) ? groups : Object.values(groups || {}),
               );
-              applyStoredNliLabelHeading(map);
+              if (!browserMode) applyStoredNliLabelHeading(map);
               nameFieldController.sync(Array.isArray(groups) ? groups : Object.values(groups || {}));
               void syncSettlementGlow();
               syncContextFlowAnimations();
@@ -1469,7 +1482,19 @@ function initializeTableSwitcher() {
 }
 
 async function boot() {
-  if (new URLSearchParams(window.location.search).get("clockPreview") === "1") {
+  const previewParams = new URLSearchParams(window.location.search);
+  const clockPreview = previewParams.get("clockPreview") === "1";
+  const settlementPreview = previewParams.get("settlementPreview") === "1";
+  if (settlementPreview) {
+    const span = previewParams.get("span");
+    if (clockPreview || !previewParams.get("previewSession") || (span !== "left" && span !== "right") || previewParams.get("outputMode") !== "browser") {
+      throw new Error(clockPreview ? "Projection preview flags are mutually exclusive" : "Projection settlement preview session is missing or invalid");
+    }
+    const { bootProjectionSettlementNamePreview } = await import("../projection/projection-settlement-name-preview.js");
+    await bootProjectionSettlementNamePreview({ window, document, fetchImpl: window.fetch.bind(window) });
+    return;
+  }
+  if (clockPreview) {
     const { bootProjectionClockPreview } = await import("../projection/projection-clock-preview.js");
     await bootProjectionClockPreview({ window, document, fetchImpl: window.fetch.bind(window) });
     return;

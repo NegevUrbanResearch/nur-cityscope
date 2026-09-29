@@ -251,3 +251,27 @@ h2, h3 { margin: 0 0 10px; }
   .warp-editor-body:has(.warp-editor-fine-panel:not([hidden])) { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(160px, 42%); }
   .warp-editor-fine-panel { overflow: hidden; }
 }
+.settlement-open-button { width: 100%; margin-top: 6px; min-height: 44px; }
+.settlement-settings-inspector { display: grid; gap: 6px; margin: 8px 0; }
+.settlement-settings-inspector[hidden] { display: none; }
+.settlement-name-dialog { position: fixed; inset: 0; z-index: 130; height: 100vh; height: 100dvh; display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 10px; overflow: hidden; padding: max(10px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left)); background: #10171d; color: #edf2f7; }
+.settlement-name-dialog :is(button, input, select) { min-height: 44px; }
+.settlement-name-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.settlement-name-header h2 { margin: 0; font-size: 1rem; }
+.settlement-name-body { display: grid; grid-template-columns: minmax(0, 1fr) 320px; min-width: 0; min-height: 0; gap: 12px; }
+.settlement-name-stage { position: relative; align-self: center; width: 100%; aspect-ratio: 16 / 9; max-height: 100%; min-width: 0; overflow: hidden; background: #000; }
+.settlement-preview-host, .settlement-preview-frame, .settlement-name-overlay { position: absolute; inset: 0; width: 100%; height: 100%; }
+.settlement-preview-frame { border: 0; pointer-events: none; }
+.settlement-name-overlay { z-index: 2; overflow: visible; touch-action: none; }
+.settlement-outline { fill: none; stroke: #ffe08a; stroke-width: 4; vector-effect: non-scaling-stroke; pointer-events: none; }
+.settlement-body-hit { fill: transparent; pointer-events: all; }
+.settlement-name-mapping, .settlement-name-warning { margin: 0; color: #ffdf8d; font-size: .8rem; }
+.settlement-name-mapping { position: absolute; left: 8px; right: 8px; bottom: 8px; z-index: 3; padding: 6px; background: #10171d; }
+.settlement-preview-retry { position: absolute; left: 8px; top: 8px; z-index: 3; }
+.settlement-shared-note { margin: 0; color: #d4e0e6; font-size: .8rem; }
+.settlement-name-controls { display: grid; gap: 6px; align-content: start; overflow: auto; }
+.settlement-name-field { display: grid; gap: 4px; }
+.settlement-name-status-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+@media (orientation: portrait) {
+  .settlement-name-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(190px, 42%); }
+}

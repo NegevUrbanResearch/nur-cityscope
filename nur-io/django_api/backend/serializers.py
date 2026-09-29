@@ -17,6 +17,7 @@ from .models import (
 from .otef_escape_overlay import normalize_escape_overlay
 from .otef_nli_clock_layout import normalize_nli_clock_layout
 from .otef_legend_settings import normalize_legend_settings
+from .otef_settlement_names import normalize_settlement_name_settings
 from .otef_person_selection import normalize_person_selection
 from .otef_narrative import normalize_narrative_state
 
@@ -227,6 +228,7 @@ class OTEFViewportStateSerializer(serializers.ModelSerializer):
     escape_overlay = serializers.SerializerMethodField()
     nli_clock_layout = serializers.SerializerMethodField()
     legend_settings = serializers.SerializerMethodField()
+    settlement_name_settings = serializers.SerializerMethodField()
 
     class Meta:
         model = OTEFViewportState
@@ -247,6 +249,8 @@ class OTEFViewportStateSerializer(serializers.ModelSerializer):
             "nli_clock_layout_revision",
             "legend_settings",
             "legend_layout_revision",
+            "settlement_name_settings",
+            "settlement_name_revision",
             "workshop_auto_publish",
             "workshop_autopublish_started_at",
             "exhibit_mode",
@@ -263,6 +267,8 @@ class OTEFViewportStateSerializer(serializers.ModelSerializer):
             "nli_clock_layout_revision",
             "legend_settings",
             "legend_layout_revision",
+            "settlement_name_settings",
+            "settlement_name_revision",
             "workshop_autopublish_started_at",
         ]
 
@@ -281,6 +287,15 @@ class OTEFViewportStateSerializer(serializers.ModelSerializer):
 
     def get_legend_settings(self, obj):
         return normalize_legend_settings(obj.legend_settings)
+
+    def get_settlement_name_settings(self, obj):
+        return normalize_settlement_name_settings(obj.settlement_name_settings)
+
+    def validate(self, attrs):
+        initial = self.initial_data if isinstance(getattr(self, "initial_data", None), dict) else {}
+        if {"settlement_name_settings", "settlement_name_revision"} & set(initial):
+            raise serializers.ValidationError("Settlement names must use their versioned command")
+        return attrs
 
 
 class LayerStateSerializer(serializers.ModelSerializer):

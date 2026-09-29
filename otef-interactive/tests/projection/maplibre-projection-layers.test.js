@@ -51,6 +51,24 @@ it('suppresses only projection name symbols after layer installation when Canvas
   expect(visibility.size).toBe(0);
 });
 
+it('suppresses only the settlement text layer in browser outputs', () => {
+  const visibility = new Map();
+  const removed = [];
+  const map = {
+    getLayer: (id) => ['projector_base__שמות_יישובים__labels', 'projector_base__שמות_יישובים__glow', 'other'].includes(id) ? { id } : null,
+    getSource: (id) => (id === 'projector_base.שמות_יישובים' ? { id } : null),
+    setLayoutProperty: (id, key, value) => visibility.set(id, [key, value]),
+    removeLayer: (id) => removed.push(id),
+    removeSource: (id) => removed.push(`source:${id}`),
+  };
+  syncProjectionLayers(map, [], { suppressSettlementSymbols: true });
+  expect([...visibility.keys()]).toEqual(['projector_base__שמות_יישובים__labels']);
+  expect([...visibility.values()]).toEqual([['visibility', 'none']]);
+  expect(removed).toEqual([]);
+  expect(map.getSource('projector_base.שמות_יישובים')).toEqual({ id: 'projector_base.שמות_יישובים' });
+  expect(map.getLayer('projector_base__שמות_יישובים__glow')).toEqual({ id: 'projector_base__שמות_יישובים__glow' });
+});
+
 const originalFetch = globalThis.fetch;
 
 /** Drain microtasks so async masked-WMTS paths complete in tests. */

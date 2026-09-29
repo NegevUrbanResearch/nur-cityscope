@@ -1,4 +1,5 @@
 import { OTEF_API } from "./api-client.js";
+import { acceptSettlementNameSnapshot, validateSettlementNameSettings } from "./settlement-name-settings.js";
 import { normalizeGisBasemap } from "./gis-basemap.js";
 import { normalizeEscapeOverlay } from "./nli-escape-overlay.js";
 import { emptyNliClockLayout, normalizeNliClockLayout } from "../projection/nli-explainer-overlay.js";
@@ -129,6 +130,7 @@ class OTEFDataContextClass {
       escapeOverlay: new Set(),
       nliClockLayout: new Set(),
       legendSettings: new Set(),
+      settlementNames: new Set(),
     };
 
     this._wsClient = null;
@@ -160,6 +162,10 @@ class OTEFDataContextClass {
     this._legendSettings = { language: "he", projection: {}, summarizedGroupIds: [] };
     this._nliClockLayoutRevision = -1;
     this._legendLayoutRevision = -1;
+    this._settlementNameSettings = null;
+    this._settlementNameRevision = -1;
+    this._settlementNameError = null;
+    this._settlementNameRefreshing = false;
     this._layoutRevisionRefresh = new Set();
     this._clockOffsetMs = 0;
     this._clockPatchQueue = null;
@@ -485,6 +491,18 @@ class OTEFDataContextClass {
     return this._legendSettings;
   }
 
+  getSettlementNameSettings() {
+    return this._settlementNameSettings;
+  }
+
+  getSettlementNameRevision() {
+    return this._settlementNameRevision;
+  }
+
+  getSettlementNameError() {
+    return this._settlementNameError;
+  }
+
   _applyLegendSettings(raw) {
     if (!raw || typeof raw !== "object") return;
     const next = {
@@ -547,6 +565,75 @@ class OTEFDataContextClass {
     }).catch((error) => getLogger().warn("[OTEFDataContext] Failed to refresh layout revision:", error)).finally(() => {
       this._layoutRevisionRefresh.delete(domain);
     });
+  }
+
+  _notifySettlementNames() {
+    this._notify("settlementNames", {
+      settings: this._settlementNameSettings,
+      revision: this._settlementNameRevision,
+      error: this._settlementNameError,
+    });
+  }
+
+  _refreshSettlementNames() {
+    if (!this._tableName || this._settlementNameRefreshing) return;
+    this._settlementNameRefreshing = true;
+    OTEF_API.getState(this._tableName, { forceFresh: true }).then((state) => {
+      if (Number.isInteger(state?.settlement_name_revision)) {
+        this._applySettlementNamesVersioned(state.settlement_name_settings, state.settlement_name_revision, { authoritative: true });
+      }
+    }).catch((error) => getLogger().warn("[OTEFDataContext] Failed to refresh settlement names:", error)).finally(() => {
+      this._settlementNameRefreshing = false;
+    });
+  }
+
+  _applySettlementNamesVersioned(raw, revision, options = {}) {
+    if (!Number.isSafeInteger(revision) || revision < 0) return false;
+    if (Number.isSafeInteger(this._settlementNameRevision) && revision < this._settlementNameRevision) return false;
+    const empty = raw == null || (typeof raw === "object" && !Array.isArray(raw) && Object.keys(raw).length === 0);
+    if (empty && revision === 0) {
+      this._settlementNameSettings = null;
+      this._settlementNameRevision = 0;
+      this._settlementNameError = "Initialization required";
+      this._notifySettlementNames();
+      return true;
+    }
+    const current = {
+      settings: this._settlementNameSettings,
+      revision: this._settlementNameRevision < 0 ? -1 : this._settlementNameRevision,
+    };
+    let next;
+    try {
+      next = acceptSettlementNameSnapshot(current, { settings: raw, revision });
+    } catch (error) {
+      this._settlementNameError = error?.message || "Invalid settlement name settings";
+      this._notifySettlementNames();
+      if (options.authoritative !== true) this._refreshSettlementNames();
+      return false;
+    }
+    if (next.requiresFreshRead) {
+      if (options.authoritative === true) {
+        const checked = validateSettlementNameSettings(raw);
+        if (checked.errors.length) {
+          this._settlementNameError = checked.errors.join(", ");
+          this._notifySettlementNames();
+          return false;
+        }
+        this._settlementNameSettings = checked.value;
+        this._settlementNameRevision = revision;
+        this._settlementNameError = null;
+        this._notifySettlementNames();
+        return true;
+      }
+      this._refreshSettlementNames();
+      return false;
+    }
+    if (next === current || next.revision === current.revision) return false;
+    this._settlementNameSettings = next.settings;
+    this._settlementNameRevision = next.revision;
+    this._settlementNameError = null;
+    this._notifySettlementNames();
+    return true;
   }
 
   async setLegendSettings(patch, options = {}) {
@@ -696,6 +783,13 @@ class OTEFDataContextClass {
     const helper = OTEFDataContextInternals.actions?.setNliClockLayout;
     return typeof helper === "function"
       ? helper(this, patch)
+      : Promise.resolve({ ok: false, reason: "missing_action" });
+  }
+
+  setSettlementNames(operation, meta) {
+    const helper = OTEFDataContextInternals.actions?.setSettlementNames;
+    return typeof helper === "function"
+      ? helper(this, operation, meta)
       : Promise.resolve({ ok: false, reason: "missing_action" });
   }
 
@@ -1016,6 +1110,13 @@ class OTEFDataContextClass {
         break;
       case "legendSettings":
         current = this._legendSettings;
+        break;
+      case "settlementNames":
+        current = {
+          settings: this._settlementNameSettings,
+          revision: this._settlementNameRevision,
+          error: this._settlementNameError,
+        };
         break;
       case "navigationCommand":
         current = undefined;

@@ -1,5 +1,6 @@
 import { outputToT3 } from './projection-config-geometry.js';
 import { validateWarpMesh } from './projection-warp-geometry.js';
+import { normalizeRotationDeg } from './nli-name-wall-config.js';
 
 const WIDTH = 1920;
 const HEIGHT = 1080;
@@ -143,7 +144,8 @@ export function rectCoveredByPieces(rect, pieces) {
 function t3ToPlane({ u, v }, config, logicalPlane) {
   const pre = config.pre;
   const scale = logicalPlane.planeScale ?? pre.scale * Math.min(config.outputs.left.post.scale, config.outputs.right.post.scale);
-  const heading = (logicalPlane.heading ?? 41) * Math.PI / 180;
+  const degrees = logicalPlane.heading ?? 41;
+  const heading = (Number.isFinite(degrees) ? normalizeRotationDeg(degrees) : degrees) * Math.PI / 180;
   if (!finite(scale) || scale <= 0 || !finite(heading)) throw new Error('invalid logical name plane');
   const point = rotate([(u - 0.5) * WIDTH / pre.scale, (v - 0.5) * HEIGHT / pre.scale], pre.rotateDeg * Math.PI / 180);
   return rotate([point[0] - pre.tx * WIDTH, point[1] - pre.ty * HEIGHT], -heading).map((n) => n * scale);

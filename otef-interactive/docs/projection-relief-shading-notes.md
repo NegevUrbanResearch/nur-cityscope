@@ -5,7 +5,7 @@
 The OTEF projection page is projected down onto a 3D printed landscape model. Because the projector lights the model from above, projected content can reduce the physical model's perceived depth. The current projection runtime is favorable for relief shading experiments because it does not project an opaque basemap by default:
 
 - `projection.html` uses a black page background.
-- `#displayedImage` starts hidden and is only shown when `projector_base.model_base` is enabled.
+- `#displayedImage` stays hidden. The old `model.png` table photo is not projected.
 - `maplibre-projection.js` creates a transparent MapLibre map with no basemap.
 - Most projection output is therefore dark/transparent background plus selected GIS layers.
 

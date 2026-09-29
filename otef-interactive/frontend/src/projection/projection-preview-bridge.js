@@ -49,6 +49,49 @@ export function installProjectionClockPreviewBridge({ win, sessionId, renderStat
   return () => { disposed = true; activeAbort?.abort(); win.removeEventListener("message", onMessage); };
 }
 
+const MAX_SETTLEMENT_LABELS = 512;
+
+function finiteSettlementLabel(label) {
+  return label && typeof label.citycode === "string" && typeof label.text === "string"
+    && [label.x, label.y, label.rotateDeg].every(Number.isFinite);
+}
+
+/** Child protocol for the settlement editor. It never writes settings or changes the exhibit. */
+export function installProjectionSettlementPreviewBridge({ win, sessionId, output, renderState }) {
+  if (!win?.parent || win.parent === win || !sessionId || !["left", "right"].includes(output) || typeof renderState !== "function") {
+    throw new Error("Settlement preview requires its parent, output, and session");
+  }
+  const parent = win.parent;
+  const origin = win.location.origin;
+  let lastRequestId = 0;
+  let disposed = false;
+  let activeAbort = null;
+  const reply = (payload) => parent.postMessage({ ...payload, sessionId, output }, origin);
+  const onMessage = (event) => {
+    const state = event.data;
+    if (disposed || event.source !== parent || event.origin !== origin || state?.type !== "otef_settlement_preview_state"
+      || state.sessionId !== sessionId || state.output !== output || !Number.isSafeInteger(state.requestId) || state.requestId <= lastRequestId) return;
+    lastRequestId = state.requestId;
+    activeAbort?.abort();
+    const controller = new AbortController();
+    activeAbort = controller;
+    const isCurrent = () => !disposed && !controller.signal.aborted && lastRequestId === state.requestId;
+    const fail = (error) => { if (isCurrent()) reply({ type: "otef_settlement_preview_error", requestId: state.requestId, message: error?.message || "Settlement preview failed" }); };
+    Promise.resolve(renderState(state, { signal: controller.signal, isCurrent })).then((result) => {
+      if (!isCurrent() || !result) return;
+      if (!Array.isArray(result.labels) || result.labels.length > MAX_SETTLEMENT_LABELS || !result.labels.every(finiteSettlementLabel)) {
+        fail(new Error("Settlement preview labels are invalid"));
+        return;
+      }
+      reply({ type: "otef_settlement_preview_rendered", requestId: state.requestId, calibrationRevision: result.calibrationRevision,
+        meshIdentity: result.meshIdentity, mesh: result.mesh, labels: result.labels, warnings: result.warnings });
+    }).catch(fail);
+  };
+  win.addEventListener("message", onMessage);
+  reply({ type: "otef_settlement_preview_ready" });
+  return () => { disposed = true; activeAbort?.abort(); win.removeEventListener("message", onMessage); };
+}
+
 function boundedWallDiagnostics(value) {
   if (!value || typeof value !== "object" || Array.isArray(value) || !["valid", "invalid"].includes(value.state) ||
     typeof value.datasetVersion !== "string" || value.datasetVersion.length > 128 || !["wall", "model"].includes(value.mode) ||
@@ -90,11 +133,15 @@ export function installProjectionPreviewBridge({ win, output, map, nameFieldCont
         if (generation !== validationGeneration) return;
         const diagnostics = boundedWallDiagnostics(wall?.diagnostics || (wall?.state ? wall : null));
         const core = wall?.wall || wall;
+        if (!Number.isFinite(core?.heading) || core.heading !== message.config.namesWall?.rotateDeg) {
+          result(false, null, 'Name wall heading disagrees with candidate rotation');
+          return;
+        }
         const complete = core?.expected === core?.placed && Number.isSafeInteger(core?.expected) && core.expected > 0 && /^[a-f0-9]{64}$/i.test(core?.digest || '');
         const valid = diagnostics ? diagnostics.state === 'valid' && diagnostics.mode === message.config.namesWall.activeMode &&
           diagnostics.expected === core?.expected && diagnostics.placed === core?.placed && complete : complete;
         if (valid) {
-          const { diagnostics: _diagnostics, state: _state, reason: _reason, ...safeWall } = core;
+          const { diagnostics: _diagnostics, state: _state, reason: _reason, heading: _heading, ...safeWall } = core;
           result(true, safeWall, null, diagnostics);
         } else {
           result(false, null, diagnostics?.reason || wall?.reason || 'Incomplete names wall', diagnostics);

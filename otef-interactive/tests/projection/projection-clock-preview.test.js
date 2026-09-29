@@ -89,6 +89,8 @@ test("boots from one read per resource and draws Home clock plus real legend thr
   const groups = rig.syncLayers.mock.calls[0][1];
   expect(groups[0].layers.map((item) => item.enabled)).toEqual([HOME_CUE.layers.includes("nli.investigation_polygons"), false]);
   expect(rig.live).not.toHaveBeenCalled();
+  expect(document.getElementById("displayedImage").getAttribute("src") || document.getElementById("displayedImage").src || "").not.toMatch(/model\.png/);
+  expect(rig.createSurface.mock.calls[0][0].getScene().image ?? null).toBeNull();
   expect(fetchImpl.mock.calls.every(([, options]) => !options?.method || options.method === "GET")).toBe(true);
   const uv = { u: 0.3, v: 0.4 }; expect(mapOutputToSourceUv(reply.mesh, mapSourceUvToOutput(reply.mesh, uv))).toEqual(expect.objectContaining({ u: expect.closeTo(0.3), v: expect.closeTo(0.4) }));
   send(frameState(2, { clockLayout: { ...layout, leftPct: 40 }, pageIndex: 99 }));

@@ -67,9 +67,9 @@ describe('candidate result', () => {
 });
 
 describe('current candidate inputs', () => {
-  test('reads heading and nonempty release identity without cached metadata', async () => {
+  test('reads dataset identity only and ignores stored rotation', async () => {
     const fetchImpl = vi.fn(async () => ({ ok: true, json: async () => ({ release: { datasetVersion: 'release-2' } }) }));
-    expect(await readProjectionCandidateInputs({ storage: { getItem: () => '42' }, fetchImpl })).toEqual({ heading: 42, datasetVersion: 'release-2' });
+    expect(await readProjectionCandidateInputs({ storage: { getItem: () => '42' }, fetchImpl, signal: undefined })).toEqual({ datasetVersion: 'release-2' });
     expect(fetchImpl).toHaveBeenCalledWith('/otef-interactive/public/processed/layers/nli/release-metadata.json', expect.objectContaining({ cache: 'no-store' }));
   });
   test('fails closed when release metadata is missing', async () => {
@@ -84,7 +84,8 @@ describe('candidate validator', () => {
     const result = await f.validator.validateCandidate(f.request());
     expect(result.valid).toBe(true);
     expect(f.prepareWall).toHaveBeenCalledOnce();
-    expect(f.prepareWall.mock.calls[0][0]).toMatchObject({ config: f.candidate, meshes: { left: expect.any(Object), right: expect.any(Object) }, ...inputs });
+    expect(f.prepareWall.mock.calls[0][0]).toMatchObject({ config: f.candidate, meshes: { left: expect.any(Object), right: expect.any(Object) }, datasetVersion: inputs.datasetVersion });
+    expect(f.prepareWall.mock.calls[0][0]).not.toHaveProperty('heading');
     expect(f.readInputs).toHaveBeenCalledTimes(2);
     f.validator.dispose();
   });
@@ -99,6 +100,34 @@ describe('candidate validator', () => {
     let version = inputs.datasetVersion;
     const f = fixture({ readInputs: async () => ({ heading: 35, datasetVersion: version }), prepareWall: async () => { version = 'next'; return field(); } });
     expect((await f.validator.validateCandidate(f.request())).valid).toBe(false);
+    f.validator.dispose();
+  });
+  test('rejects a delayed old-angle result against the candidate rotation, not stored heading', async () => {
+    let prepared;
+    const readInputs = vi.fn(async () => ({ heading: 35, datasetVersion: inputs.datasetVersion }));
+    const f = fixture({
+      prepareWall: async (request) => { prepared = request; return { ...field(), heading: 35 }; },
+      readInputs,
+    });
+    f.candidate.namesWall.rotateDeg = 70;
+    const result = await f.validator.validateCandidate({ config: f.candidate, identity: JSON.stringify(f.candidate), revision: 3, generation: 1 });
+    expect(result).toMatchObject({ valid: false, reason: expect.stringMatching(/heading/i) });
+    expect(prepared).not.toHaveProperty('heading');
+    expect(prepared.config.namesWall.rotateDeg).toBe(70);
+    expect(readInputs).toHaveBeenCalledTimes(2);
+    f.validator.dispose();
+  });
+  test('a failed rotation preparation keeps the previous complete inputs', async () => {
+    const f = fixture();
+    expect((await f.validator.validateCandidate(f.request())).valid).toBe(true);
+    const previous = f.validator.getLastInputs();
+    expect(previous).toEqual({ datasetVersion: inputs.datasetVersion });
+    const turned = structuredClone(f.candidate);
+    turned.namesWall.rotateDeg = 70;
+    f.prepareWall.mockImplementation(async () => { throw new Error('wall failed'); });
+    const failed = await f.validator.validateCandidate({ config: turned, identity: JSON.stringify(turned), revision: 4, generation: 2 });
+    expect(failed.valid).toBe(false);
+    expect(f.validator.getLastInputs()).toEqual(previous);
     f.validator.dispose();
   });
   test('rejects complete preparation for a different heading when current inputs stay unchanged', async () => {

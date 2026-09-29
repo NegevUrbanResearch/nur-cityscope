@@ -2,6 +2,7 @@ import { expect, test } from 'vitest';
 import { buildNamesWallLayout } from '../../frontend/src/shared/nli-name-wall-layout.js';
 import { rectCoveredByPieces, ringContainsGuardedRect } from '../../frontend/src/shared/nli-name-wall-coverage.js';
 import { DEFAULT_PROJECTION_CONFIG } from '../../frontend/src/shared/projection-config-schema.js';
+import { migrateNamesWallToV6 } from '../../frontend/src/shared/nli-name-wall-config.js';
 import { createFullFrameProjectionMesh } from '../../frontend/src/shared/projection-warp-geometry.js';
 
 const rectPiece = (x0, x1, y0 = 0, y1 = 80) => ({ polygon: [[x0,y0],[x1,y0],[x1,y1],[x0,y1]] });
@@ -266,6 +267,49 @@ test('model ring margin excludes notches and invalid rings fail', async () => {
   for (const p of result.placements) expect(ringContainsGuardedRect(ring, p, 2)).toBe(true);
   const invalid = await buildNamesWallLayout({ ...input, ring: [[0,0],[100,80],[0,80],[100,0],[0,0]] });
   expect(invalid.diagnostics.reason).toMatch(/Tkuma ring/);
+});
+
+test('captured heading 35 is stable while raw legacy angles keep a separate digest', async () => {
+  const round6 = (value) => Math.round(value * 1e6) / 1e6;
+  const rounded = (result) => result.placements.map((item) => ({ ...item,
+    x: round6(item.x), y: round6(item.y), width: round6(item.width), height: round6(item.height) }));
+  const membership = (result) => result.placements.map((item) => [item.id, item.output]);
+  const covered = (result) => result.placements.every((item) => rectCoveredByPieces(item, coverage.pieces[item.output]));
+  const at = (heading) => buildNamesWallLayout(payload({ logicalPlane: { heading, planeScale: 1 } }));
+  const first = await at(35);
+  const again = await at(35);
+  expect(again.digest).toBe(first.digest);
+  expect(again.placements).toEqual(first.placements);
+  expect(again.heading).toBe(35);
+  expect(again.diagnostics.effectiveFontPx).toBe(first.diagnostics.effectiveFontPx);
+  expect(membership(again)).toEqual(membership(first));
+  expect(covered(first)).toBe(true);
+  expect(first.diagnostics.invalidCoverage).toBe(0);
+  const raw395 = await at(395);
+  const raw270 = await at(270);
+  const normalized = await at(-90);
+  expect(raw395.digest).not.toBe(first.digest);
+  expect(raw270.digest).not.toBe(normalized.digest);
+  expect(raw395.heading).toBe(395);
+  expect(normalized.heading).toBe(-90);
+  expect(rounded(raw395)).toEqual(rounded(first));
+  expect(membership(raw395)).toEqual(membership(first));
+  expect(raw395.pages).toEqual(first.pages);
+  expect(covered(raw395)).toBe(true);
+  expect(raw395.diagnostics.invalidCoverage).toBe(first.diagnostics.invalidCoverage);
+  expect(raw395.diagnostics.effectiveFontPx).toBe(first.diagnostics.effectiveFontPx);
+  expect(rounded(raw270)).toEqual(rounded(normalized));
+  expect(membership(raw270)).toEqual(membership(normalized));
+  expect(raw270.pages).toEqual(normalized.pages);
+  expect(covered(raw270)).toBe(true);
+  expect(covered(normalized)).toBe(true);
+  expect(raw270.diagnostics.invalidCoverage).toBe(normalized.diagnostics.invalidCoverage);
+  expect(raw270.diagnostics.effectiveFontPx).toBe(normalized.diagnostics.effectiveFontPx);
+  const v5 = structuredClone(DEFAULT_PROJECTION_CONFIG);
+  delete v5.namesWall.rotateDeg;
+  v5.schemaVersion = 5;
+  expect(migrateNamesWallToV6(v5, 395).namesWall.rotateDeg).toBe(35);
+  expect(migrateNamesWallToV6(structuredClone(v5), 270).namesWall.rotateDeg).toBe(-90);
 });
 
 test('logical-plane heading and exact calibration contribute to content identity', async () => {

@@ -184,6 +184,40 @@ describe('versioned wall inputs', () => {
     expect(calls).toHaveLength(3);
   });
 
+  it('prepares both modes from the shared config rotation and ignores storage and an external heading', async () => {
+    globalThis.localStorage = { getItem: vi.fn(() => '91') };
+    const tkuma = { type: 'FeatureCollection', crs: { properties: { name: 'urn:ogc:def:crs:OGC:1.3:CRS84' } },
+      features: [{ geometry: { type: 'LineString', coordinates: [[34,31],[35,31],[35,32],[34,32],[34,31]] } }] };
+    const original = globalThis.fetch;
+    globalThis.fetch = vi.fn((url) => url.includes('Tkuma_Area')
+      ? Promise.resolve({ ok: true, json: () => Promise.resolve(tkuma) }) : original(url));
+    const { prepareProjectionNameWall } = await import('../../frontend/src/shared/nli-name-field-data.js');
+    const config = structuredClone(DEFAULT_PROJECTION_CONFIG);
+    config.namesWall.rotateDeg = 70;
+    const meshes = { left: createFullFrameProjectionMesh({ side: 'left' }),
+      right: createFullFrameProjectionMesh({ side: 'right' }) };
+    const request = { config, meshes, datasetVersion: 'test-version', heading: 12 };
+    runNameFieldWorker.mockImplementation((payload) => Promise.resolve({
+      id: payload.namesWall.activeMode, datasetVersion: 'test-version', heading: payload.logicalPlane.heading,
+    }));
+    await prepareProjectionNameWall(request);
+    await vi.waitFor(() => expect(runNameFieldWorker.mock.calls.length).toBeGreaterThanOrEqual(1));
+    for (const [payload] of runNameFieldWorker.mock.calls) {
+      expect(payload.logicalPlane.heading).toBe(70);
+      expect(payload.geometry.heading).toBe(70);
+      expect(payload.geometry.projectionConfig.pre.rotateDeg).toBe(DEFAULT_PROJECTION_CONFIG.pre.rotateDeg);
+      expect(payload.geometry.projectionConfig.namesWall.rotateDeg).toBe(70);
+    }
+    expect(globalThis.localStorage.getItem).not.toHaveBeenCalled();
+    const model = structuredClone(config);
+    model.namesWall.activeMode = 'model';
+    await prepareProjectionNameWall({ ...request, config: model });
+    const headings = runNameFieldWorker.mock.calls.map(([payload]) => payload.logicalPlane.heading);
+    const modes = runNameFieldWorker.mock.calls.map(([payload]) => payload.namesWall.activeMode);
+    expect(headings.every((heading) => heading === 70)).toBe(true);
+    expect(modes).toEqual(expect.arrayContaining(['wall', 'model']));
+  });
+
   it('reuses model preparation and font metrics when only regular page spacing changes', async () => {
     const { prepareProjectionNameWall } = await import('../../frontend/src/shared/nli-name-field-data.js');
     const tkuma = { type: 'FeatureCollection', crs: { properties: { name: 'urn:ogc:def:crs:OGC:1.3:CRS84' } },
@@ -220,6 +254,28 @@ describe('versioned wall inputs', () => {
     expect(fetch).toHaveBeenCalledTimes(3);
     await expect(loadNliNameField({ datasetVersion: 'other-version' })).rejects.toThrow(/dataset version/i);
     expect(fetch).toHaveBeenCalledTimes(6);
+  });
+
+  it('browser coverage preparation uses config rotation rather than stored heading', async () => {
+    globalThis.localStorage = { getItem: vi.fn(() => '91') };
+    const { loadNliNameField } = await import('../../frontend/src/shared/nli-name-field-data.js');
+    const config = structuredClone(DEFAULT_PROJECTION_CONFIG);
+    config.namesWall.rotateDeg = 70;
+    await loadNliNameField({ projectionConfig: config, coverage: { pieces: {} }, datasetVersion: 'test-version' });
+    const payload = runNameFieldWorker.mock.lastCall[0];
+    expect(payload.logicalPlane.heading).toBe(70);
+    expect(payload.geometry.heading).toBe(70);
+    expect(payload.heading).toBe(70);
+    expect(globalThis.localStorage.getItem).not.toHaveBeenCalled();
+  });
+
+  it('keeps the stored heading for GIS preparation without coverage', async () => {
+    globalThis.localStorage = { getItem: vi.fn(() => '91') };
+    const { loadNliNameField } = await import('../../frontend/src/shared/nli-name-field-data.js');
+    await loadNliNameField({ datasetVersion: 'test-version' });
+    expect(runNameFieldWorker.mock.lastCall[0].geometry.heading).toBe(91);
+    expect(runNameFieldWorker.mock.lastCall[0].logicalPlane).toBeUndefined();
+    expect(globalThis.localStorage.getItem).toHaveBeenCalled();
   });
 
   it('measures all integer sizes for wall mode and fetches Tkuma only for model mode', async () => {

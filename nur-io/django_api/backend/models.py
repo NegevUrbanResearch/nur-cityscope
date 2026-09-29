@@ -3,7 +3,7 @@ import os
 from django.utils import timezone
 
 from .projection_config_schema import legacy_projection_config_defaults
-from .projection_warp_schema import migrate_projection_config_to_v5
+from .projection_warp_schema import migrate_projection_config_to_v6
 
 
 def indicator_media_path(instance, filename):
@@ -414,6 +414,10 @@ class OTEFViewportState(models.Model):
 
     legend_layout_revision = models.PositiveBigIntegerField(default=0)
 
+    settlement_name_settings = models.JSONField(default=dict, blank=True)
+
+    settlement_name_revision = models.PositiveBigIntegerField(default=0)
+
     basemap = models.CharField(max_length=16, default="osm")
 
     updated_at = models.DateTimeField(auto_now=True)
@@ -677,7 +681,7 @@ class LayerState(models.Model):
 
 
 def projection_config_defaults():
-    return migrate_projection_config_to_v5(legacy_projection_config_defaults())
+    return migrate_projection_config_to_v6(legacy_projection_config_defaults(), 35)
 
 
 def projection_presets_defaults():

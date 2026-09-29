@@ -1025,6 +1025,23 @@ async function setNliClockLayout(ctx, patch = {}) {
   return response;
 }
 
+async function setSettlementNames(ctx, operation = {}, meta = {}) {
+  if (!ctx._tableName) return { ok: false, reason: "missing_table" };
+  if (!operation || typeof operation !== "object" || Array.isArray(operation)) {
+    return { ok: false, reason: "invalid_settlement_names" };
+  }
+  const requestMeta = meta && typeof meta === "object" ? meta : {};
+  const response = await OTEF_API.setSettlementNames(ctx._tableName, operation, {
+    ...(Number.isInteger(requestMeta.baseRevision) ? { baseRevision: requestMeta.baseRevision } : {}),
+    ...(typeof requestMeta.sourceId === "string" ? { sourceId: requestMeta.sourceId } : {}),
+    ...(typeof requestMeta.timestamp === "string" ? { timestamp: requestMeta.timestamp } : {}),
+  });
+  if (response?.settlementNameSettings && Number.isInteger(response.settlementNameRevision) && typeof ctx._applySettlementNamesVersioned === "function") {
+    ctx._applySettlementNamesVersioned(response.settlementNameSettings, response.settlementNameRevision, { authoritative: true });
+  }
+  return response;
+}
+
 async function setLegendSettings(ctx, patch = {}, options = {}) {
   if (!ctx._tableName) return { ok: false, reason: "missing_table" };
   if (!patch || typeof patch !== "object") return { ok: false, reason: "invalid_legend_settings" };
@@ -1220,6 +1237,7 @@ OTEFDataContextInternals.actions = {
   setNarrative,
   setEscapeOverlay,
   setNliClockLayout,
+  setSettlementNames,
   setLegendSettings,
   narrativePresentationCommand,
   narrativePresentationResult,
@@ -1252,6 +1270,7 @@ export {
   setNarrative,
   setEscapeOverlay,
   setNliClockLayout,
+  setSettlementNames,
   setLegendSettings,
   narrativePresentationCommand,
   narrativePresentationResult,

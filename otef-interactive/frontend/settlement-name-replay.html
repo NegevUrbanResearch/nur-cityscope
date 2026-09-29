@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="he">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Settlement name replay</title>
+    <style>
+      @font-face {
+        font-family: "Guttman Hatzvi";
+        src: url("./fonts/Guttman-Hatzvi.ttf") format("truetype");
+        font-weight: normal;
+        font-style: normal;
+        font-display: block;
+      }
+      body { margin: 16px; background: #111; color: #eee; font-family: Arial, sans-serif; }
+      section { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 12px 0; }
+      canvas.preview { width: min(100%, 720px); height: auto; background: #000; }
+      #summary { white-space: pre-wrap; }
+      button { margin-top: 8px; }
+    </style>
+  </head>
+  <body>
+    <h1>Settlement name baseline replay</h1>
+    <p id="summary">Loading replay.</p>
+    <button id="download" type="button" disabled>Download evidence</button>
+    <section>
+      <div><h2>Left old</h2><canvas class="preview" id="left-old" width="1920" height="1080"></canvas></div>
+      <div><h2>Left new</h2><canvas class="preview" id="left-new" width="1920" height="1080"></canvas></div>
+    </section>
+    <section>
+      <div><h2>Right old</h2><canvas class="preview" id="right-old" width="1920" height="1080"></canvas></div>
+      <div><h2>Right new</h2><canvas class="preview" id="right-new" width="1920" height="1080"></canvas></div>
+    </section>
+    <div id="replay-maps"></div>
+    <script type="module" src="/scripts/settlement-name-baseline/replay-entry.js"></script>
+  </body>
+</html>

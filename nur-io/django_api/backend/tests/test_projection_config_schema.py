@@ -80,9 +80,24 @@ class ProjectionConfigSchemaTests(SimpleTestCase):
         snapshot['presets'][0]['config'] = json.loads(json.dumps(defaults))
         snapshot['presets'][0]['config']['namesWall']['profiles']['wall']['spacingPx'] = 3
         self.assertIn('presets[0]', validate_projection_snapshot(snapshot))
-    def test_defaults_are_v5_identity_warp_without_changing_framing(self):
+    def test_v6_names_wall_rotation_is_independent_of_geometry(self):
+        from backend.projection_config_schema import validate_names_wall_v6
+        from backend.projection_warp_schema import migrate_projection_config_to_v6
+
+        v5 = migrate_projection_config_to_v5(legacy_projection_config_defaults())
+        converted = migrate_projection_config_to_v6(v5, 395)
+        self.assertEqual(converted['schemaVersion'], 6)
+        self.assertEqual(converted['namesWall']['rotateDeg'], 35)
+        self.assertEqual(converted['outputs'], v5['outputs'])
+        self.assertEqual(validate_names_wall_v6(converted['namesWall']), {})
+        self.assertEqual(validate_projection_config(converted), {})
+        passthrough = migrate_projection_config_to_v6(converted, -20)
+        self.assertEqual(passthrough['namesWall']['rotateDeg'], 35)
+
+    def test_defaults_are_v6_identity_warp_without_changing_framing(self):
         defaults = projection_config_defaults()
-        self.assertEqual(defaults['schemaVersion'], 5)
+        self.assertEqual(defaults['schemaVersion'], 6)
+        self.assertEqual(defaults['namesWall']['rotateDeg'], 35)
         self.assertEqual(defaults['pre'], {'scale': 1.41, 'rotateDeg': -50, 'tx': 0.01, 'ty': 0})
         for side, columns in (('left', 7), ('right', 8)):
             branch = defaults['outputs'][side]

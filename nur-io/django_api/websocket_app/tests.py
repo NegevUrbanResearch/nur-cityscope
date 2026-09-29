@@ -100,3 +100,16 @@ class TransientViewportRelayTests(IsolatedAsyncioTestCase):
 
         consumer._save_viewport.assert_not_awaited()
         consumer._broadcast_change.assert_awaited_once_with("otef", "viewport", message)
+
+
+class SettlementNameRelayTests(IsolatedAsyncioTestCase):
+    async def test_client_cannot_broadcast_saved_settlement_settings(self):
+        consumer = GeneralConsumer()
+        consumer.room_group_name = 'otef_channel'
+        consumer.channel_layer = type('Layer', (), {'group_send': AsyncMock()})()
+        await consumer.handle_otef_message({
+            'type': 'otef_settlement_names_changed', 'table': 'otef',
+            'sourceId': '11111111-1111-4111-8111-111111111111',
+            'settlementNameSettings': {}, 'settlementNameRevision': 1,
+        })
+        consumer.channel_layer.group_send.assert_not_awaited()

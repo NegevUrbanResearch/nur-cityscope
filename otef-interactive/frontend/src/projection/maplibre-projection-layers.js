@@ -384,7 +384,7 @@ export function syncProjectionLayers(map, layerGroups, options = {}) {
   const groups = asArrayLayerGroups(layerGroups);
   const groupsWithoutWmts = cloneGroupsWithWmtsDisabled(groups);
   const opts = options && typeof options === "object" ? options : {};
-  const { transition, suppressCanvasNameSymbols = false, ...restLayerStyleOptions } = opts;
+  const { transition, suppressCanvasNameSymbols = false, suppressSettlementSymbols = false, ...restLayerStyleOptions } = opts;
   const layerStyleOptions = joinedLayerStyleOptions({
     applyProjectionHatchPresentation: true,
     ...restLayerStyleOptions,
@@ -392,6 +392,10 @@ export function syncProjectionLayers(map, layerGroups, options = {}) {
   });
   applyLayerGroupsToMap(map, groupsWithoutWmts, layerStyleOptions);
   if (suppressCanvasNameSymbols) for (const id of ['nli__people_names__labels', 'nli-name-field-labels', 'nli-name-field-selected']) {
+    if (map.getLayer?.(id)) map.setLayoutProperty(id, 'visibility', 'none');
+  }
+  if (suppressSettlementSymbols) {
+    const id = 'projector_base__שמות_יישובים__labels';
     if (map.getLayer?.(id)) map.setLayoutProperty(id, 'visibility', 'none');
   }
 

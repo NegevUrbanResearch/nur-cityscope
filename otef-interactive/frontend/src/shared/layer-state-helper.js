@@ -455,8 +455,7 @@ function defaultGroupEnabledFor(groupId, layers) {
   return layers.length > 0 && layers.every((l) => defaultLayerEnabled(groupId, l.id));
 }
 
-function defaultLayerEnabled(groupId, layerId) {
-  if (groupId === "projector_base" && layerId === "model_base") return true;
+function defaultLayerEnabled(_groupId, _layerId) {
   return false;
 }
 

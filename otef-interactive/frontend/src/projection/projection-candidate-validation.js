@@ -1,8 +1,7 @@
 import { evaluateWarpMesh } from '../shared/projection-warp-geometry.js';
 import { validateProjectionBaselineMesh } from '../shared/projection-warp-assets.js';
 import { validateProjectionConfig } from '../shared/projection-config-schema.js';
-import { migrateNamesWallToV5 } from '../shared/nli-name-wall-config.js';
-import { readNliLabelHeading } from '../shared/nli-label-heading.js';
+import { migrateNamesWallToV5, migrateNamesWallToV6 } from '../shared/nli-name-wall-config.js';
 
 const SIDES = ['left', 'right'];
 const HASH = /^[a-f0-9]{64}$/i;
@@ -14,14 +13,18 @@ function abortError(reason = 'Wall preparation cancelled') {
 function checkSignal(signal) { if (signal?.aborted) throw abortError(); }
 function reasonOf(error) { return String(error?.message || error || 'Wall preparation unavailable').slice(0, 240); }
 function validInput(value) {
-  return value && Number.isFinite(value.heading) && typeof value.datasetVersion === 'string' &&
+  return value && typeof value.datasetVersion === 'string' &&
     value.datasetVersion.trim() && value.datasetVersion.length <= 128;
 }
 function sameInputs(left, right) {
-  return validInput(left) && validInput(right) && left.heading === right.heading && left.datasetVersion === right.datasetVersion;
+  return validInput(left) && validInput(right) && left.datasetVersion === right.datasetVersion;
+}
+function projectionMeshConfig(config) {
+  if (config?.schemaVersion === 6) return migrateNamesWallToV6(config, config.namesWall?.rotateDeg);
+  return migrateNamesWallToV5(config);
 }
 
-export async function readProjectionCandidateInputs({ storage = globalThis.localStorage, fetchImpl = globalThis.fetch, signal } = {}) {
+export async function readProjectionCandidateInputs({ fetchImpl = globalThis.fetch, signal } = {}) {
   checkSignal(signal);
   if (typeof fetchImpl !== 'function') throw new Error('Name wall release metadata unavailable');
   const response = await fetchImpl('/otef-interactive/public/processed/layers/nli/release-metadata.json', { cache: 'no-store', signal });
@@ -31,12 +34,12 @@ export async function readProjectionCandidateInputs({ storage = globalThis.local
   checkSignal(signal);
   const datasetVersion = metadata?.datasetVersion || metadata?.release?.datasetVersion || metadata?.version;
   if (typeof datasetVersion !== 'string' || !datasetVersion.trim() || datasetVersion.length > 128) throw new Error('Name wall dataset identity unavailable');
-  return { heading: readNliLabelHeading(storage), datasetVersion };
+  return { datasetVersion };
 }
 
 export function prepareProjectionSideMesh(config, side, baseline = null) {
   if (Object.keys(validateProjectionConfig(config)).length) throw new Error('Invalid projection calibration');
-  const candidate = migrateNamesWallToV5(config);
+  const candidate = projectionMeshConfig(config);
   const warp = candidate.outputs?.[side]?.warp;
   if (!warp) throw new Error(`Projection calibration has no ${side} warp`);
   let source = null;
@@ -52,7 +55,7 @@ export function prepareProjectionSideMesh(config, side, baseline = null) {
 
 export async function prepareProjectionPairMeshes({ config, loadBaseline, signal }) {
   if (Object.keys(validateProjectionConfig(config)).length) throw new Error('Invalid projection calibration');
-  const candidate = migrateNamesWallToV5(config);
+  const candidate = projectionMeshConfig(config);
   const loaded = {};
   const meshes = {};
   for (const side of SIDES) {
@@ -93,11 +96,12 @@ function boundedDiagnostics(value, candidate, datasetVersion) {
     missing, extra, duplicate, overlap: value.overlap ?? 0, invalidCoverage: value.invalidCoverage ?? 0 };
 }
 
-export function projectionCandidateResult(config, field, identity, expectedDatasetVersion = field?.datasetVersion, expectedHeading) {
+export function projectionCandidateResult(config, field, identity, expectedDatasetVersion = field?.datasetVersion) {
   const unavailable = (reason) => ({ identity, valid: false, reason });
   if (!field || typeof field.datasetVersion !== 'string' || !field.datasetVersion.trim() ||
     field.datasetVersion.length > 128 || field.datasetVersion !== expectedDatasetVersion) return unavailable('Name wall dataset unavailable or changed');
-  if (expectedHeading !== undefined && (!Number.isFinite(field.heading) || field.heading !== expectedHeading)) return unavailable('Name wall heading disagrees with current input');
+  const savedHeading = config?.namesWall?.rotateDeg;
+  if (!Number.isFinite(field.heading) || field.heading !== savedHeading) return unavailable('Name wall heading disagrees with candidate rotation');
   if (field.mode != null && field.mode !== config.namesWall.activeMode) return unavailable('Name wall mode disagrees with candidate');
   const diagnostics = boundedDiagnostics(field.diagnostics, config, field.datasetVersion);
   if (!diagnostics) return unavailable('Name wall diagnostics unavailable or inconsistent');
@@ -144,18 +148,18 @@ export function createProjectionCandidateValidator({ loadBaseline, prepareWall, 
       const compute = async () => {
         const before = await readInputs(signal);
         checkSignal(signal);
-        if (!validInput(before)) throw new Error('Name wall dataset or heading unavailable');
+        if (!validInput(before)) throw new Error('Name wall dataset unavailable');
         const meshes = await prepareProjectionPairMeshes({ config: candidate, loadBaseline, signal });
         checkSignal(signal);
         request.startedPreparation = true;
         ownsPreparation = true;
-        const field = await prepareWall({ config: candidate, meshes, datasetVersion: before.datasetVersion, heading: before.heading, signal });
+        const field = await prepareWall({ config: candidate, meshes, datasetVersion: before.datasetVersion, signal });
         checkSignal(signal);
         const after = await readInputs(signal);
         checkSignal(signal);
         if (!sameInputs(before, after)) throw new Error('Name wall inputs changed during preparation');
-        lastInputs = { heading: after.heading, datasetVersion: after.datasetVersion };
-        return projectionCandidateResult(candidate, field, identity, before.datasetVersion, before.heading);
+        lastInputs = { datasetVersion: after.datasetVersion };
+        return projectionCandidateResult(candidate, field, identity, before.datasetVersion);
       };
       const result = await Promise.race([compute(), aborted]);
       return active === request && !disposed && !signal.aborted ? result : { identity, valid: false, reason: 'Wall preparation superseded' };

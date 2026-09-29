@@ -40,7 +40,7 @@ test("view renders draggable node workspace and preserves an existing focused in
   expect(labels.join(" ")).toContain("Drag headers to move nodes");
   expect(labels.join(" ")).toContain("Left inner-edge clearance");
   expect(labels.join(" ")).toContain("Right inner-edge clearance");
-  expect([...view.nodeMap.keys()]).toEqual(["content", "names-wall", "clock-gis", "clock-projection", "pre", "left-crop", "right-crop", "left-fit", "right-fit", "left-keystone", "right-keystone", "left-grid", "right-grid", "left-output", "right-output"]);
+  expect([...view.nodeMap.keys()]).toEqual(["content", "names-wall", "settlement-names", "clock-gis", "clock-projection", "pre", "left-crop", "right-crop", "left-fit", "right-fit", "left-keystone", "right-keystone", "left-grid", "right-grid", "left-output", "right-output"]);
   const gisClockNode = view.nodeMap.get("clock-gis");
   gisClockNode.dispatch("click");
   expect(onNode).toHaveBeenLastCalledWith("clock-gis");
@@ -275,6 +275,14 @@ test("repeated refresh keeps inspector fields scoped to the selected node", () =
   expect(view.fields.get("inspector:namesWall.requestedFontPx").wrap.hidden).toBe(false);
   expect(view.fields.get("inspector:namesWall.inwardShiftPercent").wrap.hidden).toBe(true);
   expect(view.fields.get("inspector:namesWall.innerEdgeInsetPx.left").wrap.hidden).toBe(false);
+  const rotation = view.fields.get("inspector:namesWall.rotateDeg");
+  expect(rotation.wrap.hidden).toBe(false);
+  expect(rotation.number.value).toBe(String(draft.namesWall.rotateDeg));
+  expect(view.fields.get("names-wall:namesWall.rotateDeg").number.value).toBe(String(draft.namesWall.rotateDeg));
+  const rotationHelp = [...view.nodeMap.get("names-wall").children, ...view.controls.namesWallInspector.children]
+    .filter((node) => node.className?.includes("names-wall-rotation"));
+  expect(rotationHelp.length).toBeGreaterThan(0);
+  expect(rotationHelp.every((node) => /both wall and model/i.test(node.textContent) && /Live, Apply, and Save/i.test(node.textContent))).toBe(true);
   const editor = createWarpEditor({ config: draft, output: "right" });
   view.update({ state: { draft }, selectedNode: "right-grid", warpStates: { right: { ...editor.getState(), config: editor.getConfig(), handles: editor.getControlPoints() } } });
   expect(view.controls.warpPanel.hidden).toBe(false);

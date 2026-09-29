@@ -31,4 +31,6 @@ class OTEFViewportStateAdmin(admin.ModelAdmin):
         "nli_clock_layout_revision",
         "legend_settings",
         "legend_layout_revision",
+        "settlement_name_settings",
+        "settlement_name_revision",
     )

@@ -14,6 +14,44 @@ const placements = [
   { id: 'b', name: 'תמר', output: 'right', x: 10, y: 10, width: 20, height: 10 },
 ];
 
+test('a changed wall heading repacks the matrix and does not start reveal', () => {
+  const created = [];
+  const document = { createElement: () => { const next = fakeCanvas(); created.push(next); return next.canvas; } };
+  const settlement = fakeCanvas();
+  settlement.ctx.fillText('שדרות', 12, 24);
+  const settlementFills = settlement.ctx.fillText.mock.calls.length;
+  const settlementClears = settlement.ctx.clearRect.mock.calls.length;
+  const adapter = createProjectionNameCanvasAdapter({ document, output: 'left' });
+  const config = structuredClone(DEFAULT_PROJECTION_CONFIG);
+  const settlementStyle = { rotateDeg: -15, fontPx: 18 };
+  config.settlementNameStyle = settlementStyle;
+  const captured = { heading: config.namesWall.rotateDeg, planeScale: 1 };
+  adapter.prepare({ config, placements, logicalPlane: captured });
+  expect(adapter.descriptor()).toBeNull();
+  const turned = { heading: 70, planeScale: 1 };
+  const repacked = [{ ...placements[0], x: 18, y: 6, width: 36, height: 16 }, placements[1]];
+  adapter.prepare({ config, placements: repacked, logicalPlane: turned });
+  adapter.commit();
+  const painted = created.at(-1);
+  expect(painted.ctx.fillText).toHaveBeenCalledExactlyOnceWith('אביגיל בן דוד', 18, 6);
+  expect(painted.ctx.fillText).not.toHaveBeenCalledWith('אביגיל בן דוד', 0, 0);
+  const origin = planeToOutputUv([0, 0], config, 'left', turned);
+  const xUnit = planeToOutputUv([1, 0], config, 'left', turned);
+  expect(painted.ctx.setTransform).toHaveBeenLastCalledWith((xUnit.u - origin.u) * 1920, (xUnit.v - origin.v) * 1080,
+    expect.any(Number), expect.any(Number), origin.u * 1920, origin.v * 1080);
+  const topLeft = planeToOutputUv([0, -2], config, 'left', turned);
+  expect(Array.from(adapter.descriptor().revealVertices.slice(0, 2))).toEqual([Math.fround(topLeft.u), Math.fround(topLeft.v)]);
+  const committed = adapter.descriptor();
+  expect(committed.opacity).toBe(0);
+  expect(committed.revealSeconds).toBe(0);
+  expect(adapter.descriptor().contentVersion).toBe(committed.contentVersion);
+  expect(config.pre.rotateDeg).toBe(DEFAULT_PROJECTION_CONFIG.pre.rotateDeg);
+  expect(config.settlementNameStyle).toEqual(settlementStyle);
+  expect(settlement.ctx.fillText).toHaveBeenCalledTimes(settlementFills);
+  expect(settlement.ctx.clearRect).toHaveBeenCalledTimes(settlementClears);
+  expect(created).toHaveLength(2);
+});
+
 test('draws whole names only for the owned output with the exact logical plane', () => {
   const f = fakeCanvas();
   const adapter = createProjectionNameCanvasAdapter({ document: { createElement: () => f.canvas }, output: 'left' });
