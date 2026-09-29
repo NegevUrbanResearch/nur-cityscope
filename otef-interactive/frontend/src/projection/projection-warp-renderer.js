@@ -1,4 +1,5 @@
 import { createProjectionLayerTextures } from './projection-layer-textures.js';
+import { NAME_FIELD_MOTION, NAME_FIELD_REVEAL_DURATION_MS } from '../shared/nli-name-field-animation.js';
 
 const WIDTH = 1920;
 const HEIGHT = 1080;
@@ -27,7 +28,7 @@ export function validateProjectionMesh(mesh) {
 
 const COMPOSE_VERTEX = `attribute vec2 aSource; uniform mat3 uMatrix; varying vec2 vUv; void main(){ vec3 p=uMatrix*vec3(aSource,1.0); gl_Position=vec4(2.0*p.x-p.z,p.z-2.0*p.y,0.0,p.z); vUv=aSource; }`;
 const COMPOSE_FRAGMENT = `precision mediump float; varying vec2 vUv; uniform sampler2D uSource; uniform float uOpacity; uniform vec4 uClip; void main(){ vec2 outputUv=vec2((gl_FragCoord.x+0.5)/1920.0,1.0-(gl_FragCoord.y+0.5)/1080.0); if(outputUv.x<uClip.x||outputUv.y<uClip.y||outputUv.x>uClip.z||outputUv.y>uClip.w) discard; vec4 color=texture2D(uSource,vUv); gl_FragColor=vec4(color.rgb,color.a*uOpacity); }`;
-const NAMES_VERTEX = `attribute vec2 aSource; attribute float aDelay; attribute float aNameIndex; uniform mat3 uMatrix; uniform float uRevealSeconds; uniform float uSelectedIndex; varying vec2 vUv; varying float vReveal; void main(){ vec3 p=uMatrix*vec3(aSource,1.0); gl_Position=vec4(2.0*p.x-p.z,p.z-2.0*p.y,0.0,p.z); vUv=aSource; vReveal=abs(aNameIndex-uSelectedIndex)<0.5?1.0:clamp((uRevealSeconds-aDelay)/1.6,0.0,1.0); }`;
+const NAMES_VERTEX = `attribute vec2 aSource; attribute float aDelay; attribute float aNameIndex; uniform mat3 uMatrix; uniform float uRevealSeconds; uniform float uSelectedIndex; varying vec2 vUv; varying float vReveal; void main(){ vec3 p=uMatrix*vec3(aSource,1.0); gl_Position=vec4(2.0*p.x-p.z,p.z-2.0*p.y,0.0,p.z); vUv=aSource; vReveal=abs(aNameIndex-uSelectedIndex)<0.5?1.0:clamp((uRevealSeconds-aDelay)/${(NAME_FIELD_MOTION.revealMs / 1000).toFixed(3)},0.0,1.0); }`;
 const NAMES_FRAGMENT = `precision mediump float; varying vec2 vUv; varying float vReveal; uniform sampler2D uSource; uniform float uOpacity; uniform vec4 uClip; void main(){ vec2 outputUv=vec2((gl_FragCoord.x+0.5)/1920.0,1.0-(gl_FragCoord.y+0.5)/1080.0); if(outputUv.x<uClip.x||outputUv.y<uClip.y||outputUv.x>uClip.z||outputUv.y>uClip.w) discard; vec4 color=texture2D(uSource,vUv); gl_FragColor=vec4(color.rgb,color.a*uOpacity*vReveal); }`;
 const FINAL_VERTEX = `attribute vec2 aPosition; attribute vec2 aUv; varying vec2 vUv; void main(){vUv=vec2(aUv.x,1.0-aUv.y);gl_Position=vec4(aPosition,0.0,1.0);}`;
 const FINAL_FRAGMENT = `precision mediump float; varying vec2 vUv; uniform sampler2D uTexture; void main(){gl_FragColor=texture2D(uTexture,vUv);}`;
@@ -84,9 +85,9 @@ function descriptor(item) {
   if (revealVertices != null && (item.id !== 'names' || !(revealVertices instanceof Float32Array) ||
       revealVertices.length % 24 !== 0 || Array.from(revealVertices).some((value) => !finite(value))))
     throw new Error('projection names reveal vertices are invalid');
-  const revealSeconds = item.revealSeconds ?? 8.8;
+  const revealSeconds = item.revealSeconds ?? NAME_FIELD_REVEAL_DURATION_MS / 1000;
   const selectedIndex = item.selectedIndex ?? -1;
-  if (revealVertices != null && (!finite(revealSeconds) || revealSeconds < 0 || revealSeconds > 8.8 ||
+  if (revealVertices != null && (!finite(revealSeconds) || revealSeconds < 0 || revealSeconds > NAME_FIELD_REVEAL_DURATION_MS / 1000 ||
       !Number.isInteger(selectedIndex) || selectedIndex < -1))
     throw new Error('projection names reveal clock is invalid');
   return { id: item.id, source, contentVersion: item.contentVersion,

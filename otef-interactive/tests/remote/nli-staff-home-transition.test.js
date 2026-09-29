@@ -2,7 +2,7 @@
  * @vitest-environment jsdom
  */
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { COPY, HOME_CUE, HOME_LAYER_IDS } from "../../frontend/src/remote/nli-staff-script.js";
+import { COPY, HOME_CUE, HOME_LAYER_IDS, IDENTITY_LAYER_IDS } from "../../frontend/src/remote/nli-staff-script.js";
 import { nliTimelineHostMethods } from "../../frontend/src/remote/nli-timeline-transport.js";
 import { shouldCloseViewerForNarrative } from "../../frontend/src/map/nli-reveal-presentation.js";
 import { setLocale } from "../../frontend/src/remote/remote-locale.js";
@@ -55,6 +55,19 @@ const FIXTURE = `
 `;
 
 const el = (id) => document.getElementById(id);
+
+function layerGroupsFor(enabledIds) {
+  const groups = new Map();
+  for (const fullId of enabledIds || []) {
+    const dot = String(fullId).indexOf(".");
+    if (dot <= 0) continue;
+    const groupId = fullId.slice(0, dot);
+    const layerId = fullId.slice(dot + 1);
+    if (!groups.has(groupId)) groups.set(groupId, { id: groupId, layers: [] });
+    groups.get(groupId).layers.push({ id: layerId, enabled: true });
+  }
+  return [...groups.values()];
+}
 
 function activeScreen() {
   return document.querySelector(".screen.is-active")?.dataset.screen;
@@ -110,7 +123,7 @@ function mount(options = {}) {
     getPersonSelection: () => h.person,
     getInvestigationClock: () => h.clock,
     getEscapeOverlay: () => h.escape || { individual: false, overlap: false, mor: false, settled: false },
-    getLayerGroups: () => [],
+    getLayerGroups: () => layerGroupsFor(h.layers.at(-1) || []),
     getLegendSettings: () => ({ language: "en" }),
     setNarrative: async (id) => {
       h.narratives.push(id);
@@ -237,8 +250,13 @@ describe("NLI staff Home transitions", () => {
     expect(el("kitPresentation").hidden).toBe(true);
     expect(el("kitPresentation").innerHTML).not.toContain("data-presentation-action");
     const nullCallsBefore = h.narratives.filter((id) => id === null).length;
+    const layersBeforeHome = h.layers.length;
+    const commandsBeforeHome = h.commands.length;
     el("homeBtn").click();
-    await vi.waitFor(() => expect(h.commands.at(-1)?.presentationAction).toBe("close"));
+    await vi.waitFor(() => expect(h.layers.length).toBeGreaterThan(layersBeforeHome), { timeout: 2000 });
+    expect(h.layers[layersBeforeHome]).not.toContain("nli.people_names");
+    expect(h.commands.slice(commandsBeforeHome).some((command) => command.presentationAction === "close")).toBe(false);
+    await vi.waitFor(() => expect(h.commands.at(-1)?.presentationAction).toBe("close"), { timeout: 2000 });
     h.emit("narrativePresentationResult", { ...h.commands.at(-1), outcome: "closed" });
     await vi.waitFor(() => {
       expect(h.narratives.filter((id) => id === null).length).toBeGreaterThan(nullCallsBefore);
@@ -263,6 +281,34 @@ describe("NLI staff Home transitions", () => {
     await vi.waitFor(() => expect(el("cueStatus").dataset.status).toBe("ready"));
     expect(h.layers.at(-1)).toEqual([...HOME_LAYER_IDS]);
     expect(activeScreen()).toBe("home");
+  });
+
+  test("names-wall Back fades names before closing the GIS slide and restoring identity layers", async () => {
+    setLocale("en", { persist: false });
+    session = mount({ narrative: { id: null, revision: 1, transition: "steady" } });
+    await bootRemote(session);
+    const { h } = session;
+
+    await h.openCard('[data-show-step="names-wall"]');
+    await vi.waitFor(() => expect(h.commands.at(-1)?.presentationAction).toBe("open"));
+    h.emit("narrativePresentationResult", {
+      ...h.commands.at(-1),
+      outcome: "opened",
+      slide: 0,
+      range: [0, 0],
+    });
+    const layersBeforeBack = h.layers.length;
+    const commandsBeforeBack = h.commands.length;
+    el("prevBtn").click();
+    await vi.waitFor(() => expect(h.layers.length).toBeGreaterThan(layersBeforeBack), { timeout: 2000 });
+    expect(h.layers[layersBeforeBack]).not.toContain("nli.people_names");
+    expect(h.commands.slice(commandsBeforeBack).some((command) => command.presentationAction === "close")).toBe(false);
+    await vi.waitFor(() => expect(h.commands.at(-1)?.presentationAction).toBe("close"), { timeout: 2000 });
+    h.emit("narrativePresentationResult", { ...h.commands.at(-1), outcome: "closed" });
+    await vi.waitFor(() => {
+      expect(el("stepTitle").textContent).toBe("Identity database");
+      expect(h.layers.at(-1)).toEqual([...IDENTITY_LAYER_IDS]);
+    }, { timeout: 2000 });
   });
 
   test("Shura Close stays on the step and restores Open presentation", async () => {

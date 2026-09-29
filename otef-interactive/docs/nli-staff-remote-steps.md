@@ -140,6 +140,10 @@ idle story immediately: timeline layers, overview narrative, idle clock, and
 no escape routes. It does not keep playing and it does not use the Nova ended
 clock. Next finishes to Home. Back starts the rest of the day again from 06:42.
 
+Stop on timeline steps 1 and 2 rewinds within the current step to 06:29 and
+06:42 respectively, including after scrubbing or stepping. Play resumes there;
+Stop does not enter step 3.
+
 | # | Step | Layers | Clock | Remote controls |
 | :---: | :--- | :--- | :--- | :--- |
 | 1 | The opening minutes | Timeline | Plays up to 06:41 | Timeline |

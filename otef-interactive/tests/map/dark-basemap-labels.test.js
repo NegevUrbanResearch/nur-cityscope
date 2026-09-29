@@ -14,6 +14,7 @@ import {
   raiseDarkBasemapPlaceLabels,
 } from "../../frontend/src/map/dark-basemap-labels.js";
 import { createFakeMapLibreMap } from "../helpers/fake-maplibre-map.js";
+import openFreeMapDarkStyle from "../../frontend/src/map/basemaps/openfreemap-dark.js";
 
 const BILINGUAL_NAME_FIELD = [
   "case",
@@ -347,6 +348,37 @@ describe("raiseDarkBasemapPlaceLabels", () => {
       "otef-person-selection-halo",
     ]);
   });
+
+  it("suppresses only dark place labels while a raster basemap is also present", () => {
+    const darkPlaceId = openFreeMapDarkStyle.layers.find(
+      (layer) => layer.type === "symbol" && layer["source-layer"] === "place",
+    ).id;
+    expect(openFreeMapDarkStyle.layers.some((layer) => layer.id === "custom-memorial-place")).toBe(false);
+
+    const map = createFakeMapLibreMap({
+      layers: [
+        { id: darkPlaceId, type: "symbol", source: "openmaptiles", "source-layer": "place" },
+        { id: "custom-memorial-place", type: "symbol", source: "memorial", "source-layer": "place" },
+        { id: "nli__people_names__labels", type: "symbol" },
+        { id: "otef-person-selection-halo", type: "circle" },
+        { id: "osm-tiles", type: "raster", source: "osm" },
+        { id: "investigation-fill", type: "fill", paint: { "fill-opacity": 1 } },
+      ],
+    });
+
+    raiseDarkBasemapPlaceLabels(map);
+
+    expect(map.getStyle().layers.map((layer) => layer.id)).toEqual([
+      darkPlaceId,
+      "osm-tiles",
+      "investigation-fill",
+      "custom-memorial-place",
+      GIS_NOVA_PLACE_LABEL_LAYER_ID,
+      "nli__people_names__labels",
+      "otef-person-selection-halo",
+    ]);
+    expect(map.getLayer(GIS_NOVA_PLACE_LABEL_LAYER_ID)).toBeTruthy();
+  });
 });
 
 describe("ensureGisNovaPlaceLabel", () => {
@@ -371,5 +403,26 @@ describe("ensureGisNovaPlaceLabel", () => {
     ensureGisNovaPlaceLabel(map);
     ensureGisNovaPlaceLabel(map);
     expect(map.getStyle().layers.filter((layer) => layer.id === GIS_NOVA_PLACE_LABEL_LAYER_ID)).toHaveLength(1);
+  });
+
+  it("hides the white GIS Nova label during the nova narrative", () => {
+    const map = createFakeMapLibreMap();
+    raiseDarkBasemapPlaceLabels(map, { narrativeId: "nova" });
+    expect(map.getLayer(GIS_NOVA_PLACE_LABEL_LAYER_ID)).toBeTruthy();
+    expect(map.getLayoutProperty(GIS_NOVA_PLACE_LABEL_LAYER_ID, "visibility")).toBe("none");
+  });
+
+  it("shows the white GIS Nova label again after nova ends", () => {
+    const map = createFakeMapLibreMap();
+    raiseDarkBasemapPlaceLabels(map, { narrativeId: "nova" });
+    raiseDarkBasemapPlaceLabels(map, { narrativeId: null });
+    expect(map.getLayoutProperty(GIS_NOVA_PLACE_LABEL_LAYER_ID, "visibility")).toBe("visible");
+  });
+
+  it("keeps the last nova hide preference when restacking without a narrative id", () => {
+    const map = createFakeMapLibreMap();
+    raiseDarkBasemapPlaceLabels(map, { narrativeId: "nova" });
+    raiseDarkBasemapPlaceLabels(map);
+    expect(map.getLayoutProperty(GIS_NOVA_PLACE_LABEL_LAYER_ID, "visibility")).toBe("none");
   });
 });

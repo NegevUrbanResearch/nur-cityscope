@@ -3,7 +3,6 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, test, vi } from "vitest";
 import MapProjectionConfig from "../../frontend/src/shared/map-projection-config.js";
-import { DEFAULT_PROJECTION_CONFIG as DEFAULT_PROJECTION_CONFIG_DOCUMENT } from "../../frontend/src/shared/projection-config-schema.js";
 import {
   applyNliExplainerLayout,
   applyNliExplainerHostPresence,
@@ -12,20 +11,14 @@ import {
   gisClockLayoutSlotId,
   mergeGisClockLayout,
   mergeNliExplainerLayout,
-  nliExplainerBoxHitsOverlap,
-  nliExplainerOverlapPageRect,
-  nliExplainerRotatedPageAabb,
   nliExplainerShouldPaintOnSpan,
   nliExplainerSpanKey,
   nliExplainerContentOverflows,
-  NLI_EXPLAINER_LAYOUT_STORAGE_KEY,
   NLI_GIS_CLOCK_DEFAULT_LAYOUT,
-  NLI_GIS_CLOCK_LAYOUT_STORAGE_KEY,
   readGisClockLayoutStore,
   readNliExplainerLayoutStore,
   serializeGisClockLayoutMap,
   serializeNliExplainerLayoutMap,
-  shouldIgnoreExplainerLayoutStore,
 } from "../../frontend/src/projection/nli-explainer-overlay.js";
 
 const fallback = MapProjectionConfig.NLI_EXPLAINER_LAYOUT.full;
@@ -35,9 +28,10 @@ describe("nli explainer layout", () => {
     expect(nliExplainerSpanKey("")).toBe("full");
     expect(nliExplainerSpanKey("?span=left")).toBe("left");
     expect(nliExplainerSpanKey("?span=right")).toBe("right");
-    expect(nliExplainerShouldPaintOnSpan("full")).toBe(true);
+    expect(nliExplainerShouldPaintOnSpan("full")).toBe(false);
     expect(nliExplainerShouldPaintOnSpan("left")).toBe(true);
     expect(nliExplainerShouldPaintOnSpan("right")).toBe(false);
+    expect(nliExplainerShouldPaintOnSpan(null)).toBe(false);
   });
 
   it("hides the host on span=right", () => {
@@ -47,6 +41,8 @@ describe("nli explainer layout", () => {
     applyNliExplainerHostPresence(host, "right");
     expect(host.style.display).toBe("none");
     applyNliExplainerHostPresence(host, "full");
+    expect(host.style.display).toBe("none");
+    applyNliExplainerHostPresence(host, "left");
     expect(host.style.display).toBe("");
   });
 
@@ -101,11 +97,6 @@ describe("nli explainer layout", () => {
       },
       right: { leftPct: 58, topPct: 68, widthPct: 42, heightPct: 26, fontPx: 22, rotateDeg: 0 },
     });
-  });
-
-  it("bumps layout stores to v2 so lab v1 parks cannot shadow", () => {
-    expect(NLI_EXPLAINER_LAYOUT_STORAGE_KEY).toBe("otef.nliExplainerLayout.v2");
-    expect(NLI_GIS_CLOCK_LAYOUT_STORAGE_KEY).toBe("otef.nliGisClockLayout.v2");
   });
 
   test("GIS clock slot ids follow narrative id with start fallback", () => {
@@ -191,11 +182,6 @@ describe("nli explainer layout", () => {
     expect(host.style.transformOrigin).toMatch(/center/i);
   });
 
-  it("committed URL does not skip the layout store", () => {
-    expect(shouldIgnoreExplainerLayoutStore("?nliExplainerLayout=committed")).toBe(false);
-    expect(shouldIgnoreExplainerLayoutStore("")).toBe(false);
-  });
-
   it("readNliExplainerLayoutStore ignores JSON arrays and non-objects", () => {
     expect(readNliExplainerLayoutStore("[]")).toEqual({});
     expect(readNliExplainerLayoutStore([])).toEqual({});
@@ -205,23 +191,17 @@ describe("nli explainer layout", () => {
     expect(readNliExplainerLayoutStore('{"full":{"leftPct":9}}').full.leftPct).toBe(9);
   });
 
-  it("projection-main hydrates clock parks from the table and debug still uses the store helpers", () => {
+  it("projection runtime reads the acknowledged left clock slot and has no debug writer", () => {
     const here = path.dirname(fileURLToPath(import.meta.url));
     const main = fs.readFileSync(
       path.resolve(here, "../../frontend/src/entries/projection-main.js"),
       "utf8",
     );
-    const debug = fs.readFileSync(
-      path.resolve(here, "../../frontend/src/projection/nli-explainer-debug.js"),
-      "utf8",
-    );
     expect(main).toMatch(/getNliClockLayout/);
-    expect(main).toMatch(/setNliClockLayout/);
-    expect(debug).toMatch(/readNliExplainerLayoutStore\(/);
+    expect(main).toMatch(/projection\?\.left/);
     expect(main).toMatch(/applyNliExplainerHostPresence\(/);
-    expect(debug).toMatch(/applyNliExplainerHostPresence\(/);
     expect(main).not.toMatch(/JSON\.parse\(\s*localStorage\.getItem/);
-    expect(debug).not.toMatch(/JSON\.parse\(\s*localStorage\.getItem/);
+    expect(main).not.toMatch(/NliExplainerDebug|setNliClockLayout\(/);
   });
 
   it("serialize export has full/left/right and rotateDeg", () => {
@@ -233,75 +213,6 @@ describe("nli explainer layout", () => {
     expect(parsed.right.leftPct).toBe(58);
   });
 
-  it("overlap thirds come from PROJECTION_SPAN; committed defaults miss; bad boxes hit", () => {
-    const span = MapProjectionConfig.PROJECTION_SPAN;
-    const leftW = span.LEFT_X1 - span.LEFT_X0;
-    const leftOverlap = nliExplainerOverlapPageRect("left");
-    expect(leftOverlap.leftPct).toBeCloseTo((100 * (span.RIGHT_X0 - span.LEFT_X0)) / leftW);
-    expect(leftOverlap.widthPct).toBeCloseTo((100 * (span.LEFT_X1 - span.RIGHT_X0)) / leftW);
-    const rightW = span.RIGHT_X1 - span.RIGHT_X0;
-    const rightOverlap = nliExplainerOverlapPageRect("right");
-    expect(rightOverlap.leftPct).toBe(0);
-    expect(rightOverlap.widthPct).toBeCloseTo((100 * (span.LEFT_X1 - span.RIGHT_X0)) / rightW);
-    expect(nliExplainerOverlapPageRect("full")).toBe(null);
-
-    const leftDef = MapProjectionConfig.NLI_EXPLAINER_LAYOUT.left;
-    const rightDef = MapProjectionConfig.NLI_EXPLAINER_LAYOUT.right;
-    expect(nliExplainerBoxHitsOverlap(leftDef, "left")).toBe(false);
-    expect(nliExplainerBoxHitsOverlap(rightDef, "right")).toBe(false);
-    expect(
-      nliExplainerBoxHitsOverlap(
-        { leftPct: 80, topPct: 0, widthPct: 20, heightPct: 10, fontPx: 22, rotateDeg: 0 },
-        "left",
-      ),
-    ).toBe(true);
-    expect(
-      nliExplainerBoxHitsOverlap(
-        { leftPct: 6, topPct: 68, widthPct: 42, heightPct: 26, fontPx: 22, rotateDeg: 0 },
-        "right",
-      ),
-    ).toBe(true);
-  });
-
-  it("recomputes output overlap from effective crop and post transforms", () => {
-    const config = structuredClone(DEFAULT_PROJECTION_CONFIG_DOCUMENT);
-    const before = nliExplainerOverlapPageRect("left", config);
-    config.outputs.left.post.tx = 0.1;
-    const after = nliExplainerOverlapPageRect("left", config);
-    expect(after.leftPct).not.toBe(before.leftPct);
-    expect(after.widthPct).toBeGreaterThan(0);
-    expect(nliExplainerOverlapPageRect("right", config).widthPct).toBeGreaterThan(0);
-  });
-
-  it("reports vertical overlap and uses both axes for dynamic collision checks", () => {
-    const config = structuredClone(DEFAULT_PROJECTION_CONFIG_DOCUMENT);
-    config.outputs.left.post.ty = 0.5;
-    const overlap = nliExplainerOverlapPageRect("left", config);
-    expect(overlap.topPct).toBeGreaterThan(50);
-    expect(overlap.heightPct).toBeGreaterThan(0);
-    const box = { leftPct: 80, topPct: 0, widthPct: 20, heightPct: 10, fontPx: 22, rotateDeg: 0 };
-    expect(nliExplainerBoxHitsOverlap(box, "left", config)).toBe(false);
-    expect(nliExplainerBoxHitsOverlap({ ...box, topPct: 60 }, "left", config)).toBe(true);
-  });
-
-  it("rotated AABB is larger than the unrotated box", () => {
-    const layout = { leftPct: 40, topPct: 40, widthPct: 20, heightPct: 10, fontPx: 22, rotateDeg: 45 };
-    const aabb = nliExplainerRotatedPageAabb(layout);
-    expect(aabb.widthPct).toBeGreaterThan(layout.widthPct);
-    expect(aabb.heightPct).toBeGreaterThan(layout.heightPct);
-    expect(nliExplainerRotatedPageAabb({ ...layout, rotateDeg: 0 })).toEqual({
-      leftPct: 40,
-      topPct: 40,
-      widthPct: 20,
-      heightPct: 10,
-    });
-  });
-
-  it("rotation can turn an overlap miss into a hit", () => {
-    const near = { leftPct: 50, topPct: 40, widthPct: 16, heightPct: 10, fontPx: 22, rotateDeg: 0 };
-    expect(nliExplainerBoxHitsOverlap(near, "left")).toBe(false);
-    expect(nliExplainerBoxHitsOverlap({ ...near, rotateDeg: 45 }, "left")).toBe(true);
-  });
 
   it("overflow uses unclamped clone height, not ellipsized scrollHeight", () => {
     const padL = 12;

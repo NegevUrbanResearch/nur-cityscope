@@ -7,7 +7,7 @@ import {
   validateProjectionConfig,
 } from '../../frontend/src/shared/projection-config-schema.js';
 import { migrateProjectionConfigToV2 } from '../../frontend/src/shared/projection-warp-schema.js';
-import { migrateNamesWallToV3, migrateNamesWallToV4, migrateNamesWallToV5 } from '../../frontend/src/shared/nli-name-wall-config.js';
+import { migrateNamesWallToV3, migrateNamesWallToV4, migrateNamesWallToV5, migrateNamesWallToV6 } from '../../frontend/src/shared/nli-name-wall-config.js';
 
 const fixtureDocument = JSON.parse(readFileSync(new URL('../../../nur-io/django_api/backend/tests/fixtures/projection-config-v1.json', import.meta.url)));
 const fixture = fixtureDocument.valid;
@@ -15,8 +15,9 @@ const clone = (value) => JSON.parse(JSON.stringify(value));
 
 test('canonical fixture and defaults validate', () => {
   expect(validateProjectionConfig(fixture)).toEqual({});
-  expect(DEFAULT_PROJECTION_CONFIG).toEqual(migrateNamesWallToV5(fixture));
-  expect(DEFAULT_PROJECTION_CONFIG.schemaVersion).toBe(5);
+  expect(DEFAULT_PROJECTION_CONFIG).toEqual(migrateNamesWallToV6(fixture, 35));
+  expect(DEFAULT_PROJECTION_CONFIG.schemaVersion).toBe(6);
+  expect(DEFAULT_PROJECTION_CONFIG.namesWall.rotateDeg).toBe(35);
   expect(Object.isFrozen(DEFAULT_PROJECTION_CONFIG)).toBe(true);
 });
 
@@ -74,7 +75,7 @@ test('export emits only the versioned document', () => {
 });
 
 test('V5 export and legacy import round trip without dropping either profile', () => {
-  const config = clone(DEFAULT_PROJECTION_CONFIG);
+  const config = migrateNamesWallToV5(fixture);
   config.namesWall.activeMode = 'model';
   config.namesWall.profiles.wall.requestedFontPx = 15;
   config.namesWall.innerEdgeInsetPx.right = 60;
@@ -90,13 +91,48 @@ test('language-only non-finite numbers are rejected', () => {
   expect(validateProjectionConfig({ ...clone(fixture), pre: { ...fixture.pre, tx: Number.POSITIVE_INFINITY } })).toHaveProperty('pre.tx');
 });
 
-test('current V5 defaults and export preserve the wall-only closeness setting', () => {
+test('current V6 defaults and V5 export preserve the wall-only closeness setting', () => {
   const current = migrateNamesWallToV5(fixture);
-  expect(DEFAULT_PROJECTION_CONFIG).toEqual(current);
+  expect(DEFAULT_PROJECTION_CONFIG).toEqual(migrateNamesWallToV6(current, 35));
   expect(validateProjectionConfig(current)).toEqual({});
   current.namesWall.profiles.wall.inwardShiftPercent = 50;
   const exported = JSON.parse(serializeProjectionExport('Close pages', current));
   expect(exported).toEqual({ schemaVersion: 5, name: 'Close pages', config: current });
   expect(parseProjectionImport(JSON.stringify(exported)).config).toEqual(current);
   expect(parseProjectionImport(JSON.stringify({ schemaVersion: 4, name: 'Old', config: migrateNamesWallToV4(fixture) })).config.namesWall.profiles.wall.inwardShiftPercent).toBe(0);
+});
+
+test('V6 keeps an independent finite rotation and seeds old imports from the acknowledged angle', async () => {
+  const wall = await import('../../frontend/src/shared/nli-name-wall-config.js');
+  const schema = await import('../../frontend/src/shared/projection-config-schema.js');
+  const v5 = wall.migrateNamesWallToV5(fixture);
+  const seeded = wall.migrateNamesWallToV6(v5, 395);
+  expect(seeded.schemaVersion).toBe(6);
+  expect(seeded.namesWall.rotateDeg).toBe(35);
+  expect(seeded.pre).toEqual(v5.pre);
+  expect(seeded.outputs).toEqual(v5.outputs);
+  expect(wall.validateNamesWallV6(seeded.namesWall)).toEqual({});
+  expect(schema.validateProjectionConfigV6(seeded)).toEqual({});
+  expect(wall.migrateNamesWallToV6(seeded, 12).namesWall.rotateDeg).toBe(35);
+  expect(wall.migrateNamesWallToV6(fixture, 270).namesWall.rotateDeg).toBe(-90);
+  expect(wall.migrateNamesWallToV6(fixture, -180).namesWall.rotateDeg).toBe(-180);
+  expect(wall.migrateNamesWallToV6(fixture, 180).namesWall.rotateDeg).toBe(-180);
+  const imported = schema.parseProjectionImport(JSON.stringify({ schemaVersion: 5, name: 'Captured', config: v5 }), 70);
+  expect(imported.config.namesWall.rotateDeg).toBe(70);
+  expect(imported.config.schemaVersion).toBe(6);
+  expect(imported.config.outputs).toEqual(v5.outputs);
+  const preserved = schema.parseProjectionImport(JSON.stringify({ schemaVersion: 6, name: 'Kept', config: seeded }));
+  expect(preserved.config.namesWall.rotateDeg).toBe(35);
+  const exported = JSON.parse(schema.serializeProjectionExport('Kept', seeded));
+  expect(exported.schemaVersion).toBe(6);
+  expect(exported.config.namesWall.rotateDeg).toBe(35);
+});
+
+test('V6 import of a V3 file keeps the seam-gap conversion warning', () => {
+  const v3 = migrateNamesWallToV3(fixture);
+  v3.namesWall.profiles.wall.seamGapPx = 3;
+  const parsed = parseProjectionImport(JSON.stringify({ schemaVersion: 3, name: 'Historical seam', config: v3 }), 35);
+  expect(parsed.config.schemaVersion).toBe(6);
+  expect(parsed.config.namesWall.rotateDeg).toBe(35);
+  expect(parsed.warnings).toContain('The wall seam gap needs readjustment in final-output pixels.');
 });

@@ -177,9 +177,10 @@ export function disposeProjectionNameWallPreparation() {
 }
 
 /** One document-local owner shares the evaluated geometry and two mode results. */
-export function prepareProjectionNameWall({ config, meshes, datasetVersion, heading, signal,
+export function prepareProjectionNameWall({ config, meshes, datasetVersion, signal,
   compositorClips, cameraMappings } = {}) {
   rejectAbortedLayout(signal);
+  const heading = config?.namesWall?.rotateDeg;
   if (!config?.namesWall || !meshes?.left || !meshes?.right || !Number.isFinite(heading))
     return Promise.reject(new Error('invalid projection name wall preparation'));
   const logicalPlane = { heading, planeScale: config.pre.scale * Math.min(
@@ -266,15 +267,18 @@ export async function loadNliNameField({ projectionConfig = DEFAULT_PROJECTION_C
     ]);
     rejectAbortedLayout(signal);
     if (current !== generation) throw new Error('Stale name field dataset preparation');
-    const heading = readNliLabelHeading(globalThis.localStorage);
+    const heading = projectionConfig.namesWall?.rotateDeg;
+    if (!Number.isFinite(heading)) throw new Error('invalid projection name wall rotation');
+    const logicalPlane = { heading, planeScale: projectionConfig.pre.scale * Math.min(
+      projectionConfig.outputs.left.post.scale, projectionConfig.outputs.right.post.scale) };
     const field = await runNameFieldWorker({ profile: 'namesWall', records: input.records, metrics, fontIdentity,
-      coverage, coverageIdentity, namesWall, ...(tkuma ? { ring: tkuma.ring, ringHash: tkuma.ringHash } : {}),
+      coverage, coverageIdentity, namesWall, logicalPlane, ...(tkuma ? { ring: tkuma.ring, ringHash: tkuma.ringHash } : {}),
       geometry: { bounds: input.bounds, heading, projectionConfig }, heading, datasetVersion: input.datasetVersion, configRevision }, undefined, signal);
     rejectAbortedLayout(signal);
     if (current !== generation) throw new Error('Stale name field worker result');
     return field;
   }
-  // GIS retains its historical font fallback and single-projector field.
+  // GIS and other non-browser callers keep the stored label heading until Task 7.
   await document.fonts?.load("12px 'Guttman Hatzvi'");
   const ctx = document.createElement('canvas').getContext('2d');
   const texts = input.collection.features.map((feature) => String(feature.properties?.hebrew_name || feature.properties?.name || '').trim());

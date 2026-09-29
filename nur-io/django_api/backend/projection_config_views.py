@@ -8,6 +8,7 @@ from django.views.decorators.csrf import csrf_exempt
 from .projection_config_service import (
     ProjectionConfigError,
     ProjectionConflict,
+    ProjectionSchemaChanged,
     get_projection_state,
     mutate_projection_state,
 )
@@ -44,6 +45,8 @@ class ProjectionConfigView(View):
                 **{key: value for key, value in body.items() if key not in {"table", "baseRevision", "action", "sourceId"}},
             )
             return JsonResponse(state)
+        except ProjectionSchemaChanged as exc:
+            return JsonResponse({"error": "schema_changed", "requiredSchemaVersion": 6, "state": exc.state}, status=409)
         except ProjectionConflict as exc:
             return JsonResponse({"error": "conflict", "state": exc.state}, status=409)
         except ProjectionConfigError as exc:

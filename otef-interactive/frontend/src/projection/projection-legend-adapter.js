@@ -61,14 +61,6 @@ function textWidth(context, value, letterSpacing) {
   return (context.measureText?.(value).width || value.length * 8) + Math.max(0, value.length - 1) * letterSpacing;
 }
 
-function lineBoxBaseline(context, text, font, lineHeight) {
-  const metrics = context.measureText?.(text) || {};
-  const actualAscent = Number(metrics.actualBoundingBoxAscent) || font * 0.8;
-  const ascent = Number(metrics.fontBoundingBoxAscent) || actualAscent;
-  const descent = Number(metrics.fontBoundingBoxDescent) || Number(metrics.actualBoundingBoxDescent) || font * 0.2;
-  return (lineHeight - ascent - descent) / 2 + ascent;
-}
-
 function setShadow(context) {
   context.shadowColor = "rgba(0, 0, 0, 0.85)";
   context.shadowOffsetX = 0;
@@ -271,22 +263,8 @@ function drawGroup(context, group, startY, startX, groupWidth, height, font, dir
   const innerLeft = startX + paddingX;
   const innerRight = startX + groupWidth - paddingX;
   const innerWidth = Math.max(1, innerRight - innerLeft);
-  const titleFont = font * 0.55;
-  const titleLine = titleFont * 1.35;
   const itemGap = font * 18 / 16;
   let y = startY;
-  if (group.id !== "nli") {
-    const titleDirection = textDirection(group.name, direction);
-    const titleX = titleDirection === "rtl" ? innerRight : innerLeft;
-    context.font = `600 ${titleFont}px ${FONT}`;
-    context.fillStyle = SUB;
-    context.direction = titleDirection;
-    context.textAlign = titleDirection === "rtl" ? "right" : "left";
-    context.textBaseline = "alphabetic";
-    setShadow(context);
-    context.fillText(group.name || "", titleX, startY + lineBoxBaseline(context, group.name || "", titleFont, titleLine));
-    y = startY + titleLine + titleFont * 0.55;
-  }
   const boxes = (group.items || []).map((item) => measureItem(context, item, font));
   let cursor = direction === "rtl" ? innerRight : innerLeft;
   let rowHeight = 0;
@@ -317,8 +295,7 @@ function groupNaturalWidth(context, group, font) {
   const itemGap = font * 18 / 16;
   const boxes = (group.items || []).map((item) => measureItem(context, item, font));
   const itemsWidth = boxes.reduce((sum, box, index) => sum + box.width + (index ? itemGap : 0), 0);
-  const titleWidth = group.id === "nli" ? 0 : Math.max(1, textWidth(context, group.name || "", (font * 0.55) * 0.01));
-  return paddingX * 2 + Math.max(titleWidth, itemsWidth);
+  return paddingX * 2 + itemsWidth;
 }
 
 export function createProjectionLegendAdapter({ canvasFactory } = {}) {

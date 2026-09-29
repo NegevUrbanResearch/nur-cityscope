@@ -19,6 +19,8 @@ import {
   scaleLineOpacityPaintForGis,
   scaleLineWidthPaintForProjection,
   scaleNliPeoplePointRadius,
+  scaleOpenSpacesFillOpacity,
+  omitOpenSpacesOutline,
   scalePointRadiusPaintForProjection,
 } from "../shared/maplibre-style-bridge.js";
 import {
@@ -337,6 +339,15 @@ function applySurfacePresentation(item, surface, fullId) {
   }
   if (next.strokeOpacity != null) {
     next.strokeOpacity = scaleLineOpacityPaintForGis(next.strokeOpacity, hatchPresentation, fullId);
+  }
+  if (next.fillOpacity != null) {
+    next.fillOpacity = scaleOpenSpacesFillOpacity(next.fillOpacity, fullId);
+  }
+  if (omitOpenSpacesOutline(fullId)) {
+    delete next.stroke;
+    delete next.strokeWidth;
+    delete next.strokeOpacity;
+    next.strokeSwatches = [];
   }
   if (next.pointRadius != null) {
     next.pointRadius = scaleNliPeoplePointRadius(

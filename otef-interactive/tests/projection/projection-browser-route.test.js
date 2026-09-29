@@ -47,6 +47,39 @@ test('production output ignores the seam-proof query', async () => {
   }
 });
 
+test('browser surface boots when the unused table photo cannot be decoded', async () => {
+  const oldDocument = globalThis.document;
+  const draws = [];
+  const image = {
+    complete: true,
+    naturalWidth: 0,
+    naturalHeight: 0,
+    src: '',
+    currentSrc: '',
+    getAttribute(name) { return name === 'src' ? '' : null; },
+    style: {},
+    decode: async () => {
+      throw new Error('The source image cannot be decoded.');
+    },
+  };
+  globalThis.document = { createElement() { return { style: {}, setAttribute() {}, addEventListener() {}, removeEventListener() {}, remove() {} }; } };
+  try {
+    const surface = await createProjectionBrowserSurface({
+      host: { appendChild() {} },
+      spanId: 'left',
+      image,
+      getScene: () => ({ image: null, map: null }),
+      initialConfig: structuredClone(DEFAULT_PROJECTION_CONFIG),
+      fetchImpl: async () => ({ ok: false }),
+      rendererFactory: () => ({ draw(scene) { draws.push(scene); }, isContextLost: () => false, dispose() {} }),
+    });
+    expect(draws.at(-1).layers.some((layer) => layer.id === 'image')).toBe(false);
+    surface.dispose();
+  } finally {
+    globalThis.document = oldDocument;
+  }
+});
+
 test('an explicit unready image removes a previously drawn image layer', async () => {
   const oldDocument = globalThis.document;
   const draws = [];
@@ -244,7 +277,8 @@ test("identity startup survives unavailable framing and manifest bytes", async (
     let initialMesh;
     const initialConfig = structuredClone(DEFAULT_PROJECTION_CONFIG);
     initialConfig.outputs.left.warp.enabled = !disabled;
-    expect(initialConfig.schemaVersion).toBe(5);
+    expect(initialConfig.schemaVersion).toBe(6);
+    expect(initialConfig.namesWall.rotateDeg).toBe(35);
     const surface = await createProjectionBrowserSurface({
       host, spanId: "left", image, initialConfig,
       fetchImpl: async () => ({ ok: false }),

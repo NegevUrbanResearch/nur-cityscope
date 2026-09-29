@@ -1,12 +1,11 @@
 /**
- * Projection page lab shortcuts (H/A help, L labels, E clock, …).
- * Parsed independently of focus so clock-debug <input> fields cannot swallow them.
+ * Projection page lab shortcuts (H/A help, L labels, and renderer controls).
  */
 
 export const PROJECTION_LAB_CHROME_Z_INDEX = 1100;
 
 /**
- * @typedef {"help" | "fullscreen" | "bounds" | "rotation" | "renderDebug" | "labelDebug" | "explainerDebug"} ProjectionDisplayHotkeyAction
+ * @typedef {"help" | "fullscreen" | "bounds" | "rotation" | "renderDebug" | "labelDebug"} ProjectionDisplayHotkeyAction
  */
 
 /**
@@ -31,8 +30,6 @@ export function readProjectionDisplayHotkey(event) {
       return "renderDebug";
     case "l":
       return "labelDebug";
-    case "e":
-      return "explainerDebug";
     default:
       return null;
   }
@@ -47,7 +44,6 @@ export function readProjectionDisplayHotkey(event) {
  *   toggleRotation?: () => void,
  *   toggleRenderDebug?: () => void,
  *   toggleLabelDebug?: () => void,
- *   toggleExplainerDebug?: () => void,
  * }} handlers
  * @returns {boolean}
  */
@@ -71,9 +67,6 @@ export function dispatchProjectionDisplayHotkey(action, handlers) {
       return true;
     case "labelDebug":
       handlers.toggleLabelDebug?.();
-      return true;
-    case "explainerDebug":
-      handlers.toggleExplainerDebug?.();
       return true;
     default: {
       const _exhaustive = action;

@@ -4,6 +4,10 @@ import path from "node:path";
 import { createFakeMapLibreMap } from "../helpers/fake-maplibre-map.js";
 import { createCuratedDisplayGate, createProjectionCuratedRefresh, loadCuratedLayerToMapLibre, removeCuratedHtmlMarkers } from "../../frontend/src/map/maplibre-curated-layer-loader.js";
 import * as curatedService from "../../frontend/src/shared/curated-layer-service.js";
+import { getLayerLifecycleRuntime } from "../../frontend/src/shared/layer-lifecycle-fade.js";
+import { syncProjectionModelImage } from "../../frontend/src/projection/projection-model-image.js";
+import { syncProjectionLayers } from "../../frontend/src/projection/maplibre-projection-layers.js";
+import layerRegistry from "../../frontend/src/shared/layer-registry.js";
 
 function readProjectionEntry() {
   return fs.readFileSync(
@@ -37,8 +41,15 @@ describe("projection live curated refresh", () => {
       source.indexOf('OTEFDataContext.subscribe("viewport"'),
     );
     expect(subscriber).toMatch(/applyProjectionRefresh\(\{/);
-    expect(subscriber).toMatch(/isCurrent:\s*projectionDisplay\.begin\(/);
+    expect(subscriber).not.toMatch(/projectionDisplay\.begin\(/);
+    expect(source).toMatch(/displayGate:\s*projectionDisplay/);
     expect(subscriber).not.toMatch(/refreshProjectionCuratedLayers/);
+    expect(source).toMatch(/updateModelVisibility:\s*\(rawGroups,\s*modelInfo\)\s*=>\s*syncProjectionModelImage\(/);
+    expect(source).toMatch(/markMemberReady\(\s*["']projector_base\.model_base["']\s*\)/);
+    expect(source).toMatch(/markMemberFailed\(\s*["']projector_base\.model_base["']\s*\)/);
+    expect(source).toMatch(/projectionModelSubscribeReady\(/);
+    expect(source).toMatch(/sealBatch:\s*false/);
+    expect(source).toMatch(/releaseProjectionModelImage\(map\)/);
     const loader = fs.readFileSync(
       path.resolve(import.meta.dirname, "../../frontend/src/map/maplibre-curated-layer-loader.js"),
       "utf8",
@@ -46,7 +57,9 @@ describe("projection live curated refresh", () => {
     const refreshStart = loader.indexOf("const runProjectionCuratedRefresh = async");
     const refresh = loader.slice(refreshStart, loader.indexOf("const applyProjectionRefresh", refreshStart));
     expect(refresh.indexOf("syncProjectionLayersWithNarrative")).toBeGreaterThan(-1);
-    expect(refresh.indexOf("syncProjectionLayersWithNarrative")).toBeLessThan(refresh.indexOf("await"));
+    expect(refresh.indexOf("holdUntilHidden")).toBeGreaterThan(-1);
+    expect(refresh.indexOf("holdUntilHidden")).toBeLessThan(refresh.indexOf("syncProjectionLayersWithNarrative"));
+    expect(refresh.indexOf("syncProjectionLayersWithNarrative")).toBeLessThan(refresh.indexOf("await Promise.all"));
     expect(refresh).toMatch(/isCurrent:\s*\(\)\s*=>\s*isCurrent\(fullId\)/);
     expect(refresh).not.toMatch(/\bflyTo\b|\bjumpTo\b|\beaseTo\b/);
     expect(source).toMatch(/createProjectionCuratedRefresh\(/);
@@ -150,6 +163,7 @@ describe("projection live curated refresh", () => {
     await applyProjectionRefresh({
       groupsOverride: [curatedGroup("curated.scene", true)],
       isCurrent: () => true,
+      layerStyleOptions: { transition: { transitionMs: 0 } },
     });
     expect(added).toHaveLength(1);
     expect(removed).toHaveLength(0);
@@ -161,6 +175,7 @@ describe("projection live curated refresh", () => {
       affectedCuratedFullLayerIds: ["curated.scene"],
       groupsOverride: [curatedGroup("curated.scene", true)],
       isCurrent: sceneCurrent,
+      layerStyleOptions: { transition: { transitionMs: 0 } },
     });
     expect(removed).toHaveLength(0);
     expect(map.getLayer("curated.scene__old")).toBeTruthy();
@@ -169,6 +184,7 @@ describe("projection live curated refresh", () => {
     await applyProjectionRefresh({
       groupsOverride: [curatedGroup("curated.home", true), curatedGroup("curated.scene", false)],
       isCurrent: homeCurrent,
+      layerStyleOptions: { transition: { transitionMs: 0 } },
     });
     expect(map.getLayer("curated.scene__old")).toBeFalsy();
     expect(map.getLayer("curated.home__plain__fill")).toBeTruthy();
@@ -199,6 +215,157 @@ function curatedGroup(fullId, enabled) {
   const [groupId, layerId] = fullId.split(".");
   return { id: groupId, layers: [{ id: layerId, enabled }] };
 }
+
+test("a slideshow tick keeps curated removal immediate and forwards a zero duration", async () => {
+  vi.spyOn(curatedService, "fetchCuratedLayerData").mockResolvedValue({
+    geojson: polygonCollection("scene"),
+    layerData: {},
+  });
+  vi.spyOn(curatedService, "fetchPinkLinePaths").mockResolvedValue({ basePaths: [], pinkGeojson: null });
+  const map = createFakeMapLibreMap();
+  const modelCalls = [];
+  const gate = createCuratedDisplayGate({ isMapAlive: () => true });
+  const begin = vi.spyOn(gate, "begin");
+  const { applyProjectionRefresh } = createProjectionCuratedRefresh({
+    map,
+    displayGate: gate,
+    updateModelVisibility: (_groups, info) => modelCalls.push(info),
+  });
+  await applyProjectionRefresh({
+    fromSlideshowTick: true,
+    groupsOverride: [curatedGroup("curated.scene", true)],
+    affectedCuratedFullLayerIds: ["curated.scene"],
+    layerStyleOptions: { lifecycle: { retainDisabled: true } },
+  });
+  expect(modelCalls.at(-1)).toEqual({ durationMs: 0, fromSlideshowTick: true });
+  expect(map.getPaintProperty("curated.scene__plain__fill", "fill-opacity")).toBe(0.4);
+  expect(begin).not.toHaveBeenCalled();
+
+  await applyProjectionRefresh({
+    fromSlideshowTick: true,
+    groupsOverride: [curatedGroup("curated.scene", false)],
+  });
+  expect(map.getLayer("curated.scene__plain__fill")).toBeFalsy();
+  expect(modelCalls.at(-1)).toMatchObject({ durationMs: 0, fromSlideshowTick: true });
+});
+
+test("projection refresh fades the model image with the resolved batch duration", async () => {
+  let time = 0;
+  let frame = null;
+  const hooks = {
+    now: () => time,
+    requestFrame(callback) { frame = { callback }; return 1; },
+    cancelFrame() { frame = null; },
+    setTimer() { return 1; },
+    clearTimer() {},
+  };
+  const map = createFakeMapLibreMap();
+  getLayerLifecycleRuntime(map, hooks);
+  const image = { complete: true, naturalWidth: 8, naturalHeight: 4, style: { opacity: "0", transition: "" }, addEventListener() {}, removeEventListener() {} };
+  const requestDraw = vi.fn();
+  const { applyProjectionRefresh } = createProjectionCuratedRefresh({
+    map,
+    updateModelVisibility: (groups, modelInfo) => syncProjectionModelImage({
+      map,
+      imageEl: image,
+      layerGroups: groups,
+      modelInfo,
+      requestDraw,
+    }),
+  });
+  await applyProjectionRefresh({
+    groupsOverride: [{ id: "projector_base", enabled: true, layers: [{ id: "model_base", enabled: true }] }],
+  });
+  expect(image.style.opacity).toBe("0");
+  time = 300;
+  frame.callback(time);
+  expect(Number(image.style.opacity)).toBeGreaterThan(0);
+  expect(Number(image.style.opacity)).toBeLessThan(1);
+  expect(requestDraw).toHaveBeenCalled();
+
+  image.style.opacity = "1";
+  requestDraw.mockClear();
+  await applyProjectionRefresh({
+    groupsOverride: [{ id: "projector_base", enabled: true, layers: [{ id: "model_base", enabled: true }] }],
+  });
+  expect(image.style.opacity).toBe("1");
+  expect(requestDraw).not.toHaveBeenCalled();
+
+  await applyProjectionRefresh({
+    fromSlideshowTick: true,
+    groupsOverride: [{ id: "projector_base", enabled: true, layers: [{ id: "model_base", enabled: false }] }],
+    layerStyleOptions: { lifecycle: { retainDisabled: true } },
+  });
+  expect(image.style.opacity).toBe("0");
+  expect(image.style.transition).toBe("none");
+  expect(requestDraw).not.toHaveBeenCalled();
+});
+
+test("a same-set refresh starts a ready model and a new WMTS layer together", async () => {
+  let time = 0;
+  let frame = null;
+  const hooks = {
+    now: () => time,
+    requestFrame(callback) { frame = { callback }; return 1; },
+    cancelFrame() { frame = null; },
+    setTimer() { return 1; },
+    clearTimer() {},
+  };
+  const map = createFakeMapLibreMap();
+  const runtime = getLayerLifecycleRuntime(map, hooks);
+  const image = {
+    complete: true,
+    naturalWidth: 8,
+    naturalHeight: 4,
+    style: { opacity: "0", transition: "" },
+    addEventListener() {},
+    removeEventListener() {},
+  };
+  const wmtsId = "proj.wmts_base";
+  const rasterId = `wmts__${wmtsId}__raster`;
+  vi.spyOn(layerRegistry, "getLayerConfig").mockImplementation((id) => (
+    id === wmtsId
+      ? { fullId: wmtsId, groupId: "proj", id: "wmts_base", format: "wmts", wmts: { urlTemplate: "https://example.com/{z}/{x}/{y}.png", opacity: 1 } }
+      : undefined
+  ));
+  const modelGroup = { id: "projector_base", enabled: true, layers: [{ id: "model_base", enabled: true }] };
+  const withWmts = [modelGroup, { id: "proj", enabled: true, layers: [{ id: "wmts_base", enabled: true }] }];
+  let layersJoinedOpenBatch = false;
+  const { applyProjectionRefresh } = createProjectionCuratedRefresh({
+    map,
+    updateModelVisibility: (groups, modelInfo) => syncProjectionModelImage({
+      map,
+      imageEl: image,
+      layerGroups: groups,
+      modelInfo,
+      sealBatch: false,
+      requestDraw: () => {},
+    }),
+    syncProjectionLayersWithNarrative: (_map, groups, options) => {
+      const pending = runtime.getPendingBatch();
+      layersJoinedOpenBatch = !!pending && pending.sealed === false;
+      syncProjectionLayers(_map, groups, options);
+    },
+  });
+  await applyProjectionRefresh({ groupsOverride: [modelGroup] });
+  time = 600;
+  frame.callback(time);
+  expect(image.style.opacity).toBe("1");
+  try {
+    layersJoinedOpenBatch = false;
+    await applyProjectionRefresh({ groupsOverride: withWmts });
+    expect(layersJoinedOpenBatch).toBe(true);
+    expect(map.getPaintProperty(rasterId, "raster-opacity")).toBe(0);
+    time = 900;
+    frame.callback(time);
+    const raster = Number(map.getPaintProperty(rasterId, "raster-opacity"));
+    expect(raster).toBeGreaterThan(0);
+    expect(raster).toBeLessThan(1);
+    expect(image.style.opacity).toBe("1");
+  } finally {
+    vi.restoreAllMocks();
+  }
+});
 
 function markerNamespace(added, removed) {
   class Marker {

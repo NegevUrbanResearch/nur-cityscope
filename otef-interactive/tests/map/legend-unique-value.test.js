@@ -128,8 +128,8 @@ describe("legendLayerFromConfig uniqueValue", () => {
       language: "he",
     });
     expect(layer.items.map((item) => item.label)).toEqual([
-      "שורדי שבי",
-      "נרצחו בשבי",
+      "חטופים ששבו",
+      "חטופים שנרצחו",
     ]);
   });
 

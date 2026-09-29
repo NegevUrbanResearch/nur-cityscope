@@ -281,6 +281,14 @@ function endOpacityFade(node = overlay()) {
   node?.dispatchEvent(new TransitionEvent("transitionend", { propertyName: "opacity", bubbles: true }));
 }
 
+async function openUntilFadeArmed(startOpen, { decodeGates = null } = {}) {
+  const opening = startOpen();
+  await vi.advanceTimersByTimeAsync(0);
+  decodeGates?.[0]?.resolve();
+  await vi.advanceTimersByTimeAsync(0);
+  return { opening };
+}
+
 function deferDecode() {
   if (typeof HTMLImageElement.prototype.decode !== "function") {
     Object.defineProperty(HTMLImageElement.prototype, "decode", {
@@ -925,6 +933,10 @@ describe("presentation open and close lifecycle", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(overlay()).not.toBeNull();
     expect(overlay().querySelector("img")).toBeNull();
+    expect(overlay().querySelector(".nli-blackout-title")?.textContent).toBe("מאגר הזהויות");
+    expect(overlay().querySelector(".nli-blackout-title")?.dir).toBe("rtl");
+    expect(overlay().querySelector(".nli-blackout-date")?.textContent).toBe("7/10");
+    expect(overlay().querySelector(".nli-blackout-date")?.dir).toBe("ltr");
     expect(results).toEqual([]);
     await vi.advanceTimersByTimeAsync(16);
     expect(overlay().style.opacity).toBe("1");
@@ -934,6 +946,86 @@ describe("presentation open and close lifecycle", () => {
     expect(results.map((result) => result.outcome)).toEqual(["opened", "ready"]);
     expect(decode).not.toHaveBeenCalled();
     viewer.dispose();
+  });
+
+  test("names_wall fade-in holds opacity 0 with transition none until the next frame", async () => {
+    vi.useFakeTimers();
+    const h = makeHarness();
+    const { opening } = await openUntilFadeArmed(() => h.start("open", {
+      segmentId: "names_wall", presentationSessionId: "wall",
+    }));
+    expect(overlay().style.opacity).toBe("0");
+    expect(overlay().style.transition).toBe("none");
+    await vi.advanceTimersByTimeAsync(16);
+    expect(overlay().style.opacity).toBe("1");
+    expect(overlay().style.transition).toBe("");
+    endOpacityFade();
+    await opening;
+    expect(h.results.map((result) => result.outcome)).toEqual(["opened", "ready"]);
+    h.viewer.dispose();
+  });
+
+  test.each(
+    manifest.segments.filter((segment) => segment.kind !== "blackout").map((segment) => segment.id),
+  )("%s fade-in holds opacity 0 with transition none until the next frame", async (segmentId) => {
+    vi.useFakeTimers();
+    const gates = deferDecode();
+    const h = makeHarness();
+    const { opening } = await openUntilFadeArmed(() => h.start("open", { segmentId }), { decodeGates: gates });
+    expect(overlay().style.opacity).toBe("0");
+    expect(overlay().style.transition).toBe("none");
+    await vi.advanceTimersByTimeAsync(16);
+    expect(overlay().style.opacity).toBe("1");
+    expect(overlay().style.transition).toBe("");
+    endOpacityFade();
+    await opening;
+    expect(h.lastResult()).toMatchObject({ outcome: "opened", segmentId });
+    h.viewer.dispose();
+  });
+
+  test("names_wall fade-out holds opacity 1 with transition none until the next frame", async () => {
+    vi.useFakeTimers();
+    const h = makeHarness();
+    const { opening } = await openUntilFadeArmed(() => h.start("open", {
+      segmentId: "names_wall", presentationSessionId: "wall",
+    }));
+    await vi.advanceTimersByTimeAsync(16);
+    endOpacityFade();
+    await opening;
+    const closing = h.viewer.handleCommand(command("close", {
+      segmentId: "names_wall", presentationSessionId: "wall", sequence: 50,
+    }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(overlay().style.opacity).toBe("1");
+    expect(overlay().style.transition).toBe("none");
+    await vi.advanceTimersByTimeAsync(16);
+    expect(overlay().style.opacity).toBe("0");
+    expect(overlay().style.transition).toBe("");
+    endOpacityFade();
+    await closing;
+    expect(h.lastResult().outcome).toBe("closed");
+    expect(overlay()).toBeNull();
+  });
+
+  test("image-deck fade-out holds opacity 1 with transition none until the next frame", async () => {
+    vi.useFakeTimers();
+    const gates = deferDecode();
+    const h = makeHarness();
+    const { opening } = await openUntilFadeArmed(() => h.start("open", { segmentId: "segev" }), { decodeGates: gates });
+    await vi.advanceTimersByTimeAsync(16);
+    endOpacityFade();
+    await opening;
+    const closing = h.viewer.handleCommand(command("close", { sequence: 50 }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(overlay().style.opacity).toBe("1");
+    expect(overlay().style.transition).toBe("none");
+    await vi.advanceTimersByTimeAsync(16);
+    expect(overlay().style.opacity).toBe("0");
+    expect(overlay().style.transition).toBe("");
+    endOpacityFade();
+    await closing;
+    expect(h.lastResult().outcome).toBe("closed");
+    expect(overlay()).toBeNull();
   });
 
   test("fresh narrative exits close any viewer once per revision, including Shura", async () => {

@@ -117,10 +117,10 @@ const PROJECTION_MAP_MAX_CANVAS_SIZE = [16384, 16384];
 /**
  * @param {string} containerId
  * @param {object} modelBounds
- * @param {{ pixelRatio?: number }} [options] If `pixelRatio` is a finite number > 0, passed to MapLibre (supersampling when above devicePixelRatio).
+ * @param {{ pixelRatio?: number, canvasContextAttributes?: WebGLContextAttributes }} [options] MapLibre canvas options.
  */
 export function createProjectionMap(containerId, modelBounds, options = {}) {
-  const { pixelRatio } = options;
+  const { pixelRatio, canvasContextAttributes } = options;
   const mapOptions = {
     container: containerId,
     style: {
@@ -133,10 +133,12 @@ export function createProjectionMap(containerId, modelBounds, options = {}) {
     bearing: modelBounds.bearing || 0,
     interactive: true,
     attributionControl: false,
-    preserveDrawingBuffer: true,
     dragRotate: false,
     maxCanvasSize: PROJECTION_MAP_MAX_CANVAS_SIZE,
   };
+  if (canvasContextAttributes && typeof canvasContextAttributes === "object") {
+    mapOptions.canvasContextAttributes = { ...canvasContextAttributes };
+  }
   if (typeof pixelRatio === "number" && Number.isFinite(pixelRatio) && pixelRatio > 0) {
     mapOptions.pixelRatio = pixelRatio;
   }

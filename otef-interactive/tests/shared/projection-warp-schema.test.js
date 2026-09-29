@@ -24,6 +24,16 @@ test('migrates v1 framing without changing legacy fields', () => {
   expect(validateProjectionConfigV2(migrated)).toEqual({});
 });
 
+test('V6 projection validation accepts rotateDeg and rejects a profile angle', async () => {
+  const wall = await import('../../frontend/src/shared/nli-name-wall-config.js');
+  const warp = await import('../../frontend/src/shared/projection-warp-schema.js');
+  const config = wall.migrateNamesWallToV6(wall.migrateNamesWallToV5(migrateProjectionConfigToV2(fixture)), 35);
+  expect(warp.validateProjectionConfigV6(config)).toEqual({});
+  const angled = structuredClone(config);
+  angled.namesWall.profiles.wall.rotateDeg = 35;
+  expect(warp.validateProjectionConfigV6(angled)).toHaveProperty('namesWall.profiles.wall.rotateDeg');
+});
+
 test('accepts a complete v2 config while v1 defaults remain valid', () => {
   const value = migrateProjectionConfigToV2(fixture);
   expect(validateProjectionConfig(value)).toEqual({});

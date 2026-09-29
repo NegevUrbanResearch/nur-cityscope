@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { DEFAULT_NAMES_WALL, DEFAULT_NAMES_WALL_V5, LEGACY_NAMES_WALL, validateNamesWall, validateNamesWallV3, validateNamesWallV5, migrateNamesWallToV3, migrateNamesWallToV4, migrateNamesWallToV5 } from '../../frontend/src/shared/nli-name-wall-config.js';
+import { DEFAULT_NAMES_WALL, LEGACY_NAMES_WALL, validateNamesWall, validateNamesWallV3, validateNamesWallV5, migrateNamesWallToV3, migrateNamesWallToV4, migrateNamesWallToV5 } from '../../frontend/src/shared/nli-name-wall-config.js';
 import { DEFAULT_PROJECTION_CONFIG, LEGACY_DEFAULT_PROJECTION_CONFIG, validateProjectionConfig } from '../../frontend/src/shared/projection-config-schema.js';
 import { migrateProjectionConfigToV2 } from '../../frontend/src/shared/projection-warp-schema.js';
 
@@ -50,8 +50,9 @@ test('V4 preserves calibration and removes the old font floor', () => {
 });
 
 test('current defaults contain a wall-only closeness setting and independent profiles', () => {
-  expect(DEFAULT_PROJECTION_CONFIG.schemaVersion).toBe(5);
-  expect(DEFAULT_PROJECTION_CONFIG.namesWall).toEqual(DEFAULT_NAMES_WALL_V5);
+  expect(DEFAULT_PROJECTION_CONFIG.schemaVersion).toBe(6);
+  expect(DEFAULT_PROJECTION_CONFIG.namesWall.rotateDeg).toBe(35);
+  expect(DEFAULT_PROJECTION_CONFIG.namesWall.profiles.wall).toEqual({ requestedFontPx: 12, spacingPx: 2, edgeInsetPx: 0, inwardShiftPercent: 0 });
   expect(DEFAULT_NAMES_WALL.profiles.wall).toEqual({ requestedFontPx: 12, spacingPx: 2, edgeInsetPx: 0 });
   expect(DEFAULT_NAMES_WALL.profiles.model).toEqual(DEFAULT_NAMES_WALL.profiles.wall);
   expect(validateProjectionConfig(DEFAULT_PROJECTION_CONFIG)).toEqual({});

@@ -216,6 +216,10 @@ class GeneralConsumer(AsyncWebsocketConsumer):
             # Projection changes are emitted by the transactional service only.
             return
 
+        elif message_type == 'otef_settlement_names_changed':
+            # Settlement settings are emitted by the transactional service only.
+            return
+
         elif message_type in {
             'otef_projection_pattern',
             'otef_projection_status_request',

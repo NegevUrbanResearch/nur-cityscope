@@ -139,6 +139,65 @@ h2, h3 { margin: 0 0 10px; }
 .applied-status p { margin: 4px 0; font-size: .85rem; }
 .applied { color: #7ce0ab; }
 .not-confirmed { color: #ffc078; }
+.clock-scene-selector, .clock-element-selector, .clock-open-button { width: 100%; margin-top: 6px; }
+.clock-open-button { min-height: 44px; }
+.clock-settings-inspector { display: grid; gap: 6px; margin: 8px 0; }
+.clock-settings-inspector[hidden] { display: none; }
+.clock-settings-inspector select { width: 100%; min-width: 0; }
+.clock-layout-dialog { position: fixed; inset: 0; z-index: 130; height: 100vh; height: 100dvh; display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 10px; overflow: hidden; padding: max(10px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left)); background: #10171d; color: #edf2f7; }
+.clock-layout-header { display: grid; grid-template-columns: minmax(120px, auto) minmax(0, 1fr) auto; align-items: center; gap: 12px; }
+.clock-layout-header h2 { min-width: 0; overflow-wrap: anywhere; margin: 0; font-size: 1rem; }
+.clock-layout-status-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; }
+.config-node .clock-layout-status-actions { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 32px 36px; height: 74px; gap: 4px; margin-top: 4px; }
+.config-node .clock-layout-status { grid-column: 1 / -1; min-width: 0; font-size: .78rem; line-height: 16px; overflow-wrap: anywhere; }
+.config-node .clock-layout-status-actions button[hidden] { display: block; visibility: hidden; }
+.clock-settings-inspector .clock-layout-status-actions { justify-content: flex-start; min-height: 38px; }
+.clock-layout-status { min-width: 120px; margin: 0; color: #d4e0e6; font-size: .85rem; }
+.clock-layout-retry, .clock-layout-load { min-height: 36px; padding: 4px 10px; }
+.clock-layout-body { display: grid; grid-template-columns: minmax(0, 1fr) 290px; min-width: 0; min-height: 0; gap: 12px; }
+.clock-layout-stage { position: relative; align-self: center; width: 100%; aspect-ratio: 16 / 9; max-height: 100%; min-width: 0; overflow: hidden; background: #000; }
+.clock-layout-reference-plane { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; transform-origin: 0 0; }
+.clock-layout-preview-host, .clock-preview-frame { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+.clock-preview-frame { pointer-events: none; }
+.clock-layout-overlay { position: absolute; inset: 0; z-index: 2; width: 100%; height: 100%; overflow: visible; touch-action: none; }
+.clock-layout-outline { fill: none; stroke: #ffe08a; stroke-width: 4; vector-effect: non-scaling-stroke; pointer-events: none; }
+.clock-layout-hit { fill: none; stroke: transparent; stroke-width: 24; vector-effect: non-scaling-stroke; cursor: move; pointer-events: stroke; }
+.clock-layout-body-hit { fill: transparent; pointer-events: all; }
+.clock-layout-preview-status { position: absolute; left: 8px; top: 8px; z-index: 3; margin: 0; padding: 4px; background: #10171d; font-size: .85rem; }
+.clock-layout-preview-retry { position: absolute; left: 8px; top: 44px; z-index: 3; min-height: 36px; }
+.clock-layout-mapping-status { position: absolute; left: 8px; right: 8px; bottom: 8px; z-index: 3; margin: 0; padding: 6px; background: #10171d; color: #ffdf8d; font-size: .8rem; }
+.clock-layout-warning { margin: 0; color: #ffdf8d; font-size: .8rem; overflow-wrap: anywhere; }
+.clock-layout-handle { fill: #5ad6ae; stroke: #062b26; stroke-width: 4; vector-effect: non-scaling-stroke; cursor: nwse-resize; pointer-events: all; }
+.clock-layout-parameters { display: flex; flex-direction: column; min-width: 0; min-height: 0; gap: 8px; overflow-y: auto; padding: 8px; border-left: 1px solid #3a4a53; background: #172126; }
+.clock-layout-selection { display: grid; gap: 4px; margin: 0; color: #c7d6da; font-size: .8rem; }
+.clock-layout-selection[hidden], .clock-layout-page-label[hidden], .clock-layout-dwell[hidden] { display: none; }
+.clock-layout-selection select { width: 100%; min-width: 0; }
+.clock-layout-field { display: grid; grid-template-columns: minmax(0, 1fr) minmax(88px, 1fr) 20px; align-items: center; gap: 6px; min-width: 0; color: #c7d6da; font-size: .82rem; }
+.clock-layout-field input { width: 100%; min-width: 0; font-variant-numeric: tabular-nums; }
+.clock-layout-fields { display: grid; gap: 8px; min-width: 0; }
+.clock-layout-field[hidden] { display: none; }
+.clock-layout-unit { color: #93acb2; font-size: .78rem; }
+.clock-layout-advanced { margin-top: 2px; border-top: 1px solid #34484f; }
+.clock-layout-advanced summary { min-height: 42px; padding-top: 12px; color: #d7e5e7; cursor: pointer; font-size: .85rem; }
+.clock-layout-page-label { display: grid; gap: 4px; color: #c7d6da; font-size: .8rem; }
+.clock-layout-page-label select { width: 100%; }
+.clock-layout-exhibit-status { min-height: 1.5em; margin: 0; color: #b8c5d6; font-size: .8rem; }
+.clock-layout-show-exhibit { margin-top: auto; min-height: 46px; border-color: #d6a84b; color: #ffdf8d; }
+.clock-layout-show-exhibit[hidden] { display: none; }
+@media (max-width: 760px), (orientation: portrait) {
+  .clock-layout-dialog { grid-template-rows: auto minmax(0, 1fr); gap: 6px; padding: max(6px, env(safe-area-inset-top)) max(6px, env(safe-area-inset-right)) max(6px, env(safe-area-inset-bottom)) max(6px, env(safe-area-inset-left)); }
+  .clock-layout-header { grid-template-columns: minmax(0, 1fr) auto; gap: 6px; }
+  .clock-layout-status-actions { grid-column: 1; grid-row: 2; justify-content: flex-start; }
+  .clock-layout-header > button { grid-column: 2; grid-row: 1 / span 2; }
+  .clock-layout-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(190px, 42%); gap: 6px; }
+  .clock-layout-stage { width: 100%; height: 100%; max-height: none; aspect-ratio: auto; }
+  .clock-layout-parameters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-content: start; gap: 6px; border-left: 0; border-top: 1px solid #3a4a53; }
+  .clock-layout-parameters .clock-layout-fields { grid-column: 1 / -1; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .clock-layout-warning { grid-column: 1 / -1; }
+  .clock-layout-advanced, .clock-layout-page-label, .clock-layout-show-exhibit, .clock-layout-exhibit-status { grid-column: 1 / -1; }
+  .clock-layout-field { grid-template-columns: minmax(0, 1fr) minmax(68px, 1fr); }
+  .clock-layout-unit { display: none; }
+}
 @media (min-width: 768px) {
   .config-subtitle { display: none; }
   .config-toolbar button, .config-toolbar input, .config-toolbar select { min-height: 32px; padding: 4px 6px; font-size: .8rem; }
@@ -148,20 +207,24 @@ h2, h3 { margin: 0 0 10px; }
   .inspector-title { cursor: pointer; font-size: .85rem; margin: 0; }
   .diagram-explanation { font-size: .75rem; }
 }
-@media (max-width: 1100px), (max-height: 700px) {
+@media (max-width: 1100px), (max-height: 700px), (pointer: coarse), (hover: none) {
   .projection-config-app { min-height: 100vh; height: auto; padding: 10px; overflow: visible; }
   .config-shell { height: auto; display: block; }
   .config-chrome { position: static; display: block; pointer-events: auto; }
   .config-header { display: block; }
   .config-subtitle { margin-top: 5px; }
   .config-toolbar { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .config-toolbar > * { width: 100%; }
+  .config-toolbar > * { width: 100%; min-width: 0; }
+  .config-toolbar :is(input, select) { min-width: 0; max-width: 100%; }
+  .config-toolbar input[type=text] { width: 100%; }
+  .config-toolbar :is(button, input, select), .config-toolbar .live-toggle { min-height: 44px; }
   .config-workspace { position: static; display: block; min-height: 0; }
   .graph-column { position: static; }
   .node-graph-viewport { display: none; }
   .node-selector { display: block; }
   .mobile-warp-open:not([hidden]) { display: block; }
   .inspector { position: static; width: 100%; max-height: none; display: block; }
+  .inspector :is(button, input, select, summary, .names-wall-mode) { min-height: 44px; }
   .inspector-fields { max-height: none; }
   .warp-selection-button, .warp-action, .warp-enabled-label { min-height: 48px; }
   .warp-selection { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -175,10 +238,10 @@ h2, h3 { margin: 0 0 10px; }
   .config-node { width: 280px; }
   .names-wall-status { font-size: .72rem; }
 }
-@media (min-width: 700px) and (max-width: 1100px) and (max-height: 700px) {
+@media (min-width: 700px) and (max-width: 1100px) and (max-height: 700px) and (pointer: fine) and (hover: hover) {
   .config-chrome { top: 6px; left: 8px; right: 8px; max-height: 98px; overflow-y: auto; }
   .config-header { display: none; }
-  .inspector { top: 112px; bottom: 8px; max-height: none; width: min(420px, 48vw); z-index: 12; }
+  .inspector { top: 112px; bottom: 8px; position: static; max-height: none; width: 100%; z-index: 12; }
   .inspector-fields { max-height: none; }
   .warp-inspector { padding: 7px; margin: 6px 0; }
   .warp-selection { grid-template-columns: repeat(3, minmax(0, 1fr)); }
@@ -187,4 +250,29 @@ h2, h3 { margin: 0 0 10px; }
 @media (max-width: 699px), (orientation: portrait) {
   .warp-editor-body:has(.warp-editor-fine-panel:not([hidden])) { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(160px, 42%); }
   .warp-editor-fine-panel { overflow: hidden; }
+}
+.settlement-open-button { width: 100%; margin-top: 6px; min-height: 44px; }
+.settlement-settings-inspector { display: grid; gap: 6px; margin: 8px 0; }
+.settlement-settings-inspector[hidden] { display: none; }
+.settlement-name-dialog { position: fixed; inset: 0; z-index: 130; height: 100vh; height: 100dvh; display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 10px; overflow: hidden; padding: max(10px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left)); background: #10171d; color: #edf2f7; }
+.settlement-name-dialog :is(button, input, select) { min-height: 44px; }
+.settlement-name-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.settlement-name-header h2 { margin: 0; font-size: 1rem; }
+.settlement-name-body { display: grid; grid-template-columns: minmax(0, 1fr) 320px; min-width: 0; min-height: 0; gap: 12px; }
+.settlement-name-stage { position: relative; align-self: center; width: 100%; aspect-ratio: 16 / 9; max-height: 100%; min-width: 0; overflow: hidden; background: #000; }
+.settlement-name-reference-plane { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; transform-origin: 0 0; }
+.settlement-preview-host, .settlement-preview-frame, .settlement-name-overlay { position: absolute; inset: 0; width: 100%; height: 100%; }
+.settlement-preview-frame { border: 0; pointer-events: none; }
+.settlement-name-overlay { z-index: 2; overflow: visible; touch-action: none; }
+.settlement-outline { fill: none; stroke: #ffe08a; stroke-width: 4; vector-effect: non-scaling-stroke; pointer-events: none; }
+.settlement-body-hit { fill: transparent; pointer-events: all; }
+.settlement-name-mapping, .settlement-name-warning { margin: 0; color: #ffdf8d; font-size: .8rem; }
+.settlement-name-mapping { position: absolute; left: 8px; right: 8px; bottom: 8px; z-index: 3; padding: 6px; background: #10171d; }
+.settlement-preview-retry { position: absolute; left: 8px; top: 8px; z-index: 3; }
+.settlement-shared-note { margin: 0; color: #d4e0e6; font-size: .8rem; }
+.settlement-name-controls { display: grid; gap: 6px; align-content: start; overflow: auto; }
+.settlement-name-field { display: grid; gap: 4px; }
+.settlement-name-status-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+@media (orientation: portrait) {
+  .settlement-name-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(190px, 42%); }
 }

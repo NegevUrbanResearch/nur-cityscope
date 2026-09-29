@@ -166,10 +166,27 @@ function applyStateFromApi(ctx, state, options = {}) {
     }
   }
   if (Object.prototype.hasOwnProperty.call(state, "nli_clock_layout") && typeof ctx._applyNliClockLayout === "function") {
-    ctx._applyNliClockLayout(state.nli_clock_layout);
+    if (Number.isInteger(state.nli_clock_layout_revision) && typeof ctx._applyNliClockLayoutVersioned === "function") {
+      ctx._applyNliClockLayoutVersioned(state.nli_clock_layout, state.nli_clock_layout_revision);
+    } else if (!(ctx._nliClockLayoutRevision >= 0)) {
+      ctx._applyNliClockLayout(state.nli_clock_layout);
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(state, "settlement_name_settings") && typeof ctx._applySettlementNamesVersioned === "function") {
+    if (Number.isInteger(state.settlement_name_revision)) {
+      ctx._applySettlementNamesVersioned(state.settlement_name_settings, state.settlement_name_revision);
+    }
   }
   if (Object.prototype.hasOwnProperty.call(state, "legend_settings") && typeof ctx._applyLegendSettings === "function") {
-    ctx._applyLegendSettings(state.legend_settings);
+    if (Number.isInteger(state.legend_layout_revision) && typeof ctx._applyLegendProjectionVersioned === "function") {
+      ctx._applyLegendMetadataPatch({
+        language: state.legend_settings.language,
+        summarizedGroupIds: state.legend_settings.summarizedGroupIds,
+      });
+      ctx._applyLegendProjectionVersioned(state.legend_settings.projection, state.legend_layout_revision);
+    } else if (!(ctx._legendLayoutRevision >= 0)) {
+      ctx._applyLegendSettings(state.legend_settings);
+    }
   }
   if (Object.prototype.hasOwnProperty.call(state, "exhibit_mode")) {
     if (notify && typeof ctx._setExhibitMode === "function") {
@@ -439,11 +456,26 @@ function setupWebSocket(ctx) {
   ctx._wsClient.on(OTEF_MESSAGE_TYPES.NLI_CLOCK_LAYOUT_CHANGED, (msg = {}) => {
     if (msg.table && msg.table !== ctx._tableName) return;
     if (typeof ctx._applyNliClockLayout !== "function") return;
-    ctx._applyNliClockLayout(msg.nliClockLayout);
+    if (Number.isInteger(msg.nliClockLayoutRevision) && typeof ctx._applyNliClockLayoutVersioned === "function") {
+      ctx._applyNliClockLayoutVersioned(msg.nliClockLayout, msg.nliClockLayoutRevision);
+    } else if (!(ctx._nliClockLayoutRevision >= 0)) {
+      ctx._applyNliClockLayout(msg.nliClockLayout);
+    }
+  });
+  ctx._wsClient.on(OTEF_MESSAGE_TYPES.SETTLEMENT_NAMES_CHANGED, (msg = {}) => {
+    if (msg.table && msg.table !== ctx._tableName) return;
+    if (typeof ctx._applySettlementNamesVersioned !== "function") return;
+    if (Number.isInteger(msg.settlementNameRevision)) {
+      ctx._applySettlementNamesVersioned(msg.settlementNameSettings, msg.settlementNameRevision);
+    }
   });
   ctx._wsClient.on(OTEF_MESSAGE_TYPES.LEGEND_SETTINGS_CHANGED, (msg = {}) => {
     if (msg.table && msg.table !== ctx._tableName) return;
-    if (msg.legendSettings && typeof ctx._applyLegendSettings === "function") {
+    if (msg.changeKind === "layout" && typeof ctx._applyLegendProjectionVersioned === "function") {
+      ctx._applyLegendProjectionVersioned(msg.legendProjection, msg.legendLayoutRevision);
+    } else if (msg.changeKind === "metadata" && typeof ctx._applyLegendMetadataPatch === "function") {
+      ctx._applyLegendMetadataPatch(msg.legendSettingsPatch);
+    } else if (msg.legendSettings && typeof ctx._applyLegendSettings === "function" && !(ctx._legendLayoutRevision >= 0)) {
       ctx._applyLegendSettings(msg.legendSettings);
     }
   });

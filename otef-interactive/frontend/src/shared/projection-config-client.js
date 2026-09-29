@@ -5,7 +5,7 @@ import {
   TD_MIGRATION_PRESET_NAME,
   validateProjectionConfig,
 } from './projection-config-schema.js';
-import { migrateNamesWallToV5 } from './nli-name-wall-config.js';
+import { migrateNamesWallToV5, migrateNamesWallToV6 } from './nli-name-wall-config.js';
 import { migrateProjectionConfigToV2 } from './projection-warp-schema.js';
 
 const API_URL = '/api/otef/projection-config/';
@@ -29,7 +29,23 @@ export function equalProjectionConfig(a, b) {
 }
 const equal = equalProjectionConfig;
 const V2_DEFAULT_PROJECTION_CONFIG = migrateProjectionConfigToV2(LEGACY_DEFAULT_PROJECTION_CONFIG);
+const V5_DEFAULT_PROJECTION_CONFIG = migrateNamesWallToV5(LEGACY_DEFAULT_PROJECTION_CONFIG);
 const isUuid = (value) => typeof value === 'string' && UUID.test(value);
+
+function withoutRotation(config) {
+  const copy = clone(config);
+  if (copy?.namesWall) delete copy.namesWall.rotateDeg;
+  return copy;
+}
+
+function originalConfigOk(config) {
+  if (config?.schemaVersion === 6) {
+    const angle = config.namesWall?.rotateDeg;
+    if (typeof angle !== 'number' || !Number.isFinite(angle) || angle < -180 || angle > 180) return false;
+    return equal(withoutRotation(config), withoutRotation(migrateNamesWallToV6(LEGACY_DEFAULT_PROJECTION_CONFIG, 35)));
+  }
+  return [V5_DEFAULT_PROJECTION_CONFIG, V2_DEFAULT_PROJECTION_CONFIG, LEGACY_DEFAULT_PROJECTION_CONFIG].some((baseline) => equal(migrateNamesWallToV5(config), migrateNamesWallToV5(baseline)));
+}
 
 function validSnapshot(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
@@ -48,7 +64,7 @@ function validSnapshot(value) {
     ids.add(preset.id);
     if (preset.id === 'original') {
       originalCount += 1;
-      if (!preset.readOnly || preset.name !== 'Original calibration' || (![DEFAULT_PROJECTION_CONFIG, V2_DEFAULT_PROJECTION_CONFIG, LEGACY_DEFAULT_PROJECTION_CONFIG].some((baseline) => equal(migrateNamesWallToV5(preset.config), migrateNamesWallToV5(baseline))))) return false;
+      if (!preset.readOnly || preset.name !== 'Original calibration' || !originalConfigOk(preset.config)) return false;
     } else if (preset.id === TD_MIGRATION_PRESET_ID) {
       if (!preset.readOnly || preset.name !== TD_MIGRATION_PRESET_NAME) return false;
     } else if (!isUuid(preset.id) || preset.readOnly) return false;
@@ -104,6 +120,7 @@ export function createProjectionConfigClient({
   let previewError = null;
   let migrationWarnings = [];
   let conflictGeneration = 0;
+  let schemaChanged = false;
   const subscribers = new Set();
   const handlers = [];
 
@@ -123,7 +140,13 @@ export function createProjectionConfigClient({
       hydrationError,
       previewError,
       migrationWarnings: [...migrationWarnings],
+      initializationRequired: Boolean(snapshot?.config && snapshot.config.schemaVersion < 6),
+      schemaChanged,
     };
+  }
+
+  function setupRequired() {
+    return Boolean(snapshot?.config && snapshot.config.schemaVersion < 6);
   }
 
   function notify() {
@@ -238,7 +261,7 @@ export function createProjectionConfigClient({
   }
 
   function schedulePreview() {
-    if (!started || stopped || !connected || hydrating || !live || !draft || !snapshot || intent) return;
+    if (!started || stopped || !connected || hydrating || !live || !draft || !snapshot || intent || setupRequired()) return;
     queuedPreview = { config: clone(draft), version: draftVersion };
     scheduleDrain();
   }
@@ -294,6 +317,15 @@ export function createProjectionConfigClient({
       const status = response?.status ?? 200;
       const ok = response?.ok ?? (status >= 200 && status < 300);
       if (!ok || status === 409) {
+        if (status === 409 && bodyResponse?.error === 'schema_changed') {
+          live = false;
+          schemaChanged = true;
+          cancelQueuedPreviews();
+          const error = new Error('projection schema changed');
+          error.schemaChanged = true;
+          error.status = status;
+          throw error;
+        }
         const conflict = status === 409 && bodyResponse?.error === 'conflict';
         if (conflict) {
           if (validSnapshot(bodyResponse.state)) markConflict(bodyResponse.state);
@@ -450,21 +482,25 @@ export function createProjectionConfigClient({
   }
 
   function apply() {
+    if (setupRequired()) return Promise.reject(new Error('initialization required'));
     if (!draft || !snapshot || !connected || stopped || hydrating) return Promise.reject(new Error(hydrating ? 'projection config is hydrating' : 'projection config is disconnected'));
     return new Promise((resolve, reject) => waitForMutation({ action: 'preview', dynamicDraft: true, version: draftVersion, resolve, reject }));
   }
 
   function save({ presetId = null, name } = {}) {
+    if (setupRequired()) return Promise.reject(new Error('initialization required'));
     if (!draft || !snapshot || !connected || stopped || hydrating) return Promise.reject(new Error(hydrating ? 'projection config is hydrating' : 'projection config is disconnected'));
     return new Promise((resolve, reject) => waitForMutation({ action: 'save', dynamicDraft: true, version: draftVersion, presetId, name, resolve, reject }));
   }
 
   function load(presetId) {
+    if (setupRequired()) return Promise.reject(new Error('initialization required'));
     if (!snapshot || !connected || stopped || hydrating) return Promise.reject(new Error(hydrating ? 'projection config is hydrating' : 'projection config is disconnected'));
     return new Promise((resolve, reject) => waitForMutation({ action: 'load', presetId, version: draftVersion, resolve, reject }));
   }
 
   function revert() {
+    if (setupRequired()) return Promise.reject(new Error('initialization required'));
     if (!snapshot || !connected || stopped || hydrating) return Promise.reject(new Error(hydrating ? 'projection config is hydrating' : 'projection config is disconnected'));
     return new Promise((resolve, reject) => waitForMutation({ action: 'revert', version: draftVersion, resolve, reject }));
   }

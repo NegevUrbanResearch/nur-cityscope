@@ -2,8 +2,9 @@ import { createProjectionSurfaceCompositor } from "./projection-surface-composit
 import { createProjectionWarpRenderer } from "./projection-warp-renderer.js";
 import { evaluateWarpMesh } from "../shared/projection-warp-geometry.js";
 import { createProjectionNameCanvasAdapter } from "./projection-name-canvas-adapter.js";
+import { createProjectionSettlementNameAdapter } from "./projection-settlement-name-adapter.js";
 import { migrateProjectionConfigToV2 } from "../shared/projection-warp-schema.js";
-import { migrateNamesWallToV5 } from "../shared/nli-name-wall-config.js";
+import { migrateNamesWallToV5, migrateNamesWallToV6 } from "../shared/nli-name-wall-config.js";
 import {
   DEFAULT_PROJECTION_BASELINE,
   loadCapturedProjectionAsset,
@@ -12,6 +13,7 @@ import {
 import { visibleProjectionBrowserError } from "./projection-browser-error.js";
 import { prepareProjectionPairMeshes, prepareProjectionSideMesh } from "./projection-candidate-validation.js";
 import { createProjectionDrawScheduler } from "./projection-draw-scheduler.js";
+import { copyProjectionMesh } from "../projection-config/clock-layout-geometry.js";
 
 export function resolveProjectionOutputMode(search = "") {
   const params = new URLSearchParams(String(search).replace(/^\?/, ""));
@@ -33,6 +35,12 @@ function abortError() {
   const error = new Error("browser projection startup was cancelled");
   error.name = "AbortError";
   return error;
+}
+
+function browserProjectionConfig(config) {
+  if (!config) return null;
+  if (config.schemaVersion === 6) return migrateNamesWallToV6(config, config.namesWall?.rotateDeg);
+  return migrateNamesWallToV5(config);
 }
 
 function throwIfAborted(signal) {
@@ -69,8 +77,21 @@ function awaitWithSignal(promise, signal) {
   });
 }
 
+function unusedImageSource(source) {
+  if (Number(source.naturalWidth) > 0) return false;
+  if (typeof source.getAttribute === "function") {
+    return !String(source.getAttribute("src") || "").trim();
+  }
+  const src = String(source.currentSrc || source.src || "").trim();
+  return source.complete === true && !src;
+}
+
 function sourceReadyWithSignal(source, signal) {
   if (!source) return Promise.reject(new Error("browser projection source is missing"));
+  if (unusedImageSource(source)) {
+    throwIfAborted(signal);
+    return Promise.resolve();
+  }
   if (typeof source.decode === "function") {
     let decodePromise;
     try {
@@ -78,10 +99,7 @@ function sourceReadyWithSignal(source, signal) {
     } catch (error) {
       decodePromise = Promise.reject(error);
     }
-    return awaitWithSignal(Promise.resolve(decodePromise).catch((error) => {
-      if (source.complete && Number(source.naturalWidth) > 0) return undefined;
-      throw new Error(`browser projection image decode failed: ${error?.message || error}`);
-    }), signal);
+    return awaitWithSignal(Promise.resolve(decodePromise).catch(() => undefined), signal);
   }
   if (source.complete === true && (source.naturalWidth == null || source.naturalWidth > 0)) {
     throwIfAborted(signal);
@@ -150,6 +168,7 @@ export async function createProjectionBrowserSurface({
   let videoPlaybackActive = false;
   let contextLost = false;
   let nameAdapter;
+  let settlementAdapter;
   let peerBaseline;
   let activeMesh;
   let previousPair = null;
@@ -157,12 +176,12 @@ export async function createProjectionBrowserSurface({
     try {
       baseline = await loadCapturedProjectionFraming({ fetchImpl, signal });
     } catch (error) {
-      const fallbackWarp = [2, 3, 4, 5].includes(initialConfig?.schemaVersion) ? initialConfig.outputs?.[spanId]?.warp : null;
+      const fallbackWarp = [2, 3, 4, 5, 6].includes(initialConfig?.schemaVersion) ? initialConfig.outputs?.[spanId]?.warp : null;
       if (error?.name === "AbortError" || !fallbackWarp || (fallbackWarp.enabled !== false && fallbackWarp.baseline?.type !== "identity")) throw error;
       baseline = { manifest: { width: 1920, height: 1080, assets: {}, framing: {} }, framing: initialConfig };
     }
-    const initialV5 = initialConfig ? migrateNamesWallToV5(initialConfig) : null;
-    const startupConfig = initialV5 || (baseline.framing ? migrateNamesWallToV5(baseline.framing) : null);
+    const initialV6 = browserProjectionConfig(initialConfig);
+    const startupConfig = initialV6 || browserProjectionConfig(baseline.framing);
     const initialWarp = startupConfig?.outputs?.[spanId]?.warp;
     try {
       baseline = await loadCapturedProjectionAsset({ fetchImpl, spanId, captured: baseline, signal });
@@ -189,6 +208,7 @@ export async function createProjectionBrowserSurface({
     if (mapCanvas && !getScene) baseScene.map = { source: mapCanvas };
     const readScene = () => ({ ...baseScene, ...(typeof getScene === "function" ? getScene() : scene),
       ...(nameAdapter?.descriptor() ? { names: nameAdapter.descriptor() } : {}),
+      ...(settlementAdapter?.descriptor() ? { settlements: settlementAdapter.descriptor() } : {}),
       });
     const initialMesh = initialWarp?.baseline?.type === "identity" || initialWarp?.enabled === false
       ? evaluateWarpMesh(null, initialWarp)
@@ -196,7 +216,7 @@ export async function createProjectionBrowserSurface({
     const renderer = rendererFactory({ canvas, mesh: initialMesh });
     activeMesh = initialMesh;
     compositor = createProjectionSurfaceCompositor({ renderer, sources: readScene() });
-    let activeConfig = initialConfig ? migrateNamesWallToV5(initialConfig) : migrateNamesWallToV5(baseline.framing);
+    let activeConfig = browserProjectionConfig(initialConfig) || browserProjectionConfig(baseline.framing);
     const prepareConfig = (candidate) => prepareProjectionSideMesh(candidate, spanId, baseline);
     const preparePair = async (candidate) => {
       const peer = spanId === 'left' ? 'right' : 'left';
@@ -205,9 +225,10 @@ export async function createProjectionBrowserSurface({
         if (!peerBaseline) peerBaseline = await loadCapturedProjectionAsset({ fetchImpl, spanId: peer, captured: baseline, signal: requestSignal });
         return peerBaseline;
       } });
-      return { config: migrateNamesWallToV5(candidate), mesh: meshes[spanId], meshes };
+      return { config: browserProjectionConfig(candidate), mesh: meshes[spanId], meshes };
     };
     nameAdapter = createProjectionNameCanvasAdapter({ document: doc, output: spanId });
+    settlementAdapter = createProjectionSettlementNameAdapter({ document: doc, output: spanId });
     const applyConfig = (candidate) => {
       const prepared = prepareConfig(candidate);
       renderer.setMesh(prepared.mesh);
@@ -268,6 +289,7 @@ export async function createProjectionBrowserSurface({
       renderer,
       compositor,
       baseline,
+      getMesh: () => copyProjectionMesh(activeMesh),
       draw: () => drawScheduler.drawNow(),
       requestDraw: () => drawScheduler.requestDraw(),
       setVideoPlaybackActive(active) {
@@ -278,6 +300,7 @@ export async function createProjectionBrowserSurface({
       prepareConfig,
       preparePair,
       getNameAdapter: () => nameAdapter,
+      getSettlementAdapter: () => settlementAdapter,
       commitPair(prepared) {
         previousPair = { candidate: prepared, config: activeConfig, mesh: activeMesh };
         renderer.setMesh(prepared.mesh);
@@ -309,6 +332,7 @@ export async function createProjectionBrowserSurface({
         canvas?.removeEventListener?.("webglcontextrestored", onContextRestored);
         statusElement?.remove?.();
         nameAdapter?.dispose();
+        settlementAdapter?.dispose();
         compositor?.dispose?.();
         canvas?.remove?.();
       },

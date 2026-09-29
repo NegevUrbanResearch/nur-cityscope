@@ -1117,15 +1117,15 @@ describe("Task 8 investigation timeline coordinator", () => {
     expect(second.alarmStructuralRowsBuilds).toBe(first.alarmStructuralRowsBuilds);
   });
 
-  it("GIS basemap style-load delegates refresh ordering to the map-main lifecycle seam", () => {
+  it("installGisStyleReload awaits refreshLayers before bringing the person visual forward", () => {
     const here = path.dirname(fileURLToPath(import.meta.url));
-    const mapMain = fs.readFileSync(path.resolve(here, "../../frontend/src/entries/map-main.js"), "utf8");
     const lifecycle = fs.readFileSync(path.resolve(here, "../../frontend/src/entries/map-main-style-lifecycle.js"), "utf8");
-    expect(mapMain).toContain('import { createGisBasemapStyleCoordinator } from "./map-main-style-lifecycle.js";');
-    expect(mapMain).toContain("const basemapCoordinator = createGisBasemapStyleCoordinator({");
-    expect(mapMain).toContain("refreshLayers: async ({ basemap, groupsOverride, syncFlow = false, isCurrent }) => {");
-    expect(lifecycle).toContain("disposeStyleReload = installGisStyleReload({");
-    expect(lifecycle).toContain("syncFlow: false");
-    expect(lifecycle.indexOf("await refreshLayers")).toBeLessThan(lifecycle.indexOf("personVisual?.bringToFront?."));
+    const start = lifecycle.indexOf("export function installGisStyleReload");
+    const end = lifecycle.indexOf("export function createGisBasemapStyleCoordinator");
+    const reload = lifecycle.slice(start, end);
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+    expect(reload).toContain("syncFlow: false");
+    expect(reload.indexOf("await refreshLayers")).toBeLessThan(reload.indexOf("personVisual?.bringToFront?."));
   });
 });

@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it, test } from "vitest";
+import { describe, expect, it, test, vi } from "vitest";
 import { PEOPLE_HALO_LAYER_ID } from "../../frontend/src/map/maplibre-person-selection.js";
 import { shouldIncludeNarrativeSettlementOutline } from "../../frontend/src/shared/nli-nova-escape-impact.js";
 import { NLI_VISUAL_TOKENS } from "../../frontend/src/shared/nli-investigation-theme.js";
@@ -16,6 +16,7 @@ import {
   createProjectionSettlementGlow,
   resolveSettlementGlowFeature,
   settlementAuraPoint,
+  settlementGlowBreathScale,
   syncProjectionSettlementGlow,
 } from "../../frontend/src/projection/projection-settlement-glow.js";
 
@@ -102,9 +103,10 @@ describe("settlementAuraPoint", () => {
     const lat = 31.05;
     const widthM = 0.1 * 111320 * Math.cos((lat * Math.PI) / 180);
     const heightM = 0.1 * 110540;
-    expect(aura.properties.radiusMeters).toBeCloseTo(
-      0.5 * Math.hypot(widthM, heightM) * NLI_VISUAL_TOKENS.settlementGlowAuraPad,
-    );
+    const hypot = 0.5 * Math.hypot(widthM, heightM);
+    expect(aura.properties.radiusMeters).toBeCloseTo(hypot * NLI_VISUAL_TOKENS.settlementGlowAuraPad);
+    expect(aura.properties.coreRadiusMeters).toBeCloseTo(hypot * NLI_VISUAL_TOKENS.settlementGlowCorePad);
+    expect(aura.properties.coreRadiusMeters).toBeLessThan(aura.properties.radiusMeters);
     expect(aura.properties.OBJECTID).toBe(19);
   });
 });
@@ -125,7 +127,9 @@ describe("createProjectionSettlementGlow", () => {
     expect(map.getLayer(PROJECTION_SETTLEMENT_GLOW_CORE_LAYER_ID).type).toBe("circle");
     expect(map.getPaintProperty(PROJECTION_SETTLEMENT_GLOW_AURA_LAYER_ID, "circle-blur"))
       .toBe(NLI_VISUAL_TOKENS.settlementGlowAuraBlur);
-    expect(NLI_VISUAL_TOKENS.settlementGlowAuraBlur).toBe(0.85);
+    expect(NLI_VISUAL_TOKENS.settlementGlowAuraBlur).toBe(1.65);
+    expect(NLI_VISUAL_TOKENS.settlementGlowCoreBlur).toBe(1.15);
+    expect(NLI_VISUAL_TOKENS.settlementGlowCorePad).toBeLessThan(NLI_VISUAL_TOKENS.settlementGlowAuraPad);
     for (const id of LEGACY_GLOW_LAYER_IDS) {
       expect(map.getLayer(id)).toBeNull();
     }
@@ -185,6 +189,9 @@ describe("createProjectionSettlementGlow", () => {
     expect(radius[0]).toBe("interpolate");
     expect(radius[1]).toEqual(["exponential", 2]);
     expect(radius[2]).toEqual(["zoom"]);
+    expect(JSON.stringify(radius)).toContain("radiusMeters");
+    const coreRadius = map.getPaintProperty(PROJECTION_SETTLEMENT_GLOW_CORE_LAYER_ID, "circle-radius");
+    expect(JSON.stringify(coreRadius)).toContain("coreRadiusMeters");
     glow.dispose();
   });
 
@@ -390,4 +397,94 @@ test("projection glow loadSettlements uses the GIS yeshuv merge", () => {
   );
   expect(src).toMatch(/loadSettlements:\s*\(\)\s*=>\s*loadSettlementFeatures\(\{\}\)/);
   expect(src).not.toMatch(/shouldIncludeNarrativeSettlementOutline/);
+});
+
+describe("settlementGlowBreathScale", () => {
+  it("oscillates around rest and never reaches a flashlight peak", () => {
+    const { settlementGlowBreathMs, settlementGlowBreathMin, settlementGlowBreathMax } = NLI_VISUAL_TOKENS;
+    expect(settlementGlowBreathScale(0)).toBeCloseTo(
+      (settlementGlowBreathMin + settlementGlowBreathMax) / 2,
+    );
+    expect(settlementGlowBreathScale(settlementGlowBreathMs / 4)).toBeCloseTo(settlementGlowBreathMax);
+    expect(settlementGlowBreathScale((settlementGlowBreathMs * 3) / 4)).toBeCloseTo(settlementGlowBreathMin);
+    expect(NLI_VISUAL_TOKENS.settlementGlowAuraOpacity * settlementGlowBreathMax).toBeLessThan(0.22);
+    expect(NLI_VISUAL_TOKENS.settlementGlowCoreOpacity * settlementGlowBreathMax).toBeLessThan(0.18);
+  });
+});
+
+describe("settlement glow breath", () => {
+  it("fades in on show and starts breathing only after the intro", async () => {
+    vi.useFakeTimers();
+    const { createFakeMapLibreMap } = await import("../helpers/fake-maplibre-map.js");
+    const map = createFakeMapLibreMap();
+    const glow = createProjectionSettlementGlow({
+      map,
+      loadSettlements: async () => settlements,
+      motionMode: "full",
+    });
+    await glow.setFocus({ outlineObjectId: 19 });
+    expect(map.getPaintProperty(PROJECTION_SETTLEMENT_GLOW_AURA_LAYER_ID, "circle-opacity"))
+      .toBe(NLI_VISUAL_TOKENS.settlementGlowAuraOpacity);
+    expect(map.getPaintProperty(PROJECTION_SETTLEMENT_GLOW_AURA_LAYER_ID, "circle-opacity-transition"))
+      .toEqual({ duration: NLI_VISUAL_TOKENS.highlightOpacityTransitionMs, delay: 0 });
+    expect(map.pendingAnimationFrameCount()).toBe(0);
+    map.driveAnimationFrame(0);
+    expect(map.getPaintProperty(PROJECTION_SETTLEMENT_GLOW_AURA_LAYER_ID, "circle-opacity-transition"))
+      .toEqual({ duration: NLI_VISUAL_TOKENS.highlightOpacityTransitionMs, delay: 0 });
+    await vi.advanceTimersByTimeAsync(NLI_VISUAL_TOKENS.highlightOpacityTransitionMs);
+    expect(map.pendingAnimationFrameCount()).toBe(1);
+    glow.dispose();
+    expect(map.pendingAnimationFrameCount()).toBe(0);
+    vi.useRealTimers();
+  });
+
+  it("pulses opacity on full motion without tightening blur", async () => {
+    vi.useFakeTimers();
+    const { createFakeMapLibreMap } = await import("../helpers/fake-maplibre-map.js");
+    const map = createFakeMapLibreMap();
+    const glow = createProjectionSettlementGlow({
+      map,
+      loadSettlements: async () => settlements,
+      motionMode: "full",
+    });
+    await glow.setFocus({ outlineObjectId: 19 });
+    await vi.advanceTimersByTimeAsync(NLI_VISUAL_TOKENS.highlightOpacityTransitionMs);
+    expect(map.pendingAnimationFrameCount()).toBe(1);
+    expect(map.getPaintProperty(PROJECTION_SETTLEMENT_GLOW_AURA_LAYER_ID, "circle-blur"))
+      .toBe(NLI_VISUAL_TOKENS.settlementGlowAuraBlur);
+    map.driveAnimationFrame(0);
+    expect(map.getPaintProperty(PROJECTION_SETTLEMENT_GLOW_AURA_LAYER_ID, "circle-opacity"))
+      .toBeCloseTo(NLI_VISUAL_TOKENS.settlementGlowAuraOpacity);
+    map.driveAnimationFrame(NLI_VISUAL_TOKENS.settlementGlowBreathMs / 4);
+    expect(map.getPaintProperty(PROJECTION_SETTLEMENT_GLOW_AURA_LAYER_ID, "circle-opacity"))
+      .toBeCloseTo(
+        NLI_VISUAL_TOKENS.settlementGlowAuraOpacity * NLI_VISUAL_TOKENS.settlementGlowBreathMax,
+      );
+    expect(map.getPaintProperty(PROJECTION_SETTLEMENT_GLOW_CORE_LAYER_ID, "circle-opacity"))
+      .toBeCloseTo(
+        NLI_VISUAL_TOKENS.settlementGlowCoreOpacity * NLI_VISUAL_TOKENS.settlementGlowBreathMax,
+      );
+    expect(map.getPaintProperty(PROJECTION_SETTLEMENT_GLOW_AURA_LAYER_ID, "circle-blur"))
+      .toBe(NLI_VISUAL_TOKENS.settlementGlowAuraBlur);
+    expect(map.getPaintProperty(PROJECTION_SETTLEMENT_GLOW_CORE_LAYER_ID, "circle-blur"))
+      .toBe(NLI_VISUAL_TOKENS.settlementGlowCoreBlur);
+    glow.dispose();
+    expect(map.pendingAnimationFrameCount()).toBe(0);
+    vi.useRealTimers();
+  });
+
+  it("does not breathe when motion is reduced", async () => {
+    const { createFakeMapLibreMap } = await import("../helpers/fake-maplibre-map.js");
+    const map = createFakeMapLibreMap();
+    const glow = createProjectionSettlementGlow({
+      map,
+      loadSettlements: async () => settlements,
+      motionMode: "reduced",
+    });
+    await glow.setFocus({ outlineObjectId: 19 });
+    expect(map.pendingAnimationFrameCount()).toBe(0);
+    expect(map.getPaintProperty(PROJECTION_SETTLEMENT_GLOW_AURA_LAYER_ID, "circle-opacity"))
+      .toBe(NLI_VISUAL_TOKENS.settlementGlowAuraOpacity);
+    glow.dispose();
+  });
 });

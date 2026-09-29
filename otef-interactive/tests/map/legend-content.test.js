@@ -9,6 +9,7 @@ import {
   getLegendCategoryCopy,
   getPackDisplayLabel,
 } from "../../frontend/src/shared/legend-copy.js";
+import { OPEN_SPACES_FILL_OPACITY_SCALE } from "../../frontend/src/shared/hatch-projection-presentation.js";
 
 function pointSymbol(fillColor) {
   return {
@@ -358,6 +359,39 @@ describe("legend content model", () => {
     expect(layer.items[0].strokeSwatches.map((stroke) => stroke.dash.array)).toEqual([[2, 1], [5, 3]]);
   });
 
+  it("lowers open-space fill opacity in the legend on GIS and projection", () => {
+    const config = {
+      id: "שטחים_פתוחים",
+      name: "שטחים פתוחים",
+      geometryType: "polygon",
+      style: {
+        renderer: "simple",
+        defaultSymbol: {
+          symbolLayers: [
+            { type: "fill", fillType: "solid", color: "#bfff00", opacity: 1 },
+            { type: "stroke", color: "#003fff", width: 1, opacity: 1 },
+          ],
+        },
+      },
+    };
+    const gis = legendLayerFromConfig(config, { id: "land_use" }, {
+      fullId: "land_use.שטחים_פתוחים",
+      language: "he",
+      surface: "gis",
+    });
+    const projection = legendLayerFromConfig(config, { id: "land_use" }, {
+      fullId: "land_use.שטחים_פתוחים",
+      language: "he",
+      surface: "projection",
+    });
+    expect(gis.items[0].fillOpacity).toBe(OPEN_SPACES_FILL_OPACITY_SCALE);
+    expect(projection.items[0].fillOpacity).toBe(OPEN_SPACES_FILL_OPACITY_SCALE);
+    expect(gis.items[0].stroke).toBeUndefined();
+    expect(projection.items[0].stroke).toBeUndefined();
+    expect(gis.items[0].strokeSwatches).toEqual([]);
+    expect(projection.items[0].strokeSwatches).toEqual([]);
+  });
+
   it("uses the checked-in Gaza policy for name and explicit summary", () => {
     const layer = legendLayerFromConfig({
       id: "Gaza_Roads",
@@ -523,8 +557,10 @@ describe("legend content model", () => {
         expect(getLegendCategoryCopy(fullId, value, "en"), `${fullId}:${value}:en`).toBeTruthy();
       }
     }
-    expect(getLegendCategoryCopy("nli.people", "Kidnap survivor", "he")).toBe("שורדי שבי");
-    expect(getLegendCategoryCopy("nli.people", "Murdered in captivity", "he")).toBe("נרצחו בשבי");
+    expect(getLegendCategoryCopy("nli.people", "Kidnap survivor", "he")).toBe("חטופים ששבו");
+    expect(getLegendCategoryCopy("nli.people", "Murdered in captivity", "he")).toBe("חטופים שנרצחו");
+    expect(getLegendCategoryCopy("nli.people", "Kidnap survivor", "en")).toBe("Surviving hostages");
+    expect(getLegendCategoryCopy("nli.people", "Murdered in captivity", "en")).toBe("Murdered hostages");
     expect(Object.keys(LEGEND_CATEGORY_COPY)).toEqual(expect.arrayContaining(inventory.map(([id]) => id)));
     for (const [fullId, rows] of Object.entries(LEGEND_CATEGORY_COPY)) {
       for (const value of Object.keys(rows)) {

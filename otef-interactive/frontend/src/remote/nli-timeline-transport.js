@@ -13,6 +13,7 @@ import {
   TIMELINE_BEAT_MS,
   clockStoryDurationMs,
   collectTimelineBeats,
+  finiteClockMinutes,
   formatMinutesAsLocalClock,
   isNliPlayableFullId,
   timelineBeatDurationMs,
@@ -28,10 +29,10 @@ import {
   playNliClock,
   replayNliClock,
   resumeNliClock,
+  rewindNliClock,
   seekNliClock,
   setNliLoop,
   stepNliClock,
-  stopNliClock,
 } from "../shared/nli-investigation-clock.js";
 import { completedInvestigationBeats } from "../shared/nli-investigation-visual-state.js";
 import { NLI_NOVA_STORY, novaBeatIndexFromPercent, novaBeatPercent } from "../shared/nli-nova-story.js";
@@ -262,7 +263,8 @@ function nliThumbIndex(clock, displayBeats) {
 function nliStoryClockLabel(clock, displayBeats) {
   if (clock && clock.phase !== "idle") {
     const vis = evaluateClock(clock, nliNowMs());
-    if (Number.isFinite(Number(vis.clock))) return formatMinutesAsLocalClock(Number(vis.clock));
+    const minutes = finiteClockMinutes(vis.clock);
+    if (minutes != null) return formatMinutesAsLocalClock(minutes);
   }
   const beats = nliDisplayBeats(clock, displayBeats);
   const index = nliThumbIndex(clock, displayBeats);
@@ -326,7 +328,7 @@ export function paintNliTransportPlayhead(root, clock, beats, options = {}) {
     const vis = clock && clock.phase !== "idle" ? evaluateClock(clock, now, { narrativeId: "nova" }) : null;
     clockEl.textContent = isNova
       ? clock?.phase === "idle" ? formatMinutesAsLocalClock(NLI_NOVA_STORY.startMinutes)
-        : formatMinutesAsLocalClock(vis?.clock != null && Number.isFinite(Number(vis.clock)) ? Number(vis.clock) : NLI_NOVA_STORY.representativeMinutes[index])
+        : formatMinutesAsLocalClock(finiteClockMinutes(vis?.clock) ?? NLI_NOVA_STORY.representativeMinutes[index])
       : nliStoryClockLabel(clock, displayBeats);
   }
 }
@@ -431,7 +433,7 @@ export function renderNliTimelineTransport(clock, options = {}) {
   const isPlaying = src.phase === "playing" && vis.phase !== "ended";
   const story = isNova
     ? src.phase === "idle" ? formatMinutesAsLocalClock(NLI_NOVA_STORY.startMinutes)
-      : formatMinutesAsLocalClock(vis.clock != null && Number.isFinite(Number(vis.clock)) ? Number(vis.clock) : NLI_NOVA_STORY.representativeMinutes[novaClockIndex(src, displayBeats, nowMs)])
+      : formatMinutesAsLocalClock(finiteClockMinutes(vis.clock) ?? NLI_NOVA_STORY.representativeMinutes[novaClockIndex(src, displayBeats, nowMs)])
     : nliStoryClockLabel(src, displayBeats);
   const beats = nliDisplayBeats(src, displayBeats);
   const index = isNova ? novaClockIndex(src, beats, nowMs) : nliThumbIndex(src, displayBeats);
@@ -914,13 +916,16 @@ export const nliTimelineHostMethods = {
     from,
     to,
     loop = false,
+    playLeadIn = false,
+    replace = false,
     isCurrent = () => true,
   } = {}) {
     const current = typeof isCurrent === "function" ? isCurrent : () => true;
     if (!current()) return false;
     if (this._isPresentationActive()) throw new Error("Slideshow is active");
     const clock = this._liveNliClock();
-    if (!clock || clock.phase !== "idle") throw new Error("Timeline is not idle");
+    if (!clock) throw new Error("Timeline is not idle");
+    if (clock.phase !== "idle" && replace !== true) throw new Error("Timeline is not idle");
     const boundary = nliNarrativeBoundary();
     const narrativeId = boundary.id;
     const requested = playableMembership(membership);
@@ -948,7 +953,10 @@ export const nliTimelineHostMethods = {
     const leadInMinutes = Number.isFinite(windowFrom) ? windowFrom : undefined;
     const result = await this._patchNliClock(playNliClock(setNliLoop(clock, loop), ids, beats, now, {
       ...clockOptions,
-      ...(!clockOptions.narrativeId && leadInMinutes != null ? { leadInMinutes } : {}),
+      ...(!clockOptions.narrativeId && leadInMinutes != null ? {
+        leadInMinutes,
+        ...(playLeadIn === true ? { playLeadIn: true } : {}),
+      } : {}),
     }), { isCurrent: current });
     if (!current()) return false;
     if (!sameNarrativeBoundary(boundary, nliNarrativeBoundary())) return false;
@@ -1007,7 +1015,11 @@ export const nliTimelineHostMethods = {
     const epoch = this._nliTransportEpoch || 0;
     const isCurrent = () => (this._nliTransportEpoch || 0) === epoch && this._manualMutationsOpen();
     if (!isCurrent()) return;
-    await this._patchNliClock(stopNliClock(this._liveNliClock()), { isCurrent });
+    const narrativeId = nliNarrativeId();
+    const options = narrativeId === "nova"
+      ? { narrativeId }
+      : { leadInMinutes: this._playbackWindow().from };
+    await this._patchNliClock(rewindNliClock(this._liveNliClock(), options), { isCurrent });
   },
 
   async handleNliTimelineLoop() {

@@ -226,7 +226,7 @@ describe("Nova escape overlay coordinator", () => {
     const { coordinator } = setupCoordinator({ surface: "projection" });
     await coordinator.sync({ id: "nova" }, { individual: true, overlap: false });
     coordinator.debugNoteRibbonDrawable();
-    now += 8000;
+    now += 25000;
     expect(coordinator.debugFeatureProgress(individualCollection.features[0])).toBe(1);
     await coordinator.onStyleLoad();
     expect(coordinator.debugFeatureProgress(individualCollection.features[0])).toBe(1);
@@ -241,7 +241,7 @@ describe("Nova escape overlay coordinator", () => {
     });
     await coordinator.sync({ id: "nova" }, { individual: true, overlap: false });
     coordinator.debugNoteRibbonDrawable();
-    now += 8000;
+    now += 25000;
     expect(coordinator.debugFeatureProgress(individualCollection.features[0])).toBe(1);
     await coordinator.onStyleLoad({ styleLoss: true });
     expect(coordinator.debugFeatureProgress(individualCollection.features[0])).toBe(1);
@@ -457,7 +457,7 @@ describe("Nova escape overlay coordinator", () => {
     });
     await coordinator.sync({ id: "nova" }, { individual: true, overlap: false });
     coordinator.debugNoteRibbonDrawable();
-    now += 8000;
+    now += 25000;
     expect(coordinator.debugFeatureProgress(individualCollection.features[0])).toBe(1);
     await coordinator.sync({ id: "nova" }, { individual: false, overlap: false });
     await coordinator.sync({ id: "nova" }, { individual: true, overlap: false });
@@ -1070,7 +1070,7 @@ describe("Nova escape overlay coordinator", () => {
       });
       await coordinator.sync({ id: "nova" }, { individual: true, overlap: false });
       coordinator.debugNoteRibbonDrawable();
-      await vi.advanceTimersByTimeAsync(8000);
+      await vi.advanceTimersByTimeAsync(25000);
       map.flushAnimationFrames?.();
       expect(parallelImpactIds.has("line:232")).toBe(true);
       expect(parallelImpactIds.has("polygon:100")).toBe(false);
@@ -1626,7 +1626,7 @@ describe("settled Nova intersections", () => {
     expect(coordinator.debugFeatureProgress(memorialRoute)).toBeLessThan(0.8);
     expect(coordinator.debugParallelImpactIds()).toEqual(new Set());
 
-    now += 5000;
+    now += 16000;
     map.flushAnimationFrames(now);
     expect(coordinator.debugParallelImpactIds()).toEqual(new Set(["line:232"]));
     coordinator.dispose();

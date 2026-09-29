@@ -556,6 +556,20 @@ describe("syncInvestigationTimelineToMap alarms", () => {
     disposeInvestigationTimelineForMap(map);
   });
 
+  it("does not restore saved alarm paint after its base layer is removed", async () => {
+    const map = makeMap();
+    const alarmId = "nli__alarms__circle__0";
+    const renderer = createInvestigationAlarmRenderer(map);
+    renderer.mount();
+    const layerIndex = map.getStyle().layers.findIndex((layer) => layer.id === alarmId);
+    map.getStyle().layers.splice(layerIndex, 1);
+    map.setPaintProperty.mockClear();
+
+    renderer.dispose();
+
+    expect(map.setPaintProperty).not.toHaveBeenCalledWith(alarmId, expect.any(String), expect.anything());
+  });
+
   it("count layer layout and filter use GeoJSON properties not feature-state", async () => {
     const map = makeMap();
     const alarmFeatures = [

@@ -102,6 +102,9 @@ external_files/
 # Local agent attachments and NLI repair review evidence.
 .codex-remote-attachments/
 /docs/reviews/2026-09-27-nli-review/
+# Local verification artifacts and projection usability report.
+/artifacts/
+/docs/reviews/2026-09-28-projection-config-usability-fixes.md
 **/docs/superpowers/
 _nli_geojson_inspect/
 geojson-*.zip

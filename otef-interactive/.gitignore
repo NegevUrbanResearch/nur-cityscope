@@ -14,6 +14,7 @@ scripts/*.pyc
 # Temporary files
 *.tmp
 *.bak
+.settlement-name-replay/
 
 # Source GIS generated locally (geojson/lyrx). .gitkeep and popup-config.json
 # remain committable via root .gitignore exceptions.

@@ -1009,31 +1009,58 @@ async function setEscapeOverlay(ctx, overlay) {
 async function setNliClockLayout(ctx, patch = {}) {
   if (!ctx._tableName) return { ok: false, reason: "missing_table" };
   const surface = patch.surface === "gis" ? "gis" : patch.surface === "projection" ? "projection" : null;
+  const slot = typeof patch.slot === "string" ? patch.slot : null;
   const layout = patch.layout && typeof patch.layout === "object" ? patch.layout : null;
-  if (!surface || !layout) return { ok: false, reason: "invalid_nli_clock_layout" };
+  if (!surface || !slot || !layout || !Number.isInteger(patch.baseRevision)) return { ok: false, reason: "invalid_nli_clock_layout" };
   const response = await OTEF_API.setNliClockLayout(
     ctx._tableName,
     surface,
+    slot,
     layout,
-    { sourceId: ctx._clientId, timestamp: Date.now() },
+    { baseRevision: patch.baseRevision, sourceId: ctx._clientId, timestamp: Date.now() },
   );
-  if (response?.nliClockLayout) {
-    ctx._applyNliClockLayout(response.nliClockLayout);
+  if (response?.nliClockLayout && Number.isInteger(response.nliClockLayoutRevision)) {
+    ctx._applyNliClockLayoutVersioned(response.nliClockLayout, response.nliClockLayoutRevision);
   }
   return response;
 }
 
-async function setLegendSettings(ctx, patch = {}) {
+async function setSettlementNames(ctx, operation = {}, meta = {}) {
+  if (!ctx._tableName) return { ok: false, reason: "missing_table" };
+  if (!operation || typeof operation !== "object" || Array.isArray(operation)) {
+    return { ok: false, reason: "invalid_settlement_names" };
+  }
+  const requestMeta = meta && typeof meta === "object" ? meta : {};
+  const response = await OTEF_API.setSettlementNames(ctx._tableName, operation, {
+    ...(Number.isInteger(requestMeta.baseRevision) ? { baseRevision: requestMeta.baseRevision } : {}),
+    ...(typeof requestMeta.sourceId === "string" ? { sourceId: requestMeta.sourceId } : {}),
+    ...(typeof requestMeta.timestamp === "string" ? { timestamp: requestMeta.timestamp } : {}),
+  });
+  if (response?.settlementNameSettings && Number.isInteger(response.settlementNameRevision) && typeof ctx._applySettlementNamesVersioned === "function") {
+    ctx._applySettlementNamesVersioned(response.settlementNameSettings, response.settlementNameRevision, { authoritative: true });
+  }
+  return response;
+}
+
+async function setLegendSettings(ctx, patch = {}, options = {}) {
   if (!ctx._tableName) return { ok: false, reason: "missing_table" };
   if (!patch || typeof patch !== "object") return { ok: false, reason: "invalid_legend_settings" };
   const keys = Object.keys(patch).filter((key) => ["language", "span", "layout", "summarizedGroupIds"].includes(key));
   if (!(keys.length === 1 || (keys.length === 2 && keys.includes("span") && keys.includes("layout")))) {
     return { ok: false, reason: "invalid_legend_settings" };
   }
+  if (keys.includes("layout") && !Number.isInteger(options.baseRevision)) {
+    return { ok: false, reason: "invalid_legend_settings" };
+  }
   const response = await OTEF_API.setLegendSettings(ctx._tableName, patch, {
+    ...(Number.isInteger(options.baseRevision) ? { baseRevision: options.baseRevision } : {}),
     sourceId: ctx._clientId, timestamp: Date.now(),
   });
-  if (response?.legendSettings) ctx._applyLegendSettings(response.legendSettings);
+  if (response?.changeKind === "layout" && Number.isInteger(response.legendLayoutRevision)) {
+    ctx._applyLegendProjectionVersioned(response.legendProjection, response.legendLayoutRevision);
+  } else if (response?.changeKind === "metadata" && response.legendSettingsPatch) {
+    ctx._applyLegendMetadataPatch(response.legendSettingsPatch);
+  }
   return response;
 }
 
@@ -1210,6 +1237,7 @@ OTEFDataContextInternals.actions = {
   setNarrative,
   setEscapeOverlay,
   setNliClockLayout,
+  setSettlementNames,
   setLegendSettings,
   narrativePresentationCommand,
   narrativePresentationResult,
@@ -1242,6 +1270,7 @@ export {
   setNarrative,
   setEscapeOverlay,
   setNliClockLayout,
+  setSettlementNames,
   setLegendSettings,
   narrativePresentationCommand,
   narrativePresentationResult,

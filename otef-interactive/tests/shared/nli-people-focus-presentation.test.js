@@ -3,8 +3,11 @@ import {
   PEOPLE_FOCUS_DIM,
   applyPeopleFocusDim,
   clearPeopleFocusDim,
+  forgetPeopleFocusLayers,
   peopleFocusOpacityExpression,
 } from "../../frontend/src/shared/nli-people-focus-presentation.js";
+import { getLayerLifecycleRuntime } from "../../frontend/src/shared/layer-lifecycle-fade.js";
+import { scaleOpacityExpression } from "../../frontend/src/shared/layer-opacity-expression.js";
 
 const captivity = ["match", ["get", "status"], "Murdered in captivity", 0, 1];
 
@@ -85,5 +88,94 @@ describe("applyPeopleFocusDim", () => {
     applyPeopleFocusDim(leftoverMap, 11);
     expect(paints.get("nli__people__circle:circle-opacity")).toEqual(expected);
     expect(paints.get("nli__people__circle:circle-stroke-opacity")).toEqual(expected);
+  });
+
+  it("uses the lifecycle authored base while a fade is in progress", () => {
+    const paints = new Map();
+    const layers = [{ id: "nli__people__circle", type: "circle", source: "nli.people" }];
+    const map = createPeopleMap(paints, layers);
+    let time = 0;
+    let frame = null;
+    const hooks = {
+      now: () => time,
+      requestFrame(callback) {
+        frame = callback;
+        return 1;
+      },
+      cancelFrame() {
+        frame = null;
+      },
+      setTimer() {
+        return 1;
+      },
+      clearTimer() {},
+    };
+    const runtime = getLayerLifecycleRuntime(map, hooks);
+    applyPeopleFocusDim(map, "11");
+    runtime.setDesiredIds(["nli.people"], { durationMs: 600 });
+    runtime.stageMapLayer("nli.people", {
+      id: "nli__people__circle",
+      type: "circle",
+      paint: { "circle-opacity": captivity, "circle-stroke-opacity": captivity },
+    });
+    runtime.markMemberReady("nli.people");
+    runtime.commitBatch();
+    time = 300;
+    frame?.(time);
+    const faded = paints.get("nli__people__circle:circle-opacity");
+    expect(faded).toEqual(scaleOpacityExpression(captivity, 0.5));
+
+    applyPeopleFocusDim(map, "11");
+    const focused = peopleFocusOpacityExpression("11", captivity);
+    expect(paints.get("nli__people__circle:circle-opacity")).toEqual(scaleOpacityExpression(focused, 0.5));
+    expect(paints.get("nli__people__circle:circle-stroke-opacity")).toEqual(scaleOpacityExpression(focused, 0.5));
+
+    time = 600;
+    frame?.(time);
+    expect(paints.get("nli__people__circle:circle-opacity")).toEqual(focused);
+
+    runtime.setDesiredIds([], { durationMs: 600 });
+    runtime.commitBatch();
+    time = 900;
+    frame?.(time);
+    clearPeopleFocusDim(map);
+    expect(paints.get("nli__people__circle:circle-opacity")).toEqual(scaleOpacityExpression(captivity, 0.5));
+  });
+
+  it("does not write a stored snapshot onto a replaced layer instance", () => {
+    const paints = new Map([["nli__people__circle:circle-opacity", 0.7]]);
+    const layers = [{ id: "nli__people__circle", type: "circle", source: "nli.people" }];
+    const map = createPeopleMap(paints, layers);
+    applyPeopleFocusDim(map, "11");
+    expect(paints.get("nli__people__circle:circle-opacity")[0]).toBe("case");
+
+    layers[0] = { id: "nli__people__circle", type: "circle", source: "nli.people" };
+    paints.set("nli__people__circle:circle-opacity", 0.25);
+    clearPeopleFocusDim(map);
+    expect(paints.get("nli__people__circle:circle-opacity")).toBe(0.25);
+  });
+
+  it("drops a stale snapshot when the layer instance is replaced", () => {
+    const paints = new Map([["nli__people__circle:circle-opacity", 0.7]]);
+    const layers = [{ id: "nli__people__circle", type: "circle", source: "nli.people" }];
+    const map = createPeopleMap(paints, layers);
+    applyPeopleFocusDim(map, "11");
+    expect(paints.get("nli__people__circle:circle-opacity")[0]).toBe("case");
+
+    layers[0] = { id: "nli__people__circle", type: "circle", source: "nli.people" };
+    paints.set("nli__people__circle:circle-opacity", 0.25);
+    applyPeopleFocusDim(map, "11");
+    expect(paints.get("nli__people__circle:circle-opacity")).toEqual(peopleFocusOpacityExpression("11", 0.25));
+  });
+
+  it("clears a snapshot when the layer owner drops that instance", () => {
+    const paints = new Map([["nli__people__circle:circle-opacity", 0.7]]);
+    const layers = [{ id: "nli__people__circle", type: "circle", source: "nli.people" }];
+    const map = createPeopleMap(paints, layers);
+    applyPeopleFocusDim(map, "11");
+    forgetPeopleFocusLayers(map, ["nli__people__circle"]);
+    paints.set("nli__people__circle:circle-opacity", 0.25);
+    applyPeopleFocusDim(map, "11");
+    expect(paints.get("nli__people__circle:circle-opacity")).toEqual(peopleFocusOpacityExpression("11", 0.25));
   });
 });

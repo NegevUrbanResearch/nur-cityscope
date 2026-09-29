@@ -50,6 +50,7 @@ import {
   computePinkLineBaseLayerVisible,
   computePinkLineParkingOverlayVisible,
 } from "../map-utils/curated-pink-axis-state.js";
+import { createNameFieldExitGate } from "../shared/nli-name-wall-scene-exit.js";
 import {
   PINK_LINE_PARKING_ICON_URL,
   fetchPinkLineParkingLotsGeojson,
@@ -58,9 +59,11 @@ import {
 import MapProjectionConfig from "../shared/map-projection-config.js";
 import {
   addCuratedGeoJsonSource,
+  getEnabledMapFullLayerIds,
   removeCuratedLayersByPrefix,
   registerCuratedLayerIds,
 } from "./maplibre-layer-manager.js";
+import { getLayerLifecycleRuntime, resolveLayerFadeMs } from "../shared/layer-lifecycle-fade.js";
 import {
   maplibreLineDashFromLeafletPx,
   maplibreLineDashWithLeafletOffset,
@@ -755,10 +758,37 @@ export async function loadCuratedLayerToMapLibre(map, fullLayerId, opts = {}) {
     (typeof window !== "undefined" && window.maplibregl) ||
     null;
   const force = opts && opts.force === true;
-  const isCurrent = typeof opts.isCurrent === "function" ? opts.isCurrent : () => true;
+  const fadeMs = typeof opts.fadeMs === "number" && Number.isFinite(opts.fadeMs) ? Math.max(0, opts.fadeMs) : 0;
+  const lifecycleRuntime = fadeMs > 0 ? getLayerLifecycleRuntime(map) : null;
+  const requestToken = lifecycleRuntime ? lifecycleRuntime.beginRequest(fullLayerId) : null;
+  const userCurrent = typeof opts.isCurrent === "function" ? opts.isCurrent : () => true;
+  const isCurrent = () => userCurrent()
+    && (requestToken == null || lifecycleRuntime.isRequestCurrent(fullLayerId, requestToken));
+  const teardownCurated = () => {
+    removeCuratedLayersByPrefix(map, fullLayerId);
+    removeCuratedHtmlMarkers(fullLayerId);
+  };
+  const addOwnedLayer = (layerDef) => {
+    if (!lifecycleRuntime) {
+      map.addLayer(layerDef);
+      return;
+    }
+    const { stagedLayerDef } = lifecycleRuntime.stageMapLayer(fullLayerId, layerDef, {
+      onTeardown: teardownCurated,
+    });
+    map.addLayer(stagedLayerDef);
+  };
+  const mountOwnedMarker = (marker) => {
+    if (lifecycleRuntime) {
+      const element = marker.getElement?.();
+      if (element) lifecycleRuntime.registerElement(fullLayerId, element, { onTeardown: teardownCurated });
+    }
+    marker.addTo(map);
+  };
   const commitReplacement = () => {
     if (!isCurrent()) return false;
     if (force && map && fullLayerId) {
+      lifecycleRuntime?.dropChannels(fullLayerId);
       removeCuratedLayersByPrefix(map, fullLayerId);
       removeCuratedHtmlMarkers(fullLayerId);
     }
@@ -971,7 +1001,7 @@ export async function loadCuratedLayerToMapLibre(map, fullLayerId, opts = {}) {
       registeredSourceIds.push(sourceId);
 
       try {
-        map.addLayer({
+        addOwnedLayer({
           id: layerId,
           type: "line",
           source: sourceId,
@@ -1000,7 +1030,7 @@ export async function loadCuratedLayerToMapLibre(map, fullLayerId, opts = {}) {
 
       const { paint, layout } = resolveMapLibreCircleStyle(styleKey, styles);
       try {
-        map.addLayer({
+        addOwnedLayer({
           id: layerId,
           type: "circle",
           source: sourceId,
@@ -1021,7 +1051,7 @@ export async function loadCuratedLayerToMapLibre(map, fullLayerId, opts = {}) {
         if (!isCurrent()) return;
         const marker = createNodeMarker(maplibregl, latlng, feature, nodeFillHex, fullLayerId);
         if (!marker) continue;
-        marker.addTo(map);
+        mountOwnedMarker(marker);
         markers.push(marker);
       }
       htmlMarkersByLayer.set(fullLayerId, markers);
@@ -1067,7 +1097,7 @@ export async function loadCuratedLayerToMapLibre(map, fullLayerId, opts = {}) {
       addCuratedGeoJsonSource(map, sourceId, { type: "FeatureCollection", features: lineFeatures });
       if (map.getSource(sourceId)) {
         try {
-          map.addLayer({
+          addOwnedLayer({
             id: layerId,
             type: "line",
             source: sourceId,
@@ -1092,7 +1122,7 @@ export async function loadCuratedLayerToMapLibre(map, fullLayerId, opts = {}) {
       if (!isCurrent()) return;
       const marker = createNodeMarker(maplibregl, latlng, feature, layerColor || "#FF69B4", fullLayerId);
       if (!marker) continue;
-      marker.addTo(map);
+      mountOwnedMarker(marker);
       markers.push(marker);
     }
     if (markers.length > 0) {
@@ -1116,7 +1146,7 @@ export async function loadCuratedLayerToMapLibre(map, fullLayerId, opts = {}) {
   if (map.getSource(fallbackSourceId)) {
     const addedFallbackLayerIds = [];
     try {
-      map.addLayer({
+      addOwnedLayer({
         id: fallbackFillLayerId,
         type: "fill",
         source: fallbackSourceId,
@@ -1132,7 +1162,7 @@ export async function loadCuratedLayerToMapLibre(map, fullLayerId, opts = {}) {
       console.warn(`[maplibre-curated-layer-loader] Plain fill layer error for ${fullLayerId}`, err);
     }
     try {
-      map.addLayer({
+      addOwnedLayer({
         id: fallbackLineLayerId,
         type: "line",
         source: fallbackSourceId,
@@ -1149,7 +1179,7 @@ export async function loadCuratedLayerToMapLibre(map, fullLayerId, opts = {}) {
       console.warn(`[maplibre-curated-layer-loader] Plain line layer error for ${fullLayerId}`, err);
     }
     try {
-      map.addLayer({
+      addOwnedLayer({
         id: fallbackCircleLayerId,
         type: "circle",
         source: fallbackSourceId,
@@ -1183,19 +1213,225 @@ function collectEnabledCuratedIds(groups) {
   return ids;
 }
 
+function curatedResourceMatches(candidate, logicalId) {
+  return candidate === logicalId || (typeof candidate === "string" && candidate.startsWith(`${logicalId}__`));
+}
+
 function hasMapLibreLayerWithPrefix(targetMap, prefix) {
   if (!targetMap || !prefix || typeof targetMap.getStyle !== "function") return false;
   const style = targetMap.getStyle();
-  return (style?.layers || []).some((layer) => layer?.id?.startsWith(prefix));
+  return (style?.layers || []).some((layer) => curatedResourceMatches(layer?.id, prefix));
+}
+
+function curatedContentMounted(targetMap, fullId) {
+  if (hasMapLibreLayerWithPrefix(targetMap, fullId)) return true;
+  const markers = htmlMarkersByLayer.get(fullId);
+  return Array.isArray(markers) && markers.length > 0;
+}
+
+function subscribeCuratedSourceReady(map, fullId, { ready }) {
+  const sourceIds = Object.keys(map?.getStyle?.()?.sources || {})
+    .filter((sourceId) => curatedResourceMatches(sourceId, fullId));
+  if (sourceIds.length === 0 || typeof map?.isSourceLoaded !== "function") {
+    ready();
+    return undefined;
+  }
+  const allLoaded = () => sourceIds.every((sourceId) => map.isSourceLoaded(sourceId));
+  if (allLoaded()) {
+    ready();
+    return undefined;
+  }
+  const onSourceData = (event) => {
+    if (event?.sourceId && !sourceIds.includes(event.sourceId)) return;
+    if (!allLoaded()) return;
+    map.off?.("sourcedata", onSourceData);
+    ready();
+  };
+  map.on?.("sourcedata", onSourceData);
+  return () => map.off?.("sourcedata", onSourceData);
+}
+
+function armCuratedSourceReadiness(map, fullId, runtime) {
+  runtime?.subscribeMemberReady(fullId, (callbacks) => (
+    subscribeCuratedSourceReady(map, fullId, callbacks)
+  ));
+}
+
+function sameIdSet(left, right) {
+  if (left.size !== right.size) return false;
+  for (const id of left) {
+    if (!right.has(id)) return false;
+  }
+  return true;
+}
+
+function resolveRefreshDuration(layerStyleOptions, fromSlideshowTick) {
+  if (fromSlideshowTick) return 0;
+  return resolveLayerFadeMs(layerStyleOptions);
+}
+
+function withJoinedBatch(layerStyleOptions, durationMs) {
+  if (durationMs <= 0) return layerStyleOptions;
+  return {
+    ...(layerStyleOptions || {}),
+    lifecycle: { ...(layerStyleOptions?.lifecycle || {}), joinBatch: true },
+    transition: { ...(layerStyleOptions?.transition || {}), transitionMs: durationMs },
+  };
+}
+
+function armCuratedMember(map, fullId, runtime) {
+  runtime.stageMapLayer(fullId, {
+    id: `${fullId}__lifecycle`,
+    type: "fill",
+    paint: { "fill-opacity": 1 },
+  }, {
+    onTeardown: () => {
+      removeCuratedLayersByPrefix(map, fullId);
+      removeCuratedHtmlMarkers(fullId);
+    },
+  });
+}
+
+function createCuratedBatchSession(map, displayGate) {
+  let heldChecker = () => true;
+  let activeCuratedIds = new Set();
+
+  const open = ({
+    groups,
+    affectedCuratedFullLayerIds,
+    fromSlideshowTick = false,
+    layerStyleOptions,
+    isCurrent: providedCurrent,
+    reopenGate = false,
+    keepLiveRuntime = false,
+  } = {}) => {
+    const durationMs = resolveRefreshDuration(layerStyleOptions, fromSlideshowTick);
+    const liveFade = durationMs > 0;
+    const enabledCuratedIds = new Set(collectEnabledCuratedIds(groups));
+    const previousCuratedIds = new Set(activeCuratedIds);
+    const affectedSet = new Set(
+      (Array.isArray(affectedCuratedFullLayerIds) ? affectedCuratedFullLayerIds : [])
+        .filter((id) => typeof id === "string"),
+    );
+    const contentInvalid = !fromSlideshowTick && (reopenGate === true || affectedSet.size > 0);
+    const sameIds = sameIdSet(previousCuratedIds, enabledCuratedIds);
+    if (displayGate && !fromSlideshowTick && (contentInvalid || !sameIds)) {
+      heldChecker = displayGate.begin([...enabledCuratedIds]);
+    }
+    const gateCheck = heldChecker;
+    const isCurrent = (fullId) => {
+      if (fromSlideshowTick) return typeof providedCurrent !== "function" || providedCurrent(fullId);
+      if (typeof providedCurrent === "function" && !providedCurrent(fullId)) return false;
+      return gateCheck(fullId);
+    };
+    let runtime = null;
+    if (liveFade) {
+      runtime = getLayerLifecycleRuntime(map);
+      if (reopenGate === true && keepLiveRuntime !== true) {
+        runtime.dispose();
+        runtime = getLayerLifecycleRuntime(map);
+      }
+    }
+    let toRefresh;
+    if (fromSlideshowTick) {
+      toRefresh = [...enabledCuratedIds].filter((id) => !curatedContentMounted(map, id));
+    } else if (reopenGate === true) {
+      toRefresh = [...enabledCuratedIds];
+    } else if (affectedSet.size > 0) {
+      toRefresh = [...enabledCuratedIds].filter((id) => affectedSet.has(id));
+    } else if (liveFade) {
+      toRefresh = [...enabledCuratedIds].filter((id) => !curatedContentMounted(map, id));
+    } else {
+      toRefresh = [...enabledCuratedIds];
+    }
+    const forceIds = new Set();
+    if (fromSlideshowTick) {
+      // Slideshow keeps an already mounted curated layer.
+    } else if (liveFade && (affectedSet.size > 0 || reopenGate === true)) {
+      for (const fullId of toRefresh) forceIds.add(fullId);
+    } else if (!liveFade) {
+      for (const fullId of toRefresh) forceIds.add(fullId);
+    }
+    const pending = runtime?.getPendingBatch?.() || null;
+    const sameSet = sameIds && !contentInvalid && !(toRefresh.length > 0 && !pending);
+    if (runtime) {
+      runtime.setDesiredIds([...getEnabledMapFullLayerIds(groups)], { durationMs, sameSet });
+      for (const fullId of toRefresh) armCuratedMember(map, fullId, runtime);
+    }
+    activeCuratedIds = enabledCuratedIds;
+    return {
+      durationMs,
+      liveFade,
+      isCurrent,
+      runtime,
+      toRefresh,
+      forceIds,
+      previousCuratedIds,
+      enabledCuratedIds,
+      affectedSet,
+      joined: withJoinedBatch(layerStyleOptions, durationMs),
+      modelInfo: { durationMs, fromSlideshowTick: fromSlideshowTick === true },
+    };
+  };
+
+  return {
+    open,
+    clear() { activeCuratedIds = new Set(); },
+  };
+}
+
+async function loadCuratedMembers(map, plan, resolveMaplibregl, warnLabel) {
+  const { toRefresh, forceIds, isCurrent, runtime, durationMs } = plan;
+  if (toRefresh.length === 0) return;
+  const maplibregl = await resolveMaplibregl();
+  if (!isCurrent()) return;
+  await Promise.all(toRefresh.map(async (fullId) => {
+    if (!isCurrent(fullId)) {
+      runtime?.markMemberFailed(fullId);
+      return;
+    }
+    try {
+      await loadCuratedLayerToMapLibre(map, fullId, {
+        maplibregl,
+        force: forceIds.has(fullId),
+        fadeMs: durationMs,
+        isCurrent: () => isCurrent(fullId),
+      });
+      if (!isCurrent(fullId)) runtime?.markMemberFailed(fullId);
+      else armCuratedSourceReadiness(map, fullId, runtime);
+    } catch (err) {
+      runtime?.markMemberFailed(fullId);
+      console.warn(warnLabel, err);
+    }
+  }));
+}
+
+function removeImmediateCurated(map, plan, layerStyleOptions) {
+  if (plan.liveFade) return true;
+  for (const fullId of plan.previousCuratedIds) {
+    if (!plan.isCurrent()) return false;
+    if (!plan.enabledCuratedIds.has(fullId)) {
+      removeCuratedLayersByPrefix(map, fullId, layerStyleOptions);
+      removeCuratedHtmlMarkers(fullId);
+    }
+  }
+  for (const fullId of plan.affectedSet) {
+    if (!plan.isCurrent()) return false;
+    if (plan.enabledCuratedIds.has(fullId)) continue;
+    removeCuratedLayersByPrefix(map, fullId, layerStyleOptions);
+    removeCuratedHtmlMarkers(fullId);
+  }
+  return true;
 }
 
 /**
  * GIS curated refresh used by the live layerGroups subscriber.
- * Disabled ids are removed immediately. Still-enabled ids stay until the
- * loader commits their replacement.
+ * Disabled ids are removed immediately when the fade duration is 0.
+ * A live fade keeps outgoing visuals until the shared batch reaches factor 0.
  */
 export function createGisCuratedRefresh({
   map,
+  displayGate,
   getLayerGroups = () => [],
   displayGroups = (raw) => (Array.isArray(raw) ? raw : Object.values(raw || {})),
   filterGroups = (groups) => groups,
@@ -1208,87 +1444,64 @@ export function createGisCuratedRefresh({
   resolveMaplibregl = async () => null,
   syncPinkLine = () => {},
 } = {}) {
-  let activeCuratedIds = new Set();
+  const session = createCuratedBatchSession(map, displayGate);
+  const nameFieldExit = createNameFieldExitGate(nameFieldController);
 
   const refreshCuratedLayers = async ({
     affectedCuratedFullLayerIds,
     groupsOverride,
     syncFlow = true,
-    isCurrent = () => true,
+    isCurrent: providedCurrent,
+    layerStyleOptions,
+    fromSlideshowTick = false,
+    reopenGate = false,
+    keepLiveRuntime = false,
   } = {}) => {
-    if (!isCurrent()) return;
     const rawGroups = groupsOverride ?? getLayerGroups();
     const groupsAsArray = displayGroups(rawGroups);
     const currentGroups = filterGroups(groupsAsArray);
-
+    const plan = session.open({
+      groups: currentGroups,
+      affectedCuratedFullLayerIds,
+      fromSlideshowTick,
+      layerStyleOptions,
+      isCurrent: providedCurrent,
+      reopenGate,
+      keepLiveRuntime,
+    });
+    const isCurrent = plan.isCurrent;
     if (!isCurrent()) return;
-    applyLayerGroups(currentGroups);
+    const held = nameFieldExit.holdUntilHidden(currentGroups, isCurrent);
+    if (held !== true && !await held) return;
+    if (!isCurrent()) return;
+    applyLayerGroups(currentGroups, plan.joined);
     applyLabelHeading(map);
     nameFieldController.sync(currentGroups);
     personVisual.bringToFront?.();
     if (syncFlow) syncFlowAnimations();
+    if (!removeImmediateCurated(map, plan, layerStyleOptions)) return;
+    if (plan.runtime) plan.runtime.commitBatch();
 
-    const enabledCuratedIds = new Set(collectEnabledCuratedIds(currentGroups));
-    const previousCuratedIds = new Set(activeCuratedIds);
-    activeCuratedIds = enabledCuratedIds;
-
-    for (const fullId of previousCuratedIds) {
-      if (!isCurrent()) return;
-      if (!enabledCuratedIds.has(fullId)) {
-        removeCuratedLayersByPrefix(map, fullId);
-        removeCuratedHtmlMarkers(fullId);
-      }
-    }
-
-    let toRefresh;
-    if (Array.isArray(affectedCuratedFullLayerIds) && affectedCuratedFullLayerIds.length > 0) {
-      const affectedSet = new Set(affectedCuratedFullLayerIds.filter((id) => typeof id === "string"));
-      for (const fullId of affectedSet) {
-        if (!isCurrent()) return;
-        if (enabledCuratedIds.has(fullId)) continue;
-        removeCuratedLayersByPrefix(map, fullId);
-        removeCuratedHtmlMarkers(fullId);
-      }
-      toRefresh = [...enabledCuratedIds].filter((id) => affectedSet.has(id));
-    } else {
-      toRefresh = [...enabledCuratedIds];
-    }
-
-    if (toRefresh.length === 0) {
+    const finish = () => {
       if (!isCurrent()) return;
       if (syncFlow) syncFlowAnimations();
       personVisual.bringToFront?.();
       syncPinkLine(map, groupsAsArray);
       if (!isCurrent()) return;
       getNarrativeController()?.onStyleLoad?.();
+    };
+    if (plan.toRefresh.length === 0) {
+      finish();
       return;
     }
-
-    const maplibregl = await resolveMaplibregl();
-    for (const fullId of toRefresh) {
-      if (!isCurrent()) return;
-      try {
-        await loadCuratedLayerToMapLibre(map, fullId, {
-          maplibregl,
-          force: true,
-          isCurrent: () => isCurrent(fullId),
-        });
-      } catch (err) {
-        console.warn(`[map-main] Failed to load curated layer ${fullId}`, err);
-      }
-    }
-    if (!isCurrent()) return;
-    if (syncFlow) syncFlowAnimations();
-    personVisual.bringToFront?.();
-    syncPinkLine(map, groupsAsArray);
-    if (!isCurrent()) return;
-    getNarrativeController()?.onStyleLoad?.();
+    await loadCuratedMembers(map, plan, resolveMaplibregl, "[map-main] Failed to load curated layer");
+    finish();
   };
 
   return {
     refreshCuratedLayers,
     clearActiveCuratedIds() {
-      activeCuratedIds = new Set();
+      session.clear();
     },
   };
 }
@@ -1300,6 +1513,7 @@ export function createGisCuratedRefresh({
  */
 export function createProjectionCuratedRefresh({
   map,
+  displayGate,
   isRuntimeAlive = () => true,
   getLayerGroups = () => [],
   asLayerGroups = (raw) => (Array.isArray(raw) ? raw : Object.values(raw || {})),
@@ -1315,87 +1529,78 @@ export function createProjectionCuratedRefresh({
   syncPinkLine = () => {},
   shouldSkipLiveRefresh = () => false,
 } = {}) {
-  let activeCuratedIds = new Set();
+  const session = createCuratedBatchSession(map, displayGate);
+  const nameFieldExit = createNameFieldExitGate(nameFieldController);
 
   const runProjectionCuratedRefresh = async ({
     affectedCuratedFullLayerIds,
     fromSlideshowTick,
     groupsOverride,
     layerStyleOptions,
-    isCurrent = () => true,
+    isCurrent: providedCurrent,
+    reopenGate = false,
   } = {}) => {
-    if (!isRuntimeAlive() || !isCurrent()) return;
+    if (!isRuntimeAlive()) return;
     const rawGroups = groupsOverride ?? getLayerGroups();
     const currentGroups = asLayerGroups(rawGroups);
+    const plan = session.open({
+      groups: currentGroups,
+      affectedCuratedFullLayerIds,
+      fromSlideshowTick,
+      layerStyleOptions,
+      isCurrent: providedCurrent,
+      reopenGate,
+    });
+    if (!isRuntimeAlive() || !plan.isCurrent()) return;
 
-    updateModelVisibility(rawGroups);
+    const held = nameFieldExit.holdUntilHidden(currentGroups, plan.isCurrent);
+    if (held !== true && !await held) return;
+    if (!isRuntimeAlive() || !plan.isCurrent()) return;
+    updateModelVisibility(rawGroups, plan.modelInfo);
 
-    syncProjectionLayersWithNarrative(map, currentGroups, layerStyleOptions);
+    syncProjectionLayersWithNarrative(map, currentGroups, plan.joined);
     applyLabelHeading(map);
     nameFieldController.sync(currentGroups);
     syncFlowAnimations();
+    if (!removeImmediateCurated(map, plan, layerStyleOptions)) return;
+    if (plan.runtime) plan.runtime.commitBatch();
 
-    const enabledCuratedIds = new Set(collectEnabledCuratedIds(currentGroups));
-    const previousCuratedIds = new Set(activeCuratedIds);
-    activeCuratedIds = enabledCuratedIds;
-
-    for (const fullId of previousCuratedIds) {
-      if (!isCurrent()) return;
-      if (!enabledCuratedIds.has(fullId)) {
-        removeCuratedLayersByPrefix(map, fullId, layerStyleOptions);
-        removeCuratedHtmlMarkers(fullId);
-      }
-    }
-
-    let toRefresh;
-    if (Array.isArray(affectedCuratedFullLayerIds) && affectedCuratedFullLayerIds.length > 0) {
-      const affectedSet = new Set(
-        affectedCuratedFullLayerIds.filter((id) => typeof id === "string"),
-      );
-      for (const fullId of affectedSet) {
-        if (!isCurrent()) return;
-        if (enabledCuratedIds.has(fullId)) continue;
-        removeCuratedHtmlMarkers(fullId);
-      }
-      toRefresh = [...enabledCuratedIds].filter((id) => affectedSet.has(id));
-    } else {
-      toRefresh = [...enabledCuratedIds];
-    }
-
-    if (toRefresh.length === 0) {
-      if (!isCurrent()) return;
+    const finish = () => {
+      if (!plan.isCurrent()) return;
       syncFlowAnimations();
       syncPinkLine(map, currentGroups);
       getNarrativeController()?.onStyleLoad();
       refreshLegend();
       raiseHighlight(map);
+    };
+    if (plan.toRefresh.length === 0) {
+      finish();
       return;
     }
-
     const maplibregl = await resolveMaplibregl();
+    const isCurrent = plan.isCurrent;
     if (!isRuntimeAlive() || !isCurrent()) return;
-    for (const fullId of toRefresh) {
-      if (!isCurrent(fullId)) return;
-      if (fromSlideshowTick && hasMapLibreLayerWithPrefix(map, fullId)) {
-        continue;
+    await Promise.all(plan.toRefresh.map(async (fullId) => {
+      if (!isCurrent(fullId)) {
+        plan.runtime?.markMemberFailed(fullId);
+        return;
       }
       try {
         await loadCuratedLayerToMapLibre(map, fullId, {
           maplibregl,
-          force: true,
+          force: plan.forceIds.has(fullId),
+          fadeMs: plan.durationMs,
           isCurrent: () => isCurrent(fullId),
         });
       } catch (err) {
+        plan.runtime?.markMemberFailed(fullId);
         console.warn(`[projection-main] Failed to load curated layer ${fullId}`, err);
+        return;
       }
-      if (!isCurrent(fullId)) return;
-    }
-    if (!isCurrent()) return;
-    syncFlowAnimations();
-    syncPinkLine(map, currentGroups);
-    getNarrativeController()?.onStyleLoad();
-    refreshLegend();
-    raiseHighlight(map);
+      if (!plan.isCurrent(fullId)) plan.runtime?.markMemberFailed(fullId);
+      else armCuratedSourceReadiness(map, fullId, plan.runtime);
+    }));
+    finish();
   };
 
   const applyProjectionRefresh = ({
@@ -1404,6 +1609,7 @@ export function createProjectionCuratedRefresh({
     fromSlideshowTick,
     layerStyleOptions,
     isCurrent,
+    reopenGate,
   } = {}) => {
     if (!fromSlideshowTick && shouldSkipLiveRefresh()) {
       return Promise.resolve();
@@ -1414,6 +1620,7 @@ export function createProjectionCuratedRefresh({
       fromSlideshowTick,
       layerStyleOptions,
       isCurrent,
+      reopenGate,
     });
   };
 

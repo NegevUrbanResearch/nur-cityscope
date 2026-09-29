@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
-import { mountMapLegend } from "../../frontend/src/map/map-legend.js";
+import { applyProjectionLegendLayout, mountMapLegend } from "../../frontend/src/map/map-legend.js";
 
 function model() {
   return { packs: [{ id: "roads", name: "Roads", layers: [{
@@ -83,6 +83,55 @@ function setupWithDocument() {
 }
 
 describe("mountMapLegend", () => {
+  it("applies saved reference-plane geometry and hides only the right DOM legend", () => {
+    const element = { style: {} };
+    const parent = { getBoundingClientRect: () => ({ width: 1920, height: 1080 }) };
+    const layout = { leftPct: 10, topPct: 20, widthPct: 30, heightPct: 14, fontPx: 24, rotateDeg: 15 };
+    applyProjectionLegendLayout(element, layout, { span: "left", referenceElement: parent });
+    expect(element.style).toMatchObject({
+      left: "192px", top: "216px", width: "576px", height: "151.2px",
+      fontSize: "24px", transform: "rotate(15deg)", display: "",
+    });
+    applyProjectionLegendLayout(element, layout, { span: "right", referenceElement: parent });
+    expect(element.style.display).toBe("none");
+    applyProjectionLegendLayout(element, layout, { span: "full", referenceElement: parent });
+    expect(element.style.display).toBe("");
+  });
+
+  it("paginates from saved left geometry and refreshes metadata without placement writes", async () => {
+    const { element } = setupWithDocument();
+    const settings = {
+      language: "he",
+      summarizedGroupIds: [],
+      projection: { left: { leftPct: 5, topPct: 10, widthPct: 15, heightPct: 45, fontPx: 14, rotateDeg: 0 } },
+    };
+    const setPlacement = vi.fn();
+    element.parentElement = { getBoundingClientRect: () => ({ width: 1920, height: 1080 }) };
+    Object.defineProperty(element, "clientWidth", { configurable: true, get: () => Number.parseFloat(element.style.width) || 500 });
+    Object.defineProperty(element, "clientHeight", { configurable: true, get: () => Number.parseFloat(element.style.height) || 400 });
+    const mounted = mountMapLegend({
+      element,
+      surface: "projection",
+      projectionSpan: "left",
+      dataContext: { getLegendSettings: () => settings, setLegendLayout: setPlacement },
+      buildModel: async () => groupedModel(),
+    });
+    await mounted.refresh();
+    const narrowPageCount = mounted.getRenderSnapshot().pages.length;
+    expect(element.style.width).toBe("288px");
+    expect(element.style.fontSize).toBe("14px");
+    settings.language = "en";
+    settings.summarizedGroupIds = ["investigation"];
+    settings.projection.left = { ...settings.projection.left, widthPct: 75, fontPx: 20 };
+    await mounted.refresh();
+    expect(element.style.width).toBe("1440px");
+    expect(element.style.fontSize).toBe("20px");
+    expect(mounted.getRenderSnapshot().language).toBe("en");
+    expect(mounted.getRenderSnapshot().pages.length).toBeLessThan(narrowPageCount);
+    expect(setPlacement).not.toHaveBeenCalled();
+    mounted.dispose();
+  });
+
   it("renders one labeled row per item and keeps components together", async () => {
     const { element, surface } = setup();
     const build = vi.fn(async () => model());
@@ -276,7 +325,7 @@ describe("mountMapLegend", () => {
     const mounted = mountMapLegend({ element, surface: "gis", buildModel: async () => groupedModel() });
     await mounted.refresh();
     expect(element.innerHTML.match(/class="map-legend-group"/g)).toHaveLength(1);
-    expect(element.innerHTML.match(/class="map-legend-group-title"/g)).toHaveLength(1);
+    expect(element.innerHTML.match(/class="map-legend-group-title"/g)).toBeNull();
     expect(element.innerHTML).not.toContain("map-legend-layer-title");
     expect(element.innerHTML.match(/data-legend-item-id=/g)).toHaveLength(6);
     expect(element.innerHTML).not.toContain("Investigation polygons");
@@ -388,11 +437,12 @@ describe("mountMapLegend", () => {
     vi.unstubAllGlobals();
   });
 
-  it("shares one projection pack heading across consecutive layers on a page", async () => {
+  it("shares one projection pack group across consecutive layers on a page without a heading", async () => {
     const { element } = setup();
     const mounted = mountMapLegend({ element, surface: "projection", buildModel: async () => groupedModel() });
     await mounted.refresh();
-    expect(element.innerHTML.match(/class="map-legend-group-title"/g)).toHaveLength(1);
+    expect(element.innerHTML.match(/class="map-legend-group"/g)).toHaveLength(1);
+    expect(element.innerHTML.match(/class="map-legend-group-title"/g)).toBeNull();
     mounted.dispose();
   });
 
@@ -478,8 +528,10 @@ describe("mountMapLegend", () => {
   it("uses the active projection span dwell before the full-span fallback", async () => {
     vi.useFakeTimers();
     const { element, content } = setupWithDocument();
+    element.parentElement = { getBoundingClientRect: () => ({ width: 500, height: 571.428571 }) };
     element.clientWidth = 240;
     element.clientHeight = 80;
+    const interval = vi.spyOn(globalThis, "setInterval");
     const mounted = mountMapLegend({
       element,
       surface: "projection",
@@ -496,9 +548,9 @@ describe("mountMapLegend", () => {
       buildModel: async () => groupedModel(),
     });
     await mounted.refresh();
-    const firstPage = content().innerHTML;
-    vi.advanceTimersByTime(3000);
-    expect(content().innerHTML).not.toBe(firstPage);
+    vi.advanceTimersByTime(4000);
+    expect(interval).toHaveBeenCalledWith(expect.any(Function), 4000);
+    interval.mockRestore();
     mounted.dispose();
     vi.useRealTimers();
   });
@@ -507,6 +559,7 @@ describe("mountMapLegend", () => {
     vi.useFakeTimers();
     const { element, content, pager } = setupWithDocument();
     vi.stubGlobal("window", { innerWidth: 300 });
+    const interval = vi.spyOn(globalThis, "setInterval");
     const mounted = mountMapLegend({
       element,
       surface: "gis",
@@ -522,9 +575,9 @@ describe("mountMapLegend", () => {
     expect(pager().hidden).toBe(false);
     expect(pager().innerHTML).toContain("data-legend-prev");
     expect(pager().innerHTML).toContain("data-legend-next");
-    const firstPage = content().innerHTML;
-    vi.advanceTimersByTime(3000);
-    expect(content().innerHTML).not.toBe(firstPage);
+    vi.advanceTimersByTime(4000);
+    expect(interval).toHaveBeenCalledWith(expect.any(Function), 4000);
+    interval.mockRestore();
     expect(pager().innerHTML).toContain("data-legend-next");
     mounted.dispose();
     vi.useRealTimers();
@@ -686,7 +739,7 @@ describe("mountMapLegend", () => {
     mounted.dispose();
   });
 
-  it("keeps a non-NLI pack heading and titles only the other pack in a mixed legend", async () => {
+  it("omits pack headings for every pack, including land use on GIS and projection", async () => {
     const mixed = {
       packs: [
         { id: "nli", name: "October 7th", layers: [{ id: "nli.route", name: "Route", items: [{ id: "nli.route:a", label: "232", shape: "line", stroke: "#000" }] }] },
@@ -697,8 +750,10 @@ describe("mountMapLegend", () => {
       const { element } = setup();
       const mounted = mountMapLegend({ element, surface, buildModel: async () => mixed });
       await mounted.refresh();
-      expect(element.innerHTML.match(/class="map-legend-group-title"/g)).toHaveLength(1);
-      expect(element.innerHTML).toContain(">Land use<");
+      expect(element.innerHTML).toContain("Open space");
+      expect(element.innerHTML).toContain("232");
+      expect(element.innerHTML.match(/class="map-legend-group-title"/g)).toBeNull();
+      expect(element.innerHTML).not.toContain(">Land use<");
       expect(element.innerHTML).not.toContain(">October 7th<");
       mounted.dispose();
     }

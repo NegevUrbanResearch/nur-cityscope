@@ -1,6 +1,48 @@
 import { expect, test, vi } from "vitest";
 import { DEFAULT_PROJECTION_CONFIG } from "../../frontend/src/shared/projection-config-schema.js";
 import { installProjectionPreviewBridge } from "../../frontend/src/projection/projection-preview-bridge.js";
+import * as previewBridge from "../../frontend/src/projection/projection-preview-bridge.js";
+
+const clockLayout = { leftPct: 12, topPct: 22, widthPct: 30, heightPct: 10, fontPx: 24, rotateDeg: 30 };
+const clockRequest = (requestId, patch = {}) => ({ type: "otef_clock_preview_state", sessionId: "clock-1", requestId,
+  surface: "projection", sceneId: "home", output: "left", element: "clock", clockLayout,
+  legendLayout: { ...clockLayout, dwellSeconds: 8 }, pageIndex: 0, ...patch });
+
+test("clock bridge validates parent, session, increasing requests and finite local layouts", async () => {
+  expect(previewBridge.installProjectionClockPreviewBridge).toBeTypeOf("function");
+  const listeners = new Map(); const parent = { postMessage: vi.fn() };
+  const win = { parent, location: { origin: "http://localhost" }, addEventListener: (type, fn) => listeners.set(type, fn), removeEventListener: (type) => listeners.delete(type) };
+  const renderState = vi.fn(async () => ({ meshIdentity: "mesh-1", mesh: {}, pageIndex: 0, pageCount: 1 }));
+  const dispose = previewBridge.installProjectionClockPreviewBridge({ win, sessionId: "clock-1", renderState });
+  const send = (data, source = parent, origin = "http://localhost") => listeners.get("message")({ data, source, origin });
+  send(clockRequest(1), {}); send(clockRequest(1), parent, "http://other"); send(clockRequest(1, { sessionId: "old" }));
+  send(clockRequest(1, { sceneId: "nova" })); send(clockRequest(1, { element: "projection.left" }));
+  send(clockRequest(1, { clockLayout: { ...clockLayout, fontPx: NaN } }));
+  send(clockRequest(1, { pageIndex: -1 }));
+  expect(renderState).not.toHaveBeenCalled();
+  send(clockRequest(3)); send(clockRequest(3)); send(clockRequest(2));
+  await vi.waitFor(() => expect(renderState).toHaveBeenCalledOnce());
+  expect(parent.postMessage).toHaveBeenLastCalledWith({ type: "otef_clock_preview_rendered", sessionId: "clock-1", requestId: 3,
+    surface: "projection", sceneId: "home", output: "left", meshIdentity: "mesh-1", mesh: {}, pageIndex: 0, pageCount: 1 }, "http://localhost");
+  dispose(); expect(listeners.has("message")).toBe(false);
+});
+
+test("clock bridge aborts older draws and cannot reply after disposal", async () => {
+  expect(previewBridge.installProjectionClockPreviewBridge).toBeTypeOf("function");
+  const listeners = new Map(); const parent = { postMessage: vi.fn() }; const pending = [];
+  const win = { parent, location: { origin: "http://localhost" }, addEventListener: (type, fn) => listeners.set(type, fn), removeEventListener: (type) => listeners.delete(type) };
+  const dispose = previewBridge.installProjectionClockPreviewBridge({ win, sessionId: "clock-1",
+    renderState: (state, context) => new Promise((resolve) => pending.push({ state, context, resolve })) });
+  const send = (data) => listeners.get("message")({ data, source: parent, origin: "http://localhost" });
+  send(clockRequest(1)); send(clockRequest(2, { element: "legend" }));
+  expect(pending[0].context.signal.aborted).toBe(true);
+  expect(pending[0].context.isCurrent()).toBe(false);
+  pending[0].resolve({}); await Promise.resolve();
+  expect(parent.postMessage.mock.calls.filter(([data]) => data.requestId === 1)).toHaveLength(0);
+  dispose(); expect(pending[1].context.signal.aborted).toBe(true);
+  pending[1].resolve({}); await Promise.resolve();
+  expect(parent.postMessage.mock.calls.filter(([data]) => data.type === "otef_clock_preview_rendered")).toHaveLength(0);
+});
 
 test("preview accepts only its same-origin parent and applies a validated draft locally", () => {
   const listeners = new Map();
@@ -76,14 +118,49 @@ test('preview validation replies with exact identity and complete wall without a
   const listeners = new Map(); const parent = { postMessage: vi.fn() };
   const win = { parent, location: { origin: 'http://localhost' }, addEventListener: (type, callback) => listeners.set(type, callback), removeEventListener() {} };
   const config = structuredClone(DEFAULT_PROJECTION_CONFIG);
-  const wall = { datasetVersion: 'release', mode: 'wall', digest: 'a'.repeat(64), expected: 1228, placed: 1228 };
+  const wall = { datasetVersion: 'release', mode: 'wall', digest: 'a'.repeat(64), expected: 1228, placed: 1228, heading: config.namesWall.rotateDeg };
+  const { heading: _heading, ...safeWall } = wall;
   const map = { setEffectiveProjectionConfig: vi.fn() };
   const validateWall = vi.fn(async () => wall);
   installProjectionPreviewBridge({ win, output: 'left', map, nameFieldController: {}, syncContextInvestigation() {}, validateWall });
   listeners.get('message')({ source: parent, origin: 'http://localhost', data: { type: 'otef_projection_preview_validate', output: 'left', requestId: 2, identity: JSON.stringify(config), config } });
-  await vi.waitFor(() => expect(parent.postMessage).toHaveBeenLastCalledWith({ type: 'otef_projection_preview_validated', output: 'left', requestId: 2, identity: JSON.stringify(config), valid: true, wall }, 'http://localhost'));
+  await vi.waitFor(() => expect(parent.postMessage).toHaveBeenLastCalledWith({ type: 'otef_projection_preview_validated', output: 'left', requestId: 2, identity: JSON.stringify(config), valid: true, wall: safeWall }, 'http://localhost'));
   expect(map.setEffectiveProjectionConfig).not.toHaveBeenCalled();
   expect(validateWall).toHaveBeenCalledWith(config, expect.any(Object));
+});
+
+test('preview validation rejects a complete wall whose heading is missing or non-finite', async () => {
+  for (const heading of [undefined, null, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+    const listeners = new Map(); const parent = { postMessage: vi.fn() };
+    const win = { parent, location: { origin: 'http://localhost' }, addEventListener: (type, callback) => listeners.set(type, callback), removeEventListener() {} };
+    const config = structuredClone(DEFAULT_PROJECTION_CONFIG);
+    const wall = { datasetVersion: 'release', mode: 'wall', digest: 'a'.repeat(64), expected: 1228, placed: 1228 };
+    if (heading !== undefined) wall.heading = heading;
+    installProjectionPreviewBridge({ win, output: 'left', map: {}, nameFieldController: {}, syncContextInvestigation() {},
+      validateWall: async () => wall });
+    const identity = JSON.stringify(config);
+    listeners.get('message')({ source: parent, origin: 'http://localhost', data: { type: 'otef_projection_preview_validate', output: 'left', requestId: 4, identity, config } });
+    await vi.waitFor(() => expect(parent.postMessage).toHaveBeenLastCalledWith({
+      type: 'otef_projection_preview_validated', output: 'left', requestId: 4, identity, valid: false,
+      error: expect.stringMatching(/heading/i),
+    }, 'http://localhost'));
+  }
+});
+
+test('preview validation rejects a wall whose heading disagrees with the candidate rotation', async () => {
+  const listeners = new Map(); const parent = { postMessage: vi.fn() };
+  const win = { parent, location: { origin: 'http://localhost' }, addEventListener: (type, callback) => listeners.set(type, callback), removeEventListener() {} };
+  const config = structuredClone(DEFAULT_PROJECTION_CONFIG);
+  config.namesWall.rotateDeg = 70;
+  const wall = { datasetVersion: 'release', mode: 'wall', digest: 'a'.repeat(64), expected: 1228, placed: 1228, heading: 35 };
+  installProjectionPreviewBridge({ win, output: 'left', map: {}, nameFieldController: {}, syncContextInvestigation() {},
+    validateWall: async () => wall });
+  const identity = JSON.stringify(config);
+  listeners.get('message')({ source: parent, origin: 'http://localhost', data: { type: 'otef_projection_preview_validate', output: 'left', requestId: 3, identity, config } });
+  await vi.waitFor(() => expect(parent.postMessage).toHaveBeenLastCalledWith({
+    type: 'otef_projection_preview_validated', output: 'left', requestId: 3, identity, valid: false,
+    error: expect.stringMatching(/heading/i),
+  }, 'http://localhost'));
 });
 
 test('preview validation preserves bounded diagnostics for an incomplete candidate without marking it valid', async () => {
@@ -92,7 +169,7 @@ test('preview validation preserves bounded diagnostics for an incomplete candida
   const config = structuredClone(DEFAULT_PROJECTION_CONFIG);
   const diagnostics = { state: 'invalid', datasetVersion: 'nli-1', mode: 'model', requestedFontPx: 6, effectiveFontPx: null, expected: 1228, placed: 1201, left: 600, right: 601, reason: 'capacity through 1px' };
   installProjectionPreviewBridge({ win, output: 'right', map: {}, nameFieldController: {}, syncContextInvestigation() {},
-    validateWall: async () => ({ ...diagnostics }) });
+    validateWall: async () => ({ ...diagnostics, heading: config.namesWall.rotateDeg }) });
   const identity = JSON.stringify(config);
   listeners.get('message')({ source: parent, origin: 'http://localhost', data: { type: 'otef_projection_preview_validate', output: 'right', requestId: 9, identity, config } });
   await vi.waitFor(() => expect(parent.postMessage).toHaveBeenLastCalledWith({ type: 'otef_projection_preview_validated', output: 'right', requestId: 9, identity, valid: false, diagnostics, error: 'capacity through 1px' }, 'http://localhost'));

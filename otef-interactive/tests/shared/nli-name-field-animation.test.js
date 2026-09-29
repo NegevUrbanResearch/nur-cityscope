@@ -1,12 +1,34 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
   NAME_FIELD_MOTION,
+  NAME_FIELD_REVEAL_DURATION_MS,
   withNameRevealDelays,
   nameRevealSchedule,
   createNameFieldAnimation,
 } from '../../frontend/src/shared/nli-name-field-animation.js';
 
 describe('memorial name animation', () => {
+  it('finishes the last normal name at twenty seconds', () => {
+    vi.useFakeTimers();
+    let elapsed = 0;
+    const apply = vi.fn();
+    const animation = createNameFieldAnimation({ apply, now: () => elapsed });
+    try {
+      const delays = [...nameRevealSchedule(['a', 'b']).values()].map((value) => value.delayMs);
+      expect(Math.min(...delays)).toBe(0);
+      expect(Math.max(...delays)).toBe(18400);
+      expect(NAME_FIELD_REVEAL_DURATION_MS).toBe(20000);
+      animation.show();
+      elapsed = 19999;
+      vi.advanceTimersByTime(NAME_FIELD_MOTION.frameMs);
+      expect(apply.mock.lastCall[0].alphaFor('last', 18400)).toBeLessThan(1);
+      expect(apply.mock.lastCall[0].baseOpacity).not.toBe(1);
+      elapsed = 20000;
+      vi.advanceTimersByTime(NAME_FIELD_MOTION.frameMs);
+      expect(apply.mock.lastCall[0].alphaFor('last', 18400)).toBe(1);
+      expect(apply.mock.lastCall[0].baseOpacity).toBe(1);
+    } finally { animation.dispose(); vi.useRealTimers(); }
+  });
   it('shows a selected name immediately even while the general reveal is starting', () => {
     vi.useFakeTimers();
     const apply = vi.fn();
@@ -27,7 +49,7 @@ describe('memorial name animation', () => {
     expect(times(first)).toEqual(times(second));
     expect(first.features.map(f=>f.id)).toEqual(source.features.map(f=>f.id));
     expect(new Set(Object.values(times(first))).size).toBe(20);
-    expect(Math.max(...Object.values(times(first)))).toBe(7200);
+    expect(Math.max(...Object.values(times(first)))).toBe(18400);
     expect(source.features[0].properties.reveal_delay).toBeUndefined();
   });
   it('keeps the staggered entrance running until the last name finishes', () => {

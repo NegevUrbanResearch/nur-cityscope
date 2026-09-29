@@ -84,9 +84,9 @@ describe("maplibre AcrossLine ribbon", () => {
   test("stagger and duration formulas", () => {
     expect(staggerDelayMs(1)).toBe(300);
     expect(staggerDelayMs(8)).toBe(0);
-    expect(revealDurationMs(0)).toBe(4000);
-    expect(revealDurationMs(20000)).toBe(5000);
-    expect(revealDurationMs(40000)).toBe(5000);
+    expect(revealDurationMs(0)).toBe(15000);
+    expect(revealDurationMs(20000)).toBe(18000);
+    expect(revealDurationMs(40000)).toBe(18000);
   });
 
   test("overlap class widths from COUNT_", () => {

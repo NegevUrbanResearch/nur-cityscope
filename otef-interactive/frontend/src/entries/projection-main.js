@@ -12,6 +12,7 @@ import {
 } from "../projection/maplibre-projection.js";
 import { installProjectionRenderDebugOverlay } from "../projection/projection-render-debug-overlay.js";
 import { syncProjectionLayers } from "../projection/maplibre-projection-layers.js";
+import { attachSettlementOrientationRuntime } from "../shared/nli-settlement-orientation.js";
 import { applyNarrativeHouseOutlineFilter, applyNarrativePeopleFilter } from "../map/nli-people-marker-filter.js";
 import { applyPeopleFocusDim, clearPeopleFocusDim } from "../shared/nli-people-focus-presentation.js";
 import {
@@ -31,6 +32,8 @@ import {
 import { idleNliClock } from "../shared/nli-investigation-clock.js";
 import { subscribeNliVideoPlayback } from "../shared/nli-video-playback-channel.js";
 import { resolveMotionMode } from "../shared/reduced-motion.js";
+import { getLayerLifecycleRuntime } from "../shared/layer-lifecycle-fade.js";
+import { projectionModelSubscribeReady, releaseProjectionModelImage, syncProjectionModelImage } from "../projection/projection-model-image.js";
 import { loadPeopleRuntime } from "../map/maplibre-person-selection.js";
 import { bindProjectionPersonHalo } from "../projection/projection-person-halo.js";
 import {
@@ -62,6 +65,8 @@ import {
 import { subscribeSlideshowProjection } from "../shared/slideshow-projection-channel.js";
 import OTEFDataContext from "../shared/OTEFDataContext.js";
 import layerRegistry from "../shared/layer-registry.js";
+import { loadSettlementNameCatalog } from "../shared/settlement-name-catalog.js";
+import { bindProjectionSettlementNames } from "../projection/projection-settlement-name-runtime.js";
 import {
   applyProjectionSpanView,
   clearProjectionSpanBase,
@@ -88,15 +93,11 @@ import {
   nliExplainerSpanKey,
 } from "../projection/nli-explainer-overlay.js";
 import {
-  installNliExplainerDebug,
-  isNliExplainerDebugRequestedInUrl,
-} from "../projection/nli-explainer-debug.js";
-import {
   applyNliSharedTextHeading,
   readNliLabelHeading,
 } from "../shared/nli-label-heading.js";
 import { createProjectionPattern } from "../projection/projection-pattern.js";
-import { createProjectionCaptionAdapter } from "../projection/projection-caption-adapter.js";
+import { createProjectionCaptionAdapter, drawProjectionCaptionForSpan } from "../projection/projection-caption-adapter.js";
 import { createProjectionLegendAdapter } from "../projection/projection-legend-adapter.js";
 import { createProjectionPatternAdapter } from "../projection/projection-pattern-adapter.js";
 import { getInvestigationTimelineRenderSnapshot } from "../shared/maplibre-investigation-timeline.js";
@@ -108,7 +109,24 @@ import {
   createLegendStyleLoadRefresh,
   installMapLegendLifecycle,
 } from "../map/legend-integration.js";
-import { installLegendLayout } from "../projection/legend-layout.js";
+
+export function bindProjectionClockLayout({ dataContext, host, span, onLayout, getBrowserSurface, win = globalThis.window }) {
+  const apply = () => {
+    const remote = dataContext.getNliClockLayout?.()?.projection?.left;
+    const layout = mergeNliExplainerLayout("left", remote ? { left: remote } : {}, MapProjectionConfig.NLI_EXPLAINER_LAYOUT);
+    onLayout(layout);
+    applyNliExplainerLayout(host, layout);
+    applyNliExplainerHostPresence(host, span);
+  };
+  apply();
+  const onChange = () => {
+    apply();
+    getBrowserSurface()?.requestDraw?.();
+  };
+  const unsubscribe = dataContext.subscribe("nliClockLayout", onChange);
+  win.addEventListener("resize", onChange);
+  return () => { unsubscribe?.(); win.removeEventListener("resize", onChange); };
+}
 
 function getEffectiveProjectionLayerGroups() {
   const groups = (
@@ -173,23 +191,6 @@ function resolveProjectionMapPixelRatio() {
     return c;
   }
   return undefined;
-}
-
-function updateModelBaseImageVisibility(layerGroups, modelImgEl) {
-  if (!modelImgEl) return;
-  const groups = Array.isArray(layerGroups)
-    ? layerGroups
-    : layerGroups && typeof layerGroups === "object"
-      ? Object.values(layerGroups)
-      : [];
-  const projectorBase = groups.find((g) => g?.id === "projector_base");
-  if (!projectorBase || projectorBase.enabled === false) {
-    modelImgEl.style.opacity = "0";
-    return;
-  }
-  const modelLayer = (projectorBase.layers || []).find((l) => l?.id === "model_base");
-  const enabled = !!(modelLayer && modelLayer.enabled);
-  modelImgEl.style.opacity = enabled ? "1" : "0";
 }
 
 function toggleProjectionFullscreen() {
@@ -322,10 +323,8 @@ async function bootstrapProjectionRuntime() {
     itm: itmBounds,
   };
 
-  const modelImageUrl =
-    modelBoundsData.model_image || layerRegistry.getLayerDataUrl("projector_base.model_base");
   const modelImgEl = document.getElementById("displayedImage");
-  if (modelImgEl && modelImageUrl) {
+  if (modelImgEl) {
     modelImgEl.__otefProjectionImage = {
       bounds: modelBounds.bounds,
       corners: imageGeoCorners,
@@ -333,7 +332,6 @@ async function bootstrapProjectionRuntime() {
       width: modelBoundsData.image_width,
       height: modelBoundsData.image_height,
     };
-    updateModelBaseImageVisibility(getEffectiveProjectionLayerGroups(), modelImgEl);
   }
 
   if (typeof document !== "undefined" && document.fonts && typeof document.fonts.load === "function") {
@@ -384,18 +382,25 @@ async function bootstrapProjectionRuntime() {
       ? { canvasContextAttributes: { preserveDrawingBuffer: true } }
       : {}),
   });
+  attachSettlementOrientationRuntime(map);
   let browserSurface = null;
+  if (modelImgEl) {
+    modelImgEl.removeAttribute?.("src");
+    modelImgEl.style.opacity = "0";
+  }
   const imageReadiness = browserMode && modelImgEl ? createProjectionImageReadiness({
     imageEl: modelImgEl,
-    onReady: () => map.triggerRepaint?.(),
+    onReady: () => {
+      map.triggerRepaint?.();
+      getLayerLifecycleRuntime(map)?.markMemberReady("projector_base.model_base");
+    },
     onInvalidate: () => map.triggerRepaint?.(),
-    onError: (error) => visibleProjectionBrowserError(displayContainerEl, error),
+    onError: (error) => {
+      visibleProjectionBrowserError(displayContainerEl, error);
+      getLayerLifecycleRuntime(map)?.markMemberFailed("projector_base.model_base");
+    },
   }) : null;
   if (imageReadiness) registerDisposer(() => imageReadiness.dispose());
-  if (modelImgEl && modelImageUrl) {
-    if (imageReadiness) imageReadiness.setSource(modelImageUrl);
-    else modelImgEl.src = modelImageUrl;
-  }
   if (typeof window !== "undefined") {
     window._maplibreMap = map;
   }
@@ -464,7 +469,6 @@ async function bootstrapProjectionRuntime() {
   /** @type {null | { toggle: () => void; setVisible: (v: boolean) => void; getActive: () => boolean; dispose: () => void }} */
   let shemotLabelDebugApi = null;
   /** @type {null | { toggle: () => void; setVisible: (v: boolean) => void; isVisible: () => boolean; dispose: () => void }} */
-  let nliExplainerDebugApi = null;
 
   /** Tesuga reads Web Render info DAT `title`; keep in sync with `slideshowRuntime.isActive()`. */
   let presentationPollId = null;
@@ -602,20 +606,8 @@ async function bootstrapProjectionRuntime() {
     const { host: nliExplainerHost, captionEl: nliExplainerCaptionEl } =
       ensureNliExplainerHost(displayContainer);
     let currentCaptionLayout = {};
-    const applyStoredExplainerLayout = () => {
-      const search = typeof window !== "undefined" ? window.location.search : "";
-      const remote = OTEFDataContext.getNliClockLayout?.()?.projection;
-      const stored = remote && typeof remote === "object" ? remote : {};
-      const spanKey = nliExplainerSpanKey(search);
-      currentCaptionLayout = mergeNliExplainerLayout(spanKey, stored, MapProjectionConfig.NLI_EXPLAINER_LAYOUT);
-      applyNliExplainerLayout(nliExplainerHost, currentCaptionLayout);
-      applyNliExplainerHostPresence(nliExplainerHost, spanKey);
-    };
-    applyStoredExplainerLayout();
-    registerDisposer(OTEFDataContext.subscribe("nliClockLayout", () => {
-      if (window.NliExplainerDebug?.isVisible?.()) return;
-      applyStoredExplainerLayout();
-    }));
+    registerDisposer(bindProjectionClockLayout({ dataContext: OTEFDataContext, host: nliExplainerHost, span: projectionSpanId,
+      onLayout: (layout) => { currentCaptionLayout = layout; }, getBrowserSurface: () => browserSurface }));
     await new Promise((resolve) => {
       window.requestAnimationFrame(() => window.requestAnimationFrame(resolve));
     });
@@ -624,26 +616,12 @@ async function bootstrapProjectionRuntime() {
     const legendSpan = nliExplainerSpanKey(
       typeof window !== "undefined" ? window.location.search : "",
     );
-    let legendLifecycle = null;
-    const legendLayout = installLegendLayout({
-      element: legendElement,
-      clockElement: nliExplainerHost,
-      dataContext: OTEFDataContext,
-      spanKey: legendSpan,
-      getProjectionConfig: getEffectiveProjectionConfig,
-      onEditingChange: (editing) => legendLifecycle?.setEditing(editing),
-    });
-    legendLifecycle = installMapLegendLifecycle({
+    let legendLifecycle = installMapLegendLifecycle({
       element: legendElement,
       surface: "projection",
       projectionSpan: legendSpan,
       dataContext: OTEFDataContext,
       registry: layerRegistry,
-      onLegendSettings: (settings) => {
-        const projection = settings?.projection || {};
-        const saved = projection[legendSpan];
-        if (saved) legendLayout?.applyServerSettings?.(saved);
-      },
       onRenderSnapshot: (snapshot) => {
         legendAdapter?.sync(snapshot);
         browserSurface?.requestDraw?.();
@@ -653,14 +631,6 @@ async function bootstrapProjectionRuntime() {
       () => legendLifecycle,
     );
     registerDisposer(() => legendLifecycle.dispose());
-    registerDisposer(() => legendLayout?.dispose());
-    const onExplainerResize = () => {
-      if (window.NliExplainerDebug?.isVisible?.()) return;
-      applyStoredExplainerLayout();
-    };
-    window.addEventListener("resize", onExplainerResize);
-    registerDisposer(() => window.removeEventListener("resize", onExplainerResize));
-
     registerDisposer(() => {
       disposeRouteProgressOverlaysForMap(map);
       disposeInvestigationTimelineForMap(map);
@@ -696,7 +666,6 @@ async function bootstrapProjectionRuntime() {
         visibilityLayerGroups: overlayGroups,
       });
     };
-    let explainerDebugVisible = false;
     let projectionNarrativeController = null;
     let novaEscapeCoordinator = null;
     let morRouteCoordinator = null;
@@ -715,7 +684,6 @@ async function bootstrapProjectionRuntime() {
         motionMode: resolveMotionMode(),
         captionEl: nliExplainerCaptionEl,
         allowMapCaption: false,
-        explainerDebugVisible: explainerDebugVisible === true,
         now: () =>
           typeof OTEFDataContext.correctedNow === "function"
             ? OTEFDataContext.correctedNow()
@@ -731,39 +699,6 @@ async function bootstrapProjectionRuntime() {
         browserSurface?.requestDraw?.();
       });
     };
-    try {
-      nliExplainerDebugApi = installNliExplainerDebug({
-        host: nliExplainerHost,
-        captionEl: nliExplainerCaptionEl,
-        registerDisposer,
-        initialVisible: isNliExplainerDebugRequestedInUrl(
-          typeof window !== "undefined" ? window.location.search : "",
-        ),
-        onVisibleChange: (visible) => {
-          explainerDebugVisible = visible === true;
-          legendLayout?.setVisible(explainerDebugVisible);
-          legendLifecycle?.setEditing(explainerDebugVisible);
-          syncContextInvestigation();
-        },
-        getProjectionConfig: getEffectiveProjectionConfig,
-        getRemoteLayoutMap: () => OTEFDataContext.getNliClockLayout?.()?.projection || {},
-        persistRemoteLayoutMap: (layout) => OTEFDataContext.setNliClockLayout({
-          surface: "projection",
-          layout,
-        }),
-      });
-      if (typeof window !== "undefined" && nliExplainerDebugApi) {
-        window.NliExplainerDebug = nliExplainerDebugApi;
-        registerDisposer(() => {
-          if (window.NliExplainerDebug === nliExplainerDebugApi) {
-            delete window.NliExplainerDebug;
-          }
-          nliExplainerDebugApi = null;
-        });
-      }
-    } catch (e) {
-      console.warn("[projection-main] NLI explainer debug failed to load", e);
-    }
     const syncContextFlowAnimations = () => {
       syncContextRouteProgress();
       syncContextInvestigation();
@@ -846,15 +781,17 @@ async function bootstrapProjectionRuntime() {
     }));
     let applyPreviewProjectionConfig = null;
     let previewApplySequence = 0;
-    registerDisposer(bindProjectionHeadingStorage({ win: window, browserMode, previewMode,
-      applyHeading: () => applyStoredNliLabelHeading(map), disposePreparation: disposeProjectionNameWallPreparation,
-      controller: nameFieldController,
-      reapplyRuntime: () => projectionRuntime?.reapply('name heading changed; rebuilding wall'),
-      repreparePreview: (signal) => applyPreviewProjectionConfig?.(browserSurface.getConfig(), { signal }),
-      onError: (error) => {
-        if (isRuntimeAlive() && error?.name !== 'AbortError') visibleProjectionBrowserError(displayContainer, error);
-      },
-    }));
+    if (!browserMode) {
+      registerDisposer(bindProjectionHeadingStorage({ win: window, browserMode, previewMode,
+        applyHeading: () => applyStoredNliLabelHeading(map), disposePreparation: disposeProjectionNameWallPreparation,
+        controller: nameFieldController,
+        reapplyRuntime: () => projectionRuntime?.reapply('name heading changed; rebuilding wall'),
+        repreparePreview: (signal) => applyPreviewProjectionConfig?.(browserSurface.getConfig(), { signal }),
+        onError: (error) => {
+          if (isRuntimeAlive() && error?.name !== 'AbortError') visibleProjectionBrowserError(displayContainer, error);
+        },
+      }));
+    }
 
     let projectionMapAlive = true;
     const projectionDisplay = createCuratedDisplayGate({
@@ -869,17 +806,6 @@ async function bootstrapProjectionRuntime() {
       if (Array.isArray(raw)) return raw;
       if (raw && typeof raw === "object") return Object.values(raw);
       return [];
-    }
-
-    function collectEnabledCuratedIds(groups) {
-      const ids = [];
-      for (const group of groups || []) {
-        if (!group || !group.id || !group.id.startsWith("curated")) continue;
-        for (const layer of group.layers || []) {
-          if (layer && layer.enabled) ids.push(`${group.id}.${layer.id}`);
-        }
-      }
-      return ids;
     }
 
     async function resolveMaplibregl() {
@@ -898,12 +824,23 @@ async function bootstrapProjectionRuntime() {
       );
     const { applyProjectionRefresh } = createProjectionCuratedRefresh({
       map,
+      displayGate: projectionDisplay,
       isRuntimeAlive,
       getLayerGroups: getEffectiveProjectionLayerGroups,
       asLayerGroups: asLayerGroupsArray,
-      updateModelVisibility: (rawGroups) => updateModelBaseImageVisibility(rawGroups, modelImgEl),
+      updateModelVisibility: (rawGroups, modelInfo) => syncProjectionModelImage({
+        map,
+        imageEl: modelImgEl,
+        layerGroups: rawGroups,
+        modelInfo,
+        requestDraw: () => browserSurface?.requestDraw?.(),
+        sealBatch: false,
+        subscribeReady: imageReadiness
+          ? projectionModelSubscribeReady(modelImgEl, imageReadiness)
+          : undefined,
+      }),
       syncProjectionLayersWithNarrative,
-      applyLabelHeading: applyStoredNliLabelHeading,
+      applyLabelHeading: (targetMap) => { if (!browserMode) applyStoredNliLabelHeading(targetMap); },
       nameFieldController,
       syncFlowAnimations: syncContextFlowAnimations,
       getNarrativeController: () => projectionNarrativeController,
@@ -916,12 +853,9 @@ async function bootstrapProjectionRuntime() {
     let projectionCuratedRefreshChain = Promise.resolve();
     const refreshProjectionCuratedLayers = (options = {}) => {
       const groups = options.groupsOverride ?? getEffectiveProjectionLayerGroups();
-      const isCurrent = typeof options.isCurrent === "function"
-        ? options.isCurrent
-        : projectionDisplay.begin(collectEnabledCuratedIds(asLayerGroupsArray(groups)));
       projectionCuratedRefreshChain = projectionCuratedRefreshChain
         .catch(() => {})
-        .then(() => applyProjectionRefresh({ ...options, isCurrent }));
+        .then(() => applyProjectionRefresh({ ...options, groupsOverride: groups }));
       return projectionCuratedRefreshChain;
     };
 
@@ -956,7 +890,7 @@ async function bootstrapProjectionRuntime() {
           return {
           image: imageReadiness?.contentVersion() == null ? null : createProjectionImageDescriptor({ map, imageEl: modelImgEl, contentVersion: imageReadiness.contentVersion(), config: effectiveProjectionConfig, spanId: projectionSpanId }),
           map: createProjectionMapDescriptor({ map, config: effectiveProjectionConfig, spanId: projectionSpanId }),
-          caption: captionAdapter?.draw?.(),
+          caption: drawProjectionCaptionForSpan(captionAdapter, projectionSpanId),
           pattern: patternAdapter?.draw?.(),
           legend: legendAdapter?.draw?.(),
           };
@@ -986,6 +920,21 @@ async function bootstrapProjectionRuntime() {
           return;
         }
         nameFieldController.installProjectionCanvas(browserSurface.getNameAdapter());
+        try {
+          const settlementCatalog = await loadSettlementNameCatalog({ registry: layerRegistry, fetchImpl: window.fetch.bind(window), signal: projectionLifecycle.signal });
+          if (isRuntimeAlive()) registerDisposer(bindProjectionSettlementNames({
+            dataContext: OTEFDataContext,
+            adapter: browserSurface.getSettlementAdapter(),
+            catalog: settlementCatalog,
+            map,
+            getGroups: () => OTEFDataContext.getLayerGroups(),
+            onDraw: () => { browserSurface?.draw?.(); },
+            onError: (error) => visibleProjectionBrowserError(displayContainer, error),
+            host: displayContainer,
+          }));
+        } catch (error) {
+          if (error?.name !== "AbortError") console.warn("Settlement names unavailable:", error?.message || error);
+        }
         registerDisposer(disposeProjectionNameWallPreparation);
         const unsubscribeVideoPlayback = subscribeNliVideoPlayback({
           table: OTEFDataContext._tableName || "otef",
@@ -1014,8 +963,7 @@ async function bootstrapProjectionRuntime() {
         const pair = await browserSurface.preparePair(config);
         checkCurrent();
         const field = await prepareProjectionNameWall({ config, meshes: pair.meshes,
-          datasetVersion: OTEFDataContext.getPersonSelection?.()?.datasetVersion || undefined,
-          heading: readNliLabelHeading(window.localStorage), signal });
+          datasetVersion: OTEFDataContext.getPersonSelection?.()?.datasetVersion || undefined, signal });
         checkCurrent();
         await nameFieldController.prepareProjectionCandidate({ generation, identity: JSON.stringify(config),
           config, field, signal });
@@ -1048,11 +996,10 @@ async function bootstrapProjectionRuntime() {
         const prepared = await browserSurface.preparePair(config);
         if (signal?.aborted) throw new Error('Wall preview superseded');
         const field = await prepareProjectionNameWall({ config, meshes: prepared.meshes,
-          datasetVersion: OTEFDataContext.getPersonSelection?.()?.datasetVersion || undefined,
-          heading: readNliLabelHeading(window.localStorage), signal });
+          datasetVersion: OTEFDataContext.getPersonSelection?.()?.datasetVersion || undefined, signal });
         const result = projectionCandidateResult(config, field, JSON.stringify(config));
         if (!result.valid) return { reason: result.reason, diagnostics: result.diagnostics };
-        return { ...result.wall, diagnostics: result.diagnostics };
+        return { ...result.wall, heading: field.heading, diagnostics: result.diagnostics };
       } : null,
     }));
 
@@ -1080,8 +1027,7 @@ async function bootstrapProjectionRuntime() {
           const surfacePair = await browserSurface.preparePair(config);
           if (signal?.aborted) throw Object.assign(new Error('projection preparation cancelled'), { name: 'AbortError' });
           const field = await prepareProjectionNameWall({ config, meshes: surfacePair.meshes,
-            datasetVersion: OTEFDataContext.getPersonSelection?.()?.datasetVersion || undefined,
-            heading: readNliLabelHeading(window.localStorage), signal });
+            datasetVersion: OTEFDataContext.getPersonSelection?.()?.datasetVersion || undefined, signal });
           const wall = await nameFieldController.prepareProjectionCandidate({ generation,
             identity: JSON.stringify(config), config, field, revision, signal });
           return { surfacePair, wall, generation };
@@ -1129,7 +1075,7 @@ async function bootstrapProjectionRuntime() {
     }
 
     function syncProjectionLayersWithNarrative(targetMap, groups, options) {
-      syncProjectionLayers(targetMap, groups, { ...options, suppressCanvasNameSymbols: Boolean(browserSurface?.getNameAdapter()) });
+      syncProjectionLayers(targetMap, groups, { ...options, suppressCanvasNameSymbols: Boolean(browserSurface?.getNameAdapter()), suppressSettlementSymbols: Boolean(browserSurface?.getSettlementAdapter()) });
       applyNarrativePeopleFilter(targetMap, OTEFDataContext.getNarrativeState?.()?.id ?? null);
       const selectedPid = OTEFDataContext.getPersonSelection?.()?.personId;
       if (selectedPid) applyPeopleFocusDim(targetMap, selectedPid);
@@ -1141,7 +1087,7 @@ async function bootstrapProjectionRuntime() {
       syncProjectionLayersWithNarrative(projectionMap, groups, options);
       nameFieldController.sync(groups);
       void syncSettlementGlow();
-      applyStoredNliLabelHeading(projectionMap);
+      if (!browserMode) applyStoredNliLabelHeading(projectionMap);
       syncContextFlowAnimations();
       projectionNarrativeController?.onStyleLoad();
       refreshLegendAfterStyleLoad();
@@ -1223,18 +1169,22 @@ async function bootstrapProjectionRuntime() {
         const groups = getEffectiveProjectionLayerGroups();
         void applyProjectionRefresh({
           groupsOverride: groups,
-          isCurrent: projectionDisplay.begin(collectEnabledCuratedIds(asLayerGroupsArray(groups))),
         });
         void syncSettlementGlow();
       }),
     );
+    registerDisposer(() => {
+      releaseProjectionModelImage(map);
+      getLayerLifecycleRuntime(map)?.dispose();
+    });
     const refreshProjectionAfterStyleLoad = () => {
       if (!isRuntimeAlive()) return;
+      releaseProjectionModelImage(map);
       projectionDisplay.invalidateStyle();
       const groups = getEffectiveProjectionLayerGroups();
       void applyProjectionRefresh({
         groupsOverride: groups,
-        isCurrent: projectionDisplay.begin(collectEnabledCuratedIds(asLayerGroupsArray(groups))),
+        reopenGate: true,
       });
       void syncSettlementGlow();
     };
@@ -1278,7 +1228,7 @@ async function bootstrapProjectionRuntime() {
                 map,
                 Array.isArray(groups) ? groups : Object.values(groups || {}),
               );
-              applyStoredNliLabelHeading(map);
+              if (!browserMode) applyStoredNliLabelHeading(map);
               nameFieldController.sync(Array.isArray(groups) ? groups : Object.values(groups || {}));
               void syncSettlementGlow();
               syncContextFlowAnimations();
@@ -1497,11 +1447,8 @@ async function bootstrapProjectionRuntime() {
       toggleLabelDebug: () => {
         if (shemotLabelDebugApi) shemotLabelDebugApi.toggle();
       },
-      toggleExplainerDebug: () => {
-        if (window.NliExplainerDebug) window.NliExplainerDebug.toggle();
-      },
     });
-    if (handled && action === "explainerDebug") event.preventDefault();
+    if (handled) event.preventDefault();
   };
   window.addEventListener("keydown", onKeyDown);
   registerDisposer(() => window.removeEventListener("keydown", onKeyDown));
@@ -1536,6 +1483,23 @@ function initializeTableSwitcher() {
 }
 
 async function boot() {
+  const previewParams = new URLSearchParams(window.location.search);
+  const clockPreview = previewParams.get("clockPreview") === "1";
+  const settlementPreview = previewParams.get("settlementPreview") === "1";
+  if (settlementPreview) {
+    const span = previewParams.get("span");
+    if (clockPreview || !previewParams.get("previewSession") || (span !== "left" && span !== "right") || previewParams.get("outputMode") !== "browser") {
+      throw new Error(clockPreview ? "Projection preview flags are mutually exclusive" : "Projection settlement preview session is missing or invalid");
+    }
+    const { bootProjectionSettlementNamePreview } = await import("../projection/projection-settlement-name-preview.js");
+    await bootProjectionSettlementNamePreview({ window, document, fetchImpl: window.fetch.bind(window) });
+    return;
+  }
+  if (clockPreview) {
+    const { bootProjectionClockPreview } = await import("../projection/projection-clock-preview.js");
+    await bootProjectionClockPreview({ window, document, fetchImpl: window.fetch.bind(window) });
+    return;
+  }
   const previewMode = new URLSearchParams(window.location.search).get("preview") === "1";
   const shouldContinue = previewMode || initializeTableSwitcher();
   if (!shouldContinue) return;

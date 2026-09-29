@@ -1,5 +1,5 @@
-import { validateProjectionConfigV2, validateProjectionConfigV3, validateProjectionConfigV4, validateProjectionConfigV5 } from './projection-warp-schema.js';
-import { migrateNamesWallToV5 } from './nli-name-wall-config.js';
+import { validateProjectionConfigV2, validateProjectionConfigV3, validateProjectionConfigV4, validateProjectionConfigV5, validateProjectionConfigV6 } from './projection-warp-schema.js';
+import { migrateNamesWallToV5, migrateNamesWallToV6 } from './nli-name-wall-config.js';
 
 const LEGACY_DEFAULT_PROJECTION_CONFIG = {
   schemaVersion: 1,
@@ -12,7 +12,7 @@ const LEGACY_DEFAULT_PROJECTION_CONFIG = {
 
 const TD_MIGRATION_PRESET_ID = '6b6f2e4d-2c67-4df2-9d7e-1a7bb4ef3b2c';
 const TD_MIGRATION_PRESET_NAME = 'TD migration baseline';
-const DEFAULT_PROJECTION_CONFIG = migrateNamesWallToV5(LEGACY_DEFAULT_PROJECTION_CONFIG);
+const DEFAULT_PROJECTION_CONFIG = migrateNamesWallToV6(LEGACY_DEFAULT_PROJECTION_CONFIG, 35);
 
 function freeze(value) {
   if (value && typeof value === 'object' && !Object.isFrozen(value)) {
@@ -40,6 +40,7 @@ const number = (value, path, min, max, errors) => {
 };
 
 export function validateProjectionConfig(value) {
+  if (value?.schemaVersion === 6) return validateProjectionConfigV6(value);
   if (value?.schemaVersion === 5) return validateProjectionConfigV5(value);
   if (value?.schemaVersion === 4) return validateProjectionConfigV4(value);
   if (value?.schemaVersion === 3) return validateProjectionConfigV3(value);
@@ -66,19 +67,22 @@ export function validateProjectionConfig(value) {
   return errors;
 }
 
-export function parseProjectionImport(text) {
+export function parseProjectionImport(text, rotateDeg) {
   if (typeof text !== 'string' || new TextEncoder().encode(text).byteLength > 65536) throw new Error('import exceeds 64 KiB');
   let document;
   try { document = JSON.parse(text); } catch (error) { throw new Error(`invalid JSON: ${error.message}`); }
   const errors = {};
   if (!ownKeys(document, ['schemaVersion', 'name', 'config'], '', errors)) throw new Error(formatErrors(errors));
-  if (![1, 2, 3, 4, 5].includes(document.schemaVersion)) errors.schemaVersion = 'must equal 1, 2, 3, 4, or 5';
+  if (![1, 2, 3, 4, 5, 6].includes(document.schemaVersion)) errors.schemaVersion = 'must equal 1, 2, 3, 4, 5, or 6';
   if (document.config && document.schemaVersion !== document.config.schemaVersion) errors.schemaVersion = 'must match config schemaVersion';
   if (typeof document.name !== 'string' || document.name.trim().length < 1 || document.name.trim().length > 80) errors.name = 'must be 1–80 characters';
   Object.assign(errors, Object.fromEntries(Object.entries(validateProjectionConfig(document.config)).map(([key, value]) => [`config.${key}`, value])));
   if (Object.keys(errors).length) throw new Error(formatErrors(errors));
   const warnings = [];
-  return { name: document.name.trim(), config: migrateNamesWallToV5(document.config, warnings), warnings };
+  const config = document.schemaVersion < 6 && rotateDeg !== undefined
+    ? migrateNamesWallToV6(document.config, rotateDeg, warnings)
+    : migrateNamesWallToV5(document.config, warnings);
+  return { name: document.name.trim(), config, warnings };
 }
 const formatErrors = (errors) => `invalid projection config: ${Object.entries(errors).map(([path, message]) => `${path || 'document'} ${message}`).join('; ')}`;
 export function serializeProjectionExport(name, config) {
@@ -86,7 +90,8 @@ export function serializeProjectionExport(name, config) {
   const errors = validateProjectionConfig(config);
   if (!trimmed || trimmed.length > 80) errors.name = 'must be 1–80 characters';
   if (Object.keys(errors).length) throw new Error(formatErrors(errors));
-  return JSON.stringify({ schemaVersion: 5, name: trimmed, config: migrateNamesWallToV5(config) });
+  const normalized = config.schemaVersion === 6 ? migrateNamesWallToV6(config, config.namesWall?.rotateDeg) : migrateNamesWallToV5(config);
+  return JSON.stringify({ schemaVersion: normalized.schemaVersion, name: trimmed, config: normalized });
 }
 
-export { DEFAULT_PROJECTION_CONFIG, LEGACY_DEFAULT_PROJECTION_CONFIG, TD_MIGRATION_PRESET_ID, TD_MIGRATION_PRESET_NAME };
+export { DEFAULT_PROJECTION_CONFIG, LEGACY_DEFAULT_PROJECTION_CONFIG, TD_MIGRATION_PRESET_ID, TD_MIGRATION_PRESET_NAME, validateProjectionConfigV6 };

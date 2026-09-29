@@ -4,6 +4,13 @@ import {
   quantizeAlarmMinutes,
 } from "./nli-investigation-beats.js";
 import { NLI_DISPLAY_PROFILES, NLI_VISUAL_TOKENS } from "./nli-investigation-theme.js";
+import {
+  addInvestigationOverlayLayer,
+  completeInvestigationOverlayMount,
+  fadeInvestigationOverlayLayer,
+  isOverlayOpacityProperty,
+  publishInvestigationOverlayOpacity,
+} from "./investigation-overlay-lifecycle.js";
 
 export { INVESTIGATION_ALARMS_FULL_ID, collectAlarmTimelineBeats, quantizeAlarmMinutes };
 
@@ -167,7 +174,10 @@ function restorePaints(map, saved) {
   for (const [id, properties] of Object.entries(saved)) {
     for (const [key, value] of Object.entries(properties)) {
       if (value === undefined) continue;
-      try { map.setPaintProperty(id, key, value); } catch (_) { /* layer can disappear */ }
+      try {
+        if (typeof map.getLayer === "function" && !map.getLayer(id)) continue;
+        map.setPaintProperty(id, key, value);
+      } catch (_) { /* layer can disappear */ }
     }
   }
 }
@@ -227,8 +237,7 @@ function pointsSignature(features) {
 function addSourceAndLayer(map, sourceId, layer, spec, beforeId) {
   if (typeof map?.addSource !== "function" || typeof map?.addLayer !== "function") return;
   if (!safelyGetSource(map, sourceId)) map.addSource(sourceId, spec);
-  if (safelyGetLayer(map, layer.id)) return;
-  try { beforeId ? map.addLayer(layer, beforeId) : map.addLayer(layer); } catch (_) { /* style can disappear */ }
+  addInvestigationOverlayLayer(map, INVESTIGATION_ALARMS_FULL_ID, layer, beforeId);
 }
 
 function hidePackAlarmCircles(map, ids) {
@@ -260,9 +269,23 @@ export function createInvestigationAlarmRenderer(map, profile = NLI_DISPLAY_PROF
   const rowCache = new Map();
   let resetDone = false;
   let paintsRestored = false;
+  let hideGeneration = 0;
+
+  function setOwnedPaint(layerId, property, value) {
+    if (isOverlayOpacityProperty(property)) {
+      publishInvestigationOverlayOpacity(map, INVESTIGATION_ALARMS_FULL_ID, layerId, property, value);
+      return;
+    }
+    map.setPaintProperty(layerId, property, value);
+  }
+
+  function ownedAlarmLayersMissing() {
+    return !safelyGetLayer(map, ALARM_CIRCLE_LAYER_ID) || !safelyGetLayer(map, ALARM_RIPPLE_LAYER_ID);
+  }
 
   function mount() {
     if (disposed) return;
+    hideGeneration += 1;
     resetDone = false;
     paintsRestored = false;
     const ids = collectAlarmCircleLayerIds(map);
@@ -298,11 +321,12 @@ export function createInvestigationAlarmRenderer(map, profile = NLI_DISPLAY_PROF
       },
     }, { type: "geojson", data: featureCollection([]) }, beforeId);
     mounted = true;
+    completeInvestigationOverlayMount(map, INVESTIGATION_ALARMS_FULL_ID);
   }
 
   function render(frame = {}, data = {}) {
     if (disposed) return;
-    if (!mounted || !safelyGetSource(map, ALARM_POINTS_SOURCE_ID)) mount();
+    if (!mounted || !safelyGetSource(map, ALARM_POINTS_SOURCE_ID) || ownedAlarmLayersMissing()) mount();
     const features = Array.isArray(data) ? data : Array.isArray(data.alarmFeatures) ? data.alarmFeatures : [];
     const onset = frame?.alarmOnset || null;
     const onsetId = frame?.alarmOnsetId || onset?.id || null;
@@ -365,36 +389,55 @@ export function createInvestigationAlarmRenderer(map, profile = NLI_DISPLAY_PROF
     const rippleRadius = ["case", [">", overlayCount(), 0], ["+", settled, expansion], 0];
     if (typeof map?.setPaintProperty === "function") {
       try {
-        map.setPaintProperty(ALARM_CIRCLE_LAYER_ID, "circle-radius", basePaint.radius);
-        map.setPaintProperty(ALARM_CIRCLE_LAYER_ID, "circle-color", NLI_VISUAL_TOKENS.alarmYellow);
-        map.setPaintProperty(ALARM_CIRCLE_LAYER_ID, "circle-opacity", basePaint.opacity);
-        map.setPaintProperty(ALARM_RIPPLE_LAYER_ID, "circle-radius", rippleRadius);
+        setOwnedPaint(ALARM_CIRCLE_LAYER_ID, "circle-radius", basePaint.radius);
+        setOwnedPaint(ALARM_CIRCLE_LAYER_ID, "circle-color", NLI_VISUAL_TOKENS.alarmYellow);
+        setOwnedPaint(ALARM_CIRCLE_LAYER_ID, "circle-opacity", basePaint.opacity);
+        setOwnedPaint(ALARM_RIPPLE_LAYER_ID, "circle-radius", rippleRadius);
         const opacity = allowRipple ? rippleStrokeOpacity(loopMs) : 0;
-        map.setPaintProperty(ALARM_RIPPLE_LAYER_ID, "circle-opacity", 0);
-        map.setPaintProperty(ALARM_RIPPLE_LAYER_ID, "circle-stroke-opacity", opacity);
+        setOwnedPaint(ALARM_RIPPLE_LAYER_ID, "circle-opacity", 0);
+        setOwnedPaint(ALARM_RIPPLE_LAYER_ID, "circle-stroke-opacity", opacity);
       } catch (_) { /* style can disappear between reconciliation calls */ }
     }
   }
 
-  function reset({ preserveBasePaints = false } = {}) {
+  function reset({ preserveBasePaints = false, immediate = false } = {}) {
     if (disposed) return;
     if (resetDone) return;
-    removeOwned(map);
-    if (!preserveBasePaints && !paintsRestored) {
-      restorePaints(map, savedAlarms);
-      paintsRestored = true;
-    }
-    lastSignature = null;
-    lastFrame = null;
-    lastData = null;
-    activeOnsetId = null;
-    mounted = false;
     resetDone = true;
+    const overlayIds = [ALARM_CIRCLE_LAYER_ID, ALARM_RIPPLE_LAYER_ID].filter((id) => safelyGetLayer(map, id));
+    const generation = ++hideGeneration;
+    const finish = () => {
+      if (generation !== hideGeneration) return;
+      removeOwned(map);
+      if (!preserveBasePaints && !paintsRestored) {
+        restorePaints(map, savedAlarms);
+        paintsRestored = true;
+      }
+      lastSignature = null;
+      lastFrame = null;
+      lastData = null;
+      activeOnsetId = null;
+      mounted = false;
+    };
+    if (immediate || !overlayIds.length) {
+      finish();
+      return;
+    }
+    let remaining = overlayIds.length;
+    let started = false;
+    for (const id of overlayIds) {
+      started = fadeInvestigationOverlayLayer(map, INVESTIGATION_ALARMS_FULL_ID, id, () => {
+        remaining -= 1;
+        if (remaining <= 0) finish();
+      }) || started;
+    }
+    if (!started) finish();
   }
 
   function dispose({ preserveBasePaints = false } = {}) {
     if (disposed) return;
     disposed = true;
+    hideGeneration += 1;
     removeOwned(map);
     if (!preserveBasePaints && !paintsRestored) {
       restorePaints(map, savedAlarms);
@@ -429,7 +472,7 @@ export function applyAlarmMode(map, state, mode, phase = {}) {
   if (!renderer) throw new Error("Investigation timeline alarm renderer is not initialized");
   const previousMode = state.alarmMode || "off";
   if (mode === "off") {
-    if (previousMode !== "off") renderer.reset();
+    if (previousMode !== "off") renderer.reset({ immediate: phase?.immediate === true });
     state.alarmMode = "off";
     return;
   }

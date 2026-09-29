@@ -211,7 +211,8 @@ describe("projection-main slideshow overlay wiring", () => {
     expect(src).toMatch(/captionEl:\s*nliExplainerCaptionEl/);
     expect(src).toMatch(/allowMapCaption:\s*false/);
     expect(src).toMatch(/getNliClockLayout/);
-    expect(src).toMatch(/setNliClockLayout/);
+    expect(src).not.toMatch(/setNliClockLayout/);
+    expect(src).not.toMatch(/NLI_CLOCK_LAYOUT_STORAGE_KEY|localStorage.*clock/i);
     expect(src).toMatch(/nliClockLayout/);
     expect(src).toMatch(/nli-explainer-overlay/);
     const loadIdx = src.indexOf("const onProjectionMapLoad");
@@ -249,6 +250,9 @@ describe("projection-main slideshow overlay wiring", () => {
     expect(src).toMatch(/allowMapCaption:\s*false/);
     expect(src).toMatch(/ensureNliExplainerHost/);
     expect(src).toMatch(/nliCaptionMode:\s*"clock-only"/);
-    expect(src).toMatch(/NLI_GIS_CLOCK_LAYOUT_STORAGE_KEY/);
+    expect(src).toMatch(/getGisClockLayout|gisClockLayout/);
+    expect(src).not.toMatch(/NLI_GIS_CLOCK_LAYOUT_STORAGE_KEY|setGisClockLayout|nliGisClockDebugApi/);
+    expect(src).toMatch(/getNliClockLayout/);
+    expect(src).toMatch(/subscribe\("nliClockLayout"/);
   });
 });

@@ -79,6 +79,13 @@ export function collectAlarmTimelineBeats(alarmFeatures) {
   return [...beats].sort((a, b) => a - b);
 }
 
+/** Story minutes are minutes-of-day. Null/undefined is no minute, not midnight. */
+export function finiteClockMinutes(value) {
+  if (value == null || typeof value === "boolean") return null;
+  const minutes = Number(value);
+  return Number.isFinite(minutes) ? minutes : null;
+}
+
 export function formatMinutesAsLocalClock(minutes) {
   if (!Number.isFinite(minutes)) return "";
   const h = Math.floor(minutes / 60);

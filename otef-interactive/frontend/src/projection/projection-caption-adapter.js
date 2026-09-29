@@ -74,4 +74,8 @@ export function createProjectionCaptionAdapter({ canvasFactory } = {}) {
   return { canvas, sync, draw, dispose() { disposed = true; context.clearRect(0, 0, canvas.width, canvas.height); snapshot = null; signature = null; } };
 }
 
+export function drawProjectionCaptionForSpan(adapter, span) {
+  return span === "left" ? adapter?.draw?.() ?? null : null;
+}
+
 export { projectionOverlayMatrix as matrixFor };

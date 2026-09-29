@@ -11,6 +11,7 @@ import {
 } from "./nli-staff-timeline-host.js";
 import { consumeNliNovaEscapeClick, nliNovaEscapeTogglesHtml } from "./nli-nova-escape-toggles.js";
 import { buildNovaEndedClock, commitSceneLayers, createCueRunner } from "./nli-staff-cues.js";
+import { createNameWallSceneExit } from "../shared/nli-name-wall-scene-exit.js";
 import { createNliStaffSearchTransition } from "./nli-staff-search-transition.js";
 import { createPeopleSearchRuntime } from "./remote-people-search.js";
 import {
@@ -259,8 +260,9 @@ export function initNliStaffRemote(dataContext) {
   }
 
   async function ensureClockIdle(isCurrent = () => true) {
+    const current = dataContext?.getInvestigationClock?.();
     await waitForInvestigationClockIdle(dataContext, {
-      forceStop: true,
+      forceStop: current?.phase !== "idle",
       isCancelled: () => !isCurrent(),
     });
     if (!isCurrent()) return;
@@ -279,6 +281,8 @@ export function initNliStaffRemote(dataContext) {
       from: window?.from,
       to: window?.to,
       loop: window?.loop === true,
+      playLeadIn: true,
+      replace: true,
       isCurrent,
     }),
     endClock: async (isCurrent) => {
@@ -294,6 +298,10 @@ export function initNliStaffRemote(dataContext) {
       if (state.screen === "player") renderKit();
       if (state.screen === "home") renderHome();
     },
+  });
+  const nameWallExit = createNameWallSceneExit({
+    getLayerGroups: () => dataContext?.getLayerGroups?.(),
+    commitLayers: (ids) => commitSceneLayers(dataContext, ids),
   });
   const applyCue = (cue, narrativeId) => {
     dataContext.setExhibitMode(true);
@@ -732,6 +740,10 @@ export function initNliStaffRemote(dataContext) {
       paintPending();
       let closed = true;
       try {
+        if (nameWallExit.needsFade()) {
+          const faded = await nameWallExit.fadeOutIfShown();
+          if (faded === false) return false;
+        }
         closed = await presentation?.closeForStepChange();
       } finally {
         state.presentationClosePending = false;
@@ -899,6 +911,10 @@ export function initNliStaffRemote(dataContext) {
       state.presentationClosePending = true;
       if (state.screen === "player") renderPlayer();
       try {
+        if (nameWallExit.needsFade()) {
+          const faded = await nameWallExit.fadeOutIfShown();
+          if (faded === false) return false;
+        }
         return await presentation?.closeForStepChange();
       } finally {
         state.presentationClosePending = false;

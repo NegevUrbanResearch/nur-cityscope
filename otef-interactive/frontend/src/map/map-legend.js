@@ -1,5 +1,28 @@
 import { buildLegendModel, getDashBackground } from "./legend-model-builder.js";
 import { escapeHtml } from "../shared/html-utils.js";
+import { resolveLegendLayout } from "../projection/legend-layout.js";
+import { OUTPUT_HEIGHT, OUTPUT_WIDTH } from "../projection/projection-overlay-placement.js";
+
+export function applyProjectionLegendLayout(element, layout, { span = "full", referenceElement } = {}) {
+  if (!element?.style) return;
+  const reference = referenceElement?.getBoundingClientRect?.() || {};
+  const width = Number(reference.width) || OUTPUT_WIDTH;
+  const height = Number(reference.height) || OUTPUT_HEIGHT;
+  const scale = width / OUTPUT_WIDTH;
+  Object.assign(element.style, {
+    position: "absolute",
+    left: `${width * (Number(layout?.leftPct) || 0) / 100}px`,
+    top: `${height * (Number(layout?.topPct) || 0) / 100}px`,
+    width: `${width * (Number(layout?.widthPct) || 0) / 100}px`,
+    height: `${height * (Number(layout?.heightPct) || 0) / 100}px`,
+    fontSize: `${(Number(layout?.fontPx) || 16) * scale}px`,
+    transform: `rotate(${Number(layout?.rotateDeg) || 0}deg)`,
+    transformOrigin: "center center",
+    boxSizing: "border-box",
+    overflow: "hidden",
+    display: span === "right" ? "none" : "",
+  });
+}
 
 function symbolMarkup(part = {}) {
   const shape = part.shape || "polygon";
@@ -54,10 +77,7 @@ function layerMarkup(layer, items = layer.items || []) {
 }
 
 function packMarkup(pack, layersMarkup) {
-  const title = pack.id === "nli"
-    ? ""
-    : `<div class="map-legend-group-title" dir="auto">${escapeHtml(pack.name || "")}</div>`;
-  return `<section class="map-legend-group" data-legend-pack-id="${escapeHtml(pack.id || "")}">${title}<div class="map-legend-layers">${layersMarkup}</div></section>`;
+  return `<section class="map-legend-group" data-legend-pack-id="${escapeHtml(pack.id || "")}"><div class="map-legend-layers">${layersMarkup}</div></section>`;
 }
 
 function makeChildren(element) {
@@ -71,7 +91,7 @@ function makeChildren(element) {
 }
 
 function mountMapLegend({ element, surface = "gis", projectionSpan = "full", dataContext, registry, buildModel = buildLegendModel, onRenderSnapshot } = {}) {
-  if (!element) return { refresh: async () => {}, setEditing: () => {}, dispose: () => {} };
+  if (!element) return { refresh: async () => {}, setEditing: () => {}, setPage: () => 0, dispose: () => {} };
   const mode = surface === "projection" ? "projection" : "gis";
   const { content, pager } = makeChildren(element);
   element.classList?.add?.(`map-legend-${mode}`);
@@ -222,17 +242,13 @@ function mountMapLegend({ element, surface = "gis", projectionSpan = "full", dat
       pager.querySelector?.("[data-legend-prev]")?.addEventListener("click", () => { page = (page + pages.length - 1) % pages.length; renderPage(); });
       pager.querySelector?.("[data-legend-next]")?.addEventListener("click", () => { page = (page + 1) % pages.length; renderPage(); });
       if (!editing && !(typeof document !== "undefined" && document.hidden)) {
-        const projection = settings().projection || {};
-        const dwell = projection[projectionSpan]?.dwellSeconds
-          || projection.full?.dwellSeconds
-          || projection.dwellSeconds
-          || 8;
+        const dwell = resolveLegendLayout({ settings: settings(), span: projectionSpan }).dwellSeconds;
         timer = setInterval(() => { page = (page + 1) % pages.length; renderPage(); }, dwell * 1000);
       }
     }
   };
   const renderSnapshot = (visibleBlocks = []) => {
-    const layout = settings().projection?.[projectionSpan] || settings().projection?.full || null;
+    const layout = resolveLegendLayout({ settings: settings(), span: projectionSpan });
     return {
       model: currentModel,
       pages: pages.map((ids) => [...ids]),
@@ -265,6 +281,12 @@ function mountMapLegend({ element, surface = "gis", projectionSpan = "full", dat
     const priorId = pages[page]?.[0] || null;
     try {
       const current = settings();
+      if (mode === "projection") {
+        applyProjectionLegendLayout(element, resolveLegendLayout({ settings: current, span: projectionSpan }), {
+          span: projectionSpan,
+          referenceElement: element.parentElement,
+        });
+      }
       element.dir = language() === "en" ? "ltr" : "rtl";
       const model = await buildModel({ surface: mode, dataContext, registry, language: current.language, summarizedGroupIds: current.summarizedGroupIds });
       if (disposed || version !== generation) return;
@@ -283,6 +305,7 @@ function mountMapLegend({ element, surface = "gis", projectionSpan = "full", dat
       element.classList?.toggle("map-legend-has-content", pages.length > 0);
       renderPage();
     } catch (error) {
+      if (disposed || version !== generation) return;
       console.warn("[MapLegend] build failed", error);
       content.innerHTML = "";
       currentModel = null;
@@ -295,11 +318,22 @@ function mountMapLegend({ element, surface = "gis", projectionSpan = "full", dat
   };
   const setEditing = (next) => { editing = !!next; if (editing) clearTimer(); else renderPager(); };
   on(typeof document !== "undefined" ? document : null, "visibilitychange", () => { if (document.hidden) clearTimer(); else renderPager(); });
-  if (typeof ResizeObserver !== "undefined") { const observer = new ResizeObserver(() => { if (!disposed) refresh(); }); observer.observe(element); listeners.push(() => observer.disconnect()); }
+  if (typeof ResizeObserver !== "undefined") {
+    const observer = new ResizeObserver(() => { if (!disposed) refresh(); });
+    observer.observe(element);
+    if (mode === "projection" && element.parentElement && element.parentElement !== element) observer.observe(element.parentElement);
+    listeners.push(() => observer.disconnect());
+  }
   if (typeof document !== "undefined" && document.fonts?.addEventListener) { const callback = () => refresh(); document.fonts.addEventListener("loadingdone", callback); listeners.push(() => document.fonts.removeEventListener("loadingdone", callback)); }
   return {
     refresh,
     setEditing,
+    setPage(index) {
+      if (disposed || !Number.isSafeInteger(index)) return page;
+      page = Math.max(0, Math.min(index, Math.max(0, pages.length - 1)));
+      renderPage();
+      return page;
+    },
     getRenderSnapshot: () => {
       const visible = currentBlocks.filter((block) => (pages[page] || []).includes(block.id));
       return renderSnapshot(visible);

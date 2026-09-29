@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { createNliStaffTimelineHost } from "../../frontend/src/remote/nli-staff-timeline-host.js";
+import { createNliStaffTimelineHost, staffPlaybackConfig } from "../../frontend/src/remote/nli-staff-timeline-host.js";
 import {
   nliAxisMarksFromBeats,
   nliBeatIndexFromOccupiedHourPct,
@@ -21,10 +21,14 @@ import {
   pauseNliClock,
   playNliClock,
   replayNliClock,
+  rewindNliClock,
+  seekNliClock,
+  stepNliClock,
 } from "../../frontend/src/shared/nli-investigation-clock.js";
 import {
   clockStoryDurationMs,
   TIMELINE_HOLD_MS,
+  finiteClockMinutes,
   timelineBeatDurationMs,
   timelineSpanMs,
   INVESTIGATION_ALARMS_FULL_ID,
@@ -568,6 +572,36 @@ describe("nli timeline transport", () => {
     expect(html).toMatch(/data-nli-tl-step-forward[^>]* disabled/);
   });
 
+  test("finiteClockMinutes treats a missing minute as absent, not midnight", () => {
+    expect(finiteClockMinutes(null)).toBeNull();
+    expect(finiteClockMinutes(undefined)).toBeNull();
+    expect(finiteClockMinutes(false)).toBeNull();
+    expect(finiteClockMinutes(0)).toBe(0);
+    expect(finiteClockMinutes(401)).toBe(401);
+  });
+
+  test("opening-minutes hold and end keep 06:41 on the remote clock, not 00:00", () => {
+    const windowBeats = [389, 395, 401];
+    const playing = playNliClock(idleNliClock(), [LINES_ID], windowBeats, 0);
+    const held = pauseNliClock(playing, timelineSpanMs(windowBeats) + 100);
+    expect(evaluateClock(held, 0)).toMatchObject({ mode: "hold", clock: null });
+    const holdHtml = renderNliTimelineTransport(held, { displayBeats: windowBeats });
+    expect(holdHtml).toMatch(/class="nli-tl-clock"[^>]*>06:41</);
+    expect(holdHtml).not.toContain("00:00");
+
+    const endedHtml = renderNliTimelineTransport(endNliClock(playing), { displayBeats: windowBeats });
+    expect(endedHtml).toMatch(/class="nli-tl-clock"[^>]*>06:41</);
+    expect(endedHtml).not.toContain("00:00");
+  });
+
+  test("rest-of-day natural completion keeps the last story minute on the remote clock, not 00:00", () => {
+    const beats = [389, 395, 400, 410, 740];
+    const playing = playNliClock(idleNliClock(), [LINES_ID], beats, 0, { leadInMinutes: 402 });
+    const html = renderNliTimelineTransport(endNliClock(playing), { displayBeats: beats });
+    expect(html).toMatch(/class="nli-tl-clock"[^>]*>12:20</);
+    expect(html).not.toContain("00:00");
+  });
+
   test("disabled Nova slider is omitted from the tab order", () => {
     const html = renderNliTimelineTransport(idleNliClock(), {
       narrativeId: "nova",
@@ -866,9 +900,25 @@ describe("nli timeline transport", () => {
     await c.handleNliTimelinePlay({ from: 402 });
     const clock = ctx.patchInvestigationClock.mock.calls[0][0];
     const html = renderNliTimelineTransport(clock, { displayBeats: clock.beats });
-    expect(evaluateClock(clock, 5000).clock).toBe(402);
+    expect(evaluateClock(clock, 5000)).toMatchObject({ clock: 402, leadIn: false });
     expect(html).toMatch(/class="nli-tl-clock"[^>]*>06:42</);
     expect(html).toMatch(/aria-valuenow="2"/);
+  });
+
+  test("a fresh rest-of-day window holds 06:41 end state before 06:42 plays", async () => {
+    const beats = [389, 401, 402, 659, 660, 740];
+    const ctx = stubContext({ correctedNow: () => 5000 });
+    const c = makeController({
+      _nliFeatureCache: {
+        [LINES_ID]: beats.map((minutes) => ({ properties: { timeline_minutes: minutes } })),
+      },
+    });
+    await c.startNliTimelineWindow({ membership: [LINES_ID], from: 402, playLeadIn: true, loop: false });
+    const clock = ctx.patchInvestigationClock.mock.calls[0][0];
+    expect(clock.positionMs).toBe(0);
+    expect(evaluateClock(clock, 5000)).toMatchObject({
+      clock: 402, leadIn: true, index: -1, beatElapsedMs: 0,
+    });
   });
 
   test("idle play with a window trims later beats and starts at the window", async () => {
@@ -959,17 +1009,72 @@ describe("nli timeline transport", () => {
     expect(ctx.patchInvestigationClock.mock.calls[0][0].positionMs).toBe(timelineBeatDurationMs(400));
   });
 
-  test("stop PATCHes idle and keeps loop", async () => {
-    const playing = { ...playNliClock(idleNliClock(), [LINES_ID], [400], 1000), loop: true };
+  test("Stop and Play preserve both scene windows after playing, scrubbing, stepping, or ending", async () => {
+    for (const from of [undefined, 402]) {
+      const beats = from === undefined ? [389, 401] : [389, 401, 402, 740];
+      const playing = playNliClock(idleNliClock({ loop: true }), [LINES_ID], beats, 1000, { leadInMinutes: from });
+      const cue = { layers: [LINES_ID], clock: from === undefined ? { to: 401 } : { from } };
+      for (const source of [playing, seekNliClock(playing, beats.length - 1, 1000), stepNliClock(playing, 1, 1000), endNliClock(playing)]) {
+        let live = source;
+        const ctx = stubContext({ getInvestigationClock: () => live });
+        const c = makeController({ getPlaybackConfig: () => staffPlaybackConfig({ clock: live, cue }) });
+        const start = vi.spyOn(c, "startNliTimelineWindow");
+        await c.handleNliTimelineStop();
+        live = ctx.patchInvestigationClock.mock.calls[0][0];
+        const positionMs = from === undefined ? 0 : timelineBeatDurationMs(402);
+        expect(live).toMatchObject({
+          phase: "paused", membership: [LINES_ID], beats, loop: true,
+          positionMs, anchorMs: 0, seekKind: "none",
+        });
+        expect(evaluateClock(live, 99000)).toMatchObject({ clock: from === undefined ? 389 : 402, leadIn: false, beatElapsedMs: 0 });
+        const html = renderNliTimelineTransport(live, { displayBeats: [389, 401, 402, 740] });
+        expect(html).toMatch(from === undefined ? /class="nli-tl-clock"[^>]*>06:29</ : /class="nli-tl-clock"[^>]*>06:42</);
+        expect(html).toContain(`aria-valuemax="${beats.length - 1}"`);
+        expect(html).toContain(`aria-valuenow="${from === undefined ? 0 : 2}"`);
+        expect(html).not.toContain("nli-tl-track--idle");
+        if (from === undefined) expect(html).not.toContain("12:20");
+        await c.handleNliTimelinePlay();
+        expect(start).not.toHaveBeenCalled();
+        const resumed = ctx.patchInvestigationClock.mock.calls[1][0];
+        expect(resumed).toMatchObject({ phase: "playing", membership: [LINES_ID], beats, loop: true, positionMs });
+        if (from !== undefined) expect(resumed.leadInMinutes).toBe(402);
+      }
+    }
+  });
+
+  test("scene fallback is restricted and clock start has precedence", () => {
+    const armed = playNliClock(idleNliClock(), [LINES_ID], [389, 402, 740], 1000);
+    const cue = { layers: [LINES_ID], clock: { from: 402 } };
+    expect(staffPlaybackConfig({ clock: armed, cue })).toEqual({ membership: [LINES_ID], from: 402 });
+    expect(staffPlaybackConfig({ clock: { ...armed, leadInMinutes: 410 }, cue }).from).toBe(410);
+    for (const options of [
+      { cue: null }, { cue, manualFree: true },
+      { cue: { layers: [INVESTIGATION_POLYGONS_FULL_ID], clock: { from: 402 } } },
+      { cue: { layers: [LINES_ID], clock: "idle" } },
+    ]) expect(staffPlaybackConfig({ clock: armed, ...options })).toEqual({ membership: [LINES_ID] });
+  });
+
+  test("no-cue full-day Stop pauses at 389 without introducing a cue start", async () => {
+    const beats = [389, 402, 740];
+    const playing = playNliClock(idleNliClock({ loop: true }), [LINES_ID], beats, 1000);
     const ctx = stubContext({ getInvestigationClock: () => playing });
-    const c = makeController();
+    const c = makeController({
+      getPlaybackConfig: () => staffPlaybackConfig({ clock: playing, cue: null }),
+    });
     await c.handleNliTimelineStop();
     expect(ctx.patchInvestigationClock).toHaveBeenCalledTimes(1);
-    expect(ctx.patchInvestigationClock.mock.calls[0][0]).toMatchObject({
-      phase: "idle",
+    const stopped = ctx.patchInvestigationClock.mock.calls[0][0];
+    expect(stopped).toMatchObject({
+      phase: "paused",
+      membership: [LINES_ID],
+      beats,
       loop: true,
-      membership: [],
+      positionMs: 0,
+      anchorMs: 0,
+      seekKind: "none",
     });
+    expect(stopped).not.toHaveProperty("leadInMinutes");
+    expect(evaluateClock(stopped, 99000)).toMatchObject({ clock: 389, leadIn: false, beatElapsedMs: 0 });
   });
 
   test("pointerdown while playing PATCHes pause so maps freeze", () => {
@@ -1571,6 +1676,33 @@ describe("nli timeline transport", () => {
     expect(ctx.patchInvestigationClock).not.toHaveBeenCalled();
   });
 
+  test("a scene replace re-arms a playing window without publishing idle", async () => {
+    const beats = [389, 401, 402, 740];
+    const playing = playNliClock(idleNliClock(), [LINES_ID], beats, 1000, { leadInMinutes: 402 });
+    const ctx = stubContext({
+      getInvestigationClock: () => playing,
+      patchInvestigationClock: vi.fn(async (next) => ({ ok: true, clock: next })),
+    });
+    const c = makeController({
+      _nliFeatureCache: {
+        [LINES_ID]: beats.map((minutes) => ({ properties: { timeline_minutes: minutes } })),
+      },
+    });
+    await expect(c.startNliTimelineWindow({
+      membership: [LINES_ID],
+      to: 401,
+      replace: true,
+    })).resolves.toBe(true);
+    const patched = ctx.patchInvestigationClock.mock.calls.map(([clock]) => clock);
+    expect(patched.some((clock) => clock.phase === "idle")).toBe(false);
+    expect(patched.at(-1)).toMatchObject({
+      phase: "playing",
+      membership: [LINES_ID],
+    });
+    expect(patched.at(-1).leadInMinutes).toBeUndefined();
+    expect(patched.at(-1).beats.every((beat) => beat <= 401)).toBe(true);
+  });
+
   test("cancellation during cache load does not publish a playing clock", async () => {
     let release;
     vi.stubGlobal("fetch", () => new Promise((resolve) => { release = resolve; }));
@@ -1775,6 +1907,8 @@ describe("nli timeline transport", () => {
         from: window?.from,
         to: window?.to,
         loop: window?.loop === true,
+        playLeadIn: true,
+        replace: true,
         isCurrent,
       }),
       endClock: async () => { throw new Error("end was not part of play entry"); },
@@ -1785,8 +1919,7 @@ describe("nli timeline transport", () => {
       escape: {},
     }, null);
     expect(result).toEqual({ status: "ready" });
-    expect(layers[0]).toEqual(["projector_base.SEA"]);
-    expect(layers.at(-1)).toEqual(["projector_base.SEA", LINES_ID]);
+    expect(layers).toEqual([["projector_base.SEA", LINES_ID]]);
     const started = ctx.patchInvestigationClock.mock.calls.at(-1)[0];
     expect(started).toMatchObject({
       phase: "playing",
@@ -1795,6 +1928,49 @@ describe("nli timeline transport", () => {
     });
     expect(started.beats.every((beat) => beat <= 401)).toBe(true);
     expect(ctx.getInvestigationClock().phase).toBe("idle");
+  });
+
+  test("a rest-of-day cue starts in the 06:41 lead-in, not at the 06:42 beat", async () => {
+    const { createCueRunner } = await import("../../frontend/src/remote/nli-staff-cues.js");
+    const ctx = stubContext();
+    const host = makeController({
+      _nliFeatureCache: {
+        [LINES_ID]: [389, 401, 402, 740].map((minutes) => ({ properties: { timeline_minutes: minutes } })),
+      },
+    });
+    const runner = createCueRunner({
+      dataContext: {
+        getNarrativeState: () => ({ id: null }),
+        getPersonSelection: () => ({ personId: null }),
+        setNarrative: vi.fn(async () => ({ ok: true })),
+        setEscapeOverlay: vi.fn(async () => ({ ok: true })),
+        getInvestigationClock: () => ctx.getInvestigationClock(),
+      },
+      commitLayers: async () => {},
+      stopClock: async () => {},
+      startClock: (window, membership, isCurrent) => host.startNliTimelineWindow({
+        membership,
+        from: window?.from,
+        to: window?.to,
+        loop: window?.loop === true,
+        playLeadIn: true,
+        replace: true,
+        isCurrent,
+      }),
+      endClock: async () => { throw new Error("end was not part of play entry"); },
+    });
+    await expect(runner.apply({
+      layers: ["projector_base.SEA", LINES_ID],
+      clock: { from: 402 },
+      escape: {},
+    }, null)).resolves.toEqual({ status: "ready" });
+    const started = ctx.patchInvestigationClock.mock.calls.at(-1)[0];
+    expect(started).toMatchObject({
+      phase: "playing",
+      leadInMinutes: 402,
+      positionMs: 0,
+    });
+    expect(evaluateClock(started, 0)).toMatchObject({ leadIn: true, clock: 402, index: -1 });
   });
 
   test("a queued Stop or scrub release does not publish after navigation", async () => {

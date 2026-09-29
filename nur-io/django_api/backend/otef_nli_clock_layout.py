@@ -1,11 +1,17 @@
 """Normalize durable NLI clock parks (GIS slots + projection spans)."""
 
+import math
+
 PROJECTION_SPAN_KEYS = ("full", "left", "right")
+GIS_SLOT_KEYS = ("start", "segev", "nova", "sderot", "hostages", "hostages_all")
+CLOCK_LAYOUT_FIELDS = ("leftPct", "topPct", "widthPct", "heightPct", "fontPx", "rotateDeg")
 
 
 def _finite(value, fallback, missing_zero=False):
     try:
         number = float(value)
+    except OverflowError:
+        return float("inf") if value > 0 else float("-inf")
     except (TypeError, ValueError):
         number = None
     if number is not None and number == number and number not in (float("inf"), float("-inf")):
@@ -14,7 +20,7 @@ def _finite(value, fallback, missing_zero=False):
         return 0.0
     try:
         fallback_number = float(fallback)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return 0.0
     if fallback_number != fallback_number or fallback_number in (float("inf"), float("-inf")):
         return 0.0
@@ -44,7 +50,19 @@ def clamp_nli_explainer_layout(raw, fallback=None):
     }
 
 
-def _is_flat_gis_layout(value):
+def validate_clock_slot_layout(raw):
+    if not isinstance(raw, dict) or set(raw) != set(CLOCK_LAYOUT_FIELDS):
+        return None
+    if any(
+        type(value) not in (int, float)
+        or (type(value) is float and not math.isfinite(value))
+        for value in raw.values()
+    ):
+        return None
+    return clamp_nli_explainer_layout(raw)
+
+
+def is_flat_gis_clock_layout(value):
     return isinstance(value, dict) and not isinstance(value.get("leftPct"), dict) and (
         "leftPct" in value or "topPct" in value
     )
@@ -53,7 +71,7 @@ def _is_flat_gis_layout(value):
 def normalize_gis_clock_layout(raw):
     if not isinstance(raw, dict):
         return {}
-    if _is_flat_gis_layout(raw):
+    if is_flat_gis_clock_layout(raw):
         return {"start": clamp_nli_explainer_layout(raw)}
     out = {}
     for key, value in raw.items():
@@ -80,14 +98,3 @@ def normalize_nli_clock_layout(raw):
         "gis": normalize_gis_clock_layout(src.get("gis")),
         "projection": normalize_projection_clock_layout(src.get("projection")),
     }
-
-
-def merge_nli_clock_layout_surface(current, surface, layout):
-    doc = normalize_nli_clock_layout(current)
-    if surface == "gis":
-        doc["gis"] = normalize_gis_clock_layout(layout)
-    elif surface == "projection":
-        doc["projection"] = normalize_projection_clock_layout(layout)
-    else:
-        return None
-    return doc

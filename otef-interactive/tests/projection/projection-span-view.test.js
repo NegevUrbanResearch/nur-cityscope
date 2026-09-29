@@ -1,5 +1,11 @@
-import { describe, expect, test, vi } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { MapProjectionConfig } from "../../frontend/src/shared/map-projection-config.js";
+import { getLayerLifecycleRuntime, resolveLayerFadeMs } from "../../frontend/src/shared/layer-lifecycle-fade.js";
+import {
+  projectionModelSubscribeReady,
+  releaseProjectionModelImage,
+  syncProjectionModelImage,
+} from "../../frontend/src/projection/projection-model-image.js";
 import {
   applyProjectionSpanView,
   clearProjectionSpanView,
@@ -75,6 +81,584 @@ test("map descriptors stay volatile while ready images carry supplied revisions"
   const imageEl = { complete: true, naturalWidth: 100, naturalHeight: 50, style: {} };
   expect(createProjectionImageDescriptor({ map, imageEl, spanId: "left", contentVersion: 4 })?.contentVersion).toBe(4);
   expect(createProjectionMapDescriptor({ map, spanId: "left" })).not.toHaveProperty("contentVersion");
+});
+
+const MODEL_ID = "projector_base.model_base";
+
+function fadeHooks() {
+  let time = 0;
+  let frame = null;
+  let nextFrameId = 0;
+  let nextTimerId = 0;
+  const timers = new Map();
+  return {
+    now: () => time,
+    setTime(value) { time = value; },
+    requestFrame(callback) {
+      nextFrameId += 1;
+      frame = { id: nextFrameId, callback };
+      return nextFrameId;
+    },
+    cancelFrame(id) { if (frame?.id === id) frame = null; },
+    flushFrame() {
+      const current = frame;
+      frame = null;
+      current?.callback(time);
+    },
+    setTimer(callback, delay) {
+      nextTimerId += 1;
+      timers.set(nextTimerId, { callback, at: time + delay });
+      return nextTimerId;
+    },
+    clearTimer(id) { timers.delete(id); },
+    fireDueTimers() {
+      for (const [id, timer] of [...timers]) {
+        if (timer.at <= time) {
+          timers.delete(id);
+          timer.callback();
+        }
+      }
+    },
+    get pendingFrame() { return frame; },
+  };
+}
+
+function warpMap() {
+  return {
+    getCanvas: () => ({ width: 1920, height: 1080 }),
+    getContainer: () => ({ clientWidth: 1920, clientHeight: 1080 }),
+    project: ([x, y]) => ({ x, y }),
+    _otefProjectionImage: { corners: [[0, 0], [100, 0], [100, 50], [0, 50]], width: 100, height: 50 },
+  };
+}
+
+function modelGroups(enabled) {
+  return [{ id: "projector_base", enabled: true, layers: [{ id: "model_base", enabled }] }];
+}
+
+function modelImage(opacity = "0") {
+  const listeners = new Map();
+  return {
+    complete: true,
+    naturalWidth: 100,
+    naturalHeight: 50,
+    style: { opacity, transition: "" },
+    addEventListener(type, fn) { listeners.set(type, fn); },
+    removeEventListener(type) { listeners.delete(type); },
+    dispatch(type) { listeners.get(type)?.(); },
+  };
+}
+
+function shownModel(image, hooks, map = warpMap()) {
+  const runtime = getLayerLifecycleRuntime(map, hooks);
+  runtime.setDesiredIds([MODEL_ID], { durationMs: 600 });
+  const requestDraw = vi.fn();
+  syncProjectionModelImage({
+    map,
+    imageEl: image,
+    layerGroups: modelGroups(true),
+    modelInfo: { durationMs: 600, fromSlideshowTick: false },
+    requestDraw,
+  });
+  runtime.commitBatch();
+  return { runtime, requestDraw, map };
+}
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+test("a visible model stays visible without a new fade or draw", () => {
+  const hooks = fadeHooks();
+  const map = warpMap();
+  const image = modelImage("1");
+  const runtime = getLayerLifecycleRuntime(map, hooks);
+  runtime.setDesiredIds([MODEL_ID], { durationMs: 600 });
+  const requestDraw = vi.fn();
+  const sync = () => syncProjectionModelImage({
+    map,
+    imageEl: image,
+    layerGroups: modelGroups(true),
+    modelInfo: { durationMs: 600, fromSlideshowTick: false },
+    requestDraw,
+  });
+  sync();
+  runtime.commitBatch();
+  sync();
+  runtime.commitBatch();
+  expect(image.style.opacity).toBe("1");
+  expect(requestDraw).not.toHaveBeenCalled();
+  expect(hooks.pendingFrame).toBeNull();
+  expect(createProjectionImageDescriptor({ map, imageEl: image, spanId: "left" }).source).toBe(image);
+  runtime.setDesiredIds([], { durationMs: 600 });
+  syncProjectionModelImage({
+    map,
+    imageEl: image,
+    layerGroups: modelGroups(false),
+    modelInfo: { durationMs: 600, fromSlideshowTick: false },
+    requestDraw,
+  });
+  runtime.commitBatch();
+  hooks.setTime(300);
+  hooks.flushFrame();
+  expect(Number(image.style.opacity)).toBeGreaterThan(0);
+  expect(Number(image.style.opacity)).toBeLessThan(1);
+  expect(createProjectionImageDescriptor({ map, imageEl: image, spanId: "left" }).source).toBe(image);
+});
+
+test("a model-only midpoint writes sampled opacity and asks the idle map to draw", () => {
+  const hooks = fadeHooks();
+  const image = modelImage("0");
+  const { requestDraw, map } = shownModel(image, hooks);
+  expect(map.on).toBeUndefined();
+  hooks.setTime(300);
+  hooks.flushFrame();
+  const descriptor = createProjectionImageDescriptor({ map, imageEl: image, spanId: "left", contentVersion: 2 });
+  expect(descriptor.opacity).toBeGreaterThan(0);
+  expect(descriptor.opacity).toBeLessThan(1);
+  expect(descriptor.source).toBe(image);
+  expect(requestDraw).toHaveBeenCalled();
+  hooks.setTime(600);
+  hooks.flushFrame();
+  hooks.setTime(900);
+  hooks.flushFrame();
+  expect(image.style.opacity).toBe("1");
+  expect(hooks.pendingFrame).toBeNull();
+});
+
+test("a completed hide then show brings the model opacity back up", () => {
+  const hooks = fadeHooks();
+  const image = modelImage("0");
+  const { runtime, requestDraw, map } = shownModel(image, hooks);
+  hooks.setTime(600);
+  hooks.flushFrame();
+  expect(image.style.opacity).toBe("1");
+  runtime.setDesiredIds([], { durationMs: 600 });
+  syncProjectionModelImage({
+    map,
+    imageEl: image,
+    layerGroups: modelGroups(false),
+    modelInfo: { durationMs: 600, fromSlideshowTick: false },
+    requestDraw,
+  });
+  runtime.commitBatch();
+  hooks.setTime(1200);
+  hooks.flushFrame();
+  expect(image.style.opacity).toBe("0");
+  requestDraw.mockClear();
+  runtime.setDesiredIds([MODEL_ID], { durationMs: 600 });
+  syncProjectionModelImage({
+    map,
+    imageEl: image,
+    layerGroups: modelGroups(true),
+    modelInfo: { durationMs: 600, fromSlideshowTick: false },
+    requestDraw,
+  });
+  runtime.commitBatch();
+  hooks.setTime(1500);
+  hooks.flushFrame();
+  const opacity = Number(image.style.opacity);
+  expect(opacity).toBeGreaterThan(0);
+  expect(opacity).toBeLessThan(1);
+  expect(createProjectionImageDescriptor({ map, imageEl: image, spanId: "left" }).opacity).toBe(opacity);
+  expect(requestDraw).toHaveBeenCalled();
+});
+
+test("a reversal keeps the same image and continues from the sampled factor", () => {
+  const hooks = fadeHooks();
+  const image = modelImage("0");
+  const { runtime, map } = shownModel(image, hooks);
+  hooks.setTime(300);
+  hooks.flushFrame();
+  const midpoint = Number(image.style.opacity);
+  runtime.setDesiredIds([], { durationMs: 600 });
+  syncProjectionModelImage({
+    map,
+    imageEl: image,
+    layerGroups: modelGroups(false),
+    modelInfo: { durationMs: 600, fromSlideshowTick: false },
+    requestDraw: vi.fn(),
+  });
+  runtime.commitBatch();
+  hooks.setTime(450);
+  hooks.flushFrame();
+  const reversed = Number(image.style.opacity);
+  expect(reversed).toBeLessThan(midpoint);
+  expect(reversed).toBeGreaterThan(0);
+  runtime.setDesiredIds([MODEL_ID], { durationMs: 600 });
+  syncProjectionModelImage({
+    map,
+    imageEl: image,
+    layerGroups: modelGroups(true),
+    modelInfo: { durationMs: 600, fromSlideshowTick: false },
+    requestDraw: vi.fn(),
+  });
+  runtime.commitBatch();
+  hooks.setTime(600);
+  hooks.flushFrame();
+  expect(Number(image.style.opacity)).toBeGreaterThan(reversed);
+  expect(createProjectionImageDescriptor({ map, imageEl: image, spanId: "left" }).source).toBe(image);
+});
+
+test("explicit zero, reduced motion, retained refresh, and slideshow ticks snap the model", () => {
+  const hooks = fadeHooks();
+  const map = warpMap();
+  getLayerLifecycleRuntime(map, hooks);
+  const image = modelImage("0");
+  const requestDraw = vi.fn();
+  const snap = (modelInfo, enabled) => syncProjectionModelImage({
+    map,
+    imageEl: image,
+    layerGroups: modelGroups(enabled),
+    modelInfo,
+    requestDraw,
+  });
+  snap({ durationMs: 0, fromSlideshowTick: false }, true);
+  expect(image.style.opacity).toBe("1");
+  expect(image.style.transition).toBe("none");
+  image.style.opacity = "0.4";
+  snap({ durationMs: resolveLayerFadeMs({}, "reduced"), fromSlideshowTick: false }, true);
+  expect(image.style.opacity).toBe("1");
+  image.style.opacity = "0.4";
+  snap({ durationMs: resolveLayerFadeMs({ lifecycle: { retainDisabled: true } }), fromSlideshowTick: false }, false);
+  expect(image.style.opacity).toBe("0");
+  image.style.opacity = "0.4";
+  snap({ durationMs: 0, fromSlideshowTick: true }, true);
+  expect(image.style.opacity).toBe("1");
+  hooks.setTime(600);
+  hooks.flushFrame();
+  expect(image.style.opacity).toBe("1");
+  expect(requestDraw).not.toHaveBeenCalled();
+  expect(hooks.pendingFrame).toBeNull();
+});
+
+test("an unready model stays hidden through the deadline, then fades when it is still desired", () => {
+  const hooks = fadeHooks();
+  const map = warpMap();
+  const image = modelImage("0");
+  image.complete = false;
+  image.naturalWidth = 0;
+  let markReady = null;
+  const runtime = getLayerLifecycleRuntime(map, hooks);
+  runtime.setDesiredIds([MODEL_ID], { durationMs: 600 });
+  syncProjectionModelImage({
+    map,
+    imageEl: image,
+    layerGroups: modelGroups(true),
+    modelInfo: { durationMs: 600, fromSlideshowTick: false },
+    requestDraw: vi.fn(),
+    subscribeReady: ({ ready }) => { markReady = ready; },
+  });
+  runtime.commitBatch();
+  expect(image.style.opacity).toBe("0");
+  hooks.setTime(1200);
+  hooks.fireDueTimers();
+  expect(image.style.opacity).toBe("0");
+  expect(hooks.pendingFrame).toBeNull();
+  markReady();
+  hooks.setTime(1500);
+  hooks.flushFrame();
+  expect(Number(image.style.opacity)).toBeGreaterThan(0);
+  expect(Number(image.style.opacity)).toBeLessThan(1);
+});
+
+test("a deadline does not reveal a model that is no longer desired", () => {
+  const hooks = fadeHooks();
+  const map = warpMap();
+  const image = modelImage("0");
+  image.complete = false;
+  image.naturalWidth = 0;
+  let markReady = null;
+  const runtime = getLayerLifecycleRuntime(map, hooks);
+  runtime.setDesiredIds([MODEL_ID], { durationMs: 600 });
+  syncProjectionModelImage({
+    map,
+    imageEl: image,
+    layerGroups: modelGroups(true),
+    modelInfo: { durationMs: 600, fromSlideshowTick: false },
+    requestDraw: vi.fn(),
+    subscribeReady: ({ ready }) => { markReady = ready; },
+  });
+  runtime.commitBatch();
+  runtime.setDesiredIds([], { durationMs: 600 });
+  syncProjectionModelImage({
+    map,
+    imageEl: image,
+    layerGroups: modelGroups(false),
+    modelInfo: { durationMs: 600, fromSlideshowTick: false },
+    requestDraw: vi.fn(),
+  });
+  runtime.commitBatch();
+  hooks.setTime(1200);
+  hooks.fireDueTimers();
+  markReady();
+  hooks.flushFrame();
+  expect(image.style.opacity).toBe("0");
+});
+
+test("a zero-size or errored model fails without blocking the shared batch", () => {
+  const hooks = fadeHooks();
+  const map = warpMap();
+  const image = modelImage("0");
+  image.complete = true;
+  image.naturalWidth = 0;
+  image.naturalHeight = 0;
+  const other = modelImage("0");
+  const runtime = getLayerLifecycleRuntime(map, hooks);
+  const otherId = "registry.roads";
+  runtime.setDesiredIds([MODEL_ID, otherId], { durationMs: 600 });
+  runtime.registerElement(otherId, other, {
+    subscribeReady: ({ ready }) => { ready(); },
+  });
+  syncProjectionModelImage({
+    map,
+    imageEl: image,
+    layerGroups: modelGroups(true),
+    modelInfo: { durationMs: 600, fromSlideshowTick: false },
+    requestDraw: vi.fn(),
+    subscribeReady: projectionModelSubscribeReady(image, { contentVersion: () => null }),
+  });
+  runtime.commitBatch();
+  hooks.setTime(300);
+  hooks.flushFrame();
+  expect(Number(other.style.opacity)).toBeGreaterThan(0);
+  expect(Number(other.style.opacity)).toBeLessThan(1);
+  expect(image.style.opacity).toBe("0");
+
+  const laterMap = warpMap();
+  const laterImage = modelImage("0");
+  laterImage.complete = false;
+  laterImage.naturalWidth = 0;
+  const laterOther = modelImage("0");
+  const laterRuntime = getLayerLifecycleRuntime(laterMap, hooks);
+  laterRuntime.setDesiredIds([MODEL_ID, otherId], { durationMs: 600 });
+  laterRuntime.registerElement(otherId, laterOther, {
+    subscribeReady: ({ ready }) => { ready(); },
+  });
+  syncProjectionModelImage({
+    map: laterMap,
+    imageEl: laterImage,
+    layerGroups: modelGroups(true),
+    modelInfo: { durationMs: 600, fromSlideshowTick: false },
+    requestDraw: vi.fn(),
+    subscribeReady: projectionModelSubscribeReady(laterImage, { contentVersion: () => null }),
+  });
+  laterRuntime.commitBatch();
+  expect(laterOther.style.opacity).toBe("0");
+  laterImage.dispatch("error");
+  hooks.setTime(600);
+  hooks.flushFrame();
+  expect(Number(laterOther.style.opacity)).toBeGreaterThan(0);
+  expect(laterImage.style.opacity).toBe("0");
+});
+
+test("a finished hide keeps a zero-size or errored model hidden until a later ready", () => {
+  const hooks = fadeHooks();
+  const map = warpMap();
+  const image = modelImage("0");
+  image.complete = true;
+  image.naturalWidth = 0;
+  image.naturalHeight = 0;
+  const other = modelImage("0");
+  const otherId = "registry.roads";
+  const runtime = getLayerLifecycleRuntime(map, hooks);
+  let version = null;
+  let readyCalls = 0;
+  const subscribeReady = (handlers) => projectionModelSubscribeReady(image, { contentVersion: () => version })({
+    ready: () => {
+      readyCalls += 1;
+      handlers.ready();
+    },
+    failed: () => handlers.failed(),
+  });
+  const show = (ids) => {
+    runtime.setDesiredIds(ids, { durationMs: 600 });
+    if (ids.includes(otherId)) {
+      runtime.registerElement(otherId, other, {
+        subscribeReady: ({ ready }) => { ready(); },
+      });
+    }
+    syncProjectionModelImage({
+      map,
+      imageEl: image,
+      layerGroups: modelGroups(ids.includes(MODEL_ID)),
+      modelInfo: { durationMs: 600, fromSlideshowTick: false },
+      requestDraw: vi.fn(),
+      subscribeReady,
+    });
+    runtime.commitBatch();
+  };
+
+  hooks.setTime(0);
+  show([MODEL_ID, otherId]);
+  hooks.setTime(300);
+  hooks.flushFrame();
+  expect(image.style.opacity).toBe("0");
+  expect(Number(other.style.opacity)).toBeGreaterThan(0);
+  expect(Number(other.style.opacity)).toBeLessThan(1);
+
+  hooks.setTime(600);
+  hooks.flushFrame();
+  show([]);
+  hooks.setTime(1200);
+  hooks.flushFrame();
+  expect(image.style.opacity).toBe("0");
+  expect(other.style.opacity).toBe("0");
+
+  show([MODEL_ID, otherId]);
+  hooks.setTime(1500);
+  hooks.flushFrame();
+  expect(image.style.opacity).toBe("0");
+  expect(readyCalls).toBe(0);
+  expect(Number(other.style.opacity)).toBeGreaterThan(0);
+  expect(Number(other.style.opacity)).toBeLessThan(1);
+
+  image.naturalWidth = 100;
+  image.naturalHeight = 50;
+  version = 1;
+  show([MODEL_ID, otherId]);
+  expect(readyCalls).toBe(1);
+  expect(image.style.opacity).toBe("0");
+  hooks.setTime(1800);
+  hooks.flushFrame();
+  expect(Number(image.style.opacity)).toBeGreaterThan(0);
+  expect(Number(image.style.opacity)).toBeLessThan(1);
+  hooks.setTime(2100);
+  hooks.flushFrame();
+  expect(image.style.opacity).toBe("1");
+
+  const errorHooks = fadeHooks();
+  const errorMap = warpMap();
+  const errorImage = modelImage("0");
+  errorImage.complete = false;
+  errorImage.naturalWidth = 0;
+  errorImage.naturalHeight = 0;
+  const errorOther = modelImage("0");
+  const errorRuntime = getLayerLifecycleRuntime(errorMap, errorHooks);
+  let errorVersion = null;
+  let errorReadyCalls = 0;
+  const errorSubscribe = (handlers) => projectionModelSubscribeReady(errorImage, { contentVersion: () => errorVersion })({
+    ready: () => {
+      errorReadyCalls += 1;
+      handlers.ready();
+    },
+    failed: () => handlers.failed(),
+  });
+  const showError = (ids) => {
+    errorRuntime.setDesiredIds(ids, { durationMs: 600 });
+    if (ids.includes(otherId)) {
+      errorRuntime.registerElement(otherId, errorOther, {
+        subscribeReady: ({ ready }) => { ready(); },
+      });
+    }
+    syncProjectionModelImage({
+      map: errorMap,
+      imageEl: errorImage,
+      layerGroups: modelGroups(ids.includes(MODEL_ID)),
+      modelInfo: { durationMs: 600, fromSlideshowTick: false },
+      requestDraw: vi.fn(),
+      subscribeReady: errorSubscribe,
+    });
+    errorRuntime.commitBatch();
+  };
+  errorHooks.setTime(0);
+  showError([MODEL_ID, otherId]);
+  errorImage.complete = true;
+  errorImage.dispatch("error");
+  errorHooks.setTime(300);
+  errorHooks.flushFrame();
+  expect(errorImage.style.opacity).toBe("0");
+  expect(Number(errorOther.style.opacity)).toBeGreaterThan(0);
+  showError([]);
+  errorHooks.setTime(900);
+  errorHooks.flushFrame();
+  expect(errorImage.style.opacity).toBe("0");
+  expect(errorOther.style.opacity).toBe("0");
+  showError([MODEL_ID, otherId]);
+  errorHooks.setTime(1200);
+  errorHooks.flushFrame();
+  expect(errorImage.style.opacity).toBe("0");
+  expect(errorReadyCalls).toBe(0);
+  expect(Number(errorOther.style.opacity)).toBeGreaterThan(0);
+  expect(Number(errorOther.style.opacity)).toBeLessThan(1);
+  errorImage.naturalWidth = 80;
+  errorImage.naturalHeight = 40;
+  errorVersion = 2;
+  showError([MODEL_ID, otherId]);
+  expect(errorReadyCalls).toBe(1);
+  expect(errorImage.style.opacity).toBe("0");
+  errorHooks.setTime(1500);
+  errorHooks.flushFrame();
+  expect(Number(errorImage.style.opacity)).toBeGreaterThan(0);
+  expect(Number(errorImage.style.opacity)).toBeLessThan(1);
+});
+
+test("a finished hide keeps a still-loading model hidden until its readiness callback", () => {
+  const hooks = fadeHooks();
+  const map = warpMap();
+  const image = modelImage("0");
+  image.complete = false;
+  image.naturalWidth = 0;
+  image.naturalHeight = 0;
+  let version = null;
+  const runtime = getLayerLifecycleRuntime(map, hooks);
+  const show = (enabled) => {
+    runtime.setDesiredIds(enabled ? [MODEL_ID] : [], { durationMs: 600 });
+    syncProjectionModelImage({
+      map,
+      imageEl: image,
+      layerGroups: modelGroups(enabled),
+      modelInfo: { durationMs: 600, fromSlideshowTick: false },
+      requestDraw: vi.fn(),
+      subscribeReady: projectionModelSubscribeReady(image, { contentVersion: () => version }),
+    });
+    runtime.commitBatch();
+  };
+
+  hooks.setTime(0);
+  show(true);
+  expect(image.style.opacity).toBe("0");
+  show(false);
+  hooks.setTime(600);
+  hooks.flushFrame();
+  expect(image.style.opacity).toBe("0");
+
+  hooks.setTime(600);
+  show(true);
+  hooks.setTime(900);
+  hooks.flushFrame();
+  expect(image.style.opacity).toBe("0");
+  expect(hooks.pendingFrame).toBeNull();
+
+  image.naturalWidth = 100;
+  image.naturalHeight = 50;
+  image.complete = true;
+  version = 1;
+  image.dispatch("load");
+  expect(image.style.opacity).toBe("0");
+  hooks.setTime(1200);
+  hooks.flushFrame();
+  expect(Number(image.style.opacity)).toBeGreaterThan(0);
+  expect(Number(image.style.opacity)).toBeLessThan(1);
+  hooks.setTime(1500);
+  hooks.flushFrame();
+  expect(image.style.opacity).toBe("1");
+});
+
+test("style reset drops model draw callbacks", () => {
+  const hooks = fadeHooks();
+  const image = modelImage("0");
+  const { requestDraw, map } = shownModel(image, hooks);
+  hooks.setTime(300);
+  hooks.flushFrame();
+  expect(requestDraw).toHaveBeenCalled();
+  const calls = requestDraw.mock.calls.length;
+  image.style.opacity = "";
+  image.style.transition = "";
+  releaseProjectionModelImage(map);
+  hooks.setTime(600);
+  hooks.flushFrame();
+  expect(requestDraw).toHaveBeenCalledTimes(calls);
 });
 
 function createDomNode(tag = "div", id = "") {

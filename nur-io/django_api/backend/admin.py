@@ -22,4 +22,15 @@ admin.site.register(DashboardFeedState)
 admin.site.register(LayerConfig)
 admin.site.register(GISLayer)
 admin.site.register(OTEFModelConfig)
-admin.site.register(OTEFViewportState)
+
+
+@admin.register(OTEFViewportState)
+class OTEFViewportStateAdmin(admin.ModelAdmin):
+    readonly_fields = (
+        "nli_clock_layout",
+        "nli_clock_layout_revision",
+        "legend_settings",
+        "legend_layout_revision",
+        "settlement_name_settings",
+        "settlement_name_revision",
+    )

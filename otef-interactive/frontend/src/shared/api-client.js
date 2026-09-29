@@ -1,6 +1,7 @@
 import { APP_CONFIG } from "../config/app-config.js";
 import { getLogger } from "./logger.js";
 import { recordTraceEvent } from "./otef-trace.js";
+import { createUuid } from "./uuid.js";
 
 /**
  * Browser: `globalThis.fetch`. Vitest `vmThreads` may omit both a bare `fetch` and `globalThis.fetch`;
@@ -191,11 +192,13 @@ export const OTEF_API = {
     });
   },
 
-  async setNliClockLayout(tableName = this.defaultTable, surface, layout, meta = {}) {
+  async setNliClockLayout(tableName = this.defaultTable, surface, slot, layout, meta = {}) {
     return this.executeCommand(tableName, {
       action: "set_nli_clock_layout",
       surface,
+      slot,
       layout,
+      ...(Number.isInteger(meta.baseRevision) ? { baseRevision: meta.baseRevision } : {}),
       ...meta,
     });
   },
@@ -204,8 +207,37 @@ export const OTEF_API = {
     return this.executeCommand(tableName, {
       action: "set_legend_settings",
       ...(patch && typeof patch === "object" ? patch : {}),
+      ...(Number.isInteger(meta.baseRevision) ? { baseRevision: meta.baseRevision } : {}),
       ...meta,
     });
+  },
+
+  async setSettlementNames(tableName = this.defaultTable, operation, meta = {}) {
+    const fields = operation && typeof operation === "object" && !Array.isArray(operation) ? operation : {};
+    const requestMeta = meta && typeof meta === "object" && !Array.isArray(meta) ? meta : {};
+    const sourceId = typeof requestMeta.sourceId === "string" && requestMeta.sourceId
+      ? requestMeta.sourceId
+      : (typeof fields.sourceId === "string" && fields.sourceId ? fields.sourceId : createUuid());
+    const timestamp = typeof requestMeta.timestamp === "string" && requestMeta.timestamp
+      ? requestMeta.timestamp
+      : (typeof fields.timestamp === "string" && fields.timestamp ? fields.timestamp : new Date().toISOString());
+    const baseRevision = Number.isInteger(requestMeta.baseRevision) ? requestMeta.baseRevision : fields.baseRevision;
+    return this.executeCommand(tableName, {
+      ...fields,
+      action: "set_settlement_names",
+      ...(Number.isInteger(baseRevision) ? { baseRevision } : {}),
+      sourceId,
+      timestamp,
+    });
+  },
+
+  async initializeProjectionNameSettings(tableName = this.defaultTable, initializationBody) {
+    const body = initializationBody && typeof initializationBody === "object" && !Array.isArray(initializationBody)
+      ? { ...initializationBody }
+      : {};
+    body.action = "initialize_projection_name_settings";
+    if (typeof body.sourceId !== "string" || !body.sourceId) body.sourceId = createUuid();
+    return this.executeCommand(tableName, body);
   },
 
   async narrativePresentationCommand(tableName = this.defaultTable, command) {

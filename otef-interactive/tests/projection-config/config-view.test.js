@@ -1,18 +1,30 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { expect, test, vi } from "vitest";
 import { createProjectionConfigView } from "../../frontend/src/projection-config/config-view.js";
 import { DEFAULT_PROJECTION_CONFIG } from "../../frontend/src/shared/projection-config-schema.js";
 import { FIELD_DESCRIPTORS, NAMES_WALL_DESCRIPTORS } from "../../frontend/src/projection-config/config-controller.js";
 import { createWarpEditor } from "../../frontend/src/projection-config/warp-editor.js";
 
+test("clock layout dialog uses the available viewport width on narrow screens", () => {
+  const css = readFileSync(resolve(import.meta.dirname, "../../frontend/src/projection-config/config.css"), "utf8");
+  const dialogRule = css.match(/\.clock-layout-dialog\s*\{([^}]*)\}/)?.[1] ?? "";
+  expect(dialogRule).toContain("inset: 0");
+  expect(dialogRule).not.toMatch(/width:\s*100vw/);
+});
+
 test("view renders draggable node workspace and preserves an existing focused input", () => {
   const make = (tag = "div") => ({ tagName: tag.toUpperCase(), children: [], dataset: {}, style: {}, attributes: {}, classList: { toggle() {} }, appendChild(child) { this.children.push(child); child.parentElement = this; return child; }, append(...children) { children.forEach((child) => this.appendChild(child)); }, prepend(...children) { this.children.unshift(...children); }, remove() { if (this.parentElement) this.parentElement.children = this.parentElement.children.filter((child) => child !== this); }, setAttribute(key, value) { this.attributes[key] = value; }, removeAttribute(key) { delete this.attributes[key]; }, addEventListener(type, handler) { this.listeners ||= {}; (this.listeners[type] ||= []).push(handler); }, removeEventListener(type, handler) { this.listeners[type] = (this.listeners?.[type] || []).filter((entry) => entry !== handler); }, dispatch(type, event) { for (const handler of this.listeners?.[type] || []) handler({ currentTarget: this, target: this, ...event }); }, replaceChildren(...children) { this.children = children; } });
   const root = make("main");
   root.ownerDocument = { createElement: make, createElementNS: (_ns, tag) => make(tag), listeners: {}, addEventListener(type, handler) { (this.listeners[type] ||= []).push(handler); }, removeEventListener(type, handler) { this.listeners[type] = (this.listeners[type] || []).filter((item) => item !== handler); }, dispatch(type, event) { for (const handler of this.listeners[type] || []) handler(event); }, defaultView: { location: { origin: "http://localhost" }, addEventListener() {}, removeEventListener() {}, matchMedia: () => ({ matches: true, addEventListener() {}, removeEventListener() {} }) } };
   const onNode = vi.fn();
+  const onOpenClockEditor = vi.fn();
+  const onClockScene = vi.fn();
+  const onClockElement = vi.fn();
   const onField = vi.fn();
   const onWarpPointer = vi.fn();
   const onWarpAction = vi.fn();
-  const view = createProjectionConfigView(root, { descriptors: [...FIELD_DESCRIPTORS, ...NAMES_WALL_DESCRIPTORS], onAction() {}, onNode, onField, onWarpPointer, onWarpAction });
+  const view = createProjectionConfigView(root, { descriptors: [...FIELD_DESCRIPTORS, ...NAMES_WALL_DESCRIPTORS], onAction() {}, onNode, onOpenClockEditor, onClockScene, onClockElement, onField, onWarpPointer, onWarpAction });
   const descendants = (node) => [node, ...(node.children || []).flatMap(descendants)];
   expect(descendants(root).filter((node) => node.tagName === "IFRAME")).toHaveLength(0);
   expect(descendants(root).filter((node) => node.dataset?.action === "warp-editor-open")).toHaveLength(4);
@@ -28,7 +40,47 @@ test("view renders draggable node workspace and preserves an existing focused in
   expect(labels.join(" ")).toContain("Drag headers to move nodes");
   expect(labels.join(" ")).toContain("Left inner-edge clearance");
   expect(labels.join(" ")).toContain("Right inner-edge clearance");
-  expect([...view.nodeMap.keys()]).toEqual(["content", "names-wall", "pre", "left-crop", "right-crop", "left-fit", "right-fit", "left-keystone", "right-keystone", "left-grid", "right-grid", "left-output", "right-output"]);
+  expect([...view.nodeMap.keys()]).toEqual(["content", "names-wall", "settlement-names", "clock-gis", "clock-projection", "pre", "left-crop", "right-crop", "left-fit", "right-fit", "left-keystone", "right-keystone", "left-grid", "right-grid", "left-output", "right-output"]);
+  const gisClockNode = view.nodeMap.get("clock-gis");
+  gisClockNode.dispatch("click");
+  expect(onNode).toHaveBeenLastCalledWith("clock-gis");
+  expect(onOpenClockEditor).not.toHaveBeenCalled();
+  const gisScene = gisClockNode.children.find((node) => node.dataset?.action === "clock-scene");
+  gisScene.value = "nova";
+  gisScene.dispatch("change");
+  expect(onClockScene).toHaveBeenCalledWith("nova");
+  const projectionClockNode = view.nodeMap.get("clock-projection");
+  const overlay = projectionClockNode.children.find((node) => node.dataset?.action === "clock-element");
+  overlay.value = "legend";
+  overlay.dispatch("change");
+  expect(onClockElement).toHaveBeenCalledWith("legend");
+  projectionClockNode.children.find((node) => node.dataset?.action === "clock-editor-open").dispatch("click");
+  expect(onOpenClockEditor).toHaveBeenCalledWith("clock-projection");
+  onOpenClockEditor.mockClear();
+  gisClockNode.dispatch("dblclick");
+  gisClockNode.dispatch("keydown", { key: "Enter", preventDefault() {} });
+  expect(onOpenClockEditor.mock.calls).toEqual([["clock-gis"], ["clock-gis"]]);
+  onOpenClockEditor.mockClear();
+  const header = gisClockNode.children.find((node) => node.tagName === "H3");
+  gisClockNode.dispatch("dblclick", { target: header });
+  gisClockNode.dispatch("dblclick", { target: gisScene });
+  gisClockNode.dispatch("keydown", { key: "Enter", target: gisScene });
+  expect(onOpenClockEditor).not.toHaveBeenCalled();
+  const nodeSelector = descendants(root).find((node) => node.className === "node-selector");
+  const clockMobileOpen = descendants(root).find((node) => node.dataset?.action === "warp-editor-open-mobile");
+  view.update({ state: { draft: structuredClone(DEFAULT_PROJECTION_CONFIG) }, selectedNode: "clock-gis", clockScene: "nova", clockElement: "legend" });
+  expect(gisScene.value).toBe("nova");
+  expect(view.controls.clockSceneInspector.value).toBe("nova");
+  view.controls.clockSceneInspector.value = "timeline"; view.controls.clockSceneInspector.dispatch("change");
+  expect(onClockScene).toHaveBeenLastCalledWith("timeline");
+  view.update({ state: { draft: structuredClone(DEFAULT_PROJECTION_CONFIG) }, selectedNode: "clock-projection", clockScene: "nova", clockElement: "legend" });
+  expect(overlay.value).toBe("legend");
+  expect(view.controls.clockElementInspector.value).toBe("legend");
+  view.update({ state: { draft: structuredClone(DEFAULT_PROJECTION_CONFIG) }, selectedNode: "clock-gis" });
+  expect(clockMobileOpen.hidden).toBe(false);
+  nodeSelector.value = "clock-gis"; clockMobileOpen.dispatch("click");
+  expect(onOpenClockEditor).toHaveBeenCalledWith("clock-gis");
+  onNode.mockClear();
   const graphColumn = root.children[0].children.find((node) => node.tagName === "DIV" && node.className === "config-workspace").children[0];
   const inspector = root.children[0].children.find((node) => node.className === "config-workspace").children[1];
   expect(inspector.open).toBe(true);
@@ -64,6 +116,17 @@ test("view renders draggable node workspace and preserves an existing focused in
   view.update({ state: { draft: namesDraft }, selectedNode: "names-wall" });
   expect(closeness.wrap.hidden).toBe(true);
   expect(resetPages.hidden).toBe(true);
+  const modelHelps = [
+    ...view.nodeMap.get("names-wall").children,
+    ...view.controls.namesWallInspector.children,
+  ].filter((node) => node.className?.includes("names-wall-model-help"));
+  expect(modelHelps).toHaveLength(2);
+  expect(modelHelps.every((node) => node.textContent === "Rows spread across the model. Set 0 for the tightest fit." && !node.hidden)).toBe(true);
+  expect(namesDraft.namesWall.profiles.model).toMatchObject({ requestedFontPx: 12, spacingPx: 2 });
+  namesDraft.namesWall.activeMode = "wall";
+  view.update({ state: { draft: namesDraft }, selectedNode: "names-wall" });
+  expect(modelHelps.every((node) => node.hidden)).toBe(true);
+  expect(namesDraft.namesWall.profiles.model).toMatchObject({ requestedFontPx: 12, spacingPx: 2 });
   const draft = JSON.parse(JSON.stringify(DEFAULT_PROJECTION_CONFIG));
   draft.outputs.right.crop.x0 = 0.4;
   draft.outputs.right.post.tx = 2;
@@ -192,5 +255,81 @@ test("Names wall keeps controls editable while showing pending and incomplete ca
   expect(status.textContent).not.toContain("last complete wall");
   expect(status.title).toContain("reference-plane pixels");
   expect(control.number.disabled).not.toBe(true);
+  view.dispose();
+});
+
+test("repeated refresh keeps inspector fields scoped to the selected node", () => {
+  const make = (tag = "div") => ({ tagName: tag.toUpperCase(), children: [], dataset: {}, style: {}, attributes: {}, classList: { toggle() {} }, appendChild(child) { this.children.push(child); child.parentElement = this; return child; }, append(...children) { children.forEach((child) => this.appendChild(child)); }, prepend(...children) { this.children.unshift(...children); }, remove() {}, setAttribute(key, value) { this.attributes[key] = value; }, removeAttribute(key) { delete this.attributes[key]; }, addEventListener(type, handler) { this.listeners ||= {}; (this.listeners[type] ||= []).push(handler); }, removeEventListener() {}, dispatch(type, event) { for (const handler of this.listeners?.[type] || []) handler({ currentTarget: this, target: this, ...event }); }, replaceChildren(...children) { this.children = children; } });
+  const root = make("main"); root.ownerDocument = { createElement: make, createElementNS: (_ns, tag) => make(tag), defaultView: { matchMedia: () => ({ matches: false }) } };
+  const view = createProjectionConfigView(root, { descriptors: [...FIELD_DESCRIPTORS, ...NAMES_WALL_DESCRIPTORS] });
+  const draft = structuredClone(DEFAULT_PROJECTION_CONFIG);
+  for (let n = 0; n < 3; n += 1) view.update({ state: { draft }, selectedNode: "right-fit" });
+  expect(view.fields.get("inspector:outputs.right.post.scale").wrap.hidden).toBe(false);
+  expect(view.fields.get("inspector:outputs.right.post.tx").wrap.hidden).toBe(false);
+  expect(view.fields.get("inspector:outputs.right.post.ty").wrap.hidden).toBe(false);
+  expect(view.fields.get("inspector:pre.scale").wrap.hidden).toBe(true);
+  expect(view.fields.get("inspector:outputs.right.crop.x0").wrap.hidden).toBe(true);
+  expect(view.fields.get("inspector:namesWall.requestedFontPx").wrap.hidden).toBe(true);
+  draft.namesWall.activeMode = "model";
+  view.update({ state: { draft }, selectedNode: "names-wall" });
+  expect(view.fields.get("inspector:namesWall.requestedFontPx").wrap.hidden).toBe(false);
+  expect(view.fields.get("inspector:namesWall.inwardShiftPercent").wrap.hidden).toBe(true);
+  expect(view.fields.get("inspector:namesWall.innerEdgeInsetPx.left").wrap.hidden).toBe(false);
+  const rotation = view.fields.get("inspector:namesWall.rotateDeg");
+  expect(rotation.wrap.hidden).toBe(false);
+  expect(rotation.number.value).toBe(String(draft.namesWall.rotateDeg));
+  expect(view.fields.get("names-wall:namesWall.rotateDeg").number.value).toBe(String(draft.namesWall.rotateDeg));
+  const rotationHelp = [...view.nodeMap.get("names-wall").children, ...view.controls.namesWallInspector.children]
+    .filter((node) => node.className?.includes("names-wall-rotation"));
+  expect(rotationHelp.length).toBeGreaterThan(0);
+  expect(rotationHelp.every((node) => /both wall and model/i.test(node.textContent) && /Live, Apply, and Save/i.test(node.textContent))).toBe(true);
+  const editor = createWarpEditor({ config: draft, output: "right" });
+  view.update({ state: { draft }, selectedNode: "right-grid", warpStates: { right: { ...editor.getState(), config: editor.getConfig(), handles: editor.getControlPoints() } } });
+  expect(view.controls.warpPanel.hidden).toBe(false);
+  expect(view.fields.get("inspector:outputs.right.post.scale").wrap.hidden).toBe(true);
+  view.dispose();
+});
+
+test("invalid warp coordinates preserve handles and show an accessible error", () => {
+  const make = (tag = "div") => ({ tagName: tag.toUpperCase(), children: [], dataset: {}, style: {}, attributes: {}, classList: { toggle() {} }, appendChild(child) { this.children.push(child); child.parentElement = this; return child; }, append(...children) { children.forEach((child) => this.appendChild(child)); }, prepend(...children) { this.children.unshift(...children); }, remove() {}, setAttribute(key, value) { this.attributes[key] = value; }, removeAttribute(key) { delete this.attributes[key]; }, addEventListener(type, handler) { this.listeners ||= {}; (this.listeners[type] ||= []).push(handler); }, removeEventListener() {}, dispatch(type, event) { for (const handler of this.listeners?.[type] || []) handler({ currentTarget: this, target: this, ...event }); }, replaceChildren(...children) { this.children = children; } });
+  const root = make("main"); root.ownerDocument = { createElement: make, createElementNS: (_ns, tag) => make(tag), defaultView: { matchMedia: () => ({ matches: false }) } };
+  const onWarpAction = vi.fn();
+  const view = createProjectionConfigView(root, { descriptors: FIELD_DESCRIPTORS, onWarpAction });
+  const draft = structuredClone(DEFAULT_PROJECTION_CONFIG); const editor = createWarpEditor({ config: draft, output: "left" });
+  const handles = editor.getControlPoints();
+  view.update({ state: { draft }, selectedNode: "left-keystone", warpStates: { left: { ...editor.getState(), config: editor.getConfig(), handles } } });
+  for (const [input, axis] of [[view.controls.warpPositionX, "x"], [view.controls.warpPositionY, "y"]]) {
+    input.value = ""; input.dispatch("change");
+    expect(input.attributes["aria-invalid"]).toBe("true");
+    expect(view.controls.warpNumeric.children.find((node) => node.id === `warp-position-${axis}-error`).textContent).toContain("Enter a finite coordinate");
+    input.value = "-"; input.dispatch("change");
+    expect(input.attributes["aria-invalid"]).toBe("true");
+    expect(handles).toEqual(editor.getControlPoints());
+  }
+  expect(onWarpAction).not.toHaveBeenCalled();
+  view.controls.warpPositionX.value = "-12.5"; view.controls.warpPositionX.dispatch("change");
+  expect(onWarpAction).toHaveBeenCalledWith("warp-set-position", { axis: "x", pixels: -12.5 });
+  expect(view.controls.warpPositionX.attributes["aria-invalid"]).toBeUndefined();
+  view.controls.warpPositionY.value = "-4.25"; view.controls.warpPositionY.dispatch("change");
+  expect(onWarpAction).toHaveBeenCalledWith("warp-set-position", { axis: "y", pixels: -4.25 });
+  expect(onWarpAction).toHaveBeenCalledTimes(2);
+  expect(view.controls.warpPositionY.attributes["aria-invalid"]).toBeUndefined();
+  view.dispose();
+});
+
+test("selection refresh clears a stale warp error when it replaces the unfocused coordinate", () => {
+  const make = (tag = "div") => ({ tagName: tag.toUpperCase(), children: [], dataset: {}, style: {}, attributes: {}, classList: { toggle() {} }, appendChild(child) { this.children.push(child); child.parentElement = this; return child; }, append(...children) { children.forEach((child) => this.appendChild(child)); }, prepend(...children) { this.children.unshift(...children); }, remove() {}, setAttribute(key, value) { this.attributes[key] = value; }, removeAttribute(key) { delete this.attributes[key]; }, addEventListener(type, handler) { this.listeners ||= {}; (this.listeners[type] ||= []).push(handler); }, removeEventListener() {}, dispatch(type, event) { for (const handler of this.listeners?.[type] || []) handler({ currentTarget: this, target: this, ...event }); }, replaceChildren(...children) { this.children = children; } });
+  const root = make("main"); const doc = { activeElement: null, createElement: make, createElementNS: (_ns, tag) => make(tag), defaultView: { matchMedia: () => ({ matches: false }) } }; root.ownerDocument = doc;
+  const onWarpAction = vi.fn(); const view = createProjectionConfigView(root, { descriptors: FIELD_DESCRIPTORS, onWarpAction });
+  const draft = structuredClone(DEFAULT_PROJECTION_CONFIG); const editor = createWarpEditor({ config: draft, output: "left" });
+  const warpStates = { left: { ...editor.getState(), config: editor.getConfig(), handles: editor.getControlPoints() } };
+  view.update({ state: { draft }, selectedNode: "left-keystone", warpStates });
+  view.controls.warpPositionX.value = ""; view.controls.warpPositionX.dispatch("change");
+  expect(view.controls.warpPositionX.attributes["aria-invalid"]).toBe("true");
+  editor.select({ kind: "corner", index: 1 });
+  view.update({ state: { draft }, selectedNode: "left-keystone", warpStates: { left: { ...editor.getState(), config: editor.getConfig(), handles: editor.getControlPoints() } } });
+  expect(view.controls.warpPositionX.attributes["aria-invalid"]).toBeUndefined();
+  expect(view.controls.warpNumeric.children.find((node) => node.id === "warp-position-x-error").textContent).toBe("");
+  expect(onWarpAction).not.toHaveBeenCalled();
   view.dispose();
 });

@@ -3,11 +3,14 @@ import { visibleT3Rect } from "../shared/projection-config-geometry.js";
 import { createNodeCanvas } from "./node-canvas.js";
 import { createWarpEditorDialog } from "./warp-editor-dialog.js";
 import { bindWarpPointerInput } from "./warp-pointer-input.js";
+import { createClockLayoutParameters, createClockLayoutStatus } from "./clock-layout-controls.js";
+import { createSettlementNameControls } from "./settlement-name-controls.js";
 
 const docFor = (root) => root?.ownerDocument || globalThis.document;
 const WARP_OUTPUT_WIDTH = 1920;
 const WARP_OUTPUT_HEIGHT = 1080;
 const WARP_VIEW_PADDING = 72;
+const GIS_CLOCK_SCENES = [["home", "Home"], ["timeline", "Timeline"], ["segev", "Segev"], ["nova", "Nova"], ["sderot", "Sderot"], ["hostages", "Peri Family"], ["hostages_all", "All Hostages"]];
 function isTouchOnlySurface(doc) {
   const media = doc?.defaultView?.matchMedia;
   if (typeof media !== "function") return false;
@@ -38,6 +41,9 @@ function button(doc, label, action, className = "") {
 
 function pathParts(path) { return path.split("."); }
 function readPath(config, path) { return pathParts(path).reduce((value, key) => value?.[key], config); }
+function namesWallProfileScoped(path) {
+  return path.startsWith("namesWall.") && path !== "namesWall.rotateDeg" && !path.startsWith("namesWall.innerEdgeInsetPx.");
+}
 
 function displayValue(descriptor, value) {
   if (!Number.isFinite(Number(value))) return "";
@@ -105,6 +111,17 @@ export function createProjectionConfigView(root, {
   onNudge = () => {},
   onNamesMode = () => {},
   onNode = () => {},
+  onOpenClockEditor = () => {},
+  onOpenSettlementEditor = () => {},
+  onSettlementOutput = () => {},
+  onSettlementCitycode = () => {},
+  onSettlementPosition = () => {},
+  onSettlementStyle = () => {},
+  onSettlementRecovery = () => {},
+  onClockScene = () => {},
+  onClockElement = () => {},
+  onClockField = () => {},
+  onClockRecovery = () => {},
   onWarpAction = () => {},
   onWarpPointer = () => {},
 } = {}) {
@@ -113,6 +130,7 @@ export function createProjectionConfigView(root, {
   root.className = "projection-config-app";
   const fields = new Map();
   const controls = {};
+  const clockNodeStatuses = new Map();
   const touchOnlySurface = isTouchOnlySurface(doc);
   let outputSelection = { left: "", right: "" };
   let outputScreensSignature = null;
@@ -130,6 +148,9 @@ export function createProjectionConfigView(root, {
   controls.apply = button(doc, "Apply once", "apply");
   controls.save = button(doc, "Save preset", "save");
   controls.saveName = make(doc, "input", { type: "text", placeholder: "Preset name", maxLength: 80, ariaLabel: "Preset name" });
+  let presetNameEdited = false;
+  controls.saveName.addEventListener("input", () => { presetNameEdited = true; });
+  const setPresetName = (value) => { controls.saveName.value = String(value || ""); presetNameEdited = true; };
   controls.saveNew = button(doc, "Save as new", "save-new");
   controls.presets = make(doc, "select", { ariaLabel: "Preset" });
   controls.load = button(doc, "Load", "load");
@@ -204,7 +225,10 @@ export function createProjectionConfigView(root, {
   graphControls.append(zoomOut, zoomReset, zoomOne, zoomIn);
   graphViewport.append(graphControls, graph);
   const graphNodes = [
-    ["content", "Content", "Feeds both projector outputs"], ["names-wall", "Names wall", "NLI memorial-name profile; does not change projection geometry"], ["pre", "Shared pre-transform", "Affects both projectors"],
+    ["content", "Content", "Feeds both projector outputs"], ["names-wall", "Names wall", "NLI memorial-name profile; does not change projection geometry"],
+    ["settlement-names", "Settlement names", "Place settlement labels on the left and right projectors"],
+    ["clock-gis", "GIS Clock", "Clock layouts for GIS scenes"], ["clock-projection", "Projection Clock / Legend", "Shared left projection overlays"],
+    ["pre", "Shared pre-transform", "Affects both projectors"],
     ["left-crop", "Left Crop", "Left projector"], ["right-crop", "Right Crop", "Right projector"],
     ["left-fit", "Left Fit / post", "Left projector"], ["right-fit", "Right Fit / post", "Right projector"],
     ["left-keystone", "Left Keystone", "Projective corners"], ["right-keystone", "Right Keystone", "Projective corners"],
@@ -214,8 +238,10 @@ export function createProjectionConfigView(root, {
   const nodeMap = new Map();
   const namesModeControls = [];
   const namesStatusControls = [];
+  const modelSpacingHelpControls = [];
   const pageSpacingResetControls = [];
   const namesWallUnitsHelp = "Font, spacing, and edge inset use reference-plane pixels. Inner-edge clearances reserve final-output pixels in both modes and repack names.";
+  const namesWallRotationHelp = "Rotation applies to both wall and model profiles and follows Live, Apply, and Save.";
   function pageSpacingReset() {
     const reset = button(doc, "Reset page spacing to 0%", "reset-page-spacing");
     reset.addEventListener("click", (event) => {
@@ -239,6 +265,11 @@ export function createProjectionConfigView(root, {
     namesStatusControls.push(status);
     return status;
   }
+  function modelSpacingHelp() {
+    const help = make(doc, "p", { className: "names-wall-units names-wall-model-help" }, "Rows spread across the model. Set 0 for the tightest fit.");
+    modelSpacingHelpControls.push(help);
+    return help;
+  }
   const svg = svgNode(doc, "svg", { class: "graph-connectors", "aria-hidden": "true" });
   const wirePath = svgNode(doc, "path", { "vector-effect": "non-scaling-stroke" });
   svg.appendChild(wirePath);
@@ -249,18 +280,55 @@ export function createProjectionConfigView(root, {
     handle.append(make(doc, "span", { className: "node-grip", ariaHidden: "true" }, "⋮⋮"), make(doc, "span", {}, label));
     card.append(handle, make(doc, "p", { className: "node-description" }, description));
     if (id === "names-wall") {
-      card.append(namesModeControl(), make(doc, "p", { className: "names-wall-units" }, namesWallUnitsHelp));
+      card.append(namesModeControl(), make(doc, "p", { className: "names-wall-units" }, namesWallUnitsHelp),
+        make(doc, "p", { className: "names-wall-units names-wall-rotation" }, namesWallRotationHelp));
+    }
+    let sceneControl = null;
+    let elementControl = null;
+    if (id === "clock-gis") {
+      sceneControl = make(doc, "select", { className: "clock-scene-selector", ariaLabel: "GIS clock preview scene", dataset: { action: "clock-scene" } });
+      for (const [value, label] of GIS_CLOCK_SCENES) sceneControl.appendChild(make(doc, "option", { value }, label));
+      sceneControl.addEventListener("click", (event) => event.stopPropagation?.());
+      sceneControl.addEventListener("change", () => onClockScene(sceneControl.value));
+      controls.gisClockScene = sceneControl;
+      card.appendChild(sceneControl);
+    }
+    if (id === "clock-projection") {
+      elementControl = make(doc, "select", { className: "clock-element-selector", ariaLabel: "Projection overlay", dataset: { action: "clock-element" } });
+      elementControl.append(make(doc, "option", { value: "clock" }, "Clock"), make(doc, "option", { value: "legend" }, "Legend"));
+      elementControl.addEventListener("click", (event) => event.stopPropagation?.());
+      elementControl.addEventListener("change", () => onClockElement(elementControl.value));
+      controls.projectionElement = elementControl;
+      card.appendChild(elementControl);
     }
     const nodeFields = descriptors.filter((item) => item.node === id);
     for (const descriptor of nodeFields) { const control = renderField(doc, descriptor, onField, onNudge, false); fields.set(`${id}:${descriptor.path}`, control); card.appendChild(control.wrap); }
-    if (id === "names-wall") card.append(make(doc, "p", { className: "names-wall-units" }, "0 keeps the current positions. Increase to move the pages inward where space allows."), pageSpacingReset(), namesStatus());
+    if (id === "names-wall") card.append(modelSpacingHelp(), make(doc, "p", { className: "names-wall-units" }, "0 keeps the current positions. Increase to move the pages inward where space allows."), pageSpacingReset(), namesStatus());
     if (id.endsWith("-keystone") || id.endsWith("-grid")) card.appendChild(make(doc, "p", { className: "warp-node-summary" }, "Select to edit corners, points, and residuals."));
     if (id.endsWith("-keystone") || id.endsWith("-grid")) {
       const openButton = button(doc, "Open fullscreen editor", "warp-editor-open", "warp-open-button");
       openButton.addEventListener("click", (event) => { event.stopPropagation?.(); cancelActiveDrag(); onNode(id); dialog.open({ side: id.startsWith("right-") ? "right" : "left", mode: id.endsWith("-grid") ? "grid" : "keystone", opener: openButton }); });
       card.appendChild(openButton);
     }
-    if (id !== "names-wall") {
+    if (id === "settlement-names") {
+      const openButton = button(doc, "Open editor", "settlement-editor-open", "settlement-open-button");
+      openButton.addEventListener("click", (event) => { event.stopPropagation?.(); cancelActiveDrag(); onNode(id); onOpenSettlementEditor(); });
+      card.appendChild(openButton);
+    }
+    if (id === "clock-gis" || id === "clock-projection") {
+      const layoutStatus = createClockLayoutStatus(doc, {
+        onRetry: () => onClockRecovery("retry", id), onLoad: () => onClockRecovery("load", id),
+      });
+      clockNodeStatuses.set(id, layoutStatus); card.appendChild(layoutStatus.element);
+      const openButton = button(doc, "Open editor", "clock-editor-open", "clock-open-button");
+      openButton.addEventListener("click", (event) => { event.stopPropagation?.(); cancelActiveDrag(); onNode(id); onOpenClockEditor(id); });
+      card.addEventListener("dblclick", (event) => {
+        if (event.target === handle || event.target?.parentElement === handle || event.target === sceneControl || event.target === elementControl || event.target === openButton) return;
+        cancelActiveDrag(); onNode(id); onOpenClockEditor(id);
+      });
+      card.appendChild(openButton);
+    }
+    if (id !== "names-wall" && id !== "settlement-names") {
       const portIn = make(doc, "span", { className: "node-port port-in", ariaHidden: "true", dataset: { port: "in" } });
       const portOut = make(doc, "span", { className: "node-port port-out", ariaHidden: "true", dataset: { port: "out" } });
       card.append(portIn, portOut);
@@ -270,6 +338,8 @@ export function createProjectionConfigView(root, {
       if (event.target !== card || (event.key !== "Enter" && event.key !== " ")) return;
       event.preventDefault();
       onNode(id);
+      if (event.key === "Enter" && (id === "clock-gis" || id === "clock-projection")) onOpenClockEditor(id);
+      if (event.key === "Enter" && id === "settlement-names") onOpenSettlementEditor();
     });
     nodeMap.set(id, card); graph.appendChild(card);
   }
@@ -277,13 +347,19 @@ export function createProjectionConfigView(root, {
   const selector = make(doc, "select", { className: "node-selector", ariaLabel: "Calibration node" });
   for (const [id, label] of graphNodes) selector.appendChild(make(doc, "option", { value: id }, label));
   selector.addEventListener("change", () => onNode(selector.value));
-  const mobileOpen = button(doc, "Open fullscreen editor", "warp-editor-open-mobile", "mobile-warp-open");
-  mobileOpen.addEventListener("click", () => { const id = selector.value; if (!id.endsWith("-keystone") && !id.endsWith("-grid")) return; cancelActiveDrag(); onNode(id); dialog.open({ side: id.startsWith("right-") ? "right" : "left", mode: id.endsWith("-grid") ? "grid" : "keystone", opener: mobileOpen }); });
+  const mobileOpen = button(doc, "Open editor", "warp-editor-open-mobile", "mobile-warp-open");
+  mobileOpen.addEventListener("click", () => {
+    const id = selector.value;
+    if (id === "clock-gis" || id === "clock-projection") { cancelActiveDrag(); onNode(id); onOpenClockEditor(id); return; }
+    if (id === "settlement-names") { cancelActiveDrag(); onNode(id); onOpenSettlementEditor(); return; }
+    if (!id.endsWith("-keystone") && !id.endsWith("-grid")) return;
+    cancelActiveDrag(); onNode(id); dialog.open({ side: id.startsWith("right-") ? "right" : "left", mode: id.endsWith("-grid") ? "grid" : "keystone", opener: mobileOpen });
+  });
   graphColumn.append(selector, mobileOpen);
   workspace.appendChild(graphColumn);
 
   const inspector = make(doc, "details", { className: "inspector", ariaLabel: "Calibration diagnostics" });
-  const mobileQuery = doc.defaultView?.matchMedia?.("(max-width: 1100px), (max-height: 700px)") || globalThis.matchMedia?.("(max-width: 1100px), (max-height: 700px)");
+  const mobileQuery = doc.defaultView?.matchMedia?.("(max-width: 1100px), (max-height: 700px), (pointer: coarse), (hover: none)") || globalThis.matchMedia?.("(max-width: 1100px), (max-height: 700px), (pointer: coarse), (hover: none)");
   inspector.open = Boolean(mobileQuery?.matches);
   const openOnPhone = (event) => { if (event.matches) inspector.open = true; };
   mobileQuery?.addEventListener?.("change", openOnPhone);
@@ -293,7 +369,8 @@ export function createProjectionConfigView(root, {
   controls.inspectorFields = make(doc, "div", { className: "inspector-fields" });
   controls.namesWallInspector = make(doc, "section", { className: "names-wall-inspector", ariaLabel: "Names wall profile controls" });
   controls.namesWallInspector.append(namesModeControl(), make(doc, "p", { className: "names-wall-units" }, namesWallUnitsHelp),
-    make(doc, "p", { className: "names-wall-units" }, "0 keeps the current positions. Increase to move the pages inward where space allows."), pageSpacingReset(), namesStatus());
+    make(doc, "p", { className: "names-wall-units names-wall-rotation" }, namesWallRotationHelp),
+    modelSpacingHelp(), make(doc, "p", { className: "names-wall-units" }, "0 keeps the current positions. Increase to move the pages inward where space allows."), pageSpacingReset(), namesStatus());
   for (const descriptor of descriptors) { const control = renderField(doc, descriptor, onField, onNudge); fields.set(`inspector:${descriptor.path}`, control); controls.inspectorFields.appendChild(control.wrap); }
   controls.warpPanel = make(doc, "section", { className: "warp-inspector", ariaLabel: "Warp editor" });
   controls.warpHeading = make(doc, "h3", {}, "Warp editor");
@@ -329,11 +406,31 @@ export function createProjectionConfigView(root, {
     if (dialog.isOpen()) dialog.open({ side: output, mode: controls.warpMode.value, opener: controls.warpMode });
   });
   controls.warpStep.addEventListener("change", () => onWarpAction("warp-step", { mode: controls.warpStep.value }));
-  const commitWarpPosition = (axis, input) => { const value = Number(input.value); if (Number.isFinite(value)) onWarpAction("warp-set-position", { axis, pixels: value }); };
+  const warpPositionErrors = new Map();
+  for (const [axis, input] of [["x", controls.warpPositionX], ["y", controls.warpPositionY]]) {
+    const error = make(doc, "span", { id: `warp-position-${axis}-error`, className: "warp-position-error", role: "alert", ariaLive: "polite" });
+    input.setAttribute("aria-describedby", error.id);
+    controls.warpNumeric.appendChild(error);
+    warpPositionErrors.set(axis, error);
+  }
+  const commitWarpPosition = (axis, input) => {
+    const raw = input.value.trim();
+    const error = warpPositionErrors.get(axis);
+    if (!raw || !Number.isFinite(Number(raw))) {
+      input.setAttribute("aria-invalid", "true");
+      error.textContent = "Enter a finite coordinate before applying this position.";
+      return;
+    }
+    input.removeAttribute("aria-invalid");
+    error.textContent = "";
+    onWarpAction("warp-set-position", { axis, pixels: Number(raw) });
+  };
   controls.warpPositionX.addEventListener("change", () => commitWarpPosition("x", controls.warpPositionX));
   controls.warpPositionY.addEventListener("change", () => commitWarpPosition("y", controls.warpPositionY));
   let currentHandles = [];
   let currentSelection = null;
+  let lastLoadedPresetId = null;
+  let lastLoadedPresetLoadToken = null;
   let pointerInput;
   function cancelActiveDrag(options) { pointerInput?.cancel(options); }
   const onKeyDown = (event) => {
@@ -366,7 +463,32 @@ export function createProjectionConfigView(root, {
   controls.pattern.addEventListener("change", () => onAction("pattern", { pattern: controls.pattern.value, branch: controls.patternBranch.value }));
   controls.patternBranch.addEventListener("change", () => onAction("pattern", { pattern: controls.pattern.value, branch: controls.patternBranch.value }));
   controls.applied = make(doc, "div", { className: "applied-status" });
-  inspector.append(controls.inspectorTitle, controls.namesWallInspector, controls.inspectorFields, controls.warpPanel, controls.diagram, controls.patternBranch, controls.pattern, controls.applied);
+  controls.clockSettings = make(doc, "section", { className: "clock-settings-inspector", ariaLabel: "Clock preview selection", hidden: true });
+  controls.clockSceneInspector = make(doc, "select", { ariaLabel: "GIS clock preview scene" });
+  for (const [value, label] of GIS_CLOCK_SCENES) controls.clockSceneInspector.appendChild(make(doc, "option", { value }, label));
+  controls.clockSceneInspector.addEventListener("click", (event) => event.stopPropagation?.());
+  controls.clockSceneInspector.addEventListener("change", () => onClockScene(controls.clockSceneInspector.value));
+  controls.clockElementInspector = make(doc, "select", { ariaLabel: "Projection overlay" });
+  controls.clockElementInspector.append(make(doc, "option", { value: "clock" }, "Clock"), make(doc, "option", { value: "legend" }, "Legend"));
+  controls.clockElementInspector.addEventListener("click", (event) => event.stopPropagation?.());
+  controls.clockElementInspector.addEventListener("change", () => onClockElement(controls.clockElementInspector.value));
+  controls.clockSettings.append(controls.clockSceneInspector, controls.clockElementInspector);
+  const clockParameters = createClockLayoutParameters(doc, { onField: onClockField });
+  const clockInspectorStatus = createClockLayoutStatus(doc, {
+    onRetry: () => onClockRecovery("retry", selectedGraphNode), onLoad: () => onClockRecovery("load", selectedGraphNode),
+  });
+  controls.clockSettings.append(clockParameters.element, clockInspectorStatus.element);
+  controls.settlementSettings = make(doc, "section", { className: "settlement-settings-inspector", ariaLabel: "Settlement name settings", hidden: true });
+  const settlementControls = createSettlementNameControls(doc, {
+    onOutput: onSettlementOutput,
+    onCitycode: onSettlementCitycode,
+    onPosition: onSettlementPosition,
+    onStyle: onSettlementStyle,
+    onRetry: () => onSettlementRecovery("retry"),
+    onLoad: () => onSettlementRecovery("load"),
+  });
+  controls.settlementSettings.appendChild(settlementControls.element);
+  inspector.append(controls.inspectorTitle, controls.clockSettings, controls.settlementSettings, controls.namesWallInspector, controls.inspectorFields, controls.warpPanel, controls.diagram, controls.patternBranch, controls.pattern, controls.applied);
   workspace.appendChild(inspector);
   app.appendChild(workspace);
   root.appendChild(app);
@@ -394,8 +516,15 @@ export function createProjectionConfigView(root, {
     selector.value = selected;
     canvas.setSelected(selected);
     controls.inspectorNode.textContent = graphNodes.find(([id]) => id === selected)?.[1] || selected;
-    mobileOpen.hidden = !(selected.endsWith("-keystone") || selected.endsWith("-grid"));
-    if (selected.endsWith("-keystone") || selected.endsWith("-grid")) inspector.open = true;
+    const isClockNode = selected === "clock-gis" || selected === "clock-projection";
+    const isSettlementNode = selected === "settlement-names";
+    mobileOpen.hidden = !(isClockNode || isSettlementNode || selected.endsWith("-keystone") || selected.endsWith("-grid"));
+    mobileOpen.textContent = isClockNode || isSettlementNode ? "Open editor" : "Open fullscreen editor";
+    controls.clockSettings.hidden = !isClockNode;
+    controls.settlementSettings.hidden = !isSettlementNode;
+    controls.clockSceneInspector.hidden = selected !== "clock-gis";
+    controls.clockElementInspector.hidden = selected !== "clock-projection";
+    if (isClockNode || isSettlementNode || selected.endsWith("-keystone") || selected.endsWith("-grid")) inspector.open = true;
     for (const [id, card] of nodeMap) card.classList?.toggle("selected", id === selected);
     for (const descriptor of descriptors) {
       const control = fields.get(`inspector:${descriptor.path}`);
@@ -425,8 +554,16 @@ export function createProjectionConfigView(root, {
     const selectedIndices = new Set(warpState.selection?.indices || []);
     const chosen = [...selectedIndices].map((index) => allHandles[index]).filter(Boolean);
     const mean = (axis) => chosen.length ? chosen.reduce((sum, point) => sum + (axis === 0 ? point.x : point.y), 0) / chosen.length : 0;
-    if (doc.activeElement !== controls.warpPositionX) controls.warpPositionX.value = (mean(0) * WARP_OUTPUT_WIDTH).toFixed(2);
-    if (doc.activeElement !== controls.warpPositionY) controls.warpPositionY.value = (mean(1) * WARP_OUTPUT_HEIGHT).toFixed(2);
+    const syncWarpPosition = (axis, input, pixels) => {
+      if (doc.activeElement === input) return;
+      const value = pixels.toFixed(2);
+      if (input.value === value) return;
+      input.value = value;
+      input.removeAttribute("aria-invalid");
+      warpPositionErrors.get(axis).textContent = "";
+    };
+    syncWarpPosition("x", controls.warpPositionX, mean(0) * WARP_OUTPUT_WIDTH);
+    syncWarpPosition("y", controls.warpPositionY, mean(1) * WARP_OUTPUT_HEIGHT);
     controls.warpSelection.replaceChildren();
     const addSelection = (label, selection) => { const item = button(doc, label, "warp-select", "warp-selection-button"); item.addEventListener("click", () => onWarpAction("warp-select", { selection })); controls.warpSelection.appendChild(item); };
     if (mode === "keystone") {
@@ -466,9 +603,12 @@ export function createProjectionConfigView(root, {
     });
     dialog.setViewBox(displayViewBox);
   };
-  const update = ({ state = {}, errors = {}, conflict = "", statusText = "", selectedNode = "pre", statusRows = [], appliedSummary = 'Pending', outputState = {}, warpStates = {}, namesWallStatus = null } = {}) => {
+  const update = ({ state = {}, errors = {}, conflict = "", statusText = "", selectedNode = "pre", loadedPresetId = null, loadedPresetLoadToken = 0, statusRows = [], appliedSummary = 'Pending', outputState = {}, warpStates = {}, namesWallStatus = null, clockScene = "home", clockElement = "clock", clockLayouts = {}, clockHydration = { status: "Loading" }, settlement = null } = {}) => {
     controls.live.checked = Boolean(state.live);
-    controls.status.textContent = statusText;
+    const dirtyLocalDraft = Boolean(state.hasLocalDraft || (state.draft && state.snapshot && JSON.stringify(state.draft) !== JSON.stringify(state.snapshot.config)));
+    controls.status.textContent = dirtyLocalDraft && !state.live
+      ? `${statusText}. Changes have not reached the outputs. Apply or save before reload. Reloading discards this local draft.`
+      : statusText;
     controls.conflict.textContent = conflict;
     controls.conflict.hidden = !conflict;
     const actionError = errors.name || errors.import || errors.action || state.previewError || "";
@@ -496,10 +636,28 @@ export function createProjectionConfigView(root, {
     const selectedPreset = state.selectedPresetId || state.snapshot?.selectedPresetId || "original";
     controls.presets.replaceChildren(...presets.map((preset) => make(doc, "option", { value: preset.id }, preset.name)));
     controls.presets.value = selectedPreset;
+    const loadedPreset = presets.find((preset) => preset.id === loadedPresetId);
+    if (loadedPreset && (loadedPresetId !== lastLoadedPresetId || loadedPresetLoadToken !== lastLoadedPresetLoadToken)) {
+      const explicitLoad = lastLoadedPresetLoadToken !== null && loadedPresetLoadToken !== lastLoadedPresetLoadToken;
+      if (!presetNameEdited || explicitLoad) controls.saveName.value = loadedPreset.name || "";
+      if (explicitLoad) presetNameEdited = false;
+      lastLoadedPresetId = loadedPresetId;
+      lastLoadedPresetLoadToken = loadedPresetLoadToken;
+    }
     const draft = state.draft || DEFAULT_PROJECTION_CONFIG;
     setNode(selectedNode);
+    controls.gisClockScene.value = clockScene;
+    controls.clockSceneInspector.value = clockScene;
+    controls.projectionElement.value = clockElement;
+    controls.clockElementInspector.value = clockElement;
+    for (const [id, status] of clockNodeStatuses) status.render(clockLayouts[id]?.record, clockHydration);
+    const selectedClock = clockLayouts[selectedNode];
+    clockInspectorStatus.render(selectedClock?.record, clockHydration);
+    clockParameters.render(selectedClock?.layout, { enabled: clockHydration.status === "Saved", legend: selectedNode === "clock-projection" && clockElement === "legend" });
+    settlementControls.render(settlement || { hydration: { status: "Loading" }, enabled: false });
     controls.namesWallInspector.hidden = selectedNode !== "names-wall";
     const wallConfig = draft.namesWall;
+    for (const help of modelSpacingHelpControls) help.hidden = wallConfig?.activeMode !== "model";
     for (const select of namesModeControls) select.value = wallConfig?.activeMode || "wall";
     for (const reset of pageSpacingResetControls) reset.hidden = wallConfig?.activeMode !== "wall";
     const wallStatus = namesWallStatus || { state: "building", expected: null, placed: null };
@@ -532,17 +690,18 @@ export function createProjectionConfigView(root, {
     setDiagramRect(controls.cropSvg?.leftVisibleRect, left ? visibleT3Rect(left) : null);
     setDiagramRect(controls.cropSvg?.rightVisibleRect, right ? visibleT3Rect(right) : null);
     for (const descriptor of descriptors) {
-      const value = descriptor.path.startsWith("namesWall.") && !descriptor.path.startsWith("namesWall.innerEdgeInsetPx.")
+      const value = namesWallProfileScoped(descriptor.path)
         ? draft.namesWall?.profiles?.[descriptor.wallOnly ? "wall" : draft.namesWall?.activeMode]?.[descriptor.path.slice("namesWall.".length)]
         : readPath(draft, descriptor.path);
       for (const prefix of [descriptor.node, "inspector"]) {
         const control = fields.get(`${prefix}:${descriptor.path}`);
         if (!control) continue;
-        control.wrap.hidden = Boolean(descriptor.wallOnly && draft.namesWall?.activeMode !== "wall");
+        control.wrap.hidden = (prefix === "inspector" && descriptor.node !== selectedNode)
+          || Boolean(descriptor.wallOnly && draft.namesWall?.activeMode !== "wall");
         const display = displayValue(descriptor, value);
         for (const input of [control.range, control.number]) if (input && doc.activeElement !== input) input.value = display;
         control.value.textContent = `${display}${descriptor.unit ? ` ${descriptor.unit}` : ""}`;
-        const errorPath = descriptor.path.startsWith("namesWall.") && !descriptor.path.startsWith("namesWall.innerEdgeInsetPx.") && draft.namesWall?.activeMode
+        const errorPath = namesWallProfileScoped(descriptor.path) && draft.namesWall?.activeMode
           ? `namesWall.profiles.${descriptor.wallOnly ? "wall" : draft.namesWall.activeMode}.${descriptor.path.slice("namesWall.".length)}`
           : descriptor.path;
         const fieldError = errors[errorPath] || Object.entries(errors).find(([key]) => errorPath.startsWith(`${key}.`))?.[1] || "";
@@ -554,8 +713,17 @@ export function createProjectionConfigView(root, {
   };
   setNode("pre");
   return {
-    update, controls, fields, nodeMap, canManageDisplays: !touchOnlySurface,
+    update, controls, fields, nodeMap, setPresetName, canManageDisplays: !touchOnlySurface,
+    getClockEditorOpener(node) {
+      if (mobileQuery?.matches && selectedGraphNode === node && !mobileOpen.hidden) return mobileOpen;
+      return nodeMap.get(node)?.querySelector?.('[data-action="clock-editor-open"]') || null;
+    },
+    getSettlementEditorOpener() {
+      if (mobileQuery?.matches && selectedGraphNode === "settlement-names" && !mobileOpen.hidden) return mobileOpen;
+      return nodeMap.get("settlement-names")?.querySelector?.('[data-action="settlement-editor-open"]') || null;
+    },
     cancelWarpPointer: cancelActiveDrag,
+    closeWarpEditor: dialog.close,
     dispose() { mobileQuery?.removeEventListener?.("change", openOnPhone); doc.removeEventListener?.("keydown", onKeyDown); dialog.dispose(); pointerInput.dispose(); canvas.dispose(); },
   };
 }

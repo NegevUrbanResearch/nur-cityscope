@@ -4,6 +4,7 @@
  */
 import {
   GIS_GAZA_ROADS_LINE_OPACITY_SCALE,
+  OPEN_SPACES_FILL_OPACITY_SCALE,
   GIS_NLI_PEOPLE_POINT_RADIUS_SCALE,
   GIS_SETTLEMENT_OUTLINE_WIDTH_SCALE,
   projectionHatchRasterParams,
@@ -360,6 +361,25 @@ function scaleLineOpacityPaintForGis(opacity, hatchPresentation, fullLayerId) {
     return ["*", clamped, opacity];
   }
   return opacity;
+}
+
+function scaleOpenSpacesFillOpacity(opacity, fullLayerId) {
+  if (String(fullLayerId) !== "land_use.שטחים_פתוחים") return opacity;
+  const scale = Number(OPEN_SPACES_FILL_OPACITY_SCALE);
+  if (!Number.isFinite(scale) || scale < 0 || scale === 1) return opacity;
+  const clamped = Math.min(1, scale);
+  if (opacity == null) return clamped;
+  if (typeof opacity === "number" && Number.isFinite(opacity)) {
+    return Math.max(0, Math.min(1, opacity * clamped));
+  }
+  if (Array.isArray(opacity)) {
+    return ["*", clamped, opacity];
+  }
+  return opacity;
+}
+
+function omitOpenSpacesOutline(fullLayerId) {
+  return String(fullLayerId) === "land_use.שטחים_פתוחים";
 }
 
 function fieldNameCaseVariants(field) {
@@ -887,18 +907,23 @@ function symbolLayerToMapLibre(symbolLayer, id, hatchPresentation, fullLayerId) 
       const hatchSpec = buildHatchPatternSpec(symbolLayer.hatch, hatchPresentation);
       if (hatchSpec) {
         const paint = { "fill-pattern": hatchSpec.patternId };
-        if (symbolLayer.opacity != null) paint["fill-opacity"] = symbolLayer.opacity;
+        if (symbolLayer.opacity != null) {
+          paint["fill-opacity"] = scaleOpenSpacesFillOpacity(symbolLayer.opacity, fullLayerId);
+        }
         return { id, type: "fill", paint, layout: {}, _hatchPattern: hatchSpec };
       }
     }
     const paint = {
       "fill-color": symbolLayer.color || "#808080",
     };
-    if (symbolLayer.opacity != null) paint["fill-opacity"] = symbolLayer.opacity;
+    if (symbolLayer.opacity != null) {
+      paint["fill-opacity"] = scaleOpenSpacesFillOpacity(symbolLayer.opacity, fullLayerId);
+    }
     return { id, type: "fill", paint, layout: {} };
   }
 
   if (symbolLayer.type === "stroke") {
+    if (omitOpenSpacesOutline(fullLayerId)) return null;
     const paint = {
       "line-color": symbolLayer.color || "#000000",
       "line-width": scaleLineWidthPaintForProjection(
@@ -1231,7 +1256,9 @@ function buildMatchLayer(id, mapLibreType, field, entries, defaultSymbolLayer, h
         }
 
         const fillOpacity = buildMatchExpr(field, entries, defaultSymbolLayer, "opacity");
-        if (fillOpacity !== undefined) paint["fill-opacity"] = fillOpacity;
+        if (fillOpacity !== undefined) {
+          paint["fill-opacity"] = scaleOpenSpacesFillOpacity(fillOpacity, fullLayerId);
+        }
         return {
           id,
           type: "fill",
@@ -1245,11 +1272,14 @@ function buildMatchLayer(id, mapLibreType, field, entries, defaultSymbolLayer, h
     if (fillColor != null) paint["fill-color"] = fillColor;
     else paint["fill-color"] = "#808080";
     const fillOpacity = buildMatchExpr(field, entries, defaultSymbolLayer, "opacity");
-    if (fillOpacity !== undefined) paint["fill-opacity"] = fillOpacity;
+    if (fillOpacity !== undefined) {
+      paint["fill-opacity"] = scaleOpenSpacesFillOpacity(fillOpacity, fullLayerId);
+    }
     return { id, type: "fill", paint, layout: {} };
   }
 
   if (mapLibreType === "line") {
+    if (omitOpenSpacesOutline(fullLayerId)) return null;
     const lineColor = buildMatchExpr(field, entries, defaultSymbolLayer, "color");
     if (lineColor != null) paint["line-color"] = lineColor;
     else paint["line-color"] = "#000000";
@@ -1516,5 +1546,7 @@ export {
   scaleLineOpacityPaintForGis,
   scaleLineWidthPaintForProjection,
   scaleNliPeoplePointRadius,
+  scaleOpenSpacesFillOpacity,
+  omitOpenSpacesOutline,
   scalePointRadiusPaintForProjection,
 };

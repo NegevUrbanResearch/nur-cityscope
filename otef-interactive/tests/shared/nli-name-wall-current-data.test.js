@@ -65,7 +65,7 @@ test('captured current wall keeps every PID whole, safe, and stable in both mode
   const expectedIds = new Set(records.map((record) => record.pid));
   const orderedIds = records.slice().sort((a, b) => a.orderKey.localeCompare(b.orderKey, 'he',
     { sensitivity: 'base', numeric: true }) || a.pid.localeCompare(b.pid)).map((record) => record.pid);
-  const assertComplete = (field, mode) => {
+  const assertComplete = (field, mode, checkModelSpanUtilization = true) => {
     expect(field.diagnostics.state).toBe('valid');
     expect(field.placements).toHaveLength(records.length);
     expect(new Set(field.placements.map((p) => p.id))).toEqual(expectedIds);
@@ -74,7 +74,8 @@ test('captured current wall keeps every PID whole, safe, and stable in both mode
       expect(field.placements.filter((p) => p.output === 'left')).toHaveLength(Math.ceil(records.length / 2));
       expect(field.placements.filter((p) => p.output === 'right')).toHaveLength(Math.floor(records.length / 2));
     } else {
-      expect(field.diagnostics.modelUsedSpans).toBeGreaterThanOrEqual(field.diagnostics.modelSafeSpans - 2);
+      if (checkModelSpanUtilization)
+        expect(field.diagnostics.modelUsedSpans).toBeGreaterThanOrEqual(field.diagnostics.modelSafeSpans - 2);
     }
     expect(field.fontSize).toBeGreaterThanOrEqual(1);
     expect(field).not.toHaveProperty('drawPieces');
@@ -139,12 +140,37 @@ test('captured current wall keeps every PID whole, safe, and stable in both mode
     utilization: modeled.diagnostics.modelUtilization });
   assertComplete(modeled, 'model');
   expect(modeled).not.toHaveProperty('pages');
-  expect(modeled.fontSize).toBe(5);
-  expect(modeled.diagnostics).toMatchObject({ left: 524, right: 704, modelSafeSpans: 200, modelUsedSpans: 199 });
+  expect(modeled.fontSize).toBe(6);
+  expect(modeled.diagnostics).toMatchObject({ left: 530, right: 698, modelSafeSpans: 186, modelUsedSpans: 184 });
+  console.info('Captured model spacing 2', { fontPx: modeled.fontSize,
+    rowHeight: Math.max(...modeled.placements.map((p) => p.height)), packMs: Math.round(modeled.diagnostics.packMs),
+    left: modeled.diagnostics.left, right: modeled.diagnostics.right, usedSpans: modeled.diagnostics.modelUsedSpans,
+    safeSpans: modeled.diagnostics.modelSafeSpans, missing: modeled.diagnostics.missing,
+    duplicate: modeled.diagnostics.duplicate, overlap: modeled.diagnostics.overlap,
+    invalidCoverage: modeled.diagnostics.invalidCoverage, digest: modeled.digest });
+  const zeroProfile = structuredClone(modelWall);
+  zeroProfile.profiles.model.requestedFontPx = 12;
+  zeroProfile.profiles.model.spacingPx = 0;
+  const zero = await buildNamesWallLayout({ ...input, namesWall: zeroProfile, ring, ringHash });
+  assertComplete(zero, 'model');
+  console.info('Captured model spacing 0', { fontPx: zero.fontSize,
+    rowHeight: Math.max(...zero.placements.map((p) => p.height)), packMs: Math.round(zero.diagnostics.packMs),
+    left: zero.diagnostics.left, right: zero.diagnostics.right, usedSpans: zero.diagnostics.modelUsedSpans,
+    safeSpans: zero.diagnostics.modelSafeSpans, missing: zero.diagnostics.missing,
+    duplicate: zero.diagnostics.duplicate, overlap: zero.diagnostics.overlap,
+    invalidCoverage: zero.diagnostics.invalidCoverage, digest: zero.digest });
+  expect(zero.fontSize).toBeGreaterThan(6);
+  expect(zero.placements.every((p) => Number.isFinite(p.textOffsetX) && Number.isFinite(p.textOffsetY))).toBe(true);
   const tighterModel = structuredClone(modelWall);
   tighterModel.profiles.model.spacingPx = 1;
   const tighter = await buildNamesWallLayout({ ...input, namesWall: tighterModel, ring, ringHash });
   assertComplete(tighter, 'model');
+  console.info('Captured model spacing 1', { fontPx: tighter.fontSize,
+    rowHeight: Math.max(...tighter.placements.map((p) => p.height)), packMs: Math.round(tighter.diagnostics.packMs),
+    left: tighter.diagnostics.left, right: tighter.diagnostics.right, usedSpans: tighter.diagnostics.modelUsedSpans,
+    safeSpans: tighter.diagnostics.modelSafeSpans, missing: tighter.diagnostics.missing,
+    duplicate: tighter.diagnostics.duplicate, overlap: tighter.diagnostics.overlap,
+    invalidCoverage: tighter.diagnostics.invalidCoverage, digest: tighter.digest });
   expect(tighter.fontSize).toBe(6);
   expect(tighter.diagnostics.modelUsedSpans).toBeGreaterThanOrEqual(tighter.diagnostics.modelSafeSpans - 2);
   expect(tighter.digest).not.toBe(modeled.digest);
@@ -176,13 +202,15 @@ test('captured current wall keeps every PID whole, safe, and stable in both mode
   expect(reorderedModel.digest).toBe(modeled.digest);
   expect(reorderedModel.placements).toEqual(modeled.placements);
   const schedule = nameRevealSchedule(records.map((record) => record.pid));
-  for (const field of [first, modeled]) for (const side of ['left', 'right']) {
+  for (const [field, mode] of [[first, 'wall'], [modeled, 'model']]) for (const side of ['left', 'right']) {
     const ctx = { save: vi.fn(), restore: vi.fn(), setTransform: vi.fn(), clearRect: vi.fn(),
       strokeText: vi.fn(), fillText: vi.fn() };
     const adapter = createProjectionNameCanvasAdapter({ output: side, document: {
       createElement: () => ({ width: 0, height: 0, getContext: () => ctx }),
     } });
-    adapter.prepare({ config, placements: field.placements, fontPx: field.fontSize, logicalPlane });
+    const renderConfig = structuredClone(config);
+    renderConfig.namesWall.activeMode = mode;
+    adapter.prepare({ config: renderConfig, placements: field.placements, fontPx: field.fontSize, logicalPlane });
     adapter.commit();
     const descriptor = adapter.descriptor();
     const own = field.placements.filter((placement) => placement.output === side);
@@ -191,6 +219,9 @@ test('captured current wall keeps every PID whole, safe, and stable in both mode
     expect(ctx.fillText).toHaveBeenCalledTimes(own.length);
     for (let index = 0; index < own.length; index++) {
       const placement = own[index];
+      const paintAnchor = [placement.x + (placement.textOffsetX ?? 0), placement.y + (placement.textOffsetY ?? 0)];
+      expect(ctx.fillText.mock.calls[index].slice(1)).toEqual(paintAnchor);
+      expect(ctx.strokeText.mock.calls[index].slice(1)).toEqual(paintAnchor);
       const identity = schedule.get(placement.id);
       const offset = index * 24;
       const topLeft = planeToOutputUv([placement.x - placement.width / 2,
@@ -198,6 +229,8 @@ test('captured current wall keeps every PID whole, safe, and stable in both mode
       expect(Array.from(descriptor.revealVertices.slice(offset, offset + 4))).toEqual([
         Math.fround(topLeft.u), Math.fround(topLeft.v), Math.fround(identity.delayMs / 1000), identity.index,
       ]);
+      if (mode === 'model') expect(ctx.lineWidth).toBe(1);
+      else expect(ctx.lineWidth).toBe(3);
     }
     const painted = ctx.fillText.mock.calls.length;
     const staticVertices = descriptor.revealVertices;
@@ -243,8 +276,10 @@ test('captured current wall keeps every PID whole, safe, and stable in both mode
       .toEqual(coverage.pieces[side === 'left' ? 'right' : 'left']);
     const field = await buildNamesWallLayout({ ...input, coverage: insetCoverage, namesWall: insetConfig.namesWall,
       geometry: { bounds, projectionConfig: insetConfig }, ring, ringHash });
-    assertComplete(field, 'model');
-    expect(field.fontSize).toBe(5);
+    assertComplete(field, 'model', false);
+    expect(field.fontSize).toBe(6);
+    expect(field.diagnostics).toMatchObject({ modelUsedSpans: side === 'left' ? 181 : 183,
+      modelSafeSpans: 185, placed: records.length, missing: 0, duplicate: 0, overlap: 0, invalidCoverage: 0 });
     for (const placement of field.placements)
       expect(rectCoveredByPieces(placement, insetCoverage.pieces[placement.output])).toBe(true);
   }

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { bridgeMock, registryMock } = vi.hoisted(() => ({
   bridgeMock: {
@@ -42,6 +42,21 @@ import {
   idleNliClock,
   playNliClock,
 } from "../../frontend/src/shared/nli-investigation-clock.js";
+import {
+  LAYER_FADE_MS,
+  getLayerLifecycleRuntime,
+  peekLayerLifecycleRuntime,
+} from "../../frontend/src/shared/layer-lifecycle-fade.js";
+import { scaleOpacityExpression } from "../../frontend/src/shared/layer-opacity-expression.js";
+import { NLI_VISUAL_TOKENS } from "../../frontend/src/shared/nli-investigation-theme.js";
+import {
+  applySettlementOrientationPaint,
+  attachSettlementOrientationRuntime,
+} from "../../frontend/src/shared/nli-settlement-orientation.js";
+import {
+  BIBAS_CAPTIVITY_PIDS,
+  MURDERED_IN_CAPTIVITY_STATUS,
+} from "../../frontend/src/shared/captivity-bleed-marker.js";
 
 function createMapMock() {
   const sources = new Map();
@@ -130,6 +145,83 @@ function createMapMock() {
 
 const enabledGroups = [{ id: "group_a", layers: [{ id: "layer_1", enabled: true }] }];
 
+function applyInstant(map, groups, options) {
+  applyLayerGroupsToMap(map, groups, {
+    ...(options || {}),
+    transition: { ...(options?.transition || {}), transitionMs: 0 },
+  });
+}
+
+function createLifecycleHooks() {
+  let time = 0;
+  let frame = null;
+  let nextFrameId = 0;
+  let nextTimerId = 0;
+  const timers = new Map();
+  return {
+    now: () => time,
+    setTime(value) {
+      time = value;
+    },
+    requestFrame(callback) {
+      nextFrameId += 1;
+      frame = { id: nextFrameId, callback };
+      return nextFrameId;
+    },
+    cancelFrame(id) {
+      if (frame?.id === id) frame = null;
+    },
+    flushFrame() {
+      const current = frame;
+      frame = null;
+      current?.callback(time);
+    },
+    setTimer(callback, delay) {
+      nextTimerId += 1;
+      timers.set(nextTimerId, { callback, at: time + delay });
+      return nextTimerId;
+    },
+    clearTimer(id) {
+      timers.delete(id);
+    },
+    fireDueTimers() {
+      for (const [id, timer] of [...timers]) {
+        if (timer.at <= time) {
+          timers.delete(id);
+          timer.callback();
+        }
+      }
+    },
+    get pendingFrame() {
+      return frame;
+    },
+  };
+}
+
+function groupsFor(fullIds) {
+  const byGroup = new Map();
+  for (const fullId of fullIds) {
+    const dot = fullId.indexOf(".");
+    const groupId = fullId.slice(0, dot);
+    const layerId = fullId.slice(dot + 1);
+    if (!byGroup.has(groupId)) byGroup.set(groupId, []);
+    byGroup.get(groupId).push({ id: layerId, enabled: true });
+  }
+  return [...byGroup].map(([id, layers]) => ({ id, layers }));
+}
+
+function peopleCircleOpacity() {
+  const variants = ["status", "Status", "STATUS"].sort();
+  const statusInput = ["to-string", ["coalesce", ...variants.map((name) => ["get", name]), ""]];
+  const pidVariants = ["pid", "Pid", "PID"].sort();
+  const pidInput = ["to-string", ["coalesce", ...pidVariants.map((name) => ["get", name]), ""]];
+  const statusMatch = ["match", statusInput, MURDERED_IN_CAPTIVITY_STATUS, 0, 1];
+  const expr = ["match", pidInput];
+  for (const pid of BIBAS_CAPTIVITY_PIDS) expr.push(pid, 1);
+  expr.push(statusMatch);
+  return expr;
+}
+
 function withCanvasStub(run) {
   const prevDoc = globalThis.document;
   const ctxStub = {
@@ -201,7 +293,7 @@ describe("maplibre-layer-manager", () => {
     ]);
 
     withCanvasStub(() => {
-      applyLayerGroupsToMap(map, enabledGroups);
+      applyInstant(map, enabledGroups);
       map._images.delete(spec.imageId);
       map.emit("styleimagemissing", { id: spec.imageId });
     });
@@ -242,7 +334,7 @@ describe("maplibre-layer-manager", () => {
     ]);
 
     withCanvasStub(() => {
-      applyLayerGroupsToMap(map, enabledGroups);
+      applyInstant(map, enabledGroups);
       map._images.delete(hatchSpec.patternId);
       map._images.delete(markerSpec.imageId);
       map.emit("styleimagemissing", { id: hatchSpec.patternId });
@@ -273,7 +365,7 @@ describe("maplibre-layer-manager", () => {
     ]);
 
     withCanvasStub(() => {
-      applyLayerGroupsToMap(map, enabledGroups);
+      applyInstant(map, enabledGroups);
       map._images.delete(spec.patternId);
       map.emit("styleimagemissing", { id: spec.patternId });
     });
@@ -287,7 +379,7 @@ describe("maplibre-layer-manager", () => {
   it("does not intercept an unrelated missing sprite", () => {
     const map = createMapMock();
     bridgeMock.irToMapLibreLayers.mockReturnValue([]);
-    applyLayerGroupsToMap(map, enabledGroups);
+    applyInstant(map, enabledGroups);
     map.emit("styleimagemissing", { id: "wood-pattern" });
     expect(map.hasImage("wood-pattern")).toBe(false);
   });
@@ -295,7 +387,7 @@ describe("maplibre-layer-manager", () => {
   it("dispose removes the owned-image listener", () => {
     const map = createMapMock();
     bridgeMock.irToMapLibreLayers.mockReturnValue([]);
-    applyLayerGroupsToMap(map, enabledGroups);
+    applyInstant(map, enabledGroups);
     expect(map.listenerCount("styleimagemissing")).toBe(1);
     disposeLayerManagerForMap(map);
     expect(map.listenerCount("styleimagemissing")).toBe(0);
@@ -313,7 +405,7 @@ describe("maplibre-layer-manager", () => {
       },
     ]);
     withCanvasStub(() => {
-      applyLayerGroupsToMap(map, enabledGroups);
+      applyInstant(map, enabledGroups);
       clearAllLayers(map);
       map.emit("styleimagemissing", { id: spec.imageId });
     });
@@ -331,7 +423,7 @@ describe("maplibre-layer-manager", () => {
         _captivityBleedPattern: spec,
       },
     ]);
-    withCanvasStub(() => applyLayerGroupsToMap(map, enabledGroups));
+    withCanvasStub(() => applyInstant(map, enabledGroups));
 
     const imageMutation = map._mutations.findIndex(
       (mutation) => mutation.type === "image" && mutation.id === spec.imageId,
@@ -350,8 +442,8 @@ describe("maplibre-layer-manager", () => {
       throw new Error("addLayer failed");
     });
 
-    applyLayerGroupsToMap(map, enabledGroups);
-    applyLayerGroupsToMap(map, enabledGroups);
+    applyInstant(map, enabledGroups);
+    applyInstant(map, enabledGroups);
 
     expect(map.addSource).toHaveBeenCalledTimes(2);
     expect(map.removeSource).toHaveBeenCalledTimes(2);
@@ -370,7 +462,7 @@ describe("maplibre-layer-manager", () => {
       map._layers.add(def.id);
     });
 
-    applyLayerGroupsToMap(map, enabledGroups);
+    applyInstant(map, enabledGroups);
 
     expect(map.removeLayer).toHaveBeenCalledWith("group_a.layer_1-fill");
     expect(map.removeSource).toHaveBeenCalledWith("group_a.layer_1");
@@ -382,8 +474,8 @@ describe("maplibre-layer-manager", () => {
     const mapB = createMapMock();
     bridgeMock.irToMapLibreLayers.mockReturnValue([{ id: "group_a.layer_1-fill", type: "fill" }]);
 
-    applyLayerGroupsToMap(mapA, enabledGroups);
-    applyLayerGroupsToMap(mapB, enabledGroups);
+    applyInstant(mapA, enabledGroups);
+    applyInstant(mapB, enabledGroups);
 
     expect(mapA.addSource).toHaveBeenCalledTimes(1);
     expect(mapB.addSource).toHaveBeenCalledTimes(1);
@@ -392,7 +484,7 @@ describe("maplibre-layer-manager", () => {
   it("applies layer when layer.enabled=true even if group.enabled=false", () => {
     const map = createMapMock();
     bridgeMock.irToMapLibreLayers.mockReturnValue([{ id: "greens.agri-fill", type: "fill" }]);
-    applyLayerGroupsToMap(map, [
+    applyInstant(map, [
       { id: "greens", enabled: false, layers: [{ id: "agri", enabled: true }] },
     ]);
     expect(map.addSource).toHaveBeenCalledWith("greens.agri", expect.any(Object));
@@ -403,7 +495,7 @@ describe("maplibre-layer-manager", () => {
     const map = createMapMock();
     bridgeMock.irToMapLibreLayers.mockReturnValue([{ id: "group_a.layer_1-fill", type: "fill" }]);
 
-    applyLayerGroupsToMap(map, enabledGroups);
+    applyInstant(map, enabledGroups);
 
     // Simulate out-of-band style mutation where the layer was removed elsewhere.
     map._layers.clear();
@@ -418,12 +510,12 @@ describe("maplibre-layer-manager", () => {
       { id: "group_a.layer_1-fill", type: "fill", layout: {} },
     ]);
 
-    applyLayerGroupsToMap(map, enabledGroups);
+    applyInstant(map, enabledGroups);
     map.removeLayer.mockClear();
     map.removeSource.mockClear();
     map.setLayoutProperty.mockClear();
 
-    applyLayerGroupsToMap(map, []);
+    applyInstant(map, []);
 
     expect(map.removeLayer).toHaveBeenCalledWith("group_a.layer_1-fill");
     expect(map.removeSource).toHaveBeenCalledWith("group_a.layer_1");
@@ -439,13 +531,13 @@ describe("maplibre-layer-manager", () => {
       { id: layerId, type: "fill", layout: {} },
     ]);
 
-    applyLayerGroupsToMap(map, enabledGroups, { lifecycle });
+    applyInstant(map, enabledGroups, { lifecycle });
     expect(map.addSource).toHaveBeenCalledTimes(1);
 
     map.removeLayer.mockClear();
     map.removeSource.mockClear();
     map.setLayoutProperty.mockClear();
-    applyLayerGroupsToMap(map, [], { lifecycle });
+    applyInstant(map, [], { lifecycle });
 
     expect(map.setLayoutProperty).toHaveBeenCalledWith(layerId, "visibility", "none");
     expect(map.removeLayer).not.toHaveBeenCalled();
@@ -455,7 +547,7 @@ describe("maplibre-layer-manager", () => {
     map.addSource.mockClear();
     map.addLayer.mockClear();
     map.setLayoutProperty.mockClear();
-    applyLayerGroupsToMap(map, enabledGroups, { lifecycle });
+    applyInstant(map, enabledGroups, { lifecycle });
 
     expect(map.addSource).not.toHaveBeenCalled();
     expect(map.addLayer).not.toHaveBeenCalled();
@@ -481,15 +573,15 @@ describe("maplibre-layer-manager", () => {
       suppressedFullIds: ["nli.investigation_polygons", "nli.lines", "nli.alarms"],
       enabledFullIds: ["nli.investigation_polygons", "nli.lines", "nli.alarms", "nli.unrelated"],
     });
-    applyLayerGroupsToMap(map, groups, lifecycle);
+    applyInstant(map, groups, lifecycle);
 
     for (const id of ["nli__investigation_polygons__authored", "nli__lines__authored", "nli__alarms__authored"]) {
       expect(map._layoutByLayerId.get(id)?.visibility).toBe("none");
     }
     expect(map._layoutByLayerId.get("nli__unrelated__authored")?.visibility).toBe("visible");
 
-    applyLayerGroupsToMap(map, [{ id: "nli", layers: [] }], lifecycle);
-    applyLayerGroupsToMap(map, groups, lifecycle);
+    applyInstant(map, [{ id: "nli", layers: [] }], lifecycle);
+    applyInstant(map, groups, lifecycle);
 
     for (const id of ["nli__investigation_polygons__authored", "nli__lines__authored", "nli__alarms__authored"]) {
       expect(map._layoutByLayerId.get(id)?.visibility).toBe("none");
@@ -614,7 +706,7 @@ describe("maplibre-layer-manager", () => {
       { id: layerId, type: "fill", layout: {}, paint: { "fill-opacity": 0.65 } },
     ]);
 
-    applyLayerGroupsToMap(map, enabledGroups, { lifecycle });
+    applyInstant(map, enabledGroups, { lifecycle });
     map._paintByLayerId.set(layerId, { "fill-opacity": 0.65 });
     map.removeLayer.mockClear();
     map.removeSource.mockClear();
@@ -641,8 +733,8 @@ describe("maplibre-layer-manager", () => {
       { id: layerId, type: "fill", layout: {} },
     ]);
 
-    applyLayerGroupsToMap(map, enabledGroups, { lifecycle });
-    applyLayerGroupsToMap(map, [], { lifecycle });
+    applyInstant(map, enabledGroups, { lifecycle });
+    applyInstant(map, [], { lifecycle });
     map._layers.delete(layerId);
     map._layoutByLayerId.delete(layerId);
 
@@ -650,7 +742,7 @@ describe("maplibre-layer-manager", () => {
     map.addLayer.mockClear();
     map.removeSource.mockClear();
     map.setLayoutProperty.mockClear();
-    applyLayerGroupsToMap(map, enabledGroups, { lifecycle });
+    applyInstant(map, enabledGroups, { lifecycle });
 
     expect(map.removeSource).toHaveBeenCalledWith(fullId);
     expect(map.addSource).toHaveBeenCalledWith(fullId, expect.any(Object));
@@ -669,8 +761,8 @@ describe("maplibre-layer-manager", () => {
       { id: lineLayerId, type: "line", layout: {} },
     ]);
 
-    applyLayerGroupsToMap(map, enabledGroups, { lifecycle });
-    applyLayerGroupsToMap(map, [], { lifecycle });
+    applyInstant(map, enabledGroups, { lifecycle });
+    applyInstant(map, [], { lifecycle });
     map._layers.delete(lineLayerId);
     map._layoutByLayerId.delete(lineLayerId);
 
@@ -679,7 +771,7 @@ describe("maplibre-layer-manager", () => {
     map.removeLayer.mockClear();
     map.removeSource.mockClear();
     map.setLayoutProperty.mockClear();
-    applyLayerGroupsToMap(map, enabledGroups, { lifecycle });
+    applyInstant(map, enabledGroups, { lifecycle });
 
     expect(map.removeLayer).toHaveBeenCalledWith(fillLayerId);
     expect(map.removeLayer).not.toHaveBeenCalledWith(lineLayerId);
@@ -732,15 +824,15 @@ describe("maplibre-layer-manager", () => {
     ]);
 
     withCanvasStub(() => {
-      applyLayerGroupsToMap(map, enabledGroups, { lifecycle });
+      applyInstant(map, enabledGroups, { lifecycle });
       map.removeImage.mockClear();
-      applyLayerGroupsToMap(map, [], { lifecycle });
+      applyInstant(map, [], { lifecycle });
 
       expect(map.removeImage).not.toHaveBeenCalled();
       expect(map._images.has(hatchId)).toBe(true);
       expect(map._images.has(markerId)).toBe(true);
 
-      applyLayerGroupsToMap(map, []);
+      applyInstant(map, []);
     });
 
     expect(map.removeImage).toHaveBeenCalledWith(hatchId);
@@ -760,11 +852,11 @@ describe("maplibre-layer-manager", () => {
       { id: `${fullId}-fill`, type: "fill", layout: {} },
     ]);
 
-    applyLayerGroupsToMap(map, twoEnabledGroups, { lifecycle });
+    applyInstant(map, twoEnabledGroups, { lifecycle });
     map.removeLayer.mockClear();
     map.removeSource.mockClear();
 
-    applyLayerGroupsToMap(map, [], { lifecycle });
+    applyInstant(map, [], { lifecycle });
 
     expect(map.setLayoutProperty).toHaveBeenCalledWith(
       "group_a.layer_1-fill",
@@ -797,16 +889,16 @@ describe("maplibre-layer-manager", () => {
       { id: `${fullId}-fill`, type: "fill", layout: {} },
     ]);
 
-    applyLayerGroupsToMap(map, groupA, { lifecycle });
-    applyLayerGroupsToMap(map, [], { lifecycle });
-    applyLayerGroupsToMap(map, groupB, { lifecycle });
+    applyInstant(map, groupA, { lifecycle });
+    applyInstant(map, [], { lifecycle });
+    applyInstant(map, groupB, { lifecycle });
 
     map.addSource.mockClear();
     map.addLayer.mockClear();
     map.removeLayer.mockClear();
     map.removeSource.mockClear();
     map.setLayoutProperty.mockClear();
-    applyLayerGroupsToMap(map, swapToA, { lifecycle });
+    applyInstant(map, swapToA, { lifecycle });
 
     expect(map.addSource).not.toHaveBeenCalledWith("group_a.layer_1", expect.anything());
     expect(map.addLayer).not.toHaveBeenCalledWith(
@@ -843,7 +935,7 @@ describe("maplibre-layer-manager", () => {
       },
     ]);
     withCanvasStub(() => {
-      applyLayerGroupsToMap(map, enabledGroups);
+      applyInstant(map, enabledGroups);
     });
 
     expect(map.hasImage).toHaveBeenCalledWith(patternId);
@@ -879,8 +971,8 @@ describe("maplibre-layer-manager", () => {
     ]);
 
     withCanvasStub(() => {
-      applyLayerGroupsToMap(map, enabledGroups);
-      applyLayerGroupsToMap(map, []);
+      applyInstant(map, enabledGroups);
+      applyInstant(map, []);
     });
 
     expect(map.addImage).toHaveBeenCalledWith(
@@ -912,7 +1004,7 @@ describe("maplibre-layer-manager", () => {
       },
     ]);
     withCanvasStub(() => {
-      applyLayerGroupsToMap(map, enabledGroups);
+      applyInstant(map, enabledGroups);
     });
 
     expect(map.hasImage).toHaveBeenCalledWith(imageId);
@@ -942,7 +1034,7 @@ describe("maplibre-layer-manager", () => {
       },
     ]);
     withCanvasStub(() => {
-      applyLayerGroupsToMap(map, enabledGroups);
+      applyInstant(map, enabledGroups);
     });
     expect(map.addImage).toHaveBeenCalledWith(
       idA,
@@ -977,8 +1069,8 @@ describe("maplibre-layer-manager", () => {
     ]);
 
     withCanvasStub(() => {
-      applyLayerGroupsToMap(map, enabledGroups);
-      applyLayerGroupsToMap(map, []);
+      applyInstant(map, enabledGroups);
+      applyInstant(map, []);
     });
 
     expect(map.addImage).toHaveBeenCalledWith(
@@ -1030,8 +1122,8 @@ describe("maplibre-layer-manager", () => {
     });
 
     withCanvasStub(() => {
-      applyLayerGroupsToMap(map, enabledGroups);
-      applyLayerGroupsToMap(map, enabledGroups);
+      applyInstant(map, enabledGroups);
+      applyInstant(map, enabledGroups);
     });
 
     expect(map.addSource).toHaveBeenCalledTimes(2);
@@ -1046,8 +1138,8 @@ describe("maplibre-layer-manager", () => {
     const imageGroups = [{ id: "projector_base", layers: [{ id: "model_base", enabled: true }] }];
     registryMock.getLayerConfig.mockReturnValue({ format: "image" });
 
-    applyLayerGroupsToMap(map, imageGroups);
-    applyLayerGroupsToMap(map, imageGroups);
+    applyInstant(map, imageGroups);
+    applyInstant(map, imageGroups);
 
     expect(map.addSource).not.toHaveBeenCalled();
     expect(bridgeMock.irToMapLibreLayers).not.toHaveBeenCalled();
@@ -1058,7 +1150,7 @@ describe("maplibre-layer-manager", () => {
     const imageGroups = [{ id: "g", layers: [{ id: "x", enabled: true }] }];
     registryMock.getLayerConfig.mockReturnValue({ format: "geojson", geometryType: "image" });
 
-    applyLayerGroupsToMap(map, imageGroups);
+    applyInstant(map, imageGroups);
 
     expect(map.addSource).not.toHaveBeenCalled();
   });
@@ -1079,7 +1171,7 @@ describe("maplibre-layer-manager", () => {
       });
       registryMock.getLayerPMTilesUrl.mockReturnValue("/processed/layers/greens/agri.pmtiles");
 
-      applyLayerGroupsToMap(map, [
+      applyInstant(map, [
         { id: "greens", layers: [{ id: "agri", enabled: true }] },
       ]);
 
@@ -1170,7 +1262,7 @@ describe("maplibre-layer-manager", () => {
       });
       registryMock.getLayerPMTilesUrl.mockReturnValue("/p/x.pmtiles");
 
-      applyLayerGroupsToMap(map, [{ id: "g", layers: [{ id: "l", enabled: true }] }]);
+      applyInstant(map, [{ id: "g", layers: [{ id: "l", enabled: true }] }]);
 
       expect(map.addSource).toHaveBeenCalledWith(
         "g.l",
@@ -1199,7 +1291,7 @@ describe("maplibre-layer-manager", () => {
 
     map.removeLayer.mockClear();
 
-    applyLayerGroupsToMap(map, [
+    applyInstant(map, [
       { id: "curated_moresht_axis", layers: [{ id: "solidLine", enabled: true }] },
     ]);
 
@@ -1216,7 +1308,7 @@ describe("maplibre-layer-manager", () => {
 
     map.removeLayer.mockClear();
 
-    applyLayerGroupsToMap(map, [
+    applyInstant(map, [
       { id: "curated_moresht_axis", layers: [{ id: "solidLine", enabled: true }] },
     ]);
 
@@ -1346,7 +1438,7 @@ describe("maplibre-layer-manager", () => {
     registerCuratedLayerIds(map, fullId, fullId, [layerId]);
     map.setPaintProperty(layerId, "fill-opacity", 0.7);
 
-    applyLayerGroupsToMap(
+    applyInstant(
       map,
       [{ id: "pack", layers: [{ id: "area", enabled: false }] }],
       { lifecycle: { retainDisabled: true, maxRetainedSources: 2 } },
@@ -1413,5 +1505,948 @@ describe("maplibre-layer-manager", () => {
     expect(map.setPaintProperty).not.toHaveBeenCalled();
     expect(map.removeLayer).toHaveBeenCalledWith(layerId);
     expect(map.removeSource).toHaveBeenCalledWith(fullId);
+  });
+
+  it("fades numeric opacity in from zero, restores transitions, and removes only at zero", () => {
+    const map = createMapMock();
+    const hooks = createLifecycleHooks();
+    getLayerLifecycleRuntime(map, hooks);
+    const fullId = "group_a.layer_1";
+    const layerId = "group_a.layer_1-fill";
+    const transition = { duration: 40, delay: 5 };
+    bridgeMock.irToMapLibreLayers.mockReturnValue([{
+      id: layerId,
+      type: "fill",
+      paint: { "fill-color": "#abc", "fill-opacity": 0.8, "fill-opacity-transition": transition },
+      layout: {},
+    }]);
+
+    applyLayerGroupsToMap(map, groupsFor([fullId]));
+    expect(map.addLayer.mock.calls.at(-1)[0].paint["fill-opacity"]).toBe(0);
+    expect(map.getPaintProperty(layerId, "fill-opacity")).toBe(0);
+    expect(map.getLayer(layerId)).toBeTruthy();
+
+    hooks.setTime(300);
+    hooks.flushFrame();
+    expect(map.getPaintProperty(layerId, "fill-opacity")).toBeCloseTo(0.4);
+    expect(map.getPaintProperty(layerId, "fill-opacity-transition")).toEqual({ duration: 0, delay: 0 });
+
+    hooks.setTime(LAYER_FADE_MS);
+    hooks.flushFrame();
+    expect(map.getPaintProperty(layerId, "fill-opacity")).toBe(0.8);
+    expect(map.getPaintProperty(layerId, "fill-opacity-transition")).toEqual(transition);
+
+    applyLayerGroupsToMap(map, []);
+    hooks.setTime(LAYER_FADE_MS + 300);
+    hooks.flushFrame();
+    expect(map.getLayer(layerId)).toBeTruthy();
+    expect(map.getSource(fullId)).toBeTruthy();
+    expect(map.getPaintProperty(layerId, "fill-opacity")).toBeCloseTo(0.4);
+
+    hooks.setTime(LAYER_FADE_MS * 2 - 1);
+    hooks.flushFrame();
+    expect(map.getLayer(layerId)).toBeTruthy();
+
+    hooks.setTime(LAYER_FADE_MS * 2);
+    hooks.flushFrame();
+    expect(map.getLayer(layerId)).toBeFalsy();
+    expect(map.getSource(fullId)).toBeFalsy();
+  });
+
+  it("fades omitted opacity from the default and restores property absence", () => {
+    const map = createMapMock();
+    const hooks = createLifecycleHooks();
+    getLayerLifecycleRuntime(map, hooks);
+    const layerId = "group_a.layer_1-fill";
+    bridgeMock.irToMapLibreLayers.mockReturnValue([{
+      id: layerId,
+      type: "fill",
+      paint: { "fill-color": "#abc" },
+      layout: {},
+    }]);
+
+    applyLayerGroupsToMap(map, enabledGroups);
+    expect(map.addLayer.mock.calls.at(-1)[0].paint["fill-opacity"]).toBe(0);
+
+    hooks.setTime(300);
+    hooks.flushFrame();
+    expect(map.getPaintProperty(layerId, "fill-opacity")).toBeCloseTo(0.5);
+
+    hooks.setTime(LAYER_FADE_MS);
+    hooks.flushFrame();
+    expect(map.getPaintProperty(layerId, "fill-opacity")).toBeUndefined();
+    expect(map.getPaintProperty(layerId, "fill-opacity-transition")).toBeUndefined();
+  });
+
+  it("fades real people circle, stroke, and captivity expressions together", () => {
+    const map = createMapMock();
+    const hooks = createLifecycleHooks();
+    getLayerLifecycleRuntime(map, hooks);
+    const fullId = "nli.people";
+    const circleId = "nli__people__circle";
+    const iconId = "nli__people__captivity_bleed";
+    const circleOpacity = peopleCircleOpacity();
+    const iconOpacity = ["match", ["get", "status"], MURDERED_IN_CAPTIVITY_STATUS, 1, 0];
+    bridgeMock.irToMapLibreLayers.mockReturnValue([
+      {
+        id: circleId,
+        type: "circle",
+        paint: {
+          "circle-opacity": circleOpacity,
+          "circle-stroke-opacity": circleOpacity,
+          "circle-radius": 6,
+        },
+        layout: {},
+      },
+      {
+        id: iconId,
+        type: "symbol",
+        paint: { "icon-opacity": iconOpacity },
+        layout: { "icon-image": "captivity" },
+      },
+    ]);
+
+    applyLayerGroupsToMap(map, groupsFor([fullId]));
+    expect(map.addLayer.mock.calls.find((call) => call[0].id === circleId)[0].paint["circle-opacity"]).toEqual(
+      scaleOpacityExpression(circleOpacity, 0),
+    );
+    expect(map.addLayer.mock.calls.find((call) => call[0].id === iconId)[0].paint["icon-opacity"]).toEqual(
+      scaleOpacityExpression(iconOpacity, 0),
+    );
+
+    hooks.setTime(300);
+    hooks.flushFrame();
+    expect(map.getPaintProperty(circleId, "circle-opacity")).toEqual(scaleOpacityExpression(circleOpacity, 0.5));
+    expect(map.getPaintProperty(circleId, "circle-stroke-opacity")).toEqual(scaleOpacityExpression(circleOpacity, 0.5));
+    expect(map.getPaintProperty(iconId, "icon-opacity")).toEqual(scaleOpacityExpression(iconOpacity, 0.5));
+
+    hooks.setTime(LAYER_FADE_MS);
+    hooks.flushFrame();
+    expect(map.getPaintProperty(circleId, "circle-opacity")).toEqual(circleOpacity);
+    expect(map.getPaintProperty(iconId, "icon-opacity")).toEqual(iconOpacity);
+  });
+
+  it("keeps an already shown layer at its authored opacity while a new layer fades in", () => {
+    const map = createMapMock();
+    const hooks = createLifecycleHooks();
+    getLayerLifecycleRuntime(map, hooks);
+    const kept = "group_a.layer_1";
+    const added = "group_b.layer_2";
+    const keptLayer = "group_a.layer_1-fill";
+    const addedLayer = "group_b.layer_2-fill";
+    bridgeMock.irToMapLibreLayers.mockImplementation((fullId) => [{
+      id: fullId === kept ? keptLayer : addedLayer,
+      type: "fill",
+      paint: { "fill-opacity": fullId === kept ? 0.8 : 0.2 },
+      layout: {},
+    }]);
+
+    applyLayerGroupsToMap(map, groupsFor([kept]));
+    hooks.setTime(LAYER_FADE_MS);
+    hooks.flushFrame();
+    expect(map.getPaintProperty(keptLayer, "fill-opacity")).toBe(0.8);
+
+    applyLayerGroupsToMap(map, groupsFor([kept, added]));
+    expect(map.getPaintProperty(keptLayer, "fill-opacity")).toBe(0.8);
+    expect(map.getPaintProperty(addedLayer, "fill-opacity")).toBe(0);
+
+    hooks.setTime(LAYER_FADE_MS + 300);
+    hooks.flushFrame();
+    expect(map.getPaintProperty(keptLayer, "fill-opacity")).toBe(0.8);
+    expect(map.getPaintProperty(addedLayer, "fill-opacity")).toBeCloseTo(0.1);
+  });
+
+  it("reverses from the latest enabled set and does not restart an identical exit", () => {
+    const map = createMapMock();
+    const hooks = createLifecycleHooks();
+    getLayerLifecycleRuntime(map, hooks);
+    const fullA = "group_a.layer_1";
+    const fullB = "group_b.layer_2";
+    const layerA = "group_a.layer_1-fill";
+    const layerB = "group_b.layer_2-fill";
+    bridgeMock.irToMapLibreLayers.mockImplementation((fullId) => [{
+      id: fullId === fullA ? layerA : layerB,
+      type: "fill",
+      paint: { "fill-opacity": 1 },
+      layout: {},
+    }]);
+
+    applyLayerGroupsToMap(map, groupsFor([fullA]));
+    hooks.setTime(100);
+    applyLayerGroupsToMap(map, groupsFor([fullB]));
+    hooks.setTime(100 + LAYER_FADE_MS);
+    hooks.flushFrame();
+    expect(map.getLayer(layerA)).toBeFalsy();
+    expect(map.getPaintProperty(layerB, "fill-opacity")).toBe(1);
+
+    applyLayerGroupsToMap(map, []);
+    hooks.setTime(100 + LAYER_FADE_MS + 300);
+    hooks.flushFrame();
+    expect(map.getPaintProperty(layerB, "fill-opacity")).toBeCloseTo(0.5);
+
+    applyLayerGroupsToMap(map, groupsFor([fullB]));
+    hooks.setTime(100 + (LAYER_FADE_MS * 2) + 300);
+    hooks.flushFrame();
+    expect(map.getLayer(layerB)).toBeTruthy();
+    expect(map.getPaintProperty(layerB, "fill-opacity")).toBe(1);
+
+    const exitStart = 100 + (LAYER_FADE_MS * 2) + 300;
+    applyLayerGroupsToMap(map, []);
+    hooks.setTime(exitStart + 200);
+    applyLayerGroupsToMap(map, []);
+    hooks.setTime(exitStart + LAYER_FADE_MS);
+    hooks.flushFrame();
+    expect(map.getLayer(layerB)).toBeFalsy();
+  });
+
+  it("rolls back a failed fade add and releases hatch images only when the fade reaches zero", () => {
+    const map = createMapMock();
+    const hooks = createLifecycleHooks();
+    getLayerLifecycleRuntime(map, hooks);
+    const patternId = "hatch_fade_owner";
+    bridgeMock.irToMapLibreLayers.mockReturnValue([
+      {
+        id: "group_a.layer_1-fill",
+        type: "fill",
+        paint: { "fill-opacity": 1, "fill-pattern": patternId },
+        layout: {},
+        _hatchPattern: { patternId, color: "#f00", rotation: 0, separation: 8, width: 1 },
+      },
+      { id: "group_a.layer_1-line", type: "line", paint: { "line-opacity": 1 }, layout: {} },
+    ]);
+    map.addLayer.mockImplementation((def) => {
+      if (def.id.endsWith("-line")) throw new Error("addLayer failed");
+      map._layers.add(def.id);
+      map._paintByLayerId.set(def.id, { ...(def.paint || {}) });
+    });
+
+    withCanvasStub(() => {
+      applyLayerGroupsToMap(map, enabledGroups);
+      expect(map.getSource("group_a.layer_1")).toBeFalsy();
+      expect(map.hasImage(patternId)).toBe(false);
+      hooks.setTime(LAYER_FADE_MS);
+      hooks.flushFrame();
+      expect(map.getLayer("group_a.layer_1-fill")).toBeFalsy();
+    });
+  });
+
+  it("raises an unchanged layer when a fading layer is added above it", () => {
+    const map = createMapMock();
+    const hooks = createLifecycleHooks();
+    getLayerLifecycleRuntime(map, hooks);
+    map.moveLayer = vi.fn();
+    const kept = "group_a.layer_1";
+    const added = "group_b.layer_2";
+    bridgeMock.irToMapLibreLayers.mockImplementation((fullId) => [{
+      id: `${fullId}-fill`,
+      type: "fill",
+      paint: { "fill-opacity": 1 },
+      layout: {},
+    }]);
+
+    applyLayerGroupsToMap(map, groupsFor([kept]));
+    hooks.setTime(LAYER_FADE_MS);
+    hooks.flushFrame();
+    map.moveLayer.mockClear();
+
+    applyLayerGroupsToMap(map, groupsFor([kept, added]));
+    expect(map.moveLayer).toHaveBeenCalledWith(`${kept}-fill`);
+    expect(map.getLayer(`${added}-fill`)).toBeTruthy();
+    expect(map.getPaintProperty(`${kept}-fill`, "fill-opacity")).toBe(1);
+    expect(map.getPaintProperty(`${added}-fill`, "fill-opacity")).toBe(0);
+  });
+
+  it("does not override timeline visibility none while opacity fades", () => {
+    const map = createMapMock();
+    const hooks = createLifecycleHooks();
+    getLayerLifecycleRuntime(map, hooks);
+    const fullId = INVESTIGATION_LINES_FULL_ID;
+    const layerId = "nli__lines__authored";
+    bridgeMock.irToMapLibreLayers.mockReturnValue([{
+      id: layerId,
+      type: "line",
+      paint: { "line-opacity": 1 },
+      layout: { visibility: "visible" },
+    }]);
+    syncTimelineBaseLayerVisibility(map, {
+      suppressedFullIds: [fullId],
+      enabledFullIds: [fullId],
+    });
+
+    applyLayerGroupsToMap(map, groupsFor([fullId]));
+    hooks.setTime(300);
+    hooks.flushFrame();
+    expect(map.getLayoutProperty(layerId, "visibility")).toBe("none");
+    expect(map.getPaintProperty(layerId, "line-opacity")).toBeCloseTo(0.5);
+
+    hooks.setTime(LAYER_FADE_MS);
+    hooks.flushFrame();
+    expect(map.getLayoutProperty(layerId, "visibility")).toBe("none");
+    expect(map.getPaintProperty(layerId, "line-opacity")).toBe(1);
+  });
+
+  it("skips curated-owned resources during live sync", () => {
+    const map = createMapMock();
+    for (const fullId of ["curated.4", "curated.42"]) {
+      const layerId = `${fullId}__line__0`;
+      map._layers.add(layerId);
+      registerCuratedLayerIds(map, fullId, fullId, [layerId]);
+    }
+    map.removeLayer.mockClear();
+    map.removeSource.mockClear();
+
+    applyLayerGroupsToMap(map, []);
+
+    expect(map.removeLayer).not.toHaveBeenCalled();
+    expect(map.removeSource).not.toHaveBeenCalled();
+    expect(map.getLayer("curated.4__line__0")).toBeTruthy();
+    expect(map.getLayer("curated.42__line__0")).toBeTruthy();
+  });
+
+  it("joins an already opened batch and waits for the caller to commit", () => {
+    const map = createMapMock();
+    const hooks = createLifecycleHooks();
+    const runtime = getLayerLifecycleRuntime(map, hooks);
+    const layerId = "group_a.layer_1-fill";
+    bridgeMock.irToMapLibreLayers.mockReturnValue([{
+      id: layerId,
+      type: "fill",
+      paint: { "fill-opacity": 0.8 },
+      layout: {},
+    }]);
+    runtime.setDesiredIds(["group_a.layer_1"], { durationMs: LAYER_FADE_MS });
+    const batch = runtime.getPendingBatch();
+
+    applyLayerGroupsToMap(map, enabledGroups, { lifecycle: { joinBatch: true } });
+
+    expect(runtime.getPendingBatch()).toBe(batch);
+    expect(map.getPaintProperty(layerId, "fill-opacity")).toBe(0);
+    expect(hooks.pendingFrame).toBeNull();
+
+    runtime.commitBatch();
+    hooks.setTime(300);
+    hooks.flushFrame();
+    expect(map.getPaintProperty(layerId, "fill-opacity")).toBeCloseTo(0.4);
+  });
+
+  it("records a joined enabled set so handoff restores mounted targets", () => {
+    const map = createMapMock();
+    const hooks = createLifecycleHooks();
+    const runtime = getLayerLifecycleRuntime(map, hooks);
+    const layerId = "group_a.layer_1-fill";
+    bridgeMock.irToMapLibreLayers.mockReturnValue([{
+      id: layerId,
+      type: "fill",
+      paint: { "fill-opacity": 0.8 },
+      layout: {},
+    }]);
+    runtime.setDesiredIds(["group_a.layer_1"], { durationMs: LAYER_FADE_MS });
+
+    applyLayerGroupsToMap(map, enabledGroups, { lifecycle: { joinBatch: true } });
+    expect(map.getPaintProperty(layerId, "fill-opacity")).toBe(0);
+
+    beginSlideshowStage(map, enabledGroups, { transition: { transitionMs: 80 } });
+    expect(map.getLayer(layerId)).toBeTruthy();
+    expect(map.getPaintProperty(layerId, "fill-opacity")).toBe(0.8);
+  });
+
+  it("adopts already-mounted layers into a joined batch without sealing it", () => {
+    const map = createMapMock();
+    const hooks = createLifecycleHooks();
+    const runtime = getLayerLifecycleRuntime(map, hooks);
+    const kept = "group_a.layer_1";
+    const outgoing = "group_b.layer_2";
+    const incoming = "group_c.layer_3";
+    const keptLayer = `${kept}-fill`;
+    const outgoingLayer = `${outgoing}-fill`;
+    const incomingLayer = `${incoming}-fill`;
+    bridgeMock.irToMapLibreLayers.mockImplementation((fullId) => [{
+      id: `${fullId}-fill`,
+      type: "fill",
+      paint: { "fill-opacity": fullId === outgoing ? 0.4 : 0.8 },
+      layout: {},
+    }]);
+
+    applyLayerGroupsToMap(map, groupsFor([kept, outgoing]), {
+      lifecycle: { retainDisabled: true },
+    });
+    expect(map.getPaintProperty(keptLayer, "fill-opacity")).toBe(0.8);
+    expect(map.getPaintProperty(outgoingLayer, "fill-opacity")).toBe(0.4);
+
+    runtime.setDesiredIds([kept, incoming], { durationMs: LAYER_FADE_MS });
+    const batch = runtime.getPendingBatch();
+    applyLayerGroupsToMap(map, groupsFor([kept, incoming]), { lifecycle: { joinBatch: true } });
+
+    expect(runtime.getPendingBatch()).toBe(batch);
+    expect(batch.sealed).toBe(false);
+    expect(hooks.pendingFrame).toBeNull();
+    expect(batch.membership).toContain(kept);
+    expect(map.getLayer(outgoingLayer)).toBeTruthy();
+    expect(map.getPaintProperty(outgoingLayer, "fill-opacity")).toBe(0.4);
+    expect(map.getPaintProperty(keptLayer, "fill-opacity")).toBe(0.8);
+    expect(map.getPaintProperty(incomingLayer, "fill-opacity")).toBe(0);
+
+    runtime.commitBatch();
+    hooks.setTime(300);
+    hooks.flushFrame();
+    expect(map.getLayer(outgoingLayer)).toBeTruthy();
+    expect(map.getPaintProperty(outgoingLayer, "fill-opacity")).toBeCloseTo(0.2);
+    expect(map.getPaintProperty(keptLayer, "fill-opacity")).toBe(0.8);
+    expect(map.getPaintProperty(incomingLayer, "fill-opacity")).toBeCloseTo(0.4);
+  });
+
+  it("waits for source readiness before starting the fade", () => {
+    const map = createMapMock();
+    const hooks = createLifecycleHooks();
+    getLayerLifecycleRuntime(map, hooks);
+    const fullId = "group_a.layer_1";
+    const layerId = "group_a.layer_1-fill";
+    map.isSourceLoaded = vi.fn(() => false);
+    bridgeMock.irToMapLibreLayers.mockReturnValue([{
+      id: layerId,
+      type: "fill",
+      paint: { "fill-opacity": 0.8 },
+      layout: {},
+    }]);
+
+    applyLayerGroupsToMap(map, groupsFor([fullId]));
+    expect(map.getPaintProperty(layerId, "fill-opacity")).toBe(0);
+    expect(hooks.pendingFrame).toBeNull();
+
+    map.isSourceLoaded.mockReturnValue(true);
+    map.emit("sourcedata", { sourceId: fullId, isSourceLoaded: true });
+    expect(map.getPaintProperty(layerId, "fill-opacity")).toBe(0);
+    hooks.setTime(300);
+    hooks.flushFrame();
+    expect(map.getPaintProperty(layerId, "fill-opacity")).toBeCloseTo(0.4);
+  });
+
+  it("hands a live fade to slideshow before native paint and leaves staged zeros", async () => {
+    vi.useFakeTimers();
+    const map = createMapMock();
+    const hooks = createLifecycleHooks();
+    getLayerLifecycleRuntime(map, hooks);
+    const liveId = "group_a.layer_1";
+    const liveLayer = "group_a.layer_1-fill";
+    const nextId = "group_b.layer_2";
+    const nextLayer = "group_b.layer_2-fill";
+    bridgeMock.irToMapLibreLayers.mockImplementation((fullId) => [{
+      id: fullId === liveId ? liveLayer : nextLayer,
+      type: "fill",
+      paint: { "fill-opacity": fullId === liveId ? 0.8 : 0.7 },
+      layout: {},
+    }]);
+
+    applyLayerGroupsToMap(map, groupsFor([liveId]));
+    hooks.setTime(300);
+    hooks.flushFrame();
+    expect(map.getPaintProperty(liveLayer, "fill-opacity")).toBeCloseTo(0.4);
+
+    map.setPaintProperty.mockClear();
+    const fadePromise = fadeOutAndRemoveEnabledFullIds(map, [liveId], 80);
+    const opacityWrites = map.setPaintProperty.mock.calls.filter((call) => call[1] === "fill-opacity");
+    const restoredAt = opacityWrites.findIndex((call) => call[2] === 0.8);
+    const zeroAt = opacityWrites.findIndex((call) => call[2] === 0);
+    expect(restoredAt).toBeGreaterThanOrEqual(0);
+    expect(zeroAt).toBeGreaterThan(restoredAt);
+
+    hooks.setTime(400);
+    hooks.flushFrame();
+    expect(map.getPaintProperty(liveLayer, "fill-opacity")).toBe(0);
+
+    await vi.advanceTimersByTimeAsync(80);
+    await fadePromise;
+
+    const staged = beginSlideshowStage(map, groupsFor([nextId]), {
+      lifecycle: { retainDisabled: true, maxRetainedSources: 2 },
+      transition: { transitionMs: 80 },
+    });
+    expect(map.getPaintProperty(nextLayer, "fill-opacity")).toBe(0);
+    applyLayerGroupsToMap(map, groupsFor([nextId]), {
+      lifecycle: { retainDisabled: true, maxRetainedSources: 2 },
+    });
+    expect(map.getPaintProperty(nextLayer, "fill-opacity")).toBe(0);
+    expect(staged.targetOpacityByLayerId[nextLayer]).toEqual({ "fill-opacity": 0.7 });
+
+    commitSlideshowReveal(map, staged, 80);
+    expect(map.getPaintProperty(nextLayer, "fill-opacity")).toBe(0.7);
+
+    applyLayerGroupsToMap(map, groupsFor([liveId]));
+    expect(map.addLayer.mock.calls.filter((call) => call[0]?.id === liveLayer).at(-1)[0].paint["fill-opacity"]).toBe(0);
+    hooks.setTime(hooks.now() + 300);
+    hooks.flushFrame();
+    expect(map.getPaintProperty(liveLayer, "fill-opacity")).toBeCloseTo(0.4);
+    vi.useRealTimers();
+  });
+
+  it("cancels live work for a direct stage and a duration-0 apply", () => {
+    const map = createMapMock();
+    const hooks = createLifecycleHooks();
+    getLayerLifecycleRuntime(map, hooks);
+    const liveId = "group_a.layer_1";
+    const liveLayer = "group_a.layer_1-fill";
+    const nextLayer = "group_b.layer_2-fill";
+    bridgeMock.irToMapLibreLayers.mockImplementation((fullId) => [{
+      id: fullId === liveId ? liveLayer : nextLayer,
+      type: "fill",
+      paint: { "fill-opacity": fullId === liveId ? 0.8 : 0.7 },
+      layout: {},
+    }]);
+
+    applyLayerGroupsToMap(map, groupsFor([liveId]));
+    hooks.setTime(300);
+    hooks.flushFrame();
+    expect(hooks.pendingFrame).toBeTruthy();
+
+    const staged = beginSlideshowStage(map, groupsFor(["group_b.layer_2"]), {
+      transition: { transitionMs: 80 },
+    });
+    expect(map.getPaintProperty(nextLayer, "fill-opacity")).toBe(0);
+    hooks.setTime(900);
+    hooks.flushFrame();
+    expect(map.getPaintProperty(nextLayer, "fill-opacity")).toBe(0);
+    expect(staged.targetOpacityByLayerId[nextLayer]).toEqual({ "fill-opacity": 0.7 });
+
+    const instantMap = createMapMock();
+    const instantHooks = createLifecycleHooks();
+    getLayerLifecycleRuntime(instantMap, instantHooks);
+    bridgeMock.irToMapLibreLayers.mockReturnValue([{
+      id: liveLayer,
+      type: "fill",
+      paint: { "fill-opacity": 0.8 },
+      layout: {},
+    }]);
+    applyLayerGroupsToMap(instantMap, groupsFor([liveId]));
+    instantHooks.setTime(300);
+    instantHooks.flushFrame();
+    applyLayerGroupsToMap(instantMap, [], { transition: { transitionMs: 0 } });
+    expect(instantMap.getLayer(liveLayer)).toBeFalsy();
+    instantMap._layers.add(liveLayer);
+    instantMap.setPaintProperty(liveLayer, "fill-opacity", 0.33);
+    instantHooks.setTime(900);
+    instantHooks.flushFrame();
+    expect(instantMap.getPaintProperty(liveLayer, "fill-opacity")).toBe(0.33);
+  });
+
+  it("cancels clear, dispose, and style reset without painting reconstructed layers", () => {
+    for (const stop of [clearAllLayers, disposeLayerManagerForMap]) {
+      const map = createMapMock();
+      const hooks = createLifecycleHooks();
+      getLayerLifecycleRuntime(map, hooks);
+      const layerId = "group_a.layer_1-fill";
+      bridgeMock.irToMapLibreLayers.mockReturnValue([{
+        id: layerId,
+        type: "fill",
+        paint: { "fill-opacity": 0.8 },
+        layout: {},
+      }]);
+      applyLayerGroupsToMap(map, enabledGroups);
+      hooks.setTime(300);
+      hooks.flushFrame();
+      expect(map.getPaintProperty(layerId, "fill-opacity")).toBeCloseTo(0.4);
+
+      stop(map);
+      map._layers.add(layerId);
+      map.setPaintProperty(layerId, "fill-opacity", 0.91);
+      hooks.setTime(LAYER_FADE_MS);
+      hooks.flushFrame();
+      hooks.fireDueTimers();
+      expect(map.getPaintProperty(layerId, "fill-opacity")).toBe(0.91);
+    }
+  });
+
+  it("keeps a hatch image until the faded layer reaches zero", () => {
+    const map = createMapMock();
+    const hooks = createLifecycleHooks();
+    getLayerLifecycleRuntime(map, hooks);
+    const patternId = "hatch_until_zero";
+    const layerId = "group_a.layer_1-fill";
+    bridgeMock.irToMapLibreLayers.mockReturnValue([{
+      id: layerId,
+      type: "fill",
+      paint: { "fill-opacity": 1, "fill-pattern": patternId },
+      layout: {},
+      _hatchPattern: { patternId, color: "#0f0", rotation: 0, separation: 8, width: 1 },
+    }]);
+
+    withCanvasStub(() => {
+      applyLayerGroupsToMap(map, enabledGroups);
+      hooks.setTime(300);
+      hooks.flushFrame();
+      expect(map.hasImage(patternId)).toBe(true);
+      expect(map.getSource("group_a.layer_1")).toBeTruthy();
+
+      applyLayerGroupsToMap(map, []);
+      hooks.setTime(300 + LAYER_FADE_MS - 1);
+      hooks.flushFrame();
+      expect(map.hasImage(patternId)).toBe(true);
+
+      hooks.setTime(300 + LAYER_FADE_MS);
+      hooks.flushFrame();
+      expect(map.hasImage(patternId)).toBe(false);
+      expect(map.getSource("group_a.layer_1")).toBeFalsy();
+    });
+  });
+});
+
+const YISHUV_ID = "projector_base.ישובים";
+const YISHUV_LAYER = "projector_base__ישובים-fill";
+const DIM_OPACITY = NLI_VISUAL_TOKENS.dimOpacity;
+const GLOW_MS = NLI_VISUAL_TOKENS.highlightOpacityTransitionMs;
+
+function useSettlementFill(opacity = 1) {
+  bridgeMock.irToMapLibreLayers.mockImplementation((fullId) => [{
+    id: fullId === YISHUV_ID ? YISHUV_LAYER : `${fullId}-fill`,
+    type: "fill",
+    paint: { "fill-opacity": fullId === YISHUV_ID ? opacity : 1 },
+    layout: {},
+  }]);
+}
+
+function preferReducedMotion() {
+  vi.stubGlobal("window", {
+    matchMedia: (query) => ({ matches: query === "(prefers-reduced-motion: reduce)" }),
+  });
+}
+
+function ownedSettlement(map) {
+  return peekLayerLifecycleRuntime(map)?.hasPaintChannel?.(YISHUV_ID, "fill-opacity") === true;
+}
+
+describe("ordinary live settlement ownership", () => {
+  beforeEach(() => {
+    bridgeMock.irToMapLibreLayers.mockReset();
+    registryMock.getLayerConfig.mockReset();
+    registryMock.getLayerDataUrl.mockReset();
+    registryMock.getLayerPMTilesUrl.mockReset();
+    registryMock.getLayerConfig.mockReturnValue({ format: "geojson" });
+    registryMock.getLayerDataUrl.mockReturnValue("/data/layer.geojson");
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it.each([
+    ["reduced motion", () => preferReducedMotion(), undefined],
+    ["explicit transitionMs 0", () => {}, { transition: { transitionMs: 0 } }],
+  ])("mounts a fresh %s settlement in cached policy without waiting for the source", (_label, arrangeMotion, options) => {
+    arrangeMotion();
+    const map = createMapMock();
+    const hooks = createLifecycleHooks();
+    getLayerLifecycleRuntime(map, hooks);
+    map.isSourceLoaded = vi.fn(() => false);
+    useSettlementFill(1);
+    attachSettlementOrientationRuntime(map);
+    applySettlementOrientationPaint(map, { phase: "playing" });
+
+    applyLayerGroupsToMap(map, groupsFor([YISHUV_ID]), options);
+
+    expect(map.isSourceLoaded).not.toHaveBeenCalled();
+    expect(map.addLayer.mock.calls.at(-1)[0].paint["fill-opacity"]).not.toBe(1);
+    expect(map.getPaintProperty(YISHUV_LAYER, "fill-opacity")).toBe(DIM_OPACITY);
+    expect(ownedSettlement(map)).toBe(true);
+    expect(hooks.pendingFrame).toBeNull();
+  });
+
+  it("keeps a later full-motion policy on the 400ms clock after an explicit zero mount", () => {
+    const map = createMapMock();
+    const hooks = createLifecycleHooks();
+    getLayerLifecycleRuntime(map, hooks);
+    map.isSourceLoaded = vi.fn(() => false);
+    useSettlementFill(1);
+    attachSettlementOrientationRuntime(map);
+    applySettlementOrientationPaint(map, { phase: "playing" });
+    applyLayerGroupsToMap(map, groupsFor([YISHUV_ID]), { transition: { transitionMs: 0 } });
+    expect(map.getPaintProperty(YISHUV_LAYER, "fill-opacity")).toBe(DIM_OPACITY);
+
+    hooks.setTime(0);
+    applySettlementOrientationPaint(map, { phase: "idle" });
+    expect(map.getPaintProperty(YISHUV_LAYER, "fill-opacity")).toBe(DIM_OPACITY);
+    expect(hooks.pendingFrame).not.toBeNull();
+    hooks.setTime(GLOW_MS / 2);
+    hooks.flushFrame();
+    expect(map.getPaintProperty(YISHUV_LAYER, "fill-opacity")).toBeCloseTo(0.54);
+    hooks.setTime(GLOW_MS);
+    hooks.flushFrame();
+    expect(map.getPaintProperty(YISHUV_LAYER, "fill-opacity")).toBe(1);
+    expect(hooks.pendingFrame).toBeNull();
+  });
+
+  it("adopts an already mounted unbound settlement without changing its paint", () => {
+    const map = createMapMock();
+    const hooks = createLifecycleHooks();
+    getLayerLifecycleRuntime(map, hooks);
+    useSettlementFill(0.42);
+    applyLayerGroupsToMap(map, groupsFor([YISHUV_ID]), {
+      lifecycle: { retainDisabled: true },
+    });
+    expect(map.getPaintProperty(YISHUV_LAYER, "fill-opacity")).toBe(0.42);
+    expect(ownedSettlement(map)).toBe(false);
+
+    applyLayerGroupsToMap(map, groupsFor([YISHUV_ID]), { transition: { transitionMs: 0 } });
+
+    expect(map.getPaintProperty(YISHUV_LAYER, "fill-opacity")).toBe(0.42);
+    expect(ownedSettlement(map)).toBe(true);
+    expect(hooks.pendingFrame).toBeNull();
+  });
+
+  it("settles factor and effective on a same-set instant apply", () => {
+    const map = createMapMock();
+    const hooks = createLifecycleHooks();
+    getLayerLifecycleRuntime(map, hooks);
+    useSettlementFill(1);
+    attachSettlementOrientationRuntime(map);
+    applyLayerGroupsToMap(map, groupsFor([YISHUV_ID]));
+    hooks.setTime(300);
+    hooks.flushFrame();
+    applySettlementOrientationPaint(map, { phase: "playing" });
+    hooks.setTime(400);
+    hooks.flushFrame();
+    const factor = 400 / LAYER_FADE_MS;
+    expect(map.getPaintProperty(YISHUV_LAYER, "fill-opacity")).toBeCloseTo(
+      scaleOpacityExpression(1 + (DIM_OPACITY - 1) * (100 / GLOW_MS), factor),
+    );
+
+    applyLayerGroupsToMap(map, groupsFor([YISHUV_ID]), { transition: { transitionMs: 0 } });
+
+    expect(map.getPaintProperty(YISHUV_LAYER, "fill-opacity")).toBe(DIM_OPACITY);
+    expect(hooks.pendingFrame).toBeNull();
+
+    hooks.setTime(LAYER_FADE_MS);
+    applySettlementOrientationPaint(map, { phase: "idle" });
+    expect(hooks.pendingFrame).not.toBeNull();
+    hooks.setTime(LAYER_FADE_MS + GLOW_MS / 2);
+    hooks.flushFrame();
+    expect(map.getPaintProperty(YISHUV_LAYER, "fill-opacity")).toBeCloseTo(0.54);
+    hooks.setTime(LAYER_FADE_MS + GLOW_MS);
+    hooks.flushFrame();
+    expect(map.getPaintProperty(YISHUV_LAYER, "fill-opacity")).toBe(1);
+  });
+
+  it("commits an in-progress fade immediately when reduced motion is preferred", () => {
+    const map = createMapMock();
+    const hooks = createLifecycleHooks();
+    getLayerLifecycleRuntime(map, hooks);
+    useSettlementFill(1);
+    attachSettlementOrientationRuntime(map);
+    applyLayerGroupsToMap(map, groupsFor([YISHUV_ID]));
+    hooks.setTime(300);
+    hooks.flushFrame();
+    expect(map.getPaintProperty(YISHUV_LAYER, "fill-opacity")).toBeCloseTo(0.5);
+
+    preferReducedMotion();
+    applyLayerGroupsToMap(map, groupsFor([YISHUV_ID]));
+
+    expect(map.getPaintProperty(YISHUV_LAYER, "fill-opacity")).toBe(1);
+    expect(hooks.pendingFrame).toBeNull();
+  });
+
+  it("adopts an unbound mounted fill into a cached playing dim", () => {
+    const map = createMapMock();
+    const hooks = createLifecycleHooks();
+    getLayerLifecycleRuntime(map, hooks);
+    useSettlementFill(1);
+    applyLayerGroupsToMap(map, groupsFor([YISHUV_ID]), {
+      lifecycle: { retainDisabled: true },
+    });
+    expect(map.getPaintProperty(YISHUV_LAYER, "fill-opacity")).toBe(1);
+    expect(ownedSettlement(map)).toBe(false);
+
+    attachSettlementOrientationRuntime(map);
+    applySettlementOrientationPaint(map, { phase: "playing", layers: [] });
+    expect(map.getPaintProperty(YISHUV_LAYER, "fill-opacity")).toBe(1);
+
+    applyLayerGroupsToMap(map, groupsFor([YISHUV_ID]), { transition: { transitionMs: 0 } });
+
+    expect(map.getPaintProperty(YISHUV_LAYER, "fill-opacity")).toBe(DIM_OPACITY);
+    expect(ownedSettlement(map)).toBe(true);
+    expect(hooks.pendingFrame).toBeNull();
+  });
+
+  it("does not take slideshow ownership or replay policy over staged zeros", async () => {
+    vi.useFakeTimers();
+    const map = createMapMock();
+    const hooks = createLifecycleHooks();
+    getLayerLifecycleRuntime(map, hooks);
+    useSettlementFill(1);
+    attachSettlementOrientationRuntime(map);
+    applyLayerGroupsToMap(map, groupsFor([YISHUV_ID]));
+    hooks.setTime(LAYER_FADE_MS);
+    hooks.flushFrame();
+    hooks.setTime(LAYER_FADE_MS);
+    applySettlementOrientationPaint(map, { phase: "playing" });
+    hooks.setTime(LAYER_FADE_MS + 100);
+    hooks.flushFrame();
+    expect(map.getPaintProperty(YISHUV_LAYER, "fill-opacity")).not.toBe(DIM_OPACITY);
+
+    const fadePromise = fadeOutAndRemoveEnabledFullIds(map, [YISHUV_ID], 80, {
+      lifecycle: { retainDisabled: true },
+    });
+    expect(hooks.pendingFrame).toBeNull();
+    hooks.setTime(LAYER_FADE_MS + GLOW_MS);
+    hooks.flushFrame();
+    expect(map.getPaintProperty(YISHUV_LAYER, "fill-opacity")).toBe(0);
+
+    await vi.advanceTimersByTimeAsync(80);
+    await fadePromise;
+
+    const staged = beginSlideshowStage(map, groupsFor([YISHUV_ID]), {
+      lifecycle: { retainDisabled: true },
+      transition: { stageHidden: true, transitionMs: 80 },
+    });
+    expect(map.getPaintProperty(YISHUV_LAYER, "fill-opacity")).toBe(0);
+    applyLayerGroupsToMap(map, groupsFor([YISHUV_ID]), {
+      lifecycle: { retainDisabled: true },
+    });
+    expect(map.getPaintProperty(YISHUV_LAYER, "fill-opacity")).toBe(0);
+    expect(ownedSettlement(map)).toBe(false);
+    hooks.setTime(hooks.now() + GLOW_MS);
+    hooks.flushFrame();
+    expect(map.getPaintProperty(YISHUV_LAYER, "fill-opacity")).toBe(0);
+
+    commitSlideshowReveal(map, staged, 0);
+    expect(map.getPaintProperty(YISHUV_LAYER, "fill-opacity")).toBe(staged.targetOpacityByLayerId[YISHUV_LAYER]["fill-opacity"]);
+    expect(map.getPaintProperty(YISHUV_LAYER, "fill-opacity")).not.toBe(0);
+    vi.useRealTimers();
+  });
+
+  it("does not tear down a curated or extra desired member on an instant registry apply", () => {
+    const map = createMapMock();
+    const hooks = createLifecycleHooks();
+    const runtime = getLayerLifecycleRuntime(map, hooks);
+    const kept = "group_a.layer_1";
+    const outgoing = "group_b.layer_2";
+    const curatedId = "curated.4";
+    const curatedLayer = `${curatedId}__line__0`;
+    const extraId = "proj.wmts_base";
+    const extraLayer = `wmts__${extraId}__raster`;
+    map._layers.add(curatedLayer);
+    map._layers.add(extraLayer);
+    registerCuratedLayerIds(map, curatedId, curatedId, [curatedLayer]);
+    bridgeMock.irToMapLibreLayers.mockImplementation((fullId) => [{
+      id: `${fullId}-fill`,
+      type: "fill",
+      paint: { "fill-opacity": 1 },
+      layout: {},
+    }]);
+
+    runtime.setDesiredIds([kept, outgoing, curatedId, extraId], { durationMs: LAYER_FADE_MS });
+    runtime.stageMapLayer(curatedId, {
+      id: `${curatedId}__lifecycle`,
+      type: "fill",
+      paint: { "fill-opacity": 1 },
+    }, {
+      onTeardown: () => removeCuratedLayersByPrefix(map, curatedId),
+    });
+    runtime.stageMapLayer(extraId, {
+      id: extraLayer,
+      type: "raster",
+      paint: { "raster-opacity": 1 },
+    }, {
+      onTeardown: () => {
+        if (map.getLayer(extraLayer)) map.removeLayer(extraLayer);
+      },
+    });
+    runtime.markMemberReady(curatedId);
+    runtime.markMemberReady(extraId);
+    applyLayerGroupsToMap(map, groupsFor([kept, outgoing, curatedId]), {
+      lifecycle: { joinBatch: true },
+    });
+    runtime.commitBatch();
+    hooks.setTime(LAYER_FADE_MS);
+    hooks.flushFrame();
+    expect(map.getLayer(curatedLayer)).toBeTruthy();
+    expect(map.getLayer(extraLayer)).toBeTruthy();
+    expect(runtime.getDesiredIds()).toEqual(expect.arrayContaining([curatedId, extraId]));
+
+    applyLayerGroupsToMap(map, groupsFor([kept, curatedId]), { transition: { transitionMs: 0 } });
+
+    expect(runtime.getDesiredIds().slice().sort()).toEqual([curatedId, extraId, kept].sort());
+    expect(map.getLayer(curatedLayer)).toBeTruthy();
+    expect(map.getLayer(extraLayer)).toBeTruthy();
+    expect(map.getLayer(`${outgoing}-fill`)).toBeFalsy();
+  });
+
+  it("snaps leaving people and playables to hidden while a settlement fade stays in flight", () => {
+    const map = createMapMock();
+    const hooks = createLifecycleHooks();
+    getLayerLifecycleRuntime(map, hooks);
+    const peopleId = "nli.people";
+    const playableId = "nli.investigation_polygons";
+    const settlementId = "settlements.names";
+    const peopleLayer = "nli__people__circle";
+    const playableLayer = "nli__investigation_polygons__fill";
+    const settlementLayer = "settlements.names-fill";
+    bridgeMock.irToMapLibreLayers.mockImplementation((fullId) => {
+      if (fullId === peopleId) {
+        return [{ id: peopleLayer, type: "circle", paint: { "circle-opacity": 1 }, layout: {} }];
+      }
+      if (fullId === playableId) {
+        return [{ id: playableLayer, type: "fill", paint: { "fill-opacity": 1 }, layout: {} }];
+      }
+      return [{ id: `${fullId}-fill`, type: "fill", paint: { "fill-opacity": 1 }, layout: {} }];
+    });
+
+    applyLayerGroupsToMap(map, groupsFor([peopleId, playableId, settlementId]));
+    hooks.setTime(300);
+    hooks.flushFrame();
+    expect(map.getPaintProperty(settlementLayer, "fill-opacity")).toBeCloseTo(0.5);
+    expect(map.getPaintProperty(peopleLayer, "circle-opacity")).toBeCloseTo(0.5);
+
+    applyLayerGroupsToMap(map, groupsFor([settlementId]));
+
+    expect(map.getLayer(peopleLayer)).toBeFalsy();
+    expect(map.getLayer(playableLayer)).toBeFalsy();
+    expect(map.getPaintProperty(settlementLayer, "fill-opacity")).toBeCloseTo(0.5);
+
+    hooks.setTime(600);
+    hooks.flushFrame();
+    expect(map.getPaintProperty(settlementLayer, "fill-opacity")).toBe(1);
+    expect(map.getLayer(settlementLayer)).toBeTruthy();
+  });
+
+  it("snaps leaving people and playables inside an open joined batch without sealing it", () => {
+    const map = createMapMock();
+    const hooks = createLifecycleHooks();
+    const runtime = getLayerLifecycleRuntime(map, hooks);
+    const peopleId = "nli.people";
+    const playableId = "nli.investigation_polygons";
+    const settlementId = "settlements.names";
+    const peopleLayer = "nli__people__circle";
+    const playableLayer = "nli__investigation_polygons__fill";
+    const settlementLayer = "settlements.names-fill";
+    bridgeMock.irToMapLibreLayers.mockImplementation((fullId) => {
+      if (fullId === peopleId) {
+        return [{ id: peopleLayer, type: "circle", paint: { "circle-opacity": 1 }, layout: {} }];
+      }
+      if (fullId === playableId) {
+        return [{ id: playableLayer, type: "fill", paint: { "fill-opacity": 1 }, layout: {} }];
+      }
+      return [{ id: `${fullId}-fill`, type: "fill", paint: { "fill-opacity": 1 }, layout: {} }];
+    });
+
+    applyLayerGroupsToMap(map, groupsFor([peopleId, playableId, settlementId]));
+    hooks.setTime(300);
+    hooks.flushFrame();
+    expect(map.getPaintProperty(settlementLayer, "fill-opacity")).toBeCloseTo(0.5);
+
+    runtime.setDesiredIds([settlementId], { durationMs: LAYER_FADE_MS });
+    const batch = runtime.getPendingBatch();
+    expect(batch?.sealed).toBe(false);
+
+    applyLayerGroupsToMap(map, groupsFor([settlementId]), { lifecycle: { joinBatch: true } });
+
+    expect(map.getLayer(peopleLayer)).toBeFalsy();
+    expect(map.getLayer(playableLayer)).toBeFalsy();
+    expect(map.getPaintProperty(settlementLayer, "fill-opacity")).toBeCloseTo(0.5);
+    expect(runtime.getPendingBatch()).toBe(batch);
+    expect(batch.sealed).toBe(false);
+
+    runtime.commitBatch();
+    hooks.setTime(600);
+    hooks.flushFrame();
+    expect(map.getPaintProperty(settlementLayer, "fill-opacity")).toBe(1);
+    expect(map.getLayer(settlementLayer)).toBeTruthy();
   });
 });

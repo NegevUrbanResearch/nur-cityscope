@@ -17,12 +17,14 @@ import {
 } from "../../frontend/src/shared/nli-investigation-beats.js";
 import {
   endNliClock,
+  evaluateClock,
   idleNliClock,
   pauseNliClock,
   playNliClock,
   replayNliClock,
   normalizeNliClock,
   resumeNliClock,
+  rewindNliClock,
   seekNliClock,
   setNliLoop,
   stopNliClock,
@@ -73,12 +75,20 @@ describe("nli-investigation-theme", () => {
       personGlowRadius: 14,
       personGlowStrokeWidth: 2.5,
       personGlowPulseMs: 2400,
-      settlementGlowAuraOpacity: 0.28,
-      settlementGlowCoreOpacity: 0.16,
-      settlementGlowAuraBlur: 0.85,
-      settlementGlowCoreBlur: 0.55,
-      settlementGlowAuraPad: 1.3,
+      settlementGlowAuraOpacity: 0.16,
+      settlementGlowCoreOpacity: 0.12,
+      settlementGlowAuraBlur: 1.65,
+      settlementGlowCoreBlur: 1.15,
+      settlementGlowAuraPad: 2.5,
+      settlementGlowCorePad: 1.85,
+      settlementGlowBreathMs: 8000,
+      settlementGlowBreathMin: 0.78,
+      settlementGlowBreathMax: 1.22,
     });
+    expect(NLI_VISUAL_TOKENS.settlementGlowBreathMax).toBeLessThanOrEqual(1.25);
+    expect(
+      NLI_VISUAL_TOKENS.settlementGlowAuraOpacity * NLI_VISUAL_TOKENS.settlementGlowBreathMax,
+    ).toBeLessThan(0.22);
     expect(NLI_VISUAL_TOKENS).not.toHaveProperty("polygonCategories");
     expect(NLI_VISUAL_TOKENS).not.toHaveProperty("polygonFallbackFill");
     expect(NLI_DISPLAY_PROFILES.gis).toHaveProperty("lineWidthMultiplier");
@@ -592,7 +602,7 @@ describe("deriveInvestigationFrame", () => {
     expect(reduced.needsNextFrame).toBe(false);
   });
 
-  it("returns to the idle visual state after an explicit stop", () => {
+  it("returns to the idle complete-story visual state", () => {
     const playing = playNliClock(idleNliClock(), membership, beats, 0);
     const frame = deriveInvestigationFrame(
       stopNliClock(playing),
@@ -650,6 +660,50 @@ describe("deriveInvestigationFrame", () => {
     const playing = playNliClock(idleNliClock(), membership, beats, 0);
     const frame = deriveInvestigationFrame(endNliClock(playing), 99_000, enabled, {});
     expect(frame.achievedPolygonBeats).toEqual(beats);
+  });
+
+  it("ended windowed playback holds clock.beats instead of the full storyBeats catalog", () => {
+    const windowBeats = [400, 420];
+    const catalogBeats = [400, 420, 440, 500];
+    const playing = playNliClock(idleNliClock(), membership, windowBeats, 0);
+    const ended = deriveInvestigationFrame(endNliClock(playing), 99_000, enabled, {
+      motionMode: "full",
+      storyBeats: catalogBeats,
+      polygonMotionActive: true,
+    });
+    expect(ended.narrative.completedBeats).toEqual(windowBeats);
+    expect(ended.achievedPolygonBeats).toEqual(windowBeats);
+
+    const localEnd = deriveInvestigationFrame(playing, clockStoryDurationMs(windowBeats), enabled, {
+      motionMode: "full",
+      storyBeats: catalogBeats,
+      polygonMotionActive: true,
+    });
+    expect(localEnd.narrative.phase).toBe("ended");
+    expect(localEnd.achievedPolygonBeats).toEqual(windowBeats);
+  });
+
+  it("idle complete-story still uses the full storyBeats catalog", () => {
+    const windowBeats = [400, 420];
+    const catalogBeats = [400, 420, 440, 500];
+    const playing = playNliClock(idleNliClock(), membership, windowBeats, 0);
+    const frame = deriveInvestigationFrame(stopNliClock(playing), 99_000, enabled, {
+      motionMode: "full",
+      storyBeats: catalogBeats,
+      polygonMotionActive: true,
+    });
+    expect(frame.narrative.phase).toBe("idle");
+    expect(frame.achievedPolygonBeats).toEqual(catalogBeats);
+  });
+
+  it("rewind paints the window start instead of the loaded catalog", () => {
+    const playing = playNliClock(idleNliClock(), membership, [400, 420], 0);
+    const frame = deriveInvestigationFrame(rewindNliClock(playing), 99000, enabled, {
+      motionMode: "full", storyBeats: [400, 420, 440, 500], polygonMotionActive: true,
+    });
+    expect(frame.narrative.phase).toBe("paused");
+    expect(frame.achievedPolygonBeats).toEqual([400]);
+    expect(frame.completedRouteFlow.active).toBe(false);
   });
 
   it("personGlowActive does not keep needsNextFrame true without a halo overlay", () => {
@@ -849,6 +903,22 @@ describe("deriveInvestigationFrame", () => {
     const b = deriveInvestigationFrame({ ...clock }, 123_456, enabled, {});
     expect(a.completedRouteFlow.phase).toBe(b.completedRouteFlow.phase);
     expect(a.narrative.completedBeats).toEqual(b.narrative.completedBeats);
+  });
+
+  it("rest-of-day lead-in keeps the opening-minutes end state", () => {
+    const clock = playNliClock(
+      idleNliClock(),
+      membership,
+      [389, 401, 402, 740],
+      0,
+      { leadInMinutes: 402, playLeadIn: true },
+    );
+    const frame = deriveInvestigationFrame(clock, 100, enabled, {
+      routeBeats: [389, 401, 402, 740],
+    });
+    expect(evaluateClock(clock, 100)).toMatchObject({ leadIn: true, clock: 402 });
+    expect(frame.achievedPolygonBeats).toEqual([389, 401]);
+    expect(frame.polygonEntries).toEqual([]);
   });
 
   it("Nova lead-in achieves every polygon/line minute strictly less than 483", () => {

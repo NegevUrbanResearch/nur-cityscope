@@ -17,6 +17,7 @@ import {
   INVESTIGATION_ALARMS_FULL_ID,
   INVESTIGATION_LINES_FULL_ID,
   INVESTIGATION_POLYGONS_FULL_ID,
+  isHomeCueLayerSet,
   lineProgressAt,
   objectIdsActiveAt,
   parseLocalTimelineToMinutes,
@@ -28,6 +29,7 @@ import {
   setEscapeImpactOrientationIds,
 } from "../../frontend/src/shared/maplibre-investigation-timeline.js";
 import { PEOPLE_HALO_LAYER_ID } from "../../frontend/src/map/maplibre-person-selection.js";
+import { HOME_CUE, TIMELINE } from "../../frontend/src/remote/nli-staff-script.js";
 import {
   formatMinutesAsLocalClock,
   timelineBeatDurationMs,
@@ -39,10 +41,12 @@ import {
   idleNliClock,
   pauseNliClock,
   playNliClock,
+  rewindNliClock,
   seekNliClock,
   stopNliClock,
 } from "../../frontend/src/shared/nli-investigation-clock.js";
 import { NLI_NOVA_STORY } from "../../frontend/src/shared/nli-nova-story.js";
+import { getLayerLifecycleRuntime } from "../../frontend/src/shared/layer-lifecycle-fade.js";
 
 const INVESTIGATION_FEATURES = [
   { properties: { OBJECTID: 1, Name: "מרחב כניסה לקיבוץ", timeline: "local 07:15", timeline_minutes: 435 } },
@@ -830,6 +834,103 @@ describe("syncInvestigationTimelineToMap", () => {
     )).toBe(false);
   });
 
+  it("removes polygon overlays immediately when the polygon group turns off", async () => {
+    const map = makeMap();
+    const runtime = getLayerLifecycleRuntime(map, {
+      now: () => 0,
+      requestFrame: () => 1,
+      cancelFrame: () => {},
+    });
+    runtime.setDesiredIds([INVESTIGATION_POLYGONS_FULL_ID], { durationMs: 0 });
+    runtime.stageMapLayer(INVESTIGATION_POLYGONS_FULL_ID, {
+      id: "nli__investigation_polygons__fill__0",
+      type: "fill",
+      paint: { "fill-opacity": 1 },
+    });
+    runtime.markMemberReady(INVESTIGATION_POLYGONS_FULL_ID);
+    runtime.commitBatch();
+
+    const hidden = [{ id: "nli", layers: [{ id: "investigation_polygons", enabled: false }] }];
+    const deps = withProcessedPolygons({
+      featuresById: { [INVESTIGATION_POLYGONS_FULL_ID]: [STORY_POLYGON_A] },
+      settlementFeatures: [STORY_SETTLEMENT],
+      now: () => 0,
+    });
+    await syncInvestigationTimelineToMap(
+      map,
+      playClock([INVESTIGATION_POLYGONS_FULL_ID], [400]),
+      polygonOnlyGroups(),
+      deps,
+    );
+    expect(map.getLayer("nli-investigation-polygon-category-fill-battle")).toBeTruthy();
+
+    await syncInvestigationTimelineToMap(map, idleNliClock(), hidden, deps);
+
+    expect(map.getLayer("nli-investigation-polygon-category-fill-battle")).toBeFalsy();
+    disposeInvestigationTimelineForMap(map);
+  });
+
+  it("idle stop clears polygon overlays immediately while the row stays enabled", async () => {
+    const map = makeMap();
+    let time = 0;
+    let frame = null;
+    const runtime = getLayerLifecycleRuntime(map, {
+      now: () => time,
+      requestFrame: (callback) => {
+        frame = callback;
+        return 1;
+      },
+      cancelFrame: () => {
+        frame = null;
+      },
+    });
+    runtime.setDesiredIds([INVESTIGATION_POLYGONS_FULL_ID], { durationMs: 0 });
+    runtime.stageMapLayer(INVESTIGATION_POLYGONS_FULL_ID, {
+      id: "nli__investigation_polygons__fill__0",
+      type: "fill",
+      paint: { "fill-opacity": 1 },
+    });
+    runtime.markMemberReady(INVESTIGATION_POLYGONS_FULL_ID);
+    runtime.commitBatch();
+
+    const deps = withProcessedPolygons({
+      featuresById: { [INVESTIGATION_POLYGONS_FULL_ID]: [STORY_POLYGON_A] },
+      settlementFeatures: [STORY_SETTLEMENT],
+      now: () => time,
+    });
+    const battleId = "nli-investigation-polygon-category-fill-battle";
+    await syncInvestigationTimelineToMap(
+      map,
+      playClock([INVESTIGATION_POLYGONS_FULL_ID], [400]),
+      polygonOnlyGroups(),
+      deps,
+    );
+    time = 600;
+    frame?.(time);
+    expect(map.getLayer(battleId)).toBeTruthy();
+
+    map.removeLayer.mockClear();
+    await syncInvestigationTimelineToMap(map, idleNliClock(), polygonOnlyGroups(), deps);
+
+    expect(map.removeLayer).toHaveBeenCalledWith(battleId);
+    expect(map.getLayer(battleId)).toBeTruthy();
+    time = 1200;
+    frame?.(time);
+    expect(map.getPaintProperty(battleId, "fill-opacity")).not.toBe(0);
+    disposeInvestigationTimelineForMap(map);
+  });
+
+  it("rewind of a chopped window excludes later catalog polygons", async () => {
+    const map = makeMap();
+    const playing = playClock([INVESTIGATION_POLYGONS_FULL_ID], [400]);
+    await syncInvestigationTimelineToMap(map, rewindNliClock(playing), polygonOnlyGroups(), withProcessedPolygons({
+      featuresById: { [INVESTIGATION_POLYGONS_FULL_ID]: [STORY_POLYGON_A, STORY_POLYGON_B] },
+      settlementFeatures: [STORY_SETTLEMENT], now: () => 0,
+    }));
+    const features = map.getSource("nli-investigation-polygon-category").setData.mock.calls.at(-1)[0].features;
+    expect(features.map((f) => f.properties.timeline_minutes).sort((a, b) => a - b)).toEqual([400]);
+  });
+
   it("reasserts raw polygon suppression across Nova, general, and disabled transitions", async () => {
     const map = makeMap();
     const fillId = "nli__investigation_polygons__fill__0";
@@ -1172,6 +1273,23 @@ describe("syncInvestigationTimelineToMap", () => {
     expect(map.getSource("nli-investigation-line-active")).toBeFalsy();
     expect(map.getPaintProperty("nli__lines__line__0", "line-color")).toBe("#c31f4f");
     expect(map.getPaintProperty("nli__lines__line__0", "line-opacity")).toBe(0.42);
+  });
+
+  it("does not restore saved paint on a base line removed before disposal", async () => {
+    const map = makeMap();
+    await syncInvestigationTimelineToMap(
+      map,
+      playClock([INVESTIGATION_LINES_FULL_ID], LINE_BEATS),
+      bothGroups(),
+      { featuresById: featureBags(), now: () => 0 },
+    );
+    map.setPaintProperty.mockClear();
+    const lineIndex = map.getStyle().layers.findIndex((layer) => layer.id === "nli__lines__line__0");
+    map.getStyle().layers.splice(lineIndex, 1);
+
+    disposeInvestigationTimelineForMap(map);
+
+    expect(map.setPaintProperty).not.toHaveBeenCalledWith("nli__lines__line__0", expect.any(String), expect.anything());
   });
 
   it("hides base lines that appear after playback already started", async () => {
@@ -1693,9 +1811,9 @@ describe("syncInvestigationTimelineToMap", () => {
 
   it("clock-only relevance follows enabled direct playable IDs, not aliases or style presence", async () => {
     const cases = [
-      { name: "alarms", layerId: "alarms", visible: true },
-      { name: "lines", layerId: "lines", visible: true },
-      { name: "investigation polygons", layerId: "investigation_polygons", visible: true },
+      { name: "idle alarms", layerId: "alarms", visible: false },
+      { name: "idle lines", layerId: "lines", visible: false },
+      { name: "idle investigation polygons", layerId: "investigation_polygons", visible: false },
       { name: "people names", layerId: "people_names", visible: false },
       { name: "people", layerId: "people", visible: false },
       { name: "relevant disabled", layerId: "lines", enabled: false, visible: false },
@@ -1852,12 +1970,11 @@ describe("syncInvestigationTimelineToMap", () => {
     disposeInvestigationTimelineForMap(map);
   });
 
-  it("only recognized narratives or explicit debug make an empty-group clock-only caption relevant", async () => {
+  it("only recognized narratives make an empty-group idle clock-only caption relevant", async () => {
     const cases = [
       { name: "unknown", narrativeFocus: { id: "unknown" }, visible: false, clock: null },
       { name: "Segev", narrativeFocus: { id: "segev" }, visible: true, clock: "06:41" },
       { name: "Nova", narrativeFocus: { id: "nova" }, visible: true, clock: "08:03" },
-      { name: "debug", narrativeFocus: null, explainerDebugVisible: true, visible: true, clock: "07:00" },
     ];
     for (const testCase of cases) {
       const injected = { className: "", hidden: true, innerHTML: "", textContent: "", setAttribute() {} };
@@ -1869,7 +1986,6 @@ describe("syncInvestigationTimelineToMap", () => {
         featuresById: {},
         getLayerDataUrl: () => null,
         narrativeFocus: testCase.narrativeFocus,
-        explainerDebugVisible: testCase.explainerDebugVisible === true,
         now: () => 0,
       });
       expect(injected.hidden, testCase.name).toBe(!testCase.visible);
@@ -2011,7 +2127,6 @@ describe("syncInvestigationTimelineToMap", () => {
 
   it("stop after deferred playback keeps the recognized idle clock immediately and after resolution", async () => {
     const narratives = [
-      { name: "ordinary", narrativeFocus: null, expected: "06:29" },
       { name: "Segev", narrativeFocus: { id: "segev" }, expected: "06:41" },
       { name: "Nova", narrativeFocus: { id: "nova" }, expected: "08:03" },
     ];
@@ -2382,41 +2497,76 @@ describe("syncInvestigationTimelineToMap", () => {
     disposeInvestigationTimelineForMap(map);
   });
 
-  it("idle + explainerDebugVisible paints the sample, not the last beat", async () => {
-    const injected = { className: "", hidden: true, innerHTML: "LAST_BEAT", textContent: "", dir: "", setAttribute() {} };
+  it("recognizes only the exact Home layer set without narrative focus", () => {
+    const home = [
+      "projector_base.שמות_יישובים", "projector_base.Locations_Lines", "projector_base.ישובים",
+      "nli.ציר_232", "projector_base.SEA", "gaza.Gaza_Roads",
+    ];
+    expect(isHomeCueLayerSet(home)).toBe(true);
+    expect(isHomeCueLayerSet([...home, "other.layer"])).toBe(false);
+    expect(isHomeCueLayerSet(["nli.people_names"])).toBe(false);
+    expect(isHomeCueLayerSet(home, "segev")).toBe(false);
+  });
+
+  it("paints idle 06:29 only for the exact Home or Timeline cue layers", async () => {
+    const groupsFor = (ids) => {
+      const groups = new Map();
+      for (const value of ids) {
+        const [groupId, id] = value.split(".");
+        if (!groups.has(groupId)) groups.set(groupId, { id: groupId, enabled: false, layers: [] });
+        groups.get(groupId).layers.push({ id, enabled: true });
+      }
+      return [...groups.values()];
+    };
+    const timelineIds = TIMELINE.steps.at(-1).cue.layers;
+    expect(isHomeCueLayerSet(HOME_CUE.layers)).toBe(true);
+    expect(isHomeCueLayerSet(timelineIds)).toBe(false);
+    for (const [name, ids, visible] of [
+      ["home", HOME_CUE.layers, true],
+      ["timeline", timelineIds, true],
+      ["home with extra", [...HOME_CUE.layers, "unrelated.layer"], false],
+      ["identity", ["nli.people"], false],
+      ["names wall", ["nli.people_names"], false],
+      ["blank", [], false],
+    ]) {
+      const caption = { hidden: true, innerHTML: "", setAttribute() {} };
+      const map = makeMap();
+      const groups = groupsFor(ids);
+      await syncInvestigationTimelineToMap(map, idleNliClock(), groups, {
+        captionEl: caption, allowMapCaption: false, nliCaptionMode: "clock-only",
+        featuresById: {}, getLayerDataUrl: () => null, now: () => 0,
+      });
+      expect(caption.hidden, name).toBe(!visible);
+      if (visible) expect(caption.innerHTML, name).toContain("06:29");
+      disposeInvestigationTimelineForMap(map);
+    }
+  });
+
+  it("suppresses idle Timeline clock during Presentation and restores it after Stop", async () => {
+    const timelineIds = TIMELINE.steps.at(-1).cue.layers;
+    const groupsFor = (ids, enabled = true) => {
+      const groups = new Map();
+      for (const value of ids) {
+        const [groupId, id] = value.split(".");
+        if (!groups.has(groupId)) groups.set(groupId, { id: groupId, layers: [] });
+        groups.get(groupId).layers.push({ id, enabled });
+      }
+      return [...groups.values()];
+    };
+    const caption = { hidden: true, innerHTML: "", setAttribute() {} };
     const map = makeMap();
-    map.getContainer = vi.fn(() => ({
-      querySelector: () => null,
-      appendChild: () => {
-        throw new Error("must not append");
-      },
-      removeChild() {},
-    }));
-    await syncInvestigationTimelineToMap(map, idleNliClock(), bothGroups(), {
-      captionEl: injected,
-      allowMapCaption: false,
-      explainerDebugVisible: true,
-      featuresById: {
-        [INVESTIGATION_POLYGONS_FULL_ID]: [],
-        [INVESTIGATION_LINES_FULL_ID]: [],
-      },
-      now: () => 0,
+    const sync = (groups) => syncInvestigationTimelineToMap(map, idleNliClock(), groups, {
+      captionEl: caption, allowMapCaption: false, nliCaptionMode: "clock-only",
+      featuresById: {}, getLayerDataUrl: () => null, now: () => 0,
     });
-    expect(injected.hidden).toBe(false);
-    expect(injected.innerHTML).toMatch(/nli-tl-clock/);
-    expect(injected.innerHTML).not.toBe("LAST_BEAT");
-    expect(injected.innerHTML).toMatch(/nli-tl-row--polygons/);
-    await syncInvestigationTimelineToMap(map, idleNliClock(), bothGroups(), {
-      captionEl: injected,
-      allowMapCaption: false,
-      explainerDebugVisible: true,
-      featuresById: {
-        [INVESTIGATION_POLYGONS_FULL_ID]: [],
-        [INVESTIGATION_LINES_FULL_ID]: [],
-      },
-      now: () => 0,
-    });
-    expect(injected.innerHTML).toMatch(/nli-tl-row--polygons/);
+    await sync(groupsFor(timelineIds));
+    expect(caption.hidden).toBe(false);
+    expect(caption.innerHTML).toContain("06:29");
+    await sync(groupsFor(timelineIds, false));
+    expect(caption.hidden).toBe(true);
+    await sync(groupsFor(timelineIds));
+    expect(caption.hidden).toBe(false);
+    expect(caption.innerHTML).toContain("06:29");
     disposeInvestigationTimelineForMap(map);
   });
 
@@ -3111,6 +3261,179 @@ describe("syncInvestigationTimelineToMap", () => {
     const paint = map.getPaintProperty("nli-investigation-polygon-category-fill-battle", "fill-opacity");
     expect(JSON.stringify(paint)).not.toContain("0.08");
     expect(paint === 0.55 || JSON.stringify(paint).includes("0.55")).toBe(true);
+    disposeInvestigationTimelineForMap(map);
+  });
+
+  it("GIS Nova play restores polygon opacity after idle instant-hide", async () => {
+    const map = makeMap();
+    let now = 0;
+    let frame = null;
+    const runtime = getLayerLifecycleRuntime(map, {
+      now: () => now,
+      requestFrame: (callback) => {
+        frame = callback;
+        return 1;
+      },
+      cancelFrame: () => {
+        frame = null;
+      },
+    });
+    runtime.setDesiredIds([INVESTIGATION_POLYGONS_FULL_ID], { durationMs: 0 });
+    runtime.stageMapLayer(INVESTIGATION_POLYGONS_FULL_ID, {
+      id: "nli__investigation_polygons__fill__0",
+      type: "fill",
+      paint: { "fill-opacity": 0.4 },
+    }, {
+      onTeardown: () => {
+        map.removeLayer("nli__investigation_polygons__fill__0");
+        map.removeLayer("nli__investigation_polygons__line__1");
+      },
+    });
+    runtime.markMemberReady(INVESTIGATION_POLYGONS_FULL_ID);
+    runtime.commitBatch();
+    runtime.settleHiddenIds([INVESTIGATION_POLYGONS_FULL_ID]);
+
+    const hiddenGroups = [{
+      id: "nli",
+      layers: [{ id: "investigation_polygons", enabled: false }],
+    }];
+    const deps = withProcessedPolygons({
+      featuresById: {
+        [INVESTIGATION_POLYGONS_FULL_ID]: [{
+          type: "Feature",
+          properties: {
+            OBJECTID: 99,
+            timeline_minutes: 492,
+            Notes: "מרחב לחימה - קרב",
+            מיקום: "נובה",
+          },
+          geometry: STORY_POLYGON_B.geometry,
+        }],
+      },
+      narrativeFocus: { id: "nova" },
+      displayProfile: "gis",
+      motionMode: "reduced",
+      now: () => 0,
+    });
+    await syncInvestigationTimelineToMap(map, idleNliClock(), hiddenGroups, deps);
+
+    runtime.setDesiredIds([INVESTIGATION_POLYGONS_FULL_ID], { durationMs: 600 });
+    const playing = playNliClock(
+      idleNliClock(),
+      [INVESTIGATION_POLYGONS_FULL_ID],
+      NLI_NOVA_STORY.representativeMinutes,
+      0,
+      { narrativeId: "nova" },
+    );
+    const at492 = {
+      ...playing,
+      phase: "paused",
+      positionMs: timelineBeatDurationMs(NLI_NOVA_STORY.representativeMinutes[0]),
+      seekKind: "none",
+    };
+    await syncInvestigationTimelineToMap(map, at492, polygonOnlyGroups(), deps);
+    runtime.commitBatch();
+    now = 600;
+    frame?.(now);
+
+    const battleId = "nli-investigation-polygon-category-fill-battle";
+    expect(map.getLayer(battleId)).toBeTruthy();
+    const paint = map.getPaintProperty(battleId, "fill-opacity");
+    expect(paint === 0.55 || (Array.isArray(paint) && paint.at(-1) === 0.55)).toBe(true);
+    disposeInvestigationTimelineForMap(map);
+  });
+
+  it("GIS national play restores line and alarm opacity after idle instant-hide", async () => {
+    const map = makeMap();
+    let now = 0;
+    let frame = null;
+    const runtime = getLayerLifecycleRuntime(map, {
+      now: () => now,
+      requestFrame: (callback) => {
+        frame = callback;
+        return 1;
+      },
+      cancelFrame: () => {
+        frame = null;
+      },
+    });
+    const playableIds = [
+      INVESTIGATION_LINES_FULL_ID,
+      INVESTIGATION_ALARMS_FULL_ID,
+    ];
+    const removeAuthoredPack = (fullId, layerId) => () => {
+      map.removeLayer(layerId);
+      map.removeSource(fullId);
+    };
+    const stageAuthoredPack = (fullId, layerId, type, property, value) => {
+      map.addSource(fullId, { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+      const layer = {
+        id: layerId,
+        type,
+        source: fullId,
+        paint: { [property]: value },
+      };
+      const { stagedLayerDef } = runtime.stageMapLayer(fullId, layer, {
+        onTeardown: removeAuthoredPack(fullId, layerId),
+      });
+      map.addLayer(stagedLayerDef);
+      runtime.markMemberReady(fullId);
+    };
+    runtime.setDesiredIds(playableIds, { durationMs: 0 });
+    stageAuthoredPack(
+      INVESTIGATION_LINES_FULL_ID,
+      "nli__lines__line__0",
+      "line",
+      "line-opacity",
+      1,
+    );
+    stageAuthoredPack(
+      INVESTIGATION_ALARMS_FULL_ID,
+      "nli__alarms__circle__0",
+      "circle",
+      "circle-opacity",
+      0.4,
+    );
+    runtime.commitBatch();
+    runtime.settleHiddenIds(playableIds);
+
+    const hiddenGroups = [{ id: "nli", layers: [
+      { id: "lines", enabled: false },
+      { id: "alarms", enabled: false },
+    ] }];
+    const deps = {
+      featuresById: {
+        [INVESTIGATION_LINES_FULL_ID]: LINE_FEATURES,
+        [INVESTIGATION_ALARMS_FULL_ID]: [{
+          type: "Feature",
+          properties: { city: "City A", alarm_minutes: [400], alarm_count_total: 1 },
+          geometry: { type: "Point", coordinates: [34.4, 31.4] },
+        }],
+      },
+      investigationSettlementsUrl: null,
+      displayProfile: "gis",
+      motionMode: "reduced",
+      now: () => 0,
+    };
+    await syncInvestigationTimelineToMap(map, idleNliClock(), hiddenGroups, deps);
+
+    runtime.setDesiredIds(playableIds, { durationMs: 600 });
+    const visibleGroups = [{ id: "nli", layers: [
+      { id: "lines", enabled: true },
+      { id: "alarms", enabled: true },
+    ] }];
+    const playing = playNliClock(idleNliClock(), playableIds, [400], 0);
+    await syncInvestigationTimelineToMap(map, playing, visibleGroups, deps);
+    runtime.commitBatch();
+    now = 600;
+    frame?.(now);
+
+    const lineId = "nli-investigation-line-active-line";
+    const alarmId = "nli-investigation-alarm-circles";
+    expect(map.getLayer(lineId)).toBeTruthy();
+    expect(map.getPaintProperty(lineId, "line-opacity")).not.toBe(0);
+    expect(map.getLayer(alarmId)).toBeTruthy();
+    expect(map.getPaintProperty(alarmId, "circle-opacity")).not.toBe(0);
     disposeInvestigationTimelineForMap(map);
   });
 

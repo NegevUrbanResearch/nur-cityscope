@@ -23,6 +23,13 @@ import {
   polygonGradientBandPaint,
   polygonGradientPhase,
 } from "./nli-investigation-polygon-gradient-motion.js";
+import {
+  addInvestigationOverlayLayer,
+  completeInvestigationOverlayMount,
+  fadeInvestigationOverlayLayer,
+  isOverlayOpacityProperty,
+  publishInvestigationOverlayOpacity,
+} from "./investigation-overlay-lifecycle.js";
 
 const SETTLEMENT_SOURCE_ID = "nli-investigation-settlement-impact";
 const SETTLEMENT_LAYER_ID = "nli-investigation-settlement-impact-outline";
@@ -195,6 +202,9 @@ function notesEqualsFilter(notes) {
 
 function setPaint(map, id, property, value) {
   if (!layerPresent(map, id) || typeof map?.setPaintProperty !== "function") return false;
+  if (isOverlayOpacityProperty(property)) {
+    return publishInvestigationOverlayOpacity(map, INVESTIGATION_POLYGONS_FULL_ID, id, property, value);
+  }
   try {
     map.setPaintProperty(id, property, value);
     return true;
@@ -323,6 +333,9 @@ export function createInvestigationPolygonRenderer(
     warnedNotes: new Set(),
     warnedBufferedGradientFailure: false,
     warnedProcessedStyleFailure: false,
+    overlayHideGeneration: 0,
+    overlayHideSnapshot: null,
+    overlayRemoving: false,
     inputRefs: {
       polygonFeatures: undefined,
       bufferedGradientFeatures: undefined,
@@ -501,9 +514,12 @@ export function createInvestigationPolygonRenderer(
       };
       const anchor = state.beforeId && layerPresent(map, state.beforeId);
       const anchorIsBasePolygon = anchor && state.baseLayers.some((candidate) => candidate.id === state.beforeId);
-      // The overlay is appended once, preserving the base style's structural order.
-      if (anchor && !anchorIsBasePolygon) map.addLayer(layer, state.beforeId);
-      else map.addLayer(layer);
+      addInvestigationOverlayLayer(
+        map,
+        INVESTIGATION_POLYGONS_FULL_ID,
+        layer,
+        anchor && !anchorIsBasePolygon ? state.beforeId : null,
+      );
     }
     state.overlayMounted = sourcePresent(map, SETTLEMENT_SOURCE_ID) && layerPresent(map, SETTLEMENT_LAYER_ID);
   }
@@ -515,10 +531,8 @@ export function createInvestigationPolygonRenderer(
   }
 
   function addOwnedLayer(layer) {
-    if (layerPresent(map, layer.id) || typeof map.addLayer !== "function") return;
-    const beforeId = overlayBeforeId();
-    if (beforeId) map.addLayer(layer, beforeId);
-    else map.addLayer(layer);
+    if (typeof map.addLayer !== "function") return;
+    addInvestigationOverlayLayer(map, INVESTIGATION_POLYGONS_FULL_ID, layer, overlayBeforeId());
   }
 
   function restackOwnedOverlays() {
@@ -823,7 +837,12 @@ export function createInvestigationPolygonRenderer(
   function mount({ settlementOnly = false } = {}) {
     if (state.disposed) return;
     if (!state.mounted) {
-      if (!settlementOnly && !hostBaseReady()) {
+      const snapshot = state.overlayHideSnapshot;
+      state.overlayHideGeneration += 1;
+      state.overlayHideSnapshot = null;
+      state.overlayRemoving = false;
+      if (snapshot) removeOverlayLayersAndSources(snapshot.layerIds, snapshot.sourceIds);
+      if (!settlementOnly && !state.processedStyleActive && !hostBaseReady()) {
         state.waitingForHostStyle = true;
         return;
       }
@@ -844,6 +863,9 @@ export function createInvestigationPolygonRenderer(
       hideHostPack();
     }
     mountSettlementOverlay();
+    if (state.categoryMounted || state.overlayMounted) {
+      completeInvestigationOverlayMount(map, INVESTIGATION_POLYGONS_FULL_ID);
+    }
   }
 
   function render(frame = {}, data = {}, { renderPolygons = true } = {}) {
@@ -851,7 +873,7 @@ export function createInvestigationPolygonRenderer(
     const previousPolygonStyle = state.polygonStyle;
     absorbData(data);
     if (previousPolygonStyle !== state.polygonStyle && state.categoryMounted) {
-      removeOverlay();
+      removeOverlay({ immediate: false });
       state.categoryMounted = false;
       state.overlayMounted = false;
       state.processedFillLayerIds = [];
@@ -861,7 +883,7 @@ export function createInvestigationPolygonRenderer(
       console.warn("Investigation polygon buffered-gradient sidecar failed; processed fills are hidden.");
     }
     state.currentFrame = frame;
-    mount({ settlementOnly: !renderPolygons });
+    if (!state.overlayRemoving || !state.mounted) mount({ settlementOnly: !renderPolygons });
     applyNarrativeSettlementOutlinePaint(map, state, frame);
     const achieved = asArray(frame.achievedPolygonBeats).map(Number).filter(Number.isFinite);
     const polygonKey = achievedKey(frame);
@@ -928,17 +950,13 @@ export function createInvestigationPolygonRenderer(
     if (state.currentFrame) render(state.currentFrame, data);
   }
 
-  function removeOverlay() {
-    const ownedLayerIds = [...new Set([...CATEGORY_LAYER_IDS, ...state.processedFillLayerIds])];
-    for (const id of ownedLayerIds) {
+  function removeOverlayLayersAndSources(layerIds, sourceIds) {
+    for (const id of layerIds) {
       if (layerPresent(map, id) && typeof map.removeLayer === "function") {
         try { map.removeLayer(id); } catch (_) { /* stale style */ }
       }
     }
-    if (layerPresent(map, SETTLEMENT_LAYER_ID) && typeof map.removeLayer === "function") {
-      try { map.removeLayer(SETTLEMENT_LAYER_ID); } catch (_) { /* stale style */ }
-    }
-    for (const sourceId of [CATEGORY_SOURCE_ID, CATEGORY_OUTLINE_SOURCE_ID, BUFFERED_GRADIENT_SOURCE_ID, SETTLEMENT_SOURCE_ID]) {
+    for (const sourceId of sourceIds) {
       if (sourcePresent(map, sourceId) && typeof map.removeSource === "function") {
         try { map.removeSource(sourceId); } catch (_) { /* stale style */ }
       }
@@ -950,7 +968,44 @@ export function createInvestigationPolygonRenderer(
     state.lastCategoryParallelImpactKey = null;
   }
 
-  function reset({ preserveBasePaints = false } = {}) {
+  function removeOverlay({ immediate = false } = {}) {
+    const snapshotLayerIds = [...new Set([SETTLEMENT_LAYER_ID, ...CATEGORY_LAYER_IDS, ...state.processedFillLayerIds])];
+    const snapshotSourceIds = [CATEGORY_SOURCE_ID, CATEGORY_OUTLINE_SOURCE_ID, BUFFERED_GRADIENT_SOURCE_ID, SETTLEMENT_SOURCE_ID];
+    const fadeLayerIds = snapshotLayerIds.filter((id) => layerPresent(map, id));
+    const generation = ++state.overlayHideGeneration;
+    state.overlayHideSnapshot = {
+      generation,
+      layerIds: snapshotLayerIds,
+      sourceIds: snapshotSourceIds,
+    };
+    const finish = () => {
+      if (generation !== state.overlayHideGeneration) return;
+      const snapshot = state.overlayHideSnapshot;
+      if (!snapshot || snapshot.generation !== generation) return;
+      state.overlayHideSnapshot = null;
+      removeOverlayLayersAndSources(snapshot.layerIds, snapshot.sourceIds);
+      state.overlayRemoving = false;
+    };
+    if (immediate || !fadeLayerIds.length) {
+      finish();
+      return;
+    }
+    state.overlayRemoving = true;
+    let remaining = fadeLayerIds.length;
+    let started = false;
+    for (const id of fadeLayerIds) {
+      started = fadeInvestigationOverlayLayer(map, INVESTIGATION_POLYGONS_FULL_ID, id, () => {
+        remaining -= 1;
+        if (remaining <= 0) finish();
+      }) || started;
+    }
+    if (!started) {
+      state.overlayRemoving = false;
+      finish();
+    }
+  }
+
+  function reset({ preserveBasePaints = false, immediate = false } = {}) {
     if (state.disposed) return;
     const hasOwnedState =
       state.mounted ||
@@ -961,7 +1016,7 @@ export function createInvestigationPolygonRenderer(
       state.overlayMounted ||
       state.categoryMounted;
     if (!hasOwnedState) return;
-    removeOverlay();
+    removeOverlay({ immediate });
     state.mounted = false;
     state.overlayMounted = false;
     state.categoryMounted = false;
@@ -1007,7 +1062,7 @@ export function createInvestigationPolygonRenderer(
 
   function dispose(options) {
     if (state.disposed) return;
-    reset(options);
+    reset({ ...options, immediate: true });
     state.mounted = false;
     state.savedPaints = null;
     state.disposed = true;

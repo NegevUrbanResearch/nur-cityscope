@@ -33,19 +33,81 @@ class LegendSettingsApiTests(TestCase):
     def test_default_and_language_patch_preserve_layout(self):
         listed = self.client.get("/api/otef_viewport/by-table/otef/")
         self.assertEqual(listed.json()["legend_settings"], {"language": "he", "projection": {}, "summarizedGroupIds": []})
-        saved = self.command(span="left", layout={"leftPct": 10, "topPct": 10, "widthPct": 20, "heightPct": 35, "fontPx": 22, "rotateDeg": 0, "dwellSeconds": 8})
+        self.assertEqual(listed.json()["legend_layout_revision"], 0)
+        saved = self.command(span="left", baseRevision=0, layout={"leftPct": 10, "topPct": 10, "widthPct": 20, "heightPct": 35, "fontPx": 22, "rotateDeg": 0, "dwellSeconds": 8})
         self.assertEqual(saved.status_code, 200)
+        self.assertEqual(saved.json()["changeKind"], "layout")
+        self.assertEqual(saved.json()["legendLayoutRevision"], 1)
         changed = self.command(language="en")
         self.assertEqual(changed.status_code, 200)
-        self.assertEqual(changed.json()["legendSettings"]["language"], "en")
-        self.assertIn("left", changed.json()["legendSettings"]["projection"])
+        self.assertEqual(changed.json()["changeKind"], "metadata")
+        self.assertEqual(changed.json()["legendSettingsPatch"], {"language": "en"})
+        self.assertEqual(changed.json()["legendLayoutRevision"], 1)
+        listed = self.client.get("/api/otef_viewport/by-table/otef/")
+        self.assertEqual(listed.json()["legend_settings"]["language"], "en")
+        self.assertIn("left", listed.json()["legend_settings"]["projection"])
 
     def test_one_span_save_preserves_another_and_clamps_dwell(self):
-        self.assertEqual(self.command(span="left", layout={"widthPct": 20, "heightPct": 20}).status_code, 200)
-        response = self.command(span="right", layout={"widthPct": 30, "heightPct": 30, "dwellSeconds": 99})
-        settings = response.json()["legendSettings"]
-        self.assertIn("left", settings["projection"])
-        self.assertEqual(settings["projection"]["right"]["dwellSeconds"], 30)
+        left = {"leftPct": 10, "topPct": 10, "widthPct": 20, "heightPct": 20, "fontPx": 22, "rotateDeg": 0, "dwellSeconds": 8}
+        right = {"leftPct": 20, "topPct": 10, "widthPct": 30, "heightPct": 30, "fontPx": 22, "rotateDeg": 0, "dwellSeconds": 99}
+        self.assertEqual(self.command(span="left", baseRevision=0, layout=left).status_code, 200)
+        response = self.command(span="right", baseRevision=1, layout=right)
+        projection = response.json()["legendProjection"]
+        self.assertIn("left", projection)
+        self.assertEqual(projection["right"]["dwellSeconds"], 30)
+        self.assertEqual(response.json()["legendLayoutRevision"], 2)
+
+    def test_layout_conflict_preserves_raw_legend_metadata_and_other_spans(self):
+        layout = {"leftPct": 10, "topPct": 10, "widthPct": 20, "heightPct": 20, "fontPx": 22, "rotateDeg": 0, "dwellSeconds": 8}
+        self.state.legend_settings = {
+            "language": "en", "summarizedGroupIds": ["roads"],
+            "projection": {"right": {"legacy": "keep"}},
+            "unknownMetadata": {"keep": True},
+        }
+        self.state.save(update_fields=["legend_settings"])
+        first = self.command(span="left", baseRevision=0, layout=layout)
+        self.assertEqual(first.status_code, 200)
+        with patch("backend.views.OTEFViewportStateViewSet._broadcast_legend_settings") as broadcast:
+            with self.captureOnCommitCallbacks(execute=True) as callbacks:
+                stale = self.command(span="full", baseRevision=0, layout=layout)
+        self.assertEqual(stale.status_code, 409)
+        self.assertEqual(stale.json()["changeKind"], "layout")
+        self.assertEqual(stale.json()["legendLayoutRevision"], 1)
+        self.state.refresh_from_db()
+        self.assertEqual(self.state.legend_settings["language"], "en")
+        self.assertEqual(self.state.legend_settings["summarizedGroupIds"], ["roads"])
+        self.assertEqual(self.state.legend_settings["projection"]["right"], {"legacy": "keep"})
+        self.assertEqual(self.state.legend_settings["unknownMetadata"], {"keep": True})
+        self.assertEqual(self.state.legend_layout_revision, 1)
+        self.assertEqual(callbacks, [])
+        broadcast.assert_not_called()
+
+    def test_layout_requires_base_revision_complete_finite_exact_numeric_fields(self):
+        valid = {"leftPct": 10, "topPct": 10, "widthPct": 20, "heightPct": 20, "fontPx": 22, "rotateDeg": 0, "dwellSeconds": 8}
+        invalid_layouts = [
+            {"leftPct": 10},
+            {**valid, "fontPx": True},
+            {**valid, "dwellSeconds": float("inf")},
+            {**valid, "extra": 1},
+        ]
+        self.assertEqual(self.command(span="left", layout=valid).status_code, 400)
+        for layout in invalid_layouts:
+            with self.subTest(layout=layout):
+                self.assertEqual(self.command(span="left", baseRevision=0, layout=layout).status_code, 400)
+        self.assertEqual(self.command(span="full", baseRevision=0, language="en", layout=valid).status_code, 400)
+        self.state.refresh_from_db()
+        self.assertEqual(self.state.legend_settings, {})
+        self.assertEqual(self.state.legend_layout_revision, 0)
+
+    def test_oversized_integer_dwell_is_clamped_without_server_error(self):
+        response = self.command(
+            span="left", baseRevision=0,
+            layout={"leftPct": 10, "topPct": 10, "widthPct": 20,
+                   "heightPct": 20, "fontPx": 22, "rotateDeg": 0,
+                   "dwellSeconds": 10 ** 400},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["legendProjection"]["left"]["dwellSeconds"], 30)
 
     def test_invalid_language_and_shape_return_400_without_clock_change(self):
         before = self.state.nli_clock_layout
@@ -63,11 +125,15 @@ class LegendSettingsApiTests(TestCase):
             response = self.command(language="en")
         self.assertEqual(response.status_code, 200)
         broadcast.assert_called_once()
-        _table, settings, _meta = broadcast.call_args.args
-        self.assertEqual(settings, response.json()["legendSettings"])
+        _table, change, _meta = broadcast.call_args.args
+        self.assertEqual(change["changeKind"], "metadata")
+        self.assertEqual(change["legendSettingsPatch"], {"language": "en"})
+        self.assertEqual(change["legendLayoutRevision"], response.json()["legendLayoutRevision"])
+        self.assertEqual(response.json()["legendSettingsPatch"], {"language": "en"})
 
     def test_summary_ids_are_deduplicated(self):
         response = self.command(summarizedGroupIds=["roads", "roads", "nli"])
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["legendSettings"]["summarizedGroupIds"], ["roads", "nli"])
+        self.assertEqual(response.json()["legendSettingsPatch"], {"summarizedGroupIds": ["roads", "nli"]})
+        self.assertEqual(response.json()["legendLayoutRevision"], 0)
         self.assertEqual(normalize_legend_settings({"summarizedGroupIds": ["x", "x"]})["summarizedGroupIds"], ["x"])

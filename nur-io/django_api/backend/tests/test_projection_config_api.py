@@ -10,12 +10,48 @@ from django.test import Client, TestCase, TransactionTestCase
 from backend.models import OTEFProjectionCalibration, Table
 from backend.projection_config_service import get_projection_state, mutate_projection_state, ProjectionConflict
 from backend.projection_config_schema import legacy_projection_config_defaults
-from backend.projection_warp_schema import migrate_projection_config_to_v2
+from backend.projection_warp_schema import migrate_projection_config_to_v2, migrate_projection_config_to_v5
 
 
 class ProjectionConfigApiTests(TestCase):
+    def test_installed_v6_rejects_stale_v5_write_before_mutation(self):
+        current = self.state()
+        stale = migrate_projection_config_to_v5(legacy_projection_config_defaults())
+        response = self.post_action('preview', current['revision'], config=stale)
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()['error'], 'schema_changed')
+        self.assertEqual(response.json()['requiredSchemaVersion'], 6)
+        self.assertEqual(response.json()['state']['config']['schemaVersion'], 6)
+        self.assertEqual(response.json()['state']['revision'], current['revision'])
+        row = OTEFProjectionCalibration.objects.get(table__name='otef')
+        self.assertEqual(row.revision, current['revision'])
+        self.assertEqual(row.working_config, current['config'])
+
+    def test_v5_geometry_write_before_initialization_preserves_schema(self):
+        self.state()
+        row = OTEFProjectionCalibration.objects.get(table__name='otef')
+        v5 = migrate_projection_config_to_v5(legacy_projection_config_defaults())
+        row.working_config = v5
+        row.presets[0]['config'] = v5
+        row.revision = 4
+        row.save()
+        edited = copy.deepcopy(v5)
+        edited['pre']['tx'] = 0.2
+        response = self.post_action('preview', 4, config=edited)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['config']['schemaVersion'], 5)
+        self.assertNotIn('rotateDeg', response.json()['config']['namesWall'])
+        self.assertEqual(response.json()['config']['pre']['tx'], 0.2)
+
     def test_legacy_preview_is_normalized_to_v3_before_persistence(self):
         self.state()
+        row = OTEFProjectionCalibration.objects.get(table__name='otef')
+        v5 = migrate_projection_config_to_v5(legacy_projection_config_defaults())
+        row.working_config = v5
+        row.presets = copy.deepcopy(row.presets)
+        row.presets[0]['config'] = copy.deepcopy(v5)
+        row.revision = 4
+        row.save()
         for legacy in (legacy_projection_config_defaults(), migrate_projection_config_to_v2(legacy_projection_config_defaults())):
             response = self.post_action('preview', revision=self.state()['revision'], config=legacy)
             self.assertEqual(response.status_code, 200)
@@ -81,7 +117,8 @@ class ProjectionConfigApiTests(TestCase):
 
     def test_invalid_config_does_not_create_or_change_state(self):
         response = self.client.post("/api/otef/projection-config/", {"table": "otef", "baseRevision": 0, "action": "preview", "sourceId": self.source, "config": {}}, content_type="application/json")
-        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["error"], "schema_changed")
         self.assertEqual(self.state()["revision"], 0)
 
     def test_invalid_action_shapes_preserve_state(self):

@@ -6,11 +6,7 @@
 import { MapProjectionConfig } from "../shared/map-projection-config.js";
 import { getNliNarrative } from "../shared/nli-narratives.js";
 import { parseProjectionSpanId } from "./projection-span-view.js";
-import { DEFAULT_PROJECTION_CONFIG } from "../shared/projection-config-schema.js";
-import { t3ToOutput, visibleT3Rect } from "../shared/projection-config-geometry.js";
 
-export const NLI_EXPLAINER_LAYOUT_STORAGE_KEY = "otef.nliExplainerLayout.v2";
-export const NLI_GIS_CLOCK_LAYOUT_STORAGE_KEY = "otef.nliGisClockLayout.v2";
 export const NLI_GIS_CLOCK_DEFAULT_LAYOUT = {
   leftPct: 30,
   topPct: 88,
@@ -30,7 +26,7 @@ export function nliExplainerSpanKey(search) {
 
 /** Dual-span: only the left projector paints the table slot (right uses a different crop). */
 export function nliExplainerShouldPaintOnSpan(spanKey) {
-  return spanKey !== "right";
+  return spanKey === "left";
 }
 
 export function applyNliExplainerHostPresence(hostEl, spanKey) {
@@ -39,129 +35,6 @@ export function applyNliExplainerHostPresence(hostEl, spanKey) {
   hostEl.style.display = nliExplainerShouldPaintOnSpan(spanKey) ? "" : "none";
 }
 
-export function shouldIgnoreExplainerLayoutStore(_search) {
-  return false;
-}
-
-function legacyExplainerOverlapPageRect(spanKey, span) {
-  if (spanKey !== "left" && spanKey !== "right") return null;
-  const overlap0 = span.RIGHT_X0;
-  const overlap1 = span.LEFT_X1;
-  const overlapW = overlap1 - overlap0;
-  if (spanKey === "left") {
-    const leftW = span.LEFT_X1 - span.LEFT_X0;
-    return {
-      leftPct: (100 * (overlap0 - span.LEFT_X0)) / leftW,
-      widthPct: (100 * overlapW) / leftW,
-    };
-  }
-  const rightW = span.RIGHT_X1 - span.RIGHT_X0;
-  return {
-    leftPct: 0,
-    widthPct: (100 * overlapW) / rightW,
-  };
-}
-
-function configExplainerOverlapPageRect(spanKey, config) {
-  if (spanKey !== "left" && spanKey !== "right") return null;
-  const left = visibleT3Rect(config?.outputs?.left);
-  const right = visibleT3Rect(config?.outputs?.right);
-  if (!left || !right) return null;
-  const intersection = {
-    x0: Math.max(left.x0, right.x0),
-    x1: Math.min(left.x1, right.x1),
-    y0: Math.max(left.y0, right.y0),
-    y1: Math.min(left.y1, right.y1),
-  };
-  if (intersection.x1 <= intersection.x0 || intersection.y1 <= intersection.y0) return null;
-  const branch = config.outputs[spanKey];
-  const outputCorners = [
-    [intersection.x0, intersection.y0],
-    [intersection.x1, intersection.y0],
-    [intersection.x1, intersection.y1],
-    [intersection.x0, intersection.y1],
-  ].map(([u, v]) => t3ToOutput({ u, v }, branch));
-  const x0 = Math.max(0, Math.min(...outputCorners.map(({ u }) => u)));
-  const x1 = Math.min(1, Math.max(...outputCorners.map(({ u }) => u)));
-  const y0 = Math.max(0, Math.min(...outputCorners.map(({ v }) => v)));
-  const y1 = Math.min(1, Math.max(...outputCorners.map(({ v }) => v)));
-  return x1 > x0 && y1 > y0
-    ? { leftPct: x0 * 100, topPct: y0 * 100, widthPct: (x1 - x0) * 100, heightPct: (y1 - y0) * 100 }
-    : null;
-}
-
-/** Return the visible overlap in output coordinates for an effective config. */
-export function nliExplainerOverlapPageRect(spanKey, config) {
-  // Keep the no-argument helper compatible with the parked legacy diagnostic.
-  return config === undefined
-    ? legacyExplainerOverlapPageRect(spanKey, MapProjectionConfig.PROJECTION_SPAN)
-    : configExplainerOverlapPageRect(spanKey, config || DEFAULT_PROJECTION_CONFIG);
-}
-
-export function nliExplainerRotatedPageAabb(layout) {
-  const leftPct = Number(layout?.leftPct) || 0;
-  const topPct = Number(layout?.topPct) || 0;
-  const widthPct = Number(layout?.widthPct) || 0;
-  const heightPct = Number(layout?.heightPct) || 0;
-  const rotateDeg = Number(layout?.rotateDeg) || 0;
-  if (rotateDeg === 0) {
-    return { leftPct, topPct, widthPct, heightPct };
-  }
-  const cx = leftPct + widthPct / 2;
-  const cy = topPct + heightPct / 2;
-  const rad = (rotateDeg * Math.PI) / 180;
-  const cos = Math.cos(rad);
-  const sin = Math.sin(rad);
-  const hw = widthPct / 2;
-  const hh = heightPct / 2;
-  const corners = [
-    [-hw, -hh],
-    [hw, -hh],
-    [hw, hh],
-    [-hw, hh],
-  ];
-  let minX = Infinity;
-  let minY = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
-  for (const [x, y] of corners) {
-    const rx = x * cos - y * sin + cx;
-    const ry = x * sin + y * cos + cy;
-    if (rx < minX) minX = rx;
-    if (ry < minY) minY = ry;
-    if (rx > maxX) maxX = rx;
-    if (ry > maxY) maxY = ry;
-  }
-  return {
-    leftPct: minX,
-    topPct: minY,
-    widthPct: maxX - minX,
-    heightPct: maxY - minY,
-  };
-}
-
-function xRangesOverlap(a0, a1, b0, b1) {
-  return a0 < b1 && a1 > b0;
-}
-
-export function nliExplainerBoxHitsOverlap(layout, spanKey, config) {
-  const overlap = nliExplainerOverlapPageRect(spanKey, config);
-  if (!overlap) return false;
-  const aabb = nliExplainerRotatedPageAabb(layout);
-  const xHit = xRangesOverlap(
-    aabb.leftPct,
-    aabb.leftPct + aabb.widthPct,
-    overlap.leftPct,
-    overlap.leftPct + overlap.widthPct,
-  );
-  if (config === undefined || overlap.topPct === undefined) return xHit;
-  return xHit && xRangesOverlap(
-    aabb.topPct,
-    aabb.topPct + aabb.heightPct,
-    overlap.topPct,
-    overlap.topPct + overlap.heightPct,
-  );
-}
 
 function pickFinite(rawVal, fallbackVal, missingZero = false) {
   const n = Number(rawVal);

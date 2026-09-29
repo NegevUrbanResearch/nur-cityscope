@@ -1,3 +1,4 @@
+import math
 import re
 from copy import deepcopy
 
@@ -166,6 +167,22 @@ def validate_projection_config_v5(value, trusted_manifest=None):
     return errors
 
 
+def validate_projection_config_v6(value, trusted_manifest=None):
+    from .projection_config_schema import validate_names_wall_v6
+    errors = {}
+    if not _keys(value, ['schemaVersion', 'pre', 'outputs', 'namesWall'], '', errors): return errors
+    if value.get('schemaVersion') != 6 or isinstance(value.get('schemaVersion'), bool): errors['schemaVersion'] = 'must equal 6'
+    _legacy_fields(value, errors, trusted_manifest)
+    validate_names_wall_v6(value.get('namesWall'), 'namesWall', errors)
+    return errors
+
+
+def normalize_rotation_deg(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        raise ValueError('invalid rotation')
+    return ((value + 180) % 360) - 180
+
+
 def _identity_baseline(side, source):
     if not isinstance(source, dict) or not source.get('assetId'):
         return {'type': 'identity', 'width': 1920, 'height': 1080, 'origin': 'top-left'}
@@ -229,10 +246,29 @@ def migrate_projection_config_to_v4(config, warnings=None):
 
 
 def migrate_projection_config_to_v5(config, warnings=None):
-    if not isinstance(config, dict) or isinstance(config.get('schemaVersion'), bool) or config.get('schemaVersion') not in (1, 2, 3, 4, 5):
-        raise ValueError('projection config must be schema version 1, 2, 3, 4, or 5')
+    if not isinstance(config, dict) or isinstance(config.get('schemaVersion'), bool):
+        raise ValueError('projection config must be schema version 1, 2, 3, 4, 5, or 6')
+    if config.get('schemaVersion') == 6:
+        return deepcopy(config)
+    if config.get('schemaVersion') not in (1, 2, 3, 4, 5):
+        raise ValueError('projection config must be schema version 1, 2, 3, 4, 5, or 6')
     if config['schemaVersion'] == 5: return deepcopy(config)
     result = migrate_projection_config_to_v4(config, warnings)
     result['namesWall']['profiles']['wall']['inwardShiftPercent'] = 0
     result['schemaVersion'] = 5
+    return result
+
+
+def migrate_projection_config_to_v6(config, rotate_deg):
+    # Imported here because projection_config_schema imports this module at load time.
+    from .projection_config_schema import validate_projection_config
+    if not isinstance(config, dict) or isinstance(config.get('schemaVersion'), bool) or config.get('schemaVersion') not in (1, 2, 3, 4, 5, 6):
+        raise ValueError('projection config must be schema version 1, 2, 3, 4, 5, or 6')
+    if validate_projection_config(config):
+        raise ValueError('invalid projection config')
+    if config['schemaVersion'] == 6:
+        return deepcopy(config)
+    result = migrate_projection_config_to_v5(config)
+    result['namesWall']['rotateDeg'] = normalize_rotation_deg(rotate_deg)
+    result['schemaVersion'] = 6
     return result
