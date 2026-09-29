@@ -35,6 +35,8 @@ const runtimes = new WeakMap();
 const hooksByMap = new WeakMap();
 const rememberedListeners = new WeakMap();
 const rememberedRemoveHandlers = new WeakMap();
+const paintWriteObservers = new WeakMap();
+const paintWriteRemoveHandlers = new WeakMap();
 const removalDiscards = new WeakMap();
 const runtimeRemoveHandlers = new WeakMap();
 
@@ -62,12 +64,57 @@ export function setPaintChannelsRememberedListener(map, listener) {
   const onRemove = () => {
     rememberedListeners.delete(map);
     rememberedRemoveHandlers.delete(map);
+    paintWriteObservers.delete(map);
+    const paintRemove = paintWriteRemoveHandlers.get(map);
+    if (paintRemove && typeof map.off === "function") map.off("remove", paintRemove);
+    paintWriteRemoveHandlers.delete(map);
     if (typeof map.off === "function") map.off("remove", onRemove);
     const discard = removalDiscards.get(map);
     if (typeof discard === "function") discard();
   };
   rememberedRemoveHandlers.set(map, onRemove);
   map.on("remove", onRemove);
+}
+
+/**
+ * Observe every lifecycle paint write, including before addLayer.
+ * Independent of clock hooks. Map removal drops the set.
+ * @param {object} map
+ * @param {(event: { fullId: string, layerId: string, property: string, value: unknown, factor: number }) => void} listener
+ * @returns {() => void}
+ */
+export function addPaintWriteObserver(map, listener) {
+  if (!map || typeof listener !== "function") return () => {};
+  let observers = paintWriteObservers.get(map);
+  if (!observers) {
+    observers = new Set();
+    paintWriteObservers.set(map, observers);
+  }
+  observers.add(listener);
+  if (typeof map.on === "function" && !paintWriteRemoveHandlers.has(map)) {
+    const onRemove = () => {
+      paintWriteObservers.delete(map);
+      paintWriteRemoveHandlers.delete(map);
+      if (typeof map.off === "function") map.off("remove", onRemove);
+    };
+    paintWriteRemoveHandlers.set(map, onRemove);
+    map.on("remove", onRemove);
+  }
+  return () => {
+    observers.delete(listener);
+    if (observers.size === 0) {
+      paintWriteObservers.delete(map);
+      const onRemove = paintWriteRemoveHandlers.get(map);
+      if (onRemove && typeof map.off === "function") map.off("remove", onRemove);
+      paintWriteRemoveHandlers.delete(map);
+    }
+  };
+}
+
+function notifyPaintWrite(map, event) {
+  const observers = paintWriteObservers.get(map);
+  if (!observers) return;
+  for (const listener of observers) listener(event);
 }
 
 function hasClockHooks(hooks) {
@@ -286,11 +333,22 @@ function createLayerLifecycleRuntime(map, hooks) {
     }
   }
 
-  function writePaint(channel, factor, restore) {
+  function writePaint(member, channel, factor, restore) {
+    const transitionKey = `${channel.property}-transition`;
+    const restoreAuthored = restore && !hasEffectiveOverride(channel);
+    const value = restoreAuthored
+      ? (channel.present ? channel.authored : 1)
+      : scaleOpacityExpression(channelBase(channel), factor);
+    notifyPaintWrite(map, {
+      fullId: member.fullId,
+      layerId: channel.layerId,
+      property: channel.property,
+      value,
+      factor,
+    });
     if (typeof map.getLayer === "function" && !map.getLayer(channel.layerId)) return;
     if (typeof map.setPaintProperty !== "function") return;
-    const transitionKey = `${channel.property}-transition`;
-    if (restore && !hasEffectiveOverride(channel)) {
+    if (restoreAuthored) {
       map.setPaintProperty(channel.layerId, transitionKey, { duration: 0, delay: 0 });
       if (channel.present) {
         map.setPaintProperty(channel.layerId, channel.property, channel.authored);
@@ -305,7 +363,7 @@ function createLayerLifecycleRuntime(map, hooks) {
       return;
     }
     map.setPaintProperty(channel.layerId, transitionKey, { duration: 0, delay: 0 });
-    map.setPaintProperty(channel.layerId, channel.property, scaleOpacityExpression(channelBase(channel), factor));
+    map.setPaintProperty(channel.layerId, channel.property, value);
   }
 
   function writeDom(channel, factor) {
@@ -317,7 +375,7 @@ function createLayerLifecycleRuntime(map, hooks) {
   function writeMember(member, factor, restore) {
     for (const channel of member.channels) {
       if (channel.kind === "dom") writeDom(channel, factor);
-      else writePaint(channel, factor, restore);
+      else writePaint(member, channel, factor, restore);
     }
   }
 
@@ -583,6 +641,19 @@ function createLayerLifecycleRuntime(map, hooks) {
       for (const property of opacityChannelsForLayerType(layerType)) {
         nextPaint[`${property}-transition`] = { duration: 0, delay: 0 };
       }
+    }
+    const emitFactor = mountAtZero ? 0 : factor;
+    for (const channel of member.channels) {
+      if (channel.kind !== "paint" || channel.layerId !== layerId) continue;
+      const painted = nextPaint[channel.property];
+      if (painted === undefined) continue;
+      notifyPaintWrite(map, {
+        fullId: member.fullId,
+        layerId,
+        property: channel.property,
+        value: painted,
+        factor: emitFactor,
+      });
     }
     return nextPaint;
   }

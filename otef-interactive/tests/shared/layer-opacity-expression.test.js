@@ -4,10 +4,11 @@ import { peopleFocusOpacityExpression } from "../../frontend/src/shared/nli-peop
 import {
   emitOpacityMix,
   interpolateOpacityLeaves,
-  mixOpacityExpression,
-  opacityChannelsForLayerType,
-  paintWithOpacityFactor,
-  scaleOpacityExpression,
+    mixOpacityExpression,
+    evaluateOpacityExpression,
+    opacityChannelsForLayerType,
+    paintWithOpacityFactor,
+    scaleOpacityExpression,
 } from "../../frontend/src/shared/layer-opacity-expression.js";
 
 const PROPERTY_SPECS = {
@@ -386,5 +387,16 @@ describe("interpolateOpacityLeaves and emitOpacityMix", () => {
     expect(growing.length).toBeLessThanOrEqual(64);
     expect(JSON.stringify(emitOpacityMix(growing))).toContain("id-40");
     expect(growingSizes.at(-1)).toBeGreaterThan(growingSizes[5] * 2);
+  });
+});
+
+describe("evaluateOpacityExpression", () => {
+  it("reads achieved and dim citynames from a scaled case policy", () => {
+    const policy = scaleOpacityExpression(
+      ["case", ["in", ["get", "cityname"], ["literal", ["נירים"]]], 1, 0.08],
+      0.5,
+    );
+    expect(evaluateOpacityExpression(policy, { cityname: "נירים" })).toBeCloseTo(0.5);
+    expect(evaluateOpacityExpression(policy, { cityname: "בארי" })).toBeCloseTo(0.04);
   });
 });

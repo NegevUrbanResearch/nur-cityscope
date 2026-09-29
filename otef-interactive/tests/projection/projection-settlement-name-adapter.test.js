@@ -59,12 +59,12 @@ function fakeCanvasDocument() {
             setTransform() {},
             clearRect() {},
             translate() {},
-            rotate() {},
+            rotate(radians) { context.lastRotate = radians; },
             fillText(text, x, y) {
-              paints.push({ op: "fill", text, x, y, lineWidth: context.lineWidth, canvasWidth: canvas.width });
+              paints.push({ op: "fill", text, x, y, lineWidth: context.lineWidth, canvasWidth: canvas.width, globalAlpha: context.globalAlpha, rotate: context.lastRotate });
             },
             strokeText(text, x, y) {
-              paints.push({ op: "stroke", text, x, y, lineWidth: context.lineWidth, canvasWidth: canvas.width });
+              paints.push({ op: "stroke", text, x, y, lineWidth: context.lineWidth, canvasWidth: canvas.width, globalAlpha: context.globalAlpha, rotate: context.lastRotate });
             },
             measureText(text) {
               const size = Number(String(context.font).match(/(\d+(?:\.\d+)?)px/)?.[1] || 14);
@@ -152,6 +152,20 @@ test("one output edit leaves the other output unchanged", async () => {
   expect(right.getLabels().find((n) => n.citycode === "0067")).toMatchObject({ x: 1400, y: 360 });
 });
 
+test("applies shared rotation on the canvas and per-cityname lifecycle opacity", async () => {
+  const document = fakeCanvasDocument();
+  const adapter = createProjectionSettlementNameAdapter({ document, output: "left" });
+  await adapter.prepare({ catalog: catalogFixture(), settings: initializedSettingsFixture() });
+  adapter.commit();
+  const fills = document.paints.filter((paint) => paint.op === "fill" && paint.canvasWidth === 1920);
+  expect(fills.every((paint) => Number.isFinite(paint.rotate))).toBe(true);
+  expect(fills[0].rotate).toBeCloseTo(35 * Math.PI / 180);
+  adapter.applyScaledOpacity(["case", ["in", ["get", "cityname"], ["literal", ["נירים"]]], 1, 0.08]);
+  const later = document.paints.filter((paint) => paint.op === "fill" && paint.canvasWidth === 1920);
+  expect(later.filter((paint) => paint.text === "נירים").at(-1).globalAlpha).toBe(1);
+  expect(later.filter((paint) => paint.text === "מחוץ").at(-1).globalAlpha).toBeCloseTo(0.08);
+});
+
 test("visibility changes descriptor opacity without repacking labels", async () => {
   const adapter = createProjectionSettlementNameAdapter({ document: fakeCanvasDocument(), output: "left" });
   const settings = initializedSettingsFixture();
@@ -163,6 +177,15 @@ test("visibility changes descriptor opacity without repacking labels", async () 
   expect(adapter.getLabels()).toEqual(before);
   adapter.setVisible(true);
   expect(adapter.descriptor().opacity).toBe(1);
+});
+
+test("scaled opacity repaint keeps an explicit hidden descriptor", async () => {
+  const adapter = createProjectionSettlementNameAdapter({ document: fakeCanvasDocument(), output: "left" });
+  await adapter.prepare({ catalog: catalogFixture(), settings: initializedSettingsFixture() });
+  adapter.commit();
+  adapter.setVisible(false);
+  adapter.applyScaledOpacity(0.5);
+  expect(adapter.descriptor().opacity).toBe(0);
 });
 
 test("failed, aborted, and stale preparation keep the active descriptor", async () => {

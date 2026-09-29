@@ -1,4 +1,5 @@
 import { visibleProjectionBrowserError } from "./projection-browser-error.js";
+import { addPaintWriteObserver } from "../shared/layer-lifecycle-fade.js";
 
 const SETTLEMENT_LAYER = "שמות_יישובים";
 
@@ -7,13 +8,13 @@ function settlementVisible(groups) {
     for (const layer of group.layers || []) {
       const id = layer.fullId || layer.id;
       if (id !== SETTLEMENT_LAYER && id !== `projector_base.${SETTLEMENT_LAYER}`) continue;
-      return group.enabled !== false && layer.enabled !== false;
+      return layer.enabled !== false && group.enabled !== false;
     }
   }
   return true;
 }
 
-export function bindProjectionSettlementNames({ dataContext, adapter, catalog, host, getGroups, onDraw = () => {}, onError = () => {} } = {}) {
+export function bindProjectionSettlementNames({ dataContext, adapter, catalog, host, map, getGroups, onDraw = () => {}, onError = () => {} } = {}) {
   if (!adapter || typeof adapter.prepare !== "function") throw new Error("Settlement runtime requires an adapter");
   let disposed = false;
   let token = 0;
@@ -21,6 +22,16 @@ export function bindProjectionSettlementNames({ dataContext, adapter, catalog, h
   const clearSetupError = () => {
     setupAlert?.remove?.();
     setupAlert = null;
+  };
+  const applyGroupVisibility = () => {
+    if (map) return;
+    adapter.setVisible(settlementVisible(getGroups?.()));
+  };
+  const replayMapOpacity = () => {
+    if (!map || typeof map.getPaintProperty !== "function") return;
+    const value = map.getPaintProperty("projector_base__שמות_יישובים__labels", "text-opacity");
+    if (value === undefined) return;
+    adapter.applyScaledOpacity(value);
   };
   const run = async () => {
     const current = ++token;
@@ -42,7 +53,8 @@ export function bindProjectionSettlementNames({ dataContext, adapter, catalog, h
       if (disposed || current !== token || prepared?.stale) return;
       adapter.commit();
       clearSetupError();
-      adapter.setVisible(settlementVisible(getGroups?.()));
+      applyGroupVisibility();
+      replayMapOpacity();
       onDraw();
     } catch (error) {
       if (disposed || current !== token) return;
@@ -51,16 +63,25 @@ export function bindProjectionSettlementNames({ dataContext, adapter, catalog, h
   };
   const onNames = () => { void run(); };
   const onGroups = () => {
-    adapter.setVisible(settlementVisible(getGroups?.()));
+    applyGroupVisibility();
     if (adapter.descriptor()) onDraw();
   };
   const offNames = dataContext?.subscribe?.("settlementNames", onNames) || (() => {});
   const offGroups = dataContext?.subscribe?.("layerGroups", onGroups) || (() => {});
+  const offPaint = addPaintWriteObserver(map, (event) => {
+    if (disposed) return;
+    if (event.property !== "text-opacity") return;
+    if (event.fullId !== SETTLEMENT_LAYER && event.fullId !== `projector_base.${SETTLEMENT_LAYER}`) return;
+    if (typeof event.layerId !== "string" || !event.layerId.startsWith("projector_base__שמות_יישובים")) return;
+    adapter.applyScaledOpacity(event.value);
+    if (adapter.descriptor()) onDraw();
+  });
   if (!dataContext?.subscribe) void run();
   return () => {
     disposed = true;
     token += 1;
     offNames();
     offGroups();
+    offPaint();
   };
 }

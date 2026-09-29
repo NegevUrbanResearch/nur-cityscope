@@ -246,3 +246,52 @@ export function paintWithOpacityFactor(layerType, paint, factor) {
   }
   return next;
 }
+
+function asBoolean(value) {
+  return value === true;
+}
+
+/**
+ * Evaluate a lifecycle-scaled opacity number or orientation case/mix for one feature.
+ * Unknown operators fall back to 1 so a canvas sink cannot blank labels.
+ * @param {unknown} value
+ * @param {Record<string, unknown>} [properties]
+ */
+export function evaluateOpacityExpression(value, properties = {}) {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") return value;
+  if (!Array.isArray(value) || value.length === 0) return 1;
+  const op = value[0];
+  if (op === "get") {
+    return properties[value[1]];
+  }
+  if (op === "literal") return value[1];
+  if (op === "==") {
+    return evaluateOpacityExpression(value[1], properties) === evaluateOpacityExpression(value[2], properties);
+  }
+  if (op === "in") {
+    const needle = evaluateOpacityExpression(value[1], properties);
+    const haystack = evaluateOpacityExpression(value[2], properties);
+    return Array.isArray(haystack) && haystack.includes(needle);
+  }
+  if (op === "*") {
+    return Number(evaluateOpacityExpression(value[1], properties)) * Number(evaluateOpacityExpression(value[2], properties));
+  }
+  if (op === "+") {
+    let sum = 0;
+    for (let index = 1; index < value.length; index += 1) {
+      sum += Number(evaluateOpacityExpression(value[index], properties));
+    }
+    return sum;
+  }
+  if (op === "case") {
+    for (let index = 1; index < value.length - 1; index += 2) {
+      if (asBoolean(evaluateOpacityExpression(value[index], properties))) {
+        return evaluateOpacityExpression(value[index + 1], properties);
+      }
+    }
+    return evaluateOpacityExpression(value[value.length - 1], properties);
+  }
+  return 1;
+}

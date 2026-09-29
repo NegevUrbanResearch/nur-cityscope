@@ -926,6 +926,7 @@ async function bootstrapProjectionRuntime() {
             dataContext: OTEFDataContext,
             adapter: browserSurface.getSettlementAdapter(),
             catalog: settlementCatalog,
+            map,
             getGroups: () => OTEFDataContext.getLayerGroups(),
             onDraw: () => { browserSurface?.draw?.(); },
             onError: (error) => visibleProjectionBrowserError(displayContainer, error),

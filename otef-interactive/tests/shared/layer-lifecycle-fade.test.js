@@ -4,9 +4,10 @@ import {
   LAYER_FADE_READY_TIMEOUT_MS,
   getLayerLifecycleRuntime,
   resolveLayerFadeMs,
+  addPaintWriteObserver,
   setPaintChannelsRememberedListener,
 } from "../../frontend/src/shared/layer-lifecycle-fade.js";
-import { mixOpacityExpression, scaleOpacityExpression } from "../../frontend/src/shared/layer-opacity-expression.js";
+import { mixOpacityExpression, evaluateOpacityExpression, scaleOpacityExpression } from "../../frontend/src/shared/layer-opacity-expression.js";
 
 function createHooks() {
   let time = 0;
@@ -1345,5 +1346,59 @@ describe("effective paint tweens", () => {
     afterRemoval.setDesiredIds(["settlement"], { durationMs: 0 });
     afterRemoval.stageMapLayer("settlement", layerDef("names-2", { "fill-opacity": 1 }));
     expect(calls).toHaveLength(2);
+  });
+
+  it("notifies a paint-write observer with scaled text-opacity even before addLayer", () => {
+    const map = createMap();
+    const hooks = createHooks();
+    const writes = [];
+    addPaintWriteObserver(map, (event) => writes.push(event));
+    const runtime = getLayerLifecycleRuntime(map, hooks);
+    runtime.setDesiredIds(["projector_base.שמות_יישובים"], { durationMs: LAYER_FADE_MS });
+    runtime.stageMapLayer("projector_base.שמות_יישובים", layerDef("projector_base__שמות_יישובים__labels", {
+      "text-opacity": 1,
+    }, "symbol"));
+    runtime.updateEffectivePaint(
+      "projector_base.שמות_יישובים",
+      "projector_base__שמות_יישובים__labels",
+      "text-opacity",
+      ["case", ["in", ["get", "cityname"], ["literal", ["נירים"]]], 1, 0.08],
+      { tweenMs: 0 },
+    );
+    expect(writes.at(-1)).toMatchObject({
+      fullId: "projector_base.שמות_יישובים",
+      layerId: "projector_base__שמות_יישובים__labels",
+      property: "text-opacity",
+      factor: 0,
+    });
+    expect(evaluateOpacityExpression(writes.at(-1).value, { cityname: "נירים" })).toBe(0);
+    expect(evaluateOpacityExpression(writes.at(-1).value, { cityname: "בארי" })).toBe(0);
+    runtime.markMemberReady("projector_base.שמות_יישובים");
+    runtime.commitBatch();
+    hooks.setTime(300);
+    hooks.flushFrame();
+    expect(writes.at(-1).factor).toBeCloseTo(0.5);
+    expect(evaluateOpacityExpression(writes.at(-1).value, { cityname: "נירים" })).toBeCloseTo(0.5);
+    expect(evaluateOpacityExpression(writes.at(-1).value, { cityname: "בארי" })).toBeCloseTo(0.04);
+  });
+
+  it("drops paint-write observers when the map is removed", () => {
+    const map = withRemoveEvents(createMap());
+    const hooks = createHooks();
+    const writes = [];
+    addPaintWriteObserver(map, (event) => writes.push(event));
+    const runtime = getLayerLifecycleRuntime(map, hooks);
+    runtime.setDesiredIds(["layer"], { durationMs: 0 });
+    stage(runtime, map, "layer", layerDef("layer-fill", { "fill-opacity": 1 }));
+    runtime.markMemberReady("layer");
+    runtime.commitBatch();
+    const before = writes.length;
+    map.remove();
+    const afterRemoval = getLayerLifecycleRuntime(map, hooks);
+    afterRemoval.setDesiredIds(["layer"], { durationMs: 0 });
+    stage(afterRemoval, map, "layer", layerDef("layer-fill", { "fill-opacity": 1 }));
+    afterRemoval.markMemberReady("layer");
+    afterRemoval.commitBatch();
+    expect(writes.length).toBe(before);
   });
 });

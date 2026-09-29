@@ -1,4 +1,5 @@
 import { effectiveSettlementPosition, SETTLEMENT_FONT_STACK, validateSettlementNameSettings } from "../shared/settlement-name-settings.js";
+import { evaluateOpacityExpression } from "../shared/layer-opacity-expression.js";
 
 const WIDTH = 1920;
 const HEIGHT = 1080;
@@ -39,12 +40,19 @@ function styleFallback(context) {
   return Number(String(context.font).match(/(\d+(?:\.\d+)?)px/)?.[1] || 14) * 0.7;
 }
 
+function clampOpacity(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return 1;
+  return Math.min(1, Math.max(0, numeric));
+}
+
 export function createProjectionSettlementNameAdapter({ document = globalThis.document, output } = {}) {
   if (!["left", "right"].includes(output)) throw new Error("settlement adapter output must be left or right");
   let generation = 0;
   let pending = null;
   let active = null;
   let disposed = false;
+  let scaledOpacity = 1;
 
   const paint = (style, labels) => {
     const canvas = document?.createElement?.("canvas");
@@ -66,7 +74,9 @@ export function createProjectionSettlementNameAdapter({ document = globalThis.do
       const extents = glyphExtents(context, label.text);
       const biasX = (extents.right - extents.left) / 2;
       const biasY = (extents.descent - extents.ascent) / 2;
+      const alpha = clampOpacity(evaluateOpacityExpression(scaledOpacity, { cityname: label.text }));
       context.save();
+      context.globalAlpha = alpha;
       context.translate(label.x, label.y);
       context.rotate(label.rotateDeg * Math.PI / 180);
       context.strokeText(label.text, -biasX, -biasY);
@@ -76,6 +86,7 @@ export function createProjectionSettlementNameAdapter({ document = globalThis.do
     });
     return {
       canvas,
+      style,
       labels: painted,
       descriptor: { source: canvas, opacity: 1, contentVersion: generation, width: WIDTH, height: HEIGHT },
     };
@@ -115,6 +126,21 @@ export function createProjectionSettlementNameAdapter({ document = globalThis.do
     setVisible(visible) {
       if (!active) return;
       active.descriptor.opacity = visible ? 1 : 0;
+    },
+    applyScaledOpacity(value) {
+      scaledOpacity = value;
+      if (!active?.style) return;
+      const visibility = active.descriptor.opacity;
+      generation += 1;
+      const labels = active.labels.map((label) => ({
+        citycode: label.citycode,
+        text: label.text,
+        x: label.x,
+        y: label.y,
+        rotateDeg: label.rotateDeg,
+      }));
+      active = paint(active.style, labels);
+      active.descriptor.opacity = visibility;
     },
     descriptor() {
       return active ? active.descriptor : null;

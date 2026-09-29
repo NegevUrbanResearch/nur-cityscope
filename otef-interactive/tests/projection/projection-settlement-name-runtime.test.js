@@ -18,12 +18,21 @@ function settingsFixture() {
 }
 
 function fakeCanvasDocument() {
+  const paints = [];
   const document = {
+    paints,
     fonts: { load: async (spec) => { if (document.fonts.fail) throw new Error("font failed"); return [spec]; } },
     createElement() {
       const canvas = { width: 8, height: 8, getContext() {
-        return { font: "", measureText: () => ({ width: 12, actualBoundingBoxLeft: 6, actualBoundingBoxRight: 6, actualBoundingBoxAscent: 8, actualBoundingBoxDescent: 2 }),
-          clearRect() {}, translate() {}, rotate() {}, strokeText() {}, fillText() {}, drawImage() {}, save() {}, restore() {}, getImageData: () => ({ data: new Uint8ClampedArray(64) }) };
+        const context = {
+          font: "", globalAlpha: 1,
+          measureText: () => ({ width: 12, actualBoundingBoxLeft: 6, actualBoundingBoxRight: 6, actualBoundingBoxAscent: 8, actualBoundingBoxDescent: 2 }),
+          clearRect() {}, translate() {}, rotate() {}, drawImage() {}, save() {}, restore() {},
+          getImageData: () => ({ data: new Uint8ClampedArray(64) }),
+          strokeText() {},
+          fillText(text) { paints.push({ op: "fill", text, globalAlpha: context.globalAlpha, canvasWidth: canvas.width }); },
+        };
+        return context;
       } };
       return canvas;
     },
@@ -110,6 +119,41 @@ test("layer visibility never discards stored positions", async () => {
   expect(adapter.descriptor().opacity).toBe(0);
   expect(adapter.getLabels()[0]).toMatchObject({ citycode: "0067", x: 510, y: 350 });
   expect(data.state.settings.outputs.left).toEqual({});
+  dispose();
+});
+
+test("adopts the current lifecycle text-opacity when binding after the first write", async () => {
+  const doc = fakeCanvasDocument();
+  const adapter = createProjectionSettlementNameAdapter({ document: doc, output: "left" });
+  const data = contextFor(settingsFixture());
+  data.state.settings.baseline.outputs.left["0424"] = { x: 40, y: 80 };
+  const map = {
+    getPaintProperty(id, property) {
+      if (id === "projector_base__שמות_יישובים__labels" && property === "text-opacity") {
+        return ["case", ["in", ["get", "cityname"], ["literal", ["נירים"]]], 1, 0.08];
+      }
+      return undefined;
+    },
+  };
+  const dispose = bindProjectionSettlementNames({
+    dataContext: data, adapter, catalog, map, getGroups: () => data.state.groups, onDraw: () => {}, onError: vi.fn(),
+  });
+  await vi.waitFor(() => expect(adapter.getLabels()).toHaveLength(2));
+  const fills = doc.paints.filter((paint) => paint.op === "fill");
+  expect(fills.filter((paint) => paint.text === "נירים").at(-1).globalAlpha).toBe(1);
+  expect(fills.filter((paint) => paint.text === "מחוץ").at(-1).globalAlpha).toBeCloseTo(0.08);
+  dispose();
+});
+
+test("hides canvas names when the pack is off even if the layer flag stays on", async () => {
+  const doc = fakeCanvasDocument();
+  const adapter = createProjectionSettlementNameAdapter({ document: doc, output: "left" });
+  const data = contextFor(settingsFixture());
+  data.state.groups[0].enabled = false;
+  data.state.groups[0].layers[0].enabled = true;
+  const dispose = bindProjectionSettlementNames({ dataContext: data, adapter, catalog, getGroups: () => data.state.groups, onDraw: () => {}, onError: vi.fn() });
+  await vi.waitFor(() => expect(adapter.getLabels()[0]).toMatchObject({ citycode: "0067", x: 510, y: 350 }));
+  expect(adapter.descriptor()?.opacity).toBe(0);
   dispose();
 });
 
