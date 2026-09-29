@@ -145,6 +145,26 @@ test("clipping and overlap follow the rendered rotation", () => {
   expect(measureSettlementPreviewWarnings([{ ...edge, rotateDeg: 90 }]).clipped).toBe(false);
 });
 
+test("preview warnings describe only the selected settlement", () => {
+  const selected = { citycode: "0067", x: 100, y: 100, rotateDeg: 0, inkBox: { left: 50, right: 150, top: 95, bottom: 105 } };
+  const offscreen = { citycode: "0424", x: -40, y: 1400, rotateDeg: 0, inkBox: { left: -90, right: 10, top: 1395, bottom: 1405 } };
+  const overlappingPair = [
+    { citycode: "0100", x: 400, y: 400, rotateDeg: 90, inkBox: { left: 350, right: 450, top: 395, bottom: 405 } },
+    { citycode: "0101", x: 400, y: 430, rotateDeg: 90, inkBox: { left: 350, right: 450, top: 425, bottom: 435 } },
+  ];
+  expect(measureSettlementPreviewWarnings([selected, offscreen, ...overlappingPair], "0067")).toEqual({
+    clipped: false,
+    overlap: false,
+    outOfView: false,
+    mapping: "complete",
+  });
+  expect(measureSettlementPreviewWarnings([
+    selected,
+    { ...selected, citycode: "0424", x: 110, inkBox: { left: 60, right: 160, top: 95, bottom: 105 } },
+  ], "0067").overlap).toBe(true);
+  expect(measureSettlementPreviewWarnings([offscreen, selected], "0424")).toMatchObject({ clipped: true, outOfView: true });
+});
+
 test("V5 and uninitialized settings stop at a visible setup error", async () => {
   window.history.replaceState({}, "", "/frontend/projection.html?settlementPreview=1&span=left&outputMode=browser&previewSession=settle-v5");
   fetchImpl.mockImplementation(async (url) => ({ ok: true, json: async () => {

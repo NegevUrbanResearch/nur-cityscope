@@ -7,6 +7,7 @@ import {
 
 const SETTLEMENT_EVENT = "otef_settlement_names_changed";
 const NUMERIC_DEBOUNCE_MS = 150;
+const MAX_REBASE_ATTEMPTS = 8;
 const styleKey = "style";
 const PROBE_SOURCE = "11111111-1111-4111-8111-111111111111";
 const PROBE_TIMESTAMP = "1970-01-01T00:00:00.000Z";
@@ -322,6 +323,18 @@ export function createSettlementNameClient({ getSnapshot, writeOperation, socket
     return record.generation;
   }
 
+  function adoptConflictSnapshot(source) {
+    const payload = source?.details?.error ? source.details : source;
+    if (!payload?.settlementNameSettings || !Number.isInteger(payload.settlementNameRevision)) return false;
+    try {
+      acceptDocument(payload.settlementNameSettings, payload.settlementNameRevision);
+      return true;
+    } catch (acceptError) {
+      getLogger().warn("[SettlementNameClient] Ignored invalid conflict snapshot:", acceptError);
+      return false;
+    }
+  }
+
   function dispatch(record, generation, value, operationName) {
     const intent = {
       operation: operationName,
@@ -334,95 +347,136 @@ export function createSettlementNameClient({ getSnapshot, writeOperation, socket
     };
     const queued = writeQueue.then(async () => {
       if (destroyed) throw new Error("Settlement name client destroyed");
-      if (intent.generation !== record.generation && record.draft === null && record.status === "Saved") {
-        return { status: "superseded" };
-      }
-      if (record.status === "Conflict") throw conflictError();
-      const advancedBaseline = record.baseline
-        && same(record.baseline.value, record.acknowledged)
-        && (record.baseline.revision ?? 0) >= (intent.baseline?.revision ?? -1)
-        ? record.baseline
-        : intent.baseline;
-      if (advancedBaseline && !same(advancedBaseline.value, record.acknowledged)) {
-        record.conflict = { value: clone(record.acknowledged), revision: domain.revision };
-        record.status = "Conflict";
-        emit();
-        throw conflictError();
-      }
-      const baseRevision = domain.revision;
       const pendingValue = intent.value;
-      let acknowledge;
-      let signalConflict;
-      const eventPromise = new Promise((resolve) => {
-        acknowledge = (event) => resolve({ type: "acknowledged", ...event });
-        signalConflict = (conflict) => resolve({ type: "conflict", ...conflict });
-      });
-      pendingEvents.set(record.key, {
-        key: record.key,
-        kind: intent.kind,
-        output: intent.output,
-        citycode: intent.citycode,
-        value: pendingValue,
-        baseRevision,
-        generation: intent.generation,
-        acknowledge,
-        conflict: signalConflict,
-      });
-      const writePromise = Promise.resolve().then(() => writeOperation(freeze(intentBody(intent, baseRevision))));
-      writePromise.catch(() => {});
-      try {
-        const result = await Promise.race([
-          writePromise.then((response) => ({ kind: "http", response })),
-          eventPromise.then((event) => ({ kind: "event", event })),
-        ]);
-        if (result.kind === "event") {
-          if (result.event.type === "conflict") throw conflictError();
-          return { status: "ok", revision: result.event.revision };
+      let attempts = 0;
+      while (!destroyed) {
+        if (intent.generation !== record.generation && record.draft === null && record.status === "Saved") {
+          return { status: "superseded" };
         }
-        const response = result.response;
-        if (response?.status === "ok" && response.settlementNameSettings && Number.isInteger(response.settlementNameRevision)) {
-          if (response.settlementNameRevision <= baseRevision) throw new Error("Invalid settlement name acknowledgement revision");
-          acceptDocument(response.settlementNameSettings, response.settlementNameRevision);
-          if (record.status === "Saved" && same(record.acknowledged, pendingValue)) return response;
-        } else if (response?.error === "initialization_required") {
-          record.status = "Failed";
-          emit();
-          throw initializationError();
-        } else if (response?.error === "conflict" || response?.status === 409) {
-          if (response.settlementNameSettings && Number.isInteger(response.settlementNameRevision)) {
-            acceptDocument(response.settlementNameSettings, response.settlementNameRevision);
-          }
+        if (record.status === "Saved" && same(record.acknowledged, pendingValue)) {
+          return { status: "ok", acknowledgedBy: "event" };
+        }
+        if (record.status === "Conflict") throw conflictError();
+        const advancedBaseline = record.baseline
+          && same(record.baseline.value, record.acknowledged)
+          && (record.baseline.revision ?? 0) >= (intent.baseline?.revision ?? -1)
+          ? record.baseline
+          : intent.baseline;
+        if (advancedBaseline && !same(advancedBaseline.value, record.acknowledged)) {
           record.conflict = { value: clone(record.acknowledged), revision: domain.revision };
           record.status = "Conflict";
           emit();
           throw conflictError();
-        } else {
-          throw new Error("Invalid settlement name acknowledgement");
         }
-        if (intent.generation === record.generation && record.status !== "Saved") {
-          throw new Error("Settlement acknowledgement did not match current draft");
-        }
-        return response;
-      } catch (error) {
-        if (record.status === "Saved" && same(record.acknowledged, pendingValue)) return { status: "ok", acknowledgedBy: "event" };
-        const details = error?.details;
-        if (error?.status === 409 && details?.error === "conflict" && details.settlementNameSettings && Number.isInteger(details.settlementNameRevision)) {
-          try { acceptDocument(details.settlementNameSettings, details.settlementNameRevision); } catch (acceptError) {
-            getLogger().warn("[SettlementNameClient] Ignored invalid conflict snapshot:", acceptError);
+        attempts += 1;
+        const baseRevision = domain.revision;
+        let acknowledge;
+        let signalConflict;
+        const eventPromise = new Promise((resolve) => {
+          acknowledge = (event) => resolve({ type: "acknowledged", ...event });
+          signalConflict = (conflict) => resolve({ type: "conflict", ...conflict });
+        });
+        pendingEvents.set(record.key, {
+          key: record.key,
+          kind: intent.kind,
+          output: intent.output,
+          citycode: intent.citycode,
+          value: pendingValue,
+          baseRevision,
+          generation: intent.generation,
+          acknowledge,
+          conflict: signalConflict,
+        });
+        const writePromise = Promise.resolve().then(() => writeOperation(freeze(intentBody(intent, baseRevision))));
+        writePromise.catch(() => {});
+        try {
+          const result = await Promise.race([
+            writePromise.then((response) => ({ kind: "http", response })),
+            eventPromise.then((event) => ({ kind: "event", event })),
+          ]);
+          if (result.kind === "event") {
+            if (result.event.type === "conflict") throw conflictError();
+            return { status: "ok", revision: result.event.revision };
           }
+          const response = result.response;
+          if (response?.status === "ok" && response.settlementNameSettings && Number.isInteger(response.settlementNameRevision)) {
+            if (response.settlementNameRevision <= baseRevision) throw new Error("Invalid settlement name acknowledgement revision");
+            acceptDocument(response.settlementNameSettings, response.settlementNameRevision);
+            if (record.status === "Saved" && same(record.acknowledged, pendingValue)) return response;
+          } else if (response?.error === "initialization_required") {
+            record.status = "Failed";
+            emit();
+            throw initializationError();
+          } else if (response?.error === "conflict" || response?.status === 409) {
+            adoptConflictSnapshot(response);
+            if (record.status === "Saved" && same(record.acknowledged, pendingValue)) {
+              return { status: "ok", acknowledgedBy: "conflict-snapshot" };
+            }
+            if (intent.generation !== record.generation) {
+              if (record.status === "Conflict") throw conflictError();
+              return { status: "superseded" };
+            }
+            if (record.status !== "Conflict" && domain.revision > baseRevision && attempts < MAX_REBASE_ATTEMPTS) {
+              record.status = "Saving";
+              record.conflict = null;
+              record.baseline = { value: clone(record.acknowledged), revision: domain.revision };
+              emit();
+              continue;
+            }
+            if (record.status !== "Conflict" && intent.generation === record.generation) {
+              record.status = "Failed";
+              emit();
+              throw new Error("Settlement name save lost the revision race");
+            }
+            record.conflict = { value: clone(record.acknowledged), revision: domain.revision };
+            record.status = "Conflict";
+            emit();
+            throw conflictError();
+          } else {
+            throw new Error("Invalid settlement name acknowledgement");
+          }
+          if (intent.generation === record.generation && record.status !== "Saved") {
+            throw new Error("Settlement acknowledgement did not match current draft");
+          }
+          return response;
+        } catch (error) {
+          if (record.status === "Saved" && same(record.acknowledged, pendingValue)) return { status: "ok", acknowledgedBy: "event" };
+          if (error?.status === 409 && error?.details?.error === "conflict") {
+            adoptConflictSnapshot(error);
+            if (record.status === "Saved" && same(record.acknowledged, pendingValue)) {
+              return { status: "ok", acknowledgedBy: "conflict-snapshot" };
+            }
+            if (intent.generation !== record.generation) {
+              if (record.status === "Conflict") throw conflictError();
+              return { status: "superseded" };
+            }
+            if (record.status !== "Conflict" && domain.revision > baseRevision && attempts < MAX_REBASE_ATTEMPTS) {
+              record.status = "Saving";
+              record.conflict = null;
+              record.baseline = { value: clone(record.acknowledged), revision: domain.revision };
+              emit();
+              continue;
+            }
+            if (record.status !== "Conflict") {
+              record.status = "Failed";
+              emit();
+              throw error;
+            }
+          }
+          if (error?.status === 409 || error?.code === "conflict") {
+            record.status = "Conflict";
+            record.conflict ||= { value: clone(record.acknowledged), revision: domain.revision };
+          } else if (intent.generation === record.generation && record.status !== "Conflict") {
+            record.status = "Failed";
+          }
+          emit();
+          throw error;
+        } finally {
+          const pending = pendingEvents.get(record.key);
+          if (pending?.baseRevision === baseRevision && pending?.acknowledge === acknowledge) pendingEvents.delete(record.key);
         }
-        if (error?.status === 409 || error?.code === "conflict") {
-          record.status = "Conflict";
-          record.conflict ||= { value: clone(record.acknowledged), revision: domain.revision };
-        } else if (intent.generation === record.generation && record.status !== "Conflict") {
-          record.status = "Failed";
-        }
-        emit();
-        throw error;
-      } finally {
-        const pending = pendingEvents.get(record.key);
-        if (pending?.baseRevision === baseRevision && pending?.acknowledge === acknowledge) pendingEvents.delete(record.key);
       }
+      throw new Error("Settlement name client destroyed");
     });
     writeQueue = queued.catch(() => {});
     return queued;

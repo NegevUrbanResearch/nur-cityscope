@@ -116,15 +116,23 @@ function homeGroups(groups) {
   });
 }
 
-export function measureSettlementPreviewWarnings(labels = []) {
-  const boxes = labels.filter((label) => label.inkBox);
-  const corners = boxes.map((label) => rotatedInkCorners(label));
-  const overlap = corners.some((label, index) => corners.slice(index + 1).some((other) => !projectionSeparated(label, other)));
-  const clipped = corners.some((points) => points.some((point) => point.x < 0 || point.y < 0 || point.x > 1920 || point.y > 1080));
+export function measureSettlementPreviewWarnings(labels = [], selectedCitycode = null) {
+  const selected = selectedCitycode
+    ? labels.filter((label) => label.citycode === selectedCitycode)
+    : labels;
+  const selectedBoxes = selected.filter((label) => label.inkBox);
+  const selectedCorners = selectedBoxes.map((label) => rotatedInkCorners(label));
+  const otherCorners = selectedCitycode
+    ? labels.filter((label) => label.citycode !== selectedCitycode && label.inkBox).map((label) => rotatedInkCorners(label))
+    : selectedCorners;
+  const overlap = selectedCitycode
+    ? selectedCorners.some((label) => otherCorners.some((other) => !projectionSeparated(label, other)))
+    : selectedCorners.some((label, index) => selectedCorners.slice(index + 1).some((other) => !projectionSeparated(label, other)));
+  const clipped = selectedCorners.some((points) => points.some((point) => point.x < 0 || point.y < 0 || point.x > 1920 || point.y > 1080));
   return {
     clipped,
     overlap,
-    outOfView: labels.some((label) => label.x < 0 || label.y < 0 || label.x > 1920 || label.y > 1080),
+    outOfView: selected.some((label) => label.x < 0 || label.y < 0 || label.x > 1920 || label.y > 1080),
     mapping: "complete",
   };
 }
@@ -244,7 +252,7 @@ export async function bootProjectionSettlementNamePreview({ window: win, documen
     onMapRender = () => { if (!disposed) browserSurface.requestDraw(); };
     map.on("render", onMapRender);
     const adapter = browserSurface.getSettlementAdapter();
-    const paint = async (settings, signal) => {
+    const paint = async (settings, signal, selectedCitycode = null) => {
       const prepared = await adapter.prepare({ catalog, settings, signal });
       if (signal?.aborted || prepared?.stale) return null;
       adapter.commit();
@@ -252,10 +260,10 @@ export async function bootProjectionSettlementNamePreview({ window: win, documen
       if (!browserSurface.draw()) throw new Error("Settlement preview draw failed");
       const mesh = copyProjectionMesh(browserSurface.getMesh());
       if (!mesh) throw new Error("Settlement preview mesh is unavailable");
-      return { calibrationRevision: calibration.revision, meshIdentity: `${sessionId}:${calibration.revision}`, mesh, labels: adapter.getLabels(), warnings: measureSettlementPreviewWarnings(adapter.getLabels()) };
+      return { calibrationRevision: calibration.revision, meshIdentity: `${sessionId}:${calibration.revision}`, mesh, labels: adapter.getLabels(), warnings: measureSettlementPreviewWarnings(adapter.getLabels(), selectedCitycode) };
     };
     await paint(checked.value, assets.signal);
-    removeBridge = installProjectionSettlementPreviewBridge({ win, sessionId, output, renderState: (state, context) => paint(state.settings, context.signal) });
+    removeBridge = installProjectionSettlementPreviewBridge({ win, sessionId, output, renderState: (state, context) => paint(state.settings, context.signal, state.selectedCitycode) });
     return dispose;
   } catch (error) {
     await dispose();

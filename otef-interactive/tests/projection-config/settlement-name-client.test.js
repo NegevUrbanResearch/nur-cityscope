@@ -275,6 +275,173 @@ describe("settlement name client", () => {
     client.destroy();
   });
 
+  test("a stale-revision 409 retries when only an unrelated target advanced", async () => {
+    const socket = socketFixture();
+    const concurrent = settingsFixture();
+    concurrent.outputs.left["0424"] = { x: 80, y: 90 };
+    let rejectWrite;
+    const writeOperation = vi.fn()
+      .mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectWrite = reject; }))
+      .mockImplementation((operation) => {
+        const settings = structuredClone(concurrent);
+        settings.outputs[operation.output][operation.citycode] = { ...operation.position };
+        return {
+          status: "ok",
+          action: "set_settlement_names",
+          settlementNameSettings: settings,
+          settlementNameRevision: operation.baseRevision + 1,
+        };
+      });
+    const client = createSettlementNameClient({
+      getSnapshot: async () => viewportFixture(),
+      writeOperation,
+      socket,
+    });
+    await client.hydrate();
+    const save = client.commit(leftTarget, { x: 510, y: 350 });
+    await vi.waitFor(() => expect(writeOperation).toHaveBeenCalledTimes(1));
+    socket.emit(EVENT, changed(concurrent, 1));
+    expect(client.getTarget(leftTarget).status).toBe("Saving");
+    rejectWrite(Object.assign(new Error("Failed to execute command: 409"), {
+      status: 409,
+      details: { error: "conflict", settlementNameSettings: concurrent, settlementNameRevision: 1 },
+    }));
+    await save;
+    expect(writeOperation).toHaveBeenCalledTimes(2);
+    expect(writeOperation.mock.calls[1][0]).toMatchObject({
+      operation: "position",
+      output: "left",
+      citycode: "0067",
+      position: { x: 510, y: 350 },
+      baseRevision: 1,
+    });
+    expect(client.getTarget(leftTarget)).toMatchObject({
+      status: "Saved",
+      draft: null,
+      acknowledged: { x: 510, y: 350 },
+    });
+    expect(client.getTarget(otherTarget).acknowledged).toEqual({ x: 80, y: 90 });
+    client.destroy();
+  });
+
+  test("a 409 snapshot that already contains the draft does not resend", async () => {
+    const accepted = settingsFixture();
+    accepted.outputs.left["0067"] = { x: 510, y: 350 };
+    accepted.outputs.left["0424"] = { x: 80, y: 90 };
+    const writeOperation = vi.fn().mockRejectedValueOnce(Object.assign(new Error("Failed to execute command: 409"), {
+      status: 409,
+      details: { error: "conflict", settlementNameSettings: accepted, settlementNameRevision: 1 },
+    }));
+    const client = createSettlementNameClient({
+      getSnapshot: async () => viewportFixture(),
+      writeOperation,
+    });
+    await client.hydrate();
+    await client.commit(leftTarget, { x: 510, y: 350 });
+    expect(writeOperation).toHaveBeenCalledTimes(1);
+    expect(client.getTarget(leftTarget)).toMatchObject({
+      status: "Saved",
+      draft: null,
+      acknowledged: { x: 510, y: 350 },
+    });
+    client.destroy();
+  });
+
+  test("stops rebasing after repeated unrelated 409s and keeps the queue free", async () => {
+    let conflictRevision = 0;
+    const writeOperation = vi.fn(async (operation) => {
+      if (operation.citycode === "0067") {
+        conflictRevision += 1;
+        const settings = settingsFixture();
+        settings.outputs.left["0424"] = { x: conflictRevision, y: 90 };
+        throw Object.assign(new Error("Failed to execute command: 409"), {
+          status: 409,
+          details: { error: "conflict", settlementNameSettings: settings, settlementNameRevision: conflictRevision },
+        });
+      }
+      return serverWriteFixture(operation);
+    });
+    const client = createSettlementNameClient({
+      getSnapshot: async () => viewportFixture(),
+      writeOperation,
+    });
+    await client.hydrate();
+    await expect(client.commit(leftTarget, { x: 510, y: 350 })).rejects.toMatchObject({ status: 409 });
+    expect(writeOperation.mock.calls.filter(([intent]) => intent.citycode === "0067")).toHaveLength(8);
+    expect(client.getTarget(leftTarget)).toMatchObject({
+      status: "Failed",
+      draft: { x: 510, y: 350 },
+    });
+    await client.commit(otherTarget, { x: 21, y: 22 });
+    expect(client.getTarget(otherTarget)).toMatchObject({ status: "Saved", acknowledged: { x: 21, y: 22 } });
+    client.destroy();
+  });
+
+  test("an unrelated 409 on an older intent does not conflict a newer same-target draft", async () => {
+    const first = deferred();
+    const concurrent = settingsFixture();
+    concurrent.outputs.left["0424"] = { x: 80, y: 90 };
+    const writeOperation = vi.fn()
+      .mockReturnValueOnce(first.promise)
+      .mockImplementation((operation) => {
+        const settings = structuredClone(concurrent);
+        settings.outputs[operation.output][operation.citycode] = { ...operation.position };
+        return {
+          status: "ok",
+          action: "set_settlement_names",
+          settlementNameSettings: settings,
+          settlementNameRevision: operation.baseRevision + 1,
+        };
+      });
+    const client = createSettlementNameClient({
+      getSnapshot: async () => viewportFixture(),
+      writeOperation,
+    });
+    await client.hydrate();
+    const older = client.commit(leftTarget, { x: 510, y: 350 });
+    const newer = client.commit(leftTarget, { x: 520, y: 360 });
+    first.reject(Object.assign(new Error("Failed to execute command: 409"), {
+      status: 409,
+      details: { error: "conflict", settlementNameSettings: concurrent, settlementNameRevision: 1 },
+    }));
+    await expect(older).resolves.toMatchObject({ status: "superseded" });
+    await newer;
+    expect(writeOperation.mock.calls[1][0]).toMatchObject({
+      operation: "position",
+      position: { x: 520, y: 360 },
+      baseRevision: 1,
+    });
+    expect(client.getTarget(leftTarget)).toMatchObject({
+      status: "Saved",
+      draft: null,
+      acknowledged: { x: 520, y: 360 },
+    });
+    client.destroy();
+  });
+
+  test("HTTP 409 still conflicts when the same target changed", async () => {
+    const concurrent = settingsFixture();
+    concurrent.outputs.left["0067"] = { x: 1, y: 1 };
+    const writeOperation = vi.fn().mockRejectedValueOnce(Object.assign(new Error("Failed to execute command: 409"), {
+      status: 409,
+      details: { error: "conflict", settlementNameSettings: concurrent, settlementNameRevision: 1 },
+    }));
+    const client = createSettlementNameClient({
+      getSnapshot: async () => viewportFixture(),
+      writeOperation,
+    });
+    await client.hydrate();
+    await expect(client.commit(leftTarget, { x: 510, y: 350 })).rejects.toMatchObject({ status: 409 });
+    expect(writeOperation).toHaveBeenCalledTimes(1);
+    expect(client.getTarget(leftTarget)).toMatchObject({
+      status: "Conflict",
+      draft: { x: 510, y: 350 },
+      acknowledged: { x: 1, y: 1 },
+      conflict: { value: { x: 1, y: 1 }, revision: 1 },
+    });
+    client.destroy();
+  });
+
   test("serialized edits use the preceding acknowledged revision", async () => {
     let revision = 0;
     let settings = settingsFixture();

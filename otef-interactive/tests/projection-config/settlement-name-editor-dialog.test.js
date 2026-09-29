@@ -38,7 +38,8 @@ afterEach(() => { editor?.close(); editor = null; document.body.replaceChildren(
 
 async function rig(options = {}) {
   window.history.replaceState({}, "", "/frontend/projection-config.html");
-  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({ left: 0, top: 0, width: 960, height: 540, right: 960, bottom: 540, x: 0, y: 0, toJSON() { return {}; } });
+  const bounds = options.bounds || { left: 0, top: 0, width: 960, height: 540, right: 960, bottom: 540, x: 0, y: 0 };
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({ ...bounds, toJSON() { return {}; } });
   let revision = 1;
   let current = settingsFixture();
   const writeOperation = vi.fn(async (body) => {
@@ -217,4 +218,61 @@ test("clipping and overlap warnings stay visible without moving the saved center
   expect(warning).toMatch(/outside/i);
   expect(writeOperation).not.toHaveBeenCalled();
   expect(document.querySelector("[data-field='x']").value).toBe("500");
+});
+
+test("iframe and overlay share a contained 1920x1080 plane so the box sits on the rendered name", async () => {
+  const { writeOperation } = await rig({ bounds: { left: 0, top: 0, width: 1000, height: 400, right: 1000, bottom: 400, x: 0, y: 0 } });
+  renderFrame();
+  const plane = document.querySelector(".settlement-name-reference-plane");
+  const overlay = document.querySelector(".settlement-name-overlay");
+  const scale = 400 / 1080;
+  const left = (1000 - 1920 * scale) / 2;
+  expect(plane.contains(document.querySelector("iframe"))).toBe(true);
+  expect(plane.contains(overlay)).toBe(true);
+  expect(overlay.getAttribute("viewBox")).toBe("0 0 1920 1080");
+  expect(plane.style.transform).toBe(`translate(${left}px, 0px) scale(${scale})`);
+  pointer("pointerdown", left + 500 * scale, 340 * scale);
+  pointer("pointermove", left + 540 * scale, 340 * scale);
+  pointer("pointerup", left + 540 * scale, 340 * scale);
+  await vi.waitFor(() => expect(writeOperation).toHaveBeenCalledTimes(1));
+  expect(writeOperation.mock.calls[0][0].position.x).toBeCloseTo(540, 5);
+});
+
+test("Retry resubmits a conflicted shared style from the modal", async () => {
+  const retained = { fontFamily: "Guttman Hatzvi", fontPx: 14, rotateDeg: 40 };
+  const server = settingsFixture();
+  server.style = { ...retained, rotateDeg: 12 };
+  const writeOperation = vi.fn()
+    .mockRejectedValueOnce(Object.assign(new Error("Failed to execute command: 409"), {
+      status: 409,
+      details: { error: "conflict", settlementNameSettings: structuredClone(server), settlementNameRevision: 2 },
+    }))
+    .mockImplementation(async (body) => {
+      if (body.operation === "style") server.style = { ...body.style };
+      return { status: "ok", settlementNameSettings: structuredClone(server), settlementNameRevision: body.baseRevision + 1 };
+    });
+  const settingsClient = createSettlementNameClient({
+    getSnapshot: async () => ({ settlementNameSettings: settingsFixture(), settlementNameRevision: 1 }),
+    writeOperation,
+  });
+  await settingsClient.hydrate({ forceFresh: true });
+  await expect(settingsClient.commit({ kind: "style" }, retained)).rejects.toMatchObject({ status: 409 });
+  expect(settingsClient.getTarget({ kind: "style" }).status).toBe("Conflict");
+  const opener = document.createElement("button");
+  document.body.append(opener);
+  opener.focus();
+  editor = openSettlementNameEditor({
+    nodeId: "settlement-names",
+    output: "left",
+    citycode: "0067",
+    settingsClient,
+    catalog,
+    document,
+    restoreFocus: () => opener.focus(),
+  });
+  expect(document.querySelector(".settlement-name-status").textContent).toBe("Changed on another screen");
+  document.querySelector(".settlement-name-retry").click();
+  await vi.waitFor(() => expect(writeOperation).toHaveBeenCalledTimes(2));
+  expect(writeOperation.mock.calls[1][0]).toMatchObject({ operation: "style", style: retained });
+  await vi.waitFor(() => expect(document.querySelector(".settlement-name-status").textContent).toBe("Saved"));
 });

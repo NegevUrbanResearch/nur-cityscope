@@ -65,11 +65,14 @@ export function openSettlementNameEditor({
   header.append(title, closeButton);
   const body = make(doc, "div", { className: "settlement-name-body" });
   const stage = make(doc, "div", { className: "settlement-name-stage" });
+  const referencePlane = make(doc, "div", { className: "settlement-name-reference-plane" });
   const previewHost = make(doc, "div", { className: "settlement-preview-host" });
   const overlay = doc.createElementNS?.("http://www.w3.org/2000/svg", "svg") || make(doc, "svg");
   overlay.setAttribute?.("class", "settlement-name-overlay");
   overlay.setAttribute?.("viewBox", "0 0 1920 1080");
-  stage.append(previewHost, overlay);
+  overlay.setAttribute?.("preserveAspectRatio", "none");
+  referencePlane.append(previewHost, overlay);
+  stage.appendChild(referencePlane);
   const mapping = make(doc, "p", { className: "settlement-name-mapping", role: "status", hidden: true });
   const warning = make(doc, "p", { className: "settlement-name-warning", role: "status", hidden: true });
   const retry = make(doc, "button", { type: "button", className: "settlement-preview-retry", hidden: true }, "Retry preview");
@@ -80,8 +83,17 @@ export function openSettlementNameEditor({
     onCitycode: (next) => { setSelection({ output: activeOutput, citycode: next }); onSelection({ output: activeOutput, citycode: activeCitycode }); },
     onPosition: (position) => { void settingsClient.commit({ kind: "position", output: activeOutput, citycode: activeCitycode }, position, { numeric: true }).catch(() => {}); publish(); },
     onStyle: (style) => { void settingsClient.commit({ kind: "style" }, style, { numeric: true }).catch(() => {}); publish(); },
-    onRetry: () => { void settingsClient.retry({ kind: "position", output: activeOutput, citycode: activeCitycode }).catch(() => {}); },
-    onLoad: () => { settingsClient.loadSaved({ kind: "position", output: activeOutput, citycode: activeCitycode }); publish(); },
+    onRetry: () => {
+      void Promise.all([
+        settingsClient.retry({ kind: "position", output: activeOutput, citycode: activeCitycode }),
+        settingsClient.retry({ kind: "style" }),
+      ]).catch(() => {});
+    },
+    onLoad: () => {
+      settingsClient.loadSaved({ kind: "position", output: activeOutput, citycode: activeCitycode });
+      settingsClient.loadSaved({ kind: "style" });
+      publish();
+    },
   });
   controls.element.appendChild(warning);
   body.append(stage, controls.element);
@@ -114,6 +126,11 @@ export function openSettlementNameEditor({
     const node = doc.createElementNS?.("http://www.w3.org/2000/svg", tag) || make(doc, tag);
     for (const [key, value] of Object.entries(props)) node.setAttribute?.(key, String(value));
     return node;
+  }
+  function fitPreview() {
+    const rect = gesture?.rect || stage.getBoundingClientRect();
+    const scale = Math.min(rect.width / 1920, rect.height / 1080) || 1;
+    referencePlane.style.transform = `translate(${(rect.width - 1920 * scale) / 2}px, ${(rect.height - 1080 * scale) / 2}px) scale(${scale})`;
   }
   function drawOverlay() {
     overlay.replaceChildren?.();
@@ -206,6 +223,7 @@ export function openSettlementNameEditor({
     labels = [];
     drawOverlay();
     preview?.reload({ output: activeOutput });
+    fitPreview();
   }
   function onRendered(result) {
     if (!active) return;
@@ -217,6 +235,7 @@ export function openSettlementNameEditor({
     warning.textContent = warningText(result.warnings);
     renderControls();
     drawOverlay();
+    fitPreview();
   }
   preview = mountSettlementNamePreview({
     container: previewHost,
@@ -234,6 +253,7 @@ export function openSettlementNameEditor({
   const beforeUnload = (event) => { if (settingsClient.hasUnsavedWork?.()) { event.preventDefault?.(); event.returnValue = ""; } };
   if (manageBeforeUnload) win?.addEventListener?.("beforeunload", beforeUnload);
   publish();
+  fitPreview();
 
   function setSelection({ output: nextOutput, citycode: nextCitycode } = {}) {
     const outputChanged = nextOutput && nextOutput !== activeOutput;

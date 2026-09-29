@@ -176,9 +176,16 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     onSettlementStyle: (style) => { if (!settlementClient) return; void settlementClient.commit({ kind: "style" }, style, { numeric: true }).catch(() => {}); },
     onSettlementRecovery: (action) => {
       if (!settlementClient || !settlementCitycode) return;
-      const target = { kind: "position", output: settlementOutput, citycode: settlementCitycode };
-      if (action === "load") settlementClient.loadSaved(target);
-      else void (settlementClient.getHydrationState?.().status === "Failed" ? settlementClient.hydrate({ forceFresh: true }) : settlementClient.retry(target)).catch(() => {});
+      const position = { kind: "position", output: settlementOutput, citycode: settlementCitycode };
+      const style = { kind: "style" };
+      if (action === "load") {
+        settlementClient.loadSaved(position);
+        settlementClient.loadSaved(style);
+      } else {
+        void (settlementClient.getHydrationState?.().status === "Failed"
+          ? settlementClient.hydrate({ forceFresh: true })
+          : Promise.all([settlementClient.retry(position), settlementClient.retry(style)])).catch(() => {});
+      }
       refresh();
     },
     onClockScene: (sceneId) => { clockSceneId = sceneId; activeClockEditor?.setSelection({ nodeId: "clock-gis", sceneId: clockSceneId, element: clockElement }); refresh(); },
