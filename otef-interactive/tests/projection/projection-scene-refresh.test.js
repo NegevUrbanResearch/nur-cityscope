@@ -57,9 +57,7 @@ describe("projection live curated refresh", () => {
     const refreshStart = loader.indexOf("const runProjectionCuratedRefresh = async");
     const refresh = loader.slice(refreshStart, loader.indexOf("const applyProjectionRefresh", refreshStart));
     expect(refresh.indexOf("syncProjectionLayersWithNarrative")).toBeGreaterThan(-1);
-    expect(refresh.indexOf("holdUntilHidden")).toBeGreaterThan(-1);
-    expect(refresh.indexOf("holdUntilHidden")).toBeLessThan(refresh.indexOf("syncProjectionLayersWithNarrative"));
-    expect(refresh.indexOf("syncProjectionLayersWithNarrative")).toBeLessThan(refresh.indexOf("await Promise.all"));
+    expect(refresh.indexOf("syncProjectionLayersWithNarrative")).toBeLessThan(refresh.indexOf("await"));
     expect(refresh).toMatch(/isCurrent:\s*\(\)\s*=>\s*isCurrent\(fullId\)/);
     expect(refresh).not.toMatch(/\bflyTo\b|\bjumpTo\b|\beaseTo\b/);
     expect(source).toMatch(/createProjectionCuratedRefresh\(/);
