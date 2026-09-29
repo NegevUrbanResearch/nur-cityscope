@@ -120,7 +120,7 @@ components:
 
 ## Overview
 
-The OTEF Remote Controller is a **mobile-first** phone/tablet UI for the Negev Urban Research Lab wall: pan/zoom, GIS table context, layer visibility and time animation, plus curation. Visual tone is **quiet desert instrumentation**—warm charcoal and stone, **one terracotta** primary (`colors.primary`), matte surfaces, no cyan-on-black or neon glow. **Hebrew is default** (`lang="he"`, `dir="rtl"`); a compact **עב / en** header pill (two segments, `role="group"`, `aria-label` from locale) switches locale and mirrored layout (logical CSS). **Three bottom tabs**—Navigation, Layers, Curation—replace scattered entry points; Layers is a **full-height scrollable panel** (not a draggable bottom sheet) with **no loss** of grouping, toggles, animation chips, pack/processed behaviors, or OTEFDataContext wiring. **Curation** embeds same-origin `curation.html` in an iframe; parent owns the **single Supabase heartbeat**; embedded app skips duplicate init when an **embed flag** (e.g. `?embed=1`) is present—see implementation plan Task 7. **Layer row labels** use `formatLayerLabelForDisplay` in **`src/shared/layer-name-utils.js`** (underscores/hyphen noise → spaces for display only; canonical ids and `fullLayerIds` unchanged). **Pack labels / layers:** stable group ids are titled via **`src/remote/layer-pack-display-names.js`** (curated title still comes from `t("curatedGroupLabel")` in locale). **Switching away from the Layers tab** does not clear drill-down: reopening **Layers** shows the same focused pack; the in-panel **Back** control returns to the pack overview.
+The OTEF Remote Controller is a **mobile-first** phone/tablet UI for the Negev Urban Research Lab wall: pan/zoom, GIS table context, layer visibility and time animation, and the projection presentation. Visual tone is **quiet desert instrumentation**—warm charcoal and stone, **one terracotta** primary (`colors.primary`), matte surfaces, no cyan-on-black or neon glow. **Hebrew is default** (`lang="he"`, `dir="rtl"`); a compact **עב / en** header pill (two segments, `role="group"`, `aria-label` from locale) switches locale and mirrored layout (logical CSS). **Three enabled bottom tabs**—**Navigation** (`navigation`), **Layers** (`layers`), and **Presentation** (`data-remote-tab="slideshow"`; English label "Slideshow")—replace scattered entry points. A fourth bottom-nav button, **Library** (`data-remote-tab="curation"`, `data-nli-remote-launch`), does not open a panel: it navigates to `nli-staff-remote.html`. The workshop/curation iframe panel stays in the DOM but is never shown and is out of scope. Layers is a **full-height scrollable panel** (not a draggable bottom sheet) with **no loss** of grouping, toggles, animation chips, pack/processed behaviors, or OTEFDataContext wiring. **Layer row labels** use `formatLayerLabelForDisplay` in **`src/shared/layer-name-utils.js`** (underscores/hyphen noise → spaces for display only; canonical ids and `fullLayerIds` unchanged). **Pack labels / layers:** stable group ids are titled via **`src/remote/layer-pack-display-names.js`** (curated title still comes from `t("curatedGroupLabel")` in locale). **Switching away from the Layers tab** does not clear drill-down: reopening **Layers** shows the same focused pack; the in-panel **Back** control returns to the pack overview.
 
 ## Colors
 
@@ -150,7 +150,7 @@ Implementation: **logical properties** (`padding-inline`, `margin-inline`, `inse
 
 - **Viewport:** `100dvh`, column flex: **fixed header** → **scrollable `main`** (active tab body) → **fixed bottom nav**; `env(safe-area-inset-*)` on header and nav.
 - **Header:** Title/branding, **compact locale pill** (`#remoteLocaleToggle` / `remote-locale-btn`), **connection** cluster; **below**, full-width **`#table-switcher`** (existing mount contract unchanged).
-- **Tab panels:** Three regions, each with **`data-remote-tab`** set to **`navigation`**, **`layers`**, or **`curation`** (exact attribute/value names are CI contracts—keep in sync with `html-entrypoint-contract`). Only one panel visible at a time; **Layers** hosts list + **panel header** (title + **active layer count**). **Curation** panel holds **iframe** (`title` localized); **do not** tear down iframe on tab switches unless memory forces it.
+- **Tab panels:** Panels carry **`data-remote-tab`** set to **`navigation`**, **`layers`**, **`slideshow`**, or **`curation`** (exact attribute/value names are CI contracts—keep in sync with `tests/contracts/html-entrypoint-contract.test.js`). Only one panel is visible at a time; **Layers** hosts list + **panel header** (title + **active layer count**); **Presentation** (`slideshow`) hosts the projection slideshow controls. The `curation` panel and its iframe stay in the DOM for the embed contract but are not shown; its tab launches the NLI staff remote.
 - **Navigation tab:** D-pad, nipplejs joystick, zoom slider + step controls (existing behavior/throttle preserved).
 
 ### Navigation tab panel (controller)
@@ -163,7 +163,9 @@ This is the **main-area** body for the Navigation tab (`#remote-panel-navigation
   does not add a fourth bottom tab or mix both result types in one list.
 - People results show name and location. After acknowledged selection, the
   search field retains the name and one full-width **Open NLI record** action
-  appears. The GIS, not the remote, shows the location bubble and halo.
+  appears. The GIS, not the remote, shows the name/location bubble. People
+  points use the same status colors on GIS and projection, and both dim the
+  unselected people.
 - Missing links use a focused localized dialog and keep the person selected.
 - The presenter uses the remote **Open NLI record** action. GIS resolves the
   validated local NLI URL and opens or reuses the named top-level
@@ -205,7 +207,7 @@ conflicts are not treated as stale conflicts.
 - **Touch:** D-pad buttons and zoom ± stay at `min-height` / `min-width` from `--touch-target-size` (≥44px, prefer 56px); joystick container keeps a ≥44px minimum hit box.
 
 - **Layers tab:** Full-page list; same actions as current sheet (groups, chevrons, row toggles, pack/processed rows, animation chips).
-  - Superseded for remote layers UX by 'Layers panel (chosen mockup: Variant C sharpened)' until Task 7 aligns implementation.
+  - The shipped layout is described in **Layers panel (Variant C sharpened)** below.
 - **Touch:** Prefer **`spacing.touch` (56px)** on pad, zoom, and nav targets; 8–16px gaps between hit areas.
 
 ## NLI investigation timeline
@@ -220,8 +222,10 @@ can change scale and contrast, but they do not change state meaning.
 - A completed route keeps a solid `#c31f4f` red carrier and adds a black,
   line-based dashed overlay that flows across its full geometry in the reviewed
   direction. Completed motion continues through **Pause** and **End**. When the
-  timeline is off or returns to idle after **Stop**, every visible route uses
-  this final completed flow state. Reduced-motion mode uses a static
+  timeline is off or **idle** (full-timeline cue, Home, archive, scene change,
+  slideshow), every visible route uses this final completed flow state. GIS
+  **Stop** rewinds the armed scene window to its play start and stays paused;
+  Nova **Stop** returns to its 08:03 preview. Reduced-motion mode uses a static
   directional dashed overlay without an ambient animation frame.
 - Investigation polygons are timeline-only. Geometry intersection never
   activates a polygon. A polygon-only beat activates at its authored beat; a
@@ -268,7 +272,7 @@ can change scale and contrast, but they do not change state meaning.
 
 - **app-background** — Root fill: **`{colors.canvas}`**.
 - **header** — **`{colors.surface}`**, title **`title-sm`** / **ink**; table switcher row full-bleed under chrome.
-- **bottom-nav** — **`{colors.surface}`**, inactive labels **ink-muted**; **three** items only (Navigation / Layers / Curation). **Active:** `nav-tab-active` (raised + terracotta label); **inactive:** `nav-tab-inactive`.
+- **bottom-nav** — **`{colors.surface}`**, inactive labels **ink-muted**; three enabled tabs (Navigation / Layers / Presentation) plus the **Library** launch button for the NLI staff remote. **Active:** `nav-tab-active` (raised + terracotta label); **inactive:** `nav-tab-inactive`.
 - **button-primary** / **button-primary-hover** — Filled CTA; focus ring ~2px **primary** at ~35% opacity outside control.
 - **layer-row** — Raised row, **ink** title; **1px `border`** token in CSS between rows or on card edge as today’s density requires.
 - **animation-chip** — Pill, **primary** text on **surface**; outline via CSS **`border-strong`**.
@@ -276,26 +280,25 @@ can change scale and contrast, but they do not change state meaning.
 - **modal-scrim** — **`{colors.overlay-scrim}`** as solid base before alpha.
 - **supporting-text** — Tertiary copy: **`ink-subtle`** + **`label-sm`**.
 
-Map tokens to CSS custom properties (e.g. `--color-canvas`, `--color-primary`, `--nav-height`) in **`css/remote-styles.css`**; markup lives in **`remote-controller.html`** per Tasks 3–4.
+Map tokens to CSS custom properties (e.g. `--color-canvas`, `--color-primary`, `--nav-height`) in **`css/remote-styles.css`**; markup lives in **`remote-controller.html`**.
 
-## Layers panel (chosen mockup: Variant C sharpened)
+## Layers panel (Variant C sharpened)
 
-Implementation and the refreshed static comp follow **`docs/superpowers/plans/2026-04-22-otef-remote-ux-followup.md`** — **Sharpened Variant C** contract (not the original C mockup alone until aligned).
+This is the shipped Layers tab layout.
 
 - **Overview:** pack selection uses **pack cards in a horizontal strip** (hybrid of full cards vs. tiny chips — readable titles and actions, not icon-only slivers).
-- **Primary mockup:** [`../../docs/superpowers/mockups/otef-remote-layers-variant-c.html`](../../docs/superpowers/mockups/otef-remote-layers-variant-c.html) · **Hub:** [`../../docs/superpowers/mockups/otef-remote-layers-mockups.html`](../../docs/superpowers/mockups/otef-remote-layers-mockups.html)
 - **Show/hide all (current pack):** **One** compact control — **switch (track + thumb)** *or* a single state pill (not two buttons) — for **all layers in the selected pack**; keep this row **separate** from the tile grid with **≥12px** gap to the first tile row; do not place the **animation** control beside this row.
 - **Layer tiles:** Focused pack shows layers in a **compact tile grid** (wrap, minimum tile width) for density without an endless vertical list; keep **`layer-row`** / raised-surface language where tiles map to “cards.”
-- **Activation:** **Click the layer tile** toggles/selects the layer; **no** row-level on/off control beside the tile. **Off** (neither on-map nor selected), **on-map (non-primary)**, and **primary selected** are visually distinct: **off** = muted/dashed/lower opacity; **on-map** = solid border + full opacity; **selected** = strongest ring/background. **Animation-capable** layers: **separate** control, **min ~44px** hit target on the control only, **bottom-end** of the tile; mockup shows at least one tile with and one without.
+- **Activation:** **Click the layer tile** toggles/selects the layer; **no** row-level on/off control beside the tile. **Off** (neither on-map nor selected), **on-map (non-primary)**, and **primary selected** are visually distinct: **off** = muted/dashed/lower opacity; **on-map** = solid border + full opacity; **selected** = strongest ring/background. **Animation-capable** layers: **separate** control, **min ~44px** hit target on the control only, **bottom-end** of the tile.
 - **Pack selector:** Titles **compact and readable** — no default **ellipsis** on pack names. **Horizontal** strip: **no visible scrollbar**, **no** prev/next **arrow** buttons; **edge fades** + **touch scroll**; optional “גלילה אופקית” / “Swipe horizontally” hint; **scroll snap** allowed — not a vertical pack list.
 - **Counts (subtle):** **Per pack** (selected pack) **e.g. `4/7` active** near the pack label; **overall** “layers on” **e.g. `12 שכבות פעילות` / `12 layers on`** in the header near title or lamp, muted, not a loud badge.
-- **RTL / LTR:** One static comp should show **two mini phone shells** side-by-side (**HE** `dir="rtl"` + **EN** `dir="ltr"`) so mirroring is reviewable.
+- **RTL / LTR:** Check both **HE** `dir="rtl"` and **EN** `dir="ltr"` so mirroring is reviewable.
 
 **Scroll / shell:** Keep **`#layerSheet`** as the full-height layers host; **pack strip** scrolls horizontally when needed; **layer tile grid** is the primary scroll region inside the focused-pack area (vertical overflow only if the grid exceeds the viewport—prefer density so this is rare). Align `#layerPanelContent` / `.sheet-content` rules in **`remote-styles.css`** with these regions (no footer tab bar changes for layers density).
 
-## Workshop / curation embed
+## Workshop / curation embed (out of scope)
 
-When **`curation.html`** is loaded in an iframe with **`?embed=1`** (or `embed=true`), an inline script adds **`html.curation-embed`**. In that mode the top **`.curation-header`** is hidden so the full chrome stays on the parent remote shell; the standalone page keeps the full header. Submissions has an icon-only **refresh** control (**`#curationSubmissionsRefresh`**) in the section toolbar row (same data reload as **`#curationRefresh`**).
+The remote does not show this panel today. The contract is kept for the DOM and `curation.html`: when **`curation.html`** is loaded in an iframe with **`?embed=1`** (or `embed=true`), an inline script adds **`html.curation-embed`**. In that mode the top **`.curation-header`** is hidden so the full chrome stays on the parent remote shell; the standalone page keeps the full header. Submissions has an icon-only **refresh** control (**`#curationSubmissionsRefresh`**) in the section toolbar row (same data reload as **`#curationRefresh`**).
 
 ## Do's and Don'ts
 

@@ -2,14 +2,15 @@
 
 ## Scope and source of truth
 
-- Preserve the existing GIS, projection, and three-tab remote applications.
+- Preserve the existing GIS, projection, projection-config, three-tab remote
+  (Navigation, Layers, Presentation), and NLI staff remote applications.
   Do not replace them or add another frontend shell without owner approval.
-- For NLI behavior, read the reconciled status at the top of:
-  - `../docs/superpowers/specs/2026-08-30-nli-investigation-interactions-design.md`
-  - `../docs/superpowers/plans/2026-08-30-nli-investigation-interactions-implementation.md`
-- Treat `../.superpowers/sdd/` reports as implementation evidence. Historical
-  lease, persistent archive-state, ownership, polling, and recovery sections
-  in the original plan are superseded.
+- For NLI behavior, the source of truth is the contracts in this file, the
+  current code, and `docs/nli-exhibit-verification.md` (acceptance status).
+  `docs/nli-staff-remote-steps.md` describes what each staff-remote step does.
+- Do not read or write `docs/superpowers/` or `.superpowers/`. Plans, specs,
+  and task reports stay local and gitignored. Never point docs, code, or tests
+  at those paths.
 
 ## Data boundaries
 
@@ -52,9 +53,11 @@
   GIS **idle** (full-timeline cues, Home, archive, scene changes, slideshow)
   shows the complete investigation story. Nova **Stop** keeps its 08:03 idle
   preview. Idle alarms stay off.
-- People selection belongs in the existing remote **Navigation** tab. The GIS
-  bubble shows only name and location; clicking it opens that person's archive
-  record through the same archive bridge the remote uses.
+- People points show on both GIS and projection with the same status colors.
+  Select people from the remote **Navigation** tab or the staff remote search
+  steps. The GIS also shows the selected person's bubble with only name and
+  location; clicking it opens that person's archive record through the same
+  archive bridge the remote uses. Archive open/close is driven from the remote.
 - Archive open/close is an ephemeral command. Do not add migrations, leases,
   owners, heartbeats, polling, iframe embedding, or durable archive state
   without a new owner decision.

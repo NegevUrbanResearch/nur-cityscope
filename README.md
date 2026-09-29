@@ -100,7 +100,7 @@ Copy from `.env.example` and fill in your values. Supabase URL and **service rol
 
 ### Curation (Supabase)
 
-The **Curation** page (linked from the Remote Controller) lets you manage curated layers. The Django API proxies Supabase: it reads projects and submission features from your Supabase project and can publish GeoJSON as new curated layers. Set `SUPABASE_URL` and `SUPABASE_SECRET_KEY` in `.env` (service role key; never expose it in the frontend).
+The **Curation** page (linked from the OTEF launcher) lets you manage curated layers. The Django API proxies Supabase: it reads projects and submission features from your Supabase project and can publish GeoJSON as new curated layers. Set `SUPABASE_URL` and `SUPABASE_SECRET_KEY` in `.env` (service role key; never expose it in the frontend).
 
 ## Access Points
 
@@ -108,10 +108,15 @@ The **Curation** page (linked from the Remote Controller) lets you manage curate
 |---------|-----|
 | OTEF Launcher | http://localhost/otef-interactive/launcher.html (also http://localhost/) |
 | Dashboard | http://localhost/dashboard/ |
-| OTEF Interactive | http://localhost/otef-interactive/ |
-| Projection Display | http://localhost/projection/ |
-| Remote Controller | http://localhost/remote-controller/ |
+| OTEF Interactive (GIS) | http://localhost/otef-interactive/ |
+| OTEF Projection | http://localhost/otef-interactive/projection.html (`?span=left` / `?span=right`) |
+| OTEF Projection configuration | http://localhost/otef-interactive/projection-config.html |
+| OTEF Remote Controller | http://localhost/otef-interactive/remote-controller.html |
+| NLI Staff Remote | http://localhost/otef-interactive/nli-staff-remote.html (installable web app) |
+| OTEF Printable QR | http://localhost/otef-interactive/qr.html |
 | Curation | http://localhost/otef-interactive/curation.html |
+| Projection Display (nur-projection) | http://localhost/projection/ |
+| Remote Controller (nur-remote-controller) | http://localhost/remote-controller/ |
 | API | http://localhost:9900/api/ |
 | Admin | http://localhost:9900/admin (admin/admin123) |
 

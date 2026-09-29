@@ -23,10 +23,10 @@ and Hostages 29–34.
 
 Check audible autoplay with the remote on video slides 2, 10, 18, 21, 23, and 24.
 Confirm audio stops and rewinds when leaving each video slide or closing the
-presentation. Confirm Shura opens after its cue and its explicit Close resumes
-the parent choice; Hostages explicit Close advances to Nir Oz people, while
-Scene Next proceeds to all hostages. Scene Back, Scene Next, and Home must close
-the overlay without taking either special Close destination. Confirm that
+presentation. Confirm Shura opens after its cue. Confirm Close on Shura and
+Hostages (like every segment) stays on the current step and offers Open again;
+Scene Next on the Hostages presentation step continues to Nir Oz people.
+Scene Back, Scene Next, and Home must close the overlay before changing step. Confirm that
 slides stay on GIS and do not appear on projection. Opening and closing must
 leave GIS mounted in place without reloading the map or switching applications.
 
@@ -40,8 +40,8 @@ hardware/browser result below; automated tests do not count as exhibit checks.
 | Open/close causes no GIS reload or application switch |  |  |  | pending |  |
 | Slides 2, 10, 18, 21, 23, 24 autoplay audibly |  |  |  | pending |  |
 | Leaving a video slide or closing stops and rewinds audio |  |  |  | pending |  |
-| Shura and Hostages explicit Close destinations |  |  |  | pending |  |
-| Scene Back/Next and Home force-close without special destination |  |  |  | pending |  |
+| Shura and Hostages Close stays on step and offers Open again |  |  |  | pending |  |
+| Scene Back/Next and Home close the overlay before changing step |  |  |  | pending |  |
 | External network disconnected; fresh Chrome launch |  |  |  | pending |  |
 
 After the exhibit and when the source terms require removal, delete
@@ -133,9 +133,15 @@ commands and outcomes:
 Run these checks against the current Docker/nginx deployment. Record the
 browser, display arrangement, console result, and outcome in the result record.
 
-- [ ] Confirm `http://localhost/otef-interactive/`,
-  `http://localhost/otef-interactive/projection.html`, and
-  `http://localhost/otef-interactive/remote-controller.html` return `200`.
+- [ ] Confirm `http://localhost/` redirects (`302`) to
+  `/otef-interactive/launcher.html`, and that these return `200`:
+  `http://localhost/otef-interactive/` (GIS),
+  `http://localhost/otef-interactive/projection.html`,
+  `http://localhost/otef-interactive/projection-config.html`,
+  `http://localhost/otef-interactive/remote-controller.html`,
+  `http://localhost/otef-interactive/nli-staff-remote.html`,
+  `http://localhost/otef-interactive/nli-staff.webmanifest`, and
+  `http://localhost/otef-interactive/qr.html` (printable QR).
 - [ ] Confirm the GIS dark basemap uses the local OpenFreeMap Dark style with
   Hebrew-first white place and road names, and that labels shape and remain
   legible. Record any console error.
@@ -156,8 +162,9 @@ browser, display arrangement, console result, and outcome in the result record.
   route reaches or crosses the boundary, and an associated investigation
   polygon turns red.
 - [ ] In remote **Navigation**, select a person and confirm the GIS animates
-  to zoom `16` over `1600 ms`, shows one halo and name/location bubble, and
-  keeps the suggestions closed after acknowledgement.
+  to zoom `16` over `1600 ms`, shows one name/location bubble, dims the other
+  people points on GIS and projection (no halo overlay), and keeps the
+  suggestions closed after acknowledgement.
 - [ ] In the Hebrew remote, confirm the archive action reads
   `פתיחת ארכיון הספרייה`.
 - [ ] In projection, confirm the NLI timeline caption shows only the readable
@@ -215,7 +222,8 @@ Record the browser, operating mode, display arrangement, and result.
 - [ ] Open the GIS and remote against the running CityScope deployment.
 - [ ] In remote **Navigation**, switch to **People** and select a person with an
   NLI record.
-- [ ] Confirm the GIS shows one halo and a name/location bubble.
+- [ ] Confirm the GIS shows one name/location bubble and both GIS and
+  projection dim the other people points.
 - [ ] Press **Open NLI record**.
 - [ ] Confirm GIS opens or reuses one named top-level `otef-nli-archive` window
   with the validated record URL.
@@ -243,13 +251,14 @@ Record the browser, operating mode, display arrangement, and result.
 Run this matrix in the normal kiosk Chrome and physical projection setup. The
 automated contract test covers the narrative registry and scene wiring; it
 cannot prove physical projection legibility or the observed camera result.
-The old Canva iframe has been removed. Slide playback needs a new acceptance
-matrix after the Reveal.js viewer and revised slide mapping are implemented.
+The old Canva iframe has been removed. Slide playback on the Reveal.js viewer
+is checked in **Local Reveal presentation setup and acceptance** above.
 Leave every row unchecked until it has been observed by the exhibit operator.
 
-- [ ] From the NLI sheet, manually select **Satellite Color** and **Satellite
-  B&W** and confirm the intended basemap appears on the GIS.
-- [ ] Start the Segev narrative and confirm entry targets the exact house at
+- [ ] From the basemap control in the remote **Layers** tab, manually select
+  **Satellite Color** and **Satellite B&W** and confirm the intended basemap
+  appears on the GIS.
+- [ ] Start the Segev narrative from the staff remote and confirm entry targets the exact house at
   zoom `18`; confirm no zoom-`19` request or visible zoom-`19` stop occurs.
 - [ ] Confirm the narrative does not open a Mila victim popup, select a victim,
   or create NLI archive state.
@@ -308,13 +317,27 @@ Leave every row unchecked until it has been observed by the exhibit operator.
 - Segev refresh/reconnect convergence: pass / fail
 - Notes:
 
+## Nova, Sderot, and Hostages narrative matrix
+
+Run from the staff remote in kiosk Chrome with the physical projection. The
+expected behavior is in the [staff remote guide](nli-staff-remote-steps.md).
+Every row is pending until the exhibit operator observes it.
+
+| Check | Date | Operator | pass/fail | Notes |
+|---|---|---|---|---|
+| Nova entry fits the reviewed extent and shows 08:03 before Play |  |  | pending |  |
+| Nova compounds play five four-second beats; Stop returns to 08:03 |  |  | pending |  |
+| Nova escape routes, Mor Levy route and slides, and memorial slides |  |  | pending |  |
+| Sderot entry focuses the police station; slides stay on GIS |  |  | pending |  |
+| Hostages: Nir Oz and Peri home, archive for חיים פרי, slides, Nir Oz people, all hostages |  |  | pending |  |
+
 ## Later exhibit acceptance
 
 These checks complete acceptance after the integration and window checks:
 
 - Run the full timeline interaction matrix on GIS and projection together.
 - Review route direction, red carrier and dash contrast, settlement outlines,
-  alarm scaling/ripple, bubble legibility, halo visibility, clock placement,
+  alarm scaling/ripple, bubble legibility, people dimming, clock placement,
   and reduced motion on the exhibit hardware.
 - Capture at least 1,000 dense-state scheduler samples on each actual display
   and confirm the 95th percentile is at or below 8 ms. This remains pending
@@ -366,7 +389,7 @@ Lab filled these cells on 2026-09-06 from live TD webrender `projection.html?spa
 
 Zikim T3 `0.7829905, 0.292619` is inside `getProjectionSpanRect("right")` and outside left. Do **not** edit `PROJECTION_SPAN`, Tesuga, or `model-bounds` for this miss of the 2.5 km west sea point. Zikim base/sea and name-edge tradeoffs are deferred, not a Tesuga edit.
 
-**Deferred:** `POST_TY` / `POST_SCALE` (and any later projection-crop pass over Tesuga / AABB / `PROJECTION_SPAN`) are out of scope until a later projection board. This record does not authorize those edits.
+Crop and transform are now adjusted live in `projection-config.html` (see [browser projector operation](browser-projector-warp-operations.md)), not by editing constants. This record does not authorize edits to `PROJECTION_SPAN`, Tesuga, or `model-bounds`. Physical fit on the model remains pending.
 
 ## Staff remote scene sequence (2026-09-27)
 
@@ -398,7 +421,7 @@ Final combined frontend run: `npx vitest run tests/remote tests/shared tests/map
 
 After that combined run, a small fullscreen-error translation fix passed all 31 focused fullscreen/locale tests, including its new regression. The frontend build and whitespace check were rerun successfully afterward.
 
-Evidence: `../../docs/reviews/2026-09-27-nli-review/layout-metrics.json`, `home-after-*.png`, `presentation-slides-*.png`, `live-segev-presentation.png`, `live-nova-memorial-projection.png`, and before/after GIS error records in that directory. Detailed task reports and the final test log are in `../../.superpowers/sdd/nli-remote-repair-20260927/`.
+Evidence: `../../docs/reviews/2026-09-27-nli-review/layout-metrics.json`, `home-after-*.png`, `presentation-slides-*.png`, `live-segev-presentation.png`, `live-nova-memorial-projection.png`, and before/after GIS error records in that directory. Detailed task reports and the final test log were kept locally and are not in the repository.
 
 The device is a **Galaxy Tab A11**; these browser dimensions are simulations, not measurements of its Chrome viewport. Physical tablet touch/install acceptance, physical TD output, reduced-motion display observation and frame-by-frame cold-load WebGL capture remain unverified. Unit tests cover delayed renderer assets and reduced-motion lifecycle behavior; sampled browser frames cannot prove that no single-frame flash ever occurs. The current HTTP tablet URL does not establish promoted PWA installation: HTTPS and suitable larger original icons may still be needed. No offline service worker or certificate/deployment change was added.
 
@@ -431,8 +454,8 @@ rows. Crop Tesuga remains deferred; prior UV / TD blocker still stands.
 
 | Gate | Date | Operator | Surface | pass/fail/blocker | notes |
 |---|---|---|---|---|---|
-| Clock left park | 2026-09-08 | lab | GIS + projection | pending | Must record: `NLI_EXPLAINER_LAYOUT.left` is `46.90416666666667, 22.113809679110926, 8.886423224258024, 8.323215088627478, 56, 91.18739188335852`. Full/right unchanged. Keys `.v2`. Transparent caption, `fontPx`, GIS rotate. |
-| Legend in `#mapLegend` both surfaces | 2026-09-07 afternoon | lab | GIS + projection | pending | Must record: three rows קרב / חטיפה / שריפה in existing `#mapLegend` on GIS **and** projection. No `#nliInvestigationLegend` overlay. Hidden when polygons row off. Remote sheet still one glossary row. |
+| Clock left park | 2026-09-08 | lab | GIS + projection | pending | Must record: the committed default `NLI_EXPLAINER_LAYOUT.left` in `frontend/src/shared/map-projection-config.js` is `leftPct 22.100834647739227, topPct 31.61002744422372, widthPct 8.886423224258024, heightPct 8.323215088627478, fontPx 56, rotateDeg 91.18739188335852`; a saved Projection Clock node value overrides it. Full/right unchanged. Keys `.v2`. Transparent caption, `fontPx`, GIS rotate. |
+| Legend in `#mapLegend` both surfaces | 2026-09-07 afternoon | lab | GIS + projection | pending | Must record: the shared bilingual NLI legend in the existing `#mapLegend` on GIS **and** projection, as a short, wide rail of at most two rows per page with no pack heading (see [legend verification](legend-verification.md)). The investigation polygon categories appear only while that layer is on. No `#nliInvestigationLegend` overlay. |
 | 232 brown on LIVE processed | 2026-09-07 afternoon | lab | GIS + table | pending | Must record: live `public/processed/layers/nli/styles.json` stroke `#873e23` (or rgb 135,62,35), opacity 1, width ~2.667px. Re-prep ran; not residual. |
 | Highlight no bounce after search | 2026-09-07 afternoon | lab | GIS fly + projection highlight | pending | Must record: person search flyTo does not bounce the table highlight. Keep-geometry + 400 ms fade across zoom 13. No highlight-geometry lerp. |
 | One heading | 2026-09-08 | lab | GIS people_names + projection people_names and שמות | pending | Must record: one integer heading, default 41 (`שמות_label_overrides` v2), snap 1°, `text-rotation-alignment: map`. Per-feature offsets stay. GIS שמות stay muted. |

@@ -1,5 +1,28 @@
 # Legend verification — 2026-09-21
 
+## Current behavior (checked against code on 2026-09-29)
+
+- GIS and projection render the same generated, bilingual legend in the
+  existing `#mapLegend` element. The remote language setting picks Hebrew or
+  English.
+- The legend is a short, wide rail. Each page wraps to at most two rows; on
+  projection a page must also fit the saved panel height.
+- Neither surface draws pack headings. The NLI pack never had one, and the
+  other pack headings were removed in `a10ef98`.
+- If the content does not fit in two rows, it splits into pages. GIS shows
+  ‹ / › buttons and a page count; projection shows only the count. Pages
+  advance automatically after the configured dwell time, except while the
+  legend is being edited.
+- Projection legend placement is edited in the Projection Clock / Legend nodes
+  of `projection-config.html`. The projection page has no E key: the old E-key
+  clock and legend editors were retired in `58c7a29`. The right span keeps the
+  legend hidden.
+
+## 2026-09-21 verification record
+
+This record predates the changes above. Its pack headings, tall projection
+panel, and E-key editor observations no longer describe the shipped legend.
+
 Verified through nginx at:
 
 - `http://localhost/otef-interactive/`

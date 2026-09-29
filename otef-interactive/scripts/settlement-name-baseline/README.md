@@ -3,7 +3,7 @@
 Offline check for the projection settlement-name baseline. It does not read exhibit Chrome, recapture meshes, or fill in missing numbers.
 
 ```powershell
-node otef-interactive/scripts/settlement-name-baseline/validate-capture.mjs --capture .superpowers/sdd/settlement-name-config/baseline/capture.json
+node otef-interactive/scripts/settlement-name-baseline/validate-capture.mjs --capture <capture.json>
 ```
 
 `validateCapture(capture)` returns a list of problem paths. An empty list means the capture may authorize later conversion. The CLI also writes `capture-validation.json` beside the capture file. That file holds the capture payload SHA-256, checked artifact paths and hashes, catalogue membership, and the same errors. The capture payload does not contain its own digest.

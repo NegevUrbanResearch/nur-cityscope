@@ -56,4 +56,4 @@ This exhibit uses Chrome's `AutomaticFullscreenAllowedForUrls` and `PopupsAllowe
 
 If launch or rendering fails, read the visible error, close the browser pair, and return to TD. If an unavailable mesh asset is repaired, reload the browser output to retry loading it. After WebGL context recovery, inspect the image before relying on it.
 
-The pre-migration calibration backup is kept locally under `.superpowers/sdd/browser-warp/pre-v2-calibration-rows-live.json`. Database restoration is a technician recovery operation, not the normal TD fallback sequence. Keep the local TD project and captures until retirement is approved.
+The pre-migration calibration backup (`pre-v2-calibration-rows-live.json`) is kept locally on the exhibition PC, not in the repository. Database restoration is a technician recovery operation, not the normal TD fallback sequence. Keep the local TD project and captures until retirement is approved.

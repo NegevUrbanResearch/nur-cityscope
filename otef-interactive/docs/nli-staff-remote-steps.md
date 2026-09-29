@@ -37,8 +37,10 @@ on the current step and does not take the special Close destination.
 Presentation steps show GIS slide controls in the staff remote. Use Previous
 and Next for slides and the separate Close button to leave the presentation.
 Scene Back, Scene Next, and Home close the presentation before changing the
-run-of-show step. Only the presentation Close button runs a special destination:
-Shura resumes the parent choice, and Hostages advances to Nir Oz people.
+run-of-show step. Close always stays on the current step and offers Open for
+that segment again; no presentation Close changes the step. The Wall of names
+step is the exception to the controls: it opens a black GIS slide with no
+slide controls on the remote.
 Returning Home cancels any pending cue, closes a known presentation only after
 that close is acknowledged, clears search focus, and applies the Home cue:
 the six Home layers, overview narrative, idle clock, and no escape routes.
@@ -52,7 +54,6 @@ does not send it again.
 
 The Home screen links directly to the existing Identity Database and Names Wall
 steps. These links use the same cues and search controls as the run of show.
-Identity Database and Names Wall are no longer duplicated under Free control.
 
 Clearing the search field, returning Home, or moving between these two steps
 clears both person and place focus. The field is never empty while a search
@@ -95,7 +96,7 @@ The legend matches the people filter.
 
 | Set | Layers |
 | :--- | :--- |
-| Focus | Settlement names, settlement outlines, settlements, Route 232 |
+| Focus | Settlement names, settlement outlines, settlements, Route 232, narrative house outlines |
 | Opening | Focus + SEA + Gaza roads |
 | Timeline | Opening + investigation polygons, infiltration routes, alarms |
 | Nova timeline | Focus + investigation polygons, infiltration routes, alarms (no SEA, no Gaza roads) |
@@ -119,7 +120,7 @@ exits the current narrative.
 | 4 | Nova and Mor Levy | Unchanged until the story starts | Unchanged | Junction, not a slide | One choice: Nova |
 | 5 | Narratives | Unchanged until a story starts | Unchanged | Junction, not a slide | Sderot, Shura Camp, Hostages |
 | 6 | Identity database | Identity | Stopped (idle) | | Name search |
-| 7 | Wall of names | Wall | Stopped (idle) | | Name search |
+| 7 | Wall of names | Wall | Stopped (idle) | A black GIS slide titled מאגר הזהויות opens automatically | Name or place search; no slide controls |
 | 8 | Back to the start | Home layers | Stopped (idle) | Same reset as Home, while the remote stays on this step | |
 
 The narratives are not separate slides. On the slide before a narrative, the
@@ -205,14 +206,14 @@ that same step. Close stays on the step.
 
 | # | Step | Layers | Clock | Remote controls |
 | :---: | :--- | :--- | :--- | :--- |
-| 1 | Shura Camp | Timeline layers | Idle | Slides 22–28 open automatically after the cue succeeds; there is no manual Open button. Explicit Close resumes the parent choice. |
+| 1 | Shura Camp | Timeline layers | Idle | Slides 22–28 open automatically after the cue succeeds. Close stays on this step and offers Open again. |
 
 ## Hostages (`hostages`)
 
 | # | Step | Narrative | Layers | Clock | Remote controls |
 | :---: | :--- | :--- | :--- | :--- | :--- |
 | 1 | Nir Oz | `hostages` | Focus | Idle after entry | Archive (חיים פרי) |
-| 2 | Presentation | `hostages` | Focus | No change | Close advances to Nir Oz people; Scene Next continues to all hostages. |
+| 2 | Presentation | `hostages` | Focus | No change | Open the Hostages slides from the remote. Close stays on this step and offers Open again; Scene Next continues to Nir Oz victims and hostages. |
 | 3 | Nir Oz victims and hostages | `hostages` | Focus + people (Nir Oz people) | No change | |
 | 4 | All hostages | `hostages_all` | Focus + people (all hostages) | Idle after entry | |
 
@@ -229,24 +230,11 @@ GIS; the projection continues to show the narrative scene.
   record in the archive window on the GIS machine. Pressing it again closes
   the archive. Nova step 4, Mor Levy, has no archive and no person query. It
   has the Mor route toggle and manual slides.
-- **Name search** (identity database and wall of names): picking a person
-  selects them. The GIS map flies to the point and shows a name pop-up, and
-  the model marks the point.
+- **Name search** (identity database): picking a person selects them. The GIS
+  map flies to the point and shows a name pop-up. Both GIS and projection dim
+  the other people points. On the wall of names, a name or place search keeps
+  the associated names bright and dims the rest.
 - **GIS pop-up:** clicking a person's name pop-up on the GIS screen opens their
   record in the same archive window. The remote is not told, so its archive
   button does not switch to "back to map".
 - Selecting a different person closes an open archive record.
-
-## Free screen scenes
-
-Scenes turn on from the free screen. Each scene exits any active narrative
-to the overview. Pressing the active scene again turns all layers off and
-stops the clock.
-
-| Scene | Layers | Clock |
-| :--- | :--- | :--- |
-| Opening | Opening | Stopped (idle) |
-| Loop timeline | Timeline | Plays the whole day on repeat |
-| Identity database | Identity | Stopped (idle) |
-| Names wall | Wall | Stopped (idle) |
-| Layers | Opens the manual layer picker | No change |

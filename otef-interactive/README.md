@@ -10,17 +10,22 @@ Interactive mapping module for the OTEF physical model with synchronized project
 - Physical model overlay with transparent background
 - WebSocket sync between interactive map and projection display
 - Mobile remote controller for touch-based navigation
-- Maptastic.js calibration for projection adjustment
+- Browser projection calibration and warp in `projection-config.html`
 - Flow animation metadata for selected line layers (default OFF on fresh load)
 - Remote layer-sheet animation toggles (layer + pack, animatable layers only)
 - NLI investigation timeline shared by GIS and projection
-- Remote People search with GIS halo/bubble and remote-only NLI archive-window control
+- NLI people points on GIS and projection; remote People search with a GIS name bubble and remote-driven NLI archive window
+- NLI staff remote (`nli-staff-remote.html`) for the guided exhibit sequence
 
 ## Access Points
 
-- **Control Interface**: http://localhost/otef-interactive/
-- **Projection Display**: http://localhost/otef-interactive/projection.html
+- **Launcher**: http://localhost/ (redirects to http://localhost/otef-interactive/launcher.html)
+- **Control Interface (GIS)**: http://localhost/otef-interactive/
+- **Projection Display**: http://localhost/otef-interactive/projection.html (`?span=left` / `?span=right` for each projector)
+- **Projection configuration**: http://localhost/otef-interactive/projection-config.html
 - **Remote Controller**: http://localhost/otef-interactive/remote-controller.html
+- **NLI staff remote**: http://localhost/otef-interactive/nli-staff-remote.html (installable web app via `nli-staff.webmanifest`)
+- **Printable QR**: http://localhost/otef-interactive/qr.html (guest and staff remote QR codes)
 
 ## Phone remotes and QR
 
@@ -143,6 +148,8 @@ GET /api/actions/get_otef_layers/?table=otef
 GET /api/otef_model_config/
 GET /api/otef_viewport/
 POST /api/otef_viewport/
+GET /api/otef/projection-config/
+POST /api/otef/projection-config/
 ```
 
 ## Usage
@@ -160,9 +167,12 @@ steps and notes which narrative scene elements are already implemented.
 - After a route completes, it keeps a solid `#c31f4f` red carrier and adds a
   black, line-based dashed overlay that flows across the full route in the
   reviewed direction. The motion continues through **Pause** and **End**. When
-  the timeline is off or returns to idle after **Stop**, all visible routes use
-  this final-state flow. Reduced-motion mode uses a static directional dashed
-  overlay.
+  the timeline is off or **idle** (full-timeline cue, Home, archive, scene
+  change, slideshow), the complete story shows and all visible routes use this
+  final-state flow. GIS **Stop** is different: it rewinds the armed scene window
+  to its play start and stays paused; it does not jump to the complete story.
+  Nova **Stop** returns to its 08:03 preview. Reduced-motion mode uses a static
+  directional dashed overlay.
 - Investigation polygons activate only at their authored timeline beat. If a
   route shares that beat, the polygon waits until the route reveal completes;
   a polygon-only beat activates immediately.
@@ -170,9 +180,11 @@ steps and notes which narrative scene elements are already implemented.
   turns red or a revealing route reaches or crosses the settlement boundary.
 - Alarms remain yellow; cumulative volume changes radius, and new onsets flash
   with one ripple.
-- In remote **Navigation**, use **Settlements / People** to search and select a
-  person. The GIS shows the selected name and location; the remote provides
-  **Open NLI record** and **Back to map**.
+- People points show on both GIS and projection with the same status colors.
+  In remote **Navigation**, use **Settlements / People** to search and select a
+  person (the staff remote search steps do the same). Both surfaces dim the
+  other people points. The GIS flies to the person and shows a name/location
+  bubble; the remote provides **Open NLI record** and **Back to map**.
 - Projection uses a large `HH:MM` NLI story clock during timeline playback.
   This `clock-only` caption applies only to the projection NLI timeline; it
   does not change the remote **Presentation** tab, slideshow mode, or
@@ -209,8 +221,9 @@ revision 5. A second conflict remains visible to the presenter.
 
 ### Segev narrative
 
-- The NLI layer sheet owns the Segev narrative control. Starting it applies the
-  trusted `משפחת שגב` house focus at zoom `18` using the grayscale
+- The NLI staff remote owns the narrative controls; the regular remote Layers
+  tab no longer starts narratives. Starting Segev applies the trusted
+  `משפחת שגב` house focus at zoom `18` using the grayscale
   `satellite_bw` basemap; GIS and projection render the same Hebrew focus
   label, while the projection camera continues to follow the ordinary viewport
   channel.
@@ -224,6 +237,25 @@ revision 5. A second conflict remains visible to the presenter.
   [the exhibit verification guide](docs/nli-exhibit-verification.md) on kiosk
   Chrome and the physical projection before claiming exhibit acceptance.
 
+### Other narratives
+
+Each narrative is started from the staff remote. Step-by-step details are in
+the [staff remote guide](docs/nli-staff-remote-steps.md).
+
+- **Nova and Mor Levy (`nova`)**: fits the reviewed Nova extent and shows 08:03
+  before playback. The compounds step plays five authored four-second beats;
+  later steps show escape routes, Mor Levy's route and slides, and the memorial
+  slides.
+- **Sderot (`sderot`)**: one step focused on the Sderot police station, with
+  manual slides.
+- **Shura Camp**: no narrative scene; its slides open automatically over the
+  complete idle timeline overview.
+- **Hostages (`hostages`, then `hostages_all`)**: Nir Oz and the Peri home,
+  the archive record for חיים פרי, manual slides, Nir Oz people, then all
+  hostages.
+- These narratives have pending rows in the exhibit verification guide; none
+  is accepted on exhibit hardware yet.
+
 ### Control Interface
 - Pan/zoom to explore the map
 - Tap features for information
@@ -231,15 +263,20 @@ revision 5. A second conflict remains visible to the presenter.
 - Connection status shows sync state
 
 ### Projection Display
-- Full-screen projection view
+- Full-screen projection view; each projector opens `projection.html?span=left`
+  or `?span=right`
 - Highlights current viewport from control interface
-- **Shift+Z** - Enter calibration mode
-- **F** - Fullscreen
-- **X** - Reset calibration
+- Calibration (scale, crop, transform, keystone, and grid warp) is edited in
+  `projection-config.html`, not on the projection page. See the
+  [browser projector operation guide](docs/browser-projector-warp-operations.md)
+  and [projection configuration acceptance](docs/projection-config-acceptance.md).
+  Physical fit on the model is still a pending exhibit gate.
+- Projection page lab keys: **H**/**A** help, **F** fullscreen, **B** bounds,
+  **R** rotation, **D** render debug, **L** label debug
 
 Clock and legend placement are edited in the GIS Clock and Projection Clock /
-Legend nodes. Their scene previews are local and do not change the exhibit;
-use the separate **Show on exhibit** action to apply a GIS scene. The projection
+Legend nodes of `projection-config.html`. Their scene previews are local and do
+not change the exhibit; use the separate **Show on exhibit** action to apply a GIS scene. The projection
 clock uses the shared left slot and appears only on `?span=left`. Django
 acknowledgements and layout revisions are authoritative; runtime views do not
 write placement settings.
@@ -249,7 +286,11 @@ projection clock reads only the saved left slot; the projection legend keeps
 its existing full/left placement and right-hidden runtime behavior.
 
 ### Remote Controller
-- Directional pad and virtual joystick for navigation
+- Three tabs: **Navigation** (`navigation`), **Layers** (`layers`), and
+  **Presentation** (`data-remote-tab="slideshow"`, labelled Slideshow in
+  English). A fourth **Library** button opens the NLI staff remote. The
+  curation/workshop panel stays in the DOM but is not shown and is out of scope.
+- Directional pad and nipplejs virtual joystick for navigation
 - Zoom slider (10-19)
 - Layer toggles (layer groups, model base)
 - Animation toggles for animatable layers/packs only
@@ -268,10 +309,15 @@ its existing full/left placement and right-hidden runtime behavior.
 
 - Canonical migration source lives under `frontend/src/`.
 - Page entrypoints:
-  - `frontend/src/entries/map-main.js`
-  - `frontend/src/entries/projection-main.js`
-  - `frontend/src/entries/remote-main.js`
-  - `frontend/src/entries/curation-main.js`
+  - `frontend/src/entries/launcher-main.js` (`launcher.html`)
+  - `frontend/src/entries/map-main.js` (`index.html`, GIS)
+  - `frontend/src/entries/projection-main.js` (`projection.html`)
+  - `frontend/src/entries/projection-config-main.js` (`projection-config.html`)
+  - `frontend/src/entries/display-identify-main.js` (`display-identify.html`)
+  - `frontend/src/entries/remote-main.js` (`remote-controller.html`)
+  - `frontend/src/entries/nli-staff-remote-main.js` (`nli-staff-remote.html`)
+  - `frontend/src/entries/qr-main.js` (`qr.html`)
+  - `frontend/src/entries/curation-main.js` (`curation.html`)
 - Runtime/shared logic lives under `frontend/src/shared/`, `frontend/src/map/`, and `frontend/src/projection/`.
 
 Commands:
@@ -282,16 +328,10 @@ npm run build:frontend
 npm test
 ```
 
-### Simplifying Layers
+### Processing Layers
 
-To create simplified versions for web display:
-
-```bash
-cd otef-interactive/scripts
-python simplify_geometries.py
-```
-
-Move the generated files to `nur-io/django_api/public/processed/otef/layers/`, then run the import command.
+There is no separate simplification script. Layer packs are processed with
+`scripts/process_layers.py`; see [Adding layers](docs/adding-layers.md).
 
 ### Updating Layers
 

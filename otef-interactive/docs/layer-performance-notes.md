@@ -1,8 +1,22 @@
 # OTEF Layer Performance Notes
 
+## Current PMTiles policy
+
+`scripts/otef_layer_processing/pmtiles_policy.py` is the source of truth. It
+opts out every layer in `projector_base` and `nli`, and label-only point
+layers. Any other layer gets PMTiles if at least one of these holds:
+
+- line or polygon file size `>= LINE_OR_POLYGON_SIZE_THRESHOLD` (`1_500_000` bytes, 1.5 MB);
+- coordinate count `>= COORDINATE_THRESHOLD` (`50_000`);
+- feature count `>= FEATURE_THRESHOLD` (`5_000`);
+- an advanced style (multiple symbol layers, marker lines/points, hatch, or dash).
+
+Property payload is measured but does not affect the decision. The sections
+below are the original analysis and are kept as background.
+
 ## Context
 
-The OTEF interactive map now uses MapLibre. Static GIS packs are processed from source GIS files into WGS84 GeoJSON and, for selected layers, PMTiles. The current pipeline decides whether to generate PMTiles mostly from source file size and style complexity:
+The OTEF interactive map now uses MapLibre. Static GIS packs are processed from source GIS files into WGS84 GeoJSON and, for selected layers, PMTiles. Before the 2026-06-23 update, the pipeline decided whether to generate PMTiles mostly from source file size and style complexity:
 
 - Source file larger than about 15MB.
 - Advanced style / multi-symbol style.
@@ -18,8 +32,8 @@ The layer pipeline and projection runtime were updated from this note's initial
 recommendations. The important implementation choices are:
 
 - PMTiles eligibility now uses measured layer stats: feature count, coordinate
-  count, property payload, source size, geometry type, style complexity, and
-  explicit opt-outs.
+  count, source size, geometry type, style complexity, and explicit opt-outs
+  (see **Current PMTiles policy** above).
 - Existing PMTiles were regenerated after the tiling change. Local verification
   found 63 PMTiles, 0 header read errors, and 0 files below the required
   `max_zoom=19`.

@@ -66,4 +66,4 @@ Before adoption, test scheduler lifecycle and final-state delivery, then verify 
 
 Luna implemented the temporary diagnostic controls. Sol reviewed the isolation tests and interpreted the results independently. The parent agent performed the live browser comparisons.
 
-Temporary instrumentation has been removed from application source; the four affected files match their original revisions and pass syntax checks. Its patch and detailed chronological notes are retained in `.superpowers/sdd/nli-runtime-followup/`. Existing remote spacing, archive-status and presentation-status fixes are separate and retained.
+Temporary instrumentation has been removed from application source; the four affected files match their original revisions and pass syntax checks. Its patch and detailed chronological notes are kept locally, not in the repository. Existing remote spacing, archive-status and presentation-status fixes are separate and retained.

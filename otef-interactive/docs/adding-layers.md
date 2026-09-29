@@ -100,36 +100,32 @@ python process_layers.py \
   --output ../public/processed/layers
 ```
 
-### 5. Add Popup Configuration (Manual)
+### 5. Add Popup Configuration
 
-After processing, edit the generated `manifest.json` to add popup configurations:
-
-```
-otef-interactive/public/processed/layers/my_new_layers/manifest.json
-```
-
-Add a `ui.popup` section to each layer that needs popups:
+Popups come from `otef-interactive/public/source/popup-config.json`, keyed by
+pack ID and then layer ID. The processor copies each entry into the generated
+manifest as the layer's `ui.popup`. Do not edit the generated `manifest.json`
+by hand; a full reprocess replaces it.
 
 ```json
 {
-  "id": "buildings",
-  "name": "Buildings",
-  "file": "buildings.geojson",
-  "format": "geojson",
-  "geometryType": "polygon",
-  "ui": {
-    "popup": {
-      "titleField": "NAME",
-      "fields": [
-        { "label": "Building Name", "key": "NAME" },
-        { "label": "Address", "key": "ADDRESS" },
-        { "label": "Year Built", "key": "YEAR" }
-      ],
-      "hideEmpty": true
+  "my_new_layers": {
+    "layers": {
+      "buildings": {
+        "titleField": "NAME",
+        "fields": [
+          { "label": "Building Name", "key": "NAME" },
+          { "label": "Address", "key": "ADDRESS" },
+          { "label": "Year Built", "key": "YEAR" }
+        ],
+        "hideEmpty": true
+      }
     }
   }
 }
 ```
+
+Layer IDs match exactly first, then ignoring `_`, `-`, spaces, and case.
 
 **Popup Config Options:**
 - `titleField`: Property key to use as popup title (optional)
@@ -193,20 +189,30 @@ The `process_layers.py` script:
 2. **Transforms** coordinates from EPSG:2039 to WGS84 (and copies `*_boundary.geojson` assets without adding them as layers)
 3. **Parses** `.lyrx` files for styling information (including full label style for label layers)
 4. **Discovers** WMTS layers from `gis/*.wmts.json` and adds them to the manifest
-5. **Converts** large files (>10MB or >10,000 features) to PMTiles for better performance
+5. **Converts** layers that meet the PMTiles policy below to PMTiles
 6. **Generates** `manifest.json` and `styles.json` for each group
 7. **Caches** processed files to skip unchanged layers on subsequent runs
 
 ### PMTiles Conversion
 
-Large polygon layers are automatically converted to PMTiles format:
+The decision lives in `scripts/otef_layer_processing/pmtiles_policy.py`:
 - Uses tippecanoe via Docker for tile generation
-- Keeps original GeoJSON for coordinate transformation compatibility
+- Keeps the processed GeoJSON as the full-fidelity fallback
 - PMTiles used for rendering, GeoJSON for data queries
 
-**Threshold for PMTiles:**
-- File size > 10MB, OR
-- Feature count > 10,000
+**Opt-outs (never PMTiles):**
+- Any layer in the `projector_base` pack
+- Any layer in the `nli` pack
+- Label-only point layers (point geometry with `labels` and no symbol)
+
+**Otherwise a layer gets PMTiles if any of these is true:**
+- Line or polygon file size is at least `LINE_OR_POLYGON_SIZE_THRESHOLD = 1_500_000` bytes (1.5 MB)
+- Coordinate count is at least `COORDINATE_THRESHOLD = 50_000`
+- Feature count is at least `FEATURE_THRESHOLD = 5_000`
+- The style is advanced (multiple symbol layers, marker lines/points, hatch, or dash)
+
+Presets: lines use `roads_paths_rivers`, polygons `large_polygons`, points
+`points_thin`.
 
 ## Analyzing Layer Data
 
@@ -238,8 +244,7 @@ cp attractions.lyrx otef-interactive/public/source/layers/tourism/styles/
 # 4. Process
 ./reset-docker.sh
 
-# 5. Edit manifest to add popups
-# Edit: otef-interactive/public/processed/layers/tourism/manifest.json
+# 5. Add popups in otef-interactive/public/source/popup-config.json, then reprocess
 ```
 
 ## Troubleshooting
@@ -269,5 +274,6 @@ These logs are disabled by default. To show them during debugging, set in the co
 
 - `scripts/process_layers.py` - Main processing script
 - `scripts/analyze_data.py` - Data inspection utility
+- `scripts/otef_layer_processing/pmtiles_policy.py` - PMTiles decision
+- `public/source/popup-config.json` - Popup configuration
 - `public/source/layers/example_layer_group/` - Empty template
-- `public/processed/layers/map_3_future/manifest.json` - Example with popups

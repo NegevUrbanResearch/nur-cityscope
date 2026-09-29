@@ -40,7 +40,7 @@ eight steps and starts at the opening minutes.
 | See the [Nova table](#nova-and-mor-levy). |  | [Nova and Mor Levy](#nova-and-mor-levy) | 4 |
 | See each narrative table. The narrative names are links. |  | Narratives (free choice): [Sderot](#sderot), [Shura Camp](#shura-camp), and [Hostages (Haim Peri of Nir Oz)](#hostages-haim-peri) | 5 |
 | Settlement names and outlines, Route 232, and people shown as points. After a name search, zoom in on the point and show a pop-up with the name above it. Do not show Gaza roads. A remote action opens that person's archive record. | Settlement names and outlines, Route 232, and people shown as points. After a name search, zoom in on the point and mark it with a square of light. Dim the other points or make the selected point more prominent. Do not show Gaza roads. | Identity database | 6 |
-| All names appear on the model as a wall. All other layers are dimmed; no layer other than the names is visible. The operator can search for a specific name or place. Associated names stay bright and the others dim. | All names appear on the model as a wall. All other layers are dimmed; no layer other than the names is visible. The operator can search for a specific name or place. Associated names stay bright and the others dim. | Wall of names | 7 |
+| A black slide titled מאגר הזהויות covers the GIS map automatically; the remote shows no slide controls. The operator can search for a specific name or place. | All names appear on the model as a wall. All other layers are dimmed; no layer other than the names is visible. The operator can search for a specific name or place. Associated names stay bright and the others dim. | Wall of names | 7 |
 | The six Home layers return and the clock is idle. The remote stays on this step. | The six Home layers return and the clock is idle. The projection camera stays fixed. | Back to the start | 8 |
 
 The home screen also opens **The timeline**, three steps that are not extra
@@ -94,7 +94,7 @@ step.
 | :--- | :--- | :--- | :---: |
 |  | Zoom in on Nir Oz in black-and-white aerial imagery. Place a point on the Peri family home and show the label “Peri family home.” | Dim the model and focus on Nir Oz. Dim the other settlements. Only Nir Oz remains prominent, with a square of light and a halo around it. | 1 |
 | Open the presentation from the staff remote. | Cover the GIS map with slides 29–34. | Keep the Nir Oz-focused model view from step 1; do not show slides on the projection. | 2 |
-| Closing the presentation automatically advances to this step. | Return to the Nir Oz map view. Show points for people murdered in Nir Oz, people kidnapped and murdered, and people kidnapped and returned alive. | Keep the Nir Oz-focused model view and show the same Nir Oz people. | 3 |
+| Reach this step with Scene Next; closing the presentation stays on step 2. | Return to the Nir Oz map view. Show points for people murdered in Nir Oz, people kidnapped and murdered, and people kidnapped and returned alive. | Keep the Nir Oz-focused model view and show the same Nir Oz people. | 3 |
 |  | Remove the Nir Oz focus and show points for all hostages, including people kidnapped and murdered and people kidnapped and returned alive. | Stop dimming the model, remove the focus from Nir Oz, and show the same all-hostages view. | 4 |
 
 [Return to the sequence](#projection-sequence-and-screen-content)
@@ -103,7 +103,7 @@ step.
 
 | Notes | GIS screen | Projection / model | Order |
 | :--- | :--- | :--- | :---: |
-| Select Shura from the free-choice narratives. There is no separate entry scene or Open button. | Automatically cover the GIS map with slides 22–28. Closing the presentation returns to the narrative-choice sequence. | Show the completed idle NLI overview: alarms, investigation polygons, and infiltration lines enabled, with the normal completed-line flow. No Shura-specific model scene. | 1 |
+| Select Shura from the free-choice narratives. There is no separate entry scene. | Automatically cover the GIS map with slides 22–28. Closing the presentation stays on this step and offers Open again. | Show the completed idle NLI overview: alarms, investigation polygons, and infiltration lines enabled, with the normal completed-line flow. No Shura-specific model scene. | 1 |
 
 [Return to the sequence](#projection-sequence-and-screen-content)
 
@@ -122,10 +122,9 @@ step.
   slide 2 of 8 for Segev), not the absolute deck slide number. Opening a
   segment starts at its first slide; slide navigation does not leave the
   segment. Reopening starts at its first slide again.
-- Closing Segev, Mor Levy, Nova memorial, or Sderot reveals the GIS map and
-  keeps the remote on the current run-of-show step. Closing Hostages both
-  reveals the map and advances immediately to the Nir Oz people step. Closing
-  Shura returns directly to the narrative-choice step.
+- Closing any presentation reveals the GIS map, keeps the remote on the
+  current run-of-show step, and offers Open for that segment again. This
+  includes Shura and Hostages (changed on 2026-09-27); use Scene Next to move on.
 - Videos on slides 2, 10, 18, 21, 23, and 24 are intended to start automatically
   with sound on entering the slide. Leaving the slide or closing the
   presentation stops and rewinds its video. Video completion does not advance
