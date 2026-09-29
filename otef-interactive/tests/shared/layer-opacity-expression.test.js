@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import { createPropertyExpression, v8 } from "@maplibre/maplibre-gl-style-spec";
 import { peopleFocusOpacityExpression } from "../../frontend/src/shared/nli-people-focus-presentation.js";
 import {
+  emitOpacityMix,
+  interpolateOpacityLeaves,
+  mixOpacityExpression,
   opacityChannelsForLayerType,
   paintWithOpacityFactor,
   scaleOpacityExpression,
@@ -157,5 +160,231 @@ describe("paintWithOpacityFactor", () => {
   it("does not add lifecycle keys for unrelated layer types", () => {
     const paint = { "background-opacity": 0.4 };
     expect(paintWithOpacityFactor("background", paint, 0)).toEqual(paint);
+  });
+});
+
+const citynameOpacity = (name) => ["case", ["==", ["get", "cityname"], name], 1, 0.08];
+const objectIdOpacity = (id) => ["case", ["==", ["get", "OBJECTID"], id], 1, 0.08];
+const PRUNE_TOTAL = 1e-4;
+const RETARGET_T = 66 / 400;
+
+function leafWeightSum(leaves) {
+  return leaves.reduce((sum, leaf) => sum + leaf.weight, 0);
+}
+
+function caseCityname(goal) {
+  return goal[1][2];
+}
+
+function evalCaseLeaves(leaves, cityname) {
+  return leaves.reduce((sum, leaf) => {
+    const on = caseCityname(leaf.value) === cityname ? 1 : 0.08;
+    return sum + on * leaf.weight;
+  }, 0);
+}
+
+function preRetargetWeights(fromLeaves, to, t) {
+  const weights = new Map();
+  for (const leaf of fromLeaves) {
+    const key = JSON.stringify(leaf.value);
+    weights.set(key, (weights.get(key) ?? 0) + leaf.weight * (1 - t));
+  }
+  const toKey = JSON.stringify(to);
+  weights.set(toKey, (weights.get(toKey) ?? 0) + t);
+  return weights;
+}
+
+function discardedWeight(fromLeaves, to, t, nextLeaves) {
+  const pre = preRetargetWeights(fromLeaves, to, t);
+  const kept = new Set(nextLeaves.map((leaf) => JSON.stringify(leaf.value)));
+  let dropped = 0;
+  for (const [key, weight] of pre) {
+    if (!kept.has(key)) dropped += weight;
+  }
+  return dropped;
+}
+
+describe("mixOpacityExpression", () => {
+  it("returns exact endpoints and lerps finite numbers", () => {
+    const from = citynameOpacity("א");
+    const to = objectIdOpacity(7);
+    expect(mixOpacityExpression(from, to, 0)).toBe(from);
+    expect(mixOpacityExpression(from, to, -0.25)).toBe(from);
+    expect(mixOpacityExpression(from, to, 1)).toBe(to);
+    expect(mixOpacityExpression(from, to, 2)).toBe(to);
+    expect(mixOpacityExpression(1, 0.08, 0)).toBe(1);
+    expect(mixOpacityExpression(1, 0.08, 1)).toBe(0.08);
+    expect(mixOpacityExpression(1, 0.08, 0.5)).toBeCloseTo(0.54);
+  });
+
+  it("evaluates cityname and OBJECTID midpoints as legal feature expressions", () => {
+    const fromNames = citynameOpacity("א");
+    const toNames = citynameOpacity("ב");
+    const nameMix = mixOpacityExpression(fromNames, toNames, 0.5);
+    expect(createPropertyExpression(nameMix, PROPERTY_SPECS["text-opacity"]).result).toBe("success");
+    expect(evaluate("text-opacity", nameMix, { zoom: 8 }, { cityname: "א" })).toBeCloseTo(0.54);
+    expect(evaluate("text-opacity", nameMix, { zoom: 8 }, { cityname: "ב" })).toBeCloseTo(0.54);
+    expect(evaluate("text-opacity", nameMix, { zoom: 8 }, { cityname: "ג" })).toBeCloseTo(0.08);
+
+    const objectMix = mixOpacityExpression(1, objectIdOpacity(7), 0.5);
+    expect(createPropertyExpression(objectMix, PROPERTY_SPECS["line-opacity"]).result).toBe("success");
+    expect(evaluate("line-opacity", objectMix, { zoom: 8 }, { OBJECTID: 7 })).toBeCloseTo(1);
+    expect(evaluate("line-opacity", objectMix, { zoom: 8 }, { OBJECTID: 8 })).toBeCloseTo(0.54);
+  });
+
+  it("rejects direct and outer-let zoom curves, including interpolate and step variants", () => {
+    const hcl = ["interpolate-hcl", ["linear"], ["zoom"], 0, 0.2, 10, 0.8];
+    const lab = ["interpolate-lab", ["linear"], ["zoom"], 0, 0.2, 10, 0.8];
+    const featureCurve = ["interpolate", ["linear"], ["get", "x"], 0, 0, 1, 1];
+    const nestedZoom = ["case", true, ["interpolate", ["linear"], ["zoom"], 0, 0.2, 10, 0.8], 1];
+    for (const illegal of [zoomInterpolate, zoomStep, outerLet, hcl, lab, featureCurve, nestedZoom]) {
+      expect(() => mixOpacityExpression(illegal, 1, 0.5)).toThrow(/zoom|interpolate|step/);
+      expect(() => mixOpacityExpression(1, illegal, 0.5)).toThrow(/zoom|interpolate|step/);
+      expect(() => interpolateOpacityLeaves([{ value: 1, weight: 1 }], illegal, 0.5)).toThrow(/zoom|interpolate|step/);
+    }
+    const zoomProperty = ["case", ["==", ["get", "zoom"], "near"], 1, 0.08];
+    expect(mixOpacityExpression(zoomProperty, 0.08, 1)).toBe(0.08);
+  });
+});
+
+describe("interpolateOpacityLeaves and emitOpacityMix", () => {
+  it("keeps a mix-shaped memorial policy as one opaque leaf", () => {
+    const dim = ["case", ["==", ["get", "cityname"], "א"], 1, 0.18];
+    const focused = ["case", ["==", ["get", "cityname"], "ב"], 1, 0.18];
+    const memorial = ["+", ["*", dim, 0.4], ["*", focused, 0.6]];
+    const base = citynameOpacity("א");
+    const fromLeaves = [{ value: base, weight: 1 }];
+    const next = interpolateOpacityLeaves(fromLeaves, memorial, 0.25);
+    expect(fromLeaves).toEqual([{ value: base, weight: 1 }]);
+    expect(next.map((leaf) => leaf.value)).toEqual([base, memorial]);
+    expect(next[1].value).toBe(memorial);
+    expect(leafWeightSum(next)).toBeCloseTo(1);
+
+    const emitted = emitOpacityMix(next);
+    expect(emitted[0]).toBe("+");
+    expect(emitted.some((part) => Array.isArray(part) && part[1] === memorial)).toBe(true);
+    expect(emitted.filter((part) => Array.isArray(part) && part[0] === "+")).toEqual([]);
+    expect(createPropertyExpression(emitted, PROPERTY_SPECS["text-opacity"]).result).toBe("success");
+    expect(evaluate("text-opacity", emitted, { zoom: 8 }, { cityname: "א" })).toBeCloseTo(1 * 0.75 + (1 * 0.4 + 0.18 * 0.6) * 0.25);
+    expect(evaluate("text-opacity", emitted, { zoom: 8 }, { cityname: "ב" })).toBeCloseTo(0.08 * 0.75 + (0.18 * 0.4 + 1 * 0.6) * 0.25);
+
+    const settled = interpolateOpacityLeaves(next, memorial, 1);
+    expect(settled).toEqual([{ value: memorial, weight: 1 }]);
+    expect(emitOpacityMix(settled)).toBe(memorial);
+  });
+
+  it("merges structurally equal leaves and collapses all-numeric mixes", () => {
+    const expr = objectIdOpacity(4);
+    const copy = JSON.parse(JSON.stringify(expr));
+    const merged = interpolateOpacityLeaves(
+      [{ value: expr, weight: 0.25 }, { value: copy, weight: 0.75 }],
+      expr,
+      0,
+    );
+    expect(merged).toEqual([{ value: expr, weight: 1 }]);
+    expect(emitOpacityMix(merged)).toBe(expr);
+    expect(emitOpacityMix([{ value: 1, weight: 0.5 }, { value: 0.08, weight: 0.5 }])).toBeCloseTo(0.54);
+    expect(emitOpacityMix([{ value: expr, weight: 1 }])).toBe(expr);
+
+    const combined = interpolateOpacityLeaves(
+      [{ value: 1, weight: 0.4 }, { value: 0.5, weight: 0.6 }],
+      0,
+      0,
+    );
+    expect(combined).toHaveLength(1);
+    expect(combined[0].weight).toBe(1);
+    expect(combined[0].value).toBeCloseTo(0.7);
+    expect(emitOpacityMix(combined)).toBeCloseTo(0.7);
+  });
+
+  it("discards only the smallest weights whose total is at most 1e-4 and does not cap leaf count", () => {
+    const keep = citynameOpacity("keep");
+    const tinyA = citynameOpacity("a");
+    const tinyB = citynameOpacity("b");
+    const bothTiny = interpolateOpacityLeaves([
+      { value: keep, weight: 1 - 6e-5 },
+      { value: tinyA, weight: 3e-5 },
+      { value: tinyB, weight: 3e-5 },
+    ], keep, 0);
+    expect(bothTiny).toEqual([{ value: keep, weight: 1 }]);
+
+    const oneTiny = interpolateOpacityLeaves([
+      { value: keep, weight: 1 - 1.2e-4 },
+      { value: tinyA, weight: 6e-5 },
+      { value: tinyB, weight: 6e-5 },
+    ], keep, 0);
+    expect(oneTiny).toHaveLength(2);
+    expect(oneTiny.some((leaf) => leaf.value === tinyA)).toBe(false);
+    expect(leafWeightSum(oneTiny)).toBeCloseTo(1);
+
+    const heavy = interpolateOpacityLeaves([
+      { value: keep, weight: 1 - 2e-4 },
+      { value: tinyA, weight: 2e-4 },
+    ], keep, 0);
+    expect(heavy).toHaveLength(2);
+
+    const many = Array.from({ length: 80 }, (_, index) => ({
+      value: citynameOpacity(`n${index}`),
+      weight: 1 / 80,
+    }));
+    expect(interpolateOpacityLeaves(many, many[0].value, 0)).toHaveLength(80);
+  });
+
+  it("keeps prolonged 66ms retargets bounded, continuous, and exactly settled", () => {
+    const updates = 1000;
+    let leaves = [{ value: citynameOpacity("place-0"), weight: 1 }];
+    let unpruned = leaves.map((leaf) => ({ ...leaf }));
+    const sizes = [];
+    const checkpoints = new Set([1, 66, 400, updates]);
+
+    for (let step = 1; step <= updates; step += 1) {
+      const goal = citynameOpacity(`place-${step}`);
+      const next = interpolateOpacityLeaves(leaves, goal, RETARGET_T);
+      const dropped = discardedWeight(leaves, goal, RETARGET_T, next);
+      leaves = next;
+      unpruned = [
+        ...unpruned.map((leaf) => ({ value: leaf.value, weight: leaf.weight * (1 - RETARGET_T) })),
+        { value: goal, weight: RETARGET_T },
+      ];
+      expect(dropped).toBeLessThanOrEqual(PRUNE_TOTAL + 1e-9);
+      expect(leaves.length).toBeLessThanOrEqual(64);
+      expect(Math.abs(leafWeightSum(leaves) - 1)).toBeLessThan(1e-9);
+
+      const cities = [`place-${step}`, "missing", `place-${Math.max(0, step - 40)}`];
+      for (const cityname of cities) {
+        expect(Math.abs(evalCaseLeaves(leaves, cityname) - evalCaseLeaves(unpruned, cityname))).toBeLessThanOrEqual(1e-3);
+      }
+      sizes.push(JSON.stringify(emitOpacityMix(leaves)).length);
+
+      if (checkpoints.has(step)) {
+        const emitted = emitOpacityMix(leaves);
+        expect(createPropertyExpression(emitted, PROPERTY_SPECS["text-opacity"]).result).toBe("success");
+        for (const cityname of cities) {
+          const actual = evaluate("text-opacity", emitted, { zoom: 5 }, { cityname });
+          expect(Math.abs(actual - evalCaseLeaves(unpruned, cityname))).toBeLessThanOrEqual(1e-3);
+        }
+      }
+    }
+
+    const late = sizes.slice(120);
+    const lateSpan = Math.max(...late) - Math.min(...late);
+    expect(lateSpan).toBeLessThan(Math.min(...late) * 0.2);
+
+    const last = citynameOpacity(`place-${updates}`);
+    const settled = interpolateOpacityLeaves(leaves, last, 1);
+    expect(settled).toEqual([{ value: last, weight: 1 }]);
+    expect(emitOpacityMix(settled)).toBe(last);
+
+    let growing = [{ value: ["case", ["in", ["get", "cityname"], ["literal", ["id-0"]]], 1, 0.08], weight: 1 }];
+    const growingSizes = [JSON.stringify(emitOpacityMix(growing)).length];
+    for (let step = 1; step <= 40; step += 1) {
+      const ids = Array.from({ length: step + 1 }, (_, index) => `id-${index}`);
+      const goal = ["case", ["in", ["get", "cityname"], ["literal", ids]], 1, 0.08];
+      growing = interpolateOpacityLeaves(growing, goal, RETARGET_T);
+      growingSizes.push(JSON.stringify(emitOpacityMix(growing)).length);
+    }
+    expect(growing.length).toBeLessThanOrEqual(64);
+    expect(JSON.stringify(emitOpacityMix(growing))).toContain("id-40");
+    expect(growingSizes.at(-1)).toBeGreaterThan(growingSizes[5] * 2);
   });
 });

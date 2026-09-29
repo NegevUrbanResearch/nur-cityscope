@@ -11,6 +11,7 @@ import { idleNliClock, normalizeNliClock } from "../shared/nli-investigation-clo
 import { normalizeGisBasemap } from "../shared/gis-basemap.js";
 import layerRegistry from "../shared/layer-registry.js";
 import { resolveMotionMode } from "../shared/reduced-motion.js";
+import { attachSettlementOrientationRuntime } from "../shared/nli-settlement-orientation.js";
 import { measureClockPreviewWarnings } from "../projection/clock-preview-warnings.js";
 import { syncInvestigationTimelineToMap, disposeInvestigationTimelineForMap } from "../shared/maplibre-investigation-timeline.js";
 import {
@@ -203,6 +204,7 @@ export async function bootClockPreview({ window: frameWindow, document: frameDoc
     zoom: Number.isFinite(snapshot.viewport?.zoom) ? snapshot.viewport.zoom : 10,
     basemap: normalizeGisBasemap(snapshot.basemap || "osm"),
   });
+  attachSettlementOrientationRuntime(map);
   const mapContainer = frameDocument.getElementById("map");
   const { host: clockHost, captionEl } = ensureNliExplainerHost(mapContainer, { hostId: "nliGisClockHost" });
   applyNliExplainerLayout(clockHost, NLI_GIS_CLOCK_DEFAULT_LAYOUT);

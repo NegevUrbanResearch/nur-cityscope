@@ -24,6 +24,9 @@ vi.mock("../../frontend/src/map/maplibre-map.js", () => ({
 }));
 
 import { bootClockPreview } from "../../frontend/src/map/clock-preview.js";
+import { getLayerLifecycleRuntime, peekLayerLifecycleRuntime } from "../../frontend/src/shared/layer-lifecycle-fade.js";
+import { applySettlementOrientationPaint } from "../../frontend/src/shared/nli-settlement-orientation.js";
+import { NLI_VISUAL_TOKENS } from "../../frontend/src/shared/nli-investigation-theme.js";
 import { getInvestigationTimelineRenderSnapshot } from "../../frontend/src/shared/maplibre-investigation-timeline.js";
 import { HOME_CUE, TIMELINE } from "../../frontend/src/remote/nli-staff-script.js";
 import { createGISMap, setGISBasemap } from "../../frontend/src/map/maplibre-map.js";
@@ -97,6 +100,7 @@ function createMapMock() {
       queueMicrotask(() => map.emit("style.load"));
     }),
     remove: vi.fn(() => {
+      map.emit("remove");
       sources.clear();
       layers.clear();
       listeners.clear();
@@ -180,6 +184,7 @@ describe("bootClockPreview frame behavior", () => {
     if (dispose) await dispose();
     dispose = null;
     globalThis.fetch = priorFetch;
+    delete window.matchMedia;
     vi.useRealTimers();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
@@ -496,5 +501,74 @@ describe("bootClockPreview frame behavior", () => {
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("Guttman Hatzvi"), fontError);
     expect(createGISMap).toHaveBeenCalledTimes(1);
     warn.mockRestore();
+  });
+
+  it("attaches settlement orientation before apply, replays it on style reconstruction, and clears it on removal", async () => {
+    const paint = new Map();
+    const opacityWrites = [];
+    const priorAdd = rig.map.addLayer.getMockImplementation();
+    const priorRemove = rig.map.removeLayer.getMockImplementation();
+    rig.map.addLayer.mockImplementation((layer) => {
+      priorAdd(layer);
+      paint.set(layer.id, new Map(Object.entries(layer.paint || {})));
+    });
+    rig.map.removeLayer.mockImplementation((id) => {
+      priorRemove(id);
+      paint.delete(id);
+    });
+    rig.map.setPaintProperty.mockImplementation((id, key, value) => {
+      if (id === "projector_base__ישובים-fill" && key === "fill-opacity") opacityWrites.push(value);
+      if (!paint.has(id)) paint.set(id, new Map());
+      paint.get(id).set(key, value);
+    });
+    rig.map.getPaintProperty.mockImplementation((id, key) => paint.get(id)?.get(key));
+    const yishuvId = "projector_base.ישובים";
+    const layerId = "projector_base__ישובים-fill";
+    rig.irToLayers.mockImplementation((fullId, sourceId) => [{
+      id: fullId === yishuvId ? layerId : `${fullId}-line`,
+      type: fullId === yishuvId ? "fill" : "line",
+      source: sourceId,
+      paint: fullId === yishuvId ? { "fill-opacity": 1 } : { "line-opacity": 1 },
+    }]);
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: (query) => ({
+        matches: query === "(prefers-reduced-motion: reduce)",
+        media: query,
+        addEventListener() {},
+        removeEventListener() {},
+        dispatchEvent() { return false; },
+      }),
+    });
+
+    dispose = await bootClockPreview({
+      window,
+      document,
+      fetchImpl: vi.fn(async () => ({
+        ok: true,
+        json: async () => ({ viewport: { bbox: [34, 31, 35, 32], zoom: 10 }, basemap: "osm" }),
+      })),
+    });
+    applySettlementOrientationPaint(rig.map, { phase: "playing" });
+    rig.map.emit("load");
+
+    expect(opacityWrites).toContain(NLI_VISUAL_TOKENS.dimOpacity);
+    expect(peekLayerLifecycleRuntime(rig.map)?.hasPaintChannel?.(yishuvId, "fill-opacity")).toBe(true);
+
+    applySettlementOrientationPaint(rig.map, { phase: "playing" });
+    opacityWrites.length = 0;
+    rig.map.emit("style.load");
+    expect(opacityWrites).toContain(NLI_VISUAL_TOKENS.dimOpacity);
+
+    await dispose();
+    dispose = null;
+    opacityWrites.length = 0;
+    rig.map.addLayer({ id: layerId, type: "fill", source: yishuvId, paint: { "fill-opacity": 1 } });
+    const runtime = getLayerLifecycleRuntime(rig.map);
+    runtime.setDesiredIds([yishuvId], { durationMs: 0 });
+    runtime.stageMapLayer(yishuvId, { id: layerId, type: "fill", paint: { "fill-opacity": 1 } });
+    runtime.commitBatch();
+    expect(opacityWrites).not.toContain(NLI_VISUAL_TOKENS.dimOpacity);
+    expect(rig.map.getPaintProperty(layerId, "fill-opacity")).toBe(1);
   });
 });

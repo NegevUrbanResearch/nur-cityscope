@@ -8,6 +8,7 @@ import { getLayerLifecycleRuntime, resolveLayerFadeMs } from "../shared/layer-li
 import { releaseProjectionModelImage, syncProjectionModelImage } from "./projection-model-image.js";
 import { validateProjectionConfig } from "../shared/projection-config-schema.js";
 import { createProjectionMap } from "./maplibre-projection.js";
+import { attachSettlementOrientationRuntime } from "../shared/nli-settlement-orientation.js";
 import { syncProjectionLayers } from "./maplibre-projection-layers.js";
 import { disposeLayerManagerForMap } from "../map/maplibre-layer-manager.js";
 import { mountMapLegend } from "../map/map-legend.js";
@@ -136,6 +137,7 @@ export async function bootProjectionClockPreview({ window: win, document: doc, f
     image.style.opacity = "0";
     if (doc.fonts?.load) { await doc.fonts.load("11px 'Guttman Hatzvi'"); alive(); }
     map = createProjectionMap("projectionMap", geometry.model, { pixelRatio: 1, canvasContextAttributes: { preserveDrawingBuffer: true } });
+    attachSettlementOrientationRuntime(map);
     await waitForMap(map, "load", assets.signal); alive();
     applyProjectionSpanView({ map, imageEl: image, containerEl: host, spanId: "left", config });
     syncProjectionLayers(map, groups, { suppressCanvasNameSymbols: false });

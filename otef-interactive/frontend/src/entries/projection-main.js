@@ -12,6 +12,7 @@ import {
 } from "../projection/maplibre-projection.js";
 import { installProjectionRenderDebugOverlay } from "../projection/projection-render-debug-overlay.js";
 import { syncProjectionLayers } from "../projection/maplibre-projection-layers.js";
+import { attachSettlementOrientationRuntime } from "../shared/nli-settlement-orientation.js";
 import { applyNarrativeHouseOutlineFilter, applyNarrativePeopleFilter } from "../map/nli-people-marker-filter.js";
 import { applyPeopleFocusDim, clearPeopleFocusDim } from "../shared/nli-people-focus-presentation.js";
 import {
@@ -381,6 +382,7 @@ async function bootstrapProjectionRuntime() {
       ? { canvasContextAttributes: { preserveDrawingBuffer: true } }
       : {}),
   });
+  attachSettlementOrientationRuntime(map);
   let browserSurface = null;
   const imageReadiness = browserMode && modelImgEl ? createProjectionImageReadiness({
     imageEl: modelImgEl,

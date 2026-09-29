@@ -568,6 +568,19 @@ function liveFadeDuration(map, layerStyleOptions) {
   return resolveLayerFadeMs(layerStyleOptions);
 }
 
+function excludesLiveOwnership(layerStyleOptions) {
+  return layerStyleOptions?.lifecycle?.retainDisabled === true
+    || layerStyleOptions?.transition?.stageHidden === true;
+}
+
+function shouldOwnLiveLayer(map, layerStyleOptions) {
+  if (excludesLiveOwnership(layerStyleOptions)) return false;
+  if (layerStyleOptions?.lifecycle?.joinBatch === true) {
+    return liveFadeDuration(map, layerStyleOptions) > 0;
+  }
+  return true;
+}
+
 function handoffLiveRuntime(map) {
   const state = mapStateByMap.get(map);
   if (!state || state.lifecycleBoundFullIds.size === 0) return;
@@ -579,21 +592,26 @@ function handoffLiveRuntime(map) {
   state.lifecycleBoundFullIds = new Set();
 }
 
+function mergedLiveDesiredIds(map, state, enabledFullIds, registryIds) {
+  const enabled = enabledFullIds instanceof Set ? enabledFullIds : new Set(enabledFullIds);
+  const next = new Set(registryIds);
+  for (const id of enabled) {
+    if (isCuratedManagedFullId(id)) next.add(id);
+  }
+  for (const id of getLayerLifecycleRuntime(map).getDesiredIds()) {
+    if (next.has(id) || isCuratedManagedFullId(id)) continue;
+    if (state.loadedLayerIds.has(id) || state.loadedSources.has(id)) continue;
+    next.add(id);
+  }
+  return next;
+}
+
 function settleLiveOwnership(map, enabledFullIds) {
   const state = mapStateByMap.get(map);
   if (!state || state.lifecycleBoundFullIds.size === 0) return;
   const runtime = getLayerLifecycleRuntime(map);
   const enabled = enabledFullIds instanceof Set ? enabledFullIds : new Set(enabledFullIds);
-  const next = new Set(registryFullIds(enabled));
-  for (const id of enabled) {
-    if (isCuratedManagedFullId(id)) next.add(id);
-  }
-  for (const id of runtime.getDesiredIds()) {
-    if (next.has(id) || isCuratedManagedFullId(id)) continue;
-    if (state.loadedLayerIds.has(id) || state.loadedSources.has(id)) continue;
-    next.add(id);
-  }
-  const settled = [...next];
+  const settled = [...mergedLiveDesiredIds(map, state, enabled, registryFullIds(enabled))];
   runtime.setDesiredIds(settled, { durationMs: 0 });
   runtime.commitBatch();
   state.lifecycleDesiredIds = new Set(registryFullIds(enabled));
@@ -645,7 +663,6 @@ function adoptMountedIntoPending(map, state) {
 }
 
 function adoptMountedLayers(map, state) {
-  if (state.lifecycleBoundFullIds.size > 0) return;
   const ids = [];
   for (const fullId of state.loadedLayerIds.keys()) {
     if (isCuratedManagedFullId(fullId) || state.lifecycleBoundFullIds.has(fullId)) continue;
@@ -653,7 +670,12 @@ function adoptMountedLayers(map, state) {
   }
   if (ids.length === 0) return;
   const runtime = getLayerLifecycleRuntime(map);
-  runtime.setDesiredIds(ids, { durationMs: 0 });
+  const opening = state.lifecycleBoundFullIds.size === 0;
+  if (opening) {
+    const desired = new Set(runtime.getDesiredIds());
+    for (const id of ids) desired.add(id);
+    runtime.setDesiredIds([...desired], { durationMs: 0 });
+  }
   for (const fullId of ids) {
     const storedSource = state.loadedSources.get(fullId);
     const sourceId = Array.isArray(storedSource) ? storedSource[0] : storedSource;
@@ -666,11 +688,15 @@ function adoptMountedLayers(map, state) {
         type,
         source: fullId,
         paint: paintSnapshot(map, layerId, type),
-      }, lifecycleBindings(map, fullId, sourceId || fullId));
+      }, {
+        ...lifecycleBindings(map, fullId, sourceId || fullId),
+        adoptVisible: true,
+      });
     }
     runtime.markMemberReady(fullId);
     state.lifecycleBoundFullIds.add(fullId);
   }
+  if (!opening) return;
   runtime.commitBatch();
   state.lifecycleDesiredIds = new Set(ids);
 }
@@ -679,7 +705,7 @@ function cancelLifecycleWork(map) {
   const state = mapStateByMap.get(map);
   if (!state) return;
   if (state.lifecycleBoundFullIds.size > 0) {
-    getLayerLifecycleRuntime(map)?.dispose();
+    getLayerLifecycleRuntime(map)?.discard();
   }
   state.lifecycleDesiredIds = new Set();
   state.lifecycleBoundFullIds = new Set();
@@ -1192,11 +1218,15 @@ function addLayerToMap(map, fullId, state, layerStyleOptions, stagedMeta) {
       if (Object.keys(targetOpacity).length > 0) {
         pendingStageTargets[stagedLayerDef.id] = targetOpacity;
       }
-    } else if (liveFadeDuration(map, layerStyleOptions) > 0) {
+    } else if (shouldOwnLiveLayer(map, layerStyleOptions)) {
+      const immediate = liveFadeDuration(map, layerStyleOptions) <= 0;
+      const bindings = immediate
+        ? { onTeardown: () => removeManagedFullId(map, fullId) }
+        : lifecycleBindings(map, fullId, sourceId);
       const { stagedLayerDef } = getLayerLifecycleRuntime(map).stageMapLayer(
         fullId,
         layerDef,
-        lifecycleBindings(map, fullId, sourceId),
+        bindings,
       );
       defToAdd = stagedLayerDef;
       state.lifecycleBoundFullIds.add(fullId);
@@ -1291,7 +1321,7 @@ export function applyLayerGroupsToMap(map, layerGroups, layerStyleOptions) {
   const durationMs = liveFadeDuration(map, layerStyleOptions);
   const state = getOrCreateMapState(map);
   const enabledFullIds = getEnabledMapFullLayerIds(layerGroups);
-  if (!joinBatch && durationMs <= 0) {
+  if (!joinBatch && excludesLiveOwnership(layerStyleOptions)) {
     settleLiveOwnership(map, enabledFullIds);
     syncLayerGroupsToMap(map, layerGroups, layerStyleOptions, null);
     return;
@@ -1304,7 +1334,10 @@ export function applyLayerGroupsToMap(map, layerGroups, layerStyleOptions) {
   } else {
     adoptMountedLayers(map, state);
     const sameSet = sameIdSet(state.lifecycleDesiredIds, next);
-    runtime.setDesiredIds([...next], { durationMs, sameSet });
+    const desiredIds = durationMs <= 0
+      ? [...mergedLiveDesiredIds(map, state, enabledFullIds, next)]
+      : [...next];
+    runtime.setDesiredIds(desiredIds, { durationMs, sameSet });
     state.lifecycleDesiredIds = next;
   }
   syncLayerGroupsToMap(map, layerGroups, layerStyleOptions, null);

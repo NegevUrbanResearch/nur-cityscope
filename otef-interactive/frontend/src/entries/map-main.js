@@ -17,6 +17,7 @@ import { createNovaEscapeCoordinator } from "../shared/nli-nova-escape-coordinat
 import { createMorRouteCoordinator } from "../shared/nli-mor-route-coordinator.js";
 import { createGisBasemapStyleCoordinator } from "./map-main-style-lifecycle.js";
 import { bootClockPreview } from "../map/clock-preview.js";
+import { attachSettlementOrientationRuntime } from "../shared/nli-settlement-orientation.js";
 import {
   installMapLegendLifecycle,
   positionGisLegend,
@@ -177,6 +178,7 @@ async function bootstrapMapRuntime() {
     zoom: 11,
     basemap: currentBasemap,
   });
+  attachSettlementOrientationRuntime(map);
 
   if (typeof window !== "undefined") {
     window._maplibreMap = map;

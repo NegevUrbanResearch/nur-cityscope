@@ -1,11 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   LAYER_FADE_MS,
   LAYER_FADE_READY_TIMEOUT_MS,
   getLayerLifecycleRuntime,
   resolveLayerFadeMs,
+  setPaintChannelsRememberedListener,
 } from "../../frontend/src/shared/layer-lifecycle-fade.js";
-import { scaleOpacityExpression } from "../../frontend/src/shared/layer-opacity-expression.js";
+import { mixOpacityExpression, scaleOpacityExpression } from "../../frontend/src/shared/layer-opacity-expression.js";
 
 function createHooks() {
   let time = 0;
@@ -834,5 +835,515 @@ describe("layer lifecycle runtime", () => {
     hooks.flushFrame();
     expect(hooks.frameRequests).toBe(requests);
     expect(paintOf(map, "layer", "fill-opacity")).toBe(0);
+  });
+});
+
+const GLOW_MS = 400;
+
+function reveal(runtime, map, fullId, def) {
+  runtime.setDesiredIds([fullId], { durationMs: 0 });
+  const staged = stage(runtime, map, fullId, def);
+  runtime.markMemberReady(fullId);
+  runtime.commitBatch();
+  return staged;
+}
+
+function withRemoveEvents(map) {
+  const listeners = new Map();
+  map.on = (type, handler) => {
+    const list = listeners.get(type) || [];
+    list.push(handler);
+    listeners.set(type, list);
+  };
+  map.off = (type, handler) => {
+    listeners.set(type, (listeners.get(type) || []).filter((entry) => entry !== handler));
+  };
+  map.remove = () => {
+    for (const handler of [...(listeners.get("remove") || [])]) handler();
+  };
+  return map;
+}
+
+function countWrites(map, hooks) {
+  const writes = [];
+  const original = map.setPaintProperty.bind(map);
+  map.setPaintProperty = (id, key, value) => {
+    writes.push({ id, key, value, time: hooks.now() });
+    original(id, key, value);
+  };
+  return writes;
+}
+
+describe("effective paint tweens", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("updates only the addressed line layer and treats an equal goal array as owned", () => {
+    const map = createMap();
+    const hooks = createHooks();
+    const runtime = getLayerLifecycleRuntime(map, hooks);
+    const fullId = "projector_base.Locations_Lines";
+    runtime.setDesiredIds([fullId], { durationMs: 0 });
+    stage(runtime, map, fullId, layerDef("line-a", { "line-opacity": 1 }, "line"));
+    stage(runtime, map, fullId, layerDef("line-b", { "line-opacity": 1 }, "line"));
+    runtime.markMemberReady(fullId);
+    runtime.commitBatch();
+
+    expect(runtime.updateEffectivePaint("missing", "line-a", "line-opacity", 0.2)).toBe(false);
+    expect(runtime.updateEffectivePaint(fullId, "line-missing", "line-opacity", 0.2)).toBe(false);
+    expect(runtime.updateEffectivePaint(fullId, "line-a", "line-opacity", 0.08, { tweenMs: 0 })).toBe(true);
+    expect(paintOf(map, "line-a", "line-opacity")).toBe(0.08);
+    expect(paintOf(map, "line-b", "line-opacity")).toBe(1);
+
+    const goal = ["case", ["==", ["get", "kind"], "city"], 0.2, 1];
+    expect(runtime.updateEffectivePaint(fullId, "line-b", "line-opacity", goal, { tweenMs: GLOW_MS })).toBe(true);
+    const equalGoal = ["case", ["==", ["get", "kind"], "city"], 0.2, 1];
+    expect(equalGoal).not.toBe(goal);
+    expect(runtime.updateEffectivePaint(fullId, "line-b", "line-opacity", equalGoal, { tweenMs: 0 })).toBe(true);
+    expect(paintOf(map, "line-b", "line-opacity")).toBe(1);
+    hooks.setTime(GLOW_MS);
+    hooks.flushFrame();
+    expect(paintOf(map, "line-b", "line-opacity")).toEqual(goal);
+    expect(paintOf(map, "line-a", "line-opacity")).toBe(0.08);
+  });
+
+  it("does not stage a sibling line with another layer's effective line opacity", () => {
+    const map = createMap();
+    const hooks = createHooks();
+    const runtime = getLayerLifecycleRuntime(map, hooks);
+    const fullId = "projector_base.Locations_Lines";
+    runtime.setDesiredIds([fullId], { durationMs: 0 });
+    stage(runtime, map, fullId, layerDef("line-a", { "line-opacity": 1 }, "line"));
+    runtime.markMemberReady(fullId);
+    runtime.commitBatch();
+    expect(runtime.updateEffectivePaint(fullId, "line-a", "line-opacity", 0.08, { tweenMs: 0 })).toBe(true);
+    expect(paintOf(map, "line-a", "line-opacity")).toBe(0.08);
+
+    const staged = runtime.stageMapLayer(fullId, layerDef("line-b", { "line-opacity": 1 }, "line"));
+    expect(staged.stagedLayerDef.paint["line-opacity"]).toBe(1);
+    expect(paintOf(map, "line-a", "line-opacity")).toBe(0.08);
+  });
+
+  it("returns false for invalidated and torn-down channels", () => {
+    const map = createMap();
+    const hooks = createHooks();
+    const runtime = getLayerLifecycleRuntime(map, hooks);
+    reveal(runtime, map, "live", layerDef("live", { "fill-opacity": 1 }));
+    reveal(runtime, map, "gone", layerDef("gone", { "fill-opacity": 1 }));
+    runtime.invalidateMember("gone");
+    expect(runtime.updateEffectivePaint("gone", "gone", "fill-opacity", 0.08)).toBe(false);
+
+    runtime.setDesiredIds([], { durationMs: 0 });
+    runtime.commitBatch();
+    expect(runtime.updateEffectivePaint("live", "live", "fill-opacity", 0.08, { tweenMs: 0 })).toBe(false);
+    expect(paintOf(map, "live", "fill-opacity")).not.toBe(0.08);
+  });
+
+  it("tweens effective opacity with no factor trajectory and stops when it settles", () => {
+    const map = createMap();
+    const hooks = createHooks();
+    const runtime = getLayerLifecycleRuntime(map, hooks);
+    reveal(runtime, map, "glow", layerDef("glow", {
+      "fill-opacity": 1,
+      "fill-opacity-transition": { duration: 350, delay: 20 },
+    }));
+    expect(hooks.pendingFrame).toBeNull();
+
+    expect(runtime.updateEffectivePaint("glow", "glow", "fill-opacity", 0.08, { tweenMs: GLOW_MS })).toBe(true);
+    hooks.setTime(200);
+    hooks.flushFrame();
+    expect(paintOf(map, "glow", "fill-opacity")).toBeCloseTo(0.54);
+    hooks.setTime(GLOW_MS);
+    hooks.flushFrame();
+    expect(paintOf(map, "glow", "fill-opacity")).toBe(0.08);
+    expect(paintOf(map, "glow", "fill-opacity-transition")).toEqual({ duration: 0, delay: 0 });
+    const frames = hooks.frameRequests;
+    expect(hooks.pendingFrame).toBeNull();
+    hooks.setTime(800);
+    hooks.flushFrame();
+    expect(hooks.frameRequests).toBe(frames);
+    expect(paintOf(map, "glow", "fill-opacity")).toBe(0.08);
+  });
+
+  it("retargets from the clock sample between frames and settles on the new goal", () => {
+    const map = createMap();
+    const hooks = createHooks();
+    const runtime = getLayerLifecycleRuntime(map, hooks);
+    reveal(runtime, map, "glow", layerDef("glow", { "fill-opacity": 1 }));
+    runtime.updateEffectivePaint("glow", "glow", "fill-opacity", 0.08, { tweenMs: GLOW_MS });
+    hooks.setTime(100);
+    hooks.flushFrame();
+    expect(paintOf(map, "glow", "fill-opacity")).toBeCloseTo(0.77);
+
+    const readPaint = map.getPaintProperty.bind(map);
+    let paintReads = 0;
+    map.getPaintProperty = (...args) => {
+      paintReads += 1;
+      return readPaint(...args);
+    };
+    hooks.setTime(175);
+    runtime.updateEffectivePaint("glow", "glow", "fill-opacity", 0.2, { tweenMs: GLOW_MS });
+    expect(paintReads).toBe(0);
+    map.getPaintProperty = readPaint;
+    hooks.flushFrame();
+    const sample = mixOpacityExpression(1, 0.08, 175 / GLOW_MS);
+    expect(paintOf(map, "glow", "fill-opacity")).toBeCloseTo(sample);
+    expect(paintOf(map, "glow", "fill-opacity")).not.toBeCloseTo(0.77);
+
+    hooks.setTime(175 + GLOW_MS);
+    hooks.flushFrame();
+    expect(paintOf(map, "glow", "fill-opacity")).toBe(0.2);
+
+    const caseGoal = ["case", ["==", ["get", "name"], "א"], 0.4, 0.08];
+    hooks.setTime(600);
+    runtime.updateEffectivePaint("glow", "glow", "fill-opacity", caseGoal, { tweenMs: GLOW_MS });
+    hooks.setTime(600 + GLOW_MS);
+    hooks.flushFrame();
+    expect(paintOf(map, "glow", "fill-opacity")).toEqual(caseGoal);
+    expect(hooks.pendingFrame).toBeNull();
+  });
+
+  it("samples factor and effective clocks together until both settle", () => {
+    const map = createMap();
+    const hooks = createHooks();
+    const runtime = getLayerLifecycleRuntime(map, hooks);
+    runtime.setDesiredIds(["glow"], { durationMs: LAYER_FADE_MS });
+    stage(runtime, map, "glow", layerDef("glow", { "fill-opacity": 1 }));
+    runtime.markMemberReady("glow");
+    runtime.commitBatch();
+    runtime.updateEffectivePaint("glow", "glow", "fill-opacity", 0.08, { tweenMs: GLOW_MS });
+
+    hooks.setTime(200);
+    hooks.flushFrame();
+    expect(paintOf(map, "glow", "fill-opacity")).toBeCloseTo(
+      scaleOpacityExpression(mixOpacityExpression(1, 0.08, 0.5), 200 / LAYER_FADE_MS),
+    );
+
+    hooks.setTime(300);
+    runtime.updateEffectivePaint("glow", "glow", "fill-opacity", 0.5, { tweenMs: GLOW_MS });
+    hooks.setTime(LAYER_FADE_MS);
+    hooks.flushFrame();
+    const retargetFrom = mixOpacityExpression(1, 0.08, 300 / GLOW_MS);
+    expect(paintOf(map, "glow", "fill-opacity")).toBeCloseTo(mixOpacityExpression(retargetFrom, 0.5, 0.75));
+    expect(hooks.pendingFrame).toBeTruthy();
+    hooks.setTime(300 + GLOW_MS);
+    hooks.flushFrame();
+    expect(paintOf(map, "glow", "fill-opacity")).toBe(0.5);
+    expect(hooks.pendingFrame).toBeNull();
+  });
+
+  it("does not settle effective motion for a positive batch whose factor is unchanged", () => {
+    const map = createMap();
+    const hooks = createHooks();
+    const runtime = getLayerLifecycleRuntime(map, hooks);
+    reveal(runtime, map, "glow", layerDef("glow", { "fill-opacity": 1 }));
+    runtime.updateEffectivePaint("glow", "glow", "fill-opacity", 0.08, { tweenMs: GLOW_MS });
+    hooks.setTime(100);
+    hooks.flushFrame();
+    expect(paintOf(map, "glow", "fill-opacity")).toBeCloseTo(0.77);
+
+    runtime.setDesiredIds(["glow"], { durationMs: LAYER_FADE_MS });
+    runtime.commitBatch();
+    expect(paintOf(map, "glow", "fill-opacity")).toBeCloseTo(0.77);
+    hooks.setTime(GLOW_MS);
+    hooks.flushFrame();
+    expect(paintOf(map, "glow", "fill-opacity")).toBe(0.08);
+  });
+
+  it("settles factor and effective motion on a same-set duration-0 apply", () => {
+    const map = createMap();
+    const hooks = createHooks();
+    const runtime = getLayerLifecycleRuntime(map, hooks);
+    runtime.setDesiredIds(["glow"], { durationMs: LAYER_FADE_MS });
+    stage(runtime, map, "glow", layerDef("glow", { "fill-opacity": 1 }));
+    runtime.markMemberReady("glow");
+    runtime.commitBatch();
+    runtime.updateEffectivePaint("glow", "glow", "fill-opacity", 0.08, { tweenMs: GLOW_MS });
+    hooks.setTime(100);
+    hooks.flushFrame();
+
+    runtime.setDesiredIds(["glow"], { durationMs: 0, sameSet: true });
+    expect(paintOf(map, "glow", "fill-opacity")).toBe(0.08);
+    expect(hooks.pendingFrame).toBeNull();
+  });
+
+  it("settles an in-progress factor to its target on a same-set duration-0 apply", () => {
+    const map = createMap();
+    const hooks = createHooks();
+    const runtime = getLayerLifecycleRuntime(map, hooks);
+    runtime.setDesiredIds(["shown"], { durationMs: LAYER_FADE_MS });
+    stage(runtime, map, "shown", layerDef("shown", { "fill-opacity": 1 }));
+    runtime.markMemberReady("shown");
+    runtime.commitBatch();
+    hooks.setTime(300);
+    hooks.flushFrame();
+    expect(paintOf(map, "shown", "fill-opacity")).toBeCloseTo(0.5);
+
+    runtime.setDesiredIds(["shown"], { durationMs: 0, sameSet: true });
+    expect(paintOf(map, "shown", "fill-opacity")).toBe(1);
+    expect(hooks.pendingFrame).toBeNull();
+  });
+
+  it("snaps a reversed incoming trajectory and zeroes the pending batch on a same-set duration-0 apply", () => {
+    const map = createMap();
+    const hooks = createHooks();
+    const runtime = getLayerLifecycleRuntime(map, hooks);
+    const torn = [];
+    runtime.setDesiredIds(["a"], { durationMs: 600 });
+    stage(runtime, map, "a", layerDef("a", { "fill-opacity": 1 }), {
+      onTeardown: () => torn.push("a"),
+    });
+    runtime.markMemberReady("a");
+    runtime.commitBatch();
+    hooks.setTime(300);
+    hooks.flushFrame();
+    expect(paintOf(map, "a", "fill-opacity")).toBeCloseTo(0.5);
+
+    runtime.setDesiredIds(["b"], { durationMs: 600 });
+    const pending = runtime.getPendingBatch();
+    expect(pending.durationMs).toBe(600);
+
+    runtime.setDesiredIds(["b"], { durationMs: 0, sameSet: true });
+    expect(paintOf(map, "a", "fill-opacity")).toBe(0);
+    expect(torn).toEqual(["a"]);
+    expect(runtime.getPendingBatch()).toBe(pending);
+    expect(pending.durationMs).toBe(0);
+    expect(hooks.pendingFrame).toBeNull();
+
+    stage(runtime, map, "b", layerDef("b", { "fill-opacity": 1 }));
+    runtime.markMemberReady("b");
+    runtime.commitBatch();
+    expect(paintOf(map, "b", "fill-opacity")).toBe(1);
+    expect(hooks.pendingFrame).toBeNull();
+  });
+
+  it("preserves a running tween when the same goal is published at full motion", () => {
+    const map = createMap();
+    const hooks = createHooks();
+    const runtime = getLayerLifecycleRuntime(map, hooks);
+    reveal(runtime, map, "glow", layerDef("glow", { "fill-opacity": 1 }));
+    runtime.updateEffectivePaint("glow", "glow", "fill-opacity", 0.08, { tweenMs: GLOW_MS });
+    hooks.setTime(100);
+    hooks.flushFrame();
+    expect(runtime.updateEffectivePaint("glow", "glow", "fill-opacity", 0.08, { tweenMs: 0 })).toBe(true);
+    expect(paintOf(map, "glow", "fill-opacity")).toBeCloseTo(0.77);
+    hooks.setTime(GLOW_MS);
+    hooks.flushFrame();
+    expect(paintOf(map, "glow", "fill-opacity")).toBe(0.08);
+  });
+
+  it("settles an equal-goal publication when reduced motion is preferred", () => {
+    const map = createMap();
+    const hooks = createHooks();
+    const runtime = getLayerLifecycleRuntime(map, hooks);
+    reveal(runtime, map, "glow", layerDef("glow", { "fill-opacity": 1 }));
+    const goal = ["case", ["==", ["get", "name"], "א"], 0.4, 0.08];
+    runtime.updateEffectivePaint("glow", "glow", "fill-opacity", goal, { tweenMs: GLOW_MS });
+    hooks.setTime(100);
+    hooks.flushFrame();
+    expect(paintOf(map, "glow", "fill-opacity")).not.toEqual(goal);
+
+    vi.stubGlobal("window", {
+      matchMedia: (query) => ({ matches: query === "(prefers-reduced-motion: reduce)" }),
+    });
+    const equalGoal = ["case", ["==", ["get", "name"], "א"], 0.4, 0.08];
+    expect(runtime.updateEffectivePaint("glow", "glow", "fill-opacity", equalGoal, { tweenMs: GLOW_MS })).toBe(true);
+    expect(paintOf(map, "glow", "fill-opacity")).toEqual(goal);
+    expect(hooks.pendingFrame).toBeNull();
+  });
+
+  it("does not paint after exit teardown, invalidation, drop, or same-id replacement", () => {
+    const map = createMap();
+    const hooks = createHooks();
+    const writes = countWrites(map, hooks);
+    const runtime = getLayerLifecycleRuntime(map, hooks);
+    reveal(runtime, map, "glow", layerDef("glow", { "fill-opacity": 1 }));
+    writes.length = 0;
+    hooks.setTime(0);
+    runtime.setDesiredIds([], { durationMs: LAYER_FADE_MS });
+    runtime.commitBatch();
+    hooks.setTime(500);
+    hooks.flushFrame();
+    runtime.updateEffectivePaint("glow", "glow", "fill-opacity", 0.08, { tweenMs: GLOW_MS });
+    hooks.setTime(LAYER_FADE_MS);
+    hooks.flushFrame();
+    expect(hooks.pendingFrame).toBeNull();
+    expect(paintOf(map, "glow", "fill-opacity")).toBe(0);
+    const afterExit = writes.length;
+    const framesAfterExit = hooks.frameRequests;
+    hooks.setTime(1200);
+    hooks.flushFrame();
+    expect(writes.length).toBe(afterExit);
+    expect(hooks.frameRequests).toBe(framesAfterExit);
+
+    reveal(runtime, map, "invalid", layerDef("invalid", { "fill-opacity": 1 }));
+    runtime.updateEffectivePaint("invalid", "invalid", "fill-opacity", 0.08, { tweenMs: GLOW_MS });
+    hooks.setTime(1400);
+    hooks.flushFrame();
+    const invalidPaint = paintOf(map, "invalid", "fill-opacity");
+    runtime.invalidateMember("invalid");
+    expect(runtime.updateEffectivePaint("invalid", "invalid", "fill-opacity", 0.2)).toBe(false);
+    expect(hooks.pendingFrame).toBeNull();
+    const invalidFrames = hooks.frameRequests;
+    hooks.setTime(2000);
+    hooks.flushFrame();
+    expect(paintOf(map, "invalid", "fill-opacity")).toBe(invalidPaint);
+    expect(hooks.frameRequests).toBe(invalidFrames);
+
+    reveal(runtime, map, "edited", layerDef("edited-old", { "fill-opacity": 1 }));
+    runtime.updateEffectivePaint("edited", "edited-old", "fill-opacity", 0.08, { tweenMs: GLOW_MS });
+    hooks.setTime(2100);
+    hooks.flushFrame();
+    const droppedPaint = paintOf(map, "edited-old", "fill-opacity");
+    runtime.dropChannels("edited");
+    expect(hooks.pendingFrame).toBeNull();
+    stage(runtime, map, "edited", layerDef("edited-new", { "fill-opacity": 1 }));
+    hooks.setTime(2600);
+    hooks.flushFrame();
+    expect(paintOf(map, "edited-old", "fill-opacity")).toBe(droppedPaint);
+    expect(paintOf(map, "edited-new", "fill-opacity")).toBe(1);
+
+    reveal(runtime, map, "replaced", layerDef("replaced", { "fill-opacity": 1 }));
+    runtime.updateEffectivePaint("replaced", "replaced", "fill-opacity", 0.08, { tweenMs: GLOW_MS });
+    hooks.setTime(2700);
+    hooks.flushFrame();
+    stage(runtime, map, "replaced", layerDef("replaced", { "fill-opacity": 1 }));
+    expect(paintOf(map, "replaced", "fill-opacity")).toBe(1);
+    expect(hooks.pendingFrame).toBeNull();
+    const replacedFrames = hooks.frameRequests;
+    hooks.setTime(3200);
+    hooks.flushFrame();
+    expect(paintOf(map, "replaced", "fill-opacity")).toBe(1);
+    expect(hooks.frameRequests).toBe(replacedFrames);
+  });
+
+  it("settles mounted goals on dispose and discards invalidated channels instead", () => {
+    const map = createMap();
+    const hooks = createHooks();
+    const runtime = getLayerLifecycleRuntime(map, hooks);
+    runtime.setDesiredIds(["glow", "stale"], { durationMs: 0 });
+    stage(runtime, map, "glow", layerDef("glow", { "fill-opacity": 1 }));
+    stage(runtime, map, "stale", layerDef("stale", { "fill-opacity": 1 }));
+    runtime.markMemberReady("glow");
+    runtime.markMemberReady("stale");
+    runtime.commitBatch();
+    runtime.updateEffectivePaint("glow", "glow", "fill-opacity", 0.08, { tweenMs: GLOW_MS });
+    runtime.updateEffectivePaint("stale", "stale", "fill-opacity", 0.08, { tweenMs: GLOW_MS });
+    hooks.setTime(200);
+    hooks.flushFrame();
+    expect(paintOf(map, "glow", "fill-opacity")).toBeCloseTo(0.54);
+    runtime.invalidateMember("stale");
+    const stalePaint = paintOf(map, "stale", "fill-opacity");
+    runtime.dispose();
+    expect(paintOf(map, "glow", "fill-opacity")).toBe(0.08);
+    expect(paintOf(map, "stale", "fill-opacity")).toBe(stalePaint);
+    expect(hooks.pendingFrame).toBeNull();
+  });
+
+  it("discards a mid-tween on map removal without writing the settled goal", () => {
+    const map = withRemoveEvents(createMap());
+    const hooks = createHooks();
+    const runtime = getLayerLifecycleRuntime(map, hooks);
+    reveal(runtime, map, "glow", layerDef("glow", { "fill-opacity": 1 }));
+    runtime.updateEffectivePaint("glow", "glow", "fill-opacity", 0.08, { tweenMs: GLOW_MS });
+    hooks.setTime(200);
+    hooks.flushFrame();
+    expect(paintOf(map, "glow", "fill-opacity")).toBeCloseTo(0.54);
+    map.remove();
+    expect(paintOf(map, "glow", "fill-opacity")).toBeCloseTo(0.54);
+    hooks.setTime(GLOW_MS);
+    hooks.flushFrame();
+    expect(paintOf(map, "glow", "fill-opacity")).toBeCloseTo(0.54);
+    expect(hooks.pendingFrame).toBeNull();
+  });
+
+  it("discards a mid-tween without writing the settled goal", () => {
+    const map = createMap();
+    const hooks = createHooks();
+    const runtime = getLayerLifecycleRuntime(map, hooks);
+    reveal(runtime, map, "glow", layerDef("glow", { "fill-opacity": 1 }));
+    runtime.updateEffectivePaint("glow", "glow", "fill-opacity", 0.08, { tweenMs: GLOW_MS });
+    hooks.setTime(200);
+    hooks.flushFrame();
+    expect(paintOf(map, "glow", "fill-opacity")).toBeCloseTo(0.54);
+    runtime.discard();
+    expect(paintOf(map, "glow", "fill-opacity")).toBeCloseTo(0.54);
+    hooks.setTime(GLOW_MS);
+    hooks.flushFrame();
+    expect(paintOf(map, "glow", "fill-opacity")).toBeCloseTo(0.54);
+    expect(hooks.pendingFrame).toBeNull();
+  });
+
+  it("replays remembered channels before addLayer and keeps the listener across runtime recreation", () => {
+    const map = withRemoveEvents(createMap());
+    const hooks = createHooks();
+    const calls = [];
+    setPaintChannelsRememberedListener(map, (event) => {
+      calls.push({
+        fullId: event.fullId,
+        channels: event.channels.map((channel) => ({ ...channel })),
+        mounted: Boolean(map.getLayer(event.channels[0]?.layerId)),
+      });
+      getLayerLifecycleRuntime(map).updateEffectivePaint(
+        event.fullId,
+        event.channels[0].layerId,
+        event.channels[0].property,
+        0.08,
+        { tweenMs: 0 },
+      );
+    });
+
+    const runtime = getLayerLifecycleRuntime(map, hooks);
+    runtime.setDesiredIds(["settlement"], { durationMs: LAYER_FADE_MS });
+    const staged = runtime.stageMapLayer("settlement", layerDef("names", {
+      "fill-opacity": 1,
+      "fill-opacity-transition": { duration: 350, delay: 20 },
+    }));
+    expect(calls).toEqual([{
+      fullId: "settlement",
+      channels: [{ layerId: "names", property: "fill-opacity", type: "fill" }],
+      mounted: false,
+    }]);
+    expect(map.getLayer("names")).toBeNull();
+    map.addLayer(staged.stagedLayerDef);
+    runtime.markMemberReady("settlement");
+    runtime.commitBatch();
+    hooks.setTime(300);
+    hooks.flushFrame();
+    expect(paintOf(map, "names", "fill-opacity")).toBeCloseTo(0.04);
+
+    runtime.dispose();
+    const recreated = getLayerLifecycleRuntime(map);
+    recreated.setDesiredIds(["settlement"], { durationMs: 0 });
+    const restaged = recreated.stageMapLayer("settlement", layerDef("names", {
+      "fill-opacity": 1,
+      "fill-opacity-transition": { duration: 350, delay: 20 },
+    }));
+    expect(calls).toHaveLength(2);
+    expect(restaged.stagedLayerDef.paint["fill-opacity"]).toBe(0);
+    map.addLayer(restaged.stagedLayerDef);
+    recreated.markMemberReady("settlement");
+    recreated.commitBatch();
+    expect(paintOf(map, "names", "fill-opacity")).toBe(0.08);
+    expect(paintOf(map, "names", "fill-opacity-transition")).toEqual({ duration: 0, delay: 0 });
+
+    const base = paintOf(map, "names", "fill-opacity");
+    expect(base).toBe(0.08);
+    const startedAt = hooks.now();
+    const running = getLayerLifecycleRuntime(map, hooks);
+    running.updateEffectivePaint("settlement", "names", "fill-opacity", 0.2, { tweenMs: GLOW_MS });
+    hooks.setTime(400);
+    hooks.flushFrame();
+    const during = paintOf(map, "names", "fill-opacity");
+    expect(during).toBeCloseTo(mixOpacityExpression(base, 0.2, (400 - startedAt) / GLOW_MS));
+    expect(during).not.toBe(0.2);
+    map.remove();
+    expect(paintOf(map, "names", "fill-opacity")).toBe(during);
+    expect(hooks.pendingFrame).toBeNull();
+    const afterRemoval = getLayerLifecycleRuntime(map, hooks);
+    afterRemoval.setDesiredIds(["settlement"], { durationMs: 0 });
+    afterRemoval.stageMapLayer("settlement", layerDef("names-2", { "fill-opacity": 1 }));
+    expect(calls).toHaveLength(2);
   });
 });

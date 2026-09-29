@@ -1,6 +1,12 @@
-import { test, expect } from 'vitest';
+import { createPropertyExpression, v8 } from '@maplibre/maplibre-gl-style-spec';
+import { afterEach, expect, test, vi } from 'vitest';
+import { getLayerLifecycleRuntime } from '../../frontend/src/shared/layer-lifecycle-fade.js';
 import { createNliNameFocusPresentation, getNameFocusOpacity, getNameFocusAlpha, getRelevantPlaceGroup } from '../../frontend/src/shared/nli-name-focus-presentation.js';
-import { applySettlementOrientationPaint, collectOrientationTargets } from '../../frontend/src/shared/nli-settlement-orientation.js';
+import {
+  applySettlementOrientationPaint,
+  attachSettlementOrientationRuntime,
+  collectOrientationTargets,
+} from '../../frontend/src/shared/nli-settlement-orientation.js';
 
 const field = {
   byPid: new Map([['person-1', { feature: { properties: { group_id: 'group-1' } } }]]),
@@ -102,4 +108,126 @@ test('timeline requests cannot blink memorial settlement paint and release resto
   expect(paints.get('projector_base__Locations_Lines__line:line-opacity')).toBe(0.08);
   expect(paints.get('projector_base__שמות_יישובים__labels:text-opacity')).toEqual(
     ['case', ['in', ['get', 'cityname'], ['literal', []]], 1, 0.18]);
+});
+
+const LABEL_ID = 'projector_base__שמות_יישובים__labels';
+const FILL_ID = 'projector_base__ישובים__fill';
+const SHEMOT_ID = 'projector_base.שמות_יישובים';
+const YISHUV_ID = 'projector_base.ישובים';
+
+function evaluateText(expression, cityname) {
+  const created = createPropertyExpression(expression, v8.paint_symbol['text-opacity']);
+  expect(created.result, JSON.stringify(created.value)).toBe('success');
+  return created.value.evaluate({ zoom: 8 }, { type: 1, id: 1, properties: { cityname } });
+}
+
+function createHooks() {
+  let time = 0;
+  let frame = null;
+  let nextFrameId = 0;
+  return {
+    now: () => time,
+    setTime(value) { time = value; },
+    requestFrame(callback) {
+      nextFrameId += 1;
+      frame = { id: nextFrameId, callback };
+      return nextFrameId;
+    },
+    cancelFrame(id) { if (frame?.id === id) frame = null; },
+    flushFrame() {
+      const current = frame;
+      frame = null;
+      current?.callback(time);
+    },
+    setTimer() { return 1; },
+    clearTimer() {},
+    get pendingFrame() { return frame; },
+  };
+}
+
+function createOwnedMap() {
+  const layers = new Map();
+  const paints = new Map();
+  const listeners = new Map();
+  return {
+    addLayer(def) {
+      layers.set(def.id, def);
+      for (const [key, value] of Object.entries(def.paint || {})) paints.set(`${def.id}\0${key}`, value);
+    },
+    getLayer(id) { return layers.get(id) || null; },
+    setPaintProperty(id, key, value) { paints.set(`${id}\0${key}`, value); },
+    getPaintProperty(id, key) { return paints.get(`${id}\0${key}`); },
+    getStyle() { return { layers: [...layers.values()] }; },
+    on(type, handler) {
+      const list = listeners.get(type) || [];
+      list.push(handler);
+      listeners.set(type, list);
+    },
+    off(type, handler) {
+      listeners.set(type, (listeners.get(type) || []).filter((entry) => entry !== handler));
+    },
+    remove() {
+      for (const handler of [...(listeners.get('remove') || [])]) handler();
+    },
+  };
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+test('name-focus place change keeps its deadline through refresh and timeline ticks, then eases off', () => {
+  const places = {
+    byPid: new Map(),
+    groupGeojson: {
+      features: [
+        { properties: { group_id: 'g1', name: 'א' } },
+        { properties: { group_id: 'g2', name: 'ב' } },
+      ],
+    },
+  };
+  const map = createOwnedMap();
+  const hooks = createHooks();
+  attachSettlementOrientationRuntime(map);
+  const runtime = getLayerLifecycleRuntime(map, hooks);
+  runtime.setDesiredIds([SHEMOT_ID, YISHUV_ID], { durationMs: 0 });
+  for (const def of [
+    { id: LABEL_ID, type: 'symbol', paint: { 'text-opacity': 1, 'icon-opacity': 1 }, fullId: SHEMOT_ID },
+    { id: FILL_ID, type: 'fill', paint: { 'fill-opacity': 1 }, fullId: YISHUV_ID },
+  ]) {
+    const staged = runtime.stageMapLayer(def.fullId, def);
+    map.addLayer(staged.stagedLayerDef);
+  }
+  runtime.markMemberReady(SHEMOT_ID);
+  runtime.markMemberReady(YISHUV_ID);
+  runtime.commitBatch();
+
+  const focus = createNliNameFocusPresentation({ map, field: places });
+  focus.update({ selectedGroup: 'g1', opacity: 1 });
+  hooks.setTime(0);
+  focus.update({ selectedGroup: 'g2', opacity: 1 });
+  hooks.setTime(120);
+  hooks.flushFrame();
+  expect(evaluateText(map.getPaintProperty(LABEL_ID, 'text-opacity'), 'ב')).not.toBeCloseTo(1);
+  focus.update({ selectedGroup: 'g2', opacity: 1 });
+  applySettlementOrientationPaint(map, { phase: 'playing', layers: collectOrientationTargets(map).layers });
+  focus.update({ selectedGroup: 'g2', opacity: 1 });
+  hooks.setTime(400);
+  hooks.flushFrame();
+  expect(map.getPaintProperty(LABEL_ID, 'text-opacity')).toEqual(
+    ['case', ['==', ['get', 'cityname'], 'ב'], 1, 0.18],
+  );
+
+  focus.dispose();
+  hooks.setTime(600);
+  hooks.flushFrame();
+  expect(map.getPaintProperty(LABEL_ID, 'text-opacity')).not.toEqual(
+    ['case', ['in', ['get', 'cityname'], ['literal', []]], 1, 0.18],
+  );
+  hooks.setTime(800);
+  hooks.flushFrame();
+  expect(map.getPaintProperty(LABEL_ID, 'text-opacity')).toEqual(
+    ['case', ['in', ['get', 'cityname'], ['literal', []]], 1, 0.18],
+  );
+  expect(map.getPaintProperty(FILL_ID, 'fill-opacity')).toBe(0.08);
 });

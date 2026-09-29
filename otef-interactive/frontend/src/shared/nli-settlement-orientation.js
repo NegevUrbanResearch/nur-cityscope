@@ -5,12 +5,17 @@
  * opacity as the names. Paint targets IR-mangled MapLibre layer ids.
  */
 
+import { peekLayerLifecycleRuntime, setPaintChannelsRememberedListener } from "./layer-lifecycle-fade.js";
 import { NLI_VISUAL_TOKENS } from "./nli-investigation-theme.js";
+import { resolveMotionMode } from "./reduced-motion.js";
 
 const YISHUVIM_LAYER_PREFIX = "projector_base__ישובים";
 const SHEMOT_LAYER_PREFIX = "projector_base__שמות_יישובים";
 const LOCATIONS_LAYER_PREFIX = "projector_base__Locations_Lines";
 const SHEMOT_SOURCE_ID = "projector_base.שמות_יישובים";
+const YISHUVIM_SOURCE_ID = "projector_base.ישובים";
+const LOCATIONS_SOURCE_ID = "projector_base.Locations_Lines";
+const ORIENTATION_ROLES = ["label", "leader", "geom", "location-line"];
 const KIBBUTZ_PREFIX = /^קיבוץ /;
 const PLAY_OPACITY = NLI_VISUAL_TOKENS.dimOpacity;
 const DIM_TEXT_OPACITY = NLI_VISUAL_TOKENS.dimTextOpacity;
@@ -24,15 +29,151 @@ const ORIENTATION_TRANSITION = {
   delay: 0,
 };
 const paintStates = new WeakMap();
+const attachments = new WeakMap();
 const equal = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
 function paintState(map) {
   let state = paintStates.get(map);
   if (!state) {
-    state = { memorial: null, values: new Map() };
+    state = { memorial: null, values: new Map(), roleGoals: new Map(), publishedMemorial: null };
     paintStates.set(map, state);
   }
   return state;
+}
+
+function orientationTweenMs() {
+  return resolveMotionMode() === "reduced" ? 0 : ORIENTATION_TRANSITION.duration;
+}
+
+function memorialTweenMs(previous, next) {
+  if (resolveMotionMode() === "reduced") return 0;
+  if (next == null) return ORIENTATION_TRANSITION.duration;
+  if (previous == null || previous.strength !== next.strength) return 0;
+  return ORIENTATION_TRANSITION.duration;
+}
+
+function fullIdForTarget(map, target) {
+  const source = map.getLayer?.(target?.id)?.source;
+  if (source) return source;
+  const id = target?.id;
+  if (typeof id !== "string") return null;
+  if (id.startsWith(SHEMOT_LAYER_PREFIX)) return SHEMOT_SOURCE_ID;
+  if (id.startsWith(YISHUVIM_LAYER_PREFIX)) return YISHUVIM_SOURCE_ID;
+  if (id.startsWith(LOCATIONS_LAYER_PREFIX)) return LOCATIONS_SOURCE_ID;
+  return null;
+}
+
+function roleForChannel(layerId, type, property) {
+  if (typeof layerId !== "string") return null;
+  if (layerId.startsWith(SHEMOT_LAYER_PREFIX)) {
+    if (type === "symbol" && property === "text-opacity") return "label";
+    if (type === "line" && property === "line-opacity") return "leader";
+    return null;
+  }
+  if (layerId.startsWith(YISHUVIM_LAYER_PREFIX)) {
+    if (type === "fill" && property === "fill-opacity") return "geom";
+    if (type === "line" && property === "line-opacity") return "geom";
+    return null;
+  }
+  if (layerId.startsWith(LOCATIONS_LAYER_PREFIX)) {
+    if (type === "fill" && property === "fill-opacity") return "location-line";
+    if (type === "line" && property === "line-opacity") return "location-line";
+    return null;
+  }
+  return null;
+}
+
+function focusedForRole(role, memorial) {
+  const isName = role === "label" || role === "leader";
+  const memorialDim = isName ? MEMORIAL_TEXT_OPACITY : MEMORIAL_OPACITY;
+  if (isName && memorial?.placeName) {
+    return ["case", ["==", ["get", "cityname"], memorial.placeName], FULL_OPACITY, memorialDim];
+  }
+  return memorialDim;
+}
+
+function mixPolicy(base, focused, strength) {
+  if (strength === 1) return focused;
+  if (typeof base === "number" && typeof focused === "number") {
+    return base * (1 - strength) + focused * strength;
+  }
+  return ["+", ["*", base, 1 - strength], ["*", focused, strength]];
+}
+
+function baseForRole(state, role) {
+  if (state.roleGoals.has(role)) return state.roleGoals.get(role);
+  return FULL_OPACITY;
+}
+
+function lookupAuthoredLocationLine(map, targets) {
+  const runtime = peekLayerLifecycleRuntime(map);
+  for (const target of targets) {
+    if (target?.role !== "location-line" || !target.property) continue;
+    const fullId = fullIdForTarget(map, target);
+    if (fullId && runtime?.hasPaintChannel?.(fullId, target.property)) {
+      const authored = runtime.readAuthoredOpacity(fullId, target.property);
+      if (authored !== undefined) return authored;
+      continue;
+    }
+    if (typeof map.getLayer === "function" && !map.getLayer(target.id)) continue;
+    const painted = map.getPaintProperty?.(target.id, target.property);
+    if (painted !== undefined) return painted;
+  }
+  return undefined;
+}
+
+function retainedLocationLine(map, targets, state) {
+  if (state.roleGoals.has("location-line")) return state.roleGoals.get("location-line");
+  return lookupAuthoredLocationLine(map, targets);
+}
+
+function storePublishedMemorial(state) {
+  if (!state.memorial) {
+    state.publishedMemorial = null;
+    return;
+  }
+  const goals = new Map();
+  for (const role of ORIENTATION_ROLES) {
+    const base = baseForRole(state, role);
+    goals.set(role, mixPolicy(base, focusedForRole(role, state.memorial), state.memorial.strength ?? 0));
+  }
+  state.publishedMemorial = goals;
+}
+
+function publishOwned(map, target, value, tweenMs) {
+  if (value === undefined) return false;
+  const fullId = fullIdForTarget(map, target);
+  if (!fullId) return false;
+  const runtime = peekLayerLifecycleRuntime(map);
+  if (typeof runtime?.updateEffectivePaint !== "function") return false;
+  return runtime.updateEffectivePaint(fullId, target.id, target.property, value, { tweenMs }) === true;
+}
+
+function replayRememberedChannels(map, event) {
+  if (!event || !Array.isArray(event.channels)) return;
+  const state = paintState(map);
+  const runtime = peekLayerLifecycleRuntime(map);
+  if (typeof runtime?.updateEffectivePaint !== "function") return;
+  for (const channel of event.channels) {
+    const role = roleForChannel(channel.layerId, channel.type, channel.property);
+    if (!role) continue;
+    const value = state.memorial
+      ? state.publishedMemorial?.get(role)
+      : state.roleGoals.get(role);
+    if (value === undefined) continue;
+    runtime.updateEffectivePaint(event.fullId, channel.layerId, channel.property, value, { tweenMs: 0 });
+  }
+}
+
+/** Register mount replay once. Map removal clears the attachment. */
+export function attachSettlementOrientationRuntime(map) {
+  if (!map || attachments.has(map)) return;
+  const onRemove = () => {
+    attachments.delete(map);
+  };
+  attachments.set(map, onRemove);
+  setPaintChannelsRememberedListener(map, (event) => replayRememberedChannels(map, event));
+  if (typeof map.on === "function") map.on("remove", onRemove);
 }
 
 function pruneMissingTargets(map) {
@@ -84,6 +225,16 @@ function paintTarget(map, target) {
   }
 }
 
+function republishMemorial(map, state) {
+  if (!state.memorial || !state.publishedMemorial) return;
+  pruneMissingTargets(map);
+  for (const target of collectOrientationTargets(map).layers) {
+    const value = state.publishedMemorial.get(target.role);
+    if (publishOwned(map, target, value, orientationTweenMs())) continue;
+    paintTarget(map, target);
+  }
+}
+
 /** Memorial presentation owns effective settlement opacity while mounted. */
 export function setMemorialSettlementFocus(map, { active = false, placeName = null, strength = 1 } = {}) {
   if (!map) return;
@@ -91,16 +242,31 @@ export function setMemorialSettlementFocus(map, { active = false, placeName = nu
   const state = paintState(map);
   pruneMissingTargets(map);
   const next = active ? { placeName, strength } : null;
-  if (equal(state.memorial, next)) return;
+  const previous = state.memorial;
+  if (equal(previous, next)) {
+    republishMemorial(map, state);
+    return;
+  }
   state.memorial = next;
-  for (const target of collectOrientationTargets(map).layers) paintTarget(map, target);
+  const tweenMs = memorialTweenMs(previous, next);
+  if (next) storePublishedMemorial(state);
+  else state.publishedMemorial = null;
+  const targets = collectOrientationTargets(map).layers;
+  if (!next && !state.roleGoals.has("location-line")) {
+    const authored = lookupAuthoredLocationLine(map, targets);
+    if (authored !== undefined) state.roleGoals.set("location-line", authored);
+  }
+  for (const target of targets) {
+    const value = next ? state.publishedMemorial.get(target.role) : baseForRole(state, target.role);
+    if (publishOwned(map, target, value, tweenMs)) continue;
+    paintTarget(map, target);
+  }
 }
 
-/** Reapply the memorial policy after a style replaces the layer objects. */
+/** Reapply the stored memorial goal. Does not rebuild it from rendered paint. */
 export function refreshMemorialSettlementFocus(map) {
   if (!map || paintState(map).memorial === null) return;
-  pruneMissingTargets(map);
-  for (const target of collectOrientationTargets(map).layers) paintTarget(map, target);
+  republishMemorial(map, paintState(map));
 }
 
 /** @type {Set<string>} */
@@ -338,16 +504,31 @@ export function applySettlementOrientationPaint(map, {
   const leaderOpacity = leaderIds.length
     ? ["case", ["in", ["get", "OBJECTID"], ["literal", leaderIds]], FULL_OPACITY, PLAY_OPACITY]
     : null;
+  const state = paintState(map);
+  const locationLineGoal = mode === "narrative" && narrativeFocus && state.memorial
+    ? retainedLocationLine(map, targets, state)
+    : mode === "narrative"
+      ? (leaderOpacity ?? PLAY_OPACITY)
+      : geomOpacity;
+  state.roleGoals.set("label", textOpacity);
+  state.roleGoals.set("leader", textOpacity);
+  state.roleGoals.set("geom", geomPaint);
+  if (locationLineGoal !== undefined) state.roleGoals.set("location-line", locationLineGoal);
 
   for (const target of targets) {
     if (!target?.id || !target.property) continue;
     if (map.getLayer && !map.getLayer(target.id)) {
-      paintState(map).values.delete(target.id);
+      state.values.delete(target.id);
       continue;
     }
-    if (mode === "narrative" && target.role === "location-line" && paintState(map).memorial === null) {
+    if (state.memorial && state.publishedMemorial) {
+      if (publishOwned(map, target, state.publishedMemorial.get(target.role), orientationTweenMs())) continue;
+    } else if (!state.memorial && publishOwned(map, target, state.roleGoals.get(target.role), orientationTweenMs())) {
+      continue;
+    }
+    if (mode === "narrative" && target.role === "location-line") {
       const entry = rememberTarget(map, target);
-      entry.value = leaderOpacity ?? PLAY_OPACITY;
+      if (!(narrativeFocus && state.memorial)) entry.value = leaderOpacity ?? PLAY_OPACITY;
       paintTarget(map, target);
       continue;
     }
