@@ -45,6 +45,20 @@ test("clock preview accepts only the active frame session and latest rendered re
   preview.destroy();
 });
 
+test("rendered warning payloads are validated before reaching the editor", () => {
+  const { win, container } = harness(); const onRendered = vi.fn();
+  const preview = mountClockLayoutPreview({ container, surface: "gis", sessionId: "warning", onRendered });
+  const frame = container.children[0]; frame.contentWindow = { postMessage: vi.fn() };
+  preview.setState({ surface: "gis", sceneId: "home", output: null, clockLayout: { leftPct: 8, topPct: 8, widthPct: 35, heightPct: 28, fontPx: 22, rotateDeg: 0 }, legendLayout: null, pageIndex: 0 });
+  const dispatch = (data) => win.dispatch("message", { origin: win.location.origin, source: frame.contentWindow, data: { sessionId: "warning", ...data } });
+  dispatch({ type: "otef_clock_preview_ready", surface: "gis", output: null });
+  const reply = { type: "otef_clock_preview_rendered", requestId: 1, surface: "gis", sceneId: "home", output: null, mesh: null, meshIdentity: null, pageIndex: 0, pageCount: 1 };
+  dispatch({ ...reply, warnings: { clipped: "yes", outOfView: true, mapping: "complete" } });
+  expect(onRendered).not.toHaveBeenCalled();
+  const warnings = { clipped: true, outOfView: false, mapping: "complete" };
+  dispatch({ ...reply, warnings }); expect(onRendered).toHaveBeenCalledWith(expect.objectContaining({ warnings })); preview.destroy();
+});
+
 test("reload rejects ready and rendered messages from the previous frame", () => {
   const { win, container } = harness();
   const onRendered = vi.fn();

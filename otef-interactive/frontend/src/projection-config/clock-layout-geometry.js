@@ -136,7 +136,7 @@ export function mapOverlayOutline(mesh, layout) {
       };
       const mappedStart = mapOnTriangle(sourceAt(t0));
       const mappedEnd = mapOnTriangle(sourceAt(t1));
-      if (mappedStart && mappedEnd) result.push({ start: mappedStart, end: mappedEnd });
+      if (mappedStart && mappedEnd) result.push({ start: mappedStart, end: mappedEnd, sourceStart: sourceAt(t0), sourceEnd: sourceAt(t1) });
     }
   }
   return result;
@@ -144,6 +144,18 @@ export function mapOverlayOutline(mesh, layout) {
 
 function number(value, fallback) { return Number.isFinite(Number(value)) ? Number(value) : fallback; }
 function clamp(value, min, max) { return Math.min(max, Math.max(min, value)); }
+export function normalizeEditableLayout(layout) {
+  const widthPct = clamp(number(layout.widthPct, 2), MIN_BOX_PCT, 100);
+  const heightPct = clamp(number(layout.heightPct, 2), MIN_BOX_PCT, 100);
+  return {
+    ...layout, widthPct, heightPct,
+    leftPct: clamp(number(layout.leftPct, 0), 0, 100 - widthPct),
+    topPct: clamp(number(layout.topPct, 0), 0, 100 - heightPct),
+    fontPx: clamp(number(layout.fontPx, 22), MIN_FONT_PX, MAX_FONT_PX),
+    rotateDeg: clamp(number(layout.rotateDeg, 0), -180, 180),
+    ...(layout.dwellSeconds == null ? {} : { dwellSeconds: clamp(number(layout.dwellSeconds, 8), 4, 30) }),
+  };
+}
 function dimensions(layout) {
   return {
     width: clamp(number(layout.widthPct, 2), MIN_BOX_PCT, 100) * OUTPUT_WIDTH / 100,

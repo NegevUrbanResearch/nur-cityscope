@@ -286,6 +286,19 @@ describe("bootClockPreview frame behavior", () => {
     ]);
   });
 
+  it("measures rendered clock clipping in the child and reports pixel-correct rotated out-of-view without writes", async () => {
+    const fetchImpl = await boot();
+    const host = document.getElementById("nliGisClockHost");
+    const caption = host.querySelector(".nli-investigation-timeline-caption");
+    Object.defineProperty(host, "clientWidth", { configurable: true, value: 38 });
+    Object.defineProperty(host, "clientHeight", { configurable: true, value: 21 });
+    Object.defineProperty(caption, "scrollWidth", { configurable: true, value: 140 });
+    Object.defineProperty(caption, "scrollHeight", { configurable: true, value: 80 });
+    await render(1, "home", { leftPct: 0, topPct: 0, widthPct: 2, heightPct: 2, fontPx: 64, rotateDeg: 45 });
+    expect(messages(parent, "otef_clock_preview_rendered").at(-1).warnings).toEqual({ clipped: true, outOfView: true, mapping: "complete" });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
   it("rejects invalid senders and requests, ignores duplicate IDs, and renders only the latest draw", async () => {
     await boot();
     postState(parent, frameState(1, "home"), { source: window, origin: "https://wrong.example" });

@@ -2414,7 +2414,7 @@ describe("syncInvestigationTimelineToMap", () => {
       const groups = new Map();
       for (const value of ids) {
         const [groupId, id] = value.split(".");
-        if (!groups.has(groupId)) groups.set(groupId, { id: groupId, layers: [] });
+        if (!groups.has(groupId)) groups.set(groupId, { id: groupId, enabled: false, layers: [] });
         groups.get(groupId).layers.push({ id, enabled: true });
       }
       return [...groups.values()];

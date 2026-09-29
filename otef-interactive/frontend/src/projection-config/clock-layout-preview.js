@@ -1,5 +1,6 @@
 import { createUuid } from "../shared/uuid.js";
 import { copyProjectionMesh } from "./clock-layout-geometry.js";
+import { validClockPreviewWarnings } from "../projection/clock-preview-warnings.js";
 
 const GIS_SCENES = new Set(["home", "timeline", "segev", "nova", "sderot", "hostages", "hostages_all"]);
 const LAYOUT_KEYS = ["leftPct", "topPct", "widthPct", "heightPct", "fontPx", "rotateDeg"];
@@ -116,6 +117,7 @@ export function mountClockLayoutPreview({ container, surface, sessionId = create
       return;
     }
     if (message.type !== "otef_clock_preview_rendered" || message.requestId !== latestRequest || !state) return;
+    if (message.warnings != null && !validClockPreviewWarnings(message.warnings)) return;
     if (message.surface !== surface || message.sceneId !== state.sceneId || message.output !== (surface === "projection" ? "left" : null)
       || !Number.isSafeInteger(message.pageIndex) || !Number.isSafeInteger(message.pageCount)
       || message.pageCount < 1 || message.pageIndex < 0 || message.pageIndex >= message.pageCount) return;
@@ -130,7 +132,7 @@ export function mountClockLayoutPreview({ container, surface, sessionId = create
       } catch { fail(new Error("Invalid projection preview mesh")); return; }
     }
     clearTimeout(timeout); timeout = null;
-    onRendered({ ...message, sessionId: activeSession, mesh });
+    onRendered({ ...message, sessionId: activeSession, mesh, ...(message.warnings == null ? {} : { warnings: { ...message.warnings } }) });
   }
 
   win.addEventListener("message", onMessage);

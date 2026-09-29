@@ -51,6 +51,7 @@ import { createInvestigationPolygonRenderer } from "./maplibre-investigation-pol
 import { NLI_DISPLAY_PROFILES, NLI_VISUAL_TOKENS } from "./nli-investigation-theme.js";
 import { getNliNarrative } from "./nli-narratives.js";
 import { HOME_CUE, TIMELINE } from "../remote/nli-staff-script.js";
+import { getEnabledMapFullLayerIds } from "../map/maplibre-layer-manager.js";
 import { record as recordPerfSample } from "../map/perf-telemetry.js";
 import { deriveInvestigationFrame } from "./nli-investigation-visual-state.js";
 import { NLI_NOVA_STORY } from "./nli-nova-story.js";
@@ -1184,13 +1185,7 @@ export async function syncInvestigationTimelineToMap(map, clockInput, layerGroup
     suppressedFullIds: suppressedTimelineFullIds,
     enabledFullIds: nextMembership.visible,
   });
-  const enabledSceneIds = new Set();
-  for (const group of Array.isArray(visibilityGroups) ? visibilityGroups : Object.values(visibilityGroups || {})) {
-    if (!group || typeof group.id !== "string" || group.enabled === false) continue;
-    for (const layer of group.layers || []) {
-      if (layer?.enabled === true && typeof layer.id === "string") enabledSceneIds.add(`${group.id}.${layer.id}`);
-    }
-  }
+  const enabledSceneIds = getEnabledMapFullLayerIds(visibilityGroups);
   const activeTimeline = clock.phase !== "idle" && [
     INVESTIGATION_ALARMS_FULL_ID,
     INVESTIGATION_LINES_FULL_ID,

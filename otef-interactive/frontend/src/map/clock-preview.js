@@ -11,6 +11,7 @@ import { idleNliClock, normalizeNliClock } from "../shared/nli-investigation-clo
 import { normalizeGisBasemap } from "../shared/gis-basemap.js";
 import layerRegistry from "../shared/layer-registry.js";
 import { resolveMotionMode } from "../shared/reduced-motion.js";
+import { measureClockPreviewWarnings } from "../projection/clock-preview-warnings.js";
 import { syncInvestigationTimelineToMap, disposeInvestigationTimelineForMap } from "../shared/maplibre-investigation-timeline.js";
 import {
   applyNliExplainerLayout,
@@ -299,6 +300,7 @@ export async function bootClockPreview({ window: frameWindow, document: frameDoc
       mesh: null,
       pageIndex: 0,
       pageCount: 1,
+      warnings: measureClockPreviewWarnings({ layout: activeClockLayout, surface: "gis", element: clockHost, content: captionEl, clock: true }),
     }, targetOrigin);
   };
 

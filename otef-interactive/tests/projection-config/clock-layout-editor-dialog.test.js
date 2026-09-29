@@ -53,6 +53,63 @@ const projectionMesh = { width: 1920, height: 1080, vertices: [
   { u: 1, v: 1, x: 1820 / 1920, y: 1 }, { u: 0, v: 1, x: 100 / 1920, y: 1 },
 ], triangles: [0, 1, 2, 0, 2, 3] };
 const disposers = [];
+
+test.each([
+  ["clock-gis", "clock", "gisClock", "start"],
+  ["clock-projection", "clock", "projectionClock", "left"],
+  ["clock-projection", "legend", "projectionLegend", "left"],
+])("numeric %s/%s edits normalize the complete box before preview and backend acknowledgement", async (nodeId, element, resource, slot) => {
+  vi.useFakeTimers();
+  let latest;
+  const normalize = (layout) => ({ ...layout, leftPct: Math.min(layout.leftPct, 100 - layout.widthPct), topPct: Math.min(layout.topPct, 100 - layout.heightPct) });
+  const rig = await editorFixture(nodeId, element, { client: {
+    writeClockSlot: async ({ surface, layout, baseRevision }) => { latest = normalize(layout); return { status: "ok", nliClockLayout: { gis: { start: initialLayout }, projection: { left: initialLayout }, [surface]: { [slot]: latest } }, nliClockLayoutRevision: baseRevision + 1 }; },
+    writeLegendSlot: async ({ layout, baseRevision }) => { latest = normalize(layout); return { changeKind: "layout", legendProjection: { left: latest }, legendLayoutRevision: baseRevision + 1 }; },
+  } }); rig.rendered();
+  const set = (key, value) => { const input = rig.find((node) => node.dataset?.field === key); input.value = String(value); input.dispatch("change"); };
+  set("leftPct", 95); set("topPct", 97);
+  expect(rig.client.getSlot(resource, slot).draft).toMatchObject({ leftPct: 65, topPct: 72 });
+  set("widthPct", 80); set("heightPct", 90);
+  const draft = rig.client.getSlot(resource, slot).draft;
+  expect(draft).toMatchObject({ leftPct: 20, topPct: 10, widthPct: 80, heightPct: 90 });
+  const preview = rig.frame().contentWindow.sent.at(-1).message;
+  expect(element === "legend" ? preview.legendLayout : preview.clockLayout).toEqual(draft);
+  await vi.advanceTimersByTimeAsync(150);
+  expect(rig.client.getSlot(resource, slot)).toMatchObject({ acknowledged: latest, draft: null, status: "Saved" });
+});
+
+test.each(["move", "release"])("projection gesture cancels on unavailable inverse at %s and keeps numeric editing usable", async (phase) => {
+  const rig = await editorFixture(); rig.rendered();
+  const hit = rig.find((node) => node.attributes?.class === "clock-layout-body-hit");
+  hit.dispatch("pointerdown", { button: 0, pointerId: 17, clientX: 240, clientY: 160 });
+  rig.doc.dispatch("pointermove", { pointerId: 17, clientX: 260, clientY: 170 });
+  rig.doc.dispatch(phase === "move" ? "pointermove" : "pointerup", { pointerId: 17, clientX: 2, clientY: 170 });
+  rig.doc.dispatch("pointerup", { pointerId: 17, clientX: 260, clientY: 170 });
+  await Promise.resolve();
+  expect(rig.writeClockSlot).not.toHaveBeenCalled();
+  expect(rig.frame().contentWindow.sent.at(-1).message.clockLayout).toEqual(initialLayout);
+  expect(rig.find((node) => node.className === "clock-layout-mapping-status")?.textContent).toContain("Mapping unavailable");
+  expect(rig.find((node) => node.dataset?.field === "leftPct").disabled).toBe(false);
+});
+
+test("rejected initial projection inverse shows visible mapping feedback without a write", async () => {
+  const rig = await editorFixture(); rig.rendered();
+  rig.find((node) => node.attributes?.class === "clock-layout-body-hit").dispatch("pointerdown", { button: 0, pointerId: 17, clientX: 2, clientY: 170 });
+  expect(rig.find((node) => node.className === "clock-layout-mapping-status")?.textContent).toContain("Mapping unavailable");
+  expect(rig.writeClockSlot).not.toHaveBeenCalled();
+});
+
+test("validated clipping and partial-mesh warnings remain visible without changing layout or calibration", async () => {
+  const rig = await editorFixture(); rig.rendered();
+  const state = rig.frame().contentWindow.sent.at(-1).message;
+  rig.message({ type: "otef_clock_preview_rendered", requestId: state.requestId, surface: "projection", sceneId: "home", output: "left",
+    mesh: projectionMesh, meshIdentity: "mesh-a", pageIndex: 0, pageCount: 1,
+    warnings: { clipped: true, outOfView: true, mapping: "partial" } });
+  const warning = rig.find((node) => node.className === "clock-layout-warning");
+  expect(warning?.textContent).toContain("Content clipped"); expect(warning?.textContent).toContain("partly outside"); expect(warning?.textContent).toContain("partial");
+  expect(rig.client.getSlot("projectionClock", "left")).toMatchObject({ acknowledged: initialLayout, draft: null, status: "Saved" });
+  expect(rig.writeClockSlot).not.toHaveBeenCalled();
+});
 afterEach(() => { disposers.splice(0).forEach((dispose) => dispose()); vi.useRealTimers(); });
 
 async function editorFixture(nodeId = "clock-projection", element = "clock", overrides = {}) {
@@ -69,15 +126,28 @@ async function editorFixture(nodeId = "clock-projection", element = "clock", ove
   const frame = () => find((node) => node.tagName === "IFRAME");
   const message = (data, target = frame()) => doc.defaultView.dispatch("message", { origin: doc.defaultView.location.origin,
     source: target.contentWindow, data: { sessionId: new URL(target.src).searchParams.get("previewSession"), ...data } });
-  function rendered() {
+  function rendered(activeMesh = projectionMesh) {
     const surface = nodeId === "clock-gis" ? "gis" : "projection";
     message({ type: "otef_clock_preview_ready", surface, output: surface === "gis" ? null : "left" });
     const state = frame().contentWindow.sent.at(-1).message;
     message({ type: "otef_clock_preview_rendered", requestId: state.requestId, surface, sceneId: "home", output: state.output,
-      mesh: surface === "gis" ? null : projectionMesh, meshIdentity: surface === "gis" ? null : "mesh-a", pageIndex: 0, pageCount: 1 });
+      mesh: surface === "gis" ? null : activeMesh, meshIdentity: surface === "gis" ? null : "mesh-a", pageIndex: 0, pageCount: 1 });
   }
   return { doc, editor, client, snapshot, writeClockSlot, writeLegendSlot, find, frame, message, rendered };
 }
+
+test.each(["move", "release"])("projection gesture cancels a valid-to-ambiguous inverse at %s with zero writes", async (phase) => {
+  const rig = await editorFixture();
+  rig.rendered({ ...projectionMesh, vertices: [...projectionMesh.vertices,
+    { u: 0, v: 0, x: 0.55, y: 0.1 }, { u: 0.4, v: 0, x: 0.9, y: 0.1 }, { u: 0, v: 0.7, x: 0.55, y: 0.8 }], triangles: [...projectionMesh.triangles, 4, 5, 6] });
+  rig.find((node) => node.attributes?.class === "clock-layout-body-hit").dispatch("pointerdown", { button: 0, pointerId: 17, clientX: 240, clientY: 160 });
+  rig.doc.dispatch("pointermove", { pointerId: 17, clientX: 260, clientY: 170 });
+  rig.doc.dispatch(phase === "move" ? "pointermove" : "pointerup", { pointerId: 17, clientX: 560, clientY: 170 });
+  rig.doc.dispatch("pointerup", { pointerId: 17, clientX: 260, clientY: 170 });
+  await vi.waitFor(() => expect(rig.frame().contentWindow.sent.at(-1).message.clockLayout).toEqual(initialLayout));
+  expect(rig.writeClockSlot).not.toHaveBeenCalled();
+  expect(rig.find((node) => node.className === "clock-layout-mapping-status").hidden).toBe(false);
+});
 
 test.each(["clock", "legend"])("projection %s draws normalized mesh endpoints and corners in pixel SVG on a square stage", async (element) => {
   const rig = await editorFixture("clock-projection", element);

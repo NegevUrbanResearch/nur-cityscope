@@ -19,6 +19,7 @@ import { syncInvestigationTimelineToMap, getInvestigationTimelineRenderSnapshot,
 import { installProjectionClockPreviewBridge } from "./projection-preview-bridge.js";
 import { copyProjectionMesh } from "../projection-config/clock-layout-geometry.js";
 import { OUTPUT_WIDTH, OUTPUT_HEIGHT } from "./projection-overlay-placement.js";
+import { measureClockPreviewWarnings } from "./clock-preview-warnings.js";
 
 function abortError() {
   const error = new Error("Projection clock preview was disposed");
@@ -185,7 +186,10 @@ export async function bootProjectionClockPreview({ window: win, document: doc, f
       if (!mesh) throw new Error("Projection preview mesh is unavailable");
       const signature = JSON.stringify(mesh);
       if (signature !== meshSignature) { meshSignature = signature; meshIdentity = `${sessionId}:${calibration.revision}:${++meshGeneration}`; }
-      return { meshIdentity, mesh, pageIndex: legendSnapshot.pageIndex, pageCount: Math.max(1, legendSnapshot.pages.length) };
+      const editingClock = state.element === "clock";
+      const warnings = measureClockPreviewWarnings({ layout: editingClock ? activeClockLayout : activeLegendLayout, mesh, surface: "projection",
+        element: editingClock ? clockHost : legendElement, content: editingClock ? captionEl : legendElement, clock: editingClock });
+      return { meshIdentity, mesh, pageIndex: legendSnapshot.pageIndex, pageCount: Math.max(1, legendSnapshot.pages.length), warnings };
     } });
     return dispose;
   } catch (error) {

@@ -47,6 +47,7 @@ export async function bootProjectionConfig({ document = globalThis.document, loc
   let mounted = null;
   const layoutSourceId = createUuid();
   const layoutClient = createClockLayoutClient({
+    tableName: "otef",
     getSnapshot: (options) => OTEF_API.getState("otef", options),
     writeClockSlot: (intent) => OTEF_API.setNliClockLayout("otef", intent.surface, intent.slot, intent.layout, { baseRevision: intent.baseRevision, sourceId: layoutSourceId }),
     writeLegendSlot: (intent) => OTEF_API.setLegendSettings("otef", { span: intent.span, layout: intent.layout }, { baseRevision: intent.baseRevision }),

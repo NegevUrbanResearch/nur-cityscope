@@ -14,6 +14,7 @@ import { NLI_LABEL_HEADING_STORAGE_KEY } from "../shared/nli-label-heading.js";
 import { openClockLayoutEditor } from "./clock-layout-editor-dialog.js";
 import { createClockExhibitCueAction } from "./clock-exhibit-cue.js";
 import { OTEF_API } from "../shared/api-client.js";
+import { resourceFor, layoutFor, layoutFieldEdit } from "./clock-layout-controls.js";
 
 const FIELD_DESCRIPTORS = [
   { path: "pre.scale", node: "pre", label: "Scale", min: 0.1, max: 8, step: 0.01, fine: 0.001, unit: "×", decimals: 3 },
@@ -135,6 +136,17 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
   let validatedInputs = null;
   const validator = candidateValidator || { validateCandidate: async ({ identity }) => ({ identity, valid: false, reason: 'Candidate validator unavailable' }), dispose() {} };
   const win = root?.ownerDocument?.defaultView || globalThis.document?.defaultView;
+  let layoutUnloadAttached = false;
+  const layoutBeforeUnload = (event) => {
+    if (layoutClient?.hasUnsavedWork?.()) { event.preventDefault?.(); event.returnValue = ""; }
+  };
+  function syncLayoutUnload() {
+    const pending = !disposed && layoutClient?.hasUnsavedWork?.() === true;
+    if (pending === layoutUnloadAttached) return;
+    layoutUnloadAttached = pending;
+    if (pending) win?.addEventListener?.("beforeunload", layoutBeforeUnload);
+    else win?.removeEventListener?.("beforeunload", layoutBeforeUnload);
+  }
   let activePattern = { pattern: "off", branch: "left" };
   let patternTimer = null;
   const warpEditors = {
@@ -150,6 +162,20 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     onOpenClockEditor: openClockEditor,
     onClockScene: (sceneId) => { clockSceneId = sceneId; activeClockEditor?.setSelection({ nodeId: "clock-gis", sceneId: clockSceneId, element: clockElement }); refresh(); },
     onClockElement: (nextElement) => { clockElement = nextElement; activeClockEditor?.setSelection({ nodeId: "clock-projection", sceneId: clockSceneId, element: clockElement }); refresh(); },
+    onClockField: (key, raw) => {
+      if (!layoutClient || !["clock-gis", "clock-projection"].includes(selectedNode) || layoutClient.getHydrationState?.().status === "Failed") return;
+      const selection = resourceFor(selectedNode, clockSceneId, clockElement);
+      const next = layoutFieldEdit(layoutFor(layoutClient, selection).layout, key, raw);
+      if (next) void layoutClient.commit(selection.resource, selection.slot, next, { numeric: true }).catch(() => {});
+      refresh();
+    },
+    onClockRecovery: (action, node) => {
+      if (!layoutClient) return;
+      const selection = resourceFor(node, clockSceneId, clockElement);
+      if (action === "load") layoutClient.loadSaved(selection.resource, selection.slot);
+      else void (layoutClient.getHydrationState?.().status === "Failed" ? layoutClient.hydrate({ forceFresh: true }) : layoutClient.retry(selection.resource, selection.slot)).catch(() => {});
+      refresh();
+    },
     onAction: handleAction,
     onOutputAction: handleOutputAction,
     onWarpAction: handleWarpAction,
@@ -172,13 +198,16 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
   }
   function refresh() {
     if (disposed) return;
+    syncLayoutUnload();
     const rows = [...statusRows.values()].map((row) => ({ ...row, text: rowText(row) }));
     const warpStates = Object.fromEntries(["left", "right"].map((output) => [output, { ...warpEditors[output].getState(), config: warpEditors[output].getConfig(), handles: warpEditors[output].getControlPoints() }]));
     view.update({ state: { ...state, selectedPresetId }, errors: fieldErrors,
       conflict: conflict || state.migrationWarnings?.join(' ') || '',
       statusText: statusText(state, loadedPresetId), selectedNode, loadedPresetId, loadedPresetLoadToken, statusRows: rows,
       appliedSummary: projectionAppliedStatus(rows, expectedRevision), outputState, warpStates,
-      namesWallStatus: wallStatusForDraft(), clockScene: clockSceneId, clockElement });
+      namesWallStatus: wallStatusForDraft(), clockScene: clockSceneId, clockElement,
+      clockLayouts: layoutClient ? Object.fromEntries(["clock-gis", "clock-projection"].map((node) => [node, layoutFor(layoutClient, resourceFor(node, clockSceneId, clockElement))])) : {},
+      clockHydration: layoutClient?.getHydrationState?.() || { status: layoutClient ? "Saved" : "Loading" } });
   }
   function syncClockEditor(node = activeClockEditorNode) {
     if (!activeClockEditor) return;
@@ -200,6 +229,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     selectedNode = nodeId;
     if (activeClockEditor) { syncClockEditor(nodeId); refresh(); return; }
     const editor = clockEditorFactory({ nodeId, sceneId: clockSceneId, element: clockElement, layoutClient,
+      manageBeforeUnload: false,
       document: root?.ownerDocument || globalThis.document,
       onShowOnExhibit: async (sceneId) => {
         const action = createClockExhibitCueAction({ api: OTEF_API, tableName: "otef", sourceId: createUuid() });
@@ -477,6 +507,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
   const onPageReturn = () => { void recheckInputs(); };
   const onVisibility = () => { if (globalThis.document?.visibilityState === 'visible') void recheckInputs(); };
   const unsubscribe = client.subscribe(handleState);
+  const unsubscribeLayout = layoutClient?.subscribe?.(refresh);
   const unsubscribeOutput = outputController?.subscribe?.((nextState) => { outputState = nextState; refresh(); });
   if (view.canManageDisplays) outputController?.refreshDisplays?.().catch(() => {});
   socket?.on?.("otef_projection_applied", statusMessage);
@@ -499,7 +530,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     sourceId,
     getStatusRows: () => [...statusRows.values()].map((row) => ({ ...row })),
     setConflict,
-    dispose() { if (disposed) return; disposed = true; closeClockEditor(); for (const action of clockCueActions) action.cancel(); clockCueActions.clear(); inputCheckId += 1; wallInspectionId += 1; wallMutationId += 1; for (const editor of clockEditors) editor.dispose(); clockEditors.clear(); activeClockEditor = null; activeClockEditorNode = null; if (confirmationTimer !== null) clearTimeout(confirmationTimer); if (patternTimer !== null) clearInterval(patternTimer); socket?.send?.({ type: "otef_projection_pattern", table: "otef", output: activePattern.branch, pattern: "off", sourceId }); socket?.off?.("otef_projection_applied", statusMessage); socket?.off?.("connect", onConnect); socket?.off?.("disconnect", onDisconnect); socket?.off?.('otef_person_selection_changed', onDatasetEvent); socket?.off?.('otef_narrative_scene_changed', onDatasetEvent); win?.removeEventListener?.('storage', onHeadingStorage); win?.removeEventListener?.('pageshow', onPageReturn); win?.removeEventListener?.('focus', onPageReturn); globalThis.document?.removeEventListener?.('visibilitychange', onVisibility); unsubscribe?.(); unsubscribeOutput?.(); outputController?.dispose?.(); validator.dispose?.(); view.dispose(); client.stop?.(); },
+    dispose() { if (disposed) return; disposed = true; syncLayoutUnload(); closeClockEditor(); for (const action of clockCueActions) action.cancel(); clockCueActions.clear(); inputCheckId += 1; wallInspectionId += 1; wallMutationId += 1; for (const editor of clockEditors) editor.dispose(); clockEditors.clear(); activeClockEditor = null; activeClockEditorNode = null; if (confirmationTimer !== null) clearTimeout(confirmationTimer); if (patternTimer !== null) clearInterval(patternTimer); socket?.send?.({ type: "otef_projection_pattern", table: "otef", output: activePattern.branch, pattern: "off", sourceId }); socket?.off?.("otef_projection_applied", statusMessage); socket?.off?.("connect", onConnect); socket?.off?.("disconnect", onDisconnect); socket?.off?.('otef_person_selection_changed', onDatasetEvent); socket?.off?.('otef_narrative_scene_changed', onDatasetEvent); win?.removeEventListener?.('storage', onHeadingStorage); win?.removeEventListener?.('pageshow', onPageReturn); win?.removeEventListener?.('focus', onPageReturn); globalThis.document?.removeEventListener?.('visibilitychange', onVisibility); unsubscribe?.(); unsubscribeLayout?.(); unsubscribeOutput?.(); outputController?.dispose?.(); validator.dispose?.(); view.dispose(); client.stop?.(); },
   };
 }
 

@@ -3,6 +3,7 @@ import { visibleT3Rect } from "../shared/projection-config-geometry.js";
 import { createNodeCanvas } from "./node-canvas.js";
 import { createWarpEditorDialog } from "./warp-editor-dialog.js";
 import { bindWarpPointerInput } from "./warp-pointer-input.js";
+import { createClockLayoutParameters, createClockLayoutStatus } from "./clock-layout-controls.js";
 
 const docFor = (root) => root?.ownerDocument || globalThis.document;
 const WARP_OUTPUT_WIDTH = 1920;
@@ -109,6 +110,8 @@ export function createProjectionConfigView(root, {
   onOpenClockEditor = () => {},
   onClockScene = () => {},
   onClockElement = () => {},
+  onClockField = () => {},
+  onClockRecovery = () => {},
   onWarpAction = () => {},
   onWarpPointer = () => {},
 } = {}) {
@@ -117,6 +120,7 @@ export function createProjectionConfigView(root, {
   root.className = "projection-config-app";
   const fields = new Map();
   const controls = {};
+  const clockNodeStatuses = new Map();
   const touchOnlySurface = isTouchOnlySurface(doc);
   let outputSelection = { left: "", right: "" };
   let outputScreensSignature = null;
@@ -288,6 +292,10 @@ export function createProjectionConfigView(root, {
       card.appendChild(openButton);
     }
     if (id === "clock-gis" || id === "clock-projection") {
+      const layoutStatus = createClockLayoutStatus(doc, {
+        onRetry: () => onClockRecovery("retry", id), onLoad: () => onClockRecovery("load", id),
+      });
+      clockNodeStatuses.set(id, layoutStatus); card.appendChild(layoutStatus.element);
       const openButton = button(doc, "Open editor", "clock-editor-open", "clock-open-button");
       openButton.addEventListener("click", (event) => { event.stopPropagation?.(); cancelActiveDrag(); onNode(id); onOpenClockEditor(id); });
       card.addEventListener("dblclick", (event) => {
@@ -438,6 +446,11 @@ export function createProjectionConfigView(root, {
   controls.clockElementInspector.addEventListener("click", (event) => event.stopPropagation?.());
   controls.clockElementInspector.addEventListener("change", () => onClockElement(controls.clockElementInspector.value));
   controls.clockSettings.append(controls.clockSceneInspector, controls.clockElementInspector);
+  const clockParameters = createClockLayoutParameters(doc, { onField: onClockField });
+  const clockInspectorStatus = createClockLayoutStatus(doc, {
+    onRetry: () => onClockRecovery("retry", selectedGraphNode), onLoad: () => onClockRecovery("load", selectedGraphNode),
+  });
+  controls.clockSettings.append(clockParameters.element, clockInspectorStatus.element);
   inspector.append(controls.inspectorTitle, controls.clockSettings, controls.namesWallInspector, controls.inspectorFields, controls.warpPanel, controls.diagram, controls.patternBranch, controls.pattern, controls.applied);
   workspace.appendChild(inspector);
   app.appendChild(workspace);
@@ -472,7 +485,7 @@ export function createProjectionConfigView(root, {
     controls.clockSettings.hidden = !isClockNode;
     controls.clockSceneInspector.hidden = selected !== "clock-gis";
     controls.clockElementInspector.hidden = selected !== "clock-projection";
-    if (selected.endsWith("-keystone") || selected.endsWith("-grid")) inspector.open = true;
+    if (isClockNode || selected.endsWith("-keystone") || selected.endsWith("-grid")) inspector.open = true;
     for (const [id, card] of nodeMap) card.classList?.toggle("selected", id === selected);
     for (const descriptor of descriptors) {
       const control = fields.get(`inspector:${descriptor.path}`);
@@ -551,7 +564,7 @@ export function createProjectionConfigView(root, {
     });
     dialog.setViewBox(displayViewBox);
   };
-  const update = ({ state = {}, errors = {}, conflict = "", statusText = "", selectedNode = "pre", loadedPresetId = null, loadedPresetLoadToken = 0, statusRows = [], appliedSummary = 'Pending', outputState = {}, warpStates = {}, namesWallStatus = null, clockScene = "home", clockElement = "clock" } = {}) => {
+  const update = ({ state = {}, errors = {}, conflict = "", statusText = "", selectedNode = "pre", loadedPresetId = null, loadedPresetLoadToken = 0, statusRows = [], appliedSummary = 'Pending', outputState = {}, warpStates = {}, namesWallStatus = null, clockScene = "home", clockElement = "clock", clockLayouts = {}, clockHydration = { status: "Loading" } } = {}) => {
     controls.live.checked = Boolean(state.live);
     const dirtyLocalDraft = Boolean(state.hasLocalDraft || (state.draft && state.snapshot && JSON.stringify(state.draft) !== JSON.stringify(state.snapshot.config)));
     controls.status.textContent = dirtyLocalDraft && !state.live
@@ -598,6 +611,10 @@ export function createProjectionConfigView(root, {
     controls.clockSceneInspector.value = clockScene;
     controls.projectionElement.value = clockElement;
     controls.clockElementInspector.value = clockElement;
+    for (const [id, status] of clockNodeStatuses) status.render(clockLayouts[id]?.record, clockHydration);
+    const selectedClock = clockLayouts[selectedNode];
+    clockInspectorStatus.render(selectedClock?.record, clockHydration);
+    clockParameters.render(selectedClock?.layout, { enabled: clockHydration.status === "Saved", legend: selectedNode === "clock-projection" && clockElement === "legend" });
     controls.namesWallInspector.hidden = selectedNode !== "names-wall";
     const wallConfig = draft.namesWall;
     for (const select of namesModeControls) select.value = wallConfig?.activeMode || "wall";

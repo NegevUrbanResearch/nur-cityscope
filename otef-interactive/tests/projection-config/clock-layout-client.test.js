@@ -30,6 +30,118 @@ function socketHarness() {
 }
 
 describe("clock layout client", () => {
+  test("historical slots survive events, HTTP acknowledgements and reconnect without becoming editable records", async () => {
+    const socket = socketHarness();
+    const initial = snapshot();
+    initial.nli_clock_layout.projection.full = clockLayout(41);
+    initial.nli_clock_layout.projection.right = clockLayout(42);
+    initial.nli_clock_layout.gis.historical = clockLayout(43);
+    initial.nli_clock_layout.archive = { preserved: true };
+    let current = structuredClone(initial);
+    const client = createClockLayoutClient({ getSnapshot: async () => current, socket,
+      writeClockSlot: async ({ surface, slot, layout, baseRevision }) => {
+        current.nli_clock_layout[surface][slot] = layout;
+        current.nli_clock_layout_revision = baseRevision + 1;
+        return { status: "ok", nliClockLayout: current.nli_clock_layout, nliClockLayoutRevision: current.nli_clock_layout_revision };
+      }, writeLegendSlot: async ({ layout, baseRevision }) => {
+        current.legend_settings.projection.left = layout;
+        current.legend_layout_revision = baseRevision + 1;
+        return { changeKind: "layout", legendProjection: current.legend_settings.projection, legendLayoutRevision: current.legend_layout_revision };
+      } });
+    await client.hydrate();
+    current.nli_clock_layout.gis.start = clockLayout(15); current.nli_clock_layout_revision = 1;
+    expect(() => socket.emit("otef_nli_clock_layout_changed", { nliClockLayout: current.nli_clock_layout, nliClockLayoutRevision: 1 })).not.toThrow();
+    current.legend_settings.projection.left = legendLayout(45); current.legend_layout_revision = 1;
+    expect(() => socket.emit("otef_legend_settings_changed", { changeKind: "layout", legendProjection: current.legend_settings.projection, legendLayoutRevision: 1 })).not.toThrow();
+    expect(client.getSlot("gisClock", "start").acknowledged).toEqual(clockLayout(15));
+    expect(client.getSlot("projectionLegend", "left").acknowledged).toEqual(legendLayout(45));
+    await client.commit("projectionClock", "left", clockLayout(32));
+    await client.commit("projectionLegend", "left", legendLayout(46));
+    socket.emit("disconnect"); socket.emit("connect");
+    await vi.waitFor(() => expect(client.getHydrationState().status).toBe("Saved"));
+    expect(current.nli_clock_layout.projection.full).toEqual(clockLayout(41));
+    expect(current.nli_clock_layout.archive).toEqual({ preserved: true });
+    client.destroy();
+  });
+
+  test("foreign-table events cannot change either layout revision or own-table write bases", async () => {
+    const socket = socketHarness();
+    const initial = snapshot();
+    const writeClockSlot = vi.fn(async ({ layout, baseRevision }) => ({ status: "ok", nliClockLayout: { ...initial.nli_clock_layout, gis: { ...initial.nli_clock_layout.gis, start: layout } }, nliClockLayoutRevision: baseRevision + 1 }));
+    const writeLegendSlot = vi.fn(async ({ layout, baseRevision }) => ({ changeKind: "layout", legendProjection: { ...initial.legend_settings.projection, left: layout }, legendLayoutRevision: baseRevision + 1 }));
+    const client = createClockLayoutClient({ tableName: "otef", getSnapshot: async () => initial, socket, writeClockSlot, writeLegendSlot });
+    await client.hydrate();
+    socket.emit("otef_nli_clock_layout_changed", { table: "another", nliClockLayout: { gis: { start: clockLayout(70) } }, nliClockLayoutRevision: 50 });
+    socket.emit("otef_legend_settings_changed", { table: "another", changeKind: "layout", legendProjection: { left: legendLayout(60) }, legendLayoutRevision: 50 });
+    expect(client.getSlot("gisClock", "start").acknowledged).toEqual(clockLayout(10));
+    expect(client.getSlot("projectionLegend", "left").acknowledged).toEqual(legendLayout(40));
+    await client.commit("gisClock", "start", clockLayout(11));
+    await client.commit("projectionLegend", "left", legendLayout(41));
+    expect(writeClockSlot.mock.calls[0][0].baseRevision).toBe(0);
+    expect(writeLegendSlot.mock.calls[0][0].baseRevision).toBe(0);
+    client.destroy();
+  });
+
+  test("explicit Retry refreshes revision after a missed committed write before reapplying retained intent", async () => {
+    const refreshed = snapshot({ nli_clock_layout_revision: 4 });
+    refreshed.nli_clock_layout.gis.start = clockLayout(17);
+    const getSnapshot = vi.fn().mockResolvedValueOnce(snapshot()).mockResolvedValueOnce(refreshed);
+    const writeClockSlot = vi.fn().mockRejectedValueOnce(new Error("lost response")).mockImplementation(async ({ layout, baseRevision }) => ({
+      status: "ok", nliClockLayout: { ...refreshed.nli_clock_layout, gis: { ...refreshed.nli_clock_layout.gis, start: layout } }, nliClockLayoutRevision: baseRevision + 1,
+    }));
+    const client = createClockLayoutClient({ getSnapshot, writeClockSlot }); await client.hydrate();
+    await expect(client.commit("gisClock", "start", clockLayout(17))).rejects.toThrow("lost response");
+    await client.retry("gisClock", "start");
+    expect(getSnapshot).toHaveBeenLastCalledWith({ forceFresh: true });
+    expect(writeClockSlot.mock.calls[1][0].baseRevision).toBe(4);
+    expect(client.getSlot("gisClock", "start").status).toBe("Saved"); client.destroy();
+  });
+
+  test("Retry rejects an incomplete fresh snapshot without dispatching or discarding retained intent", async () => {
+    const getSnapshot = vi.fn().mockResolvedValueOnce(snapshot()).mockResolvedValueOnce({});
+    const writeClockSlot = vi.fn().mockRejectedValue(new Error("offline"));
+    const client = createClockLayoutClient({ getSnapshot, writeClockSlot }); await client.hydrate();
+    await expect(client.commit("gisClock", "start", clockLayout(17))).rejects.toThrow("offline");
+    const before = client.getSlot("gisClock", "start");
+    await expect(client.retry("gisClock", "start")).rejects.toThrow("snapshot is incomplete");
+    expect(writeClockSlot).toHaveBeenCalledOnce(); expect(client.getSlot("gisClock", "start")).toEqual(before); client.destroy();
+  });
+
+  test("Retry permits an unrelated slot broadcast during refresh and uses the advanced domain revision", async () => {
+    const socket = socketHarness(); let finishRefresh;
+    const refreshed = snapshot({ nli_clock_layout_revision: 1 });
+    refreshed.nli_clock_layout.gis.nova = clockLayout(25);
+    const getSnapshot = vi.fn().mockResolvedValueOnce(snapshot()).mockImplementationOnce(() => new Promise((resolve) => { finishRefresh = () => resolve(refreshed); }));
+    const writeClockSlot = vi.fn().mockRejectedValueOnce(new Error("offline")).mockImplementation(async ({ layout, baseRevision }) => ({
+      status: "ok", nliClockLayout: { ...refreshed.nli_clock_layout, gis: { ...refreshed.nli_clock_layout.gis, start: layout } }, nliClockLayoutRevision: baseRevision + 1,
+    }));
+    const client = createClockLayoutClient({ getSnapshot, writeClockSlot, socket }); await client.hydrate();
+    await expect(client.commit("gisClock", "start", clockLayout(17))).rejects.toThrow("offline");
+    const retry = client.retry("gisClock", "start");
+    socket.emit("otef_nli_clock_layout_changed", { nliClockLayout: refreshed.nli_clock_layout, nliClockLayoutRevision: 1 });
+    finishRefresh();
+    await expect(retry).resolves.toMatchObject({ status: "ok" });
+    expect(writeClockSlot.mock.calls[1][0]).toMatchObject({ baseRevision: 1, slot: "start", layout: clockLayout(17) });
+    expect(client.getSlot("gisClock", "nova").acknowledged).toEqual(clockLayout(25));
+    expect(client.getSlot("gisClock", "start").status).toBe("Saved"); client.destroy();
+  });
+
+  test.each(["edit", "load saved"])("Retry refresh cannot overwrite a newer %s", async (choice) => {
+    let resolveRefresh;
+    const getSnapshot = vi.fn().mockResolvedValueOnce(snapshot()).mockImplementationOnce(() => new Promise((resolve) => { resolveRefresh = resolve; }));
+    const writeClockSlot = vi.fn().mockRejectedValue(new Error("offline"));
+    const client = createClockLayoutClient({ getSnapshot, writeClockSlot }); await client.hydrate();
+    await expect(client.commit("gisClock", "start", clockLayout(17))).rejects.toThrow("offline");
+    const retry = client.retry("gisClock", "start");
+    await vi.waitFor(() => expect(resolveRefresh).toBeTypeOf("function"));
+    if (choice === "edit") await expect(client.commit("gisClock", "start", clockLayout(18))).rejects.toThrow("offline");
+    else client.loadSaved("gisClock", "start");
+    resolveRefresh(snapshot({ nli_clock_layout_revision: 1 }));
+    await expect(retry).resolves.toMatchObject({ status: "superseded" });
+    expect(writeClockSlot).toHaveBeenCalledTimes(choice === "edit" ? 2 : 1);
+    expect(client.getSlot("gisClock", "start").draft).toEqual(choice === "edit" ? clockLayout(18) : null);
+    client.destroy();
+  });
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();

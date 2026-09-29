@@ -39,7 +39,8 @@ export function installProjectionClockPreviewBridge({ win, sessionId, renderStat
       Promise.resolve(renderState(local, { signal: controller.signal, isCurrent })).then((result) => {
         if (!isCurrent()) return;
         reply({ type: "otef_clock_preview_rendered", requestId: state.requestId, surface: "projection", sceneId: "home", output: "left",
-          meshIdentity: result.meshIdentity, mesh: result.mesh, pageIndex: result.pageIndex, pageCount: result.pageCount });
+          meshIdentity: result.meshIdentity, mesh: result.mesh, pageIndex: result.pageIndex, pageCount: result.pageCount,
+          ...(result.warnings == null ? {} : { warnings: result.warnings }) });
       }).catch(fail);
     } catch (error) { fail(error); }
   };

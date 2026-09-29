@@ -103,6 +103,31 @@ test("read-only Home preview retains canvas names because it has no replacement 
   expect(rig.live).not.toHaveBeenCalled();
 });
 
+test("projection child reports measured clipping for both clock and legend without writes", async () => {
+  dispose = await bootProjectionClockPreview({ window, document, fetchImpl });
+  const host = document.getElementById("nliExplainerHost");
+  const caption = host.querySelector(".nli-investigation-timeline-caption");
+  for (const element of [host, document.getElementById("mapLegend")]) {
+    Object.defineProperty(element, "clientWidth", { configurable: true, value: 38 });
+    Object.defineProperty(element, "clientHeight", { configurable: true, value: 21 });
+  }
+  Object.defineProperty(caption, "scrollWidth", { configurable: true, value: 140 });
+  Object.defineProperty(caption, "scrollHeight", { configurable: true, value: 80 });
+  Object.defineProperty(document.getElementById("mapLegend"), "scrollWidth", { configurable: true, value: 160 });
+  send(frameState(1)); await vi.waitFor(() => expect(messages("otef_clock_preview_rendered")).toHaveLength(1));
+  expect(messages("otef_clock_preview_rendered")[0].warnings).toMatchObject({ clipped: true, mapping: "complete" });
+  send(frameState(2, { element: "legend" })); await vi.waitFor(() => expect(messages("otef_clock_preview_rendered")).toHaveLength(2));
+  expect(messages("otef_clock_preview_rendered")[1].warnings.clipped).toBe(true);
+  rig.surface.getMesh = () => ({ ...mesh, triangles: [0, 1, 2] });
+  send(frameState(3, { clockLayout: { ...layout, leftPct: 40, topPct: 40, rotateDeg: 0 } }));
+  await vi.waitFor(() => expect(messages("otef_clock_preview_rendered")).toHaveLength(3));
+  expect(messages("otef_clock_preview_rendered")[2].warnings.mapping).toBe("partial");
+  send(frameState(4, { clockLayout: { ...layout, leftPct: 0, topPct: 80, widthPct: 2, heightPct: 2, rotateDeg: 0 } }));
+  await vi.waitFor(() => expect(messages("otef_clock_preview_rendered")).toHaveLength(4));
+  expect(messages("otef_clock_preview_rendered")[3].warnings.mapping).toBe("unavailable");
+  expect(rig.live).not.toHaveBeenCalled(); expect(fetchImpl).toHaveBeenCalledTimes(3);
+});
+
 test("a newer local request supersedes a pending legend rebuild before layout or draw commit", async () => {
   dispose = await bootProjectionClockPreview({ window, document, fetchImpl });
   let resolveOld; rig.model.mockImplementationOnce(() => new Promise((resolve) => { resolveOld = resolve; }));

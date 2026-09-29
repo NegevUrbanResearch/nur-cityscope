@@ -105,6 +105,24 @@ import {
   installMapLegendLifecycle,
 } from "../map/legend-integration.js";
 
+export function bindProjectionClockLayout({ dataContext, host, span, onLayout, getBrowserSurface, win = globalThis.window }) {
+  const apply = () => {
+    const remote = dataContext.getNliClockLayout?.()?.projection?.left;
+    const layout = mergeNliExplainerLayout("left", remote ? { left: remote } : {}, MapProjectionConfig.NLI_EXPLAINER_LAYOUT);
+    onLayout(layout);
+    applyNliExplainerLayout(host, layout);
+    applyNliExplainerHostPresence(host, span);
+  };
+  apply();
+  const onChange = () => {
+    apply();
+    getBrowserSurface()?.requestDraw?.();
+  };
+  const unsubscribe = dataContext.subscribe("nliClockLayout", onChange);
+  win.addEventListener("resize", onChange);
+  return () => { unsubscribe?.(); win.removeEventListener("resize", onChange); };
+}
+
 function getEffectiveProjectionLayerGroups() {
   const groups = (
     typeof window !== "undefined" &&
@@ -596,18 +614,8 @@ async function bootstrapProjectionRuntime() {
     const { host: nliExplainerHost, captionEl: nliExplainerCaptionEl } =
       ensureNliExplainerHost(displayContainer);
     let currentCaptionLayout = {};
-    const applyStoredExplainerLayout = () => {
-      const search = typeof window !== "undefined" ? window.location.search : "";
-      const remote = OTEFDataContext.getNliClockLayout?.()?.projection?.left;
-      const spanKey = nliExplainerSpanKey(search);
-      currentCaptionLayout = mergeNliExplainerLayout("left", remote ? { left: remote } : {}, MapProjectionConfig.NLI_EXPLAINER_LAYOUT);
-      applyNliExplainerLayout(nliExplainerHost, currentCaptionLayout);
-      applyNliExplainerHostPresence(nliExplainerHost, projectionSpanId);
-    };
-    applyStoredExplainerLayout();
-    registerDisposer(OTEFDataContext.subscribe("nliClockLayout", () => {
-      applyStoredExplainerLayout();
-    }));
+    registerDisposer(bindProjectionClockLayout({ dataContext: OTEFDataContext, host: nliExplainerHost, span: projectionSpanId,
+      onLayout: (layout) => { currentCaptionLayout = layout; }, getBrowserSurface: () => browserSurface }));
     await new Promise((resolve) => {
       window.requestAnimationFrame(() => window.requestAnimationFrame(resolve));
     });
@@ -631,12 +639,6 @@ async function bootstrapProjectionRuntime() {
       () => legendLifecycle,
     );
     registerDisposer(() => legendLifecycle.dispose());
-    const onExplainerResize = () => {
-      applyStoredExplainerLayout();
-    };
-    window.addEventListener("resize", onExplainerResize);
-    registerDisposer(() => window.removeEventListener("resize", onExplainerResize));
-
     registerDisposer(() => {
       disposeRouteProgressOverlaysForMap(map);
       disposeInvestigationTimelineForMap(map);

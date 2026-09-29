@@ -26,7 +26,14 @@ function conflictError() {
   return Object.assign(new Error("Layout changed on the server"), { code: "conflict", status: 409 });
 }
 
-export function createClockLayoutClient({ getSnapshot, writeClockSlot, writeLegendSlot, socket = null }) {
+function requireCompleteSnapshot(snapshot) {
+  if (!snapshot?.nli_clock_layout || !Number.isInteger(snapshot.nli_clock_layout_revision) || snapshot.nli_clock_layout_revision < 0
+    || !(snapshot.legendProjection ?? snapshot.legend_settings?.projection)
+    || !Number.isInteger(snapshot.legendLayoutRevision ?? snapshot.legend_layout_revision)
+    || (snapshot.legendLayoutRevision ?? snapshot.legend_layout_revision) < 0) throw new Error("Layout settings snapshot is incomplete");
+}
+
+export function createClockLayoutClient({ getSnapshot, writeClockSlot, writeLegendSlot, socket = null, tableName = "otef" }) {
   const listeners = new Set();
   const records = new Map();
   const domains = {
@@ -169,12 +176,14 @@ export function createClockLayoutClient({ getSnapshot, writeClockSlot, writeLege
   }
 
   function applyClockEvent(message = {}) {
+    if (message.table != null && message.table !== tableName) return;
     if (message.nliClockLayout && Number.isInteger(message.nliClockLayoutRevision)) {
       acceptDomainSnapshot("clock", message.nliClockLayout, message.nliClockLayoutRevision);
     }
   }
 
   function applyLegendEvent(message = {}) {
+    if (message.table != null && message.table !== tableName) return;
     if (message.changeKind === "layout" && message.legendProjection && Number.isInteger(message.legendLayoutRevision)) {
       acceptDomainSnapshot("legend", message.legendProjection, message.legendLayoutRevision);
     }
@@ -199,17 +208,15 @@ export function createClockLayoutClient({ getSnapshot, writeClockSlot, writeLege
     let snapshot;
     try {
       snapshot = await getSnapshot(options);
-      if (!snapshot?.nli_clock_layout || !Number.isInteger(snapshot.nli_clock_layout_revision) || snapshot.nli_clock_layout_revision < 0
-        || !(snapshot.legendProjection ?? snapshot.legend_settings?.projection)
-        || !Number.isInteger(snapshot.legendLayoutRevision ?? snapshot.legend_layout_revision)
-        || (snapshot.legendLayoutRevision ?? snapshot.legend_layout_revision) < 0) throw new Error("Layout settings snapshot is incomplete");
+      requireCompleteSnapshot(snapshot);
     } catch (error) {
       hydration = { status: "Failed", error: error?.message || "Layout settings unavailable" }; emit(); throw error;
     }
     acceptSnapshot(snapshot, { authoritative: options.forceFresh === true });
     for (const [surface, layout] of Object.entries(domains.clock.snapshot || {})) {
-      if (!layout || typeof layout !== "object") continue;
+      if (!["gis", "projection"].includes(surface) || !layout || typeof layout !== "object") continue;
       for (const [slot, value] of Object.entries(layout)) {
+        if (surface === "gis" ? !GIS_CLOCK_SLOTS.has(slot) : slot !== "left") continue;
         const resource = surface === "gis" ? "gisClock" : "projectionClock";
         ensureRecord(resource, slot, value);
       }
@@ -360,17 +367,25 @@ export function createClockLayoutClient({ getSnapshot, writeClockSlot, writeLege
     return dispatch(record, generation, clone(layout));
   }
 
-  function retry(resource, slot) {
+  async function retry(resource, slot) {
     if (hydration.status !== "Saved") return Promise.reject(new Error("Layout settings are not loaded"));
     const details = resourceDetails(resource, slot);
     const record = ensureRecord(resource, details.slot, slotLayout(details.domain, resource, details.slot));
     if (record.draft === null) return Promise.resolve({ status: "Saved" });
+    const captured = { generation: record.generation, draft: clone(record.draft), acknowledged: clone(record.acknowledged) };
+    const snapshot = await getSnapshot({ forceFresh: true });
+    if (destroyed || record.generation !== captured.generation || !same(record.draft, captured.draft)) return { status: "superseded" };
+    requireCompleteSnapshot(snapshot);
+    // Only a change to this target defeats the user's Retry decision.
+    if (!same(record.acknowledged, captured.acknowledged)) throw conflictError();
+    acceptSnapshot(snapshot, { authoritative: true });
+    if (record.generation !== captured.generation || !same(record.draft, captured.draft)) return { status: "superseded" };
     record.status = "Saving";
     record.conflict = null;
     record.baseline = { layout: clone(record.acknowledged), revision: domains[details.domain].revision };
     const generation = ++record.generation;
     emit();
-    return dispatch(record, generation, clone(record.draft));
+    return dispatch(record, generation, captured.draft);
   }
 
   function loadSaved(resource, slot) {
@@ -410,5 +425,6 @@ export function createClockLayoutClient({ getSnapshot, writeClockSlot, writeLege
     pendingEvents.clear();
   }
 
-  return { hydrate, getHydrationState: () => ({ ...hydration }), getSlot, subscribe, commit, retry, loadSaved, destroy };
+  return { hydrate, getHydrationState: () => ({ ...hydration }), getSlot, subscribe, commit, retry, loadSaved, destroy,
+    hasUnsavedWork: () => [...records.values()].some((record) => record.draft !== null || record.status !== "Saved") };
 }

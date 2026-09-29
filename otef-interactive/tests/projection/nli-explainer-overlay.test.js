@@ -3,7 +3,6 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, test, vi } from "vitest";
 import MapProjectionConfig from "../../frontend/src/shared/map-projection-config.js";
-import { DEFAULT_PROJECTION_CONFIG as DEFAULT_PROJECTION_CONFIG_DOCUMENT } from "../../frontend/src/shared/projection-config-schema.js";
 import {
   applyNliExplainerLayout,
   applyNliExplainerHostPresence,
@@ -12,9 +11,6 @@ import {
   gisClockLayoutSlotId,
   mergeGisClockLayout,
   mergeNliExplainerLayout,
-  nliExplainerBoxHitsOverlap,
-  nliExplainerOverlapPageRect,
-  nliExplainerRotatedPageAabb,
   nliExplainerShouldPaintOnSpan,
   nliExplainerSpanKey,
   nliExplainerContentOverflows,
@@ -217,75 +213,6 @@ describe("nli explainer layout", () => {
     expect(parsed.right.leftPct).toBe(58);
   });
 
-  it("overlap thirds come from PROJECTION_SPAN; committed defaults miss; bad boxes hit", () => {
-    const span = MapProjectionConfig.PROJECTION_SPAN;
-    const leftW = span.LEFT_X1 - span.LEFT_X0;
-    const leftOverlap = nliExplainerOverlapPageRect("left");
-    expect(leftOverlap.leftPct).toBeCloseTo((100 * (span.RIGHT_X0 - span.LEFT_X0)) / leftW);
-    expect(leftOverlap.widthPct).toBeCloseTo((100 * (span.LEFT_X1 - span.RIGHT_X0)) / leftW);
-    const rightW = span.RIGHT_X1 - span.RIGHT_X0;
-    const rightOverlap = nliExplainerOverlapPageRect("right");
-    expect(rightOverlap.leftPct).toBe(0);
-    expect(rightOverlap.widthPct).toBeCloseTo((100 * (span.LEFT_X1 - span.RIGHT_X0)) / rightW);
-    expect(nliExplainerOverlapPageRect("full")).toBe(null);
-
-    const leftDef = MapProjectionConfig.NLI_EXPLAINER_LAYOUT.left;
-    const rightDef = MapProjectionConfig.NLI_EXPLAINER_LAYOUT.right;
-    expect(nliExplainerBoxHitsOverlap(leftDef, "left")).toBe(false);
-    expect(nliExplainerBoxHitsOverlap(rightDef, "right")).toBe(false);
-    expect(
-      nliExplainerBoxHitsOverlap(
-        { leftPct: 80, topPct: 0, widthPct: 20, heightPct: 10, fontPx: 22, rotateDeg: 0 },
-        "left",
-      ),
-    ).toBe(true);
-    expect(
-      nliExplainerBoxHitsOverlap(
-        { leftPct: 6, topPct: 68, widthPct: 42, heightPct: 26, fontPx: 22, rotateDeg: 0 },
-        "right",
-      ),
-    ).toBe(true);
-  });
-
-  it("recomputes output overlap from effective crop and post transforms", () => {
-    const config = structuredClone(DEFAULT_PROJECTION_CONFIG_DOCUMENT);
-    const before = nliExplainerOverlapPageRect("left", config);
-    config.outputs.left.post.tx = 0.1;
-    const after = nliExplainerOverlapPageRect("left", config);
-    expect(after.leftPct).not.toBe(before.leftPct);
-    expect(after.widthPct).toBeGreaterThan(0);
-    expect(nliExplainerOverlapPageRect("right", config).widthPct).toBeGreaterThan(0);
-  });
-
-  it("reports vertical overlap and uses both axes for dynamic collision checks", () => {
-    const config = structuredClone(DEFAULT_PROJECTION_CONFIG_DOCUMENT);
-    config.outputs.left.post.ty = 0.5;
-    const overlap = nliExplainerOverlapPageRect("left", config);
-    expect(overlap.topPct).toBeGreaterThan(50);
-    expect(overlap.heightPct).toBeGreaterThan(0);
-    const box = { leftPct: 80, topPct: 0, widthPct: 20, heightPct: 10, fontPx: 22, rotateDeg: 0 };
-    expect(nliExplainerBoxHitsOverlap(box, "left", config)).toBe(false);
-    expect(nliExplainerBoxHitsOverlap({ ...box, topPct: 60 }, "left", config)).toBe(true);
-  });
-
-  it("rotated AABB is larger than the unrotated box", () => {
-    const layout = { leftPct: 40, topPct: 40, widthPct: 20, heightPct: 10, fontPx: 22, rotateDeg: 45 };
-    const aabb = nliExplainerRotatedPageAabb(layout);
-    expect(aabb.widthPct).toBeGreaterThan(layout.widthPct);
-    expect(aabb.heightPct).toBeGreaterThan(layout.heightPct);
-    expect(nliExplainerRotatedPageAabb({ ...layout, rotateDeg: 0 })).toEqual({
-      leftPct: 40,
-      topPct: 40,
-      widthPct: 20,
-      heightPct: 10,
-    });
-  });
-
-  it("rotation can turn an overlap miss into a hit", () => {
-    const near = { leftPct: 50, topPct: 40, widthPct: 16, heightPct: 10, fontPx: 22, rotateDeg: 0 };
-    expect(nliExplainerBoxHitsOverlap(near, "left")).toBe(false);
-    expect(nliExplainerBoxHitsOverlap({ ...near, rotateDeg: 45 }, "left")).toBe(true);
-  });
 
   it("overflow uses unclamped clone height, not ellipsized scrollHeight", () => {
     const padL = 12;
