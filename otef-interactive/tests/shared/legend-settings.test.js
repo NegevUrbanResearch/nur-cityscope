@@ -1,6 +1,14 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
 
-const SETTINGS = { language: "en", projection: { left: { leftPct: 10 } }, summarizedGroupIds: [] };
+const SETTINGS = {
+  language: "en",
+  projection: {
+    full: { leftPct: 8, topPct: 10, widthPct: 84, heightPct: 70, fontPx: 22, rotateDeg: 0, dwellSeconds: 8 },
+    left: { leftPct: 10, topPct: 20, widthPct: 30, heightPct: 40, fontPx: 22, rotateDeg: 0, dwellSeconds: 8 },
+    right: { leftPct: 60, topPct: 20, widthPct: 30, heightPct: 40, fontPx: 22, rotateDeg: 0, dwellSeconds: 8 },
+  },
+  summarizedGroupIds: [],
+};
 
 describe("shared legend settings transport", () => {
   beforeEach(() => {
@@ -68,8 +76,15 @@ describe("shared legend settings transport", () => {
     const seen = [];
     context.subscribe("legendSettings", (value) => seen.push(value));
     websocket.setupWebSocket(context);
-    context._wsClient.listeners.get("otef_legend_settings_changed")({ legendSettings: SETTINGS });
-    expect(seen.at(-1)).toEqual(SETTINGS);
+    context._wsClient.listeners.get("otef_legend_settings_changed")({
+      changeKind: "layout", legendProjection: { ...SETTINGS.projection, left: { ...SETTINGS.projection.left, leftPct: 25 } }, legendLayoutRevision: 1,
+    });
+    context._wsClient.listeners.get("otef_legend_settings_changed")({
+      changeKind: "metadata", legendSettingsPatch: { language: "he", summarizedGroupIds: ["g1"] },
+    });
+    expect(seen.at(-1)).toMatchObject({
+      language: "he", summarizedGroupIds: ["g1"], projection: { left: { leftPct: 25 } },
+    });
   });
 
   test("websocket event ignores legend settings for another table", async () => {

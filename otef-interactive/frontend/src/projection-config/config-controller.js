@@ -11,6 +11,9 @@ import { createWarpEditor } from "./warp-editor.js";
 import { loadCapturedProjectionAsset } from "../projection/projection-captured-baseline.js";
 import { migrateNamesWallToV5 } from "../shared/nli-name-wall-config.js";
 import { NLI_LABEL_HEADING_STORAGE_KEY } from "../shared/nli-label-heading.js";
+import { openClockLayoutEditor } from "./clock-layout-editor-dialog.js";
+import { createClockExhibitCueAction } from "./clock-exhibit-cue.js";
+import { OTEF_API } from "../shared/api-client.js";
 
 const FIELD_DESCRIPTORS = [
   { path: "pre.scale", node: "pre", label: "Scale", min: 0.1, max: 8, step: 0.01, fine: 0.001, unit: "×", decimals: 3 },
@@ -100,7 +103,7 @@ export function projectionAppliedStatus(rows, revision) {
   return new Set(walls.map(identity)).size === 1 ? 'Applied' : 'Unconfirmed';
 }
 
-export function mountProjectionConfig(root, { client, share, onExport, onImport, socket, outputController, candidateValidator } = {}) {
+export function mountProjectionConfig(root, { client, share, onExport, onImport, socket, outputController, candidateValidator, layoutClient, clockEditorFactory = openClockLayoutEditor } = {}) {
   if (!client) throw new Error("projection config client is required");
   const sourceId = createUuid();
   let selectedNode = "pre";
@@ -109,6 +112,13 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
   let conflict = "";
   let disposed = false;
   let state = normalizeState(client.getState?.() || {});
+  let lastCalibrationConfig = state.snapshot?.config ? structuredClone(state.snapshot.config) : null;
+  let clockSceneId = "home";
+  let clockElement = "clock";
+  let activeClockEditor = null;
+  let activeClockEditorNode = null;
+  const clockEditors = new Set();
+  const clockCueActions = new Set();
   let localDraftNotification = false;
   let outputState = outputController?.getState?.() || { screens: [], assignments: { left: null, right: null }, error: "", message: "Workstation output controls unavailable." };
   let statusRows = new Map();
@@ -116,6 +126,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
   let reconnectStatusRevision = null;
   let confirmationTimer = null;
   let loadedPresetId = state.snapshot?.selectedPresetId || "original";
+  let loadedPresetLoadToken = 0;
   let showUnconfirmed = false;
   let wallValidation = { identity: "", revision: null, pending: false, result: null };
   let wallInspectionId = 0;
@@ -135,7 +146,10 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     onField: handleField,
     onNudge: handleNudge,
     onNamesMode: handleNamesMode,
-    onNode: (node) => { view.cancelWarpPointer(); selectedNode = node; if (node.endsWith("-keystone") || node.endsWith("-grid")) warpEditors[node.startsWith("right-") ? "right" : "left"].setMode(node.endsWith("-grid") ? "grid" : "keystone"); refresh(); },
+    onNode: (node) => { view.cancelWarpPointer(); selectedNode = node; if (node === "clock-gis" || node === "clock-projection") syncClockEditor(node); else closeClockEditor(); if (node.endsWith("-keystone") || node.endsWith("-grid")) warpEditors[node.startsWith("right-") ? "right" : "left"].setMode(node.endsWith("-grid") ? "grid" : "keystone"); refresh(); },
+    onOpenClockEditor: openClockEditor,
+    onClockScene: (sceneId) => { clockSceneId = sceneId; activeClockEditor?.setSelection({ nodeId: "clock-gis", sceneId: clockSceneId, element: clockElement }); refresh(); },
+    onClockElement: (nextElement) => { clockElement = nextElement; activeClockEditor?.setSelection({ nodeId: "clock-projection", sceneId: clockSceneId, element: clockElement }); refresh(); },
     onAction: handleAction,
     onOutputAction: handleOutputAction,
     onWarpAction: handleWarpAction,
@@ -162,9 +176,41 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     const warpStates = Object.fromEntries(["left", "right"].map((output) => [output, { ...warpEditors[output].getState(), config: warpEditors[output].getConfig(), handles: warpEditors[output].getControlPoints() }]));
     view.update({ state: { ...state, selectedPresetId }, errors: fieldErrors,
       conflict: conflict || state.migrationWarnings?.join(' ') || '',
-      statusText: statusText(state, loadedPresetId), selectedNode, statusRows: rows,
+      statusText: statusText(state, loadedPresetId), selectedNode, loadedPresetId, loadedPresetLoadToken, statusRows: rows,
       appliedSummary: projectionAppliedStatus(rows, expectedRevision), outputState, warpStates,
-      namesWallStatus: wallStatusForDraft() });
+      namesWallStatus: wallStatusForDraft(), clockScene: clockSceneId, clockElement });
+  }
+  function syncClockEditor(node = activeClockEditorNode) {
+    if (!activeClockEditor) return;
+    activeClockEditorNode = node;
+    activeClockEditor.setSelection({ nodeId: node, sceneId: clockSceneId, element: clockElement });
+  }
+  function closeClockEditor() {
+    for (const action of clockCueActions) action.cancel();
+    clockCueActions.clear();
+    if (!activeClockEditor) return;
+    const editor = activeClockEditor;
+    activeClockEditor = null; activeClockEditorNode = null;
+    editor.close();
+  }
+  function openClockEditor(nodeId) {
+    if (!layoutClient || !["clock-gis", "clock-projection"].includes(nodeId)) return;
+    view.cancelWarpPointer();
+    view.closeWarpEditor();
+    selectedNode = nodeId;
+    if (activeClockEditor) { syncClockEditor(nodeId); refresh(); return; }
+    const editor = clockEditorFactory({ nodeId, sceneId: clockSceneId, element: clockElement, layoutClient,
+      document: root?.ownerDocument || globalThis.document,
+      onShowOnExhibit: async (sceneId) => {
+        const action = createClockExhibitCueAction({ api: OTEF_API, tableName: "otef", sourceId: createUuid() });
+        clockCueActions.add(action);
+        try { return await action.show(sceneId); } finally { action.cancel(); clockCueActions.delete(action); }
+      },
+      onSelection: ({ nodeId: nextNode, sceneId, element }) => { selectedNode = nextNode; clockSceneId = sceneId; clockElement = element; refresh(); },
+      onClose: () => { if (activeClockEditor === editor) { activeClockEditor = null; activeClockEditorNode = null; } },
+    });
+    activeClockEditor = editor; activeClockEditorNode = nodeId; clockEditors.add(editor);
+    refresh();
   }
   function wallStatusForDraft() {
     const config = state.draft;
@@ -240,6 +286,11 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
   }
   function handleState(nextState) {
     nextState = normalizeState(nextState);
+    const incomingCalibration = nextState.snapshot?.config;
+    if (incomingCalibration && JSON.stringify(incomingCalibration) !== JSON.stringify(lastCalibrationConfig)) {
+      lastCalibrationConfig = structuredClone(incomingCalibration);
+      if (activeClockEditor && activeClockEditorNode === "clock-projection") activeClockEditor.calibrationChanged();
+    }
     const previousRevision = state.snapshot?.revision;
     const previousSelected = state.snapshot?.selectedPresetId;
     const previousDraft = state.draft;
@@ -349,7 +400,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
         ? migrateNamesWallToV5(parsed.config, warnings) : normalizeConfig(parsed?.config);
       const importErrors = validateProjectionConfig(config);
       if (Object.keys(importErrors).length) throw new Error(`invalid imported projection config: ${Object.entries(importErrors).map(([path, message]) => `${path} ${message}`).join("; ")}`);
-      client.setLive(false); setClientDraft(config); view.controls.saveName.value = parsed.name || ""; fieldErrors = {}; conflict = [...new Set(warnings)].join(" "); refresh();
+      client.setLive(false); setClientDraft(config); view.setPresetName(parsed.name || ""); fieldErrors = {}; conflict = [...new Set(warnings)].join(" "); refresh();
     } catch (error) { fieldErrors = { import: error.message }; refresh(); }
   }
   async function handleAction(action, value) {
@@ -360,7 +411,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
       if (action === "apply") await client.apply();
       if (action === "save-new") { if (!String(value || "").trim()) { fieldErrors = { name: "Enter a preset name" }; refresh(); return; } await client.save({ presetId: null, name: String(value).trim() }); selectedPresetId = loadedPresetId = client.getState?.().snapshot?.selectedPresetId || selectedPresetId; }
       if (action === "save") { const selected = state.snapshot?.presets?.find((preset) => preset.id === loadedPresetId); if (!selected || selected.readOnly || !String(value || "").trim()) { fieldErrors = { name: selected?.readOnly ? `${selected.name || "Selected preset"} is immutable` : "Enter a preset name" }; refresh(); return; } await client.save({ presetId: loadedPresetId, name: String(value).trim() }); selectedPresetId = loadedPresetId = client.getState?.().snapshot?.selectedPresetId || loadedPresetId; }
-      if (action === "load") { const requested = value; await client.load(requested); selectedPresetId = loadedPresetId = requested; }
+      if (action === "load") { const requested = value; await client.load(requested); selectedPresetId = loadedPresetId = requested; loadedPresetLoadToken += 1; }
       if (action === "preset-select") { selectedPresetId = value; }
       if (action === "revert") await client.revert();
       if (action === "export") { const selected = state.snapshot?.presets?.find((preset) => preset.id === loadedPresetId); const content = serializeProjectionExport(selected?.name || "Calibration", state.draft); onExport?.(content, selected?.name || "Calibration"); }
@@ -447,7 +498,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     sourceId,
     getStatusRows: () => [...statusRows.values()].map((row) => ({ ...row })),
     setConflict,
-    dispose() { if (disposed) return; disposed = true; inputCheckId += 1; wallInspectionId += 1; wallMutationId += 1; if (confirmationTimer !== null) clearTimeout(confirmationTimer); if (patternTimer !== null) clearInterval(patternTimer); socket?.send?.({ type: "otef_projection_pattern", table: "otef", output: activePattern.branch, pattern: "off", sourceId }); socket?.off?.("otef_projection_applied", statusMessage); socket?.off?.("connect", onConnect); socket?.off?.("disconnect", onDisconnect); socket?.off?.('otef_person_selection_changed', onDatasetEvent); socket?.off?.('otef_narrative_scene_changed', onDatasetEvent); win?.removeEventListener?.('storage', onHeadingStorage); win?.removeEventListener?.('pageshow', onPageReturn); win?.removeEventListener?.('focus', onPageReturn); globalThis.document?.removeEventListener?.('visibilitychange', onVisibility); unsubscribe?.(); unsubscribeOutput?.(); outputController?.dispose?.(); validator.dispose?.(); view.dispose(); client.stop?.(); },
+    dispose() { if (disposed) return; disposed = true; closeClockEditor(); for (const action of clockCueActions) action.cancel(); clockCueActions.clear(); inputCheckId += 1; wallInspectionId += 1; wallMutationId += 1; for (const editor of clockEditors) editor.dispose(); clockEditors.clear(); activeClockEditor = null; activeClockEditorNode = null; if (confirmationTimer !== null) clearTimeout(confirmationTimer); if (patternTimer !== null) clearInterval(patternTimer); socket?.send?.({ type: "otef_projection_pattern", table: "otef", output: activePattern.branch, pattern: "off", sourceId }); socket?.off?.("otef_projection_applied", statusMessage); socket?.off?.("connect", onConnect); socket?.off?.("disconnect", onDisconnect); socket?.off?.('otef_person_selection_changed', onDatasetEvent); socket?.off?.('otef_narrative_scene_changed', onDatasetEvent); win?.removeEventListener?.('storage', onHeadingStorage); win?.removeEventListener?.('pageshow', onPageReturn); win?.removeEventListener?.('focus', onPageReturn); globalThis.document?.removeEventListener?.('visibilitychange', onVisibility); unsubscribe?.(); unsubscribeOutput?.(); outputController?.dispose?.(); validator.dispose?.(); view.dispose(); client.stop?.(); },
   };
 }
 

@@ -1536,6 +1536,11 @@ function initializeTableSwitcher() {
 }
 
 async function boot() {
+  if (new URLSearchParams(window.location.search).get("clockPreview") === "1") {
+    const { bootProjectionClockPreview } = await import("../projection/projection-clock-preview.js");
+    await bootProjectionClockPreview({ window, document, fetchImpl: window.fetch.bind(window) });
+    return;
+  }
   const previewMode = new URLSearchParams(window.location.search).get("preview") === "1";
   const shouldContinue = previewMode || initializeTableSwitcher();
   if (!shouldContinue) return;

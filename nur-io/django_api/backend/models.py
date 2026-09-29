@@ -410,6 +410,10 @@ class OTEFViewportState(models.Model):
 
     legend_settings = models.JSONField(default=dict, blank=True)
 
+    nli_clock_layout_revision = models.PositiveBigIntegerField(default=0)
+
+    legend_layout_revision = models.PositiveBigIntegerField(default=0)
+
     basemap = models.CharField(max_length=16, default="osm")
 
     updated_at = models.DateTimeField(auto_now=True)

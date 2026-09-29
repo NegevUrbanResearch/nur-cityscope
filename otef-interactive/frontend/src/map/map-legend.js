@@ -71,7 +71,7 @@ function makeChildren(element) {
 }
 
 function mountMapLegend({ element, surface = "gis", projectionSpan = "full", dataContext, registry, buildModel = buildLegendModel, onRenderSnapshot } = {}) {
-  if (!element) return { refresh: async () => {}, setEditing: () => {}, dispose: () => {} };
+  if (!element) return { refresh: async () => {}, setEditing: () => {}, setPage: () => 0, dispose: () => {} };
   const mode = surface === "projection" ? "projection" : "gis";
   const { content, pager } = makeChildren(element);
   element.classList?.add?.(`map-legend-${mode}`);
@@ -283,6 +283,7 @@ function mountMapLegend({ element, surface = "gis", projectionSpan = "full", dat
       element.classList?.toggle("map-legend-has-content", pages.length > 0);
       renderPage();
     } catch (error) {
+      if (disposed || version !== generation) return;
       console.warn("[MapLegend] build failed", error);
       content.innerHTML = "";
       currentModel = null;
@@ -300,6 +301,12 @@ function mountMapLegend({ element, surface = "gis", projectionSpan = "full", dat
   return {
     refresh,
     setEditing,
+    setPage(index) {
+      if (disposed || !Number.isSafeInteger(index)) return page;
+      page = Math.max(0, Math.min(index, Math.max(0, pages.length - 1)));
+      renderPage();
+      return page;
+    },
     getRenderSnapshot: () => {
       const visible = currentBlocks.filter((block) => (pages[page] || []).includes(block.id));
       return renderSnapshot(visible);

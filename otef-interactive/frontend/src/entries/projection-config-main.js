@@ -9,6 +9,8 @@ import { createOutputWindowController } from "../projection-config/output-window
 import { loadCapturedProjectionAsset, loadCapturedProjectionFraming } from '../projection/projection-captured-baseline.js';
 import { createProjectionCandidateValidator, readProjectionCandidateInputs } from '../projection/projection-candidate-validation.js';
 import { disposeProjectionNameWallPreparation, prepareProjectionNameWall } from '../shared/nli-name-field-data.js';
+import { OTEF_API } from "../shared/api-client.js";
+import { createClockLayoutClient } from "../projection-config/clock-layout-client.js";
 
 function downloadExport(content, name) {
   if (typeof document === "undefined" || typeof URL?.createObjectURL !== "function") return;
@@ -37,12 +39,20 @@ async function shareConfigUrl({ location = globalThis.location, fetchImpl = glob
   return { href: url, copied, qrRendered };
 }
 
-export function bootProjectionConfig({ document = globalThis.document, location = globalThis.location, fetchImpl = globalThis.fetch, socket } = {}) {
+export async function bootProjectionConfig({ document = globalThis.document, location = globalThis.location, fetchImpl = globalThis.fetch, socket } = {}) {
   const root = document?.getElementById("projectionConfig");
   if (!root) return () => {};
   const ws = socket || new OTEFWebSocketClient("/ws/otef/");
   const ownsSocket = !socket;
   let mounted = null;
+  const layoutSourceId = createUuid();
+  const layoutClient = createClockLayoutClient({
+    getSnapshot: (options) => OTEF_API.getState("otef", options),
+    writeClockSlot: (intent) => OTEF_API.setNliClockLayout("otef", intent.surface, intent.slot, intent.layout, { baseRevision: intent.baseRevision, sourceId: layoutSourceId }),
+    writeLegendSlot: (intent) => OTEF_API.setLegendSettings("otef", { span: intent.span, layout: intent.layout }, { baseRevision: intent.baseRevision }),
+    socket: ws,
+  });
+  try { await layoutClient.hydrate({ forceFresh: true }); } catch { /* The client retains hydration health for the editor's Retry action. */ }
   const client = createProjectionConfigClient({ fetchImpl, socket: ws, sourceId: createUuid(), onConflict: (message) => mounted?.setConflict?.(message) });
   const outputLocation = location?.href ? new URL("./projection.html", location.href).href : "projection.html";
   const outputController = createOutputWindowController({ location: outputLocation, open: globalThis.open, screenApi: globalThis, navigatorApi: globalThis.navigator, storage: (() => { try { return globalThis.localStorage; } catch { return null; } })() });
@@ -60,8 +70,8 @@ export function bootProjectionConfig({ document = globalThis.document, location 
     readInputs: (signal) => readProjectionCandidateInputs({ storage: globalThis.localStorage, fetchImpl, signal }),
     disposePreparation: disposeProjectionNameWallPreparation,
   });
-  mounted = mountProjectionConfig(root, { client, socket: ws, outputController, candidateValidator, share: () => shareConfigUrl({ location, fetchImpl, document }), onExport: downloadExport, onImport: readImportFile });
-  return () => { mounted.dispose(); if (ownsSocket) ws.disconnect?.(); };
+  mounted = mountProjectionConfig(root, { client, socket: ws, layoutClient, outputController, candidateValidator, share: () => shareConfigUrl({ location, fetchImpl, document }), onExport: downloadExport, onImport: readImportFile });
+  return () => { mounted.dispose(); layoutClient.destroy(); if (ownsSocket) ws.disconnect?.(); };
 }
 
-if (typeof document !== "undefined") bootProjectionConfig();
+if (typeof document !== "undefined") void bootProjectionConfig().catch((error) => console.error("[projection-config] boot failed", error));

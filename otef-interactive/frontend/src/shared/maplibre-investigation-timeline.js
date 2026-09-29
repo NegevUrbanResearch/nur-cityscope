@@ -381,11 +381,11 @@ function applyCaptionDeps(state, map, deps = {}) {
   setCaptionDirRtl(state.captionEl);
 }
 
-function publishClockOnlyCaptionRelevance(state, visibleIds) {
+function publishClockOnlyCaptionRelevance(state, visibleIds, localOverride = false) {
   if (state.nliCaptionMode !== NLI_CAPTION_MODE_CLOCK_ONLY) return;
   const visible = visibleIds instanceof Set ? visibleIds : new Set(visibleIds || []);
   const recognizedNarrative = !!getNliNarrative(state.narrativeFocus?.id);
-  state.clockOnlyCaptionRelevant = state.explainerDebugVisible === true || recognizedNarrative ||
+  state.clockOnlyCaptionRelevant = localOverride === true || state.explainerDebugVisible === true || recognizedNarrative ||
     [...CLOCK_ONLY_CAPTION_RELEVANT_IDS].some((id) => visible.has(id));
   if (!state.clockOnlyCaptionRelevant) {
     state.lastCaption = null;
@@ -1183,7 +1183,7 @@ export async function syncInvestigationTimelineToMap(map, clockInput, layerGroup
     suppressedFullIds: suppressedTimelineFullIds,
     enabledFullIds: nextMembership.visible,
   });
-  publishClockOnlyCaptionRelevance(state, nextMembership.visible);
+  publishClockOnlyCaptionRelevance(state, nextMembership.visible, deps.clockOnlyCaptionRelevantOverride);
 
   // A setStyle call can fire style.load before the host has re-synced its base
   // layers. The style listener marks the coordinator ready; this branch keeps

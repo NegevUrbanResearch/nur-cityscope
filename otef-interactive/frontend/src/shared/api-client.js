@@ -191,11 +191,13 @@ export const OTEF_API = {
     });
   },
 
-  async setNliClockLayout(tableName = this.defaultTable, surface, layout, meta = {}) {
+  async setNliClockLayout(tableName = this.defaultTable, surface, slot, layout, meta = {}) {
     return this.executeCommand(tableName, {
       action: "set_nli_clock_layout",
       surface,
+      slot,
       layout,
+      ...(Number.isInteger(meta.baseRevision) ? { baseRevision: meta.baseRevision } : {}),
       ...meta,
     });
   },
@@ -204,6 +206,7 @@ export const OTEF_API = {
     return this.executeCommand(tableName, {
       action: "set_legend_settings",
       ...(patch && typeof patch === "object" ? patch : {}),
+      ...(Number.isInteger(meta.baseRevision) ? { baseRevision: meta.baseRevision } : {}),
       ...meta,
     });
   },

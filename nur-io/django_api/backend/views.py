@@ -55,10 +55,17 @@ from .otef_person_selection import (
 )
 from .otef_escape_overlay import normalize_escape_overlay
 from .otef_nli_clock_layout import (
-    merge_nli_clock_layout_surface,
+    CLOCK_LAYOUT_FIELDS,
+    GIS_SLOT_KEYS,
+    is_flat_gis_clock_layout,
+    validate_clock_slot_layout,
     normalize_nli_clock_layout,
 )
-from .otef_legend_settings import merge_legend_settings, normalize_legend_settings
+from .otef_legend_settings import (
+    LEGEND_SPANS,
+    normalize_legend_settings,
+    validate_legend_slot_layout,
+)
 from .otef_narrative import (
     NARRATIVE_IDS,
     StaleNarrativeRevision,
@@ -835,6 +842,7 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                 "type": "otef_nli_clock_layout_changed",
                 "table": table_name,
                 "nliClockLayout": layout,
+                "nliClockLayoutRevision": meta.get("nliClockLayoutRevision"),
                 "sourceId": meta.get("sourceId"),
                 "timestamp": meta.get("timestamp"),
             },
@@ -843,27 +851,71 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
     def _set_nli_clock_layout_command(self, table, request):
         payload = request.data if isinstance(request.data, dict) else {}
         surface = payload.get("surface")
-        layout = payload.get("layout")
-        if surface not in ("gis", "projection") or not isinstance(layout, dict):
+        slot = payload.get("slot")
+        layout = validate_clock_slot_layout(payload.get("layout"))
+        base_revision = payload.get("baseRevision")
+        allowed_slots = GIS_SLOT_KEYS if surface == "gis" else ("left",) if surface == "projection" else ()
+        if (
+            surface not in ("gis", "projection")
+            or slot not in allowed_slots
+            or layout is None
+            or type(base_revision) is not int
+            or base_revision < 0
+            or base_revision > 9007199254740991
+        ):
             return Response(
-                {"error": "surface must be gis or projection and layout must be an object"},
+                {"error": "invalid clock layout slot, revision, or layout"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
         with transaction.atomic():
             locked = OTEFViewportState.objects.select_for_update().get(table=table)
-            merged = merge_nli_clock_layout_surface(locked.nli_clock_layout, surface, layout)
-            if merged is None:
+            revision = locked.nli_clock_layout_revision
+            captured = normalize_nli_clock_layout(locked.nli_clock_layout)
+            if revision != base_revision or revision >= 9007199254740991:
                 return Response(
-                    {"error": "invalid nli clock layout"},
-                    status=status.HTTP_400_BAD_REQUEST,
+                    {
+                        "error": "conflict",
+                        "nliClockLayout": captured,
+                        "nliClockLayoutRevision": revision,
+                    },
+                    status=status.HTTP_409_CONFLICT,
                 )
-            locked.nli_clock_layout = merged
-            locked.save(update_fields=["nli_clock_layout", "updated_at"])
-            captured = dict(merged)
+
+            raw = copy.deepcopy(locked.nli_clock_layout)
+            if not isinstance(raw, dict):
+                raw = {}
+            if surface == "gis":
+                gis = raw.get("gis")
+                if not isinstance(gis, dict):
+                    gis = {}
+                else:
+                    gis = copy.deepcopy(gis)
+                if "gis" not in raw and any(field in raw for field in CLOCK_LAYOUT_FIELDS):
+                    legacy = {field: raw.pop(field) for field in CLOCK_LAYOUT_FIELDS if field in raw}
+                    gis["start"] = normalize_nli_clock_layout({"gis": {"start": legacy}})["gis"]["start"]
+                if is_flat_gis_clock_layout(gis):
+                    legacy = {field: gis.pop(field) for field in CLOCK_LAYOUT_FIELDS if field in gis}
+                    gis["start"] = normalize_nli_clock_layout({"gis": {"start": legacy}})["gis"]["start"]
+                gis[slot] = layout
+                raw["gis"] = gis
+            else:
+                projection = raw.get("projection")
+                if not isinstance(projection, dict):
+                    projection = {}
+                else:
+                    projection = copy.deepcopy(projection)
+                projection[slot] = layout
+                raw["projection"] = projection
+
+            locked.nli_clock_layout = raw
+            locked.nli_clock_layout_revision = revision + 1
+            locked.save(update_fields=["nli_clock_layout", "nli_clock_layout_revision", "updated_at"])
+            captured = normalize_nli_clock_layout(raw)
             captured_metadata = {
                 "sourceId": payload.get("sourceId"),
                 "timestamp": payload.get("timestamp"),
+                "nliClockLayoutRevision": locked.nli_clock_layout_revision,
             }
             transaction.on_commit(
                 lambda: self._broadcast_nli_clock_layout(
@@ -875,10 +927,11 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                 "status": "ok",
                 "action": "set_nli_clock_layout",
                 "nliClockLayout": captured,
+                "nliClockLayoutRevision": locked.nli_clock_layout_revision,
             }
         )
 
-    def _broadcast_legend_settings(self, table_name, settings, metadata):
+    def _broadcast_legend_settings(self, table_name, change, metadata):
         channel_layer = get_channel_layer()
         if not channel_layer:
             return
@@ -888,7 +941,7 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
             "message": {
                 "type": "otef_legend_settings_changed",
                 "table": table_name,
-                "legendSettings": settings,
+                **change,
                 "sourceId": meta.get("sourceId"),
                 "timestamp": meta.get("timestamp"),
             },
@@ -896,32 +949,78 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
 
     def _set_legend_settings_command(self, table, request):
         payload = request.data if isinstance(request.data, dict) else {}
-        fields = [key for key in ("language", "span", "summarizedGroupIds") if key in payload]
-        if len(fields) != 1:
-            return Response({"error": "provide exactly one of language, span/layout, or summarizedGroupIds"}, status=status.HTTP_400_BAD_REQUEST)
-        if "span" in payload and "layout" not in payload:
-            return Response({"error": "span requires layout"}, status=status.HTTP_400_BAD_REQUEST)
-        if "language" in payload and payload.get("language") not in ("he", "en"):
-            return Response({"error": "language must be he or en"}, status=status.HTTP_400_BAD_REQUEST)
-        if "summarizedGroupIds" in payload and not isinstance(payload.get("summarizedGroupIds"), list):
-            return Response({"error": "summarizedGroupIds must be an array"}, status=status.HTTP_400_BAD_REQUEST)
+        is_layout = "span" in payload or "layout" in payload or "baseRevision" in payload
+        if is_layout:
+            span = payload.get("span")
+            layout = validate_legend_slot_layout(payload.get("layout"))
+            base_revision = payload.get("baseRevision")
+            if (
+                span not in LEGEND_SPANS
+                or layout is None
+                or type(base_revision) is not int
+                or base_revision < 0
+                or base_revision > 9007199254740991
+                or "language" in payload
+                or "summarizedGroupIds" in payload
+            ):
+                return Response({"error": "invalid legend layout slot, revision, or layout"}, status=status.HTTP_400_BAD_REQUEST)
+            metadata_field = None
+        elif "language" in payload and "summarizedGroupIds" not in payload:
+            if payload.get("language") not in ("he", "en"):
+                return Response({"error": "language must be he or en"}, status=status.HTTP_400_BAD_REQUEST)
+            metadata_field = "language"
+        elif "summarizedGroupIds" in payload and "language" not in payload:
+            values = payload.get("summarizedGroupIds")
+            if not isinstance(values, list) or any(not isinstance(value, str) or not value for value in values):
+                return Response({"error": "summarizedGroupIds must be an array of nonempty strings"}, status=status.HTTP_400_BAD_REQUEST)
+            metadata_field = "summarizedGroupIds"
+        else:
+            return Response({"error": "provide one legend metadata field or a versioned span layout"}, status=status.HTTP_400_BAD_REQUEST)
+
         with transaction.atomic():
             locked = OTEFViewportState.objects.select_for_update().get(table=table)
-            merged = merge_legend_settings(
-                locked.legend_settings,
-                language=payload.get("language"),
-                span=payload.get("span"),
-                layout=payload.get("layout"),
-                summarized_group_ids=payload.get("summarizedGroupIds"),
-            )
-            if merged is None:
-                return Response({"error": "invalid legend settings"}, status=status.HTTP_400_BAD_REQUEST)
-            locked.legend_settings = merged
-            locked.save(update_fields=["legend_settings", "updated_at"])
-            captured = normalize_legend_settings(merged)
+            raw = copy.deepcopy(locked.legend_settings)
+            if not isinstance(raw, dict):
+                raw = {}
+            revision = locked.legend_layout_revision
+            if is_layout:
+                projection = raw.get("projection")
+                if not isinstance(projection, dict):
+                    projection = {}
+                else:
+                    projection = copy.deepcopy(projection)
+                captured_projection = normalize_legend_settings({"projection": projection})["projection"]
+                if revision != base_revision or revision >= 9007199254740991:
+                    return Response({
+                        "error": "conflict", "changeKind": "layout",
+                        "legendProjection": captured_projection,
+                        "legendLayoutRevision": revision,
+                    }, status=status.HTTP_409_CONFLICT)
+                projection[span] = layout
+                raw["projection"] = projection
+                locked.legend_settings = raw
+                locked.legend_layout_revision = revision + 1
+                locked.save(update_fields=["legend_settings", "legend_layout_revision", "updated_at"])
+                change = {
+                    "changeKind": "layout",
+                    "legendProjection": normalize_legend_settings({"projection": projection})["projection"],
+                    "legendLayoutRevision": locked.legend_layout_revision,
+                }
+            else:
+                value = payload[metadata_field]
+                if metadata_field == "summarizedGroupIds":
+                    value = list(dict.fromkeys(value))
+                raw[metadata_field] = value
+                locked.legend_settings = raw
+                locked.save(update_fields=["legend_settings", "updated_at"])
+                change = {
+                    "changeKind": "metadata",
+                    "legendSettingsPatch": {metadata_field: value},
+                    "legendLayoutRevision": revision,
+                }
             metadata = {"sourceId": payload.get("sourceId"), "timestamp": payload.get("timestamp")}
-            transaction.on_commit(lambda: self._broadcast_legend_settings(table.name, captured, metadata))
-        return Response({"status": "ok", "action": "set_legend_settings", "legendSettings": captured})
+            transaction.on_commit(lambda: self._broadcast_legend_settings(table.name, dict(change), metadata))
+        return Response({"status": "ok", "action": "set_legend_settings", **change})
 
     def _narrative_presentation_command(self, table, request):
         payload = request.data if isinstance(request.data, dict) else {}
@@ -1392,11 +1491,22 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
             defaults={
                 'viewport': OTEFViewportState.DEFAULT_VIEWPORT.copy(),
                 'layers': OTEFViewportState.DEFAULT_LAYERS.copy(),
-                'animations': {}
+                'animations': {},
+                'nli_clock_layout_revision': 0,
+                'legend_layout_revision': 0,
             }
         )
 
         if request.method == 'PATCH':
+            protected_layout_fields = {
+                "nli_clock_layout", "nli_clock_layout_revision",
+                "legend_settings", "legend_layout_revision",
+            }
+            if protected_layout_fields.intersection(request.data.keys()):
+                return Response(
+                    {"error": "Clock and legend layouts must use their versioned commands"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
             state = OTEFViewportState.objects.select_for_update().get(pk=state.pk)
             request_viewport = (
                 request.data.get('viewport')
@@ -1634,7 +1744,9 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                 normalize_narrative_state(state.narrative_state)["id"],
             ),
             'nli_clock_layout': normalize_nli_clock_layout(state.nli_clock_layout),
+            'nli_clock_layout_revision': state.nli_clock_layout_revision,
             'legend_settings': normalize_legend_settings(state.legend_settings),
+            'legend_layout_revision': state.legend_layout_revision,
             'updated_at': state.updated_at.isoformat() if state.updated_at else None,
         }
 
@@ -2247,7 +2359,9 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
             defaults={
                 'viewport': OTEFViewportState.DEFAULT_VIEWPORT.copy(),
                 'layers': OTEFViewportState.DEFAULT_LAYERS.copy(),
-                'animations': {}
+                'animations': {},
+                'nli_clock_layout_revision': 0,
+                'legend_layout_revision': 0,
             }
         )
 

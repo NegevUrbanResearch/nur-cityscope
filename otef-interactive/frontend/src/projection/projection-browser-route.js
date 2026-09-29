@@ -12,6 +12,7 @@ import {
 import { visibleProjectionBrowserError } from "./projection-browser-error.js";
 import { prepareProjectionPairMeshes, prepareProjectionSideMesh } from "./projection-candidate-validation.js";
 import { createProjectionDrawScheduler } from "./projection-draw-scheduler.js";
+import { copyProjectionMesh } from "../projection-config/clock-layout-geometry.js";
 
 export function resolveProjectionOutputMode(search = "") {
   const params = new URLSearchParams(String(search).replace(/^\?/, ""));
@@ -268,6 +269,7 @@ export async function createProjectionBrowserSurface({
       renderer,
       compositor,
       baseline,
+      getMesh: () => copyProjectionMesh(activeMesh),
       draw: () => drawScheduler.drawNow(),
       requestDraw: () => drawScheduler.requestDraw(),
       setVideoPlaybackActive(active) {

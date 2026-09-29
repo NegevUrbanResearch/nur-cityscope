@@ -158,6 +158,9 @@ class OTEFDataContextClass {
     this._escapeOverlay = normalizeEscapeOverlay(null, null);
     this._nliClockLayout = emptyNliClockLayout();
     this._legendSettings = { language: "he", projection: {}, summarizedGroupIds: [] };
+    this._nliClockLayoutRevision = -1;
+    this._legendLayoutRevision = -1;
+    this._layoutRevisionRefresh = new Set();
     this._clockOffsetMs = 0;
     this._clockPatchQueue = null;
   }
@@ -494,12 +497,64 @@ class OTEFDataContextClass {
     this._notify("legendSettings", this._legendSettings);
   }
 
-  async setLegendSettings(patch) {
+  _applyLegendMetadataPatch(patch) {
+    if (!patch || typeof patch !== "object") return;
+    const next = { ...this._legendSettings };
+    if (Object.prototype.hasOwnProperty.call(patch, "language")) next.language = patch.language === "en" ? "en" : "he";
+    if (Array.isArray(patch.summarizedGroupIds)) next.summarizedGroupIds = [...patch.summarizedGroupIds];
+    this._applyLegendSettings(next);
+  }
+
+  _applyNliClockLayoutVersioned(raw, revision, options = {}) {
+    if (!Number.isInteger(revision) || revision < 0 || !raw || typeof raw !== "object") return false;
+    if (revision < this._nliClockLayoutRevision) return false;
+    if (revision === this._nliClockLayoutRevision) {
+      if (JSON.stringify(this._nliClockLayout) !== JSON.stringify(raw)) {
+        if (options.authoritative === true) this._applyNliClockLayout(raw);
+        else this._refreshLayoutRevision("clock");
+      }
+      return false;
+    }
+    this._applyNliClockLayout(raw);
+    this._nliClockLayoutRevision = revision;
+    return true;
+  }
+
+  _applyLegendProjectionVersioned(raw, revision, options = {}) {
+    if (!Number.isInteger(revision) || revision < 0 || !raw || typeof raw !== "object") return false;
+    if (revision < this._legendLayoutRevision) return false;
+    if (revision === this._legendLayoutRevision) {
+      if (JSON.stringify(this._legendSettings.projection) !== JSON.stringify(raw)) {
+        if (options.authoritative === true) this._applyLegendSettings({ ...this._legendSettings, projection: raw });
+        else this._refreshLayoutRevision("legend");
+      }
+      return false;
+    }
+    this._legendLayoutRevision = revision;
+    this._applyLegendSettings({ ...this._legendSettings, projection: raw });
+    return true;
+  }
+
+  _refreshLayoutRevision(domain) {
+    if (!this._tableName || this._layoutRevisionRefresh.has(domain)) return;
+    this._layoutRevisionRefresh.add(domain);
+    OTEF_API.getState(this._tableName, { forceFresh: true }).then((state) => {
+      if (domain === "clock" && Number.isInteger(state?.nli_clock_layout_revision)) {
+        this._applyNliClockLayoutVersioned(state.nli_clock_layout, state.nli_clock_layout_revision, { authoritative: true });
+      } else if (domain === "legend" && Number.isInteger(state?.legend_layout_revision)) {
+        this._applyLegendProjectionVersioned(state.legend_settings?.projection, state.legend_layout_revision, { authoritative: true });
+      }
+    }).catch((error) => getLogger().warn("[OTEFDataContext] Failed to refresh layout revision:", error)).finally(() => {
+      this._layoutRevisionRefresh.delete(domain);
+    });
+  }
+
+  async setLegendSettings(patch, options = {}) {
     const actions = OTEFDataContextInternals.actions;
     if (!actions || typeof actions.setLegendSettings !== "function") {
       throw new Error("Missing setLegendSettings action helper");
     }
-    return actions.setLegendSettings(this, patch);
+    return actions.setLegendSettings(this, patch, options);
   }
 
   _applyNliClockLayout(raw) {

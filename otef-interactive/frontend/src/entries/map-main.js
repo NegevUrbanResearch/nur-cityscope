@@ -16,6 +16,7 @@ import { applyPeopleFocusDim, clearPeopleFocusDim } from "../shared/nli-people-f
 import { createNovaEscapeCoordinator } from "../shared/nli-nova-escape-coordinator.js";
 import { createMorRouteCoordinator } from "../shared/nli-mor-route-coordinator.js";
 import { createGisBasemapStyleCoordinator } from "./map-main-style-lifecycle.js";
+import { bootClockPreview } from "../map/clock-preview.js";
 import {
   createLegendStyleLoadRefresh,
   installMapLegendLifecycle,
@@ -774,6 +775,9 @@ function initializeTableSwitcher() {
 }
 
 async function boot() {
+  if (new URLSearchParams(window.location.search).get("clockPreview") === "1") {
+    return bootClockPreview({ window, document, fetchImpl: window.fetch.bind(window) });
+  }
   const shouldContinue = initializeTableSwitcher();
   if (!shouldContinue) return;
   await bootstrapMapRuntime();

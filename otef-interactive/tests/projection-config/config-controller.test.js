@@ -82,6 +82,44 @@ function fakeClient(initialSnapshot) {
 }
 
 describe("projection config controller", () => {
+  test("projection-opened reusable editor retains the GIS exhibit callback after switching nodes", () => {
+    const previousDocument = globalThis.document; globalThis.document = documentStub();
+    const editor = { close: vi.fn(), dispose: vi.fn(), setSelection: vi.fn(), calibrationChanged: vi.fn() };
+    const factory = vi.fn(() => editor); const root = element("main");
+    const api = mountProjectionConfig(root, { client: fakeClient(), layoutClient: {}, clockEditorFactory: factory });
+    const open = (id) => find(find(root, (node) => node.dataset?.node === id), (node) => node.dataset?.action === "clock-editor-open").dispatch("click");
+    open("clock-projection"); open("clock-gis");
+    expect(factory).toHaveBeenCalledOnce();
+    expect(factory.mock.calls[0][0].onShowOnExhibit).toBeTypeOf("function");
+    expect(editor.setSelection).toHaveBeenCalledWith(expect.objectContaining({ nodeId: "clock-gis" }));
+    api.dispose(); globalThis.document = previousDocument;
+  });
+  test("projection calibration reload follows accepted effective config changes only", () => {
+    const previousDocument = globalThis.document;
+    globalThis.document = documentStub();
+    const client = fakeClient();
+    const layoutClient = { getSlot: vi.fn(() => ({ acknowledged: {}, draft: null, status: "Saved" })), subscribe: () => () => {}, commit: vi.fn() };
+    const editor = { close: vi.fn(), dispose: vi.fn(), setSelection: vi.fn(), calibrationChanged: vi.fn() };
+    const clockEditorFactory = vi.fn(() => editor);
+    const root = element("main");
+    const api = mountProjectionConfig(root, { client, layoutClient, clockEditorFactory });
+    const projectionNode = find(root, (node) => node.dataset?.node === "clock-projection");
+    find(projectionNode, (node) => node.dataset?.action === "clock-editor-open").dispatch("click");
+    expect(clockEditorFactory).toHaveBeenCalledWith(expect.objectContaining({ nodeId: "clock-projection", layoutClient }));
+    const draft = clone(DEFAULTS); draft.pre.tx = 0.2;
+    client.report({ draft, hasLocalDraft: true });
+    client.report({ snapshot: { ...client.getState().snapshot, revision: 3, selectedPresetId: "metadata-only" }, draft });
+    expect(editor.calibrationChanged).not.toHaveBeenCalled();
+    client.report({ snapshot: { ...client.getState().snapshot, revision: 4 }, draft });
+    expect(editor.calibrationChanged).not.toHaveBeenCalled();
+    const effective = clone(DEFAULTS); effective.pre.tx = 0.1;
+    client.report({ snapshot: { ...client.getState().snapshot, revision: 5, config: effective }, draft: effective, hasLocalDraft: false });
+    expect(editor.calibrationChanged).toHaveBeenCalledOnce();
+    find(root, (node) => node.dataset?.node === "left-fit").dispatch("click");
+    expect(editor.close).toHaveBeenCalledOnce();
+    api.dispose(); globalThis.document = previousDocument;
+  });
+
   test('uses an injected validator for inspection and mutations without preview frames', async () => {
     const previousDocument = globalThis.document;
     globalThis.document = documentStub();
@@ -196,6 +234,71 @@ describe("projection config controller", () => {
     const descriptor = FIELD_DESCRIPTORS.find((item) => item.path === "pre.tx");
     expect(Number.isNaN(fieldValueFromInput(descriptor, ""))).toBe(true);
     expect(Number.isNaN(fieldValueFromInput(descriptor, "   "))).toBe(true);
+  });
+
+  test("prefills the loaded preset name, preserves edits, and resets on explicit reload", async () => {
+    const previousDocument = globalThis.document; globalThis.document = documentStub();
+    const client = fakeClient();
+    const snapshot = clone(client.getState().snapshot);
+    snapshot.presets.push({ id: "desk", name: "Desk calibration", config: clone(DEFAULTS) });
+    snapshot.selectedPresetId = "desk";
+    client.hydrate(snapshot);
+    const root = element("main"); const api = mountProjectionConfig(root, { client });
+    const name = find(root, (node) => node.attributes?.["aria-label"] === "Preset name");
+    expect(name.value).toBe("Desk calibration");
+    name.value = "My working copy";
+    client.report({ pending: true });
+    expect(name.value).toBe("My working copy");
+    find(root, (node) => node.dataset?.action === "load").dispatch("click");
+    await vi.waitFor(() => expect(name.value).toBe("Desk calibration"));
+    api.dispose(); globalThis.document = previousDocument;
+  });
+
+  test("prefills the original preset after a cold mount hydrates", () => {
+    const previousDocument = globalThis.document; globalThis.document = documentStub();
+    const client = fakeClient(null); const root = element("main"); const api = mountProjectionConfig(root, { client });
+    const name = find(root, (node) => node.attributes?.["aria-label"] === "Preset name");
+    expect(name.value).toBe("");
+    client.hydrate({ revision: 3, config: clone(DEFAULTS), presets: [{ id: "original", name: "Original calibration", config: clone(DEFAULTS), readOnly: true }], selectedPresetId: "original" });
+    expect(name.value).toBe("Original calibration");
+    api.dispose(); globalThis.document = previousDocument;
+  });
+
+  test("preserves an imported preset name entered before first hydration", async () => {
+    const previousDocument = globalThis.document; globalThis.document = documentStub();
+    const client = fakeClient(null); const root = element("main");
+    const api = mountProjectionConfig(root, { client, onImport: async () => ({ name: "Imported fieldwork", config: clone(DEFAULTS) }) });
+    const fileInput = find(root, (node) => node.attributes?.["aria-label"] === "Import calibration");
+    fileInput.files = [{}]; fileInput.dispatch("change");
+    const name = find(root, (node) => node.attributes?.["aria-label"] === "Preset name");
+    await vi.waitFor(() => expect(name.value).toBe("Imported fieldwork"));
+    client.hydrate({ revision: 3, config: clone(DEFAULTS), presets: [{ id: "original", name: "Original calibration", config: clone(DEFAULTS), readOnly: true }], selectedPresetId: "original" });
+    expect(name.value).toBe("Imported fieldwork");
+    api.dispose(); globalThis.document = previousDocument;
+  });
+
+  test("preserves a manually typed preset name entered before first hydration", () => {
+    const previousDocument = globalThis.document; globalThis.document = documentStub();
+    const client = fakeClient(null); const root = element("main"); const api = mountProjectionConfig(root, { client });
+    const name = find(root, (node) => node.attributes?.["aria-label"] === "Preset name");
+    name.value = "Typed before load"; name.dispatch("input");
+    client.hydrate({ revision: 3, config: clone(DEFAULTS), presets: [{ id: "original", name: "Original calibration", config: clone(DEFAULTS), readOnly: true }], selectedPresetId: "original" });
+    expect(name.value).toBe("Typed before load");
+    api.dispose(); globalThis.document = previousDocument;
+  });
+
+  test("explains unsaved Live-off drafts and hides the reload warning for saved or accepted edits", () => {
+    const previousDocument = globalThis.document; globalThis.document = documentStub();
+    const root = element("main"); const client = fakeClient(); const api = mountProjectionConfig(root, { client });
+    const status = find(root, (node) => node.className === "draft-status");
+    client.report({ live: false, hasLocalDraft: true });
+    expect(status.textContent).toContain("Changes have not reached the outputs");
+    expect(status.textContent).toContain("Apply or save before reload");
+    expect(status.textContent).toContain("Reloading discards this local draft");
+    client.report({ live: true, hasLocalDraft: false });
+    expect(status.textContent).not.toContain("Reloading discards");
+    expect(status.textContent).toBe("Saved");
+    api.dispose(); globalThis.document = previousDocument;
   });
 
   test("selecting a warp stage synchronizes the editor mode and opens its inspector", () => {

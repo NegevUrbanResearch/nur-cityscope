@@ -101,3 +101,49 @@ test("mounted cards produce pixel wires; drag moves ports and dispose removes li
   expect(nodeMap.get("pre").header.listeners.size).toBe(0);
   expect(controls.zoomReset.listeners.size).toBe(0);
 });
+
+test("clock settings nodes occupy a separate column without calibration connectors", () => {
+  const { positions } = layoutNodePositions({});
+  expect(positions["clock-gis"]).toBeDefined();
+  expect(positions["clock-projection"]).toBeDefined();
+  expect(positions["clock-gis"].x).toBe(positions["clock-projection"].x);
+  expect(positions["clock-projection"].y).toBeGreaterThan(positions["clock-gis"].y);
+});
+
+test("a graph drag remains owned by its initiating pointer until that pointer ends or cancels", () => {
+  const document = fakeElement();
+  const viewport = fakeElement(900, 560);
+  viewport.clientWidth = 900; viewport.clientHeight = 560;
+  viewport.getBoundingClientRect = () => ({ left: 0, top: 0 });
+  const graph = fakeElement(); const svg = fakeElement(); const wire = fakeElement();
+  const controls = { zoomIn: fakeElement(), zoomOut: fakeElement(), zoomReset: fakeElement(), zoomOne: fakeElement() };
+  const nodeMap = new Map(ids.map((id) => { const card = fakeElement(330); card.header = fakeElement(); return [id, card]; }));
+  const canvas = createNodeCanvas({ document, viewport, graph, svg, wire, nodeMap, controls });
+  canvas.mount();
+  const pre = nodeMap.get("pre");
+  const initialX = pre.offsetLeft;
+  pre.header.emit("pointerdown", { pointerId: 22, pointerType: "touch", isPrimary: false, clientX: 100, clientY: 100 });
+  document.emit("pointermove", { pointerId: 22, pointerType: "touch", isPrimary: false, clientX: 800, clientY: 100 });
+  expect(pre.offsetLeft).toBe(initialX);
+  document.emit("pointerup", { pointerId: 22, pointerType: "touch", isPrimary: false });
+  pre.header.emit("pointerdown", { pointerId: 11, pointerType: "touch", isPrimary: true, clientX: 100, clientY: 100 });
+  pre.header.emit("pointerdown", { pointerId: 22, pointerType: "touch", isPrimary: false, clientX: 500, clientY: 100 });
+  document.emit("pointermove", { pointerId: 22, clientX: 800, clientY: 100 });
+  document.emit("pointerup", { pointerId: 22 });
+  expect(pre.offsetLeft).toBe(initialX);
+  document.emit("pointermove", { pointerId: 11, pointerType: "touch", isPrimary: true, clientX: 130, clientY: 100 });
+  expect(pre.offsetLeft).toBe(initialX + 30 / 0.8);
+  document.emit("pointercancel", { pointerId: 22 });
+  document.emit("pointermove", { pointerId: 11, pointerType: "touch", isPrimary: true, clientX: 150, clientY: 100 });
+  expect(pre.offsetLeft).toBe(initialX + 50 / 0.8);
+  document.emit("pointercancel", { pointerId: 11, pointerType: "touch", isPrimary: true });
+  document.emit("pointermove", { pointerId: 11, pointerType: "touch", isPrimary: true, clientX: 180, clientY: 100 });
+  expect(pre.offsetLeft).toBe(initialX + 50 / 0.8);
+  pre.header.emit("pointerdown", { pointerId: 33, clientX: 0, clientY: 0 });
+  document.emit("pointermove", { pointerId: 33, clientX: 10, clientY: 0 });
+  expect(pre.offsetLeft).toBe(initialX + 60 / 0.8);
+  expect(document.listeners.has("pointermove")).toBe(true);
+  canvas.dispose();
+  expect(document.listeners.has("pointermove")).toBe(false);
+  expect(document.listeners.has("pointerup")).toBe(false);
+});

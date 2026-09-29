@@ -244,7 +244,9 @@ class OTEFViewportStateSerializer(serializers.ModelSerializer):
             "narrative_state",
             "escape_overlay",
             "nli_clock_layout",
+            "nli_clock_layout_revision",
             "legend_settings",
+            "legend_layout_revision",
             "workshop_auto_publish",
             "workshop_autopublish_started_at",
             "exhibit_mode",
@@ -258,7 +260,9 @@ class OTEFViewportStateSerializer(serializers.ModelSerializer):
             "narrative_state",
             "escape_overlay",
             "nli_clock_layout",
+            "nli_clock_layout_revision",
             "legend_settings",
+            "legend_layout_revision",
             "workshop_autopublish_started_at",
         ]
 

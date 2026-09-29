@@ -1009,21 +1009,45 @@ async function setEscapeOverlay(ctx, overlay) {
 async function setNliClockLayout(ctx, patch = {}) {
   if (!ctx._tableName) return { ok: false, reason: "missing_table" };
   const surface = patch.surface === "gis" ? "gis" : patch.surface === "projection" ? "projection" : null;
+  if (surface && !patch.slot && patch.layout && typeof patch.layout === "object") {
+    const current = ctx.getNliClockLayout?.()?.[surface] || {};
+    const changed = Object.entries(patch.layout).filter(([slot, layout]) =>
+      JSON.stringify(current[slot]) !== JSON.stringify(layout));
+    if (changed.length === 0) return { status: "ok", nliClockLayout: ctx.getNliClockLayout(), nliClockLayoutRevision: ctx._nliClockLayoutRevision };
+    let revision = ctx._nliClockLayoutRevision;
+    if (!Number.isInteger(revision) || revision < 0) {
+      const state = await OTEF_API.getState(ctx._tableName, { forceFresh: true });
+      revision = Number.isInteger(state?.nli_clock_layout_revision) ? state.nli_clock_layout_revision : 0;
+      if (state?.nli_clock_layout) ctx._applyNliClockLayoutVersioned(state.nli_clock_layout, revision);
+    }
+    let response;
+    for (const [slot, layout] of changed) {
+      response = await OTEF_API.setNliClockLayout(ctx._tableName, surface, slot, layout, {
+        baseRevision: revision, sourceId: ctx._clientId, timestamp: Date.now(),
+      });
+      if (!response?.nliClockLayout || !Number.isInteger(response.nliClockLayoutRevision)) return response;
+      revision = response.nliClockLayoutRevision;
+      ctx._applyNliClockLayoutVersioned(response.nliClockLayout, revision);
+    }
+    return response;
+  }
+  const slot = typeof patch.slot === "string" ? patch.slot : null;
   const layout = patch.layout && typeof patch.layout === "object" ? patch.layout : null;
-  if (!surface || !layout) return { ok: false, reason: "invalid_nli_clock_layout" };
+  if (!surface || !slot || !layout || !Number.isInteger(patch.baseRevision)) return { ok: false, reason: "invalid_nli_clock_layout" };
   const response = await OTEF_API.setNliClockLayout(
     ctx._tableName,
     surface,
+    slot,
     layout,
-    { sourceId: ctx._clientId, timestamp: Date.now() },
+    { baseRevision: patch.baseRevision, sourceId: ctx._clientId, timestamp: Date.now() },
   );
-  if (response?.nliClockLayout) {
-    ctx._applyNliClockLayout(response.nliClockLayout);
+  if (response?.nliClockLayout && Number.isInteger(response.nliClockLayoutRevision)) {
+    ctx._applyNliClockLayoutVersioned(response.nliClockLayout, response.nliClockLayoutRevision);
   }
   return response;
 }
 
-async function setLegendSettings(ctx, patch = {}) {
+async function setLegendSettings(ctx, patch = {}, options = {}) {
   if (!ctx._tableName) return { ok: false, reason: "missing_table" };
   if (!patch || typeof patch !== "object") return { ok: false, reason: "invalid_legend_settings" };
   const keys = Object.keys(patch).filter((key) => ["language", "span", "layout", "summarizedGroupIds"].includes(key));
@@ -1031,9 +1055,14 @@ async function setLegendSettings(ctx, patch = {}) {
     return { ok: false, reason: "invalid_legend_settings" };
   }
   const response = await OTEF_API.setLegendSettings(ctx._tableName, patch, {
+    ...(Number.isInteger(options.baseRevision) ? { baseRevision: options.baseRevision } : {}),
     sourceId: ctx._clientId, timestamp: Date.now(),
   });
-  if (response?.legendSettings) ctx._applyLegendSettings(response.legendSettings);
+  if (response?.changeKind === "layout" && Number.isInteger(response.legendLayoutRevision)) {
+    ctx._applyLegendProjectionVersioned(response.legendProjection, response.legendLayoutRevision);
+  } else if (response?.changeKind === "metadata" && response.legendSettingsPatch) {
+    ctx._applyLegendMetadataPatch(response.legendSettingsPatch);
+  }
   return response;
 }
 

@@ -1,5 +1,5 @@
 const COLUMNS = [
-  ["content", "names-wall"], ["pre"], ["left-crop", "right-crop"],
+  ["content", "names-wall"], ["clock-gis", "clock-projection"], ["pre"], ["left-crop", "right-crop"],
   ["left-fit", "right-fit"], ["left-keystone", "right-keystone"],
   ["left-grid", "right-grid"], ["left-output", "right-output"],
 ];
@@ -23,18 +23,20 @@ export function layoutNodePositions(sizes) {
   const bottomHeight = Math.max(...["right-crop", "right-fit", "right-keystone", "right-grid", "right-output"].map(heightOf));
   const pathHeight = topHeight + ROW_GAP + bottomHeight;
   const contentColumnHeight = heightOf("content") + ROW_GAP + heightOf("names-wall");
-  const height = PAD * 2 + Math.max(pathHeight, contentColumnHeight);
+  const clockColumnHeight = heightOf("clock-gis") + ROW_GAP + heightOf("clock-projection");
+  const height = PAD * 2 + Math.max(pathHeight, contentColumnHeight, clockColumnHeight);
   const positions = {};
   let x = PAD;
   for (const column of COLUMNS) {
-    let stackY = (height - contentColumnHeight) / 2;
+    const stackedHeight = column[0] === "clock-gis" ? clockColumnHeight : contentColumnHeight;
+    let stackY = (height - stackedHeight) / 2;
     for (const id of column) {
       const y = id.startsWith("left-") ? PAD
         : id.startsWith("right-") ? PAD + topHeight + ROW_GAP
-          : (id === "content" || id === "names-wall") ? stackY
+          : (id === "content" || id === "names-wall" || id === "clock-gis" || id === "clock-projection") ? stackY
             : (height - heightOf(id)) / 2;
       positions[id] = { x, y };
-      if (id === "content" || id === "names-wall") stackY += heightOf(id) + ROW_GAP;
+      if (id === "content" || id === "names-wall" || id === "clock-gis" || id === "clock-projection") stackY += heightOf(id) + ROW_GAP;
     }
     x += Math.max(...column.map(widthOf)) + COLUMN_GAP;
   }
@@ -163,14 +165,15 @@ export function createNodeCanvas({ document, viewport, graph, svg, wire, nodeMap
     zoom(event.deltaY < 0 ? 1.1 : 1 / 1.1, { x: event.clientX - rect.left, y: event.clientY - rect.top });
   };
 
-  function endDrag() {
+  function endDrag(event, force = false) {
+    if (!drag || (!force && event?.pointerId !== drag.pointerId)) return;
     drag = null;
     document?.removeEventListener?.("pointermove", moveDrag);
-    document?.removeEventListener?.("pointerup", endDrag);
-    document?.removeEventListener?.("pointercancel", endDrag);
+    document?.removeEventListener?.("pointerup", onDragEnd);
+    document?.removeEventListener?.("pointercancel", onDragEnd);
   }
   function moveDrag(event) {
-    if (!drag) return;
+    if (!drag || event.pointerId !== drag.pointerId) return;
     const dx = event.clientX - drag.x;
     const dy = event.clientY - drag.y;
     if (drag.node) {
@@ -185,14 +188,14 @@ export function createNodeCanvas({ document, viewport, graph, svg, wire, nodeMap
     framing = "custom";
   }
   function beginDrag(event, node = null) {
-    if (event.button !== 0) return;
-    endDrag();
+    if (event.button !== 0 || event.isPrimary === false || drag) return;
     event.preventDefault?.();
-    drag = { x: event.clientX, y: event.clientY, node, left: node ? leftOf(node) : 0, top: node ? topOf(node) : 0, viewX: view.x, viewY: view.y };
+    drag = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, node, left: node ? leftOf(node) : 0, top: node ? topOf(node) : 0, viewX: view.x, viewY: view.y };
     document?.addEventListener?.("pointermove", moveDrag);
-    document?.addEventListener?.("pointerup", endDrag);
-    document?.addEventListener?.("pointercancel", endDrag);
+    document?.addEventListener?.("pointerup", onDragEnd);
+    document?.addEventListener?.("pointercancel", onDragEnd);
   }
+  const onDragEnd = (event) => endDrag(event);
   const onBackgroundDown = (event) => {
     if (event.target === viewport || event.target === graph || event.target === svg) beginDrag(event);
   };
@@ -230,7 +233,7 @@ export function createNodeCanvas({ document, viewport, graph, svg, wire, nodeMap
   function dispose() {
     if (!mounted) return;
     mounted = false;
-    endDrag();
+    endDrag(undefined, true);
     observer?.disconnect();
     observer = null;
     viewport.removeEventListener("pointerdown", onBackgroundDown);

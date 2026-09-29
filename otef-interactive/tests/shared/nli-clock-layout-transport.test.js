@@ -44,16 +44,28 @@ describe("nli clock layout transport", () => {
 
   test("API helper sends set_nli_clock_layout", async () => {
     const { OTEF_API } = await import("../../frontend/src/shared/api-client.js");
-    await OTEF_API.setNliClockLayout("otef", "projection", LAYOUT.projection, {
+    await OTEF_API.setNliClockLayout("otef", "projection", "left", LAYOUT.projection.left, {
+      baseRevision: 4,
       sourceId: "proj-a",
       timestamp: 10,
     });
     expect(JSON.parse(global.fetch.mock.calls[0][1].body)).toEqual({
       action: "set_nli_clock_layout",
       surface: "projection",
-      layout: LAYOUT.projection,
+      slot: "left",
+      layout: LAYOUT.projection.left,
+      baseRevision: 4,
       sourceId: "proj-a",
       timestamp: 10,
+    });
+  });
+
+  test("API helper sends a legend slot placement with its layout revision", async () => {
+    const { OTEF_API } = await import("../../frontend/src/shared/api-client.js");
+    const placement = { leftPct: 12, topPct: 34 };
+    await OTEF_API.setLegendSettings("otef", { span: "left", layout: placement }, { baseRevision: 8 });
+    expect(JSON.parse(global.fetch.mock.calls[0][1].body)).toMatchObject({
+      action: "set_legend_settings", span: "left", layout: placement, baseRevision: 8,
     });
   });
 
@@ -85,5 +97,52 @@ describe("nli clock layout transport", () => {
       sourceId: "remote-a",
     });
     expect(context.getNliClockLayout().projection.left.fontPx).toBe(40);
+  });
+
+  test("newer WebSocket layouts survive a delayed older GET snapshot", async () => {
+    installWebSocketMock();
+    const websocket = await import("../../frontend/src/shared/otef-data-context/OTEFDataContext-websocket.js");
+    const { default: context } = await import("../../frontend/src/shared/OTEFDataContext.js");
+    context._tableName = "otef";
+    websocket.applyStateFromApi(context, {
+      nli_clock_layout: LAYOUT, nli_clock_layout_revision: 5,
+      legend_settings: { language: "he", projection: { left: { leftPct: 10 } }, summarizedGroupIds: [] },
+      legend_layout_revision: 5,
+    });
+    websocket.setupWebSocket(context);
+    const newerClock = structuredClone(LAYOUT);
+    newerClock.gis.start.leftPct = 33;
+    context._wsClient.listeners.get("otef_nli_clock_layout_changed")({
+      table: "otef", nliClockLayout: newerClock, nliClockLayoutRevision: 6,
+    });
+    context._wsClient.listeners.get("otef_legend_settings_changed")({
+      table: "otef", changeKind: "layout", legendProjection: { left: { leftPct: 60 } }, legendLayoutRevision: 6,
+    });
+    websocket.applyStateFromApi(context, {
+      nli_clock_layout: LAYOUT, nli_clock_layout_revision: 5,
+      legend_settings: { language: "en", projection: { left: { leftPct: 20 } }, summarizedGroupIds: ["new"] },
+      legend_layout_revision: 5,
+    });
+    expect(context.getNliClockLayout().gis.start.leftPct).toBe(33);
+    expect(context.getLegendSettings()).toMatchObject({ language: "en", projection: { left: { leftPct: 60 } } });
+  });
+
+  test("fresh GET reconciles a same-revision context mismatch exactly once", async () => {
+    const api = await import("../../frontend/src/shared/api-client.js");
+    const websocket = await import("../../frontend/src/shared/otef-data-context/OTEFDataContext-websocket.js");
+    const { default: context } = await import("../../frontend/src/shared/OTEFDataContext.js");
+    context._tableName = "otef";
+    websocket.applyStateFromApi(context, { nli_clock_layout: LAYOUT, nli_clock_layout_revision: 5 });
+    const authoritative = structuredClone(LAYOUT);
+    authoritative.gis.start.leftPct = 48;
+    vi.spyOn(api.OTEF_API, "getState").mockResolvedValue({
+      nli_clock_layout: authoritative, nli_clock_layout_revision: 5,
+    });
+    const mismatched = structuredClone(LAYOUT);
+    mismatched.gis.start.leftPct = 37;
+    context._applyNliClockLayoutVersioned(mismatched, 5);
+    await vi.waitFor(() => expect(context.getNliClockLayout().gis.start.leftPct).toBe(48));
+    expect(api.OTEF_API.getState).toHaveBeenCalledTimes(1);
+    expect(api.OTEF_API.getState).toHaveBeenCalledWith("otef", { forceFresh: true });
   });
 });
