@@ -25,19 +25,22 @@ vi.mock("../../frontend/src/map/maplibre-map.js", () => ({
 
 import { bootClockPreview } from "../../frontend/src/map/clock-preview.js";
 import { getInvestigationTimelineRenderSnapshot } from "../../frontend/src/shared/maplibre-investigation-timeline.js";
-import { HOME_CUE } from "../../frontend/src/remote/nli-staff-script.js";
+import { HOME_CUE, TIMELINE } from "../../frontend/src/remote/nli-staff-script.js";
 import { createGISMap } from "../../frontend/src/map/maplibre-map.js";
 
+const PREVIEW_CUE_LAYER_IDS = [...new Set([
+  ...HOME_CUE.layers,
+  ...TIMELINE.steps.at(-1).cue.layers,
+])];
+const PREVIEW_GROUPS = new Map();
+for (const fullId of PREVIEW_CUE_LAYER_IDS) {
+  const [groupId, id] = fullId.split(".");
+  if (!PREVIEW_GROUPS.has(groupId)) PREVIEW_GROUPS.set(groupId, []);
+  PREVIEW_GROUPS.get(groupId).push({ id, enabled: true });
+}
 const GROUPS = [
-  { id: "projector_base", layers: [
-    { id: "ישובים", enabled: true },
-    { id: "unused", enabled: true },
-  ] },
-  { id: "nli", layers: [
-    { id: "investigation_polygons", enabled: true },
-    { id: "lines", enabled: true },
-    { id: "alarms", enabled: true },
-  ] },
+  ...[...PREVIEW_GROUPS].map(([id, layers]) => ({ id, layers })),
+  { id: "projector_base", layers: [{ id: "unused", enabled: true }] },
 ];
 
 function createMapMock() {
@@ -180,16 +183,18 @@ describe("bootClockPreview frame behavior", () => {
   });
 
   async function boot() {
+    const fetchImpl = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ viewport: { bbox: [34, 31, 35, 32], zoom: 10 }, basemap: "osm" }),
+    }));
     dispose = await bootClockPreview({
       window,
       document,
-      fetchImpl: vi.fn(async () => ({
-        ok: true,
-        json: async () => ({ viewport: { bbox: [34, 31, 35, 32], zoom: 10 }, basemap: "osm" }),
-      })),
+      fetchImpl,
     });
     rig.map.emit("load");
     await vi.waitFor(() => expect(messages(parent, "otef_clock_preview_ready")).toHaveLength(1));
+    return fetchImpl;
   }
 
   async function render(requestId, sceneId, layout) {
@@ -256,6 +261,29 @@ describe("bootClockPreview frame behavior", () => {
         model: { clockLabel },
       });
     }
+  });
+
+  it("renders exact Home and Timeline overview clocks without writes or cue mutations", async () => {
+    const fetchImpl = await boot();
+    const caption = document.querySelector("#nliGisClockHost .nli-investigation-timeline-caption");
+    const beforeHome = structuredClone(HOME_CUE);
+    const beforeTimeline = structuredClone(TIMELINE.steps.at(-1).cue);
+    await render(1, "home");
+    expect(caption.hidden).toBe(false);
+    expect(caption.textContent).toContain("06:29");
+    await render(2, "timeline");
+    expect(caption.hidden).toBe(false);
+    expect(caption.textContent).toContain("06:29");
+    expect(HOME_CUE).toEqual(beforeHome);
+    expect(TIMELINE.steps.at(-1).cue).toEqual(beforeTimeline);
+    expect(rig.map.setStyle).not.toHaveBeenCalled();
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(messages(parent, "otef_clock_preview_rendered").map(({ sceneId }) => sceneId)).toEqual([
+      "home", "timeline",
+    ]);
+    expect(parent.postMessage.mock.calls.map(([message]) => message.type)).toEqual([
+      "otef_clock_preview_ready", "otef_clock_preview_rendered", "otef_clock_preview_rendered",
+    ]);
   });
 
   it("rejects invalid senders and requests, ignores duplicate IDs, and renders only the latest draw", async () => {

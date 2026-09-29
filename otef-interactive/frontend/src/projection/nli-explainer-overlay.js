@@ -9,8 +9,6 @@ import { parseProjectionSpanId } from "./projection-span-view.js";
 import { DEFAULT_PROJECTION_CONFIG } from "../shared/projection-config-schema.js";
 import { t3ToOutput, visibleT3Rect } from "../shared/projection-config-geometry.js";
 
-export const NLI_EXPLAINER_LAYOUT_STORAGE_KEY = "otef.nliExplainerLayout.v2";
-export const NLI_GIS_CLOCK_LAYOUT_STORAGE_KEY = "otef.nliGisClockLayout.v2";
 export const NLI_GIS_CLOCK_DEFAULT_LAYOUT = {
   leftPct: 30,
   topPct: 88,
@@ -30,17 +28,13 @@ export function nliExplainerSpanKey(search) {
 
 /** Dual-span: only the left projector paints the table slot (right uses a different crop). */
 export function nliExplainerShouldPaintOnSpan(spanKey) {
-  return spanKey !== "right";
+  return spanKey === "left";
 }
 
 export function applyNliExplainerHostPresence(hostEl, spanKey) {
   if (!hostEl) return;
   if (!hostEl.style) hostEl.style = {};
   hostEl.style.display = nliExplainerShouldPaintOnSpan(spanKey) ? "" : "none";
-}
-
-export function shouldIgnoreExplainerLayoutStore(_search) {
-  return false;
 }
 
 function legacyExplainerOverlapPageRect(spanKey, span) {

@@ -19,6 +19,12 @@ function keyEvent(key, extras = {}) {
 }
 
 describe("projection display hotkeys", () => {
+  it("does not assign E a runtime action", () => {
+    const toggle = vi.fn();
+    expect(readProjectionDisplayHotkey(keyEvent("e"))).toBeNull();
+    expect(dispatchProjectionDisplayHotkey(readProjectionDisplayHotkey(keyEvent("e")), { toggle })).toBe(false);
+    expect(toggle).not.toHaveBeenCalled();
+  });
   it("treats A and H as help even when a clock-debug input is focused", () => {
     const input = { tagName: "INPUT" };
     expect(readProjectionDisplayHotkey(keyEvent("a", { target: input }))).toBe("help");

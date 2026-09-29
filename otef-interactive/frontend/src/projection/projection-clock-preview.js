@@ -12,7 +12,7 @@ import { mountMapLegend } from "../map/map-legend.js";
 import { createProjectionBrowserSurface } from "./projection-browser-route.js";
 import { createProjectionCaptionAdapter } from "./projection-caption-adapter.js";
 import { createProjectionLegendAdapter } from "./projection-legend-adapter.js";
-import { LEGEND_LAYOUT_DEFAULT } from "./legend-layout.js";
+import { resolveLegendLayout } from "./legend-layout.js";
 import { applyNliExplainerLayout, ensureNliExplainerHost } from "./nli-explainer-overlay.js";
 import { applyProjectionSpanView, createProjectionImageDescriptor, createProjectionMapDescriptor } from "./projection-span-view.js";
 import { syncInvestigationTimelineToMap, getInvestigationTimelineRenderSnapshot, disposeInvestigationTimelineForMap } from "../shared/maplibre-investigation-timeline.js";
@@ -136,7 +136,7 @@ export async function bootProjectionClockPreview({ window: win, document: doc, f
     const captionEl = clockHost.querySelector(".nli-investigation-timeline-caption");
     activeClockLayout = { ...MapProjectionConfig.NLI_EXPLAINER_LAYOUT.left, ...snapshot.nli_clock_layout?.projection?.left };
     legendSettings = structuredClone(snapshot.legend_settings || {});
-    activeLegendLayout = { ...LEGEND_LAYOUT_DEFAULT, ...legendSettings.projection?.left };
+    activeLegendLayout = resolveLegendLayout({ settings: legendSettings, span: "left" });
     applyNliExplainerLayout(clockHost, activeClockLayout);
     const applyLegendMeasurement = () => {
       Object.assign(legendElement.style, { width: `${OUTPUT_WIDTH * activeLegendLayout.widthPct / 100}px`, height: `${OUTPUT_HEIGHT * activeLegendLayout.heightPct / 100}px`,

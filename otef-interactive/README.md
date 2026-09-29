@@ -238,12 +238,16 @@ revision 5. A second conflict remains visible to the presenter.
 - **F** - Fullscreen
 - **X** - Reset calibration
 
-The committed 2026-09-07 owner-lab left projection calibration is stored in
-`NLI_EXPLAINER_LAYOUT.left` as
-`leftPct: 46.90416666666667`, `topPct: 22.113809679110926`,
-`widthPct: 8.886423224258024`, `heightPct: 8.323215088627478`,
-`fontPx: 56`, and `rotateDeg: 91.18739188335852`.
-The `full` and `right` layouts remain unchanged.
+Clock and legend placement are edited in the GIS Clock and Projection Clock /
+Legend nodes. Their scene previews are local and do not change the exhibit;
+use the separate **Show on exhibit** action to apply a GIS scene. The projection
+clock uses the shared left slot and appears only on `?span=left`. Django
+acknowledgements and layout revisions are authoritative; runtime views do not
+write placement settings.
+
+The legacy full/right clock layout records remain preserved. The active
+projection clock reads only the saved left slot; the projection legend keeps
+its existing full/left placement and right-hidden runtime behavior.
 
 ### Remote Controller
 - Directional pad and virtual joystick for navigation

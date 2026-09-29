@@ -163,14 +163,15 @@ browser, display arrangement, console result, and outcome in the result record.
 - [ ] In projection, confirm the NLI timeline caption shows only the readable
   `HH:MM` story clock. Confirm the remote **Presentation** tab, slideshow, and
   `presentationActive` behavior remain unchanged.
-- [ ] Confirm GIS and projection clock parks match the committed 2026-09-07
-  owner lab clock park in the default layout and persisted JSON
-  (`otef.nliExplainerLayout.v2` / `otef.nliGisClockLayout.v2`): transparent
-  caption, type sized from `fontPx`, GIS rotate handle works. Left span:
-  `46.90416666666667, 22.113809679110926, 8.886423224258024, 8.323215088627478, 56, 91.18739188335852`
-  for `leftPct, topPct, widthPct, heightPct, fontPx, rotateDeg`. Full/right
-  unchanged. Full record: **2026-09-07 lab follow-up exhibit gates** Clock left
-  park.
+- [ ] Confirm Home and Timeline share the GIS `start` clock; identity search,
+  names wall, blank, and unrelated views have no idle clock. Confirm narrative
+  playback and presentation suppression/restore remain unchanged.
+- [ ] Confirm the projection clock uses the saved left slot for each scene and
+  appears only at `span=left`. Confirm the runtime does not write clock or
+  legend placement settings.
+- [ ] Confirm the GIS Clock and Projection Clock / Legend nodes retain local
+  drafts through preview scene changes and show Saved only after matching
+  server acknowledgement. Use **Show on exhibit** as the explicit scene action.
 
 ## NLI clock relevance matrix (Task 6)
 
@@ -181,18 +182,17 @@ marked GIS-only.
 | Case | GIS | Projection | Expected result |
 |---|---|---|---|
 | No relevant layer/no narrative | [ ] | [ ] | Clock absent. |
-| `nli.alarms` only | [ ] | [ ] | Clock present; outside Nova, Stop is `06:29`. |
-| `nli.lines` (infiltration lines) only | [ ] | [ ] | Clock present; outside Nova, Stop is `06:29`. |
-| `nli.investigation_polygons` only | [ ] | [ ] | Clock present; outside Nova, Stop is `06:29`. |
+| Exact Home cue layer set | [ ] | [ ] | Idle `06:29`; Home IDs plus any unrelated enabled layer are not Home. |
+| Timeline cue | [ ] | N/A | Shares the GIS `start` slot and idle clock. |
 | Victims names / `nli.people_names` alone | [ ] | [ ] | Clock absent. |
 | Another unrelated NLI layer only | [ ] | [ ] | Clock absent. |
-| Segev or Nova with relevant chips off | [ ] | [ ] | Clock remains visible: Segev idle/Stop is `06:29`; Nova idle/Stop is `08:03`, while Play starts beat 1 at zero reveal without an `08:03` lead-in. |
+| Segev or Nova with relevant chips off | [ ] | [ ] | Clock remains visible: Segev idle/Stop is `06:41`; Nova idle/Stop is `08:03`, while Play starts beat 1 at zero reveal without an `08:03` lead-in. |
 | Projection slideshow warmup/crossfade (projection only) | N/A | [ ] | Warmup/staging do not change relevance; visibility changes only at reveal. Right span is blank. |
-| GIS zoomed-out view, press `e`, edit/move the clock, then refresh | [ ] | N/A | Edit/move survives refresh; the `start` layout is used when zoomed out. |
+| Preview, switch scene, close preview | [ ] | [ ] | No exhibit scene, playback, viewport, or layout write occurs. |
 
 For slideshow rows, verify that projection consumes the committed revealed pack.
-For the GIS edit row, verify that the remote map is used for initial load,
-rebind, edits, and refresh restoration, with browser storage as fallback.
+Clock and legend changes are made in their config nodes and persist through
+acknowledged Django writes and revision checks.
 
 ## Technician browser setup
 

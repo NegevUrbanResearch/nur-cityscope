@@ -50,12 +50,7 @@ import {
   gisClockLayoutSlotId,
   mergeGisClockLayout,
   NLI_GIS_CLOCK_DEFAULT_LAYOUT,
-  NLI_GIS_CLOCK_LAYOUT_STORAGE_KEY,
 } from "../projection/nli-explainer-overlay.js";
-import {
-  installNliExplainerDebug,
-  isNliExplainerDebugRequestedInUrl,
-} from "../projection/nli-explainer-debug.js";
 import {
   applyNliSharedTextHeading,
   NLI_LABEL_HEADING_STORAGE_KEY,
@@ -332,11 +327,9 @@ async function bootstrapMapRuntime() {
     };
     applyStoredGisClockLayout();
     registerDisposer(OTEFDataContext.subscribe("nliClockLayout", () => {
-      if (window.NliExplainerDebug?.isVisible?.()) return;
       applyStoredGisClockLayout();
     }));
     registerDisposer(OTEFDataContext.subscribe("narrativeState", () => {
-      if (window.NliExplainerDebug?.isVisible?.()) return;
       applyStoredGisClockLayout();
     }));
     const raiseGisClockHost = () => {
@@ -347,7 +340,6 @@ async function bootstrapMapRuntime() {
     map.on?.("style.load", raiseGisClockHost);
     registerDisposer(() => map.off?.("style.load", raiseGisClockHost));
     const onGisClockResize = () => {
-      if (window.NliExplainerDebug?.isVisible?.()) return;
       applyStoredGisClockLayout();
       positionLegend();
     };
@@ -373,8 +365,6 @@ async function bootstrapMapRuntime() {
         visibilityLayerGroups: groupsAsArray,
       }).finally(() => raiseDarkBasemapPlaceLabels(map));
     };
-    let explainerDebugVisible = false;
-    let nliGisClockDebugApi = null;
     let narrativeController = null;
     let novaEscapeCoordinator = null;
     let morRouteCoordinator = null;
@@ -396,7 +386,6 @@ async function bootstrapMapRuntime() {
         motionMode: resolveMotionMode(),
         captionEl: nliGisClockCaptionEl,
         allowMapCaption: false,
-        explainerDebugVisible: explainerDebugVisible === true,
         now: () =>
           typeof OTEFDataContext.correctedNow === "function"
             ? OTEFDataContext.correctedNow()
@@ -407,61 +396,6 @@ async function bootstrapMapRuntime() {
         narrativeFocus: narrativeController?.getDefinition?.() || null,
       }).finally(() => raiseDarkBasemapPlaceLabels(map));
     };
-    try {
-      nliGisClockDebugApi = installNliExplainerDebug({
-        host: nliGisClockHost,
-        captionEl: nliGisClockCaptionEl,
-        registerDisposer,
-        storageKey: NLI_GIS_CLOCK_LAYOUT_STORAGE_KEY,
-        defaultLayout: NLI_GIS_CLOCK_DEFAULT_LAYOUT,
-        enableSpanGuards: false,
-        enableLayoutMapExport: false,
-        mergeProjectionLayout: false,
-        enableRotation: true,
-        // GIS clock layout debug: ?ned=1 / nliExplainerDebug=1 or E
-        initialVisible: isNliExplainerDebugRequestedInUrl(
-          typeof window !== "undefined" ? window.location.search : "",
-        ),
-        onVisibleChange: (visible) => {
-          explainerDebugVisible = visible === true;
-          syncContextInvestigation();
-        },
-        getRemoteLayoutMap: () => OTEFDataContext.getNliClockLayout?.()?.gis || {},
-        persistRemoteLayoutMap: (layout) => OTEFDataContext.setNliClockLayout({
-          surface: "gis",
-          layout,
-        }),
-      });
-      if (typeof window !== "undefined" && nliGisClockDebugApi) {
-        window.NliExplainerDebug = nliGisClockDebugApi;
-        registerDisposer(() => {
-          if (window.NliExplainerDebug === nliGisClockDebugApi) {
-            delete window.NliExplainerDebug;
-          }
-          nliGisClockDebugApi = null;
-        });
-      }
-    } catch (e) {
-      console.warn("[map-main] NLI GIS clock debug failed to load", e);
-    }
-    nliGisClockDebugApi?.setGisClockLayoutSlot?.(
-      gisClockLayoutSlotId(OTEFDataContext.getNarrativeState?.()?.id),
-    );
-    const onGisClockKeyDown = (event) => {
-      if (event.defaultPrevented || event.repeat) return;
-      const target = event.target;
-      const targetTag = target?.tagName;
-      if (targetTag === "INPUT" || targetTag === "TEXTAREA" || target?.isContentEditable) {
-        return;
-      }
-      const key = String(event.key || "").toLowerCase();
-      if (key === "e") {
-        const handled = window.NliExplainerDebug?.handleGisClockHotkey?.(event);
-        if (handled) event.preventDefault();
-      }
-    };
-    window.addEventListener("keydown", onGisClockKeyDown);
-    registerDisposer(() => window.removeEventListener("keydown", onGisClockKeyDown));
     const onNliLabelHeadingStorage = (event) => {
       if (event.key !== NLI_LABEL_HEADING_STORAGE_KEY) return;
       applyStoredNliLabelHeading(map);
@@ -538,11 +472,6 @@ async function bootstrapMapRuntime() {
     });
     registerDisposer(() => narrativeController?.dispose?.());
     registerDisposer(OTEFDataContext.subscribe("narrativeState", (state) => narrativeController?.apply(state)));
-    registerDisposer(OTEFDataContext.subscribe("narrativeState", (state) => {
-      nliGisClockDebugApi?.setGisClockLayoutSlot?.(
-        gisClockLayoutSlotId(state?.id ?? OTEFDataContext.getNarrativeState?.()?.id),
-      );
-    }));
     const archiveBridge = createNliArchiveCommandBridge({
       windowController: archiveWindow,
       resolvePerson: (personId, datasetVersion) => personVisual.resolve(personId, datasetVersion),

@@ -15,7 +15,6 @@ import {
   buildNliExplainerModel,
   nliExplainerInnerHtml,
   NLI_CAPTION_MODE_CLOCK_ONLY,
-  NLI_EXPLAINER_SAMPLE_MODEL,
 } from "./nli-explainer-model.js";
 import {
   collectUnionTimelineBeats,
@@ -51,6 +50,7 @@ import { createInvestigationLineRenderer } from "./maplibre-investigation-lines.
 import { createInvestigationPolygonRenderer } from "./maplibre-investigation-polygons.js";
 import { NLI_DISPLAY_PROFILES, NLI_VISUAL_TOKENS } from "./nli-investigation-theme.js";
 import { getNliNarrative } from "./nli-narratives.js";
+import { HOME_CUE, TIMELINE } from "../remote/nli-staff-script.js";
 import { record as recordPerfSample } from "../map/perf-telemetry.js";
 import { deriveInvestigationFrame } from "./nli-investigation-visual-state.js";
 import { NLI_NOVA_STORY } from "./nli-nova-story.js";
@@ -89,11 +89,22 @@ export {
 } from "./nli-investigation-timeline-data.js";
 
 const LINE_LAYER_ID_PREFIX = INVESTIGATION_LINES_FULL_ID.replace(/\./g, "__");
-const CLOCK_ONLY_CAPTION_RELEVANT_IDS = new Set([
-  INVESTIGATION_ALARMS_FULL_ID,
-  INVESTIGATION_LINES_FULL_ID,
-  INVESTIGATION_POLYGONS_FULL_ID,
-]);
+export function isHomeCueLayerSet(enabledIds, narrativeId = null) {
+  const expected = new Set(HOME_CUE.layers);
+  const actual = enabledIds instanceof Set ? enabledIds : new Set(enabledIds || []);
+  return narrativeId == null && actual.size === expected.size &&
+    [...expected].every((id) => actual.has(id));
+}
+
+export function isIdleOverviewCueLayerSet(enabledIds, narrativeId = null) {
+  if (narrativeId != null) return false;
+  const actual = enabledIds instanceof Set ? enabledIds : new Set(enabledIds || []);
+  const cues = [HOME_CUE, TIMELINE.steps.at(-1).cue];
+  return cues.some((cue) => {
+    const expected = new Set(cue.layers);
+    return actual.size === expected.size && [...expected].every((id) => actual.has(id));
+  });
+}
 
 /** @type {WeakMap<object, object>} */
 const stateByMap = new WeakMap();
@@ -358,7 +369,6 @@ function applyCaptionDeps(state, map, deps = {}) {
   state.nliCaptionMode = deps.nliCaptionMode === NLI_CAPTION_MODE_CLOCK_ONLY
     ? NLI_CAPTION_MODE_CLOCK_ONLY
     : "full";
-  state.explainerDebugVisible = deps.explainerDebugVisible === true;
   if (deps.captionEl) {
     removeLeftoverMapCaption(map, deps.captionEl);
     state.captionEl = deps.captionEl;
@@ -381,12 +391,12 @@ function applyCaptionDeps(state, map, deps = {}) {
   setCaptionDirRtl(state.captionEl);
 }
 
-function publishClockOnlyCaptionRelevance(state, visibleIds, localOverride = false) {
+function publishClockOnlyCaptionRelevance(state, visibleIds, localOverride = false, activeTimeline = false) {
   if (state.nliCaptionMode !== NLI_CAPTION_MODE_CLOCK_ONLY) return;
   const visible = visibleIds instanceof Set ? visibleIds : new Set(visibleIds || []);
   const recognizedNarrative = !!getNliNarrative(state.narrativeFocus?.id);
-  state.clockOnlyCaptionRelevant = localOverride === true || state.explainerDebugVisible === true || recognizedNarrative ||
-    [...CLOCK_ONLY_CAPTION_RELEVANT_IDS].some((id) => visible.has(id));
+  state.clockOnlyCaptionRelevant = localOverride === true || recognizedNarrative || activeTimeline ||
+    isIdleOverviewCueLayerSet(visible, state.narrativeFocus?.id);
   if (!state.clockOnlyCaptionRelevant) {
     state.lastCaption = null;
     clearCaption(state.captionEl);
@@ -458,14 +468,6 @@ function updateCaption(state, phase, _previousClock) {
       nliCaptionMode: state.nliCaptionMode,
     });
     state.captionRenderSnapshot = { model, visible: true, phase: state.clockPhase };
-    return;
-  }
-  if (state.explainerDebugVisible) {
-    el.hidden = false;
-    el.innerHTML = nliExplainerInnerHtml(NLI_EXPLAINER_SAMPLE_MODEL, {
-      nliCaptionMode: state.nliCaptionMode,
-    });
-    state.captionRenderSnapshot = { model: NLI_EXPLAINER_SAMPLE_MODEL, visible: true, phase: state.clockPhase };
     return;
   }
   if (state.nliCaptionMode === NLI_CAPTION_MODE_CLOCK_ONLY) {
@@ -884,7 +886,6 @@ function createTimelineState(map, deps = {}) {
     lastFrame: null,
     captionEl: null,
     captionOwned: false,
-    explainerDebugVisible: false,
     clockOnlyCaptionRelevant: false,
     nliCaptionMode: deps.nliCaptionMode === NLI_CAPTION_MODE_CLOCK_ONLY
       ? NLI_CAPTION_MODE_CLOCK_ONLY
@@ -1145,7 +1146,6 @@ export function getInvestigationTimelineDiagnostics(map) {
  *   motionMode?: 'full'|'reduced',
  *   captionEl?: HTMLElement | null,
  *   allowMapCaption?: boolean,
- *   explainerDebugVisible?: boolean,
  *   getPersonSelection?: () => { personId?: string|null, pid?: string|null, datasetVersion?: string|null } | null,
  *   onClockFrame?: (clock: import('./nli-investigation-clock.js').NliInvestigationClock, nowMs: number) => void,
  * }} [deps]
@@ -1183,7 +1183,19 @@ export async function syncInvestigationTimelineToMap(map, clockInput, layerGroup
     suppressedFullIds: suppressedTimelineFullIds,
     enabledFullIds: nextMembership.visible,
   });
-  publishClockOnlyCaptionRelevance(state, nextMembership.visible, deps.clockOnlyCaptionRelevantOverride);
+  const enabledSceneIds = new Set();
+  for (const group of Array.isArray(visibilityGroups) ? visibilityGroups : Object.values(visibilityGroups || {})) {
+    if (!group || typeof group.id !== "string" || group.enabled === false) continue;
+    for (const layer of group.layers || []) {
+      if (layer?.enabled === true && typeof layer.id === "string") enabledSceneIds.add(`${group.id}.${layer.id}`);
+    }
+  }
+  const activeTimeline = clock.phase !== "idle" && [
+    INVESTIGATION_ALARMS_FULL_ID,
+    INVESTIGATION_LINES_FULL_ID,
+    INVESTIGATION_POLYGONS_FULL_ID,
+  ].some((id) => nextMembership.visible.has(id));
+  publishClockOnlyCaptionRelevance(state, enabledSceneIds, deps.clockOnlyCaptionRelevantOverride, activeTimeline);
 
   // A setStyle call can fire style.load before the host has re-synced its base
   // layers. The style listener marks the coordinator ready; this branch keeps

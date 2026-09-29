@@ -233,26 +233,25 @@ can change scale and contrast, but they do not change state meaning.
   a large `HH:MM` story clock during NLI playback. This caption mode does not
   alter the remote **Presentation** tab, slideshow behavior, or
   `presentationActive` state.
-- GIS and projection both use clock-only captions. The clock is visible only
-  when effective surface groups enable `nli.alarms`, `nli.lines`, or
-  `nli.investigation_polygons`, or when a recognized NLI narrative is active.
-  Explicit debug is an internal exception. `nli.people_names` or victim names
-  alone do not trigger the clock, and an unrelated NLI layer does not trigger
-  it.
-- Ordinary and Segev idle/Stop show `06:29`. Active Nova idle/Stop shows
-  `08:03`.
+- GIS Home and Timeline share the `start` clock slot and show idle `06:29` only
+  when the enabled layer set exactly matches the Home cue. Identity search,
+  names wall, blank, and unrelated views do not show an idle clock. Recognized
+  narrative and active playback clock behavior remains unchanged.
+- The projection clock reads only `projection.left` and paints only on
+  `span=left`; it is shared by all local scene previews. No runtime clock or
+  legend placement path writes settings. The two config nodes own those edits.
+- Projection legend rendering resolves the saved full/left placement and keeps
+  the right span hidden. Missing placements use the established default without
+  writing a record. Language and summarized-group settings remain independent.
 - Projection slideshow visibility uses the committed revealed pack. Warmup and
   staging do not change clock relevance; visibility changes at reveal only.
   The right span remains suppressed.
-- In a zoomed-out GIS, the clock uses the `start` layout. The remote map is the
-  source for initial load, rebind, edits, and refresh restoration; browser
-  storage is the fallback.
-- The committed left projection calibration comes from the 2026-09-07 owner lab
-  clock park and is represented by `leftPct: 46.90416666666667`,
-  `topPct: 22.113809679110926`, `widthPct: 8.886423224258024`,
-  `heightPct: 8.323215088627478`, `fontPx: 56`, and
-  `rotateDeg: 91.18739188335852` in
-  `NLI_EXPLAINER_LAYOUT.left`; `full` and `right` remain unchanged.
+- Django supplies acknowledged clock and legend layout snapshots with separate
+  revisions. Browser clock layout storage is inactive; existing browser values
+  are left in place and are not read.
+- The active projection clock layout comes from Django's `projection.left`
+  record. Historical full/right clock records remain in saved documents but
+  are not runtime defaults.
 
 ## Elevation & Depth
 

@@ -203,44 +203,6 @@ body {
 .map-legend-gis .map-legend-group + .map-legend-group { margin-top: 0; padding: 0; padding-inline-start: 20px; border-top: 0; border-inline-start: 1px solid var(--legend-edge); }
 @media (max-width: 720px) { .map-legend-gis { max-width: calc(100vw - 18px); } }
 
-/* Projection legend placement editor; controls live in a sibling overlay. */
-.legend-layout-editor {
-  position: fixed;
-  inset: 0;
-  z-index: 1110;
-  display: none;
-  pointer-events: none;
-}
-
-.legend-layout-editing {
-  outline: 2px dashed #38bdf8;
-  cursor: move;
-  transform-origin: center center;
-}
-
-.legend-layout-controls {
-  position: fixed;
-  top: 8px;
-  right: 8px;
-  display: flex;
-  gap: 8px;
-  padding: 8px 10px;
-  color: #f4f4f5;
-  background: rgba(24, 24, 27, 0.94);
-  border: 1px solid #52525b;
-  border-radius: 5px;
-  font: 12px/1.3 system-ui, sans-serif;
-  pointer-events: auto;
-}
-
-.legend-layout-controls input {
-  width: 48px;
-  margin-left: 4px;
-  color: inherit;
-  background: #27272a;
-  border: 1px solid #71717a;
-}
-
 #connectionStatus {
   width: 16px;
   height: 16px;

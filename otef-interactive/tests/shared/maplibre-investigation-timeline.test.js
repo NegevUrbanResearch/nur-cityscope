@@ -17,6 +17,7 @@ import {
   INVESTIGATION_ALARMS_FULL_ID,
   INVESTIGATION_LINES_FULL_ID,
   INVESTIGATION_POLYGONS_FULL_ID,
+  isHomeCueLayerSet,
   lineProgressAt,
   objectIdsActiveAt,
   parseLocalTimelineToMinutes,
@@ -28,6 +29,7 @@ import {
   setEscapeImpactOrientationIds,
 } from "../../frontend/src/shared/maplibre-investigation-timeline.js";
 import { PEOPLE_HALO_LAYER_ID } from "../../frontend/src/map/maplibre-person-selection.js";
+import { HOME_CUE, TIMELINE } from "../../frontend/src/remote/nli-staff-script.js";
 import {
   formatMinutesAsLocalClock,
   timelineBeatDurationMs,
@@ -1693,9 +1695,9 @@ describe("syncInvestigationTimelineToMap", () => {
 
   it("clock-only relevance follows enabled direct playable IDs, not aliases or style presence", async () => {
     const cases = [
-      { name: "alarms", layerId: "alarms", visible: true },
-      { name: "lines", layerId: "lines", visible: true },
-      { name: "investigation polygons", layerId: "investigation_polygons", visible: true },
+      { name: "idle alarms", layerId: "alarms", visible: false },
+      { name: "idle lines", layerId: "lines", visible: false },
+      { name: "idle investigation polygons", layerId: "investigation_polygons", visible: false },
       { name: "people names", layerId: "people_names", visible: false },
       { name: "people", layerId: "people", visible: false },
       { name: "relevant disabled", layerId: "lines", enabled: false, visible: false },
@@ -1852,12 +1854,11 @@ describe("syncInvestigationTimelineToMap", () => {
     disposeInvestigationTimelineForMap(map);
   });
 
-  it("only recognized narratives or explicit debug make an empty-group clock-only caption relevant", async () => {
+  it("only recognized narratives make an empty-group idle clock-only caption relevant", async () => {
     const cases = [
       { name: "unknown", narrativeFocus: { id: "unknown" }, visible: false, clock: null },
       { name: "Segev", narrativeFocus: { id: "segev" }, visible: true, clock: "06:41" },
       { name: "Nova", narrativeFocus: { id: "nova" }, visible: true, clock: "08:03" },
-      { name: "debug", narrativeFocus: null, explainerDebugVisible: true, visible: true, clock: "07:00" },
     ];
     for (const testCase of cases) {
       const injected = { className: "", hidden: true, innerHTML: "", textContent: "", setAttribute() {} };
@@ -1869,7 +1870,6 @@ describe("syncInvestigationTimelineToMap", () => {
         featuresById: {},
         getLayerDataUrl: () => null,
         narrativeFocus: testCase.narrativeFocus,
-        explainerDebugVisible: testCase.explainerDebugVisible === true,
         now: () => 0,
       });
       expect(injected.hidden, testCase.name).toBe(!testCase.visible);
@@ -2011,7 +2011,6 @@ describe("syncInvestigationTimelineToMap", () => {
 
   it("stop after deferred playback keeps the recognized idle clock immediately and after resolution", async () => {
     const narratives = [
-      { name: "ordinary", narrativeFocus: null, expected: "06:29" },
       { name: "Segev", narrativeFocus: { id: "segev" }, expected: "06:41" },
       { name: "Nova", narrativeFocus: { id: "nova" }, expected: "08:03" },
     ];
@@ -2382,41 +2381,76 @@ describe("syncInvestigationTimelineToMap", () => {
     disposeInvestigationTimelineForMap(map);
   });
 
-  it("idle + explainerDebugVisible paints the sample, not the last beat", async () => {
-    const injected = { className: "", hidden: true, innerHTML: "LAST_BEAT", textContent: "", dir: "", setAttribute() {} };
+  it("recognizes only the exact Home layer set without narrative focus", () => {
+    const home = [
+      "projector_base.שמות_יישובים", "projector_base.Locations_Lines", "projector_base.ישובים",
+      "nli.ציר_232", "projector_base.SEA", "gaza.Gaza_Roads",
+    ];
+    expect(isHomeCueLayerSet(home)).toBe(true);
+    expect(isHomeCueLayerSet([...home, "other.layer"])).toBe(false);
+    expect(isHomeCueLayerSet(["nli.people_names"])).toBe(false);
+    expect(isHomeCueLayerSet(home, "segev")).toBe(false);
+  });
+
+  it("paints idle 06:29 only for the exact Home or Timeline cue layers", async () => {
+    const groupsFor = (ids) => {
+      const groups = new Map();
+      for (const value of ids) {
+        const [groupId, id] = value.split(".");
+        if (!groups.has(groupId)) groups.set(groupId, { id: groupId, layers: [] });
+        groups.get(groupId).layers.push({ id, enabled: true });
+      }
+      return [...groups.values()];
+    };
+    const timelineIds = TIMELINE.steps.at(-1).cue.layers;
+    expect(isHomeCueLayerSet(HOME_CUE.layers)).toBe(true);
+    expect(isHomeCueLayerSet(timelineIds)).toBe(false);
+    for (const [name, ids, visible] of [
+      ["home", HOME_CUE.layers, true],
+      ["timeline", timelineIds, true],
+      ["home with extra", [...HOME_CUE.layers, "unrelated.layer"], false],
+      ["identity", ["nli.people"], false],
+      ["names wall", ["nli.people_names"], false],
+      ["blank", [], false],
+    ]) {
+      const caption = { hidden: true, innerHTML: "", setAttribute() {} };
+      const map = makeMap();
+      const groups = groupsFor(ids);
+      await syncInvestigationTimelineToMap(map, idleNliClock(), groups, {
+        captionEl: caption, allowMapCaption: false, nliCaptionMode: "clock-only",
+        featuresById: {}, getLayerDataUrl: () => null, now: () => 0,
+      });
+      expect(caption.hidden, name).toBe(!visible);
+      if (visible) expect(caption.innerHTML, name).toContain("06:29");
+      disposeInvestigationTimelineForMap(map);
+    }
+  });
+
+  it("suppresses idle Timeline clock during Presentation and restores it after Stop", async () => {
+    const timelineIds = TIMELINE.steps.at(-1).cue.layers;
+    const groupsFor = (ids, enabled = true) => {
+      const groups = new Map();
+      for (const value of ids) {
+        const [groupId, id] = value.split(".");
+        if (!groups.has(groupId)) groups.set(groupId, { id: groupId, layers: [] });
+        groups.get(groupId).layers.push({ id, enabled });
+      }
+      return [...groups.values()];
+    };
+    const caption = { hidden: true, innerHTML: "", setAttribute() {} };
     const map = makeMap();
-    map.getContainer = vi.fn(() => ({
-      querySelector: () => null,
-      appendChild: () => {
-        throw new Error("must not append");
-      },
-      removeChild() {},
-    }));
-    await syncInvestigationTimelineToMap(map, idleNliClock(), bothGroups(), {
-      captionEl: injected,
-      allowMapCaption: false,
-      explainerDebugVisible: true,
-      featuresById: {
-        [INVESTIGATION_POLYGONS_FULL_ID]: [],
-        [INVESTIGATION_LINES_FULL_ID]: [],
-      },
-      now: () => 0,
+    const sync = (groups) => syncInvestigationTimelineToMap(map, idleNliClock(), groups, {
+      captionEl: caption, allowMapCaption: false, nliCaptionMode: "clock-only",
+      featuresById: {}, getLayerDataUrl: () => null, now: () => 0,
     });
-    expect(injected.hidden).toBe(false);
-    expect(injected.innerHTML).toMatch(/nli-tl-clock/);
-    expect(injected.innerHTML).not.toBe("LAST_BEAT");
-    expect(injected.innerHTML).toMatch(/nli-tl-row--polygons/);
-    await syncInvestigationTimelineToMap(map, idleNliClock(), bothGroups(), {
-      captionEl: injected,
-      allowMapCaption: false,
-      explainerDebugVisible: true,
-      featuresById: {
-        [INVESTIGATION_POLYGONS_FULL_ID]: [],
-        [INVESTIGATION_LINES_FULL_ID]: [],
-      },
-      now: () => 0,
-    });
-    expect(injected.innerHTML).toMatch(/nli-tl-row--polygons/);
+    await sync(groupsFor(timelineIds));
+    expect(caption.hidden).toBe(false);
+    expect(caption.innerHTML).toContain("06:29");
+    await sync(groupsFor(timelineIds, false));
+    expect(caption.hidden).toBe(true);
+    await sync(groupsFor(timelineIds));
+    expect(caption.hidden).toBe(false);
+    expect(caption.innerHTML).toContain("06:29");
     disposeInvestigationTimelineForMap(map);
   });
 

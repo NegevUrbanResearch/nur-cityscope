@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { createProjectionCaptionAdapter } from "../../frontend/src/projection/projection-caption-adapter.js";
+import { createProjectionCaptionAdapter, drawProjectionCaptionForSpan } from "../../frontend/src/projection/projection-caption-adapter.js";
 import { createProjectionLegendAdapter } from "../../frontend/src/projection/projection-legend-adapter.js";
 import { createProjectionPatternAdapter } from "../../frontend/src/projection/projection-pattern-adapter.js";
 import { DEFAULT_PROJECTION_CONFIG } from "../../frontend/src/shared/projection-config-schema.js";
@@ -13,6 +13,15 @@ function canvasFactory() {
 const layout = { leftPct: 10, topPct: 20, widthPct: 30, heightPct: 10, fontPx: 24, rotateDeg: 12 };
 
 describe("projection overlay adapters", () => {
+  test("only left output emits a browser clock descriptor", () => {
+    const descriptor = { source: {}, matrix: [] };
+    const adapter = { draw: vi.fn(() => descriptor) };
+    expect(drawProjectionCaptionForSpan(adapter, "left")).toBe(descriptor);
+    expect(drawProjectionCaptionForSpan(adapter, "right")).toBe(null);
+    expect(drawProjectionCaptionForSpan(adapter, null)).toBe(null);
+    expect(adapter.draw).toHaveBeenCalledTimes(1);
+  });
+
   test("caption paints canonical clock text and returns placement", () => {
     const c = canvasFactory(); const adapter = createProjectionCaptionAdapter({ canvasFactory: () => c });
     adapter.sync({ layout, snapshot: { visible: true, model: { clockLabel: "07:05", rows: [] } } });

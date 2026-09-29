@@ -18,14 +18,11 @@ import {
   nliExplainerShouldPaintOnSpan,
   nliExplainerSpanKey,
   nliExplainerContentOverflows,
-  NLI_EXPLAINER_LAYOUT_STORAGE_KEY,
   NLI_GIS_CLOCK_DEFAULT_LAYOUT,
-  NLI_GIS_CLOCK_LAYOUT_STORAGE_KEY,
   readGisClockLayoutStore,
   readNliExplainerLayoutStore,
   serializeGisClockLayoutMap,
   serializeNliExplainerLayoutMap,
-  shouldIgnoreExplainerLayoutStore,
 } from "../../frontend/src/projection/nli-explainer-overlay.js";
 
 const fallback = MapProjectionConfig.NLI_EXPLAINER_LAYOUT.full;
@@ -35,9 +32,10 @@ describe("nli explainer layout", () => {
     expect(nliExplainerSpanKey("")).toBe("full");
     expect(nliExplainerSpanKey("?span=left")).toBe("left");
     expect(nliExplainerSpanKey("?span=right")).toBe("right");
-    expect(nliExplainerShouldPaintOnSpan("full")).toBe(true);
+    expect(nliExplainerShouldPaintOnSpan("full")).toBe(false);
     expect(nliExplainerShouldPaintOnSpan("left")).toBe(true);
     expect(nliExplainerShouldPaintOnSpan("right")).toBe(false);
+    expect(nliExplainerShouldPaintOnSpan(null)).toBe(false);
   });
 
   it("hides the host on span=right", () => {
@@ -47,6 +45,8 @@ describe("nli explainer layout", () => {
     applyNliExplainerHostPresence(host, "right");
     expect(host.style.display).toBe("none");
     applyNliExplainerHostPresence(host, "full");
+    expect(host.style.display).toBe("none");
+    applyNliExplainerHostPresence(host, "left");
     expect(host.style.display).toBe("");
   });
 
@@ -101,11 +101,6 @@ describe("nli explainer layout", () => {
       },
       right: { leftPct: 58, topPct: 68, widthPct: 42, heightPct: 26, fontPx: 22, rotateDeg: 0 },
     });
-  });
-
-  it("bumps layout stores to v2 so lab v1 parks cannot shadow", () => {
-    expect(NLI_EXPLAINER_LAYOUT_STORAGE_KEY).toBe("otef.nliExplainerLayout.v2");
-    expect(NLI_GIS_CLOCK_LAYOUT_STORAGE_KEY).toBe("otef.nliGisClockLayout.v2");
   });
 
   test("GIS clock slot ids follow narrative id with start fallback", () => {
@@ -191,11 +186,6 @@ describe("nli explainer layout", () => {
     expect(host.style.transformOrigin).toMatch(/center/i);
   });
 
-  it("committed URL does not skip the layout store", () => {
-    expect(shouldIgnoreExplainerLayoutStore("?nliExplainerLayout=committed")).toBe(false);
-    expect(shouldIgnoreExplainerLayoutStore("")).toBe(false);
-  });
-
   it("readNliExplainerLayoutStore ignores JSON arrays and non-objects", () => {
     expect(readNliExplainerLayoutStore("[]")).toEqual({});
     expect(readNliExplainerLayoutStore([])).toEqual({});
@@ -205,23 +195,17 @@ describe("nli explainer layout", () => {
     expect(readNliExplainerLayoutStore('{"full":{"leftPct":9}}').full.leftPct).toBe(9);
   });
 
-  it("projection-main hydrates clock parks from the table and debug still uses the store helpers", () => {
+  it("projection runtime reads the acknowledged left clock slot and has no debug writer", () => {
     const here = path.dirname(fileURLToPath(import.meta.url));
     const main = fs.readFileSync(
       path.resolve(here, "../../frontend/src/entries/projection-main.js"),
       "utf8",
     );
-    const debug = fs.readFileSync(
-      path.resolve(here, "../../frontend/src/projection/nli-explainer-debug.js"),
-      "utf8",
-    );
     expect(main).toMatch(/getNliClockLayout/);
-    expect(main).toMatch(/setNliClockLayout/);
-    expect(debug).toMatch(/readNliExplainerLayoutStore\(/);
+    expect(main).toMatch(/projection\?\.left/);
     expect(main).toMatch(/applyNliExplainerHostPresence\(/);
-    expect(debug).toMatch(/applyNliExplainerHostPresence\(/);
     expect(main).not.toMatch(/JSON\.parse\(\s*localStorage\.getItem/);
-    expect(debug).not.toMatch(/JSON\.parse\(\s*localStorage\.getItem/);
+    expect(main).not.toMatch(/NliExplainerDebug|setNliClockLayout\(/);
   });
 
   it("serialize export has full/left/right and rotateDeg", () => {

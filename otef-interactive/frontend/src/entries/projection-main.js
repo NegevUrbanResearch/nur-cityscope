@@ -88,15 +88,11 @@ import {
   nliExplainerSpanKey,
 } from "../projection/nli-explainer-overlay.js";
 import {
-  installNliExplainerDebug,
-  isNliExplainerDebugRequestedInUrl,
-} from "../projection/nli-explainer-debug.js";
-import {
   applyNliSharedTextHeading,
   readNliLabelHeading,
 } from "../shared/nli-label-heading.js";
 import { createProjectionPattern } from "../projection/projection-pattern.js";
-import { createProjectionCaptionAdapter } from "../projection/projection-caption-adapter.js";
+import { createProjectionCaptionAdapter, drawProjectionCaptionForSpan } from "../projection/projection-caption-adapter.js";
 import { createProjectionLegendAdapter } from "../projection/projection-legend-adapter.js";
 import { createProjectionPatternAdapter } from "../projection/projection-pattern-adapter.js";
 import { getInvestigationTimelineRenderSnapshot } from "../shared/maplibre-investigation-timeline.js";
@@ -108,7 +104,6 @@ import {
   createLegendStyleLoadRefresh,
   installMapLegendLifecycle,
 } from "../map/legend-integration.js";
-import { installLegendLayout } from "../projection/legend-layout.js";
 
 function getEffectiveProjectionLayerGroups() {
   const groups = (
@@ -464,7 +459,6 @@ async function bootstrapProjectionRuntime() {
   /** @type {null | { toggle: () => void; setVisible: (v: boolean) => void; getActive: () => boolean; dispose: () => void }} */
   let shemotLabelDebugApi = null;
   /** @type {null | { toggle: () => void; setVisible: (v: boolean) => void; isVisible: () => boolean; dispose: () => void }} */
-  let nliExplainerDebugApi = null;
 
   /** Tesuga reads Web Render info DAT `title`; keep in sync with `slideshowRuntime.isActive()`. */
   let presentationPollId = null;
@@ -604,16 +598,14 @@ async function bootstrapProjectionRuntime() {
     let currentCaptionLayout = {};
     const applyStoredExplainerLayout = () => {
       const search = typeof window !== "undefined" ? window.location.search : "";
-      const remote = OTEFDataContext.getNliClockLayout?.()?.projection;
-      const stored = remote && typeof remote === "object" ? remote : {};
+      const remote = OTEFDataContext.getNliClockLayout?.()?.projection?.left;
       const spanKey = nliExplainerSpanKey(search);
-      currentCaptionLayout = mergeNliExplainerLayout(spanKey, stored, MapProjectionConfig.NLI_EXPLAINER_LAYOUT);
+      currentCaptionLayout = mergeNliExplainerLayout("left", remote ? { left: remote } : {}, MapProjectionConfig.NLI_EXPLAINER_LAYOUT);
       applyNliExplainerLayout(nliExplainerHost, currentCaptionLayout);
-      applyNliExplainerHostPresence(nliExplainerHost, spanKey);
+      applyNliExplainerHostPresence(nliExplainerHost, projectionSpanId);
     };
     applyStoredExplainerLayout();
     registerDisposer(OTEFDataContext.subscribe("nliClockLayout", () => {
-      if (window.NliExplainerDebug?.isVisible?.()) return;
       applyStoredExplainerLayout();
     }));
     await new Promise((resolve) => {
@@ -624,26 +616,12 @@ async function bootstrapProjectionRuntime() {
     const legendSpan = nliExplainerSpanKey(
       typeof window !== "undefined" ? window.location.search : "",
     );
-    let legendLifecycle = null;
-    const legendLayout = installLegendLayout({
-      element: legendElement,
-      clockElement: nliExplainerHost,
-      dataContext: OTEFDataContext,
-      spanKey: legendSpan,
-      getProjectionConfig: getEffectiveProjectionConfig,
-      onEditingChange: (editing) => legendLifecycle?.setEditing(editing),
-    });
-    legendLifecycle = installMapLegendLifecycle({
+    let legendLifecycle = installMapLegendLifecycle({
       element: legendElement,
       surface: "projection",
       projectionSpan: legendSpan,
       dataContext: OTEFDataContext,
       registry: layerRegistry,
-      onLegendSettings: (settings) => {
-        const projection = settings?.projection || {};
-        const saved = projection[legendSpan];
-        if (saved) legendLayout?.applyServerSettings?.(saved);
-      },
       onRenderSnapshot: (snapshot) => {
         legendAdapter?.sync(snapshot);
         browserSurface?.requestDraw?.();
@@ -653,9 +631,7 @@ async function bootstrapProjectionRuntime() {
       () => legendLifecycle,
     );
     registerDisposer(() => legendLifecycle.dispose());
-    registerDisposer(() => legendLayout?.dispose());
     const onExplainerResize = () => {
-      if (window.NliExplainerDebug?.isVisible?.()) return;
       applyStoredExplainerLayout();
     };
     window.addEventListener("resize", onExplainerResize);
@@ -696,7 +672,6 @@ async function bootstrapProjectionRuntime() {
         visibilityLayerGroups: overlayGroups,
       });
     };
-    let explainerDebugVisible = false;
     let projectionNarrativeController = null;
     let novaEscapeCoordinator = null;
     let morRouteCoordinator = null;
@@ -715,7 +690,6 @@ async function bootstrapProjectionRuntime() {
         motionMode: resolveMotionMode(),
         captionEl: nliExplainerCaptionEl,
         allowMapCaption: false,
-        explainerDebugVisible: explainerDebugVisible === true,
         now: () =>
           typeof OTEFDataContext.correctedNow === "function"
             ? OTEFDataContext.correctedNow()
@@ -731,39 +705,6 @@ async function bootstrapProjectionRuntime() {
         browserSurface?.requestDraw?.();
       });
     };
-    try {
-      nliExplainerDebugApi = installNliExplainerDebug({
-        host: nliExplainerHost,
-        captionEl: nliExplainerCaptionEl,
-        registerDisposer,
-        initialVisible: isNliExplainerDebugRequestedInUrl(
-          typeof window !== "undefined" ? window.location.search : "",
-        ),
-        onVisibleChange: (visible) => {
-          explainerDebugVisible = visible === true;
-          legendLayout?.setVisible(explainerDebugVisible);
-          legendLifecycle?.setEditing(explainerDebugVisible);
-          syncContextInvestigation();
-        },
-        getProjectionConfig: getEffectiveProjectionConfig,
-        getRemoteLayoutMap: () => OTEFDataContext.getNliClockLayout?.()?.projection || {},
-        persistRemoteLayoutMap: (layout) => OTEFDataContext.setNliClockLayout({
-          surface: "projection",
-          layout,
-        }),
-      });
-      if (typeof window !== "undefined" && nliExplainerDebugApi) {
-        window.NliExplainerDebug = nliExplainerDebugApi;
-        registerDisposer(() => {
-          if (window.NliExplainerDebug === nliExplainerDebugApi) {
-            delete window.NliExplainerDebug;
-          }
-          nliExplainerDebugApi = null;
-        });
-      }
-    } catch (e) {
-      console.warn("[projection-main] NLI explainer debug failed to load", e);
-    }
     const syncContextFlowAnimations = () => {
       syncContextRouteProgress();
       syncContextInvestigation();
@@ -956,7 +897,7 @@ async function bootstrapProjectionRuntime() {
           return {
           image: imageReadiness?.contentVersion() == null ? null : createProjectionImageDescriptor({ map, imageEl: modelImgEl, contentVersion: imageReadiness.contentVersion(), config: effectiveProjectionConfig, spanId: projectionSpanId }),
           map: createProjectionMapDescriptor({ map, config: effectiveProjectionConfig, spanId: projectionSpanId }),
-          caption: captionAdapter?.draw?.(),
+          caption: drawProjectionCaptionForSpan(captionAdapter, projectionSpanId),
           pattern: patternAdapter?.draw?.(),
           legend: legendAdapter?.draw?.(),
           };
@@ -1497,11 +1438,8 @@ async function bootstrapProjectionRuntime() {
       toggleLabelDebug: () => {
         if (shemotLabelDebugApi) shemotLabelDebugApi.toggle();
       },
-      toggleExplainerDebug: () => {
-        if (window.NliExplainerDebug) window.NliExplainerDebug.toggle();
-      },
     });
-    if (handled && action === "explainerDebug") event.preventDefault();
+    if (handled) event.preventDefault();
   };
   window.addEventListener("keydown", onKeyDown);
   registerDisposer(() => window.removeEventListener("keydown", onKeyDown));

@@ -217,7 +217,7 @@ export async function bootClockPreview({ window: frameWindow, document: frameDoc
     const groups = groupsForMap();
     const focus = narrativeController?.getDefinition?.() || null;
     await syncInvestigationTimelineToMap(map, currentScene.clock, groups, {
-      visibilityLayerGroups: groups,
+      visibilityLayerGroups: currentScene.groups,
       displayProfile: "gis",
       nliCaptionMode: "clock-only",
       clockOnlyCaptionRelevantOverride: currentScene.sceneId === "home",
