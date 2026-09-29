@@ -45,6 +45,7 @@ export const GIS_NOVA_PLACE_LABEL_LAYER_ID = "gis-nova-place-label";
 const GIS_NOVA_PLACE_SOURCE_ID = GIS_NOVA_PLACE_LABEL_LAYER_ID;
 const GIS_NOVA_CITYCODE = "nvaP";
 const GIS_NOVA_TEXT_OFFSET_EM = Object.freeze([2, -0.5]);
+const novaBasemapLabelHidden = new WeakMap();
 
 function cloneJson(value) {
   return JSON.parse(JSON.stringify(value));
@@ -298,14 +299,36 @@ export function ensureGisNovaPlaceLabel(map) {
   }
 }
 
+function hideGisNovaBasemapLabel(options, map) {
+  if (options && Object.prototype.hasOwnProperty.call(options, "narrativeId")) {
+    return options.narrativeId === "nova";
+  }
+  return novaBasemapLabelHidden.get(map) === true;
+}
+
+function applyGisNovaPlaceLabelVisibility(map, hidden) {
+  if (typeof map?.setLayoutProperty !== "function") return;
+  if (typeof map.getLayer === "function" && !map.getLayer(GIS_NOVA_PLACE_LABEL_LAYER_ID)) return;
+  try {
+    map.setLayoutProperty(GIS_NOVA_PLACE_LABEL_LAYER_ID, "visibility", hidden ? "none" : "visible");
+  } catch (_) {
+    /* style was replaced mid-sync */
+  }
+}
+
 /**
  * Keep dark place names above investigation fills when dark is the only basemap.
  * While a raster basemap is also on the map, leave those dark place labels in place.
  * Nova and people/selection overlays stay in front on every basemap.
+ * During the nova narrative the red settlement-name label is already on, so hide
+ * the white GIS-only Nova basemap label.
  */
-export function raiseDarkBasemapPlaceLabels(map) {
+export function raiseDarkBasemapPlaceLabels(map, options = {}) {
   if (!map) return;
   ensureGisNovaPlaceLabel(map);
+  const hidden = hideGisNovaBasemapLabel(options, map);
+  novaBasemapLabelHidden.set(map, hidden);
+  applyGisNovaPlaceLabelVisibility(map, hidden);
   const layers = styleLayers(map);
   const suppressDarkPlaceLabels = rasterBasemapPresent(layers) && darkBasemapPresent(layers);
   const placeIds = layers

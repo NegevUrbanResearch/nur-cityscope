@@ -318,6 +318,9 @@ async function bootstrapMapRuntime() {
       mapContainer,
       { hostId: "nliGisClockHost" },
     );
+    const raiseGisPlaceLabels = () => raiseDarkBasemapPlaceLabels(map, {
+      narrativeId: OTEFDataContext.getNarrativeState?.()?.id ?? null,
+    });
     let positionLegend = () => {};
     const applyStoredGisClockLayout = () => {
       const stored = OTEFDataContext.getNliClockLayout?.()?.gis || {};
@@ -332,6 +335,7 @@ async function bootstrapMapRuntime() {
     }));
     registerDisposer(OTEFDataContext.subscribe("narrativeState", () => {
       applyStoredGisClockLayout();
+      raiseGisPlaceLabels();
     }));
     const raiseGisClockHost = () => {
       if (typeof mapContainer?.appendChild !== "function" || !nliGisClockHost) return;
@@ -364,7 +368,7 @@ async function bootstrapMapRuntime() {
         typeof OTEFDataContext.getAnimations === "function" ? OTEFDataContext.getAnimations() : {};
       void syncRouteProgressOverlaysToMap(map, anim, currentGroups, {
         visibilityLayerGroups: groupsAsArray,
-      }).finally(() => raiseDarkBasemapPlaceLabels(map));
+      }).finally(raiseGisPlaceLabels);
     };
     let narrativeController = null;
     let novaEscapeCoordinator = null;
@@ -395,7 +399,7 @@ async function bootstrapMapRuntime() {
           narrativeController?.syncInvestigationClock?.(frameClock, frameNow),
         getPersonSelection: () => OTEFDataContext.getPersonSelection(),
         narrativeFocus: narrativeController?.getDefinition?.() || null,
-      }).finally(() => raiseDarkBasemapPlaceLabels(map));
+      }).finally(raiseGisPlaceLabels);
     };
     const onNliLabelHeadingStorage = (event) => {
       if (event.key !== NLI_LABEL_HEADING_STORAGE_KEY) return;
@@ -432,7 +436,7 @@ async function bootstrapMapRuntime() {
       if (selectedPid) applyPeopleFocusDim(map, selectedPid);
       else clearPeopleFocusDim(map);
       applyNarrativeHouseOutlineFilter(map, OTEFDataContext.getNarrativeState?.()?.id ?? null);
-      raiseDarkBasemapPlaceLabels(map);
+      raiseGisPlaceLabels();
     };
     syncContextInvestigation();
     applyGisLayerGroups(initialGroups);

@@ -32,7 +32,7 @@ describe("map-main GIS style reload lifecycle", () => {
       "utf8",
     );
     expect(source).toMatch(
-      /const applyGisLayerGroups = \(groups, layerStyleOptions\) => \{\s*applyLayerGroupsToMap\(map, groups, layerStyleOptions\);\s*applyNarrativePeopleFilter\(map, OTEFDataContext\.getNarrativeState\?\.\(\)\?\.id \?\? null\);\s*const selectedPid = OTEFDataContext\.getPersonSelection\?\.\(\)\?\.personId;\s*if \(selectedPid\) applyPeopleFocusDim\(map, selectedPid\);\s*else clearPeopleFocusDim\(map\);\s*applyNarrativeHouseOutlineFilter\(map, OTEFDataContext\.getNarrativeState\?\.\(\)\?\.id \?\? null\);\s*raiseDarkBasemapPlaceLabels\(map\);\s*\};/,
+      /const applyGisLayerGroups = \(groups, layerStyleOptions\) => \{\s*applyLayerGroupsToMap\(map, groups, layerStyleOptions\);\s*applyNarrativePeopleFilter\(map, OTEFDataContext\.getNarrativeState\?\.\(\)\?\.id \?\? null\);\s*const selectedPid = OTEFDataContext\.getPersonSelection\?\.\(\)\?\.personId;\s*if \(selectedPid\) applyPeopleFocusDim\(map, selectedPid\);\s*else clearPeopleFocusDim\(map\);\s*applyNarrativeHouseOutlineFilter\(map, OTEFDataContext\.getNarrativeState\?\.\(\)\?\.id \?\? null\);\s*raiseGisPlaceLabels\(\);\s*\};/,
     );
     expect(source.match(/applyLayerGroupsToMap\(/g)).toHaveLength(1);
   });

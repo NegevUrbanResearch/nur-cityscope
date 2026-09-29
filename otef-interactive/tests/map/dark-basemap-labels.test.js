@@ -404,4 +404,25 @@ describe("ensureGisNovaPlaceLabel", () => {
     ensureGisNovaPlaceLabel(map);
     expect(map.getStyle().layers.filter((layer) => layer.id === GIS_NOVA_PLACE_LABEL_LAYER_ID)).toHaveLength(1);
   });
+
+  it("hides the white GIS Nova label during the nova narrative", () => {
+    const map = createFakeMapLibreMap();
+    raiseDarkBasemapPlaceLabels(map, { narrativeId: "nova" });
+    expect(map.getLayer(GIS_NOVA_PLACE_LABEL_LAYER_ID)).toBeTruthy();
+    expect(map.getLayoutProperty(GIS_NOVA_PLACE_LABEL_LAYER_ID, "visibility")).toBe("none");
+  });
+
+  it("shows the white GIS Nova label again after nova ends", () => {
+    const map = createFakeMapLibreMap();
+    raiseDarkBasemapPlaceLabels(map, { narrativeId: "nova" });
+    raiseDarkBasemapPlaceLabels(map, { narrativeId: null });
+    expect(map.getLayoutProperty(GIS_NOVA_PLACE_LABEL_LAYER_ID, "visibility")).toBe("visible");
+  });
+
+  it("keeps the last nova hide preference when restacking without a narrative id", () => {
+    const map = createFakeMapLibreMap();
+    raiseDarkBasemapPlaceLabels(map, { narrativeId: "nova" });
+    raiseDarkBasemapPlaceLabels(map);
+    expect(map.getLayoutProperty(GIS_NOVA_PLACE_LABEL_LAYER_ID, "visibility")).toBe("none");
+  });
 });
