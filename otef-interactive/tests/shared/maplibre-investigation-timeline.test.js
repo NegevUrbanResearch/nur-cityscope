@@ -1176,6 +1176,23 @@ describe("syncInvestigationTimelineToMap", () => {
     expect(map.getPaintProperty("nli__lines__line__0", "line-opacity")).toBe(0.42);
   });
 
+  it("does not restore saved paint on a base line removed before disposal", async () => {
+    const map = makeMap();
+    await syncInvestigationTimelineToMap(
+      map,
+      playClock([INVESTIGATION_LINES_FULL_ID], LINE_BEATS),
+      bothGroups(),
+      { featuresById: featureBags(), now: () => 0 },
+    );
+    map.setPaintProperty.mockClear();
+    const lineIndex = map.getStyle().layers.findIndex((layer) => layer.id === "nli__lines__line__0");
+    map.getStyle().layers.splice(lineIndex, 1);
+
+    disposeInvestigationTimelineForMap(map);
+
+    expect(map.setPaintProperty).not.toHaveBeenCalledWith("nli__lines__line__0", expect.any(String), expect.anything());
+  });
+
   it("hides base lines that appear after playback already started", async () => {
     const map = makeMap();
     const style = map.getStyle();

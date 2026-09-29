@@ -167,7 +167,10 @@ function restorePaints(map, saved) {
   for (const [id, properties] of Object.entries(saved)) {
     for (const [key, value] of Object.entries(properties)) {
       if (value === undefined) continue;
-      try { map.setPaintProperty(id, key, value); } catch (_) { /* layer can disappear */ }
+      try {
+        if (typeof map.getLayer === "function" && !map.getLayer(id)) continue;
+        map.setPaintProperty(id, key, value);
+      } catch (_) { /* layer can disappear */ }
     }
   }
 }

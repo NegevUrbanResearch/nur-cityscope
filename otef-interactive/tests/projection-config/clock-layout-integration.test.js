@@ -55,3 +55,34 @@ test("node, inspector and editor selection stay synchronized without changing th
   expect(nodeScene.value).toBe("timeline"); expect(editorScene.value).toBe("timeline");
   expect(layoutClient.commit).not.toHaveBeenCalled();
 });
+
+test("editor close restores focus to the current node opener after selection and responsive resize", () => {
+  const responsiveListeners = new Set();
+  let responsiveMatches = true;
+  const originalMatchMedia = window.matchMedia;
+  window.matchMedia = (query) => ({
+    get matches() { return query.includes("max-width: 1100px") ? responsiveMatches : false; },
+    addEventListener(_type, listener) { if (query.includes("max-width: 1100px")) responsiveListeners.add(listener); },
+    removeEventListener(_type, listener) { responsiveListeners.delete(listener); },
+  });
+  try {
+    const { root } = mount();
+    const selector = root.querySelector(".node-selector");
+    selector.value = "clock-gis";
+    selector.dispatchEvent(new Event("change"));
+    const mobileOpener = root.querySelector('[data-action="warp-editor-open-mobile"]');
+    mobileOpener.focus();
+    mobileOpener.click();
+
+    const scene = document.querySelector('.clock-layout-dialog select[aria-label="GIS clock preview scene"]');
+    scene.value = "nova";
+    scene.dispatchEvent(new Event("change"));
+    responsiveMatches = false;
+    for (const listener of responsiveListeners) listener({ matches: false });
+    document.querySelector(".clock-layout-close").click();
+
+    expect(document.activeElement).toBe(root.querySelector('[data-node="clock-gis"] [data-action="clock-editor-open"]'));
+  } finally {
+    window.matchMedia = originalMatchMedia;
+  }
+});

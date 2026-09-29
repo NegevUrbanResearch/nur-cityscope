@@ -66,6 +66,24 @@ describe("clock layout mesh geometry", () => {
     expect(outline).toHaveLength(6);
     expect(outline.every((segment) => segment.start && segment.end)).toBe(true);
   });
+
+  test("maps split outline coordinates through a non-affine mesh", () => {
+    const folded = {
+      width: 1920, height: 1080,
+      vertices: [
+        { u: 0, v: 0, x: 0, y: 0 }, { u: 1, v: 0, x: 1, y: 0 },
+        { u: 1, v: 1, x: 0.8, y: 1 }, { u: 0, v: 1, x: 0, y: 1 },
+      ],
+      triangles: [0, 1, 2, 0, 2, 3],
+    };
+    const outline = mapOverlayOutline(folded, { leftPct: 20, topPct: 30, widthPct: 60, heightPct: 30, rotateDeg: 0 });
+    expect(outline).toHaveLength(6);
+    const rounded = outline.map(({ start, end }) => [start.x, start.y, end.x, end.y].map((value) => Number(value.toFixed(2))));
+    expect(rounded).toContainEqual([0.16, 0.3, 0.24, 0.3]);
+    expect(rounded).toContainEqual([0.24, 0.3, 0.74, 0.3]);
+    expect(rounded).toContainEqual([0.74, 0.3, 0.68, 0.6]);
+    expect(rounded).toContainEqual([0.48, 0.6, 0.16, 0.6]);
+  });
 });
 
 describe("projector plane gesture math", () => {
@@ -101,5 +119,16 @@ describe("projector plane gesture math", () => {
     const anchorAfter = rotatedTopLeft(resized);
     expect(anchorAfter.x).toBeCloseTo(anchorBefore.x, 5);
     expect(anchorAfter.y).toBeCloseTo(anchorBefore.y, 5);
+  });
+
+  test("clamps a rotated resize to the projector bounds", () => {
+    const nearEdge = { ...base, leftPct: 72, topPct: 70, widthPct: 20, heightPct: 20 };
+    const resized = resizeLegendLayout(nearEdge, "bottom-right", { x: 900, y: 700 });
+    expect(resized.leftPct).toBeGreaterThanOrEqual(0);
+    expect(resized.topPct).toBeGreaterThanOrEqual(0);
+    expect(resized.leftPct + resized.widthPct).toBeLessThanOrEqual(100);
+    expect(resized.topPct + resized.heightPct).toBeLessThanOrEqual(100);
+    expect(resized.widthPct).toBeCloseTo(100 - resized.leftPct, 7);
+    expect(resized.heightPct).toBeCloseTo(100 - resized.topPct, 7);
   });
 });

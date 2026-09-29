@@ -144,7 +144,7 @@ h2, h3 { margin: 0 0 10px; }
 .clock-settings-inspector { display: grid; gap: 6px; margin: 8px 0; }
 .clock-settings-inspector[hidden] { display: none; }
 .clock-settings-inspector select { width: 100%; min-width: 0; }
-.clock-layout-dialog { position: fixed; inset: 0; z-index: 130; width: 100vw; height: 100vh; height: 100dvh; display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 10px; overflow: hidden; padding: max(10px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left)); background: #10171d; color: #edf2f7; }
+.clock-layout-dialog { position: fixed; inset: 0; z-index: 130; height: 100vh; height: 100dvh; display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 10px; overflow: hidden; padding: max(10px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left)); background: #10171d; color: #edf2f7; }
 .clock-layout-header { display: grid; grid-template-columns: minmax(120px, auto) minmax(0, 1fr) auto; align-items: center; gap: 12px; }
 .clock-layout-header h2 { min-width: 0; overflow-wrap: anywhere; margin: 0; font-size: 1rem; }
 .clock-layout-status-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; }

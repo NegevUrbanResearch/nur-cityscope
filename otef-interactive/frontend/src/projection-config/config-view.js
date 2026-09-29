@@ -656,6 +656,10 @@ export function createProjectionConfigView(root, {
   setNode("pre");
   return {
     update, controls, fields, nodeMap, setPresetName, canManageDisplays: !touchOnlySurface,
+    getClockEditorOpener(node) {
+      if (mobileQuery?.matches && selectedGraphNode === node && !mobileOpen.hidden) return mobileOpen;
+      return nodeMap.get(node)?.querySelector?.('[data-action="clock-editor-open"]') || null;
+    },
     cancelWarpPointer: cancelActiveDrag,
     closeWarpEditor: dialog.close,
     dispose() { mobileQuery?.removeEventListener?.("change", openOnPhone); doc.removeEventListener?.("keydown", onKeyDown); dialog.dispose(); pointerInput.dispose(); canvas.dispose(); },

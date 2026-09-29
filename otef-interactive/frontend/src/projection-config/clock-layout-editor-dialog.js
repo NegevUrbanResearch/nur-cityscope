@@ -57,7 +57,7 @@ function referencePoint(surface, point) {
   return surface === "projection" ? { x: point.x * 1920, y: point.y * 1080 } : point;
 }
 
-export function openClockLayoutEditor({ nodeId, sceneId = "home", element = "clock", layoutClient, document = globalThis.document, onShowOnExhibit = null, onPendingState = () => {}, onSelection = () => {}, onClose = () => {} } = {}) {
+export function openClockLayoutEditor({ nodeId, sceneId = "home", element = "clock", layoutClient, document = globalThis.document, onShowOnExhibit = null, onPendingState = () => {}, onSelection = () => {}, restoreFocus, onClose = () => {} } = {}) {
   const doc = document;
   if (!doc?.createElement || !layoutClient) throw new Error("Clock layout editor requires a document and layout client");
   let activeScene = GIS_SLOT[sceneId] ? sceneId : "home";
@@ -413,7 +413,8 @@ export function openClockLayoutEditor({ nodeId, sceneId = "home", element = "clo
     active = false; preview?.destroy(); preview = null;
     dialog.remove?.();
     inertSiblings.forEach(({ node, inert }) => { node.inert = inert; }); inertSiblings = [];
-    opener?.focus?.();
+    if (restoreFocus) restoreFocus()?.focus?.();
+    else opener?.focus?.();
     unsubscribe?.();
     updateBeforeUnload();
     onClose();

@@ -207,6 +207,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
         try { return await action.show(sceneId); } finally { action.cancel(); clockCueActions.delete(action); }
       },
       onSelection: ({ nodeId: nextNode, sceneId, element }) => { selectedNode = nextNode; clockSceneId = sceneId; clockElement = element; refresh(); },
+      restoreFocus: () => view.getClockEditorOpener(selectedNode),
       onClose: () => { if (activeClockEditor === editor) { activeClockEditor = null; activeClockEditorNode = null; } },
     });
     activeClockEditor = editor; activeClockEditorNode = nodeId; clockEditors.add(editor);

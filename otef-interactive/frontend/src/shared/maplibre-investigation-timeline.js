@@ -286,6 +286,7 @@ function restorePaints(map, saved) {
     for (const [key, value] of Object.entries(props)) {
       if (value === undefined) continue;
       try {
+        if (typeof map.getLayer === "function" && !map.getLayer(id)) continue;
         map.setPaintProperty(id, key, value);
       } catch (_) {
         /* layer may have been removed */
