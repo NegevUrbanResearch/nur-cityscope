@@ -1,10 +1,11 @@
 export const NAME_FIELD_MOTION = Object.freeze({
-  spreadMs: 7200,
+  spreadMs: 18400,
   revealMs: 1600,
   hideMs: 600,
   focusMs: 350,
   frameMs: 33,
 });
+export const NAME_FIELD_REVEAL_DURATION_MS = NAME_FIELD_MOTION.spreadMs + NAME_FIELD_MOTION.revealMs;
 const clamp = (value) => Math.max(0, Math.min(1, value));
 const product = (a, b) => a === 1 ? b : b === 1 ? a
   : typeof a === 'number' && typeof b === 'number' ? a * b : ['*', a, b];
@@ -63,7 +64,7 @@ export function createNameFieldAnimation({ apply, motionMode = 'full', now = () 
   };
   const revealAt = (time) => {
     const elapsed = frozenReveal ?? Math.max(0, time - revealStart);
-    if (reduced || elapsed >= NAME_FIELD_MOTION.spreadMs + NAME_FIELD_MOTION.revealMs) return 1;
+    if (reduced || elapsed >= NAME_FIELD_REVEAL_DURATION_MS) return 1;
     return [
       'interpolate', ['linear'],
       ['-', elapsed, ['coalesce', ['get', 'reveal_delay'], 0]],
@@ -97,7 +98,7 @@ export function createNameFieldAnimation({ apply, motionMode = 'full', now = () 
       return;
     }
     const revealing = shown && frozenReveal === null &&
-      time - revealStart < NAME_FIELD_MOTION.spreadMs + NAME_FIELD_MOTION.revealMs;
+      time - revealStart < NAME_FIELD_REVEAL_DURATION_MS;
     if (!reduced && (visibilityMix < 1 || focusMix < 1 || revealing)) {
       timer = setTimeout(tick, NAME_FIELD_MOTION.frameMs);
     }

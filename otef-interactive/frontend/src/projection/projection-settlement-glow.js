@@ -100,24 +100,38 @@ export function settlementAuraPoint(feature) {
   const cy = (minLat + maxLat) / 2;
   const widthM = (maxLon - minLon) * 111320 * Math.cos((cy * Math.PI) / 180);
   const heightM = (maxLat - minLat) * 110540;
-  const radiusMeters = 0.5 * Math.hypot(widthM, heightM) * NLI_VISUAL_TOKENS.settlementGlowAuraPad;
+  const hypotRadius = 0.5 * Math.hypot(widthM, heightM);
   return {
     type: "Feature",
-    properties: { ...(feature?.properties || {}), radiusMeters },
+    properties: {
+      ...(feature?.properties || {}),
+      radiusMeters: hypotRadius * NLI_VISUAL_TOKENS.settlementGlowAuraPad,
+      coreRadiusMeters: hypotRadius * NLI_VISUAL_TOKENS.settlementGlowCorePad,
+    },
     geometry: { type: "Point", coordinates: [cx, cy] },
   };
 }
 
-function glowCircleRadiusExpression() {
+function glowCircleRadiusExpression(property = "radiusMeters") {
   return [
     "interpolate",
     ["exponential", 2],
     ["zoom"],
     0,
-    ["/", ["get", "radiusMeters"], METERS_PER_PIXEL_AT_ZOOM_0],
+    ["/", ["get", property], METERS_PER_PIXEL_AT_ZOOM_0],
     24,
-    ["/", ["get", "radiusMeters"], METERS_PER_PIXEL_AT_ZOOM_0 / 2 ** 24],
+    ["/", ["get", property], METERS_PER_PIXEL_AT_ZOOM_0 / 2 ** 24],
   ];
+}
+
+export function settlementGlowBreathScale(elapsedMs) {
+  const period = NLI_VISUAL_TOKENS.settlementGlowBreathMs;
+  const min = NLI_VISUAL_TOKENS.settlementGlowBreathMin;
+  const max = NLI_VISUAL_TOKENS.settlementGlowBreathMax;
+  const mid = (min + max) / 2;
+  const amp = (max - min) / 2;
+  const t = (Number(elapsedMs) || 0) / period;
+  return mid + amp * Math.sin(t * Math.PI * 2);
 }
 
 function paintGlow(map, opacityScale, { immediate = false } = {}) {
@@ -142,7 +156,8 @@ function removeGlowLayers(map, ids) {
 
 function addGlowLayers(map) {
   const opacityTransition = { duration: NLI_VISUAL_TOKENS.highlightOpacityTransitionMs };
-  const radius = glowCircleRadiusExpression();
+  const auraRadius = glowCircleRadiusExpression("radiusMeters");
+  const coreRadius = glowCircleRadiusExpression("coreRadiusMeters");
   if (!map.getLayer(PROJECTION_SETTLEMENT_GLOW_AURA_LAYER_ID)) {
     map.addLayer({
       id: PROJECTION_SETTLEMENT_GLOW_AURA_LAYER_ID,
@@ -153,7 +168,7 @@ function addGlowLayers(map) {
         "circle-opacity": 0,
         "circle-opacity-transition": opacityTransition,
         "circle-blur": NLI_VISUAL_TOKENS.settlementGlowAuraBlur,
-        "circle-radius": radius,
+        "circle-radius": auraRadius,
         "circle-pitch-alignment": "map",
       },
     });
@@ -168,7 +183,7 @@ function addGlowLayers(map) {
         "circle-opacity": 0,
         "circle-opacity-transition": opacityTransition,
         "circle-blur": NLI_VISUAL_TOKENS.settlementGlowCoreBlur,
-        "circle-radius": radius,
+        "circle-radius": coreRadius,
         "circle-pitch-alignment": "map",
       },
     });
@@ -178,8 +193,60 @@ function addGlowLayers(map) {
 export function createProjectionSettlementGlow({ map, loadSettlements, motionMode } = {}) {
   let currentId = null;
   let lastFeature = null;
+  let breathFrame = null;
+  let breathOrigin = null;
+  let breathDelay = null;
   const settlementsPromise = Promise.resolve().then(loadSettlements);
   const reduced = motionMode === "reduced";
+
+  function scheduleFrame(callback) {
+    if (typeof map?.requestAnimationFrame === "function") return map.requestAnimationFrame(callback);
+    if (typeof requestAnimationFrame === "function") return requestAnimationFrame(callback);
+    return null;
+  }
+
+  function cancelFrame(id) {
+    if (id == null) return;
+    if (typeof map?.cancelAnimationFrame === "function") map.cancelAnimationFrame(id);
+    else if (typeof cancelAnimationFrame === "function") cancelAnimationFrame(id);
+  }
+
+  function clearBreathDelay() {
+    if (breathDelay == null) return;
+    if (typeof map?.clearTimeout === "function") map.clearTimeout(breathDelay);
+    else clearTimeout(breathDelay);
+    breathDelay = null;
+  }
+
+  function stopBreath() {
+    clearBreathDelay();
+    cancelFrame(breathFrame);
+    breathFrame = null;
+    breathOrigin = null;
+  }
+
+  function tickBreath(now) {
+    if (currentId == null || reduced) {
+      stopBreath();
+      return;
+    }
+    if (breathOrigin == null) breathOrigin = now;
+    paintGlow(map, settlementGlowBreathScale(now - breathOrigin), { immediate: true });
+    breathFrame = scheduleFrame(tickBreath);
+  }
+
+  function startBreath() {
+    if (reduced || currentId == null) return;
+    stopBreath();
+    const wait = typeof map?.setTimeout === "function"
+      ? (callback, ms) => map.setTimeout(callback, ms)
+      : setTimeout;
+    breathDelay = wait(() => {
+      breathDelay = null;
+      if (reduced || currentId == null) return;
+      breathFrame = scheduleFrame(tickBreath);
+    }, NLI_VISUAL_TOKENS.highlightOpacityTransitionMs);
+  }
 
   function ensureLayers(targetMap = map) {
     if (!targetMap || typeof targetMap.getSource !== "function") return;
@@ -197,6 +264,7 @@ export function createProjectionSettlementGlow({ map, loadSettlements, motionMod
     addGlowLayers(targetMap);
     if (missingLayer) {
       currentId = null;
+      stopBreath();
       raise(targetMap);
     }
   }
@@ -217,6 +285,7 @@ export function createProjectionSettlementGlow({ map, loadSettlements, motionMod
       : resolveSettlementGlowFeature(settlements, { outlineObjectId, locationName });
     if (suppressed || !feature) {
       currentId = null;
+      stopBreath();
       paintGlow(map, 0, { immediate: reduced });
       return;
     }
@@ -224,6 +293,7 @@ export function createProjectionSettlementGlow({ map, loadSettlements, motionMod
     if (currentId != null && nextId != null && currentId === nextId) {
       return;
     }
+    stopBreath();
     paintGlow(map, 0, { immediate: true });
     lastFeature = settlementAuraPoint(feature);
     currentId = nextId;
@@ -232,9 +302,11 @@ export function createProjectionSettlementGlow({ map, loadSettlements, motionMod
       features: [lastFeature],
     });
     paintGlow(map, 1, { immediate: reduced });
+    startBreath();
   }
 
   function dispose() {
+    stopBreath();
     if (!map) return;
     removeGlowLayers(map, DISPOSE_LAYER_IDS);
     if (map.getSource?.(PROJECTION_SETTLEMENT_GLOW_SOURCE_ID)) {

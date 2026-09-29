@@ -116,6 +116,17 @@ test("view renders draggable node workspace and preserves an existing focused in
   view.update({ state: { draft: namesDraft }, selectedNode: "names-wall" });
   expect(closeness.wrap.hidden).toBe(true);
   expect(resetPages.hidden).toBe(true);
+  const modelHelps = [
+    ...view.nodeMap.get("names-wall").children,
+    ...view.controls.namesWallInspector.children,
+  ].filter((node) => node.className?.includes("names-wall-model-help"));
+  expect(modelHelps).toHaveLength(2);
+  expect(modelHelps.every((node) => node.textContent === "Rows spread across the model. Set 0 for the tightest fit." && !node.hidden)).toBe(true);
+  expect(namesDraft.namesWall.profiles.model).toMatchObject({ requestedFontPx: 12, spacingPx: 2 });
+  namesDraft.namesWall.activeMode = "wall";
+  view.update({ state: { draft: namesDraft }, selectedNode: "names-wall" });
+  expect(modelHelps.every((node) => node.hidden)).toBe(true);
+  expect(namesDraft.namesWall.profiles.model).toMatchObject({ requestedFontPx: 12, spacingPx: 2 });
   const draft = JSON.parse(JSON.stringify(DEFAULT_PROJECTION_CONFIG));
   draft.outputs.right.crop.x0 = 0.4;
   draft.outputs.right.post.tx = 2;

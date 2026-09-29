@@ -1,6 +1,6 @@
 import { loadNliNameField as defaultLoadNliNameField } from "./nli-name-field-data.js";
 import { createNameGroupOverlay } from "./nli-name-field-group-overlay.js";
-import { createNameFieldAnimation, withNameRevealDelays, NAME_FIELD_MOTION } from './nli-name-field-animation.js';
+import { createNameFieldAnimation, withNameRevealDelays, NAME_FIELD_MOTION, NAME_FIELD_REVEAL_DURATION_MS } from './nli-name-field-animation.js';
 import { createNliNameFocusPresentation, getNameFocusOpacity, getNameFocusAlpha, getRelevantPlaceGroup } from './nli-name-focus-presentation.js';
 import { DEFAULT_PROJECTION_CONFIG, validateProjectionConfig } from "./projection-config-schema.js";
 import { equalProjectionConfig } from "./projection-config-client.js";
@@ -147,7 +147,7 @@ export function createNliNameFieldController({
   let revealFrame = null, revealStart = 0, revealElapsedMs = 0, revealRunning = false;
   const frame = globalThis.requestAnimationFrame?.bind(globalThis) || ((fn) => setTimeout(() => fn(Date.now()), 16));
   const cancelFrame = globalThis.cancelAnimationFrame?.bind(globalThis) || clearTimeout;
-  const revealDurationMs = NAME_FIELD_MOTION.spreadMs + NAME_FIELD_MOTION.revealMs;
+  const revealDurationMs = NAME_FIELD_REVEAL_DURATION_MS;
   const publishReveal = () => {
     canvasAdapter?.setRevealSeconds?.(revealElapsedMs / 1000);
     map.triggerRepaint?.();

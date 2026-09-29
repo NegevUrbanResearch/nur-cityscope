@@ -73,12 +73,20 @@ describe("nli-investigation-theme", () => {
       personGlowRadius: 14,
       personGlowStrokeWidth: 2.5,
       personGlowPulseMs: 2400,
-      settlementGlowAuraOpacity: 0.28,
-      settlementGlowCoreOpacity: 0.16,
-      settlementGlowAuraBlur: 0.85,
-      settlementGlowCoreBlur: 0.55,
-      settlementGlowAuraPad: 1.3,
+      settlementGlowAuraOpacity: 0.16,
+      settlementGlowCoreOpacity: 0.12,
+      settlementGlowAuraBlur: 1.65,
+      settlementGlowCoreBlur: 1.15,
+      settlementGlowAuraPad: 2.5,
+      settlementGlowCorePad: 1.85,
+      settlementGlowBreathMs: 8000,
+      settlementGlowBreathMin: 0.78,
+      settlementGlowBreathMax: 1.22,
     });
+    expect(NLI_VISUAL_TOKENS.settlementGlowBreathMax).toBeLessThanOrEqual(1.25);
+    expect(
+      NLI_VISUAL_TOKENS.settlementGlowAuraOpacity * NLI_VISUAL_TOKENS.settlementGlowBreathMax,
+    ).toBeLessThan(0.22);
     expect(NLI_VISUAL_TOKENS).not.toHaveProperty("polygonCategories");
     expect(NLI_VISUAL_TOKENS).not.toHaveProperty("polygonFallbackFill");
     expect(NLI_DISPLAY_PROFILES.gis).toHaveProperty("lineWidthMultiplier");

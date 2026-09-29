@@ -3,6 +3,7 @@ import { resolveNliLocation } from './nli-name-field-places.js';
 import { nameWallRowSpans, rectCoveredByPieces, ringContainsGuardedRect, validNameWallRing } from './nli-name-wall-coverage.js';
 import { sha256Hex } from './sha256-hex.js';
 import { inwardPageTravel } from './nli-name-wall-inward-travel.js';
+import { modelNameTextBounds } from './nli-name-wall-text-bounds.js';
 
 const SIDES = ['left', 'right'];
 const finite = (value) => typeof value === 'number' && Number.isFinite(value);
@@ -34,7 +35,7 @@ function overlapCount(placements) {
   return count;
 }
 
-const MODEL_ALGORITHM = 'ordered-shared-justified-v2';
+const MODEL_ALGORITHM = 'ordered-shared-justified-ink-v3';
 const MODEL_SEARCH_STEPS = 28;
 function modelScanSpans(dimensions, profile, coverage, ring, boxes, rowOrigin) {
   const rowHeight = Math.max(...[...dimensions.values()].map((item) => item.height));
@@ -75,7 +76,7 @@ function packModelStream(items, dimensions, profile, spans, fraction, collect = 
       for (let i = 0; i < count; i++) {
         const row = items[first + i], measure = dimensions.get(row.name);
         result.push({ id: row.pid, name: row.name, output, x: cursor - measure.width / 2, y,
-          width: measure.width, height: measure.height });
+          width: measure.width, height: measure.height, textOffsetX: measure.textOffsetX, textOffsetY: measure.textOffsetY });
         cursor -= measure.width + gap;
       }
     }
@@ -265,7 +266,8 @@ export async function buildNamesWallLayout(payload) {
     const metrics = metricSets.get(size);
     if (!metrics || ordered.some((row) => !metrics.has(row.name))) return fail(`missing font metrics at ${size}px`);
     let dimensions;
-    try { dimensions = new Map(ordered.map((row) => [row.name, metricRectangle(metrics.get(row.name), size)])); }
+    try { dimensions = new Map(ordered.map((row) => [row.name, mode === 'model'
+      ? modelNameTextBounds(metrics.get(row.name)) : metricRectangle(metrics.get(row.name), size)])); }
     catch (error) { return fail(error.message); }
     let placed = [], pages = {}, model = null;
     if (mode === 'model') {
@@ -338,7 +340,8 @@ export async function buildNamesWallLayout(payload) {
     mode, profile, innerEdgeInsetPx: namesWall.innerEdgeInsetPx, effective,
     ringHash: mode === 'model' ? ringHash : null,
     ...(mode === 'wall' ? { pageAlgorithm: PAGE_ALGORITHM, pages: chosenPages } : { modelAlgorithm: MODEL_ALGORITHM }),
-    placements: chosen.map((p) => ({ ...p, x: round(p.x), y: round(p.y), width: round(p.width), height: round(p.height) })) });
+    placements: chosen.map((p) => ({ ...p, x: round(p.x), y: round(p.y), width: round(p.width), height: round(p.height),
+      ...(mode === 'model' ? { textOffsetX: round(p.textOffsetX), textOffsetY: round(p.textOffsetY) } : {}) })) });
   const digest = await sha256Hex(new TextEncoder().encode(JSON.stringify(digestInput)));
   diagnostics.state = 'valid'; diagnostics.reason = null; diagnostics.effectiveFontPx = effective;
   if (chosenModel) {

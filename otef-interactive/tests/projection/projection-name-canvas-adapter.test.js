@@ -48,6 +48,32 @@ test('model text uses a thinner outline while wall text keeps its existing outli
   expect(widths).toEqual([['wall', 3], ['model', 1]]);
 });
 
+test('model offsets move both paint calls while reveal quads stay at the guarded rectangle', () => {
+  const f = fakeCanvas();
+  const config = structuredClone(DEFAULT_PROJECTION_CONFIG);
+  config.namesWall.activeMode = 'model';
+  const placement = { ...placements[0], textOffsetX: -2, textOffsetY: 2.5 };
+  const adapter = createProjectionNameCanvasAdapter({ document: { createElement: () => f.canvas }, output: 'left' });
+  adapter.prepare({ config, placements: [placement], logicalPlane: plane });
+  expect(f.ctx.strokeText).toHaveBeenCalledExactlyOnceWith(placement.name, -2, 2.5);
+  expect(f.ctx.fillText).toHaveBeenCalledExactlyOnceWith(placement.name, -2, 2.5);
+  const topLeft = planeToOutputUv([placement.x - placement.width / 2, placement.y - placement.height / 2], config, 'left', plane);
+  adapter.commit();
+  expect(Array.from(adapter.descriptor().revealVertices.slice(0, 2))).toEqual([Math.fround(topLeft.u), Math.fround(topLeft.v)]);
+});
+
+test('present offsets must be finite while omitted and zero offsets remain valid', () => {
+  for (const item of [{ ...placements[0] }, { ...placements[0], textOffsetX: 0, textOffsetY: 0 }]) {
+    const adapter = createProjectionNameCanvasAdapter({ document: { createElement: () => fakeCanvas().canvas }, output: 'left' });
+    expect(() => adapter.prepare({ config: DEFAULT_PROJECTION_CONFIG, placements: [item], logicalPlane: plane })).not.toThrow();
+  }
+  for (const key of ['textOffsetX', 'textOffsetY']) for (const bad of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+    const adapter = createProjectionNameCanvasAdapter({ document: { createElement: () => fakeCanvas().canvas }, output: 'left' });
+    expect(() => adapter.prepare({ config: DEFAULT_PROJECTION_CONFIG,
+      placements: [{ ...placements[0], [key]: bad }], logicalPlane: plane })).toThrow(/placement/);
+  }
+});
+
 test('global delays, selected bypass, and reveal clock change no painted pixels or static vertices', () => {
   const f = fakeCanvas();
   const adapter = createProjectionNameCanvasAdapter({ document: { createElement: () => f.canvas }, output: 'right' });
@@ -55,6 +81,11 @@ test('global delays, selected bypass, and reveal clock change no painted pixels 
   adapter.commit();
   const first = adapter.descriptor();
   const paintCount = f.ctx.fillText.mock.calls.length;
+  adapter.setRevealSeconds(3.2);
+  adapter.setRevealSeconds(20);
+  expect(() => adapter.setRevealSeconds(20.001)).toThrow(/reveal time/);
+  for (const invalid of [-0.001, Number.NaN, Number.POSITIVE_INFINITY])
+    expect(() => adapter.setRevealSeconds(invalid)).toThrow(/reveal time/);
   adapter.setRevealSeconds(3.2);
   adapter.setSelectedPid('b');
   expect(adapter.descriptor()).toMatchObject({ contentVersion: first.contentVersion, revealSeconds: 3.2 });

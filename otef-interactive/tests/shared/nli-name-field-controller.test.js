@@ -135,8 +135,11 @@ describe("createNliNameFieldController", () => {
     await vi.advanceTimersByTimeAsync(500);
     expect(adapter.getRevealSeconds()).toBeGreaterThan(frozen);
     d.map.remountStyle({ layers: [{ id: 'nli__people_names__labels', type: 'symbol' }] });
-    await vi.advanceTimersByTimeAsync(8000);
-    expect(adapter.getRevealSeconds()).toBe(8.8);
+    await vi.advanceTimersByTimeAsync(7500);
+    expect(adapter.getRevealSeconds()).toBeCloseTo(8.8, 1);
+    expect(adapter.getRevealSeconds()).toBeLessThan(20);
+    await vi.advanceTimersByTimeAsync(11200);
+    expect(adapter.getRevealSeconds()).toBe(20);
     disable(d); await vi.advanceTimersByTimeAsync(650);
     expect(adapter.getOpacity()).toBe(0);
     enable(d);
@@ -339,7 +342,7 @@ describe("createNliNameFieldController", () => {
     await vi.advanceTimersByTimeAsync(150);
     expect(adapter.getOpacity()).toBe(1);
     expect(adapter.getRevealSeconds()).toBeGreaterThan(0);
-    expect(adapter.getRevealSeconds()).toBeLessThan(8.8);
+    expect(adapter.getRevealSeconds()).toBeLessThan(20);
     d.map.remountStyle({ layers: [{ id: 'nli__people_names__labels', type: 'symbol' }] });
     await vi.advanceTimersByTimeAsync(650);
     expect(adapter.getOpacity()).toBe(1);

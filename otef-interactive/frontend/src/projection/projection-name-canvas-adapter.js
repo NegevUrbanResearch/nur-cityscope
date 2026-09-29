@@ -1,5 +1,6 @@
 import { planeToOutputUv } from '../shared/projection-config-geometry.js';
-import { nameRevealSchedule, NAME_FIELD_MOTION } from '../shared/nli-name-field-animation.js';
+import { nameRevealSchedule, NAME_FIELD_REVEAL_DURATION_MS } from '../shared/nli-name-field-animation.js';
+import { MODEL_NAME_STROKE_WIDTH } from '../shared/nli-name-wall-text-bounds.js';
 
 const WIDTH = 1920;
 const HEIGHT = 1080;
@@ -21,7 +22,7 @@ export function createProjectionNameCanvasAdapter({ document = globalThis.docume
     ctx.font = `${fontPx}px "${fontFamily}"`;
     ctx.fillStyle = color;
     ctx.strokeStyle = '#000000';
-    ctx.lineWidth = mode === 'model' ? 1 : 3;
+    ctx.lineWidth = mode === 'model' ? MODEL_NAME_STROKE_WIDTH : 3;
     ctx.lineJoin = 'round';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -31,8 +32,9 @@ export function createProjectionNameCanvasAdapter({ document = globalThis.docume
       if (!Number.isFinite(alpha) || alpha < 0 || alpha > 1) throw new Error('invalid Canvas name focus opacity');
       if (!alpha) continue;
       ctx.globalAlpha = alpha;
-      ctx.strokeText?.(name.name, name.x, name.y);
-      ctx.fillText(name.name, name.x, name.y);
+      const x = name.x + (name.textOffsetX ?? 0), y = name.y + (name.textOffsetY ?? 0);
+      ctx.strokeText?.(name.name, x, y);
+      ctx.fillText(name.name, x, y);
     }
     ctx.restore();
     entry.contentVersion = ++version;
@@ -54,7 +56,8 @@ export function createProjectionNameCanvasAdapter({ document = globalThis.docume
         (yUnit.u - origin.u) * WIDTH, (yUnit.v - origin.v) * HEIGHT,
         origin.u * WIDTH, origin.v * HEIGHT];
       const own = placements.filter((item) => item.output === output);
-      if (own.some((item) => !item.id || !item.name || ![item.x, item.y, item.width, item.height].every(Number.isFinite)))
+      if (own.some((item) => !item.id || !item.name || ![item.x, item.y, item.width, item.height].every(Number.isFinite) ||
+          ['textOffsetX', 'textOffsetY'].some((key) => Object.hasOwn(item, key) && !Number.isFinite(item[key]))))
         throw new Error('invalid name canvas placement');
       const schedule = nameRevealSchedule(placements.map((item) => item.id));
       const vertices = [];
@@ -89,7 +92,7 @@ export function createProjectionNameCanvasAdapter({ document = globalThis.docume
       opacity = value;
     },
     setRevealSeconds(value) {
-      if (!Number.isFinite(value) || value < 0 || value > (NAME_FIELD_MOTION.spreadMs + NAME_FIELD_MOTION.revealMs) / 1000)
+      if (!Number.isFinite(value) || value < 0 || value > NAME_FIELD_REVEAL_DURATION_MS / 1000)
         throw new Error('invalid Canvas name reveal time');
       revealSeconds = value;
     },

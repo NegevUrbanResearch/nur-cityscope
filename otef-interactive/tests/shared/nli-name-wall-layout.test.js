@@ -70,6 +70,40 @@ test('regular pages split evenly while model fills safe spans in one ordered str
   ]);
 });
 
+test('model digest captures ink offsets and stays stable under reversal and prewarming', async () => {
+  const ids = ['a', 'b', 'c', 'd'];
+  const wall = structuredClone(namesWall); wall.activeMode = 'model';
+  const originConfig = structuredClone(DEFAULT_PROJECTION_CONFIG);
+  originConfig.namesWall.activeMode = 'model';
+  const input = payload({ records: records(ids), metrics: metrics(ids), namesWall: wall,
+    config: originConfig,
+    ring: [[0,0],[100,0],[100,80],[0,80],[0,0]], ringHash: 'digest-ink' });
+  const first = await buildNamesWallLayout(input);
+  const reversed = await buildNamesWallLayout({ ...input, records: records(ids).reverse() });
+  const prewarmedConfig = structuredClone(DEFAULT_PROJECTION_CONFIG);
+  prewarmedConfig.namesWall.activeMode = 'wall';
+  const prewarmed = await buildNamesWallLayout({ ...input, config: prewarmedConfig });
+  expect(reversed.digest).toBe(first.digest);
+  expect(prewarmed.digest).toBe(first.digest);
+  const horizontalMetrics = metrics(ids).map(([size, rows]) => [size, rows.map(([name, metric]) =>
+    [name, { ...metric, left: 2, right: 6 }])]);
+  const horizontal = await buildNamesWallLayout({ ...input, metrics: horizontalMetrics });
+  expect(horizontal.placements[0].width).toBe(first.placements[0].width);
+  expect(horizontal.placements[0].height).toBe(first.placements[0].height);
+  expect(horizontal.placements[0].textOffsetX).not.toBe(first.placements[0].textOffsetX);
+  expect(horizontal.digest).not.toBe(first.digest);
+  const verticalMetrics = metrics(ids).map(([size, rows]) => [size, rows.map(([name, metric]) =>
+    [name, { ...metric, ascent: 5, descent: 4 }])]);
+  const vertical = await buildNamesWallLayout({ ...input, metrics: verticalMetrics });
+  expect(vertical.placements[0].width).toBe(first.placements[0].width);
+  expect(vertical.placements[0].height).toBe(first.placements[0].height);
+  expect(vertical.placements[0].textOffsetY).not.toBe(first.placements[0].textOffsetY);
+  expect(vertical.digest).not.toBe(first.digest);
+  const regular = structuredClone(wall); regular.activeMode = 'wall';
+  const wallFirst = await buildNamesWallLayout({ ...input, namesWall: regular });
+  expect((await buildNamesWallLayout({ ...input, namesWall: regular })).digest).toBe(wallFirst.digest);
+});
+
 test('model waits for a wider later span without dropping the next long name', async () => {
   const ids = ['a', 'b', 'c'];
   const narrowFirst = { pieces: { left: [rectPiece(0, 60, 0, 40), rectPiece(70, 90, 0, 40)],
@@ -91,7 +125,7 @@ test('model waits for a wider later span without dropping the next long name', a
   }
 });
 
-test('model tries the full span width before lowering the common font', async () => {
+test('model keeps the requested font when the full span can fit every name', async () => {
   const ids = ['a', 'b', 'c', 'd'];
   const oneRow = { pieces: { left: [rectPiece(0, 53, 0, 20)], right: [rectPiece(60, 113, 0, 20)] },
     outputIdentities: coverage.outputIdentities };
@@ -101,7 +135,7 @@ test('model tries the full span width before lowering the common font', async ()
     ring: [[0,0],[113,0],[113,20],[0,20],[0,0]], ringHash: 'one-row' }));
   expect(result.diagnostics).toMatchObject({ state: 'valid', placed: 4, left: 2, right: 2,
     missing: 0, duplicate: 0, invalidCoverage: 0 });
-  expect(result.fontSize).toBe(7);
+  expect(result.fontSize).toBe(8);
   expect(result.placements.map((p) => p.id)).toEqual(ids);
 });
 
