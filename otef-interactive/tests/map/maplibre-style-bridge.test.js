@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   GIS_GAZA_ROADS_LINE_OPACITY_SCALE,
   GIS_SETTLEMENT_OUTLINE_WIDTH_SCALE,
+  OPEN_SPACES_FILL_OPACITY_SCALE,
   PROJECTION_MAPLIBRE_POINT_RADIUS_SCALE,
   PROJECTION_MAPLIBRE_STROKE_WIDTH_SCALE,
 } from "../../frontend/src/shared/hatch-projection-presentation.js";
@@ -46,6 +47,32 @@ describe("irToMapLibreLayers", () => {
     expect(line).toBeDefined();
     expect(line.paint["line-color"]).toBe("#000000");
     expect(line.paint["line-width"]).toBe(1.0);
+  });
+
+  it("lowers open-space fill opacity on GIS and projection so it blends with satellite", () => {
+    const layerConfig = {
+      geometryType: "polygon",
+      style: {
+        renderer: "simple",
+        defaultSymbol: {
+          symbolLayers: [
+            { type: "fill", fillType: "solid", color: "#bfff00", opacity: 1.0 },
+            { type: "stroke", color: "#003fff", width: 0.4, opacity: 1.0 },
+          ],
+        },
+      },
+    };
+    const gis = irToMapLibreLayers("land_use.שטחים_פתוחים", "land_use__שטחים_פתוחים", layerConfig);
+    const proj = irToMapLibreLayers("land_use.שטחים_פתוחים", "land_use__שטחים_פתוחים", layerConfig, {
+      applyProjectionHatchPresentation: true,
+    });
+    const other = irToMapLibreLayers("land_use.מגורים", "land_use__מגורים", layerConfig);
+    expect(gis.find((layer) => layer.type === "fill").paint["fill-opacity"]).toBe(OPEN_SPACES_FILL_OPACITY_SCALE);
+    expect(proj.find((layer) => layer.type === "fill").paint["fill-opacity"]).toBe(OPEN_SPACES_FILL_OPACITY_SCALE);
+    expect(other.find((layer) => layer.type === "fill").paint["fill-opacity"]).toBe(1);
+    expect(gis.find((layer) => layer.type === "line")).toBeUndefined();
+    expect(proj.find((layer) => layer.type === "line")).toBeUndefined();
+    expect(other.find((layer) => layer.type === "line")?.paint["line-color"]).toBe("#003fff");
   });
 
   it("does not reorder fill/line for line geometry (synthetic stroke must stay under fill)", () => {

@@ -325,7 +325,7 @@ describe("mountMapLegend", () => {
     const mounted = mountMapLegend({ element, surface: "gis", buildModel: async () => groupedModel() });
     await mounted.refresh();
     expect(element.innerHTML.match(/class="map-legend-group"/g)).toHaveLength(1);
-    expect(element.innerHTML.match(/class="map-legend-group-title"/g)).toHaveLength(1);
+    expect(element.innerHTML.match(/class="map-legend-group-title"/g)).toBeNull();
     expect(element.innerHTML).not.toContain("map-legend-layer-title");
     expect(element.innerHTML.match(/data-legend-item-id=/g)).toHaveLength(6);
     expect(element.innerHTML).not.toContain("Investigation polygons");
@@ -437,11 +437,12 @@ describe("mountMapLegend", () => {
     vi.unstubAllGlobals();
   });
 
-  it("shares one projection pack heading across consecutive layers on a page", async () => {
+  it("shares one projection pack group across consecutive layers on a page without a heading", async () => {
     const { element } = setup();
     const mounted = mountMapLegend({ element, surface: "projection", buildModel: async () => groupedModel() });
     await mounted.refresh();
-    expect(element.innerHTML.match(/class="map-legend-group-title"/g)).toHaveLength(1);
+    expect(element.innerHTML.match(/class="map-legend-group"/g)).toHaveLength(1);
+    expect(element.innerHTML.match(/class="map-legend-group-title"/g)).toBeNull();
     mounted.dispose();
   });
 
@@ -738,7 +739,7 @@ describe("mountMapLegend", () => {
     mounted.dispose();
   });
 
-  it("keeps a non-NLI pack heading and titles only the other pack in a mixed legend", async () => {
+  it("omits pack headings for every pack, including land use on GIS and projection", async () => {
     const mixed = {
       packs: [
         { id: "nli", name: "October 7th", layers: [{ id: "nli.route", name: "Route", items: [{ id: "nli.route:a", label: "232", shape: "line", stroke: "#000" }] }] },
@@ -749,8 +750,10 @@ describe("mountMapLegend", () => {
       const { element } = setup();
       const mounted = mountMapLegend({ element, surface, buildModel: async () => mixed });
       await mounted.refresh();
-      expect(element.innerHTML.match(/class="map-legend-group-title"/g)).toHaveLength(1);
-      expect(element.innerHTML).toContain(">Land use<");
+      expect(element.innerHTML).toContain("Open space");
+      expect(element.innerHTML).toContain("232");
+      expect(element.innerHTML.match(/class="map-legend-group-title"/g)).toBeNull();
+      expect(element.innerHTML).not.toContain(">Land use<");
       expect(element.innerHTML).not.toContain(">October 7th<");
       mounted.dispose();
     }

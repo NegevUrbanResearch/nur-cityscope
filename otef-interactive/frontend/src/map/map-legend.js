@@ -77,10 +77,7 @@ function layerMarkup(layer, items = layer.items || []) {
 }
 
 function packMarkup(pack, layersMarkup) {
-  const title = pack.id === "nli"
-    ? ""
-    : `<div class="map-legend-group-title" dir="auto">${escapeHtml(pack.name || "")}</div>`;
-  return `<section class="map-legend-group" data-legend-pack-id="${escapeHtml(pack.id || "")}">${title}<div class="map-legend-layers">${layersMarkup}</div></section>`;
+  return `<section class="map-legend-group" data-legend-pack-id="${escapeHtml(pack.id || "")}"><div class="map-legend-layers">${layersMarkup}</div></section>`;
 }
 
 function makeChildren(element) {

@@ -2,6 +2,7 @@
  * MapLibre hatch and stroke presentation tokens.
  * Projection hatch/width/point scales apply only when `applyProjectionHatchPresentation`
  * is true. GIS-only paint tokens (Gaza Roads opacity) apply on the interactive map.
+ * Open-space fill opacity applies on both GIS and projection.
  */
 
 /**
@@ -36,6 +37,13 @@ export const PROJECTION_MAPLIBRE_STROKE_WIDTH_SCALE = 0.3;
  * via {@link PROJECTION_MAPLIBRE_STROKE_WIDTH_SCALE}). Tune if GIS roads still dominate.
  */
 export const GIS_GAZA_ROADS_LINE_OPACITY_SCALE = 0.45;
+
+/**
+ * Multiplies `land_use.שטחים_פתוחים` fill opacity on GIS and projection.
+ * Nova's first scene shows this lime overlay on black-and-white satellite;
+ * full opacity reads as a solid plate instead of land cover.
+ */
+export const OPEN_SPACES_FILL_OPACITY_SCALE = 0.4;
 
 /**
  * Multiplies `projector_base.ישובים` `line-width` on the interactive GIS map only.

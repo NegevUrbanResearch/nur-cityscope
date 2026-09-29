@@ -57,7 +57,7 @@ describe("projection overlay adapters", () => {
         { label: "יהלום", components: [{ shape: "diamond", fill: "#654321", hatchStyle: "repeating-linear-gradient(45deg, #fff, #fff 1px, transparent 1px, transparent 8px)" }] },
       ] }] }] });
     expect(adapter.draw(500).source).toBe(c);
-    expect(c.context.calls.some(([name, value]) => name === "fillText" && value === "קבוצה")).toBe(true);
+    expect(c.context.calls.some(([name, value]) => name === "fillText" && value === "קבוצה")).toBe(false);
     expect(c.context.calls.some(([name, value]) => name === "fillText" && value === "תווית ארוכה נעטפת")).toBe(true);
     expect(c.context.calls.some(([name]) => name === "setLineDash")).toBe(true);
     expect(c.context.calls.some(([name]) => name === "clip")).toBe(true);
@@ -88,7 +88,6 @@ describe("projection overlay adapters", () => {
     const point = c.context.calls.find(([name]) => name === "arc");
     const square = c.context.calls.find(([name]) => name === "rect");
     const label = c.context.calls.find(([name, value]) => name === "fillText" && value === "אב");
-    const title = c.context.calls.find(([name, value]) => name === "fillText" && value === "Group");
     const padding = 28 * 0.5;
     const canvasWidth = 1920 * 0.4;
     const expectedPointCenter = padding + 28 * 0.32 + 28 * 0.55 / 2;
@@ -98,7 +97,7 @@ describe("projection overlay adapters", () => {
     const squareCenterX = square[1] + square[3] / 2;
     expect(point?.[1]).toBeCloseTo(expectedPointCenter, 3);
     expect(label?.[2]).toBeGreaterThan(point?.[1]);
-    expect(title?.[2]).toBeCloseTo(padding, 3);
+    expect(c.context.calls.some(([name, value]) => name === "fillText" && value === "Group")).toBe(false);
     expect(squareCenterX).toBeGreaterThan(point[1]);
     expect(squareCenterX).toBeCloseTo(padding + firstWidth + itemGap + 28 * 0.32 + 28 * 0.55 / 2, 1);
     expect(square[1]).toBeLessThan(canvasWidth / 2);
@@ -210,24 +209,33 @@ describe("projection overlay adapters", () => {
     expect(adapter.draw().contentVersion).toBe(changed.contentVersion);
   });
 
-  test("legend omits the NLI pack title on the canvas", () => {
+  test("legend omits pack titles on the canvas, including land use", () => {
     const c = canvasFactory();
     const adapter = createProjectionLegendAdapter({ canvasFactory: () => c });
     adapter.sync({
       layout: { ...layout, widthPct: 40, heightPct: 40, fontPx: 16 },
-      language: "en",
+      language: "he",
       spanId: "left",
       visible: true,
-      pages: [["nli"]],
+      pages: [["nli", "land_use"]],
       pageIndex: 0,
-      blocks: [{
-        id: "nli",
-        pack: { id: "nli", name: "October 7th" },
-        layers: [{ items: [{ label: "Murdered", components: [{ shape: "point", fill: "#123456" }] }] }],
-      }],
+      blocks: [
+        {
+          id: "nli",
+          pack: { id: "nli", name: "October 7th" },
+          layers: [{ items: [{ label: "Murdered", components: [{ shape: "point", fill: "#123456" }] }] }],
+        },
+        {
+          id: "land_use",
+          pack: { id: "land_use", name: "שימושי קרקע" },
+          layers: [{ items: [{ label: "שטחים פתוחים", components: [{ shape: "polygon", fill: "#bfff00" }] }] }],
+        },
+      ],
     });
     adapter.draw();
     expect(c.context.calls.some(([name, value]) => name === "fillText" && value === "Murdered")).toBe(true);
+    expect(c.context.calls.some(([name, value]) => name === "fillText" && value === "שטחים פתוחים")).toBe(true);
     expect(c.context.calls.some(([name, value]) => name === "fillText" && value === "October 7th")).toBe(false);
+    expect(c.context.calls.some(([name, value]) => name === "fillText" && value === "שימושי קרקע")).toBe(false);
   });
 });
