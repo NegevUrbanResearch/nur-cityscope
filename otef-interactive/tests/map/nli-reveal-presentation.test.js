@@ -925,6 +925,10 @@ describe("presentation open and close lifecycle", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(overlay()).not.toBeNull();
     expect(overlay().querySelector("img")).toBeNull();
+    expect(overlay().querySelector(".nli-blackout-title")?.textContent).toBe("מאגר הזהויות");
+    expect(overlay().querySelector(".nli-blackout-title")?.dir).toBe("rtl");
+    expect(overlay().querySelector(".nli-blackout-date")?.textContent).toBe("7/10");
+    expect(overlay().querySelector(".nli-blackout-date")?.dir).toBe("ltr");
     expect(results).toEqual([]);
     await vi.advanceTimersByTimeAsync(16);
     expect(overlay().style.opacity).toBe("1");

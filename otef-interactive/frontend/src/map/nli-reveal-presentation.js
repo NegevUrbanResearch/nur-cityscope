@@ -326,6 +326,18 @@ export function createNliRevealPresentation(container, {
     const overlay = element("div", "nli-reveal-overlay");
     overlay.style.opacity = "0";
     if (segment.kind === "blackout") {
+      overlay.classList.add("nli-reveal-overlay--blackout");
+      const copy = element("div", "nli-blackout-copy");
+      const title = element("p", "nli-blackout-title");
+      title.lang = "he";
+      title.dir = "rtl";
+      title.textContent = "מאגר הזהויות";
+      const date = element("p", "nli-blackout-date");
+      date.lang = "en";
+      date.dir = "ltr";
+      date.textContent = "7/10";
+      copy.append(title, date);
+      overlay.append(copy);
       container.append(overlay);
       return { overlay, revealRoot: null, sections: new Map(), cancels: [] };
     }

@@ -156,6 +156,14 @@ describe("NLI Segev narrative cross-surface contract", () => {
     expect(Number(overlay[1])).toBeGreaterThan(1110);
     expect(styles).toMatch(/\.nli-reveal-overlay\s*\{[^}]*position:\s*absolute/s);
     expect(styles).toMatch(/\.nli-presentation-frame\s*\{[^}]*aspect-ratio:\s*16\s*\/\s*9/s);
+    expect(styles).toMatch(/\.nli-reveal-overlay--blackout\s*\{[^}]*display:\s*flex[^}]*align-items:\s*center[^}]*justify-content:\s*center/s);
+    expect(styles).toMatch(/\.nli-blackout-title\s*\{[^}]*font-family:\s*"Hadassah Friedlaender"/s);
+    expect(styles).toMatch(/\.nli-blackout-date\s*\{[^}]*font-family:\s*"Narkiss Block"/s);
+    const indexHtml = readSource("../../frontend/index.html");
+    expect(indexHtml).toMatch(/font-family:\s*"Hadassah Friedlaender"/);
+    expect(indexHtml).toMatch(/url\("\.\/fonts\/HadassahFriedlaender-Regular\.otf"\)/);
+    expect(indexHtml).toMatch(/font-family:\s*"Narkiss Block"/);
+    expect(indexHtml).toMatch(/url\("\.\/fonts\/NarkissBlock-Regular\.otf"\)/);
   });
 
   test("subscribes both surfaces to durable state while keeping NLI-sheet commands remote-owned", () => {
