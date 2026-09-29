@@ -205,9 +205,13 @@ export function createNliRevealPresentation(container, {
       state.overlay.style.opacity = String(opacity);
       return nextFrame(state, token);
     }
-    state.overlay.style.transition = "";
+    const from = opacity > 0 ? "0" : "1";
+    state.overlay.style.transition = "none";
+    state.overlay.style.opacity = from;
+    void getComputedStyle(state.overlay).opacity;
     const framed = await nextFrame(state, token);
     if (!framed || !isCurrent(state, token)) return false;
+    state.overlay.style.transition = "";
     state.overlay.style.opacity = String(opacity);
     return waitForOpacity(state, token);
   };
