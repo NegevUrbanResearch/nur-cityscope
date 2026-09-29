@@ -13,6 +13,7 @@ import {
   TIMELINE_BEAT_MS,
   clockStoryDurationMs,
   collectTimelineBeats,
+  finiteClockMinutes,
   formatMinutesAsLocalClock,
   isNliPlayableFullId,
   timelineBeatDurationMs,
@@ -262,7 +263,8 @@ function nliThumbIndex(clock, displayBeats) {
 function nliStoryClockLabel(clock, displayBeats) {
   if (clock && clock.phase !== "idle") {
     const vis = evaluateClock(clock, nliNowMs());
-    if (Number.isFinite(Number(vis.clock))) return formatMinutesAsLocalClock(Number(vis.clock));
+    const minutes = finiteClockMinutes(vis.clock);
+    if (minutes != null) return formatMinutesAsLocalClock(minutes);
   }
   const beats = nliDisplayBeats(clock, displayBeats);
   const index = nliThumbIndex(clock, displayBeats);
@@ -326,7 +328,7 @@ export function paintNliTransportPlayhead(root, clock, beats, options = {}) {
     const vis = clock && clock.phase !== "idle" ? evaluateClock(clock, now, { narrativeId: "nova" }) : null;
     clockEl.textContent = isNova
       ? clock?.phase === "idle" ? formatMinutesAsLocalClock(NLI_NOVA_STORY.startMinutes)
-        : formatMinutesAsLocalClock(vis?.clock != null && Number.isFinite(Number(vis.clock)) ? Number(vis.clock) : NLI_NOVA_STORY.representativeMinutes[index])
+        : formatMinutesAsLocalClock(finiteClockMinutes(vis?.clock) ?? NLI_NOVA_STORY.representativeMinutes[index])
       : nliStoryClockLabel(clock, displayBeats);
   }
 }
@@ -431,7 +433,7 @@ export function renderNliTimelineTransport(clock, options = {}) {
   const isPlaying = src.phase === "playing" && vis.phase !== "ended";
   const story = isNova
     ? src.phase === "idle" ? formatMinutesAsLocalClock(NLI_NOVA_STORY.startMinutes)
-      : formatMinutesAsLocalClock(vis.clock != null && Number.isFinite(Number(vis.clock)) ? Number(vis.clock) : NLI_NOVA_STORY.representativeMinutes[novaClockIndex(src, displayBeats, nowMs)])
+      : formatMinutesAsLocalClock(finiteClockMinutes(vis.clock) ?? NLI_NOVA_STORY.representativeMinutes[novaClockIndex(src, displayBeats, nowMs)])
     : nliStoryClockLabel(src, displayBeats);
   const beats = nliDisplayBeats(src, displayBeats);
   const index = isNova ? novaClockIndex(src, beats, nowMs) : nliThumbIndex(src, displayBeats);

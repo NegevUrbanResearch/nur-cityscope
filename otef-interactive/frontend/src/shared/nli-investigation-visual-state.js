@@ -62,10 +62,6 @@ function isNovaManifestClock(clock, narrativeId) {
   ));
 }
 
-function isIdleOrEndedVisualPhase(src, phase) {
-  return src.phase === "idle" || phase.phase === "ended" || phase.phase === "idle";
-}
-
 function positionInfo(clock, nowMs, beats, options) {
   const absoluteMs = clockPositionMs(clock, nowMs);
   const mapping = mapClockStoryPosition(beats, clock, absoluteMs, options);
@@ -242,9 +238,9 @@ export function deriveInvestigationFrame(
   let achievedPolygonBeats = [];
   if (polygonEnabled && suppressNovaIdleStory) {
     achievedPolygonBeats = [];
-  } else if (polygonEnabled && isIdleOrEndedVisualPhase(src, phase)) {
+  } else if (polygonEnabled && src.phase === "idle") {
+    // Complete-story / Stop uses the loaded catalog, not the last play window.
     if (storyBeats.length > 0) achievedPolygonBeats = storyBeats;
-    else if (phase.phase === "ended") achievedPolygonBeats = completedBeats.slice();
   } else if (polygonEnabled) {
     achievedPolygonBeats = completedBeats.slice();
     if (

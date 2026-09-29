@@ -660,6 +660,40 @@ describe("deriveInvestigationFrame", () => {
     expect(frame.achievedPolygonBeats).toEqual(beats);
   });
 
+  it("ended windowed playback holds clock.beats instead of the full storyBeats catalog", () => {
+    const windowBeats = [400, 420];
+    const catalogBeats = [400, 420, 440, 500];
+    const playing = playNliClock(idleNliClock(), membership, windowBeats, 0);
+    const ended = deriveInvestigationFrame(endNliClock(playing), 99_000, enabled, {
+      motionMode: "full",
+      storyBeats: catalogBeats,
+      polygonMotionActive: true,
+    });
+    expect(ended.narrative.completedBeats).toEqual(windowBeats);
+    expect(ended.achievedPolygonBeats).toEqual(windowBeats);
+
+    const localEnd = deriveInvestigationFrame(playing, clockStoryDurationMs(windowBeats), enabled, {
+      motionMode: "full",
+      storyBeats: catalogBeats,
+      polygonMotionActive: true,
+    });
+    expect(localEnd.narrative.phase).toBe("ended");
+    expect(localEnd.achievedPolygonBeats).toEqual(windowBeats);
+  });
+
+  it("idle complete-story still uses the full storyBeats catalog", () => {
+    const windowBeats = [400, 420];
+    const catalogBeats = [400, 420, 440, 500];
+    const playing = playNliClock(idleNliClock(), membership, windowBeats, 0);
+    const frame = deriveInvestigationFrame(stopNliClock(playing), 99_000, enabled, {
+      motionMode: "full",
+      storyBeats: catalogBeats,
+      polygonMotionActive: true,
+    });
+    expect(frame.narrative.phase).toBe("idle");
+    expect(frame.achievedPolygonBeats).toEqual(catalogBeats);
+  });
+
   it("personGlowActive does not keep needsNextFrame true without a halo overlay", () => {
     const frame = deriveInvestigationFrame(idleNliClock(), 99_000, [], {
       motionMode: "full",

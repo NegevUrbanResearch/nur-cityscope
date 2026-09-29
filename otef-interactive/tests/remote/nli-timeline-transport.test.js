@@ -25,6 +25,7 @@ import {
 import {
   clockStoryDurationMs,
   TIMELINE_HOLD_MS,
+  finiteClockMinutes,
   timelineBeatDurationMs,
   timelineSpanMs,
   INVESTIGATION_ALARMS_FULL_ID,
@@ -566,6 +567,36 @@ describe("nli timeline transport", () => {
     expect(html).toContain('style="left:100%"');
     expect(html).not.toContain("00:00");
     expect(html).toMatch(/data-nli-tl-step-forward[^>]* disabled/);
+  });
+
+  test("finiteClockMinutes treats a missing minute as absent, not midnight", () => {
+    expect(finiteClockMinutes(null)).toBeNull();
+    expect(finiteClockMinutes(undefined)).toBeNull();
+    expect(finiteClockMinutes(false)).toBeNull();
+    expect(finiteClockMinutes(0)).toBe(0);
+    expect(finiteClockMinutes(401)).toBe(401);
+  });
+
+  test("opening-minutes hold and end keep 06:41 on the remote clock, not 00:00", () => {
+    const windowBeats = [389, 395, 401];
+    const playing = playNliClock(idleNliClock(), [LINES_ID], windowBeats, 0);
+    const held = pauseNliClock(playing, timelineSpanMs(windowBeats) + 100);
+    expect(evaluateClock(held, 0)).toMatchObject({ mode: "hold", clock: null });
+    const holdHtml = renderNliTimelineTransport(held, { displayBeats: windowBeats });
+    expect(holdHtml).toMatch(/class="nli-tl-clock"[^>]*>06:41</);
+    expect(holdHtml).not.toContain("00:00");
+
+    const endedHtml = renderNliTimelineTransport(endNliClock(playing), { displayBeats: windowBeats });
+    expect(endedHtml).toMatch(/class="nli-tl-clock"[^>]*>06:41</);
+    expect(endedHtml).not.toContain("00:00");
+  });
+
+  test("rest-of-day natural completion keeps the last story minute on the remote clock, not 00:00", () => {
+    const beats = [389, 395, 400, 410, 740];
+    const playing = playNliClock(idleNliClock(), [LINES_ID], beats, 0, { leadInMinutes: 402 });
+    const html = renderNliTimelineTransport(endNliClock(playing), { displayBeats: beats });
+    expect(html).toMatch(/class="nli-tl-clock"[^>]*>12:20</);
+    expect(html).not.toContain("00:00");
   });
 
   test("disabled Nova slider is omitted from the tab order", () => {
