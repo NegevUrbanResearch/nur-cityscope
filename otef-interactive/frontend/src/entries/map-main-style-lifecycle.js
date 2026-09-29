@@ -20,6 +20,7 @@ export function installGisStyleReload({ map, refreshLayers, personVisual, narrat
     await refreshLayers({
       groupsOverride: typeof getLayerGroups === "function" ? getLayerGroups() : undefined,
       syncFlow: false,
+      reopenGate: true,
       isCurrent,
     });
     if (coordinators.get(map) !== record || !isCurrent()) return;

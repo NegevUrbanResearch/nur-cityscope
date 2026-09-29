@@ -17,6 +17,8 @@ vi.mock("../../frontend/src/projection/projection-browser-route.js", () => ({ cr
 vi.mock("../../frontend/src/shared/OTEFDataContext.js", () => ({ default: new Proxy({}, { get: () => rig.live }) }));
 
 import { bootProjectionClockPreview } from "../../frontend/src/projection/projection-clock-preview.js";
+import { getLayerLifecycleRuntime } from "../../frontend/src/shared/layer-lifecycle-fade.js";
+import { releaseProjectionModelImage, syncProjectionModelImage } from "../../frontend/src/projection/projection-model-image.js";
 import { DEFAULT_PROJECTION_CONFIG } from "../../frontend/src/shared/projection-config-schema.js";
 import { HOME_CUE } from "../../frontend/src/remote/nli-staff-script.js";
 
@@ -155,6 +157,65 @@ test("a superseded legend rejection cannot erase a rendered request or schedule 
   expect(messages("otef_clock_preview_error")).toEqual([]);
   rig.surface.draw();
   expect(draws.at(-1).map((item) => item.id)).toContain("legend");
+});
+
+test("home preview snaps the model with CSS transitions disabled", async () => {
+  dispose = await bootProjectionClockPreview({ window, document, fetchImpl });
+  const image = document.getElementById("displayedImage");
+  expect(image.style.opacity).toBe("0");
+  expect(image.style.transition).toBe("none");
+});
+
+test("preview disposal and style reset leave no model draw callbacks", async () => {
+  dispose = await bootProjectionClockPreview({ window, document, fetchImpl });
+  let time = 0;
+  let frame = null;
+  const hooks = {
+    now: () => time,
+    requestFrame(callback) { frame = { callback }; return 1; },
+    cancelFrame() { frame = null; },
+    setTimer() { return 1; },
+    clearTimer() {},
+  };
+  getLayerLifecycleRuntime(rig.map)?.dispose();
+  const runtime = getLayerLifecycleRuntime(rig.map, hooks);
+  const image = document.getElementById("displayedImage");
+  const requestDraw = vi.fn();
+  const readyNow = ({ ready }) => { ready(); };
+  runtime.setDesiredIds(["projector_base.model_base"], { durationMs: 600 });
+  syncProjectionModelImage({
+    map: rig.map,
+    imageEl: image,
+    layerGroups: [{ id: "projector_base", enabled: true, layers: [{ id: "model_base", enabled: true }] }],
+    modelInfo: { durationMs: 600, fromSlideshowTick: false },
+    requestDraw,
+    subscribeReady: readyNow,
+  });
+  runtime.commitBatch();
+  time = 300;
+  frame.callback(time);
+  expect(requestDraw).toHaveBeenCalled();
+  const calls = requestDraw.mock.calls.length;
+  image.style.opacity = "";
+  image.style.transition = "";
+  releaseProjectionModelImage(rig.map);
+  time = 450;
+  frame?.callback(time);
+  expect(requestDraw).toHaveBeenCalledTimes(calls);
+  runtime.setDesiredIds(["projector_base.model_base"], { durationMs: 600 });
+  syncProjectionModelImage({
+    map: rig.map,
+    imageEl: image,
+    layerGroups: [{ id: "projector_base", enabled: true, layers: [{ id: "model_base", enabled: true }] }],
+    modelInfo: { durationMs: 600, fromSlideshowTick: false },
+    requestDraw,
+    subscribeReady: readyNow,
+  });
+  runtime.commitBatch();
+  await dispose();
+  time = 600;
+  frame?.callback(time);
+  expect(requestDraw).toHaveBeenCalledTimes(calls);
 });
 
 test("disposes bridge, map, adapters and asset abort signal on unload", async () => {

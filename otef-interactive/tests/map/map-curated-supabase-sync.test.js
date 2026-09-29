@@ -103,7 +103,9 @@ describe("syncCuratedMapLayersAfterSupabasePull debounce merge", () => {
     await Promise.all([p1, p2]);
 
     expect(reloadCuratedOnMap).toHaveBeenCalledTimes(1);
-    expect(reloadCuratedOnMap).toHaveBeenCalledWith();
+    expect(reloadCuratedOnMap).toHaveBeenCalledWith(expect.objectContaining({
+      reopenGate: true,
+    }));
   });
 
   it("forces a full curated reload when a later call omits affected ids", async () => {
@@ -125,6 +127,8 @@ describe("syncCuratedMapLayersAfterSupabasePull debounce merge", () => {
     await Promise.all([p1, p2]);
 
     expect(reloadCuratedOnMap).toHaveBeenCalledTimes(1);
-    expect(reloadCuratedOnMap).toHaveBeenCalledWith();
+    expect(reloadCuratedOnMap).toHaveBeenCalledWith(expect.objectContaining({
+      reopenGate: true,
+    }));
   });
 });

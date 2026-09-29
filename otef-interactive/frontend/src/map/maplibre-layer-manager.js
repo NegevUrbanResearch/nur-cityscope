@@ -14,6 +14,9 @@ import {
   INVESTIGATION_LINES_FULL_ID,
   INVESTIGATION_POLYGONS_FULL_ID,
 } from "../shared/nli-investigation-beats.js";
+import { getLayerLifecycleRuntime, resolveLayerFadeMs } from "../shared/layer-lifecycle-fade.js";
+import { opacityChannelsForLayerType } from "../shared/layer-opacity-expression.js";
+import { forgetPeopleFocusLayers } from "../shared/nli-people-focus-presentation.js";
 
 const TIMELINE_RENDERER_FULL_IDS = new Set([
   INVESTIGATION_POLYGONS_FULL_ID,
@@ -141,6 +144,7 @@ export async function fadeOutAndRemoveEnabledFullIds(
   transitionMs,
   layerStyleOptions,
 ) {
+  if (map) handoffLiveRuntime(map);
   if (!map || !Array.isArray(fullIds) || fullIds.length === 0) {
     return;
   }
@@ -235,6 +239,7 @@ export async function fadeOutAndRemoveEnabledFullIds(
  *
  */
 export function beginSlideshowStage(map, layerGroups, layerStyleOptions) {
+  if (map) handoffLiveRuntime(map);
   const base = layerStyleOptions && typeof layerStyleOptions === "object" ? { ...layerStyleOptions } : {};
   const prevTransition =
     base.transition && typeof base.transition === "object" ? { ...base.transition } : {};
@@ -417,6 +422,8 @@ function getOrCreateMapState(map) {
       hatchPatternRefCounts: new Map(), // patternId -> number
       ownedImageFactories: new Map(), // imageId -> { create, options }
       missingImageListener: null,
+      lifecycleDesiredIds: new Set(),
+      lifecycleBoundFullIds: new Set(),
     };
     mapStateByMap.set(map, state);
   }
@@ -496,9 +503,192 @@ export function getEnabledMapFullLayerIds(layerGroups) {
   return enabled;
 }
 
+function isCuratedManagedFullId(fullId) {
+  return fullId === "curated" || fullId.startsWith("curated.") || fullId.startsWith("curated__");
+}
+
+function matchesCuratedPrefix(candidate, prefix) {
+  return candidate === prefix || candidate.startsWith(`${prefix}__`);
+}
+
+function sameIdSet(left, right) {
+  if (!left || !right || left.size !== right.size) return false;
+  for (const id of left) {
+    if (!right.has(id)) return false;
+  }
+  return true;
+}
+
+function registryFullIds(enabled) {
+  const ids = [];
+  for (const id of enabled || []) {
+    if (!isCuratedManagedFullId(id)) ids.push(id);
+  }
+  return ids;
+}
+
+function removeManagedFullId(map, fullId) {
+  const state = mapStateByMap.get(map);
+  if (!state) return;
+  if (state.loadedLayerIds.has(fullId) || state.loadedSources.has(fullId)) {
+    removeFullIdFromMap(map, fullId, state);
+  }
+  state.lifecycleBoundFullIds.delete(fullId);
+}
+
+function bindRegistrySourceReady(map, sourceId) {
+  return ({ ready }) => {
+    if (typeof map.isSourceLoaded !== "function" || map.isSourceLoaded(sourceId)) {
+      ready();
+      return undefined;
+    }
+    const onSourceData = (event) => {
+      if (event?.sourceId && event.sourceId !== sourceId) return;
+      if (typeof map.isSourceLoaded === "function" && !map.isSourceLoaded(sourceId)) return;
+      map.off?.("sourcedata", onSourceData);
+      ready();
+    };
+    map.on?.("sourcedata", onSourceData);
+    return () => map.off?.("sourcedata", onSourceData);
+  };
+}
+
+function lifecycleBindings(map, fullId, sourceId) {
+  return {
+    onTeardown: () => removeManagedFullId(map, fullId),
+    subscribeReady: bindRegistrySourceReady(map, sourceId),
+  };
+}
+
+function liveFadeDuration(map, layerStyleOptions) {
+  if (layerStyleOptions?.lifecycle?.joinBatch === true) {
+    const pending = getLayerLifecycleRuntime(map)?.getPendingBatch();
+    return pending && pending.durationMs > 0 ? pending.durationMs : 0;
+  }
+  return resolveLayerFadeMs(layerStyleOptions);
+}
+
+function handoffLiveRuntime(map) {
+  const state = mapStateByMap.get(map);
+  if (!state || state.lifecycleBoundFullIds.size === 0) return;
+  const runtime = getLayerLifecycleRuntime(map);
+  runtime.setDesiredIds([...state.lifecycleDesiredIds], { durationMs: 0 });
+  runtime.commitBatch();
+  runtime.dispose();
+  state.lifecycleDesiredIds = new Set();
+  state.lifecycleBoundFullIds = new Set();
+}
+
+function settleLiveOwnership(map, enabledFullIds) {
+  const state = mapStateByMap.get(map);
+  if (!state || state.lifecycleBoundFullIds.size === 0) return;
+  const runtime = getLayerLifecycleRuntime(map);
+  const enabled = enabledFullIds instanceof Set ? enabledFullIds : new Set(enabledFullIds);
+  const next = new Set(registryFullIds(enabled));
+  for (const id of enabled) {
+    if (isCuratedManagedFullId(id)) next.add(id);
+  }
+  for (const id of runtime.getDesiredIds()) {
+    if (next.has(id) || isCuratedManagedFullId(id)) continue;
+    if (state.loadedLayerIds.has(id) || state.loadedSources.has(id)) continue;
+    next.add(id);
+  }
+  const settled = [...next];
+  runtime.setDesiredIds(settled, { durationMs: 0 });
+  runtime.commitBatch();
+  state.lifecycleDesiredIds = new Set(registryFullIds(enabled));
+}
+
+function paintSnapshot(map, layerId, type) {
+  const paint = {};
+  const layer = typeof map.getLayer === "function" ? map.getLayer(layerId) : null;
+  for (const property of opacityChannelsForLayerType(type)) {
+    let value;
+    try {
+      value = map.getPaintProperty?.(layerId, property);
+    } catch {
+      continue;
+    }
+    if (value !== undefined) paint[property] = value;
+    const transition = layer?.paint?.[`${property}-transition`];
+    if (transition !== undefined) paint[`${property}-transition`] = transition;
+  }
+  return paint;
+}
+
+function adoptMountedIntoPending(map, state) {
+  const runtime = getLayerLifecycleRuntime(map);
+  const pending = runtime?.getPendingBatch?.();
+  if (!pending || pending.sealed || pending.durationMs <= 0) return;
+  for (const fullId of state.loadedLayerIds.keys()) {
+    if (isCuratedManagedFullId(fullId) || state.lifecycleBoundFullIds.has(fullId)) continue;
+    const storedSource = state.loadedSources.get(fullId);
+    const sourceId = Array.isArray(storedSource) ? storedSource[0] : storedSource;
+    let staged = false;
+    for (const layerId of state.loadedLayerIds.get(fullId) || []) {
+      const layer = map.getLayer?.(layerId);
+      const type = layer?.type;
+      if (!type) continue;
+      runtime.stageMapLayer(fullId, {
+        id: layerId,
+        type,
+        source: fullId,
+        paint: paintSnapshot(map, layerId, type),
+      }, {
+        ...lifecycleBindings(map, fullId, sourceId || fullId),
+        adoptVisible: true,
+      });
+      staged = true;
+    }
+    if (staged) state.lifecycleBoundFullIds.add(fullId);
+  }
+}
+
+function adoptMountedLayers(map, state) {
+  if (state.lifecycleBoundFullIds.size > 0) return;
+  const ids = [];
+  for (const fullId of state.loadedLayerIds.keys()) {
+    if (isCuratedManagedFullId(fullId) || state.lifecycleBoundFullIds.has(fullId)) continue;
+    ids.push(fullId);
+  }
+  if (ids.length === 0) return;
+  const runtime = getLayerLifecycleRuntime(map);
+  runtime.setDesiredIds(ids, { durationMs: 0 });
+  for (const fullId of ids) {
+    const storedSource = state.loadedSources.get(fullId);
+    const sourceId = Array.isArray(storedSource) ? storedSource[0] : storedSource;
+    for (const layerId of state.loadedLayerIds.get(fullId) || []) {
+      const layer = map.getLayer?.(layerId);
+      const type = layer?.type;
+      if (!type) continue;
+      runtime.stageMapLayer(fullId, {
+        id: layerId,
+        type,
+        source: fullId,
+        paint: paintSnapshot(map, layerId, type),
+      }, lifecycleBindings(map, fullId, sourceId || fullId));
+    }
+    runtime.markMemberReady(fullId);
+    state.lifecycleBoundFullIds.add(fullId);
+  }
+  runtime.commitBatch();
+  state.lifecycleDesiredIds = new Set(ids);
+}
+
+function cancelLifecycleWork(map) {
+  const state = mapStateByMap.get(map);
+  if (!state) return;
+  if (state.lifecycleBoundFullIds.size > 0) {
+    getLayerLifecycleRuntime(map)?.dispose();
+  }
+  state.lifecycleDesiredIds = new Set();
+  state.lifecycleBoundFullIds = new Set();
+}
+
 function removeFullIdFromMap(map, fullId, state) {
   const { loadedLayerIds, loadedSources } = state;
   const mlLayerIds = loadedLayerIds.get(fullId) || [];
+  forgetPeopleFocusLayers(map, mlLayerIds);
   for (const layerId of mlLayerIds) {
     if (map.getLayer(layerId)) {
       map.removeLayer(layerId);
@@ -787,10 +977,10 @@ export function removeCuratedLayersByPrefix(map, prefix, layerStyleOptions) {
   const retainedLayerIds = new Set();
   const retainedSourceIds = new Set();
   for (const id of state.loadedLayerIds.keys()) {
-    if (id.startsWith(prefix)) toRemove.push(id);
+    if (matchesCuratedPrefix(id, prefix)) toRemove.push(id);
   }
   for (const id of state.loadedSources.keys()) {
-    if (id.startsWith(prefix) && !toRemove.includes(id)) toRemove.push(id);
+    if (matchesCuratedPrefix(id, prefix) && !toRemove.includes(id)) toRemove.push(id);
   }
   for (const id of toRemove) {
     if (!hideRetainedFullId(map, id, state, lifecycleOptions)) {
@@ -810,12 +1000,12 @@ export function removeCuratedLayersByPrefix(map, prefix, layerStyleOptions) {
     const style = map.getStyle();
     if (style) {
       for (const layer of (style.layers || [])) {
-        if (layer.id && layer.id.startsWith(prefix) && !retainedLayerIds.has(layer.id)) {
+        if (layer.id && matchesCuratedPrefix(layer.id, prefix) && !retainedLayerIds.has(layer.id)) {
           if (map.getLayer(layer.id)) map.removeLayer(layer.id);
         }
       }
       for (const srcId of Object.keys(style.sources || {})) {
-        if (srcId.startsWith(prefix) && !retainedSourceIds.has(srcId)) {
+        if (matchesCuratedPrefix(srcId, prefix) && !retainedSourceIds.has(srcId)) {
           if (map.getSource(srcId)) map.removeSource(srcId);
         }
       }
@@ -857,6 +1047,8 @@ function rollbackFullIdAdd(map, fullId, sourceId, state, addedLayerIds, register
     state.hatchPatternIdsByFullId.set(fullId, [...registeredPatternIds]);
     releaseHatchPatternsForFullId(map, fullId, state);
   }
+  getLayerLifecycleRuntime(map)?.invalidateMember(fullId);
+  state.lifecycleBoundFullIds.delete(fullId);
 }
 
 /**
@@ -1000,6 +1192,14 @@ function addLayerToMap(map, fullId, state, layerStyleOptions, stagedMeta) {
       if (Object.keys(targetOpacity).length > 0) {
         pendingStageTargets[stagedLayerDef.id] = targetOpacity;
       }
+    } else if (liveFadeDuration(map, layerStyleOptions) > 0) {
+      const { stagedLayerDef } = getLayerLifecycleRuntime(map).stageMapLayer(
+        fullId,
+        layerDef,
+        lifecycleBindings(map, fullId, sourceId),
+      );
+      defToAdd = stagedLayerDef;
+      state.lifecycleBoundFullIds.add(fullId);
     }
 
     try {
@@ -1051,6 +1251,10 @@ function syncLayerGroupsToMap(map, layerGroups, layerStyleOptions, stagedMeta) {
 
   for (const fullId of trackedFullIds) {
     if (!enabledFullIds.has(fullId)) {
+      if (isCuratedManagedFullId(fullId)) continue;
+      if (liveFadeDuration(map, layerStyleOptions) > 0 && state.lifecycleBoundFullIds.has(fullId)) {
+        continue;
+      }
       if (!hideRetainedFullId(map, fullId, state, lifecycleOptions)) {
         removeFullIdFromMap(map, fullId, state);
       }
@@ -1082,7 +1286,29 @@ function syncLayerGroupsToMap(map, layerGroups, layerStyleOptions, stagedMeta) {
 }
 
 export function applyLayerGroupsToMap(map, layerGroups, layerStyleOptions) {
+  if (!map) return;
+  const joinBatch = layerStyleOptions?.lifecycle?.joinBatch === true;
+  const durationMs = liveFadeDuration(map, layerStyleOptions);
+  const state = getOrCreateMapState(map);
+  const enabledFullIds = getEnabledMapFullLayerIds(layerGroups);
+  if (!joinBatch && durationMs <= 0) {
+    settleLiveOwnership(map, enabledFullIds);
+    syncLayerGroupsToMap(map, layerGroups, layerStyleOptions, null);
+    return;
+  }
+  const runtime = getLayerLifecycleRuntime(map);
+  const next = new Set(registryFullIds(enabledFullIds));
+  if (joinBatch) {
+    if (durationMs > 0) adoptMountedIntoPending(map, state);
+    state.lifecycleDesiredIds = next;
+  } else {
+    adoptMountedLayers(map, state);
+    const sameSet = sameIdSet(state.lifecycleDesiredIds, next);
+    runtime.setDesiredIds([...next], { durationMs, sameSet });
+    state.lifecycleDesiredIds = next;
+  }
   syncLayerGroupsToMap(map, layerGroups, layerStyleOptions, null);
+  if (!joinBatch) runtime.commitBatch();
 }
 
 /** Apply the synchronous renderer-ownership visibility rule for authored NLI bases. */
@@ -1119,6 +1345,7 @@ export function syncTimelineBaseLayerVisibility(map, { suppressedFullIds = [], e
 }
 
 export function clearAllLayers(map) {
+  cancelLifecycleWork(map);
   const state = getOrCreateMapState(map);
   const trackedFullIds = new Set([
     ...state.loadedLayerIds.keys(),

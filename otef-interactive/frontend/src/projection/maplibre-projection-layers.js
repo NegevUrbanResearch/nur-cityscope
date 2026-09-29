@@ -20,10 +20,13 @@ import { CoordUtils } from "../map-utils/coordinate-utils.js";
 import { applyLayerGroupsToMap } from "../map/maplibre-layer-manager.js";
 import { formatFullLayerIdFromGroupLayer } from "../shared/layer-state-helper.js";
 import layerRegistry from "../shared/layer-registry.js";
+import { getLayerLifecycleRuntime, resolveLayerFadeMs } from "../shared/layer-lifecycle-fade.js";
 
 const wmtsStateByMap = new WeakMap(); // map -> Set<fullLayerId>
 const wmtsPendingIncludeByMap = new WeakMap(); // map -> Set<fullLayerId> (mask include path, async)
 const wmtsMaskEpochByMap = new WeakMap(); // map -> Map<fullId, number>
+const wmtsDesiredByMap = new WeakMap(); // map -> Set<fullLayerId>
+const wmtsPendingSignatureByMap = new WeakMap(); // map -> Map<fullId, string>
 
 function asArrayLayerGroups(layerGroups) {
   if (Array.isArray(layerGroups)) return layerGroups;
@@ -85,6 +88,110 @@ function bumpWmtsMaskEpoch(map, fullId) {
 
 function getWmtsMaskEpoch(map, fullId) {
   return wmtsMaskEpochByMap.get(map)?.get(fullId) || 0;
+}
+
+function fadeJoin(options) {
+  return options?.lifecycle?.joinBatch === true && resolveLayerFadeMs(options) > 0;
+}
+
+function wmtsSignature(layerConfig, maskCfg) {
+  return JSON.stringify({
+    url: layerConfig?.wmts?.urlTemplate || "",
+    opacity: layerConfig?.wmts?.opacity ?? 1,
+    mask: maskCfg ? `${maskCfg.type || ""}:${maskCfg.file || ""}` : "",
+  });
+}
+
+function pendingSignatures(map) {
+  let table = wmtsPendingSignatureByMap.get(map);
+  if (!table) {
+    table = new Map();
+    wmtsPendingSignatureByMap.set(map, table);
+  }
+  return table;
+}
+
+function mapIsLive(map) {
+  try {
+    return !!map && typeof map.getLayer === "function" && map.removed !== true;
+  } catch {
+    return false;
+  }
+}
+
+function wmtsIsDesired(map, fullId) {
+  const desired = wmtsDesiredByMap.get(map);
+  return !desired || desired.has(fullId);
+}
+
+function joinedLayerStyleOptions(options) {
+  const layerStyleOptions = options && typeof options === "object" ? { ...options } : {};
+  if (layerStyleOptions.lifecycle?.joinBatch !== true) return layerStyleOptions;
+  const durationMs = resolveLayerFadeMs(layerStyleOptions);
+  if (durationMs <= 0) return layerStyleOptions;
+  return {
+    ...layerStyleOptions,
+    transition: { ...(layerStyleOptions.transition || {}), transitionMs: durationMs },
+  };
+}
+
+function rasterLayerDef(fullId, layerConfig) {
+  const sourceId = `wmts__${fullId}`;
+  return {
+    id: `${sourceId}__raster`,
+    type: "raster",
+    source: sourceId,
+    paint: { "raster-opacity": layerConfig.wmts.opacity ?? 1.0 },
+  };
+}
+
+function subscribeRasterReady(map, fullId, sourceId, epochAtStart, { ready }) {
+  const current = () => wmtsCommitIsCurrent(map, fullId, epochAtStart);
+  if (!current()) return undefined;
+  if (typeof map.isSourceLoaded !== "function" || map.isSourceLoaded(sourceId)) {
+    ready();
+    return undefined;
+  }
+  const onSourceData = (event) => {
+    if (!current()) {
+      map.off?.("sourcedata", onSourceData);
+      return;
+    }
+    if (event?.sourceId && event.sourceId !== sourceId) return;
+    if (!map.isSourceLoaded(sourceId)) return;
+    map.off?.("sourcedata", onSourceData);
+    ready();
+  };
+  map.on?.("sourcedata", onSourceData);
+  return () => map.off?.("sourcedata", onSourceData);
+}
+
+function stageRasterDef(map, fullId, layerDef, options, readiness = null) {
+  if (!fadeJoin(options)) return layerDef;
+  const { stagedLayerDef } = getLayerLifecycleRuntime(map).stageMapLayer(fullId, layerDef, {
+    onTeardown: () => removeWmtsMountedResources(map, fullId),
+    ...(readiness ? {
+      subscribeReady: (callbacks) => subscribeRasterReady(
+        map,
+        fullId,
+        readiness.sourceId,
+        readiness.epochAtStart,
+        callbacks,
+      ),
+    } : {}),
+  });
+  return stagedLayerDef;
+}
+
+function wmtsCommitIsCurrent(map, fullId, epochAtStart) {
+  if (!mapIsLive(map) || !wmtsIsDesired(map, fullId)) return false;
+  if (epochAtStart == null) return true;
+  return getWmtsMaskEpoch(map, fullId) === epochAtStart;
+}
+
+function failJoinedMember(map, fullId, epochAtStart, options) {
+  if (!fadeJoin(options) || !wmtsCommitIsCurrent(map, fullId, epochAtStart)) return;
+  getLayerLifecycleRuntime(map).markMemberFailed(fullId);
 }
 
 function resolveEnabledWmtsFullIds(layerGroups) {
@@ -191,7 +298,7 @@ function removeWmtsRasterOnly(map, fullId) {
   }
 }
 
-async function applyWmtsIncludeMaskFromRegistry(map, layerConfig, fullId, epochAtStart) {
+async function applyWmtsIncludeMaskFromRegistry(map, layerConfig, fullId, epochAtStart, options) {
   const state = getOrCreateWmtsState(map);
   const maskCfg = getResolvedMaskConfig(layerConfig, fullId);
   const url =
@@ -222,23 +329,18 @@ async function applyWmtsIncludeMaskFromRegistry(map, layerConfig, fullId, epochA
     }
   }
 
-  if (getWmtsMaskEpoch(map, fullId) !== epochAtStart) {
-    return;
-  }
+  if (!maskedResultIsCurrent(map, fullId, epochAtStart)) return;
 
   const sourceId = `wmts__${fullId}`;
-  const layerId = `${sourceId}__raster`;
-
   removeWmtsRasterOnly(map, fullId);
 
-  if (getWmtsMaskEpoch(map, fullId) !== epochAtStart) {
-    return;
-  }
+  if (!maskedResultIsCurrent(map, fullId, epochAtStart)) return;
 
   if (!bounds) {
     console.warn(
       `[maplibre-projection-layers] Masked WMTS ${fullId} omitted (fail closed): ${failReason || "unknown"}.`,
     );
+    failJoinedMember(map, fullId, epochAtStart, options);
     return;
   }
 
@@ -253,24 +355,27 @@ async function applyWmtsIncludeMaskFromRegistry(map, layerConfig, fullId, epochA
     // For mask.exclude, `bounds` is still the mask geometry bbox only (see file header): strongest
     // practical cap under MapLibre without inverse raster clip—not a polygon hole.
     map.addSource(sourceId, spec);
-    if (getWmtsMaskEpoch(map, fullId) !== epochAtStart) {
+    if (!maskedResultIsCurrent(map, fullId, epochAtStart)) {
       removeWmtsRasterOnly(map, fullId);
       return;
     }
-    map.addLayer({
-      id: layerId,
-      type: "raster",
-      source: sourceId,
-      paint: {
-        "raster-opacity": layerConfig.wmts.opacity ?? 1.0,
-      },
-    });
+    map.addLayer(stageRasterDef(map, fullId, rasterLayerDef(fullId, layerConfig), options, {
+      sourceId,
+      epochAtStart,
+    }));
     state.add(fullId);
   } catch (error) {
     console.warn(`[maplibre-projection-layers] Failed to add masked WMTS (include) ${fullId}`, error);
     removeWmtsRasterOnly(map, fullId);
     state.delete(fullId);
+    failJoinedMember(map, fullId, epochAtStart, options);
   }
+}
+
+function maskedResultIsCurrent(map, fullId, epochAtStart) {
+  return mapIsLive(map)
+    && getWmtsMaskEpoch(map, fullId) === epochAtStart
+    && wmtsIsDesired(map, fullId);
 }
 
 export function syncProjectionLayers(map, layerGroups, options = {}) {
@@ -280,13 +385,11 @@ export function syncProjectionLayers(map, layerGroups, options = {}) {
   const groupsWithoutWmts = cloneGroupsWithWmtsDisabled(groups);
   const opts = options && typeof options === "object" ? options : {};
   const { transition, suppressCanvasNameSymbols = false, ...restLayerStyleOptions } = opts;
-  const layerStyleOptions = {
+  const layerStyleOptions = joinedLayerStyleOptions({
     applyProjectionHatchPresentation: true,
     ...restLayerStyleOptions,
-  };
-  if (transition && typeof transition === "object") {
-    layerStyleOptions.transition = { ...transition };
-  }
+    ...(transition && typeof transition === "object" ? { transition: { ...transition } } : {}),
+  });
   applyLayerGroupsToMap(map, groupsWithoutWmts, layerStyleOptions);
   if (suppressCanvasNameSymbols) for (const id of ['nli__people_names__labels', 'nli-name-field-labels', 'nli-name-field-selected']) {
     if (map.getLayer?.(id)) map.setLayoutProperty(id, 'visibility', 'none');
@@ -294,11 +397,12 @@ export function syncProjectionLayers(map, layerGroups, options = {}) {
 
   const wmtsState = getOrCreateWmtsState(map);
   const enabledWmts = resolveEnabledWmtsFullIds(groups);
+  wmtsDesiredByMap.set(map, new Set(enabledWmts));
 
   for (const fullId of enabledWmts) {
     const cfg = layerRegistry.getLayerConfig(fullId);
     if (cfg) {
-      addWmtsSource(map, cfg);
+      addWmtsSource(map, cfg, layerStyleOptions);
     }
   }
 
@@ -306,14 +410,13 @@ export function syncProjectionLayers(map, layerGroups, options = {}) {
   const tracked = new Set([...wmtsState, ...(pending || [])]);
   for (const fullId of tracked) {
     if (!enabledWmts.has(fullId)) {
-      removeWmtsSource(map, fullId);
+      removeWmtsSource(map, fullId, layerStyleOptions);
       wmtsState.delete(fullId);
-      removePendingInclude(map, fullId);
     }
   }
 }
 
-export function addWmtsSource(map, layerConfig) {
+export function addWmtsSource(map, layerConfig, options) {
   if (!map || !layerConfig?.wmts) return;
 
   const fullId = layerConfig.fullId || `${layerConfig.groupId}.${layerConfig.id}`;
@@ -321,29 +424,35 @@ export function addWmtsSource(map, layerConfig) {
   const layerId = `${sourceId}__raster`;
   const state = getOrCreateWmtsState(map);
   const maskCfg = getResolvedMaskConfig(layerConfig, fullId);
+  const joined = fadeJoin(options);
 
   const sourceExistedAtStart = !!map.getSource(sourceId);
   const layerExistedAtStart = !!map.getLayer(layerId);
 
-  if (maskCfg) {
-    if (sourceExistedAtStart && layerExistedAtStart) {
+  if (sourceExistedAtStart && layerExistedAtStart) {
+    if (!joined) {
       map.setPaintProperty(layerId, "raster-opacity", layerConfig.wmts.opacity ?? 1.0);
       map.setLayoutProperty(layerId, "visibility", "visible");
-      state.add(fullId);
-      return;
     }
-    addPendingInclude(map, fullId);
-    const epoch = bumpWmtsMaskEpoch(map, fullId);
-    void applyWmtsIncludeMaskFromRegistry(map, layerConfig, fullId, epoch).finally(() => {
-      removePendingInclude(map, fullId);
-    });
+    state.add(fullId);
     return;
   }
 
-  if (sourceExistedAtStart && layerExistedAtStart) {
-    map.setPaintProperty(layerId, "raster-opacity", layerConfig.wmts.opacity ?? 1.0);
-    map.setLayoutProperty(layerId, "visibility", "visible");
-    state.add(fullId);
+  if (maskCfg) {
+    const signature = wmtsSignature(layerConfig, maskCfg);
+    if (wmtsPendingIncludeByMap.get(map)?.has(fullId) && pendingSignatures(map).get(fullId) === signature) {
+      return;
+    }
+    addPendingInclude(map, fullId);
+    pendingSignatures(map).set(fullId, signature);
+    const epoch = bumpWmtsMaskEpoch(map, fullId);
+    if (joined) stageRasterDef(map, fullId, rasterLayerDef(fullId, layerConfig), options);
+    void applyWmtsIncludeMaskFromRegistry(map, layerConfig, fullId, epoch, options).finally(() => {
+      if (getWmtsMaskEpoch(map, fullId) === epoch) {
+        removePendingInclude(map, fullId);
+        pendingSignatures(map).delete(fullId);
+      }
+    });
     return;
   }
 
@@ -357,14 +466,10 @@ export function addWmtsSource(map, layerConfig) {
       });
     }
     if (!layerExistedAtStart) {
-      map.addLayer({
-        id: layerId,
-        type: "raster",
-        source: sourceId,
-        paint: {
-          "raster-opacity": layerConfig.wmts.opacity ?? 1.0,
-        },
-      });
+      map.addLayer(stageRasterDef(map, fullId, rasterLayerDef(fullId, layerConfig), options, {
+        sourceId,
+        epochAtStart: null,
+      }));
     }
     state.add(fullId);
   } catch (error) {
@@ -376,18 +481,35 @@ export function addWmtsSource(map, layerConfig) {
       map.removeSource(sourceId);
     }
     state.delete(fullId);
+    failJoinedMember(map, fullId, null, options);
   }
 }
 
-function removeWmtsSource(map, fullId) {
-  bumpWmtsMaskEpoch(map, fullId);
+function removeWmtsMountedResources(map, fullId) {
   const sourceId = `wmts__${fullId}`;
   const layerId = `${sourceId}__raster`;
-  if (map.getLayer(layerId)) {
-    map.removeLayer(layerId);
-  }
-  if (map.getSource(sourceId)) {
-    map.removeSource(sourceId);
-  }
+  if (map.getLayer?.(layerId)) map.removeLayer(layerId);
+  if (map.getSource?.(sourceId)) map.removeSource(sourceId);
+}
+
+function removeWmtsSource(map, fullId, options) {
+  bumpWmtsMaskEpoch(map, fullId);
+  pendingSignatures(map).delete(fullId);
   removePendingInclude(map, fullId);
+  const layerId = `wmts__${fullId}__raster`;
+  if (fadeJoin(options) && map.getLayer?.(layerId)) {
+    getLayerLifecycleRuntime(map).stageMapLayer(fullId, {
+      id: layerId,
+      type: "raster",
+      source: `wmts__${fullId}`,
+      paint: {
+        "raster-opacity": map.getPaintProperty?.(layerId, "raster-opacity") ?? 1,
+      },
+    }, {
+      onTeardown: () => removeWmtsMountedResources(map, fullId),
+      adoptVisible: true,
+    });
+    return;
+  }
+  removeWmtsMountedResources(map, fullId);
 }

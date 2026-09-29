@@ -69,6 +69,7 @@ export class FakeMapLibreMap {
       },
     };
     this._sources.set(id, source);
+    if (spec?.type === "geojson") this._sourceLoaded.set(id, true);
     this._calls.push({ method: "addSource", id, spec });
   }
 
@@ -220,7 +221,10 @@ export class FakeMapLibreMap {
   }
 
   isSourceLoaded(id) {
-    return this._sourceLoaded.get(id) === true;
+    if (this._sourceLoaded.has(id)) return this._sourceLoaded.get(id) === true;
+    // Curated GeoJSON and projection WMTS tests add sources without an explicit
+    // loaded flag. GIS basemap ids stay unloaded until setSourceLoaded.
+    return typeof id === "string" && (id.startsWith("curated.") || id.startsWith("wmts__"));
   }
 
   setSourceLoaded(id, loaded) {

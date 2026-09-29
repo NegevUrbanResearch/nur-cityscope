@@ -4,6 +4,8 @@ import MapProjectionConfig from "../shared/map-projection-config.js";
 import { HOME_CUE } from "../remote/nli-staff-script.js";
 import { idleNliClock } from "../shared/nli-investigation-clock.js";
 import { resolveMotionMode } from "../shared/reduced-motion.js";
+import { getLayerLifecycleRuntime, resolveLayerFadeMs } from "../shared/layer-lifecycle-fade.js";
+import { releaseProjectionModelImage, syncProjectionModelImage } from "./projection-model-image.js";
 import { validateProjectionConfig } from "../shared/projection-config-schema.js";
 import { createProjectionMap } from "./maplibre-projection.js";
 import { syncProjectionLayers } from "./maplibre-projection-layers.js";
@@ -97,6 +99,10 @@ export async function bootProjectionClockPreview({ window: win, document: doc, f
     win.removeEventListener("pagehide", dispose);
     win.removeEventListener("beforeunload", dispose);
     if (onMapRender) map?.off?.("render", onMapRender);
+    if (map) {
+      releaseProjectionModelImage(map);
+      getLayerLifecycleRuntime(map)?.dispose();
+    }
     legend?.dispose();
     captionAdapter?.dispose();
     legendAdapter?.dispose();
@@ -126,7 +132,8 @@ export async function bootProjectionClockPreview({ window: win, document: doc, f
     legendElement.style.visibility = "hidden";
     image.__otefProjectionImage = geometry.image;
     image.src = bounds.model_image || layerRegistry.getLayerDataUrl("projector_base.model_base");
-    image.style.opacity = groups.find((group) => group.id === "projector_base")?.layers?.some((layer) => layer.id === "model_base" && layer.enabled) ? "1" : "0";
+    image.style.transition = "none";
+    image.style.opacity = "0";
     if (doc.fonts?.load) { await doc.fonts.load("11px 'Guttman Hatzvi'"); alive(); }
     map = createProjectionMap("projectionMap", geometry.model, { pixelRatio: 1, canvasContextAttributes: { preserveDrawingBuffer: true } });
     await waitForMap(map, "load", assets.signal); alive();
@@ -168,6 +175,13 @@ export async function bootProjectionClockPreview({ window: win, document: doc, f
       fetchImpl, signal: assets.signal, initialConfig: config, search: win.location.search });
     if (disposed) { surface.dispose(); return dispose; }
     browserSurface = surface;
+    syncProjectionModelImage({
+      map,
+      imageEl: image,
+      layerGroups: groups,
+      modelInfo: { durationMs: resolveLayerFadeMs(), fromSlideshowTick: false },
+      requestDraw: () => { if (!disposed) browserSurface?.requestDraw(); },
+    });
     if (browserSurface.applyConfig(config) === false) throw new Error("Projection preview rejected acknowledged calibration");
     if (!browserSurface.draw()) throw new Error("Projection preview draw failed");
     onMapRender = () => { if (!disposed) browserSurface.requestDraw(); };

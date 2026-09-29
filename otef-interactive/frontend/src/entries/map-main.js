@@ -423,8 +423,8 @@ async function bootstrapMapRuntime() {
       ? layerGroups
       : Object.values(layerGroups || {});
     const initialGroups = filterGroupsForGisMap(gisDisplayGroups(rawInitialLayerGroups));
-    const applyGisLayerGroups = (groups) => {
-      applyLayerGroupsToMap(map, groups);
+    const applyGisLayerGroups = (groups, layerStyleOptions) => {
+      applyLayerGroupsToMap(map, groups, layerStyleOptions);
       applyNarrativePeopleFilter(map, OTEFDataContext.getNarrativeState?.()?.id ?? null);
       const selectedPid = OTEFDataContext.getPersonSelection?.()?.personId;
       if (selectedPid) applyPeopleFocusDim(map, selectedPid);
@@ -507,22 +507,6 @@ async function bootstrapMapRuntime() {
     );
 
     /**
-     * Collect enabled curated fullLayerIds from current layer groups.
-     * @param {Array} groups - filtered GIS layer groups
-     * @returns {string[]}
-     */
-    function collectEnabledCuratedIds(groups) {
-      const ids = [];
-      for (const group of groups || []) {
-        if (!group || !group.id || !group.id.startsWith("curated")) continue;
-        for (const layer of group.layers || []) {
-          if (layer && layer.enabled) ids.push(`${group.id}.${layer.id}`);
-        }
-      }
-      return ids;
-    }
-
-    /**
      * Resolve the MapLibre GL JS namespace for marker creation.
      * Prefers window.maplibregl (loaded via CDN or global); falls back to dynamic import.
      */
@@ -537,6 +521,7 @@ async function bootstrapMapRuntime() {
 
     const { refreshCuratedLayers } = createGisCuratedRefresh({
       map,
+      displayGate: curatedDisplay,
       getLayerGroups: () => OTEFDataContext.getLayerGroups(),
       displayGroups: gisDisplayGroups,
       filterGroups: filterGroupsForGisMap,
@@ -553,9 +538,6 @@ async function bootstrapMapRuntime() {
     // Initial curated load for current layerGroups state (raw groups preserve parking toggle row).
     await refreshCuratedLayers({
       groupsOverride: rawInitialLayerGroups,
-      isCurrent: curatedDisplay.begin(
-        collectEnabledCuratedIds(filterGroupsForGisMap(gisDisplayGroups(rawInitialLayerGroups))),
-      ),
     });
     narrativeController.apply(OTEFDataContext.getNarrativeState?.());
 
@@ -579,9 +561,6 @@ async function bootstrapMapRuntime() {
         syncContextFlowAnimations();
         void refreshCuratedLayers({
           groupsOverride: groups,
-          isCurrent: curatedDisplay.begin(
-            collectEnabledCuratedIds(filterGroupsForGisMap(gisDisplayGroups(groups))),
-          ),
         });
       }),
     );
@@ -599,11 +578,6 @@ async function bootstrapMapRuntime() {
             pullPayload: ev?.detail || {},
             reloadCuratedOnMap: (options = {}) => refreshCuratedLayers({
               ...options,
-              isCurrent: curatedDisplay.begin(
-                collectEnabledCuratedIds(filterGroupsForGisMap(gisDisplayGroups(
-                  options.groupsOverride ?? OTEFDataContext.getLayerGroups(),
-                ))),
-              ),
             }),
             applyLayerGroupsState: (groups) => {
               applyGisLayerGroups(filterGroupsForGisMap(gisDisplayGroups(groups)));

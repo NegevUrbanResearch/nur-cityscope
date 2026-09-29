@@ -31,6 +31,8 @@ import {
 import { idleNliClock } from "../shared/nli-investigation-clock.js";
 import { subscribeNliVideoPlayback } from "../shared/nli-video-playback-channel.js";
 import { resolveMotionMode } from "../shared/reduced-motion.js";
+import { getLayerLifecycleRuntime } from "../shared/layer-lifecycle-fade.js";
+import { projectionModelSubscribeReady, releaseProjectionModelImage, syncProjectionModelImage } from "../projection/projection-model-image.js";
 import { loadPeopleRuntime } from "../map/maplibre-person-selection.js";
 import { bindProjectionPersonHalo } from "../projection/projection-person-halo.js";
 import {
@@ -188,23 +190,6 @@ function resolveProjectionMapPixelRatio() {
   return undefined;
 }
 
-function updateModelBaseImageVisibility(layerGroups, modelImgEl) {
-  if (!modelImgEl) return;
-  const groups = Array.isArray(layerGroups)
-    ? layerGroups
-    : layerGroups && typeof layerGroups === "object"
-      ? Object.values(layerGroups)
-      : [];
-  const projectorBase = groups.find((g) => g?.id === "projector_base");
-  if (!projectorBase || projectorBase.enabled === false) {
-    modelImgEl.style.opacity = "0";
-    return;
-  }
-  const modelLayer = (projectorBase.layers || []).find((l) => l?.id === "model_base");
-  const enabled = !!(modelLayer && modelLayer.enabled);
-  modelImgEl.style.opacity = enabled ? "1" : "0";
-}
-
 function toggleProjectionFullscreen() {
   const doc = window.document;
   const docElement = doc.documentElement;
@@ -346,7 +331,6 @@ async function bootstrapProjectionRuntime() {
       width: modelBoundsData.image_width,
       height: modelBoundsData.image_height,
     };
-    updateModelBaseImageVisibility(getEffectiveProjectionLayerGroups(), modelImgEl);
   }
 
   if (typeof document !== "undefined" && document.fonts && typeof document.fonts.load === "function") {
@@ -400,9 +384,15 @@ async function bootstrapProjectionRuntime() {
   let browserSurface = null;
   const imageReadiness = browserMode && modelImgEl ? createProjectionImageReadiness({
     imageEl: modelImgEl,
-    onReady: () => map.triggerRepaint?.(),
+    onReady: () => {
+      map.triggerRepaint?.();
+      getLayerLifecycleRuntime(map)?.markMemberReady("projector_base.model_base");
+    },
     onInvalidate: () => map.triggerRepaint?.(),
-    onError: (error) => visibleProjectionBrowserError(displayContainerEl, error),
+    onError: (error) => {
+      visibleProjectionBrowserError(displayContainerEl, error);
+      getLayerLifecycleRuntime(map)?.markMemberFailed("projector_base.model_base");
+    },
   }) : null;
   if (imageReadiness) registerDisposer(() => imageReadiness.dispose());
   if (modelImgEl && modelImageUrl) {
@@ -814,17 +804,6 @@ async function bootstrapProjectionRuntime() {
       return [];
     }
 
-    function collectEnabledCuratedIds(groups) {
-      const ids = [];
-      for (const group of groups || []) {
-        if (!group || !group.id || !group.id.startsWith("curated")) continue;
-        for (const layer of group.layers || []) {
-          if (layer && layer.enabled) ids.push(`${group.id}.${layer.id}`);
-        }
-      }
-      return ids;
-    }
-
     async function resolveMaplibregl() {
       if (typeof window !== "undefined" && window.maplibregl) return window.maplibregl;
       try {
@@ -841,10 +820,21 @@ async function bootstrapProjectionRuntime() {
       );
     const { applyProjectionRefresh } = createProjectionCuratedRefresh({
       map,
+      displayGate: projectionDisplay,
       isRuntimeAlive,
       getLayerGroups: getEffectiveProjectionLayerGroups,
       asLayerGroups: asLayerGroupsArray,
-      updateModelVisibility: (rawGroups) => updateModelBaseImageVisibility(rawGroups, modelImgEl),
+      updateModelVisibility: (rawGroups, modelInfo) => syncProjectionModelImage({
+        map,
+        imageEl: modelImgEl,
+        layerGroups: rawGroups,
+        modelInfo,
+        requestDraw: () => browserSurface?.requestDraw?.(),
+        sealBatch: false,
+        subscribeReady: imageReadiness
+          ? projectionModelSubscribeReady(modelImgEl, imageReadiness)
+          : undefined,
+      }),
       syncProjectionLayersWithNarrative,
       applyLabelHeading: applyStoredNliLabelHeading,
       nameFieldController,
@@ -859,12 +849,9 @@ async function bootstrapProjectionRuntime() {
     let projectionCuratedRefreshChain = Promise.resolve();
     const refreshProjectionCuratedLayers = (options = {}) => {
       const groups = options.groupsOverride ?? getEffectiveProjectionLayerGroups();
-      const isCurrent = typeof options.isCurrent === "function"
-        ? options.isCurrent
-        : projectionDisplay.begin(collectEnabledCuratedIds(asLayerGroupsArray(groups)));
       projectionCuratedRefreshChain = projectionCuratedRefreshChain
         .catch(() => {})
-        .then(() => applyProjectionRefresh({ ...options, isCurrent }));
+        .then(() => applyProjectionRefresh({ ...options, groupsOverride: groups }));
       return projectionCuratedRefreshChain;
     };
 
@@ -1166,18 +1153,22 @@ async function bootstrapProjectionRuntime() {
         const groups = getEffectiveProjectionLayerGroups();
         void applyProjectionRefresh({
           groupsOverride: groups,
-          isCurrent: projectionDisplay.begin(collectEnabledCuratedIds(asLayerGroupsArray(groups))),
         });
         void syncSettlementGlow();
       }),
     );
+    registerDisposer(() => {
+      releaseProjectionModelImage(map);
+      getLayerLifecycleRuntime(map)?.dispose();
+    });
     const refreshProjectionAfterStyleLoad = () => {
       if (!isRuntimeAlive()) return;
+      releaseProjectionModelImage(map);
       projectionDisplay.invalidateStyle();
       const groups = getEffectiveProjectionLayerGroups();
       void applyProjectionRefresh({
         groupsOverride: groups,
-        isCurrent: projectionDisplay.begin(collectEnabledCuratedIds(asLayerGroupsArray(groups))),
+        reopenGate: true,
       });
       void syncSettlementGlow();
     };

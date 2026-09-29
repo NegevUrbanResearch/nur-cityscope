@@ -33,6 +33,11 @@ import {
   addWmtsSource,
   syncProjectionLayers,
 } from "../../frontend/src/projection/maplibre-projection-layers.js";
+import {
+  LAYER_FADE_MS,
+  LAYER_FADE_READY_TIMEOUT_MS,
+  getLayerLifecycleRuntime,
+} from "../../frontend/src/shared/layer-lifecycle-fade.js";
 
 it('suppresses only projection name symbols after layer installation when Canvas is active', () => {
   const visibility = new Map();
@@ -50,7 +55,11 @@ const originalFetch = globalThis.fetch;
 
 /** Drain microtasks so async masked-WMTS paths complete in tests. */
 function flushPromises() {
-  return Promise.resolve().then(() => Promise.resolve());
+  return Promise.resolve()
+    .then(() => Promise.resolve())
+    .then(() => Promise.resolve())
+    .then(() => Promise.resolve())
+    .then(() => Promise.resolve());
 }
 
 function createMapMock() {
@@ -623,4 +632,392 @@ describe("maplibre-projection-layers", () => {
     expect(map._sources.has(`wmts__${fullId}`)).toBe(false);
     expect(map._layers.has(`wmts__${fullId}__raster`)).toBe(false);
   });
+
+  it("drops an in-flight masked WMTS when disable wins before the 100ms mask resolution", async () => {
+    const map = createPaintMap();
+    const hooks = createLifecycleHooks();
+    const runtime = getLayerLifecycleRuntime(map, hooks);
+    const fullId = "gaza.satellite_imagery";
+    const release = holdMaskFetch();
+    registryMock.getLayerConfig.mockImplementation((id) => (
+      id === fullId ? maskedConfig(fullId) : { format: "geojson" }
+    ));
+    const enabled = [{ id: "gaza", layers: [{ id: "satellite_imagery", enabled: true }] }];
+    const disabled = [{ id: "gaza", layers: [{ id: "satellite_imagery", enabled: false }] }];
+    runtime.setDesiredIds([fullId], { durationMs: LAYER_FADE_MS });
+    syncProjectionLayers(map, enabled, { lifecycle: { joinBatch: true } });
+    hooks.setTime(100);
+    runtime.setDesiredIds([], { durationMs: LAYER_FADE_MS });
+    syncProjectionLayers(map, disabled, { lifecycle: { joinBatch: true } });
+    release.resolve();
+    await flushPromises();
+    expect(map.getLayer(`wmts__${fullId}__raster`)).toBeFalsy();
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores an older masked completion after disable and re-enable, and reuses one pending request", async () => {
+    const map = createPaintMap();
+    const fullId = "gaza.satellite_imagery";
+    const first = holdMaskFetch();
+    registryMock.getLayerConfig.mockImplementation((id) => (
+      id === fullId ? maskedConfig(fullId) : { format: "geojson" }
+    ));
+    const enabled = [{ id: "gaza", layers: [{ id: "satellite_imagery", enabled: true }] }];
+    const disabled = [{ id: "gaza", layers: [{ id: "satellite_imagery", enabled: false }] }];
+    const runtime = getLayerLifecycleRuntime(map, createLifecycleHooks());
+    runtime.setDesiredIds([fullId], { durationMs: LAYER_FADE_MS });
+    syncProjectionLayers(map, enabled, { lifecycle: { joinBatch: true } });
+    syncProjectionLayers(map, enabled, { lifecycle: { joinBatch: true } });
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+
+    runtime.setDesiredIds([], { durationMs: LAYER_FADE_MS });
+    syncProjectionLayers(map, disabled, { lifecycle: { joinBatch: true } });
+    const second = holdMaskFetch();
+    runtime.setDesiredIds([fullId], { durationMs: LAYER_FADE_MS });
+    syncProjectionLayers(map, enabled, { lifecycle: { joinBatch: true } });
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    first.resolve();
+    await flushPromises();
+    expect(map.getLayer(`wmts__${fullId}__raster`)).toBeFalsy();
+    syncProjectionLayers(map, enabled, { lifecycle: { joinBatch: true } });
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    second.resolve();
+    await flushPromises();
+    expect(map.getLayer(`wmts__${fullId}__raster`)).toBeTruthy();
+    expect(map.getPaintProperty(`wmts__${fullId}__raster`, "raster-opacity")).toBe(0);
+  });
+
+  it("stages sync and masked rasters at factor 0 and shares a registry deadline", async () => {
+    const map = createPaintMap();
+    const hooks = createLifecycleHooks();
+    const runtime = getLayerLifecycleRuntime(map, hooks);
+    const syncId = "proj.wmts_base";
+    const maskedId = "gaza.satellite_imagery";
+    const release = holdMaskFetch();
+    registryMock.getLayerConfig.mockImplementation((id) => {
+      if (id === syncId) {
+        return {
+          fullId: syncId,
+          format: "wmts",
+          wmts: { urlTemplate: "https://example.com/{z}/{x}/{y}.png", opacity: 0.5 },
+        };
+      }
+      if (id === maskedId) return maskedConfig(maskedId);
+      return { format: "geojson" };
+    });
+    map.isSourceLoaded = vi.fn(() => false);
+    runtime.setDesiredIds(["borders.ring", syncId, maskedId], { durationMs: LAYER_FADE_MS });
+    runtime.stageMapLayer("borders.ring", {
+      id: "borders.ring-fill",
+      type: "fill",
+      paint: { "fill-opacity": 0.8 },
+    }, {
+      subscribeReady: ({ ready }) => { ready(); return undefined; },
+    });
+    map.addLayer({ id: "borders.ring-fill", type: "fill", paint: { "fill-opacity": 0 } });
+    syncProjectionLayers(map, [
+      { id: "proj", layers: [{ id: "wmts_base", enabled: true }] },
+      { id: "gaza", layers: [{ id: "satellite_imagery", enabled: true }] },
+    ], { lifecycle: { joinBatch: true } });
+    expect(applyLayerGroupsToMapMock).toHaveBeenCalledWith(
+      map,
+      expect.any(Array),
+      expect.objectContaining({
+        lifecycle: { joinBatch: true },
+        transition: expect.objectContaining({ transitionMs: LAYER_FADE_MS }),
+      }),
+    );
+    expect(map.getPaintProperty(`wmts__${syncId}__raster`, "raster-opacity")).toBe(0);
+    runtime.commitBatch();
+    hooks.flushFrame();
+    expect(map.getPaintProperty("borders.ring-fill", "fill-opacity")).toBe(0);
+    expect(map.getPaintProperty(`wmts__${syncId}__raster`, "raster-opacity")).toBe(0);
+
+    map.isSourceLoaded.mockReturnValue(true);
+    map.emit("sourcedata", { sourceId: `wmts__${syncId}` });
+    expect(map.getPaintProperty(`wmts__${syncId}__raster`, "raster-opacity")).toBe(0);
+    hooks.setTime(LAYER_FADE_READY_TIMEOUT_MS);
+    hooks.fireDueTimers();
+    hooks.setTime(LAYER_FADE_READY_TIMEOUT_MS + 300);
+    hooks.flushFrame();
+    expect(map.getPaintProperty("borders.ring-fill", "fill-opacity")).toBeCloseTo(0.4);
+    expect(map.getPaintProperty(`wmts__${syncId}__raster`, "raster-opacity")).toBeCloseTo(0.25);
+    expect(map.getLayer(`wmts__${maskedId}__raster`)).toBeFalsy();
+
+    release.resolve();
+    await flushPromises();
+    expect(map.getPaintProperty(`wmts__${maskedId}__raster`, "raster-opacity")).toBe(0);
+    hooks.setTime(LAYER_FADE_READY_TIMEOUT_MS + 600);
+    hooks.flushFrame();
+    expect(map.getPaintProperty(`wmts__${maskedId}__raster`, "raster-opacity")).toBeCloseTo(0.1);
+  });
+
+  it("removes an unloaded WMTS sourcedata listener when the layer is disabled", () => {
+    const map = createPaintMap();
+    const runtime = getLayerLifecycleRuntime(map, createLifecycleHooks());
+    const fullId = "proj.wmts_base";
+    registryMock.getLayerConfig.mockImplementation((id) => (
+      id === fullId
+        ? { fullId, format: "wmts", wmts: { urlTemplate: "https://example.com/{z}/{x}/{y}.png", opacity: 0.5 } }
+        : { format: "geojson" }
+    ));
+    map.isSourceLoaded = vi.fn(() => false);
+    const enabled = [{ id: "proj", layers: [{ id: "wmts_base", enabled: true }] }];
+    const disabled = [{ id: "proj", layers: [{ id: "wmts_base", enabled: false }] }];
+    const joined = { lifecycle: { joinBatch: true } };
+
+    runtime.setDesiredIds([fullId], { durationMs: LAYER_FADE_MS });
+    syncProjectionLayers(map, enabled, joined);
+    expect(map.on).toHaveBeenCalledWith("sourcedata", expect.any(Function));
+
+    runtime.setDesiredIds([], { durationMs: LAYER_FADE_MS });
+    syncProjectionLayers(map, disabled, joined);
+
+    expect(map.off).toHaveBeenCalledWith("sourcedata", expect.any(Function));
+  });
+
+  it("does not accumulate unloaded WMTS sourcedata listeners when restaged", () => {
+    const map = createPaintMap();
+    const runtime = getLayerLifecycleRuntime(map, createLifecycleHooks());
+    const fullId = "proj.wmts_base";
+    const config = {
+      fullId,
+      format: "wmts",
+      wmts: { urlTemplate: "https://example.com/{z}/{x}/{y}.png", opacity: 0.5 },
+    };
+    const joined = { lifecycle: { joinBatch: true } };
+    map.isSourceLoaded = vi.fn(() => false);
+    runtime.setDesiredIds([fullId], { durationMs: LAYER_FADE_MS });
+
+    addWmtsSource(map, config, joined);
+    expect(map.listenerCount("sourcedata")).toBe(1);
+
+    map.removeLayer(`wmts__${fullId}__raster`);
+    addWmtsSource(map, config, joined);
+    expect(map.listenerCount("sourcedata")).toBe(1);
+
+    runtime.dispose();
+    expect(map.listenerCount("sourcedata")).toBe(0);
+  });
+
+  it("preserves a mounted WMTS factor across disable and re-enable", () => {
+    const map = createPaintMap();
+    const hooks = createLifecycleHooks();
+    const runtime = getLayerLifecycleRuntime(map, hooks);
+    const fullId = "proj.wmts_base";
+    const layerId = `wmts__${fullId}__raster`;
+    registryMock.getLayerConfig.mockImplementation((id) => (
+      id === fullId
+        ? { fullId, format: "wmts", wmts: { urlTemplate: "https://example.com/{z}/{x}/{y}.png", opacity: 0.5 } }
+        : { format: "geojson" }
+    ));
+    const enabled = [{ id: "proj", layers: [{ id: "wmts_base", enabled: true }] }];
+    const disabled = [{ id: "proj", layers: [{ id: "wmts_base", enabled: false }] }];
+    runtime.setDesiredIds([fullId], { durationMs: LAYER_FADE_MS });
+    syncProjectionLayers(map, enabled, { lifecycle: { joinBatch: true } });
+    runtime.commitBatch();
+    hooks.setTime(LAYER_FADE_MS);
+    hooks.flushFrame();
+    expect(map.getPaintProperty(layerId, "raster-opacity")).toBeCloseTo(0.5);
+
+    runtime.setDesiredIds([], { durationMs: LAYER_FADE_MS });
+    syncProjectionLayers(map, disabled, { lifecycle: { joinBatch: true } });
+    runtime.commitBatch();
+    hooks.setTime(LAYER_FADE_MS + 300);
+    hooks.flushFrame();
+    expect(map.getLayer(layerId)).toBeTruthy();
+    expect(map.getPaintProperty(layerId, "raster-opacity")).toBeCloseTo(0.25);
+
+    runtime.setDesiredIds([fullId], { durationMs: LAYER_FADE_MS });
+    syncProjectionLayers(map, enabled, { lifecycle: { joinBatch: true } });
+    runtime.commitBatch();
+    expect(map.addSource).toHaveBeenCalledTimes(1);
+    hooks.setTime(LAYER_FADE_MS + 600);
+    hooks.flushFrame();
+    expect(map.getPaintProperty(layerId, "raster-opacity")).toBeCloseTo(0.375);
+  });
+
+  it("keeps retained WMTS immediate when the joined duration is zero", () => {
+    const map = createPaintMap();
+    const fullId = "proj.wmts_base";
+    registryMock.getLayerConfig.mockImplementation((id) => (
+      id === fullId
+        ? { fullId, format: "wmts", wmts: { urlTemplate: "https://example.com/{z}/{x}/{y}.png", opacity: 0.5 } }
+        : { format: "geojson" }
+    ));
+    map.isSourceLoaded = () => false;
+    syncProjectionLayers(map, [{ id: "proj", layers: [{ id: "wmts_base", enabled: true }] }], {
+      lifecycle: { retainDisabled: true, joinBatch: true },
+    });
+    expect(map.getPaintProperty(`wmts__${fullId}__raster`, "raster-opacity")).toBe(0.5);
+  });
+
+  it("a stale masked completion cannot fail the replacement raster", async () => {
+    const map = createPaintMap();
+    const hooks = createLifecycleHooks();
+    const runtime = getLayerLifecycleRuntime(map, hooks);
+    const fullId = "gaza.satellite_imagery";
+    const layerId = `wmts__${fullId}__raster`;
+    const queued = queueMaskFetches();
+    map.isSourceLoaded = vi.fn(() => false);
+    registryMock.getLayerConfig.mockImplementation((id) => (
+      id === fullId ? maskedConfig(fullId) : { format: "geojson" }
+    ));
+    const enabled = [{ id: "gaza", layers: [{ id: "satellite_imagery", enabled: true }] }];
+    const disabled = [{ id: "gaza", layers: [{ id: "satellite_imagery", enabled: false }] }];
+    const joined = { lifecycle: { joinBatch: true } };
+
+    runtime.setDesiredIds([fullId], { durationMs: LAYER_FADE_MS });
+    syncProjectionLayers(map, enabled, joined);
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+
+    runtime.setDesiredIds([], { durationMs: LAYER_FADE_MS });
+    syncProjectionLayers(map, disabled, joined);
+    runtime.setDesiredIds([fullId], { durationMs: LAYER_FADE_MS });
+    syncProjectionLayers(map, enabled, joined);
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+
+    queued.resolve(1, { ok: true, json: () => Promise.resolve(maskGeoJson()) });
+    await flushPromises();
+    expect(map.getLayer(layerId)).toBeTruthy();
+    expect(map.getPaintProperty(layerId, "raster-opacity")).toBe(0);
+
+    queued.resolve(0, { ok: false, status: 503, json: async () => ({}) });
+    await flushPromises();
+    syncProjectionLayers(map, enabled, joined);
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+
+    map.isSourceLoaded.mockReturnValue(true);
+    map.emit("sourcedata", { sourceId: `wmts__${fullId}` });
+    runtime.commitBatch();
+    hooks.setTime(LAYER_FADE_MS);
+    hooks.flushFrame();
+    expect(map.getPaintProperty(layerId, "raster-opacity")).toBeCloseTo(0.2);
+  });
 });
+
+function maskedConfig(fullId) {
+  return {
+    fullId,
+    groupId: "gaza",
+    id: "satellite_imagery",
+    format: "wmts",
+    wmts: { urlTemplate: "https://tiles.example/{z}/{x}/{y}", opacity: 0.2 },
+    mask: { type: "geojson", file: "gaza_boundary.geojson" },
+  };
+}
+
+function maskGeoJson() {
+  return {
+    type: "FeatureCollection",
+    features: [{
+      type: "Feature",
+      geometry: {
+        type: "Polygon",
+        coordinates: [[[34.2, 31.2], [34.3, 31.2], [34.3, 31.3], [34.2, 31.3], [34.2, 31.2]]],
+      },
+    }],
+  };
+}
+
+function holdMaskFetch() {
+  let resolve;
+  const gate = new Promise((done) => { resolve = done; });
+  globalThis.fetch = vi.fn(() => gate.then(() => Promise.resolve({
+    ok: true,
+    json: () => Promise.resolve(maskGeoJson()),
+  })));
+  return { resolve: () => resolve() };
+}
+
+function queueMaskFetches() {
+  const resolvers = [];
+  globalThis.fetch = vi.fn(() => new Promise((resolve) => {
+    resolvers.push(resolve);
+  }));
+  return {
+    resolve(index, body) {
+      resolvers[index](body);
+    },
+  };
+}
+
+function createLifecycleHooks() {
+  let time = 0;
+  let frame = null;
+  let nextFrameId = 0;
+  let nextTimerId = 0;
+  const timers = new Map();
+  return {
+    now: () => time,
+    setTime(value) { time = value; },
+    requestFrame(callback) {
+      nextFrameId += 1;
+      frame = { id: nextFrameId, callback };
+      return nextFrameId;
+    },
+    cancelFrame(id) { if (frame?.id === id) frame = null; },
+    flushFrame() {
+      const current = frame;
+      frame = null;
+      current?.callback(time);
+    },
+    setTimer(callback, delay) {
+      nextTimerId += 1;
+      timers.set(nextTimerId, { callback, at: time + delay });
+      return nextTimerId;
+    },
+    clearTimer(id) { timers.delete(id); },
+    fireDueTimers() {
+      for (const [id, timer] of [...timers]) {
+        if (timer.at <= time) {
+          timers.delete(id);
+          timer.callback();
+        }
+      }
+    },
+  };
+}
+
+function createPaintMap() {
+  const sources = new Set();
+  const layers = new Map();
+  const paint = new Map();
+  const listeners = new Map();
+  const map = {
+    addSource: vi.fn((sourceId) => { sources.add(sourceId); }),
+    getSource: vi.fn((sourceId) => (sources.has(sourceId) ? { id: sourceId } : undefined)),
+    removeSource: vi.fn((sourceId) => { sources.delete(sourceId); }),
+    addLayer: vi.fn((layerDef) => {
+      layers.set(layerDef.id, layerDef);
+      paint.set(layerDef.id, { ...(layerDef.paint || {}) });
+    }),
+    getLayer: vi.fn((layerId) => layers.get(layerId)),
+    removeLayer: vi.fn((layerId) => {
+      layers.delete(layerId);
+      paint.delete(layerId);
+    }),
+    setPaintProperty: vi.fn((layerId, key, value) => {
+      const current = paint.get(layerId) || {};
+      current[key] = value;
+      paint.set(layerId, current);
+    }),
+    getPaintProperty: vi.fn((layerId, key) => paint.get(layerId)?.[key]),
+    setLayoutProperty: vi.fn(),
+    on: vi.fn((type, listener) => {
+      const set = listeners.get(type) || new Set();
+      set.add(listener);
+      listeners.set(type, set);
+    }),
+    off: vi.fn((type, listener) => { listeners.get(type)?.delete(listener); }),
+    emit(type, event) {
+      for (const listener of [...(listeners.get(type) || [])]) listener(event);
+    },
+    listenerCount(type) {
+      return listeners.get(type)?.size || 0;
+    },
+    _sources: sources,
+    _layers: layers,
+  };
+  return map;
+}

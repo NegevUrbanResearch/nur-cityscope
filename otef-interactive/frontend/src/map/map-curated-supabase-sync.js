@@ -115,7 +115,7 @@ async function runSyncCuratedMapLayersAfterSupabasePull(options) {
   if (affected) {
     reloadCuratedOnMap({ affectedCuratedFullLayerIds: affected });
   } else {
-    reloadCuratedOnMap();
+    reloadCuratedOnMap({ reopenGate: true, keepLiveRuntime: true });
   }
   if (
     typeof applyLayerGroupsState === "function" &&
