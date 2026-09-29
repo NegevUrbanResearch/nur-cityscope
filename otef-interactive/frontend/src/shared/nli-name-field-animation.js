@@ -57,10 +57,16 @@ export function createNameFieldAnimation({ apply, motionMode = 'full', now = () 
   let focusStart = 0;
   let focusMix = 1;
   let onHidden = null;
+  let hideResolve = null;
   let interruptedFocusTransitions = 0;
   const stop = () => {
     if (timer !== null) clearTimeout(timer);
     timer = null;
+  };
+  const settleHide = () => {
+    const resolve = hideResolve;
+    hideResolve = null;
+    resolve?.();
   };
   const revealAt = (time) => {
     const elapsed = frozenReveal ?? Math.max(0, time - revealStart);
@@ -91,10 +97,11 @@ export function createNameFieldAnimation({ apply, motionMode = 'full', now = () 
       selectedOpacity: visibility,
       alphaFor,
     });
-    if (targetVisibility === 0 && visibilityMix === 1 && onHidden) {
+    if (targetVisibility === 0 && visibilityMix === 1 && (onHidden || hideResolve)) {
       const complete = onHidden;
       onHidden = null;
-      complete();
+      complete?.();
+      settleHide();
       return;
     }
     const revealing = shown && frozenReveal === null &&
@@ -107,6 +114,7 @@ export function createNameFieldAnimation({ apply, motionMode = 'full', now = () 
     show({ restart = true } = {}) {
       if (disposed) return;
       onHidden = null;
+      settleHide();
       if (restart || !shown) {
         revealStart = now();
         visibility = 1;
@@ -134,17 +142,24 @@ export function createNameFieldAnimation({ apply, motionMode = 'full', now = () 
       tick();
     },
     hide(complete) {
-      if (disposed) return;
+      if (disposed) {
+        complete?.();
+        return Promise.resolve();
+      }
       frozenReveal = Math.max(0, now() - revealStart);
       fromVisibility = visibility;
       targetVisibility = 0;
       visibilityStart = now();
-      onHidden = complete;
-      tick();
+      return new Promise((resolve) => {
+        hideResolve = resolve;
+        onHidden = complete;
+        tick();
+      });
     },
     dispose() {
       disposed = true;
       onHidden = null;
+      settleHide();
       stop();
     },
   };

@@ -291,9 +291,9 @@ describe("map-main GIS style reload lifecycle", () => {
     expect(source).not.toMatch(/curatedDisplay\.invalidateStyle\(\)/);
     expect(source).toMatch(/curatedDisplay\.dispose\(\)/);
     const applyAt = loader.indexOf("applyLayerGroups(", refreshStart);
-    const awaitAt = loader.indexOf("await ", refreshStart);
+    const loadAwaitAt = loader.indexOf("await loadCuratedLayerToMapLibre", refreshStart);
     expect(applyAt).toBeGreaterThan(refreshStart);
-    expect(applyAt).toBeLessThan(awaitAt);
+    expect(applyAt).toBeLessThan(loadAwaitAt);
   });
 });
 

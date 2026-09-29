@@ -50,6 +50,7 @@ import {
   computePinkLineBaseLayerVisible,
   computePinkLineParkingOverlayVisible,
 } from "../map-utils/curated-pink-axis-state.js";
+import { createNameFieldExitGate } from "../shared/nli-name-wall-scene-exit.js";
 import {
   PINK_LINE_PARKING_ICON_URL,
   fetchPinkLineParkingLotsGeojson,
@@ -1209,6 +1210,7 @@ export function createGisCuratedRefresh({
   syncPinkLine = () => {},
 } = {}) {
   let activeCuratedIds = new Set();
+  const nameFieldExit = createNameFieldExitGate(nameFieldController);
 
   const refreshCuratedLayers = async ({
     affectedCuratedFullLayerIds,
@@ -1221,6 +1223,9 @@ export function createGisCuratedRefresh({
     const groupsAsArray = displayGroups(rawGroups);
     const currentGroups = filterGroups(groupsAsArray);
 
+    if (!isCurrent()) return;
+    const held = nameFieldExit.holdUntilHidden(currentGroups, isCurrent);
+    if (held !== true && !await held) return;
     if (!isCurrent()) return;
     applyLayerGroups(currentGroups);
     applyLabelHeading(map);
@@ -1316,6 +1321,7 @@ export function createProjectionCuratedRefresh({
   shouldSkipLiveRefresh = () => false,
 } = {}) {
   let activeCuratedIds = new Set();
+  const nameFieldExit = createNameFieldExitGate(nameFieldController);
 
   const runProjectionCuratedRefresh = async ({
     affectedCuratedFullLayerIds,
@@ -1328,6 +1334,9 @@ export function createProjectionCuratedRefresh({
     const rawGroups = groupsOverride ?? getLayerGroups();
     const currentGroups = asLayerGroups(rawGroups);
 
+    const held = nameFieldExit.holdUntilHidden(currentGroups, isCurrent);
+    if (held !== true && !await held) return;
+    if (!isRuntimeAlive() || !isCurrent()) return;
     updateModelVisibility(rawGroups);
 
     syncProjectionLayersWithNarrative(map, currentGroups, layerStyleOptions);

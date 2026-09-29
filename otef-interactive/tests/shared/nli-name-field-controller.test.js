@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createFakeMapLibreMap } from "../helpers/fake-maplibre-map.js";
 import { DEFAULT_PROJECTION_CONFIG as DEFAULTS } from "../../frontend/src/shared/projection-config-schema.js";
+import { NAME_FIELD_MOTION } from "../../frontend/src/shared/nli-name-field-animation.js";
 
 vi.mock("../../frontend/src/shared/nli-name-field-data.js", () => ({
   loadNliNameField: vi.fn(),
@@ -148,6 +149,24 @@ describe("createNliNameFieldController", () => {
     expect(adapter.prepare).toHaveBeenCalledOnce();
     d.controller.dispose();
   });
+  it('fadeOut resolves after hideMs even while the stagger reveal is still running', async () => {
+    vi.useFakeTimers();
+    const d = setup({ applyProjectionConfig: false, projectionSpan: 'left', motionMode: 'full' });
+    const adapter = canvasAdapter(); d.controller.installProjectionCanvas(adapter);
+    await d.controller.prepareProjectionCandidate({ generation: 1, config: DEFAULTS, field: canvasField(), revision: 1 });
+    d.controller.commitProjectionCandidate(1); d.controller.finalizeProjectionCandidate(1);
+    enable(d);
+    await vi.advanceTimersByTimeAsync(800);
+    expect(adapter.getRevealSeconds()).toBeGreaterThan(0);
+    expect(adapter.getOpacity()).toBe(1);
+    const hidden = d.controller.fadeOut();
+    await vi.advanceTimersByTimeAsync(300);
+    expect(adapter.getOpacity()).toBeCloseTo(0.5, 1);
+    await vi.advanceTimersByTimeAsync(NAME_FIELD_MOTION.hideMs);
+    expect(adapter.getOpacity()).toBeCloseTo(0, 2);
+    await hidden;
+    d.controller.dispose();
+  });
   it('dims a selected wall name without restarting the stagger reveal', async () => {
     vi.useFakeTimers();
     const d = setup({ applyProjectionConfig: false, projectionSpan: 'left', motionMode: 'full' });
@@ -259,7 +278,7 @@ describe("createNliNameFieldController", () => {
     enable(d); await vi.advanceTimersByTimeAsync(650);
     expect(adapter.getOpacity()).toBeCloseTo(1, 1);
     d.emit('personSelection', { personId: 'p-1', datasetVersion: 'v1' });
-    expect(d.map.getPaintProperty(settlement, 'text-opacity')).toBe(0.08);
+    expect(d.map.getPaintProperty(settlement, 'text-opacity')).toBe(0.18);
     disable(d); await vi.advanceTimersByTimeAsync(300);
     expect(adapter.getOpacity()).toBeCloseTo(0.5, 1);
     expect(d.map.getLayer('nli-name-field-connector-line')).toBeFalsy();
@@ -268,7 +287,7 @@ describe("createNliNameFieldController", () => {
     enable(d); expect(adapter.getOpacity()).toBeCloseTo(0.5, 1);
     await vi.advanceTimersByTimeAsync(650);
     expect(adapter.getOpacity()).toBeCloseTo(1, 1);
-    expect(d.map.getPaintProperty(settlement, 'text-opacity')).toBe(0.08);
+    expect(d.map.getPaintProperty(settlement, 'text-opacity')).toBe(0.18);
     expect(adapter.prepare).toHaveBeenCalledTimes(1);
     d.controller.dispose();
   });
@@ -407,7 +426,7 @@ describe("createNliNameFieldController", () => {
     d.map.addLayer({ id, type: 'symbol', paint: { 'text-opacity': 0.8 } });
     d.map.setPaintProperty(id, 'text-opacity', 0.8);
     d.map.emit('styledata');
-    expect(d.map.getPaintProperty(id, 'text-opacity')).toBe(0.08);
+    expect(d.map.getPaintProperty(id, 'text-opacity')).toBe(0.18);
     d.controller.dispose();
     expect(d.map.getPaintProperty(id, 'text-opacity')).toBe(0.8);
     expect(d.map.listenerCount('styledata')).toBe(0);
@@ -806,7 +825,7 @@ describe("createNliNameFieldController", () => {
     expect(d.map.getLayer("nli-name-place-outline-line")).toBeFalsy();
     expect(d.map.getLayer('nli-name-field-labels').paint['text-color']).toBe('#ffffff');
     expect(d.map.getPaintProperty('nli-name-field-labels', 'text-opacity')).toEqual([
-      'case', ['==', ['get', 'group_id'], 'nova'], 1, 0.08,
+      'case', ['==', ['get', 'group_id'], 'nova'], 1, 0.18,
     ]);
     expect(JSON.parse(d.map._dataset.nliNameField).selectedGroup).toBe('nova');
     d.emit('personSelection', { personId: null, datasetVersion: null, revision: 1 });

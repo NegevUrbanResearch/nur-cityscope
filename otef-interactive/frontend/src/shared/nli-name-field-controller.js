@@ -144,6 +144,7 @@ export function createNliNameFieldController({
   let canvasRequestToken = 0;
   let observedDatasetVersion = context.getPersonSelection?.()?.datasetVersion || null;
   let fadeFrame = null, fadeStart = 0, fadeFrom = 0, fadeTarget = 0, fadeOpacity = 0;
+  let fadeComplete = null;
   let revealFrame = null, revealStart = 0, revealElapsedMs = 0, revealRunning = false;
   const frame = globalThis.requestAnimationFrame?.bind(globalThis) || ((fn) => setTimeout(() => fn(Date.now()), 16));
   const cancelFrame = globalThis.cancelAnimationFrame?.bind(globalThis) || clearTimeout;
@@ -194,33 +195,51 @@ export function createNliNameFieldController({
     }
     map.triggerRepaint?.();
   };
-  const fadeTo = (target) => {
-    if (!canvasAdapter) return;
+  const settleFade = () => {
+    const done = fadeComplete;
+    fadeComplete = null;
+    done?.();
+  };
+  const cancelFadeFrame = () => {
     if (fadeFrame != null) {
       setCanvasOpacity(fadeFrom + (fadeTarget - fadeFrom) * Math.min(1, (Date.now() - fadeStart) / NAME_FIELD_MOTION.hideMs));
-      cancelFrame(fadeFrame); fadeFrame = null;
+      cancelFrame(fadeFrame);
+      fadeFrame = null;
     }
-    if (motionMode === 'reduced' || !ready) { setCanvasOpacity(ready ? target : 0); return; }
+    settleFade();
+  };
+  const fadeTo = (target) => {
+    if (!canvasAdapter) return Promise.resolve();
+    cancelFadeFrame();
+    if (motionMode === 'reduced' || !ready) { setCanvasOpacity(ready ? target : 0); return Promise.resolve(); }
     fadeFrom = fadeOpacity; fadeTarget = target; fadeStart = Date.now();
-    if (fadeFrom === target) return;
-    const tick = () => {
-      const fraction = Math.min(1, (Date.now() - fadeStart) / NAME_FIELD_MOTION.hideMs);
-      setCanvasOpacity(fadeFrom + (fadeTarget - fadeFrom) * fraction);
-      fadeFrame = fraction < 1 ? frame(tick) : null;
-      if (fadeFrame === null) publishDiagnostics();
-    };
-    fadeFrame = frame(tick);
+    if (fadeFrom === target) return Promise.resolve();
+    return new Promise((resolve) => {
+      fadeComplete = resolve;
+      const tick = () => {
+        if (fadeComplete !== resolve) return;
+        const fraction = Math.min(1, (Date.now() - fadeStart) / NAME_FIELD_MOTION.hideMs);
+        setCanvasOpacity(fadeFrom + (fadeTarget - fadeFrom) * fraction);
+        if (fraction < 1) fadeFrame = frame(tick);
+        else {
+          fadeFrame = null;
+          publishDiagnostics();
+          settleFade();
+        }
+      };
+      fadeFrame = frame(tick);
+    });
   };
   const showCanvas = ({ restart = false } = {}) => {
     if (!ready || !canvasAdapter) return;
     const fresh = restart || (fadeOpacity <= 0 && fadeFrame === null);
     startReveal({ restart: fresh });
     if (fresh || motionMode === 'reduced') {
-      if (fadeFrame != null) { cancelFrame(fadeFrame); fadeFrame = null; }
+      cancelFadeFrame();
       setCanvasOpacity(1);
     } else fadeTo(1);
   };
-  const hideCanvas = () => { freezeReveal(); fadeTo(0); };
+  const hideCanvas = () => { freezeReveal(); return fadeTo(0); };
   const projectionSpanFilter = () => displayProfile === "projection" && ["left", "right"].includes(projectionSpan)
     ? ["in", projectionSpan, ["get", "visible_spans"]] : null;
   const packedProjectionOwners = () => Object.fromEntries((field?.geojson?.features || [])
@@ -278,7 +297,7 @@ export function createNliNameFieldController({
   };
 
   const disposeAnimation = ({ preserveFade = false } = {}) => {
-    if (!preserveFade && fadeFrame != null) { cancelFrame(fadeFrame); fadeFrame = null; }
+    if (!preserveFade) cancelFadeFrame();
     animation?.dispose();
     animation = null;
   };
@@ -709,6 +728,30 @@ export function createNliNameFieldController({
           canvasRevealPending: revealFrame !== null } : {}),
       };
     },
+    fadeOut() {
+      if (disposed) return Promise.resolve();
+      if (canvasAdapter) {
+        if (!enabled && fadeOpacity <= 0 && fadeFrame == null) return Promise.resolve();
+        enabled = false;
+        hideLegacyLabels(map);
+        suppressCanvasSymbols();
+        publishDiagnostics();
+        return hideCanvas();
+      }
+      if (!enabled && !animation) return Promise.resolve();
+      enabled = false;
+      selectedGroup = null;
+      pendingPlaceId = null;
+      if (!animation) {
+        removeOwned();
+        publishDiagnostics();
+        return Promise.resolve();
+      }
+      publishDiagnostics();
+      return Promise.resolve(animation.hide(() => {
+        if (!enabled) removeOwned();
+      }));
+    },
     sync(groups) {
       if (disposed) return;
       const nextEnabled = hasPeopleNames(groups);
@@ -781,7 +824,7 @@ export function createNliNameFieldController({
     dispose() {
       if (disposed) return;
       disposed = true;
-      if (fadeFrame != null) { cancelFrame(fadeFrame); fadeFrame = null; }
+      cancelFadeFrame();
       freezeReveal();
       requestGeneration += 1;
       enabled = false;
