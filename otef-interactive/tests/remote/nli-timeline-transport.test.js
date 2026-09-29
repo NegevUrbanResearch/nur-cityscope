@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { createNliStaffTimelineHost } from "../../frontend/src/remote/nli-staff-timeline-host.js";
+import { createNliStaffTimelineHost, staffPlaybackConfig } from "../../frontend/src/remote/nli-staff-timeline-host.js";
 import {
   nliAxisMarksFromBeats,
   nliBeatIndexFromOccupiedHourPct,
@@ -21,6 +21,9 @@ import {
   pauseNliClock,
   playNliClock,
   replayNliClock,
+  rewindNliClock,
+  seekNliClock,
+  stepNliClock,
 } from "../../frontend/src/shared/nli-investigation-clock.js";
 import {
   clockStoryDurationMs,
@@ -990,17 +993,72 @@ describe("nli timeline transport", () => {
     expect(ctx.patchInvestigationClock.mock.calls[0][0].positionMs).toBe(timelineBeatDurationMs(400));
   });
 
-  test("stop PATCHes idle and keeps loop", async () => {
-    const playing = { ...playNliClock(idleNliClock(), [LINES_ID], [400], 1000), loop: true };
+  test("Stop and Play preserve both scene windows after playing, scrubbing, stepping, or ending", async () => {
+    for (const from of [undefined, 402]) {
+      const beats = from === undefined ? [389, 401] : [389, 401, 402, 740];
+      const playing = playNliClock(idleNliClock({ loop: true }), [LINES_ID], beats, 1000, { leadInMinutes: from });
+      const cue = { layers: [LINES_ID], clock: from === undefined ? { to: 401 } : { from } };
+      for (const source of [playing, seekNliClock(playing, beats.length - 1, 1000), stepNliClock(playing, 1, 1000), endNliClock(playing)]) {
+        let live = source;
+        const ctx = stubContext({ getInvestigationClock: () => live });
+        const c = makeController({ getPlaybackConfig: () => staffPlaybackConfig({ clock: live, cue }) });
+        const start = vi.spyOn(c, "startNliTimelineWindow");
+        await c.handleNliTimelineStop();
+        live = ctx.patchInvestigationClock.mock.calls[0][0];
+        const positionMs = from === undefined ? 0 : timelineBeatDurationMs(402);
+        expect(live).toMatchObject({
+          phase: "paused", membership: [LINES_ID], beats, loop: true,
+          positionMs, anchorMs: 0, seekKind: "none",
+        });
+        expect(evaluateClock(live, 99000)).toMatchObject({ clock: from === undefined ? 389 : 402, leadIn: false, beatElapsedMs: 0 });
+        const html = renderNliTimelineTransport(live, { displayBeats: [389, 401, 402, 740] });
+        expect(html).toMatch(from === undefined ? /class="nli-tl-clock"[^>]*>06:29</ : /class="nli-tl-clock"[^>]*>06:42</);
+        expect(html).toContain(`aria-valuemax="${beats.length - 1}"`);
+        expect(html).toContain(`aria-valuenow="${from === undefined ? 0 : 2}"`);
+        expect(html).not.toContain("nli-tl-track--idle");
+        if (from === undefined) expect(html).not.toContain("12:20");
+        await c.handleNliTimelinePlay();
+        expect(start).not.toHaveBeenCalled();
+        const resumed = ctx.patchInvestigationClock.mock.calls[1][0];
+        expect(resumed).toMatchObject({ phase: "playing", membership: [LINES_ID], beats, loop: true, positionMs });
+        if (from !== undefined) expect(resumed.leadInMinutes).toBe(402);
+      }
+    }
+  });
+
+  test("scene fallback is restricted and clock start has precedence", () => {
+    const armed = playNliClock(idleNliClock(), [LINES_ID], [389, 402, 740], 1000);
+    const cue = { layers: [LINES_ID], clock: { from: 402 } };
+    expect(staffPlaybackConfig({ clock: armed, cue })).toEqual({ membership: [LINES_ID], from: 402 });
+    expect(staffPlaybackConfig({ clock: { ...armed, leadInMinutes: 410 }, cue }).from).toBe(410);
+    for (const options of [
+      { cue: null }, { cue, manualFree: true },
+      { cue: { layers: [INVESTIGATION_POLYGONS_FULL_ID], clock: { from: 402 } } },
+      { cue: { layers: [LINES_ID], clock: "idle" } },
+    ]) expect(staffPlaybackConfig({ clock: armed, ...options })).toEqual({ membership: [LINES_ID] });
+  });
+
+  test("no-cue full-day Stop pauses at 389 without introducing a cue start", async () => {
+    const beats = [389, 402, 740];
+    const playing = playNliClock(idleNliClock({ loop: true }), [LINES_ID], beats, 1000);
     const ctx = stubContext({ getInvestigationClock: () => playing });
-    const c = makeController();
+    const c = makeController({
+      getPlaybackConfig: () => staffPlaybackConfig({ clock: playing, cue: null }),
+    });
     await c.handleNliTimelineStop();
     expect(ctx.patchInvestigationClock).toHaveBeenCalledTimes(1);
-    expect(ctx.patchInvestigationClock.mock.calls[0][0]).toMatchObject({
-      phase: "idle",
+    const stopped = ctx.patchInvestigationClock.mock.calls[0][0];
+    expect(stopped).toMatchObject({
+      phase: "paused",
+      membership: [LINES_ID],
+      beats,
       loop: true,
-      membership: [],
+      positionMs: 0,
+      anchorMs: 0,
+      seekKind: "none",
     });
+    expect(stopped).not.toHaveProperty("leadInMinutes");
+    expect(evaluateClock(stopped, 99000)).toMatchObject({ clock: 389, leadIn: false, beatElapsedMs: 0 });
   });
 
   test("pointerdown while playing PATCHes pause so maps freeze", () => {

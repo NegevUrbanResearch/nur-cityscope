@@ -29,10 +29,10 @@ import {
   playNliClock,
   replayNliClock,
   resumeNliClock,
+  rewindNliClock,
   seekNliClock,
   setNliLoop,
   stepNliClock,
-  stopNliClock,
 } from "../shared/nli-investigation-clock.js";
 import { completedInvestigationBeats } from "../shared/nli-investigation-visual-state.js";
 import { NLI_NOVA_STORY, novaBeatIndexFromPercent, novaBeatPercent } from "../shared/nli-nova-story.js";
@@ -1009,7 +1009,11 @@ export const nliTimelineHostMethods = {
     const epoch = this._nliTransportEpoch || 0;
     const isCurrent = () => (this._nliTransportEpoch || 0) === epoch && this._manualMutationsOpen();
     if (!isCurrent()) return;
-    await this._patchNliClock(stopNliClock(this._liveNliClock()), { isCurrent });
+    const narrativeId = nliNarrativeId();
+    const options = narrativeId === "nova"
+      ? { narrativeId }
+      : { leadInMinutes: this._playbackWindow().from };
+    await this._patchNliClock(rewindNliClock(this._liveNliClock(), options), { isCurrent });
   },
 
   async handleNliTimelineLoop() {

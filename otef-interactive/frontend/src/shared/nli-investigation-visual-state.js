@@ -239,7 +239,7 @@ export function deriveInvestigationFrame(
   if (polygonEnabled && suppressNovaIdleStory) {
     achievedPolygonBeats = [];
   } else if (polygonEnabled && src.phase === "idle") {
-    // Complete-story / Stop uses the loaded catalog, not the last play window.
+    // Complete-story / idle uses the loaded catalog, not the last play window.
     if (storyBeats.length > 0) achievedPolygonBeats = storyBeats;
   } else if (polygonEnabled) {
     achievedPolygonBeats = completedBeats.slice();

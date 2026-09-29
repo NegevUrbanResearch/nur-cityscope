@@ -1,5 +1,5 @@
 import { getEffectiveLayerGroups } from "../shared/layer-state-helper.js";
-import { isNliPlayableFullId } from "../shared/nli-investigation-beats.js";
+import { finiteClockMinutes, isNliPlayableFullId } from "../shared/nli-investigation-beats.js";
 import { nliPlayableIdsFromGroups } from "../shared/nli-investigation-clock.js";
 import { nliTimelineHostMethods } from "./nli-timeline-transport.js";
 
@@ -18,11 +18,14 @@ function playableMembership(ids) {
 export function staffPlaybackConfig({ clock, cue, groups, manualFree = false } = {}) {
   const phase = clock?.phase || "idle";
   if (phase !== "idle") {
-    const from = Number(clock?.leadInMinutes);
-    return {
-      membership: playableMembership(clock?.membership),
-      ...(Number.isFinite(from) ? { from } : {}),
-    };
+    const membership = playableMembership(clock?.membership);
+    const cueMembership = playableMembership(cue?.layers);
+    const window = cue?.clock && typeof cue.clock === "object" ? cue.clock : null;
+    const matches = membership.length > 0 && membership.length === cueMembership.length
+      && membership.every((id) => cueMembership.includes(id));
+    const from = finiteClockMinutes(clock?.leadInMinutes)
+      ?? (!manualFree && matches && window ? finiteClockMinutes(window.from) : null);
+    return { membership, ...(from != null ? { from } : {}) };
   }
   const window = cue?.clock && typeof cue.clock === "object" ? cue.clock : null;
   const cueMembership = playableMembership(cue?.layers);

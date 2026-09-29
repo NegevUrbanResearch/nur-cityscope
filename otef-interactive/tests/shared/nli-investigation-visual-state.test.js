@@ -23,6 +23,7 @@ import {
   replayNliClock,
   normalizeNliClock,
   resumeNliClock,
+  rewindNliClock,
   seekNliClock,
   setNliLoop,
   stopNliClock,
@@ -600,7 +601,7 @@ describe("deriveInvestigationFrame", () => {
     expect(reduced.needsNextFrame).toBe(false);
   });
 
-  it("returns to the idle visual state after an explicit stop", () => {
+  it("returns to the idle complete-story visual state", () => {
     const playing = playNliClock(idleNliClock(), membership, beats, 0);
     const frame = deriveInvestigationFrame(
       stopNliClock(playing),
@@ -692,6 +693,16 @@ describe("deriveInvestigationFrame", () => {
     });
     expect(frame.narrative.phase).toBe("idle");
     expect(frame.achievedPolygonBeats).toEqual(catalogBeats);
+  });
+
+  it("rewind paints the window start instead of the loaded catalog", () => {
+    const playing = playNliClock(idleNliClock(), membership, [400, 420], 0);
+    const frame = deriveInvestigationFrame(rewindNliClock(playing), 99000, enabled, {
+      motionMode: "full", storyBeats: [400, 420, 440, 500], polygonMotionActive: true,
+    });
+    expect(frame.narrative.phase).toBe("paused");
+    expect(frame.achievedPolygonBeats).toEqual([400]);
+    expect(frame.completedRouteFlow.active).toBe(false);
   });
 
   it("personGlowActive does not keep needsNextFrame true without a halo overlay", () => {

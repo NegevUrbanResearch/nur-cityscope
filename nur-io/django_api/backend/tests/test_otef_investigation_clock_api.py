@@ -469,3 +469,25 @@ class OTEFInvestigationClockApiTests(TestCase):
         )
         self.assertEqual(res.status_code, 200)
         self.assertEqual(res.json()["investigation_clock"]["leadInMinutes"], 483)
+
+    def test_patch_accepts_rewound_scene_windows(self):
+        for beats, start, lead_in in (([389, 401], 0, None), ([389, 401, 402, 740], 2500, 402)):
+            with self.subTest(beats=beats):
+                payload = self.canonical_clock(
+                    phase="paused", membership=["nli.lines"], beats=beats,
+                    loop=True, positionMs=start, anchorMs=0, seekKind="none",
+                )
+                if lead_in is not None:
+                    payload["leadInMinutes"] = lead_in
+                response = self.client.patch(
+                    "/api/otef_viewport/by-table/otef/",
+                    data=json.dumps({"investigation_clock": payload}),
+                    content_type="application/json",
+                )
+                self.assertEqual(response.status_code, 200)
+                returned = response.json()["investigation_clock"]
+                for key, value in payload.items():
+                    self.assertEqual(returned[key], value)
+                self.assertNotIn("alarmOnsetOriginMs", returned)
+                if lead_in is None:
+                    self.assertNotIn("leadInMinutes", returned)

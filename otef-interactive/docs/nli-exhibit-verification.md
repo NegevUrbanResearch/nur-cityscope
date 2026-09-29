@@ -146,9 +146,9 @@ browser, display arrangement, console result, and outcome in the result record.
   a black, line-based dashed overlay over the carrier that flows across its full
   geometry in the reviewed direction.
 - [ ] Confirm completed route motion remains visible through **Pause** and
-  **End**, and that timeline-off and post-**Stop** idle states animate every
-  visible route as completed. Confirm reduced-motion mode uses static
-  directional dashes.
+  **End**, and timeline-off/full-timeline/slideshow **idle** animates every
+  visible route as completed. GIS Stop stays in its scene window. Confirm
+  reduced-motion mode uses static directional dashes.
 - [ ] Confirm a polygon-only beat activates at its authored beat, while a
   polygon sharing a route beat waits until that route reveal completes. Confirm
   route geometry alone never activates an investigation polygon.
@@ -408,8 +408,8 @@ Spec exhibit gates that unit tests cannot replace. Every cell below is a
 recorded result. Empty checkboxes are not a record. A fail that is an
 exhibit/TD blocker is labeled **blocker**, not a silent pass.
 
-Slideshow is the idle complete-story look (same as Stop/`idle`), not a separate
-visual.
+Slideshow uses the idle complete-story presentation, like the full-timeline
+cue. GIS Stop on opening-minutes or rest-of-day rewinds that scene instead.
 
 | Gate | Date | Operator | Surface | pass/fail/blocker | notes/screenshot path |
 |---|---|---|---|---|---|

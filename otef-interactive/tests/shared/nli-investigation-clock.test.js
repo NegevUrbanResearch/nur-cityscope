@@ -20,6 +20,7 @@ import {
   playNliClock,
   replayNliClock,
   resumeNliClock,
+  rewindNliClock,
   seekNliClock,
   setNliLoop,
   stepNliClock,
@@ -175,6 +176,57 @@ describe("canonical clock actions", () => {
       anchorMs: null, seekKind: "none",
     });
     expectCanonical(ended);
+  });
+
+  it("rewinds advanced playing, paused, and ended GIS windows", () => {
+    for (const leadInMinutes of [undefined, 402]) {
+      const windowBeats = leadInMinutes === undefined ? [389, 401] : [389, 401, 402, 740];
+      for (const phase of ["playing", "paused", "ended"]) {
+        const source = {
+          ...playNliClock(idleNliClock(), [polygons], windowBeats, 8000, { leadInMinutes }),
+          phase, positionMs: 9000, seekKind: "jump", alarmOnsetOriginMs: 1234,
+          loop: true, revision: 7, serverNowMs: 9000,
+        };
+        const before = structuredClone(source);
+        const rewound = rewindNliClock(source);
+        expect(rewound).toMatchObject({
+          phase: "paused", membership: [polygons], beats: windowBeats,
+          positionMs: leadInMinutes === undefined ? 0 : timelineBeatDurationMs(402),
+          anchorMs: 0, seekKind: "none", loop: true, revision: 7, serverNowMs: 9000,
+        });
+        expect(rewound).not.toHaveProperty("alarmOnsetOriginMs");
+        expect(evaluateClock(rewound, 99000)).toMatchObject({
+          clock: leadInMinutes === undefined ? 389 : 402, leadIn: false, beatElapsedMs: 0,
+        });
+        if (leadInMinutes === undefined) {
+          expect(rewound).not.toHaveProperty("leadInMinutes");
+          expectCanonical(rewound);
+        } else expect(rewound.leadInMinutes).toBe(402);
+        expect(source).toEqual(before);
+        expect(rewound).not.toBe(source);
+        expect(stopNliClock(source)).toEqual(idleNliClock(source));
+      }
+    }
+  });
+
+  it("recovers a missing scene start but prefers the clock start", () => {
+    const playing = playNliClock(idleNliClock(), [polygons], [389, 401, 402, 740], 1000, { leadInMinutes: 402 });
+    const sought = seekNliClock(playing, 3, 1000);
+    expect(sought).not.toHaveProperty("leadInMinutes");
+    const recovered = rewindNliClock(sought, { leadInMinutes: 402 });
+    expect(recovered).toMatchObject({ leadInMinutes: 402, positionMs: timelineBeatDurationMs(402) });
+    expect(evaluateClock(recovered, 99000)).toMatchObject({ clock: 402, leadIn: false, beatElapsedMs: 0 });
+    expect(rewindNliClock(playing, { leadInMinutes: 740 }).leadInMinutes).toBe(402);
+  });
+
+  it("keeps Nova and empty rewind idle", () => {
+    const playing = playNliClock(idleNliClock(), [polygons], NLI_NOVA_STORY.representativeMinutes, 0);
+    expect(rewindNliClock(playing, { narrativeId: "nova" })).toEqual(idleNliClock(playing));
+    expect(rewindNliClock(playing).phase).toBe("paused");
+    const idle = idleNliClock({ loop: true });
+    expect(rewindNliClock(idle, { leadInMinutes: 402 })).toEqual(idle);
+    expect(rewindNliClock({ ...playing, membership: [] })).toEqual(idleNliClock(playing));
+    expect(rewindNliClock({ ...playing, beats: [] })).toEqual(idleNliClock(playing));
   });
 });
 

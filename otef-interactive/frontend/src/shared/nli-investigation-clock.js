@@ -10,6 +10,7 @@ import {
   NLI_PLAYABLE_IDS,
   clockStoryDurationMs,
   collectPlaybackTimelineBeats,
+  finiteClockMinutes,
   isNliPlayableFullId,
   mapClockStoryPosition,
   previousTimelineBeat,
@@ -186,30 +187,57 @@ export function beatsForMembership(membership, featureBags = {}) {
 }
 
 /**
+ * @param {number[]} beats
+ * @param {{ leadInMinutes?: number }} [options]
+ * @returns {{ positionMs: number, leadInMinutes?: number }}
+ */
+function playStartFields(beats, options = {}) {
+  const leadInMinutes = Number(options?.leadInMinutes);
+  if (!Number.isFinite(leadInMinutes)) return { positionMs: 0 };
+  return {
+    leadInMinutes,
+    positionMs: beats.includes(leadInMinutes) ? timelineBeatDurationMs(leadInMinutes) : 0,
+  };
+}
+
+/**
  * @param {NliInvestigationClock|null|undefined} prev
  * @param {string[]} membership
  * @param {number[]} beats
  * @param {number} nowMs
+ * @param {{ leadInMinutes?: number }} [options]
  * @returns {NliInvestigationClock}
  */
 export function playNliClock(prev, membership, beats, nowMs, options = {}) {
   const list = cloneBeats(beats);
   if (list.length === 0) return idleNliClock(prev);
-  const leadInMinutes = Number(options?.leadInMinutes);
-  const extras = {
-    phase: "playing",
-    positionMs: 0,
-    anchorMs: finiteTimestamp(nowMs),
-    seekKind: "none",
-  };
-  if (Number.isFinite(leadInMinutes)) {
-    extras.leadInMinutes = leadInMinutes;
-    // A lead-in on a real beat would show that minute twice. Start on the beat.
-    if (list.includes(leadInMinutes)) {
-      extras.positionMs = timelineBeatDurationMs(leadInMinutes);
-    }
-  }
-  return armedClock(prev, membership, list, extras);
+  return armedClock(prev, membership, list, {
+    ...playStartFields(list, options),
+    phase: "playing", anchorMs: finiteTimestamp(nowMs), seekKind: "none",
+  });
+}
+
+/**
+ * Rewind an armed GIS clock to its scene play start and stay paused.
+ * Clock-owned lead-in wins over the caller fallback. Nova, idle, and empty
+ * clocks become idle.
+ *
+ * @param {NliInvestigationClock|null|undefined} prev
+ * @param {{ narrativeId?: string, leadInMinutes?: number }} [options]
+ * @returns {NliInvestigationClock}
+ */
+export function rewindNliClock(prev, options = {}) {
+  const src = prev && typeof prev === "object" ? prev : {};
+  if (options.narrativeId === "nova" || src.phase === "idle") return idleNliClock(src);
+  const membership = filterPlayableMembership(src.membership);
+  const list = cloneBeats(src.beats);
+  if (!membership.length || !list.length) return idleNliClock(src);
+  const leadInMinutes = finiteClockMinutes(src.leadInMinutes)
+    ?? finiteClockMinutes(options.leadInMinutes);
+  return armedClock(src, membership, list, {
+    ...playStartFields(list, leadInMinutes == null ? {} : { leadInMinutes }),
+    phase: "paused", anchorMs: 0, seekKind: "none",
+  });
 }
 
 /**

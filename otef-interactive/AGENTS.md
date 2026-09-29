@@ -48,8 +48,10 @@
 - GIS and projection share timeline semantics. Keep display differences in
   named theme/profile tokens.
 - **Pause** freezes narrative reveal but completed-line flow continues.
-  **Stop** / `idle` shows the complete investigation story (all category polygons,
-  settlement impact outlines, completed route flow). Alarms stay idle/off.
+  GIS **Stop** rewinds the armed window to its scene play start and stays paused.
+  GIS **idle** (full-timeline cues, Home, archive, scene changes, slideshow)
+  shows the complete investigation story. Nova **Stop** keeps its 08:03 idle
+  preview. Idle alarms stay off.
 - People selection belongs in the existing remote **Navigation** tab. The GIS
   bubble shows only name and location; clicking it opens that person's archive
   record through the same archive bridge the remote uses.

@@ -41,6 +41,7 @@ import {
   idleNliClock,
   pauseNliClock,
   playNliClock,
+  rewindNliClock,
   seekNliClock,
   stopNliClock,
 } from "../../frontend/src/shared/nli-investigation-clock.js";
@@ -830,6 +831,17 @@ describe("syncInvestigationTimelineToMap", () => {
     expect(map.setPaintProperty.mock.calls.some(
       ([id, , value]) => String(id).startsWith("nli__investigation_polygons") && value === "#f79009",
     )).toBe(false);
+  });
+
+  it("rewind of a chopped window excludes later catalog polygons", async () => {
+    const map = makeMap();
+    const playing = playClock([INVESTIGATION_POLYGONS_FULL_ID], [400]);
+    await syncInvestigationTimelineToMap(map, rewindNliClock(playing), polygonOnlyGroups(), withProcessedPolygons({
+      featuresById: { [INVESTIGATION_POLYGONS_FULL_ID]: [STORY_POLYGON_A, STORY_POLYGON_B] },
+      settlementFeatures: [STORY_SETTLEMENT], now: () => 0,
+    }));
+    const features = map.getSource("nli-investigation-polygon-category").setData.mock.calls.at(-1)[0].features;
+    expect(features.map((f) => f.properties.timeline_minutes).sort((a, b) => a - b)).toEqual([400]);
   });
 
   it("reasserts raw polygon suppression across Nova, general, and disabled transitions", async () => {
