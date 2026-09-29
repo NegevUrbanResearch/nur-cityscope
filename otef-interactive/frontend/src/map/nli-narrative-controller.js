@@ -78,7 +78,8 @@ export function createGisNarrativeController({
       });
       return;
     }
-    map?.flyTo?.({ center: definition.center, zoom: definition.zoom, essential: true, duration });
+    const center = definition?.id === "hostages_all" ? exitCenter() : definition.center;
+    map?.flyTo?.({ center, zoom: definition.zoom, essential: true, duration });
   };
   const fitMorRoute = () => {
     if (morCameraActive || activeDefinition?.id !== "nova") return;

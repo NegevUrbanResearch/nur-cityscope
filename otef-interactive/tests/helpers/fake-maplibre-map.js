@@ -18,6 +18,10 @@ export class FakeMapLibreMap {
     this._frames = new Map();
     this._calls = [];
     this._getStyleCalls = 0;
+    this._sourceLoaded = new Map();
+    this._cameraMoving = false;
+    this._removed = false;
+    this._sprite = options.sprite || null;
     for (const [id, properties] of Object.entries(options.paints || {})) {
       this._paints.set(id, { ...properties });
     }
@@ -32,11 +36,19 @@ export class FakeMapLibreMap {
 
   getStyle() {
     this._getStyleCalls += 1;
-    return {
+    const style = {
       version: 8,
       sources: Object.fromEntries(this._sources),
       layers: this._layers.map((layer) => ({ ...layer })),
     };
+    if (this._sprite) style.sprite = this._sprite;
+    return style;
+  }
+
+  setSprite(url) {
+    this._sprite = url || null;
+    this._calls.push({ method: "setSprite", url });
+    return this;
   }
 
   getLayer(id) {
@@ -197,5 +209,31 @@ export class FakeMapLibreMap {
 
   pendingAnimationFrameCount() {
     return this._frames.size;
+  }
+
+  isMoving() {
+    return this._cameraMoving;
+  }
+
+  setCameraMoving(moving) {
+    this._cameraMoving = Boolean(moving);
+  }
+
+  isSourceLoaded(id) {
+    return this._sourceLoaded.get(id) === true;
+  }
+
+  setSourceLoaded(id, loaded) {
+    this._sourceLoaded.set(id, Boolean(loaded));
+  }
+
+  triggerRepaint() {
+    this._calls.push({ method: "triggerRepaint" });
+  }
+
+  remove() {
+    this._removed = true;
+    this.emit("remove");
+    this._calls.push({ method: "remove" });
   }
 }

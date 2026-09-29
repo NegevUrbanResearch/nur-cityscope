@@ -189,8 +189,6 @@ describe("GIS person selection visual", () => {
     d.visual.show(person, { focus: true });
     d.map.flyTo.mockClear();
     beginCameraTravel.mockClear();
-    d.visual.hide();
-    expect(d.map.flyTo).not.toHaveBeenCalled();
     d.visual.hide({ restoreCamera: true });
     expect(beginCameraTravel).toHaveBeenCalled();
     expect(d.map.flyTo).toHaveBeenCalledWith(expect.objectContaining({
@@ -201,6 +199,18 @@ describe("GIS person selection visual", () => {
       duration: 1600,
       essential: true,
     }));
+  });
+
+  test("a hide without restore discards the saved overview camera", async () => {
+    const d = setup();
+    d.map.getCenter = vi.fn(() => ({ lng: 34.4, lat: 31.3 }));
+    d.map.getZoom = vi.fn(() => 10);
+    const person = await d.visual.resolve("11", "v1");
+    d.visual.show(person, { focus: true });
+    d.map.flyTo.mockClear();
+    d.visual.hide();
+    d.visual.hide({ restoreCamera: true });
+    expect(d.map.flyTo).not.toHaveBeenCalled();
   });
 
   test("viewport helper uses projected point and 32px padding", async () => {

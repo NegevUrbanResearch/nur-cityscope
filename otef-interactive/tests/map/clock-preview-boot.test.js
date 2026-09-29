@@ -20,13 +20,13 @@ vi.mock("../../frontend/src/shared/maplibre-style-bridge.js", () => ({
 }));
 vi.mock("../../frontend/src/map/maplibre-map.js", () => ({
   createGISMap: vi.fn(() => rig.map),
-  setGISBasemap: vi.fn((map) => map.setStyle()),
+  setGISBasemap: vi.fn(() => true),
 }));
 
 import { bootClockPreview } from "../../frontend/src/map/clock-preview.js";
 import { getInvestigationTimelineRenderSnapshot } from "../../frontend/src/shared/maplibre-investigation-timeline.js";
 import { HOME_CUE, TIMELINE } from "../../frontend/src/remote/nli-staff-script.js";
-import { createGISMap } from "../../frontend/src/map/maplibre-map.js";
+import { createGISMap, setGISBasemap } from "../../frontend/src/map/maplibre-map.js";
 
 const PREVIEW_CUE_LAYER_IDS = [...new Set([
   ...HOME_CUE.layers,
@@ -65,6 +65,7 @@ function createMapMock() {
       for (const callback of [...(listeners.get(name) || [])]) callback(value);
     },
     listenerCount(name) { return listeners.get(name)?.size || 0; },
+    listenersFor(name) { return [...(listeners.get(name) || [])]; },
     addSource: vi.fn((id, spec) => sources.set(id, { ...spec, setData: vi.fn() })),
     getSource: vi.fn((id) => sources.get(id)),
     removeSource: vi.fn((id) => sources.delete(id)),
@@ -166,6 +167,8 @@ describe("bootClockPreview frame behavior", () => {
       source: sourceId,
       paint: { "line-color": "#c00", "line-opacity": 1 },
     }]);
+    setGISBasemap.mockClear();
+    setGISBasemap.mockImplementation(() => true);
     priorFetch = globalThis.fetch;
     globalThis.fetch = vi.fn(async () => ({
       ok: true,
@@ -343,5 +346,155 @@ describe("bootClockPreview frame behavior", () => {
     expect(messages(parent, "otef_clock_preview_error")).toHaveLength(1);
     expect(messages(parent, "otef_clock_preview_error")[0].requestId).toBe(1);
     expect(rig.map.listenerCount("idle")).toBe(0);
+  });
+
+  it("changes a narrative basemap without clearing overlays or registering another style.load listener", async () => {
+    await boot();
+    await render(1, "home");
+    const initialListeners = rig.map.listenersFor("style.load");
+    expect(initialListeners.length).toBeGreaterThan(0);
+    expect(rig.map.getSource("projector_base.ישובים")).toBeTruthy();
+    expect(rig.map.getLayer("projector_base.ישובים-line")).toBeTruthy();
+
+    await render(2, "segev");
+
+    expect(setGISBasemap).toHaveBeenCalledWith(
+      rig.map,
+      "satellite_bw",
+      expect.objectContaining({ onSettled: expect.any(Function) }),
+    );
+    expect(rig.map.listenersFor("style.load")).toEqual(initialListeners);
+    expect(rig.map.setStyle).not.toHaveBeenCalled();
+    expect(rig.map.getSource("projector_base.ישובים")).toBeTruthy();
+    expect(rig.map.getLayer("projector_base.ישובים-line")).toBeTruthy();
+  });
+
+  it("restores the local basemap after accepted failure so a later render can retry", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await boot();
+    setGISBasemap.mockImplementation((map, id, options = {}) => {
+      options.onSettled?.({ status: "failed", basemapId: "osm" });
+      return true;
+    });
+    await render(1, "segev");
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("satellite_bw"));
+    const callsAfterSyncFailure = setGISBasemap.mock.calls.length;
+
+    setGISBasemap.mockImplementation(() => true);
+    await render(2, "segev");
+    expect(setGISBasemap.mock.calls.length).toBe(callsAfterSyncFailure + 1);
+    expect(setGISBasemap.mock.calls.at(-1)[1]).toBe("satellite_bw");
+    const settle = setGISBasemap.mock.calls.at(-1)[2]?.onSettled;
+    expect(settle).toEqual(expect.any(Function));
+
+    settle({ status: "failed", basemapId: "osm" });
+    expect(warn).toHaveBeenCalledWith(
+      "[gis-basemap] failed to show satellite_bw; retaining osm",
+    );
+    await render(3, "segev");
+    expect(setGISBasemap.mock.calls.at(-1)[1]).toBe("satellite_bw");
+    expect(setGISBasemap.mock.calls.length).toBe(callsAfterSyncFailure + 2);
+    warn.mockRestore();
+  });
+
+  it("restores the prior basemap when the setter returns false and ignores superseded or disposed settlements", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await boot();
+    await render(1, "segev");
+    const accepted = setGISBasemap.mock.calls.at(-1)[2]?.onSettled;
+    expect(accepted).toEqual(expect.any(Function));
+    const callsAfterSegev = setGISBasemap.mock.calls.length;
+
+    setGISBasemap.mockImplementationOnce(() => false);
+    await render(2, "home");
+    expect(setGISBasemap.mock.calls.at(-1)[1]).toBe("osm");
+    expect(setGISBasemap.mock.calls.length).toBe(callsAfterSegev + 1);
+
+    await render(3, "segev");
+    expect(setGISBasemap.mock.calls.length).toBe(callsAfterSegev + 1);
+
+    accepted({ status: "failed", basemapId: "osm" });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("satellite_bw"));
+    await render(4, "segev");
+    expect(setGISBasemap.mock.calls.at(-1)[1]).toBe("satellite_bw");
+    const superseded = setGISBasemap.mock.calls.at(-1)[2].onSettled;
+
+    await render(5, "home");
+    expect(setGISBasemap.mock.calls.at(-1)[1]).toBe("osm");
+    const callsAfterHome = setGISBasemap.mock.calls.length;
+
+    superseded({ status: "completed", basemapId: "satellite_bw" });
+    await render(6, "home");
+    expect(setGISBasemap.mock.calls.length).toBe(callsAfterHome);
+
+    await render(7, "segev");
+    expect(setGISBasemap.mock.calls.at(-1)[1]).toBe("satellite_bw");
+    const pending = setGISBasemap.mock.calls.at(-1)[2].onSettled;
+    const callsBeforeDispose = setGISBasemap.mock.calls.length;
+
+    await dispose();
+    dispose = null;
+    warn.mockClear();
+    pending({ status: "failed", basemapId: "osm" });
+    expect(setGISBasemap.mock.calls.length).toBe(callsBeforeDispose);
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it("awaits the supplied frame document font before creating the map", async () => {
+    let releaseFonts = () => {};
+    const fontsLoad = vi.fn(() => new Promise((resolve) => {
+      releaseFonts = () => resolve([]);
+    }));
+    const globalLoad = vi.fn(() => Promise.resolve([]));
+    Object.defineProperty(document, "fonts", { configurable: true, value: { load: globalLoad } });
+    const frameDocument = {
+      getElementById: (id) => document.getElementById(id),
+      fonts: { load: fontsLoad },
+    };
+    const fetchImpl = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ viewport: { bbox: [34, 31, 35, 32], zoom: 10 }, basemap: "osm" }),
+    }));
+    createGISMap.mockClear();
+
+    const bootPromise = bootClockPreview({ window, document: frameDocument, fetchImpl });
+    for (let step = 0; step < 20; step += 1) await Promise.resolve();
+
+    expect(fontsLoad).toHaveBeenCalledWith("14px 'Guttman Hatzvi'");
+    expect(globalLoad).not.toHaveBeenCalled();
+    expect(createGISMap).not.toHaveBeenCalled();
+
+    releaseFonts();
+    dispose = await bootPromise;
+    expect(createGISMap).toHaveBeenCalledTimes(1);
+  });
+
+  it("logs a frame-document font preload rejection and still creates the map", async () => {
+    const fontError = new Error("missing face");
+    const fontsLoad = vi.fn(() => Promise.reject(fontError));
+    const globalLoad = vi.fn(() => Promise.resolve([]));
+    Object.defineProperty(document, "fonts", { configurable: true, value: { load: globalLoad } });
+    const frameDocument = {
+      getElementById: (id) => document.getElementById(id),
+      fonts: { load: fontsLoad },
+    };
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    createGISMap.mockClear();
+
+    dispose = await bootClockPreview({
+      window,
+      document: frameDocument,
+      fetchImpl: vi.fn(async () => ({
+        ok: true,
+        json: async () => ({ viewport: { bbox: [34, 31, 35, 32], zoom: 10 }, basemap: "osm" }),
+      })),
+    });
+
+    expect(fontsLoad).toHaveBeenCalledWith("14px 'Guttman Hatzvi'");
+    expect(globalLoad).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("Guttman Hatzvi"), fontError);
+    expect(createGISMap).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
   });
 });

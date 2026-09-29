@@ -89,6 +89,15 @@ describe("GIS Segev narrative scene", () => {
     expect(d.map.flyTo).toHaveBeenCalledTimes(2);
   });
 
+  test("hostages overview uses the same Home bounds center as exit", async () => {
+    const d = await setup({ bounds: { west: 34, east: 35, south: 31, north: 32 } });
+    d.controller.apply({ id: "hostages_all", transition: "enter", revision: 1 });
+    expect(d.map.flyTo).toHaveBeenCalledWith({ center: [34.5, 31.5], zoom: 10, essential: true, duration: 1600 });
+    expect(d.map.flyTo.mock.calls[0][0].center).not.toEqual(NLI_NARRATIVES.hostages_all.center);
+    d.controller.apply({ id: null, transition: "exit", revision: 2 });
+    expect(d.map.flyTo).toHaveBeenLastCalledWith({ center: [34.5, 31.5], zoom: 10, essential: true, duration: 1600 });
+  });
+
   test("rapid enter then exit stops stale travel and style reconstruction keeps only the latest scene", async () => {
     const d = await setup();
     d.controller.apply({ id: "segev", transition: "enter", revision: 1 });

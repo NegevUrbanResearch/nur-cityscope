@@ -223,10 +223,15 @@ export function createGisPersonSelection({ map, maplibregl, fetchJson: fetcher, 
     load: () => runtimePromise,
     resolve: (personId, datasetVersion) => { const token = renderToken; return runtimePromise.then((runtime) => disposed || token !== renderToken ? null : runtime.resolve(personId, datasetVersion)); },
     bringToFront,
-    show, hide: (options = {}) => {
+    show,
+    hide: (options = {}) => {
       if (disposed) return;
       cancelCamera(); renderToken += 1; current = null; removeVisual();
-      if (options.restoreCamera !== true || !overviewCamera || typeof map?.flyTo !== "function") return;
+      if (options.restoreCamera !== true) {
+        overviewCamera = null;
+        return;
+      }
+      if (!overviewCamera || typeof map?.flyTo !== "function") return;
       const camera = overviewCamera;
       overviewCamera = null;
       const duration = motionReduced(options.reducedMotion) ? 0 : 1600;

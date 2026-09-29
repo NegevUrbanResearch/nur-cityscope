@@ -1,9 +1,12 @@
+import { isGisBasemapId } from "../shared/gis-basemap.js";
+
 const coordinators = new WeakMap();
 
 /**
- * Schedule exactly one style reconstruction for the newest basemap request.
- * A MapLibre style can finish after a newer setStyle call, so every listener is
+ * Rebuild overlays after a real MapLibre style load.
+ * A newer style can finish after an older setStyle, so every listener is
  * generation-scoped and the old listener is detached before replacing it.
+ * Basemap id changes do not use this path.
  */
 export function installGisStyleReload({ map, refreshLayers, personVisual, narrativeController, getLayerGroups, onStyleLoad: afterStyleLoad, isCurrent = () => true } = {}) {
   if (!map || typeof refreshLayers !== "function" || typeof map.on !== "function") return () => {};
@@ -34,50 +37,39 @@ export function installGisStyleReload({ map, refreshLayers, personVisual, narrat
   };
 }
 
-/** The production basemap request path, separate from MapLibre's eventual style.load event. */
+/** Accepted basemap intent and settlement. Basemap changes do not reload the style. */
 export function createGisBasemapStyleCoordinator({
   map,
   initialBasemap,
   setBasemap,
-  refreshLayers,
-  personVisual,
-  narrativeController,
-  getLayerGroups,
-  onStyleLoad,
 } = {}) {
   let requestedBasemap = initialBasemap;
   let requestGeneration = 0;
-  let disposeStyleReload = null;
+  let disposed = false;
 
   const request = (nextBasemap) => {
-    if (nextBasemap === requestedBasemap || typeof setBasemap !== "function") return false;
+    if (typeof setBasemap !== "function" || !isGisBasemapId(nextBasemap)) return false;
+    if (nextBasemap === requestedBasemap) return false;
+
     const previousBasemap = requestedBasemap;
+    const previousGeneration = requestGeneration;
     const generation = ++requestGeneration;
     requestedBasemap = nextBasemap;
-    disposeStyleReload?.();
-    const isCurrent = () => generation === requestGeneration && requestedBasemap === nextBasemap;
-    disposeStyleReload = installGisStyleReload({
-      map,
-      personVisual,
-      narrativeController,
-      getLayerGroups,
-      onStyleLoad,
-      isCurrent,
-      refreshLayers: (options) => refreshLayers?.({ ...options, basemap: nextBasemap, isCurrent }),
+    const accepted = setBasemap(map, nextBasemap, {
+      onSettled(result) {
+        if (disposed || generation !== requestGeneration) return;
+        requestedBasemap = result?.basemapId;
+        if (result?.status === "failed") {
+          console.warn(
+            `[gis-basemap] failed to show ${nextBasemap}; retaining ${result.basemapId}`,
+          );
+        }
+      },
     });
-    if (!setBasemap(map, nextBasemap)) {
+    if (!accepted) {
       requestedBasemap = previousBasemap;
-      disposeStyleReload?.();
-      disposeStyleReload = null;
+      requestGeneration = previousGeneration;
       return false;
-    }
-    if (typeof map?.on !== "function") {
-      void refreshLayers?.({
-        groupsOverride: typeof getLayerGroups === "function" ? getLayerGroups() : undefined,
-        syncFlow: false,
-        basemap: nextBasemap,
-        isCurrent,
-      });
     }
     return true;
   };
@@ -85,6 +77,9 @@ export function createGisBasemapStyleCoordinator({
   return {
     request,
     getRequestedBasemap: () => requestedBasemap,
-    dispose() { disposeStyleReload?.(); disposeStyleReload = null; },
+    dispose() {
+      disposed = true;
+      requestGeneration += 1;
+    },
   };
 }

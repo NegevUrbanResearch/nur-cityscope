@@ -1,4 +1,9 @@
 import placeCatalog from "../shared/place-navigation/place-catalog.generated.js";
+import openFreeMapDarkStyle from "./basemaps/openfreemap-dark.js";
+
+const DARK_BASEMAP_LAYER_IDS = new Set(
+  (openFreeMapDarkStyle.layers || []).map((layer) => layer.id).filter(Boolean),
+);
 
 export const DARK_BASEMAP_TEXT_FIELD = Object.freeze([
   "coalesce",
@@ -212,9 +217,19 @@ function moveLayerToTop(map, id) {
   }
 }
 
-function isBasemapPlaceLabelLayer(layer) {
+function rasterBasemapPresent(layers) {
+  return layers.some((layer) => layer?.id === "osm-tiles" || layer?.id === "esri-tiles");
+}
+
+function darkBasemapPresent(layers) {
+  return layers.some((layer) => DARK_BASEMAP_LAYER_IDS.has(layer?.id));
+}
+
+function isRaisedPlaceLabel(layer, suppressDarkPlaceLabels) {
   if (layer?.id === GIS_NOVA_PLACE_LABEL_LAYER_ID) return true;
-  return layer?.type === "symbol" && layer["source-layer"] === PLACE_SOURCE_LAYER;
+  if (layer?.type !== "symbol" || layer["source-layer"] !== PLACE_SOURCE_LAYER) return false;
+  if (suppressDarkPlaceLabels && DARK_BASEMAP_LAYER_IDS.has(layer.id)) return false;
+  return true;
 }
 
 function isForegroundOverlayLayer(layer) {
@@ -284,15 +299,18 @@ export function ensureGisNovaPlaceLabel(map) {
 }
 
 /**
- * Keep OSM / dark-basemap place names above pack fills
- * so settlement labels stay readable. People-name and person-selection overlays
- * remain in front of those place labels.
+ * Keep dark place names above investigation fills when dark is the only basemap.
+ * While a raster basemap is also on the map, leave those dark place labels in place.
+ * Nova and people/selection overlays stay in front on every basemap.
  */
 export function raiseDarkBasemapPlaceLabels(map) {
   if (!map) return;
   ensureGisNovaPlaceLabel(map);
   const layers = styleLayers(map);
-  const placeIds = layers.filter(isBasemapPlaceLabelLayer).map((layer) => layer.id);
+  const suppressDarkPlaceLabels = rasterBasemapPresent(layers) && darkBasemapPresent(layers);
+  const placeIds = layers
+    .filter((layer) => isRaisedPlaceLabel(layer, suppressDarkPlaceLabels))
+    .map((layer) => layer.id);
   const overlayIds = layers.filter(isForegroundOverlayLayer).map((layer) => layer.id);
   for (const id of placeIds) moveLayerToTop(map, id);
   for (const id of overlayIds) moveLayerToTop(map, id);

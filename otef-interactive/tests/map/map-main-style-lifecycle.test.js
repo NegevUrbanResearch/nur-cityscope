@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import { createFakeMapLibreMap } from "../helpers/fake-maplibre-map.js";
-import { installGisStyleReload } from "../../frontend/src/entries/map-main-style-lifecycle.js";
+import { createGisBasemapStyleCoordinator, installGisStyleReload } from "../../frontend/src/entries/map-main-style-lifecycle.js";
 import { createCuratedDisplayGate, createGisCuratedRefresh, loadCuratedLayerToMapLibre, removeCuratedHtmlMarkers } from "../../frontend/src/map/maplibre-curated-layer-loader.js";
 import * as curatedService from "../../frontend/src/shared/curated-layer-service.js";
 
@@ -47,69 +47,197 @@ describe("map-main GIS style reload lifecycle", () => {
     expect(narrativeController.onStyleLoad).toHaveBeenCalledTimes(1);
   });
 
-  test("the production basemap request path accepts dark after an unloaded satellite request", async () => {
-    const { createGisBasemapStyleCoordinator } = await import(
-      "../../frontend/src/entries/map-main-style-lifecycle.js"
-    );
+  test("a basemap request does not register style.load or reconstruct overlays", async () => {
     const map = createFakeMapLibreMap();
-    const setBasemap = vi.fn(() => true);
     const refreshLayers = vi.fn(async () => {});
+    const personVisual = { bringToFront: vi.fn() };
+    const narrativeController = { onStyleLoad: vi.fn() };
+    const onStyleLoad = vi.fn();
     const coordinator = createGisBasemapStyleCoordinator({
       map,
       initialBasemap: "dark",
-      setBasemap,
-      refreshLayers,
-      getLayerGroups: () => [],
-    });
-
-    expect(coordinator.request("satellite_bw")).toBe(true);
-    expect(coordinator.request("dark")).toBe(true);
-    expect(setBasemap).toHaveBeenNthCalledWith(1, map, "satellite_bw");
-    expect(setBasemap).toHaveBeenNthCalledWith(2, map, "dark");
-    map.emit("style.load");
-    await Promise.resolve();
-    expect(refreshLayers).toHaveBeenCalledWith(expect.objectContaining({ basemap: "dark" }));
-    expect(coordinator.getRequestedBasemap()).toBe("dark");
-  });
-
-  test("a superseded async style refresh cannot perform stale follow-up ordering", async () => {
-    const map = createFakeMapLibreMap();
-    let releaseSatellite;
-    const mutations = [];
-    const refreshLayers = vi.fn(({ basemap, isCurrent }) => new Promise((resolve) => {
-      if (basemap === "satellite_bw") {
-        releaseSatellite = () => {
-          if (isCurrent()) mutations.push("satellite-mutation");
-          resolve();
-        };
-        return;
-      }
-      if (isCurrent()) mutations.push("dark-mutation");
-      resolve();
-    }));
-    const personVisual = { bringToFront: vi.fn(() => mutations.push("person")) };
-    const narrativeController = { onStyleLoad: vi.fn(() => mutations.push("narrative")) };
-    const { createGisBasemapStyleCoordinator } = await import(
-      "../../frontend/src/entries/map-main-style-lifecycle.js"
-    );
-    const coordinator = createGisBasemapStyleCoordinator({
-      map,
-      initialBasemap: "dark",
-      setBasemap: () => true,
+      setBasemap: vi.fn(() => true),
       refreshLayers,
       personVisual,
       narrativeController,
+      getLayerGroups: () => ["satellite"],
+      onStyleLoad,
     });
 
-    coordinator.request("satellite_bw");
+    expect(coordinator.request("satellite")).toBe(true);
+    expect(map.listenerCount("style.load")).toBe(0);
     map.emit("style.load");
     await Promise.resolve();
-    coordinator.request("dark");
-    releaseSatellite();
-    await Promise.resolve();
-    expect(mutations).not.toContain("satellite-mutation");
+    expect(refreshLayers).not.toHaveBeenCalled();
     expect(personVisual.bringToFront).not.toHaveBeenCalled();
     expect(narrativeController.onStyleLoad).not.toHaveBeenCalled();
+    expect(onStyleLoad).not.toHaveBeenCalled();
+  });
+
+  test("the map-main coordinator call site does not remount overlays for a basemap change", () => {
+    const source = fs.readFileSync(
+      path.resolve(import.meta.dirname, "../../frontend/src/entries/map-main.js"),
+      "utf8",
+    );
+    const lifecycle = fs.readFileSync(
+      path.resolve(import.meta.dirname, "../../frontend/src/entries/map-main-style-lifecycle.js"),
+      "utf8",
+    );
+    const start = source.indexOf("const basemapCoordinator = createGisBasemapStyleCoordinator({");
+    const end = source.indexOf("registerDisposer(() => basemapCoordinator.dispose())", start);
+    const call = source.slice(start, end);
+    expect(call).not.toContain("refreshLayers");
+    expect(call).not.toContain("onStyleLoad");
+    expect(call).not.toContain("clearAllLayers");
+    expect(call).not.toContain("personVisual");
+    expect(call).not.toContain("narrativeController");
+    expect(source).toContain("installMapLegendLifecycle({");
+    const requestStart = lifecycle.indexOf("const request = ");
+    const request = lifecycle.slice(requestStart, lifecycle.indexOf("return {", requestStart));
+    expect(request).not.toContain("installGisStyleReload");
+    expect(request).not.toContain("style.load");
+    expect(request).not.toContain("refreshLayers");
+  });
+
+  test("synchronous rejection keeps the earlier requested id and its settlement", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    let settleSatellite;
+    const setBasemap = vi.fn((map, id, options = {}) => {
+      if (id === "osm") return false;
+      settleSatellite = options.onSettled;
+      return true;
+    });
+    const coordinator = createGisBasemapStyleCoordinator({
+      map: createFakeMapLibreMap(),
+      initialBasemap: "dark",
+      setBasemap,
+    });
+
+    expect(coordinator.request("satellite")).toBe(true);
+    expect(coordinator.request("osm")).toBe(false);
+    expect(coordinator.getRequestedBasemap()).toBe("satellite");
+    expect(settleSatellite).toEqual(expect.any(Function));
+    settleSatellite({ status: "failed", basemapId: "dark" });
+    expect(coordinator.getRequestedBasemap()).toBe("dark");
+    warn.mockRestore();
+  });
+
+  test("an invalid basemap id does not advance generation or drop an in-flight settlement", () => {
+    let settleSatellite;
+    const setBasemap = vi.fn((map, id, options = {}) => {
+      if (id === "satellite") settleSatellite = options.onSettled;
+      return id !== "not-real";
+    });
+    const coordinator = createGisBasemapStyleCoordinator({
+      map: createFakeMapLibreMap(),
+      initialBasemap: "dark",
+      setBasemap,
+    });
+
+    expect(coordinator.request("satellite")).toBe(true);
+    expect(coordinator.request("not-real")).toBe(false);
+    expect(setBasemap).toHaveBeenCalledTimes(1);
+    expect(coordinator.getRequestedBasemap()).toBe("satellite");
+    settleSatellite({ status: "completed", basemapId: "satellite" });
+    expect(coordinator.getRequestedBasemap()).toBe("satellite");
+  });
+
+  test("synchronous settlement records the retained id before the setter returns", () => {
+    const completed = createGisBasemapStyleCoordinator({
+      map: createFakeMapLibreMap(),
+      initialBasemap: "dark",
+      setBasemap: vi.fn((map, id, options = {}) => {
+        expect(options.onSettled).toEqual(expect.any(Function));
+        options.onSettled({ status: "completed", basemapId: id });
+        return true;
+      }),
+    });
+    expect(completed.request("satellite")).toBe(true);
+    expect(completed.getRequestedBasemap()).toBe("satellite");
+
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const failed = createGisBasemapStyleCoordinator({
+      map: createFakeMapLibreMap(),
+      initialBasemap: "dark",
+      setBasemap: vi.fn((map, id, options = {}) => {
+        options.onSettled({ status: "failed", basemapId: "dark" });
+        return true;
+      }),
+    });
+    expect(failed.request("satellite")).toBe(true);
+    expect(failed.getRequestedBasemap()).toBe("dark");
+    warn.mockRestore();
+  });
+
+  test("failure allows the same target again and a pending duplicate stays a no-op", () => {
+    const pending = new Map();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const setBasemap = vi.fn((map, id, options = {}) => {
+      pending.set(id, options.onSettled);
+      return true;
+    });
+    const coordinator = createGisBasemapStyleCoordinator({
+      map: createFakeMapLibreMap(),
+      initialBasemap: "dark",
+      setBasemap,
+    });
+
+    expect(coordinator.request("satellite")).toBe(true);
+    expect(coordinator.request("satellite")).toBe(false);
+    expect(setBasemap).toHaveBeenCalledTimes(1);
+    const settle = pending.get("satellite");
+    expect(settle).toEqual(expect.any(Function));
+    settle({ status: "failed", basemapId: "dark" });
+    expect(coordinator.getRequestedBasemap()).toBe("dark");
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("satellite"));
+
+    expect(coordinator.request("satellite")).toBe(true);
+    expect(setBasemap).toHaveBeenCalledTimes(2);
+    expect(coordinator.request("satellite")).toBe(false);
+    expect(setBasemap).toHaveBeenCalledTimes(2);
+    warn.mockRestore();
+  });
+
+  test("a stale settlement does not replace the latest requested id", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const settlements = [];
+    const setBasemap = vi.fn((map, id, options = {}) => {
+      settlements.push(options.onSettled);
+      return true;
+    });
+    const coordinator = createGisBasemapStyleCoordinator({
+      map: createFakeMapLibreMap(),
+      initialBasemap: "dark",
+      setBasemap,
+    });
+
+    expect(coordinator.request("satellite")).toBe(true);
+    expect(coordinator.request("osm")).toBe(true);
+    expect(settlements[0]).toEqual(expect.any(Function));
+    settlements[0]({ status: "completed", basemapId: "satellite" });
+    expect(coordinator.getRequestedBasemap()).toBe("osm");
+    settlements[1]({ status: "failed", basemapId: "dark" });
+    expect(coordinator.getRequestedBasemap()).toBe("dark");
+    warn.mockRestore();
+  });
+
+  test("dispose ignores a late settlement", () => {
+    let settle;
+    const setBasemap = vi.fn((map, id, options = {}) => {
+      settle = options.onSettled;
+      return true;
+    });
+    const coordinator = createGisBasemapStyleCoordinator({
+      map: createFakeMapLibreMap(),
+      initialBasemap: "dark",
+      setBasemap,
+    });
+
+    expect(coordinator.request("satellite")).toBe(true);
+    coordinator.dispose();
+    expect(settle).toEqual(expect.any(Function));
+    settle({ status: "failed", basemapId: "dark" });
+    expect(coordinator.getRequestedBasemap()).toBe("satellite");
   });
 
   test("curated refresh restores the narrative marker above a later curated layer only while current", async () => {
@@ -160,7 +288,7 @@ describe("map-main GIS style reload lifecycle", () => {
     const refreshStart = loader.indexOf("const refreshCuratedLayers = async");
     const loaderCall = loader.slice(loader.indexOf("await loadCuratedLayerToMapLibre", refreshStart));
     expect(loaderCall.slice(0, 240)).toMatch(/isCurrent:\s*\(\)\s*=>\s*isCurrent\(fullId\)/);
-    expect(source).toMatch(/curatedDisplay\.invalidateStyle\(\)/);
+    expect(source).not.toMatch(/curatedDisplay\.invalidateStyle\(\)/);
     expect(source).toMatch(/curatedDisplay\.dispose\(\)/);
     const applyAt = loader.indexOf("applyLayerGroups(", refreshStart);
     const awaitAt = loader.indexOf("await ", refreshStart);

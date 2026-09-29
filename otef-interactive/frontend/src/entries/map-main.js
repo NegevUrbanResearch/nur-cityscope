@@ -2,7 +2,7 @@ import TableSwitcher from "../shared/table-switcher.js";
 import TableSwitcherPopup from "../shared/table-switcher-popup.js";
 import { createGISMap, setGISBasemap, maplibregl } from "../map/maplibre-map.js";
 import { setupViewportSync } from "../map/maplibre-viewport-sync.js";
-import { applyLayerGroupsToMap, clearAllLayers, disposeLayerManagerForMap } from "../map/maplibre-layer-manager.js";
+import { applyLayerGroupsToMap, disposeLayerManagerForMap } from "../map/maplibre-layer-manager.js";
 import { raiseDarkBasemapPlaceLabels } from "../map/dark-basemap-labels.js";
 import { attachGisFeaturePopups } from "../map/maplibre-gis-popups.js";
 import { createGisPersonSelection } from "../map/maplibre-person-selection.js";
@@ -18,7 +18,6 @@ import { createMorRouteCoordinator } from "../shared/nli-mor-route-coordinator.j
 import { createGisBasemapStyleCoordinator } from "./map-main-style-lifecycle.js";
 import { bootClockPreview } from "../map/clock-preview.js";
 import {
-  createLegendStyleLoadRefresh,
   installMapLegendLifecycle,
   positionGisLegend,
 } from "../map/legend-integration.js";
@@ -169,7 +168,7 @@ async function bootstrapMapRuntime() {
     resolveCenterFromViewport(OTEFDataContext.getViewport()) ||
     DEFAULT_MAP_CENTER;
 
-  let currentBasemap = normalizeGisBasemap(
+  const currentBasemap = normalizeGisBasemap(
     typeof OTEFDataContext.getBasemap === "function" ? OTEFDataContext.getBasemap() : "osm",
   );
 
@@ -536,7 +535,7 @@ async function bootstrapMapRuntime() {
       }
     }
 
-    const { refreshCuratedLayers, clearActiveCuratedIds } = createGisCuratedRefresh({
+    const { refreshCuratedLayers } = createGisCuratedRefresh({
       map,
       getLayerGroups: () => OTEFDataContext.getLayerGroups(),
       displayGroups: gisDisplayGroups,
@@ -561,37 +560,10 @@ async function bootstrapMapRuntime() {
     narrativeController.apply(OTEFDataContext.getNarrativeState?.());
 
     let legendLifecycle = null;
-    const refreshLegendAfterStyleLoad = createLegendStyleLoadRefresh(
-      () => legendLifecycle,
-    );
     const basemapCoordinator = createGisBasemapStyleCoordinator({
       map,
       initialBasemap: currentBasemap,
       setBasemap: setGISBasemap,
-      personVisual,
-      narrativeController,
-      getLayerGroups: () => OTEFDataContext.getLayerGroups(),
-      onStyleLoad: refreshLegendAfterStyleLoad,
-      refreshLayers: async ({ basemap, groupsOverride, syncFlow = false, isCurrent }) => {
-        if (!isCurrent()) return;
-        curatedDisplay.invalidateStyle();
-        const groups = groupsOverride ?? OTEFDataContext.getLayerGroups();
-        const displayIsCurrent = curatedDisplay.begin(
-          collectEnabledCuratedIds(filterGroupsForGisMap(gisDisplayGroups(groups))),
-        );
-        const refreshIsCurrent = (fullId) => isCurrent() && displayIsCurrent(fullId);
-        currentBasemap = basemap;
-        clearAllLayers(map);
-        clearActiveCuratedIds();
-        if (!refreshIsCurrent()) return;
-        await refreshCuratedLayers({
-          groupsOverride: groups,
-          syncFlow,
-          isCurrent: refreshIsCurrent,
-        });
-        if (!refreshIsCurrent()) return;
-        if (!syncFlow) syncContextFlowAnimations();
-      },
     });
     registerDisposer(() => basemapCoordinator.dispose());
     registerDisposer(

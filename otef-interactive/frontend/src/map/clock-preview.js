@@ -191,6 +191,13 @@ export async function bootClockPreview({ window: frameWindow, document: frameDoc
   const snapshot = await readStateSnapshot(fetchImpl);
   await layerRegistry.init();
   const registryGroups = clone(layerRegistry.getGroups());
+  if (frameDocument.fonts && typeof frameDocument.fonts.load === "function") {
+    try {
+      await frameDocument.fonts.load("14px 'Guttman Hatzvi'");
+    } catch (err) {
+      console.warn("[clock-preview] Guttman Hatzvi font preload failed; people-name labels may flash", err);
+    }
+  }
   const map = createGISMap("map", {
     center: viewportCenter(snapshot.viewport),
     zoom: Number.isFinite(snapshot.viewport?.zoom) ? snapshot.viewport.zoom : 10,
@@ -202,6 +209,7 @@ export async function bootClockPreview({ window: frameWindow, document: frameDoc
   const escape = localEscapeContext();
   let currentScene = composeGisClockPreviewScene("home", registryGroups);
   let activeBasemap = normalizeGisBasemap(snapshot.basemap || "osm");
+  let basemapGeneration = 0;
   let requestId = -1;
   let disposed = false;
   let styleRefresh = null;
@@ -260,15 +268,25 @@ export async function bootClockPreview({ window: frameWindow, document: frameDoc
   const setBasemap = (nextBasemap) => {
     const normalized = normalizeGisBasemap(nextBasemap);
     if (normalized === activeBasemap) return;
+    const previousBasemap = activeBasemap;
+    const previousGeneration = basemapGeneration;
+    const generation = ++basemapGeneration;
     activeBasemap = normalized;
-    styleRefresh?.();
-    styleRefresh = installGisStyleReload({
-      map,
-      refreshLayers: refreshStyle,
-      narrativeController,
-      getLayerGroups: () => groupsForMap(),
+    const accepted = setGISBasemap(map, normalized, {
+      onSettled(result) {
+        if (disposed || generation !== basemapGeneration) return;
+        activeBasemap = result?.basemapId;
+        if (result?.status === "failed") {
+          console.warn(
+            `[gis-basemap] failed to show ${normalized}; retaining ${result.basemapId}`,
+          );
+        }
+      },
     });
-    setGISBasemap(map, normalized);
+    if (!accepted) {
+      activeBasemap = previousBasemap;
+      basemapGeneration = previousGeneration;
+    }
   };
 
   const renderState = async (state) => {
@@ -347,6 +365,7 @@ export async function bootClockPreview({ window: frameWindow, document: frameDoc
     if (disposed) return;
     disposed = true;
     renderGeneration += 1;
+    basemapGeneration += 1;
     cancelDrawWaits();
     frameWindow.removeEventListener("message", onMessage);
     map.off?.("load", onLoad);

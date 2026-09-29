@@ -1,6 +1,6 @@
-import { normalizeGisBasemap } from "../shared/gis-basemap.js";
-import { prepareInvestigationTimelineForStyleReload } from "../shared/maplibre-investigation-timeline.js";
-import { applyDarkBasemapLabelPolicy } from "./dark-basemap-labels.js";
+import { isGisBasemapId, normalizeGisBasemap } from "../shared/gis-basemap.js";
+import { applyDarkBasemapLabelPolicy, raiseDarkBasemapPlaceLabels } from "./dark-basemap-labels.js";
+import { transitionGisBasemap } from "./gis-basemap-transition.js";
 import openFreeMapDarkStyle from "./basemaps/openfreemap-dark.js";
 
 const maplibregl =
@@ -26,9 +26,12 @@ const ESRI_WORLD_IMAGERY_TILES = Object.freeze([
   "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
 ]);
 
+const DARK_BASEMAP_SPRITE = openFreeMapDarkStyle.sprite;
+
 function createEsriRasterStyle(paint) {
   return {
     version: 8,
+    sprite: DARK_BASEMAP_SPRITE,
     sources: {
       esri: {
         type: "raster",
@@ -77,6 +80,7 @@ maplibregl.addProtocol("pmtiles", pmtilesProtocol.tile);
 const BASEMAP_STYLES = {
   osm: {
     version: 8,
+    sprite: DARK_BASEMAP_SPRITE,
     sources: {
       osm: {
         type: "raster",
@@ -96,12 +100,30 @@ const BASEMAP_STYLES = {
   dark: applyDarkBasemapLabelPolicy(openFreeMapDarkStyle),
 };
 
-export function setGISBasemap(map, basemap) {
-  const style = BASEMAP_STYLES[basemap];
-  if (!map || !style || typeof map.setStyle !== "function") return false;
-  prepareInvestigationTimelineForStyleReload(map);
-  map.setStyle(style, { diff: false });
-  return true;
+function ensureBasemapSprite(map) {
+  if (!DARK_BASEMAP_SPRITE || typeof map?.getStyle !== "function" || typeof map.setSprite !== "function") {
+    return;
+  }
+  let sprite;
+  try {
+    sprite = map.getStyle()?.sprite;
+  } catch {
+    return;
+  }
+  if (sprite) return;
+  map.setSprite(DARK_BASEMAP_SPRITE);
+}
+
+export function setGISBasemap(map, basemapId, { onSettled } = {}) {
+  if (!isGisBasemapId(basemapId)) return false;
+  ensureBasemapSprite(map);
+  return transitionGisBasemap(map, basemapId, {
+    styles: BASEMAP_STYLES,
+    onSettled(result) {
+      raiseDarkBasemapPlaceLabels(map);
+      onSettled?.(result);
+    },
+  });
 }
 
 export function createGISMap(containerId, options = {}) {
