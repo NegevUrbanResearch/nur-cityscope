@@ -254,4 +254,19 @@ describe("projection warp renderer", () => {
     renderer.dispose();
     expect(gl.deleteBuffer).toHaveBeenCalled(); expect(gl.deleteTexture).toHaveBeenCalled(); expect(gl.deleteFramebuffer).toHaveBeenCalled();
   });
+
+  test('relative-source profile accepts small well-conditioned faces and rejects Float32 collapse', () => {
+    const small={width:1920,height:1080,validationProfile:'relative-source-v1',vertices:[
+      {s:.1,t:.1,x:.1,y:.1,u:0,v:0},{s:.101,t:.1,x:.101,y:.1,u:1,v:0},{s:.1,t:.101,x:.1,y:.101,u:0,v:1}],triangles:[0,1,2]};
+    expect(validateProjectionMesh(small)).toBe(small);
+    const collapsed={...small,vertices:[
+      {s:.3,t:.3,x:.3,y:.3,u:0,v:0},{s:.300000001,t:.3,x:.300000001,y:.3,u:1,v:0},{s:.3,t:.300000001,x:.3,y:.300000001,u:0,v:1}]};
+    expect(()=>validateProjectionMesh(collapsed)).toThrow('render precision collapses or inverts a grid triangle');
+    const insufficientRatio={...small,vertices:[
+      {s:0,t:0,x:.6113237719982862,y:.9376534202601761,u:0,v:0},
+      {s:1,t:0,x:.7954265424050391,y:.6015647205058485,u:1,v:0},
+      {s:0,t:1,x:.7312631888714295,y:.7186981057826362,u:0,v:1}]};
+    expect(()=>validateProjectionMesh(insufficientRatio)).toThrow('render precision collapses or inverts a grid triangle');
+    expect(()=>validateProjectionMesh({...small,validationProfile:'unknown'})).toThrow('projection mesh validation profile is unknown');
+  });
 });

@@ -1,5 +1,6 @@
 import { createProjectionLayerTextures } from './projection-layer-textures.js';
 import { NAME_FIELD_MOTION, NAME_FIELD_REVEAL_DURATION_MS } from '../shared/nli-name-field-animation.js';
+import { relativeTriangleError } from '../shared/projection-relative-mesh.js';
 
 const WIDTH = 1920;
 const HEIGHT = 1080;
@@ -21,7 +22,12 @@ export function validateProjectionMesh(mesh) {
     if (!indices.every((n) => finite(n) && Number.isInteger(n) && n >= 0 && n <= 65535 && n < mesh.vertices.length)) throw new Error("projection mesh triangle index is invalid or exceeds unsigned-short capacity");
     const [a, b, c] = indices.map((n) => mesh.vertices[n]);
     const area = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
-    if (!(area > EPSILON)) throw new Error("projection mesh triangle is inverted or degenerate");
+    if (mesh.validationProfile === 'relative-source-v1') {
+      const relativeError = relativeTriangleError(a, b, c);
+      if (relativeError === 'render') throw new Error('render precision collapses or inverts a grid triangle');
+      if (relativeError) throw new Error('projection mesh triangle is inverted or degenerate');
+    } else if (mesh.validationProfile !== undefined) throw new Error('projection mesh validation profile is unknown');
+    else if (!(area > EPSILON)) throw new Error("projection mesh triangle is inverted or degenerate");
   }
   return mesh;
 }

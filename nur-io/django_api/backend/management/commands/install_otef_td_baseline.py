@@ -14,7 +14,9 @@ from backend.projection_warp_schema import (
     TD_MIGRATION_PRESET_NAME,
     migrate_projection_config_to_v2,
     migrate_projection_config_to_v5,
+    migrate_projection_config_to_v7,
     validate_projection_config_v5,
+    validate_projection_config_v7,
 )
 
 
@@ -55,13 +57,13 @@ def build_td_baseline(root):
             'height': asset.get('height', 1080),
             'origin': asset.get('origin', 'top-left'),
         }
-    config = migrate_projection_config_to_v5(migrate_projection_config_to_v2(framing, baselines=baselines))
-    errors = validate_projection_config_v5(config, trusted_manifest=manifest)
+    config = migrate_projection_config_to_v7(migrate_projection_config_to_v2(framing, baselines=baselines), 35)
+    errors = validate_projection_config_v7(config, trusted_manifest=manifest)
     if errors:
         raise CommandError('TD baseline config is invalid: ' + '; '.join(f'{path} {message}' for path, message in errors.items()))
     for side in ('left', 'right'):
         try:
-            evaluate_warp_mesh(meshes[side], config['outputs'][side]['warp'])
+            evaluate_warp_mesh(meshes[side], config['outputs'][side]['warp'], side=side, schema_version=7)
         except (ValueError, TypeError, KeyError) as error:
             raise CommandError(f'{side} TD baseline geometry is unsafe: {error}') from error
     return config

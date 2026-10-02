@@ -5,7 +5,7 @@ import { createWarpEditor, gridSelection } from "../../frontend/src/projection-c
 import { DEFAULT_PROJECTION_CONFIG } from "../../frontend/src/shared/projection-config-schema.js";
 import { createIdentityProjectionMesh } from "../../frontend/src/shared/projection-warp-geometry.js";
 
-function fixture({ handles = [{ x: 0.25, y: 0.25 }], selection = { mode: "grid", kind: "point", index: 0, indices: [0] }, rect = { left: 0, top: 0, width: 960, height: 540 }, viewBox = { x: 0, y: 0, width: 1920, height: 1080 } } = {}) {
+function fixture({ handles = [{ x: 0.25, y: 0.25 }], selection = { mode: "grid", kind: "point", index: 0, indices: [0] }, rows = 7, columns = 7, rect = { left: 0, top: 0, width: 960, height: 540 }, viewBox = { x: 0, y: 0, width: 1920, height: 1080 } } = {}) {
   const listeners = new Map();
   const surface = {
     ownerDocument: { visibilityState: "visible", addEventListener(type, callback) { listeners.set(`doc:${type}`, callback); }, removeEventListener(type) { listeners.delete(`doc:${type}`); }, defaultView: { addEventListener(type, callback) { listeners.set(`win:${type}`, callback); }, removeEventListener(type) { listeners.delete(`win:${type}`); } } },
@@ -13,11 +13,60 @@ function fixture({ handles = [{ x: 0.25, y: 0.25 }], selection = { mode: "grid",
     setPointerCapture: vi.fn(), releasePointerCapture: vi.fn(), focus: vi.fn(),
   };
   const calls = { select: vi.fn(), start: vi.fn(), move: vi.fn(), end: vi.fn(), cancel: vi.fn(), navigate: vi.fn() };
-  const geometry = { rect, viewBox, handles, selection, side: "left", mode: selection.mode };
+  const geometry = { rect, viewBox, handles, selection, rows, columns, side: "left", mode: selection.mode };
   const binder = bindWarpPointerInput({ surface, readGeometry: () => geometry, onSelect: calls.select, onStart: calls.start, onMove: calls.move, onEnd: calls.end, onCancel: calls.cancel, onNavigate: calls.navigate });
   const fire = (type, event = {}) => listeners.get(type)?.({ type, pointerId: 1, isPrimary: true, button: 0, clientX: 240, clientY: 135, preventDefault: vi.fn(), ...event });
   return { surface, calls, geometry, binder, fire };
 }
+
+test.each([
+  { side: "left", rows: 7, columns: 7, index: 17, expected: { mode: "grid", kind: "row", index: 2 } },
+  { side: "right", rows: 7, columns: 8, index: 19, expected: { mode: "grid", kind: "row", index: 2 } },
+])("a hit on a different row member selects that row before starting the drag ($side grid)", ({ side, rows, columns, index, expected }) => {
+  const handles = Array.from({ length: rows * columns }, (_, item) => ({ x: (item % columns) / (columns - 1), y: Math.floor(item / columns) / (rows - 1) }));
+  const selectedRowIndices = Array.from({ length: columns }, (_, column) => columns + column);
+  const f = fixture({ handles, rows, columns, selection: { mode: "grid", kind: "row", index: 1, indices: selectedRowIndices }, rect: { left: 0, top: 0, width: 1920, height: 1080 } });
+  f.geometry.side = side;
+  const order = [];
+  f.calls.select.mockImplementation((value) => { order.push("select"); f.geometry.selection = { ...value.selection, indices: Array.from({ length: columns }, (_, column) => expected.index * columns + column) }; });
+  f.calls.start.mockImplementation(() => { expect(f.geometry.selection).toMatchObject(expected); order.push("start"); });
+  const point = handles[index];
+  f.fire("pointerdown", { clientX: point.x * 1920, clientY: point.y * 1080 });
+  expect(f.calls.select).toHaveBeenCalledWith({ output: side, selection: expected });
+  expect(order).toEqual(["select", "start"]);
+  expect(f.calls.start).toHaveBeenCalledOnce();
+  f.binder.dispose();
+});
+
+test("a hit on another column member preserves column mode and selects that column before starting", () => {
+  const rows = 7; const columns = 8;
+  const handles = Array.from({ length: rows * columns }, (_, item) => ({ x: (item % columns) / (columns - 1), y: Math.floor(item / columns) / (rows - 1) }));
+  const indices = Array.from({ length: rows }, (_, row) => row * columns + 2);
+  const f = fixture({ handles, rows, columns, selection: { mode: "grid", kind: "column", index: 2, indices }, rect: { left: 0, top: 0, width: 1920, height: 1080 } });
+  const order = [];
+  f.calls.select.mockImplementation((value) => { order.push("select"); f.geometry.selection = { ...value.selection, indices: Array.from({ length: rows }, (_, row) => row * columns + 5) }; });
+  f.calls.start.mockImplementation(() => { expect(f.geometry.selection).toMatchObject({ mode: "grid", kind: "column", index: 5 }); order.push("start"); });
+  const hitIndex = 2 * columns + 5;
+  const point = handles[hitIndex];
+  f.fire("pointerdown", { clientX: point.x * 1920, clientY: point.y * 1080 });
+  expect(f.calls.select).toHaveBeenCalledWith({ output: "left", selection: { mode: "grid", kind: "column", index: 5 } });
+  expect(order).toEqual(["select", "start"]);
+  f.binder.dispose();
+});
+
+test.each([
+  { kind: "row", columns: 8, rows: 7, selectedIndex: 0, hitIndex: 3, expectedKind: "row", expectedIndex: 0 },
+  { kind: "column", columns: 8, rows: 7, selectedIndex: 2, hitIndex: 10, expectedKind: "column", expectedIndex: 2 },
+])("hitting a selected $kind member preserves the group selection", ({ kind, columns, rows, selectedIndex, hitIndex, expectedKind, expectedIndex }) => {
+  const handles = Array.from({ length: rows * columns }, (_, item) => ({ x: (item % columns) / (columns - 1), y: Math.floor(item / columns) / (rows - 1) }));
+  const indices = kind === "row" ? Array.from({ length: columns }, (_, column) => selectedIndex * columns + column) : Array.from({ length: rows }, (_, row) => row * columns + selectedIndex);
+  const f = fixture({ handles, rows, columns, selection: { mode: "grid", kind, index: selectedIndex, indices }, rect: { left: 0, top: 0, width: 1920, height: 1080 } });
+  const point = handles[hitIndex];
+  f.fire("pointerdown", { clientX: point.x * 1920, clientY: point.y * 1080 });
+  expect(f.calls.select).not.toHaveBeenCalled();
+  expect(f.calls.start).toHaveBeenCalledOnce();
+  f.binder.dispose();
+});
 
 test("second touch cannot cancel or take ownership from a geometry drag", () => {
   const config = structuredClone(DEFAULT_PROJECTION_CONFIG);

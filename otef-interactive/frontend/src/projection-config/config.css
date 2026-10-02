@@ -135,7 +135,7 @@ h2, h3 { margin: 0 0 10px; }
 .warp-editor-fine-panel .warp-fine-primary { flex: 0 1 auto; min-height: 0; overflow-y: auto; }
 .warp-editor-fine-panel .warp-fine-secondary { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 .warp-editor-fine-panel .warp-fine-primary > .warp-selection { margin: 3px 0; gap: 3px; }
-.warp-editor-fine-panel .warp-fine-primary > .warp-selection-status { min-height: 1.2em; margin: 3px 0; color: var(--config-muted); font-size: 13px; line-height: 18px; overflow-wrap: anywhere; }
+.warp-editor-fine-panel .warp-fine-primary > .warp-selection-status { height: 36px; min-height: 36px; margin: 3px 0; color: var(--config-muted); font-size: 13px; line-height: 18px; overflow: auto; overflow-wrap: anywhere; }
 .warp-editor-fine-panel .warp-fine-primary > .warp-step, .warp-editor-fine-panel .warp-fine-primary > .warp-arrows { margin-top: 4px; }
 .warp-editor-applied { color: var(--config-muted); font-size: 13px; line-height: 18px; }
 .warp-editor-footer label { display: inline-flex; align-items: center; gap: 6px; }
@@ -183,14 +183,20 @@ h2, h3 { margin: 0 0 10px; }
 .warp-selection { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 5px; margin-top: 8px; }
 .warp-selection-picker { grid-column: 1 / -1; width: 100%; min-width: 0; }
 .warp-selection-button, .warp-action { min-height: 44px; padding: 6px; font-size: .78rem; }
+.warp-selection-controls { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-template-rows: 48px 48px; min-width: 0; gap: 4px; margin: 4px 0; }
+.warp-selection-controls[hidden] { display: none; }
+.warp-selection-controls .warp-selection-button, .warp-selection-controls .warp-selection-picker { min-width: 0; min-height: 48px; margin: 0; }
+.warp-selection-controls .warp-selection-picker { grid-column: 1 / -1; width: 100%; }
+.warp-selection-button[aria-pressed="true"] { border-color: var(--config-accent); color: var(--config-text); background: var(--config-surface-raised); }
 .warp-edit-surface { display: block; width: 100%; height: auto; aspect-ratio: 16 / 9; min-height: 110px; margin-top: 10px; overflow: visible; border: 1px solid #38504d; border-radius: 6px; background: #0a1415; touch-action: none; }
 .warp-edit-surface.warp-preview-overlay { position: absolute; inset: 0; z-index: 3; width: 100%; height: 100%; margin: 0; aspect-ratio: auto; border: 0; border-radius: 0; background: transparent; pointer-events: auto; }
 .warp-output-rect { fill: none; stroke: #f6c453; stroke-width: 4; stroke-dasharray: 18 12; vector-effect: non-scaling-stroke; pointer-events: none; }
 .warp-grid-line { fill: none; stroke: #79c9b2; stroke-width: 3; opacity: .75; vector-effect: non-scaling-stroke; pointer-events: none; }
+.warp-grid-line.selected { stroke: #ffd166; stroke-width: 5; opacity: 1; }
 .warp-handle { fill: #77d8b0; stroke: #07110f; stroke-width: 5; vector-effect: non-scaling-stroke; cursor: grab; }
 .warp-handle.selected { fill: #ffd166; stroke: #fff3c4; }
 .warp-handle:focus-visible { outline: 3px solid #fff3c4; outline-offset: 4px; }
-.warp-selection-status { min-height: 2.4em; margin: 8px 0; color: var(--config-muted); font-size: 13px; line-height: 18px; overflow-wrap: anywhere; }
+.warp-selection-status { height: 36px; min-height: 36px; margin: 8px 0; overflow: auto; color: var(--config-muted); font-size: 13px; line-height: 18px; overflow-wrap: anywhere; }
 .warp-numeric { display: grid; grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 8px; margin-top: 6px; color: var(--config-muted); font-size: 14px; }
 .warp-numeric input { min-height: 48px; width: 100%; padding: 5px; font-variant-numeric: tabular-nums; }
 .warp-position-error { grid-column: 1 / -1; min-width: 0; overflow-wrap: anywhere; }
@@ -200,6 +206,15 @@ h2, h3 { margin: 0 0 10px; }
 .warp-step-label { display: inline-block; margin-top: 8px; color: var(--config-muted); font-size: 13px; line-height: 18px; }
 .warp-editor-fine-panel .warp-step { width: 100%; margin-top: 4px; }
 .warp-editor-applied, .applied-status, .warp-editor-preview-status { color: var(--config-muted); font-size: 13px; line-height: 18px; }
+.warp-grid-layout-section { min-width: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--config-divider); }
+.warp-grid-layout-section[hidden] { display: none; }
+.warp-grid-layout-section h3 { grid-column: 1 / -1; margin: 0; font-size: .9rem; }
+.warp-grid-layout-hint { grid-column: 1 / -1; height: 36px; min-height: 36px; max-height: 36px; margin: 0; overflow: auto; overflow-wrap: anywhere; color: var(--config-muted); font-size: 11px; line-height: 18px; }
+.warp-grid-layout-field { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 3px; font-size: .75rem; color: var(--config-muted); }
+.warp-grid-layout-field input { width: 100%; min-width: 0; min-height: 44px; padding: 4px 6px; }
+.warp-grid-layout-section button { min-width: 0; min-height: 44px; padding: 4px; }
+.warp-grid-layout-error { grid-column: 1 / -1; height: 36px; min-height: 36px; max-height: 36px; margin: 0; overflow: auto; overflow-wrap: anywhere; color: var(--config-error); font-size: 12px; line-height: 18px; }
+.warp-grid-layout-section .warp-grid-layout-field:nth-of-type(5), .warp-grid-layout-section .warp-grid-layout-field:nth-of-type(6) { grid-column: 1 / -1; }
 .crop-diagram { margin-top: 16px; padding: 12px; border: 1px solid #34465c; border-radius: 8px; background: #151d28; }
 .crop-diagram-svg { display: block; width: 100%; height: auto; }
 .diagram-legend { color: #b8c5d6; font-size: .8rem; margin: 8px 0 0; }

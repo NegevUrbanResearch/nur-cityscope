@@ -1131,6 +1131,7 @@ describe("projection config controller", () => {
     globalThis.document = documentStub();
     const legacy = clone(DEFAULTS);
     legacy.schemaVersion = 1;
+    delete legacy.namesWall;
     for (const output of ["left", "right"]) {
       delete legacy.outputs[output].presentationEffect;
       delete legacy.outputs[output].warp;
@@ -1451,6 +1452,68 @@ describe("projection config controller", () => {
     undo.dispatch("click");
     expect(client.getState().draft.outputs.left.warp.keystone.corners[0][0]).toBe(0);
     expect(redraws()).toBe(1);
+    restore();
+  });
+
+  test("Grid layout edit preserves selection through synchronous draft notification and flushes once in Live", async () => {
+    const { root, client, trace, redraws, restore } = tracedWarpHarness();
+    find(root, (node) => node.dataset?.action === "warp-editor-close").dispatch("click");
+    client.setLive(true);
+    find(root, (node) => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+    const chooseRow = find(root, (node) => node.dataset?.warpSelectionKind === "row");
+    chooseRow.dispatch("click");
+    const rowPicker = find(root, (node) => node.className === "warp-selection-picker");
+    rowPicker.value = "2"; rowPicker.dispatch("change");
+    const before = clone(client.getState().draft.outputs.left.warp.grid);
+    client.setDraft.mockClear(); client.apply.mockClear(); trace.record.mockClear();
+    const rows = find(root, (node) => node.dataset?.gridLayoutField === "rows");
+    rows.value = "3"; rows.dispatch("input"); rows.dispatch("change");
+    expect(client.getState().draft.outputs.left.warp.grid.rows).toBe(3);
+    expect(client.setDraft).toHaveBeenCalledTimes(1);
+    expect(client.apply).toHaveBeenCalledTimes(1);
+    expect(redraws()).toBe(1);
+    expect(rowPicker.value).toBe("2");
+    find(root, (node) => node.dataset?.action === "warp-undo").dispatch("click");
+    expect(client.getState().draft.outputs.left.warp.grid).toEqual(before);
+    expect(client.setDraft).toHaveBeenCalledTimes(2);
+    expect(client.apply).toHaveBeenCalledTimes(2);
+    expect(rowPicker.value).toBe("2");
+    restore();
+  });
+
+  test("invalid source-line geometry reports near Grid controls without draft, apply, or history writes", () => {
+    const { root, client, trace, restore } = tracedWarpHarness();
+    find(root, (node) => node.dataset?.action === "warp-editor-close").dispatch("click");
+    find(root, (node) => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+    find(root, (node) => node.dataset?.warpSelectionKind === "row").dispatch("click");
+    const picker = find(root, (node) => node.className === "warp-selection-picker"); picker.value = "1"; picker.dispatch("change");
+    const before = clone(client.getState().draft.outputs.left.warp);
+    client.setDraft.mockClear(); client.apply.mockClear(); trace.record.mockClear();
+    const sourceY = find(root, (node) => node.dataset?.gridLayoutField === "source-y");
+    sourceY.value = "100"; sourceY.dispatch("input"); sourceY.dispatch("change"); sourceY.dispatch("blur");
+    expect(client.getState().draft.outputs.left.warp).toEqual(before);
+    expect(client.setDraft).not.toHaveBeenCalled();
+    expect(client.apply).not.toHaveBeenCalled();
+    expect(find(root, (node) => node.dataset?.action === "warp-undo").disabled).toBe(true);
+    expect(find(root, (node) => node.className === "warp-grid-layout-error").textContent).toContain("between its neighbors");
+    restore();
+  });
+
+  test("accepted replacement cancels a pending source input and syncs the new source axis", () => {
+    const { root, client, restore } = tracedWarpHarness();
+    find(root, (node) => node.dataset?.action === "warp-editor-close").dispatch("click");
+    find(root, (node) => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+    find(root, (node) => node.dataset?.warpSelectionKind === "row").dispatch("click");
+    const picker = find(root, (node) => node.className === "warp-selection-picker"); picker.value = "1"; picker.dispatch("change");
+    const sourceY = find(root, (node) => node.dataset?.gridLayoutField === "source-y");
+    sourceY.value = "55"; sourceY.dispatch("input");
+    const external = clone(client.getState().draft);
+    external.outputs.left.warp.grid.rowPositions[1] = 0.2;
+    client.setDraft.mockClear(); client.apply.mockClear();
+    client.report({ draft: external, hasLocalDraft: false, snapshot: { ...client.getState().snapshot, revision: 3, config: clone(external) } });
+    expect(sourceY.value).toBe("20");
+    sourceY.dispatch("change"); sourceY.dispatch("blur");
+    expect(client.setDraft).not.toHaveBeenCalled(); expect(client.apply).not.toHaveBeenCalled();
     restore();
   });
 

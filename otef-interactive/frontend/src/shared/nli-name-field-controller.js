@@ -2,9 +2,8 @@ import { loadNliNameField as defaultLoadNliNameField } from "./nli-name-field-da
 import { createNameGroupOverlay } from "./nli-name-field-group-overlay.js";
 import { createNameFieldAnimation, withNameRevealDelays, NAME_FIELD_MOTION, NAME_FIELD_REVEAL_DURATION_MS } from './nli-name-field-animation.js';
 import { createNliNameFocusPresentation, getNameFocusOpacity, getNameFocusAlpha, getRelevantPlaceGroup } from './nli-name-focus-presentation.js';
-import { DEFAULT_PROJECTION_CONFIG, validateProjectionConfig } from "./projection-config-schema.js";
+import { DEFAULT_PROJECTION_CONFIG, migrateProjectionConfigToV7, validateProjectionConfig } from "./projection-config-schema.js";
 import { equalProjectionConfig } from "./projection-config-client.js";
-import { migrateNamesWallToV5, migrateNamesWallToV6 } from './nli-name-wall-config.js';
 
 const ORIGINAL_LABEL_ID = "nli__people_names__labels";
 const SOURCE_ID = "nli-name-field";
@@ -586,9 +585,7 @@ export function createNliNameFieldController({
       if (!canvasAdapter || disposed) throw new Error('projection Canvas adapter unavailable');
       if (Object.keys(validateProjectionConfig(config)).length || !candidate) throw new Error('invalid projection Canvas candidate');
       if (signal?.aborted) throw Object.assign(new Error('projection preparation cancelled'), { name: 'AbortError' });
-      const wallConfig = config.schemaVersion === 6
-        ? migrateNamesWallToV6(config, config.namesWall.rotateDeg)
-        : migrateNamesWallToV5(config);
+      const wallConfig = migrateProjectionConfigToV7(config, config.namesWall?.rotateDeg ?? 35);
       const token = ++canvasRequestToken;
       rebuildState = 'building';
       publishDiagnostics();
@@ -725,9 +722,7 @@ export function createNliNameFieldController({
       if (map?._otefProjectionConfigRollback === true) return api._rollbackProjectionConfig(config, revision);
       if (Object.keys(validateProjectionConfig(config)).length || !Number.isSafeInteger(revision) || revision < 0 ||
         (Number.isFinite(requestedRevision) && revision < requestedRevision)) return false;
-      const wallConfig = config.schemaVersion === 6
-        ? migrateNamesWallToV6(config, config.namesWall.rotateDeg)
-        : migrateNamesWallToV5(config);
+      const wallConfig = migrateProjectionConfigToV7(config, config.namesWall?.rotateDeg ?? 35);
       if (!canvasAdapter) return api.setProjectionConfig(wallConfig, revision);
       if (ready && field && installedConfig) {
         const remapped = { ...wallConfig, namesWall: installedConfig.namesWall };

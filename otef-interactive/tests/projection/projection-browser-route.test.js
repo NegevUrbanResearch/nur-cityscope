@@ -277,7 +277,7 @@ test("identity startup survives unavailable framing and manifest bytes", async (
     let initialMesh;
     const initialConfig = structuredClone(DEFAULT_PROJECTION_CONFIG);
     initialConfig.outputs.left.warp.enabled = !disabled;
-    expect(initialConfig.schemaVersion).toBe(6);
+    expect(initialConfig.schemaVersion).toBe(7);
     expect(initialConfig.namesWall.rotateDeg).toBe(35);
     const surface = await createProjectionBrowserSurface({
       host, spanId: "left", image, initialConfig,

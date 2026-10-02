@@ -1,7 +1,7 @@
 import { evaluateWarpMesh } from '../shared/projection-warp-geometry.js';
 import { validateProjectionBaselineMesh } from '../shared/projection-warp-assets.js';
 import { validateProjectionConfig } from '../shared/projection-config-schema.js';
-import { migrateNamesWallToV5, migrateNamesWallToV6 } from '../shared/nli-name-wall-config.js';
+import { migrateProjectionConfigToV7 } from '../shared/projection-config-schema.js';
 
 const SIDES = ['left', 'right'];
 const HASH = /^[a-f0-9]{64}$/i;
@@ -20,8 +20,7 @@ function sameInputs(left, right) {
   return validInput(left) && validInput(right) && left.datasetVersion === right.datasetVersion;
 }
 function projectionMeshConfig(config) {
-  if (config?.schemaVersion === 6) return migrateNamesWallToV6(config, config.namesWall?.rotateDeg);
-  return migrateNamesWallToV5(config);
+  return migrateProjectionConfigToV7(config, config?.namesWall?.rotateDeg ?? 35);
 }
 
 export async function readProjectionCandidateInputs({ fetchImpl = globalThis.fetch, signal } = {}) {
@@ -50,7 +49,7 @@ export function prepareProjectionSideMesh(config, side, baseline = null) {
     }
     source = baseline.mesh;
   }
-  return { config: candidate, mesh: evaluateWarpMesh(source, warp) };
+  return { config: candidate, mesh: evaluateWarpMesh(source, warp, { side, schemaVersion: candidate.schemaVersion }) };
 }
 
 export async function prepareProjectionPairMeshes({ config, loadBaseline, signal }) {

@@ -2,6 +2,7 @@ import {
   DEFAULT_PROJECTION_CONFIG,
   parseProjectionImport,
   serializeProjectionExport,
+  migrateProjectionConfigToV7,
   validateProjectionConfig,
 } from "../shared/projection-config-schema.js";
 import { equalProjectionConfig } from "../shared/projection-config-client.js";
@@ -10,7 +11,6 @@ import { createProjectionConfigView } from "./config-view.js";
 import { createWarpEditor } from "./warp-editor.js";
 import { recordProjectionTrace, projectionTraceTime } from './projection-trace-input.js';
 import { loadCapturedProjectionAsset } from "../projection/projection-captured-baseline.js";
-import { migrateNamesWallToV5, migrateNamesWallToV6 } from "../shared/nli-name-wall-config.js";
 import { openClockLayoutEditor } from "./clock-layout-editor-dialog.js";
 import { openNovaExplainerEditor } from "./nova-explainer-editor-dialog.js";
 import { openSettlementNameEditor } from "./settlement-name-editor-dialog.js";
@@ -76,9 +76,7 @@ function resolvedFieldPath(config, path) {
 function readField(config, path) { return path.split(".").reduce((target, key) => target?.[key], namesWallProfileScoped(path) ? { namesWall: config?.namesWall?.profiles?.[path === "namesWall.inwardShiftPercent" ? "wall" : config?.namesWall?.activeMode] } : config); }
 function normalizeConfig(config) {
   if (!config) return config;
-  if ([1, 2, 3, 4].includes(config.schemaVersion)) return migrateNamesWallToV5(config);
-  if (config.schemaVersion === 6) return migrateNamesWallToV6(config, config.namesWall?.rotateDeg ?? 35);
-  return config;
+  return migrateProjectionConfigToV7(config, config.namesWall?.rotateDeg ?? 35);
 }
 function normalizeState(value) {
   if (!value || typeof value !== "object") return value;
@@ -587,6 +585,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
       if (action === "warp-undo") editor.undo();
       if (action === "warp-redo") editor.redo();
       if (action === "warp-enabled") editor.setEnabled(value.enabled);
+      if (action === "warp-grid-layout") editor.editGridLayout(value.operation, value);
       refresh();
     });
   }
@@ -611,9 +610,8 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
       const parsed = typeof imported === "string" ? parseProjectionImport(imported, rotateDeg) : imported?.config ? imported : parseProjectionImport(String(imported), rotateDeg);
       const warnings = [...(parsed?.warnings || [])];
       let config = parsed?.config;
-      if (config && config.schemaVersion < 6) {
-        if ([1, 2, 3, 4].includes(config.schemaVersion)) migrateNamesWallToV5(config, warnings);
-        config = migrateNamesWallToV6(config, rotateDeg);
+      if (config && config.schemaVersion < 7) {
+        config = migrateProjectionConfigToV7(config, rotateDeg, warnings);
       } else config = normalizeConfig(config);
       const importErrors = validateProjectionConfig(config);
       if (Object.keys(importErrors).length) throw new Error(`invalid imported projection config: ${Object.entries(importErrors).map(([path, message]) => `${path} ${message}`).join("; ")}`);

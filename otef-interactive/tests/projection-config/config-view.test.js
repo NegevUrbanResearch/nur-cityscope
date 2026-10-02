@@ -4,7 +4,7 @@ import { expect, test, vi } from "vitest";
 import { createProjectionConfigView } from "../../frontend/src/projection-config/config-view.js";
 import { DEFAULT_PROJECTION_CONFIG } from "../../frontend/src/shared/projection-config-schema.js";
 import { FIELD_DESCRIPTORS, NAMES_WALL_DESCRIPTORS } from "../../frontend/src/projection-config/config-controller.js";
-import { createWarpEditor } from "../../frontend/src/projection-config/warp-editor.js";
+import { createWarpEditor, gridSelection } from "../../frontend/src/projection-config/warp-editor.js";
 
 test("clock layout dialog uses the available viewport width on narrow screens", () => {
   const css = readFileSync(resolve(import.meta.dirname, "../../frontend/src/projection-config/config.css"), "utf8");
@@ -47,10 +47,16 @@ test("warp handle outlines stay constant in CSS pixels while zooming", () => {
   expect(handleRule).toContain("vector-effect: non-scaling-stroke");
 });
 
+test("Grid layout inputs have at least 44 CSS pixel touch targets", () => {
+  const css = readFileSync(resolve(import.meta.dirname, "../../frontend/src/projection-config/config.css"), "utf8");
+  const fieldRule = css.match(/\.warp-grid-layout-field input\s*\{([^}]*)\}/)?.[1] ?? "";
+  expect(fieldRule).toMatch(/min-height:\s*44px/);
+});
+
 test("view renders draggable node workspace and preserves an existing focused input", () => {
   const make = (tag = "div") => ({ tagName: tag.toUpperCase(), children: [], dataset: {}, style: {}, attributes: {}, classList: { toggle() {} }, appendChild(child) { if (child.parentElement) child.parentElement.children = child.parentElement.children.filter((item) => item !== child); this.children.push(child); child.parentElement = this; return child; }, append(...children) { children.forEach((child) => this.appendChild(child)); }, prepend(...children) { children.forEach((child) => { if (child.parentElement) child.parentElement.children = child.parentElement.children.filter((item) => item !== child); this.children.unshift(child); child.parentElement = this; }); }, remove() { if (this.parentElement) this.parentElement.children = this.parentElement.children.filter((child) => child !== this); }, setAttribute(key, value) { this.attributes[key] = value; }, removeAttribute(key) { delete this.attributes[key]; }, addEventListener(type, handler) { this.listeners ||= {}; (this.listeners[type] ||= []).push(handler); }, removeEventListener(type, handler) { this.listeners[type] = (this.listeners?.[type] || []).filter((entry) => entry !== handler); }, dispatch(type, event) { for (const handler of this.listeners?.[type] || []) handler({ currentTarget: this, target: this, ...event }); }, replaceChildren(...children) { this.children = children; children.forEach((child) => { child.parentElement = this; }); } });
   const root = make("main");
-  root.ownerDocument = { createElement: make, createElementNS: (_ns, tag) => make(tag), listeners: {}, addEventListener(type, handler) { (this.listeners[type] ||= []).push(handler); }, removeEventListener(type, handler) { this.listeners[type] = (this.listeners[type] || []).filter((item) => item !== handler); }, dispatch(type, event) { for (const handler of this.listeners[type] || []) handler(event); }, defaultView: { location: { origin: "http://localhost" }, addEventListener() {}, removeEventListener() {}, matchMedia: (query) => ({ matches: query.includes("pointer: coarse"), addEventListener() {}, removeEventListener() {} }) } };
+  root.ownerDocument = { createElement: make, createElementNS: (_ns, tag) => make(tag), createTextNode: (text) => ({ nodeType: 3, textContent: String(text), parentElement: null }), listeners: {}, addEventListener(type, handler) { (this.listeners[type] ||= []).push(handler); }, removeEventListener(type, handler) { this.listeners[type] = (this.listeners[type] || []).filter((item) => item !== handler); }, dispatch(type, event) { for (const handler of this.listeners[type] || []) handler(event); }, defaultView: { location: { origin: "http://localhost" }, addEventListener() {}, removeEventListener() {}, matchMedia: (query) => ({ matches: query.includes("pointer: coarse"), addEventListener() {}, removeEventListener() {} }) } };
   const onNode = vi.fn();
   const onOpenClockEditor = vi.fn();
   const onOpenNovaExplainerEditor = vi.fn();
@@ -202,6 +208,7 @@ test("view renders draggable node workspace and preserves an existing focused in
   expect(view.controls.warpStep.parentElement.className).toBe("warp-fine-primary");
   expect(view.controls.warpArrows.parentElement.className).toBe("warp-fine-primary");
   expect(view.controls.warpStatus.parentElement.className).toBe("warp-fine-primary");
+  expect(view.controls.warpSelectionControls.hidden).toBe(true);
   const undoButton = descendants(root).find((node) => node.dataset?.warpAction === "warp-undo");
   expect(undoButton.parentElement.className).toBe("warp-history-command-group");
   expect(undoButton.parentElement.role).toBe("group");
@@ -213,9 +220,45 @@ test("view renders draggable node workspace and preserves an existing focused in
   draft.outputs.right.warp.baseline = { type: "identity", width: 1920, height: 1080, origin: "top-left" };
   const rightIdentityWarpEditor = createWarpEditor({ config: draft, output: "right" });
   rightIdentityWarpEditor.setMode("grid");
+  rightIdentityWarpEditor.select(gridSelection("point", 9));
+  view.update({ state: { draft }, selectedNode: "right-grid", warpStates: { right: { ...rightIdentityWarpEditor.getState(), config: rightIdentityWarpEditor.getConfig(), handles: rightIdentityWarpEditor.getControlPoints() } } });
+  expect(view.controls.warpSelectionPicker.children).toHaveLength(56);
+  expect(view.controls.warpSelectionPicker.children.slice(0, 3).map((option) => option.textContent)).toEqual(["Point 1 · Row 1, Column 1", "Point 2 · Row 1, Column 2", "Point 3 · Row 1, Column 3"]);
+  expect(view.controls.warpStatus.textContent).toContain("Point 10 · Row 2, Column 2");
+  expect(view.controls.warpPositionLabels.map((label) => label.textContent)).toEqual(["X px", "Y px"]);
+  expect(view.controls.warpActions.children.find((button) => button.dataset.warpAction === "warp-reset-selection").textContent).toBe("Reset point");
+  rightIdentityWarpEditor.select(gridSelection("row", 1));
   view.update({ state: { draft }, selectedNode: "right-grid", warpStates: { right: { ...rightIdentityWarpEditor.getState(), config: rightIdentityWarpEditor.getConfig(), handles: rightIdentityWarpEditor.getControlPoints() } } });
   expect(root.querySelector?.(".warp-mode")).toBeUndefined();
-  expect(root.querySelector?.(".warp-selection-picker")).toBeUndefined();
+  expect(view.controls.warpSelectionPicker).toBeDefined();
+  expect(view.controls.warpSelectionButtons.map((control) => control.textContent)).toEqual(["Point", "Row", "Column"]);
+  expect(view.controls.warpSelectionPicker.children.slice(0, 3).map((option) => option.textContent)).toEqual(["Row 1", "Row 2", "Row 3"]);
+  expect(view.controls.warpStatus.textContent).toContain("Row 2");
+  expect(view.controls.warpPositionLabels.map((label) => label.textContent)).toEqual(["Mean X px", "Mean Y px"]);
+  expect(view.controls.warpPositionX.value).toBe("960.00");
+  expect(view.controls.warpPositionY.value).toBe("180.00");
+  expect(view.controls.warpActions.children.find((button) => button.dataset.warpAction === "warp-reset-selection").textContent).toBe("Reset row");
+  expect(view.controls.warpSurface.children.filter((item) => item.attributes.class === "warp-grid-line selected")).toHaveLength(1);
+  expect(view.controls.warpSurface.children.filter((item) => item.attributes.class?.startsWith("warp-handle") && item.attributes.class.includes("selected"))).toHaveLength(8);
+  view.controls.warpSelectionButtons[2].dispatch("click", { detail: 1 });
+  expect(onWarpAction).toHaveBeenLastCalledWith("warp-select", { output: "right", selection: { mode: "grid", kind: "column", index: 1 } });
+  rightIdentityWarpEditor.select(gridSelection("column", 1));
+  view.update({ state: { draft }, selectedNode: "right-grid", warpStates: { right: { ...rightIdentityWarpEditor.getState(), config: rightIdentityWarpEditor.getConfig(), handles: rightIdentityWarpEditor.getControlPoints() } } });
+  expect(view.controls.warpStatus.textContent).toContain("Column 2");
+  expect(view.controls.warpActions.children.find((button) => button.dataset.warpAction === "warp-reset-selection").textContent).toBe("Reset column");
+  expect(view.controls.warpSelectionButtons[2].attributes["aria-pressed"]).toBe("true");
+  expect(view.controls.warpSurface.children.filter((item) => item.attributes.class === "warp-grid-line selected")).toHaveLength(1);
+  expect(view.controls.warpSurface.children.filter((item) => item.attributes.class?.startsWith("warp-handle") && item.attributes.class.includes("selected"))).toHaveLength(7);
+  rightIdentityWarpEditor.select(gridSelection("row", 1));
+  view.update({ state: { draft }, selectedNode: "right-grid", warpStates: { right: { ...rightIdentityWarpEditor.getState(), config: rightIdentityWarpEditor.getConfig(), handles: rightIdentityWarpEditor.getControlPoints() } } });
+  view.controls.warpSurface.children.find((item) => item.attributes["data-index"] === "19").dispatch("keydown", { key: "Enter", preventDefault() {} });
+  expect(onWarpAction).toHaveBeenLastCalledWith("warp-select", { output: "right", selection: { mode: "grid", kind: "row", index: 2 } });
+  const leftGridEditor = createWarpEditor({ config: draft, output: "left" });
+  leftGridEditor.setMode("grid");
+  leftGridEditor.select(gridSelection("point", 6));
+  view.update({ state: { draft }, selectedNode: "left-grid", warpStates: { left: { ...leftGridEditor.getState(), config: leftGridEditor.getConfig(), handles: leftGridEditor.getControlPoints() } } });
+  expect(view.controls.warpSelectionPicker.children).toHaveLength(49);
+  expect(view.controls.warpStatus.textContent).toContain("Point 7 · Row 1, Column 7");
   expect(view.controls.warpSurface.children.some((node) => node.attributes.class === "warp-grid-line")).toBe(true);
   view.controls.warpSurface.dispatch("pointerdown", { button: 0, pointerId: 1, clientX: 40, clientY: 40 });
   expect(onWarpPointer).not.toHaveBeenCalled();
@@ -292,10 +335,20 @@ test("view renders draggable node workspace and preserves an existing focused in
   view.dispose();
 });
 
+test("Grid Warp selection controls reserve 48px targets and a fixed-height status slot", () => {
+  const css = readFileSync(resolve(import.meta.dirname, "../../frontend/src/projection-config/config.css"), "utf8");
+  const controlsRule = css.match(/\.warp-selection-controls \.warp-selection-button, \.warp-selection-controls \.warp-selection-picker\s*\{([^}]*)\}/)?.[1] ?? "";
+  const statusRule = css.match(/\.warp-editor-fine-panel \.warp-fine-primary > \.warp-selection-status\s*\{([^}]*)\}/)?.[1] ?? "";
+  expect(controlsRule).toContain("min-height: 48px");
+  expect(statusRule).toContain("height: 36px");
+  expect(statusRule).toContain("min-height: 36px");
+});
+
+
 test("Names wall keeps controls editable and reports installed output status with Run action", () => {
   const make = (tag = "div") => ({ tagName: tag.toUpperCase(), children: [], dataset: {}, style: {}, attributes: {}, classList: { toggle() {} }, appendChild(child) { this.children.push(child); child.parentElement = this; return child; }, append(...children) { children.forEach((child) => this.appendChild(child)); }, prepend(...children) { this.children.unshift(...children); }, remove() {}, setAttribute(key, value) { this.attributes[key] = value; }, addEventListener(type, handler) { this.listeners ||= {}; (this.listeners[type] ||= []).push(handler); }, removeEventListener() {}, replaceChildren(...children) { this.children = children; } });
   const root = make("main");
-  root.ownerDocument = { createElement: make, createElementNS: (_ns, tag) => make(tag), defaultView: { location: { origin: "http://localhost" }, addEventListener() {}, removeEventListener() {}, matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }) } };
+  root.ownerDocument = { createElement: make, createElementNS: (_ns, tag) => make(tag), createTextNode: (text) => ({ nodeType: 3, textContent: String(text), parentElement: null }), defaultView: { location: { origin: "http://localhost" }, addEventListener() {}, removeEventListener() {}, matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }) } };
   const view = createProjectionConfigView(root, { descriptors: [...FIELD_DESCRIPTORS, ...NAMES_WALL_DESCRIPTORS], onField() {}, onNamesMode() {} });
   const draft = structuredClone(DEFAULT_PROJECTION_CONFIG);
   view.update({ state: { draft }, selectedNode: "names-wall", namesWallStatus: { state: "rebuilding", detail: "Rebuilding names on both outputs…" }, namesRunDisabledReason: "Apply the pending calibration before running names." });
@@ -318,7 +371,7 @@ test("Names wall keeps controls editable and reports installed output status wit
 
 test("repeated refresh keeps inline fields scoped to their graph nodes", () => {
   const make = (tag = "div") => ({ tagName: tag.toUpperCase(), children: [], dataset: {}, style: {}, attributes: {}, classList: { toggle() {} }, appendChild(child) { this.children.push(child); child.parentElement = this; return child; }, append(...children) { children.forEach((child) => this.appendChild(child)); }, prepend(...children) { this.children.unshift(...children); }, remove() {}, setAttribute(key, value) { this.attributes[key] = value; }, removeAttribute(key) { delete this.attributes[key]; }, addEventListener(type, handler) { this.listeners ||= {}; (this.listeners[type] ||= []).push(handler); }, removeEventListener() {}, dispatch(type, event) { for (const handler of this.listeners?.[type] || []) handler({ currentTarget: this, target: this, ...event }); }, replaceChildren(...children) { this.children = children; } });
-  const root = make("main"); root.ownerDocument = { createElement: make, createElementNS: (_ns, tag) => make(tag), defaultView: { matchMedia: () => ({ matches: false }) } };
+  const root = make("main"); root.ownerDocument = { createElement: make, createElementNS: (_ns, tag) => make(tag), createTextNode: (text) => ({ nodeType: 3, textContent: String(text), parentElement: null }), defaultView: { matchMedia: () => ({ matches: false }) } };
   const view = createProjectionConfigView(root, { descriptors: [...FIELD_DESCRIPTORS, ...NAMES_WALL_DESCRIPTORS] });
   const draft = structuredClone(DEFAULT_PROJECTION_CONFIG);
   for (let n = 0; n < 3; n += 1) view.update({ state: { draft }, selectedNode: "right-fit" });
@@ -348,7 +401,7 @@ test("repeated refresh keeps inline fields scoped to their graph nodes", () => {
 
 test("invalid warp coordinates preserve handles and show an accessible error", () => {
   const make = (tag = "div") => ({ tagName: tag.toUpperCase(), children: [], dataset: {}, style: {}, attributes: {}, classList: { toggle() {} }, appendChild(child) { this.children.push(child); child.parentElement = this; return child; }, append(...children) { children.forEach((child) => this.appendChild(child)); }, prepend(...children) { this.children.unshift(...children); }, remove() {}, setAttribute(key, value) { this.attributes[key] = value; }, removeAttribute(key) { delete this.attributes[key]; }, addEventListener(type, handler) { this.listeners ||= {}; (this.listeners[type] ||= []).push(handler); }, removeEventListener() {}, dispatch(type, event) { for (const handler of this.listeners?.[type] || []) handler({ currentTarget: this, target: this, ...event }); }, replaceChildren(...children) { this.children = children; } });
-  const root = make("main"); root.ownerDocument = { createElement: make, createElementNS: (_ns, tag) => make(tag), defaultView: { matchMedia: () => ({ matches: false }) } };
+  const root = make("main"); root.ownerDocument = { createElement: make, createElementNS: (_ns, tag) => make(tag), createTextNode: (text) => ({ nodeType: 3, textContent: String(text), parentElement: null }), defaultView: { matchMedia: () => ({ matches: false }) } };
   const onWarpAction = vi.fn();
   const view = createProjectionConfigView(root, { descriptors: FIELD_DESCRIPTORS, onWarpAction });
   const draft = structuredClone(DEFAULT_PROJECTION_CONFIG); const editor = createWarpEditor({ config: draft, output: "left" });
@@ -375,7 +428,7 @@ test("invalid warp coordinates preserve handles and show an accessible error", (
 
 test("selection refresh clears a stale warp error when it replaces the unfocused coordinate", () => {
   const make = (tag = "div") => ({ tagName: tag.toUpperCase(), children: [], dataset: {}, style: {}, attributes: {}, classList: { toggle() {} }, appendChild(child) { this.children.push(child); child.parentElement = this; return child; }, append(...children) { children.forEach((child) => this.appendChild(child)); }, prepend(...children) { this.children.unshift(...children); }, remove() {}, setAttribute(key, value) { this.attributes[key] = value; }, removeAttribute(key) { delete this.attributes[key]; }, addEventListener(type, handler) { this.listeners ||= {}; (this.listeners[type] ||= []).push(handler); }, removeEventListener() {}, dispatch(type, event) { for (const handler of this.listeners?.[type] || []) handler({ currentTarget: this, target: this, ...event }); }, replaceChildren(...children) { this.children = children; } });
-  const root = make("main"); const doc = { activeElement: null, createElement: make, createElementNS: (_ns, tag) => make(tag), defaultView: { matchMedia: () => ({ matches: false }) } }; root.ownerDocument = doc;
+  const root = make("main"); const doc = { activeElement: null, createElement: make, createElementNS: (_ns, tag) => make(tag), createTextNode: (text) => ({ nodeType: 3, textContent: String(text), parentElement: null }), defaultView: { matchMedia: () => ({ matches: false }) } }; root.ownerDocument = doc;
   const onWarpAction = vi.fn(); const view = createProjectionConfigView(root, { descriptors: FIELD_DESCRIPTORS, onWarpAction });
   const draft = structuredClone(DEFAULT_PROJECTION_CONFIG); const editor = createWarpEditor({ config: draft, output: "left" });
   const warpStates = { left: { ...editor.getState(), config: editor.getConfig(), handles: editor.getControlPoints() } };

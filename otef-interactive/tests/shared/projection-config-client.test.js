@@ -167,8 +167,8 @@ test('hydration converts historical working and preset configs to V4', async () 
   const starting = h.client.start(); h.resolveNext(saved); await starting;
   const state = h.client.getState();
   expect(state.snapshot.revision).toBe(9);
-  expect(state.snapshot.config.schemaVersion).toBe(5);
-  expect(state.snapshot.presets[1].config.schemaVersion).toBe(5);
+  expect(state.snapshot.config.schemaVersion).toBe(7);
+  expect(state.snapshot.presets[1].config.schemaVersion).toBe(7);
   expect(state.draft.namesWall.innerEdgeInsetPx).toEqual({ left: 0, right: 0 });
   expect(state.draft.namesWall.profiles.wall).not.toHaveProperty('seamGapPx');
   expect(state.draft.pre).toEqual(historical.pre);
@@ -178,7 +178,7 @@ test('hydration converts historical working and preset configs to V4', async () 
 
 test('hydration normalizes old V6 configs and preserves the reserved Original calibration', async () => {
   const h = harness();
-  const old = clone(DEFAULTS);
+  const old = (await import('../../frontend/src/shared/nli-name-wall-config.js')).migrateNamesWallToV6(LEGACY_DEFAULT_PROJECTION_CONFIG, 35);
   delete old.namesWall.profiles.wall.strokeWidthPx;
   delete old.namesWall.profiles.model.strokeWidthPx;
   const saved = stateFor(12, old);
@@ -833,7 +833,7 @@ for (const [label, body, status] of [
   });
 }
 
-test('a V5 snapshot requires initialization and does not seed wall rotation or write', async () => {
+test('a V5 snapshot requires initialization, normalizes to v7, and does not write', async () => {
   const h = harness();
   const v5 = migrateNamesWallToV5(LEGACY_DEFAULT_PROJECTION_CONFIG);
   const snapshot = h.stateFor(4, v5);
@@ -843,10 +843,56 @@ test('a V5 snapshot requires initialization and does not seed wall rotation or w
   await started;
   const state = h.client.getState();
   expect(state.initializationRequired).toBe(true);
-  expect(state.draft?.namesWall?.rotateDeg).toBeUndefined();
+  expect(state.snapshot.config.schemaVersion).toBe(7);
+  expect(state.draft?.namesWall?.rotateDeg).toBe(35);
   expect(h.pendingRequests()).toHaveLength(0);
   await expect(h.client.apply()).rejects.toThrow(/initialization/i);
   expect(h.pendingRequests()).toHaveLength(0);
+  h.client.stop();
+});
+
+test('a V6 snapshot normalizes locally but stays gated by the installed schema version', async () => {
+  const h = harness();
+  const v6 = (await import('../../frontend/src/shared/nli-name-wall-config.js')).migrateNamesWallToV6(LEGACY_DEFAULT_PROJECTION_CONFIG, 35);
+  const snapshot = h.stateFor(4, v6);
+  snapshot.presets[0].config = clone(v6);
+  const started = h.client.start(); h.resolveNext(snapshot); await started;
+  expect(h.client.getState()).toMatchObject({ initializationRequired: true, snapshot: { config: { schemaVersion: 7 } } });
+  await expect(h.client.apply()).rejects.toThrow(/initialization/i);
+  expect(h.pendingRequests()).toHaveLength(0);
+  h.client.stop();
+});
+
+test('same-revision authoritative hydration refreshes installed schema while preserving draft and history', async () => {
+  const h = harness();
+  const { migrateNamesWallToV6 } = await import('../../frontend/src/shared/nli-name-wall-config.js');
+  const v6 = migrateNamesWallToV6(migrateNamesWallToV5(migrateProjectionConfigToV2(LEGACY_DEFAULT_PROJECTION_CONFIG)), 35);
+  const oldSnapshot = h.stateFor(4, v6); oldSnapshot.presets[0].config = clone(v6);
+  const started = h.client.start(); h.resolveNext(oldSnapshot); await started;
+  const draft = clone(DEFAULTS); draft.pre.tx = 0.27; h.client.setDraft(draft);
+  const upgraded = h.stateFor(4, DEFAULTS);
+  h.disconnect(); h.reconnect(); h.resolveNext(upgraded); await h.flushPromises();
+  expect(h.client.getState()).toMatchObject({ initializationRequired: false, snapshot: { revision: 4, config: { schemaVersion: 7 } }, draft, hasLocalDraft: true });
+  h.disconnect(); h.reconnect();
+  const authoritativeOld = h.stateFor(4, v6); authoritativeOld.presets[0].config = clone(v6);
+  h.resolveNext(authoritativeOld); await h.flushPromises();
+  expect(h.client.getState()).toMatchObject({ initializationRequired: true, snapshot: { revision: 4, config: { schemaVersion: 7 } }, draft, hasLocalDraft: true });
+  await expect(h.client.apply()).rejects.toThrow(/initialization/i);
+  expect(h.pendingRequests()).toHaveLength(0);
+});
+
+test('v7 snapshots preserve custom knot axes and reserve Original for canonical uniform topology', async () => {
+  const h = harness();
+  const snapshot = h.stateFor(8);
+  const custom = clone(DEFAULTS);
+  custom.outputs.left.warp.grid.columnPositions[1] = 0.1;
+  snapshot.presets.push({ id: '11111111-1111-4111-8111-111111111111', name: 'Custom grid', config: custom, readOnly: false });
+  expect(validateProjectionConfigSnapshot(snapshot)).toBe(true);
+  const started = h.client.start(); h.resolveNext(snapshot); await started;
+  expect(h.client.getState().snapshot.presets[1].config.outputs.left.warp.grid.columnPositions[1]).toBe(0.1);
+  const invalidOriginal = clone(snapshot);
+  invalidOriginal.presets[0].config.outputs.left.warp.grid.columnPositions[1] = 0.1;
+  expect(validateProjectionConfigSnapshot(invalidOriginal)).toBe(false);
   h.client.stop();
 });
 
@@ -863,7 +909,7 @@ test('schema_changed keeps the unsaved draft and does not retry', async () => {
   const result = pending.catch((error) => error);
   await h.advance(100);
   expect(h.pendingRequests()).toHaveLength(1);
-  h.resolveNext({ error: 'schema_changed', requiredSchemaVersion: 6, state: h.stateFor(1) }, 409);
+  h.resolveNext({ error: 'schema_changed', requiredSchemaVersion: 7, state: h.stateFor(1) }, 409);
   await h.flushPromises();
   const error = await result;
   expect(error.schemaChanged).toBe(true);

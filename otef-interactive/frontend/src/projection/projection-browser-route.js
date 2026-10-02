@@ -4,7 +4,7 @@ import { evaluateWarpMesh } from "../shared/projection-warp-geometry.js";
 import { createProjectionNameCanvasAdapter } from "./projection-name-canvas-adapter.js";
 import { createProjectionSettlementNameAdapter } from "./projection-settlement-name-adapter.js";
 import { migrateProjectionConfigToV2 } from "../shared/projection-warp-schema.js";
-import { migrateNamesWallToV5, migrateNamesWallToV6 } from "../shared/nli-name-wall-config.js";
+import { migrateProjectionConfigToV7 } from "../shared/projection-config-schema.js";
 import {
   DEFAULT_PROJECTION_BASELINE,
   loadCapturedProjectionAsset,
@@ -39,8 +39,7 @@ function abortError() {
 
 function browserProjectionConfig(config) {
   if (!config) return null;
-  if (config.schemaVersion === 6) return migrateNamesWallToV6(config, config.namesWall?.rotateDeg);
-  return migrateNamesWallToV5(config);
+  return migrateProjectionConfigToV7(config, config.namesWall?.rotateDeg ?? 35);
 }
 
 function throwIfAborted(signal) {
@@ -176,7 +175,7 @@ export async function createProjectionBrowserSurface({
     try {
       baseline = await loadCapturedProjectionFraming({ fetchImpl, signal });
     } catch (error) {
-      const fallbackWarp = [2, 3, 4, 5, 6].includes(initialConfig?.schemaVersion) ? initialConfig.outputs?.[spanId]?.warp : null;
+      const fallbackWarp = [2, 3, 4, 5, 6, 7].includes(initialConfig?.schemaVersion) ? initialConfig.outputs?.[spanId]?.warp : null;
       if (error?.name === "AbortError" || !fallbackWarp || (fallbackWarp.enabled !== false && fallbackWarp.baseline?.type !== "identity")) throw error;
       baseline = { manifest: { width: 1920, height: 1080, assets: {}, framing: {} }, framing: initialConfig };
     }
@@ -211,8 +210,8 @@ export async function createProjectionBrowserSurface({
       ...(settlementAdapter?.descriptor() ? { settlements: settlementAdapter.descriptor() } : {}),
       });
     const initialMesh = initialWarp?.baseline?.type === "identity" || initialWarp?.enabled === false
-      ? evaluateWarpMesh(null, initialWarp)
-      : (baseline.mesh || evaluateWarpMesh(null, migrateProjectionConfigToV2(baseline.framing).outputs[spanId].warp));
+      ? evaluateWarpMesh(null, initialWarp, { side: spanId, schemaVersion: initialConfig?.schemaVersion })
+      : (baseline.mesh || evaluateWarpMesh(null, migrateProjectionConfigToV2(baseline.framing).outputs[spanId].warp, { side: spanId }));
     const renderer = rendererFactory({ canvas, mesh: initialMesh });
     activeMesh = initialMesh;
     compositor = createProjectionSurfaceCompositor({ renderer, sources: readScene() });

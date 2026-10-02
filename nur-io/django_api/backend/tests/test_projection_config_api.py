@@ -10,7 +10,7 @@ from django.test import Client, TestCase, TransactionTestCase
 from backend.models import OTEFProjectionCalibration, Table
 from backend.projection_config_service import get_projection_state, mutate_projection_state, ProjectionConflict
 from backend.projection_config_schema import legacy_projection_config_defaults
-from backend.projection_warp_schema import migrate_projection_config_to_v2, migrate_projection_config_to_v5
+from backend.projection_warp_schema import migrate_projection_config_to_v2, migrate_projection_config_to_v5, migrate_projection_config_to_v6, migrate_projection_config_to_v7
 
 
 class ProjectionConfigApiTests(TestCase):
@@ -24,7 +24,13 @@ class ProjectionConfigApiTests(TestCase):
         self.assertEqual(self.state(), current)
 
     def test_installed_v6_rejects_stale_v5_write_before_mutation(self):
-        current = self.state()
+        self.state()
+        row = OTEFProjectionCalibration.objects.get(table__name='otef')
+        v6 = migrate_projection_config_to_v6(legacy_projection_config_defaults(), 35)
+        row.working_config = v6
+        row.presets[0]['config'] = copy.deepcopy(v6)
+        row.save(update_fields=['working_config', 'presets'])
+        current = get_projection_state('otef')
         stale = migrate_projection_config_to_v5(legacy_projection_config_defaults())
         response = self.post_action('preview', current['revision'], config=stale)
         self.assertEqual(response.status_code, 409)
@@ -35,6 +41,27 @@ class ProjectionConfigApiTests(TestCase):
         row = OTEFProjectionCalibration.objects.get(table__name='otef')
         self.assertEqual(row.revision, current['revision'])
         self.assertEqual(row.working_config, current['config'])
+
+    def test_installed_v7_rejects_stale_writer_with_authoritative_snapshot(self):
+        current = self.state()
+        stale = migrate_projection_config_to_v6(legacy_projection_config_defaults(), 35)
+        response = self.post_action('preview', current['revision'], config=stale)
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()['error'], 'schema_changed')
+        self.assertEqual(response.json()['requiredSchemaVersion'], 7)
+        self.assertEqual(response.json()['state']['config']['schemaVersion'], 7)
+
+    def test_older_install_rejects_incoming_v7_until_upgrade(self):
+        self.state()
+        row = OTEFProjectionCalibration.objects.get(table__name='otef')
+        old = migrate_projection_config_to_v5(legacy_projection_config_defaults())
+        row.working_config = old
+        row.presets[0]['config'] = copy.deepcopy(old)
+        row.save(update_fields=['working_config', 'presets'])
+        incoming = migrate_projection_config_to_v7(old)
+        response = self.post_action('preview', row.revision, config=incoming)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('schemaVersion', response.json()['fields'])
 
     def test_v5_geometry_write_before_initialization_preserves_schema(self):
         self.state()
@@ -139,10 +166,15 @@ class ProjectionConfigApiTests(TestCase):
         self.assertEqual(saved.json()['presets'][-1]['config']['namesWall']['profiles']['model']['strokeWidthPx'], 1)
 
     def test_preview_normalizes_pre_outline_v6_configs_before_accepting_edits(self):
-        state = self.state()
-        old_config = copy.deepcopy(state['config'])
+        self.state()
+        row = OTEFProjectionCalibration.objects.get(table__name='otef')
+        old_config = migrate_projection_config_to_v6(legacy_projection_config_defaults(), 35)
         del old_config['namesWall']['profiles']['wall']['strokeWidthPx']
         del old_config['namesWall']['profiles']['model']['strokeWidthPx']
+        row.working_config = copy.deepcopy(old_config)
+        row.presets[0]['config'] = copy.deepcopy(old_config)
+        row.save(update_fields=['working_config', 'presets'])
+        state = get_projection_state('otef')
         response = self.post_action('preview', state['revision'], config=old_config)
         self.assertEqual(response.status_code, 200, response.content)
         self.assertEqual(response.json()['config']['namesWall']['profiles']['wall']['strokeWidthPx'], 3)
@@ -153,6 +185,26 @@ class ProjectionConfigApiTests(TestCase):
         self.assertEqual(response.status_code, 409)
         self.assertEqual(response.json()["error"], "schema_changed")
         self.assertEqual(self.state()["revision"], 0)
+
+    def test_v7_zero_count_with_empty_axis_is_a_validation_error_without_state_change(self):
+        initial = self.state()
+        invalid = copy.deepcopy(initial['config'])
+        grid = invalid['outputs']['left']['warp']['grid']
+        grid['columns'] = 0
+        grid['columnPositions'] = []
+        response = self.post_action('preview', initial['revision'], config=invalid)
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertIn('outputs.left.grid.columns', response.json()['fields'])
+        self.assertEqual(self.state(), initial)
+
+    def test_v7_oversized_axis_integer_is_a_validation_error_without_state_change(self):
+        initial = self.state()
+        invalid = copy.deepcopy(initial['config'])
+        invalid['outputs']['left']['warp']['grid']['columnPositions'][1] = 10 ** 400
+        response = self.post_action('preview', initial['revision'], config=invalid)
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertIn('outputs.left.grid.columnPositions[1]', response.json()['fields'])
+        self.assertEqual(self.state(), initial)
 
     def test_invalid_action_shapes_preserve_state(self):
         initial = self.state()

@@ -7,7 +7,7 @@ from django.test import TestCase
 
 from backend.models import OTEFProjectionCalibration
 from backend.projection_config_schema import legacy_projection_config_defaults, validate_projection_snapshot
-from backend.projection_warp_schema import migrate_projection_config_to_v2, migrate_projection_config_to_v5
+from backend.projection_warp_schema import migrate_projection_config_to_v2, migrate_projection_config_to_v5, migrate_projection_config_to_v7
 from backend.tests.settlement_name_fixtures import (
     BASELINE_POSITIONS,
     CALIBRATION_CONFIG_DIGEST,
@@ -44,13 +44,13 @@ class ProjectionNameInitializationTests(SettlementNameFixtureMixin, TestCase):
         self.assertEqual(self.state.settlement_name_revision, 1)
         self.assertEqual(self.calibration.revision, CALIBRATION_REVISION + 1)
         self.assertEqual(self.calibration.selected_preset_id, "original")
-        self.assertEqual(self.calibration.working_config["schemaVersion"], 6)
+        self.assertEqual(self.calibration.working_config["schemaVersion"], 7)
         self.assertEqual(self.calibration.working_config["pre"], before_working["pre"])
-        self.assertEqual(self.calibration.working_config["outputs"], before_working["outputs"])
+        self.assertEqual(self.calibration.working_config["outputs"], migrate_projection_config_to_v7(before_working, WALL_ROTATE_DEG)["outputs"])
         self.assertEqual(self.calibration.working_config["namesWall"]["rotateDeg"], WALL_ROTATE_DEG)
         self.assertEqual(
             {key: value for key, value in self.calibration.working_config["namesWall"].items() if key != "rotateDeg"},
-            before_working["namesWall"],
+            {key: value for key, value in migrate_projection_config_to_v7(before_working, WALL_ROTATE_DEG)["namesWall"].items() if key != "rotateDeg"},
         )
         self.assertEqual(
             [(preset["id"], preset["name"], preset["readOnly"]) for preset in self.calibration.presets],
@@ -58,9 +58,9 @@ class ProjectionNameInitializationTests(SettlementNameFixtureMixin, TestCase):
         )
         for before, after in zip(before_presets, self.calibration.presets):
             self.assertEqual(after["config"]["pre"], before["config"]["pre"])
-            self.assertEqual(after["config"]["outputs"], before["config"]["outputs"])
+            self.assertEqual(after["config"]["outputs"], migrate_projection_config_to_v7(before["config"], WALL_ROTATE_DEG)["outputs"])
             self.assertEqual(after["config"]["namesWall"]["rotateDeg"], WALL_ROTATE_DEG)
-            self.assertEqual(after["config"]["schemaVersion"], 6)
+            self.assertEqual(after["config"]["schemaVersion"], 7)
         baseline = self.state.settlement_name_settings["baseline"]
         self.assertEqual(baseline["outputs"], BASELINE_POSITIONS)
         self.assertEqual(baseline["sourceDigest"], PROCESSED_SOURCE_DIGEST)
@@ -118,7 +118,7 @@ class ProjectionNameInitializationTests(SettlementNameFixtureMixin, TestCase):
         self.state.refresh_from_db()
         self.calibration.refresh_from_db()
         self.assertEqual(self.state.settlement_name_revision, 1)
-        self.assertEqual(self.calibration.working_config["schemaVersion"], 6)
+        self.assertEqual(self.calibration.working_config["schemaVersion"], 7)
         self.state.settlement_name_settings = {}
         self.state.settlement_name_revision = 0
         self.state.save(update_fields=["settlement_name_settings", "settlement_name_revision"])
@@ -483,10 +483,10 @@ class ProjectionV6SchemaTests(TestCase):
         snapshot["presets"][0]["config"] = shifted
         self.assertIn("presets[0]", validate_projection_snapshot(snapshot))
 
-    def test_new_defaults_use_v6_and_35_degrees(self):
+    def test_new_defaults_use_v7_and_35_degrees(self):
         from backend.models import projection_config_defaults
 
         defaults = projection_config_defaults()
-        self.assertEqual(defaults["schemaVersion"], 6)
+        self.assertEqual(defaults["schemaVersion"], 7)
         self.assertEqual(defaults["namesWall"]["rotateDeg"], 35)
         self.assertEqual(defaults["pre"], {"scale": 1.41, "rotateDeg": -50, "tx": 0.01, "ty": 0})

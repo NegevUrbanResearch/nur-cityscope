@@ -22,7 +22,7 @@ function number(value, path, errors, min = SAFETY_MIN, max = SAFETY_MAX) {
   return value >= min && value <= max;
 }
 
-function legacyFields(config, errors, options) {
+function legacyFields(config, errors, options, warpValidator = validateProjectionWarp) {
   if (ownKeys(config.pre, ['scale', 'rotateDeg', 'tx', 'ty'], 'pre', errors)) {
     number(config.pre.scale, 'pre.scale', errors, 0.1, 8);
     number(config.pre.rotateDeg, 'pre.rotateDeg', errors, -180, 180);
@@ -51,12 +51,12 @@ function legacyFields(config, errors, options) {
       if (typeof presentation.enabled !== 'boolean') errors[`${base}.presentationEffect.enabled`] = 'must be a boolean';
       if (presentation.mode !== 'passthrough') errors[`${base}.presentationEffect.mode`] = 'must equal passthrough';
     }
-    const warpErrors = validateProjectionWarp(output.warp, side, options);
+    const warpErrors = warpValidator(output.warp, side, options);
     for (const [path, message] of Object.entries(warpErrors)) errors[`${base}.${path}`] = message;
   }
 }
 
-export function validateProjectionWarp(value, side, { trustedManifest = null } = {}) {
+function validateProjectionWarpFields(value, side, { trustedManifest = null } = {}, gridV7 = false) {
   const errors = {};
   const expected = SIDES[side];
   if (!expected) { errors.side = 'must be left or right'; return errors; }
@@ -88,10 +88,26 @@ export function validateProjectionWarp(value, side, { trustedManifest = null } =
       point.forEach((coordinate, axis) => number(coordinate, `keystone.corners[${index}][${axis}]`, errors));
     });
   }
-  if (ownKeys(value.grid, ['columns', 'rows', 'offsets'], 'grid', errors)) {
-    if (value.grid.columns !== expected.columns) errors['grid.columns'] = `must equal ${expected.columns}`;
-    if (value.grid.rows !== expected.rows) errors['grid.rows'] = `must equal ${expected.rows}`;
-    const expectedCount = expected.columns * expected.rows;
+  if (ownKeys(value.grid, gridV7 ? ['columns', 'rows', 'columnPositions', 'rowPositions', 'offsets'] : ['columns', 'rows', 'offsets'], 'grid', errors)) {
+    const columns = value.grid.columns;
+    const rows = value.grid.rows;
+    if (gridV7) {
+      if (!Number.isInteger(columns) || columns < 2 || columns > 16) errors['grid.columns'] = 'must be an integer between 2 and 16';
+      if (!Number.isInteger(rows) || rows < 2 || rows > 16) errors['grid.rows'] = 'must be an integer between 2 and 16';
+      for (const [key, count] of [['columnPositions', columns], ['rowPositions', rows]]) {
+        const axis = value.grid[key];
+        if (!Array.isArray(axis) || axis.length !== count) { errors[`grid.${key}`] = `must contain ${count} positions`; continue; }
+        axis.forEach((item, index) => number(item, `grid.${key}[${index}]`, errors, 0, 1));
+        if (axis[0] !== 0 || axis.at(-1) !== 1) errors[`grid.${key}`] = 'must start at 0 and end at 1';
+        for (let index = 1; index < axis.length; index += 1) {
+          if (typeof axis[index - 1] === 'number' && typeof axis[index] === 'number' && axis[index] <= axis[index - 1]) errors[`grid.${key}`] = 'positions must be strictly increasing';
+        }
+      }
+    } else {
+      if (columns !== expected.columns) errors['grid.columns'] = `must equal ${expected.columns}`;
+      if (rows !== expected.rows) errors['grid.rows'] = `must equal ${expected.rows}`;
+    }
+    const expectedCount = columns * rows;
     if (!Array.isArray(value.grid.offsets) || value.grid.offsets.length !== expectedCount) errors['grid.offsets'] = `must contain ${expectedCount} offsets`;
     else value.grid.offsets.forEach((point, index) => {
       if (!Array.isArray(point) || point.length !== 2) { errors[`grid.offsets[${index}]`] = 'must contain two coordinates'; return; }
@@ -100,6 +116,9 @@ export function validateProjectionWarp(value, side, { trustedManifest = null } =
   }
   return errors;
 }
+
+export function validateProjectionWarp(value, side, options = {}) { return validateProjectionWarpFields(value, side, options, false); }
+export function validateProjectionWarpV7(value, side, options = {}) { return validateProjectionWarpFields(value, side, options, true); }
 
 export function validateProjectionConfigV2(value, options = {}) {
   const errors = {};
@@ -141,6 +160,15 @@ export function validateProjectionConfigV6(value, options = {}) {
   if (!ownKeys(value, ['schemaVersion', 'pre', 'outputs', 'namesWall'], '', errors)) return errors;
   if (value.schemaVersion !== 6 || typeof value.schemaVersion !== 'number') errors.schemaVersion = 'must equal 6';
   legacyFields(value, errors, options);
+  validateNamesWallV6(value.namesWall, 'namesWall', errors);
+  return errors;
+}
+
+export function validateProjectionConfigV7(value, options = {}) {
+  const errors = {};
+  if (!ownKeys(value, ['schemaVersion', 'pre', 'outputs', 'namesWall'], '', errors)) return errors;
+  if (value.schemaVersion !== 7 || typeof value.schemaVersion !== 'number') errors.schemaVersion = 'must equal 7';
+  legacyFields(value, errors, options, validateProjectionWarpV7);
   validateNamesWallV6(value.namesWall, 'namesWall', errors);
   return errors;
 }

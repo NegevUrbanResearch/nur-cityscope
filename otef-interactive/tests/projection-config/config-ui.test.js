@@ -196,6 +196,229 @@ test("category shortcuts call actual graph node groups and leave every node moun
   expect(view.nodeMap.has("settlement-names")).toBe(true);
 });
 
+test("changing Grid Warp mode or picker cancels the active pointer edit before selecting", () => {
+  const { root, view, onWarpAction, onWarpPointer, update } = makeView({ coarse: false });
+  const config = structuredClone(DEFAULT_PROJECTION_CONFIG);
+  config.outputs.left.warp.baseline = { type: "identity", width: 1920, height: 1080, origin: "top-left" };
+  const editor = createWarpEditor({ config, output: "left" });
+  editor.setMode("grid");
+  update({ selectedNode: "left-grid", warpStates: { left: { ...editor.getState(), config: editor.getConfig(), handles: editor.getControlPoints() } } });
+  root.querySelector(".config-node[data-node='left-grid'] .warp-open-button").click();
+  const surface = view.controls.warpSurface;
+  surface.getBoundingClientRect = () => ({ left: 0, top: 0, width: 1920, height: 1080, right: 1920, bottom: 1080 });
+  const handle = editor.getControlPoints()[0];
+  const [viewX, viewY, viewWidth, viewHeight] = surface.getAttribute("viewBox").split(" ").map(Number);
+  const mapping = fitWarpViewport({ x: viewX, y: viewY, width: viewWidth, height: viewHeight }, 1920, 1080);
+  const down = () => surface.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 1, pointerType: "mouse", button: 0, isPrimary: true, clientX: mapping.insetX + (handle.x * 1920 - viewX) * mapping.scale, clientY: mapping.insetY + (handle.y * 1080 - viewY) * mapping.scale, bubbles: true, cancelable: true }));
+
+  down();
+  expect(onWarpPointer).toHaveBeenCalledWith("start", expect.anything());
+  onWarpPointer.mockClear(); onWarpAction.mockClear();
+  view.controls.warpSelectionButtons[1].click();
+  expect(onWarpPointer).toHaveBeenCalledWith("cancel", expect.anything());
+  expect(onWarpPointer.mock.invocationCallOrder[0]).toBeLessThan(onWarpAction.mock.invocationCallOrder[0]);
+  expect(onWarpAction).toHaveBeenLastCalledWith("warp-select", { output: "left", selection: { mode: "grid", kind: "row", index: 0 } });
+
+  onWarpPointer.mockClear(); onWarpAction.mockClear();
+  editor.select({ mode: "grid", kind: "row", index: 0 });
+  update({ selectedNode: "left-grid", warpStates: { left: { ...editor.getState(), config: editor.getConfig(), handles: editor.getControlPoints() } } });
+  down();
+  onWarpPointer.mockClear(); onWarpAction.mockClear();
+  view.controls.warpSelectionPicker.value = "2";
+  view.controls.warpSelectionPicker.dispatchEvent(new Event("change", { bubbles: true }));
+  expect(onWarpPointer).toHaveBeenCalledWith("cancel", expect.anything());
+  expect(onWarpPointer.mock.invocationCallOrder[0]).toBeLessThan(onWarpAction.mock.invocationCallOrder[0]);
+  expect(onWarpAction).toHaveBeenLastCalledWith("warp-select", { output: "left", selection: { mode: "grid", kind: "row", index: 2 } });
+  view.dispose();
+});
+
+test("Grid layout controls derive from axes and commit numeric input once", () => {
+  const { root, view, onWarpAction, update } = makeView();
+  const config = structuredClone(DEFAULT_PROJECTION_CONFIG);
+  const warp = config.outputs.left.warp;
+  warp.grid = {
+    columns: 3, rows: 3, columnPositions: [0, 0.333333, 1], rowPositions: [0, 0.6, 1],
+    offsets: Array.from({ length: 9 }, () => [0, 0]),
+  };
+  const editor = createWarpEditor({ config, output: "left", baselineMesh: null });
+  editor.setMode("grid"); editor.select({ mode: "grid", kind: "row", index: 1 });
+  const state = { ...editor.getState(), config: editor.getConfig(), handles: editor.getControlPoints() };
+  update({ state: { draft: config }, selectedNode: "left-grid", warpStates: { left: state } });
+  root.querySelector(".config-node[data-node='left-grid'] .warp-open-button").click();
+  const layout = root.querySelector(".warp-grid-layout-section");
+  expect(layout).not.toBeNull();
+  const field = (name) => layout.querySelector(`[data-grid-layout-field='${name}']`);
+  const action = (name) => layout.querySelector(`[data-grid-layout-action='${name}']`);
+  expect(field("rows").value).toBe("3");
+  expect(field("columns").value).toBe("3");
+  expect(field("source-y").value).toBe("60");
+  expect(field("source-x").value).toBe("0");
+  expect(field("source-x").disabled).toBe(true);
+  expect(action("remove-row").disabled).toBe(false);
+  onWarpAction.mockClear();
+  field("rows").value = "4";
+  field("rows").dispatchEvent(new Event("input", { bubbles: true }));
+  field("rows").dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  field("rows").dispatchEvent(new Event("change", { bubbles: true }));
+  field("rows").dispatchEvent(new Event("blur"));
+  expect(onWarpAction).toHaveBeenCalledTimes(1);
+  expect(onWarpAction).toHaveBeenCalledWith("warp-grid-layout", { output: "left", operation: "counts", columns: 3, rows: 4 });
+  onWarpAction.mockClear();
+  field("source-y").value = "55";
+  field("source-y").dispatchEvent(new Event("input", { bubbles: true }));
+  field("source-y").dispatchEvent(new Event("change", { bubbles: true }));
+  field("source-y").dispatchEvent(new Event("blur"));
+  expect(onWarpAction).toHaveBeenCalledTimes(1);
+  expect(onWarpAction).toHaveBeenCalledWith("warp-grid-layout", { output: "left", operation: "move", axis: "row", index: 1, position: 55 });
+  onWarpAction.mockClear();
+  action("add-row").click();
+  expect(onWarpAction).toHaveBeenCalledWith("warp-grid-layout", { output: "left", operation: "add", axis: "row", position: 80 });
+  onWarpAction.mockClear();
+  action("even").click();
+  expect(onWarpAction).toHaveBeenCalledWith("warp-grid-layout", { output: "left", operation: "even" });
+  view.dispose();
+});
+
+test("unchanged counts and rounded source percentages do not commit on refresh or blur", () => {
+  const { root, view, onWarpAction, update } = makeView();
+  const config = structuredClone(DEFAULT_PROJECTION_CONFIG);
+  config.outputs.left.warp.grid = {
+    columns: 3, rows: 3, columnPositions: [0, 0.333333, 1], rowPositions: [0, 0.6, 1], offsets: Array.from({ length: 9 }, () => [0, 0]),
+  };
+  const editor = createWarpEditor({ config, output: "left" }); editor.setMode("grid"); editor.select({ mode: "grid", kind: "row", index: 1 });
+  const state = { ...editor.getState(), config: editor.getConfig(), handles: editor.getControlPoints() };
+  update({ state: { draft: config }, selectedNode: "left-grid", warpStates: { left: state } });
+  root.querySelector(".config-node[data-node='left-grid'] .warp-open-button").click();
+  const layout = root.querySelector(".warp-grid-layout-section");
+  const rows = layout.querySelector("[data-grid-layout-field='rows']");
+  const sourceX = layout.querySelector("[data-grid-layout-field='source-x']");
+  onWarpAction.mockClear();
+  rows.dispatchEvent(new Event("change", { bubbles: true }));
+  sourceX.dispatchEvent(new Event("change", { bubbles: true }));
+  update({ statusText: "Unrelated status refresh", state: { draft: config }, selectedNode: "left-grid", warpStates: { left: state } });
+  sourceX.dispatchEvent(new Event("change", { bubbles: true }));
+  sourceX.dispatchEvent(new Event("blur"));
+  expect(onWarpAction).not.toHaveBeenCalled();
+  view.dispose();
+});
+
+test("column selection derives one-based source controls and routes source edits to that column", () => {
+  const { root, view, onWarpAction, update } = makeView();
+  const config = structuredClone(DEFAULT_PROJECTION_CONFIG);
+  config.outputs.left.warp.grid = { columns: 3, rows: 3, columnPositions: [0, 0.333333, 1], rowPositions: [0, 0.6, 1], offsets: Array.from({ length: 9 }, () => [0, 0]) };
+  const editor = createWarpEditor({ config, output: "left" }); editor.setMode("grid"); editor.select({ mode: "grid", kind: "column", index: 1 });
+  const state = { ...editor.getState(), config: editor.getConfig(), handles: editor.getControlPoints() };
+  update({ state: { draft: config }, selectedNode: "left-grid", warpStates: { left: state } });
+  root.querySelector(".config-node[data-node='left-grid'] .warp-open-button").click();
+  const layout = root.querySelector(".warp-grid-layout-section");
+  const sourceX = layout.querySelector("[data-grid-layout-field='source-x']");
+  expect(sourceX.value).toBe("33.3333"); expect(sourceX.disabled).toBe(false);
+  expect(layout.querySelector("[data-grid-layout-field='source-y']").value).toBe("0");
+  expect(layout.querySelector("[data-grid-layout-field='source-y']").disabled).toBe(true);
+  sourceX.value = "40"; sourceX.dispatchEvent(new Event("input", { bubbles: true })); sourceX.dispatchEvent(new Event("change", { bubbles: true }));
+  expect(onWarpAction).toHaveBeenCalledWith("warp-grid-layout", { output: "left", operation: "move", axis: "column", index: 1, position: 40 });
+  view.dispose();
+});
+
+test.each(["close", "output switch"])("pending grid input is cancelled before editor %s", (transition) => {
+  const { root, view, onWarpAction, update } = makeView();
+  const config = structuredClone(DEFAULT_PROJECTION_CONFIG);
+  const editor = createWarpEditor({ config, output: "left" }); editor.setMode("grid"); editor.select({ mode: "grid", kind: "row", index: 1 });
+  const state = { ...editor.getState(), config: editor.getConfig(), handles: editor.getControlPoints() };
+  update({ state: { draft: config }, selectedNode: "left-grid", warpStates: { left: state, right: { ...state, config: structuredClone(config) } } });
+  root.querySelector(".config-node[data-node='left-grid'] .warp-open-button").click();
+  const sourceY = root.querySelector(".warp-grid-layout-section [data-grid-layout-field='source-y']");
+  sourceY.value = "55"; sourceY.dispatchEvent(new Event("input", { bubbles: true }));
+  onWarpAction.mockClear();
+  if (transition === "close") root.querySelector("[data-action='warp-editor-close']").click();
+  else root.querySelector(".config-node[data-node='right-grid'] .warp-open-button").click();
+  expect(sourceY.value).toBe("16.6667");
+  sourceY.dispatchEvent(new Event("change", { bubbles: true })); sourceY.dispatchEvent(new Event("blur"));
+  expect(onWarpAction).not.toHaveBeenCalled();
+  view.dispose();
+});
+
+test("empty and browser-sanitized bad grid inputs restore valid values and report an accessible error", () => {
+  const { root, view, onWarpAction, update } = makeView();
+  const config = structuredClone(DEFAULT_PROJECTION_CONFIG);
+  config.outputs.left.warp.grid = { columns: 3, rows: 3, columnPositions: [0, 0.333333, 1], rowPositions: [0, 0.6, 1], offsets: Array.from({ length: 9 }, () => [0, 0]) };
+  const editor = createWarpEditor({ config, output: "left" }); editor.setMode("grid"); editor.select({ mode: "grid", kind: "row", index: 1 });
+  const state = { ...editor.getState(), config: editor.getConfig(), handles: editor.getControlPoints() };
+  update({ state: { draft: config }, selectedNode: "left-grid", warpStates: { left: state } });
+  root.querySelector(".config-node[data-node='left-grid'] .warp-open-button").click();
+  const layout = root.querySelector(".warp-grid-layout-section");
+  const rows = layout.querySelector("[data-grid-layout-field='rows']");
+  const sourceY = layout.querySelector("[data-grid-layout-field='source-y']");
+  onWarpAction.mockClear();
+  rows.value = ""; rows.dispatchEvent(new Event("input", { bubbles: true })); rows.dispatchEvent(new Event("change", { bubbles: true }));
+  expect(rows.value).toBe("3"); expect(rows.getAttribute("aria-invalid")).toBe("true");
+  expect(layout.querySelector(".warp-grid-layout-error").textContent).toMatch(/finite|valid/i);
+  sourceY.value = ""; sourceY.dispatchEvent(new Event("input", { bubbles: true })); sourceY.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  expect(sourceY.value).toBe("60"); expect(sourceY.getAttribute("aria-invalid")).toBe("true");
+  rows.value = "not-a-number"; rows.dispatchEvent(new Event("input", { bubbles: true })); rows.dispatchEvent(new Event("change", { bubbles: true }));
+  expect(rows.value).toBe("3"); expect(rows.getAttribute("aria-invalid")).toBe("true");
+  rows.value = "4"; rows.dispatchEvent(new Event("input", { bubbles: true }));
+  expect(rows.getAttribute("aria-invalid")).toBeNull();
+  rows.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  rows.dispatchEvent(new Event("change", { bubbles: true })); rows.dispatchEvent(new Event("blur"));
+  expect(onWarpAction).toHaveBeenCalledTimes(1);
+  expect(onWarpAction).toHaveBeenCalledWith("warp-grid-layout", { output: "left", operation: "counts", rows: 4, columns: 3 });
+  view.dispose();
+});
+
+test("add-position typing stays local until its Add action", () => {
+  const { root, view, onWarpAction, update } = makeView();
+  const config = structuredClone(DEFAULT_PROJECTION_CONFIG);
+  const editor = createWarpEditor({ config, output: "left" }); editor.setMode("grid"); editor.select({ mode: "grid", kind: "row", index: 1 });
+  const state = { ...editor.getState(), config: editor.getConfig(), handles: editor.getControlPoints() };
+  update({ state: { draft: config }, selectedNode: "left-grid", warpStates: { left: state } });
+  root.querySelector(".config-node[data-node='left-grid'] .warp-open-button").click();
+  const layout = root.querySelector(".warp-grid-layout-section");
+  const position = layout.querySelector("[data-grid-layout-field='addRowPosition']");
+  position.value = "35"; position.dispatchEvent(new Event("input", { bubbles: true }));
+  position.dispatchEvent(new Event("change", { bubbles: true })); position.dispatchEvent(new Event("blur"));
+  expect(onWarpAction).not.toHaveBeenCalled();
+  layout.querySelector("[data-grid-layout-action='add-row']").click();
+  expect(onWarpAction).toHaveBeenCalledTimes(1);
+  expect(onWarpAction).toHaveBeenCalledWith("warp-grid-layout", { output: "left", operation: "add", axis: "row", position: 35 });
+  view.dispose();
+});
+
+test.each([false, true])("Grid layout dispatch releases an active %s pointer before committing", (moved) => {
+  const { root, view, onWarpAction, onWarpPointer, update } = makeView({ coarse: false });
+  const editor = createWarpEditor({ config: DEFAULT_PROJECTION_CONFIG, output: "left" }); editor.setMode("grid"); editor.select({ mode: "grid", kind: "point", index: 0 });
+  const state = { ...editor.getState(), config: editor.getConfig(), handles: editor.getControlPoints() };
+  update({ state: { draft: structuredClone(DEFAULT_PROJECTION_CONFIG) }, selectedNode: "left-grid", warpStates: { left: state } });
+  root.querySelector(".config-node[data-node='left-grid'] .warp-open-button").click();
+  const surface = root.querySelector(".warp-edit-surface");
+  const rect = { left: 0, top: 0, width: 2064, height: 1224 };
+  surface.getBoundingClientRect = () => rect;
+  surface.setPointerCapture = vi.fn(); surface.releasePointerCapture = vi.fn();
+  let handleY = 72;
+  const pointer = (type, x, y = handleY) => {
+    const event = new Event(type, { bubbles: true, cancelable: true });
+    Object.assign(event, { pointerId: 4, pointerType: "mouse", isPrimary: true, button: 0, clientX: x, clientY: y, preventDefault: vi.fn() });
+    surface.dispatchEvent(event);
+  };
+  const handle = state.handles[0];
+  const [viewX, viewY, viewWidth, viewHeight] = surface.getAttribute("viewBox").split(" ").map(Number);
+  const fit = fitWarpViewport({ x: viewX, y: viewY, width: viewWidth, height: viewHeight }, rect.width, rect.height);
+  const handleX = rect.left + fit.insetX + (handle.x * 1920 - viewX) * fit.scale;
+  handleY = rect.top + fit.insetY + (handle.y * 1080 - viewY) * fit.scale;
+  pointer("pointerdown", handleX, handleY);
+  expect(surface.setPointerCapture).toHaveBeenCalledWith(4);
+  if (moved) pointer("pointermove", handleX + 10, handleY);
+  const rows = root.querySelector(".warp-grid-layout-section [data-grid-layout-field='rows']");
+  rows.value = "3"; rows.dispatchEvent(new Event("input", { bubbles: true })); rows.dispatchEvent(new Event("change", { bubbles: true }));
+  expect(surface.releasePointerCapture).toHaveBeenCalledWith(4);
+  expect(onWarpPointer.mock.calls.at(-1)?.[0]).toBe("cancel");
+  expect(onWarpAction).toHaveBeenCalledWith("warp-grid-layout", { output: "left", operation: "counts", columns: 7, rows: 3 });
+  const callbackCount = onWarpPointer.mock.calls.length;
+  pointer("pointermove", 92); pointer("pointerup", 92); pointer("pointercancel", 92);
+  expect(onWarpPointer).toHaveBeenCalledTimes(callbackCount);
+  view.dispose();
+});
+
 test("Adjust opens the descriptor set for Shared transform and each Crop/Fit node", () => {
   const { root, view } = makeView({ coarse: false });
   const expected = new Map([

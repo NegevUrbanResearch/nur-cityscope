@@ -3,6 +3,7 @@ import {
   LEGACY_DEFAULT_PROJECTION_CONFIG,
   TD_MIGRATION_PRESET_ID,
   TD_MIGRATION_PRESET_NAME,
+  migrateProjectionConfigToV7,
   validateProjectionConfig,
 } from './projection-config-schema.js';
 import { migrateNamesWallToV5, migrateNamesWallToV6 } from './nli-name-wall-config.js';
@@ -39,6 +40,11 @@ function withoutRotation(config) {
 }
 
 function originalConfigOk(config) {
+  if (config?.schemaVersion === 7) {
+    const angle = config.namesWall?.rotateDeg;
+    if (typeof angle !== 'number' || !Number.isFinite(angle) || angle < -180 || angle > 180) return false;
+    return equal(withoutRotation(migrateProjectionConfigToV7(config, angle)), withoutRotation(DEFAULT_PROJECTION_CONFIG));
+  }
   if (config?.schemaVersion === 6) {
     const angle = config.namesWall?.rotateDeg;
     if (typeof angle !== 'number' || !Number.isFinite(angle) || angle < -180 || angle > 180) return false;
@@ -74,9 +80,7 @@ function validSnapshot(value) {
 }
 
 function normalizeSnapshot(value, warnings = []) {
-  const normalizeConfig = (config) => config?.schemaVersion === 6
-    ? migrateNamesWallToV6(config, config.namesWall?.rotateDeg ?? 35, warnings)
-    : migrateNamesWallToV5(config, warnings);
+  const normalizeConfig = (config) => migrateProjectionConfigToV7(config, config?.namesWall?.rotateDeg ?? 35, warnings);
   return {
     ...clone(value),
     config: normalizeConfig(value.config),
@@ -107,6 +111,7 @@ export function createProjectionConfigClient({
   let stopped = false;
   let connected = false;
   let snapshot = null;
+  let installedSchemaVersion = null;
   let draft = null;
   let hasLocalDraft = false;
   let live = true;
@@ -143,13 +148,13 @@ export function createProjectionConfigClient({
       hydrationError,
       previewError,
       migrationWarnings: [...migrationWarnings],
-      initializationRequired: Boolean(snapshot?.config && snapshot.config.schemaVersion < 6),
+      initializationRequired: Boolean(snapshot?.config && installedSchemaVersion < 7),
       schemaChanged,
     };
   }
 
   function setupRequired() {
-    return Boolean(snapshot?.config && snapshot.config.schemaVersion < 6);
+    return Boolean(snapshot?.config && installedSchemaVersion < 7);
   }
 
   function notify(receipt) {
@@ -203,6 +208,7 @@ export function createProjectionConfigClient({
     if (typeof onConflict === 'function') onConflict(CONFLICT_MESSAGE);
     if (validSnapshot(next) && (!snapshot || next.revision > snapshot.revision)) {
       const warnings = [];
+      installedSchemaVersion = next.config.schemaVersion;
       snapshot = normalizeSnapshot(next, warnings);
       migrationWarnings = [...new Set(warnings)];
     }
@@ -211,10 +217,20 @@ export function createProjectionConfigClient({
 
   function receiveSnapshot(next, { origin, fromHydrate = false } = {}) {
     if (!validSnapshot(next)) return false;
-    if (snapshot && next.revision <= snapshot.revision) return false;
+    if (snapshot && next.revision < snapshot.revision) return false;
+    if (snapshot && next.revision === snapshot.revision) {
+      // Installation migrations preserve calibration revisions. An authoritative
+      // hydration may therefore refresh the write gate without replacing the
+      // normalized snapshot, unsaved draft, or its edit history.
+      if (!fromHydrate) return false;
+      installedSchemaVersion = next.config.schemaVersion;
+      notify();
+      return true;
+    }
     const foreign = origin !== undefined && origin !== null && origin !== sourceId;
     if (foreign && (hasLocalDraft || inFlight || queuedPreview || intent)) markConflict(next);
     const warnings = [];
+    installedSchemaVersion = next.config.schemaVersion;
     snapshot = normalizeSnapshot(next, warnings);
     migrationWarnings = [...new Set(warnings)];
     if (!hasLocalDraft) {
@@ -365,7 +381,7 @@ export function createProjectionConfigClient({
       const responseIsCurrent = equal(snapshot, normalizeSnapshot(bodyResponse));
       if (request.action === 'load' || request.action === 'revert') {
         if ((adopted || responseIsCurrent) && conflictGeneration === request.conflictGeneration && draftVersion === sentVersion) {
-          draft = migrateNamesWallToV5(bodyResponse.config);
+          draft = migrateProjectionConfigToV7(bodyResponse.config, bodyResponse.config?.namesWall?.rotateDeg ?? 35);
           hasLocalDraft = false;
           draftReplaced = true;
         }
@@ -492,7 +508,7 @@ export function createProjectionConfigClient({
   function setDraft(config) {
     if (!config || Object.keys(validateProjectionConfig(config)).length) throw new Error('invalid projection config');
     cancelPreflight('projection config operation superseded');
-    draft = migrateNamesWallToV5(config);
+    draft = migrateProjectionConfigToV7(config, config?.namesWall?.rotateDeg ?? 35);
     draftVersion += 1;
     hasLocalDraft = !snapshot || !equal(draft, snapshot.config);
     if (live) schedulePreview();

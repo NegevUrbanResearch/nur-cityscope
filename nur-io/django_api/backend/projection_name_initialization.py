@@ -10,7 +10,7 @@ from django.db import transaction
 
 from .models import OTEFProjectionCalibration, OTEFViewportState, Table
 from .projection_config_schema import validate_projection_snapshot
-from .projection_warp_schema import migrate_projection_config_to_v6, validate_projection_config_v6
+from .projection_warp_schema import migrate_projection_config_to_v7, validate_projection_config_v7
 
 SAFE_REVISION = 2**53 - 1
 OUTPUTS = ("left", "right")
@@ -225,18 +225,18 @@ def _snapshot(viewport, calibration):
     }
 
 
-def _v6(config):
-    return isinstance(config, dict) and config.get("schemaVersion") == 6 and not validate_projection_config_v6(config)
+def _v7(config):
+    return isinstance(config, dict) and config.get("schemaVersion") == 7 and not validate_projection_config_v7(config)
 
 
-def _current_v6_envelopes(calibration):
+def _current_v7_envelopes(calibration):
     presets = calibration.presets
     if not isinstance(presets, list) or not presets:
         return False
     for preset in presets:
-        if not isinstance(preset, dict) or not _v6(preset.get("config")):
+        if not isinstance(preset, dict) or not _v7(preset.get("config")):
             return False
-    if not _v6(calibration.working_config):
+    if not _v7(calibration.working_config):
         return False
     revision = calibration.revision
     if isinstance(revision, bool) or not isinstance(revision, int):
@@ -318,7 +318,7 @@ def _retry(viewport, calibration, payload, parsed_config):
     baseline = settings.get("baseline") if isinstance(settings, dict) else None
     current = _snapshot(viewport, calibration)
     try:
-        converted = migrate_projection_config_to_v6(parsed_config, payload["wallRotateDeg"])
+        converted = migrate_projection_config_to_v7(parsed_config, payload["wallRotateDeg"])
         successor_digest = digest_text(compact_json(converted))
     except (TypeError, ValueError) as error:
         raise InitializationConflict(current) from error
@@ -339,7 +339,7 @@ def _retry(viewport, calibration, payload, parsed_config):
         and int(calibration.revision) >= successor["revision"]
         and _safe_int(viewport.settlement_name_revision)
         and viewport.settlement_name_revision >= 1
-        and _current_v6_envelopes(calibration)
+        and _current_v7_envelopes(calibration)
         and _settlement_snapshot_complete(settings)
         and _positions_subset(payload["baselinePositions"], baseline.get("outputs"))
     )
@@ -368,7 +368,7 @@ def _convert_presets(presets, angle, selected_preset_id, working_config, revisio
         if not isinstance(preset, dict) or set(preset) != {"id", "name", "config", "readOnly"}:
             raise InitializationRejected("invalid calibration")
         try:
-            config = migrate_projection_config_to_v6(preset["config"], angle)
+            config = migrate_projection_config_to_v7(preset["config"], angle)
         except (TypeError, ValueError) as error:
             raise InitializationRejected("invalid calibration") from error
         converted.append({"id": preset["id"], "name": preset["name"], "config": config, "readOnly": preset["readOnly"]})
@@ -404,7 +404,7 @@ def initialize_projection_name_settings(table_name, payload):
         if not semantically_equal(parsed_config, calibration.working_config):
             raise InitializationRejected("config mismatch")
         try:
-            working = migrate_projection_config_to_v6(parsed_config, payload["wallRotateDeg"])
+            working = migrate_projection_config_to_v7(parsed_config, payload["wallRotateDeg"])
         except (TypeError, ValueError) as error:
             raise InitializationRejected("invalid calibration") from error
         presets = _convert_presets(

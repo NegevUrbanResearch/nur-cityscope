@@ -3,6 +3,15 @@ import { recordProjectionTrace } from './projection-trace-input.js';
 
 const HIT_RADIUS = 24;
 
+/** Convert a grid handle index into the active point, row, or column selection. */
+export function gridSelectionForHandle(selection, index, columns) {
+  const columnCount = Math.max(1, Math.floor(Number(columns) || 1));
+  const handleIndex = Math.max(0, Math.floor(Number(index) || 0));
+  if (selection?.kind === "row") return { mode: "grid", kind: "row", index: Math.floor(handleIndex / columnCount) };
+  if (selection?.kind === "column") return { mode: "grid", kind: "column", index: handleIndex % columnCount };
+  return { mode: "grid", kind: "point", index: handleIndex };
+}
+
 /** Bind one geometry gesture or a two-touch navigation gesture to the stable SVG. */
 export function bindWarpPointerInput({ surface, readGeometry, onSelect, onStart, onMove, onEnd, onCancel, onNavigate, trace }) {
   const doc = surface.ownerDocument;
@@ -140,7 +149,12 @@ export function bindWarpPointerInput({ surface, readGeometry, onSelect, onStart,
     active = gesture;
     recordProjectionTrace(trace, 'selection', { surface: 'warp', output, mode, index: hit.index, accepted: selectionChanged });
     event.preventDefault?.();
-    if (selectionChanged) onSelect({ output, selection: { mode, kind: mode === "grid" ? "point" : "corner", index: hit.index } });
+    if (selectionChanged) {
+      const selection = mode === "grid"
+        ? gridSelectionForHandle(geometry.selection, hit.index, geometry.columns)
+        : { mode, kind: "corner", index: hit.index };
+      onSelect({ output, selection });
+    }
     try { surface.setPointerCapture?.(gesture.pointerId); recordProjectionTrace(trace, 'capture', { surface: 'warp', phase: 'request', pointerId: gesture.pointerId, accepted: true }); } catch { recordProjectionTrace(trace, 'capture', { surface: 'warp', phase: 'request', pointerId: gesture.pointerId, accepted: false, reason: 'capture_failed' }); active = null; return; }
     recordProjectionTrace(trace, 'gesture', { surface: 'warp', phase: 'start', output, mode, pointerId: gesture.pointerId });
     onStart(point(event, gesture));

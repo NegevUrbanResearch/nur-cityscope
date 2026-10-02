@@ -180,7 +180,7 @@ export async function bootProjectionSettlementNamePreview({ window: win, documen
     const calibration = acknowledgedCalibration(await readSnapshot(fetchImpl, "/api/otef/projection-config/?table=otef", assets.signal));
     const settlement = settlementDocument(snapshot);
     const checked = validateSettlementNameSettings(settlement.settings);
-    if (calibration.config?.schemaVersion !== 6 || !Number.isSafeInteger(settlement.revision) || settlement.revision < 1 || checked.errors.length) {
+    if (![6, 7].includes(calibration.config?.schemaVersion) || !Number.isSafeInteger(settlement.revision) || settlement.revision < 1 || checked.errors.length) {
       throw new Error("Initialization required");
     }
     const config = structuredClone(calibration.config);
