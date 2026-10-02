@@ -36,6 +36,29 @@ it('held nudges start after 350ms, repeat every 100ms and cancel cleanly', () =>
   c.dispose(); vi.useRealTimers();
 });
 const descriptor = {path:'pre.rotateDeg',label:'Rotation',min:-180,max:180,displayMin:-180,displayMax:180,displayStep:.1,decimals:2,unit:'deg',fine:.1};
+it.each(['Escape', 'pointercancel', 'lostpointercapture'])('a keyboard click after held cancellation by %s still nudges', terminal => {
+  vi.useFakeTimers();
+  const onNudge=vi.fn(); const c=renderField(document,descriptor,()=>{},onNudge); c.update({value:1});
+  const plus=c.wrap.querySelector('[data-direction="1"]');
+  const pointer=type=>{const event=new Event(type); Object.defineProperty(event,'pointerId',{value:8}); plus.dispatchEvent(event);};
+  try {
+    pointer('pointerdown'); vi.advanceTimersByTime(350);
+    if(terminal==='Escape') plus.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'})); else pointer(terminal);
+    expect(onNudge.mock.calls.at(-1)[2].phase).toBe('cancel'); const before=onNudge.mock.calls.length;
+    plus.dispatchEvent(new MouseEvent('click',{detail:0}));
+    expect(onNudge).toHaveBeenCalledTimes(before+1); expect(onNudge).toHaveBeenLastCalledWith(descriptor.path,1);
+  } finally {c.dispose();vi.useRealTimers();}
+});
+it('a held nudge suppresses its native synthesized pointer click', () => {
+  vi.useFakeTimers(); const onNudge=vi.fn(); const c=renderField(document,descriptor,()=>{},onNudge); c.update({value:1});
+  const plus=c.wrap.querySelector('[data-direction="1"]');
+  const pointer=type=>{const event=new Event(type); Object.defineProperty(event,'pointerId',{value:8}); plus.dispatchEvent(event);};
+  try {
+    pointer('pointerdown'); vi.advanceTimersByTime(350); pointer('pointerup');
+    const before=onNudge.mock.calls.length; plus.dispatchEvent(new MouseEvent('click',{detail:1})); expect(onNudge).toHaveBeenCalledTimes(before);
+    plus.dispatchEvent(new MouseEvent('click',{detail:0})); expect(onNudge).toHaveBeenCalledTimes(before+1);
+  } finally {c.dispose();vi.useRealTimers();}
+});
 function setup(value=0, extra={}) { const onField=vi.fn(); const c=renderField(document,{...descriptor,...extra},onField,()=>{}); document.body.append(c.wrap); c.update({value,resolvedPath:descriptor.path}); const mode=c.wrap.querySelector('[data-action="numeric-sensitivity"]'); if(mode?.getAttribute('aria-pressed')==='true') mode.click(); return {c,onField}; }
 it('optical continuous fields start in Fine with visible Coarse option and exact local zero', () => {
   const onField=vi.fn(); const base=.123456789123456;

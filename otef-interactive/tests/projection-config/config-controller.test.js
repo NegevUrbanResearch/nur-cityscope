@@ -147,6 +147,30 @@ function replacementHarness() {
 }
 
 describe("projection config controller", () => {
+  test('real-client Live Undo validates and publishes the exact restored scalar after its own acknowledgment', async () => {
+    const root=element('main'); root.ownerDocument=documentStub(); const h=replacementHarness(); const checks=[];
+    h.snapshot.config.pre.tx=.123456789123456;
+    const api=mountProjectionConfig(root,{client:h.client,candidateValidator:{validateCandidate:args=>new Promise(resolve=>checks.push({...args,resolve})),dispose(){}}});
+    try {
+      h.respond(h.snapshot); await vi.waitFor(()=>expect(h.client.getState().hydrating).toBe(false));
+      expect(h.client.getState().live).toBe(true);
+      find(root,n=>n.dataset?.action==='fine-nudge' && n.dataset.path==='pre.tx' && n.dataset.direction==='1').dispatch('click');
+      await vi.waitFor(()=>expect(checks).toHaveLength(1)); expect(h.requests).toHaveLength(0);
+      expect(checks[0].config.pre.tx).toBe(h.snapshot.config.pre.tx+.0001);
+      checks[0].resolve({identity:checks[0].identity,valid:true}); await vi.waitFor(()=>expect(h.requests).toHaveLength(1));
+      const edited=clone(h.snapshot); edited.revision=1; edited.config=JSON.parse(h.requests[0].options.body).config;
+      expect(h.requests[0].options.method).toBe('POST'); expect(JSON.parse(h.requests[0].options.body).action).toBe('preview');
+      h.respond(edited); await vi.waitFor(()=>expect(h.client.getState().pending).toBe(false));
+      expect(await api.handleAction('parameter-undo')).toBe(true);
+      expect(h.client.getState().pending).toBe(true); await vi.waitFor(()=>expect(checks).toHaveLength(2));
+      expect(h.requests).toHaveLength(0); expect(checks[1].config).toEqual(h.snapshot.config);
+      checks[1].resolve({identity:checks[1].identity,valid:true}); await vi.waitFor(()=>expect(h.requests).toHaveLength(1));
+      expect(h.requests[0].options.method).toBe('POST');
+      expect(JSON.parse(h.requests[0].options.body)).toMatchObject({action:'preview',baseRevision:1,config:h.snapshot.config});
+      h.respond({...h.snapshot,revision:2}); await vi.waitFor(()=>expect(h.client.getState().pending).toBe(false));
+      expect(h.client.getState().snapshot.config).toEqual(h.snapshot.config); expect(h.client.getState().live).toBe(true);
+    } finally {api.dispose();}
+  });
   test('held nudges produce one undo entry, own acknowledgments retain it and foreign same-field changes invalidate it', async () => {
     const root=element('main'); root.ownerDocument=documentStub(); const client=fakeClient(); const factory=vi.spyOn(configView,'createProjectionConfigView'); const api=mountProjectionConfig(root,{client});
     const {onNudge,onField}=factory.mock.calls.at(-1)[1];

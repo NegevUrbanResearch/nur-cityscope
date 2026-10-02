@@ -268,7 +268,12 @@ export function renderField(doc, descriptor, onField, onNudge, compact = false, 
   listen(useLatest, 'click', event => { event.stopPropagation?.(); cancel(); });
   listen(useMine, 'click', event => { event.stopPropagation?.(); finish('number', true); });
   if (!compact) for (const [nudge, direction] of [[fineMinus, -1], [finePlus, 1]]) {
-    listen(nudge, 'click', () => { if (suppressNudgeClick) { suppressNudgeClick = false; return; } cancel(); sendNudge(direction); });
+    listen(nudge, 'click', event => {
+      const suppressPointerClick = suppressNudgeClick && event.detail !== 0;
+      suppressNudgeClick = false;
+      if (suppressPointerClick) return;
+      cancel(); sendNudge(direction);
+    });
     listen(nudge, 'pointerdown', event => {
       cancel(); suppressNudgeClick = false; nudge.setPointerCapture?.(event.pointerId);
       const active = { button: nudge, direction, pointer: event.pointerId, id: gestureId(), count: 0, acceptedCount: 0 }; hold = active;
