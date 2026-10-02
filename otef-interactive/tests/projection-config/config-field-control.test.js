@@ -59,12 +59,29 @@ it('a held nudge suppresses its native synthesized pointer click', () => {
     plus.dispatchEvent(new MouseEvent('click',{detail:0})); expect(onNudge).toHaveBeenCalledTimes(before+1);
   } finally {c.dispose();vi.useRealTimers();}
 });
-function setup(value=0, extra={}) { const onField=vi.fn(); const c=renderField(document,{...descriptor,...extra},onField,()=>{}); document.body.append(c.wrap); c.update({value,resolvedPath:descriptor.path}); const mode=c.wrap.querySelector('[data-action="numeric-sensitivity"]'); if(mode?.getAttribute('aria-pressed')==='true') mode.click(); return {c,onField}; }
+it('nudge finishes a valid pending value first and leaves invalid text untouched until Cancel edit',()=>{
+  const onField=vi.fn(()=>true); const onNudge=vi.fn(); const c=renderField(document,descriptor,onField,onNudge); c.update({value:1.23456});
+  input(c,'2.5'); c.wrap.querySelector('[data-direction="1"]').click();
+  expect(onField).toHaveBeenCalledWith(descriptor.path,'2.5','number',{baseValue:1.23456,resolvedPath:descriptor.path,override:false});
+  expect(onNudge).toHaveBeenCalledWith(descriptor.path,1); expect(c.number.value).toBe('2.50');
+  onField.mockClear(); onNudge.mockClear(); input(c,'-'); c.wrap.querySelector('[data-direction="1"]').click();
+  expect(onField).not.toHaveBeenCalled(); expect(onNudge).not.toHaveBeenCalled(); expect(c.number.value).toBe('-'); expect(c.error.textContent).toMatch(/complete number/i);
+  c.wrap.querySelector('[data-action="numeric-cancel-edit"]').click(); expect(c.number.value).toBe('2.50');
+  c.dispose();
+});
+function setup(value=0, extra={}) { const onField=vi.fn(); const c=renderField(document,{...descriptor,...extra},onField,()=>{}); document.body.append(c.wrap); c.update({value,resolvedPath:descriptor.path}); const coarse=c.wrap.querySelector('[data-mode="coarse"]'); if(coarse?.getAttribute('aria-pressed')==='false') coarse.click(); return {c,onField}; }
 it('optical continuous fields start in Fine with visible Coarse option and exact local zero', () => {
   const onField=vi.fn(); const base=.123456789123456;
   const c=renderField(document,{...descriptor,display:'percentage',step:.001,fine:.0001},onField,()=>{}); c.update({value:base});
-  expect(c.wrap.querySelector('[data-action="numeric-sensitivity"]').textContent).toBe('Coarse / Fine: Fine');
+  const fine = c.wrap.querySelector('[data-mode="fine"]');
+  const coarse = c.wrap.querySelector('[data-mode="coarse"]');
+  expect(fine.textContent).toBe('Fine'); expect(coarse.textContent).toBe('Coarse');
+  expect(fine.getAttribute('aria-pressed')).toBe('true'); expect(coarse.getAttribute('aria-pressed')).toBe('false');
   expect(c.wrap.querySelector('.numeric-step').textContent).toBe('Step: 0.01 deg');
+  coarse.click();
+  expect(fine.getAttribute('aria-pressed')).toBe('false'); expect(coarse.getAttribute('aria-pressed')).toBe('true');
+  expect(c.wrap.querySelector('.numeric-step').textContent).toBe('Step: 0.1 deg');
+  fine.click(); expect(c.wrap.querySelector('.numeric-step').textContent).toBe('Step: 0.01 deg');
   expect(c.range.value).toBe('0'); c.range.dispatchEvent(new Event('input'));
   expect(onField.mock.calls.at(-1)[3].canonicalValue).toBe(base); c.dispose();
 });
@@ -72,6 +89,8 @@ function input(c,raw) { c.number.value=raw; c.number.dispatchEvent(new Event('in
 it('untouched blur preserves exact baseline without a callback',()=>{ const {c,onField}=setup(1.23456); c.number.dispatchEvent(new Event('blur')); expect(onField).not.toHaveBeenCalled(); expect(c.finish()).toMatchObject({kind:'unchanged',baseValue:1.23456}); });
 it('sign from zero and comma entry commit signed display units with canonical metadata',()=>{ const {c,onField}=setup(); c.wrap.querySelector('[data-action="numeric-sign"]').click(); input(c,'2,5'); c.number.dispatchEvent(new Event('blur')); expect(onField).toHaveBeenCalledWith(descriptor.path,'-2.5','number',{baseValue:0,resolvedPath:descriptor.path,override:false}); expect(c.number.type).toBe('text'); expect(c.number.getAttribute('aria-describedby')).toContain(c.error.id); });
 it('signed paste works and invalid entry has a visible associated error',()=>{ const {c,onField}=setup(); input(c,'-3.5'); c.finish(); expect(onField).toHaveBeenCalledTimes(1); input(c,'-'); expect(c.finish().kind).toBe('invalid'); expect(c.error.textContent).toMatch(/complete number/i); expect(c.number.getAttribute('aria-invalid')).toBe('true'); });
+it('Cancel edit restores the latest scalar value without committing invalid inline text',()=>{ const {c,onField}=setup(1); input(c,'-'); const cancel=c.wrap.querySelector('[data-action="numeric-cancel-edit"]'); expect(cancel.hidden).toBe(false); cancel.click(); expect(c.number.value).toBe('1.00'); expect(cancel.hidden).toBe(true); expect(onField).not.toHaveBeenCalled(); });
+it('Cancel edit prevents pointer focus transfer so a valid dirty value is discarded before blur',()=>{ const {c,onField}=setup(1.23456); input(c,'1.3'); const cancel=c.wrap.querySelector('[data-action="numeric-cancel-edit"]'); const down=new Event('pointerdown',{cancelable:true}); expect(cancel.dispatchEvent(down)).toBe(false); if(!down.defaultPrevented) c.number.dispatchEvent(new Event('blur')); cancel.click(); expect(c.number.value).toBe('1.23'); expect(onField).not.toHaveBeenCalled(); });
 it('dirty foreign updates block blur and allow explicit same-target override',()=>{ const {c,onField}=setup(1); input(c,'2'); c.update({value:3,resolvedPath:descriptor.path}); expect(c.number.value).toBe('2'); expect(c.finish().kind).toBe('conflict'); expect(onField).not.toHaveBeenCalled(); c.wrap.querySelector('[data-action="numeric-use-mine"]').click(); expect(onField).toHaveBeenCalledWith(descriptor.path,'2','number',{baseValue:3,resolvedPath:descriptor.path,override:true}); });
 it('target changes disable override and use latest starts a new session',()=>{ const {c,onField}=setup(1); input(c,'2'); c.update({value:4,resolvedPath:'other.rotation'}); expect(c.wrap.querySelector('[data-action="numeric-use-mine"]').disabled).toBe(true); c.wrap.querySelector('[data-action="numeric-use-latest"]').click(); expect(c.number.value).toBe('4.00'); expect(c.finish().kind).toBe('unchanged'); expect(onField).not.toHaveBeenCalled(); });
 it('unedited focused updates advance values without committing',()=>{ const {c,onField}=setup(1); c.number.focus(); c.update({value:2.34567,resolvedPath:descriptor.path}); expect(c.number.value).toBe('2.35'); c.number.blur(); expect(onField).not.toHaveBeenCalled(); });

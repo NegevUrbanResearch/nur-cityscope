@@ -4,25 +4,29 @@ import { createProjectionTraceUi } from './projection-trace-ui.js';
 import { recordProjectionTrace } from './projection-trace-input.js';
 
 /** Owns one disposable projection frame. The config controller retains all draft and edit state. */
-export function createWarpEditorDialog({ document: doc, host, editorPanel, overlay, navigationControls, onBeforeClose = () => {}, onBeforeSwitch = () => {}, onBeforeResize = () => {}, onViewportChange = () => {}, onOrientationChange = () => {}, onApply = () => {}, onLive = () => {}, trace }) {
+export function createWarpEditorDialog({ document: doc, host, editorPanel, overlay, navigationControls, presentation = "dialog", onVisibilityChange = () => {}, onEscape = () => false, onBeforeClose = () => {}, onBeforeSwitch = () => {}, onBeforeResize = () => {}, onViewportChange = () => {}, onOrientationChange = () => {}, onApply = () => {}, onLive = () => {}, trace }) {
   const win = doc.defaultView;
   const home = editorPanel.parentElement;
   const overlayHome = overlay.parentElement;
   const modal = doc.createElement("section");
   modal.className = "warp-editor-dialog";
   modal.hidden = true;
-  modal.setAttribute("role", "dialog");
-  modal.setAttribute("aria-modal", "true");
+  const isPanel = presentation === "panel";
+  modal.dataset.presentation = isPanel ? "panel" : "dialog";
+  modal.setAttribute("role", isPanel ? "region" : "dialog");
+  if (!isPanel) modal.setAttribute("aria-modal", "true");
   modal.setAttribute("aria-label", "Warp editor");
   const header = doc.createElement("header"); header.className = "warp-editor-header";
   const title = doc.createElement("h2"); title.className = "warp-editor-title";
   const status = doc.createElement("span"); status.className = "warp-editor-message"; status.setAttribute("role", "status");
-  const closeButton = doc.createElement("button"); closeButton.type = "button"; closeButton.dataset.action = "warp-editor-close"; closeButton.textContent = "Close";
+  const closeButton = doc.createElement("button"); closeButton.type = "button"; closeButton.dataset.action = "warp-editor-close"; closeButton.textContent = isPanel ? "Back to nodes" : "Close";
   header.append(title, status);
   if (navigationControls) header.appendChild(navigationControls);
   header.appendChild(closeButton);
   const body = doc.createElement("div"); body.className = "warp-editor-body";
   const viewport = doc.createElement("div"); viewport.className = "warp-editor-viewport";
+  const dimensions = doc.createElement("span"); dimensions.className = "warp-editor-dimensions";
+  viewport.appendChild(dimensions);
   const finePanel = doc.createElement("aside"); finePanel.className = "warp-editor-fine-panel";
   body.append(viewport, finePanel);
   const footer = doc.createElement("footer"); footer.className = "warp-editor-footer";
@@ -113,8 +117,8 @@ export function createWarpEditorDialog({ document: doc, host, editorPanel, overl
   };
   const onKeyDown = (event) => {
     if (modal.hidden) return;
-    if (event.key === "Escape") { event.preventDefault(); close(); return; }
-    if (event.key !== "Tab") return;
+    if (event.key === "Escape") { event.preventDefault(); if (!onEscape()) close(); return; }
+    if (isPanel || event.key !== "Tab") return;
     const focusables = [...modal.querySelectorAll("button:not([hidden]), input:not([hidden]), select:not([hidden])")].filter((item) => !item.disabled && !item.closest("[hidden]"));
     if (!focusables.length) return;
     const first = focusables[0]; const last = focusables.at(-1);
@@ -155,7 +159,8 @@ export function createWarpEditorDialog({ document: doc, host, editorPanel, overl
     inertSiblings = [];
     if (oldOverflow !== null) { doc.body.style.overflow = oldOverflow; oldOverflow = null; }
     if (ownFullscreen && doc.fullscreenElement === modal) exitOwnedFullscreen(returnTo);
-    else restoreFocus(returnTo);
+    onVisibilityChange(false);
+    if (!ownFullscreen || doc.fullscreenElement !== modal) restoreFocus(returnTo);
     ownFullscreen = false;
     opener = null;
   };
@@ -170,22 +175,28 @@ export function createWarpEditorDialog({ document: doc, host, editorPanel, overl
     else {
       focusEpoch += 1; closedFocus = null;
       opener = activatingElement || doc.activeElement;
-      if (doc.body?.style) { oldOverflow = doc.body.style.overflow; doc.body.style.overflow = "hidden"; }
-      inertSiblings = [...host.children].filter((child) => child !== modal).map((child) => [child, child.inert]);
-      for (const [child] of inertSiblings) child.inert = true;
+      if (!isPanel) {
+        if (doc.body?.style) { oldOverflow = doc.body.style.overflow; doc.body.style.overflow = "hidden"; }
+        inertSiblings = [...host.children].filter((child) => child !== modal).map((child) => [child, child.inert]);
+        for (const [child] of inertSiblings) child.inert = true;
+      }
       modal.hidden = false;
       attachListeners();
-      requestFullscreen();
+      if (!isPanel) requestFullscreen();
     }
     modal.dataset.mode = mode;
     title.textContent = `${side === "left" ? "Left" : "Right"} · ${mode === "grid" ? "Grid Warp" : "Keystone"}`;
+    dimensions.textContent = `${side === "left" ? "Left" : "Right"} output · 1920 × 1080 px`;
+    viewport.setAttribute("aria-label", `${side === "left" ? "Left" : "Right"} output preview, 1920 by 1080 pixels`);
     finePanel.appendChild(editorPanel); viewport.appendChild(overlay);
     overlay.classList?.add?.("warp-preview-overlay");
     overlay.setAttribute("preserveAspectRatio", "xMidYMid meet");
     overlay.setAttribute("tabindex", "0");
     makeFrame(side);
     closeButton.focus?.();
+    onVisibilityChange(true);
   };
+  if (isPanel) closeButton.addEventListener("pointerdown", (event) => event.preventDefault?.());
   closeButton.addEventListener("click", close);
   retry.addEventListener("click", () => { if (session) { preview.retry(); session.frame = preview.frame(); fit(); } });
   applyButton.addEventListener("click", onApply);

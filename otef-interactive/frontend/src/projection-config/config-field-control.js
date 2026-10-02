@@ -27,7 +27,7 @@ export function displayValue(descriptor, value) {
   return descriptor.decimals === undefined ? String(shown) : shown.toFixed(descriptor.decimals);
 }
 
-export function renderField(doc, descriptor, onField, onNudge, compact = false, editorLayout = false) {
+export function renderField(doc, descriptor, onField, onNudge, compact = false, editorLayout = false, onCancelEdit = () => {}) {
   const id = `numeric-field-${++nextControlId}`;
   const signed = descriptor.min < 0;
   const toDisplay = descriptor.display === 'percentage' ? v => v * 100 : v => v;
@@ -63,16 +63,27 @@ export function renderField(doc, descriptor, onField, onNudge, compact = false, 
   signButton?.setAttribute('aria-label', `${descriptor.label} sign: positive. Change to negative`);
   const useLatest = button(doc, 'Use latest', 'numeric-use-latest');
   const useMine = button(doc, 'Use my value', 'numeric-use-mine');
+  const cancelEdit = button(doc, 'Cancel edit', 'numeric-cancel-edit');
+  cancelEdit.setAttribute('aria-label', `Cancel editing ${descriptor.label}`);
   useLatest.hidden = useMine.hidden = true;
   const value = make(doc, "output", { className: "config-field-value", htmlFor: descriptor.path });
   const unit = make(doc, "span", { className: "config-field-unit" }, descriptor.unit || "");
   const fineMinus = button(doc, "−", "fine-nudge", "nudge");
   const finePlus = button(doc, "+", "fine-nudge", "nudge");
-  const sensitivity = button(doc, `Coarse / Fine: ${fineMode ? 'Fine' : 'Coarse'}`, 'numeric-sensitivity', 'numeric-sensitivity');
+  const sensitivityGroup = make(doc, 'div', { className: 'numeric-sensitivity-group', role: 'group', ariaLabel: `${descriptor.label} slider step size` });
+  const fineSensitivity = button(doc, 'Fine', 'numeric-sensitivity', 'numeric-sensitivity');
+  const coarseSensitivity = button(doc, 'Coarse', 'numeric-sensitivity', 'numeric-sensitivity');
+  fineSensitivity.dataset.mode = 'fine'; coarseSensitivity.dataset.mode = 'coarse';
+  fineSensitivity.setAttribute('aria-label', `${descriptor.label} fine slider step`);
+  coarseSensitivity.setAttribute('aria-label', `${descriptor.label} coarse slider step`);
+  sensitivityGroup.append(fineSensitivity, coarseSensitivity);
   const stepLabel = make(doc, 'span', { className: 'numeric-step' });
   const showStep = () => { stepLabel.textContent = `Step: ${fineMode ? toDisplay(descriptor.fine) : descriptor.displayStep ?? descriptor.step}${descriptor.unit ? ` ${descriptor.unit}` : ''}`; };
-  sensitivity.setAttribute('aria-label', `${descriptor.label} slider sensitivity`);
-  sensitivity.setAttribute('aria-pressed', String(fineMode));
+  const renderSensitivity = () => {
+    fineSensitivity.setAttribute('aria-pressed', String(fineMode));
+    coarseSensitivity.setAttribute('aria-pressed', String(!fineMode));
+  };
+  renderSensitivity();
   const fine = displayValue(descriptor, descriptor.fine);
   fineMinus.title = `Decrease ${descriptor.label} by ${fine}${descriptor.unit || ""}`;
   finePlus.title = `Increase ${descriptor.label} by ${fine}${descriptor.unit || ""}`;
@@ -102,11 +113,11 @@ export function renderField(doc, descriptor, onField, onNudge, compact = false, 
   } else row.append(...(descriptor.range === false ? [] : [range]), ...(signButton ? [signButton] : []), number, unit, ...(descriptor.nudges === false ? [] : [fineMinus, finePlus]), ...(descriptor.commitOnChange ? [value] : []));
   if (editorLayout) wrap.appendChild(controlsRow);
   else wrap.appendChild(row);
-  if (descriptor.range !== false && Number.isFinite(descriptor.fine)) { wrap.append(sensitivity, stepLabel); showStep(); }
+  if (descriptor.range !== false && Number.isFinite(descriptor.fine)) { wrap.append(sensitivityGroup, stepLabel); showStep(); }
   const error = make(doc, "small", { id: `${id}-error`, className: "config-field-error", role: "alert", dataset: { errorFor: descriptor.path } });
   const unitId = `${id}-unit`; unit.id = unitId;
   for (const input of [range, number, signButton]) input?.setAttribute('aria-describedby', `${unitId} ${error.id}`);
-  wrap.append(error, useLatest, useMine);
+  wrap.append(error, useLatest, useMine, cancelEdit);
   const showSign = () => {
     if (!signButton) return;
     signButton.textContent = sign < 0 ? '−' : '+';
@@ -120,6 +131,7 @@ export function renderField(doc, descriptor, onField, onNudge, compact = false, 
     for (const input of [range, number]) input?.setAttribute('aria-invalid', String(Boolean(message)));
     useLatest.hidden = useMine.hidden = result.kind !== 'conflict';
     useMine.disabled = targetChanged || result.resolvedPath !== latest.resolvedPath;
+    cancelEdit.hidden = !session.isDirty() && rangeGesture === null && !rangeRejected;
   };
   const refresh = (resetSign = false) => {
     const shown = displayValue(descriptor, latest.value);
@@ -229,7 +241,7 @@ export function renderField(doc, descriptor, onField, onNudge, compact = false, 
     renderResult(result.kind === 'commit' ? session.candidate() : result);
     return result;
   };
-  const cancel = ({ notify = true } = {}) => { focusedTarget = null; if (heldPointer !== null) retiredPointer = heldPointer; heldPointer = null; endRange(true, notify); stopHold(true, notify); session.cancel(); targetChanged = false; externalError = ''; needsAcceptance = false; rangeRejected = false; rejectionError = ''; refresh(true); };
+  const cancel = ({ notify = true, clearControllerError = false } = {}) => { focusedTarget = null; if (heldPointer !== null) retiredPointer = heldPointer; heldPointer = null; endRange(true, notify); stopHold(true, notify); session.cancel(); targetChanged = false; externalError = ''; needsAcceptance = false; rangeRejected = false; rejectionError = ''; refresh(true); if (clearControllerError) onCancelEdit(descriptor.path); };
   listen(range, 'pointerdown', event => { retiredPointer = null; heldPointer = event.pointerId; beginRange(); range.setPointerCapture?.(event.pointerId); sendRange('start'); });
   listen(range, 'keydown', () => { retiredPointer = null; });
   for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) listen(range, type, event => {
@@ -240,7 +252,10 @@ export function renderField(doc, descriptor, onField, onNudge, compact = false, 
   listen(number, 'input', () => markInput(number.value));
   listen(number, 'blur', () => { finish(); if (!session.isDirty()) focusedTarget = null; });
   listen(number, 'change', () => finish());
-  listen(number, 'keydown', event => { if (event.key === 'Enter') { event.preventDefault(); finish(); } else if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation?.(); cancel(); } });
+  listen(number, 'keydown', event => {
+    if (event.key === 'Enter') { event.preventDefault(); finish(); }
+    else if (event.key === 'Escape' && (session.isDirty() || rangeGesture !== null || rangeRejected || needsAcceptance)) { event.preventDefault(); event.stopPropagation?.(); cancel({ clearControllerError: true }); }
+  });
   listen(signButton, 'pointerdown', event => event.preventDefault?.());
   listen(signButton, 'click', event => {
     event.stopPropagation?.();
@@ -261,23 +276,36 @@ export function renderField(doc, descriptor, onField, onNudge, compact = false, 
     if (!descriptor.commitOnChange) finish('range');
   });
   listen(range, 'change', () => { if (retiredPointer === null && heldPointer === null) { if (rangeGesture) endRange(); else finish('range'); } });
-  listen(range, 'keydown', event => { if (event.key === 'Escape') { event.preventDefault?.(); event.stopPropagation?.(); cancel(); } });
-  listen(sensitivity, 'click', () => {
+  listen(range, 'keydown', event => { if (event.key === 'Escape' && (session.isDirty() || rangeGesture !== null || rangeRejected || needsAcceptance)) { event.preventDefault?.(); event.stopPropagation?.(); cancel({ clearControllerError: true }); } });
+  const selectSensitivity = (nextFineMode) => {
     if (heldPointer !== null || hold) return;
-    endRange(); fineMode = !fineMode; sensitivity.textContent = `Coarse / Fine: ${fineMode ? 'Fine' : 'Coarse'}`; sensitivity.setAttribute('aria-pressed', String(fineMode)); configureRange(); showStep();
+    if (fineMode === nextFineMode) return;
+    endRange(); fineMode = nextFineMode; renderSensitivity(); configureRange(); showStep();
     onNudge(descriptor.path, 0, { phase: 'sensitivity' });
-  });
-  listen(useLatest, 'click', event => { event.stopPropagation?.(); cancel(); });
+  };
+  const finishBeforeNudge = () => {
+    if (rangeGesture && heldPointer === null) endRange();
+    const result = finish();
+    return result.kind === 'commit' || result.kind === 'unchanged';
+  };
+  listen(fineSensitivity, 'click', () => selectSensitivity(true));
+  listen(coarseSensitivity, 'click', () => selectSensitivity(false));
+  listen(useLatest, 'click', event => { event.stopPropagation?.(); cancel({ clearControllerError: true }); });
   listen(useMine, 'click', event => { event.stopPropagation?.(); finish('number', true); });
+  listen(cancelEdit, 'click', event => { event.stopPropagation?.(); cancel({ clearControllerError: true }); });
+  for (const action of [useLatest, useMine, cancelEdit]) listen(action, 'pointerdown', event => event.preventDefault?.());
   if (!compact) for (const [nudge, direction] of [[fineMinus, -1], [finePlus, 1]]) {
     listen(nudge, 'click', event => {
       const suppressPointerClick = suppressNudgeClick && event.detail !== 0;
       suppressNudgeClick = false;
       if (suppressPointerClick) return;
-      cancel(); sendNudge(direction);
+      if (!finishBeforeNudge()) return;
+      sendNudge(direction);
     });
     listen(nudge, 'pointerdown', event => {
-      cancel(); suppressNudgeClick = false; nudge.setPointerCapture?.(event.pointerId);
+      suppressNudgeClick = false;
+      if (!finishBeforeNudge()) { suppressNudgeClick = true; event.preventDefault?.(); return; }
+      nudge.setPointerCapture?.(event.pointerId);
       const active = { button: nudge, direction, pointer: event.pointerId, id: gestureId(), count: 0, acceptedCount: 0 }; hold = active;
       const tick = () => {
         active.count++;

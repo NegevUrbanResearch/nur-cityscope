@@ -57,6 +57,26 @@ test("updates external values and validation without replacing active text entry
   dialog.dispose();
 });
 
+test("crop extent errors use displayed percentage points and keep their accessible target stable", () => {
+  const host = document.createElement("aside"); document.body.appendChild(host);
+  const crop = { ...descriptors[1], path: "outputs.left.crop.x0", label: "Left edge" };
+  const config = makeConfig();
+  const dialog = createParameterEditorDialog({ document, host, presentation: "panel" });
+  dialog.update({ config });
+  dialog.open({ nodeId: "left-crop", descriptors: [crop] });
+  const number = host.querySelector('[data-input="number"]');
+  const error = host.querySelector(".config-field-error");
+  const describedBy = number.getAttribute("aria-describedby");
+  dialog.update({ config, fieldErrors: { "outputs.left.crop": "x extent must be at least 0.01" } });
+  expect(error.textContent).toBe("Horizontal crop extent must be at least 1 percentage point.");
+  expect(number.getAttribute("aria-describedby")).toBe(describedBy);
+  expect(describedBy.split(" ")).toContain(error.id);
+  number.focus(); number.value = "11.25"; number.dispatchEvent(new Event("input", { bubbles: true }));
+  dialog.update({ config, fieldErrors: { "outputs.left.crop": "x extent must be at least 0.01" } });
+  expect(number.value).toBe("11.25");
+  dialog.dispose();
+});
+
 test("Escape closes, restores inert siblings, and returns focus to the opener", () => {
   const host = document.createElement("main"); document.body.appendChild(host);
   const workspace = document.createElement("section"); const opener = document.createElement("button"); workspace.appendChild(opener); host.appendChild(workspace);
@@ -68,6 +88,115 @@ test("Escape closes, restores inert siblings, and returns focus to the opener", 
   expect(workspace.inert).not.toBe(true);
   expect(document.activeElement).toBe(opener);
   dialog.dispose();
+});
+
+test("true dialog consumes Escape to cancel dirty field then closes on the next bubbled Escape", () => {
+  const host = document.createElement("main"); document.body.appendChild(host);
+  const workspace = document.createElement("section"); const opener = document.createElement("button"); workspace.appendChild(opener); host.appendChild(workspace);
+  const dialog = createParameterEditorDialog({ document, host });
+  dialog.update({ config: makeConfig() });
+  dialog.open({ nodeId: "pre", title: "Shared pre-transform", descriptors: [descriptors[0]], opener });
+  const input = host.querySelector('[data-input="number"]');
+  input.focus(); input.value = "1.5"; input.dispatchEvent(new Event("input", { bubbles: true }));
+  input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+  expect(host.querySelector(".parameter-editor-dialog").hidden).toBe(false);
+  expect(input.value).toBe("1.250");
+  input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+  expect(host.querySelector(".parameter-editor-dialog").hidden).toBe(true);
+  expect(workspace.inert).not.toBe(true);
+  expect(document.activeElement).toBe(opener);
+  dialog.dispose();
+});
+
+test("panel presentation keeps header actions interactive and returns focus without inerting siblings", () => {
+  const host = document.createElement("aside"); document.body.appendChild(host);
+  const headerAction = document.createElement("button"); headerAction.textContent = "Save"; document.body.appendChild(headerAction);
+  const opener = document.createElement("button"); document.body.appendChild(opener);
+  const onAction = vi.fn();
+  const panel = createParameterEditorDialog({ document, host, onAction, presentation: "panel" });
+  panel.update({ config: makeConfig(), parameterHistory: { undo: 1, redo: 0 } });
+  panel.open({ nodeId: "pre", title: "Shared pre-transform", descriptors: [descriptors[0]], opener });
+  expect(host.querySelector(".parameter-editor-dialog").getAttribute("role")).toBe("region");
+  expect(host.querySelector(".parameter-editor-dialog").getAttribute("aria-modal")).toBeNull();
+  expect(headerAction.inert).not.toBe(true);
+  expect(headerAction.hasAttribute("inert")).toBe(false);
+  headerAction.click();
+  expect(headerAction.disabled).toBe(false);
+  const tab = new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true });
+  document.dispatchEvent(tab);
+  expect(tab.defaultPrevented).toBe(false);
+  host.querySelector('[data-action="parameter-undo"]').click();
+  expect(onAction).toHaveBeenCalledWith("parameter-undo");
+  panel.close();
+  expect(document.activeElement).toBe(opener);
+  panel.dispose();
+});
+
+test("Back commits valid pending text, while invalid text waits for explicit Cancel edit", () => {
+  const host = document.createElement("aside"); document.body.appendChild(host);
+  const opener = document.createElement("button"); document.body.appendChild(opener);
+  const onField = vi.fn();
+  const panel = createParameterEditorDialog({ document, host, onField, presentation: "panel" });
+  panel.update({ config: makeConfig() });
+  panel.open({ nodeId: "pre", descriptors: [descriptors[0]], opener });
+  const input = host.querySelector('[data-input="number"]');
+  input.focus(); input.value = "1.500"; input.dispatchEvent(new Event("input", { bubbles: true }));
+  host.querySelector('[data-action="parameter-editor-close"]').click();
+  expect(panel.isOpen()).toBe(false);
+  expect(onField).toHaveBeenCalledWith("pre.scale", "1.5", "number", { baseValue: 1.25, resolvedPath: "pre.scale", override: false });
+
+  onField.mockClear();
+  panel.open({ nodeId: "pre", descriptors: [descriptors[0]], opener });
+  const reopened = host.querySelector('[data-input="number"]');
+  reopened.focus(); reopened.value = "-"; reopened.dispatchEvent(new Event("input", { bubbles: true }));
+  expect(host.querySelector('[data-action="numeric-cancel-edit"]').hidden).toBe(false);
+  host.querySelector('[data-action="parameter-editor-close"]').click();
+  expect(panel.isOpen()).toBe(true);
+  expect(onField).not.toHaveBeenCalled();
+  host.querySelector('[data-action="numeric-cancel-edit"]').click();
+  expect(reopened.value).toBe("1.250");
+  host.querySelector('[data-action="parameter-editor-close"]').click();
+  expect(panel.isOpen()).toBe(false);
+  panel.dispose();
+});
+
+test("panel Back keeps a pointer-down on the target until the click finishes the pending field", () => {
+  const host = document.createElement("aside"); document.body.appendChild(host);
+  const opener = document.createElement("button"); document.body.appendChild(opener);
+  const onField = vi.fn();
+  const panel = createParameterEditorDialog({ document, host, onField, presentation: "panel" });
+  panel.update({ config: makeConfig() });
+  panel.open({ nodeId: "pre", descriptors: [descriptors[0]], opener });
+  const input = host.querySelector('[data-input="number"]');
+  const back = host.querySelector('[data-action="parameter-editor-close"]');
+  input.focus(); input.value = "1.500"; input.dispatchEvent(new Event("input", { bubbles: true }));
+  const pointerDown = new Event("pointerdown", { bubbles: true, cancelable: true });
+  back.dispatchEvent(pointerDown);
+  expect(pointerDown.defaultPrevented).toBe(true);
+  expect(panel.isOpen()).toBe(true);
+  back.click();
+  expect(panel.isOpen()).toBe(false);
+  expect(onField).toHaveBeenCalledWith("pre.scale", "1.5", "number", { baseValue: 1.25, resolvedPath: "pre.scale", override: false });
+  panel.dispose();
+});
+
+test("Escape cancels pending panel text before the next Escape closes it", () => {
+  const host = document.createElement("aside"); document.body.appendChild(host);
+  const opener = document.createElement("button"); document.body.appendChild(opener);
+  const onField = vi.fn();
+  const panel = createParameterEditorDialog({ document, host, onField, presentation: "panel" });
+  panel.update({ config: makeConfig() });
+  panel.open({ nodeId: "pre", descriptors: [descriptors[0]], opener });
+  const input = host.querySelector('[data-input="number"]');
+  input.focus(); input.value = "1.5"; input.dispatchEvent(new Event("input", { bubbles: true }));
+  input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+  expect(host.querySelector(".parameter-editor-dialog").hidden).toBe(false);
+  expect(input.value).toBe("1.250");
+  expect(onField).not.toHaveBeenCalled();
+  input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+  expect(host.querySelector(".parameter-editor-dialog").hidden).toBe(true);
+  expect(document.activeElement).toBe(opener);
+  panel.dispose();
 });
 
 test('untouched blur and a dirty foreign update never emit stale parameter edits', () => {

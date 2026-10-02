@@ -91,8 +91,36 @@ button:hover { background: var(--config-surface-hover); }
 .conflict-banner { color: #ffb4a8; }
 .action-error { color: #ffb4a8; }
 .connection-status { overflow-wrap: anywhere; }
-.config-workspace { position: relative; display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; min-height: 0; gap: var(--config-space); }
+.config-workspace { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) minmax(340px, 420px); min-width: 0; min-height: 0; gap: 1rem; }
 .graph-column { position: relative; min-width: 0; min-height: 0; }
+.config-editor-region { grid-column: 2; grid-row: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: 16px; border: 1px solid var(--config-divider); border-radius: 12px; background: var(--config-surface); }
+.config-editor-region { container-type: inline-size; }
+.config-editor-region > h2 { margin: 0 0 8px; color: var(--config-muted); font-size: 13px; line-height: 18px; font-weight: 500; }
+.config-editor-node-heading { margin: 0 0 8px; font-size: 18px; line-height: 24px; }
+.config-editor-help, .config-editor-empty { margin: 0 0 12px; color: var(--config-muted); font-size: 13px; line-height: 19px; }
+.config-selected-context { min-width: 0; margin: 0 0 12px; padding: 10px; border: 1px solid var(--config-divider); border-radius: 8px; background: var(--config-canvas); }
+.config-selected-parameters { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; margin: 0; font-size: 13px; line-height: 18px; }
+.config-selected-parameters dt { color: var(--config-muted); }
+.config-selected-parameters dd { margin: 0; text-align: end; font-variant-numeric: tabular-nums; }
+.config-selected-geometry { margin: 0; color: var(--config-muted); font-size: 13px; line-height: 18px; }
+.config-enlarge-edit, .config-editor-region button { min-height: 44px; min-width: 44px; }
+.config-enlarge-edit { align-self: flex-start; }
+.config-editor-region > .parameter-editor-dialog:not([hidden]) { position: relative; inset: auto; z-index: auto; flex: 1 1 0; min-height: 0; height: auto; padding: 0; background: transparent; }
+.parameter-editor-dialog[data-presentation="panel"] .parameter-editor-body { display: flex; flex: 1 1 0; flex-direction: column; min-height: 0; overflow-x: hidden; overflow-y: auto; }
+.parameter-editor-dialog[data-presentation="panel"] .parameter-editor-fields,
+.parameter-editor-dialog[data-presentation="panel"] .parameter-editor-preview-column { flex: 0 0 auto; min-height: auto; overflow: visible; }
+.parameter-editor-dialog[data-presentation="panel"] .parameter-editor-fields { order: 1; padding: 12px 0 0; border: 0; border-top: 1px solid var(--config-divider); border-radius: 0; background: transparent; }
+.parameter-editor-dialog[data-presentation="panel"] .parameter-editor-preview-column { order: 0; }
+.parameter-editor-dialog[data-presentation="panel"] .parameter-editor-preview-column:empty { display: none; }
+.parameter-editor-dialog[data-presentation="panel"] .parameter-editor-previews { gap: 8px; }
+.config-workspace[data-editing="true"] .config-editor-region > :not(.parameter-editor-dialog):not(.warp-editor-dialog) { display: none; }
+@media (max-width: 1100px) {
+  .config-workspace { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; }
+  .config-editor-region { grid-column: 1; grid-row: 2; }
+  .config-workspace[data-editing="true"] { grid-template-rows: minmax(0, 1fr); }
+  .config-workspace[data-editing="true"] .graph-column { display: none; }
+  .config-workspace[data-editing="true"] .config-editor-region { grid-row: 1; }
+}
 .graph-column > h2 { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 h2, h3 { margin: 0 0 10px; }
 .node-graph-viewport { position: absolute; inset: 0; overflow: hidden; background-color: var(--config-canvas); background-image: radial-gradient(#26374a 1px, transparent 1px); background-size: 18px 18px; cursor: grab; touch-action: none; }
@@ -138,7 +166,13 @@ h2, h3 { margin: 0 0 10px; }
 .config-node .config-field-error:empty { display: none; }
 .warp-open-button { margin-top: 7px; width: 100%; }
 .config-node .warp-open-button { min-height: 44px; padding: 4px; font-size: .75rem; }
-.warp-node-summary { color: #b8c5d6; font-size: .78rem; margin: 8px 0 0; }
+.warp-node-geometry { display: flex; align-items: center; gap: 8px; min-width: 0; margin-top: 8px; }
+.warp-node-mesh { display: block; flex: 0 0 112px; width: 112px; height: 64px; border: 1px solid var(--config-divider); border-radius: 5px; background: var(--config-canvas); }
+.warp-node-frame { fill: none; stroke: #8291a0; stroke-width: 24; }
+.warp-node-line { fill: none; stroke: #80d0c3; stroke-width: 18; }
+.warp-node-handle { fill: #79c9b2; stroke: #14202b; stroke-width: 14; }
+.warp-node-handle.selected { fill: #f4c875; }
+.warp-node-summary { min-width: 0; margin: 0; color: #b8c5d6; font-size: .72rem; line-height: 1.4; overflow-wrap: anywhere; }
 .warp-editor-dialog { position: fixed; inset: 0; z-index: 100; height: 100vh; height: 100dvh; padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)); display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: 12px; overflow: hidden; background: var(--config-surface); color: var(--config-text); }
 .warp-editor-dialog[hidden], .warp-editor-fine-panel[hidden] { display: none; }
 .warp-editor-dialog button { min-width: 48px; min-height: 48px; }
@@ -155,6 +189,7 @@ h2, h3 { margin: 0 0 10px; }
 .warp-editor-viewport { position: relative; min-height: 0; min-width: 0; overflow: hidden; border-radius: 12px; background: var(--config-canvas); }
 .warp-editor-frame { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; border: 0; pointer-events: none; transform-origin: 0 0; }
 .warp-editor-viewport > .warp-edit-surface { position: absolute; inset: 0; z-index: 2; width: 100%; height: 100%; min-height: 0; margin: 0; aspect-ratio: auto; border: 0; background: transparent; }
+.warp-editor-dimensions { position: absolute; z-index: 3; top: 8px; left: 8px; display: inline-flex; align-items: center; min-height: 32px; padding: 4px 8px; border: 1px solid var(--config-divider); border-radius: 6px; background: rgb(12 16 22 / 88%); color: var(--config-text); font-size: 12px; line-height: 18px; pointer-events: none; }
 .warp-editor-fine-panel { min-width: 0; min-height: 0; overflow: hidden; }
 .warp-editor-fine-panel > .warp-inspector { margin: 0; padding: 16px; height: 100%; display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--config-divider); border-radius: 12px; background: var(--config-surface-raised); }
 .warp-editor-fine-panel > .warp-inspector > h3 { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
@@ -433,7 +468,25 @@ h2, h3 { margin: 0 0 10px; }
 
 .numeric-sensitivity { min-height: 44px; margin-block: 4px; }
 .numeric-sensitivity[aria-pressed='true'] { border-width: 2px; font-weight: 700; }
+.numeric-sensitivity-group { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.numeric-sensitivity-group .numeric-sensitivity { min-width: 64px; }
 .config-field .nudge { touch-action: none; }
+
+.config-editor-region > .warp-editor-dialog[data-presentation="panel"]:not([hidden]) { position: relative; inset: auto; z-index: auto; display: flex; flex: 1 1 0; flex-direction: column; width: 100%; height: auto; min-height: 0; gap: 8px; padding: 0; overflow: hidden; background: transparent; }
+.warp-editor-dialog[data-presentation="panel"] .warp-editor-body { display: flex; flex: 1 1 0; flex-direction: column; min-height: 0; overflow-x: hidden; overflow-y: auto; gap: 8px; }
+.warp-editor-dialog[data-presentation="panel"] .warp-editor-viewport { flex: 0 0 auto; width: 100%; height: auto; min-height: 160px; max-height: 44dvh; aspect-ratio: 16 / 9; }
+.warp-editor-dialog[data-presentation="panel"] .warp-editor-fine-panel { flex: 0 0 auto; min-height: auto; overflow: visible; }
+.warp-editor-dialog[data-presentation="panel"] .warp-editor-fine-panel > .warp-inspector { display: block; height: auto; margin: 0; padding: 0; overflow: visible; border: 0; background: transparent; }
+.warp-editor-dialog[data-presentation="panel"] .warp-editor-fine-panel .warp-fine-primary,
+.warp-editor-dialog[data-presentation="panel"] .warp-editor-fine-panel .warp-fine-secondary { display: block; min-height: auto; overflow: visible; }
+.warp-editor-dialog[data-presentation="panel"] .warp-editor-message { flex-basis: auto; height: auto; min-height: 0; max-height: none; overflow: visible; }
+@container (min-width: 700px) {
+  .warp-editor-dialog[data-presentation="panel"] .warp-editor-body { display: grid; grid-template-columns: minmax(0, .85fr) minmax(0, 1.15fr); align-content: start; overflow-y: auto; }
+  .warp-editor-dialog[data-presentation="panel"] .warp-editor-viewport { align-self: start; min-height: 160px; max-height: none; aspect-ratio: 16 / 9; }
+  @media (orientation: landscape) and (max-height: 850px) {
+    .warp-editor-dialog[data-presentation="panel"] .warp-numeric { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; }
+  }
+}
 .numeric-step { display: inline-block; margin-inline-start: 8px; font-size: 12px; }
 .parameter-field-layout .config-field-controls-row,
 .parameter-field-layout .config-field-controls-row:has(.numeric-sign) { display: flex; flex-wrap: wrap; min-width: 0; }
@@ -442,3 +495,10 @@ h2, h3 { margin: 0 0 10px; }
 .parameter-field-layout .config-field-controls-row > button { flex: 0 0 48px; min-height: 48px; }
 .parameter-editor-header > [data-action='parameter-undo'],
 .parameter-editor-header > [data-action='parameter-redo'] { grid-column: auto; grid-row: auto; min-height: 44px; }
+.parameter-editor-dialog[data-presentation="panel"] .parameter-editor-previews:has(.parameter-preview-slot:not([hidden]) ~ .parameter-preview-slot:not([hidden])) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@container (max-width: 699px) {
+  .warp-editor-dialog[data-presentation="panel"] .warp-editor-viewport { min-height: 120px; max-height: 140px; aspect-ratio: 2.2; }
+  @media (orientation: landscape) and (max-height: 1000px) {
+    .warp-editor-dialog[data-presentation="panel"] .warp-numeric { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; }
+  }
+}

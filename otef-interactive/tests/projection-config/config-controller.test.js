@@ -85,6 +85,24 @@ function clickCommand(root, action) {
   if (action === 'save-new') find(root, node => node.dataset?.action === 'save-copy-confirm').dispatch('click');
 }
 
+test('Back commits a valid pending scalar edit and closes the active panel once', () => {
+  const previousDocument = globalThis.document;
+  const doc = documentStub(); globalThis.document = doc;
+  const root = element('main'); root.ownerDocument = doc;
+  const client = fakeClient();
+  const api = mountProjectionConfig(root, { client });
+  try {
+    find(root, node => node.className === 'config-enlarge-edit').dispatch('click');
+    const editor = find(root, node => node.className === 'parameter-editor-dialog');
+    const scale = find(editor, node => node.attributes?.['aria-label'] === 'Scale' && node.tagName === 'INPUT');
+    scale.value = '1.3'; scale.dispatch('input');
+    find(root, node => node.dataset?.action === 'parameter-editor-close').dispatch('click');
+    expect(client.getState().draft.pre.scale).toBe(1.3);
+    expect(editor.hidden).toBe(true);
+    expect(find(root, node => node.className === 'config-workspace').dataset.editing).toBe('false');
+  } finally { api.dispose(); globalThis.document = previousDocument; }
+});
+
 test('Import keeps its explicit save name while subsequent copy edits stay separate', async () => {
   const root = element('main'); root.ownerDocument = documentStub(); const client = fakeClient();
   client.getState().snapshot.presets.push({ id: 'desk', name: 'Desk', config: clone(DEFAULTS) });
@@ -289,7 +307,7 @@ describe("projection config controller", () => {
     const root = element('main'); root.ownerDocument = documentStub(); const client = fakeClient(); const api = mountProjectionConfig(root, {client});
     try {
       const range = find(root, n => n.dataset?.field === 'outputs.left.crop.x0' && n.dataset.input === 'range');
-      find(root, n => n.dataset?.path === 'outputs.left.crop.x0').children.find(n => n.dataset?.action === 'numeric-sensitivity').dispatch('click');
+      find(find(root, n => n.dataset?.path === 'outputs.left.crop.x0'), n => n.dataset?.mode === 'coarse').dispatch('click');
       range.dispatch('pointerdown', {pointerId: 2}); range.value = '99.9'; range.dispatch('input'); range.dispatch('pointerup', {pointerId: 2});
       await api.handleAction('apply'); expect(client.apply).not.toHaveBeenCalled(); expect(client.setDraft).not.toHaveBeenCalled();
       expect(find(root, n => n.dataset?.errorFor === 'outputs.left.crop.x0').textContent).toMatch(/extent|edge|below|accepted/i);
@@ -416,6 +434,50 @@ describe("projection config controller", () => {
     } finally { api.dispose(); }
   });
 
+  test('explicit Cancel retires only the rejected field group and survives a status refresh without writing the draft', async () => {
+    const root = element('main'); root.ownerDocument = documentStub(); const client = fakeClient(); const api = mountProjectionConfig(root, { client });
+    const inputFor = path => find(root, node => node.dataset?.field === path && node.dataset.input === 'number');
+    const errorFor = path => find(root, node => node.dataset?.errorFor === path);
+    try {
+      const draftBefore = clone(client.getState().draft);
+      client.setDraft.mockClear(); client.apply.mockClear(); client.save.mockClear();
+      const unrelated = inputFor('pre.scale'); unrelated.value = '1.'; unrelated.dispatch('input');
+      const rejected = inputFor('outputs.left.crop.x0'); rejected.value = '60'; rejected.dispatch('input'); rejected.dispatch('blur');
+      expect(errorFor('outputs.left.crop.x0').textContent).toMatch(/extent/i);
+      expect(unrelated.value).toBe('1.'); expect(unrelated.attributes['aria-invalid']).toBe('true');
+      find(find(root, node => node.dataset?.path === 'outputs.left.crop.x0'), node => node.dataset?.action === 'numeric-cancel-edit').dispatch('click');
+      expect(rejected.value).toBe('0.00');
+      for (const edge of ['x0', 'x1', 'y0', 'y1']) {
+        const path = `outputs.left.crop.${edge}`;
+        expect(errorFor(path).textContent).toBe(''); expect(inputFor(path).attributes['aria-invalid']).toBe('false');
+      }
+      expect(unrelated.value).toBe('1.'); expect(unrelated.attributes['aria-invalid']).toBe('true');
+      await api.handleAction('live', false);
+      expect(errorFor('outputs.left.crop.x0').textContent).toBe('');
+      expect(unrelated.value).toBe('1.'); expect(unrelated.attributes['aria-invalid']).toBe('true');
+      expect(client.getState().draft).toEqual(draftBefore);
+      expect(client.setDraft).not.toHaveBeenCalled(); expect(client.apply).not.toHaveBeenCalled(); expect(client.save).not.toHaveBeenCalled();
+    } finally { api.dispose(); }
+  });
+
+  test('nudge finishes valid text before stepping, blocks invalid text, and resets its anchor after manual commit', () => {
+    const root = element('main'); root.ownerDocument = documentStub(); const client = fakeClient(); const api = mountProjectionConfig(root, { client });
+    const input = find(root, node => node.dataset?.field === 'pre.scale' && node.dataset.input === 'number');
+    const plus = find(find(root, node => node.dataset?.path === 'pre.scale'), node => node.dataset?.direction === '1');
+    try {
+      input.value = '1.3'; input.dispatch('input'); plus.dispatch('click', { detail: 0 });
+      expect(client.getState().draft.pre.scale).toBe(1.301);
+      input.value = '1.5'; input.dispatch('input'); input.dispatch('blur');
+      expect(client.getState().draft.pre.scale).toBe(1.5);
+      plus.dispatch('click', { detail: 0 }); expect(client.getState().draft.pre.scale).toBe(1.501);
+      input.value = '-'; input.dispatch('input'); plus.dispatch('click', { detail: 0 });
+      expect(input.value).toBe('-'); expect(input.attributes['aria-invalid']).toBe('true'); expect(client.getState().draft.pre.scale).toBe(1.501);
+      find(find(root, node => node.dataset?.path === 'pre.scale'), node => node.dataset?.action === 'numeric-cancel-edit').dispatch('click');
+      expect(input.value).toBe('1.501'); expect(input.attributes['aria-invalid']).toBe('false');
+      plus.dispatch('click', { detail: 0 }); expect(client.getState().draft.pre.scale).toBe(1.502);
+    } finally { api.dispose(); }
+  });
+
   test.each(['pre.scale', 'outputs.left.crop.x0'])('an unchanged crop correction retains another rejected pending edit at %s', async pendingPath => {
     const root = element('main'); root.ownerDocument = documentStub(); const client = fakeClient(); const api = mountProjectionConfig(root, { client });
     const inputFor = path => find(root, node => node.dataset?.field === path && node.dataset.input === 'number');
@@ -499,7 +561,7 @@ describe("projection config controller", () => {
     const api = mountProjectionConfig(root, { client });
     try {
       const range = find(root, node => node.dataset?.field === 'pre.scale' && node.dataset.input === 'range');
-      find(root, n => n.dataset?.path === 'pre.scale').children.find(n => n.dataset?.action === 'numeric-sensitivity').dispatch('click');
+      find(find(root, n => n.dataset?.path === 'pre.scale'), n => n.dataset?.mode === 'coarse').dispatch('click');
       range.dispatch('pointerdown', { pointerId: 9 }); range.value = '1.5'; range.dispatch('input'); const draft = clone(client.getState().draft); client.setDraft.mockClear();
       api.handleAction(action, 'original'); expect(root.ownerDocument.defaultView.confirm).toHaveBeenCalledTimes(1);
       range.value = '2'; range.dispatch('input'); range.dispatch('change');
