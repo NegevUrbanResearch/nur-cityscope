@@ -241,7 +241,12 @@ export function renderField(doc, descriptor, onField, onNudge, compact = false, 
     renderResult(result.kind === 'commit' ? session.candidate() : result);
     return result;
   };
-  const cancel = ({ notify = true, clearControllerError = false } = {}) => { focusedTarget = null; if (heldPointer !== null) retiredPointer = heldPointer; heldPointer = null; endRange(true, notify); stopHold(true, notify); session.cancel(); targetChanged = false; externalError = ''; needsAcceptance = false; rangeRejected = false; rejectionError = ''; refresh(true); if (clearControllerError) onCancelEdit(descriptor.path); };
+  const cancel = ({ notify = true, clearControllerError = false } = {}) => {
+    const candidate = session.candidate();
+    const cancellationTarget = session.isDirty() ? candidate.resolvedPath : latest.resolvedPath;
+    focusedTarget = null; if (heldPointer !== null) retiredPointer = heldPointer; heldPointer = null; endRange(true, notify); stopHold(true, notify); session.cancel(); targetChanged = false; externalError = ''; needsAcceptance = false; rangeRejected = false; rejectionError = ''; refresh(true);
+    if (clearControllerError) onCancelEdit(descriptor.path, cancellationTarget || latest.resolvedPath);
+  };
   listen(range, 'pointerdown', event => { retiredPointer = null; heldPointer = event.pointerId; beginRange(); range.setPointerCapture?.(event.pointerId); sendRange('start'); });
   listen(range, 'keydown', () => { retiredPointer = null; });
   for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) listen(range, type, event => {

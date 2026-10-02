@@ -1,7 +1,7 @@
 import { renderField } from "./config-field-control.js";
 
 const pathValue = (config, path) => path.split(".").reduce((value, key) => value?.[key], config);
-function presentationError(path, error) {
+export function presentationError(path, error) {
   const cropMatch = path.match(/^outputs\.(left|right)\.crop\.(x0|x1|y0|y1)$/);
   const extentMatch = String(error || "").match(/^([xy]) extent must be at least 0\.01$/);
   if (!cropMatch || !extentMatch) return error;
@@ -10,7 +10,7 @@ function presentationError(path, error) {
 }
 
 /** Enlarged controls for one geometry node. Values remain owned by the view/controller. */
-export function createParameterEditorDialog({ document: doc, host, presentation = "dialog", onField = () => {}, onCancelField = () => {}, onNudge = () => {}, onAction = () => {}, createPreview = null, onVisibilityChange = () => {} }) {
+export function createParameterEditorDialog({ document: doc, host, presentation = "dialog", onField = () => {}, onCancelField = () => {}, onNudge = () => {}, onAction = () => {}, createPreview = null, onVisibilityChange = () => {}, resolveFieldPath = (_descriptor, _config) => null, isFieldVisible = () => true }) {
   if (!doc?.createElement || !host) throw new Error("parameter editor host is required");
   if (!["dialog", "panel"].includes(presentation)) throw new TypeError("parameter editor presentation must be dialog or panel");
   const modal = doc.createElement("section");
@@ -54,7 +54,7 @@ export function createParameterEditorDialog({ document: doc, host, presentation 
     if (event.key === "Escape") {
       event.preventDefault();
       if ([...fieldControls.values()].some((control) => control.isPending())) {
-        for (const control of fieldControls.values()) control.cancel();
+        for (const control of fieldControls.values()) control.cancel({ clearControllerError: true });
         return;
       }
       close(); return;
@@ -74,9 +74,12 @@ export function createParameterEditorDialog({ document: doc, host, presentation 
     latestConfig = config;
     preview?.update?.(config);
     for (const [path, control] of fieldControls) {
-      const value = pathValue(config, path);
-      const rawError = fieldErrors[path] || Object.entries(fieldErrors).find(([key]) => path.startsWith(`${key}.`))?.[1] || "";
-      control.update({ value, resolvedPath: path, error: presentationError(path, rawError) });
+      const descriptor = control.descriptor;
+      const resolvedPath = resolveFieldPath(descriptor, config) || path;
+      control.wrap.hidden = !isFieldVisible(descriptor, config);
+      const value = pathValue(config, resolvedPath);
+      const rawError = fieldErrors[resolvedPath] || Object.entries(fieldErrors).find(([key]) => resolvedPath.startsWith(`${key}.`))?.[1] || "";
+      control.update({ value, resolvedPath, error: presentationError(resolvedPath, rawError) });
     }
   };
   const open = ({ nodeId, title: heading, descriptors = [], opener: activatingElement } = {}) => {
@@ -132,6 +135,7 @@ export function createParameterEditorDialog({ document: doc, host, presentation 
   return {
     open,
     element: modal,
+    fieldsElement: fields,
     presentation,
     update: renderValues,
     close,

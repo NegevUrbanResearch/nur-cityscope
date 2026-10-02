@@ -67,6 +67,10 @@ function element(tag = "div") {
 function documentStub({ coarse = false, noHover = false } = {}) {
   return {
     activeElement: null,
+    listeners: {},
+    addEventListener(type, handler) { (this.listeners[type] ||= []).push(handler); },
+    removeEventListener(type, handler) { this.listeners[type] = (this.listeners[type] || []).filter((item) => item !== handler); },
+    dispatch(type, event = {}) { for (const handler of this.listeners[type] || []) handler(event); },
     defaultView: { matchMedia: (query) => ({ matches: query.includes("pointer: coarse") ? coarse : query.includes("hover: none") ? noHover : false, addEventListener() {}, removeEventListener() {} }) },
     createElement: element,
     createElementNS: (_namespace, tag) => element(tag),
@@ -457,6 +461,51 @@ describe("projection config controller", () => {
       expect(unrelated.value).toBe('1.'); expect(unrelated.attributes['aria-invalid']).toBe('true');
       expect(client.getState().draft).toEqual(draftBefore);
       expect(client.setDraft).not.toHaveBeenCalled(); expect(client.apply).not.toHaveBeenCalled(); expect(client.save).not.toHaveBeenCalled();
+    } finally { api.dispose(); }
+  });
+
+  test.each(['wall', 'model'])('profile-scoped Cancel retires the resolved %s error and preserves unrelated pending text', profile => {
+    const root = element('main'); root.ownerDocument = documentStub(); const client = fakeClient();
+    client.getState().draft.namesWall.activeMode = profile;
+    client.getState().snapshot.config.namesWall.activeMode = profile;
+    const api = mountProjectionConfig(root, { client });
+    const font = find(root, node => node.dataset?.field === 'namesWall.requestedFontPx' && node.dataset.input === 'number');
+    const pre = find(root, node => node.dataset?.field === 'pre.scale' && node.dataset.input === 'number');
+    const fontError = find(root, node => node.dataset?.errorFor === 'namesWall.requestedFontPx');
+    try {
+      client.setDraft.mockClear(); client.apply.mockClear(); client.save.mockClear(); client.setLive.mockClear();
+      pre.value = '1.'; pre.dispatch('input');
+      font.value = '49'; font.dispatch('input'); font.dispatch('blur');
+      expect(fontError.textContent).toMatch(/between 1 and 48 px/i);
+      find(find(root, node => node.dataset?.path === 'namesWall.requestedFontPx'), node => node.dataset?.action === 'numeric-cancel-edit').dispatch('click');
+      expect(fontError.textContent).toBe(''); expect(font.attributes['aria-invalid']).toBe('false');
+      expect(pre.value).toBe('1.'); expect(pre.attributes['aria-invalid']).toBe('true');
+      client.report({ pending: !client.getState().pending });
+      expect(fontError.textContent).toBe(''); expect(pre.value).toBe('1.'); expect(pre.attributes['aria-invalid']).toBe('true');
+      expect(client.setDraft).not.toHaveBeenCalled(); expect(client.apply).not.toHaveBeenCalled(); expect(client.save).not.toHaveBeenCalled(); expect(client.setLive).not.toHaveBeenCalled();
+    } finally { api.dispose(); }
+  });
+
+  test('header Escape retires rejected crop validation and its status refresh without writing state', () => {
+    const doc = documentStub(); const root = element('main'); root.ownerDocument = doc; const client = fakeClient();
+    const api = mountProjectionConfig(root, { client });
+    const inputFor = (container, path) => find(container, node => node.dataset?.field === path && node.dataset.input === 'number');
+    const errorFor = path => find(root, node => node.dataset?.errorFor === path);
+    try {
+      client.setDraft.mockClear(); client.apply.mockClear(); client.save.mockClear(); client.setLive.mockClear();
+      find(root, node => node.dataset?.node === 'left-crop').dispatch('click');
+      find(root, node => node.className === 'config-enlarge-edit').dispatch('click');
+      const panel = find(root, node => node.className === 'parameter-editor-dialog');
+      const x0 = inputFor(panel, 'outputs.left.crop.x0'); x0.value = '60'; x0.dispatch('input'); x0.dispatch('blur');
+      expect(errorFor('outputs.left.crop.x0').textContent).toMatch(/extent/i);
+      const back = find(panel, node => node.dataset?.action === 'parameter-editor-close'); doc.activeElement = back;
+      doc.dispatch('keydown', { key: 'Escape', target: back, preventDefault() {} });
+      expect(panel.hidden).toBe(false);
+      for (const edge of ['x0', 'x1', 'y0', 'y1']) expect(errorFor(`outputs.left.crop.${edge}`).textContent).toBe('');
+      client.report({ pending: !client.getState().pending });
+      for (const edge of ['x0', 'x1', 'y0', 'y1']) expect(errorFor(`outputs.left.crop.${edge}`).textContent).toBe('');
+      expect(client.getState().draft).toEqual(DEFAULTS);
+      expect(client.setDraft).not.toHaveBeenCalled(); expect(client.apply).not.toHaveBeenCalled(); expect(client.save).not.toHaveBeenCalled(); expect(client.setLive).not.toHaveBeenCalled();
     } finally { api.dispose(); }
   });
 
@@ -2194,6 +2243,27 @@ describe("projection config controller", () => {
     expect(find(root, node => node.className === 'warp-editor-dialog').hidden).toBe(false);
     input.dispatch('keydown', { key: 'Escape', preventDefault() {}, stopPropagation() {} });
     find(root, node => node.dataset?.action === 'warp-editor-close').dispatch('click');
+    expect(find(root, node => node.className === 'warp-editor-dialog').hidden).toBe(true);
+    restore();
+  });
+
+  test('warp panel Escape retires rejected coordinate validation without draft or history writes', () => {
+    const { root, client, restore } = tracedWarpHarness();
+    const doc = globalThis.document;
+    const input = find(root, node => node.dataset?.field === 'warp.position.x');
+    input.value = '999999'; input.dispatch('input'); input.dispatch('change');
+    expect(input.attributes['aria-invalid']).toBe('true');
+    const before = clone(client.getState().draft.outputs.left.warp);
+    client.setDraft.mockClear(); client.apply.mockClear();
+
+    doc.dispatch('keydown', { key: 'Escape', preventDefault() {} });
+    expect(find(root, node => node.className === 'warp-editor-dialog').hidden).toBe(false);
+    expect(input.attributes['aria-invalid']).toBe('false');
+    expect(find(root, node => node.className === 'warp-selection-status').textContent).not.toContain('Move rejected:');
+    expect(client.getState().draft.outputs.left.warp).toEqual(before);
+    expect(client.setDraft).not.toHaveBeenCalled(); expect(client.apply).not.toHaveBeenCalled();
+
+    doc.dispatch('keydown', { key: 'Escape', preventDefault() {} });
     expect(find(root, node => node.className === 'warp-editor-dialog').hidden).toBe(true);
     restore();
   });

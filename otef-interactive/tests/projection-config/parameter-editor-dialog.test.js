@@ -199,6 +199,21 @@ test("Escape cancels pending panel text before the next Escape closes it", () =>
   panel.dispose();
 });
 
+test("panel header Escape retires a rejected field using its resolved session target", () => {
+  const host = document.createElement("aside"); document.body.appendChild(host);
+  const onCancelField = vi.fn();
+  const panel = createParameterEditorDialog({ document, host, presentation: "panel", onField: () => false, onCancelField });
+  panel.update({ config: makeConfig() });
+  panel.open({ nodeId: "left-crop", descriptors: [descriptors[1]] });
+  const input = host.querySelector('[data-input="number"]'); input.focus(); input.value = "0";
+  input.dispatchEvent(new Event("input", { bubbles: true })); input.dispatchEvent(new Event("blur"));
+  const back = host.querySelector('[data-action="parameter-editor-close"]'); back.focus();
+  document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+  expect(panel.isOpen()).toBe(true);
+  expect(onCancelField).toHaveBeenCalledWith("outputs.left.crop.x0", "outputs.left.crop.x0");
+  panel.dispose();
+});
+
 test('untouched blur and a dirty foreign update never emit stale parameter edits', () => {
   const host = document.createElement('main'); document.body.appendChild(host);
   const onField = vi.fn();

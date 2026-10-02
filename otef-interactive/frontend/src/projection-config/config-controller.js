@@ -194,6 +194,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     onField: handleField,
     onFieldCancel: handleFieldCancel,
     onNudge: handleNudge,
+    onWarpFieldCancel: (output) => { warpEditors[output].clearValidation(); refresh(); },
     onNamesMode: handleNamesMode,
     onNode: (node) => { if (!finishPendingEdit()) return false; view.cancelWarpPointer(); selectedNode = node; if (node === "clock-gis" || node === "clock-projection") { closeNovaExplainerEditor(); syncClockEditor(node); } else closeClockEditor(); if (node !== "nova-explainers") closeNovaExplainerEditor(); if (node === "settlement-names") syncSettlementEditor(); else closeSettlementEditor(); if (node.endsWith("-keystone") || node.endsWith("-grid")) warpEditors[node.startsWith("right-") ? "right" : "left"].setMode(node.endsWith("-grid") ? "grid" : "keystone"); refresh(); return true; },
     onOpenClockEditor: openClockEditor,
@@ -668,8 +669,9 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     if (!editMeta.phase || editMeta.phase === 'start') nudgeAnchors.delete(resolvedFieldPath(state.draft, path));
     return commitScalar({ path, ...editMeta, value: editMeta.canonicalValue !== undefined ? editMeta.canonicalValue : fieldValueFromInput(descriptor, raw) });
   }
-  function handleFieldCancel(path) {
-    const next = Object.fromEntries(Object.entries(fieldErrors).filter(([key]) => key !== path && !key.startsWith(`${path}.`) && !path.startsWith(`${key}.`)));
+  function handleFieldCancel(path, resolvedPath = path) {
+    const target = resolvedPath || path;
+    const next = Object.fromEntries(Object.entries(fieldErrors).filter(([key]) => key !== target && !key.startsWith(`${target}.`) && !target.startsWith(`${key}.`)));
     if (Object.keys(next).length === Object.keys(fieldErrors).length) return;
     fieldErrors = next;
     refresh();

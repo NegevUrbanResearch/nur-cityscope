@@ -322,6 +322,7 @@ export function createWarpEditor({
     return true;
   }
   function retireGesture() { drag = null; validationMessage = ""; }
+  function clearValidation() { validationMessage = ""; validationReason = ""; }
   function getControlPoints() {
     const warp = configWarp(current, output);
     const grid = warp?.grid || {};
@@ -357,7 +358,7 @@ export function createWarpEditor({
     getState: () => ({ output, selection: { ...clone(selection), indices: selectedIndices() }, stepMode, dragging: Boolean(drag), historyDepth: undoStack.length, redoDepth: redoStack.length, baselineAvailable: baselineAvailable(), validationMessage }),
     getControlPoints,
     select, setMode, setStep, moveByPixels, nudge, setPosition, resetSelection, resetResiduals, setEnabled, undo, redo,
-    pointerStart, pointerMove, pointerEnd, pointerCancel, retireGesture, setConfig, setBaselineMesh, editGridLayout,
+    pointerStart, pointerMove, pointerEnd, pointerCancel, retireGesture, clearValidation, setConfig, setBaselineMesh, editGridLayout,
   };
 }
 
