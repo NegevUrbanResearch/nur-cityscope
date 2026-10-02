@@ -1,14 +1,14 @@
 import { getEffectiveLayerGroups } from "../shared/layer-state-helper.js";
 import {
-  bindNliTimelinePointerListeners,
-  consumeNliTimelineButtonClick,
-  nliTransportSheetHtml,
-} from "./nli-timeline-transport.js";
-import {
   createNliStaffTimelineHost,
-  nliGroupWithPlaybackMembership,
   staffPlaybackConfig,
 } from "./nli-staff-timeline-host.js";
+import { finiteClockMinutes, NLI_PLAYABLE_IDS } from "../shared/nli-investigation-beats.js";
+import { createPresenterDatasetGate } from "./nli-presenter-content.js";
+import presenterContent from "./nli-presenter-content.json" with { type: "json" };
+import { buildPresenterSnapshot } from "./nli-presenter-snapshot.js";
+import { createPresenterCommands } from "./nli-presenter-commands.js";
+import { createPresenterView } from "./nli-presenter-view.js";
 import { consumeNliNovaEscapeClick, nliNovaEscapeTogglesHtml } from "./nli-nova-escape-toggles.js";
 import { buildNovaEndedClock, commitSceneLayers, createCueRunner } from "./nli-staff-cues.js";
 import { createNameWallSceneExit } from "../shared/nli-name-wall-scene-exit.js";
@@ -174,7 +174,7 @@ export function initNliStaffLocaleControls(dataContext, { onFailure } = {}) {
   });
 }
 
-export function initNliStaffRemote(dataContext) {
+export function initNliStaffRemote(dataContext, { presenterManifest = presenterContent } = {}) {
   dataContext.setExhibitMode(true);
   const releaseExhibitMode = () => {
     dataContext.setExhibitMode(false);
@@ -191,6 +191,9 @@ export function initNliStaffRemote(dataContext) {
     step: 0,
     returnTo: null,
     cueStatus: null,
+    cueAttempt: null,
+    failedCue: null,
+    presenterError: null,
     connected: false,
     connectionStatus: "disconnected",
     scene: null,
@@ -217,6 +220,12 @@ export function initNliStaffRemote(dataContext) {
     labels: fullscreenLabels,
   });
   let navigationGeneration = 0;
+  let presenterGeneration = 0;
+  let presenterGate;
+  let presenterCommands;
+  let presenterView;
+  let disposed = false;
+  let paintingTimeline = false;
 
   const timelineHost = createNliStaffTimelineHost({
     sheet: $("kitTimeline"),
@@ -229,6 +238,15 @@ export function initNliStaffRemote(dataContext) {
     },
     render() {
       paintTimelineMounts();
+    },
+    paintPlayhead() {
+      if (presenterView && !disposed) presenterView.update(currentPresenterSnapshot());
+    },
+    cacheChanged() {
+      presenterGeneration += 1;
+      presenterCommands?.invalidate();
+      void presenterGate?.refresh();
+      if (presenterView && !disposed) presenterView.update(currentPresenterSnapshot());
     },
   });
 
@@ -294,6 +312,9 @@ export function initNliStaffRemote(dataContext) {
     },
     onStatus: (status) => {
       state.cueStatus = status;
+      if (status === "applying") state.failedCue = null;
+      else if (status === "failed") state.failedCue = state.cueAttempt;
+      else if (status === "ready" || status === null) state.failedCue = null;
       renderCueStatus();
       if (state.screen === "player") renderKit();
       if (state.screen === "home") renderHome();
@@ -305,7 +326,12 @@ export function initNliStaffRemote(dataContext) {
   });
   const applyCue = (cue, narrativeId) => {
     dataContext.setExhibitMode(true);
-    return cues.apply(cue, narrativeId);
+    const attempt = { cue, narrativeId };
+    state.cueAttempt = attempt;
+    return cues.apply(cue, narrativeId).then((result) => {
+      if (state.cueAttempt === attempt && result?.status !== "failed") state.cueAttempt = null;
+      return result;
+    });
   };
 
   function manualMutationsOpen() {
@@ -354,6 +380,7 @@ export function initNliStaffRemote(dataContext) {
   function showScreen(name) {
     dataContext.setExhibitMode(true);
     state.screen = name;
+    if (name !== "player") presenterView?.setVisible(false);
     document.querySelectorAll(".screen").forEach((el) => {
       const on = el.dataset.screen === name;
       el.classList.toggle("is-active", on);
@@ -397,27 +424,90 @@ export function initNliStaffRemote(dataContext) {
     return !state.searchPending || state.navigationPending || state.presentationClosePending;
   }
 
-  function nliSelectedGroup() {
-    const live = timelineHost.getEffectiveGroupsForView().find((group) => group?.id === "nli");
-    return nliGroupWithPlaybackMembership(live, timelineHost.getPlaybackConfig()?.membership);
+  function currentPresenterSnapshot() {
+    const window = currentStep()?.cue?.clock;
+    const cueWindow = {
+      membership: (currentStep()?.cue?.layers || []).filter((id) => NLI_PLAYABLE_IDS.includes(id)),
+      from: finiteClockMinutes(window && typeof window === "object" ? window.from : null),
+      to: finiteClockMinutes(window && typeof window === "object" ? window.to : null),
+    };
+    return buildPresenterSnapshot({
+      host: timelineHost,
+      clock: dataContext?.getInvestigationClock?.(),
+      nowMs: dataContext?.correctedNow?.() ?? Date.now(),
+      narrative: dataContext?.getNarrativeState?.(),
+      sceneKey: `${state.scriptId || "home"}:${state.step}:${navigationGeneration}`,
+      sceneId: currentStep()?.id || null,
+      cueWindow,
+      locale: getLocale(),
+      manifest: presenterManifest,
+      dataset: { ...presenterGate?.getState(), identity: presenterManifest.datasetVersion,
+        generation: presenterGeneration },
+      connected: dataContext?.isConnected?.() === true || state.connected,
+      mutationAllowed: manualMutationsOpen() && !state.navigationPending && !state.presentationClosePending,
+    });
   }
 
   function paintTimelineMounts() {
-    const clock = dataContext?.getInvestigationClock?.() || null;
-    const cache = timelineHost._nliFeatureCache;
-    const html = nliTransportSheetHtml(
-      nliSelectedGroup(),
-      clock,
-      cache,
-      false,
-      false,
-      dataContext.getNarrativeState?.()?.id ?? null,
-      state.cueStatus === "applying" || state.searchPending,
-    );
-    $("kitTimeline").innerHTML = html;
-    timelineHost._syncNliPlayheadTicker?.(clock);
-    timelineHost._syncNliEndedTimer?.(clock);
+    if (disposed || paintingTimeline || !presenterView) return;
+    paintingTimeline = true;
+    try {
+      presenterView.update(currentPresenterSnapshot());
+      const clock = dataContext?.getInvestigationClock?.() || null;
+      timelineHost._syncNliPlayheadTicker?.(clock);
+      timelineHost._syncNliEndedTimer?.(clock);
+    } finally {
+      paintingTimeline = false;
+    }
   }
+
+  function onPresenterError(error) {
+    state.presenterError = getLocale() === "he" ? "הפעלת ציר הזמן נכשלה" : "Timeline action failed";
+    presenterView?.setError(state.presenterError);
+    renderCueStatus();
+  }
+
+  function clearPresenterError() {
+    if (!state.presenterError) return;
+    state.presenterError = null;
+    presenterView.setError(null);
+    renderCueStatus();
+  }
+
+  async function retryPresenterTimeline() {
+    const boundary = currentPresenterSnapshot().sceneBoundaryKey;
+    const isCurrent = () => !disposed && currentPresenterSnapshot().sceneBoundaryKey === boundary;
+    try {
+      const ids = timelineHost._nliArmPayload().visibleMembership;
+      if (!presenterGate.getState().ready) {
+        for (const id of ids) timelineHost._storeNliCachedFeatures(id, null);
+      }
+      await timelineHost._ensureNliFeatureCache(ids, { timeoutMs: 4000, isCurrent });
+      if (!isCurrent()) return { ready: false };
+      const verified = await presenterGate.refresh();
+      if (!isCurrent()) return { ready: false };
+      if (verified.ready) { state.presenterError = null; presenterView.setError(null); renderCueStatus(); }
+      paintTimelineMounts();
+      return verified;
+    } catch (error) {
+      if (isCurrent()) onPresenterError(error);
+      return { ready: false, error };
+    }
+  }
+
+  presenterGate = createPresenterDatasetGate({ host: timelineHost, manifest: presenterManifest,
+    onChange(next) {
+      if (disposed) return;
+      if (!next.ready) presenterCommands?.invalidate();
+      if (!paintingTimeline) paintTimelineMounts();
+    } });
+  presenterCommands = createPresenterCommands({ host: timelineHost, context: dataContext,
+    getSnapshot: currentPresenterSnapshot,
+    onPending: (pending) => presenterView?.setPending(pending),
+    onError: onPresenterError });
+  presenterView = createPresenterView({ root: $("kitTimeline"), commands: presenterCommands,
+    onError: onPresenterError, onRetry: retryPresenterTimeline });
+  presenterView.setVisible(false);
 
   function renderPlayer() {
     const item = script();
@@ -444,6 +534,8 @@ export function initNliStaffRemote(dataContext) {
   function renderDock() {
     const next = nextAction(state);
     const choices = next.kind === "choose";
+    $("prevBtn").setAttribute("aria-label", getLocale() === "he" ? "הסצנה הקודמת" : "Previous scene");
+    $("nextBtn").setAttribute("aria-label", getLocale() === "he" ? "הסצנה הבאה" : "Next scene");
     $("prevBtn").disabled = !canReplaceNavigation() || !prevAction(state);
     $("nextBtn").hidden = choices;
     $("nextBtn").textContent = txt({ step: "next", resume: "backToShow", finish: "done" }[next.kind] || "next");
@@ -462,8 +554,15 @@ export function initNliStaffRemote(dataContext) {
     const key = { applying: "cueApplying", ready: "cueReady", failed: "cueFailed" }[state.cueStatus];
     const cueStatus = $("cueStatus");
     if (cueStatus) {
-      cueStatus.textContent = key ? txt(key) : "";
-      cueStatus.dataset.status = state.cueStatus || "";
+      const scenePriority = state.cueStatus === "applying" || state.cueStatus === "failed";
+      cueStatus.textContent = scenePriority ? txt(key) : state.presenterError || (key ? txt(key) : "");
+      cueStatus.dataset.status = scenePriority ? state.cueStatus : state.presenterError ? "presenter-failed" : state.cueStatus || "";
+    }
+    const playerFailure = $("playerCueFailure");
+    if (playerFailure) {
+      const failed = state.screen === "player" && state.cueStatus === "failed" && Boolean(state.failedCue);
+      playerFailure.hidden = !failed;
+      $("playerCueFailureText").textContent = failed ? txt("cueFailed") : "";
     }
     const homeFailure = state.screen === "home" && (state.cueStatus === "failed" || state.homeFailure);
     const homeStatus = $("homeCueStatus");
@@ -491,6 +590,7 @@ export function initNliStaffRemote(dataContext) {
       const el = $(id);
       if (el) el.hidden = !on;
     });
+    presenterView.setVisible(show.kitTimeline);
     if (show.kitPresentation) {
       $("kitPresentation").innerHTML = presentationControlsHtml(step, presentation?.getState(), getLocale(), state.cueStatus === "applying" || state.searchPending);
     } else {
@@ -499,6 +599,7 @@ export function initNliStaffRemote(dataContext) {
     renderCueStatus();
     if (show.kitTimeline) {
       void timelineHost._ensureNliFeatureCache?.();
+      void presenterGate.refresh();
       paintTimelineMounts();
     }
     if (show.kitEscape) {
@@ -605,10 +706,13 @@ export function initNliStaffRemote(dataContext) {
 
   async function transitionToStep(item, index, { returnTo = state.returnTo } = {}) {
     navigationGeneration += 1;
+    clearPresenterError();
     const generation = navigationGeneration;
     state.navigationPending = true;
     if (state.screen === "home") renderHome();
     timelineHost.invalidateTransport();
+    presenterCommands.invalidate();
+    presenterView.setVisible(false);
     try {
       return await searchActions.transitionToStep(item, index, returnTo);
     } finally {
@@ -718,6 +822,7 @@ export function initNliStaffRemote(dataContext) {
 
   async function performHomeExit() {
     navigationGeneration += 1;
+    clearPresenterError();
     const generation = navigationGeneration;
     state.navigationPending = true;
     const previous = {
@@ -727,6 +832,8 @@ export function initNliStaffRemote(dataContext) {
       returnTo: state.returnTo,
     };
     timelineHost.invalidateTransport();
+    presenterCommands.invalidate();
+    presenterView.setVisible(false);
     const token = searchTransition.begin();
     cues.cancel();
     state.searchPending = true;
@@ -976,6 +1083,23 @@ export function initNliStaffRemote(dataContext) {
     void exitToHome();
   });
 
+  $("playerCueRetry")?.addEventListener("click", async () => {
+    const failedCue = state.failedCue;
+    if (!failedCue || state.cueStatus !== "failed") return;
+    if (failedCue.cue === HOME_CUE && failedCue.narrativeId === null) {
+      await exitToHome();
+      return;
+    }
+    const result = await applyCue(failedCue.cue, failedCue.narrativeId);
+    rearmTransport();
+    if (result?.status !== "ready") return;
+    const item = script();
+    const step = currentStep();
+    if (shouldAutoOpenNliPresentation({
+      item, index: state.step, currentScript: item, currentStep: step, cueStatus: "ready",
+    })) void presentation.run("open", step.presentation.segmentId);
+  });
+
   $("ticks").addEventListener("click", (event) => {
     if (state.searchPending) return;
     const tick = event.target.closest("[data-step]");
@@ -1071,49 +1195,64 @@ export function initNliStaffRemote(dataContext) {
       renderSearchStatus();
     },
   });
-  dataContext?.subscribe?.("legendSettings", (settings) => {
+  const unsubscribers = [];
+  const subscribe = (topic, listener) => {
+    const unsubscribe = dataContext?.subscribe?.(topic, listener);
+    if (typeof unsubscribe === "function") unsubscribers.push(unsubscribe);
+  };
+  subscribe("legendSettings", (settings) => {
     if (settings?.language) applyServerLocale(settings.language);
   });
-  window.addEventListener(LOCALE_EVENT, () => {
+  const onLocaleChange = () => {
     peopleArchive.handleLocaleChange();
+    if (state.presenterError) onPresenterError();
     render();
-  });
+  };
+  window.addEventListener(LOCALE_EVENT, onLocaleChange);
 
-  const timelineRoot = $("playerKit");
-  timelineRoot.addEventListener("click", (event) => {
-    consumeNliTimelineButtonClick(event, timelineHost);
-  });
-  bindNliTimelinePointerListeners(timelineRoot, timelineHost);
-
-  dataContext?.subscribe?.("connection", (isConnected) => {
+  subscribe("connection", (isConnected) => {
     state.connected = !!isConnected;
     renderConnection();
     peopleArchive.syncArchiveButton();
     renderKit();
     maybeBootHome();
   });
-  dataContext?.subscribe?.("connectionStatus", (status) => {
+  subscribe("connectionStatus", (status) => {
     state.connectionStatus = status;
     renderConnection();
   });
-  dataContext?.subscribe?.("investigationClock", () => {
+  subscribe("investigationClock", () => {
     paintTimelineMounts();
     if (state.screen === "home" && packMenus?.isOpen()) renderHome();
   });
-  dataContext?.subscribe?.("narrativeState", () => {
+  subscribe("narrativeState", () => {
     hydrated = true;
     timelineHost._clearNliScrubOnNarrativeChange?.();
     renderKit();
     maybeBootHome();
   });
-  dataContext?.subscribe?.("escapeOverlay", () => {
+  subscribe("escapeOverlay", () => {
     renderKit();
   });
-  dataContext?.subscribe?.("layerGroups", () => {
+  subscribe("layerGroups", () => {
+    presenterCommands.invalidate();
+    void presenterGate.refresh();
+    paintTimelineMounts();
     if (state.screen === "home" && packMenus?.isOpen()) renderHome();
   });
   state.connected = dataContext?.isConnected?.() !== false;
   render();
   void timelineHost._ensureNliFeatureCache?.();
-  return { render };
+  return { render, dispose() {
+    if (disposed) return;
+    disposed = true;
+    for (const unsubscribe of unsubscribers) unsubscribe();
+    window.removeEventListener(LOCALE_EVENT, onLocaleChange);
+    window.removeEventListener("pagehide", releaseExhibitMode);
+    window.removeEventListener("beforeunload", releaseExhibitMode);
+    timelineHost.invalidateTransport();
+    presenterCommands.dispose();
+    presenterGate.dispose();
+    presenterView.dispose();
+  } };
 }

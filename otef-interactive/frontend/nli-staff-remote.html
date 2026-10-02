@@ -538,6 +538,21 @@
       }
       .cue-status[data-status="failed"]::before { background: var(--danger); }
 
+      .scene-cue-failure {
+        align-self: stretch;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        border-color: rgba(255, 107, 107, 0.3);
+        color: var(--danger);
+      }
+      .scene-cue-failure[hidden] { display: none !important; }
+      .scene-cue-failure .btn {
+        min-height: 40px;
+        padding: 0 14px;
+        border: 1px solid rgba(255, 107, 107, 0.45);
+        border-radius: var(--radius-pill);
+      }
+
       .kit-block { flex-shrink: 0; }
       .kit-block[hidden] { display: none !important; }
       .kit-action .btn { width: 100%; }
@@ -1288,7 +1303,6 @@
         .step-note { -webkit-line-clamp: 2; }
         .nli-tl-hours { display: none; }
         .nli-tl-scrub-row { padding-top: 8px; }
-        .cue-status { display: none; }
       }
 
       @media (orientation: landscape) and (max-height: 700px) {
@@ -1309,6 +1323,8 @@
       }
 
     </style>
+    <link rel="stylesheet" href="./css/nli-presenter.css">
+
   </head>
   <body>
     <div class="app">
@@ -1367,8 +1383,11 @@
             <div class="clock" id="stepClock"></div>
             <h1 class="step-title" id="stepTitle"></h1>
             <p class="step-note" id="stepNote"></p>
+            <div class="cue-status scene-cue-failure" id="playerCueFailure" role="alert" data-status="failed" hidden>
+              <span id="playerCueFailureText"></span>
+              <button type="button" class="btn" id="playerCueRetry" data-i18n="cueRetry">Retry</button>
+            </div>
             <div class="kit" id="playerKit">
-              <p class="cue-status" id="cueStatus" role="status"></p>
               <div class="kit-block" id="kitSearch" hidden>
                 <div class="search-kit" id="searchKit">
                   <div class="search">

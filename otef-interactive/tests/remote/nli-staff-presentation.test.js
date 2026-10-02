@@ -50,6 +50,48 @@ describe("NLI staff presentation controller", () => {
     expect(html).not.toMatch(/play|pause|replay|retry/i);
   });
 
+  test("only hides Next at a confirmed terminal slide and restores it after Previous", async () => {
+    const h = makeControllerHarness();
+    await h.openAndReply("nova_mor");
+    const nextOne = h.controller.run("next", "nova_mor");
+    h.reply({ outcome: "ready", slide: 10, range: [9, 11] });
+    await nextOne;
+    expect(presentationControlsHtml(step, h.controller.getState(), "en"))
+      .toContain('data-presentation-action="next"');
+
+    const nextTwo = h.controller.run("next", "nova_mor");
+    h.reply({ outcome: "ready", slide: 11, range: [9, 11] });
+    await nextTwo;
+    const terminalHtml = presentationControlsHtml(step, h.controller.getState(), "en");
+    expect(terminalHtml).not.toContain('data-presentation-action="next"');
+    expect(terminalHtml).toContain('data-presentation-action="previous"');
+    expect(terminalHtml).toContain('data-presentation-action="close"');
+
+    const previous = h.controller.run("previous", "nova_mor");
+    const pendingHtml = presentationControlsHtml(step, h.controller.getState(), "en");
+    expect(pendingHtml).not.toContain('data-presentation-action="next"');
+    h.reply({ outcome: "ready", slide: 10, range: [9, 11] });
+    await previous;
+    expect(presentationControlsHtml(step, h.controller.getState(), "en"))
+      .toContain('data-presentation-action="next"');
+
+    const toTerminal = h.controller.run("next", "nova_mor");
+    h.reply({ outcome: "ready", slide: 11, range: [9, 11] });
+    await toTerminal;
+    const closing = h.controller.run("close", "nova_mor");
+    expect(presentationControlsHtml(step, h.controller.getState(), "en"))
+      .not.toContain('data-presentation-action="next"');
+    h.reply({ outcome: "closed" });
+    await closing;
+  });
+
+  test("keeps Next when the open presentation has no known slide range", () => {
+    const html = presentationControlsHtml(step, {
+      phase: "open", segmentId: step.presentation.segmentId, slide: 11, range: null,
+    }, "en");
+    expect(html).toContain('data-presentation-action="next"');
+  });
+
   test("manual steps show Open while Shura never exposes a manual Open button", () => {
     expect(presentationControlsHtml(step, { phase: "closed" }, "en"))
       .toContain('data-presentation-action="open"');

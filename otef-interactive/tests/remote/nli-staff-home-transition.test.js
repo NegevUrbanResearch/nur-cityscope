@@ -28,6 +28,7 @@ const FIXTURE = `
       <div id="stepClock"></div>
       <h1 id="stepTitle"></h1>
       <p id="stepNote"></p>
+      <div id="playerCueFailure" hidden role="alert"><span id="playerCueFailureText"></span><button id="playerCueRetry">Retry</button></div>
       <p id="stepGis"></p>
       <p id="stepModel"></p>
       <div id="playerKit">
@@ -181,13 +182,13 @@ describe("NLI staff Home transitions", () => {
     setLocale("he", { force: true, persist: false });
   });
 
-  test("cue status reports sending or failure, and connection copy stays separate", () => {
+  test("cue state keeps localized failure copy separate from connection state", () => {
     expect(COPY.en.cueApplying).toBe("Sending the scene…");
     expect(COPY.en.cueReady).toBe("Scene sent");
-    expect(COPY.en.cueFailed).toBe("Could not send the scene");
+    expect(COPY.en.cueFailed).toBe("Could not apply this scene");
     expect(COPY.he.cueApplying).toBe("שולח את הסצנה…");
     expect(COPY.he.cueReady).toBe("הסצנה נשלחה");
-    expect(COPY.he.cueFailed).toBe("שליחת הסצנה נכשלה");
+    expect(COPY.he.cueFailed).toBe("החלת הסצנה נכשלה");
     expect(COPY.en.cueReady).not.toMatch(/both displays|Map is set/i);
     expect(COPY.he.cueReady).not.toMatch(/מוכנה|שני המסכים/);
     expect(COPY.en.connected).toBe("Connected");
@@ -271,16 +272,19 @@ describe("NLI staff Home transitions", () => {
       expect(el("cueStatus").dataset.status).toBe("failed");
       expect(activeScreen()).toBe("player");
     });
-    expect(el("cueStatus").textContent).toBe("Could not send the scene");
+    expect(el("cueStatus").textContent).toBe("Could not apply this scene");
     expect(el("cueStatus").textContent).not.toBe("Scene sent");
     expect(activeScreen()).not.toBe("home");
     expect(el("homeBtn").hidden).toBe(false);
 
     h.failNull = false;
-    el("homeBtn").click();
+    expect(el("playerCueFailure").hidden).toBe(false);
+    expect(el("playerCueFailureText").textContent).toBe("Could not apply this scene");
+    el("playerCueRetry").click();
     await vi.waitFor(() => expect(el("cueStatus").dataset.status).toBe("ready"));
     expect(h.layers.at(-1)).toEqual([...HOME_LAYER_IDS]);
     expect(activeScreen()).toBe("home");
+    expect(el("playerCueFailure").hidden).toBe(true);
   });
 
   test("names-wall Back fades names before closing the GIS slide and restoring identity layers", async () => {
@@ -544,7 +548,7 @@ describe("NLI staff Home transitions", () => {
     session.h.emit("connection", true);
     await vi.waitFor(() => expect(session.h.narratives).toContain(null));
     await vi.waitFor(() => expect(el("homeCueStatus")?.hidden).toBe(false));
-    expect(el("homeCueStatus").textContent).toBe("Could not send the scene");
+    expect(el("homeCueStatus").textContent).toBe("Could not apply this scene");
     expect(el("homeRetry").hidden).toBe(false);
 
     const failedCalls = session.h.narratives.length;

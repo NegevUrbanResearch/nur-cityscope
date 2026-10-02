@@ -3,6 +3,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { createNliStaffTimelineHost, staffPlaybackConfig } from "../../frontend/src/remote/nli-staff-timeline-host.js";
+import { createPresenterDatasetGate } from "../../frontend/src/remote/nli-presenter-content.js";
+import { createPresenterCommands } from "../../frontend/src/remote/nli-presenter-commands.js";
 import {
   nliAxisMarksFromBeats,
   nliBeatIndexFromOccupiedHourPct,
@@ -1408,6 +1410,86 @@ describe("nli timeline transport", () => {
     expect(ctx.patchInvestigationClock).not.toHaveBeenCalled();
     expect(c.render).not.toHaveBeenCalled();
     expect(content.innerHTML).toBe("KEEP");
+  });
+
+  test("staff playhead hook receives the real beat tick while legacy sheet remains available", async () => {
+    vi.useFakeTimers();
+    const playing = playNliClock(idleNliClock(), [LINES_ID], [400, 740], 1000);
+    let now = 1000;
+    const ctx = stubContext({ getInvestigationClock: () => playing, correctedNow: () => now });
+    const paintPlayhead = vi.fn();
+    const host = createNliStaffTimelineHost({ paintPlayhead, getGroups: () => nliGroups() });
+    host._syncNliPlayheadTicker(playing);
+    now += timelineBeatDurationMs(400);
+    await vi.advanceTimersByTimeAsync(timelineBeatDurationMs(400));
+    expect(paintPlayhead).toHaveBeenCalledWith(playing);
+    expect(ctx.patchInvestigationClock).not.toHaveBeenCalled();
+    host._clearNliPlayheadTicker();
+
+    const legacy = makeController({ sheet: { querySelector: vi.fn(() => null) } });
+    expect(legacy._nliStaffPaintPlayhead).toBeUndefined();
+    expect(() => legacy._paintNliPlayhead(playing)).not.toThrow();
+  });
+
+  test("feature cache writes notify staff synchronously before the next fetch resolves", async () => {
+    const cacheChanged = vi.fn();
+    const first = [{ properties: { timeline_minutes: 400 } }];
+    let resolveSecond;
+    vi.stubGlobal("fetch", vi.fn((url) => String(url).includes("lines")
+      ? Promise.resolve({ ok: true, json: async () => ({ features: first }) })
+      : new Promise((resolve) => { resolveSecond = resolve; })));
+    globalThis.layerRegistry = { getLayerDataUrl: (id) => `/${id}.json` };
+    stubContext();
+    const host = createNliStaffTimelineHost({ getGroups: () => nliGroups(), cacheChanged });
+    const pending = host._ensureNliFeatureCache([LINES_ID, INVESTIGATION_POLYGONS_FULL_ID]);
+    await vi.waitFor(() => expect(cacheChanged).toHaveBeenCalledWith(LINES_ID, first));
+    expect(host._nliFeatureCache[INVESTIGATION_POLYGONS_FULL_ID]).toBeUndefined();
+    resolveSecond({ ok: true, json: async () => ({ features: [] }) });
+    await pending;
+    expect(cacheChanged).toHaveBeenCalledWith(INVESTIGATION_POLYGONS_FULL_ID, []);
+  });
+
+  test("a verified array replacement blocks saved event keys before another layer fetch settles", async () => {
+    const polygon = INVESTIGATION_POLYGONS_FULL_ID;
+    const line = LINES_ID;
+    const oldPolygon = [{ id: "polygon-old" }];
+    const newPolygon = [{ id: "polygon-new" }];
+    const oldLine = [{ id: "line-old" }];
+    const newLine = [{ id: "line-new" }];
+    let releaseLine;
+    vi.stubGlobal("fetch", vi.fn(() => new Promise((resolve) => { releaseLine = resolve; })));
+    globalThis.layerRegistry = { getLayerDataUrl: () => "/line.json" };
+    const ctx = stubContext();
+    let generation = 0;
+    let gate;
+    const host = createNliStaffTimelineHost({ getGroups: () => nliGroups(),
+      cacheChanged() { generation += 1; void gate.refresh(); } });
+    host._nliFeatureCache = { [polygon]: oldPolygon, [line]: oldLine };
+    host._nliArmPayload = () => ({ visibleMembership: [polygon, line], beats: [400] });
+    host._patchNliClock = vi.fn(async () => ({ ok: true }));
+    gate = createPresenterDatasetGate({ host,
+      manifest: { datasetVersion: "synthetic", acceptedSourceSha256: "source",
+        requiredArtifacts: { [polygon]: "hash-p", [line]: "hash-r" } },
+      hash: async (bytes) => new TextDecoder().decode(bytes).includes("polygon") ? "hash-p" : "hash-r" });
+    expect((await gate.refresh()).ready).toBe(true);
+    const getSnapshot = () => ({ boundaryKey: String(generation), canMutate: gate.getState().ready,
+      arm: host._nliArmPayload(), beats: [{ key: "saved", minute: 400 }], narrativeId: null });
+    const commands = createPresenterCommands({ host, context: ctx, getSnapshot });
+    expect(getSnapshot().canMutate).toBe(true);
+    expect(host._manualMutationsOpen()).toBe(true);
+    host._nliFeatureCache[line] = null;
+    const pending = host._ensureNliFeatureCache([line]);
+    await vi.waitFor(() => expect(releaseLine).toBeTypeOf("function"));
+    host._storeNliCachedFeatures(polygon, newPolygon);
+    expect(gate.getState().ready).toBe(false);
+    expect(await commands.select("saved")).toMatchObject({ ok: false, stale: true });
+    expect(host._patchNliClock).not.toHaveBeenCalled();
+    releaseLine({ ok: true, json: async () => ({ features: newLine }) });
+    await pending;
+    expect((await gate.refresh()).ready).toBe(true);
+    expect(host._nliFeatureCache[polygon]).toBe(newPolygon);
+    expect(host._nliFeatureCache[line]).toBe(newLine);
+    commands.dispose(); gate.dispose();
   });
 
   test("Nova local ticker updates copy, marks, and playhead at each four-second beat", async () => {

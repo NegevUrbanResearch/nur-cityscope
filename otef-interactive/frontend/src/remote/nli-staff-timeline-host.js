@@ -69,6 +69,8 @@ export function createNliStaffTimelineHost({
   render,
   getPlaybackConfig,
   isManualMutationAllowed,
+  paintPlayhead,
+  cacheChanged,
 } = {}) {
   return Object.assign(
     {
@@ -81,6 +83,8 @@ export function createNliStaffTimelineHost({
       _nliTransportEpoch: 0,
       _nliPlayheadTimer: null,
       _nliEndTimer: null,
+      _nliStaffPaintPlayhead: paintPlayhead,
+      _nliStaffCacheChanged: cacheChanged,
       sheet,
       getPlaybackConfig,
       isManualMutationAllowed,

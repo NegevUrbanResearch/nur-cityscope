@@ -263,18 +263,19 @@ export function createNliStaffPresentationController({ dataContext, onStateChang
   };
 }
 
-function slideControls(step, state, locale, labels, disabled) {
+function slideControls(step, state, locale, labels, disabled, hideNext = false) {
   const range = state?.range;
   const relative = Array.isArray(range) && Number.isInteger(state.slide)
     ? `${state.slide - range[0] + 1} / ${range[1] - range[0] + 1}`
     : "";
   const title = step.title?.[locale] || step.title?.he || "";
   const disabledAttr = disabled ? " disabled" : "";
+  const nextButton = hideNext ? "" : `<button type="button" class="btn" data-presentation-action="next"${disabledAttr}>${labels.next}</button>`;
   return `<section class="presentation-controls" aria-label="${title}">
     <div class="presentation-controls-heading"><span>${title}</span><span class="presentation-counter">${relative}</span></div>
     <div class="presentation-slide-actions">
       <button type="button" class="btn btn--outline" data-presentation-action="previous"${disabledAttr}>${labels.previous}</button>
-      <button type="button" class="btn" data-presentation-action="next"${disabledAttr}>${labels.next}</button>
+      ${nextButton}
     </div>
     <button type="button" class="btn btn--outline presentation-close" data-presentation-action="close"${disabledAttr}>${labels.close}</button>
   </section>`;
@@ -296,7 +297,12 @@ export function presentationControlsHtml(step, state, locale, mutationBusy = fal
   };
   const sameSegment = state?.segmentId === presentation.segmentId;
   if (["opening", "applying", "closing"].includes(state?.phase) && sameSegment) {
-    return slideControls(step, state, locale, labels, true);
+    const range = state.range;
+    const knownRange = Array.isArray(range) && range.length === 2 &&
+      Number.isInteger(range[0]) && Number.isInteger(range[1]) && range[1] >= range[0];
+    const pendingAtKnownTerminalSlide = state.phase !== "opening" && Boolean(state.sessionId) &&
+      knownRange && Number.isInteger(state.slide) && state.slide === range[1];
+    return slideControls(step, state, locale, labels, true, pendingAtKnownTerminalSlide);
   }
   if (state?.phase === "failed" && sameSegment) {
     const retryAction = state.sessionId ? "close" : "open";
@@ -308,7 +314,11 @@ export function presentationControlsHtml(step, state, locale, mutationBusy = fal
     if ((presentation.open !== "manual" && state?.retryOpenSegmentId !== presentation.segmentId) || state?.phase !== "closed") return "";
     return `<div class="presentation-controls"><button type="button" class="btn" data-presentation-action="open"${mutationBusy ? " disabled" : ""}>${labels.open}</button></div>`;
   }
-  return slideControls(step, state, locale, labels, mutationBusy);
+  const range = state.range;
+  const knownRange = Array.isArray(range) && range.length === 2 &&
+    Number.isInteger(range[0]) && Number.isInteger(range[1]) && range[1] >= range[0];
+  const atKnownTerminalSlide = active && knownRange && Number.isInteger(state.slide) && state.slide === range[1];
+  return slideControls(step, state, locale, labels, mutationBusy, atKnownTerminalSlide);
 }
 
 export function createNliStaffPresentationButtonHandler({
