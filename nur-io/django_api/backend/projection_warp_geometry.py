@@ -61,6 +61,21 @@ def _uniform_v7_grid(grid, side):
                for axis, count in ((grid['columnPositions'], grid['columns']), (grid['rowPositions'], grid['rows'])))
 
 
+def _has_grid_control_vertices(mesh, grid):
+    if not isinstance(mesh, dict) or not isinstance(mesh.get('vertices'), list) or not isinstance(mesh.get('triangles'), list):
+        return False
+    connected = set(mesh['triangles'])
+    return all(any(index in connected and abs(point['s'] - s) <= 1e-12 and abs(point['t'] - t) <= 1e-12
+                   for index, point in enumerate(mesh['vertices']))
+               for t in grid['rowPositions'] for s in grid['columnPositions'])
+
+
+def _requires_grid_preparation(mesh, warp, side):
+    return (not _uniform_v7_grid(warp['grid'], side) or
+            (warp.get('baseline', {}).get('type') == 'tdMesh' and
+             not _has_grid_control_vertices(mesh, warp['grid'])))
+
+
 def _prepare_v7_warp(warp, side, schema_version=None):
     grid = warp.get('grid') if isinstance(warp, dict) else None
     has_axes = isinstance(grid, dict) and ('columnPositions' in grid or 'rowPositions' in grid)
@@ -180,9 +195,13 @@ def create_identity_projection_mesh(side='left'):
 def evaluate_warp_mesh(mesh, warp, *, side=None, schema_version=None):
     prepared, is_v7 = _prepare_v7_warp(warp, side, schema_version)
     resolved_side = side or (mesh.get('side') if isinstance(mesh, dict) else _side(prepared))
+    source_validated = False
     if is_v7 and warp.get('enabled') is False:
         return validate_warp_mesh(create_full_frame_projection_mesh(resolved_side))
-    if is_v7 and warp.get('enabled') and not _uniform_v7_grid(warp['grid'], side):
+    if is_v7 and warp.get('enabled') and mesh is not None:
+        validate_warp_mesh(mesh)
+        source_validated = True
+    if is_v7 and warp.get('enabled') and _requires_grid_preparation(mesh, warp, side):
         baseline=warp.get('baseline')
         if mesh is None and isinstance(baseline,dict) and baseline.get('type')=='identity': mesh=create_full_frame_projection_mesh(resolved_side)
         from .projection_grid_mesh import prepare_grid_warp_mesh
@@ -192,7 +211,7 @@ def evaluate_warp_mesh(mesh, warp, *, side=None, schema_version=None):
         return validate_warp_mesh(create_full_frame_projection_mesh(resolved_side))
     baseline = warp.get('baseline')
     if mesh is None and isinstance(baseline, dict) and baseline.get('type') == 'identity': mesh = create_identity_projection_mesh(resolved_side)
-    validate_warp_mesh(mesh)
+    if not source_validated: validate_warp_mesh(mesh)
     errors = validate_projection_warp(warp, resolved_side or _side(warp, mesh.get('side', 'left')))
     if errors: raise ValueError('invalid warp: ' + '; '.join(f'{path} {message}' for path, message in errors.items()))
     evaluate = _create_evaluator(warp)

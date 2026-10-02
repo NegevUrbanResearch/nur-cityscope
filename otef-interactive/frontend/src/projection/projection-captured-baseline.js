@@ -1,5 +1,6 @@
 import { sha256Hex } from "../shared/sha256-hex.js";
 import { validateProjectionConfig } from "../shared/projection-config-schema.js";
+import { validateProjectionBaselineManifest } from "../shared/projection-warp-assets.js";
 
 export const PROJECTION_OUTPUT_WIDTH = 1920;
 export const PROJECTION_OUTPUT_HEIGHT = 1080;
@@ -35,6 +36,14 @@ function abortError() {
 
 function throwIfAborted(signal) {
   if (signal?.aborted) throw abortError();
+}
+
+function validateBaselineManifest(manifest) {
+  const errors = validateProjectionBaselineManifest(manifest);
+  if (Object.keys(errors).length) {
+    throw new Error("browser projection baseline manifest invalid: " +
+      Object.entries(errors).map(([path, message]) => `${path} ${message}`).join("; "));
+  }
 }
 
 function awaitWithSignal(promise, signal) {
@@ -125,6 +134,7 @@ export async function loadCapturedProjectionFraming({
     throw new Error("browser projection baseline manifest dimensions are invalid");
   }
   if (!manifest.framing?.path) throw new Error("browser projection baseline framing is missing");
+  validateBaselineManifest(manifest);
   const framingUrl = joinAssetUrl(base, manifest.framing.path);
   const framing = await fetchVerifiedJson(fetchImpl, framingUrl, "captured framing", manifest.framing.sha256, signal);
   if (!framing.value?.pre || !framing.value?.outputs || Object.keys(validateProjectionConfig(framing.value)).length) {
@@ -142,6 +152,11 @@ export async function loadCapturedProjectionAsset({
 } = {}) {
   const source = captured || await loadCapturedProjectionFraming({ fetchImpl, base, signal });
   throwIfAborted(signal);
+  if (!source?.manifest || source.manifest.width !== PROJECTION_OUTPUT_WIDTH || source.manifest.height !== PROJECTION_OUTPUT_HEIGHT) {
+    throw new Error("browser projection baseline manifest dimensions are invalid");
+  }
+  if (!source.manifest.framing?.path) throw new Error("browser projection baseline framing is missing");
+  validateBaselineManifest(source?.manifest);
   const asset = source.manifest.assets?.[spanId];
   if (!asset?.path) throw new Error(`browser projection baseline asset for ${spanId} is missing`);
   const meshUrl = joinAssetUrl(base, asset.path);

@@ -8,6 +8,7 @@ changes parameters, or opens/closes projector windows.
 import hashlib
 import json
 import os
+import re
 from datetime import date
 
 
@@ -63,6 +64,60 @@ def _table_fingerprints(tables):
     return {name: hashlib.sha256(text.encode("utf-8")).hexdigest() for name, text in tables.items()}
 
 
+def logical_grid_from_topology(text):
+    if not isinstance(text, str) or not text.strip():
+        raise ValueError("Stoner logical topology is missing")
+    lines = [line for line in text.replace("\r", "").split("\n") if line.strip()]
+    headers = [value.strip() for value in lines[0].split("\t")]
+    required = ("index", "rIndex", "l", "r", "t", "b")
+    if (not headers or any(not value for value in headers) or len(set(headers)) != len(headers)
+            or any(key not in headers for key in required)):
+        raise ValueError("Stoner logical topology has unsupported headers")
+    indexes = {key: headers.index(key) for key in required}
+    records = []
+    try:
+        for line in lines[1:]:
+            row = line.split("\t")
+            if len(row) != len(headers):
+                raise ValueError("Stoner logical topology has an invalid row width")
+            record = {}
+            for key, column in indexes.items():
+                value = row[column].strip()
+                if not re.fullmatch(r"[+-]?[0-9]+", value):
+                    raise ValueError("Stoner topology requires textual integers")
+                number = int(value)
+                if abs(number) > 9007199254740991:
+                    raise ValueError("Stoner topology IDs exceed the safe integer range")
+                record[key] = number
+            records.append(record)
+    except (TypeError, ValueError, KeyError):
+        raise ValueError("Stoner logical topology requires integer IDs and neighbors") from None
+    records.sort(key=lambda row: row["index"])
+    count = len(records)
+    if not 4 <= count <= 65536:
+        raise ValueError("Stoner logical topology has an unsupported point count")
+    if [row["index"] for row in records] != list(range(count)):
+        raise ValueError("Stoner logical indexes must cover every point exactly once")
+    if len({row["rIndex"] for row in records}) != count or any(row["rIndex"] < 0 for row in records):
+        raise ValueError("Stoner lattice indexes must be unique and nonnegative")
+    if any(row[key] < -1 for row in records for key in ("l", "r", "t", "b")):
+        raise ValueError("Stoner neighbor IDs must be >= -1")
+    columns = sum(row["b"] == -1 for row in records)
+    rows = sum(row["l"] == -1 for row in records)
+    if columns < 2 or rows < 2 or columns * rows != count:
+        raise ValueError("Stoner logical topology is not a supported rectangular grid")
+    for index, row in enumerate(records):
+        expected = {
+            "l": index % columns == 0,
+            "r": index % columns == columns - 1,
+            "b": index // columns == 0,
+            "t": index // columns == rows - 1,
+        }
+        if any((row[key] == -1) != absent for key, absent in expected.items()):
+            raise ValueError("Stoner logical boundary pattern is inconsistent")
+    return {"columns": columns, "rows": rows}
+
+
 def export_side(side, root, output_directory):
     if side not in ("left", "right"):
         raise ValueError("side must be left or right")
@@ -81,7 +136,10 @@ def export_side(side, root, output_directory):
     after = _table_fingerprints({name: _table(path) for name, path in table_paths.items()})
     if before != after:
         raise RuntimeError("TD tables changed during read-only capture")
-    logical = {"columns": 7 if side == "left" else 8, "rows": 7}
+    try:
+        logical = logical_grid_from_topology(tables.get("topology"))
+    except ValueError as error:
+        raise ValueError("{} Stoner topology at {}: {}".format(side, table_paths["topology"], error)) from error
     payload = {
         "schemaVersion": 1,
         "side": side,

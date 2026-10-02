@@ -6,9 +6,14 @@ import {
 } from "../../frontend/src/projection/projection-browser-route.js";
 import { sha256Hex } from "../../frontend/src/shared/sha256-hex.js";
 import { DEFAULT_PROJECTION_CONFIG } from "../../frontend/src/shared/projection-config-schema.js";
-import { createIdentityProjectionMesh } from "../../frontend/src/shared/projection-warp-geometry.js";
+import { createIdentityProjectionMesh, evaluateWarpPoint } from "../../frontend/src/shared/projection-warp-geometry.js";
+import { validateProjectionBaselineMesh } from "../../frontend/src/shared/projection-warp-assets.js";
 import { migrateProjectionConfigToV2 } from "../../frontend/src/shared/projection-warp-schema.js";
+import { loadCapturedProjectionAsset } from "../../frontend/src/projection/projection-captured-baseline.js";
 import { createProjectionImageDescriptor } from "../../frontend/src/projection/projection-span-view.js";
+import { prepareProjectionPairMeshes } from "../../frontend/src/projection/projection-candidate-validation.js";
+import { createBaselineSampler } from "../../frontend/src/shared/projection-baseline-sampler.js";
+import { variableTdMesh } from "../fixtures/td-variable-grid.js";
 
 const framingConfig = {
   schemaVersion: 1,
@@ -18,6 +23,18 @@ const framingConfig = {
     right: { crop: { x0: 0, x1: 1, y0: 0, y1: 1 }, post: { scale: 1, tx: 0, ty: 0 } },
   },
 };
+
+function completeBaselineManifest(manifest) {
+  manifest.schemaVersion ??= 1;
+  for (const side of ["left", "right"]) {
+    manifest.assets[side] ??= { path: `${side}.json`, sha256: "a".repeat(64) };
+    Object.assign(manifest.assets[side], {
+      assetId: manifest.assets[side].assetId || `fixture-${side}`,
+      logicalGrid: manifest.assets[side].logicalGrid || { columns: side === "left" ? 7 : 8, rows: 7 },
+    });
+  }
+  return manifest;
+}
 
 test("selects browser mode only for the explicit outputMode query", () => {
   expect(resolveProjectionOutputMode("?span=left")).toBe("td");
@@ -162,22 +179,121 @@ test("uses geographic projective placement and viewport normalization for the im
 test("loads the captured 1920x1080 asset for the requested span", async () => {
   const framing = new TextEncoder().encode(JSON.stringify(framingConfig));
   const mesh = new TextEncoder().encode(JSON.stringify({ width: 1920, height: 1080, vertices: [{ s: 0, t: 0, x: 0, y: 0, u: 0, v: 0 }, { s: 1, t: 0, x: 1, y: 0, u: 1, v: 0 }, { s: 0, t: 1, x: 0, y: 1, u: 0, v: 1 }], triangles: [0, 1, 2] }));
-  const manifest = { width: 1920, height: 1080, assets: { left: { path: "left.json", sha256: await sha256Hex(mesh) } }, framing: { path: "../td-source-config.json", sha256: await sha256Hex(framing) } };
+  const manifest = completeBaselineManifest({ width: 1920, height: 1080, assets: { left: { path: "left.json", sha256: await sha256Hex(mesh) } }, framing: { path: "../td-source-config.json", sha256: await sha256Hex(framing) } });
   const fetchImpl = vi.fn(async (url) => ({ ok: true, async arrayBuffer() { return url.endsWith("manifest.json") ? new TextEncoder().encode(JSON.stringify(manifest)).buffer : (url.endsWith("td-source-config.json") ? framing : mesh).buffer; } }));
   const result = await loadCapturedProjectionBaseline({ fetchImpl, spanId: "left", base: "/baseline/" });
   expect(result.manifest.width).toBe(1920); expect(fetchImpl).toHaveBeenLastCalledWith("/baseline/left.json", { cache: "no-store" });
   expect(fetchImpl.mock.calls.every(([, options]) => options.cache === "no-store")).toBe(true);
 });
 
+test('loads byte-hashed variable TD assets through pair preflight and preserves framing and source UV mapping', async () => {
+  const framing = new TextEncoder().encode(JSON.stringify(framingConfig));
+  const assets = {};
+  const meshBytes = {};
+  for (const side of ['left', 'right']) {
+    meshBytes[side] = new TextEncoder().encode(JSON.stringify(variableTdMesh(side)));
+    const mesh = variableTdMesh(side);
+    assets[side] = { assetId: `variable-${side}`, path: `${side}.json`, sha256: await sha256Hex(meshBytes[side]), logicalGrid: mesh.logicalGrid };
+  }
+  const manifest = { schemaVersion: 1, width: 1920, height: 1080, assets,
+    framing: { path: '../td-source-config.json', sha256: await sha256Hex(framing) } };
+  const bytes = new TextEncoder().encode(JSON.stringify(manifest));
+  const fetchImpl = vi.fn(async (url) => ({ ok: true, async arrayBuffer() {
+    if (url.endsWith('manifest.json')) return bytes.buffer;
+    if (url.endsWith('td-source-config.json')) return framing.buffer;
+    return meshBytes[url.endsWith('left.json') ? 'left' : 'right'].buffer;
+  } }));
+  const loaded = await loadCapturedProjectionBaseline({ fetchImpl, spanId: 'left', base: '/fixture/' });
+  expect(loaded.mesh.logicalGrid).toEqual({ columns: 3, rows: 4 });
+  expect(loaded.framing).toEqual(framingConfig);
+
+  const config = structuredClone(DEFAULT_PROJECTION_CONFIG);
+  const originalFraming = { pre: structuredClone(config.pre), outputs: structuredClone(config.outputs), namesWall: structuredClone(config.namesWall) };
+  for (const [side, columnKnot, rowKnot, offset] of [['left', 3, 3, [0.012, -0.009]], ['right', 4, 2, [-0.006, 0.008]]]) {
+    const warp = config.outputs[side].warp;
+    warp.grid.columnPositions[columnKnot] += side === 'left' ? -0.025 : -0.02;
+    warp.grid.rowPositions[rowKnot] += side === 'left' ? 0.03 : -0.025;
+    warp.grid.offsets[Math.floor(warp.grid.offsets.length / 2)] = offset;
+    warp.baseline = {
+      type: 'tdMesh', assetId: assets[side].assetId, sha256: assets[side].sha256,
+      width: 1920, height: 1080, origin: 'top-left',
+    };
+  }
+  const expectedWarps = Object.fromEntries(['left', 'right'].map((side) => [side, structuredClone(config.outputs[side].warp)]));
+  const pair = await prepareProjectionPairMeshes({ config, loadBaseline: async (side) =>
+    loadCapturedProjectionAsset({ fetchImpl, spanId: side, base: '/fixture/', captured: loaded }) });
+  expect(config.pre).toEqual(originalFraming.pre);
+  expect(config.namesWall).toEqual(originalFraming.namesWall);
+  expect(config.outputs.left).toEqual(expect.objectContaining({ crop: originalFraming.outputs.left.crop, post: originalFraming.outputs.left.post }));
+  expect(config.outputs.right).toEqual(expect.objectContaining({ crop: originalFraming.outputs.right.crop, post: originalFraming.outputs.right.post }));
+  for (const side of ['left', 'right']) expect(config.outputs[side].warp).toEqual(expectedWarps[side]);
+  for (const side of ['left', 'right']) {
+    const expected = variableTdMesh(side);
+    const result = pair[side];
+    const sourceSampler = createBaselineSampler(expected);
+    const preparedSampler = createBaselineSampler(result);
+    for (const [s, t] of [[0, 0], [.37, .44], [1, 1]]) {
+      const sourcePoint = sourceSampler(s, t);
+      const renderedPoint = preparedSampler(s, t);
+      const expectedPoint = evaluateWarpPoint(sourcePoint.x, sourcePoint.y, expectedWarps[side], s, t,
+        { side, schemaVersion: 7, mesh: expected });
+      expect(renderedPoint.u).toBeCloseTo(sourcePoint.u, 11);
+      expect(renderedPoint.v).toBeCloseTo(sourcePoint.v, 11);
+      expect(Math.abs(renderedPoint.x - expectedPoint[0]) * 1920).toBeLessThanOrEqual(0.45);
+      expect(Math.abs(renderedPoint.y - expectedPoint[1]) * 1080).toBeLessThanOrEqual(0.45);
+    }
+  }
+  expect(fetchImpl.mock.calls.some(([url]) => url.endsWith('left.json'))).toBe(true);
+  expect(fetchImpl.mock.calls.some(([url]) => url.endsWith('right.json'))).toBe(true);
+});
+
+test("rejects matching malformed logical metadata during fetched and supplied baseline loading", async () => {
+  const framing = new TextEncoder().encode(JSON.stringify(framingConfig));
+  const meshValue = createIdentityProjectionMesh({ side: "left" });
+  meshValue.logicalGrid = { columns: true, rows: 3 };
+  const mesh = new TextEncoder().encode(JSON.stringify(meshValue));
+  const meshHash = await sha256Hex(mesh);
+  const manifest = completeBaselineManifest({
+    schemaVersion: 1, width: 1920, height: 1080,
+    assets: Object.fromEntries(["left", "right"].map((side) => [side, {
+      assetId: `fixture-${side}`, path: `${side}.json`, sha256: side === "left" ? meshHash : "a".repeat(64),
+      logicalGrid: { columns: true, rows: 3 },
+    }])),
+    framing: { path: "../td-source-config.json", sha256: await sha256Hex(framing) },
+  });
+  const manifestBytes = new TextEncoder().encode(JSON.stringify(manifest));
+  const fetchImpl = vi.fn(async (url) => ({
+    ok: true,
+    async arrayBuffer() {
+      if (url.endsWith("manifest.json")) return manifestBytes.buffer;
+      if (url.endsWith("td-source-config.json")) return framing.buffer;
+      return mesh.buffer;
+    },
+  }));
+
+  await expect(loadCapturedProjectionBaseline({ fetchImpl, spanId: "left" }))
+    .rejects.toThrow(/baseline manifest invalid: assets\.left\.logicalGrid/);
+
+  const captured = { manifest, framing: framingConfig };
+  await expect(loadCapturedProjectionAsset({ fetchImpl, spanId: "left", captured }))
+    .rejects.toThrow(/baseline manifest invalid: assets\.left\.logicalGrid/);
+  expect(fetchImpl.mock.calls.some(([url]) => url.endsWith("left.json"))).toBe(false);
+
+  const errors = validateProjectionBaselineMesh(meshValue, {
+    side: "left", manifest, baseline: { assetId: "fixture-left", sha256: manifest.assets.left.sha256 },
+  });
+  expect(errors).toHaveProperty("manifest.assets.left.logicalGrid");
+});
+
 test("verifies the manifest-selected mesh and pinned framing bytes", async () => {
   const framing = new TextEncoder().encode(JSON.stringify(framingConfig));
   const mesh = new TextEncoder().encode('{"width":1920,"height":1080}');
-  const manifest = {
+  const manifest = completeBaselineManifest({
     width: 1920,
     height: 1080,
     assets: { left: { path: "left.json", sha256: await sha256Hex(mesh) } },
     framing: { path: "../td-source-config.json", sha256: await sha256Hex(framing) },
-  };
+  });
   const fetchImpl = vi.fn(async (url) => ({
     ok: true,
     async arrayBuffer() {
@@ -231,7 +347,7 @@ test("composes only actual scene descriptors and restores source visibility on d
       async arrayBuffer() {
         const framing = new TextEncoder().encode(JSON.stringify(framingConfig));
         const mesh = new TextEncoder().encode(JSON.stringify({ width: 1920, height: 1080, vertices: [{ s: 0, t: 0, x: 0, y: 0, u: 0, v: 0 }, { s: 1, t: 0, x: 1, y: 0, u: 1, v: 0 }, { s: 0, t: 1, x: 0, y: 1, u: 0, v: 1 }], triangles: [0, 1, 2] }));
-        const manifest = { width: 1920, height: 1080, assets: { left: { path: "left.json", sha256: await sha256Hex(mesh) } }, framing: { path: "../td-source-config.json", sha256: await sha256Hex(framing) } };
+        const manifest = completeBaselineManifest({ width: 1920, height: 1080, assets: { left: { path: "left.json", sha256: await sha256Hex(mesh) } }, framing: { path: "../td-source-config.json", sha256: await sha256Hex(framing) } });
         return (url.endsWith("manifest.json") ? new TextEncoder().encode(JSON.stringify(manifest)) : url.endsWith("td-source-config.json") ? framing : mesh).buffer;
       },
     }),
@@ -253,7 +369,7 @@ test("identity startup tolerates an unavailable optional TD mesh preload", async
   const oldDocument = globalThis.document;
   globalThis.document = { createElement() { return { style: {}, setAttribute() {}, addEventListener() {}, removeEventListener() {}, remove() {} }; } };
   const framing = new TextEncoder().encode(JSON.stringify(framingConfig));
-  const manifest = { width: 1920, height: 1080, assets: { left: { path: "left.json", sha256: "a".repeat(64) } }, framing: { path: "../td-source-config.json", sha256: await sha256Hex(framing) } };
+  const manifest = completeBaselineManifest({ width: 1920, height: 1080, assets: { left: { path: "left.json", sha256: "a".repeat(64) } }, framing: { path: "../td-source-config.json", sha256: await sha256Hex(framing) } });
   let initialMesh;
   const fetchImpl = vi.fn(async (url) => ({ ok: !url.endsWith("left.json"), async arrayBuffer() { return url.endsWith("manifest.json") ? new TextEncoder().encode(JSON.stringify(manifest)).buffer : framing.buffer; } }));
   const surface = await createProjectionBrowserSurface({
@@ -299,7 +415,7 @@ test("disabled warp evaluates a diagnostic quad when its optional TD preload fai
   globalThis.document = { createElement() { return { style: {}, setAttribute() {}, addEventListener() {}, removeEventListener() {}, remove() {} }; } };
   const framing = new TextEncoder().encode(JSON.stringify(framingConfig));
   const mesh = new TextEncoder().encode(JSON.stringify({ width: 1920, height: 1080, vertices: [{ s: 0, t: 0, x: 0, y: 0, u: 0, v: 0 }, { s: 1, t: 0, x: 1, y: 0, u: 1, v: 0 }, { s: 0, t: 1, x: 0, y: 1, u: 0, v: 1 }], triangles: [0, 1, 2] }));
-  const manifest = { width: 1920, height: 1080, assets: { left: { path: "left.json", sha256: await sha256Hex(mesh) } }, framing: { path: "../td-source-config.json", sha256: await sha256Hex(framing) } };
+  const manifest = completeBaselineManifest({ width: 1920, height: 1080, assets: { left: { path: "left.json", sha256: await sha256Hex(mesh) } }, framing: { path: "../td-source-config.json", sha256: await sha256Hex(framing) } });
   let appliedMesh;
   const disabled = structuredClone((await import("../../frontend/src/shared/projection-warp-schema.js")).migrateProjectionConfigToV2(framingConfig));
   disabled.outputs.left.warp.enabled = false;
@@ -331,12 +447,12 @@ test("captured v1 startup preloads TD mesh for saved apply and disable/re-enable
     sha256: await sha256Hex(meshBytes),
     logicalGrid: { columns: 7, rows: 7 },
   };
-  const manifest = {
+  const manifest = completeBaselineManifest({
     width: 1920,
     height: 1080,
     assets: { left: asset },
     framing: { path: "../td-source-config.json", sha256: await sha256Hex(framing) },
-  };
+  });
   const fetchImpl = vi.fn(async (url) => ({
     ok: true,
     async arrayBuffer() {
@@ -403,12 +519,12 @@ test("cancels image decoding before creating a browser surface", async () => {
   const host = { ownerDocument: { createElement }, appendChild() {} };
   const framing = new TextEncoder().encode(JSON.stringify(framingConfig));
   const mesh = new TextEncoder().encode('{"width":1920,"height":1080}');
-  const manifest = {
+  const manifest = completeBaselineManifest({
     width: 1920,
     height: 1080,
     assets: { left: { path: "left.json", sha256: await sha256Hex(mesh) } },
     framing: { path: "../td-source-config.json", sha256: await sha256Hex(framing) },
-  };
+  });
   const fetchImpl = vi.fn(async (url) => ({
     ok: true,
     async arrayBuffer() {

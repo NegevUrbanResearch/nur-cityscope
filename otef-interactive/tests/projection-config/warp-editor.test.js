@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { DEFAULT_PROJECTION_CONFIG } from "../../frontend/src/shared/projection-config-schema.js";
 import { createIdentityProjectionMesh, evaluateWarpPoint } from "../../frontend/src/shared/projection-warp-geometry.js";
 import { createWarpEditor, gridSelection, keystoneSelection } from "../../frontend/src/projection-config/warp-editor.js";
+import { variableTdMesh } from "../fixtures/td-variable-grid.js";
 
 const clone = (value) => structuredClone(value);
 const parityMesh = JSON.parse(readFileSync(new URL("../../../nur-io/django_api/backend/tests/fixtures/projection-grid-parity.json", import.meta.url), "utf8")).mesh;
@@ -196,6 +197,94 @@ test("nonuniform TD grid handles match explicit-side evaluation at every source 
     expect(handles[index].x).toBeCloseTo(x, 12);
     expect(handles[index].y).toBeCloseTo(y, 12);
   }
+});
+
+test.each(["uniform", "custom"])("changed TD captures expose editable %s browser knots", (layout) => {
+  const config = clone(DEFAULT_PROJECTION_CONFIG);
+  const warp = config.outputs.left.warp;
+  warp.baseline = { type: "tdMesh", assetId: "changed", sha256: "a".repeat(64), width: 1920, height: 1080, origin: "top-left" };
+  if (layout === "custom") {
+    warp.grid = { columns: 3, rows: 3, columnPositions: [0, 0.4, 1], rowPositions: [0, 0.6, 1], offsets: Array.from({ length: 9 }, () => [0, 0]) };
+  } else warp.grid.offsets = warp.grid.offsets.map(() => [0, 0]);
+  const editor = createWarpEditor({ config, output: "left", baselineMesh: variableTdMesh("left") });
+  editor.setMode("grid");
+  const count = warp.grid.columns * warp.grid.rows;
+  const start = editor.getControlPoints();
+  expect(start).toHaveLength(count);
+  for (const t of warp.grid.rowPositions) for (const s of warp.grid.columnPositions) {
+    expect(start.some((point) => Math.abs(point.s - s) <= 1e-12 && Math.abs(point.t - t) <= 1e-12)).toBe(true);
+  }
+
+  editor.select(gridSelection("point", Math.floor(count / 2)));
+  expect(editor.setPosition("x", 960)).toBe(true);
+  expect(editor.getControlPoints()[Math.floor(count / 2)].x).toBeCloseTo(0.5, 10);
+  expect(editor.setPosition("y", 540)).toBe(true);
+  expect(editor.getControlPoints()[Math.floor(count / 2)].y).toBeCloseTo(0.5, 10);
+  expect(editor.undo()).toBe(true);
+  expect(editor.redo()).toBe(true);
+
+  editor.select(gridSelection("row", 1));
+  expect(editor.setPosition("x", 960)).toBe(true);
+  const rowStart = editor.getControlPoints().slice(warp.grid.columns, 2 * warp.grid.columns);
+  expect(rowStart.reduce((sum, point) => sum + point.x, 0) / rowStart.length).toBeCloseTo(0.5, 10);
+  editor.setStep("fine");
+  expect(editor.nudge("right")).toBe(true);
+  expect(editor.nudge("right", { coarse: true })).toBe(true);
+  const rowMoved = editor.getControlPoints().slice(warp.grid.columns, 2 * warp.grid.columns);
+  expect(rowMoved.reduce((sum, point) => sum + point.x, 0) / rowMoved.length).toBeCloseTo(0.5 + 1.25 / 1920, 9);
+
+  editor.select(gridSelection("point", Math.floor(count / 2)));
+  const beforeDrag = editor.getControlPoints()[Math.floor(count / 2)];
+  expect(editor.pointerStart({ x: 100, y: 100 })).toBe(true);
+  expect(editor.pointerMove({ x: 101, y: 101 })).toBe(true);
+  expect(editor.pointerEnd()).toBe(true);
+  const afterDrag = editor.getControlPoints()[Math.floor(count / 2)];
+  expect(afterDrag.x - beforeDrag.x).toBeCloseTo(1 / 1920, 9);
+  expect(afterDrag.y - beforeDrag.y).toBeCloseTo(1 / 1080, 9);
+  expect(editor.undo()).toBe(true);
+  expect(editor.redo()).toBe(true);
+
+  expect(editor.resetResiduals()).toBe(true);
+  expect(editor.getConfig().outputs.left.warp.grid.offsets.every(([x, y]) => x === 0 && y === 0)).toBe(true);
+  expect(editor.getControlPoints()).toEqual(start);
+});
+
+test.each([["left", 49], ["right", 56]])("changed %s TD capture exposes all %i default browser handles", (side, count) => {
+  const config = clone(DEFAULT_PROJECTION_CONFIG);
+  const warp = config.outputs[side].warp;
+  warp.baseline = { type: "tdMesh", assetId: "changed", sha256: "a".repeat(64), width: 1920, height: 1080, origin: "top-left" };
+  warp.grid.offsets = warp.grid.offsets.map(() => [0, 0]);
+  const editor = createWarpEditor({ config, output: side, baselineMesh: variableTdMesh(side) });
+  editor.setMode("grid");
+  expect(editor.getControlPoints()).toHaveLength(count);
+});
+
+test.each(["left", "right"])("dense accepted %s capture remains responsive to grid edits", (side) => {
+  const baselineMesh = JSON.parse(readFileSync(new URL(`../../public/projection-calibration/td-baselines/${side}.json`, import.meta.url), "utf8"));
+  const config = clone(DEFAULT_PROJECTION_CONFIG);
+  const warp = config.outputs[side].warp;
+  warp.baseline = { type: "tdMesh", assetId: `accepted-${side}`, sha256: "a".repeat(64), width: 1920, height: 1080, origin: "top-left" };
+  warp.grid.offsets = warp.grid.offsets.map(() => [0, 0]);
+  const editor = createWarpEditor({ config, output: side, baselineMesh });
+  editor.setMode("grid");
+  const count = warp.grid.columns * warp.grid.rows;
+  expect(editor.getControlPoints()).toHaveLength(count);
+  const index = Math.floor(count / 2);
+  editor.select(gridSelection("point", index));
+  const beforeNudge = editor.getControlPoints()[index];
+  expect(editor.nudge("right", { coarse: true })).toBe(true);
+  const afterNudge = editor.getControlPoints()[index];
+  expect(afterNudge.x - beforeNudge.x).toBeCloseTo(1 / 1920, 9);
+  expect(editor.undo()).toBe(true);
+  expect(editor.redo()).toBe(true);
+
+  const beforeDrag = editor.getControlPoints()[index];
+  expect(editor.pointerStart({ x: 100, y: 100 })).toBe(true);
+  expect(editor.pointerMove({ x: 101, y: 100.25 })).toBe(true);
+  expect(editor.pointerEnd()).toBe(true);
+  const afterDrag = editor.getControlPoints()[index];
+  expect(afterDrag.x - beforeDrag.x).toBeCloseTo(1 / 1920, 9);
+  expect(afterDrag.y - beforeDrag.y).toBeCloseTo(0.25 / 1080, 9);
 });
 
 test("close custom TD knots keep distinct exact destinations instead of matching a nearby source vertex", () => {

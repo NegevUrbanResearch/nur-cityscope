@@ -1,7 +1,11 @@
 import copy
+import hashlib
+import json
+import tempfile
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
+from pathlib import Path
 from unittest.mock import patch
 
 from django.db import connection, connections, transaction
@@ -110,6 +114,81 @@ class ProjectionConfigApiTests(TestCase):
         self.assertIn('outputs.left.baseline.assetId', response.json()['fields'])
         self.assertIn('outputs.left.baseline.sha256', response.json()['fields'])
         self.assertEqual(self.state(), original)
+
+    def test_variable_fixture_hashes_load_through_preview_and_save_without_changing_calibration_fields(self):
+        fixture_path = Path(__file__).parents[4] / 'otef-interactive/tests/fixtures/td-variable-grid.json'
+        fixture = json.loads(fixture_path.read_text(encoding='utf-8'))
+        initial = self.state()
+        config = copy.deepcopy(initial['config'])
+        original_pre = copy.deepcopy(config['pre'])
+        original_names = copy.deepcopy(config['namesWall'])
+        original_outputs = {side: copy.deepcopy(config['outputs'][side]) for side in ('left', 'right')}
+        grids = {
+            'left': {'columns': 3, 'rows': 3, 'columnPositions': [0.0, 0.42, 1.0], 'rowPositions': [0.0, 0.57, 1.0]},
+            'right': {'columns': 4, 'rows': 3, 'columnPositions': [0.0, 0.25, 0.68, 1.0], 'rowPositions': [0.0, 0.6, 1.0]},
+        }
+        for side in ('left', 'right'):
+            grid = grids[side]
+            grid['offsets'] = [[0.0, 0.0] for _ in range(grid['columns'] * grid['rows'])]
+            grid['offsets'][grid['columns'] + 1] = [0.012 if side == 'left' else -0.006, -0.009 if side == 'left' else 0.008]
+            config['outputs'][side]['warp']['grid'] = grid
+            config['outputs'][side]['post']['tx'] = 0.08 if side == 'left' else -0.07
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            assets = {}
+            for side in ('left', 'right'):
+                payload = json.dumps(fixture[side]['expectedMesh'], separators=(',', ':')).encode()
+                (root / f'{side}.json').write_bytes(payload)
+                assets[side] = {'assetId': f'variable-{side}', 'path': f'{side}.json',
+                                'sha256': hashlib.sha256(payload).hexdigest(),
+                                'logicalGrid': fixture[side]['expectedMesh']['logicalGrid']}
+                config['outputs'][side]['warp']['baseline'] = {
+                    'type': 'tdMesh', 'assetId': assets[side]['assetId'], 'sha256': assets[side]['sha256'],
+                    'width': 1920, 'height': 1080, 'origin': 'top-left',
+                }
+            (root / 'framing.json').write_text(json.dumps({'schemaVersion': 1}), encoding='utf-8')
+            (root / 'manifest.json').write_text(json.dumps({
+                'schemaVersion': 1, 'width': 1920, 'height': 1080, 'assets': assets,
+                'framing': {'path': 'framing.json', 'sha256': 'c' * 64},
+            }), encoding='utf-8')
+            with patch('backend.projection_config_service.projection_baseline_root', return_value=root):
+                preview = self.post_action('preview', initial['revision'], config=config)
+                self.assertEqual(preview.status_code, 200, preview.content)
+                self.assertEqual(preview.json()['config'], config)
+                self.assertEqual(preview.json()['config']['pre'], original_pre)
+                self.assertEqual(preview.json()['config']['namesWall'], original_names)
+                for side in ('left', 'right'):
+                    self.assertEqual(preview.json()['config']['outputs'][side]['crop'], original_outputs[side]['crop'])
+                    self.assertEqual(preview.json()['config']['outputs'][side]['post'], config['outputs'][side]['post'])
+                    self.assertEqual(preview.json()['config']['outputs'][side]['warp']['grid'], grids[side])
+                    self.assertEqual(preview.json()['config']['outputs'][side]['warp']['baseline']['sha256'], assets[side]['sha256'])
+
+                single_side_edit = copy.deepcopy(config)
+                single_side_edit['outputs']['left']['warp']['grid']['offsets'][4][0] += 0.004
+                edited = self.post_action('preview', preview.json()['revision'], config=single_side_edit)
+                self.assertEqual(edited.status_code, 200, edited.content)
+                self.assertEqual(edited.json()['config'], single_side_edit)
+                self.assertEqual(edited.json()['config']['outputs']['right'], config['outputs']['right'])
+                self.assertEqual(edited.json()['config']['pre'], original_pre)
+                self.assertEqual(edited.json()['config']['namesWall'], original_names)
+                saved = self.post_action('save', edited.json()['revision'], config=single_side_edit, presetId=None, name='Variable fixture')
+                self.assertEqual(saved.status_code, 200, saved.content)
+                self.assertEqual(saved.json()['config'], single_side_edit)
+                self.assertEqual(saved.json()['presets'][-1]['name'], 'Variable fixture')
+                self.assertEqual(saved.json()['presets'][-1]['config'], single_side_edit)
+                self.assertEqual(saved.json()['presets'][-1]['config']['outputs']['left']['warp']['grid'], single_side_edit['outputs']['left']['warp']['grid'])
+                self.assertEqual(saved.json()['presets'][-1]['config']['outputs']['right'], config['outputs']['right'])
+                loaded = self.post_action('load', saved.json()['revision'], presetId=saved.json()['selectedPresetId'])
+                self.assertEqual(loaded.status_code, 200, loaded.content)
+                self.assertEqual(loaded.json()['config'], saved.json()['presets'][-1]['config'])
+                self.assertEqual(self.state()['config'], saved.json()['presets'][-1]['config'])
+
+                changed = copy.deepcopy(config)
+                changed['outputs']['left']['warp']['baseline']['sha256'] = '0' * 64
+                rejected = self.post_action('preview', loaded.json()['revision'], config=changed)
+                self.assertEqual(rejected.status_code, 400)
+                self.assertIn('is not present in the trusted manifest', str(rejected.json()['fields']))
+                self.assertEqual(self.state(), loaded.json())
 
     def setUp(self):
         Table.objects.create(name="otef")

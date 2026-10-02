@@ -6,6 +6,19 @@ from .projection_warp_geometry import validate_warp_mesh
 from .projection_warp_schema import SIDES
 
 
+def _logical_count(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    return 2 <= value <= 65536 and int(value) == value
+
+
+def _valid_logical_grid(value):
+    return (isinstance(value, dict) and
+            _logical_count(value.get('columns')) and
+            _logical_count(value.get('rows')) and
+            value['columns'] * value['rows'] <= 65536)
+
+
 def read_projection_baseline_manifest(root):
     root = Path(root)
     manifest = json.loads((root / 'manifest.json').read_text(encoding='utf-8'))
@@ -18,7 +31,7 @@ def read_projection_baseline_manifest(root):
     if not isinstance(assets, dict):
         errors['assets'] = 'must be an object'
     else:
-        for side, expected in SIDES.items():
+        for side in SIDES:
             asset = assets.get(side)
             if not isinstance(asset, dict): errors[f'assets.{side}'] = 'is required'; continue
             if not isinstance(asset.get('assetId'), str) or not asset.get('assetId'): errors[f'assets.{side}.assetId'] = 'must be a non-empty string'
@@ -26,13 +39,8 @@ def read_projection_baseline_manifest(root):
             digest = str(asset.get('sha256', ''))
             digest = digest[7:] if digest.lower().startswith('sha256:') else digest
             if len(digest) != 64 or any(character not in '0123456789abcdefABCDEF' for character in digest): errors[f'assets.{side}.sha256'] = 'must be a 64-character SHA-256 hex digest'
-            logical_grid = asset.get('logicalGrid')
-            if not isinstance(logical_grid, dict):
-                errors[f'assets.{side}.logicalGrid.columns'] = f'must equal {expected["columns"]}'
-                errors[f'assets.{side}.logicalGrid.rows'] = f'must equal {expected["rows"]}'
-            else:
-                if logical_grid.get('columns') != expected['columns']: errors[f'assets.{side}.logicalGrid.columns'] = f'must equal {expected["columns"]}'
-                if logical_grid.get('rows') != expected['rows']: errors[f'assets.{side}.logicalGrid.rows'] = f'must equal {expected["rows"]}'
+            if not _valid_logical_grid(asset.get('logicalGrid')):
+                errors[f'assets.{side}.logicalGrid'] = 'must contain integer columns/rows >= 2 with at most 65536 points'
     framing = manifest.get('framing')
     if not isinstance(framing, dict):
         errors['framing'] = 'must be an object'

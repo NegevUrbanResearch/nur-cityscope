@@ -189,7 +189,9 @@ describe('pair mesh preparation', () => {
       type: 'tdMesh', assetId: assets[side].assetId, sha256: assets[side].sha256,
       width: 1920, height: 1080, origin: 'top-left',
     };
-    const manifest = { assets };
+    const manifest = { schemaVersion: 1, width: 1920, height: 1080,
+      assets: Object.fromEntries(Object.entries(assets).map(([side, asset]) => [side, { ...asset, path: `${side}.json` }])),
+      framing: { path: 'framing.json', sha256: 'c'.repeat(64) } };
     const loadBaseline = vi.fn(async (side) => ({ mesh: createIdentityProjectionMesh({ side }), manifest }));
     const readInputs = vi.fn(async () => { throw new Error('release metadata unavailable'); });
     const prepareWall = vi.fn(async () => { throw new Error('name worker must not run'); });
@@ -230,13 +232,15 @@ describe('pair mesh preparation', () => {
       type: 'tdMesh', assetId: assets[side].assetId, sha256: assets[side].sha256,
       width: 1920, height: 1080, origin: 'top-left',
     };
-    const manifest = { assets };
+    const manifest = { schemaVersion: 1, width: 1920, height: 1080,
+      assets: Object.fromEntries(Object.entries(assets).map(([side, asset]) => [side, { ...asset, path: `${side}.json` }])),
+      framing: { path: 'framing.json', sha256: 'c'.repeat(64) } };
     const loadBaseline = vi.fn(async (side) => ({ manifest, mesh: createIdentityProjectionMesh({ side }) }));
     expect(await prepareProjectionPairMeshes({ config: candidate, loadBaseline })).toMatchObject({ left: expect.any(Object), right: expect.any(Object) });
     expect(loadBaseline).toHaveBeenCalledTimes(2);
     await expect(prepareProjectionPairMeshes({ config: candidate, loadBaseline: async (side) => ({ manifest, mesh: { side } }) })).rejects.toThrow(/baseline rejected/);
     await expect(prepareProjectionPairMeshes({ config: candidate, loadBaseline: async (side) => ({
-      manifest: { assets, capture: side }, mesh: createIdentityProjectionMesh({ side }),
+      manifest: { ...manifest, capture: side }, mesh: createIdentityProjectionMesh({ side }),
     }) })).rejects.toThrow(/different manifests/);
   });
 });

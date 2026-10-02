@@ -3,6 +3,8 @@ import { readFileSync } from 'node:fs';
 import { createFullFrameProjectionMesh, createIdentityProjectionMesh, compareRenderedLayouts, evaluateWarpPoint, evaluateWarpMesh, interpolateGridOffset, validateWarpMesh } from '../../frontend/src/shared/projection-warp-geometry.js';
 import { migrateProjectionConfigToV7 } from '../../frontend/src/shared/projection-config-schema.js';
 import { compileSourceProbeState, prepareGridWarpMesh } from '../../frontend/src/shared/projection-grid-mesh.js';
+import { createBaselineSampler } from '../../frontend/src/shared/projection-baseline-sampler.js';
+import { variableTdMesh } from '../fixtures/td-variable-grid.js';
 
 const golden = JSON.parse(readFileSync(new URL('../../../nur-io/django_api/backend/tests/fixtures/projection-warp-golden.json', import.meta.url)));
 const warp = golden.identity.warp;
@@ -154,6 +156,65 @@ test('compact shared grid-render fixture fixes deterministic topology across run
     expect(result.vertices.some(p=>p.s===s&&p.t===t)).toBe(true);
 });
 
+test('uniform browser knots are prepared on changed TD captures', () => {
+  const source = variableTdMesh('left');
+  const config = migrateProjectionConfigToV7(JSON.parse(readFileSync(new URL('../../../nur-io/django_api/backend/tests/fixtures/projection-config-v1.json', import.meta.url))).valid);
+  const value = structuredClone(config.outputs.left.warp);
+  value.baseline = { type: 'tdMesh', assetId: 'changed', sha256: 'a'.repeat(64), width: 1920, height: 1080, origin: 'top-left' };
+  value.grid.offsets = value.grid.offsets.map(() => [0, 0]);
+  // Include disconnected vertices at every browser knot so eligibility must
+  // check triangle connectivity rather than mere coordinate presence.
+  for (const t of value.grid.rowPositions) for (const s of value.grid.columnPositions) {
+    source.vertices.push({ s, t, x: s, y: t, u: s, v: t });
+  }
+
+  const result = evaluateWarpMesh(source, value, { side: 'left', schemaVersion: 7 });
+  const sample = createBaselineSampler(source);
+  const connected = new Set(result.triangles);
+  for (const t of value.grid.rowPositions) for (const s of value.grid.columnPositions) {
+    const vertex = result.vertices.find((point, index) => connected.has(index) && Math.abs(point.s - s) <= 1e-12 && Math.abs(point.t - t) <= 1e-12);
+    expect(vertex).toBeDefined();
+    const baseline = sample(s, t);
+    const point = evaluateWarpPoint(baseline.x, baseline.y, value, s, t, { side: 'left', schemaVersion: 7 });
+    expect(point[0]).toBeCloseTo(vertex.x, 5);
+    expect(point[1]).toBeCloseTo(vertex.y, 5);
+  }
+  const malformed = structuredClone(source);
+  malformed.triangles[0] = malformed.vertices.length;
+  expect(() => evaluateWarpMesh(malformed, value, { side: 'left', schemaVersion: 7 })).toThrow(/invalid index/);
+  const missingDomain = variableTdMesh('left');
+  missingDomain.triangles = missingDomain.triangles.slice(0, 6);
+  expect(() => evaluateWarpMesh(missingDomain, value, { side: 'left', schemaVersion: 7 })).toThrow(/source point.*covered/);
+});
+
+test.each([
+  ['5x5', [0, .25, .5, .75, 1], [0, .25, .5, .75, 1]],
+  ['16x16', Array.from({ length: 16 }, (_, index) => index / 15), Array.from({ length: 16 }, (_, index) => index / 15)],
+  ['rectangular nonuniform', [0, .37, 1], [0, .2, .55, .78, 1]],
+])('changed sparse captures prepare %s browser layouts', (_name, columnPositions, rowPositions) => {
+  const source = variableTdMesh('left');
+  const config = migrateProjectionConfigToV7(JSON.parse(readFileSync(new URL('../../../nur-io/django_api/backend/tests/fixtures/projection-config-v1.json', import.meta.url))).valid);
+  const value = structuredClone(config.outputs.left.warp);
+  value.baseline = { type: 'tdMesh', assetId: 'changed', sha256: 'a'.repeat(64), width: 1920, height: 1080, origin: 'top-left' };
+  value.grid.columns = columnPositions.length; value.grid.rows = rowPositions.length;
+  value.grid.columnPositions = columnPositions; value.grid.rowPositions = rowPositions;
+  value.grid.offsets = Array.from({ length: columnPositions.length * rowPositions.length }, () => [0, 0]);
+  const result = evaluateWarpMesh(source, value, { side: 'left', schemaVersion: 7 });
+  const connected = new Set(result.triangles);
+  for (const t of rowPositions) for (const s of columnPositions) {
+    expect(result.vertices.some((point, index) => connected.has(index) && Math.abs(point.s - s) <= 1e-12 && Math.abs(point.t - t) <= 1e-12)).toBe(true);
+  }
+});
+
+test.each(['left', 'right'])('historical uniform %s TD capture keeps its prepared mesh exactly', (side) => {
+  const source = JSON.parse(readFileSync(new URL(`../../public/projection-calibration/td-baselines/${side}.json`, import.meta.url), 'utf8'));
+  const config = migrateProjectionConfigToV7(JSON.parse(readFileSync(new URL('../../../nur-io/django_api/backend/tests/fixtures/projection-config-v1.json', import.meta.url))).valid);
+  const value = structuredClone(config.outputs[side].warp);
+  value.baseline = { type: 'tdMesh', assetId: 'historical', sha256: 'a'.repeat(64), width: 1920, height: 1080, origin: 'top-left' };
+  const legacy = structuredClone(value); delete legacy.grid.columnPositions; delete legacy.grid.rowPositions;
+  expect(evaluateWarpMesh(source, value, { side, schemaVersion: 7 })).toEqual(evaluateWarpMesh(source, legacy, { side }));
+});
+
 test('sampled render error compares double targets with interpolated Float32 vertices',()=>{
   const fixture=JSON.parse(readFileSync(new URL('../../../nur-io/django_api/backend/tests/fixtures/projection-grid-render-parity.json',import.meta.url)));
   fixture.warp.grid.offsets=fixture.warp.grid.offsets.map(()=>[.123456,.031415]);
@@ -215,6 +276,27 @@ test('nonuniform residual grids prepare both trusted dense TD outputs within sam
     for(const t of warp.grid.rowPositions)for(const s of positions)expect(rendered.vertices.some(p=>p.s===s&&p.t===t)).toBe(true);
     expect(warp).toEqual(before);
   }
+});
+
+test('zero corrections preserve source mapping and UVs at independent samples on variable TD meshes', () => {
+  const warp = migrateProjectionConfigToV7(JSON.parse(readFileSync(new URL('../../../nur-io/django_api/backend/tests/fixtures/projection-config-v1.json', import.meta.url))).valid).outputs.left.warp;
+  const source = variableTdMesh('left');
+  warp.baseline = { type: 'tdMesh', assetId: 'variable-left', sha256: 'a'.repeat(64), width: 1920, height: 1080, origin: 'top-left' };
+  const result = evaluateWarpMesh(source, warp, { side: 'left', schemaVersion: 7 });
+  const preparedSampler = createBaselineSampler(result);
+  const samples = [[0,0],[.5,1/3],[1,1],[.25,.5]];
+  for (const [s,t] of samples) {
+    const expected = createBaselineSampler(source)(s,t);
+    const rendered = preparedSampler(s,t);
+    expect(rendered.x).toBeCloseTo(expected.x, 11);
+    expect(rendered.y).toBeCloseTo(expected.y, 11);
+    expect(rendered.u).toBeCloseTo(expected.u, 11);
+    expect(rendered.v).toBeCloseTo(expected.v, 11);
+    const actual = evaluateWarpPoint(expected.x, expected.y, warp, s, t, { side: 'left', schemaVersion: 7, mesh: source });
+    expect(actual[0]).toBeCloseTo(expected.x, 11);
+    expect(actual[1]).toBeCloseTo(expected.y, 11);
+  }
+  expect(result.validationProfile).toBe('relative-source-v1');
 });
 
 test('rendered-layout comparison reports deterministic sampled pixel differences',()=>{

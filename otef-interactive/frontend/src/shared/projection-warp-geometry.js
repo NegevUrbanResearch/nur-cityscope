@@ -119,6 +119,19 @@ function isLegacyV7Grid(grid, side) {
     axis.length === count && axis.every((value, index) => Math.abs(value - index / (count - 1)) <= 1e-12));
 }
 
+function hasGridControlVertices(mesh, grid) {
+  if (!Array.isArray(mesh?.vertices) || !Array.isArray(mesh?.triangles)) return false;
+  const connected = new Set(mesh.triangles);
+  return grid.rowPositions.every((t) => grid.columnPositions.every((s) =>
+    mesh.vertices.some((point, index) => connected.has(index) &&
+      Math.abs(point.s - s) <= 1e-12 && Math.abs(point.t - t) <= 1e-12)));
+}
+
+function requiresGridPreparation(mesh, warp, side) {
+  return !isLegacyV7Grid(warp.grid, side) ||
+    (warp.baseline?.type === 'tdMesh' && !hasGridControlVertices(mesh, warp.grid));
+}
+
 function meshError(mesh) {
   if (!mesh || mesh.width !== 1920 || mesh.height !== 1080) return 'projection mesh must be 1920x1080';
   if (mesh.validationProfile !== undefined && mesh.validationProfile !== 'relative-source-v1') return 'projection mesh validation profile is unknown';
@@ -197,12 +210,14 @@ export function evaluateWarpMesh(mesh, warp, { side = null, schemaVersion = null
   const hasAxes = Object.hasOwn(warp?.grid || {}, 'columnPositions') || Object.hasOwn(warp?.grid || {}, 'rowPositions');
   const isV7 = schemaVersion === 7 || hasAxes;
   const resolvedSide = side || (isV7 ? null : mesh?.side || sideForWarp(warp));
+  let sourceValidated = false;
   if (isV7) {
     if (!resolvedSide) throw new Error('v7 warp evaluation requires explicit side');
     const errors = validateProjectionWarpV7(warp, resolvedSide);
     if (Object.keys(errors).length) throw new Error(`invalid warp: ${Object.entries(errors).map(([path, message]) => `${path} ${message}`).join('; ')}`);
     if (warp.enabled === false) return validateWarpMesh(createFullFrameProjectionMesh({ side: resolvedSide }));
-    if (!isLegacyV7Grid(warp.grid, resolvedSide)) {
+    if (mesh) { validateWarpMesh(mesh); sourceValidated = true; }
+    if (requiresGridPreparation(mesh, warp, resolvedSide)) {
       if (!mesh && warp.baseline?.type === 'identity') mesh = createFullFrameProjectionMesh({ side: resolvedSide });
       return validateWarpMesh(prepareGridWarpMesh(mesh, warp, { side: resolvedSide }));
     }
@@ -214,7 +229,7 @@ export function evaluateWarpMesh(mesh, warp, { side = null, schemaVersion = null
   }
   if (warp?.enabled === false) return validateWarpMesh(createFullFrameProjectionMesh({ side: resolvedSide || mesh?.side || sideForWarp(warp) }));
   if (!mesh && warp?.baseline?.type === 'identity') mesh = createIdentityProjectionMesh({ side: resolvedSide || sideForWarp(warp) });
-  validateWarpMesh(mesh);
+  if (!sourceValidated) validateWarpMesh(mesh);
   const evaluate = createEvaluator(warp, resolvedSide);
   const result = { ...mesh, vertices: mesh.vertices.map((point) => {
     const [x, y] = evaluate(point.x, point.y, point.s, point.t);

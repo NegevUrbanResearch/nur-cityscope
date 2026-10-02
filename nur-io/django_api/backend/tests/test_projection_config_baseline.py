@@ -15,7 +15,7 @@ class ProjectionBaselineInstallerTests(TestCase):
     def setUp(self):
         self.table = Table.objects.create(name='otef')
 
-    def asset_root(self):
+    def asset_root(self, grids=None):
         temp = TemporaryDirectory()
         self.addCleanup(temp.cleanup)
         root = Path(temp.name) / 'td-baselines'
@@ -35,12 +35,15 @@ class ProjectionBaselineInstallerTests(TestCase):
         (root.parent / 'td-source-config.json').write_bytes(framing_bytes)
         assets = {}
         for side in ('left', 'right'):
-            payload = json.dumps(create_identity_projection_mesh(side), separators=(',', ':')).encode()
+            grid = (grids or {}).get(side, {'columns': 7 if side == 'left' else 8, 'rows': 7})
+            mesh = create_identity_projection_mesh(side)
+            mesh['logicalGrid'] = grid
+            payload = json.dumps(mesh, separators=(',', ':')).encode()
             (root / f'{side}.json').write_bytes(payload)
             assets[side] = {
                 'assetId': f'test-{side}', 'path': f'{side}.json',
                 'sha256': hashlib.sha256(payload).hexdigest(),
-                'logicalGrid': {'columns': 7 if side == 'left' else 8, 'rows': 7},
+                'logicalGrid': grid,
             }
         manifest = {'schemaVersion': 1, 'width': 1920, 'height': 1080, 'assets': assets,
                     'framing': {'path': '../td-source-config.json', 'sha256': hashlib.sha256(framing_bytes).hexdigest()}}
@@ -75,6 +78,26 @@ class ProjectionBaselineInstallerTests(TestCase):
             call_command('install_otef_td_baseline', table='otef', asset_root=str(root))
         row.refresh_from_db()
         self.assertEqual(len(row.presets), 2)
+
+    def test_install_accepts_changed_capture_metadata_without_resizing_browser_defaults(self):
+        root = self.asset_root({'left': {'columns': 3, 'rows': 4}, 'right': {'columns': 5, 'rows': 3}})
+        row = OTEFProjectionCalibration.objects.create(table=self.table)
+        row.revision = 8
+        row.selected_preset_id = 'working-selection'
+        row.save(update_fields=['revision', 'selected_preset_id'])
+        working = row.working_config
+
+        call_command('install_otef_td_baseline', table='otef', asset_root=str(root))
+
+        row.refresh_from_db()
+        self.assertEqual(row.revision, 8)
+        self.assertEqual(row.selected_preset_id, 'working-selection')
+        self.assertEqual(row.working_config, working)
+        installed = next(p for p in row.presets if p['id'] == TD_MIGRATION_PRESET_ID)
+        self.assertEqual(installed['config']['outputs']['left']['warp']['grid']['columns'], 7)
+        self.assertEqual(installed['config']['outputs']['left']['warp']['grid']['rows'], 7)
+        self.assertEqual(installed['config']['outputs']['right']['warp']['grid']['columns'], 8)
+        self.assertEqual(installed['config']['outputs']['right']['warp']['grid']['rows'], 7)
 
     def test_wrong_mesh_grid_with_matching_hash_is_rejected_without_row_change(self):
         root = self.asset_root()

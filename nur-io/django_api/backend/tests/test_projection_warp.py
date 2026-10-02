@@ -9,13 +9,82 @@ from backend.projection_warp_assets import load_trusted_projection_asset, read_p
 from backend.projection_warp_geometry import create_full_frame_projection_mesh, evaluate_warp_mesh, evaluate_warp_point, interpolate_grid_offset, validate_warp_mesh
 from backend.projection_warp_schema import migrate_projection_config_to_v2, validate_projection_config_v2, validate_projection_warp
 from backend.projection_config_schema import validate_projection_config
+from backend.projection_baseline_sampler import create_baseline_sampler
 
 
 GOLDEN = json.loads((Path(__file__).parent / 'fixtures' / 'projection-warp-golden.json').read_text())
 V1 = json.loads((Path(__file__).parent / 'fixtures/projection-config-v1.json').read_text())['valid']
+VARIABLE_TD = json.loads((Path(__file__).parents[4] / 'otef-interactive/tests/fixtures/td-variable-grid.json').read_text())
 
 
 class ProjectionWarpTests(SimpleTestCase):
+    def test_uniform_browser_knots_are_prepared_on_changed_td_captures(self):
+        from backend.projection_warp_schema import migrate_projection_config_to_v7
+        source = copy.deepcopy(VARIABLE_TD['left']['expectedMesh'])
+        warp = migrate_projection_config_to_v7(V1)['outputs']['left']['warp']
+        warp['baseline'] = {'type': 'tdMesh', 'assetId': 'changed', 'sha256': 'a' * 64,
+                            'width': 1920, 'height': 1080, 'origin': 'top-left'}
+        warp['grid']['offsets'] = [[0, 0] for _ in warp['grid']['offsets']]
+        for t in warp['grid']['rowPositions']:
+            for s in warp['grid']['columnPositions']:
+                source['vertices'].append({'s': s, 't': t, 'x': s, 'y': t, 'u': s, 'v': t})
+
+        result = evaluate_warp_mesh(source, warp, side='left', schema_version=7)
+        sample = create_baseline_sampler(source)
+        connected = set(result['triangles'])
+        for t in warp['grid']['rowPositions']:
+            for s in warp['grid']['columnPositions']:
+                vertex = next(point for index, point in enumerate(result['vertices'])
+                              if index in connected and abs(point['s'] - s) <= 1e-12 and abs(point['t'] - t) <= 1e-12)
+                from backend.projection_warp_geometry import evaluate_warp_point
+                baseline = sample(s, t)
+                point = evaluate_warp_point(baseline['x'], baseline['y'], warp, s, t, side='left', schema_version=7)
+                self.assertAlmostEqual(point[0], vertex['x'], places=5)
+                self.assertAlmostEqual(point[1], vertex['y'], places=5)
+        malformed = copy.deepcopy(source)
+        malformed['triangles'][0] = len(malformed['vertices'])
+        with self.assertRaisesRegex(ValueError, 'invalid index'):
+            evaluate_warp_mesh(malformed, warp, side='left', schema_version=7)
+        missing_domain = copy.deepcopy(VARIABLE_TD['left']['expectedMesh'])
+        missing_domain['triangles'] = missing_domain['triangles'][:6]
+        with self.assertRaisesRegex(ValueError, 'source point.*covered'):
+            evaluate_warp_mesh(missing_domain, warp, side='left', schema_version=7)
+
+    def test_changed_sparse_capture_prepares_5x5_16x16_and_rectangular_layouts(self):
+        from backend.projection_warp_schema import migrate_projection_config_to_v7
+        layouts = (
+            ('5x5', [0, .25, .5, .75, 1], [0, .25, .5, .75, 1]),
+            ('16x16', [index / 15 for index in range(16)], [index / 15 for index in range(16)]),
+            ('rectangular nonuniform', [0, .37, 1], [0, .2, .55, .78, 1]),
+        )
+        for name, xs, ys in layouts:
+            with self.subTest(layout=name):
+                source = copy.deepcopy(VARIABLE_TD['left']['expectedMesh'])
+                warp = migrate_projection_config_to_v7(V1)['outputs']['left']['warp']
+                warp['baseline'] = {'type': 'tdMesh', 'assetId': 'changed', 'sha256': 'a' * 64,
+                                    'width': 1920, 'height': 1080, 'origin': 'top-left'}
+                warp['grid'].update(columns=len(xs), rows=len(ys), columnPositions=xs, rowPositions=ys,
+                                    offsets=[[0, 0] for _ in range(len(xs) * len(ys))])
+                result = evaluate_warp_mesh(source, warp, side='left', schema_version=7)
+                connected = set(result['triangles'])
+                for t in ys:
+                    for s in xs:
+                        self.assertTrue(any(index in connected and abs(point['s'] - s) <= 1e-12 and abs(point['t'] - t) <= 1e-12
+                                            for index, point in enumerate(result['vertices'])))
+
+    def test_historical_uniform_td_captures_keep_legacy_mesh_exactly(self):
+        from backend.projection_warp_schema import migrate_projection_config_to_v7
+        for side in ('left', 'right'):
+            with self.subTest(side=side):
+                source = json.loads((Path(__file__).parents[4] / f'otef-interactive/public/projection-calibration/td-baselines/{side}.json').read_text())
+                warp = migrate_projection_config_to_v7(V1)['outputs'][side]['warp']
+                warp['baseline'] = {'type': 'tdMesh', 'assetId': 'historical', 'sha256': 'a' * 64,
+                                    'width': 1920, 'height': 1080, 'origin': 'top-left'}
+                legacy = copy.deepcopy(warp)
+                legacy['grid'].pop('columnPositions'); legacy['grid'].pop('rowPositions')
+                self.assertEqual(evaluate_warp_mesh(source, warp, side=side, schema_version=7),
+                                 evaluate_warp_mesh(source, legacy, side=side))
+
     def test_migrates_v1_framing_losslessly(self):
         migrated = migrate_projection_config_to_v2(V1)
         self.assertEqual(migrated['schemaVersion'], 2)

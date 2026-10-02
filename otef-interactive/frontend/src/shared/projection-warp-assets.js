@@ -2,6 +2,13 @@ import { validateWarpMesh } from './projection-warp-geometry.js';
 import { SIDES } from './projection-warp-schema.js';
 
 const HASH = /^[0-9a-f]{64}$/i;
+const validLogicalCount = (value) => Number.isSafeInteger(value) && value >= 2;
+
+function validLogicalGrid(grid) {
+  return Boolean(grid && typeof grid === 'object' && !Array.isArray(grid) &&
+    validLogicalCount(grid.columns) && validLogicalCount(grid.rows) &&
+    grid.columns * grid.rows <= 65536);
+}
 
 export function validateProjectionBaselineManifest(manifest) {
   const errors = {};
@@ -19,9 +26,7 @@ export function validateProjectionBaselineManifest(manifest) {
     if (typeof asset.assetId !== 'string' || !asset.assetId) errors[`assets.${side}.assetId`] = 'must be a non-empty string';
     if (typeof asset.path !== 'string' || !asset.path) errors[`assets.${side}.path`] = 'must be a non-empty string';
     if (typeof asset.sha256 !== 'string' || !HASH.test(asset.sha256.replace(/^sha256:/i, ''))) errors[`assets.${side}.sha256`] = 'must be a 64-character SHA-256 hex digest';
-    const expected = SIDES[side];
-    if (asset.logicalGrid?.columns !== expected.columns) errors[`assets.${side}.logicalGrid.columns`] = `must equal ${expected.columns}`;
-    if (asset.logicalGrid?.rows !== expected.rows) errors[`assets.${side}.logicalGrid.rows`] = `must equal ${expected.rows}`;
+    if (!validLogicalGrid(asset.logicalGrid)) errors[`assets.${side}.logicalGrid`] = 'must contain integer columns/rows >= 2 with at most 65536 points';
   }
   if (!manifest.framing || typeof manifest.framing !== 'object' || Array.isArray(manifest.framing)) {
     errors.framing = 'must be an object';
@@ -36,6 +41,11 @@ export function validateProjectionBaselineMesh(mesh, { side, manifest = null, ba
   const errors = {};
   try { validateWarpMesh(mesh); } catch (error) { errors.mesh = error.message; return errors; }
   if (side && mesh.side !== side) errors.side = 'does not match the requested span';
+  if (manifest) {
+    const manifestErrors = validateProjectionBaselineManifest(manifest);
+    for (const [path, message] of Object.entries(manifestErrors)) errors[`manifest.${path}`] = message;
+    if (Object.keys(manifestErrors).length) return errors;
+  }
   if (manifest && side) {
     const asset = manifest.assets?.[side];
     if (!asset) errors.asset = 'is not present in the trusted manifest';

@@ -8,7 +8,8 @@ import {
   validateProjectionConfigV7,
 } from '../../frontend/src/shared/projection-warp-schema.js';
 import { validateProjectionConfig, migrateProjectionConfigToV7 } from '../../frontend/src/shared/projection-config-schema.js';
-import { validateProjectionBaselineManifest } from '../../frontend/src/shared/projection-warp-assets.js';
+import { validateProjectionBaselineManifest, validateProjectionBaselineMesh } from '../../frontend/src/shared/projection-warp-assets.js';
+import { createIdentityProjectionMesh } from '../../frontend/src/shared/projection-warp-geometry.js';
 
 const fixture = JSON.parse(readFileSync(new URL('../../../nur-io/django_api/backend/tests/fixtures/projection-config-v1.json', import.meta.url))).valid;
 const golden = JSON.parse(readFileSync(new URL('../../../nur-io/django_api/backend/tests/fixtures/projection-warp-golden.json', import.meta.url)));
@@ -129,4 +130,66 @@ test('v7 accepts count boundaries and arbitrarily close increasing source knots 
 test('manifest metadata rejects malformed objects and missing framing hash', () => {
   expect(validateProjectionBaselineManifest({ schemaVersion: 1, width: 1920, height: 1080, assets: [], framing: [] })).toMatchObject({ assets: 'must be an object', framing: 'must be an object' });
   expect(validateProjectionBaselineManifest({ schemaVersion: 1, width: 1920, height: 1080, assets: {}, framing: { path: 'framing.json' } })).toHaveProperty('framing.sha256');
+});
+
+function baselineManifest(grid) {
+  return {
+    schemaVersion: 1, width: 1920, height: 1080,
+    assets: Object.fromEntries(['left', 'right'].map((side) => [side, {
+      assetId: `fixture-${side}`, path: `${side}.json`, sha256: 'a'.repeat(64), logicalGrid: structuredClone(grid),
+    }])),
+    framing: { path: 'framing.json', sha256: 'b'.repeat(64) },
+  };
+}
+
+test('manifest accepts independent changed logical counts on both sides', () => {
+  const manifest = baselineManifest({ columns: 3, rows: 4 });
+  manifest.assets.right.logicalGrid = { columns: 5, rows: 3 };
+  expect(validateProjectionBaselineManifest(manifest)).toEqual({});
+});
+
+test('manifest retains historical 7x7 and 8x7 metadata acceptance', () => {
+  expect(validateProjectionBaselineManifest(baselineManifest({ columns: 7, rows: 7 }))).toEqual({});
+});
+
+test('manifest still requires both side asset references', () => {
+  const manifest = baselineManifest({ columns: 3, rows: 4 });
+  delete manifest.assets.right;
+  expect(validateProjectionBaselineManifest(manifest)).toHaveProperty('assets.right', 'is required');
+});
+
+test('mesh logical metadata must still match its trusted manifest', () => {
+  const manifest = baselineManifest({ columns: 3, rows: 4 });
+  const mesh = createIdentityProjectionMesh({ side: 'left' });
+  mesh.logicalGrid = { columns: 4, rows: 4 };
+  expect(validateProjectionBaselineMesh(mesh, {
+    side: 'left', manifest,
+    baseline: { assetId: 'fixture-left', sha256: 'a'.repeat(64) },
+  })).toHaveProperty('logicalGrid', 'does not match the trusted manifest');
+});
+
+test.each([
+  ['missing object', undefined],
+  ['array', []],
+  ['boolean', { columns: true, rows: 3 }],
+  ['fraction', { columns: 2.5, rows: 3 }],
+  ['null count', { columns: null, rows: 3 }],
+  ['count below two', { columns: 1, rows: 3 }],
+  ['too many points', { columns: 257, rows: 256 }],
+])('manifest rejects %s logical metadata', (_name, grid) => {
+  const manifest = baselineManifest(grid);
+  expect(validateProjectionBaselineManifest(manifest)).toHaveProperty('assets.left.logicalGrid');
+  expect(validateProjectionBaselineManifest(manifest)).toHaveProperty('assets.right.logicalGrid');
+});
+
+test('manifest rejects arrays even when direct JS objects give them named counts', () => {
+  const manifest = baselineManifest({ columns: 3, rows: 4 });
+  for (const side of ['left', 'right']) {
+    const grid = [];
+    grid.columns = 3;
+    grid.rows = 4;
+    manifest.assets[side].logicalGrid = grid;
+  }
+  expect(validateProjectionBaselineManifest(manifest)).toHaveProperty('assets.left.logicalGrid');
+  expect(validateProjectionBaselineManifest(manifest)).toHaveProperty('assets.right.logicalGrid');
 });
