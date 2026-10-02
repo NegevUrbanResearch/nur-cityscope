@@ -17,3 +17,39 @@ it('release slider conflict override uses the slider candidate rather than its o
 it('a target switch remains blocked even if the original target returns',()=>{ const {c,onField}=setup(1); input(c,'2'); c.update({value:3,resolvedPath:'other.rotation'}); c.update({value:1,resolvedPath:descriptor.path}); expect(c.wrap.querySelector('[data-action="numeric-use-mine"]').disabled).toBe(true); c.wrap.querySelector('[data-action="numeric-use-mine"]').click(); expect(onField).not.toHaveBeenCalled(); });
 it('sign-only selection starts magnitude editing so leaving the field commits it',()=>{ const {c,onField}=setup(3); c.wrap.querySelector('[data-action="numeric-sign"]').click(); expect(document.activeElement).toBe(c.number); c.number.blur(); expect(onField).toHaveBeenCalledWith(descriptor.path,'-3','number',{baseValue:3,resolvedPath:descriptor.path,override:false}); });
 it('changing only the sign preserves the exact baseline magnitude',()=>{ const {c,onField}=setup(1.23456); c.wrap.querySelector('[data-action="numeric-sign"]').click(); c.finish(); expect(onField).toHaveBeenCalledWith(descriptor.path,'-1.23456','number',{baseValue:1.23456,resolvedPath:descriptor.path,override:false}); });
+
+it('retains a negative sign at zero after blur and uses it when editing resumes', () => {
+  const { c, onField } = setup(0);
+  const sign = c.wrap.querySelector('[data-action="numeric-sign"]');
+  sign.click();
+  c.number.blur();
+  expect(onField).not.toHaveBeenCalled();
+  expect(sign.textContent).toBe('−');
+  c.number.focus(); input(c, '2,5'); c.finish();
+  expect(onField).toHaveBeenCalledWith(descriptor.path, '-2.5', 'number', { baseValue: 0, resolvedPath: descriptor.path, override: false });
+});
+
+it('retains the selected zero sign across ordinary same-target render updates', () => {
+  const { c, onField } = setup(0);
+  const sign = c.wrap.querySelector('[data-action="numeric-sign"]');
+  sign.click(); c.number.blur();
+  c.update({ value: 0, resolvedPath: descriptor.path });
+  expect(sign.textContent).toBe('−');
+  expect(onField).not.toHaveBeenCalled();
+  input(c, '2,5'); c.finish();
+  expect(onField).toHaveBeenCalledWith(descriptor.path, '-2.5', 'number', { baseValue: 0, resolvedPath: descriptor.path, override: false });
+});
+
+it('cancel and a new zero target reset the selected sign while nonzero updates derive their own sign', () => {
+  const { c, onField } = setup(0);
+  const sign = c.wrap.querySelector('[data-action="numeric-sign"]');
+  sign.click(); c.number.blur(); c.cancel();
+  expect(sign.textContent).toBe('+');
+  sign.click(); c.number.blur(); c.update({ value: 0, resolvedPath: 'other.rotation' });
+  expect(sign.textContent).toBe('+');
+  c.update({ value: -3, resolvedPath: 'other.rotation' });
+  expect(sign.textContent).toBe('−'); expect(c.number.value).toBe('3.00');
+  c.update({ value: 4, resolvedPath: 'other.rotation' });
+  expect(sign.textContent).toBe('+'); expect(c.number.value).toBe('4.00');
+  expect(onField).not.toHaveBeenCalled();
+});

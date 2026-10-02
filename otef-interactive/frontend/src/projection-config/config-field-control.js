@@ -104,9 +104,9 @@ export function renderField(doc, descriptor, onField, onNudge, compact = false, 
     useLatest.hidden = useMine.hidden = result.kind !== 'conflict';
     useMine.disabled = targetChanged || result.resolvedPath !== latest.resolvedPath;
   };
-  const refresh = () => {
+  const refresh = (resetSign = false) => {
     const shown = displayValue(descriptor, latest.value);
-    sign = Number(latest.value) < 0 ? -1 : 1;
+    if (resetSign || Number(latest.value) !== 0) sign = Number(latest.value) < 0 ? -1 : 1;
     range.value = shown;
     if (number) number.value = signed && shown ? formatInputValue(Math.abs(Number(shown))) : shown;
     value.textContent = `${shown}${descriptor.unit ? ` ${descriptor.unit}` : ''}`;
@@ -141,7 +141,7 @@ export function renderField(doc, descriptor, onField, onNudge, compact = false, 
     renderResult(result.kind === 'commit' ? session.candidate() : result);
     return result;
   };
-  const cancel = () => { session.cancel(); targetChanged = false; externalError = ''; refresh(); };
+  const cancel = () => { session.cancel(); targetChanged = false; externalError = ''; refresh(true); };
   listen(number, 'input', () => markInput(number.value));
   listen(number, 'blur', () => finish());
   listen(number, 'change', () => finish());
@@ -163,10 +163,11 @@ export function renderField(doc, descriptor, onField, onNudge, compact = false, 
   return { wrap, range, number, value, error,
     update({ value: nextValue, resolvedPath = descriptor.path, error: nextError = '' }) {
       if (disposed) return;
+      const resolvedChanged = latest.resolvedPath !== resolvedPath;
       if (session.isDirty() && session.candidate().resolvedPath !== resolvedPath) targetChanged = true;
       latest = { value: nextValue, resolvedPath }; externalError = String(nextError || ''); session.sync(latest);
       range.value = displayValue(descriptor, nextValue);
-      if (!session.isDirty()) refresh(); else renderResult();
+      if (!session.isDirty()) refresh(resolvedChanged); else renderResult();
     },
     finish, cancel,
     dispose() { cancel(); disposed = true; listeners.forEach(remove => remove()); },
