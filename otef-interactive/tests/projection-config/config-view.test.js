@@ -47,6 +47,14 @@ test("warp handle outlines stay constant in CSS pixels while zooming", () => {
   expect(handleRule).toContain("vector-effect: non-scaling-stroke");
 });
 
+test("warp coordinate wrappers stack both axes and fit sign, magnitude and units", () => {
+  const css = readFileSync(resolve(import.meta.dirname, "../../frontend/src/projection-config/config.css"), "utf8");
+  const container = css.match(/\.warp-numeric\s*\{([^}]*)\}/)?.[1] ?? "";
+  expect(container).toMatch(/grid-template-columns:\s*minmax\(0, 1fr\)/);
+  expect(css).toMatch(/\.warp-numeric \.config-field-row:has\(\.numeric-sign\)\s*\{[^}]*grid-template-columns:\s*48px minmax\(0, 1fr\) auto/s);
+  expect(css).toMatch(/\.warp-numeric \.config-field-row input\[data-input=number\]\s*\{[^}]*min-width:\s*0[^}]*width:\s*100%/s);
+});
+
 test("Grid layout inputs have at least 44 CSS pixel touch targets", () => {
   const css = readFileSync(resolve(import.meta.dirname, "../../frontend/src/projection-config/config.css"), "utf8");
   const fieldRule = css.match(/\.warp-grid-layout-field input\s*\{([^}]*)\}/)?.[1] ?? "";

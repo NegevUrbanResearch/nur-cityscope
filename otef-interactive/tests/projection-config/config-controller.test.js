@@ -2070,6 +2070,11 @@ describe("projection config controller", () => {
     input.value = '999999'; input.dispatch('input'); input.dispatch('change');
     expect(client.getState().draft.outputs.left.warp).toEqual(before);
     expect(input.attributes['aria-invalid']).toBe('true');
+    const gridOpen = find(root, node => node.dataset?.action === 'warp-editor-open' && node.parentElement?.dataset?.node === 'left-grid');
+    gridOpen.dispatch('click');
+    expect(find(root, node => node.className === 'warp-editor-dialog').dataset.mode).toBe('keystone');
+    expect(find(root, node => node.className === 'warp-inspector').hidden).toBe(false);
+    expect(client.getState().draft.outputs.left.warp).toEqual(before);
     find(root, node => node.dataset?.action === 'warp-editor-close').dispatch('click');
     expect(find(root, node => node.className === 'warp-editor-dialog').hidden).toBe(false);
     input.dispatch('keydown', { key: 'Escape', preventDefault() {}, stopPropagation() {} });

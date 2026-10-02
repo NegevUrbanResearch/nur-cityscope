@@ -221,7 +221,13 @@ h2, h3 { margin: 0 0 10px; }
 .warp-handle.selected { fill: #ffd166; stroke: #fff3c4; }
 .warp-handle:focus-visible { outline: 3px solid #fff3c4; outline-offset: 4px; }
 .warp-selection-status { height: 36px; min-height: 36px; margin: 8px 0; overflow: auto; color: var(--config-muted); font-size: 13px; line-height: 18px; overflow-wrap: anywhere; }
-.warp-numeric { display: grid; grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 8px; margin-top: 6px; color: var(--config-muted); font-size: 14px; }
+.warp-numeric { display: grid; grid-template-columns: minmax(0, 1fr); align-items: center; gap: 8px; margin-top: 6px; color: var(--config-muted); font-size: 14px; }
+.warp-numeric .config-field { min-width: 0; margin-top: 0; }
+.warp-numeric .config-field-label, .warp-numeric .config-field-error { overflow-wrap: anywhere; }
+.warp-numeric .config-field-row:has(.numeric-sign) { grid-template-columns: 48px minmax(0, 1fr) auto; }
+.warp-numeric .config-field-row input[data-input=number] { min-width: 0; width: 100%; min-height: 48px; }
+.warp-numeric .numeric-sign { min-height: 48px; }
+.warp-numeric .config-field > button { max-width: 100%; white-space: normal; }
 .warp-numeric input { min-height: 48px; width: 100%; padding: 5px; font-variant-numeric: tabular-nums; }
 .warp-position-error { grid-column: 1 / -1; min-width: 0; overflow-wrap: anywhere; }
 .warp-arrows { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 8px; }
