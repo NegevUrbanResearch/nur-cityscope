@@ -15,7 +15,6 @@ import { sha256Hex } from "../../frontend/src/shared/sha256-hex.js";
 const FIXTURE = `
   <div class="app">
     <button type="button" id="homeBtn" hidden></button>
-    <button type="button" id="homeLayersBtn" aria-label="Layers"></button>
     <button type="button" id="fullscreenBtn"></button>
     <p id="fullscreenStatus" hidden></p>
     <button type="button" id="localeHe"></button>
@@ -58,7 +57,6 @@ const FIXTURE = `
         <div id="nextChoices" hidden></div>
       </div>
     </section>
-    <div id="staffPackMenus" hidden></div>
   </div>
 `;
 
@@ -640,44 +638,14 @@ describe("NLI staff Home transitions", () => {
     expect(h.layers.at(-1)).not.toEqual([...HOME_LAYER_IDS]);
   });
 
-  test("Home layer sheet opens and closes without resetting the scene, then closes on navigation", async () => {
+  test("Home has no layer control button or sheet", async () => {
     setLocale("en", { persist: false });
     session = mount();
     await bootRemote(session);
-    const { h } = session;
-    const narrativesBefore = h.narratives.length;
-    const layersBefore = h.layers.length;
-
-    el("homeLayersBtn").click();
+    expect(el("homeLayersBtn")).toBeNull();
+    expect(el("staffPackMenus")).toBeNull();
     expect(activeScreen()).toBe("home");
-    expect(el("staffPackMenus").hidden).toBe(false);
-    expect(el("staffPackMenus").querySelector('[role="dialog"]')).toBeTruthy();
-    el("staffPackMenus").querySelector(".layer-sheet-close").click();
-    expect(el("staffPackMenus").hidden).toBe(true);
-    expect(h.narratives).toHaveLength(narrativesBefore);
-    expect(h.layers).toHaveLength(layersBefore);
-
-    el("homeLayersBtn").click();
-    await h.openCard('[data-open="segev"]');
-    expect(activeScreen()).toBe("player");
-    expect(el("staffPackMenus").hidden).toBe(true);
-    expect(el("homeLayersBtn").hidden).toBe(true);
-  });
-
-  test("Home layer access is disabled while the Home reset is applying", async () => {
-    setLocale("en", { persist: false });
-    session = mount();
-    await bootRemote(session);
-    let releaseLayers;
-    session.h.layerGate = new Promise((resolve) => { releaseLayers = resolve; });
-    session.h.emit("narrativeState", session.h.narrative);
-    session.h.emit("connection", true);
-    await vi.waitFor(() => expect(el("cueStatus").dataset.status).toBe("applying"));
-    expect(el("homeLayersBtn").disabled).toBe(true);
-    el("homeLayersBtn").click();
-    expect(el("staffPackMenus").hidden).toBe(true);
-    releaseLayers();
-    await vi.waitFor(() => expect(el("cueStatus").dataset.status).toBe("ready"));
+    expect(document.querySelector("[data-layer-sheet-dismiss], .layer-sheet")).toBeNull();
   });
 
   test("a rendered Segev presentation button dispatches the open command", async () => {

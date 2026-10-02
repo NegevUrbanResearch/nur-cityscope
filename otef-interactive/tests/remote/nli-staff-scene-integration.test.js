@@ -39,7 +39,6 @@ const PLAYABLE_LAYER_IDS = ["investigation_polygons", "lines", "alarms"];
 const FIXTURE = `
   <div class="app">
     <button type="button" id="homeBtn" hidden></button>
-    <button type="button" id="homeLayersBtn" hidden></button>
     <button type="button" id="localeHe"></button>
     <button type="button" id="localeEn"></button>
     <span id="staffConnection"></span>
@@ -76,7 +75,6 @@ const FIXTURE = `
         <div id="nextChoices" hidden></div>
       </div>
     </section>
-    <div id="staffPackMenus" hidden></div>
   </div>
 `;
 

@@ -1012,168 +1012,6 @@
         animation: pulse 2s ease-in-out infinite;
       }
 
-      /* Layer sheet */
-      .layer-sheet {
-        position: fixed;
-        inset: 0;
-        z-index: 20;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        padding: var(--space) var(--pad);
-      }
-      .layer-sheet[hidden] { display: none !important; }
-      .layer-sheet-backdrop {
-        position: absolute;
-        inset: 0;
-        background: rgba(0, 0, 0, 0.62);
-        backdrop-filter: blur(6px);
-        -webkit-backdrop-filter: blur(6px);
-      }
-      .layer-sheet-dialog {
-        position: relative;
-        z-index: 1;
-        width: min(720px, 100%);
-        max-height: min(80dvh, 840px);
-        display: flex;
-        flex-direction: column;
-        border-radius: var(--radius-lg);
-        background: var(--surface);
-        border: 1px solid var(--line-strong);
-        box-shadow: var(--shadow-pop);
-        overflow: hidden;
-      }
-      .layer-sheet-head {
-        display: flex;
-        align-items: flex-start;
-        justify-content: space-between;
-        gap: 16px;
-        padding: var(--space) var(--pad);
-        border-bottom: 1px solid var(--line);
-        flex-shrink: 0;
-      }
-      .layer-sheet-heading .lede {
-        margin: 4px 0 0;
-        max-width: none;
-      }
-      .layer-sheet-close {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        width: 44px;
-        height: 44px;
-        border-radius: 50%;
-        background: var(--surface-2);
-        border: 1px solid var(--line);
-        color: var(--text);
-        flex-shrink: 0;
-      }
-      .layer-sheet-close .icon {
-        width: 20px;
-        height: 20px;
-      }
-      .layer-sheet-body {
-        min-height: 0;
-        overflow: auto;
-        padding: var(--space) var(--pad) calc(var(--space) + env(safe-area-inset-bottom));
-        display: flex;
-        flex-direction: column;
-        gap: var(--space);
-        scrollbar-width: thin;
-        scrollbar-color: var(--surface-3) transparent;
-      }
-      .layer-sheet-pack {
-        border-radius: var(--radius);
-        border: 1px solid var(--line);
-        background: var(--bg);
-        overflow: hidden;
-      }
-      .layer-sheet-pack-head {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-        padding: 12px 16px;
-        border-bottom: 1px solid var(--line);
-      }
-      .layer-sheet-pack-title {
-        font-size: var(--text-ui);
-        font-weight: 600;
-        line-height: 1.2;
-      }
-      .layer-sheet-pack-meta {
-        padding: 3px 10px;
-        border-radius: var(--radius-pill);
-        background: var(--surface-2);
-        font-size: var(--text-kicker);
-        font-weight: 500;
-        color: var(--text-muted);
-        white-space: nowrap;
-      }
-      .layer-sheet-rows {
-        display: flex;
-        flex-direction: column;
-        padding: 4px;
-      }
-      .layer-sheet-row {
-        width: 100%;
-        min-height: 52px;
-        padding: 8px 12px;
-        border-radius: var(--radius-sm);
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-        text-align: start;
-        color: var(--text-muted);
-      }
-      .layer-sheet-row.is-on { color: var(--text); }
-      .layer-sheet-row.is-locked { opacity: 0.4; cursor: default; }
-      .layer-sheet-label {
-        font-size: var(--text-ui);
-        line-height: 1.25;
-      }
-      .layer-sheet-row.is-on .layer-sheet-label { font-weight: 500; }
-      .layer-sheet-switch {
-        width: 46px;
-        height: 28px;
-        flex-shrink: 0;
-        border-radius: var(--radius-pill);
-        border: 1px solid var(--line-strong);
-        background: var(--surface-3);
-        position: relative;
-        transition: background-color 0.2s var(--ease), border-color 0.2s var(--ease);
-      }
-      .layer-sheet-switch::after {
-        content: "";
-        position: absolute;
-        width: 20px;
-        height: 20px;
-        border-radius: 50%;
-        background: var(--text-muted);
-        inset-block-start: 3px;
-        inset-inline-start: 3px;
-        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
-        transition: transform 0.2s var(--ease), background-color 0.2s var(--ease);
-      }
-      .layer-sheet-row.is-on .layer-sheet-switch {
-        background: var(--accent);
-        border-color: var(--accent);
-      }
-      .layer-sheet-row.is-on .layer-sheet-switch::after {
-        transform: translateX(18px);
-        background: var(--accent-ink);
-      }
-      [dir="rtl"] .layer-sheet-row.is-on .layer-sheet-switch::after {
-        transform: translateX(-18px);
-      }
-      .layer-sheet-empty {
-        margin: 0;
-        padding: 14px;
-        font-size: var(--text-meta);
-        color: var(--text-subtle);
-      }
-
       .visually-hidden {
         position: absolute;
         width: 1px;
@@ -1193,7 +1031,6 @@
       @media (hover: hover) {
         .home-btn:hover,
         .header-action:not(:disabled):hover,
-        .layer-sheet-close:hover,
         .nli-tl-btn:not(:disabled):not(.nli-tl-btn--play):not(.nli-tl-loop--on):hover { background: var(--surface-3); }
         .locale button:not(.is-active):hover { color: var(--text); }
         .nav-card:not(.nav-card--primary):hover {
@@ -1215,7 +1052,6 @@
           border-color: var(--text-subtle);
         }
         .results button:hover { background: var(--surface-3); }
-        .layer-sheet-row:not(.is-locked):hover { background: var(--surface-2); }
       }
 
       @media (prefers-reduced-motion: reduce) {
@@ -1347,12 +1183,6 @@
     <div class="app">
       <header class="header">
         <div class="header-side header-side--start">
-          <button type="button" class="header-action" id="homeLayersBtn" hidden data-i18n-aria="layersTitle" aria-label="שכבות" aria-expanded="false" aria-controls="staffPackMenus">
-            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="m12 3 9 5-9 5-9-5 9-5Z" />
-              <path d="m3 12 9 5 9-5M3 16l9 5 9-5" />
-            </svg>
-          </button>
           <button
             type="button"
             class="home-btn"
@@ -1434,7 +1264,6 @@
         </section>
 
       </main>
-      <div class="layer-sheet" id="staffPackMenus" hidden></div>
       <div id="table-switcher" hidden></div>
     </div>
 

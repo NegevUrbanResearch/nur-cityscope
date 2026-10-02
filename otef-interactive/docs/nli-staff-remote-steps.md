@@ -212,7 +212,7 @@ that same step. Close stays on the step.
 
 | # | Step | Narrative | Layers | Clock | Remote controls |
 | :---: | :--- | :--- | :--- | :--- | :--- |
-| 1 | Nir Oz | `hostages` | Focus | Idle after entry | Archive (חיים פרי) |
+| 1 | Nir Oz | `hostages` | Focus | Idle after entry | |
 | 2 | Presentation | `hostages` | Focus | No change | Open the Hostages slides from the remote. Close stays on this step and offers Open again; Scene Next continues to Nir Oz victims and hostages. |
 | 3 | Nir Oz victims and hostages | `hostages` | Focus + people (Nir Oz people) | No change | |
 | 4 | All hostages | `hostages_all` | Focus + people (all hostages) | Idle after entry | |
@@ -226,10 +226,6 @@ GIS; the projection continues to show the narrative scene.
 
 ## Archive
 
-- **Archive button** (Hostages step 1): selects חיים פרי and opens their NLI
-  record in the archive window on the GIS machine. Pressing it again closes
-  the archive. Nova step 4, Mor Levy, has no archive and no person query. It
-  has the Mor route toggle and manual slides.
 - **Name search** (identity database): picking a person selects them. The GIS
   map flies to the point and shows a name pop-up. Both GIS and projection dim
   the other people points. On the wall of names, a name or place search keeps

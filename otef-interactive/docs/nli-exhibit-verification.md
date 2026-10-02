@@ -329,7 +329,7 @@ Every row is pending until the exhibit operator observes it.
 | Nova compounds play five four-second beats; Stop returns to 08:03 |  |  | pending |  |
 | Nova escape routes, Mor Levy route and slides, and memorial slides |  |  | pending |  |
 | Sderot entry focuses the police station; slides stay on GIS |  |  | pending |  |
-| Hostages: Nir Oz and Peri home, archive for חיים פרי, slides, Nir Oz people, all hostages |  |  | pending |  |
+| Hostages: Nir Oz and Peri home, slides, Nir Oz people, all hostages |  |  | pending |  |
 
 ## Later exhibit acceptance
 

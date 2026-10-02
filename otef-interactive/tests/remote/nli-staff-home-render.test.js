@@ -90,10 +90,16 @@ describe("NLI staff home renderer", () => {
     expect(COPY.en).not.toHaveProperty("namesHomeMeta");
     expect(COPY.he).not.toHaveProperty("freeTitle");
     expect(COPY.en).not.toHaveProperty("freeMeta");
+    expect(COPY.he).not.toHaveProperty("layersSheetTitle");
+    expect(COPY.en).not.toHaveProperty("layersTitle");
+    expect(COPY.he).not.toHaveProperty("packLibrary");
+    expect(remoteSource).not.toMatch(/homeLayersBtn|staffPackMenus|createStaffPackMenus/);
   });
 
-  test("staff page exposes Home layers and a fullscreen control", () => {
-    expect(page).toContain('id="homeLayersBtn"');
+  test("staff page exposes a fullscreen control without Home layer control", () => {
+    expect(page).not.toContain('id="homeLayersBtn"');
+    expect(page).not.toContain('id="staffPackMenus"');
+    expect(page).not.toContain("שליטה בשכבות");
     expect(page).toContain('id="fullscreenBtn"');
     expect(page).toContain('id="fullscreenStatus"');
     expect(page).not.toContain('data-screen="free"');

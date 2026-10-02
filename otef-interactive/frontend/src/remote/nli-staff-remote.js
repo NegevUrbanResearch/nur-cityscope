@@ -18,7 +18,6 @@ import {
   createRemotePeopleArchiveController,
   waitForInvestigationClockIdle,
 } from "./remote-people-archive-controller.js";
-import { createStaffPackMenus } from "./nli-staff-pack-menus.js";
 import { createStaffFullscreenControl } from "./nli-staff-fullscreen.js";
 import { labelForPlace, placeIsWithinRemoteBounds } from "./remote-place-navigation.js";
 import { applyServerLocale, bindLocaleButtons, getLocale, t, LOCALE_EVENT } from "./remote-locale.js";
@@ -215,7 +214,6 @@ export function initNliStaffRemote(dataContext, { presenterManifest = presenterC
   let archivePageHold = null;
   let searchTransition = null;
   let searchActions = null;
-  let packMenus = null;
   let presentation = null;
   const fullscreenLabels = { enter: "", exit: "", unavailable: "" };
   const fullscreen = createStaffFullscreenControl({
@@ -392,24 +390,10 @@ export function initNliStaffRemote(dataContext, { presenterManifest = presenterC
       el.hidden = !on;
     });
     $("homeBtn").hidden = name === "home";
-    $("homeLayersBtn").hidden = name !== "home";
-    if (name !== "home") {
-      packMenus?.close({ silent: true });
-      $("homeLayersBtn").setAttribute("aria-expanded", "false");
-    }
   }
 
   function renderHome() {
-    const busy = state.searchPending || state.navigationPending || state.cueStatus === "applying";
     $("narrativeList").innerHTML = homeListHtml({ locale: getLocale(), pending: state.searchPending });
-    const layersButton = $("homeLayersBtn");
-    layersButton.hidden = state.screen !== "home";
-    layersButton.disabled = busy;
-    layersButton.setAttribute("aria-expanded", String(packMenus?.isOpen() === true));
-    packMenus?.render();
-    $("staffPackMenus").querySelectorAll("[data-layer-ids]").forEach((button) => {
-      button.disabled = button.disabled || busy;
-    });
   }
 
   function sceneCue() {
@@ -946,32 +930,6 @@ export function initNliStaffRemote(dataContext, { presenterManifest = presenterC
     await peopleArchive.openArchive(person);
   }
 
-  packMenus = createStaffPackMenus({
-    root: $("staffPackMenus"),
-    getGroups: () => timelineHost.getEffectiveGroupsForView(),
-    getClock: () => dataContext?.getInvestigationClock?.() || null,
-    setLayersEnabled: (ids, enabled) => {
-      if (!manualMutationsOpen()) return;
-      return setLayerSet(ids, enabled);
-    },
-    isConnected: () => state.connected,
-    titleForPack: (id) => (id === "nli" ? txt("packLibrary") : txt("packBase")),
-    emptyLabel: () => txt("packEmpty"),
-    sheetTitle: () => txt("layersSheetTitle"),
-    sheetLede: () => txt("layersSheetLede"),
-    closeLabel: () => txt("layersClose"),
-    onClose: () => {
-      $("homeLayersBtn").setAttribute("aria-expanded", "false");
-    },
-  });
-
-  $("homeLayersBtn").addEventListener("click", () => {
-    if (state.screen !== "home" || state.searchPending || state.cueStatus === "applying" || state.navigationPending) return;
-    if (packMenus.isOpen()) packMenus.close();
-    else packMenus.open();
-    $("homeLayersBtn").setAttribute("aria-expanded", String(packMenus.isOpen()));
-  });
-
   peopleArchive = createRemotePeopleArchiveController({
     root: document.querySelector(".app"),
     input: $("searchInput"),
@@ -1276,7 +1234,6 @@ export function initNliStaffRemote(dataContext, { presenterManifest = presenterC
   });
   subscribe("investigationClock", () => {
     paintTimelineMounts();
-    if (state.screen === "home" && packMenus?.isOpen()) renderHome();
   });
   subscribe("narrativeState", () => {
     hydrated = true;
@@ -1291,7 +1248,6 @@ export function initNliStaffRemote(dataContext, { presenterManifest = presenterC
     presenterCommands.invalidate();
     void presenterGate.refresh();
     paintTimelineMounts();
-    if (state.screen === "home" && packMenus?.isOpen()) renderHome();
   });
   state.connected = dataContext?.isConnected?.() !== false;
   render();

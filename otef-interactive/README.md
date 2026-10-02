@@ -251,8 +251,7 @@ the [staff remote guide](docs/nli-staff-remote-steps.md).
 - **Shura Camp**: no narrative scene; its slides open automatically over the
   complete idle timeline overview.
 - **Hostages (`hostages`, then `hostages_all`)**: Nir Oz and the Peri home,
-  the archive record for חיים פרי, manual slides, Nir Oz people, then all
-  hostages.
+  manual slides, Nir Oz people, then all hostages.
 - These narratives have pending rows in the exhibit verification guide; none
   is accepted on exhibit hardware yet.
 

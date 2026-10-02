@@ -277,6 +277,13 @@ describe("NLI staff run of show", () => {
     ]);
     expect(hostages.title).toEqual({ he: "חיים פרי וחטופים", en: "Haim Peri and hostages" });
     expect(hostages.steps).toHaveLength(4);
+    expect(hostages.steps[0]).toEqual({
+      title: { he: "ניר עוז", en: "Nir Oz" },
+      cue: { layers: FOCUS_LAYER_IDS, clock: "idle" },
+      kit: [],
+    });
+    expect(hostages.steps.every((step) => !step.kit.includes("archive"))).toBe(true);
+    expect(hostages.steps.every((step) => !("personQuery" in step))).toBe(true);
     expect(hostages.steps.map((step) => step.cue.clock)).toEqual(["idle", "idle", "idle", "idle"]);
     expect(hostages.steps[1].presentation).toEqual({ segmentId: "hostages", open: "manual", onClose: "stay" });
     for (const step of hostages.steps) {
