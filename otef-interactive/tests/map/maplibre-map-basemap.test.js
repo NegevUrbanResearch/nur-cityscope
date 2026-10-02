@@ -314,7 +314,7 @@ describe("setGISBasemap sprite and dark label restoration", () => {
     map.emit("error", { sourceId: "esri" });
 
     expect(settled).toHaveBeenCalledTimes(1);
-    expect(settled).toHaveBeenCalledWith({ status: "failed", basemapId: "dark" });
+    expect(settled).toHaveBeenCalledWith({ status: "failed", basemapId: "dark", reason: "source-error" });
     expectDarkLabelsAboveInvestigation(map);
     expect(map.getLayer("esri-tiles")).toBeNull();
   });
@@ -369,7 +369,7 @@ describe("setGISBasemap sprite and dark label restoration", () => {
     expect(duplicate).not.toHaveBeenCalled();
     expect(map.calls.length).toBe(callsDuringPending);
     map.emit("error", { sourceId: "esri" });
-    expect(first).toHaveBeenCalledWith({ status: "failed", basemapId: "dark" });
+    expect(first).toHaveBeenCalledWith({ status: "failed", basemapId: "dark", reason: "source-error" });
 
     expect(setGISBasemap(map, "satellite", { onSettled: retry })).toBe(true);
     expect(retry).not.toHaveBeenCalled();

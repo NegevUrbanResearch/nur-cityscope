@@ -1,5 +1,7 @@
 import { validateProjectionConfig } from "../shared/projection-config-schema.js";
 import { evaluateWarpMesh } from "../shared/projection-warp-geometry.js";
+import { insertGridLine, moveGridLine, removeGridLine, uniformGrid } from "../shared/projection-grid-topology.js";
+import { recordProjectionTrace, projectionTraceTime } from './projection-trace-input.js';
 
 const OUTPUT_WIDTH = 1920;
 const OUTPUT_HEIGHT = 1080;
@@ -62,6 +64,7 @@ export function createWarpEditor({
   onChange = () => {},
   validateCandidate = (candidate) => Object.keys(validateProjectionConfig(candidate)).length === 0,
   historyLimit = DEFAULT_HISTORY_LIMIT,
+  trace,
 } = {}) {
   if (!config?.outputs?.[output]?.warp) throw new Error(`warp editor requires ${output} warp config`);
   let current = clone(config);
@@ -70,31 +73,48 @@ export function createWarpEditor({
   let undoStack = [];
   let redoStack = [];
   let drag = null;
+  let validationMessage = "";
+  let validationReason = '';
+  let evaluationCache = null;
 
   const step = () => stepMode === "coarse" ? 1 : 0.25;
   const selectedIndices = () => indicesFor(selection, configWarp(current, output));
   const emit = (candidate, meta) => { current = candidate; onChange(clone(candidate), { ...meta, selection: clone(selection) }); };
-  const valid = (candidate, { semantic = true } = {}) => {
+  const evaluate = (candidate) => {
+    if (evaluationCache?.config === candidate && evaluationCache.mesh === baselineMesh) return evaluationCache.result;
+    const warp = configWarp(candidate, output);
+    const result = evaluateWarpMesh(warp?.baseline?.type === "tdMesh" ? baselineMesh : null, warp, { side: output, schemaVersion: candidate.schemaVersion });
+    evaluationCache = { config: candidate, mesh: baselineMesh, result };
+    return result;
+  };
+  const valid = (candidate, { semantic = true, report = false } = {}) => {
+    validationReason = '';
+    const reject = (reason, category = 'geometry_invalid') => { validationReason = category; if (report) validationMessage = "Move rejected: " + reason; return false; };
     try {
-      if (!validateCandidate(candidate)) return false;
-      if (!semantic) return true;
+      if (!validateCandidate(candidate)) {
+        const errors = validateProjectionConfig(candidate);
+        return reject(Object.values(errors)[0] || "configuration validation rejected the candidate.", 'configuration_invalid');
+      }
+      if (!semantic) { if (report) validationMessage = ""; return true; }
       const warp = configWarp(candidate, output);
       if (warp?.enabled === false || warp?.baseline?.type === "identity") {
-        evaluateWarpMesh(null, warp);
+        evaluate(candidate);
+        if (report) validationMessage = "";
         return true;
       }
-      if (warp?.baseline?.type !== "tdMesh" || !baselineMesh) return false;
-      evaluateWarpMesh(baselineMesh, warp);
+      if (warp?.baseline?.type !== "tdMesh" || !baselineMesh) return reject("the TD baseline is unavailable.", 'baseline_unavailable');
+      evaluate(candidate);
+      if (report) validationMessage = "";
       return true;
-    } catch { return false; }
+    } catch (error) { return reject(error?.message || "the geometry is invalid."); }
   };
-  const remember = (snapshot) => {
-    undoStack.push(clone(configWarp(snapshot, output)));
+  const remember = (snapshot, selected = selection) => {
+    undoStack.push({ warp: clone(configWarp(snapshot, output)), selection: clone(selected) });
     if (undoStack.length > historyLimit) undoStack.splice(0, undoStack.length - historyLimit);
     redoStack = [];
   };
   const apply = (candidate, meta = {}, { record = true } = {}) => {
-    if (!valid(candidate)) return false;
+    if (!valid(candidate, { report: true })) return false;
     if (record) remember(current);
     emit(candidate, meta);
     return true;
@@ -136,6 +156,7 @@ export function createWarpEditor({
     const candidate = clone(current);
     candidate.outputs[output].warp = clone(warp);
     if (!valid(candidate)) return false;
+    validationMessage = "";
     emit(candidate, { reason, flush });
     return true;
   };
@@ -143,9 +164,10 @@ export function createWarpEditor({
   function select(next) {
     if (!next || !["keystone", "grid"].includes(next.mode)) return false;
     selection = clone(next);
+    recordProjectionTrace(trace, 'selection', { output, mode: selection.mode, role: selection.kind, index: selection.index, indices: selectedIndices() });
     return true;
   }
-  function setMode(mode) { return select(mode === "grid" ? gridSelection() : keystoneSelection()); }
+  function setMode(mode) { if (selection.mode === mode) return true; return select(mode === "grid" ? gridSelection() : keystoneSelection()); }
   function setStep(mode) { if (!["fine", "coarse"].includes(mode)) return false; stepMode = mode; return true; }
   function moveByPixels(dx, dy, meta = {}) {
     return moveNormalized(Number(dx) / OUTPUT_WIDTH, Number(dy) / OUTPUT_HEIGHT, { reason: meta.reason || "nudge", flush: meta.flush ?? true }, { record: meta.record !== false });
@@ -167,24 +189,34 @@ export function createWarpEditor({
   function resetSelection() { return apply(resetToIdentity(true), { reason: "reset-selection", flush: true }); }
   function resetResiduals() { return apply(resetToIdentity(false), { reason: "reset-residuals", flush: true }); }
   function setEnabled(enabled) { const candidate = clone(current); candidate.outputs[output].warp.enabled = Boolean(enabled); return apply(candidate, { reason: "warp-enabled", flush: true }); }
+  function restoreHistory(entry, reason) {
+    const candidate = clone(current);
+    candidate.outputs[output].warp = clone(entry.warp);
+    if (!valid(candidate)) return false;
+    selection = clone(entry.selection);
+    validationMessage = "";
+    emit(candidate, { reason, flush: true });
+    return true;
+  }
   function undo() {
     if (!undoStack.length) return false;
-    redoStack.push(clone(configWarp(current, output)));
-    return restoreWarp(undoStack.pop(), "undo");
+    redoStack.push({ warp: clone(configWarp(current, output)), selection: clone(selection) });
+    return restoreHistory(undoStack.pop(), "undo");
   }
   function redo() {
     if (!redoStack.length) return false;
-    undoStack.push(clone(configWarp(current, output)));
-    return restoreWarp(redoStack.pop(), "redo");
+    undoStack.push({ warp: clone(configWarp(current, output)), selection: clone(selection) });
+    return restoreHistory(redoStack.pop(), "redo");
   }
   function pointerStart(point) {
     if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return false;
-    drag = { startWarp: clone(configWarp(current, output)), x: point.x, y: point.y, lastX: point.x, lastY: point.y, moved: false };
+    drag = { startWarp: clone(configWarp(current, output)), startSelection: clone(selection), x: point.x, y: point.y, lastX: point.x, lastY: point.y, moved: false };
     return true;
   }
   function pointerMove(point) {
     if (!drag || !point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return false;
     if (point.x === drag.lastX && point.y === drag.lastY) return true;
+    const started = projectionTraceTime(trace);
     const dx = (point.x - drag.x) / OUTPUT_WIDTH;
     const dy = (point.y - drag.y) / OUTPUT_HEIGHT;
     const candidate = clone(current);
@@ -192,7 +224,8 @@ export function createWarpEditor({
     const points = pointsForSelection(candidate, output, selection);
     const indices = selectedIndices();
     for (const index of indices) { points[index][0] += dx; points[index][1] += dy; }
-    if (!valid(candidate)) return false;
+    if (!valid(candidate, { report: true })) { recordProjectionTrace(trace, 'geometry', { output, phase: 'move', accepted: false, reason: validationReason, durationMs: projectionTraceTime(trace) - started }); return false; }
+    recordProjectionTrace(trace, 'geometry', { output, phase: 'move', accepted: true, durationMs: projectionTraceTime(trace) - started });
     drag.moved = drag.moved || dx !== 0 || dy !== 0;
     drag.lastX = point.x; drag.lastY = point.y;
     emit(candidate, { reason: "drag", flush: false });
@@ -200,35 +233,103 @@ export function createWarpEditor({
   }
   function pointerEnd() {
     if (!drag) return false;
-    if (drag.moved) { undoStack.push(clone(drag.startWarp)); if (undoStack.length > historyLimit) undoStack.splice(0, undoStack.length - historyLimit); redoStack = []; onChange(clone(current), { reason: "drag-end", flush: true, selection: clone(selection) }); }
+    if (drag.moved) { undoStack.push({ warp: clone(drag.startWarp), selection: clone(drag.startSelection) }); if (undoStack.length > historyLimit) undoStack.splice(0, undoStack.length - historyLimit); redoStack = []; onChange(clone(current), { reason: "drag-end", flush: true, selection: clone(selection) }); }
     drag = null;
     return true;
   }
   function pointerCancel() {
-    if (!drag) return false;
+    if (!drag) { validationMessage = ""; return false; }
     const shouldFlush = drag.moved;
     const start = drag.startWarp;
     drag = null;
+    validationMessage = "";
     if (shouldFlush) restoreWarp(start, "drag-cancel", true);
     return true;
   }
   function setConfig(next, { rebase = true } = {}) {
     if (!valid(next, { semantic: false })) return false;
+    const canReuseEvaluation = !rebase && evaluationCache?.mesh === baselineMesh && evaluationCache.config?.schemaVersion === next.schemaVersion &&
+      JSON.stringify(configWarp(evaluationCache.config, output)) === JSON.stringify(configWarp(next, output));
     current = clone(next);
+    if (canReuseEvaluation) evaluationCache.config = current;
+    validationMessage = "";
     if (rebase) { undoStack = []; redoStack = []; drag = null; }
     return true;
   }
   function setBaselineMesh(next) { baselineMesh = next ? clone(next) : null; return true; }
+  const nearestAxisIndex = (oldAxis, newAxis, index) => {
+    const value = oldAxis[Math.max(0, Math.min(oldAxis.length - 1, index))];
+    let best = 0;
+    for (let i = 1; i < newAxis.length; i += 1) if (Math.abs(newAxis[i] - value) < Math.abs(newAxis[best] - value)) best = i;
+    return best;
+  };
+  const remapGridSelection = (next, oldGrid, newGrid, operation, values) => {
+    const columns = newGrid.columns, rows = newGrid.rows;
+    if (next.mode !== "grid" || next.kind === "all" || next.kind === "edge") return next;
+    const oldX = oldGrid.columnPositions || Array.from({ length: oldGrid.columns }, (_, i) => i / (oldGrid.columns - 1));
+    const oldY = oldGrid.rowPositions || Array.from({ length: oldGrid.rows }, (_, i) => i / (oldGrid.rows - 1));
+    const newX = newGrid.columnPositions, newY = newGrid.rowPositions;
+    const oldRow = next.kind === "row" ? next.index : Math.floor(next.index / oldGrid.columns);
+    const oldColumn = next.kind === "column" ? next.index : next.index % oldGrid.columns;
+    const movedAxis = operation === "move" ? values.axis : null;
+    const preserveIndex = operation === "counts" || operation === "even";
+    const followsMovedRow = movedAxis === "row" && (next.kind === "row" && next.index === values.index || next.kind === "point" && oldRow === values.index);
+    const followsMovedColumn = movedAxis === "column" && (next.kind === "column" && next.index === values.index || next.kind === "point" && oldColumn === values.index);
+    const rowIndex = preserveIndex ? clamp(oldRow, 0, rows - 1) : followsMovedRow ? clamp(values.index, 0, rows - 1) : nearestAxisIndex(oldY, newY, oldRow);
+    const columnIndex = preserveIndex ? clamp(oldColumn, 0, columns - 1) : followsMovedColumn ? clamp(values.index, 0, columns - 1) : nearestAxisIndex(oldX, newX, oldColumn);
+    if (next.kind === "row") return gridSelection("row", rowIndex);
+    if (next.kind === "column") return gridSelection("column", columnIndex);
+    return gridSelection("point", rowIndex * columns + columnIndex);
+  };
+  function editGridLayout(operation, values = {}) {
+    if (drag) {
+      validationReason = "gesture_active";
+      validationMessage = "Finish or cancel the active pointer gesture before changing the grid layout.";
+      return false;
+    }
+    const candidate = clone(current);
+    const grid = configWarp(candidate, output)?.grid;
+    if (!grid) return false;
+    let nextGrid;
+    try {
+      if (operation === "counts" || operation === "even") nextGrid = uniformGrid(grid, operation === "counts" ? values.columns : grid.columns, operation === "counts" ? values.rows : grid.rows);
+      else if (operation === "move") nextGrid = moveGridLine(grid, values.axis, values.index, Number(values.position) / 100);
+      else if (operation === "add") nextGrid = insertGridLine(grid, values.axis, Number(values.position) / 100);
+      else if (operation === "remove") nextGrid = removeGridLine(grid, values.axis, values.index);
+      else return false;
+    } catch (error) {
+      validationReason = 'configuration_invalid';
+      validationMessage = error?.message || "The grid layout is invalid.";
+      return false;
+    }
+    candidate.outputs[output].warp.grid = nextGrid;
+    if (!valid(candidate, { report: true })) return false;
+    const priorSelection = selection;
+    const nextSelection = remapGridSelection(selection, grid, nextGrid, operation, values);
+    remember(current, priorSelection);
+    selection = nextSelection;
+    redoStack = [];
+    validationMessage = "";
+    emit(candidate, { reason: "grid-layout", flush: true });
+    return true;
+  }
   function getControlPoints() {
     const warp = configWarp(current, output);
-    const dimensions = sideDimensions(output);
-    const regular = Array.from({ length: dimensions.columns * dimensions.rows }, (_, index) => ({ s: (index % dimensions.columns) / (dimensions.columns - 1), t: Math.floor(index / dimensions.columns) / (dimensions.rows - 1), x: (index % dimensions.columns) / (dimensions.columns - 1), y: Math.floor(index / dimensions.columns) / (dimensions.rows - 1) }));
+    const grid = warp?.grid || {};
+    const columns = grid.columns || sideDimensions(output).columns;
+    const rows = grid.rows || sideDimensions(output).rows;
+    const axesX = grid.columnPositions || Array.from({ length: columns }, (_, index) => index / (columns - 1));
+    const axesY = grid.rowPositions || Array.from({ length: rows }, (_, index) => index / (rows - 1));
+    const regular = axesY.flatMap((t) => axesX.map((s) => ({ s, t, x: s, y: t })));
     const usesTdMesh = warp?.enabled !== false && warp?.baseline?.type === "tdMesh";
     if (usesTdMesh && !baselineMesh) return [];
     let evaluated = null;
-    try { evaluated = evaluateWarpMesh(usesTdMesh ? baselineMesh : null, warp); } catch { if (usesTdMesh) return []; }
+    try { evaluated = evaluate(current); } catch { if (usesTdMesh) return []; }
+    const exactKnots = current.schemaVersion === 7 || Object.hasOwn(grid, "columnPositions") || Object.hasOwn(grid, "rowPositions");
+    const tolerance = exactKnots ? 1e-12 : 1e-6;
+    if (usesTdMesh && exactKnots && regular.some((point) => !evaluated?.vertices?.some((candidate) => Math.abs(candidate.s - point.s) <= tolerance && Math.abs(candidate.t - point.t) <= tolerance))) return [];
     const points = regular.map((point) => {
-      const match = evaluated?.vertices?.find((candidate) => Math.abs(candidate.s - point.s) < 1e-6 && Math.abs(candidate.t - point.t) < 1e-6);
+      const match = evaluated?.vertices?.find((candidate) => Math.abs(candidate.s - point.s) <= tolerance && Math.abs(candidate.t - point.t) <= tolerance);
       return { s: point.s, t: point.t, x: match?.x ?? point.x, y: match?.y ?? point.y };
     });
     if (selection.mode !== "keystone") return points;
@@ -240,14 +341,14 @@ export function createWarpEditor({
     const warp = configWarp(current, output);
     if (warp?.enabled === false || warp?.baseline?.type !== "tdMesh") return true;
     if (!baselineMesh) return false;
-    try { evaluateWarpMesh(baselineMesh, warp); return true; } catch { return false; }
+    try { evaluate(current); return true; } catch { return false; }
   };
   return {
     getConfig: () => clone(current),
-    getState: () => ({ output, selection: { ...clone(selection), indices: selectedIndices() }, stepMode, dragging: Boolean(drag), historyDepth: undoStack.length, redoDepth: redoStack.length, baselineAvailable: baselineAvailable() }),
+    getState: () => ({ output, selection: { ...clone(selection), indices: selectedIndices() }, stepMode, dragging: Boolean(drag), historyDepth: undoStack.length, redoDepth: redoStack.length, baselineAvailable: baselineAvailable(), validationMessage }),
     getControlPoints,
     select, setMode, setStep, moveByPixels, nudge, setPosition, resetSelection, resetResiduals, setEnabled, undo, redo,
-    pointerStart, pointerMove, pointerEnd, pointerCancel, setConfig, setBaselineMesh,
+    pointerStart, pointerMove, pointerEnd, pointerCancel, setConfig, setBaselineMesh, editGridLayout,
   };
 }
 

@@ -1,5 +1,6 @@
 import { afterEach, expect, test, vi } from "vitest";
 import { createClockLayoutClient } from "../../frontend/src/projection-config/clock-layout-client.js";
+import { layoutFieldEdit } from "../../frontend/src/projection-config/clock-layout-controls.js";
 import { openClockLayoutEditor } from "../../frontend/src/projection-config/clock-layout-editor-dialog.js";
 
 function documentHarness() {
@@ -24,6 +25,20 @@ function documentHarness() {
         tagName: tag.toUpperCase(), children: [], dataset: {}, style: {}, attributes: {}, hidden: false,
         classList: { add() {}, remove() {}, toggle() {} },
         appendChild(child) { this.children.push(child); child.parentElement = this; child.ownerDocument ||= doc; return child; },
+        insertBefore(child, reference) {
+          if (reference == null) return this.appendChild(child);
+          if (!this.children.includes(reference)) throw Object.assign(new Error("Reference node is not a child"), { name: "NotFoundError" });
+          if (child === reference) return child;
+          const previousParent = child.parentElement;
+          if (previousParent) {
+            const previousIndex = previousParent.children.indexOf(child);
+            if (previousIndex >= 0) previousParent.children.splice(previousIndex, 1);
+          }
+          const referenceIndex = this.children.indexOf(reference);
+          this.children.splice(referenceIndex, 0, child);
+          child.parentElement = this; child.ownerDocument ||= doc;
+          return child;
+        },
         append(...children) { children.forEach((child) => this.appendChild(child)); },
         replaceChildren(...children) { this.children = []; children.forEach((child) => this.appendChild(child)); },
         setAttribute(key, value) { this.attributes[key] = value; if (key.startsWith("data-")) this.dataset[key.slice(5)] = value; },
@@ -54,6 +69,13 @@ const projectionMesh = { width: 1920, height: 1080, vertices: [
 ], triangles: [0, 1, 2, 0, 2, 3] };
 const disposers = [];
 
+test("column edits convert numeric select values and reject malformed values", () => {
+  expect(layoutFieldEdit({ ...initialLayout, columns: 2 }, "columns", "1").columns).toBe(1);
+  for (const value of ["", "4", "-1", "1.5", "auto", null, [2], { toString: () => "2" }]) {
+    expect(layoutFieldEdit({ ...initialLayout, columns: 2 }, "columns", value)).toBeNull();
+  }
+});
+
 test.each([
   ["clock-gis", "clock", "gisClock", "start"],
   ["clock-projection", "clock", "projectionClock", "left"],
@@ -76,6 +98,58 @@ test.each([
   expect(element === "legend" ? preview.legendLayout : preview.clockLayout).toEqual(draft);
   await vi.advanceTimersByTimeAsync(150);
   expect(rig.client.getSlot(resource, slot)).toMatchObject({ acknowledged: latest, draft: null, status: "Saved" });
+});
+
+test.each([0, 1, 2, 3])("legend column select previews, saves, and reloads %i", async (columns) => {
+  vi.useFakeTimers();
+  const rig = await editorFixture("clock-projection", "legend"); rig.rendered();
+  const select = rig.find((node) => node.dataset?.field === "columns");
+  expect(select).toBeDefined();
+  expect(select.children.map((option) => [option.value, option.textContent])).toEqual([["0", "Auto"], ["1", "1"], ["2", "2"], ["3", "3"]]);
+  expect(select.hidden).toBe(false);
+  select.value = String(columns); select.dispatch("change");
+  const draft = rig.client.getSlot("projectionLegend", "left").draft;
+  expect(draft.columns).toBe(columns);
+  expect(rig.frame().contentWindow.sent.at(-1).message.legendLayout.columns).toBe(columns);
+  await vi.advanceTimersByTimeAsync(150);
+  expect(rig.writeLegendSlot).toHaveBeenCalledWith(expect.objectContaining({ layout: expect.objectContaining({ columns }) }));
+  expect(rig.client.getSlot("projectionLegend", "left").acknowledged.columns).toBe(columns);
+  rig.editor.dispose();
+  const reloaded = openClockLayoutEditor({ nodeId: "clock-projection", element: "legend", layoutClient: rig.client, document: rig.doc });
+  expect(descendants(rig.doc.body).find((node) => node.dataset?.field === "columns").value).toBe(String(columns));
+  reloaded.dispose(); rig.client.destroy();
+});
+
+test("legacy legend opens as Auto without changing its acknowledged record and hides dwell", async () => {
+  const rig = await editorFixture("clock-projection", "legend"); rig.rendered();
+  const select = rig.find((node) => node.dataset?.field === "columns");
+  expect(select.value).toBe("0");
+  expect(select.hidden).toBe(false);
+  expect(rig.find((node) => node.dataset?.field === "dwellSeconds").hidden).toBe(true);
+  const fontLabel = rig.find((node) => node.dataset?.field === "fontPx").parentElement;
+  expect(fontLabel.children[0].textContent).toBe("Font size (maximum)");
+  expect(rig.client.getSlot("projectionLegend", "left").acknowledged).not.toHaveProperty("columns");
+  expect(rig.client.getSlot("projectionLegend", "left").draft).toBeNull();
+  expect(rig.writeLegendSlot).not.toHaveBeenCalled();
+});
+
+test.each([["clock-projection", "clock"], ["clock-gis", "clock"]])("column select is hidden for %s/%s", async (nodeId, element) => {
+  const rig = await editorFixture(nodeId, element); rig.rendered();
+  expect(rig.find((node) => node.dataset?.field === "columns").hidden).toBe(true);
+  expect(rig.find((node) => node.dataset?.field === "fontPx").parentElement.children[0].textContent).toBe("Font size");
+});
+
+test("clock editor identifies its output or selected GIS scene and explains autosave", async () => {
+  const projection = await editorFixture("clock-projection");
+  expect(projection.find((node) => node.className === "clock-layout-header")?.children[0].textContent).toMatch(/Left/);
+  expect(projection.find((node) => node.className === "clock-layout-autosave-note")?.textContent).toMatch(/save automatically/i);
+  projection.editor.dispose(); projection.client.destroy();
+
+  const gis = await editorFixture("clock-gis");
+  expect(gis.find((node) => node.className === "clock-layout-header")?.children[0].textContent).toMatch(/Home/);
+  const scene = gis.find((node) => node.className?.includes("clock-layout-scene")).children[0];
+  scene.value = "segev"; scene.dispatch("change");
+  expect(gis.find((node) => node.className === "clock-layout-header")?.children[0].textContent).toMatch(/Segev/i);
 });
 
 test.each(["move", "release"])("projection gesture cancels on unavailable inverse at %s and keeps numeric editing usable", async (phase) => {

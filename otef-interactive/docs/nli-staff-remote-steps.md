@@ -165,9 +165,9 @@ same step. Close stays on the step.
 | # | Step | Layers | Clock | Escape routes | Remote controls |
 | :---: | :--- | :--- | :--- | :--- | :--- |
 | 1 | The Nova site | Focus + open spaces | Stopped; previews beat 1 and shows 08:03 | All off | |
-| 2 | The compounds | Nova timeline | Five authored beats, 4 seconds each (20 seconds total); play starts beat 1 at 0% | All off | Five-mark scrubber and beat navigation |
+| 2 | The compounds | Nova timeline | Five authored beats, 8 seconds each (40 seconds total); play starts beat 1 at 0% | All off | Five-mark scrubber and beat navigation |
 | 3 | Escape routes | Nova timeline | Ended; leaves a partial play unfinished | Individual routes on | Individual route control only |
-| 4 | Mor Levy | Nova timeline | Ended | Mor's route only | Mor route control and Mor Levy slides; Close stays on this step. |
+| 4 | Mor Levy | Nova timeline | Ended | Mor's route only | Mor route control; slides open automatically after the cue is ready. Close stays on this step. |
 | 5 | Memorial | Focus + people (Nova people only) | Ended Nova clock; compounds stay visible through Nova virtual membership even when the stored rows have no playable layers | Settled intersections; route ribbons off | Memorial slides open automatically after the cue is sent; Close stays on this step. No escape toggles and no route replay. |
 
 The Nova timeline uses five authored beats, not source-timestamp grouping:
@@ -182,7 +182,7 @@ The Nova timeline uses five authored beats, not source-timestamp grouping:
 
 The remote shows only the active beat's event time, title, and presenter
 paragraph. The exhibit clock reads 08:03 before playback and after Stop; Play
-begins beat 1 at zero reveal. Each automatic beat lasts four seconds. Natural
+begins beat 1 at zero reveal. Each automatic beat lasts eight seconds. Natural
 completion holds beat 5 and 100% progress. Back, forward, pointer selection,
 and Left/Right, Home, and End keyboard controls select a beat without wrapping;
 the first and last marks sit at the scrubber ends. Polygon 107 is excluded
@@ -190,7 +190,8 @@ pending source review and its source record is unchanged.
 
 The compounds step starts playback. Next leaves that playback before it
 finishes and ends the Nova clock on the escape-routes step. Routes expose only
-the individual-route control. Mor exposes only Mor's route, plus manual slides.
+the individual-route control. Mor exposes only Mor's route; its slides open
+automatically after the cue is ready. Closing the slides stays on this step.
 Memorial does not replay routes.
 
 ## Sderot (`sderot`)
@@ -212,7 +213,7 @@ that same step. Close stays on the step.
 
 | # | Step | Narrative | Layers | Clock | Remote controls |
 | :---: | :--- | :--- | :--- | :--- | :--- |
-| 1 | Nir Oz | `hostages` | Focus | Idle after entry | Archive (חיים פרי) |
+| 1 | Nir Oz | `hostages` | Focus | Idle after entry | |
 | 2 | Presentation | `hostages` | Focus | No change | Open the Hostages slides from the remote. Close stays on this step and offers Open again; Scene Next continues to Nir Oz victims and hostages. |
 | 3 | Nir Oz victims and hostages | `hostages` | Focus + people (Nir Oz people) | No change | |
 | 4 | All hostages | `hostages_all` | Focus + people (all hostages) | Idle after entry | |
@@ -226,10 +227,6 @@ GIS; the projection continues to show the narrative scene.
 
 ## Archive
 
-- **Archive button** (Hostages step 1): selects חיים פרי and opens their NLI
-  record in the archive window on the GIS machine. Pressing it again closes
-  the archive. Nova step 4, Mor Levy, has no archive and no person query. It
-  has the Mor route toggle and manual slides.
 - **Name search** (identity database): picking a person selects them. The GIS
   map flies to the point and shows a name pop-up. Both GIS and projection dim
   the other people points. On the wall of names, a name or place search keeps
@@ -238,3 +235,11 @@ GIS; the projection continues to show the narrative scene.
   record in the same archive window. The remote is not told, so its archive
   button does not switch to "back to map".
 - Selecting a different person closes an open archive record.
+- **Staff remote paging:** after a person with an archive record is selected,
+  the staff remote shows presentation-scale **Open**, then **Scroll up** /
+  **Scroll down** and **Back to map**. Look at the wall (the GIS archive
+  window), not the phone. Tap pages one screen. Hold repeats every 500ms.
+  Search kit (Identity database) is the live path. Keep `#stepTitle`,
+  `#stepNote`, and the scene dock visible. Do not use a workshop Navigation
+  replica of nli.org.il. If the live NLI column does not move, stop — do not
+  add banner clicking.

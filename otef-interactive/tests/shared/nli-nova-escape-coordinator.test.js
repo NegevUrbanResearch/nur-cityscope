@@ -160,12 +160,12 @@ describe("Nova escape overlay coordinator", () => {
     expect(map.getLayer("nli-nova-escape-overlap")).toBeFalsy();
   });
 
-  test("GIS surface never mounts fleeing or site-outline layers while nova individual is on", async () => {
+  test("GIS surface mounts fleeing ribbons while nova individual is on, without a site outline", async () => {
     const { coordinator, map } = await setupCoordinator({ profile: "gis", surface: "gis" });
     await coordinator.sync({ id: "nova" }, { individual: true, overlap: true });
-    expect(map.getLayer("nli-nova-escape-individual")).toBeFalsy();
-    expect(map.getLayer("nli-nova-escape-overlap")).toBeFalsy();
-    expect(map.getLayer("nli-nova-escape-impact-outline")).toBeFalsy();
+    expect(map.getLayer("nli-nova-escape-individual")?.type).toBe("custom");
+    expect(map.getLayer("nli-nova-escape-overlap")?.type).toBe("custom");
+    expect(map.getLayer("nli-nova-escape-impact-outline")).toBeTruthy();
     expect(map.getLayer("nli-nova-site-outline")).toBeFalsy();
     coordinator.dispose();
   });
@@ -1648,18 +1648,14 @@ describe("settled Nova intersections", () => {
     coordinator.dispose();
   });
 
-  test("GIS individual still does not mount ribbons or schedule impact frames", async () => {
+  test("GIS individual mounts ribbons and impact frames without emitting parallel-impact ids", async () => {
     installMemorialFetch();
-    const { map, coordinator } = startSettledCoordinator("gis");
+    const { map, coordinator, onParallelImpactIdsChanged } = startSettledCoordinator("gis");
     await coordinator.sync({ id: "nova" }, INDIVIDUAL_OVERLAY);
-    expect(map.getLayer("nli-nova-escape-individual")).toBeFalsy();
-    expect(map.getLayer(NOVA_ESCAPE_IMPACT_LAYER_ID)).toBeFalsy();
-    expect(map.pendingAnimationFrameCount()).toBe(0);
-    map.flushAnimationFrames();
-    expect(map.pendingAnimationFrameCount()).toBe(0);
-    expect(fetch.mock.calls.map((call) => String(call[0]))).not.toContain(
-      DEFAULT_INVESTIGATION_SETTLEMENTS_URL,
-    );
+    expect(map.getLayer("nli-nova-escape-individual")?.type).toBe("custom");
+    expect(map.getLayer(NOVA_ESCAPE_IMPACT_LAYER_ID)).toBeTruthy();
+    expect(map.pendingAnimationFrameCount()).toBeGreaterThan(0);
+    expect(onParallelImpactIdsChanged).not.toHaveBeenCalled();
     coordinator.dispose();
   });
 });

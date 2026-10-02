@@ -1,5 +1,6 @@
 import { sha256Hex } from "../shared/sha256-hex.js";
 import { validateProjectionConfig } from "../shared/projection-config-schema.js";
+import { resolveProjectionBaselineAsset, validateProjectionBaselineManifest, validateProjectionBaselineMesh } from "../shared/projection-warp-assets.js";
 
 export const PROJECTION_OUTPUT_WIDTH = 1920;
 export const PROJECTION_OUTPUT_HEIGHT = 1080;
@@ -35,6 +36,14 @@ function abortError() {
 
 function throwIfAborted(signal) {
   if (signal?.aborted) throw abortError();
+}
+
+function validateBaselineManifest(manifest) {
+  const errors = validateProjectionBaselineManifest(manifest);
+  if (Object.keys(errors).length) {
+    throw new Error("browser projection baseline manifest invalid: " +
+      Object.entries(errors).map(([path, message]) => `${path} ${message}`).join("; "));
+  }
 }
 
 function awaitWithSignal(promise, signal) {
@@ -125,6 +134,7 @@ export async function loadCapturedProjectionFraming({
     throw new Error("browser projection baseline manifest dimensions are invalid");
   }
   if (!manifest.framing?.path) throw new Error("browser projection baseline framing is missing");
+  validateBaselineManifest(manifest);
   const framingUrl = joinAssetUrl(base, manifest.framing.path);
   const framing = await fetchVerifiedJson(fetchImpl, framingUrl, "captured framing", manifest.framing.sha256, signal);
   if (!framing.value?.pre || !framing.value?.outputs || Object.keys(validateProjectionConfig(framing.value)).length) {
@@ -138,15 +148,94 @@ export async function loadCapturedProjectionAsset({
   base = DEFAULT_PROJECTION_BASELINE,
   spanId = "left",
   captured = null,
+  baseline = null,
   signal,
 } = {}) {
   const source = captured || await loadCapturedProjectionFraming({ fetchImpl, base, signal });
   throwIfAborted(signal);
-  const asset = source.manifest.assets?.[spanId];
-  if (!asset?.path) throw new Error(`browser projection baseline asset for ${spanId} is missing`);
+  if (!source?.manifest || source.manifest.width !== PROJECTION_OUTPUT_WIDTH || source.manifest.height !== PROJECTION_OUTPUT_HEIGHT) {
+    throw new Error("browser projection baseline manifest dimensions are invalid");
+  }
+  if (!source.manifest.framing?.path) throw new Error("browser projection baseline framing is missing");
+  validateBaselineManifest(source?.manifest);
+  let asset;
+  try { asset = resolveProjectionBaselineAsset(source.manifest, spanId, baseline); }
+  catch (error) { throw new Error(`browser projection baseline for ${spanId} rejected: ${error.message}`); }
   const meshUrl = joinAssetUrl(base, asset.path);
   const mesh = await fetchVerifiedJson(fetchImpl, meshUrl, `${spanId} mesh`, asset.sha256, signal);
+  const meshErrors = validateProjectionBaselineMesh(mesh.value, { side: spanId, manifest: source.manifest, baseline });
+  if (Object.keys(meshErrors).length) {
+    throw new Error(`browser projection ${spanId} mesh rejected: ${Object.entries(meshErrors).map(([path, message]) => `${path} ${message}`).join('; ')}`);
+  }
   return { ...source, mesh: mesh.value, meshUrl, asset };
+}
+
+function containsAssetId(manifest, side, baseline) {
+  if (!baseline || typeof baseline.assetId !== 'string') return false;
+  return [manifest?.assets?.[side], ...(Array.isArray(manifest?.catalog?.[side]) ? manifest.catalog[side] : [])]
+    .some((asset) => asset?.assetId === baseline.assetId);
+}
+
+/** Resolve and load a candidate pair from one catalog snapshot, refreshing once for absent IDs. */
+export function createProjectionBaselineCatalogLoader({ fetchImpl = globalThis.fetch, base = DEFAULT_PROJECTION_BASELINE, initialSnapshot = null } = {}) {
+  let currentSnapshot = initialSnapshot;
+  const caches = new WeakMap();
+  const cacheFor = (snapshot) => {
+    let cache = caches.get(snapshot);
+    if (!cache) { cache = new Map(); caches.set(snapshot, cache); }
+    return cache;
+  };
+  const loadSelected = async (snapshot, side, reference, signal) => {
+    const key = `${side}\0${reference.assetId}\0${String(reference.sha256).toLowerCase().replace(/^sha256:/i, '')}`;
+    const cache = cacheFor(snapshot);
+    if (!cache.has(key)) {
+      // A shared cache entry must outlive any one preparation's abort signal.
+      // Each caller races its own signal below; a canceled caller cannot abort
+      // the request another candidate is already awaiting.
+      const pending = loadCapturedProjectionAsset({ fetchImpl, base, spanId: side, captured: snapshot, baseline: reference });
+      cache.set(key, pending);
+      pending.catch(() => { if (cache.get(key) === pending) cache.delete(key); });
+    }
+    const result = await awaitWithSignal(cache.get(key), signal);
+    return result;
+  };
+  const prepare = async (config, signal) => {
+    throwIfAborted(signal);
+    const configErrors = validateProjectionConfig(config);
+    if (Object.keys(configErrors).length) throw new Error('Invalid projection calibration: ' +
+      Object.entries(configErrors).map(([path, message]) => `${path} ${message}`).join('; '));
+    const selected = {};
+    for (const side of ['left', 'right']) {
+      const warp = config?.outputs?.[side]?.warp;
+      if (warp?.enabled !== false && warp?.baseline?.type === 'tdMesh') selected[side] = warp.baseline;
+    }
+    if (!Object.keys(selected).length) return { snapshot: currentSnapshot, loaded: {} };
+    const firstSnapshot = !currentSnapshot;
+    let snapshot = currentSnapshot || await loadCapturedProjectionFraming({ fetchImpl, base, signal });
+    let requiresRefresh = false;
+    for (const [side, reference] of Object.entries(selected)) {
+      // Resolve every known record against the current trusted snapshot before
+      // an absent peer can trigger a refresh that changes those records.
+      if (containsAssetId(snapshot.manifest, side, reference)) resolveProjectionBaselineAsset(snapshot.manifest, side, reference);
+      else requiresRefresh = true;
+    }
+    if (requiresRefresh && !firstSnapshot) {
+      snapshot = await loadCapturedProjectionFraming({ fetchImpl, base, signal });
+      if (Object.entries(selected).some(([side, reference]) => !containsAssetId(snapshot.manifest, side, reference))) {
+        throw new Error('projection baseline is not present in the refreshed trusted manifest');
+      }
+    }
+    const loaded = {};
+    await Promise.all(Object.entries(selected).map(async ([side, reference]) => {
+      loaded[side] = await loadSelected(snapshot, side, reference, signal);
+    }));
+    return { snapshot, loaded };
+  };
+  return {
+    prepare,
+    promote(snapshot) { if (snapshot?.manifest) currentSnapshot = snapshot; },
+    getSnapshot() { return currentSnapshot; },
+  };
 }
 
 export { joinAssetUrl };

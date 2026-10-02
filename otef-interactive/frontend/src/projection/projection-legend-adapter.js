@@ -1,9 +1,8 @@
 import { OUTPUT_HEIGHT, OUTPUT_WIDTH, projectionOverlayMatrix } from "./projection-overlay-placement.js";
 import { paintCaptivityBleedMarker } from "../shared/captivity-bleed-marker.js";
+import { PROJECTION_LEGEND_FONT as FONT, layoutProjectionLegend, resolveLegendRasterSize } from "./legend-content-layout.js";
 
-const FONT = '"Guttman Hatzvi", "Noto Sans Hebrew", Arial, sans-serif';
 const INK = "#f2f3f4";
-const SUB = "#bbc2c6";
 
 function makeCanvas(factory) {
   const canvas = factory?.() || globalThis.document?.createElement?.("canvas");
@@ -13,59 +12,11 @@ function makeCanvas(factory) {
   return canvas;
 }
 
-function localSize(layout) {
-  return {
-    width: Math.max(1, Math.round(OUTPUT_WIDTH * (Number(layout?.widthPct) || 100) / 100)),
-    height: Math.max(1, Math.round(OUTPUT_HEIGHT * (Number(layout?.heightPct) || 100) / 100)),
-  };
-}
-
-function components(item) {
-  if (item?.components?.length) return item.components;
-  if (item?.strokeSwatches?.length) {
-    return item.strokeSwatches.map((swatch) => ({ ...item, ...swatch, stroke: swatch.color }));
-  }
-  return [item || {}];
-}
-
-function textDirection(value, fallback) {
-  const text = String(value || "");
-  if ([...text].some((character) => /[\u0590-\u08ff]/u.test(character))) return "rtl";
-  if ([...text].some((character) => /[A-Za-z\u00c0-\u024f]/u.test(character))) return "ltr";
-  return fallback;
-}
-
-function glyphWidth(shape, font) {
-  return shape === "point" || shape === "square" ? font * 0.55 : shape === "diamond" ? font * 0.45 : font * 1.23;
-}
-
-function glyphHeight(part, font) {
-  return part.shape === "line" ? Math.max(2, Number(part.strokeWidth) || 1) : part.shape === "point" || part.shape === "square" ? font * 0.55 : part.shape === "diamond" ? font * 0.45 : font * 0.68;
-}
-
-function symbolMetrics(parts, font) {
-  const gap = font * 0.18;
-  const children = parts.map((part) => {
-    const shape = part.shape || "polygon";
-    const margin = shape === "point" || shape === "square" ? font * 0.32 : shape === "diamond" ? font * 0.36 : 0;
-    const marginTop = shape === "point" || shape === "square" ? font * 0.09 : shape === "diamond" ? font * 0.14 : shape === "line" ? font * 0.27 : 0;
-    return { part, width: glyphWidth(shape, font), height: glyphHeight(part, font), margin, marginTop };
-  });
-  const naturalWidth = children.reduce((sum, child) => sum + child.width + child.margin * 2, 0) + Math.max(0, children.length - 1) * gap;
-  const slotWidth = Math.max(font * 1.23, naturalWidth);
-  const slotHeight = Math.max(0, ...children.map((child) => child.marginTop + child.height));
-  return { children, gap, width: slotWidth, height: slotHeight };
-}
-
-function textWidth(context, value, letterSpacing) {
-  return (context.measureText?.(value).width || value.length * 8) + Math.max(0, value.length - 1) * letterSpacing;
-}
-
-function setShadow(context) {
+function setShadow(context, scale = 1) {
   context.shadowColor = "rgba(0, 0, 0, 0.85)";
   context.shadowOffsetX = 0;
-  context.shadowOffsetY = 2;
-  context.shadowBlur = 8;
+  context.shadowOffsetY = 2 * scale;
+  context.shadowBlur = 8 * scale;
 }
 
 function shapePath(context, shape, x, y, width, height) {
@@ -123,15 +74,19 @@ function drawBands(context, bands, x, y, width, height) {
   }
 }
 
-function drawSymbol(context, part, x, y, font) {
+function drawSymbol(context, part, x, y, font, geometry, scale) {
   const shape = part.shape || "polygon";
-  const symbolWidth = shape === "point" ? font * 0.55 : shape === "square" ? font * 0.55 : shape === "diamond" ? font * 0.45 : font * 1.23;
-  const symbolHeight = shape === "line" ? Math.max(2, Number(part.strokeWidth) || 1) : shape === "point" || shape === "square" ? font * 0.55 : shape === "diamond" ? font * 0.45 : font * 0.68;
+  const symbolWidth = geometry.width;
+  const symbolHeight = geometry.height;
   const fill = part.fill ?? "transparent";
   const stroke = part.stroke ?? "transparent";
   const fillOpacity = Number.isFinite(part.fillOpacity) ? part.fillOpacity : (Number.isFinite(part.opacity) ? part.opacity : 1);
   const strokeOpacity = Number.isFinite(part.strokeOpacity) ? part.strokeOpacity : 1;
   context.save?.();
+  context.shadowColor = "transparent";
+  context.shadowOffsetX = 0;
+  context.shadowOffsetY = 0;
+  context.shadowBlur = 0;
   if (shape === "line") {
     const dash = part.dash && (Array.isArray(part.dash) ? part.dash : part.dash.array);
     const dashScale = part.carrier ? 0.5 : 1.5;
@@ -153,7 +108,7 @@ function drawSymbol(context, part, x, y, font) {
     context.globalAlpha = strokeOpacity;
     context.lineWidth = Math.max(2, Number(part.strokeWidth) || 1);
     context.setLineDash?.(dashArray);
-    if (part.halo && part.halo !== "transparent") { context.shadowColor = part.halo; context.shadowBlur = 1; }
+    if (part.halo && part.halo !== "transparent") { context.shadowColor = part.halo; context.shadowBlur = scale; }
     context.stroke();
     context.setLineDash?.([]);
   } else if (part.captivityBleed) {
@@ -184,118 +139,21 @@ function drawSymbol(context, part, x, y, font) {
     context.stroke();
   }
   context.restore?.();
-  return { width: symbolWidth, height: symbolHeight };
 }
 
-function wrapLabel(context, text, maxWidth, letterSpacing = 0) {
-  const value = String(text || "");
-  const words = value.split(/\s+/).filter(Boolean);
-  if (!words.length) return [""];
-  const lines = [];
-  let line = "";
-  const widthOf = (value) => (context.measureText?.(value).width || value.length * 8) + Math.max(0, value.length - 1) * letterSpacing;
-  for (const word of words) {
-    const candidate = line ? `${line} ${word}` : word;
-    if (line && widthOf(candidate) > maxWidth) {
-      lines.push(line);
-      line = word;
-    } else line = candidate;
-  }
-  if (line) lines.push(line);
-  return lines;
-}
-
-function drawLabel(context, lines, x, y, font, direction) {
+function drawPlacement(context, placement, font, scale) {
+  const label = placement.labelGeometry;
   context.fillStyle = INK;
   context.font = `${font}px ${FONT}`;
-  context.direction = direction;
-  context.textAlign = direction === "rtl" ? "right" : "left";
+  context.direction = label.direction;
+  context.textAlign = label.align;
   context.textBaseline = "alphabetic";
-  context.letterSpacing = `${font * 0.01}px`;
-  setShadow(context);
-  const lineHeight = font * 1.35;
-  lines.forEach((line, index) => context.fillText(line, x, y + lineHeight * index));
-  return Math.max(1, lines.length) * lineHeight;
-}
-
-function measureItem(context, item, font) {
-  const parts = components(item);
-  const symbols = symbolMetrics(parts, font);
-  const label = String(item.label || "");
-  context.font = `${font}px ${FONT}`;
-  const labelBoxWidth = Math.max(1, textWidth(context, label, font * 0.01));
-  return {
-    item,
-    parts,
-    symbols,
-    label,
-    labelBoxWidth,
-    width: symbols.width + font * 0.36 + labelBoxWidth,
-    height: Math.max(font * 1.14, symbols.height, font * 1.35),
-  };
-}
-
-function paintItem(context, box, slotLeft, top, font, panelDirection, innerPanelWidth) {
-  const labelDirection = textDirection(box.label, panelDirection);
-  const slotFree = box.symbols.height;
-  const symbolTop = top + font * 0.18;
-  let cursor = panelDirection === "rtl" ? slotLeft + box.symbols.width : slotLeft;
-  box.symbols.children.forEach(({ part, width: partWidth, height: partHeight, margin, marginTop }) => {
-    const partX = panelDirection === "rtl"
-      ? (cursor -= margin) - partWidth / 2
-      : (cursor += margin) + partWidth / 2;
-    const partY = symbolTop + (slotFree - marginTop - partHeight) / 2 + marginTop + partHeight / 2;
-    drawSymbol(context, part, partX, partY, font);
-    if (panelDirection === "rtl") cursor -= partWidth + margin + box.symbols.gap;
-    else cursor += partWidth + margin + box.symbols.gap;
-  });
-  const labelLeft = panelDirection === "rtl" ? slotLeft - font * 0.36 - box.labelBoxWidth : slotLeft + box.symbols.width + font * 0.36;
-  const labelRight = panelDirection === "rtl" ? slotLeft - font * 0.36 : labelLeft + box.labelBoxWidth;
-  const textX = labelDirection === "rtl" ? labelRight : labelLeft;
-  const lines = box.width >= innerPanelWidth
-    ? wrapLabel(context, box.label, Math.max(1, innerPanelWidth - box.symbols.width - font * 0.36), font * 0.01)
-    : [box.label || ""];
-  drawLabel(context, lines, textX, top + font, font, labelDirection);
-}
-
-function drawGroup(context, group, startY, startX, groupWidth, height, font, direction) {
-  const paddingX = font * 0.5;
-  const innerLeft = startX + paddingX;
-  const innerRight = startX + groupWidth - paddingX;
-  const innerWidth = Math.max(1, innerRight - innerLeft);
-  const itemGap = font * 18 / 16;
-  let y = startY;
-  const boxes = (group.items || []).map((item) => measureItem(context, item, font));
-  let cursor = direction === "rtl" ? innerRight : innerLeft;
-  let rowHeight = 0;
-  const beginRow = () => {
-    y += rowHeight;
-    rowHeight = 0;
-    cursor = direction === "rtl" ? innerRight : innerLeft;
-  };
-  for (const box of boxes) {
-    const needed = Math.min(innerWidth, box.width);
-    const remaining = direction === "rtl" ? cursor - innerLeft : innerRight - cursor;
-    if (rowHeight > 0 && needed - remaining > 0.01) beginRow();
-    const slotLeft = direction === "rtl" ? cursor - box.symbols.width : cursor;
-    const top = y + font * 0.32;
-    const painted = box.width > innerWidth
-      ? { ...box, labelBoxWidth: Math.max(1, innerWidth - box.symbols.width - font * 0.36), width: innerWidth }
-      : box;
-    paintItem(context, painted, slotLeft, top, font, direction, innerWidth);
-    const step = painted.width + itemGap;
-    cursor = direction === "rtl" ? cursor - step : cursor + step;
-    rowHeight = Math.max(rowHeight, painted.height + font * 0.64);
+  context.letterSpacing = "0px";
+  setShadow(context, scale);
+  placement.labelLines.forEach((line, index) => context.fillText(line, label.x, label.y + label.lineHeight * index));
+  for (const component of placement.symbolGeometry.components) {
+    drawSymbol(context, component.part, component.x, component.y, font, component, scale);
   }
-  return Math.min(height, y + rowHeight + font * 0.35);
-}
-
-function groupNaturalWidth(context, group, font) {
-  const paddingX = font * 0.5;
-  const itemGap = font * 18 / 16;
-  const boxes = (group.items || []).map((item) => measureItem(context, item, font));
-  const itemsWidth = boxes.reduce((sum, box, index) => sum + box.width + (index ? itemGap : 0), 0);
-  return paddingX * 2 + itemsWidth;
 }
 
 export function createProjectionLegendAdapter({ canvasFactory } = {}) {
@@ -308,15 +166,32 @@ export function createProjectionLegendAdapter({ canvasFactory } = {}) {
   let disposed = false;
   let signature = null;
   let contentVersion = 0;
+  let contentLayout = null;
+  let rasterSize = { width: canvas.width, height: canvas.height };
+
+  const planFor = (source, sourceLayout, size) => {
+    if (source.contentLayout) return source.contentLayout;
+    context.textAlign = "left";
+    context.textBaseline = "alphabetic";
+    context.font = `${Number(sourceLayout.fontPx) || 22}px ${FONT}`;
+    context.letterSpacing = "0px";
+    return layoutProjectionLegend({ blocks: source.blocks || [], width: size.width, height: size.height,
+      fontPx: Number(sourceLayout.fontPx) || 22, columns: sourceLayout.columns, language: source.language === "en" ? "en" : "he",
+      measureText: (text) => context.measureText?.(text) || {} });
+  };
 
   const sync = (next = {}) => {
     if (disposed) return;
     snapshot = next.snapshot || next;
     layout = snapshot.layout || layout;
-    const size = localSize(layout);
-    const nextSignature = JSON.stringify([snapshot.language, snapshot.blocks, snapshot.pages, snapshot.pageIndex, Number(layout.fontPx) || 22, size.width, size.height]);
+    const size = resolveLegendRasterSize(layout);
+    const nextPlan = planFor(snapshot, layout, size);
+    const nextSignature = JSON.stringify([snapshot.language, snapshot.blocks, snapshot.pages, snapshot.pageIndex, Number(layout.fontPx) || 22,
+      size.width, size.height, Number(layout.columns) || 0, nextPlan, Number(snapshot.fontRevision) || 0]);
     if (nextSignature === signature) return;
     signature = nextSignature;
+    contentLayout = nextPlan;
+    rasterSize = size;
     if (canvas.width !== size.width || canvas.height !== size.height) {
       canvas.width = size.width;
       canvas.height = size.height;
@@ -329,47 +204,19 @@ export function createProjectionLegendAdapter({ canvasFactory } = {}) {
     if (dirty) {
       context.clearRect(0, 0, canvas.width, canvas.height);
       const font = Number(layout.fontPx) || 22;
-      const direction = snapshot.language === "en" ? "ltr" : "rtl";
-      const groups = [];
-      for (const block of snapshot.blocks || []) {
-        const groupId = block.pack?.id || block.id;
-        const prior = groups.at(-1);
-        if (prior?.id === groupId) prior.items.push(...(block.layers || []).flatMap((layer) => layer.items || []));
-        else groups.push({ id: groupId, name: block.pack?.name || "", items: (block.layers || []).flatMap((layer) => layer.items || []) });
-      }
-      const paddingX = font * 0.5;
-      const packGap = font * 22 / 16;
-      let y = font * 0.4;
-      let x = direction === "rtl" ? canvas.width : 0;
-      let rowHeight = 0;
-      const rowStart = () => (direction === "rtl" ? canvas.width : 0);
-      for (const group of groups) {
-        const natural = Math.min(canvas.width, Math.max(paddingX * 2 + font, groupNaturalWidth(context, group, font)));
-        const remaining = direction === "rtl" ? x : canvas.width - x;
-        if (rowHeight > 0 && natural - remaining > 0.01) {
-          y += rowHeight;
-          rowHeight = 0;
-          x = rowStart();
-        }
-        const groupWidth = Math.min(natural, direction === "rtl" ? x : canvas.width - x);
-        const startX = direction === "rtl" ? x - groupWidth : x;
-        const bottom = drawGroup(context, group, y, startX, groupWidth, canvas.height, font, direction);
-        rowHeight = Math.max(rowHeight, bottom - y);
-        x = direction === "rtl" ? startX - packGap : startX + groupWidth + packGap;
-      }
-      if ((snapshot.pages || []).length > 1) {
-        context.fillStyle = SUB;
-        context.font = "11px Arial";
-        context.direction = "ltr";
-        context.textAlign = direction === "rtl" ? "left" : "right";
-        context.textBaseline = "alphabetic";
-        context.shadowColor = "transparent";
-        context.fillText(`${Number(snapshot.pageIndex || 0) + 1} / ${snapshot.pages.length}`, direction === "rtl" ? 5 : canvas.width - 5, canvas.height - 3);
-      }
+      const scale = Number(contentLayout?.scale) || 1;
+      context.save?.();
+      context.scale?.(scale, scale);
+      for (const placement of contentLayout?.placements || []) drawPlacement(context, placement, font, scale);
+      context.restore?.();
       dirty = false;
       contentVersion += 1;
     }
-    return { source: canvas, contentVersion, matrix: projectionOverlayMatrix(layout) };
+    const rasterWidthPct = rasterSize.width / OUTPUT_WIDTH * 100;
+    const rasterHeightPct = rasterSize.height / OUTPUT_HEIGHT * 100;
+    const paintLayout = { ...layout, leftPct: layout.leftPct + (layout.widthPct - rasterWidthPct) / 2,
+      topPct: layout.topPct + (layout.heightPct - rasterHeightPct) / 2, widthPct: rasterWidthPct, heightPct: rasterHeightPct };
+    return { source: canvas, contentVersion, matrix: projectionOverlayMatrix(paintLayout) };
   };
 
   return {

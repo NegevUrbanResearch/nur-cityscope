@@ -743,6 +743,150 @@ describe("remote People and archive controller", () => {
     expect(controller.getArchivePhase()).toBe("opening");
   });
 
+  async function openArchiveSession(fixture) {
+    await fixture.controller.openArchive();
+    const requestId = fixture.dataContext.archiveWindowCommand.mock.calls[0][3];
+    fixture.controller.handleArchiveResult({
+      requestId,
+      personId: "11",
+      datasetVersion: "v1",
+      outcome: "navigation_attempted",
+    });
+    expect(fixture.controller.getArchivePhase()).toBe("open");
+    fixture.dataContext.archiveWindowCommand.mockClear();
+    return fixture;
+  }
+
+  test("pageArchive sends page_down without changing an open phase", async () => {
+    const fixture = await openArchiveSession(await createArchiveFixture());
+    await expect(fixture.controller.pageArchive("down")).resolves.toBe(true);
+    expect(fixture.dataContext.archiveWindowCommand).toHaveBeenCalledWith(
+      "page_down",
+      "11",
+      "v1",
+      expect.any(String),
+    );
+    expect(fixture.controller.getArchivePhase()).toBe("open");
+    fixture.controller.destroy();
+  });
+
+  test.each(["up", "down"])("pageArchive %s preserves the real data context receiver", async (direction) => {
+    const { OTEFDataContext } = await import("../../frontend/src/shared/OTEFDataContext.js");
+    const { OTEF_API } = await import("../../frontend/src/shared/api-client.js");
+    const transport = vi.spyOn(OTEF_API, "archiveWindowCommand").mockResolvedValue({ acknowledged: true });
+    const fixture = await createArchiveFixture({
+      archiveWindowCommand: vi.fn(OTEFDataContext.archiveWindowCommand),
+    });
+    Object.assign(fixture.dataContext, { _tableName: "otef", _clientId: "scroll-test" });
+    try {
+      await openArchiveSession(fixture);
+      transport.mockClear();
+      await expect(fixture.controller.pageArchive(direction)).resolves.toBe(true);
+      expect(transport).toHaveBeenCalledWith("otef", {
+        action: direction === "up" ? "page_up" : "page_down",
+        personId: "11",
+        datasetVersion: "v1",
+        requestId: expect.any(String),
+        sourceId: "scroll-test",
+      });
+      expect(fixture.controller.getArchivePhase()).toBe("open");
+    } finally {
+      fixture.controller.destroy();
+      transport.mockRestore();
+    }
+  });
+
+  test("pageArchive while closed does not send", async () => {
+    const fixture = await createArchiveFixture();
+    await expect(fixture.controller.pageArchive("down")).resolves.toBe(false);
+    expect(fixture.dataContext.archiveWindowCommand).not.toHaveBeenCalled();
+    expect(fixture.controller.getArchivePhase()).toBe("closed");
+    fixture.controller.destroy();
+  });
+
+  test("pageArchive while opening does not send", async () => {
+    const fixture = await createArchiveFixture();
+    await fixture.controller.openArchive();
+    expect(fixture.controller.getArchivePhase()).toBe("opening");
+    fixture.dataContext.archiveWindowCommand.mockClear();
+    await expect(fixture.controller.pageArchive("down")).resolves.toBe(false);
+    expect(fixture.dataContext.archiveWindowCommand).not.toHaveBeenCalled();
+    fixture.controller.destroy();
+  });
+
+  test("pageArchive swallows transport errors and stays open", async () => {
+    const archiveWindowCommand = vi.fn()
+      .mockResolvedValueOnce({ acknowledged: true })
+      .mockRejectedValueOnce(new Error("transport failed"));
+    const fixture = await openArchiveSession(await createArchiveFixture({ archiveWindowCommand }));
+    await expect(fixture.controller.pageArchive("up")).resolves.toBe(false);
+    expect(archiveWindowCommand).toHaveBeenCalledWith("page_up", "11", "v1", expect.any(String));
+    expect(fixture.controller.getArchivePhase()).toBe("open");
+    fixture.controller.destroy();
+  });
+
+  test("archiveButton undefined still synthesizes the workshop dummy button", async () => {
+    const { createRemotePeopleArchiveController } = await import(
+      "../../frontend/src/remote/remote-people-archive-controller.js"
+    );
+    const root = document.getElementById("placeSearchGroup");
+    const controller = createRemotePeopleArchiveController({
+      root,
+      input: document.getElementById("placeSearchInput"),
+      clear: document.getElementById("placeSearchClear"),
+      list: document.getElementById("placeSuggestions"),
+      status: document.getElementById("placeSearchStatus"),
+      navigationSection: root,
+      dataContext: { getInvestigationClock: () => ({ phase: "idle" }) },
+      peopleRuntime: { load: vi.fn(), resolve: vi.fn() },
+      getMode: () => "people",
+      setMode: vi.fn(),
+      renderSuggestions: vi.fn(),
+      setStatus: vi.fn(),
+      setRootClass: vi.fn(),
+      setHidden: vi.fn(),
+      syncInputDirection: vi.fn(),
+      archiveButton: undefined,
+    });
+    const dummy = root.children.find((child) => child.className === "place-search-archive-button");
+    expect(dummy).toBeDefined();
+    expect(dummy.type).toBe("button");
+    expect(dummy.hidden).toBe(true);
+    expect(controller.archiveButton).toBe(dummy);
+    controller.destroy();
+  });
+
+  test("archiveButton null does not append a workshop dummy button", async () => {
+    const { createRemotePeopleArchiveController } = await import(
+      "../../frontend/src/remote/remote-people-archive-controller.js"
+    );
+    const onStateChange = vi.fn();
+    const root = document.getElementById("placeSearchGroup");
+    const controller = createRemotePeopleArchiveController({
+      root,
+      input: document.getElementById("placeSearchInput"),
+      clear: document.getElementById("placeSearchClear"),
+      list: document.getElementById("placeSuggestions"),
+      status: document.getElementById("placeSearchStatus"),
+      navigationSection: root,
+      dataContext: { getInvestigationClock: () => ({ phase: "idle" }) },
+      peopleRuntime: { load: vi.fn(), resolve: vi.fn() },
+      getMode: () => "people",
+      setMode: vi.fn(),
+      renderSuggestions: vi.fn(),
+      setStatus: vi.fn(),
+      setRootClass: vi.fn(),
+      setHidden: vi.fn(),
+      syncInputDirection: vi.fn(),
+      archiveButton: null,
+      onStateChange,
+    });
+    expect(root.children.find((child) => child.className === "place-search-archive-button")).toBeUndefined();
+    expect(controller.archiveButton).toBeNull();
+    expect(onStateChange).toHaveBeenCalled();
+    controller.destroy();
+  });
+
   test("a cancelled queued stop does not treat the old idle snapshot as acknowledgement", async () => {
     const { waitForInvestigationClockIdle } = await import(
       "../../frontend/src/remote/remote-people-archive-controller.js"

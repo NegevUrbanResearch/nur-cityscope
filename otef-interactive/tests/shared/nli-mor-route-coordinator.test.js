@@ -75,8 +75,8 @@ describe("Mor Levy route coordinator", () => {
     const dataContext = context({ narrative: { id: "nova" }, overlay: { mor: true } });
     const coordinator = createMorRouteCoordinator({ map, dataContext, profile: "gis" });
     return coordinator.onStyleLoad().then(() => {
-      vi.spyOn(Date, "now").mockReturnValue(3100);
-      map.driveAnimationFrame(3100);
+      vi.spyOn(Date, "now").mockReturnValue(6000);
+      map.driveAnimationFrame(6000);
       const head = map.getSource("nli-mor-route").data.features.find((feature) => feature.properties.role === "head").geometry.coordinates;
 
       expect(head[0]).toBeCloseTo(0, 5);
@@ -107,8 +107,8 @@ describe("Mor Levy route coordinator", () => {
     await coordinator.onStyleLoad();
 
     expect(map.getSource("nli-mor-route-head")).toBeFalsy();
-    vi.spyOn(Date, "now").mockReturnValue(3100);
-    map.driveAnimationFrame(3100);
+    vi.spyOn(Date, "now").mockReturnValue(6000);
+    map.driveAnimationFrame(6000);
     const source = map.getSource("nli-mor-route");
     expect(source.data.features.map((feature) => feature.properties.role)).toEqual(["line", "head"]);
     const tip = source.data.features[0].geometry.coordinates.at(-1).at(-1);
@@ -146,8 +146,8 @@ describe("Mor Levy route coordinator", () => {
     map.driveAnimationFrame(3100);
     const partial = map.getSource("nli-mor-route").data;
     expect(partial.features.map((feature) => feature.properties.role)).toEqual(["line", "head"]);
-    vi.spyOn(Date, "now").mockReturnValue(5200);
-    map.driveAnimationFrame(5200);
+    vi.spyOn(Date, "now").mockReturnValue(11000);
+    map.driveAnimationFrame(11000);
     const complete = map.getSource("nli-mor-route").data;
     const completeCoordinates = complete.features.find((feature) => feature.properties.role === "line").geometry.coordinates;
     expect(completeCoordinates).toHaveLength(2);
@@ -165,8 +165,8 @@ describe("Mor Levy route coordinator", () => {
     const coordinator = createMorRouteCoordinator({ map, dataContext, profile: "gis" });
     await coordinator.onStyleLoad();
 
-    vi.spyOn(Date, "now").mockReturnValue(5200);
-    map.driveAnimationFrame(5200);
+    vi.spyOn(Date, "now").mockReturnValue(11000);
+    map.driveAnimationFrame(11000);
 
     const features = map.getSource("nli-mor-route").data.features;
     const head = features.find((feature) => feature.properties.role === "head");

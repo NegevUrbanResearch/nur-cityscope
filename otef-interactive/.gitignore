@@ -6,6 +6,7 @@ frontend/data/*.mbtiles
 # Node dependencies (for local JS tooling/tests)
 node_modules/
 package-lock.json
+scripts/hotspot-config.local.json
 
 # Python cache
 scripts/__pycache__/

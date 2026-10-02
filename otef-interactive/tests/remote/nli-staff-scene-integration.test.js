@@ -9,6 +9,7 @@ import { OTEF_MESSAGE_TYPES } from "../../frontend/src/shared/message-protocol.j
 import {
   INVESTIGATION_LINES_FULL_ID,
   INVESTIGATION_POLYGONS_FULL_ID,
+  timelineBeatDurationMs,
 } from "../../frontend/src/shared/nli-investigation-beats.js";
 import { nliPlayableIdsFromGroups } from "../../frontend/src/shared/nli-investigation-clock.js";
 import { deriveInvestigationFrame } from "../../frontend/src/shared/nli-investigation-visual-state.js";
@@ -23,6 +24,8 @@ import {
 import { DEFAULT_INVESTIGATION_SETTLEMENTS_URL } from "../../frontend/src/shared/nli-investigation-timeline-data.js";
 import { HOME_LAYER_IDS, NARRATIVES, TIMELINE_LAYER_IDS } from "../../frontend/src/remote/nli-staff-script.js";
 import { setLocale } from "../../frontend/src/remote/remote-locale.js";
+import { sha256Hex } from "../../frontend/src/shared/sha256-hex.js";
+import { presenterCopyKey } from "../../frontend/src/remote/nli-presenter-content.js";
 
 const STORY_MINUTES = [389, 401, 402, 780];
 const ESCAPE_URLS = new Set([
@@ -36,7 +39,6 @@ const PLAYABLE_LAYER_IDS = ["investigation_polygons", "lines", "alarms"];
 const FIXTURE = `
   <div class="app">
     <button type="button" id="homeBtn" hidden></button>
-    <button type="button" id="homeLayersBtn" hidden></button>
     <button type="button" id="localeHe"></button>
     <button type="button" id="localeEn"></button>
     <span id="staffConnection"></span>
@@ -50,6 +52,7 @@ const FIXTURE = `
       <div id="stepClock"></div>
       <h1 id="stepTitle"></h1>
       <p id="stepNote"></p>
+      <div id="playerCueFailure" hidden role="alert"><span id="playerCueFailureText"></span><button id="playerCueRetry">Retry</button></div>
       <div id="playerKit">
         <p id="cueStatus"></p>
         <div id="kitSearch">
@@ -57,20 +60,21 @@ const FIXTURE = `
             <input id="searchInput" />
             <ul id="searchResults"></ul>
             <p id="searchStatus" hidden></p>
-            <button type="button" id="freeArchiveBtn"></button>
+            <div id="searchArchiveMount"></div>
           </div>
         </div>
         <div id="kitEscape"></div>
         <div id="kitPresentation"></div>
         <div id="kitTimeline"></div>
-        <div id="kitArchive"><button type="button" id="archiveBtn"></button></div>
+        <div id="kitArchive"></div>
         <p id="kitIdle" hidden></p>
       </div>
-      <button type="button" id="prevBtn"></button>
-      <button type="button" id="nextBtn"></button>
-      <div id="nextChoices" hidden></div>
+      <div class="dock">
+        <button type="button" id="prevBtn"></button>
+        <button type="button" id="nextBtn"></button>
+        <div id="nextChoices" hidden></div>
+      </div>
     </section>
-    <div id="staffPackMenus" hidden></div>
   </div>
 `;
 
@@ -209,6 +213,7 @@ function mount() {
 
   const dataContext = {
     isConnected: () => false,
+    correctedNow: () => 50_000,
     getNarrativeState: () => h.narrative,
     getPersonSelection: () => h.person,
     getInvestigationClock: () => h.clock,
@@ -295,15 +300,28 @@ function mount() {
   return { h, dataContext };
 }
 
-async function boot(session) {
+async function boot(session, options) {
   const { initNliStaffRemote } = await import("../../frontend/src/remote/nli-staff-remote.js");
-  initNliStaffRemote(session.dataContext);
+  session.remote = initNliStaffRemote(session.dataContext, options);
   session.h.emit("narrativeState", session.h.narrative);
   session.h.emit("connection", true);
   await vi.waitFor(() => {
     expect(session.h.layers.at(-1)).toEqual([...HOME_LAYER_IDS]);
     for (const view of session.h.followers.map(readFollower)) expectHome(view);
   });
+}
+
+async function syntheticPresenterManifest() {
+  const features = storyCollection().features;
+  const hash = await sha256Hex(new TextEncoder().encode(JSON.stringify(features)));
+  const membership = PLAYABLE_LAYER_IDS.map((id) => `nli.${id}`);
+  const records = Object.fromEntries(STORY_MINUTES.map((minute) => [
+    presenterCopyKey(null, membership, minute),
+    { en: { timeLabel: String(minute), title: `Event ${minute}` },
+      he: { timeLabel: String(minute), title: `אירוע ${minute}` } },
+  ]));
+  return { schemaVersion: 1, datasetVersion: "synthetic-v1", acceptedSourceSha256: "test-source",
+    requiredArtifacts: Object.fromEntries(membership.map((id) => [id, hash])), records };
 }
 
 async function openCard(selector) {
@@ -345,6 +363,7 @@ describe("NLI staff scene integration", () => {
   afterEach(() => {
     for (const coordinator of coordinators) coordinator.dispose();
     coordinators = [];
+    session?.remote?.dispose();
     session?.h.dispose();
     session = null;
     globalThis.OTEFDataContext = OTEFDataContext;
@@ -408,6 +427,9 @@ describe("NLI staff scene integration", () => {
     await openCard('[data-open="timeline"]');
     await clickNextReady("The rest of the day");
     await clickNextReady("The full timeline");
+    const writes = vi.spyOn(session.dataContext, "patchInvestigationClock");
+    session.remote.render();
+    expect(writes).not.toHaveBeenCalled();
     for (const view of views(session)) {
       expect(view.narrativeId).toBeNull();
       expect(view.clock.phase).toBe("idle");
@@ -426,6 +448,157 @@ describe("NLI staff scene integration", () => {
       expect(frame.narrative).toMatchObject({ phase: "idle", advances: false });
       expect(view.viewport).toBeNull();
     }
+  });
+
+  test("staff timeline mounts the presenter controls without legacy transport controls", async () => {
+    setLocale("en", { persist: false });
+    session = mount();
+    await boot(session);
+    await openCard('[data-open="timeline"]');
+    const root = el("kitTimeline");
+    expect(root.querySelector("[data-presenter-list]")).not.toBeNull();
+    expect(root.querySelector("[data-presenter-play]")).not.toBeNull();
+    expect(root.querySelector(".nli-transport-scrub, [data-nli-action='stop'], [data-nli-action='loop']")).toBeNull();
+    const list = root.querySelector("[data-presenter-list]");
+    session.h.emit("investigationClock", session.h.clock);
+    expect(root.querySelector("[data-presenter-list]")).toBe(list);
+    expect(el("kitSearch")).not.toBeNull();
+    expect(el("nextBtn")).not.toBeNull();
+  });
+
+  test("verified staff event rows retain identity through clock updates and browsing does not write", async () => {
+    setLocale("en", { persist: false });
+    session = mount();
+    const writes = vi.spyOn(session.dataContext, "patchInvestigationClock");
+    await boot(session, { presenterManifest: await syntheticPresenterManifest() });
+    await openCard('[data-open="timeline"]');
+    await vi.waitFor(() => expect(el("kitTimeline").querySelectorAll("[data-presenter-event]")).toHaveLength(2));
+    const root = el("kitTimeline").firstElementChild;
+    const list = el("kitTimeline").querySelector("[data-presenter-list]");
+    const row = list.querySelector("[data-presenter-event]");
+    const writesBeforeBrowse = writes.mock.calls.length;
+    row.focus();
+    list.scrollTop = 32;
+    list.dispatchEvent(new Event("scroll"));
+    expect(writes).toHaveBeenCalledTimes(writesBeforeBrowse);
+    session.h.emit("investigationClock", session.h.clock);
+    expect(el("kitTimeline").firstElementChild).toBe(root);
+    expect(el("kitTimeline").querySelector("[data-presenter-list]")).toBe(list);
+    expect(list.querySelector("[data-presenter-event]")).toBe(row);
+    expect(list.scrollTop).toBe(32);
+    expect(writes).toHaveBeenCalledTimes(writesBeforeBrowse);
+    await clickNextReady("The rest of the day");
+    await vi.waitFor(() => expect(el("kitTimeline").querySelectorAll("[data-presenter-event]")).toHaveLength(2));
+    await clickNextReady("The full timeline");
+    await vi.waitFor(() => expect(el("kitTimeline").querySelectorAll("[data-presenter-event]")).toHaveLength(4));
+  });
+
+  test("rejected presenter event keeps its applied state and Retry only refetches", async () => {
+    setLocale("en", { persist: false });
+    session = mount();
+    await boot(session, { presenterManifest: await syntheticPresenterManifest() });
+    await openCard('[data-open="timeline"]');
+    await vi.waitFor(() => expect(el("kitTimeline").querySelectorAll("[data-presenter-event]")).toHaveLength(2));
+    const before = session.h.clock;
+    const originalPatch = session.dataContext.patchInvestigationClock;
+    const rejectedPatch = vi.fn(async () => ({ ok: false, error: new Error("rejected") }));
+    session.dataContext.patchInvestigationClock = rejectedPatch;
+    el("kitTimeline").querySelectorAll("[data-presenter-event]")[1].click();
+    await vi.waitFor(() => expect(el("cueStatus").dataset.status).toBe("presenter-failed"));
+    expect(rejectedPatch).toHaveBeenCalledTimes(1);
+    expect(session.h.clock).toBe(before);
+    const writes = rejectedPatch.mock.calls.length;
+    el("kitTimeline").querySelector("[data-presenter-retry]").click();
+    await vi.waitFor(() => expect(el("cueStatus").dataset.status).toBe("ready"));
+    expect(rejectedPatch).toHaveBeenCalledTimes(writes);
+    session.dataContext.patchInvestigationClock = originalPatch;
+  });
+
+  test("a presenter failure clears at the next scene boundary", async () => {
+    setLocale("en", { persist: false });
+    session = mount();
+    await boot(session, { presenterManifest: await syntheticPresenterManifest() });
+    await openCard('[data-open="timeline"]');
+    await vi.waitFor(() => expect(el("kitTimeline").querySelectorAll("[data-presenter-event]")).toHaveLength(2));
+    const originalPatch = session.dataContext.patchInvestigationClock;
+    session.dataContext.patchInvestigationClock = vi.fn(async () => ({ ok: false, error: new Error("rejected") }));
+    el("kitTimeline").querySelectorAll("[data-presenter-event]")[1].click();
+    await vi.waitFor(() => expect(el("cueStatus").dataset.status).toBe("presenter-failed"));
+    session.dataContext.patchInvestigationClock = originalPatch;
+    await clickNextReady("The rest of the day");
+    expect(el("cueStatus").dataset.status).toBe("ready");
+    expect(el("cueStatus").textContent).not.toMatch(/Timeline action failed/);
+    session.dataContext.patchInvestigationClock = vi.fn(async () => ({ ok: false, error: new Error("rejected again") }));
+    await vi.waitFor(() => expect(el("kitTimeline").querySelectorAll("[data-presenter-event]")).toHaveLength(2));
+    el("kitTimeline").querySelectorAll("[data-presenter-event]")[0].click();
+    await vi.waitFor(() => expect(el("cueStatus").dataset.status).toBe("presenter-failed"));
+    session.dataContext.patchInvestigationClock = originalPatch;
+    el("homeBtn").click();
+    await vi.waitFor(() => expect(document.querySelector(".screen.is-active")?.dataset.screen).toBe("home"));
+    expect(el("cueStatus").dataset.status).toBe("ready");
+  });
+
+  test("a published advancing beat changes the applied card and current row without a staff clock write", async () => {
+    setLocale("en", { persist: false });
+    session = mount();
+    await boot(session, { presenterManifest: await syntheticPresenterManifest() });
+    await openCard('[data-open="timeline"]');
+    await vi.waitFor(() => expect(el("kitTimeline").querySelectorAll("[data-presenter-event]")).toHaveLength(2));
+    const rows = [...el("kitTimeline").querySelectorAll("[data-presenter-event]")];
+    const clock = session.h.clock;
+    const writes = vi.spyOn(session.dataContext, "patchInvestigationClock");
+    session.h.clock = { ...clock, positionMs: timelineBeatDurationMs(clock.beats[0]) + 1,
+      anchorMs: session.dataContext.correctedNow(), revision: clock.revision + 1 };
+    session.h.emit("investigationClock", session.h.clock);
+    expect(el("kitTimeline").querySelector("[data-presenter-title]").textContent).toBe("Event 401");
+    expect(rows[0].hasAttribute("aria-current")).toBe(false);
+    expect(rows[1].getAttribute("aria-current")).toBe("true");
+    expect(writes).not.toHaveBeenCalled();
+  });
+
+  test("hash mismatch Retry refetches corrected features without writing the clock", async () => {
+    setLocale("en", { persist: false });
+    session = mount();
+    const normalFetch = globalThis.fetch;
+    let corrected = false;
+    vi.stubGlobal("fetch", vi.fn(async (url) => {
+      const response = await normalFetch(url);
+      if (corrected || ESCAPE_URLS.has(String(url))) return response;
+      const json = await response.json();
+      return { ok: true, json: async () => ({ ...json,
+        features: json.features?.map((feature) => ({ ...feature, properties: { ...feature.properties, extra: "wrong" } })) }) };
+    }));
+    const writes = vi.spyOn(session.dataContext, "patchInvestigationClock");
+    await boot(session, { presenterManifest: await syntheticPresenterManifest() });
+    await openCard('[data-open="timeline"]');
+    await vi.waitFor(() => expect(el("kitTimeline").querySelector("[data-presenter-retry]").hidden).toBe(false));
+    expect(el("kitTimeline").querySelectorAll("[data-presenter-event]")).toHaveLength(0);
+    corrected = true;
+    const before = writes.mock.calls.length;
+    el("kitTimeline").querySelector("[data-presenter-retry]").click();
+    await vi.waitFor(() => expect(el("kitTimeline").querySelectorAll("[data-presenter-event]")).toHaveLength(2));
+    expect(writes).toHaveBeenCalledTimes(before);
+  });
+
+  test("Home invalidates a delayed event acknowledgement before it repaints", async () => {
+    setLocale("en", { persist: false });
+    session = mount();
+    await boot(session, { presenterManifest: await syntheticPresenterManifest() });
+    await openCard('[data-open="timeline"]');
+    await vi.waitFor(() => expect(el("kitTimeline").querySelectorAll("[data-presenter-event]")).toHaveLength(2));
+    const originalPatch = session.dataContext.patchInvestigationClock;
+    let acknowledge;
+    session.dataContext.patchInvestigationClock = vi.fn(() => new Promise((resolve) => { acknowledge = resolve; }));
+    el("kitTimeline").querySelectorAll("[data-presenter-event]")[1].click();
+    await vi.waitFor(() => expect(acknowledge).toBeTypeOf("function"));
+    session.dataContext.patchInvestigationClock = originalPatch;
+    el("homeBtn").click();
+    await vi.waitFor(() => expect(document.querySelector(".screen.is-active")?.dataset.screen).toBe("home"));
+    acknowledge({ ok: true });
+    await Promise.resolve();
+    expect(document.querySelector(".screen.is-active")?.dataset.screen).toBe("home");
+    expect(el("kitTimeline").querySelector("[data-presenter-list]")).not.toBeNull();
+    expect(el("cueStatus").dataset.status).not.toBe("presenter-failed");
   });
 
   test("Nova partial play, routes, Mor, memorial, routes, and Home keep follower virtual membership", async () => {
@@ -502,6 +675,42 @@ describe("NLI staff scene integration", () => {
     });
   });
 
+  test("Mor opens its slides when the cue is ready, keeps its route active, and can reopen", async () => {
+    setLocale("en", { persist: false });
+    session = mount();
+    await boot(session);
+    await openCard('[data-open="nova"]');
+    await clickNextReady("The compounds");
+    await clickNextReady("Escape routes");
+    expect(session.h.commands.filter((command) => command.segmentId === "nova_mor")).toHaveLength(0);
+
+    let releaseMorCue;
+    const originalSetEscapeOverlay = session.dataContext.setEscapeOverlay;
+    session.dataContext.setEscapeOverlay = vi.fn(async (...args) => {
+      await new Promise((resolve) => { releaseMorCue = resolve; });
+      return originalSetEscapeOverlay(...args);
+    });
+    el("nextBtn").click();
+    await vi.waitFor(() => expect(releaseMorCue).toBeTypeOf("function"));
+    expect(el("stepTitle").textContent).toBe("Mor Levy");
+    expect(el("cueStatus").dataset.status).not.toBe("ready");
+    expect(session.h.commands.filter((command) => command.segmentId === "nova_mor")).toHaveLength(0);
+
+    releaseMorCue();
+    await vi.waitFor(() => {
+      expect(el("cueStatus").dataset.status).toBe("ready");
+      expect(session.h.commands.filter((command) => command.segmentId === "nova_mor" && command.presentationAction === "open")).toHaveLength(1);
+    });
+    expect(views(session).every((view) => view.escape.mor)).toBe(true);
+
+    el("kitPresentation").querySelector('[data-presentation-action="close"]').click();
+    await vi.waitFor(() => expect(session.h.commands.at(-1)).toMatchObject({ segmentId: "nova_mor", presentationAction: "close" }));
+    await vi.waitFor(() => expect(el("kitPresentation").querySelector('[data-presentation-action="open"]')).not.toBeNull());
+    el("kitPresentation").querySelector('[data-presentation-action="open"]').click();
+    await vi.waitFor(() => expect(session.h.commands.filter((command) => command.segmentId === "nova_mor" && command.presentationAction === "open")).toHaveLength(2));
+    expect(views(session).every((view) => view.escape.mor)).toBe(true);
+  });
+
   test("a failed Home reset stays retryable and followers ignore the rejected narrative", async () => {
     setLocale("en", { persist: false });
     session = mount();
@@ -509,11 +718,11 @@ describe("NLI staff scene integration", () => {
     await openCard('[data-open="segev"]');
     session.h.failNull = true;
     el("homeBtn").click();
-    await vi.waitFor(() => expect(el("cueStatus").dataset.status).toBe("failed"));
+    await vi.waitFor(() => expect(el("playerCueFailure").hidden).toBe(false));
     expect(document.querySelector(".screen.is-active")?.dataset.screen).toBe("player");
     for (const view of views(session)) expect(view.narrativeId).toBe("segev");
 
-    el("homeBtn").click();
+    el("playerCueRetry").click();
     await vi.waitFor(() => {
       expect(el("cueStatus").dataset.status).toBe("ready");
       for (const view of views(session)) expectHome(view);

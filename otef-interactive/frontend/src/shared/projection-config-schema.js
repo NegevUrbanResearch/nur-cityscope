@@ -1,4 +1,4 @@
-import { validateProjectionConfigV2, validateProjectionConfigV3, validateProjectionConfigV4, validateProjectionConfigV5, validateProjectionConfigV6 } from './projection-warp-schema.js';
+import { validateProjectionConfigV2, validateProjectionConfigV3, validateProjectionConfigV4, validateProjectionConfigV5, validateProjectionConfigV6, validateProjectionConfigV7 } from './projection-warp-schema.js';
 import { migrateNamesWallToV5, migrateNamesWallToV6 } from './nli-name-wall-config.js';
 
 const LEGACY_DEFAULT_PROJECTION_CONFIG = {
@@ -12,7 +12,7 @@ const LEGACY_DEFAULT_PROJECTION_CONFIG = {
 
 const TD_MIGRATION_PRESET_ID = '6b6f2e4d-2c67-4df2-9d7e-1a7bb4ef3b2c';
 const TD_MIGRATION_PRESET_NAME = 'TD migration baseline';
-const DEFAULT_PROJECTION_CONFIG = migrateNamesWallToV6(LEGACY_DEFAULT_PROJECTION_CONFIG, 35);
+const DEFAULT_PROJECTION_CONFIG = migrateProjectionConfigToV7(LEGACY_DEFAULT_PROJECTION_CONFIG, 35);
 
 function freeze(value) {
   if (value && typeof value === 'object' && !Object.isFrozen(value)) {
@@ -24,7 +24,7 @@ function freeze(value) {
 freeze(LEGACY_DEFAULT_PROJECTION_CONFIG);
 freeze(DEFAULT_PROJECTION_CONFIG);
 
-const ownKeys = (value, keys, path, errors) => {
+function ownKeys(value, keys, path, errors) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     errors[path] = 'must be an object';
     return false;
@@ -33,13 +33,14 @@ const ownKeys = (value, keys, path, errors) => {
   for (const key of keys) if (!Object.hasOwn(value, key)) errors[fieldPath(key)] = 'is required';
   for (const key of Object.keys(value)) if (!keys.includes(key)) errors[fieldPath(key)] = 'unknown field';
   return true;
-};
-const number = (value, path, min, max, errors) => {
+}
+function number(value, path, min, max, errors) {
   if (typeof value !== 'number' || !Number.isFinite(value)) { errors[path] = 'must be a finite number'; return; }
   if (value < min || value > max) errors[path] = `must be between ${min} and ${max}`;
-};
+}
 
 export function validateProjectionConfig(value) {
+  if (value?.schemaVersion === 7) return validateProjectionConfigV7(value);
   if (value?.schemaVersion === 6) return validateProjectionConfigV6(value);
   if (value?.schemaVersion === 5) return validateProjectionConfigV5(value);
   if (value?.schemaVersion === 4) return validateProjectionConfigV4(value);
@@ -67,21 +68,33 @@ export function validateProjectionConfig(value) {
   return errors;
 }
 
+export function migrateProjectionConfigToV7(config, rotateDeg = config?.schemaVersion === 6 ? config.namesWall?.rotateDeg : 35, warnings = null) {
+  const errors = validateProjectionConfig(config);
+  if (Object.keys(errors).length) throw new Error(`invalid projection config: ${formatErrors(errors)}`);
+  if (config.schemaVersion === 7) return structuredClone(config);
+  const result = migrateNamesWallToV6(config, rotateDeg, warnings);
+  result.schemaVersion = 7;
+  for (const side of ['left', 'right']) {
+    const grid = result.outputs[side].warp.grid;
+    grid.columnPositions = Array.from({ length: grid.columns }, (_, index) => index / (grid.columns - 1));
+    grid.rowPositions = Array.from({ length: grid.rows }, (_, index) => index / (grid.rows - 1));
+  }
+  return result;
+}
+
 export function parseProjectionImport(text, rotateDeg) {
   if (typeof text !== 'string' || new TextEncoder().encode(text).byteLength > 65536) throw new Error('import exceeds 64 KiB');
   let document;
   try { document = JSON.parse(text); } catch (error) { throw new Error(`invalid JSON: ${error.message}`); }
   const errors = {};
   if (!ownKeys(document, ['schemaVersion', 'name', 'config'], '', errors)) throw new Error(formatErrors(errors));
-  if (![1, 2, 3, 4, 5, 6].includes(document.schemaVersion)) errors.schemaVersion = 'must equal 1, 2, 3, 4, 5, or 6';
+  if (![1, 2, 3, 4, 5, 6, 7].includes(document.schemaVersion)) errors.schemaVersion = 'must equal 1, 2, 3, 4, 5, 6, or 7';
   if (document.config && document.schemaVersion !== document.config.schemaVersion) errors.schemaVersion = 'must match config schemaVersion';
   if (typeof document.name !== 'string' || document.name.trim().length < 1 || document.name.trim().length > 80) errors.name = 'must be 1–80 characters';
   Object.assign(errors, Object.fromEntries(Object.entries(validateProjectionConfig(document.config)).map(([key, value]) => [`config.${key}`, value])));
   if (Object.keys(errors).length) throw new Error(formatErrors(errors));
   const warnings = [];
-  const config = document.schemaVersion < 6 && rotateDeg !== undefined
-    ? migrateNamesWallToV6(document.config, rotateDeg, warnings)
-    : migrateNamesWallToV5(document.config, warnings);
+  const config = migrateProjectionConfigToV7(document.config, rotateDeg ?? document.config.namesWall?.rotateDeg ?? 35, warnings);
   return { name: document.name.trim(), config, warnings };
 }
 const formatErrors = (errors) => `invalid projection config: ${Object.entries(errors).map(([path, message]) => `${path || 'document'} ${message}`).join('; ')}`;
@@ -90,8 +103,8 @@ export function serializeProjectionExport(name, config) {
   const errors = validateProjectionConfig(config);
   if (!trimmed || trimmed.length > 80) errors.name = 'must be 1–80 characters';
   if (Object.keys(errors).length) throw new Error(formatErrors(errors));
-  const normalized = config.schemaVersion === 6 ? migrateNamesWallToV6(config, config.namesWall?.rotateDeg) : migrateNamesWallToV5(config);
+  const normalized = migrateProjectionConfigToV7(config, config.namesWall?.rotateDeg ?? 35);
   return JSON.stringify({ schemaVersion: normalized.schemaVersion, name: trimmed, config: normalized });
 }
 
-export { DEFAULT_PROJECTION_CONFIG, LEGACY_DEFAULT_PROJECTION_CONFIG, TD_MIGRATION_PRESET_ID, TD_MIGRATION_PRESET_NAME, validateProjectionConfigV6 };
+export { DEFAULT_PROJECTION_CONFIG, LEGACY_DEFAULT_PROJECTION_CONFIG, TD_MIGRATION_PRESET_ID, TD_MIGRATION_PRESET_NAME, validateProjectionConfigV6, validateProjectionConfigV7 };

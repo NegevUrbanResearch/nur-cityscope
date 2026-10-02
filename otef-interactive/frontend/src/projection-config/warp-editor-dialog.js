@@ -1,11 +1,11 @@
 import { fitWarpViewport } from "./warp-viewport.js";
-
-const FRAME_URL = (side) => `/otef-interactive/projection.html?span=${side}&preview=1&mapPixelRatio=1&outputMode=browser`;
+import { createProjectionPreviewFrame } from "./projection-preview-frame.js";
+import { createProjectionTraceUi } from './projection-trace-ui.js';
+import { recordProjectionTrace } from './projection-trace-input.js';
 
 /** Owns one disposable projection frame. The config controller retains all draft and edit state. */
-export function createWarpEditorDialog({ document: doc, host, editorPanel, overlay, onBeforeClose = () => {}, onBeforeSwitch = () => {}, onFineToggle = () => {}, onBeforeResize = () => {}, onApply = () => {}, onLive = () => {} }) {
+export function createWarpEditorDialog({ document: doc, host, editorPanel, overlay, navigationControls, onBeforeClose = () => {}, onBeforeSwitch = () => {}, onBeforeResize = () => {}, onViewportChange = () => {}, onOrientationChange = () => {}, onApply = () => {}, onLive = () => {}, trace }) {
   const win = doc.defaultView;
-  const origin = win?.location?.origin;
   const home = editorPanel.parentElement;
   const overlayHome = overlay.parentElement;
   const modal = doc.createElement("section");
@@ -17,25 +17,26 @@ export function createWarpEditorDialog({ document: doc, host, editorPanel, overl
   const header = doc.createElement("header"); header.className = "warp-editor-header";
   const title = doc.createElement("h2"); title.className = "warp-editor-title";
   const status = doc.createElement("span"); status.className = "warp-editor-message"; status.setAttribute("role", "status");
-  const fineToggle = doc.createElement("button"); fineToggle.type = "button"; fineToggle.dataset.action = "warp-editor-fine"; fineToggle.textContent = "Fine adjustment"; fineToggle.setAttribute("aria-expanded", "false");
   const closeButton = doc.createElement("button"); closeButton.type = "button"; closeButton.dataset.action = "warp-editor-close"; closeButton.textContent = "Close";
-  header.append(title, status, fineToggle, closeButton);
+  header.append(title, status);
+  if (navigationControls) header.appendChild(navigationControls);
+  header.appendChild(closeButton);
   const body = doc.createElement("div"); body.className = "warp-editor-body";
   const viewport = doc.createElement("div"); viewport.className = "warp-editor-viewport";
-  const finePanel = doc.createElement("aside"); finePanel.className = "warp-editor-fine-panel"; finePanel.hidden = true;
+  const finePanel = doc.createElement("aside"); finePanel.className = "warp-editor-fine-panel";
   body.append(viewport, finePanel);
   const footer = doc.createElement("footer"); footer.className = "warp-editor-footer";
-  const liveLabel = doc.createElement("label"); liveLabel.textContent = "Live";
+  const liveLabel = doc.createElement("label"); liveLabel.className = "live-toggle"; liveLabel.textContent = "Live";
   const liveInput = doc.createElement("input"); liveInput.type = "checkbox"; liveInput.setAttribute("aria-label", "Editor Live"); liveLabel.prepend(liveInput);
   const applyButton = doc.createElement("button"); applyButton.type = "button"; applyButton.textContent = "Apply once";
   const applied = doc.createElement("span"); applied.className = "warp-editor-applied";
   const retry = doc.createElement("button"); retry.type = "button"; retry.dataset.action = "warp-editor-retry"; retry.textContent = "Retry"; retry.hidden = true;
   footer.append(liveLabel, applyButton, applied, retry);
+  const traceUi = trace?.enabled ? createProjectionTraceUi({ document: doc, trace }) : null;
+  if (traceUi) footer.appendChild(traceUi.element);
   modal.append(header, body, footer); host.appendChild(modal);
 
   let session = null;
-  let latest = null;
-  let generation = 0;
   let opener = null;
   let oldOverflow = null;
   let inertSiblings = [];
@@ -47,28 +48,36 @@ export function createWarpEditorDialog({ document: doc, host, editorPanel, overl
   let closedFocus = null;
   let viewBox = { x: -72, y: -72, width: 2064, height: 1224 };
   const setMessage = (message) => { status.textContent = message; };
+  const preview = createProjectionPreviewFrame({ document: doc, host: viewport, trace, onStatus: (message, canRetry) => { setMessage(message); retry.hidden = !canRetry; } });
   const fit = () => {
     if (!session || !viewport.clientWidth || !viewport.clientHeight) return;
     const mapping = fitWarpViewport(viewBox, viewport.clientWidth, viewport.clientHeight);
     const frame = session.frame;
     frame.style.transform = `translate(${mapping.image.left}px, ${mapping.image.top}px) scale(${mapping.scale})`;
     overlay.setAttribute("viewBox", `${viewBox.x} ${viewBox.y} ${viewBox.width} ${viewBox.height}`);
+    onViewportChange();
+  };
+  const readViewportMapping = () => {
+    const rect = viewport.getBoundingClientRect?.();
+    if (!rect) return null;
+    return { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
+  };
+  const rememberViewportMapping = (current) => {
+    if (current && current === session && viewport.clientWidth && viewport.clientHeight) current.mapping = readViewportMapping();
+  };
+  const refreshViewportGeometry = (current = session) => {
+    if (!current || current !== session) return;
+    const next = readViewportMapping();
+    const previous = current.mapping;
+    if (previous && next && (previous.left !== next.left || previous.top !== next.top || previous.width !== next.width || previous.height !== next.height)) onBeforeResize();
+    fit();
+    rememberViewportMapping(current);
   };
   const clearFrame = () => {
     if (!session) return;
-    clearTimeout(session.timer);
     session.observer?.disconnect();
-    session.frame.remove();
+    preview.clear();
     session = null;
-  };
-  const send = () => {
-    if (!session?.ready || !latest || !origin) return;
-    const identity = JSON.stringify(latest);
-    if (identity === session.sentIdentity) return;
-    session.sentIdentity = identity;
-    const requestId = ++session.requestId;
-    session.frame.contentWindow?.postMessage({ type: "otef_projection_preview_config", output: session.side, requestId, config: latest }, origin);
-    setMessage("Rendering current draft…");
   };
   const restoreFocus = (returnTo) => {
     if (returnTo && focusEpoch === returnTo.epoch && modal.hidden) returnTo.element?.focus?.();
@@ -82,37 +91,13 @@ export function createWarpEditorDialog({ document: doc, host, editorPanel, overl
   };
   const makeFrame = (side) => {
     clearFrame();
-    const frame = doc.createElement("iframe");
-    frame.className = "warp-editor-frame";
-    frame.title = `${side} projection output`;
-    frame.setAttribute("aria-hidden", "true");
-    frame.tabIndex = -1;
-    frame.src = FRAME_URL(side);
-    viewport.appendChild(frame);
-    const current = { frame, side, generation: ++generation, ready: false, timedOut: false, requestId: 0, sentIdentity: null, observer: null, timer: null };
+    const frame = preview.mount(side);
+    const current = { frame, side, observer: null };
     session = current;
-    setMessage("Loading projection output…"); retry.hidden = true;
-    current.timer = setTimeout(() => {
-      if (session !== current || current.ready) return;
-      current.timedOut = true;
-      setMessage("Projection output unavailable. Retry to reload it."); retry.hidden = false;
-    }, 30000);
     const ResizeObserverType = win?.ResizeObserver || globalThis.ResizeObserver;
-    if (ResizeObserverType) { current.observer = new ResizeObserverType(() => { onBeforeResize(); fit(); }); current.observer.observe(viewport); }
+    if (ResizeObserverType) { current.observer = new ResizeObserverType(() => { if (current !== session) return; recordProjectionTrace(trace, 'viewport', { surface: 'dialog', phase: 'resize_observer', output: side }); refreshViewportGeometry(current); }); current.observer.observe(viewport); }
     fit();
-  };
-  const onMessage = (event) => {
-    const current = session;
-    const message = event.data;
-    if (!current || current.timedOut || current.generation !== generation || event.origin !== origin || event.source !== current.frame.contentWindow || message?.output !== current.side) return;
-    if (message.type === "otef_projection_preview_ready") {
-      if (current.ready) return;
-      current.ready = true; clearTimeout(current.timer); current.timer = null;
-      setMessage("Ready"); retry.hidden = true; send();
-    } else if (message.type === "otef_projection_preview_applied" && current.ready && message.requestId === current.requestId) {
-      setMessage(message.success ? "Current draft" : `Preview unavailable: ${String(message.error || "render failed").slice(0, 240)}`);
-      retry.hidden = Boolean(message.success);
-    }
+    rememberViewportMapping(current);
   };
   const requestFullscreen = () => {
     if (fullscreenPending || doc.fullscreenElement === modal || typeof modal.requestFullscreen !== "function") return;
@@ -123,7 +108,7 @@ export function createWarpEditorDialog({ document: doc, host, editorPanel, overl
     Promise.resolve(request).then(() => {
       fullscreenPending = false;
       if (disposed || !session) { exitOwnedFullscreen(closedFocus); ownFullscreen = false; }
-      else { ownFullscreen = doc.fullscreenElement === modal; fit(); }
+      else { ownFullscreen = doc.fullscreenElement === modal; refreshViewportGeometry(); }
     }).catch(() => { fullscreenPending = false; });
   };
   const onKeyDown = (event) => {
@@ -136,23 +121,23 @@ export function createWarpEditorDialog({ document: doc, host, editorPanel, overl
     if (event.shiftKey && doc.activeElement === first) { event.preventDefault(); last.focus(); }
     else if (!event.shiftKey && doc.activeElement === last) { event.preventDefault(); first.focus(); }
   };
-  const onResize = () => { onBeforeResize(); fit(); };
+  const onResize = () => refreshViewportGeometry();
+  const onOrientation = () => { onOrientationChange(); fit(); rememberViewportMapping(session); };
+  const onFullscreenChange = () => refreshViewportGeometry();
   const attachListeners = () => {
     if (listenersAttached) return;
     listenersAttached = true;
-    win?.addEventListener?.("message", onMessage);
     win?.addEventListener?.("resize", onResize);
-    win?.addEventListener?.("orientationchange", onResize);
-    doc.addEventListener?.("fullscreenchange", fit);
+    win?.addEventListener?.("orientationchange", onOrientation);
+    doc.addEventListener?.("fullscreenchange", onFullscreenChange);
     doc.addEventListener?.("keydown", onKeyDown);
   };
   const detachListeners = () => {
     if (!listenersAttached) return;
     listenersAttached = false;
-    win?.removeEventListener?.("message", onMessage);
     win?.removeEventListener?.("resize", onResize);
-    win?.removeEventListener?.("orientationchange", onResize);
-    doc.removeEventListener?.("fullscreenchange", fit);
+    win?.removeEventListener?.("orientationchange", onOrientation);
+    doc.removeEventListener?.("fullscreenchange", onFullscreenChange);
     doc.removeEventListener?.("keydown", onKeyDown);
   };
   const close = () => {
@@ -193,7 +178,6 @@ export function createWarpEditorDialog({ document: doc, host, editorPanel, overl
     }
     modal.dataset.mode = mode;
     title.textContent = `${side === "left" ? "Left" : "Right"} · ${mode === "grid" ? "Grid Warp" : "Keystone"}`;
-    finePanel.hidden = true; fineToggle.setAttribute("aria-expanded", "false");
     finePanel.appendChild(editorPanel); viewport.appendChild(overlay);
     overlay.classList?.add?.("warp-preview-overlay");
     overlay.setAttribute("preserveAspectRatio", "xMidYMid meet");
@@ -201,30 +185,27 @@ export function createWarpEditorDialog({ document: doc, host, editorPanel, overl
     makeFrame(side);
     closeButton.focus?.();
   };
-  fineToggle.addEventListener("click", () => {
-    onFineToggle(); finePanel.hidden = !finePanel.hidden;
-    fineToggle.setAttribute("aria-expanded", String(!finePanel.hidden));
-    fit();
-  });
   closeButton.addEventListener("click", close);
-  retry.addEventListener("click", () => { if (session) makeFrame(session.side); });
+  retry.addEventListener("click", () => { if (session) { preview.retry(); session.frame = preview.frame(); fit(); } });
   applyButton.addEventListener("click", onApply);
   liveInput.addEventListener("change", () => onLive(liveInput.checked));
   return {
     open,
     isOpen() { return !modal.hidden; },
     update(config, { live, appliedSummary } = {}) {
-      latest = config;
       if (live !== undefined) liveInput.checked = Boolean(live);
       if (appliedSummary !== undefined) applied.textContent = appliedSummary;
-      send();
+      preview.update(config);
     },
+    sendRunNamesPreview(config) { return preview.sendRunNamesPreview(config); },
     setViewBox(next) { if (!next) return; viewBox = { ...next }; fit(); },
     close,
     dispose() {
       if (disposed) return;
       close(); disposed = true;
       detachListeners();
+      preview.dispose();
+      traceUi?.dispose();
       modal.remove();
     },
   };

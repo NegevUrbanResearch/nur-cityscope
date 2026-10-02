@@ -1,7 +1,7 @@
 import { describe, expect, test, vi } from 'vitest';
 import { DEFAULT_PROJECTION_CONFIG } from '../../frontend/src/shared/projection-config-schema.js';
 import { createIdentityProjectionMesh } from '../../frontend/src/shared/projection-warp-geometry.js';
-import { createProjectionCandidateValidator, prepareProjectionPairMeshes, projectionCandidateResult, readProjectionCandidateInputs } from '../../frontend/src/projection/projection-candidate-validation.js';
+import { createProjectionCandidateValidator, createProjectionGeometryValidator, prepareProjectionPairMeshes, projectionCandidateResult, readProjectionCandidateInputs } from '../../frontend/src/projection/projection-candidate-validation.js';
 
 const config = () => structuredClone(DEFAULT_PROJECTION_CONFIG);
 const inputs = { heading: 35, datasetVersion: 'validation-fixture' };
@@ -180,6 +180,32 @@ describe('candidate validator', () => {
 });
 
 describe('pair mesh preparation', () => {
+  test('geometry preflight validates both meshes without reading release metadata or placing names', async () => {
+    const candidate = config();
+    const assets = Object.fromEntries(['left', 'right'].map((side) => [side, {
+      assetId: `${side}-id`, sha256: side === 'left' ? 'a'.repeat(64) : 'b'.repeat(64), logicalGrid: { columns: side === 'left' ? 7 : 8, rows: 7 },
+    }]));
+    for (const side of ['left', 'right']) candidate.outputs[side].warp.baseline = {
+      type: 'tdMesh', assetId: assets[side].assetId, sha256: assets[side].sha256,
+      width: 1920, height: 1080, origin: 'top-left',
+    };
+    const manifest = { schemaVersion: 1, width: 1920, height: 1080,
+      assets: Object.fromEntries(Object.entries(assets).map(([side, asset]) => [side, { ...asset, path: `${side}.json` }])),
+      framing: { path: 'framing.json', sha256: 'c'.repeat(64) } };
+    const loadBaseline = vi.fn(async (side) => ({ mesh: createIdentityProjectionMesh({ side }), manifest }));
+    const readInputs = vi.fn(async () => { throw new Error('release metadata unavailable'); });
+    const prepareWall = vi.fn(async () => { throw new Error('name worker must not run'); });
+    const validator = createProjectionGeometryValidator({ loadBaseline, readInputs, prepareWall });
+
+    const result = await validator.validateCandidate({ config: candidate, identity: JSON.stringify(candidate), generation: 1, revision: 3 });
+
+    expect(result).toMatchObject({ valid: true, identity: JSON.stringify(candidate) });
+    expect(loadBaseline).toHaveBeenCalledTimes(2);
+    expect(readInputs).not.toHaveBeenCalled();
+    expect(prepareWall).not.toHaveBeenCalled();
+    validator.dispose();
+  });
+
   test('identity and disabled warps need no source mesh', async () => {
     const candidate = config();
     candidate.outputs.left.warp.enabled = false;
@@ -206,13 +232,61 @@ describe('pair mesh preparation', () => {
       type: 'tdMesh', assetId: assets[side].assetId, sha256: assets[side].sha256,
       width: 1920, height: 1080, origin: 'top-left',
     };
-    const manifest = { assets };
+    const manifest = { schemaVersion: 1, width: 1920, height: 1080,
+      assets: Object.fromEntries(Object.entries(assets).map(([side, asset]) => [side, { ...asset, path: `${side}.json` }])),
+      framing: { path: 'framing.json', sha256: 'c'.repeat(64) } };
     const loadBaseline = vi.fn(async (side) => ({ manifest, mesh: createIdentityProjectionMesh({ side }) }));
     expect(await prepareProjectionPairMeshes({ config: candidate, loadBaseline })).toMatchObject({ left: expect.any(Object), right: expect.any(Object) });
     expect(loadBaseline).toHaveBeenCalledTimes(2);
     await expect(prepareProjectionPairMeshes({ config: candidate, loadBaseline: async (side) => ({ manifest, mesh: { side } }) })).rejects.toThrow(/baseline rejected/);
     await expect(prepareProjectionPairMeshes({ config: candidate, loadBaseline: async (side) => ({
-      manifest: { assets, capture: side }, mesh: createIdentityProjectionMesh({ side }),
+      manifest: { ...manifest, capture: side }, mesh: createIdentityProjectionMesh({ side }),
     }) })).rejects.toThrow(/different manifests/);
   });
+
+  test('rejects a selected catalog mesh whose origin disagrees with the trusted asset', async () => {
+    const candidate = config();
+    const assets = Object.fromEntries(['left', 'right'].map((side) => [side, {
+      assetId: `${side}-id`, path: `${side}.json`, sha256: side === 'left' ? 'a'.repeat(64) : 'b'.repeat(64),
+      logicalGrid: { columns: side === 'left' ? 7 : 8, rows: 7 },
+    }]));
+    const selected = { assetId: 'capture-left', path: 'captures/left.json', sha256: 'd'.repeat(64), logicalGrid: { columns: 7, rows: 7 }, origin: 'top-left' };
+    const manifest = { schemaVersion: 1, width: 1920, height: 1080,
+      assets,
+      catalog: { left: [selected], right: [] },
+      framing: { path: 'framing.json', sha256: 'c'.repeat(64) } };
+    candidate.outputs.left.warp.baseline = {
+      type: 'tdMesh', assetId: selected.assetId, sha256: selected.sha256, width: 1920, height: 1080, origin: 'top-left',
+    };
+    candidate.outputs.right.warp.baseline = {
+      type: 'tdMesh', assetId: assets.right.assetId, sha256: assets.right.sha256, width: 1920, height: 1080, origin: 'top-left',
+    };
+    const loadBaseline = async (side) => {
+      const mesh = createIdentityProjectionMesh({ side });
+      if (side === 'left') mesh.origin = 'bottom-left';
+      else mesh.logicalGrid = { columns: 8, rows: 7 };
+      return { manifest, mesh };
+    };
+
+    await expect(prepareProjectionPairMeshes({ config: candidate, loadBaseline })).rejects.toThrow(/origin does not match the trusted manifest/);
+  });
+});
+
+test('pair baseline callbacks receive the candidate TD reference as their third argument', async () => {
+  const candidate = config();
+  const references = {};
+  const manifest = { schemaVersion: 1, width: 1920, height: 1080, assets: {
+    left: { assetId: 'left-selected', path: 'left.json', sha256: 'a'.repeat(64), logicalGrid: { columns: 7, rows: 7 } },
+    right: { assetId: 'right-selected', path: 'right.json', sha256: 'b'.repeat(64), logicalGrid: { columns: 8, rows: 7 } },
+  }, framing: { path: '../framing.json', sha256: 'c'.repeat(64) } };
+  const loadBaseline = vi.fn(async (side, _signal, baselineReference) => {
+    references[side] = baselineReference;
+    const mesh = createIdentityProjectionMesh({ side });
+    mesh.logicalGrid = manifest.assets[side].logicalGrid;
+    return { manifest, mesh };
+  });
+  candidate.outputs.left.warp.baseline = { type: 'tdMesh', assetId: 'left-selected', sha256: 'a'.repeat(64), width: 1920, height: 1080, origin: 'top-left' };
+  candidate.outputs.right.warp.baseline = { type: 'tdMesh', assetId: 'right-selected', sha256: 'b'.repeat(64), width: 1920, height: 1080, origin: 'top-left' };
+  await prepareProjectionPairMeshes({ config: candidate, loadBaseline });
+  expect(references).toEqual({ left: candidate.outputs.left.warp.baseline, right: candidate.outputs.right.warp.baseline });
 });

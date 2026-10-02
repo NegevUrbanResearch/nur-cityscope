@@ -407,7 +407,7 @@ function applyInvestigationRouteLegend(items, fullId, options) {
   const unconfirmed = {
     id: `${fullId}:unconfirmed`,
     shape: "line",
-    label: locale === "en" ? "Unconfirmed approach" : "גישה לא מאומתת",
+    label: getLayerDisplayLabel("nli.lines.unconfirmed", locale, "Unconfirmed approach"),
     stroke: NLI_VISUAL_TOKENS.incidentRed,
     strokeOpacity: NLI_VISUAL_TOKENS.routeUnconfirmedOpacity * (Number(profile.unconfirmedOpacityMultiplier) || 1),
     dash: { array: [...NLI_VISUAL_TOKENS.routeUnconfirmedDashPx] },

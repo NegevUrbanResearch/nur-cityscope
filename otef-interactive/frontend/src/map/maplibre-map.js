@@ -1,6 +1,7 @@
 import { isGisBasemapId, normalizeGisBasemap } from "../shared/gis-basemap.js";
 import { applyDarkBasemapLabelPolicy, raiseDarkBasemapPlaceLabels } from "./dark-basemap-labels.js";
 import { transitionGisBasemap } from "./gis-basemap-transition.js";
+import { installMapLibreRasterAbortFix } from "./maplibre-raster-abort-fix.js";
 import openFreeMapDarkStyle from "./basemaps/openfreemap-dark.js";
 
 const maplibregl =
@@ -19,6 +20,8 @@ if (!maplibregl || !Protocol) {
     "[maplibre-map] Missing maplibregl/pmtiles globals. Ensure CDN scripts are loaded before map-main.js.",
   );
 }
+
+installMapLibreRasterAbortFix(maplibregl);
 
 const MAPLIBRE_RTL_TEXT_PLUGIN_URL =
   "https://unpkg.com/@mapbox/mapbox-gl-rtl-text@0.2.3/mapbox-gl-rtl-text.js";

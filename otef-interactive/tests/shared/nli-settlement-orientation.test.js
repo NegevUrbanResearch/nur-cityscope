@@ -186,6 +186,21 @@ describe("narrative settlement orientation", () => {
     expect(target.setPaintProperty).toHaveBeenCalledWith("Locations_Lines", "line-opacity", 1);
   });
 
+  it("keeps play fade after a windowed scene ends", () => {
+    const target = map();
+    applySettlementOrientationPaint(target, {
+      phase: "ended",
+      achievedCitynames: ["עיר א"],
+      layers,
+    });
+
+    expect(painted(target, "settlements-fill")).toBe(0.08);
+    expect(painted(target, "Locations_Lines")).toBe(0.08);
+    expect(painted(target, "settlements-label")).toEqual(
+      ["case", ["in", ["get", "cityname"], ["literal", ["עיר א"]]], 1, 0.18],
+    );
+  });
+
   it("dims Locations_Lines with the rest of the scene in narrative mode", () => {
     const target = createFakeMapLibreMap({
       layers: [

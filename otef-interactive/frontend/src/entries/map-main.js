@@ -6,7 +6,12 @@ import { applyLayerGroupsToMap, disposeLayerManagerForMap } from "../map/maplibr
 import { raiseDarkBasemapPlaceLabels } from "../map/dark-basemap-labels.js";
 import { attachGisFeaturePopups } from "../map/maplibre-gis-popups.js";
 import { createGisPersonSelection } from "../map/maplibre-person-selection.js";
-import { createNliArchiveCommandBridge, createNliArchiveWindowController } from "../map/nli-archive-window.js";
+import {
+  createNliArchiveCommandBridge,
+  createNliArchiveWindowController,
+  ownsArchiveWindowCommands,
+} from "../map/nli-archive-window.js";
+import { createNliArchivePagerClient } from "../map/nli-archive-pager-client.js";
 import { createGisPersonController } from "../map/maplibre-gis-person-controller.js";
 import { createNliNameFieldController } from "../shared/nli-name-field-controller.js";
 import { createGisNarrativeController } from "../map/nli-narrative-controller.js";
@@ -17,6 +22,7 @@ import { createNovaEscapeCoordinator } from "../shared/nli-nova-escape-coordinat
 import { createMorRouteCoordinator } from "../shared/nli-mor-route-coordinator.js";
 import { createGisBasemapStyleCoordinator } from "./map-main-style-lifecycle.js";
 import { bootClockPreview } from "../map/clock-preview.js";
+import { createNovaExplainerOverlay } from "../map/nli-nova-explainer-overlay.js";
 import { attachSettlementOrientationRuntime } from "../shared/nli-settlement-orientation.js";
 import {
   installMapLegendLifecycle,
@@ -330,16 +336,34 @@ async function bootstrapMapRuntime() {
       positionLegend();
     };
     applyStoredGisClockLayout();
+    const novaExplainerOverlay = createNovaExplainerOverlay({
+      map,
+      container: mapContainer,
+      getLayout: () => OTEFDataContext.getNliClockLayout?.()?.gisOverlays?.novaExplainers,
+      getNarrativeId: () => OTEFDataContext.getNarrativeState?.()?.id ?? null,
+      getEscapeMor: () => OTEFDataContext.getEscapeOverlay?.()?.mor === true,
+      motionMode: resolveMotionMode(),
+    });
+    registerDisposer(() => novaExplainerOverlay.dispose());
     registerDisposer(OTEFDataContext.subscribe("nliClockLayout", () => {
       applyStoredGisClockLayout();
+      novaExplainerOverlay.refresh();
     }));
     registerDisposer(OTEFDataContext.subscribe("narrativeState", () => {
       applyStoredGisClockLayout();
       raiseGisPlaceLabels();
+      novaExplainerOverlay.refresh();
+    }));
+    registerDisposer(OTEFDataContext.subscribe("escapeOverlay", () => {
+      novaExplainerOverlay.refresh();
     }));
     const raiseGisClockHost = () => {
       if (typeof mapContainer?.appendChild !== "function" || !nliGisClockHost) return;
       mapContainer.appendChild(nliGisClockHost);
+      const novaExplainerHost = document.getElementById("nliNovaExplainerHost");
+      if (novaExplainerHost && document.contains(novaExplainerHost)) {
+        mapContainer.appendChild(novaExplainerHost);
+      }
     };
     raiseGisClockHost();
     map.on?.("style.load", raiseGisClockHost);
@@ -391,6 +415,7 @@ async function bootstrapMapRuntime() {
         motionMode: resolveMotionMode(),
         captionEl: nliGisClockCaptionEl,
         allowMapCaption: false,
+        onVisualFrame: novaExplainerOverlay.sync,
         now: () =>
           typeof OTEFDataContext.correctedNow === "function"
             ? OTEFDataContext.correctedNow()
@@ -477,6 +502,7 @@ async function bootstrapMapRuntime() {
     });
     registerDisposer(() => narrativeController?.dispose?.());
     registerDisposer(OTEFDataContext.subscribe("narrativeState", (state) => narrativeController?.apply(state)));
+    const archivePager = createNliArchivePagerClient();
     const archiveBridge = createNliArchiveCommandBridge({
       windowController: archiveWindow,
       resolvePerson: (personId, datasetVersion) => personVisual.resolve(personId, datasetVersion),
@@ -487,8 +513,15 @@ async function bootstrapMapRuntime() {
         result.datasetVersion,
         result.requestId,
       ),
+      pageArchive: (direction, requestId) => archivePager.page(direction, requestId),
     });
-    registerDisposer(OTEFDataContext.subscribe("archiveWindow", (command) => { void archiveBridge.handleCommand(command); }));
+    const ownsArchiveCommands = ownsArchiveWindowCommands(window.location.search);
+    if (ownsArchiveCommands) {
+      registerDisposer(OTEFDataContext.subscribe("archiveWindow", (command) => {
+        void archiveBridge.handleCommand(command);
+      }));
+    }
+    OTEFDataContext._markArchiveWindowBridgeReady?.(ownsArchiveCommands);
     const syncContextPersonSelection = (selection) => {
       archiveBridge.handlePersonSelection(selection);
       wakeInvestigationTimelinePersonGlow(map);

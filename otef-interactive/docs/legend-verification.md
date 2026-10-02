@@ -1,22 +1,33 @@
 # Legend verification — 2026-09-21
 
-## Current behavior (checked against code on 2026-09-29)
+## Current behavior (checked against code on 2026-10-01)
 
 - GIS and projection render the same generated, bilingual legend in the
   existing `#mapLegend` element. The remote language setting picks Hebrew or
-  English.
-- The legend is a short, wide rail. Each page wraps to at most two rows; on
-  projection a page must also fit the saved panel height.
+  English. GIS retains its existing paging and dwell behavior when the content
+  does not fit its two-row layout.
+- Projection shows the complete generated legend on one page, including entries
+  that would otherwise appear on later GIS pages. It fits the saved panel by
+  choosing equal-width columns and reducing text, symbols, strokes, dashes, and
+  spacing together as needed. Auto evaluates one to three columns and prefers
+  fewer columns when fit is equal; an authored choice can fix the count at one,
+  two, or three. Labels wrap where possible, and an item that cannot fit a
+  column at the requested size contributes to reducing the overall scale.
+- The saved projection font size is a maximum from 8 to 64 px. Fitting can
+  render it smaller, but never larger. Resizing the panel recalculates the fit
+  without changing that saved maximum.
 - Neither surface draws pack headings. The NLI pack never had one, and the
   other pack headings were removed in `a10ef98`.
-- If the content does not fit in two rows, it splits into pages. GIS shows
-  ‹ / › buttons and a page count; projection shows only the count. Pages
-  advance automatically after the configured dwell time, except while the
-  legend is being edited.
-- Projection legend placement is edited in the Projection Clock / Legend nodes
-  of `projection-config.html`. The projection page has no E key: the old E-key
-  clock and legend editors were retired in `58c7a29`. The right span keeps the
-  legend hidden.
+- Projection legend placement and fit options are edited in the Projection
+  Clock / Legend nodes of `projection-config.html`. The legend node exposes
+  Auto / 1 / 2 / 3 columns and labels font size as a maximum; page and dwell
+  controls are hidden for projection. The projection page has no E key: the old
+  E-key clock and legend editors were retired in `58c7a29`. The right span keeps
+  the legend hidden.
+- Automated tests and the production build cover the current planner and
+  renderer. The updated projection layout still needs review in the normal
+  browser and on the exhibit display; no new visual acceptance is recorded
+  here.
 
 ## 2026-09-21 verification record
 

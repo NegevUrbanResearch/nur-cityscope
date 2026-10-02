@@ -43,5 +43,41 @@
   "framing": {
     "path": "../td-source-config.json",
     "sha256": "0a864ff0377e24b24e0a288c1b90cdfa510d7b60c6464d51a359ef0cf3fcfd20"
+  },
+  "catalog": {
+    "left": [
+      {
+        "assetId": "tkumap-test-left-2026-10-02",
+        "path": "captures/tkumap-test-2026-10-02/left.json",
+        "sha256": "a3ad1d0e62bd72bbcb597e695a01bddc541eb146a7da0f0a3c5e299ed599ecc8",
+        "logicalGrid": {
+          "columns": 5,
+          "rows": 3
+        },
+        "denseGrid": {
+          "columns": 53,
+          "rows": 27
+        },
+        "source": "Tkumap_test.1.toe",
+        "capturedAt": "2026-10-02"
+      }
+    ],
+    "right": [
+      {
+        "assetId": "tkumap-test-right-2026-10-02",
+        "path": "captures/tkumap-test-2026-10-02/right.json",
+        "sha256": "f53bb8279de0dd9228b8699682702aa88edd24bc571cc03ac2e033193102ff4a",
+        "logicalGrid": {
+          "columns": 3,
+          "rows": 8
+        },
+        "denseGrid": {
+          "columns": 27,
+          "rows": 92
+        },
+        "source": "Tkumap_test.1.toe",
+        "capturedAt": "2026-10-02"
+      }
+    ]
   }
 }

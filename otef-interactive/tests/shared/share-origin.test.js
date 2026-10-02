@@ -40,19 +40,26 @@ test("loadShareHosts flags whether share.json loaded", async () => {
   expect(await loadShareHosts({
     location: new URL("http://localhost/otef-interactive/launcher.html"),
     fetchImpl: fetchOk,
-  })).toEqual({ ...hosts, fromShareFile: true });
+  })).toEqual({ ...hosts, localKind: null, fromShareFile: true });
   expect(await loadShareHosts({
     location: new URL("http://localhost/otef-interactive/launcher.html"),
     fetchImpl: async () => ({ ok: false }),
-  })).toEqual({ localOrigin: null, tailnetOrigin: null, fromShareFile: false });
+  })).toEqual({ localOrigin: null, tailnetOrigin: null, localKind: null, fromShareFile: false });
   expect(await loadShareHosts({
     location: new URL("http://noams-macbook-pro.local/otef-interactive/launcher.html"),
     fetchImpl: async () => { throw new Error("offline"); },
-  })).toEqual({ localOrigin: "http://noams-macbook-pro.local", tailnetOrigin: null, fromShareFile: false });
+  })).toEqual({ localOrigin: "http://noams-macbook-pro.local", tailnetOrigin: null, localKind: null, fromShareFile: false });
   expect(await loadShareHosts({
     location: new URL("https://labpc.tail62fa44.ts.net/otef-interactive/launcher.html"),
     fetchImpl: async () => ({ ok: false }),
-  })).toEqual({ localOrigin: null, tailnetOrigin: null, fromShareFile: false });
+  })).toEqual({ localOrigin: null, tailnetOrigin: null, localKind: null, fromShareFile: false });
+});
+
+test("loadShareHosts accepts an inactive hotspot without falling back to the page host", async () => {
+  expect(await loadShareHosts({
+    location: new URL("http://localhost/otef-interactive/launcher.html"),
+    fetchImpl: async () => ({ ok: true, json: async () => ({ localOrigin: null, tailnetOrigin: "http://100.64.0.1", localKind: "hotspot" }) }),
+  })).toEqual({ localOrigin: null, tailnetOrigin: "http://100.64.0.1", localKind: "hotspot", fromShareFile: true });
 });
 
 test("originForMode uses local when tailnet is missing", () => {

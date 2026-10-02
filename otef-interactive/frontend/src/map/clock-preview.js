@@ -3,17 +3,21 @@ import { createGisNarrativeController } from "./nli-narrative-controller.js";
 import { createGISMap, setGISBasemap } from "./maplibre-map.js";
 import { applyLayerGroupsToMap, clearAllLayers, disposeLayerManagerForMap } from "./maplibre-layer-manager.js";
 import { applyNarrativeHouseOutlineFilter, applyNarrativePeopleFilter } from "./nli-people-marker-filter.js";
-import { installGisStyleReload } from "../entries/map-main-style-lifecycle.js";
+import { createGisBasemapStyleCoordinator, installGisStyleReload } from "../entries/map-main-style-lifecycle.js";
 import { HOME_CUE, TIMELINE, NARRATIVES } from "../remote/nli-staff-script.js";
 import { getNliNarrative } from "../shared/nli-narratives.js";
 import { filterGroupsForGisMap } from "../shared/gis-layer-filter.js";
-import { idleNliClock, normalizeNliClock } from "../shared/nli-investigation-clock.js";
+import { INVESTIGATION_POLYGONS_FULL_ID } from "../shared/nli-investigation-beats.js";
+import { endNliClock, idleNliClock, normalizeNliClock, playNliClock } from "../shared/nli-investigation-clock.js";
+import { NLI_NOVA_STORY } from "../shared/nli-nova-story.js";
+import { NOVA_EXPLAINER_OBJECT_IDS, normalizeNovaExplainerMaps } from "../shared/nli-nova-explainer-layout.js";
 import { normalizeGisBasemap } from "../shared/gis-basemap.js";
 import layerRegistry from "../shared/layer-registry.js";
 import { resolveMotionMode } from "../shared/reduced-motion.js";
 import { attachSettlementOrientationRuntime } from "../shared/nli-settlement-orientation.js";
 import { measureClockPreviewWarnings } from "../projection/clock-preview-warnings.js";
 import { syncInvestigationTimelineToMap, disposeInvestigationTimelineForMap } from "../shared/maplibre-investigation-timeline.js";
+import { createNovaExplainerOverlay } from "./nli-nova-explainer-overlay.js";
 import {
   applyNliExplainerLayout,
   ensureNliExplainerHost,
@@ -27,6 +31,7 @@ const GIS_PREVIEW_SCENE_ID_SET = new Set(GIS_PREVIEW_SCENE_IDS);
 const DEFAULT_CENTER = [34.5, 31.4];
 const VALID_CLOCK_LAYOUT_KEYS = ["leftPct", "topPct", "widthPct", "heightPct", "fontPx", "rotateDeg"];
 const DRAW_COMPLETION_TIMEOUT_MS = 5000;
+const NOVA_STORY_IDS = new Set(NOVA_EXPLAINER_OBJECT_IDS);
 
 function clone(value) {
   return value == null ? value : structuredClone(value);
@@ -58,13 +63,21 @@ function groupsWithCue(registryGroups, cue) {
 }
 
 /** Compose a preview-only copy from the same cues and narratives used by the exhibit. */
-export function composeGisClockPreviewScene(sceneId, registryGroups, nowMs = Date.now()) {
+export function composeGisClockPreviewScene(sceneId, registryGroups, nowMs = Date.now(), options = {}) {
   if (!GIS_PREVIEW_SCENE_ID_SET.has(sceneId)) throw new Error("Unknown GIS preview scene");
   const rawCue = sceneCue(sceneId);
   if (!rawCue) throw new Error(`Missing cue for GIS preview scene: ${sceneId}`);
   const cue = cloneCue(rawCue);
   const narrative = getNliNarrative(sceneId === "home" || sceneId === "timeline" ? null : sceneId);
-  const clock = normalizeNliClock(idleNliClock({ serverNowMs: nowMs }));
+  const explainer = options?.novaExplainers === true && sceneId === "nova";
+  const clock = explainer
+    ? endNliClock(playNliClock(
+      idleNliClock({ serverNowMs: nowMs }),
+      [INVESTIGATION_POLYGONS_FULL_ID],
+      NLI_NOVA_STORY.representativeMinutes,
+      nowMs,
+    ))
+    : normalizeNliClock(idleNliClock({ serverNowMs: nowMs }));
   return {
     sceneId,
     cue,
@@ -92,6 +105,115 @@ function viewportCenter(viewport) {
 function validLayout(layout) {
   return layout && typeof layout === "object" && !Array.isArray(layout) &&
     VALID_CLOCK_LAYOUT_KEYS.every((key) => Number.isFinite(layout[key]));
+}
+
+function plainObject(value) {
+  return value != null && typeof value === "object" && !Array.isArray(value);
+}
+
+async function loadPreviewTypeface(fonts, spec, warning) {
+  if (!fonts || typeof fonts.load !== "function") return;
+  try {
+    await fonts.load(spec);
+  } catch (err) {
+    console.warn(warning, err);
+  }
+}
+
+async function loadPreviewTypefaceUnlessPresent(fonts, spec, warning) {
+  if (typeof fonts?.check === "function") {
+    try {
+      if (fonts.check(spec)) return;
+    } catch {
+      // A failing check still falls through to the preload.
+    }
+  }
+  await loadPreviewTypeface(fonts, spec, warning);
+}
+
+function storyObjectId(value) {
+  const number = typeof value === "number"
+    ? value
+    : (typeof value === "string" && /^[1-9][0-9]*$/.test(value) ? Number(value) : NaN);
+  return Number.isInteger(number) && NOVA_STORY_IDS.has(number) ? number : null;
+}
+
+function featureName(feature) {
+  const name = feature?.properties?.Name;
+  return typeof name === "string" && name.trim() ? name : null;
+}
+
+function renderedExplainerCard(container, objectId) {
+  const cards = container?.querySelectorAll?.(".nli-nova-explainer-card") || [];
+  for (const card of cards) {
+    if (card.dataset?.objectId === String(objectId)) return card;
+  }
+  return null;
+}
+
+function measuredExplainerBox(card, container) {
+  const width = Number(container?.clientWidth);
+  const height = Number(container?.clientHeight);
+  if (!card || !(width > 0) || !(height > 0)) return null;
+  const box = {
+    leftPct: (card.offsetLeft / width) * 100,
+    topPct: (card.offsetTop / height) * 100,
+    widthPct: (card.offsetWidth / width) * 100,
+    heightPct: (card.offsetHeight / height) * 100,
+  };
+  return Object.values(box).every(Number.isFinite) ? box : null;
+}
+
+function measuredNovaExplainerCards(frame, container) {
+  const achieved = Array.isArray(frame?.achievedPolygonObjectIds) ? frame.achievedPolygonObjectIds : [];
+  const features = Array.isArray(frame?.polygonFeatures) ? frame.polygonFeatures : [];
+  const byId = new Map();
+  for (const feature of features) {
+    const id = storyObjectId(feature?.properties?.OBJECTID);
+    if (id == null || byId.has(id)) continue;
+    byId.set(id, feature);
+  }
+  const cards = [];
+  const seen = new Set();
+  for (const rawId of achieved) {
+    const id = storyObjectId(rawId);
+    if (id == null || seen.has(id)) continue;
+    seen.add(id);
+    const name = featureName(byId.get(id));
+    if (!name) continue;
+    cards.push({
+      objectId: id,
+      name,
+      box: measuredExplainerBox(renderedExplainerCard(container, id), container),
+    });
+  }
+  return cards;
+}
+
+function placeNovaExplainerCamera(map, camera) {
+  const narrative = getNliNarrative("nova");
+  if (!narrative) return;
+  const placement = {
+    center: narrative.center,
+    zoom: camera === "wide" ? narrative.beat4Zoom : narrative.zoom,
+    duration: 0,
+  };
+  if (typeof map?.jumpTo === "function") {
+    map.jumpTo(placement);
+    return;
+  }
+  map?.easeTo?.(placement);
+}
+
+async function settlePreviewFonts(frameDocument) {
+  const ready = frameDocument?.fonts?.ready;
+  if (ready && typeof ready.then === "function") {
+    try {
+      await ready;
+    } catch {
+      // Measurement still uses whichever faces loaded.
+    }
+  }
 }
 
 function postFrameMessage(target, payload, targetOrigin) {
@@ -178,6 +300,17 @@ function previewStateFromEvent(event, sessionId, lastRequestId, origin) {
   if (state.pageIndex != null && (!Number.isInteger(state.pageIndex) || state.pageIndex < 0)) {
     throw new Error("Invalid GIS preview page index");
   }
+  if (state.element === "novaExplainers") {
+    if (state.sceneId !== "nova"
+      || (state.novaExplainerCamera !== "close" && state.novaExplainerCamera !== "wide")
+      || !plainObject(state.novaExplainerLayout)) {
+      throw new Error("Invalid GIS preview explainer request");
+    }
+    return {
+      ...state,
+      novaExplainerLayout: normalizeNovaExplainerMaps(state.novaExplainerLayout),
+    };
+  }
   return state;
 }
 
@@ -192,13 +325,18 @@ export async function bootClockPreview({ window: frameWindow, document: frameDoc
   const snapshot = await readStateSnapshot(fetchImpl);
   await layerRegistry.init();
   const registryGroups = clone(layerRegistry.getGroups());
-  if (frameDocument.fonts && typeof frameDocument.fonts.load === "function") {
-    try {
-      await frameDocument.fonts.load("14px 'Guttman Hatzvi'");
-    } catch (err) {
-      console.warn("[clock-preview] Guttman Hatzvi font preload failed; people-name labels may flash", err);
-    }
-  }
+  await Promise.all([
+    loadPreviewTypeface(
+      frameDocument.fonts,
+      "14px 'Guttman Hatzvi'",
+      "[clock-preview] Guttman Hatzvi font preload failed; people-name labels may flash",
+    ),
+    loadPreviewTypefaceUnlessPresent(
+      frameDocument.fonts,
+      "14px 'Hadassah Friedlaender'",
+      "[clock-preview] Hadassah Friedlaender font preload failed; explainer cards may use a fallback face",
+    ),
+  ]);
   const map = createGISMap("map", {
     center: viewportCenter(snapshot.viewport),
     zoom: Number.isFinite(snapshot.viewport?.zoom) ? snapshot.viewport.zoom : 10,
@@ -210,8 +348,23 @@ export async function bootClockPreview({ window: frameWindow, document: frameDoc
   applyNliExplainerLayout(clockHost, NLI_GIS_CLOCK_DEFAULT_LAYOUT);
   const escape = localEscapeContext();
   let currentScene = composeGisClockPreviewScene("home", registryGroups);
-  let activeBasemap = normalizeGisBasemap(snapshot.basemap || "osm");
-  let basemapGeneration = 0;
+  let currentExplainerLayout = null;
+  let currentExplainerCamera = null;
+  let lastExplainerFrame = null;
+  const novaExplainerOverlay = createNovaExplainerOverlay({
+    map,
+    container: mapContainer,
+    getLayout: () => currentExplainerLayout,
+    getNarrativeId: () => currentScene.narrative?.id ?? null,
+    getEscapeMor: () => escape.get()?.mor === true,
+    motionMode: resolveMotionMode(),
+    cameraOverride: () => currentExplainerCamera,
+  });
+  const basemapCoordinator = createGisBasemapStyleCoordinator({
+    map,
+    initialBasemap: normalizeGisBasemap(snapshot.basemap || "osm"),
+    setBasemap: setGISBasemap,
+  });
   let requestId = -1;
   let disposed = false;
   let styleRefresh = null;
@@ -238,6 +391,10 @@ export async function bootClockPreview({ window: frameWindow, document: frameDoc
       now: () => currentScene.clock.serverNowMs ?? Date.now(),
       narrativeFocus: focus,
       getPersonSelection: () => null,
+      onVisualFrame: (frame) => {
+        if (generation === renderGeneration) lastExplainerFrame = frame;
+        novaExplainerOverlay.sync(frame);
+      },
     });
     if (!isCurrent(generation)) return;
     applyNliExplainerLayout(clockHost, activeClockLayout);
@@ -268,33 +425,19 @@ export async function bootClockPreview({ window: frameWindow, document: frameDoc
     await syncTimeline();
   };
   const setBasemap = (nextBasemap) => {
-    const normalized = normalizeGisBasemap(nextBasemap);
-    if (normalized === activeBasemap) return;
-    const previousBasemap = activeBasemap;
-    const previousGeneration = basemapGeneration;
-    const generation = ++basemapGeneration;
-    activeBasemap = normalized;
-    const accepted = setGISBasemap(map, normalized, {
-      onSettled(result) {
-        if (disposed || generation !== basemapGeneration) return;
-        activeBasemap = result?.basemapId;
-        if (result?.status === "failed") {
-          console.warn(
-            `[gis-basemap] failed to show ${normalized}; retaining ${result.basemapId}`,
-          );
-        }
-      },
-    });
-    if (!accepted) {
-      activeBasemap = previousBasemap;
-      basemapGeneration = previousGeneration;
-    }
+    basemapCoordinator.request(normalizeGisBasemap(nextBasemap));
   };
 
   const renderState = async (state) => {
     cancelDrawWaits();
     const generation = ++renderGeneration;
-    currentScene = composeGisClockPreviewScene(state.sceneId, registryGroups, Date.now());
+    const explainer = state.element === "novaExplainers";
+    currentExplainerCamera = explainer ? state.novaExplainerCamera : null;
+    currentExplainerLayout = explainer ? state.novaExplainerLayout : null;
+    lastExplainerFrame = null;
+    currentScene = composeGisClockPreviewScene(state.sceneId, registryGroups, Date.now(), {
+      novaExplainers: explainer,
+    });
     activeClockLayout = { ...state.clockLayout };
     applyNliExplainerLayout(clockHost, activeClockLayout);
     applyGroups();
@@ -305,10 +448,15 @@ export async function bootClockPreview({ window: frameWindow, document: frameDoc
     });
     if (currentScene.narrative?.id) setBasemap(currentScene.basemap);
     else setBasemap(snapshot.basemap || "osm");
+    // jumpTo stops the narrative fly so an ended clock cannot leave Close on the wide zoom.
+    if (explainer) placeNovaExplainerCamera(map, currentExplainerCamera);
     await syncTimeline(generation);
     if (!isCurrent(generation)) return;
     const drew = await waitForIdle(map, () => isCurrent(generation), pendingDrawWaits);
     if (!drew || !isCurrent(generation)) return;
+    await settlePreviewFonts(frameDocument);
+    if (!isCurrent(generation)) return;
+    if (explainer) novaExplainerOverlay.refresh();
     postFrameMessage(parent, {
       type: "otef_clock_preview_rendered",
       sessionId,
@@ -321,6 +469,10 @@ export async function bootClockPreview({ window: frameWindow, document: frameDoc
       pageIndex: 0,
       pageCount: 1,
       warnings: measureClockPreviewWarnings({ layout: activeClockLayout, surface: "gis", element: clockHost, content: captionEl, clock: true }),
+      ...(explainer ? {
+        novaExplainerCamera: state.novaExplainerCamera,
+        novaExplainerCards: measuredNovaExplainerCards(lastExplainerFrame, mapContainer),
+      } : {}),
     }, targetOrigin);
   };
 
@@ -367,13 +519,14 @@ export async function bootClockPreview({ window: frameWindow, document: frameDoc
     if (disposed) return;
     disposed = true;
     renderGeneration += 1;
-    basemapGeneration += 1;
+    basemapCoordinator.dispose();
     cancelDrawWaits();
     frameWindow.removeEventListener("message", onMessage);
     map.off?.("load", onLoad);
     styleRefresh?.();
     narrativeController?.dispose?.();
     disposeInvestigationTimelineForMap(map);
+    novaExplainerOverlay.dispose();
     disposeLayerManagerForMap(map);
     map.remove?.();
   };

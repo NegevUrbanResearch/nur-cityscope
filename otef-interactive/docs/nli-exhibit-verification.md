@@ -326,10 +326,26 @@ Every row is pending until the exhibit operator observes it.
 | Check | Date | Operator | pass/fail | Notes |
 |---|---|---|---|---|
 | Nova entry fits the reviewed extent and shows 08:03 before Play |  |  | pending |  |
-| Nova compounds play five four-second beats; Stop returns to 08:03 |  |  | pending |  |
+| Nova compounds play five eight-second beats; Stop returns to 08:03 |  |  | pending |  |
 | Nova escape routes, Mor Levy route and slides, and memorial slides |  |  | pending |  |
 | Sderot entry focuses the police station; slides stay on GIS |  |  | pending |  |
-| Hostages: Nir Oz and Peri home, archive for חיים פרי, slides, Nir Oz people, all hostages |  |  | pending |  |
+| Hostages: Nir Oz and Peri home, slides, Nir Oz people, all hostages |  |  | pending |  |
+
+## Nova polygon explainer cards
+
+Pending until an operator records these on the exhibit GIS with the real
+dataset. Leave every row pending until that check is actually performed.
+jsdom cannot prove card readability on the wall.
+
+| Check | Date | Operator | Result | Notes |
+|---|---|---|---|---|
+| Playback of five beats; names wrap; the fourth beat widens; all 14 names are visible at the end |  |  | pending |  |
+| Pause, seek backwards, and Stop |  |  | pending |  |
+| Leave and re-enter Nova and Mor while paused and while ended |  |  | pending |  |
+| Authored Close and Wide layouts stay clear of the clock, people plaque, and map controls; manual zoom does not switch the layout |  |  | pending |  |
+| Editor moves and resets Close and Wide independently; keyboard X/Y; GIS reload; conflict Retry and Load saved |  |  | pending |  |
+| Ordinary GIS clock preview and projection preview still work; projection has no explainer host |  |  | pending |  |
+| Closing and reopening the editor does not duplicate hosts or listeners |  |  | pending |  |
 
 ## Later exhibit acceptance
 
@@ -437,6 +453,7 @@ cue. GIS Stop on opening-minutes or rest-of-day rewinds that scene instead.
 | Gate | Date | Operator | Surface | pass/fail/blocker | notes/screenshot path |
 |---|---|---|---|---|---|
 | Archive open/close on **kiosk Chrome** with the popup allowlist (`configure-chrome-popup-policy.ps1`) | 2026-09-06 | exhibit owner | kiosk Chrome (GIS + remote) | pending | Must record: remote never shows closed while `otef-nli-archive` is still open; close honesty matches Task 11; kiosk Chrome with popup allowlist (`configure-chrome-popup-policy.ps1`). Owner will record on kiosk Chrome + table; do not invent pass/fail. |
+| Archive paging on **kiosk Chrome** (dedicated GIS profile + pager) | 2026-10-01 | exhibit owner | kiosk Chrome (GIS + staff remote) | pending | Nir Oz + search kit (Identity database). Open, then Scroll down/up must move the live NLI column on the wall; Back to map closes. GIS must not pan. Closed archive POST must not move GIS. If the live NLI column does not move with the locked pager algorithm, stop — do not add cookie-banner clicking. Owner will record on kiosk Chrome; do not invent pass/fail. |
 | Densest `people_names` clusters on GIS **and** projection | 2026-09-06 | exhibit owner | GIS and projection | pending | Must record: one integer heading (default 41, snap 1°, `text-rotation-alignment: map`), size 8 readable on GIS **and** projection; dense clusters readable. See **2026-09-07 lab follow-up exhibit gates** One heading. Owner will record on kiosk Chrome + table; do not invent pass/fail. |
 | Category motion at **table distance** | 2026-09-06 | exhibit owner | table (GIS and projection) | pending | Must record: three `Notes` colors; battle/kidnap/fire motion slow enough; GIS and projection match. Owner will record at table distance; do not invent pass/fail. |
 | Crop (copy from Task 12/13) | 2026-09-06 | lab | projection `span=right` / `span=left` webrender + TD table | blocker | Zikim UV in-rect skip; Tesuga not edited. Zikim T3 `0.7829905, 0.292619` inside `getProjectionSpanRect("right")`, outside left. Remaining table black / coast-base deferred as TD/projection blocker, not a silent pass. UV table and screenshots in **Zikim / sea crop UV record (Task 12)** (`docs/nli-exhibit-screenshots/span-right-webrender.png`, `span-left-webrender.png`, `projected-right-null6.png`, `projected-left-null2.png`). |
@@ -455,7 +472,7 @@ rows. Crop Tesuga remains deferred; prior UV / TD blocker still stands.
 | Gate | Date | Operator | Surface | pass/fail/blocker | notes |
 |---|---|---|---|---|---|
 | Clock left park | 2026-09-08 | lab | GIS + projection | pending | Must record: the committed default `NLI_EXPLAINER_LAYOUT.left` in `frontend/src/shared/map-projection-config.js` is `leftPct 22.100834647739227, topPct 31.61002744422372, widthPct 8.886423224258024, heightPct 8.323215088627478, fontPx 56, rotateDeg 91.18739188335852`; a saved Projection Clock node value overrides it. Full/right unchanged. Keys `.v2`. Transparent caption, `fontPx`, GIS rotate. |
-| Legend in `#mapLegend` both surfaces | 2026-09-07 afternoon | lab | GIS + projection | pending | Must record: the shared bilingual NLI legend in the existing `#mapLegend` on GIS **and** projection, as a short, wide rail of at most two rows per page with no pack heading (see [legend verification](legend-verification.md)). The investigation polygon categories appear only while that layer is on. No `#nliInvestigationLegend` overlay. |
+| Legend in `#mapLegend` both surfaces | 2026-09-07 afternoon | lab | GIS + projection | pending | Must record: the shared bilingual NLI legend in the existing `#mapLegend` on GIS **and** projection, with no pack heading (see [legend verification](legend-verification.md)). GIS retains its existing paging. Projection must show the complete legend on one page, fitting its saved panel with equal-width columns and shrink-to-fit; Auto evaluates one to three columns and prefers fewer on ties. Verify requested labels, symbols, no clipping, right-span hidden behavior, and unchanged GIS pagination. The investigation polygon categories appear only while that layer is on. No `#nliInvestigationLegend` overlay. This updated projection layout still needs normal-browser and exhibit-display review. |
 | 232 brown on LIVE processed | 2026-09-07 afternoon | lab | GIS + table | pending | Must record: live `public/processed/layers/nli/styles.json` stroke `#873e23` (or rgb 135,62,35), opacity 1, width ~2.667px. Re-prep ran; not residual. |
 | Highlight no bounce after search | 2026-09-07 afternoon | lab | GIS fly + projection highlight | pending | Must record: person search flyTo does not bounce the table highlight. Keep-geometry + 400 ms fade across zoom 13. No highlight-geometry lerp. |
 | One heading | 2026-09-08 | lab | GIS people_names + projection people_names and שמות | pending | Must record: one integer heading, default 41 (`שמות_label_overrides` v2), snap 1°, `text-rotation-alignment: map`. Per-feature offsets stay. GIS שמות stay muted. |

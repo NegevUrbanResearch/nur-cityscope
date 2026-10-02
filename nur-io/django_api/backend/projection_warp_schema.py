@@ -1,6 +1,7 @@
 import math
 import re
 from copy import deepcopy
+from .projection_baseline_manifest import resolve_projection_baseline_asset
 
 
 SIDES = {'left': {'columns': 7, 'rows': 7}, 'right': {'columns': 8, 'rows': 7}}
@@ -30,8 +31,9 @@ def _number(value, path, errors, low=-1, high=2):
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         errors[path] = 'must be a finite number'
         return False
-    import math
-    if not math.isfinite(value):
+    # Python integers are finite regardless of magnitude; math.isfinite(int)
+    # converts to float and can raise OverflowError for an oversized JSON int.
+    if isinstance(value, float) and not math.isfinite(value):
         errors[path] = 'must be a finite number'
         return False
     if value < low or value > high:
@@ -40,7 +42,20 @@ def _number(value, path, errors, low=-1, high=2):
     return True
 
 
-def validate_projection_warp(value, side, trusted_manifest=None):
+def _integral_count(value):
+    """Return an internal integer for finite integral JSON numbers, else None."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if isinstance(value, int):
+        return value
+    if not math.isfinite(value):
+        return None
+    if int(value) != value:
+        return None
+    return int(value)
+
+
+def validate_projection_warp(value, side, trusted_manifest=None, grid_v7=False):
     errors = {}
     expected = SIDES.get(side)
     if expected is None:
@@ -59,19 +74,14 @@ def validate_projection_warp(value, side, trusted_manifest=None):
         if baseline.get('width') != 1920: errors['baseline.width'] = 'must equal 1920'
         if baseline.get('height') != 1080: errors['baseline.height'] = 'must equal 1080'
         if baseline.get('origin') != 'top-left': errors['baseline.origin'] = 'must equal top-left'
-        assets = trusted_manifest.get('assets') if isinstance(trusted_manifest, dict) else None
-        asset = assets.get(side) if isinstance(assets, dict) else None
-        if baseline.get('type') == 'tdMesh' and trusted_manifest is not None and not isinstance(asset, dict):
-            errors['baseline.assetId'] = 'is not present in the trusted manifest'
-            errors['baseline.sha256'] = 'is not present in the trusted manifest'
-        elif baseline.get('type') == 'tdMesh' and isinstance(asset, dict):
-            digest = str(asset.get('sha256', ''))
-            digest = digest[7:] if digest.lower().startswith('sha256:') else digest
-            digest = digest.lower()
-            if baseline.get('assetId') != asset.get('assetId'): errors['baseline.assetId'] = 'is not present in the trusted manifest'
-            if str(baseline.get('sha256', '')).lower() != digest: errors['baseline.sha256'] = 'is not present in the trusted manifest'
-            if asset.get('width') is not None and baseline.get('width') != asset['width']: errors['baseline.width'] = 'does not match the trusted manifest'
-            if asset.get('height') is not None and baseline.get('height') != asset['height']: errors['baseline.height'] = 'does not match the trusted manifest'
+        if value.get('enabled') is True and baseline.get('type') == 'tdMesh' and trusted_manifest is not None:
+            try:
+                asset = resolve_projection_baseline_asset(trusted_manifest, side, baseline)
+                if asset.get('width') is not None and baseline.get('width') != asset['width']: errors['baseline.width'] = 'does not match the trusted manifest'
+                if asset.get('height') is not None and baseline.get('height') != asset['height']: errors['baseline.height'] = 'does not match the trusted manifest'
+            except (TypeError, ValueError):
+                errors['baseline.assetId'] = 'is not present in the trusted manifest'
+                errors['baseline.sha256'] = 'is not present in the trusted manifest'
     keystone = value.get('keystone')
     if _keys(keystone, ['corners'], 'keystone', errors):
         corners = keystone.get('corners')
@@ -84,10 +94,29 @@ def validate_projection_warp(value, side, trusted_manifest=None):
                     continue
                 for axis, coordinate in enumerate(point): _number(coordinate, f'keystone.corners[{index}][{axis}]', errors)
     grid = value.get('grid')
-    if _keys(grid, ['columns', 'rows', 'offsets'], 'grid', errors):
-        if grid.get('columns') != expected['columns']: errors['grid.columns'] = f"must equal {expected['columns']}"
-        if grid.get('rows') != expected['rows']: errors['grid.rows'] = f"must equal {expected['rows']}"
-        count = expected['columns'] * expected['rows']
+    if _keys(grid, ['columns', 'rows', 'columnPositions', 'rowPositions', 'offsets'] if grid_v7 else ['columns', 'rows', 'offsets'], 'grid', errors):
+        columns, rows = grid.get('columns'), grid.get('rows')
+        if grid_v7:
+            for key, count_value in (('columns', columns), ('rows', rows)):
+                normalized = _integral_count(count_value)
+                if normalized is None or not 2 <= normalized <= 16:
+                    errors[f'grid.{key}'] = 'must be an integer between 2 and 16'
+            columns_count, rows_count = _integral_count(columns), _integral_count(rows)
+            for key, count_value in (('columnPositions', columns), ('rowPositions', rows)):
+                axis = grid.get(key)
+                normalized = _integral_count(count_value)
+                if not isinstance(axis, list) or normalized is None or not 2 <= normalized <= 16 or len(axis) != normalized:
+                    errors[f'grid.{key}'] = f'must contain {count_value} positions'
+                    continue
+                for index, position in enumerate(axis): _number(position, f'grid.{key}[{index}]', errors, 0, 1)
+                if not axis or axis[0] != 0 or axis[-1] != 1: errors[f'grid.{key}'] = 'must start at 0 and end at 1'
+                if any(isinstance(axis[i - 1], (int, float)) and not isinstance(axis[i - 1], bool) and isinstance(axis[i], (int, float)) and not isinstance(axis[i], bool) and axis[i] <= axis[i - 1] for i in range(1, len(axis))):
+                    errors[f'grid.{key}'] = 'positions must be strictly increasing'
+        else:
+            if columns != expected['columns']: errors['grid.columns'] = f"must equal {expected['columns']}"
+            if rows != expected['rows']: errors['grid.rows'] = f"must equal {expected['rows']}"
+        columns_count, rows_count = _integral_count(columns), _integral_count(rows)
+        count = columns_count * rows_count if columns_count is not None and rows_count is not None else -1
         offsets = grid.get('offsets')
         if not isinstance(offsets, list) or len(offsets) != count:
             errors['grid.offsets'] = f'must contain {count} offsets'
@@ -100,7 +129,11 @@ def validate_projection_warp(value, side, trusted_manifest=None):
     return errors
 
 
-def _legacy_fields(value, errors, options):
+def validate_projection_warp_v7(value, side, trusted_manifest=None):
+    return validate_projection_warp(value, side, trusted_manifest, grid_v7=True)
+
+
+def _legacy_fields(value, errors, options, warp_validator=None):
     from .projection_config_schema import _keys as legacy_keys, _number as legacy_number
     if legacy_keys(value.get('pre'), ['scale', 'rotateDeg', 'tx', 'ty'], 'pre', errors):
         legacy_number(value['pre'].get('scale'), 'pre.scale', .1, 8, errors)
@@ -126,7 +159,8 @@ def _legacy_fields(value, errors, options):
         if legacy_keys(presentation, ['enabled', 'mode'], f'{base}.presentationEffect', errors):
             if not isinstance(presentation.get('enabled'), bool): errors[f'{base}.presentationEffect.enabled'] = 'must be a boolean'
             if presentation.get('mode') != 'passthrough': errors[f'{base}.presentationEffect.mode'] = 'must equal passthrough'
-        for path, message in validate_projection_warp(branch.get('warp'), side, options).items(): errors[f'{base}.{path}'] = message
+        validator = warp_validator or validate_projection_warp
+        for path, message in validator(branch.get('warp'), side, options).items(): errors[f'{base}.{path}'] = message
 
 
 def validate_projection_config_v2(value, trusted_manifest=None):
@@ -173,6 +207,16 @@ def validate_projection_config_v6(value, trusted_manifest=None):
     if not _keys(value, ['schemaVersion', 'pre', 'outputs', 'namesWall'], '', errors): return errors
     if value.get('schemaVersion') != 6 or isinstance(value.get('schemaVersion'), bool): errors['schemaVersion'] = 'must equal 6'
     _legacy_fields(value, errors, trusted_manifest)
+    validate_names_wall_v6(value.get('namesWall'), 'namesWall', errors)
+    return errors
+
+
+def validate_projection_config_v7(value, trusted_manifest=None):
+    from .projection_config_schema import validate_names_wall_v6
+    errors = {}
+    if not _keys(value, ['schemaVersion', 'pre', 'outputs', 'namesWall'], '', errors): return errors
+    if value.get('schemaVersion') != 7 or isinstance(value.get('schemaVersion'), bool): errors['schemaVersion'] = 'must equal 7'
+    _legacy_fields(value, errors, trusted_manifest, validate_projection_warp_v7)
     validate_names_wall_v6(value.get('namesWall'), 'namesWall', errors)
     return errors
 
@@ -267,8 +311,36 @@ def migrate_projection_config_to_v6(config, rotate_deg):
     if validate_projection_config(config):
         raise ValueError('invalid projection config')
     if config['schemaVersion'] == 6:
-        return deepcopy(config)
+        result = deepcopy(config)
+        names = result['namesWall']
+        legacy_width = names.get('strokeWidthPx')
+        names.pop('strokeWidthPx', None)
+        for mode, width in (('wall', 3), ('model', 2)):
+            names['profiles'][mode].setdefault('strokeWidthPx', legacy_width if legacy_width is not None else width)
+        return result
     result = migrate_projection_config_to_v5(config)
     result['namesWall']['rotateDeg'] = normalize_rotation_deg(rotate_deg)
+    result['namesWall']['profiles']['wall']['strokeWidthPx'] = 3
+    result['namesWall']['profiles']['model']['strokeWidthPx'] = 2
     result['schemaVersion'] = 6
+    return result
+
+
+def migrate_projection_config_to_v7(config, rotate_deg=None):
+    from .projection_config_schema import validate_projection_config
+    if not isinstance(config, dict) or isinstance(config.get('schemaVersion'), bool) or config.get('schemaVersion') not in (1, 2, 3, 4, 5, 6, 7):
+        raise ValueError('projection config must be schema version 1, 2, 3, 4, 5, 6, or 7')
+    if validate_projection_config(config):
+        raise ValueError('invalid projection config')
+    if config['schemaVersion'] == 7:
+        return deepcopy(config)
+    if rotate_deg is None:
+        rotate_deg = config.get('namesWall', {}).get('rotateDeg', 35)
+    result = migrate_projection_config_to_v6(config, rotate_deg)
+    for output in result['outputs'].values():
+        grid = output['warp']['grid']
+        columns, rows = _integral_count(grid['columns']), _integral_count(grid['rows'])
+        grid['columnPositions'] = [index / (columns - 1) for index in range(columns)]
+        grid['rowPositions'] = [index / (rows - 1) for index in range(rows)]
+    result['schemaVersion'] = 7
     return result

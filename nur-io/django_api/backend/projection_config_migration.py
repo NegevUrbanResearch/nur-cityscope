@@ -1,7 +1,7 @@
 from copy import deepcopy
 
 from .projection_config_schema import validate_projection_config, validate_projection_snapshot
-from .projection_warp_schema import migrate_projection_config_to_v2, migrate_projection_config_to_v3, migrate_projection_config_to_v4, migrate_projection_config_to_v5
+from .projection_warp_schema import migrate_projection_config_to_v2, migrate_projection_config_to_v3, migrate_projection_config_to_v4, migrate_projection_config_to_v5, migrate_projection_config_to_v7
 
 
 def convert_projection_calibration_payload(working_config, presets, selected_preset_id, revision):
@@ -60,7 +60,7 @@ def _convert_config_to_v3(config, path):
     errors = validate_projection_config(config)
     if errors:
         raise ValueError(f'{path} is invalid: ' + '; '.join(f'{key} {message}' for key, message in errors.items()))
-    return migrate_projection_config_to_v3(config)
+    return deepcopy(config) if config.get('schemaVersion') > 3 else migrate_projection_config_to_v3(config)
 
 
 def convert_projection_calibration_payload_to_v4(working_config, presets, selected_preset_id, revision, warnings=None):
@@ -71,7 +71,7 @@ def convert_projection_calibration_payload_to_v4(working_config, presets, select
         if errors:
             raise ValueError(f'{path} is invalid: ' + '; '.join(f'{key} {message}' for key, message in errors.items()))
         notices = []
-        result = migrate_projection_config_to_v4(config, notices)
+        result = deepcopy(config) if config.get('schemaVersion') > 4 else migrate_projection_config_to_v4(config, notices)
         warnings.extend(f'{path}: {notice}' for notice in notices)
         return result
     converted_working = convert(working_config, 'working_config')
@@ -99,7 +99,7 @@ def convert_projection_calibration_payload_to_v5(working_config, presets, select
         if errors:
             raise ValueError(f'{path} is invalid: ' + '; '.join(f'{key} {message}' for key, message in errors.items()))
         notices = []
-        result = migrate_projection_config_to_v5(config, notices)
+        result = deepcopy(config) if config.get('schemaVersion') > 5 else migrate_projection_config_to_v5(config, notices)
         warnings.extend(f'{path}: {notice}' for notice in notices)
         return result
     converted_working = convert(working_config, 'working_config')
@@ -111,6 +111,25 @@ def convert_projection_calibration_payload_to_v5(working_config, presets, select
             raise ValueError(f'presets[{index}] has an invalid shape')
         converted = deepcopy(preset)
         converted['config'] = convert(preset['config'], f'presets[{index}].config')
+        converted_presets.append(converted)
+    candidate = {'revision': revision, 'config': converted_working, 'presets': converted_presets, 'selectedPresetId': selected_preset_id}
+    errors = validate_projection_snapshot(candidate)
+    if errors:
+        raise ValueError('invalid projection calibration: ' + '; '.join(f'{path} {message}' for path, message in errors.items()))
+    return converted_working, converted_presets
+
+
+def convert_projection_calibration_payload_to_v7(working_config, presets, selected_preset_id, revision):
+    """Upgrade one complete calibration envelope without mutating inputs."""
+    converted_working = migrate_projection_config_to_v7(working_config)
+    if not isinstance(presets, list):
+        raise ValueError('presets must be a list')
+    converted_presets = []
+    for index, preset in enumerate(presets):
+        if not isinstance(preset, dict) or set(preset) != {'id', 'name', 'config', 'readOnly'}:
+            raise ValueError(f'presets[{index}] has an invalid shape')
+        converted = deepcopy(preset)
+        converted['config'] = migrate_projection_config_to_v7(preset['config'])
         converted_presets.append(converted)
     candidate = {'revision': revision, 'config': converted_working, 'presets': converted_presets, 'selectedPresetId': selected_preset_id}
     errors = validate_projection_snapshot(candidate)

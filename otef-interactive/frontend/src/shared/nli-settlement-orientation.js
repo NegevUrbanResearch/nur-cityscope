@@ -441,8 +441,8 @@ export function achievedSettlementCitynames(outlineIds, settlementFeatures, know
 }
 
 /**
- * Dim ישובים + Locations_Lines while playing/paused; light achieved שמות
- * labels. Idle/ended restore opacity 1 and drop the dim expression.
+ * Dim ישובים + Locations_Lines while playing/paused/ended; light achieved
+ * שמות labels. Idle restores opacity 1 and drops the dim expression.
  */
 export function applySettlementOrientationPaint(map, {
   phase,
@@ -461,7 +461,7 @@ export function applySettlementOrientationPaint(map, {
     && focusCityname.length > 0;
   const narrativeFocus = hasFocusName && focusOutlineObjectId != null;
   const dimAllYeshuvs = mode === "narrative" && !hasFocusName;
-  const dim = phase === "playing" || phase === "paused" || dimAllYeshuvs;
+  const dim = phase === "playing" || phase === "paused" || phase === "ended" || dimAllYeshuvs;
   const geomOpacity = dim ? PLAY_OPACITY : FULL_OPACITY;
   const citynames = [
     ...(achievedCitynames instanceof Set

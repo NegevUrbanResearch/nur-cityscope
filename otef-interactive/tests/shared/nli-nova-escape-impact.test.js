@@ -283,7 +283,7 @@ describe("Nova escape-impact outlines", () => {
     });
     await coordinator.sync({ id: "nova" }, { individual: true, overlap: false });
     expect(map.getLayer("nli-nova-site-outline")).toBeFalsy();
-    expect(map.getLayer("nli-nova-escape-individual")).toBeFalsy();
+    expect(map.getLayer("nli-nova-escape-individual")?.type).toBe("custom");
     coordinator.dispose();
   });
 });

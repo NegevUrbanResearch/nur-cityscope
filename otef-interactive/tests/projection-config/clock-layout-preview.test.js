@@ -49,7 +49,7 @@ test("rendered warning payloads are validated before reaching the editor", () =>
   const { win, container } = harness(); const onRendered = vi.fn();
   const preview = mountClockLayoutPreview({ container, surface: "gis", sessionId: "warning", onRendered });
   const frame = container.children[0]; frame.contentWindow = { postMessage: vi.fn() };
-  preview.setState({ surface: "gis", sceneId: "home", output: null, clockLayout: { leftPct: 8, topPct: 8, widthPct: 35, heightPct: 28, fontPx: 22, rotateDeg: 0 }, legendLayout: null, pageIndex: 0 });
+  preview.setState({ surface: "gis", sceneId: "home", output: null, element: "clock", clockLayout: { leftPct: 8, topPct: 8, widthPct: 35, heightPct: 28, fontPx: 22, rotateDeg: 0 }, legendLayout: null, pageIndex: 0 });
   const dispatch = (data) => win.dispatch("message", { origin: win.location.origin, source: frame.contentWindow, data: { sessionId: "warning", ...data } });
   dispatch({ type: "otef_clock_preview_ready", surface: "gis", output: null });
   const reply = { type: "otef_clock_preview_rendered", requestId: 1, surface: "gis", sceneId: "home", output: null, mesh: null, meshIdentity: null, pageIndex: 0, pageCount: 1 };
@@ -82,7 +82,7 @@ test.each(["bootstrap", "render", "iframe"])("%s failure reports unavailable and
   const onError = vi.fn(); const onRendered = vi.fn();
   const preview = mountClockLayoutPreview({ container, surface: "gis", sessionId: "timed", onError, onRendered });
   const frame = container.children[0]; frame.contentWindow = { postMessage: vi.fn() };
-  preview.setState({ surface: "gis", sceneId: "home", output: null, clockLayout: { leftPct: 8, topPct: 8, widthPct: 35, heightPct: 28, fontPx: 22, rotateDeg: 0 }, legendLayout: null, pageIndex: 0 });
+  preview.setState({ surface: "gis", sceneId: "home", output: null, element: "clock", clockLayout: { leftPct: 8, topPct: 8, widthPct: 35, heightPct: 28, fontPx: 22, rotateDeg: 0 }, legendLayout: null, pageIndex: 0 });
   if (failure === "render") win.dispatch("message", { origin: win.location.origin, source: frame.contentWindow, data: { type: "otef_clock_preview_ready", sessionId: "timed", surface: "gis", output: null } });
   if (failure === "iframe") frame.listeners.error[0]();
   else await vi.advanceTimersByTimeAsync(30000);
@@ -109,8 +109,149 @@ test("projection validates and defensively copies meshes; malformed active repli
   dispatch(rendered);
   expect(onRendered).toHaveBeenCalledTimes(1);
   expect(onRendered.mock.calls[0][0].mesh).not.toBe(mesh);
+  expect(onRendered.mock.calls[0][0]).not.toHaveProperty("novaExplainerCamera");
+  expect(onRendered.mock.calls[0][0]).not.toHaveProperty("novaExplainerCards");
   expect(() => dispatch({ ...rendered, mesh: { ...mesh, vertices: [{ u: NaN }] } })).not.toThrow();
   expect(onError).toHaveBeenCalledTimes(1);
   expect(onRendered).toHaveBeenCalledTimes(1);
+  preview.destroy();
+});
+
+test.each([0, 1, 2, 3])("projection preview accepts integer legend columns %i", (columns) => {
+  const { win, container } = harness();
+  const preview = mountClockLayoutPreview({ container, surface: "projection", sessionId: "columns" });
+  const layout = { leftPct: 8, topPct: 8, widthPct: 35, heightPct: 28, fontPx: 22, rotateDeg: 0 };
+  expect(() => preview.setState({ surface: "projection", sceneId: "home", output: "left", element: "legend", clockLayout: layout, legendLayout: { ...layout, columns }, pageIndex: 0 })).not.toThrow();
+  preview.destroy();
+});
+
+test("projection preview rejects malformed present legend columns and accepts legacy absence", () => {
+  const { container } = harness();
+  const preview = mountClockLayoutPreview({ container, surface: "projection", sessionId: "columns" });
+  const layout = { leftPct: 8, topPct: 8, widthPct: 35, heightPct: 28, fontPx: 22, rotateDeg: 0 };
+  const state = { surface: "projection", sceneId: "home", output: "left", element: "legend", clockLayout: layout, legendLayout: layout, pageIndex: 0 };
+  expect(() => preview.setState(state)).not.toThrow();
+  for (const columns of ["2", 1.5, -1, 4, null]) {
+    expect(() => preview.setState({ ...state, legendLayout: { ...layout, columns } })).toThrow(TypeError);
+  }
+  preview.destroy();
+});
+
+const CLOCK_LAYOUT = { leftPct: 1, topPct: 2, widthPct: 20, heightPct: 20, fontPx: 22, rotateDeg: 0 };
+
+function gisExplainerState(patch = {}) {
+  return {
+    surface: "gis",
+    sceneId: "nova",
+    output: null,
+    element: "novaExplainers",
+    clockLayout: CLOCK_LAYOUT,
+    legendLayout: null,
+    pageIndex: 0,
+    novaExplainerCamera: "close",
+    novaExplainerLayout: { close: {}, wide: {} },
+    ...patch,
+  };
+}
+
+test("ordinary GIS clock requests reject omitted, empty, and non-string elements", () => {
+  const { container } = harness();
+  const preview = mountClockLayoutPreview({ container, surface: "gis", sessionId: "gis-element" });
+  const base = {
+    surface: "gis",
+    sceneId: "home",
+    output: null,
+    clockLayout: CLOCK_LAYOUT,
+    legendLayout: null,
+    pageIndex: 0,
+  };
+  expect(() => preview.setState(base)).toThrow(TypeError);
+  expect(() => preview.setState({ ...base, element: "" })).toThrow(TypeError);
+  expect(() => preview.setState({ ...base, element: 12 })).toThrow(TypeError);
+  preview.destroy();
+});
+
+test("rejects a GIS explainer preview unless the scene, camera, and layout are valid", () => {
+  const { container } = harness();
+  const preview = mountClockLayoutPreview({ container, surface: "gis", sessionId: "explainer-reject" });
+  expect(() => preview.setState(gisExplainerState({ novaExplainerCamera: "near" }))).toThrow(TypeError);
+  expect(() => preview.setState(gisExplainerState({ sceneId: "segev" }))).toThrow(TypeError);
+  expect(() => preview.setState(gisExplainerState({ novaExplainerLayout: null }))).toThrow(TypeError);
+  expect(() => preview.setState(gisExplainerState({ novaExplainerLayout: [] }))).toThrow(TypeError);
+  expect(() => preview.setState(gisExplainerState({ novaExplainerCamera: "wide", novaExplainerLayout: "maps" }))).toThrow(TypeError);
+  expect(() => preview.setState({
+    surface: "gis", sceneId: "home", output: null, element: "clock", clockLayout: CLOCK_LAYOUT, legendLayout: null, pageIndex: 0,
+  })).not.toThrow();
+  preview.destroy();
+});
+
+test("sanitizes Nova explainer layout and accepts only matching measured cards", () => {
+  const { win, container } = harness();
+  const onRendered = vi.fn();
+  const preview = mountClockLayoutPreview({ container, surface: "gis", sessionId: "explainer-cards", onRendered });
+  const frame = container.children[0];
+  const sent = [];
+  frame.contentWindow = { postMessage: (message) => sent.push(message) };
+  preview.setState(gisExplainerState({
+    novaExplainerCamera: "wide",
+    novaExplainerLayout: {
+      close: {
+        "100": { leftPct: 12, topPct: 20 },
+        "107": { leftPct: 1, topPct: 2 },
+        "99": { leftPct: 3, topPct: 4, extra: true },
+      },
+      wide: { "100": { leftPct: 150, topPct: -4 } },
+      junk: true,
+    },
+  }));
+  const dispatch = (data) => win.dispatch("message", { origin: win.location.origin, source: frame.contentWindow, data: { sessionId: "explainer-cards", ...data } });
+  dispatch({ type: "otef_clock_preview_ready", surface: "gis", output: null });
+  expect(sent.at(-1)).toMatchObject({
+    element: "novaExplainers",
+    sceneId: "nova",
+    novaExplainerCamera: "wide",
+    novaExplainerLayout: { close: { "100": { leftPct: 12, topPct: 20 } }, wide: { "100": { leftPct: 100, topPct: 0 } } },
+  });
+  const reply = {
+    type: "otef_clock_preview_rendered",
+    requestId: sent.at(-1).requestId,
+    surface: "gis",
+    sceneId: "nova",
+    output: null,
+    mesh: null,
+    meshIdentity: null,
+    pageIndex: 0,
+    pageCount: 1,
+    novaExplainerCamera: "wide",
+    novaExplainerCards: [{ objectId: 100, name: "Polygon Name", box: { leftPct: 12, topPct: 20, widthPct: 8, heightPct: 4 } }],
+  };
+  dispatch({ ...reply, novaExplainerCamera: "close" });
+  dispatch({ ...reply, novaExplainerCards: [{ objectId: 100, name: "Polygon Name", box: { leftPct: NaN, topPct: 1, widthPct: 1, heightPct: 1 } }] });
+  dispatch({ ...reply, novaExplainerCards: [{ objectId: "100", name: "Polygon Name", box: null }] });
+  dispatch({ ...reply, novaExplainerCards: null });
+  expect(onRendered).not.toHaveBeenCalled();
+  win.dispatch("message", { origin: "https://wrong.example", source: frame.contentWindow, data: { ...reply, sessionId: "explainer-cards" } });
+  win.dispatch("message", { origin: win.location.origin, source: {}, data: { ...reply, sessionId: "explainer-cards" } });
+  dispatch({ ...reply, requestId: 0 });
+  dispatch({ ...reply, sessionId: "other-session" });
+  expect(onRendered).not.toHaveBeenCalled();
+  dispatch(reply);
+  expect(onRendered).toHaveBeenCalledWith(expect.objectContaining({
+    novaExplainerCamera: "wide",
+    novaExplainerCards: reply.novaExplainerCards,
+  }));
+  preview.setState({ surface: "gis", sceneId: "home", output: null, element: "clock", clockLayout: CLOCK_LAYOUT, legendLayout: null, pageIndex: 0 });
+  dispatch({
+    type: "otef_clock_preview_rendered",
+    requestId: sent.at(-1).requestId,
+    surface: "gis",
+    sceneId: "home",
+    output: null,
+    mesh: null,
+    meshIdentity: null,
+    pageIndex: 0,
+    pageCount: 1,
+  });
+  expect(onRendered).toHaveBeenLastCalledWith(expect.not.objectContaining({ novaExplainerCamera: expect.anything(), novaExplainerCards: expect.anything() }));
   preview.destroy();
 });

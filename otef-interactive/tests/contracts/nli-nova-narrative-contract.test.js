@@ -104,6 +104,7 @@ describe("NLI Nova overlay remount contract", () => {
     expect(mapEntry).toMatch(/surface:\s*"gis"/);
     expect(projectionEntry).toMatch(/surface:\s*"projection"/);
     expect(coordinator).toMatch(/surface === "projection"|surface === 'projection'|ribbonsAllowed/);
+    expect(coordinator).toMatch(/surface === "gis"|surface === 'gis'/);
   });
 
   test("GIS map-main overlay remount still uses the narrative onStyleLoad bus", () => {
@@ -158,8 +159,8 @@ describe("NLI Nova overlay remount contract", () => {
     const script = readSource("../../frontend/src/remote/nli-staff-script.js");
     const compounds = script.slice(script.indexOf('title: { he: "המתחמים"'));
     const step = compounds.slice(0, compounds.indexOf("\n      },"));
-    expect(step).toContain("פוליגוני הנובה עולים בחמישה ביטים בני ארבע שניות, לפי הרצף המתועד.");
-    expect(step).toContain("Nova polygons appear in five four-second beats, following the documented sequence.");
+    expect(step).toContain("פוליגוני הנובה עולים בחמישה ביטים בני שמונה שניות, לפי הרצף המתועד.");
+    expect(step).toContain("Nova polygons appear in five eight-second beats, following the documented sequence.");
     expect(step).toMatch(/clock:\s*\{\}/);
     expect(step).not.toMatch(/clock:\s*"08:03"/);
     expect(step).not.toMatch(/עד 5 ביטים|up to 5 beats/);

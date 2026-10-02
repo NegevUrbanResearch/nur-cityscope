@@ -1,7 +1,11 @@
 import copy
+import hashlib
+import json
+import tempfile
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
+from pathlib import Path
 from unittest.mock import patch
 
 from django.db import connection, connections, transaction
@@ -10,12 +14,41 @@ from django.test import Client, TestCase, TransactionTestCase
 from backend.models import OTEFProjectionCalibration, Table
 from backend.projection_config_service import get_projection_state, mutate_projection_state, ProjectionConflict
 from backend.projection_config_schema import legacy_projection_config_defaults
-from backend.projection_warp_schema import migrate_projection_config_to_v2, migrate_projection_config_to_v5
+from backend.projection_warp_assets import read_projection_baseline_manifest
+from backend.projection_warp_schema import migrate_projection_config_to_v2, migrate_projection_config_to_v5, migrate_projection_config_to_v6, migrate_projection_config_to_v7
 
 
 class ProjectionConfigApiTests(TestCase):
-    def test_installed_v6_rejects_stale_v5_write_before_mutation(self):
+    @patch('backend.projection_config_service.load_trusted_projection_asset', side_effect=AssertionError('disabled warp must not load an asset'))
+    def test_disabled_td_warp_skips_asset_trust_lookup(self, _loader):
+        initial = self.state()
+        config = copy.deepcopy(initial['config'])
+        config['outputs']['left']['warp'].update({
+            'enabled': False,
+            'baseline': {'type': 'tdMesh', 'assetId': 'removed-capture', 'sha256': 'd' * 64,
+                         'width': 1920, 'height': 1080, 'origin': 'top-left'},
+        })
+        response = self.post_action('preview', initial['revision'], config=config)
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()['config']['outputs']['left']['warp']['baseline']['assetId'], 'removed-capture')
+
+    def test_v6_rejects_unknown_names_wall_profile(self):
         current = self.state()
+        config = copy.deepcopy(current['config'])
+        config['namesWall']['profiles']['extra'] = {}
+        response = self.post_action('preview', current['revision'], config=config)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('namesWall.profiles.extra', response.json()['fields'])
+        self.assertEqual(self.state(), current)
+
+    def test_installed_v6_rejects_stale_v5_write_before_mutation(self):
+        self.state()
+        row = OTEFProjectionCalibration.objects.get(table__name='otef')
+        v6 = migrate_projection_config_to_v6(legacy_projection_config_defaults(), 35)
+        row.working_config = v6
+        row.presets[0]['config'] = copy.deepcopy(v6)
+        row.save(update_fields=['working_config', 'presets'])
+        current = get_projection_state('otef')
         stale = migrate_projection_config_to_v5(legacy_projection_config_defaults())
         response = self.post_action('preview', current['revision'], config=stale)
         self.assertEqual(response.status_code, 409)
@@ -26,6 +59,27 @@ class ProjectionConfigApiTests(TestCase):
         row = OTEFProjectionCalibration.objects.get(table__name='otef')
         self.assertEqual(row.revision, current['revision'])
         self.assertEqual(row.working_config, current['config'])
+
+    def test_installed_v7_rejects_stale_writer_with_authoritative_snapshot(self):
+        current = self.state()
+        stale = migrate_projection_config_to_v6(legacy_projection_config_defaults(), 35)
+        response = self.post_action('preview', current['revision'], config=stale)
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()['error'], 'schema_changed')
+        self.assertEqual(response.json()['requiredSchemaVersion'], 7)
+        self.assertEqual(response.json()['state']['config']['schemaVersion'], 7)
+
+    def test_older_install_rejects_incoming_v7_until_upgrade(self):
+        self.state()
+        row = OTEFProjectionCalibration.objects.get(table__name='otef')
+        old = migrate_projection_config_to_v5(legacy_projection_config_defaults())
+        row.working_config = old
+        row.presets[0]['config'] = copy.deepcopy(old)
+        row.save(update_fields=['working_config', 'presets'])
+        incoming = migrate_projection_config_to_v7(old)
+        response = self.post_action('preview', row.revision, config=incoming)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('schemaVersion', response.json()['fields'])
 
     def test_v5_geometry_write_before_initialization_preserves_schema(self):
         self.state()
@@ -75,6 +129,99 @@ class ProjectionConfigApiTests(TestCase):
         self.assertIn('outputs.left.baseline.sha256', response.json()['fields'])
         self.assertEqual(self.state(), original)
 
+    def test_variable_fixture_hashes_load_through_preview_and_save_without_changing_calibration_fields(self):
+        fixture_path = Path(__file__).parents[4] / 'otef-interactive/tests/fixtures/td-variable-grid.json'
+        fixture = json.loads(fixture_path.read_text(encoding='utf-8'))
+        initial = self.state()
+        config = copy.deepcopy(initial['config'])
+        original_pre = copy.deepcopy(config['pre'])
+        original_names = copy.deepcopy(config['namesWall'])
+        original_outputs = {side: copy.deepcopy(config['outputs'][side]) for side in ('left', 'right')}
+        grids = {
+            'left': {'columns': 3, 'rows': 3, 'columnPositions': [0.0, 0.42, 1.0], 'rowPositions': [0.0, 0.57, 1.0]},
+            'right': {'columns': 4, 'rows': 3, 'columnPositions': [0.0, 0.25, 0.68, 1.0], 'rowPositions': [0.0, 0.6, 1.0]},
+        }
+        for side in ('left', 'right'):
+            grid = grids[side]
+            grid['offsets'] = [[0.0, 0.0] for _ in range(grid['columns'] * grid['rows'])]
+            grid['offsets'][grid['columns'] + 1] = [0.012 if side == 'left' else -0.006, -0.009 if side == 'left' else 0.008]
+            config['outputs'][side]['warp']['grid'] = grid
+            config['outputs'][side]['post']['tx'] = 0.08 if side == 'left' else -0.07
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            assets = {}
+            catalog = {'left': [], 'right': []}
+            for side in ('left', 'right'):
+                payload = json.dumps(fixture[side]['expectedMesh'], separators=(',', ':')).encode()
+                (root / f'legacy-{side}.json').write_bytes(payload)
+                (root / 'captures').mkdir(exist_ok=True)
+                (root / 'captures' / f'{side}.json').write_bytes(payload)
+                assets[side] = {'assetId': f'legacy-{side}', 'path': f'legacy-{side}.json',
+                                'sha256': hashlib.sha256(payload).hexdigest(),
+                                'logicalGrid': fixture[side]['expectedMesh']['logicalGrid']}
+                catalog[side].append({'assetId': f'variable-{side}', 'path': f'captures/{side}.json',
+                                      'sha256': hashlib.sha256(payload).hexdigest(),
+                                      'logicalGrid': fixture[side]['expectedMesh']['logicalGrid']})
+                config['outputs'][side]['warp']['baseline'] = {
+                    'type': 'tdMesh', 'assetId': catalog[side][0]['assetId'], 'sha256': catalog[side][0]['sha256'],
+                    'width': 1920, 'height': 1080, 'origin': 'top-left',
+                }
+            (root / 'framing.json').write_text(json.dumps({'schemaVersion': 1}), encoding='utf-8')
+            (root / 'manifest.json').write_text(json.dumps({
+                'schemaVersion': 1, 'width': 1920, 'height': 1080, 'assets': assets, 'catalog': catalog,
+                'framing': {'path': 'framing.json', 'sha256': 'c' * 64},
+            }), encoding='utf-8')
+            with patch('backend.projection_config_service.projection_baseline_root', return_value=root):
+                with patch('backend.projection_config_service.read_projection_baseline_manifest', wraps=read_projection_baseline_manifest) as manifest_reader:
+                    preview = self.post_action('preview', initial['revision'], config=config)
+                    self.assertEqual(manifest_reader.call_count, 1)
+                self.assertEqual(preview.status_code, 200, preview.content)
+                self.assertEqual(preview.json()['config'], config)
+                self.assertEqual(preview.json()['config']['pre'], original_pre)
+                self.assertEqual(preview.json()['config']['namesWall'], original_names)
+                for side in ('left', 'right'):
+                    self.assertEqual(preview.json()['config']['outputs'][side]['crop'], original_outputs[side]['crop'])
+                    self.assertEqual(preview.json()['config']['outputs'][side]['post'], config['outputs'][side]['post'])
+                    self.assertEqual(preview.json()['config']['outputs'][side]['warp']['grid'], grids[side])
+                    self.assertEqual(preview.json()['config']['outputs'][side]['warp']['baseline']['sha256'], assets[side]['sha256'])
+
+                single_side_edit = copy.deepcopy(config)
+                single_side_edit['outputs']['left']['warp']['grid']['offsets'][4][0] += 0.004
+                edited = self.post_action('preview', preview.json()['revision'], config=single_side_edit)
+                self.assertEqual(edited.status_code, 200, edited.content)
+                self.assertEqual(edited.json()['config'], single_side_edit)
+                self.assertEqual(edited.json()['config']['outputs']['right'], config['outputs']['right'])
+                self.assertEqual(edited.json()['config']['pre'], original_pre)
+                self.assertEqual(edited.json()['config']['namesWall'], original_names)
+                saved = self.post_action('save', edited.json()['revision'], config=single_side_edit, presetId=None, name='Variable fixture')
+                self.assertEqual(saved.status_code, 200, saved.content)
+                self.assertEqual(saved.json()['config'], single_side_edit)
+                self.assertEqual(saved.json()['presets'][-1]['name'], 'Variable fixture')
+                self.assertEqual(saved.json()['presets'][-1]['config'], single_side_edit)
+                self.assertEqual(saved.json()['presets'][-1]['config']['outputs']['left']['warp']['grid'], single_side_edit['outputs']['left']['warp']['grid'])
+                self.assertEqual(saved.json()['presets'][-1]['config']['outputs']['right'], config['outputs']['right'])
+                loaded = self.post_action('load', saved.json()['revision'], presetId=saved.json()['selectedPresetId'])
+                self.assertEqual(loaded.status_code, 200, loaded.content)
+                self.assertEqual(loaded.json()['config'], saved.json()['presets'][-1]['config'])
+                self.assertEqual(self.state()['config'], saved.json()['presets'][-1]['config'])
+
+                changed = copy.deepcopy(config)
+                changed['outputs']['left']['warp']['baseline']['sha256'] = '0' * 64
+                rejected = self.post_action('preview', loaded.json()['revision'], config=changed)
+                self.assertEqual(rejected.status_code, 400)
+                self.assertIn('is not present in the trusted manifest', str(rejected.json()['fields']))
+                self.assertEqual(self.state(), loaded.json())
+                rejected_save = self.post_action('save', loaded.json()['revision'], config=changed, presetId=loaded.json()['selectedPresetId'], name='Invalid catalog')
+                self.assertEqual(rejected_save.status_code, 400)
+                self.assertEqual(self.state(), loaded.json())
+
+                trusted_manifest = json.loads((root / 'manifest.json').read_text(encoding='utf-8'))
+                trusted_manifest['catalog']['left'] = []
+                (root / 'manifest.json').write_text(json.dumps(trusted_manifest), encoding='utf-8')
+                rejected_load = self.post_action('load', loaded.json()['revision'], presetId=loaded.json()['selectedPresetId'])
+                self.assertEqual(rejected_load.status_code, 400)
+                self.assertEqual(self.state(), loaded.json())
+
     def setUp(self):
         Table.objects.create(name="otef")
         self.source = str(uuid.uuid4())
@@ -115,11 +262,60 @@ class ProjectionConfigApiTests(TestCase):
         self.assertEqual(saved["selectedPresetId"], saved["presets"][-1]["id"])
         self.assertEqual(OTEFProjectionCalibration.objects.get(table__name="otef").revision, 1)
 
+    def test_preview_and_save_accept_per_profile_outline_widths(self):
+        state = self.state()
+        config = copy.deepcopy(state['config'])
+        config['namesWall']['profiles']['wall']['strokeWidthPx'] = 5
+        config['namesWall']['profiles']['model']['strokeWidthPx'] = 1
+        preview = self.post_action('preview', state['revision'], config=config)
+        self.assertEqual(preview.status_code, 200, preview.content)
+        self.assertEqual(preview.json()['config']['namesWall']['profiles']['wall']['strokeWidthPx'], 5)
+        self.assertEqual(preview.json()['config']['namesWall']['profiles']['model']['strokeWidthPx'], 1)
+        saved = self.post_action('save', preview.json()['revision'], config=config, presetId=None, name='Outline widths')
+        self.assertEqual(saved.status_code, 200, saved.content)
+        self.assertEqual(saved.json()['presets'][-1]['config']['namesWall']['profiles']['wall']['strokeWidthPx'], 5)
+        self.assertEqual(saved.json()['presets'][-1]['config']['namesWall']['profiles']['model']['strokeWidthPx'], 1)
+
+    def test_preview_normalizes_pre_outline_v6_configs_before_accepting_edits(self):
+        self.state()
+        row = OTEFProjectionCalibration.objects.get(table__name='otef')
+        old_config = migrate_projection_config_to_v6(legacy_projection_config_defaults(), 35)
+        del old_config['namesWall']['profiles']['wall']['strokeWidthPx']
+        del old_config['namesWall']['profiles']['model']['strokeWidthPx']
+        row.working_config = copy.deepcopy(old_config)
+        row.presets[0]['config'] = copy.deepcopy(old_config)
+        row.save(update_fields=['working_config', 'presets'])
+        state = get_projection_state('otef')
+        response = self.post_action('preview', state['revision'], config=old_config)
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()['config']['namesWall']['profiles']['wall']['strokeWidthPx'], 3)
+        self.assertEqual(response.json()['config']['namesWall']['profiles']['model']['strokeWidthPx'], 2)
+
     def test_invalid_config_does_not_create_or_change_state(self):
         response = self.client.post("/api/otef/projection-config/", {"table": "otef", "baseRevision": 0, "action": "preview", "sourceId": self.source, "config": {}}, content_type="application/json")
         self.assertEqual(response.status_code, 409)
         self.assertEqual(response.json()["error"], "schema_changed")
         self.assertEqual(self.state()["revision"], 0)
+
+    def test_v7_zero_count_with_empty_axis_is_a_validation_error_without_state_change(self):
+        initial = self.state()
+        invalid = copy.deepcopy(initial['config'])
+        grid = invalid['outputs']['left']['warp']['grid']
+        grid['columns'] = 0
+        grid['columnPositions'] = []
+        response = self.post_action('preview', initial['revision'], config=invalid)
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertIn('outputs.left.grid.columns', response.json()['fields'])
+        self.assertEqual(self.state(), initial)
+
+    def test_v7_oversized_axis_integer_is_a_validation_error_without_state_change(self):
+        initial = self.state()
+        invalid = copy.deepcopy(initial['config'])
+        invalid['outputs']['left']['warp']['grid']['columnPositions'][1] = 10 ** 400
+        response = self.post_action('preview', initial['revision'], config=invalid)
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertIn('outputs.left.grid.columnPositions[1]', response.json()['fields'])
+        self.assertEqual(self.state(), initial)
 
     def test_invalid_action_shapes_preserve_state(self):
         initial = self.state()

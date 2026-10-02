@@ -388,6 +388,90 @@ describe("person selection transport", () => {
     expect(context.getPersonSelection()).toEqual({ personId: "p-9", datasetVersion: "v9", revision: 1 });
   });
 
+  test("first WebSocket connection hydrates the authoritative person selection before connecting", async () => {
+    let resolveState;
+    vi.doMock("../../frontend/src/shared/websocket-client.js", () => ({
+      OTEFWebSocketClient: class {
+        constructor(_url, options) {
+          this.options = options;
+          this.listeners = new Map();
+        }
+        on(type, callback) { this.listeners.set(type, callback); }
+        connect() {}
+      },
+    }));
+    const api = await import("../../frontend/src/shared/api-client.js");
+    const websocket = await import(
+      "../../frontend/src/shared/otef-data-context/OTEFDataContext-websocket.js"
+    );
+    const { default: context } = await import("../../frontend/src/shared/OTEFDataContext.js");
+    context._tableName = "otef";
+    const connection = vi.spyOn(context, "_setConnection");
+    vi.spyOn(api.OTEF_API, "getState").mockImplementation(() => new Promise((resolve) => {
+      resolveState = resolve;
+    }));
+    websocket.setupWebSocket(context);
+
+    const connected = context._wsClient.options.onConnect();
+    expect(api.OTEF_API.getState).toHaveBeenCalledWith("otef", { forceFresh: true });
+    expect(connection).not.toHaveBeenCalledWith(true);
+
+    resolveState({
+      person_selection: { personId: "p-live", datasetVersion: "v-live", revision: 260 },
+    });
+    await connected;
+
+    expect(context.getPersonSelection()).toEqual({
+      personId: "p-live",
+      datasetVersion: "v-live",
+      revision: 260,
+    });
+    expect(connection).toHaveBeenLastCalledWith(true);
+  });
+
+  test("queues archive commands until hydration and the archive bridge are ready", async () => {
+    let resolveState;
+    vi.doMock("../../frontend/src/shared/websocket-client.js", () => ({
+      OTEFWebSocketClient: class {
+        constructor(_url, options) {
+          this.options = options;
+          this.listeners = new Map();
+        }
+        on(type, callback) { this.listeners.set(type, callback); }
+        connect() {}
+      },
+    }));
+    const api = await import("../../frontend/src/shared/api-client.js");
+    const websocket = await import(
+      "../../frontend/src/shared/otef-data-context/OTEFDataContext-websocket.js"
+    );
+    const { default: context } = await import("../../frontend/src/shared/OTEFDataContext.js");
+    context._tableName = "otef";
+    vi.spyOn(api.OTEF_API, "getState").mockImplementation(() => new Promise((resolve) => {
+      resolveState = resolve;
+    }));
+    const commands = vi.fn();
+    context.subscribe("archiveWindow", commands);
+    websocket.setupWebSocket(context);
+
+    const connected = context._wsClient.options.onConnect();
+    context._wsClient.listeners.get("otef_archive_window_command")({
+      table: "otef",
+      action: "open",
+      requestId: "open-live",
+    });
+    context._markArchiveWindowBridgeReady();
+    expect(commands).not.toHaveBeenCalled();
+
+    resolveState({});
+    await connected;
+
+    expect(commands).toHaveBeenCalledWith(expect.objectContaining({
+      action: "open",
+      requestId: "open-live",
+    }));
+  });
+
   test("WebSocket delivers archive results on a dedicated subscription topic", async () => {
     vi.doMock("../../frontend/src/shared/websocket-client.js", () => ({
       OTEFWebSocketClient: class {

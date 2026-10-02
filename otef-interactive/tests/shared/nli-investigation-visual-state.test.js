@@ -55,6 +55,10 @@ describe("nli-investigation-theme", () => {
       annotationInk: "#fff7ed",
       revealDurationMs: 3200,
       alarmRippleDurationMs: 900,
+      alarmChorusLoopMs: 2600,
+      alarmChorusExpansionPx: 30,
+      alarmChorusOpacity: 0.2,
+      alarmEventDurationMs: 1800,
       completedFlowStepMs: 66,
       routeCarrierWidth: 2.4,
       routeFlowWidth: 1.35,
@@ -102,7 +106,7 @@ describe("nli-investigation-theme", () => {
 });
 
 describe("deriveInvestigationFrame", () => {
-  it("derives Nova polygon OBJECTIDs on its four-second beats and 320ms manual jumps", () => {
+  it("derives Nova polygon OBJECTIDs on its eight-second beats and 320ms manual jumps", () => {
     const novaOptions = { narrativeId: "nova" };
     const novaClock = playNliClock(
       idleNliClock(),
@@ -112,12 +116,12 @@ describe("deriveInvestigationFrame", () => {
       novaOptions,
     );
     const idle = deriveInvestigationFrame(idleNliClock(), 0, enabled, novaOptions);
-    const midBeat = deriveInvestigationFrame(novaClock, 2000, enabled, novaOptions);
-    const secondBeat = deriveInvestigationFrame(novaClock, 4000, enabled, novaOptions);
+    const midBeat = deriveInvestigationFrame(novaClock, 4000, enabled, novaOptions);
+    const secondBeat = deriveInvestigationFrame(novaClock, 8000, enabled, novaOptions);
     const jumped = seekNliClock(novaClock, 2, 5000, undefined, novaOptions);
     const jumpBefore = deriveInvestigationFrame(jumped, 5319, enabled, novaOptions);
     const jumpSettled = deriveInvestigationFrame(jumped, 5320, enabled, novaOptions);
-    const ended = deriveInvestigationFrame(endNliClock(novaClock), 20000, enabled, novaOptions);
+    const ended = deriveInvestigationFrame(endNliClock(novaClock), 40000, enabled, novaOptions);
 
     expect(idle.achievedPolygonObjectIds).toEqual([]);
     expect(midBeat.achievedPolygonObjectIds).toEqual([97, 100, 104]);
@@ -137,7 +141,7 @@ describe("deriveInvestigationFrame", () => {
     expect(ended.completedBeats).toEqual([]);
     expect(ended.activeBeat).toBeNull();
 
-    const naturallyEnded = deriveInvestigationFrame(novaClock, 20_000, enabled, novaOptions);
+    const naturallyEnded = deriveInvestigationFrame(novaClock, 40_000, enabled, novaOptions);
     expect(naturallyEnded.achievedPolygonObjectIds).toHaveLength(14);
     expect(naturallyEnded.activeProgress).toBe(1);
     expect(naturallyEnded.completedBeats).toEqual([]);

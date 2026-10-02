@@ -2,6 +2,9 @@ import { describe, expect, test, vi } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import { createProjectionWarpRenderer, validateProjectionMesh } from "../../frontend/src/projection/projection-warp-renderer.js";
+import { evaluateWarpMesh } from '../../frontend/src/shared/projection-warp-geometry.js';
+import { DEFAULT_PROJECTION_CONFIG } from '../../frontend/src/shared/projection-config-schema.js';
+import { variableTdMesh } from '../fixtures/td-variable-grid.js';
 
 const mesh = { width: 1920, height: 1080, vertices: [
   { s: 0, t: 0, x: 0, y: 0, u: 0, v: 0 }, { s: 1, t: 0, x: 1, y: 0, u: 1, v: 0 },
@@ -35,6 +38,44 @@ function fakeGl() {
 function canvasFor(gl) { const listeners = {}; return { width: 1920, height: 1080, getContext: () => gl, addEventListener: (name, cb) => { listeners[name] = cb; }, removeEventListener: vi.fn(), listeners }; }
 
 describe("projection warp renderer", () => {
+  test('uploads exact buffers for source and each replacement mesh, including a differently sized prepared mesh', () => {
+    const source = variableTdMesh('left');
+    const preparedWarpA = structuredClone(DEFAULT_PROJECTION_CONFIG.outputs.left.warp);
+    preparedWarpA.baseline = { type: 'tdMesh', assetId: 'fixture-left', sha256: 'a'.repeat(64), width: 1920, height: 1080, origin: 'top-left' };
+    const preparedA = evaluateWarpMesh(source, preparedWarpA, { side: 'left', schemaVersion: 7 });
+    const preparedWarpB = structuredClone(DEFAULT_PROJECTION_CONFIG.outputs.right.warp);
+    preparedWarpB.baseline = { type: 'tdMesh', assetId: 'fixture-right', sha256: 'b'.repeat(64), width: 1920, height: 1080, origin: 'top-left' };
+    const preparedB = evaluateWarpMesh(variableTdMesh('right'), preparedWarpB, { side: 'right', schemaVersion: 7 });
+    expect(preparedA.vertices.length).not.toBe(preparedB.vertices.length);
+    const gl = fakeGl(), renderer = createProjectionWarpRenderer({ canvas: canvasFor(gl), mesh: source });
+
+    const expectFreshUploadsFor = (activeMesh, fromCall) => {
+      const calls = gl.bufferData.mock.calls.slice(fromCall);
+      expect(calls).toHaveLength(3);
+      expect(calls.map(([, data]) => data)).toEqual([
+        new Float32Array(activeMesh.vertices.flatMap((v) => [v.x * 2 - 1, 1 - v.y * 2])),
+        new Float32Array(activeMesh.vertices.flatMap((v) => [v.u, v.v])),
+        new Uint16Array(activeMesh.triangles),
+      ]);
+      expect(gl.drawElements).toHaveBeenLastCalledWith(gl.TRIANGLES, activeMesh.triangles.length, gl.UNSIGNED_SHORT, 0);
+    };
+
+    renderer.draw({ layers: [] });
+    expectFreshUploadsFor(source, gl.bufferData.mock.calls.length - 3);
+
+    let uploadStart = gl.bufferData.mock.calls.length;
+    renderer.setMesh(preparedA);
+    renderer.draw({ layers: [] });
+    expectFreshUploadsFor(preparedA, uploadStart);
+
+    uploadStart = gl.bufferData.mock.calls.length;
+    renderer.setMesh(preparedB);
+    renderer.draw({ layers: [] });
+    expectFreshUploadsFor(preparedB, uploadStart);
+    expect(preparedA.validationProfile).toBe('relative-source-v1');
+    expect(preparedB.validationProfile).toBe('relative-source-v1');
+    renderer.dispose();
+  });
   test('reuses static pixels while still drawing a changed transform', () => {
     const gl = fakeGl();
     const renderer = createProjectionWarpRenderer({ canvas: canvasFor(gl), mesh });
@@ -253,5 +294,20 @@ describe("projection warp renderer", () => {
     expect(gl.drawElements).toHaveBeenCalledTimes(drawsBeforeLoss + 1);
     renderer.dispose();
     expect(gl.deleteBuffer).toHaveBeenCalled(); expect(gl.deleteTexture).toHaveBeenCalled(); expect(gl.deleteFramebuffer).toHaveBeenCalled();
+  });
+
+  test('relative-source profile accepts small well-conditioned faces and rejects Float32 collapse', () => {
+    const small={width:1920,height:1080,validationProfile:'relative-source-v1',vertices:[
+      {s:.1,t:.1,x:.1,y:.1,u:0,v:0},{s:.101,t:.1,x:.101,y:.1,u:1,v:0},{s:.1,t:.101,x:.1,y:.101,u:0,v:1}],triangles:[0,1,2]};
+    expect(validateProjectionMesh(small)).toBe(small);
+    const collapsed={...small,vertices:[
+      {s:.3,t:.3,x:.3,y:.3,u:0,v:0},{s:.300000001,t:.3,x:.300000001,y:.3,u:1,v:0},{s:.3,t:.300000001,x:.3,y:.300000001,u:0,v:1}]};
+    expect(()=>validateProjectionMesh(collapsed)).toThrow('render precision collapses or inverts a grid triangle');
+    const insufficientRatio={...small,vertices:[
+      {s:0,t:0,x:.6113237719982862,y:.9376534202601761,u:0,v:0},
+      {s:1,t:0,x:.7954265424050391,y:.6015647205058485,u:1,v:0},
+      {s:0,t:1,x:.7312631888714295,y:.7186981057826362,u:0,v:1}]};
+    expect(()=>validateProjectionMesh(insufficientRatio)).toThrow('render precision collapses or inverts a grid triangle');
+    expect(()=>validateProjectionMesh({...small,validationProfile:'unknown'})).toThrow('projection mesh validation profile is unknown');
   });
 });

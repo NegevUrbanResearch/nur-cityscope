@@ -1,0 +1,34 @@
+{
+  "mesh": {
+    "version": 1,
+    "type": "tdMesh",
+    "side": "left",
+    "width": 1920,
+    "height": 1080,
+    "origin": "top-left",
+    "vertices": [
+      { "s": 0, "t": 0, "x": 0, "y": 0, "u": 0, "v": 0 },
+      { "s": 1, "t": 0, "x": 1, "y": 0, "u": 1, "v": 0 },
+      { "s": 0, "t": 1, "x": 0, "y": 1, "u": 0, "v": 1 },
+      { "s": 1, "t": 1, "x": 1, "y": 1, "u": 1, "v": 1 }
+    ],
+    "triangles": [0, 1, 2, 2, 1, 3]
+  },
+  "warp": {
+    "enabled": true,
+    "baseline": { "type": "identity", "width": 1920, "height": 1080, "origin": "top-left" },
+    "keystone": { "corners": [[0, 0], [1, 0], [0, 1], [1, 1]] },
+    "grid": {
+      "columns": 3,
+      "rows": 3,
+      "columnPositions": [0, 0.37, 1],
+      "rowPositions": [0, 0.63, 1],
+      "offsets": [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0]]
+    }
+  },
+  "expected": {
+    "vertexCount": 15,
+    "triangleCount": 20,
+    "triangles": [9,0,1,9,1,4,9,4,3,9,3,0,10,1,2,10,2,4,10,4,1,11,4,6,11,6,3,11,3,4,12,4,2,12,2,5,12,5,4,13,6,4,13,4,7,13,7,6,14,4,5,14,5,8,14,8,7,14,7,4]
+  }
+}

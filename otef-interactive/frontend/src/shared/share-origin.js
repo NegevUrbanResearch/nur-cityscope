@@ -49,9 +49,9 @@ function allowedHttpOrigin(value) {
 function missingShareHosts(location) {
   const page = asUrl(location);
   if (!page || isLoopbackHostname(page.hostname)) {
-    return { localOrigin: null, tailnetOrigin: null, fromShareFile: false };
+    return { localOrigin: null, tailnetOrigin: null, localKind: null, fromShareFile: false };
   }
-  return { localOrigin: allowedHttpOrigin(page.origin), tailnetOrigin: null, fromShareFile: false };
+  return { localOrigin: allowedHttpOrigin(page.origin), tailnetOrigin: null, localKind: null, fromShareFile: false };
 }
 
 export function mdnsLabelFromHostname(hostname) {
@@ -66,12 +66,12 @@ export function httpOrigin(hostname, port) {
 
 export function parseShareHosts(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const localOrigin = allowedHttpOrigin(value.localOrigin);
-  if (!localOrigin) return null;
-  if (value.tailnetOrigin === null) return { localOrigin, tailnetOrigin: null };
+  const localOrigin = value.localOrigin === null ? null : allowedHttpOrigin(value.localOrigin);
+  if (!localOrigin && value.localOrigin !== null) return null;
+  if (value.tailnetOrigin === null) return { localOrigin, tailnetOrigin: null, ...(value.localKind === "hotspot" ? { localKind: "hotspot" } : {}) };
   const tailnetOrigin = allowedHttpOrigin(value.tailnetOrigin);
   if (!tailnetOrigin) return null;
-  return { localOrigin, tailnetOrigin };
+  return { localOrigin, tailnetOrigin, ...(value.localKind === "hotspot" ? { localKind: "hotspot" } : {}) };
 }
 
 export async function loadShareHosts({ location, fetchImpl = globalThis.fetch } = {}) {
@@ -81,7 +81,7 @@ export async function loadShareHosts({ location, fetchImpl = globalThis.fetch } 
     if (!response?.ok) return missingShareHosts(location);
     const parsed = parseShareHosts(await response.json());
     if (!parsed) return missingShareHosts(location);
-    return { ...parsed, fromShareFile: true };
+    return { ...parsed, localKind: parsed.localKind ?? null, fromShareFile: true };
   } catch {
     return missingShareHosts(location);
   }

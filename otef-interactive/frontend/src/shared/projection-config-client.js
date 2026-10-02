@@ -3,6 +3,7 @@ import {
   LEGACY_DEFAULT_PROJECTION_CONFIG,
   TD_MIGRATION_PRESET_ID,
   TD_MIGRATION_PRESET_NAME,
+  migrateProjectionConfigToV7,
   validateProjectionConfig,
 } from './projection-config-schema.js';
 import { migrateNamesWallToV5, migrateNamesWallToV6 } from './nli-name-wall-config.js';
@@ -39,10 +40,15 @@ function withoutRotation(config) {
 }
 
 function originalConfigOk(config) {
+  if (config?.schemaVersion === 7) {
+    const angle = config.namesWall?.rotateDeg;
+    if (typeof angle !== 'number' || !Number.isFinite(angle) || angle < -180 || angle > 180) return false;
+    return equal(withoutRotation(migrateProjectionConfigToV7(config, angle)), withoutRotation(DEFAULT_PROJECTION_CONFIG));
+  }
   if (config?.schemaVersion === 6) {
     const angle = config.namesWall?.rotateDeg;
     if (typeof angle !== 'number' || !Number.isFinite(angle) || angle < -180 || angle > 180) return false;
-    return equal(withoutRotation(config), withoutRotation(migrateNamesWallToV6(LEGACY_DEFAULT_PROJECTION_CONFIG, 35)));
+    return equal(withoutRotation(migrateNamesWallToV6(config, angle)), withoutRotation(migrateNamesWallToV6(LEGACY_DEFAULT_PROJECTION_CONFIG, 35)));
   }
   return [V5_DEFAULT_PROJECTION_CONFIG, V2_DEFAULT_PROJECTION_CONFIG, LEGACY_DEFAULT_PROJECTION_CONFIG].some((baseline) => equal(migrateNamesWallToV5(config), migrateNamesWallToV5(baseline)));
 }
@@ -74,10 +80,11 @@ function validSnapshot(value) {
 }
 
 function normalizeSnapshot(value, warnings = []) {
+  const normalizeConfig = (config) => migrateProjectionConfigToV7(config, config?.namesWall?.rotateDeg ?? 35, warnings);
   return {
     ...clone(value),
-    config: migrateNamesWallToV5(value.config, warnings),
-    presets: value.presets.map((preset) => ({ ...clone(preset), config: migrateNamesWallToV5(preset.config, warnings) })),
+    config: normalizeConfig(value.config),
+    presets: value.presets.map((preset) => ({ ...clone(preset), config: normalizeConfig(preset.config) })),
   };
 }
 
@@ -104,6 +111,7 @@ export function createProjectionConfigClient({
   let stopped = false;
   let connected = false;
   let snapshot = null;
+  let installedSchemaVersion = null;
   let draft = null;
   let hasLocalDraft = false;
   let live = true;
@@ -140,19 +148,19 @@ export function createProjectionConfigClient({
       hydrationError,
       previewError,
       migrationWarnings: [...migrationWarnings],
-      initializationRequired: Boolean(snapshot?.config && snapshot.config.schemaVersion < 6),
+      initializationRequired: Boolean(snapshot?.config && installedSchemaVersion < 7),
       schemaChanged,
     };
   }
 
   function setupRequired() {
-    return Boolean(snapshot?.config && snapshot.config.schemaVersion < 6);
+    return Boolean(snapshot?.config && installedSchemaVersion < 7);
   }
 
-  function notify() {
+  function notify(receipt) {
     const state = getState();
     if (typeof onState === 'function') onState(state);
-    for (const listener of subscribers) listener(getState());
+    for (const listener of subscribers) listener(getState(), receipt);
   }
 
   function setConnected(value) {
@@ -200,6 +208,7 @@ export function createProjectionConfigClient({
     if (typeof onConflict === 'function') onConflict(CONFLICT_MESSAGE);
     if (validSnapshot(next) && (!snapshot || next.revision > snapshot.revision)) {
       const warnings = [];
+      installedSchemaVersion = next.config.schemaVersion;
       snapshot = normalizeSnapshot(next, warnings);
       migrationWarnings = [...new Set(warnings)];
     }
@@ -208,10 +217,20 @@ export function createProjectionConfigClient({
 
   function receiveSnapshot(next, { origin, fromHydrate = false } = {}) {
     if (!validSnapshot(next)) return false;
-    if (snapshot && next.revision <= snapshot.revision) return false;
+    if (snapshot && next.revision < snapshot.revision) return false;
+    if (snapshot && next.revision === snapshot.revision) {
+      // Installation migrations preserve calibration revisions. An authoritative
+      // hydration may therefore refresh the write gate without replacing the
+      // normalized snapshot, unsaved draft, or its edit history.
+      if (!fromHydrate) return false;
+      installedSchemaVersion = next.config.schemaVersion;
+      notify();
+      return true;
+    }
     const foreign = origin !== undefined && origin !== null && origin !== sourceId;
     if (foreign && (hasLocalDraft || inFlight || queuedPreview || intent)) markConflict(next);
     const warnings = [];
+    installedSchemaVersion = next.config.schemaVersion;
     snapshot = normalizeSnapshot(next, warnings);
     migrationWarnings = [...new Set(warnings)];
     if (!hasLocalDraft) {
@@ -220,8 +239,19 @@ export function createProjectionConfigClient({
     } else if (fromHydrate) {
       live = false;
     }
-    notify();
+    // Receipt context lasts only for this adoption. An own checkpoint Save
+    // changes preset selection without replacing the editing session.
+    notify(origin === sourceId && matchesSaveAcknowledgement(inFlight, next)
+      ? { origin, action: 'save' } : undefined);
     return true;
+  }
+
+  function matchesSaveAcknowledgement(request, next) {
+    if (request?.action !== 'save' || request.retired || next.revision !== request.sentRevision + 1) return false;
+    const checkpoint = next.presets.find((preset) => preset.id === next.selectedPresetId);
+    return Boolean(checkpoint && !checkpoint.readOnly && checkpoint.name === String(request.body.name ?? '').trim() &&
+      (!request.body.presetId || checkpoint.id === request.body.presetId) &&
+      equalProjectionConfig(next.config, request.body.config) && equalProjectionConfig(checkpoint.config, request.body.config));
   }
 
   async function hydrate() {
@@ -346,16 +376,27 @@ export function createProjectionConfigClient({
       if (!validSnapshot(bodyResponse)) throw new Error('invalid projection config response');
       previewError = null;
       const adopted = receiveSnapshot(bodyResponse, { origin: sourceId });
+      let draftReplaced = false;
+      let savedPresetId = null;
+      const responseIsCurrent = equal(snapshot, normalizeSnapshot(bodyResponse));
       if (request.action === 'load' || request.action === 'revert') {
-        const responseIsCurrent = equal(snapshot, normalizeSnapshot(bodyResponse));
         if ((adopted || responseIsCurrent) && conflictGeneration === request.conflictGeneration && draftVersion === sentVersion) {
-          draft = migrateNamesWallToV5(bodyResponse.config);
+          draft = migrateProjectionConfigToV7(bodyResponse.config, bodyResponse.config?.namesWall?.rotateDeg ?? 35);
+          hasLocalDraft = false;
+          draftReplaced = true;
+        }
+      } else if (request.action === 'save') {
+        if (responseIsCurrent && conflictGeneration === request.conflictGeneration && draftVersion === sentVersion && matchesSaveAcknowledgement(request, bodyResponse)) {
+          savedPresetId = bodyResponse.selectedPresetId;
           hasLocalDraft = false;
         }
       } else if (draftVersion === sentVersion && snapshot && equal(draft, snapshot.config)) {
         hasLocalDraft = false;
       }
-      request.resolve(getState());
+      // Persistence callers need this request's accepted outcome, not just
+      // HTTP success. Keep receipt/outcome fields out of the shared state.
+      request.resolve(request.action === 'load' || request.action === 'revert'
+        ? { ...getState(), draftReplaced } : request.action === 'save' ? { ...getState(), savedPresetId } : getState());
     }).catch((error) => {
       if (request.retired) return;
       request.failed = true;
@@ -431,12 +472,12 @@ export function createProjectionConfigClient({
       preflighting = null;
       const stale = stopped || !connected || hydrating || snapshot?.revision !== revision ||
         conflictGeneration !== check.conflictGeneration || draftVersion !== check.version || intent ||
-        (operation.action === 'preview' && !live);
+        (operation.action === 'preview' && !live && operation.explicitApply !== true);
       if (stale) {
         operation.reject(new Error('projection config operation superseded'));
         if (live) schedulePreview();
       } else if (!result?.valid || result.identity !== identity) {
-        const message = result?.reason || 'complete names wall preview unavailable';
+        const message = result?.reason || 'projection geometry preflight unavailable';
         previewError = message;
         operation.reject(new Error(message));
       } else {
@@ -448,7 +489,7 @@ export function createProjectionConfigClient({
     }).catch((error) => {
       if (preflighting !== check) return;
       preflighting = null;
-      previewError = error?.message || 'complete names wall preview unavailable';
+      previewError = error?.message || 'projection geometry preflight unavailable';
       operation.reject(error);
       notify();
       scheduleDrain();
@@ -467,7 +508,7 @@ export function createProjectionConfigClient({
   function setDraft(config) {
     if (!config || Object.keys(validateProjectionConfig(config)).length) throw new Error('invalid projection config');
     cancelPreflight('projection config operation superseded');
-    draft = migrateNamesWallToV5(config);
+    draft = migrateProjectionConfigToV7(config, config?.namesWall?.rotateDeg ?? 35);
     draftVersion += 1;
     hasLocalDraft = !snapshot || !equal(draft, snapshot.config);
     if (live) schedulePreview();
@@ -484,7 +525,7 @@ export function createProjectionConfigClient({
   function apply() {
     if (setupRequired()) return Promise.reject(new Error('initialization required'));
     if (!draft || !snapshot || !connected || stopped || hydrating) return Promise.reject(new Error(hydrating ? 'projection config is hydrating' : 'projection config is disconnected'));
-    return new Promise((resolve, reject) => waitForMutation({ action: 'preview', dynamicDraft: true, version: draftVersion, resolve, reject }));
+    return new Promise((resolve, reject) => waitForMutation({ action: 'preview', dynamicDraft: true, explicitApply: true, version: draftVersion, resolve, reject }));
   }
 
   function save({ presetId = null, name } = {}) {

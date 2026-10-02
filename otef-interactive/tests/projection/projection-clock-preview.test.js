@@ -80,6 +80,8 @@ test("boots from one read per resource and draws Home clock plus real legend thr
   await vi.waitFor(() => expect(messages("otef_clock_preview_rendered")).toHaveLength(1));
   const reply = messages("otef_clock_preview_rendered")[0];
   expect(reply).toMatchObject({ requestId: 1, sceneId: "home", output: "left", mesh, pageIndex: 0, pageCount: 1 });
+  expect(reply).not.toHaveProperty("novaExplainerCamera");
+  expect(reply).not.toHaveProperty("novaExplainerCards");
   expect(reply.meshIdentity).toBeTypeOf("string");
   const layers = draws.at(-1); expect(layers.map((layer) => layer.id)).toContain("caption"); expect(layers.map((layer) => layer.id)).toContain("legend");
   expect(layers.find((layer) => layer.id === "caption").matrix).toEqual(projectionOverlayMatrix(layout));
@@ -121,7 +123,7 @@ test("projection child reports measured clipping for both clock and legend witho
   send(frameState(1)); await vi.waitFor(() => expect(messages("otef_clock_preview_rendered")).toHaveLength(1));
   expect(messages("otef_clock_preview_rendered")[0].warnings).toMatchObject({ clipped: true, mapping: "complete" });
   send(frameState(2, { element: "legend" })); await vi.waitFor(() => expect(messages("otef_clock_preview_rendered")).toHaveLength(2));
-  expect(messages("otef_clock_preview_rendered")[1].warnings.clipped).toBe(true);
+  expect(messages("otef_clock_preview_rendered")[1].warnings.clipped).toBe(false);
   rig.surface.getMesh = () => ({ ...mesh, triangles: [0, 1, 2] });
   send(frameState(3, { clockLayout: { ...layout, leftPct: 40, topPct: 40, rotateDeg: 0 } }));
   await vi.waitFor(() => expect(messages("otef_clock_preview_rendered")).toHaveLength(3));

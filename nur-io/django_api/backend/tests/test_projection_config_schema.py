@@ -1,4 +1,5 @@
 import json
+import copy
 from pathlib import Path
 from django.test import SimpleTestCase
 from backend.projection_config_schema import validate_projection_config, validate_projection_snapshot, legacy_projection_config_defaults
@@ -94,9 +95,81 @@ class ProjectionConfigSchemaTests(SimpleTestCase):
         passthrough = migrate_projection_config_to_v6(converted, -20)
         self.assertEqual(passthrough['namesWall']['rotateDeg'], 35)
 
-    def test_defaults_are_v6_identity_warp_without_changing_framing(self):
+    def test_v6_outline_widths_are_per_profile_and_old_configs_remain_valid(self):
+        from backend.projection_config_schema import validate_names_wall_v6
+        from backend.projection_warp_schema import migrate_projection_config_to_v6
+
+        converted = migrate_projection_config_to_v6(migrate_projection_config_to_v5(legacy_projection_config_defaults()), 35)
+        self.assertEqual(converted['namesWall']['profiles']['wall']['strokeWidthPx'], 3)
+        self.assertEqual(converted['namesWall']['profiles']['model']['strokeWidthPx'], 2)
+        old_v6 = copy.deepcopy(converted)
+        del old_v6['namesWall']['profiles']['wall']['strokeWidthPx']
+        del old_v6['namesWall']['profiles']['model']['strokeWidthPx']
+        self.assertEqual(validate_projection_config(old_v6), {})
+        normalized = migrate_projection_config_to_v6(old_v6, 90)
+        self.assertEqual(normalized['namesWall']['profiles']['wall']['strokeWidthPx'], 3)
+        self.assertEqual(normalized['namesWall']['profiles']['model']['strokeWidthPx'], 2)
+        for mode, width in (('wall', 0), ('model', 7)):
+            invalid = copy.deepcopy(converted)
+            invalid['namesWall']['profiles'][mode]['strokeWidthPx'] = width
+            self.assertIn(f'namesWall.profiles.{mode}.strokeWidthPx', validate_names_wall_v6(invalid['namesWall']))
+        interim = copy.deepcopy(converted)
+        del interim['namesWall']['profiles']['wall']['strokeWidthPx']
+        del interim['namesWall']['profiles']['model']['strokeWidthPx']
+        interim['namesWall']['strokeWidthPx'] = 5
+        migrated = migrate_projection_config_to_v6(interim, 35)
+        self.assertEqual(migrated['namesWall']['profiles']['wall']['strokeWidthPx'], 5)
+        self.assertEqual(migrated['namesWall']['profiles']['model']['strokeWidthPx'], 5)
+        self.assertNotIn('strokeWidthPx', migrated['namesWall'])
+        explicit_width = copy.deepcopy(interim)
+        explicit_width['namesWall']['profiles']['wall']['strokeWidthPx'] = 4
+        migrated_explicit = migrate_projection_config_to_v6(explicit_width, 35)
+        self.assertEqual(migrated_explicit['namesWall']['profiles']['wall']['strokeWidthPx'], 4)
+        self.assertEqual(migrated_explicit['namesWall']['profiles']['model']['strokeWidthPx'], 5)
+        global_two = copy.deepcopy(converted)
+        del global_two['namesWall']['profiles']['wall']['strokeWidthPx']
+        del global_two['namesWall']['profiles']['model']['strokeWidthPx']
+        global_two['namesWall']['strokeWidthPx'] = 2
+        migrated_two = migrate_projection_config_to_v6(global_two, 35)
+        self.assertEqual(migrated_two['namesWall']['profiles']['wall']['strokeWidthPx'], 2)
+        self.assertEqual(migrated_two['namesWall']['profiles']['model']['strokeWidthPx'], 2)
+        extra_profile = copy.deepcopy(converted['namesWall'])
+        extra_profile['profiles']['extra'] = {}
+        self.assertIn('namesWall.profiles.extra', validate_names_wall_v6(extra_profile))
+        invalid_config = copy.deepcopy(converted)
+        invalid_config['namesWall']['profiles']['extra'] = {}
+        self.assertIn('namesWall.profiles.extra', validate_projection_config(invalid_config))
+
+    def test_interim_global_width_makes_original_preset_noncanonical(self):
+        from backend.projection_warp_schema import migrate_projection_config_to_v6
+        defaults = migrate_projection_config_to_v6(legacy_projection_config_defaults(), 35)
+        snapshot = {'revision': 1, 'config': defaults, 'presets': [
+            {'id': 'original', 'name': 'Original calibration', 'config': copy.deepcopy(defaults), 'readOnly': True},
+        ], 'selectedPresetId': 'original'}
+        snapshot['presets'][0]['config']['namesWall']['strokeWidthPx'] = 5
+        del snapshot['presets'][0]['config']['namesWall']['profiles']['wall']['strokeWidthPx']
+        del snapshot['presets'][0]['config']['namesWall']['profiles']['model']['strokeWidthPx']
+        self.assertIn('presets[0]', validate_projection_snapshot(snapshot))
+        self.assertEqual(migrate_projection_config_to_v6(snapshot['presets'][0]['config'], 35)['namesWall']['profiles']['wall']['strokeWidthPx'], 5)
+
+    def test_old_v6_original_preset_is_compared_after_outline_defaulting(self):
+        from backend.projection_warp_schema import migrate_projection_config_to_v6
+        v6 = migrate_projection_config_to_v6(legacy_projection_config_defaults(), 35)
+        snapshot = {'revision': 3, 'config': v6, 'presets': [
+            {'id': 'original', 'name': 'Original calibration', 'config': copy.deepcopy(v6), 'readOnly': True},
+            {'id': TD_MIGRATION_PRESET_ID, 'name': TD_MIGRATION_PRESET_NAME,
+             'config': migrate_projection_config_to_v4(migrate_projection_config_to_v2(legacy_projection_config_defaults())), 'readOnly': True},
+        ], 'selectedPresetId': 'original'}
+        for target in (snapshot['config'], snapshot['presets'][0]['config']):
+            del target['namesWall']['profiles']['wall']['strokeWidthPx']
+            del target['namesWall']['profiles']['model']['strokeWidthPx']
+        self.assertEqual(validate_projection_snapshot(snapshot), {})
+        snapshot['presets'][0]['config']['namesWall']['profiles']['wall']['strokeWidthPx'] = 4
+        self.assertIn('presets[0]', validate_projection_snapshot(snapshot))
+
+    def test_defaults_are_v7_identity_warp_without_changing_framing(self):
         defaults = projection_config_defaults()
-        self.assertEqual(defaults['schemaVersion'], 6)
+        self.assertEqual(defaults['schemaVersion'], 7)
         self.assertEqual(defaults['namesWall']['rotateDeg'], 35)
         self.assertEqual(defaults['pre'], {'scale': 1.41, 'rotateDeg': -50, 'tx': 0.01, 'ty': 0})
         for side, columns in (('left', 7), ('right', 8)):
@@ -104,8 +177,73 @@ class ProjectionConfigSchemaTests(SimpleTestCase):
             self.assertEqual(branch['presentationEffect'], {'enabled': False, 'mode': 'passthrough'})
             self.assertEqual(branch['warp']['grid']['columns'], columns)
             self.assertEqual(branch['warp']['grid']['rows'], 7)
+            self.assertEqual(len(branch['warp']['grid']['columnPositions']), columns)
+            self.assertEqual(branch['warp']['grid']['columnPositions'][0], 0)
+            self.assertEqual(branch['warp']['grid']['columnPositions'][-1], 1)
             self.assertTrue(all(point == [0, 0] for point in branch['warp']['grid']['offsets']))
         self.assertEqual(validate_projection_config(defaults), {})
+        equal = copy.deepcopy(defaults)
+        right_grid = equal['outputs']['right']['warp']['grid']
+        right_grid['columns'] = 7
+        right_grid['columnPositions'] = [i / 6 for i in range(7)]
+        right_grid['offsets'] = [[0, 0] for _ in range(49)]
+        self.assertEqual(validate_projection_config(equal), {})
+        snapshot = {'revision': 0, 'config': defaults, 'presets': [
+            {'id': 'original', 'name': 'Original calibration', 'config': copy.deepcopy(defaults), 'readOnly': True},
+        ], 'selectedPresetId': 'original'}
+        self.assertEqual(validate_projection_snapshot(snapshot), {})
+        snapshot['presets'][0]['config']['outputs']['left']['warp']['grid']['columnPositions'][1] = .1
+        self.assertIn('presets[0]', validate_projection_snapshot(snapshot))
+
+    def test_v7_grid_schema_is_strict_and_migration_is_deep_copy_idempotent(self):
+        from backend.projection_warp_schema import migrate_projection_config_to_v7, migrate_projection_config_to_v6, validate_projection_config_v7
+        v6 = migrate_projection_config_to_v6(legacy_projection_config_defaults(), 35)
+        converted = migrate_projection_config_to_v7(v6)
+        self.assertEqual(converted['schemaVersion'], 7)
+        self.assertEqual(validate_projection_config_v7(converted), {})
+        self.assertEqual(converted['outputs']['left']['warp']['grid']['columnPositions'], [i / 6 for i in range(7)])
+        self.assertEqual(converted['outputs']['right']['warp']['grid']['columnPositions'], [i / 7 for i in range(8)])
+        self.assertEqual(migrate_projection_config_to_v7(converted), converted)
+        self.assertIsNot(migrate_projection_config_to_v7(converted), converted)
+        self.assertIsNot(migrate_projection_config_to_v7(v6), v6)
+        for key, bad in (('columns', True), ('rows', 2.5)):
+            invalid = copy.deepcopy(converted)
+            invalid['outputs']['left']['warp']['grid'][key] = bad
+            self.assertTrue(any(error.startswith(f'outputs.left.grid.{key}') for error in validate_projection_config(invalid)))
+        for key, mutate in (
+            ('missing axis', lambda grid: grid.pop('rowPositions')),
+            ('length', lambda grid: grid['columnPositions'].pop()),
+            ('endpoint', lambda grid: grid['rowPositions'].__setitem__(0, 0.01)),
+            ('order', lambda grid: grid['columnPositions'].__setitem__(2, grid['columnPositions'][1])),
+            ('unknown', lambda grid: grid.__setitem__('extra', 1)),
+            ('offsets', lambda grid: grid['offsets'].pop()),
+        ):
+            invalid = copy.deepcopy(converted)
+            mutate(invalid['outputs']['left']['warp']['grid'])
+            self.assertTrue(validate_projection_config(invalid), key)
+        with self.assertRaises(ValueError):
+            migrate_projection_config_to_v6(converted, 35)
+        invalid = copy.deepcopy(converted)
+        invalid['outputs']['left']['warp']['grid']['columnPositions'][1] = True
+        self.assertTrue(any('columnPositions[1]' in error for error in validate_projection_config(invalid)))
+        invalid = copy.deepcopy(converted)
+        invalid['outputs']['left']['warp']['grid']['rowPositions'][1] = float('nan')
+        self.assertTrue(any('rowPositions[1]' in error for error in validate_projection_config(invalid)))
+        invalid = copy.deepcopy(converted)
+        invalid['outputs']['left']['warp']['grid']['offsets'][0][0] = 2.01
+        self.assertTrue(any('offsets[0][0]' in error for error in validate_projection_config(invalid)))
+
+    def test_v7_accepts_count_boundaries_and_tiny_strict_axis_gaps_legacy_rejects_axes(self):
+        from backend.projection_warp_schema import migrate_projection_config_to_v7, validate_projection_warp
+        value = migrate_projection_config_to_v7(legacy_projection_config_defaults())
+        left = value['outputs']['left']['warp']
+        left['grid'].update(columns=3, columnPositions=[0, 1e-300, 1], offsets=[[0, 0] for _ in range(21)])
+        right = value['outputs']['right']['warp']
+        right['grid'].update(columns=16, rows=2, columnPositions=[i / 15 for i in range(16)], rowPositions=[0, 1], offsets=[[0, 0] for _ in range(32)])
+        self.assertEqual(validate_projection_config(value), {})
+        legacy = copy.deepcopy(left)
+        legacy['grid'] = {'columns': 7, 'rows': 7, 'columnPositions': [i / 6 for i in range(7)], 'rowPositions': [i / 6 for i in range(7)], 'offsets': [[0, 0] for _ in range(49)]}
+        self.assertIn('grid.columnPositions', validate_projection_warp(legacy, 'left'))
 
     def test_canonical_fixture_validates(self):
         fixture = json.loads((Path(__file__).parent / 'fixtures' / 'projection-config-v1.json').read_text())

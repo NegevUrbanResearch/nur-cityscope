@@ -10,7 +10,7 @@ import { NLI_NARRATIVES } from "../../frontend/src/shared/nli-narratives.js";
 import { NLI_NOVA_STORY } from "../../frontend/src/shared/nli-nova-story.js";
 import { idleNliClock, playNliClock } from "../../frontend/src/shared/nli-investigation-clock.js";
 
-test("natural Nova playback crossing 12 seconds changes camera without a clock update", async () => {
+test("natural Nova playback crossing 24 seconds changes camera without a clock update", async () => {
   let now = 0;
   const map = createFakeMapLibreMap({
     layers: [
@@ -68,7 +68,7 @@ test("natural Nova playback crossing 12 seconds changes camera without a clock u
   });
 
   map.flyTo.mockClear();
-  now = 12_001;
+  now = 24_001;
   expect(map.driveAnimationFrame(now)).toBe(true);
   expect(map.flyTo).toHaveBeenCalledWith({
     zoom: NLI_NARRATIVES.nova.beat4Zoom,

@@ -4,6 +4,14 @@ import { createWarpEditorDialog } from "../../frontend/src/projection-config/war
 import { DEFAULT_PROJECTION_CONFIG } from "../../frontend/src/shared/projection-config-schema.js";
 
 afterEach(() => { document.body.replaceChildren(); vi.useRealTimers(); });
+let resizeObserverDescriptor;
+afterEach(() => {
+  if (resizeObserverDescriptor) {
+    if (resizeObserverDescriptor.value === undefined) delete window.ResizeObserver;
+    else Object.defineProperty(window, "ResizeObserver", resizeObserverDescriptor);
+    resizeObserverDescriptor = undefined;
+  }
+});
 
 function setup(options = {}) {
   const host = document.createElement("main");
@@ -14,6 +22,17 @@ function setup(options = {}) {
   const opener = document.createElement("button"); host.append(opener); opener.focus();
   const dialog = createWarpEditorDialog({ document, host, editorPanel: panel, overlay, ...options });
   return { host, home, panel, overlay, opener, dialog };
+}
+
+function setViewportRect(viewport, rect) {
+  viewport.getBoundingClientRect = () => ({
+    ...rect,
+    x: rect.left,
+    y: rect.top,
+    right: rect.left + rect.width,
+    bottom: rect.top + rect.height,
+    toJSON() { return this; },
+  });
 }
 
 test("one disposable frame exists only for an explicitly open warp editor", () => {
@@ -39,18 +58,102 @@ test("one disposable frame exists only for an explicitly open warp editor", () =
   dialog.dispose();
 });
 
-test("resize and orientation changes cancel an active edit before refitting", () => {
+test("unchanged resize notifications preserve an active edit and changed mappings cancel before refitting", () => {
   const onBeforeResize = vi.fn();
-  const { dialog, opener } = setup({ onBeforeResize });
+  const order = [];
+  class TestResizeObserver {
+    constructor(callback) { this.callback = callback; TestResizeObserver.latest = this; }
+    observe() {}
+    disconnect() {}
+    notify() { this.callback([], this); }
+  }
+  resizeObserverDescriptor = Object.getOwnPropertyDescriptor(window, "ResizeObserver") || { value: undefined };
+  Object.defineProperty(window, "ResizeObserver", { configurable: true, value: TestResizeObserver });
+  const { dialog, opener } = setup({ onBeforeResize: () => { order.push("cancel"); onBeforeResize(); }, onViewportChange: () => order.push("fit") });
   window.dispatchEvent(new Event("resize"));
   expect(onBeforeResize).not.toHaveBeenCalled();
+  const viewport = document.querySelector(".warp-editor-viewport");
+  Object.defineProperties(viewport, { clientWidth: { configurable: true, value: 600 }, clientHeight: { configurable: true, value: 400 } });
+  let rect = { left: 20, top: 30, width: 600, height: 400 };
+  setViewportRect(viewport, rect);
   dialog.open({ side: "left", mode: "grid", opener });
+
+  // The observer's initial delivery and a window notification with the same
+  // viewport mapping must not cancel a pointer edit.
+  TestResizeObserver.latest.notify();
   window.dispatchEvent(new Event("resize"));
+  expect(onBeforeResize).not.toHaveBeenCalled();
+
+  // A moved viewport changes the pointer-to-output mapping, so cancel before fit.
+  rect = { ...rect, left: 21 };
+  setViewportRect(viewport, rect);
+  order.length = 0;
+  window.dispatchEvent(new Event("resize"));
+  expect(order).toEqual(["cancel", "fit"]);
+  expect(onBeforeResize).toHaveBeenCalledTimes(1);
+
+  // A later ResizeObserver delivery with that same rect is also a no-op.
+  TestResizeObserver.latest.notify();
+  expect(onBeforeResize).toHaveBeenCalledTimes(1);
+
+  rect = { ...rect, width: 599 };
+  setViewportRect(viewport, rect);
+  order.length = 0;
+  TestResizeObserver.latest.notify();
+  expect(order).toEqual(["cancel", "fit"]);
+  expect(onBeforeResize).toHaveBeenCalledTimes(2);
   window.dispatchEvent(new Event("orientationchange"));
   expect(onBeforeResize).toHaveBeenCalledTimes(2);
   dialog.close();
   window.dispatchEvent(new Event("resize"));
   expect(onBeforeResize).toHaveBeenCalledTimes(2);
+  dialog.dispose();
+});
+
+test("orientation callback runs independently from ordinary resize while the editor remains open", () => {
+  const onBeforeResize = vi.fn();
+  const onOrientationChange = vi.fn();
+  const { dialog, opener } = setup({ onBeforeResize, onOrientationChange });
+  dialog.open({ side: "left", mode: "grid", opener });
+  window.dispatchEvent(new Event("resize"));
+  expect(onBeforeResize).not.toHaveBeenCalled();
+  expect(onOrientationChange).not.toHaveBeenCalled();
+  window.dispatchEvent(new Event("orientationchange"));
+  expect(onBeforeResize).not.toHaveBeenCalled();
+  expect(onOrientationChange).toHaveBeenCalledTimes(1);
+  expect(dialog.isOpen()).toBe(true);
+  dialog.dispose();
+});
+
+test("fullscreen geometry changes cancel before refitting the viewport", () => {
+  const order = [];
+  const onBeforeResize = () => order.push("cancel");
+  const onViewportChange = () => order.push("fit");
+  const { dialog, opener } = setup({ onBeforeResize, onViewportChange });
+  dialog.open({ side: "left", mode: "grid", opener });
+  const editorViewport = document.querySelector(".warp-editor-viewport");
+  Object.defineProperties(editorViewport, { clientWidth: { configurable: true, value: 600 }, clientHeight: { configurable: true, value: 400 } });
+  let rect = { left: 20, top: 30, width: 600, height: 400 };
+  setViewportRect(editorViewport, rect);
+  // Seed a measurable mapping after open, as occurs once the dialog has layout.
+  window.dispatchEvent(new Event("resize"));
+  order.length = 0;
+  rect = { ...rect, width: 599 };
+  setViewportRect(editorViewport, rect);
+  document.dispatchEvent(new Event("fullscreenchange"));
+  expect(order).toEqual(["cancel", "fit"]);
+  dialog.dispose();
+});
+
+test("navigation controls are appended to the private header without replacing dialog actions", () => {
+  const navigationControls = document.createElement("div");
+  navigationControls.className = "warp-view-controls";
+  const { dialog, opener } = setup({ navigationControls });
+  dialog.open({ side: "left", mode: "grid", opener });
+  expect(document.querySelector(".warp-editor-header .warp-view-controls")).toBe(navigationControls);
+  expect(document.querySelector("[data-action=warp-editor-close]")).not.toBeNull();
+  expect(document.querySelector(".warp-editor-footer input[aria-label='Editor Live']")).not.toBeNull();
+  expect(document.querySelector(".warp-editor-footer button").textContent).toBe("Apply once");
   dialog.dispose();
 });
 
@@ -113,6 +216,27 @@ test("readiness timeout exposes retry without discarding the draft", () => {
   dialog.dispose();
 });
 
+test("retry refits the replacement frame to the current navigated viewport immediately", () => {
+  vi.useFakeTimers();
+  const { dialog, opener, overlay } = setup();
+  const viewport = document.querySelector(".warp-editor-viewport");
+  Object.defineProperties(viewport, { clientWidth: { configurable: true, value: 600 }, clientHeight: { configurable: true, value: 400 } });
+  dialog.open({ side: "left", mode: "grid", opener });
+  dialog.setViewBox({ x: -240, y: -90, width: 2400, height: 1260 });
+  const first = document.querySelector(".warp-editor-frame");
+  const fittedTransform = first.style.transform;
+  expect(fittedTransform).not.toBe("");
+  expect(overlay.getAttribute("viewBox")).toBe("-240 -90 2400 1260");
+
+  vi.advanceTimersByTime(30000);
+  document.querySelector('[data-action="warp-editor-retry"]').click();
+  const replacement = document.querySelector(".warp-editor-frame");
+  expect(replacement).not.toBe(first);
+  expect(replacement.style.transform).toBe(fittedTransform);
+  expect(overlay.getAttribute("viewBox")).toBe("-240 -90 2400 1260");
+  dialog.dispose();
+});
+
 test("a ready reply after the deadline cannot revive the timed-out frame", () => {
   vi.useFakeTimers();
   const { dialog, opener } = setup();
@@ -141,15 +265,57 @@ test("failed preview application offers retry for the selected frame", () => {
   dialog.dispose();
 });
 
-test("Fine adjustment begins collapsed and toggling does not activate overlay", () => {
+test("Run names cannot replace the first pending geometry acknowledgement", () => {
+  const config = structuredClone(DEFAULT_PROJECTION_CONFIG);
+  const { dialog, opener } = setup();
+  dialog.update(config);
+  dialog.open({ side: "left", mode: "keystone", opener });
+  const frame = document.querySelector("iframe");
+  const send = vi.spyOn(frame.contentWindow, "postMessage");
+  window.dispatchEvent(new MessageEvent("message", { origin: location.origin, source: frame.contentWindow,
+    data: { type: "otef_projection_preview_ready", output: "left" } }));
+  const geometryRequest = send.mock.calls[0][0];
+  expect(dialog.sendRunNamesPreview(config)).toBe(false);
+  expect(send).toHaveBeenCalledOnce();
+  window.dispatchEvent(new MessageEvent("message", { origin: location.origin, source: frame.contentWindow,
+    data: { type: "otef_projection_preview_applied", output: "left", requestId: geometryRequest.requestId, success: true } }));
+  expect(frame.style.visibility).toBe("visible");
+  expect(document.querySelector(".warp-editor-message").textContent).toBe("Current draft");
+  dialog.dispose();
+});
+
+test("Run names for older applied geometry cannot replace a newer pending draft acknowledgement", () => {
+  const appliedConfig = structuredClone(DEFAULT_PROJECTION_CONFIG);
+  const pendingConfig = structuredClone(appliedConfig); pendingConfig.pre.tx += 0.01;
+  const { dialog, opener } = setup();
+  dialog.update(appliedConfig);
+  dialog.open({ side: "right", mode: "grid", opener });
+  const frame = document.querySelector("iframe");
+  const send = vi.spyOn(frame.contentWindow, "postMessage");
+  window.dispatchEvent(new MessageEvent("message", { origin: location.origin, source: frame.contentWindow,
+    data: { type: "otef_projection_preview_ready", output: "right" } }));
+  const firstRequest = send.mock.calls[0][0];
+  window.dispatchEvent(new MessageEvent("message", { origin: location.origin, source: frame.contentWindow,
+    data: { type: "otef_projection_preview_applied", output: "right", requestId: firstRequest.requestId, success: true } }));
+  dialog.update(pendingConfig);
+  const latestRequest = send.mock.calls[1][0];
+  expect(dialog.sendRunNamesPreview(appliedConfig)).toBe(false);
+  expect(send).toHaveBeenCalledTimes(2);
+  window.dispatchEvent(new MessageEvent("message", { origin: location.origin, source: frame.contentWindow,
+    data: { type: "otef_projection_preview_applied", output: "right", requestId: latestRequest.requestId, success: true } }));
+  expect(frame.style.visibility).toBe("visible");
+  expect(document.querySelector(".warp-editor-message").textContent).toBe("Current draft");
+  dialog.dispose();
+});
+
+test("warp controls remain visible without a Fine adjustment toggle", () => {
   const { dialog, opener } = setup();
   dialog.open({ side: "left", mode: "keystone", opener });
-  const toggle = document.querySelector('[data-action="warp-editor-fine"]');
   const panel = document.querySelector(".warp-editor-fine-panel");
-  expect(panel.hidden).toBe(true);
-  toggle.click(); expect(panel.hidden).toBe(false);
+  expect(panel.hidden).toBe(false);
+  expect(document.querySelector('[data-action="warp-editor-fine"]')).toBeNull();
   dialog.close(); dialog.open({ side: "left", mode: "grid", opener });
-  expect(panel.hidden).toBe(true);
+  expect(panel.hidden).toBe(false);
   dialog.dispose();
 });
 
@@ -161,13 +327,15 @@ test("modal contains focus, restores page interaction on Escape, and forwards Ap
   dialog.open({ side: "left", mode: "keystone", opener });
   expect(background.inert).toBe(true);
   expect(document.body.style.overflow).toBe("hidden");
-  const first = document.querySelector('[data-action="warp-editor-fine"]');
-  const last = document.querySelector(".warp-editor-footer > button:not([hidden])");
+  const first = document.querySelector('[data-action="warp-editor-close"]');
+  expect(document.querySelector('[data-action="projection-names-run"]')).toBeNull();
+  const last = document.querySelector('.warp-editor-footer button:not([hidden])');
   first.focus(); document.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true }));
   expect(document.activeElement).toBe(last);
   document.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true }));
   expect(document.activeElement).toBe(first);
-  last.click(); expect(onApply).toHaveBeenCalledTimes(1);
+  Array.from(document.querySelectorAll(".warp-editor-footer button")).find((button) => button.textContent === "Apply once").click();
+  expect(onApply).toHaveBeenCalledTimes(1);
   const live = document.querySelector('.warp-editor-footer input[type="checkbox"]');
   live.checked = true; live.dispatchEvent(new Event("change", { bubbles: true }));
   expect(onLive).toHaveBeenCalledWith(true);

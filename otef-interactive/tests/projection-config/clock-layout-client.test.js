@@ -30,9 +30,46 @@ function socketHarness() {
 }
 
 describe("clock layout client", () => {
+  test("eight-field legend drafts survive HTTP acknowledgements, metadata events, and other-span updates", async () => {
+    const socket = socketHarness();
+    const initial = snapshot();
+    initial.legend_settings.projection.left = { ...legendLayout(40), columns: 2 };
+    initial.legend_settings.projection.right = { ...legendLayout(60), columns: 3 };
+    let projection = structuredClone(initial.legend_settings.projection);
+    const client = createClockLayoutClient({ getSnapshot: async () => ({ ...initial, legend_settings: { ...initial.legend_settings, projection } }), socket,
+      writeLegendSlot: async ({ span, layout, baseRevision }) => {
+        projection = { ...projection, [span]: layout };
+        return { changeKind: "layout", legendProjection: projection, legendLayoutRevision: baseRevision + 1 };
+      } });
+    await client.hydrate();
+    const eightFieldDraft = { ...projection.left, columns: 1 };
+    await client.commit("projectionLegend", "left", eightFieldDraft);
+    expect(client.getSlot("projectionLegend", "left").acknowledged).toEqual(eightFieldDraft);
+    projection = { ...projection, left: { ...eightFieldDraft, leftPct: 44 } };
+    socket.emit("otef_legend_settings_changed", { changeKind: "layout", legendProjection: projection, legendLayoutRevision: 2 });
+    expect(client.getSlot("projectionLegend", "left").acknowledged).toMatchObject({ leftPct: 44, columns: 1 });
+    socket.emit("otef_legend_settings_changed", { changeKind: "metadata", legendSettingsPatch: { language: "he" } });
+    expect(client.getSlot("projectionLegend", "left").acknowledged.columns).toBe(1);
+    socket.emit("otef_legend_settings_changed", { changeKind: "layout", legendProjection: { ...projection, right: { ...projection.right, leftPct: 62 } }, legendLayoutRevision: 3 });
+    expect(client.getSlot("projectionLegend", "left").acknowledged.columns).toBe(1);
+    client.destroy();
+  });
+
+  test("seven-field legacy layout acknowledgement keeps its original shape", async () => {
+    const initial = snapshot();
+    const client = createClockLayoutClient({ getSnapshot: async () => initial,
+      writeLegendSlot: async ({ layout, baseRevision }) => ({ changeKind: "layout", legendProjection: { ...initial.legend_settings.projection, left: layout }, legendLayoutRevision: baseRevision + 1 }) });
+    await client.hydrate();
+    const legacy = legendLayout(41);
+    await client.commit("projectionLegend", "left", legacy);
+    expect(client.getSlot("projectionLegend", "left").acknowledged).toEqual(legacy);
+    expect(client.getSlot("projectionLegend", "left").acknowledged).not.toHaveProperty("columns");
+    client.destroy();
+  });
   test("historical slots survive events, HTTP acknowledgements and reconnect without becoming editable records", async () => {
     const socket = socketHarness();
     const initial = snapshot();
+    initial.legend_settings.projection.left = { ...initial.legend_settings.projection.left, columns: 1 };
     initial.nli_clock_layout.projection.full = clockLayout(41);
     initial.nli_clock_layout.projection.right = clockLayout(42);
     initial.nli_clock_layout.gis.historical = clockLayout(43);
@@ -51,16 +88,18 @@ describe("clock layout client", () => {
     await client.hydrate();
     current.nli_clock_layout.gis.start = clockLayout(15); current.nli_clock_layout_revision = 1;
     expect(() => socket.emit("otef_nli_clock_layout_changed", { nliClockLayout: current.nli_clock_layout, nliClockLayoutRevision: 1 })).not.toThrow();
-    current.legend_settings.projection.left = legendLayout(45); current.legend_layout_revision = 1;
+    current.legend_settings.projection.left = { ...legendLayout(45), columns: 2 }; current.legend_layout_revision = 1;
     expect(() => socket.emit("otef_legend_settings_changed", { changeKind: "layout", legendProjection: current.legend_settings.projection, legendLayoutRevision: 1 })).not.toThrow();
     expect(client.getSlot("gisClock", "start").acknowledged).toEqual(clockLayout(15));
-    expect(client.getSlot("projectionLegend", "left").acknowledged).toEqual(legendLayout(45));
+    expect(client.getSlot("projectionLegend", "left").acknowledged).toEqual({ ...legendLayout(45), columns: 2 });
     await client.commit("projectionClock", "left", clockLayout(32));
-    await client.commit("projectionLegend", "left", legendLayout(46));
+    await client.commit("projectionLegend", "left", { ...legendLayout(46), columns: 3 });
     socket.emit("disconnect"); socket.emit("connect");
     await vi.waitFor(() => expect(client.getHydrationState().status).toBe("Saved"));
     expect(current.nli_clock_layout.projection.full).toEqual(clockLayout(41));
     expect(current.nli_clock_layout.archive).toEqual({ preserved: true });
+    expect(client.getSlot("projectionLegend", "left").acknowledged.columns).toBe(3);
+    expect(current.legend_settings.projection.left.columns).toBe(3);
     client.destroy();
   });
 
@@ -346,6 +385,26 @@ describe("clock layout client", () => {
     client.destroy();
   });
 
+  test("a conflicting legend event preserves columns on acknowledged and retained draft layouts", async () => {
+    const socket = socketHarness();
+    const writeLegendSlot = vi.fn(() => new Promise(() => {}));
+    const client = createClockLayoutClient({ getSnapshot: async () => snapshot(), writeLegendSlot, socket });
+    await client.hydrate();
+    const draft = { ...legendLayout(17), columns: 1 };
+    const remote = { ...legendLayout(19), columns: 3 };
+    const save = client.commit("projectionLegend", "left", draft);
+    await vi.waitFor(() => expect(writeLegendSlot).toHaveBeenCalledTimes(1));
+    socket.emit("otef_legend_settings_changed", {
+      changeKind: "layout", legendProjection: { ...snapshot().legend_settings.projection, left: remote }, legendLayoutRevision: 1,
+    });
+    await expect(save).rejects.toMatchObject({ code: "conflict" });
+    expect(client.getSlot("projectionLegend", "left")).toMatchObject({
+      acknowledged: remote, draft, status: "Conflict",
+      conflict: { layout: remote, revision: 1 },
+    });
+    client.destroy();
+  });
+
   test.each([false, true])("keeps Conflict across a completed edit after an in-flight conflict (numeric=%s)", async (numeric) => {
     const socket = socketHarness();
     const writeClockSlot = vi.fn()
@@ -476,6 +535,94 @@ describe("clock layout client", () => {
     client.commit("gisClock", "start", clockLayout(22));
     client.loadSaved("gisClock", "start");
     expect(client.getSlot("gisClock", "start")).toMatchObject({ draft: null, status: "Saved" });
+    client.destroy();
+  });
+
+  const novaMaps = (closeLeft, wideLeft) => ({
+    close: { "100": { leftPct: closeLeft, topPct: 20 } },
+    wide: { "104": { leftPct: wideLeft, topPct: 18 } },
+  });
+
+  test("hydrates nova explainers when no positions are saved", async () => {
+    const client = createClockLayoutClient({ getSnapshot: async () => snapshot(), writeClockSlot: vi.fn() });
+    await client.hydrate();
+    expect(client.getSlot("gisNovaExplainers", "novaExplainers").acknowledged).toEqual({ close: {}, wide: {} });
+    client.destroy();
+  });
+
+  test("overlay and gis clock writes share one revision", async () => {
+    const initial = snapshot();
+    const layouts = structuredClone(initial.nli_clock_layout);
+    let revision = 0;
+    const writeClockSlot = vi.fn(async ({ surface, slot, layout, baseRevision }) => {
+      expect(baseRevision).toBe(revision);
+      if (surface === "gisOverlays") layouts.gisOverlays = { novaExplainers: layout };
+      else layouts[surface][slot] = layout;
+      return { status: "ok", nliClockLayout: structuredClone(layouts), nliClockLayoutRevision: ++revision };
+    });
+    const client = createClockLayoutClient({ getSnapshot: async () => initial, writeClockSlot });
+    await client.hydrate();
+    const overlay = novaMaps(12.5, 8);
+    await client.commit("gisNovaExplainers", "novaExplainers", overlay);
+    await client.commit("gisClock", "start", clockLayout(11));
+    expect(writeClockSlot.mock.calls[0][0]).toEqual({
+      surface: "gisOverlays", slot: "novaExplainers", layout: overlay, baseRevision: 0,
+    });
+    expect(writeClockSlot.mock.calls[1][0]).toMatchObject({ surface: "gis", slot: "start", baseRevision: 1 });
+    expect(client.getSlot("gisNovaExplainers", "novaExplainers").acknowledged).toEqual(overlay);
+    expect(client.getSlot("gisClock", "start").acknowledged).toEqual(clockLayout(11));
+    client.destroy();
+  });
+
+  test("a remote gis update keeps the nova explainer draft", async () => {
+    const socket = socketHarness();
+    const initial = snapshot();
+    initial.nli_clock_layout.gisOverlays = { novaExplainers: novaMaps(12.5, 8) };
+    const client = createClockLayoutClient({ getSnapshot: async () => initial, writeClockSlot: () => new Promise(() => {}), socket });
+    await client.hydrate();
+    const draft = novaMaps(30, 6);
+    const save = client.commit("gisNovaExplainers", "novaExplainers", draft);
+    const remote = structuredClone(initial.nli_clock_layout);
+    remote.gis.start = clockLayout(19);
+    socket.emit("otef_nli_clock_layout_changed", { nliClockLayout: remote, nliClockLayoutRevision: 1 });
+    expect(client.getSlot("gisClock", "start").acknowledged).toEqual(clockLayout(19));
+    expect(client.getSlot("gisNovaExplainers", "novaExplainers")).toMatchObject({ draft, status: "Saving" });
+    client.destroy();
+    await expect(save).rejects.toThrow("destroyed");
+  });
+
+  test("retry resubmits the whole nova explainer draft and load saved replaces both cameras", async () => {
+    const saved = novaMaps(12.5, 8);
+    const serverNext = novaMaps(1, 3);
+    const draft = novaMaps(30, 6);
+    const initial = snapshot();
+    initial.nli_clock_layout = { ...initial.nli_clock_layout, gisOverlays: { novaExplainers: structuredClone(saved) } };
+    const conflictDoc = structuredClone(initial.nli_clock_layout);
+    conflictDoc.gisOverlays = { novaExplainers: structuredClone(serverNext) };
+    const conflictSnapshot = { ...initial, nli_clock_layout: conflictDoc, nli_clock_layout_revision: 4 };
+    const getSnapshot = vi.fn().mockResolvedValueOnce(initial).mockResolvedValue(conflictSnapshot);
+    let writes = 0;
+    const writeClockSlot = vi.fn(async ({ layout, baseRevision }) => {
+      writes += 1;
+      if (writes === 1) return { status: 409, error: "conflict", nliClockLayout: conflictDoc, nliClockLayoutRevision: 4 };
+      const doc = structuredClone(conflictDoc);
+      doc.gisOverlays = { novaExplainers: layout };
+      return { status: "ok", nliClockLayout: doc, nliClockLayoutRevision: baseRevision + 1 };
+    });
+    const client = createClockLayoutClient({ getSnapshot, writeClockSlot });
+    await client.hydrate();
+    expect(client.getSlot("gisNovaExplainers", "novaExplainers").acknowledged).toEqual(saved);
+    await expect(client.commit("gisNovaExplainers", "novaExplainers", draft)).rejects.toMatchObject({ code: "conflict" });
+    expect(client.getSlot("gisNovaExplainers", "novaExplainers")).toMatchObject({ acknowledged: serverNext, draft, status: "Conflict" });
+    await client.retry("gisNovaExplainers", "novaExplainers");
+    expect(writeClockSlot.mock.calls[1][0]).toEqual({
+      surface: "gisOverlays", slot: "novaExplainers", layout: draft, baseRevision: 4,
+    });
+    expect(client.getSlot("gisNovaExplainers", "novaExplainers")).toMatchObject({ acknowledged: draft, draft: null, status: "Saved" });
+    const edited = novaMaps(7, 9);
+    client.commit("gisNovaExplainers", "novaExplainers", edited);
+    client.loadSaved("gisNovaExplainers", "novaExplainers");
+    expect(client.getSlot("gisNovaExplainers", "novaExplainers")).toMatchObject({ acknowledged: draft, draft: null, status: "Saved" });
     client.destroy();
   });
 });

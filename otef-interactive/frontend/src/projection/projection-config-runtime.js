@@ -1,4 +1,5 @@
 import { DEFAULT_PROJECTION_CONFIG } from "../shared/projection-config-schema.js";
+import { projectionPlacementInputIdentity } from "./projection-names-run.js";
 
 const TABLE = "otef";
 
@@ -23,11 +24,15 @@ export function createProjectionConfigRuntime({
   drawCompletion = null,
   route = "maplibre",
   baseline = null,
+  prepareGeometry = null,
+  rollbackGeometry = null,
+  finalizeGeometry = null,
   prepareCandidate = null,
   commitCandidate = null,
   rollbackCandidate = null,
   finalizeCandidate = null,
   getDatasetVersion = () => null,
+  getDatasetIdentityError = () => null,
 } = {}) {
   let stopped = true;
   let unsubscribe = null;
@@ -38,7 +43,18 @@ export function createProjectionConfigRuntime({
   let appliedConfig = null;
   let appliedRevision = -1;
   let appliedWall = null;
+  let installedNames = null;
+  let namesState = "initializing";
+  let namesTarget = null;
+  let namesGeneration = 0;
+  let namesTargetGeneration = 0;
+  let namesJob = null;
+  let namesRenderWait = null;
+  let initialNamesAttempted = false;
+  let initialNamesDatasetRetry = false;
+  const namesRequests = new Map();
   let observedDatasetVersion = null;
+  let datasetIdentityError = null;
   let hydrated = false;
   let failedRevision = -1;
   let failedError = null;
@@ -65,9 +81,21 @@ export function createProjectionConfigRuntime({
   const abandonRenderWait = () => {
     const wait = renderWait;
     removeRenderWait();
-    if (wait?.pair && typeof rollbackCandidate === "function") {
-      try { rollbackCandidate(wait.pair, appliedConfig || initialConfig, wait.revision); }
+    if (wait?.geometryPair && typeof rollbackGeometry === "function") {
+      const previousRollbackFlag = map?._otefProjectionConfigRollback;
+      if (map) map._otefProjectionConfigRollback = true;
+      try {
+        const previousConfig = appliedConfig || initialConfig;
+        rollbackGeometry(wait.geometryPair, previousConfig, wait.revision);
+        applyConfig(previousConfig, wait.revision);
+      }
       catch { /* A cancelled candidate cannot be acknowledged as applied. */ }
+      finally {
+        if (map) {
+          if (previousRollbackFlag === undefined) delete map._otefProjectionConfigRollback;
+          else map._otefProjectionConfigRollback = previousRollbackFlag;
+        }
+      }
     }
   };
   const abortPreparation = () => { preparing?.abort?.abort(); preparing = null; };
@@ -90,10 +118,30 @@ export function createProjectionConfigRuntime({
     if (success && appliedWall) message.wall = clone(appliedWall);
     send(message);
   };
+  const reportNames = (state = namesState, request = null, error = "", correlationTarget = null) => {
+    if (!correlationTarget) namesState = state;
+    if (!error && state === "failed") error = datasetIdentityError || "";
+    const target = correlationTarget || namesTarget;
+    const message = { type: "otef_projection_names_status", table, output: spanId, instanceId,
+      requestId: request?.requestId ?? null, revision: target?.revision ?? Math.max(0, appliedRevision),
+      datasetVersion: target?.datasetVersion ?? "", placementIdentity: target?.placementIdentity ?? "",
+      state, installed: installedNames ? { ...installedNames } : null };
+    if (error) message.error = String(error).slice(0, 240);
+    send(message);
+  };
   const baselineFor = (config) => typeof baseline === "function" ? baseline(config) : baseline;
   const currentDatasetVersion = () => getDatasetVersion() || null;
   const wallDatasetChanged = (wall) => Boolean(wall && currentDatasetVersion() &&
     wall.datasetVersion !== currentDatasetVersion());
+
+  function promoteInstalledNamesForTarget(target = namesTarget) {
+    if (!target || appliedRevision !== target.revision || !installedNames ||
+      installedNames.datasetVersion !== target.datasetVersion || installedNames.placementIdentity !== target.placementIdentity ||
+      currentDatasetVersion() !== target.datasetVersion) return false;
+    if (installedNames.revision !== target.revision) installedNames = { ...installedNames, revision: target.revision };
+    reportNames("current");
+    return true;
+  }
 
   function restartLatest(reason = null) {
     if (stopped || !latest) return;
@@ -105,17 +153,14 @@ export function createProjectionConfigRuntime({
     failedError = null;
     failedBaseline = null;
     awaitingReapply = true;
-    if (reason) {
-      appliedWall = null;
-      acknowledge(latestRevision, false, reason, baselineFor(latest.config));
-    }
+    if (reason) acknowledge(latestRevision, false, reason, baselineFor(latest.config));
     suspended = false;
     schedule();
   }
 
   function handleRenderFailure(revision, error, baselineOverride = undefined) {
     const failedIdentity = baselineOverride !== undefined ? baselineOverride : renderWait?.baseline;
-    const failedPair = renderWait?.pair;
+    const failedGeometryPair = renderWait?.geometryPair;
     generation += 1;
     removeRenderWait();
     const rollbackConfig = appliedConfig || initialConfig;
@@ -123,8 +168,8 @@ export function createProjectionConfigRuntime({
     if (map) map._otefProjectionConfigRollback = true;
     let restored = false;
     try {
-      if (failedPair && typeof rollbackCandidate === 'function') rollbackCandidate(failedPair, rollbackConfig, revision);
-      else applyConfig(rollbackConfig, revision);
+      if (failedGeometryPair && typeof rollbackGeometry === 'function') rollbackGeometry(failedGeometryPair, rollbackConfig, revision);
+      applyConfig(rollbackConfig, revision);
       restored = typeof drawCompletion === "function" ? drawCompletion(rollbackConfig, revision) === true : true;
     } catch { /* report failure without claiming restoration */ }
     finally {
@@ -146,7 +191,7 @@ export function createProjectionConfigRuntime({
   const settleRender = (event) => {
     const wait = renderWait;
     if (!wait) return;
-    if (stopped || generation !== wait.applyGeneration || latestRevision !== wait.revision) {
+    if (stopped || suspended || generation !== wait.applyGeneration || latestRevision !== wait.revision) {
       abandonRenderWait();
       return;
     }
@@ -156,10 +201,7 @@ export function createProjectionConfigRuntime({
       return;
     }
     if (wait.applying) return;
-    if (wallDatasetChanged(wait.pair?.wall || appliedWall)) {
-      restartLatest('name dataset changed; rebuilding wall');
-      return;
-    }
+    if (wallDatasetChanged(installedNames)) { invalidateNames("name dataset changed"); }
     if (typeof drawCompletion === "function") {
       let complete = false;
       try { complete = drawCompletion(wait.config, wait.revision) === true; } catch (error) { handleRenderFailure(wait.revision, error); return; }
@@ -167,17 +209,35 @@ export function createProjectionConfigRuntime({
     }
     appliedConfig = clone(wait.config);
     appliedRevision = wait.revision;
-    if (wait.newCandidate) appliedWall = wallFor(wait.pair, wait.config);
     failedRevision = -1;
     failedError = null;
     failedBaseline = null;
     awaitingReapply = false;
     removeRenderWait();
-    if (wait.pair && typeof finalizeCandidate === 'function') finalizeCandidate(wait.pair, wait.config, wait.revision);
+    promoteInstalledNamesForTarget();
+    if (wait.geometryPair && typeof finalizeGeometry === 'function') finalizeGeometry(wait.geometryPair, wait.config, wait.revision);
     acknowledge(wait.revision, true);
+    if (!initialNamesAttempted && !installedNames) {
+      initialNamesAttempted = true;
+      const config = clone(latest.config), revision = latestRevision;
+      void setNamesTarget(config, revision).then((target) => {
+        if (!target || stopped || latestRevision !== revision || appliedRevision !== revision) return;
+        if (!target.datasetVersion) {
+          const identityError = getDatasetIdentityError?.() || datasetIdentityError;
+          if (identityError) {
+            datasetIdentityError = String(identityError).slice(0, 240);
+            reportNames("failed", null, datasetIdentityError);
+          } else {
+            reportNames("initializing", null, "Waiting for the names dataset identity");
+          }
+          return;
+        }
+        void runNamesBuild(null, config, target);
+      }).catch((error) => reportNames("failed", null, error?.message || error));
+    }
   };
 
-  const waitForRender = (revision, applyGeneration, config, applying = true) => {
+  const waitForRender = (revision, applyGeneration, config, applying = true, geometryPair = null) => {
     removeRenderWait();
     const listener = (event) => {
       if (!renderWait || renderWait.listener !== listener) return;
@@ -188,7 +248,7 @@ export function createProjectionConfigRuntime({
       if (!renderWait || renderWait.errorListener !== errorListener || !event?.error || event.sourceId || event.source || event.tile) return;
       settleRender(event);
     };
-    renderWait = { listener, errorListener, revision, applyGeneration, config, applying, newCandidate: applying, pendingError: null, baseline: null, timer: null };
+    renderWait = { listener, errorListener, revision, applyGeneration, config, applying, geometryPair, newCandidate: false, pendingError: null, baseline: null, timer: null };
     if (typeof map?.on === "function") map.on("render", listener);
     else if (typeof map?.once === "function") map.once("render", listener);
     if (typeof map?.on === "function") map.on("error", errorListener);
@@ -218,89 +278,249 @@ export function createProjectionConfigRuntime({
     if (stopped || suspended || !latest || spanId !== "left" && spanId !== "right") return;
     const item = latest;
     const applyGeneration = ++generation;
+    cancelNamesBuild("geometry changed");
     abandonRenderWait();
-    if (typeof prepareCandidate === 'function') {
-      const abort = new AbortController();
-      preparing = { generation: applyGeneration, revision: item.revision, abort };
-      let preparation;
-      try { preparation = prepareCandidate(item.config, item.revision, applyGeneration, abort.signal); }
-      catch (error) { preparation = Promise.reject(error); }
-      Promise.resolve(preparation).then((pair) => {
-        if (stopped || suspended || generation !== applyGeneration || latestRevision !== item.revision) {
-          rollbackCandidate?.(pair, appliedConfig || initialConfig, item.revision);
+    if (typeof prepareGeometry !== "function") {
+      if (typeof map?.on !== "function" && typeof map?.once !== "function") {
+        try {
+          applyConfig(item.config, item.revision);
+          failedRevision = item.revision;
+          failedError = "render completion unavailable";
+          acknowledge(item.revision, false, failedError, baselineFor(item.config));
+        } catch (error) { acknowledge(item.revision, false, error?.message || error, baselineFor(item.config)); }
+        return;
+      }
+      waitForRender(item.revision, applyGeneration, item.config);
+      try {
+        const wait = renderWait;
+        if (wait) wait.baseline = clone(baselineFor(item.config));
+        applyConfig(item.config, item.revision);
+        if (wait) {
+          wait.baseline = clone(baselineFor(item.config));
+          wait.applying = false;
+          if (wait.pendingError) { handleRenderFailure(item.revision, wait.pendingError); return; }
+        }
+        map?.triggerRepaint?.();
+      } catch (error) { handleRenderFailure(item.revision, error); }
+      return;
+    }
+    const abort = new AbortController();
+    const preparation = { abort };
+    preparing = preparation;
+    void (async () => {
+      let geometryPair = null;
+      try {
+        if (typeof prepareGeometry === "function") geometryPair = await prepareGeometry(item.config, item.revision, abort.signal);
+        if (stopped || suspended || abort.signal.aborted || preparing !== preparation || generation !== applyGeneration || latestRevision !== item.revision) return;
+        preparing = null;
+        if (typeof map?.on !== "function" && typeof map?.once !== "function") {
+          // Apply validated geometry, but do not claim it rendered successfully.
+      applyConfig(item.config, item.revision, geometryPair);
+      if (geometryPair && typeof finalizeGeometry === "function") finalizeGeometry(geometryPair, item.config, item.revision);
+          failedRevision = item.revision;
+          failedError = "render completion unavailable";
+          acknowledge(item.revision, false, failedError, baselineFor(item.config));
           return;
         }
-        if (wallDatasetChanged(pair?.wall)) {
-          rollbackCandidate?.(pair, appliedConfig || initialConfig, item.revision);
-          restartLatest('name dataset changed; rebuilding wall');
+        waitForRender(item.revision, applyGeneration, item.config, true, geometryPair);
+        const wait = renderWait;
+        if (wait) wait.baseline = clone(baselineFor(item.config));
+        applyConfig(item.config, item.revision, geometryPair);
+        if (wait) {
+          wait.baseline = clone(baselineFor(item.config));
+          wait.applying = false;
+          if (wait.pendingError) {
+            handleRenderFailure(item.revision, wait.pendingError);
+            return;
+          }
+        }
+        if (typeof map?.triggerRepaint === "function") map.triggerRepaint();
+      } catch (error) {
+        if (preparing === preparation) preparing = null;
+        if (geometryPair && !renderWait && typeof rollbackGeometry === "function") {
+          try { rollbackGeometry(geometryPair, appliedConfig || initialConfig, item.revision); } catch { /* report the apply error below */ }
+        }
+        if (stopped || abort.signal.aborted || latestRevision !== item.revision) return;
+        if (renderWait?.revision === item.revision) handleRenderFailure(item.revision, error);
+        else {
+          failedRevision = item.revision;
+          failedError = String(error?.message || error || "projection geometry validation failed").slice(0, 240);
+          acknowledge(item.revision, false, failedError, baselineFor(item.config));
+        }
+      } finally {
+        if (preparing === preparation) preparing = null;
+        if (!stopped && !suspended && latestRevision > item.revision) schedule();
+      }
+    })();
+  }
+
+  function cancelNamesBuild(reason) {
+    namesGeneration += 1;
+    namesJob?.abort?.abort();
+    // Ownership lasts through the render promise continuation, so a newer
+    // geometry apply always starts with the last completed names installed.
+    namesJob?.rollback?.();
+    namesJob = null;
+    if (namesRenderWait) {
+      map?.off?.("render", namesRenderWait.listener);
+      if (namesRenderWait.timer !== null) clock.clearTimeout(namesRenderWait.timer);
+      namesRenderWait.rollback?.();
+      namesRenderWait.cancel?.(Object.assign(new Error(reason || "names run cancelled"), { name: "AbortError" }));
+      namesRenderWait = null;
+    }
+  }
+
+  async function setNamesTarget(config, revision) {
+    const token = ++namesTargetGeneration;
+    const datasetVersion = currentDatasetVersion() || "";
+    let placementIdentity = "";
+    try { placementIdentity = await projectionPlacementInputIdentity(config); } catch { /* the ordinary config validator reports malformed configs */ }
+    if (stopped || token !== namesTargetGeneration || latestRevision !== revision || !latest || JSON.stringify(latest.config) !== JSON.stringify(config)) return;
+    namesTarget = { revision, datasetVersion, placementIdentity };
+    datasetIdentityError = getDatasetIdentityError?.() || datasetIdentityError;
+    if (datasetIdentityError) {
+      reportNames("failed", null, datasetIdentityError);
+    } else if (!promoteInstalledNamesForTarget(namesTarget)) {
+      reportNames(installedNames && installedNames.revision === revision && installedNames.datasetVersion === datasetVersion && installedNames.placementIdentity === placementIdentity ? "current" : installedNames ? "stale" : "initializing");
+    }
+    return namesTarget;
+  }
+
+  function awaitNamesRender(pair, config, revision, token, request) {
+    return new Promise((resolve, reject) => {
+      if (typeof map?.on !== "function" && typeof map?.once !== "function") { reject(new Error("render completion unavailable")); return; }
+      const onTimeout = () => {
+        if (namesRenderWait?.listener !== listener) return;
+        if (!isDocumentVisible()) {
+          namesRenderWait.timer = clock.setTimeout(onTimeout, renderTimeoutMs);
           return;
         }
-        preparing = null;
-        frameId = requestFrame(() => {
-          frameId = null;
-          if (stopped || suspended || generation !== applyGeneration || latestRevision !== item.revision) {
-            rollbackCandidate?.(pair, appliedConfig || initialConfig, item.revision);
-            schedule();
-            return;
-          }
-          if (wallDatasetChanged(pair?.wall)) {
-            rollbackCandidate?.(pair, appliedConfig || initialConfig, item.revision);
-            restartLatest('name dataset changed; rebuilding wall');
-            return;
-          }
-          waitForRender(item.revision, applyGeneration, item.config);
-          const wait = renderWait;
-          if (wait) { wait.baseline = clone(baselineFor(item.config)); wait.pair = pair; }
-          try {
-            commitCandidate(pair, item.config, item.revision);
-            if (wait) {
-              wait.applying = false;
-              if (wait.pendingError) { handleRenderFailure(item.revision, wait.pendingError); return; }
-            }
-            map?.triggerRepaint?.();
-          } catch (error) { handleRenderFailure(item.revision, error); }
-        });
-      }).catch((error) => {
-        if (stopped || generation !== applyGeneration || latestRevision !== item.revision) return;
-        preparing = null;
-        failedRevision = item.revision;
-        failedError = String(error?.message || error).slice(0, 240);
-        failedBaseline = baselineFor(item.config);
-        acknowledge(item.revision, false, failedError, failedBaseline);
+        finish(new Error("name render completion timeout"));
+      };
+      const timer = typeof clock.setTimeout === "function" ? clock.setTimeout(onTimeout, renderTimeoutMs) : null;
+      const listener = () => {
+        if (namesRenderWait?.listener !== listener) return;
+        if (stopped || suspended || token !== namesGeneration || latestRevision !== revision || (request && namesJob?.request?.requestId !== request.requestId)) {
+          finish(Object.assign(new Error("names run superseded"), { name: "AbortError" })); return;
+        }
+        let complete = false;
+        try { complete = typeof drawCompletion === "function" ? drawCompletion(config, revision) === true : true; }
+        catch (error) { finish(error); return; }
+        if (complete) finish();
+      };
+      const finish = (error = null) => {
+        if (namesRenderWait?.listener !== listener) return;
+        map?.off?.("render", listener);
+        if (namesRenderWait.timer !== null) clock.clearTimeout(namesRenderWait.timer);
+        namesRenderWait = null;
+        if (error) reject(error); else resolve();
+      };
+      namesRenderWait = { listener, pair, config, revision, committed: true, timer, cancel: (error) => finish(error) };
+      map?.on?.("render", listener);
+      map?.triggerRepaint?.();
+      if (typeof map?.on !== "function") map?.once?.("render", listener);
+    });
+  }
+
+  async function runNamesBuild(requestId, config, target) {
+    if (typeof prepareCandidate !== "function" || !target || !target.placementIdentity ||
+      (requestId && (latestRevision !== target.revision || appliedRevision !== target.revision))) return false;
+    const request = requestId ? { requestId, ...target } : null;
+    if (request && namesRequests.has(requestId)) return namesRequests.get(requestId);
+    const token = ++namesGeneration;
+    const abort = new AbortController();
+    namesJob = { abort, request };
+    reportNames("rebuilding", request);
+    const operation = (async () => {
+      let pair;
+      let committed = false;
+      let candidateRolledBack = false;
+      const isCurrentTarget = () => !stopped && !suspended && token === namesGeneration && !abort.signal.aborted &&
+        latestRevision === target.revision && appliedRevision === target.revision && namesTarget === target &&
+        (currentDatasetVersion() || "") === target.datasetVersion;
+      const rollbackPrepared = () => {
+        if (!pair || candidateRolledBack) return;
+        rollbackCandidate?.(pair, appliedConfig || initialConfig, target.revision, { namesOnly: true });
+        candidateRolledBack = true;
+      };
+      try {
+        pair = await prepareCandidate(config, target.revision, token, abort.signal);
+        if (!isCurrentTarget()) {
+          rollbackPrepared(); throw Object.assign(new Error("names run superseded"), { name: "AbortError" });
+        }
+        const actualIdentity = await projectionPlacementInputIdentity(config);
+        if (!isCurrentTarget() || actualIdentity !== target.placementIdentity) {
+          rollbackPrepared(); throw Object.assign(new Error("names run superseded"), { name: "AbortError" });
+        }
+        const wall = wallFor(pair, config);
+        if (!wall || wall.datasetVersion !== target.datasetVersion) {
+          rollbackPrepared(); throw new Error("prepared name wall does not match the requested dataset");
+        }
+        commitCandidate?.(pair, config, target.revision);
+        committed = true;
+        if (namesJob?.abort === abort) namesJob.rollback = rollbackPrepared;
+        const renderPromise = awaitNamesRender(pair, config, target.revision, token, request);
+        if (namesRenderWait) namesRenderWait.rollback = rollbackPrepared;
+        await renderPromise;
+        if (!isCurrentTarget()) throw Object.assign(new Error("names run superseded"), { name: "AbortError" });
+        finalizeCandidate?.(pair, config, target.revision);
+        installedNames = { revision: target.revision, datasetVersion: wall.datasetVersion,
+          placementIdentity: target.placementIdentity, mode: wall.mode, digest: wall.digest,
+          expected: wall.expected, placed: wall.placed };
+        appliedWall = wall;
+        reportNames("current", request);
+        acknowledge(target.revision, true);
+        return true;
+      } catch (error) {
+        if (pair && !committed && !candidateRolledBack) rollbackPrepared();
+        if (pair && committed && !candidateRolledBack) rollbackCandidate?.(pair, appliedConfig || initialConfig, target.revision, { namesOnly: true });
+        if (token === namesGeneration && error?.name !== "AbortError") reportNames("failed", request, error?.message || error);
+        return false;
+      } finally {
+        if (namesJob?.abort === abort) namesJob = null;
+      }
+    })();
+    if (requestId) {
+      namesRequests.set(requestId, operation);
+      while (namesRequests.size > 32) namesRequests.delete(namesRequests.keys().next().value);
+    }
+    return operation;
+  }
+
+  async function onNamesRun(message) {
+    if (message?.table !== table || typeof message.requestId !== "string" || !Number.isSafeInteger(message.revision) ||
+      typeof message.datasetVersion !== "string" || !/^[a-f0-9]{64}$/i.test(message.placementIdentity || "")) return;
+    if (namesRequests.has(message.requestId)) return;
+    const config = latest?.config;
+    const target = namesTarget;
+    const targetGeneration = namesTargetGeneration;
+    const validBeforeHash = Boolean(config && target && !stopped && !suspended && message.revision === latestRevision &&
+      message.revision === appliedRevision && message.datasetVersion === (currentDatasetVersion() || "") &&
+      target.revision === message.revision && target.datasetVersion === message.datasetVersion &&
+      target.placementIdentity === message.placementIdentity);
+    if (!validBeforeHash) {
+      const unavailable = !currentDatasetVersion() || datasetIdentityError;
+      reportNames(unavailable ? "failed" : "stale", message,
+        unavailable ? (datasetIdentityError || "Accepted name dataset identity unavailable") : "Run target no longer matches the applied calibration", {
+        revision: message.revision, datasetVersion: message.datasetVersion, placementIdentity: message.placementIdentity,
       });
       return;
     }
-    if (typeof map?.on !== "function" && typeof map?.once !== "function") {
-      // Without a render completion event there is no evidence for a successful
-      // browser-output acknowledgement. Keep the presentation usable but report
-      // the missing completion honestly.
-      try {
-        applyConfig(item.config, item.revision);
-        failedRevision = item.revision;
-        failedError = "render completion unavailable";
-        acknowledge(item.revision, false, "render completion unavailable", baselineFor(item.config));
-      } catch (error) {
-        acknowledge(item.revision, false, error?.message || error, baselineFor(item.config));
-      }
+    const actualIdentity = await projectionPlacementInputIdentity(config);
+    if (stopped || suspended || targetGeneration !== namesTargetGeneration || target !== namesTarget ||
+      latestRevision !== message.revision || appliedRevision !== message.revision ||
+      (currentDatasetVersion() || "") !== message.datasetVersion || actualIdentity !== message.placementIdentity) {
+      reportNames("stale", message, "Run target no longer matches the applied calibration", {
+        revision: message.revision, datasetVersion: message.datasetVersion, placementIdentity: message.placementIdentity,
+      });
       return;
     }
-    waitForRender(item.revision, applyGeneration, item.config);
-    try {
-      const wait = renderWait;
-      if (wait) wait.baseline = clone(baselineFor(item.config));
-      applyConfig(item.config, item.revision);
-      if (wait) {
-        wait.baseline = clone(baselineFor(item.config));
-        wait.applying = false;
-        if (wait.pendingError) {
-          handleRenderFailure(item.revision, wait.pendingError);
-          return;
-        }
-      }
-      if (typeof map?.triggerRepaint === "function") map.triggerRepaint();
-    } catch (error) {
-      handleRenderFailure(item.revision, error);
-    }
+    void runNamesBuild(message.requestId, config, target);
+  }
+
+  function invalidateNames(reason) {
+    cancelNamesBuild(reason);
+    if (namesTarget) reportNames("stale", null, reason);
   }
 
   function onState(state) {
@@ -316,8 +536,12 @@ export function createProjectionConfigRuntime({
       generation += 1;
       abortPreparation();
     }
+    cancelNamesBuild("calibration changed");
+    namesTargetGeneration += 1;
     latestRevision = snapshot.revision;
     latest = { revision: snapshot.revision, config: clone(snapshot.config) };
+    namesTarget = null;
+    void setNamesTarget(latest.config, latest.revision);
     if (snapshot.revision > failedRevision) { failedRevision = -1; failedError = null; failedBaseline = null; }
     if (!hydrated) {
       hydrated = true;
@@ -334,10 +558,12 @@ export function createProjectionConfigRuntime({
     if (awaitingReapply) { schedule(); return; }
     if (failedRevision === latestRevision) {
       acknowledge(failedRevision, false, failedError || "projection render failed", failedBaseline);
+      reportNames(namesState);
       return;
     }
     if (!appliedConfig || appliedRevision < 0) {
       if (latest && !preparing && !renderWait) schedule();
+      reportNames(namesState);
       return;
     }
     if (latest && latestRevision > appliedRevision) {
@@ -347,6 +573,7 @@ export function createProjectionConfigRuntime({
     const applyGeneration = ++generation;
     waitForRender(appliedRevision, applyGeneration, appliedConfig, false);
     if (typeof map?.triggerRepaint === "function") map.triggerRepaint();
+    reportNames(namesState);
   }
 
   function requestStatus() {
@@ -362,12 +589,19 @@ export function createProjectionConfigRuntime({
     if (typeof client?.subscribe === "function") unsubscribe = client.subscribe(onState);
     if (typeof socket?.on === "function") {
       const connect = () => { if (hydrated) requestStatus(); };
-      const disconnect = () => { generation += 1; abortPreparation(); abandonRenderWait(); };
+      const disconnect = () => {
+        generation += 1; abortPreparation(); abandonRenderWait();
+        const namesWereRebuilding = namesState === "rebuilding";
+        cancelNamesBuild("socket disconnected");
+        if (namesWereRebuilding) reportNames("stale", null, "Names run cancelled because the connection was lost");
+      };
       const status = (message) => onStatusRequest(message);
+      const namesRun = (message) => { void onNamesRun(message); };
       socket.on("connect", connect);
       socket.on("disconnect", disconnect);
       socket.on("otef_projection_status_request", status);
-      socketHandlers.push(["connect", connect], ["disconnect", disconnect], ["otef_projection_status_request", status]);
+      socket.on("otef_projection_names_run", namesRun);
+      socketHandlers.push(["connect", connect], ["disconnect", disconnect], ["otef_projection_status_request", status], ["otef_projection_names_run", namesRun]);
     }
     if (typeof client?.start === "function") await client.start();
   }
@@ -379,6 +613,7 @@ export function createProjectionConfigRuntime({
     abortPreparation();
     if (frameId !== null) { cancelFrame(frameId); frameId = null; }
     abandonRenderWait();
+    cancelNamesBuild("runtime stopped");
     if (typeof unsubscribe === "function") unsubscribe();
     unsubscribe = null;
     if (typeof socket?.off === "function") for (const [event, handler] of socketHandlers) socket.off(event, handler);
@@ -389,6 +624,13 @@ export function createProjectionConfigRuntime({
     generation += 1;
     suspended = true;
     awaitingReapply = true;
+    const hadNamesWork = Boolean(namesJob || namesRenderWait);
+    cancelNamesBuild("runtime invalidated");
+    if (hadNamesWork && namesTarget) {
+      const installedMatches = installedNames && installedNames.revision === namesTarget.revision &&
+        installedNames.datasetVersion === namesTarget.datasetVersion && installedNames.placementIdentity === namesTarget.placementIdentity;
+      reportNames(installedMatches ? "current" : "stale");
+    }
     abortPreparation();
     abandonRenderWait();
     if (frameId !== null) { cancelFrame(frameId); frameId = null; }
@@ -407,15 +649,29 @@ export function createProjectionConfigRuntime({
   function datasetChanged() {
     const nextVersion = currentDatasetVersion();
     if (!nextVersion || nextVersion === observedDatasetVersion) return false;
+    datasetIdentityError = null;
     if (!observedDatasetVersion) {
       observedDatasetVersion = nextVersion;
-      return false;
+      if (!initialNamesAttempted || installedNames || initialNamesDatasetRetry || !latest || appliedRevision !== latestRevision) return false;
+      initialNamesDatasetRetry = true;
+      cancelNamesBuild("names dataset identity became available");
+      void setNamesTarget(latest.config, latestRevision).then((target) => {
+        if (target && !installedNames && !stopped && !suspended && appliedRevision === latestRevision) {
+          void runNamesBuild(null, latest.config, target);
+        }
+      });
+      return true;
     }
     observedDatasetVersion = nextVersion;
-    if (suspended) { appliedWall = null; awaitingReapply = true; return true; }
-    restartLatest("name dataset changed; rebuilding wall");
+    if (namesTarget) namesTarget = { ...namesTarget, datasetVersion: nextVersion };
+    invalidateNames("name dataset changed");
     return true;
   }
 
-  return { start, stop, requestStatus, invalidate, resume, reapply, datasetChanged };
+  function datasetIdentityFailed(reason) {
+    datasetIdentityError = String(reason || "Accepted name dataset identity unavailable").slice(0, 240);
+    if (latest && appliedRevision === latestRevision) void setNamesTarget(latest.config, latestRevision);
+  }
+
+  return { start, stop, requestStatus, invalidate, resume, reapply, datasetChanged, datasetIdentityFailed };
 }

@@ -99,6 +99,14 @@ test("denied automatic discovery opens no windows and identifies no screens", as
   expect(open).not.toHaveBeenCalled();
 });
 
+test("reports display-management support independently of pointer capability", () => {
+  const { controller } = setup();
+  expect(controller.getState().supported).toBe(true);
+  const unsupported = createOutputWindowController({ open: vi.fn(), screenApi: {}, storage: null });
+  controllers.push(unsupported);
+  expect(unsupported.getState().supported).toBe(false);
+});
+
 test("rearranging existing displays refreshes badge positions without a screenschange event", async () => {
   const { controller, details, opened } = setup();
   details.screens = displays.map((display) => Object.assign(new EventTarget(), display));

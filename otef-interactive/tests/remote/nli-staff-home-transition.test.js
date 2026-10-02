@@ -6,11 +6,15 @@ import { COPY, HOME_CUE, HOME_LAYER_IDS, IDENTITY_LAYER_IDS } from "../../fronte
 import { nliTimelineHostMethods } from "../../frontend/src/remote/nli-timeline-transport.js";
 import { shouldCloseViewerForNarrative } from "../../frontend/src/map/nli-reveal-presentation.js";
 import { setLocale } from "../../frontend/src/remote/remote-locale.js";
+import {
+  PEOPLE_INDEX_URL,
+  PEOPLE_RELEASE_METADATA_URL,
+} from "../../frontend/src/remote/remote-people-search.js";
+import { sha256Hex } from "../../frontend/src/shared/sha256-hex.js";
 
 const FIXTURE = `
   <div class="app">
     <button type="button" id="homeBtn" hidden></button>
-    <button type="button" id="homeLayersBtn" aria-label="Layers"></button>
     <button type="button" id="fullscreenBtn"></button>
     <p id="fullscreenStatus" hidden></p>
     <button type="button" id="localeHe"></button>
@@ -28,6 +32,7 @@ const FIXTURE = `
       <div id="stepClock"></div>
       <h1 id="stepTitle"></h1>
       <p id="stepNote"></p>
+      <div id="playerCueFailure" hidden role="alert"><span id="playerCueFailureText"></span><button id="playerCueRetry">Retry</button></div>
       <p id="stepGis"></p>
       <p id="stepModel"></p>
       <div id="playerKit">
@@ -37,20 +42,21 @@ const FIXTURE = `
             <input id="searchInput" />
             <ul id="searchResults"></ul>
             <p id="searchStatus" hidden></p>
-            <button type="button" id="freeArchiveBtn"></button>
+            <div id="searchArchiveMount"></div>
           </div>
         </div>
         <div id="kitEscape"></div>
         <div id="kitPresentation"></div>
         <div id="kitTimeline"></div>
-        <div id="kitArchive"><button type="button" id="archiveBtn"></button></div>
+        <div id="kitArchive"></div>
         <p id="kitIdle" hidden></p>
       </div>
-      <button type="button" id="prevBtn"></button>
-      <button type="button" id="nextBtn"></button>
-      <div id="nextChoices" hidden></div>
+      <div class="dock">
+        <button type="button" id="prevBtn"></button>
+        <button type="button" id="nextBtn"></button>
+        <div id="nextChoices" hidden></div>
+      </div>
     </section>
-    <div id="staffPackMenus" hidden></div>
   </div>
 `;
 
@@ -151,6 +157,7 @@ function mount(options = {}) {
       return { ok: true, clock: h.clock };
     },
     clearPerson: (...args) => h.clearPerson(...args),
+    archiveWindowCommand: vi.fn().mockResolvedValue({ acknowledged: true }),
     narrativePresentationCommand: async (command) => {
       h.commands.push(command);
       return { status: "ok" };
@@ -169,25 +176,26 @@ function mount(options = {}) {
 
 async function bootRemote(session) {
   const { initNliStaffRemote } = await import("../../frontend/src/remote/nli-staff-remote.js");
-  initNliStaffRemote(session.dataContext);
+  session.remote = initNliStaffRemote(session.dataContext);
 }
 
 describe("NLI staff Home transitions", () => {
   let session;
 
   afterEach(() => {
+    session?.remote?.dispose();
     session?.h.dispose();
     session = null;
     setLocale("he", { force: true, persist: false });
   });
 
-  test("cue status reports sending or failure, and connection copy stays separate", () => {
+  test("cue state keeps localized failure copy separate from connection state", () => {
     expect(COPY.en.cueApplying).toBe("Sending the scene…");
     expect(COPY.en.cueReady).toBe("Scene sent");
-    expect(COPY.en.cueFailed).toBe("Could not send the scene");
+    expect(COPY.en.cueFailed).toBe("Could not apply this scene");
     expect(COPY.he.cueApplying).toBe("שולח את הסצנה…");
     expect(COPY.he.cueReady).toBe("הסצנה נשלחה");
-    expect(COPY.he.cueFailed).toBe("שליחת הסצנה נכשלה");
+    expect(COPY.he.cueFailed).toBe("החלת הסצנה נכשלה");
     expect(COPY.en.cueReady).not.toMatch(/both displays|Map is set/i);
     expect(COPY.he.cueReady).not.toMatch(/מוכנה|שני המסכים/);
     expect(COPY.en.connected).toBe("Connected");
@@ -271,16 +279,19 @@ describe("NLI staff Home transitions", () => {
       expect(el("cueStatus").dataset.status).toBe("failed");
       expect(activeScreen()).toBe("player");
     });
-    expect(el("cueStatus").textContent).toBe("Could not send the scene");
+    expect(el("cueStatus").textContent).toBe("Could not apply this scene");
     expect(el("cueStatus").textContent).not.toBe("Scene sent");
     expect(activeScreen()).not.toBe("home");
     expect(el("homeBtn").hidden).toBe(false);
 
     h.failNull = false;
-    el("homeBtn").click();
+    expect(el("playerCueFailure").hidden).toBe(false);
+    expect(el("playerCueFailureText").textContent).toBe("Could not apply this scene");
+    el("playerCueRetry").click();
     await vi.waitFor(() => expect(el("cueStatus").dataset.status).toBe("ready"));
     expect(h.layers.at(-1)).toEqual([...HOME_LAYER_IDS]);
     expect(activeScreen()).toBe("home");
+    expect(el("playerCueFailure").hidden).toBe(true);
   });
 
   test("names-wall Back fades names before closing the GIS slide and restoring identity layers", async () => {
@@ -544,7 +555,7 @@ describe("NLI staff Home transitions", () => {
     session.h.emit("connection", true);
     await vi.waitFor(() => expect(session.h.narratives).toContain(null));
     await vi.waitFor(() => expect(el("homeCueStatus")?.hidden).toBe(false));
-    expect(el("homeCueStatus").textContent).toBe("Could not send the scene");
+    expect(el("homeCueStatus").textContent).toBe("Could not apply this scene");
     expect(el("homeRetry").hidden).toBe(false);
 
     const failedCalls = session.h.narratives.length;
@@ -627,44 +638,14 @@ describe("NLI staff Home transitions", () => {
     expect(h.layers.at(-1)).not.toEqual([...HOME_LAYER_IDS]);
   });
 
-  test("Home layer sheet opens and closes without resetting the scene, then closes on navigation", async () => {
+  test("Home has no layer control button or sheet", async () => {
     setLocale("en", { persist: false });
     session = mount();
     await bootRemote(session);
-    const { h } = session;
-    const narrativesBefore = h.narratives.length;
-    const layersBefore = h.layers.length;
-
-    el("homeLayersBtn").click();
+    expect(el("homeLayersBtn")).toBeNull();
+    expect(el("staffPackMenus")).toBeNull();
     expect(activeScreen()).toBe("home");
-    expect(el("staffPackMenus").hidden).toBe(false);
-    expect(el("staffPackMenus").querySelector('[role="dialog"]')).toBeTruthy();
-    el("staffPackMenus").querySelector(".layer-sheet-close").click();
-    expect(el("staffPackMenus").hidden).toBe(true);
-    expect(h.narratives).toHaveLength(narrativesBefore);
-    expect(h.layers).toHaveLength(layersBefore);
-
-    el("homeLayersBtn").click();
-    await h.openCard('[data-open="segev"]');
-    expect(activeScreen()).toBe("player");
-    expect(el("staffPackMenus").hidden).toBe(true);
-    expect(el("homeLayersBtn").hidden).toBe(true);
-  });
-
-  test("Home layer access is disabled while the Home reset is applying", async () => {
-    setLocale("en", { persist: false });
-    session = mount();
-    await bootRemote(session);
-    let releaseLayers;
-    session.h.layerGate = new Promise((resolve) => { releaseLayers = resolve; });
-    session.h.emit("narrativeState", session.h.narrative);
-    session.h.emit("connection", true);
-    await vi.waitFor(() => expect(el("cueStatus").dataset.status).toBe("applying"));
-    expect(el("homeLayersBtn").disabled).toBe(true);
-    el("homeLayersBtn").click();
-    expect(el("staffPackMenus").hidden).toBe(true);
-    releaseLayers();
-    await vi.waitFor(() => expect(el("cueStatus").dataset.status).toBe("ready"));
+    expect(document.querySelector("[data-layer-sheet-dismiss], .layer-sheet")).toBeNull();
   });
 
   test("a rendered Segev presentation button dispatches the open command", async () => {
@@ -768,6 +749,60 @@ describe("NLI staff Home transitions", () => {
       expect(el("stepTitle").textContent).toBe("Segev family");
     } finally {
       sync.mockRestore();
+    }
+  });
+
+  test("open archive kit paint includes page_down and keeps the player chrome", async () => {
+    const peopleIndex = {
+      datasetVersion: "v1",
+      people: [{ pid: "11", nameForms: ["Ada"], hasArchiveRecord: true }],
+    };
+    const indexBytes = new TextEncoder().encode(JSON.stringify(peopleIndex));
+    const digest = await sha256Hex(indexBytes);
+    const metadata = {
+      datasetVersion: "v1",
+      runtimeArtifactHashes: { "people-search-index.json": digest },
+    };
+    const metadataBytes = new TextEncoder().encode(JSON.stringify(metadata));
+    vi.stubGlobal("fetch", vi.fn(async (url) => {
+      const body = String(url) === PEOPLE_RELEASE_METADATA_URL ? metadataBytes : indexBytes;
+      if (String(url) !== PEOPLE_INDEX_URL && String(url) !== PEOPLE_RELEASE_METADATA_URL) {
+        return { ok: true, json: async () => ({}), arrayBuffer: async () => new Uint8Array().buffer };
+      }
+      return {
+        ok: true,
+        arrayBuffer: async () => body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength),
+      };
+    }));
+    try {
+      setLocale("en", { persist: false });
+      session = mount();
+      await bootRemote(session);
+      session.h.emit("connection", true);
+      await session.h.openCard('[data-show-step="identity-database"]');
+      session.h.emit("personSelection", { personId: "11", datasetVersion: "v1", revision: 2 });
+      await vi.waitFor(() => {
+        expect(el("searchArchiveMount").querySelector("[data-archive-action='open']")).toBeTruthy();
+      });
+      el("searchArchiveMount").querySelector("[data-archive-action='open']").click();
+      await vi.waitFor(() => expect(session.dataContext.archiveWindowCommand).toHaveBeenCalled());
+      const requestId = session.dataContext.archiveWindowCommand.mock.calls[0][3];
+      session.h.emit("archiveWindowResult", {
+        requestId,
+        personId: "11",
+        datasetVersion: "v1",
+        outcome: "navigation_attempted",
+      });
+      await vi.waitFor(() => {
+        expect(el("searchArchiveMount").innerHTML).toContain('data-archive-action="page_down"');
+      });
+      expect(el("stepTitle").textContent).toBe("Identity database");
+      expect(el("stepNote")).not.toBeNull();
+      expect(document.querySelector(".dock")).not.toBeNull();
+      expect(document.getElementById("archiveBtn")).toBeNull();
+      expect(document.getElementById("freeArchiveBtn")).toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
     }
   });
 

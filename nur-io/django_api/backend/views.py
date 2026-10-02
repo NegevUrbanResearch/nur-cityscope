@@ -59,8 +59,9 @@ from .otef_nli_clock_layout import (
     CLOCK_LAYOUT_FIELDS,
     GIS_SLOT_KEYS,
     is_flat_gis_clock_layout,
-    validate_clock_slot_layout,
     normalize_nli_clock_layout,
+    validate_clock_slot_layout,
+    validate_nova_explainer_layout,
 )
 from .otef_legend_settings import (
     LEGEND_SPANS,
@@ -869,12 +870,22 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
         payload = request.data if isinstance(request.data, dict) else {}
         surface = payload.get("surface")
         slot = payload.get("slot")
-        layout = validate_clock_slot_layout(payload.get("layout"))
         base_revision = payload.get("baseRevision")
-        allowed_slots = GIS_SLOT_KEYS if surface == "gis" else ("left",) if surface == "projection" else ()
+        layout_raw = payload.get("layout")
+        if surface == "gisOverlays" and slot == "novaExplainers":
+            layout = validate_nova_explainer_layout(layout_raw)
+            target = "overlay"
+        elif surface == "gis" and slot in GIS_SLOT_KEYS:
+            layout = validate_clock_slot_layout(layout_raw)
+            target = "gis"
+        elif surface == "projection" and slot == "left":
+            layout = validate_clock_slot_layout(layout_raw)
+            target = "projection"
+        else:
+            layout = None
+            target = None
         if (
-            surface not in ("gis", "projection")
-            or slot not in allowed_slots
+            target is None
             or layout is None
             or type(base_revision) is not int
             or base_revision < 0
@@ -902,7 +913,7 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
             raw = copy.deepcopy(locked.nli_clock_layout)
             if not isinstance(raw, dict):
                 raw = {}
-            if surface == "gis":
+            if target == "gis":
                 gis = raw.get("gis")
                 if not isinstance(gis, dict):
                     gis = {}
@@ -916,7 +927,7 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                     gis["start"] = normalize_nli_clock_layout({"gis": {"start": legacy}})["gis"]["start"]
                 gis[slot] = layout
                 raw["gis"] = gis
-            else:
+            elif target == "projection":
                 projection = raw.get("projection")
                 if not isinstance(projection, dict):
                     projection = {}
@@ -924,6 +935,14 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                     projection = copy.deepcopy(projection)
                 projection[slot] = layout
                 raw["projection"] = projection
+            else:
+                gis_overlays = raw.get("gisOverlays")
+                if not isinstance(gis_overlays, dict):
+                    gis_overlays = {}
+                else:
+                    gis_overlays = copy.deepcopy(gis_overlays)
+                gis_overlays["novaExplainers"] = layout
+                raw["gisOverlays"] = gis_overlays
 
             locked.nli_clock_layout = raw
             locked.nli_clock_layout_revision = revision + 1
@@ -1328,7 +1347,7 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
     def _archive_window_command(self, table, request):
         payload = request.data if isinstance(request.data, dict) else {}
         action = payload.get("archiveAction")
-        if action not in ("open", "close"):
+        if action not in ("open", "close", "page_up", "page_down"):
             return Response({"error": "archive action must be open or close"}, status=status.HTTP_400_BAD_REQUEST)
         raw_values = {key: payload.get(key) for key in ("personId", "datasetVersion", "requestId", "sourceId")}
         if any(not isinstance(value, str) or not value.strip() or len(value.strip()) > 128 for value in raw_values.values()):
@@ -1339,7 +1358,7 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
             "personId": person_id, "datasetVersion": version, "requestId": request_id,
             "sourceId": source_id, "acknowledged": True,
         }
-        if action == "open":
+        if action in ("open", "page_up", "page_down"):
             with transaction.atomic():
                 state = OTEFViewportState.objects.select_for_update().filter(table=table).first()
                 selection = normalize_person_selection(state.person_selection if state else {})

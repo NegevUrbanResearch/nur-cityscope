@@ -57,5 +57,25 @@ fi
 
 node --experimental-detect-module "$SCRIPT_DIR/write-share-hosts.mjs" --repository-root "$ROOT" --port "$port"
 
+set +e
+pager_listening=0
+if (echo >/dev/tcp/127.0.0.1/7733) >/dev/null 2>&1; then
+  pager_listening=1
+fi
+if [ "$pager_listening" -ne 1 ]; then
+  node "$SCRIPT_DIR/nli-archive-pager.mjs" >/dev/null 2>&1 &
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    if (echo >/dev/tcp/127.0.0.1/7733) >/dev/null 2>&1; then
+      pager_listening=1
+      break
+    fi
+    sleep 0.2
+  done
+fi
+if [ "$pager_listening" -ne 1 ]; then
+  echo "degraded-mode: NLI archive pager is not listening on 127.0.0.1:7733" >&2
+fi
+set -e
+
 open "$launcher_url"
 echo "OTEF ready: $launcher_url"

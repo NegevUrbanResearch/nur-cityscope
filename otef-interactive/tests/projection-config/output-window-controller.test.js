@@ -108,21 +108,188 @@ test("opens explicit browser URLs on selected display bounds and owns only this 
   expect(opened[3].win.close).toHaveBeenCalledTimes(1);
 });
 
+test("opens both cached display targets synchronously before awaiting fullscreen readiness", async () => {
+  const opened = [];
+  const open = outputOpen(null, opened, { fullscreen: "pending" });
+  const api = screenApi();
+  const controller = createOutputWindowController({ open, screenApi: api, storage: storageStub() });
+  const screens = await controller.refreshDisplays();
+  controller.assignDisplays({ left: screens[0].key, right: screens[1].key });
+  api.getScreenDetails = vi.fn(() => new Promise(() => {}));
+
+  const pending = controller.openBoth();
+  expect(open).toHaveBeenCalledTimes(2);
+  expect(opened).toHaveLength(2);
+  controller.closeBoth();
+  await expect(pending).rejects.toThrow(/cancelled/i);
+});
+
+test("invalidates the synchronous display cache as soon as topology changes", async () => {
+  const handlers = new Set();
+  const details = { screens: displays, addEventListener: vi.fn((_type, handler) => handlers.add(handler)), removeEventListener: vi.fn((_type, handler) => handlers.delete(handler)) };
+  const api = { permissions: { query: vi.fn(async () => ({ state: "granted" })) }, getScreenDetails: vi.fn(async () => details) };
+  const open = vi.fn((url) => popupFor(url));
+  const controller = createOutputWindowController({ open, screenApi: api, storage: storageStub() });
+  const screens = await controller.refreshDisplays();
+  controller.assignDisplays({ left: screens[0].key, right: screens[1].key });
+  for (const handler of handlers) handler();
+
+  await expect(controller.openBoth()).rejects.toThrow(/identify displays or refresh/i);
+  expect(open).not.toHaveBeenCalled();
+});
+
+test("retains a successfully opened side when its peer popup is blocked", async () => {
+  const opened = [];
+  const open = vi.fn((url, name, features) => {
+    if (name.includes("right")) throw new Error("right popup blocked");
+    const win = popupFor(url); opened.push({ url, name, features, win }); return win;
+  });
+  const controller = createOutputWindowController({ open, screenApi: screenApi(), storage: storageStub() });
+  const screens = await controller.refreshDisplays();
+  controller.assignDisplays({ left: screens[0].key, right: screens[1].key });
+
+  await expect(controller.openBoth()).rejects.toThrow(/right popup blocked/i);
+  expect(open).toHaveBeenCalledTimes(2);
+  expect(opened).toHaveLength(1);
+  expect(controller.getOwnedWindows().has("left")).toBe(true);
+});
+
+test("opens only the missing side and keeps the owned peer's callbacks live", async () => {
+  const opened = [];
+  let blocked = false;
+  const open = vi.fn((url, name, features) => {
+    if (name.includes("right") && !blocked) { blocked = true; throw new Error("right popup blocked"); }
+    const win = popupFor(url); opened.push({ url, name, features, win }); return win;
+  });
+  const controller = createOutputWindowController({ open, screenApi: screenApi(), storage: storageStub() });
+  const screens = await controller.refreshDisplays();
+  controller.assignDisplays({ left: screens[0].key, right: screens[1].key });
+  await expect(controller.openBoth()).rejects.toThrow(/right popup blocked/i);
+
+  await controller.openSide("right");
+  opened[0].win.dispatchFullscreen("fullscreenchange", false);
+  expect(open).toHaveBeenCalledTimes(3);
+  expect(controller.getOwnedWindows().size).toBe(2);
+  expect(controller.getState().message).toMatch(/left.*exited/i);
+});
+
+test("Close Both keeps a cancelled missing-side launch from restoring stale status", async () => {
+  const open = vi.fn((url) => popupFor(url, { fullscreen: "pending" }));
+  const controller = createOutputWindowController({ open, screenApi: screenApi(), storage: storageStub() });
+  const screens = await controller.refreshDisplays();
+  controller.assignDisplays({ left: screens[0].key, right: screens[1].key });
+
+  const pending = controller.openSide("left");
+  controller.closeBoth();
+  await expect(pending).rejects.toThrow(/cancelled|closed/i);
+  expect(controller.getOwnedWindows().size).toBe(0);
+  expect(controller.getState().message).toMatch(/closed/i);
+});
+
+test("retries fullscreen on a failed existing side without opening a duplicate", async () => {
+  const opened = [];
+  const open = outputOpen(null, opened, { fullscreen: "reject" });
+  const controller = createOutputWindowController({ open, screenApi: screenApi(), storage: storageStub() });
+  const screens = await controller.refreshDisplays();
+  controller.assignDisplays({ left: screens[0].key, right: screens[1].key });
+  await expect(controller.openBoth()).rejects.toThrow(/fullscreen denied/i);
+  const win = opened[0].win;
+  const requestFullscreen = win.document.documentElement.requestFullscreen;
+  requestFullscreen.mockImplementationOnce(async () => { win.dispatchFullscreen(); });
+
+  await controller.openSide("left");
+  expect(open).toHaveBeenCalledTimes(2);
+  expect(requestFullscreen).toHaveBeenCalledTimes(2);
+});
+
+test("Close Both cancels an in-flight fullscreen retry without restoring stale status", async () => {
+  vi.useFakeTimers();
+  try {
+    const opened = [];
+    const open = outputOpen(null, opened, { fullscreen: "reject" });
+    const controller = createOutputWindowController({ open, screenApi: screenApi(), storage: storageStub() });
+    const screens = await controller.refreshDisplays();
+    controller.assignDisplays({ left: screens[0].key, right: screens[1].key });
+    await expect(controller.openBoth()).rejects.toThrow(/fullscreen denied/i);
+    opened[0].win.document.documentElement.requestFullscreen.mockImplementation(() => new Promise(() => {}));
+
+    const retry = controller.openSide("left");
+    const rejected = expect(retry).rejects.toThrow(/cancelled|closed/i);
+    controller.closeBoth();
+    await vi.advanceTimersByTimeAsync(FULLSCREEN_TIMEOUT_MS);
+    await rejected;
+    expect(controller.getState().message).toMatch(/closed/i);
+    expect(controller.getOwnedWindows().size).toBe(0);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("rejects a retry when the existing side's assigned display changed", async () => {
+  const opened = [];
+  const open = outputOpen(null, opened, { fullscreen: "reject" });
+  const controller = createOutputWindowController({ open, screenApi: screenApi(), storage: storageStub() });
+  const screens = await controller.refreshDisplays();
+  controller.assignDisplays({ left: screens[0].key, right: screens[1].key });
+  await expect(controller.openBoth()).rejects.toThrow(/fullscreen denied/i);
+  const requestFullscreen = opened[0].win.document.documentElement.requestFullscreen;
+  controller.assignDisplays({ left: screens[1].key, right: screens[0].key });
+
+  await expect(controller.openSide("left")).rejects.toThrow(/reassign|assignment/i);
+  expect(requestFullscreen).toHaveBeenCalledTimes(1);
+  expect(controller.getState().message).toMatch(/reassign/i);
+});
+
+test("refuses to treat an active fullscreen side as recovered after cache invalidation", async () => {
+  const handlers = new Set();
+  const details = { screens: displays, addEventListener: vi.fn((_type, handler) => handlers.add(handler)), removeEventListener: vi.fn((_type, handler) => handlers.delete(handler)) };
+  const api = { permissions: { query: vi.fn(async () => ({ state: "granted" })) }, getScreenDetails: vi.fn(async () => details) };
+  const opened = [];
+  const open = outputOpen(null, opened);
+  const controller = createOutputWindowController({ open, screenApi: api, storage: storageStub() });
+  const screens = await controller.refreshDisplays();
+  controller.assignDisplays({ left: screens[0].key, right: screens[1].key });
+  await controller.openBoth();
+  const requestFullscreen = opened[0].win.document.documentElement.requestFullscreen;
+  api.getScreenDetails.mockRejectedValue(new Error("display refresh failed"));
+  for (const handler of handlers) handler();
+  await vi.waitFor(() => expect(controller.getState().error).toMatch(/refresh failed/i));
+
+  await expect(controller.openSide("left")).rejects.toThrow(/identify displays|retry unavailable/i);
+  expect(requestFullscreen).toHaveBeenCalledTimes(1);
+  expect(controller.getState().error).toMatch(/identify displays|assignment/i);
+});
+
+test("keeps one side's fullscreen error when its peer succeeds later", async () => {
+  const opened = [];
+  const open = vi.fn((url, name, features) => {
+    const win = popupFor(url, { fullscreen: name.includes("left") ? "reject" : "success" });
+    opened.push({ url, name, features, win }); return win;
+  });
+  const controller = createOutputWindowController({ open, screenApi: screenApi(), storage: storageStub() });
+  const screens = await controller.refreshDisplays();
+  controller.assignDisplays({ left: screens[0].key, right: screens[1].key });
+  await expect(controller.openBoth()).rejects.toThrow(/left.*fullscreen denied/i);
+  opened[1].win.dispatchFullscreen("fullscreenchange", true);
+  expect(controller.getState().error).toMatch(/left.*fullscreen denied/i);
+  expect(controller.getOwnedWindows().size).toBe(2);
+});
+
 test("rejects a blocked screen permission before opening any popup", async () => {
   const open = vi.fn();
   const screenApi = { permissions: { query: vi.fn(async () => ({ state: "denied" })) }, getScreenDetails: vi.fn() };
   const controller = createOutputWindowController({ open, screenApi, storage: storageStub() });
 
   await expect(controller.refreshDisplays()).rejects.toThrow(/window-management permission/i);
-  await expect(controller.openBoth()).rejects.toThrow(/window-management permission/i);
+  await expect(controller.openBoth()).rejects.toThrow(/identify displays or refresh/i);
   expect(open).not.toHaveBeenCalled();
 });
 
-test("cleans up a partial popup attempt and closes only owned windows", async () => {
+test("retains a partial popup attempt and closes only owned windows on explicit close", async () => {
   const opened = [];
   const open = vi.fn((url, name) => {
     if (name.includes("right")) throw new Error("popup blocked");
-    const win = { closed: false, close: vi.fn(() => { win.closed = true; }) };
+    const win = popupFor(url);
     opened.push(win); return win;
   });
   const controller = createOutputWindowController({ open, screenApi: screenApi(), storage: storageStub() });
@@ -130,8 +297,10 @@ test("cleans up a partial popup attempt and closes only owned windows", async ()
   controller.assignDisplays({ left: screens[0].key, right: screens[1].key });
 
   await expect(controller.openBoth()).rejects.toThrow(/popup blocked/i);
+  expect(opened[0].close).not.toHaveBeenCalled();
+  expect(controller.getOwnedWindows().has("left")).toBe(true);
+  controller.closeBoth();
   expect(opened[0].close).toHaveBeenCalledTimes(1);
-  expect(controller.getOwnedWindows()).toEqual(new Map());
 });
 
 test("requires explicit reassignment when saved labels or bounds are ambiguous or changed", async () => {
@@ -220,8 +389,8 @@ test("reports listener registration failures through fullscreen readiness", asyn
 
     await vi.advanceTimersByTimeAsync(0);
     await expect(pending).rejects.toThrow(/cannot register fullscreenerror/i);
-    expect(opened[0].win.close).toHaveBeenCalled();
-    expect(opened[1].win.close).toHaveBeenCalled();
+    expect(opened[0].win.close).not.toHaveBeenCalled();
+    expect(opened[1].win.close).not.toHaveBeenCalled();
   } finally {
     vi.useRealTimers();
   }
@@ -246,7 +415,7 @@ test.each([
   ["fullscreen error", { fullscreen: "error" }, /fullscreen/i],
   ["missing fullscreen API", { fullscreen: "missing-api" }, /fullscreen API unavailable/i],
   ["missing exact child screen", { details: [displays[0]] }, /right.*screen|display/i],
-])("closes both windows when automatic fullscreen fails: %s", async (_label, options, error) => {
+])("retains both windows when automatic fullscreen fails: %s", async (_label, options, error) => {
   const opened = [];
   const open = outputOpen(null, opened, options);
   const controller = createOutputWindowController({ open, screenApi: screenApi(), storage: storageStub() });
@@ -254,12 +423,12 @@ test.each([
   controller.assignDisplays({ left: screens[0].key, right: screens[1].key });
   await expect(controller.openBoth()).rejects.toThrow(error);
   expect(opened).toHaveLength(2);
-  expect(opened[0].win.close).toHaveBeenCalled();
-  expect(opened[1].win.close).toHaveBeenCalled();
-  expect(controller.getOwnedWindows().size).toBe(0);
+  expect(opened[0].win.close).not.toHaveBeenCalled();
+  expect(opened[1].win.close).not.toHaveBeenCalled();
+  expect(controller.getOwnedWindows().size).toBe(2);
 });
 
-test("times out an unconfirmed fullscreen launch and closes the attempt pair", async () => {
+test("times out an unconfirmed fullscreen launch and retains the attempt pair", async () => {
   vi.useFakeTimers();
   try {
     const opened = [];
@@ -272,8 +441,9 @@ test("times out an unconfirmed fullscreen launch and closes the attempt pair", a
     await vi.advanceTimersByTimeAsync(0);
     await vi.advanceTimersByTimeAsync(FULLSCREEN_TIMEOUT_MS);
     await expect(pending).rejects.toThrow(/timed out/i);
-    expect(opened[0].win.close).toHaveBeenCalled();
-    expect(opened[1].win.close).toHaveBeenCalled();
+    expect(opened[0].win.close).not.toHaveBeenCalled();
+    expect(opened[1].win.close).not.toHaveBeenCalled();
+    expect(controller.getOwnedWindows().size).toBe(2);
   } finally {
     vi.useRealTimers();
   }
@@ -340,21 +510,17 @@ test("close and reopen removes obsolete fullscreen callbacks", async () => {
 });
 
 test("Close Both invalidates a pending Open Both before it can create windows", async () => {
-  const gate = deferred();
   const api = screenApi();
-  const originalGet = api.getScreenDetails;
   const open = vi.fn((url) => popupFor(url, { autoLoad: false }));
   const controller = createOutputWindowController({ open, screenApi: api, storage: storageStub() });
   const screens = await controller.refreshDisplays();
   controller.assignDisplays({ left: screens[0].key, right: screens[1].key });
-  api.getScreenDetails = vi.fn(() => gate.promise);
-
   const pending = controller.openBoth();
+  expect(open).toHaveBeenCalledTimes(2);
   controller.closeBoth();
-  gate.resolve(await originalGet());
 
   await expect(pending).rejects.toThrow(/cancelled|closed/i);
-  expect(open).not.toHaveBeenCalled();
+  expect(open).toHaveBeenCalledTimes(2);
   expect(controller.getState().message).toMatch(/closed/i);
 });
 
@@ -384,6 +550,7 @@ test("reports existing owned windows when validation fails", async () => {
   controller.assignDisplays({ left: screens[0].key, right: screens[1].key });
   await controller.openBoth();
   api.getScreenDetails = vi.fn(async () => ({ screens: [{ ...displays[0], left: 901 }, displays[1]] }));
+  await controller.refreshDisplays().catch(() => {});
 
   await expect(controller.openBoth()).rejects.toThrow(/reconfigured|reassign/i);
   expect(controller.getOwnedWindows().size).toBe(2);

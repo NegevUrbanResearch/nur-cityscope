@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import { HOME_CUE, TIMELINE, NARRATIVES } from "../../frontend/src/remote/nli-staff-script.js";
+import { INVESTIGATION_POLYGONS_FULL_ID } from "../../frontend/src/shared/nli-investigation-beats.js";
+import { endNliClock, idleNliClock, playNliClock } from "../../frontend/src/shared/nli-investigation-clock.js";
+import { deriveInvestigationFrame } from "../../frontend/src/shared/nli-investigation-visual-state.js";
 import { getNliNarrative } from "../../frontend/src/shared/nli-narratives.js";
+import { NLI_NOVA_STORY } from "../../frontend/src/shared/nli-nova-story.js";
 
 vi.mock("../../frontend/src/map/maplibre-map.js", () => ({
   createGISMap: vi.fn(),
@@ -68,5 +72,29 @@ describe("GIS clock preview scenes", () => {
     expect(HOME_CUE).toEqual(beforeHome);
     expect(TIMELINE.steps.at(-1).cue).toEqual(beforeTimeline);
     expect(NARRATIVES).toEqual(beforeNarratives);
+  });
+
+  it("composes an ended Nova explainer clock that reveals the 14 story polygons", () => {
+    const scene = composeGisClockPreviewScene("nova", GROUPS, 1234, { novaExplainers: true });
+    expect(scene.clock).toEqual(endNliClock(playNliClock(
+      idleNliClock({ serverNowMs: 1234 }),
+      [INVESTIGATION_POLYGONS_FULL_ID],
+      NLI_NOVA_STORY.representativeMinutes,
+      1234,
+    )));
+    const frame = deriveInvestigationFrame(scene.clock, 1234, scene.clock.membership, { narrativeId: "nova" });
+    expect(frame.narrative.phase).toBe("ended");
+    expect(frame.achievedPolygonObjectIds).toHaveLength(14);
+    expect(new Set(frame.achievedPolygonObjectIds).size).toBe(14);
+    expect(frame.achievedPolygonObjectIds).not.toContain(107);
+    expect(scene.cue.layers).toEqual(NARRATIVES.find((item) => item.id === "nova").steps[0].cue.layers);
+  });
+
+  it("keeps an ordinary Nova preview on the idle clock when explainer mode is absent", () => {
+    const scene = composeGisClockPreviewScene("nova", GROUPS, 1234);
+    expect(scene.clock.phase).toBe("idle");
+    expect(scene.captionMinute).toBe(getNliNarrative("nova").idleClockMinutes);
+    const frame = deriveInvestigationFrame(scene.clock, 1234, scene.clock.membership, { narrativeId: "nova" });
+    expect(frame.achievedPolygonObjectIds ?? []).toHaveLength(0);
   });
 });

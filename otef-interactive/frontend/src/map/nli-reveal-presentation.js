@@ -337,9 +337,9 @@ export function createNliRevealPresentation(container, {
       title.dir = "rtl";
       title.textContent = "מאגר הזהויות";
       const date = element("p", "nli-blackout-date");
-      date.lang = "en";
-      date.dir = "ltr";
-      date.textContent = "7/10";
+      date.lang = "he";
+      date.dir = "rtl";
+      date.textContent = "ארכיון 7 באוקטובר";
       copy.append(title, date);
       overlay.append(copy);
       container.append(overlay);

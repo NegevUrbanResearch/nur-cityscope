@@ -69,13 +69,16 @@ export function createOutputWindowController({
   const owned = new Map(); const trackers = new Map(); const subscriptions = new Set(); const assignments = parseAssignments(storage); const id = makeSessionId(sessionId);
   const identifier = createDisplayIdentifier({ open, location, sessionId: id });
   let screenDetails = null;
+  let liveScreens = null;
+  const sideErrors = new Map();
   let watchedScreens = [];
   let disposed = false;
-  const onScreensChange = () => { identifier.close(); refreshDisplays().catch(() => {}); };
+  const onScreensChange = () => { liveScreens = null; identifier.close(); setState({ screens: [], message: "Display layout changed; refreshing display detection." }); refreshDisplays().catch(() => {}); };
   const onPageHide = () => identifier.close();
   screenApi?.addEventListener?.("pagehide", onPageHide);
   let generation = 0; let operationToken = 0; let openingPromise = null;
-  let state = { screens: [], assignments, error: "", message: "Detecting connected displays…", ownedSpans: [] };
+  const supported = typeof screenApi?.getScreenDetails === "function";
+  let state = { screens: [], assignments, supported, error: "", message: supported ? "Detecting connected displays…" : "Display management unavailable in this browser.", ownedSpans: [] };
   function setState(patch) { state = { ...state, ...patch, ownedSpans: [...owned.keys()] }; subscriptions.forEach((listener) => listener(state)); return state; }
   function pruneOwned() {
     for (const [span, win] of owned) {
@@ -123,7 +126,8 @@ export function createOutputWindowController({
     watchedScreens.forEach((screen) => screen.addEventListener?.("change", onScreensChange));
     const screens = Array.isArray(details?.screens) ? details.screens.map(normalizeDisplay) : [];
     if (!screens.length) throw new Error("window-management returned no displays");
-    return numberDisplays(screens);
+    liveScreens = numberDisplays(screens);
+    return liveScreens;
   }
   function assignmentScreens(screens) {
     const result = {};
@@ -139,6 +143,7 @@ export function createOutputWindowController({
   async function refreshDisplays() {
     try { const screens = await readScreens(); return setState({ screens, error: "", message: `${screens.length} displays detected. Identify displays shows their numbers for 5 seconds.` }).screens; }
     catch (error) {
+      liveScreens = null;
       if (!disposed) setState({ screens: [], error: `${errorMessage(error)}. Allow display access in browser site settings, then reload.`, message: "Display detection unavailable." });
       throw error;
     }
@@ -169,7 +174,8 @@ export function createOutputWindowController({
   function fullscreenTracker(span, win, assignment, token, currentGeneration) {
     const initialDocument = win?.document;
     let doc; let target;
-    let settled = false; let loaded = false; let resolveReady; let rejectReady; let timeoutId;
+    let settled = false; let loaded = false; let resolveReady; let rejectReady; let timeoutId; let verifiedScreen = null;
+    const retryCancels = new Set();
     const readiness = new Promise((resolve, reject) => { resolveReady = resolve; rejectReady = reject; });
     readiness.catch(() => {});
     const current = () => token === operationToken && owned.get(span) === win && trackers.get(span)?.generation === currentGeneration;
@@ -190,7 +196,8 @@ export function createOutputWindowController({
       if (doc.fullscreenElement === target) {
         if (!settled) { clearTimeout(timeoutId); settled = true; resolveReady(win); }
         const active = activeSpans();
-        setState({ error: "", message: active.length === OUTPUTS.length ? "Both browser outputs fullscreen active." : `${span} fullscreen active; waiting for the other output.` });
+        if (active.includes(span)) sideErrors.delete(span);
+        setState({ error: sideErrors.size ? [...sideErrors.values()].join("; ") : (active.length === OUTPUTS.length ? "" : state.error), message: active.length === OUTPUTS.length ? "Both browser outputs fullscreen active." : `${span} fullscreen active; waiting for the other output.` });
       } else if (loaded) {
         const active = activeSpans();
         setState({ message: active.length ? `${span} fullscreen exited; ${active.join(" and ")} fullscreen remains active.` : `${span} fullscreen exited; no browser output is fullscreen active.` });
@@ -221,6 +228,7 @@ export function createOutputWindowController({
         const details = await win.getScreenDetails();
         if (!current()) return;
         const screen = childScreenFor(details, assignment);
+        verifiedScreen = screen;
         await target.requestFullscreen({ screen });
         if (current() && doc.fullscreenElement === target) onFullscreenChange();
       } catch (error) {
@@ -229,7 +237,42 @@ export function createOutputWindowController({
     };
     try { win?.addEventListener?.("load", onLoad); } catch (error) { settleError(new Error(`${span} fullscreen error: ${errorMessage(error)}`)); }
     timeoutId = setTimeout(() => { if (current()) settleError(new Error(`${span} fullscreen error: timed out waiting for fullscreen`)); }, FULLSCREEN_TIMEOUT_MS);
-    return { generation: currentGeneration, readiness, isActive: () => Boolean(doc && target && doc.fullscreenElement === target), cancel: (error) => { remove(); settleError(error); } };
+    const retry = () => {
+      try { win?.focus?.(); } catch { /* focus is best effort */ }
+      if (!current() || !doc || !target || !verifiedScreen || !liveScreens || typeof target.requestFullscreen !== "function") {
+        throw new Error(`${span} fullscreen retry unavailable; identify displays and verify the assignment first`);
+      }
+      try {
+        assignmentScreens(liveScreens);
+        if (!screenMatchesAssignment(normalizeDisplay(verifiedScreen), state.assignments[span])) throw new Error("the verified output screen no longer matches its current assignment");
+      } catch { throw new Error(`${span} fullscreen retry unavailable; identify displays and reassign the projector first`); }
+      if (doc.fullscreenElement === target) return Promise.resolve(win);
+      setState({ message: `${span} fullscreen retry pending.` });
+      const retryReady = new Promise((resolve, reject) => {
+        let retryTimer; let retrySettled = false;
+        const finish = (fn, value) => {
+          if (retrySettled) return;
+          retrySettled = true;
+          clearTimeout(retryTimer);
+          doc.removeEventListener?.("fullscreenchange", onRetryChange);
+          retryCancels.delete(cancelRetry);
+          fn(value);
+        };
+        const onRetryChange = () => {
+          if (!current()) { finish(reject, new Error("browser output opening cancelled by a newer control action")); return; }
+          if (doc.fullscreenElement === target) finish(resolve, win);
+        };
+        const cancelRetry = (error) => finish(reject, error);
+        retryCancels.add(cancelRetry);
+        retryTimer = setTimeout(() => finish(reject, new Error(`${span} fullscreen error: timed out waiting for fullscreen`)), FULLSCREEN_TIMEOUT_MS);
+        doc.addEventListener("fullscreenchange", onRetryChange);
+        Promise.resolve(target.requestFullscreen({ screen: verifiedScreen })).catch((error) => {
+          finish(reject, new Error(`${span} fullscreen error: ${errorMessage(error)}`));
+        });
+      });
+      return retryReady;
+    };
+    return { generation: currentGeneration, readiness, retry, isActive: () => Boolean(doc && target && doc.fullscreenElement === target), cancel: (error) => { remove(); settleError(error); retryCancels.forEach((cancelRetry) => cancelRetry(error)); } };
   }
   function openOne(span, screen, assignment, currentGeneration, token) {
     if (typeof open !== "function") throw new Error("browser popup API unavailable");
@@ -240,19 +283,25 @@ export function createOutputWindowController({
     trackers.set(span, tracker);
     return { win, readiness: tracker.readiness };
   }
-  async function performOpenBoth(token) {
-    let selected;
+  function assignedScreensFromCache() {
     try {
-      const screens = await readScreens();
-      assertCurrentOperation(token);
+      if (!liveScreens || !screenDetails || !Array.isArray(screenDetails.screens)) throw new Error("identify displays or refresh display detection before opening outputs");
+      const screens = numberDisplays(screenDetails.screens.map(normalizeDisplay));
+      if (!screens.length) throw new Error("identify displays or refresh display detection before opening outputs");
+      liveScreens = screens;
       setState({ screens, error: "", message: "Current displays validated." });
-      selected = assignmentScreens(screens);
+      return assignmentScreens(screens);
     } catch (error) {
-      if (token !== operationToken) throw new Error("browser output opening cancelled by a newer control action");
-      const remains = owned.size ? " Existing browser output windows remain open; close them manually if needed." : "";
+      liveScreens = null;
+      const remains = owned.size ? " Existing browser output windows remain open." : "";
       setState({ error: errorMessage(error), message: `Display assignment is invalid; no new browser windows opened.${remains}` });
       throw error;
     }
+  }
+  function performOpenBoth(token) {
+    const selected = assignedScreensFromCache();
+    assertCurrentOperation(token);
+    sideErrors.clear();
     pruneOwned();
     const closeFailures = closeOwnedWindows();
     if (closeFailures.length) {
@@ -262,31 +311,89 @@ export function createOutputWindowController({
     }
     const currentGeneration = ++generation;
     assertCurrentOperation(token);
-    try {
-      const opened = [openOne("left", selected.left, state.assignments.left, currentGeneration, token), openOne("right", selected.right, state.assignments.right, currentGeneration, token)];
-      await Promise.all(opened.map(({ readiness }) => readiness));
+    const opened = []; const failures = [];
+    for (const span of OUTPUTS) {
+      try { opened.push({ span, ...openOne(span, selected[span], state.assignments[span], currentGeneration, token) }); }
+      catch (error) { failures.push({ span, error }); }
+    }
+    const readiness = opened.map(({ span, readiness: ready }) => ready.then(() => ({ span }), (error) => ({ span, error })));
+    return Promise.all(readiness).then((results) => {
       assertCurrentOperation(token);
+      const errors = [...failures, ...results.filter((result) => result.error)];
+      errors.forEach(({ span, error }) => sideErrors.set(span, `${span}: ${errorMessage(error)}`));
+      const detail = errors.map(({ span, error }) => `${span}: ${errorMessage(error)}`).join("; ");
+      const active = results.filter(({ span }) => trackers.get(span)?.isActive?.()).map(({ span }) => span);
+      if (errors.length) {
+        setState({ error: [...sideErrors.values()].join("; ") || detail, message: `${active.join(" and ") || "No"} browser output${active.length === 1 ? " is" : "s are"} fullscreen; opened windows remain available for recovery.` });
+        throw new Error(detail);
+      }
       return setState({ error: "", message: "Browser outputs opened fullscreen on their assigned displays." }).ownedSpans;
-    }
-    catch (error) {
-      const failed = closeOwnedWindows();
-      if (token !== operationToken) throw error;
-      const cleanupMessage = failed.length ? " Some newly opened windows remain; close them manually." : " Any newly opened window was closed.";
-      setState({ error: `${errorMessage(error)}${failed.length ? " Cleanup incomplete." : ""}`, message: `Browser output opening failed.${cleanupMessage}` });
-      throw error;
-    }
+    });
   }
   function openBoth() {
     identifier.close();
     if (openingPromise) return openingPromise;
     const token = ++operationToken;
-    const pending = performOpenBoth(token);
+    let pending;
+    try { pending = Promise.resolve(performOpenBoth(token)); }
+    catch (error) { pending = Promise.reject(error); }
     const wrapped = pending.finally(() => { if (openingPromise === wrapped) openingPromise = null; });
     openingPromise = wrapped;
     return wrapped;
   }
+  function openSide(span) {
+    if (!OUTPUTS.includes(span)) return Promise.reject(new Error("unknown browser output side"));
+    identifier.close();
+    const existing = owned.get(span);
+    if (existing && !existing.closed) {
+      pruneOwned();
+      const tracker = trackers.get(span);
+      const token = operationToken;
+      const trackerGeneration = tracker?.generation;
+      const stillOwned = () => token === operationToken && owned.get(span) === existing && !existing.closed && trackers.get(span) === tracker && tracker?.generation === trackerGeneration;
+      try {
+        const pending = tracker?.retry?.();
+        return Promise.resolve(pending).then(() => {
+          if (!stillOwned()) throw new Error("browser output opening cancelled by a newer control action");
+          sideErrors.delete(span);
+          setState({ error: [...sideErrors.values()].join("; "), message: `${span} fullscreen recovered; other browser output windows remain open.` });
+        }, (error) => {
+          if (!stillOwned()) throw error;
+          sideErrors.set(span, `${span}: ${errorMessage(error)}`);
+          setState({ error: [...sideErrors.values()].join("; "), message: `${span} output remains open. ${errorMessage(error)}. Identify displays and verify or reassign its display before retrying fullscreen.` }); throw error;
+        });
+      } catch (error) {
+        if (!stillOwned()) return Promise.reject(error);
+        sideErrors.set(span, `${span}: ${errorMessage(error)}`);
+        setState({ error: [...sideErrors.values()].join("; "), message: `${span} output remains open. ${errorMessage(error)}. Identify displays and verify or reassign its display before retrying fullscreen.` });
+        return Promise.reject(error);
+      }
+    }
+    const token = operationToken;
+    let selected;
+    try { selected = assignedScreensFromCache()[span]; }
+    catch (error) { return Promise.reject(error); }
+    const currentGeneration = ++generation;
+    try {
+      const opened = openOne(span, selected, state.assignments[span], currentGeneration, token);
+      const win = opened.win; const tracker = trackers.get(span);
+      const stillOwned = () => token === operationToken && owned.get(span) === win && !win.closed && trackers.get(span) === tracker && tracker?.generation === currentGeneration;
+      return opened.readiness.then(() => {
+        if (!stillOwned()) throw new Error("browser output opening cancelled by a newer control action");
+        sideErrors.delete(span);
+        setState({ error: [...sideErrors.values()].join("; "), message: `${span} output opened fullscreen on its assigned display.` });
+      }, (error) => {
+        if (!stillOwned()) throw error;
+        sideErrors.set(span, `${span}: ${errorMessage(error)}`);
+        setState({ error: [...sideErrors.values()].join("; "), message: `${span} output remains open for fullscreen recovery.` }); throw error;
+      });
+    } catch (error) {
+      setState({ error: errorMessage(error), message: `${span} output could not be opened. The other output remains open.` });
+      return Promise.reject(error);
+    }
+  }
   return {
-    refreshDisplays, identifyDisplays, assignDisplays, openBoth, closeBoth,
+    refreshDisplays, identifyDisplays, assignDisplays, openBoth, openSide, closeBoth,
     dispose() {
       disposed = true;
       identifier.close();

@@ -322,7 +322,7 @@ describe("transitionGisBasemap", () => {
 
     await vi.advanceTimersByTimeAsync(500);
     expect(first).toHaveBeenCalledTimes(1);
-    expect(first).toHaveBeenCalledWith({ status: "failed", basemapId: "dark" });
+    expect(first).toHaveBeenCalledWith({ status: "failed", basemapId: "dark", reason: "source-timeout" });
     expect(second).not.toHaveBeenCalled();
     expect(map.getLayer("osm-tiles")).toBeNull();
     expectIdleListeners(map, baseline);
@@ -539,6 +539,113 @@ describe("transitionGisBasemap", () => {
     expect(settled).not.toHaveBeenCalled();
   });
 
+  test("observes readiness on render after camera cancellation removes the last pending tile", async () => {
+    const map = createDarkMap();
+    const settled = vi.fn();
+    const baseline = overlayListenerBaseline(map);
+    expect(request(map, "satellite_bw", settled)).toBe(true);
+    map.setSourceLoaded("esri", false);
+    map.emit("sourcedata", { sourceId: "esri", tile: { state: "loaded" } });
+    expect(map.getPaintProperty("esri-tiles", "raster-opacity")).toBe(0);
+    map.setSourceLoaded("esri", true);
+    map.emit("sourcedataabort", { sourceId: "esri", tile: { state: "loading", aborted: true } });
+    map.emit("render");
+    expect(map.getPaintProperty("esri-tiles", "raster-opacity")).toBe(1);
+    await finishRenderedFade(map, settled, "satellite_bw", ["background", "water", "place_city"]);
+    expectIdleListeners(map, baseline);
+  });
+
+  test("checks readiness one last time before a source timeout", async () => {
+    const map = createDarkMap();
+    const settled = vi.fn();
+    expect(request(map, "satellite_bw", settled)).toBe(true);
+    map.setSourceLoaded("esri", false);
+    map.emit("sourcedata", { sourceId: "esri", tile: { state: "loaded" } });
+    map.setSourceLoaded("esri", true);
+    await vi.advanceTimersByTimeAsync(GIS_BASEMAP_SOURCE_WAIT_MS);
+    expect(settled).not.toHaveBeenCalled();
+    expect(map.getPaintProperty("esri-tiles", "raster-opacity")).toBe(1);
+    await finishRenderedFade(map, settled, "satellite_bw");
+  });
+
+  test.each([
+    { state: "unloaded" },
+    { state: "loading" },
+    { state: "loaded", aborted: true },
+  ])("does not count cancelled or unfinished tiles as imagery: %j", async (tile) => {
+    const map = createDarkMap();
+    const settled = vi.fn();
+    expect(request(map, "satellite_bw", settled)).toBe(true);
+    map.setSourceLoaded("esri", true);
+    map.emit("sourcedata", { sourceId: "esri", tile });
+    map.emit("render");
+    expect(map.getPaintProperty("esri-tiles", "raster-opacity")).toBe(0);
+    await vi.advanceTimersByTimeAsync(GIS_BASEMAP_SOURCE_WAIT_MS);
+    expect(settled).toHaveBeenCalledWith({ status: "failed", basemapId: "dark", reason: "source-timeout" });
+  });
+
+  test("allows a tile failure to settle alongside successful imagery", async () => {
+    const map = createDarkMap();
+    const settled = vi.fn();
+    expect(request(map, "satellite_bw", settled)).toBe(true);
+    map.setSourceLoaded("esri", false);
+    map.emit("sourcedata", { sourceId: "esri", tile: { state: "loaded" } });
+    map.setSourceLoaded("esri", true);
+    map.emit("error", { sourceId: "esri", tile: { state: "errored" }, error: new Error("one tile failed") });
+    expect(map.getPaintProperty("esri-tiles", "raster-opacity")).toBe(1);
+    expect(settled).not.toHaveBeenCalled();
+    await finishRenderedFade(map, settled, "satellite_bw");
+  });
+
+  test("waits for healthy imagery when the first tile error makes MapLibre report loaded", async () => {
+    const map = createDarkMap();
+    const settled = vi.fn();
+    expect(request(map, "satellite_bw", settled)).toBe(true);
+    // MapLibre TileManager._sourceErrored makes loaded() true after a tile
+    // error even while the raster source still has healthy pending tiles.
+    map.setSourceLoaded("esri", true);
+    map.emit("error", { sourceId: "esri", tile: { state: "errored" }, error: new Error("first tile failed") });
+    expect(settled).not.toHaveBeenCalled();
+    expect(map.getPaintProperty("esri-tiles", "raster-opacity")).toBe(0);
+    await vi.advanceTimersByTimeAsync(100);
+    emitSuccessfulTile(map, "esri");
+    await finishRenderedFade(map, settled, "satellite_bw");
+  });
+
+  test("retains dark when tile errors never produce healthy imagery", async () => {
+    const map = createDarkMap();
+    const settled = vi.fn();
+    expect(request(map, "satellite_bw", settled)).toBe(true);
+    map.setSourceLoaded("esri", true);
+    map.emit("error", { sourceId: "esri", tile: { state: "errored" }, error: new Error("no imagery") });
+    expect(settled).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(GIS_BASEMAP_SOURCE_WAIT_MS);
+    expect(settled).toHaveBeenCalledWith({ status: "failed", basemapId: "dark", reason: "tiles-unavailable" });
+    expect(map.getLayer("esri-tiles")).toBeNull();
+  });
+
+  test("does not undo usable imagery for an individual tile error during the fade", async () => {
+    const map = createDarkMap();
+    const settled = vi.fn();
+    expect(request(map, "satellite_bw", settled)).toBe(true);
+    emitSuccessfulTile(map, "esri");
+    map.emit("error", { sourceId: "esri", tile: { state: "errored" }, error: new Error("later tile failed") });
+    expect(settled).not.toHaveBeenCalled();
+    await finishRenderedFade(map, settled, "satellite_bw");
+  });
+
+  test("treats an aborted tile error as camera cancellation", async () => {
+    const map = createDarkMap();
+    const settled = vi.fn();
+    expect(request(map, "satellite_bw", settled)).toBe(true);
+    map.setSourceLoaded("esri", false);
+    map.emit("sourcedata", { sourceId: "esri", tile: { state: "loaded" } });
+    map.setSourceLoaded("esri", true);
+    map.emit("error", { sourceId: "esri", tile: { state: "unloaded", aborted: true }, error: new Error("cancelled") });
+    expect(settled).not.toHaveBeenCalled();
+    await finishRenderedFade(map, settled, "satellite_bw");
+  });
+
   test("accepts a MapLibre tile event that omits sourceDataType", () => {
     const map = createDarkMap();
     const settled = vi.fn();
@@ -585,8 +692,46 @@ describe("transitionGisBasemap", () => {
       sourceDataType: "idle",
     });
     await vi.advanceTimersByTimeAsync(GIS_BASEMAP_SOURCE_WAIT_MS);
-    expect(settled).toHaveBeenCalledWith({ status: "failed", basemapId: "dark" });
+    expect(settled).toHaveBeenCalledWith({ status: "failed", basemapId: "dark", reason: "source-timeout" });
     expect(map.getLayer("osm-tiles")).toBeNull();
+  });
+
+  test("does not reveal a reused loaded source without drawable cached tiles", async () => {
+    const map = createDarkMap();
+    map.addSource("esri", STYLES.satellite.sources.esri);
+    map.setSourceLoaded("esri", true);
+    map.style = { tileManagers: { esri: { getRenderableIds: () => [] } } };
+    const settled = vi.fn();
+    expect(request(map, "satellite_bw", settled)).toBe(true);
+    expect(map.getPaintProperty("esri-tiles", "raster-opacity")).toBe(0);
+    await vi.advanceTimersByTimeAsync(GIS_BASEMAP_SOURCE_WAIT_MS);
+    expect(settled).toHaveBeenCalledWith({ status: "failed", basemapId: "dark", reason: "source-timeout" });
+  });
+
+  test("can reveal a reused source with drawable cached tiles without another tile event", async () => {
+    const map = createDarkMap();
+    map.addSource("esri", STYLES.satellite.sources.esri);
+    map.setSourceLoaded("esri", true);
+    map.style = { tileManagers: { esri: { getRenderableIds: () => ["cached-tile"] } } };
+    const settled = vi.fn();
+    expect(request(map, "satellite_bw", settled)).toBe(true);
+    expect(map.getPaintProperty("esri-tiles", "raster-opacity")).toBe(1);
+    await finishRenderedFade(map, settled, "satellite_bw");
+  });
+
+  test("retains dark when native 404 handling emits no tile success or error events", async () => {
+    const map = createDarkMap();
+    const settled = vi.fn();
+    expect(request(map, "satellite_bw", settled)).toBe(true);
+    // Native MapLibre suppresses error events for 404 tiles. Once every tile
+    // has errored, loaded() is true, but metadata/visibility cannot prove imagery.
+    map.setSourceLoaded("esri", true);
+    map.emit("sourcedata", { sourceId: "esri", sourceDataType: "metadata" });
+    map.emit("sourcedata", { sourceId: "esri", sourceDataType: "visibility" });
+    map.emit("render");
+    await vi.advanceTimersByTimeAsync(GIS_BASEMAP_SOURCE_WAIT_MS);
+    expect(settled).toHaveBeenCalledWith({ status: "failed", basemapId: "dark", reason: "source-timeout" });
+    expect(map.getLayer("esri-tiles")).toBeNull();
   });
 
   test("registers readiness listeners before adding the candidate source", () => {
@@ -622,7 +767,7 @@ describe("transitionGisBasemap", () => {
     map.emit("error", { sourceId: "esri", error: new Error("tile failure") });
 
     expect(settled).toHaveBeenCalledTimes(1);
-    expect(settled).toHaveBeenCalledWith({ status: "failed", basemapId: "dark" });
+    expect(settled).toHaveBeenCalledWith({ status: "failed", basemapId: "dark", reason: "source-error" });
     expect(map.getLayer("esri-tiles")).toBeNull();
     expect(map.getSource("esri")).toBeNull();
     expect(map.getLayer("background")).not.toBeNull();
@@ -630,7 +775,7 @@ describe("transitionGisBasemap", () => {
     expectIdleListeners(map, baseline);
   });
 
-  test("fails all-404 tile responses that never produce successful tile evidence", () => {
+  test("fails reported errored tiles that never produce successful tile evidence", async () => {
     const map = createDarkMap();
     const settled = vi.fn();
 
@@ -649,7 +794,9 @@ describe("transitionGisBasemap", () => {
       error: { status: 404 },
     });
 
-    expect(settled).toHaveBeenCalledWith({ status: "failed", basemapId: "dark" });
+    expect(settled).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(GIS_BASEMAP_SOURCE_WAIT_MS);
+    expect(settled).toHaveBeenCalledWith({ status: "failed", basemapId: "dark", reason: "tiles-unavailable" });
     expect(map.getLayer("esri-tiles")).toBeNull();
     expect(map.getPaintProperty("esri-tiles", "raster-opacity")).not.toBe(1);
     expect(layerIds(map)).toContain("background");
@@ -673,7 +820,7 @@ describe("transitionGisBasemap", () => {
 
     await vi.advanceTimersByTimeAsync(1);
     expect(settled).toHaveBeenCalledTimes(1);
-    expect(settled).toHaveBeenCalledWith({ status: "failed", basemapId: "dark" });
+    expect(settled).toHaveBeenCalledWith({ status: "failed", basemapId: "dark", reason: "source-timeout" });
     expect(map.getLayer("osm-tiles")).toBeNull();
     expect(map.getSource("osm")).toBeNull();
     expect(map.getSource("openmaptiles")).not.toBeNull();
@@ -695,7 +842,7 @@ describe("transitionGisBasemap", () => {
     expect(map.getLayer("osm-tiles")).not.toBeNull();
 
     await vi.advanceTimersByTimeAsync(1);
-    expect(settled).toHaveBeenCalledWith({ status: "failed", basemapId: "dark" });
+    expect(settled).toHaveBeenCalledWith({ status: "failed", basemapId: "dark", reason: "source-timeout" });
     expect(map.getLayer("osm-tiles")).toBeNull();
     expect(map.listenerCount("move")).toBe(0);
     expect(map.listenerCount("moveend")).toBe(0);
@@ -722,7 +869,7 @@ describe("transitionGisBasemap", () => {
     expect(request(map, "osm", settled)).toBe(true);
     map.emit("error", { sourceId: "osm", error: new Error("blocked") });
 
-    expect(settled).toHaveBeenCalledWith({ status: "failed", basemapId: "dark" });
+    expect(settled).toHaveBeenCalledWith({ status: "failed", basemapId: "dark", reason: "source-error" });
     expect(map.getLayer("osm-tiles")).toBeNull();
   });
 
@@ -738,7 +885,7 @@ describe("transitionGisBasemap", () => {
     map.emit("error", { sourceId: "openmaptiles", error: new Error("dropped") });
 
     expect(settled).toHaveBeenCalledTimes(1);
-    expect(settled).toHaveBeenCalledWith({ status: "failed", basemapId: "satellite" });
+    expect(settled).toHaveBeenCalledWith({ status: "failed", basemapId: "satellite", reason: "source-error" });
     expect(map.getPaintProperty("esri-tiles", "raster-opacity")).toBe(1);
     expect(map.getPaintProperty("esri-tiles", "raster-opacity-transition")).toEqual({ duration: 0, delay: 0 });
     expect(map.getPaintProperty("esri-tiles", "raster-saturation")).toBe(0);
@@ -1029,6 +1176,7 @@ describe("transitionGisBasemap", () => {
 
     const osmSourceAdds = retained.calls.filter((call) => call.method === "addSource" && call.id === "osm").length;
     retained.setSourceLoaded("osm", true);
+    retained.style = { tileManagers: { osm: { getRenderableIds: () => ["retained-tile"] } } };
     const again = vi.fn();
     expect(request(retained, "osm", again)).toBe(true);
     expect(retained.getPaintProperty("osm-tiles", "raster-opacity")).toBe(1);

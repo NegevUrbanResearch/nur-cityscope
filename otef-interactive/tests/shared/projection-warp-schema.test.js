@@ -4,9 +4,12 @@ import {
   migrateProjectionConfigToV2,
   validateProjectionConfigV2,
   validateProjectionWarp,
+  validateProjectionWarpV7,
+  validateProjectionConfigV7,
 } from '../../frontend/src/shared/projection-warp-schema.js';
-import { validateProjectionConfig } from '../../frontend/src/shared/projection-config-schema.js';
-import { validateProjectionBaselineManifest } from '../../frontend/src/shared/projection-warp-assets.js';
+import { DEFAULT_PROJECTION_CONFIG, validateProjectionConfig, migrateProjectionConfigToV7 } from '../../frontend/src/shared/projection-config-schema.js';
+import { validateProjectionBaselineManifest, validateProjectionBaselineMesh } from '../../frontend/src/shared/projection-warp-assets.js';
+import { createIdentityProjectionMesh } from '../../frontend/src/shared/projection-warp-geometry.js';
 
 const fixture = JSON.parse(readFileSync(new URL('../../../nur-io/django_api/backend/tests/fixtures/projection-config-v1.json', import.meta.url))).valid;
 const golden = JSON.parse(readFileSync(new URL('../../../nur-io/django_api/backend/tests/fixtures/projection-warp-golden.json', import.meta.url)));
@@ -66,7 +69,165 @@ test('trusted manifests must contain the requested side reference', () => {
   expect(errors).toHaveProperty('baseline.sha256');
 });
 
+test('v7 grid schema accepts equal output dimensions and migration is a deep-copy idempotent upgrade', async () => {
+  const wall = await import('../../frontend/src/shared/nli-name-wall-config.js');
+  const v6 = wall.migrateNamesWallToV6(wall.migrateNamesWallToV5(migrateProjectionConfigToV2(fixture)), 35);
+  const migrated = migrateProjectionConfigToV7(v6);
+  expect(migrated.schemaVersion).toBe(7);
+  expect(migrated.outputs.left.warp.grid).toMatchObject({ columns: 7, rows: 7, columnPositions: Array.from({ length: 7 }, (_, i) => i / 6) });
+  expect(migrated.outputs.right.warp.grid.columns).toBe(8);
+  expect(validateProjectionConfigV7(migrated)).toEqual({});
+  expect(migrateProjectionConfigToV7(migrated)).toEqual(migrated);
+  expect(migrateProjectionConfigToV7(migrated)).not.toBe(migrated);
+  expect(migrateProjectionConfigToV7(v6)).not.toBe(v6);
+  const equalCounts = structuredClone(migrated);
+  equalCounts.outputs.right.warp.grid.columns = 7;
+  equalCounts.outputs.right.warp.grid.columnPositions = Array.from({ length: 7 }, (_, i) => i / 6);
+  equalCounts.outputs.right.warp.grid.offsets = Array.from({ length: 49 }, () => [0, 0]);
+  expect(validateProjectionConfigV7(equalCounts)).toEqual({});
+});
+
+test.each([
+  ['boolean column count', (grid) => { grid.columns = true; }, 'grid.columns'],
+  ['fractional row count', (grid) => { grid.rows = 2.5; }, 'grid.rows'],
+  ['missing axis', (grid) => { delete grid.rowPositions; }, 'grid.rowPositions'],
+  ['wrong axis length', (grid) => { grid.columnPositions.pop(); }, 'grid.columnPositions'],
+  ['wrong endpoint', (grid) => { grid.rowPositions[0] = 0.01; }, 'grid.rowPositions'],
+  ['nonincreasing axis', (grid) => { grid.columnPositions[2] = grid.columnPositions[1]; }, 'grid.columnPositions'],
+  ['unknown key', (grid) => { grid.extra = 1; }, 'grid.extra'],
+  ['wrong offset count', (grid) => { grid.offsets.pop(); }, 'grid.offsets'],
+  ['boolean axis coordinate', (grid) => { grid.columnPositions[1] = true; }, 'grid.columnPositions[1]'],
+  ['nonfinite axis coordinate', (grid) => { grid.rowPositions[1] = Number.NaN; }, 'grid.rowPositions[1]'],
+  ['out of range offset', (grid) => { grid.offsets[0][0] = 2.01; }, 'grid.offsets[0][0]'],
+])('v7 rejects %s', (_name, mutate, path) => {
+  const warp = structuredClone(golden.identity.warp);
+  warp.grid = { columns: 7, rows: 7, columnPositions: Array.from({ length: 7 }, (_, i) => i / 6), rowPositions: Array.from({ length: 7 }, (_, i) => i / 6), offsets: Array.from({ length: 49 }, () => [0, 0]) };
+  mutate(warp.grid);
+  expect(validateProjectionWarpV7(warp, 'left')).toHaveProperty(path);
+});
+
+test('v7 accepts count boundaries and arbitrarily close increasing source knots while legacy stays fixed', async () => {
+  const wall = await import('../../frontend/src/shared/nli-name-wall-config.js');
+  const v6 = wall.migrateNamesWallToV6(wall.migrateNamesWallToV5(migrateProjectionConfigToV2(fixture)), 35);
+  const v7 = migrateProjectionConfigToV7(v6);
+  const left = v7.outputs.left.warp;
+  left.grid.columns = 3;
+  left.grid.columnPositions = [0, Number.MIN_VALUE, 1];
+  left.grid.offsets = Array.from({ length: 21 }, () => [0, 0]);
+  const right = v7.outputs.right.warp;
+  right.grid.columns = 16;
+  right.grid.columnPositions = Array.from({ length: 16 }, (_, i) => i / 15);
+  right.grid.rows = 2;
+  right.grid.rowPositions = [0, 1];
+  right.grid.offsets = Array.from({ length: 32 }, () => [0, 0]);
+  expect(validateProjectionConfigV7(v7)).toEqual({});
+  expect(validateProjectionWarp(golden.identity.warp, 'left')).toEqual({});
+  const legacyWithAxis = structuredClone(golden.identity.warp);
+  legacyWithAxis.grid.columnPositions = Array.from({ length: 7 }, (_, i) => i / 6);
+  expect(validateProjectionWarp(legacyWithAxis, 'left')).toHaveProperty('grid.columnPositions');
+});
+
 test('manifest metadata rejects malformed objects and missing framing hash', () => {
   expect(validateProjectionBaselineManifest({ schemaVersion: 1, width: 1920, height: 1080, assets: [], framing: [] })).toMatchObject({ assets: 'must be an object', framing: 'must be an object' });
   expect(validateProjectionBaselineManifest({ schemaVersion: 1, width: 1920, height: 1080, assets: {}, framing: { path: 'framing.json' } })).toHaveProperty('framing.sha256');
+});
+
+function baselineManifest(grid) {
+  return {
+    schemaVersion: 1, width: 1920, height: 1080,
+    assets: Object.fromEntries(['left', 'right'].map((side) => [side, {
+      assetId: `fixture-${side}`, path: `${side}.json`, sha256: 'a'.repeat(64), logicalGrid: structuredClone(grid),
+    }])),
+    framing: { path: 'framing.json', sha256: 'b'.repeat(64) },
+  };
+}
+
+test('manifest accepts independent changed logical counts on both sides', () => {
+  const manifest = baselineManifest({ columns: 3, rows: 4 });
+  manifest.assets.right.logicalGrid = { columns: 5, rows: 3 };
+  expect(validateProjectionBaselineManifest(manifest)).toEqual({});
+});
+
+test('manifest retains historical 7x7 and 8x7 metadata acceptance', () => {
+  expect(validateProjectionBaselineManifest(baselineManifest({ columns: 7, rows: 7 }))).toEqual({});
+});
+
+test('manifest still requires both side asset references', () => {
+  const manifest = baselineManifest({ columns: 3, rows: 4 });
+  delete manifest.assets.right;
+  expect(validateProjectionBaselineManifest(manifest)).toHaveProperty('assets.right', 'is required');
+});
+
+test('mesh logical metadata must still match its trusted manifest', () => {
+  const manifest = baselineManifest({ columns: 3, rows: 4 });
+  const mesh = createIdentityProjectionMesh({ side: 'left' });
+  mesh.logicalGrid = { columns: 4, rows: 4 };
+  expect(validateProjectionBaselineMesh(mesh, {
+    side: 'left', manifest,
+    baseline: { assetId: 'fixture-left', sha256: 'a'.repeat(64) },
+  })).toHaveProperty('logicalGrid', 'does not match the trusted manifest');
+});
+
+test('trusted mesh validation selects catalog metadata for the configured reference', () => {
+  const manifest = baselineManifest({ columns: 7, rows: 7 });
+  const selected = { assetId: 'capture-left', path: 'captures/left.json', sha256: 'd'.repeat(64), logicalGrid: { columns: 5, rows: 3 } };
+  manifest.catalog = { left: [selected], right: [] };
+  const mesh = createIdentityProjectionMesh({ side: 'left' });
+  mesh.logicalGrid = { columns: 5, rows: 3 };
+  expect(validateProjectionBaselineMesh(mesh, {
+    side: 'left', manifest,
+    baseline: { assetId: selected.assetId, sha256: selected.sha256 },
+  })).toEqual({});
+  expect(validateProjectionBaselineMesh(mesh, {
+    side: 'left', manifest,
+    baseline: { assetId: selected.assetId, sha256: 'e'.repeat(64) },
+  })).toMatchObject({ assetId: expect.any(String), sha256: expect.any(String) });
+});
+
+test('trusted mesh validation enforces an optional selected asset origin', () => {
+  const manifest = baselineManifest({ columns: 7, rows: 7 });
+  const selected = { assetId: 'capture-left', path: 'captures/left.json', sha256: 'd'.repeat(64), logicalGrid: { columns: 7, rows: 7 }, origin: 'top-left' };
+  manifest.catalog = { left: [selected], right: [] };
+  const mesh = createIdentityProjectionMesh({ side: 'left' });
+  const baseline = { assetId: selected.assetId, sha256: selected.sha256 };
+
+  expect(validateProjectionBaselineMesh(mesh, { side: 'left', manifest, baseline })).toEqual({});
+  mesh.origin = 'bottom-left';
+  expect(validateProjectionBaselineMesh(mesh, { side: 'left', manifest, baseline })).toHaveProperty('origin', 'does not match the trusted manifest');
+  delete selected.origin;
+  expect(validateProjectionBaselineMesh(mesh, { side: 'left', manifest, baseline })).toEqual({});
+});
+
+test('disabled TD warps keep structural validation and skip trusted membership', () => {
+  const manifest = baselineManifest({ columns: 7, rows: 7 });
+  const value = structuredClone(DEFAULT_PROJECTION_CONFIG.outputs.left.warp);
+  value.enabled = false;
+  value.baseline = { type: 'tdMesh', assetId: 'retired', sha256: 'd'.repeat(64), width: 1920, height: 1080, origin: 'top-left' };
+  expect(validateProjectionWarpV7(value, 'left', { trustedManifest: manifest })).toEqual({});
+});
+
+test.each([
+  ['missing object', undefined],
+  ['array', []],
+  ['boolean', { columns: true, rows: 3 }],
+  ['fraction', { columns: 2.5, rows: 3 }],
+  ['null count', { columns: null, rows: 3 }],
+  ['count below two', { columns: 1, rows: 3 }],
+  ['too many points', { columns: 257, rows: 256 }],
+])('manifest rejects %s logical metadata', (_name, grid) => {
+  const manifest = baselineManifest(grid);
+  expect(validateProjectionBaselineManifest(manifest)).toHaveProperty('assets.left.logicalGrid');
+  expect(validateProjectionBaselineManifest(manifest)).toHaveProperty('assets.right.logicalGrid');
+});
+
+test('manifest rejects arrays even when direct JS objects give them named counts', () => {
+  const manifest = baselineManifest({ columns: 3, rows: 4 });
+  for (const side of ['left', 'right']) {
+    const grid = [];
+    grid.columns = 3;
+    grid.rows = 4;
+    manifest.assets[side].logicalGrid = grid;
+  }
+  expect(validateProjectionBaselineManifest(manifest)).toHaveProperty('assets.left.logicalGrid');
+  expect(validateProjectionBaselineManifest(manifest)).toHaveProperty('assets.right.logicalGrid');
 });

@@ -63,7 +63,7 @@ const EXPECTED_NOVA_BEATS = [
 describe("authored Nova story", () => {
   it("contains the five approved localized beat records and polygon membership", () => {
     expect(NLI_NOVA_STORY.startMinutes).toBe(483);
-    expect(NLI_NOVA_STORY.beatDurationMs).toBe(4000);
+    expect(NLI_NOVA_STORY.beatDurationMs).toBe(8000);
     expect(NLI_NOVA_STORY.manualRevealMs).toBe(320);
     expect(NLI_NOVA_STORY.representativeMinutes).toEqual([492, 506, 540, 630, 720]);
     expect(NLI_NOVA_STORY.beats).toHaveLength(5);
@@ -77,7 +77,7 @@ describe("authored Nova story", () => {
 
   it("maps beat indices, percentages, and positions to clamped Nova beat boundaries", () => {
     expect(novaBeatStartMs(0)).toBe(0);
-    expect(novaBeatStartMs(4)).toBe(16_000);
+    expect(novaBeatStartMs(4)).toBe(32_000);
     expect(novaBeatPercent(0)).toBe(0);
     expect(novaBeatPercent(4)).toBe(100);
     expect(novaBeatIndexFromPercent(0)).toBe(0);
@@ -86,8 +86,8 @@ describe("authored Nova story", () => {
     expect(novaBeatIndexFromPercent(-10)).toBe(0);
     expect(novaBeatIndexFromPercent(120)).toBe(4);
     expect(novaBeatIndexAtPosition(0)).toBe(0);
-    expect(novaBeatIndexAtPosition(3999)).toBe(0);
-    expect(novaBeatIndexAtPosition(4000)).toBe(1);
-    expect(novaBeatIndexAtPosition(20_000)).toBe(4);
+    expect(novaBeatIndexAtPosition(7999)).toBe(0);
+    expect(novaBeatIndexAtPosition(8000)).toBe(1);
+    expect(novaBeatIndexAtPosition(40_000)).toBe(4);
   });
 });

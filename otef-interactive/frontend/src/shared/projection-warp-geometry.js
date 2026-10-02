@@ -1,4 +1,7 @@
-import { SIDES, validateProjectionWarp } from './projection-warp-schema.js';
+import { SIDES, validateProjectionWarp, validateProjectionWarpV7 } from './projection-warp-schema.js';
+import { prepareGridWarpMesh, evaluateGridWarpPoint } from './projection-grid-mesh.js';
+import { createBaselineSampler } from './projection-baseline-sampler.js';
+import { relativeTriangleError } from './projection-relative-mesh.js';
 
 const EPSILON = 1e-9;
 const AREA_EPSILON = 1e-5;
@@ -60,8 +63,11 @@ export function interpolateGridOffset(s, t, grid) {
 
 function sideForWarp(warp, fallback = 'left') { return warp?.side || (warp?.grid?.columns === 8 ? 'right' : fallback); }
 
-function createEvaluator(warp) {
-  const errors = validateProjectionWarp(warp, sideForWarp(warp));
+function createEvaluator(warp, side = null, schemaVersion = null) {
+  const resolvedSide = side || sideForWarp(warp);
+  const errors = schemaVersion === 7 || Object.hasOwn(warp?.grid || {}, 'columnPositions') || Object.hasOwn(warp?.grid || {}, 'rowPositions')
+    ? validateProjectionWarpV7(warp, side, {})
+    : validateProjectionWarp(warp, resolvedSide);
   if (Object.keys(errors).length) throw new Error(`invalid warp: ${Object.entries(errors).map(([path, message]) => `${path} ${message}`).join('; ')}`);
   const h = homography(warp.keystone.corners);
   return (x, y, s = x, t = y) => {
@@ -76,13 +82,61 @@ function createEvaluator(warp) {
   };
 }
 
-export function evaluateWarpPoint(x, y, warp, s = x, t = y) {
-  return createEvaluator(warp)(x, y, s, t);
+/**
+ * Evaluate one warp point. x/y are baseline destination coordinates; s/t are
+ * source coordinates. V7 requires options.side, and options.schemaVersion=7
+ * forces v7 validation even when axis arrays are missing. Disabled v7 warps
+ * return [x, y]; enabled uniform grids use legacy geometry, while enabled
+ * nonlegacy grids require options.mesh: the original trusted source baseline
+ * used to prepare the render mesh, never a previously deformed mesh.
+ */
+export function evaluateWarpPoint(x, y, warp, s = x, t = y, options = {}) {
+  const side = options.side || null;
+  const schemaVersion = options.schemaVersion || null;
+  let actual = warp;
+  if (schemaVersion === 7 || Object.hasOwn(warp?.grid || {}, 'columnPositions') || Object.hasOwn(warp?.grid || {}, 'rowPositions')) {
+    if (!side) throw new Error('v7 warp evaluation requires explicit side');
+    const validation = validateProjectionWarpV7(warp, side);
+    if (Object.keys(validation).length) throw new Error(`invalid warp: ${Object.entries(validation).map(([path, message]) => `${path} ${message}`).join('; ')}`);
+    if (warp.enabled && !isLegacyV7Grid(warp.grid, side)) {
+      if (!options.mesh) throw new Error('configurable grid point evaluation requires a trusted source mesh');
+      return evaluateGridWarpPoint(options.mesh, warp, s, t);
+    }
+    actual = structuredClone(warp);
+    if (actual.enabled === false) return [x, y];
+    delete actual.grid.columnPositions;
+    delete actual.grid.rowPositions;
+  } else if (schemaVersion === 7) {
+    throw new Error('v7 warp requires both axis arrays');
+  }
+  return createEvaluator(actual, side, null)(x, y, s, t);
+}
+
+function isLegacyV7Grid(grid, side) {
+  const dimensions = SIDES[side];
+  if (!dimensions || grid.columns !== dimensions.columns || grid.rows !== dimensions.rows) return false;
+  return [[grid.columnPositions, grid.columns], [grid.rowPositions, grid.rows]].every(([axis, count]) =>
+    axis.length === count && axis.every((value, index) => Math.abs(value - index / (count - 1)) <= 1e-12));
+}
+
+function hasGridControlVertices(mesh, grid) {
+  if (!Array.isArray(mesh?.vertices) || !Array.isArray(mesh?.triangles)) return false;
+  const connected = new Set(mesh.triangles);
+  return grid.rowPositions.every((t) => grid.columnPositions.every((s) =>
+    mesh.vertices.some((point, index) => connected.has(index) &&
+      Math.abs(point.s - s) <= 1e-12 && Math.abs(point.t - t) <= 1e-12)));
+}
+
+function requiresGridPreparation(mesh, warp, side) {
+  return !isLegacyV7Grid(warp.grid, side) ||
+    (warp.baseline?.type === 'tdMesh' && !hasGridControlVertices(mesh, warp.grid));
 }
 
 function meshError(mesh) {
   if (!mesh || mesh.width !== 1920 || mesh.height !== 1080) return 'projection mesh must be 1920x1080';
+  if (mesh.validationProfile !== undefined && mesh.validationProfile !== 'relative-source-v1') return 'projection mesh validation profile is unknown';
   if (!Array.isArray(mesh.vertices) || !Array.isArray(mesh.triangles) || mesh.vertices.length < 3 || mesh.triangles.length < 3 || mesh.triangles.length % 3) return 'projection mesh geometry is incomplete';
+  if (mesh.vertices.length > 65536) return 'projection mesh exceeds unsigned-short vertex capacity';
   for (let index = 0; index < mesh.vertices.length; index += 1) {
     const point = mesh.vertices[index];
     if (!point || !['s', 't', 'x', 'y', 'u', 'v'].every((key) => finite(point[key]))) return `projection mesh vertex ${index} is non-finite`;
@@ -91,11 +145,16 @@ function meshError(mesh) {
   }
   for (let index = 0; index < mesh.triangles.length; index += 3) {
     const indices = mesh.triangles.slice(index, index + 3);
-    if (!indices.every((value) => Number.isInteger(value) && value >= 0 && value < mesh.vertices.length)) return `projection mesh triangle ${index / 3} has an invalid index`;
+    if (!indices.every((value) => Number.isInteger(value) && value >= 0 && value <= 65535 && value < mesh.vertices.length)) return `projection mesh triangle ${index / 3} has an invalid index`;
     const [a, b, c] = indices.map((value) => mesh.vertices[value]);
     const area = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
-    if (!(area > AREA_EPSILON)) return `projection mesh triangle ${index / 3} is inverted or degenerate`;
+    if (mesh.validationProfile === 'relative-source-v1') {
+      const relativeError = relativeTriangleError(a, b, c);
+      if (relativeError === 'render') return 'render precision collapses or inverts a grid triangle';
+      if (relativeError) return `projection mesh triangle ${index / 3} is inverted or degenerate`;
+    } else if (!(area > AREA_EPSILON)) return `projection mesh triangle ${index / 3} is inverted or degenerate`;
   }
+  if (mesh.validationProfile !== undefined && mesh.validationProfile !== 'relative-source-v1') return 'projection mesh validation profile is unknown';
   return null;
 }
 
@@ -147,14 +206,52 @@ export function createIdentityProjectionMesh({ side = 'left' } = {}) {
   return { version: 1, type: 'tdMesh', side, width: 1920, height: 1080, origin: 'top-left', logicalGrid: dimensions, vertices, triangles };
 }
 
-export function evaluateWarpMesh(mesh, warp) {
-  if (warp?.enabled === false) return validateWarpMesh(createFullFrameProjectionMesh({ side: mesh?.side || sideForWarp(warp) }));
-  if (!mesh && warp?.baseline?.type === 'identity') mesh = createIdentityProjectionMesh({ side: sideForWarp(warp) });
-  validateWarpMesh(mesh);
-  const evaluate = createEvaluator(warp);
+export function evaluateWarpMesh(mesh, warp, { side = null, schemaVersion = null } = {}) {
+  const hasAxes = Object.hasOwn(warp?.grid || {}, 'columnPositions') || Object.hasOwn(warp?.grid || {}, 'rowPositions');
+  const isV7 = schemaVersion === 7 || hasAxes;
+  const resolvedSide = side || (isV7 ? null : mesh?.side || sideForWarp(warp));
+  let sourceValidated = false;
+  if (isV7) {
+    if (!resolvedSide) throw new Error('v7 warp evaluation requires explicit side');
+    const errors = validateProjectionWarpV7(warp, resolvedSide);
+    if (Object.keys(errors).length) throw new Error(`invalid warp: ${Object.entries(errors).map(([path, message]) => `${path} ${message}`).join('; ')}`);
+    if (warp.enabled === false) return validateWarpMesh(createFullFrameProjectionMesh({ side: resolvedSide }));
+    if (mesh) { validateWarpMesh(mesh); sourceValidated = true; }
+    if (requiresGridPreparation(mesh, warp, resolvedSide)) {
+      if (!mesh && warp.baseline?.type === 'identity') mesh = createFullFrameProjectionMesh({ side: resolvedSide });
+      return validateWarpMesh(prepareGridWarpMesh(mesh, warp, { side: resolvedSide }));
+    }
+    warp = structuredClone(warp);
+    delete warp.grid.columnPositions;
+    delete warp.grid.rowPositions;
+  } else if (schemaVersion === 7) {
+    throw new Error('v7 warp requires both axis arrays');
+  }
+  if (warp?.enabled === false) return validateWarpMesh(createFullFrameProjectionMesh({ side: resolvedSide || mesh?.side || sideForWarp(warp) }));
+  if (!mesh && warp?.baseline?.type === 'identity') mesh = createIdentityProjectionMesh({ side: resolvedSide || sideForWarp(warp) });
+  if (!sourceValidated) validateWarpMesh(mesh);
+  const evaluate = createEvaluator(warp, resolvedSide);
   const result = { ...mesh, vertices: mesh.vertices.map((point) => {
     const [x, y] = evaluate(point.x, point.y, point.s, point.t);
     return { ...point, x, y };
   }) };
   return validateWarpMesh(result);
+}
+
+/** Compare two prepared layouts at deterministic source samples in 1920x1080 pixels.
+ * This reports a sampled difference, not a continuous error bound.
+ */
+export function compareRenderedLayouts(baselineMesh, oldWarp, newWarp, { side } = {}) {
+  if (!side) throw new Error('rendered layout comparison requires explicit side');
+  const oldMesh=evaluateWarpMesh(baselineMesh,oldWarp,{side,schemaVersion:7});
+  const newMesh=evaluateWarpMesh(baselineMesh,newWarp,{side,schemaVersion:7});
+  const oldSample=createBaselineSampler(oldMesh),newSample=createBaselineSampler(newMesh),xs=new Set([0,1]),ys=new Set([0,1]);
+  for(const warp of [oldWarp,newWarp]){for(const x of warp.grid.columnPositions)xs.add(x);for(const y of warp.grid.rowPositions)ys.add(y);}
+  const xAxis=[...xs].sort((a,b)=>a-b),yAxis=[...ys].sort((a,b)=>a-b),points=[];
+  for(let y=0;y<=32;y++)for(let x=0;x<=32;x++)points.push([x/32,y/32]);
+  for(const t of yAxis)for(const s of xAxis)points.push([s,t]);
+  for(let r=0;r<yAxis.length-1;r++)for(let c=0;c<xAxis.length-1;c++){const x0=xAxis[c],x1=xAxis[c+1],y0=yAxis[r],y1=yAxis[r+1];points.push([(x0+x1)/2,(y0+y1)/2],[(3*x0+x1)/4,(3*y0+y1)/4],[(x0+3*x1)/4,(3*y0+y1)/4],[(3*x0+x1)/4,(y0+3*y1)/4],[(x0+3*x1)/4,(y0+3*y1)/4]);}
+  let maximumDifferencePx=0,maximumSample=null;
+  for(const [s,t] of points){const a=oldSample(s,t),b=newSample(s,t),differencePx=Math.hypot((a.x-b.x)*1920,(a.y-b.y)*1080);if(differencePx>maximumDifferencePx){maximumDifferencePx=differencePx;maximumSample={s,t};}}
+  return {maximumDifferencePx,maximumSample,sampleCount:points.length,comparison:'sampled-only'};
 }

@@ -6,12 +6,12 @@ import { renderQr } from "../shared/qr-code.js";
 import { OTEFWebSocketClient } from "../shared/websocket-client.js";
 import { mountProjectionConfig } from "../projection-config/config-controller.js";
 import { createOutputWindowController } from "../projection-config/output-window-controller.js";
-import { loadCapturedProjectionAsset, loadCapturedProjectionFraming } from '../projection/projection-captured-baseline.js';
-import { createProjectionCandidateValidator, readProjectionCandidateInputs } from '../projection/projection-candidate-validation.js';
-import { disposeProjectionNameWallPreparation, prepareProjectionNameWall } from '../shared/nli-name-field-data.js';
+import { createProjectionBaselineCatalogLoader } from '../projection/projection-captured-baseline.js';
+import { createProjectionGeometryValidator, readProjectionCandidateInputs } from '../projection/projection-candidate-validation.js';
 import { OTEF_API } from "../shared/api-client.js";
 import { createClockLayoutClient } from "../projection-config/clock-layout-client.js";
 import { createSettlementNameClient } from "../projection-config/settlement-name-client.js";
+import { createProjectionTrace } from "../projection-config/projection-trace.js";
 import { loadSettlementNameCatalog } from "../shared/settlement-name-catalog.js";
 import layerRegistry from "../shared/layer-registry.js";
 
@@ -30,11 +30,23 @@ function readImportFile(file) {
   return file.text();
 }
 
-async function shareConfigUrl({ location = globalThis.location, fetchImpl = globalThis.fetch, document = globalThis.document } = {}) {
+const PROJECTION_TRACE_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function readProjectionTraceSession(location = globalThis.location) {
+  try {
+    const search = location?.href ? new URL(location.href).search : location?.search;
+    const values = new URLSearchParams(search || "").getAll("projectionTrace");
+    return values.length === 1 && PROJECTION_TRACE_UUID.test(values[0]) ? values[0] : null;
+  } catch { return null; }
+}
+
+export async function shareConfigUrl({ location = globalThis.location, fetchImpl = globalThis.fetch, document = globalThis.document, traceSessionId = null } = {}) {
   const hosts = await loadShareHosts({ location, fetchImpl });
   const origin = hosts.fromShareFile ? hosts.localOrigin : location.origin;
   if (!origin || origin === "null") return null;
-  const url = new URL("/otef-interactive/projection-config.html", origin).href;
+  const shareUrl = new URL("/otef-interactive/projection-config.html", origin);
+  if (typeof traceSessionId === "string" && PROJECTION_TRACE_UUID.test(traceSessionId)) shareUrl.searchParams.set("projectionTrace", traceSessionId);
+  const url = shareUrl.href;
   const copied = await copyUrl(url, { document });
   const qrHost = document?.getElementById("shareQr");
   let qrRendered = false;
@@ -47,9 +59,14 @@ export async function bootProjectionConfig({ document = globalThis.document, loc
   if (!root) return () => {};
   const ws = socket || new OTEFWebSocketClient("/ws/otef/");
   const ownsSocket = !socket;
+  const traceSessionId = readProjectionTraceSession(location);
+  const trace = createProjectionTrace({ sessionId: traceSessionId, socket: ws, window: document?.defaultView || globalThis.window, document });
   let mounted = null;
+  let layoutClient = null;
+  let settlementClient = null;
+  try {
   const layoutSourceId = createUuid();
-  const layoutClient = createClockLayoutClient({
+  layoutClient = createClockLayoutClient({
     tableName: "otef",
     getSnapshot: (options) => OTEF_API.getState("otef", options),
     writeClockSlot: (intent) => OTEF_API.setNliClockLayout("otef", intent.surface, intent.slot, intent.layout, { baseRevision: intent.baseRevision, sourceId: layoutSourceId }),
@@ -57,7 +74,7 @@ export async function bootProjectionConfig({ document = globalThis.document, loc
     socket: ws,
   });
   try { await layoutClient.hydrate({ forceFresh: true }); } catch { /* The client retains hydration health for the editor's Retry action. */ }
-  const settlementClient = createSettlementNameClient({
+  settlementClient = createSettlementNameClient({
     getSnapshot: (options) => OTEF_API.getState("otef", options),
     writeOperation: (body) => OTEF_API.setSettlementNames("otef", body, { sourceId: createUuid() }),
     socket: ws,
@@ -71,22 +88,20 @@ export async function bootProjectionConfig({ document = globalThis.document, loc
   const client = createProjectionConfigClient({ fetchImpl, socket: ws, sourceId: createUuid(), onConflict: (message) => mounted?.setConflict?.(message) });
   const outputLocation = location?.href ? new URL("./projection.html", location.href).href : "projection.html";
   const outputController = createOutputWindowController({ location: outputLocation, open: globalThis.open, screenApi: globalThis, navigatorApi: globalThis.navigator, storage: (() => { try { return globalThis.localStorage; } catch { return null; } })() });
-  const capturedBySignal = new WeakMap();
-  const candidateValidator = createProjectionCandidateValidator({
-    loadBaseline: async (side, signal) => {
-      let captured = capturedBySignal.get(signal);
-      if (!captured) {
-        captured = loadCapturedProjectionFraming({ fetchImpl, signal });
-        capturedBySignal.set(signal, captured);
-      }
-      return loadCapturedProjectionAsset({ fetchImpl, spanId: side, captured: await captured, signal });
-    },
-    prepareWall: prepareProjectionNameWall,
-    readInputs: (signal) => readProjectionCandidateInputs({ fetchImpl, signal }),
-    disposePreparation: disposeProjectionNameWallPreparation,
-  });
-  mounted = mountProjectionConfig(root, { client, socket: ws, layoutClient, settlementClient, catalog, outputController, candidateValidator, share: () => shareConfigUrl({ location, fetchImpl, document }), onExport: downloadExport, onImport: readImportFile });
-  return () => { mounted.dispose(); layoutClient.destroy(); settlementClient.destroy(); if (ownsSocket) ws.disconnect?.(); };
+  const baselineCatalogLoader = createProjectionBaselineCatalogLoader({ fetchImpl });
+  const candidateValidator = createProjectionGeometryValidator({ baselineCatalogLoader });
+  mounted = mountProjectionConfig(root, { client, socket: ws, layoutClient, settlementClient, catalog, outputController, candidateValidator, baselineCatalogLoader,
+    readNamesDataset: () => readProjectionCandidateInputs({ fetchImpl }),
+    trace, share: () => shareConfigUrl({ location, fetchImpl, document, traceSessionId: trace.enabled ? traceSessionId : null }), onExport: downloadExport, onImport: readImportFile });
+  return () => { mounted.dispose(); layoutClient.destroy(); settlementClient.destroy(); trace.dispose(); if (ownsSocket) ws.disconnect?.(); };
+  } catch (error) {
+    try { mounted?.dispose?.(); } catch { /* preserve the boot error */ }
+    try { layoutClient?.destroy?.(); } catch { /* preserve the boot error */ }
+    try { settlementClient?.destroy?.(); } catch { /* preserve the boot error */ }
+    try { trace.dispose?.(); } catch { /* preserve the boot error */ }
+    if (ownsSocket) { try { ws.disconnect?.(); } catch { /* preserve the boot error */ } }
+    throw error;
+  }
 }
 
 if (typeof document !== "undefined") void bootProjectionConfig().catch((error) => console.error("[projection-config] boot failed", error));

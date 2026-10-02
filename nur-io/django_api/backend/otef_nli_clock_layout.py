@@ -1,8 +1,11 @@
 """Normalize durable NLI clock parks (GIS slots + projection spans)."""
 
 import math
+import re
 
 PROJECTION_SPAN_KEYS = ("full", "left", "right")
+_NOVA_EXPLAINER_ID = re.compile(r"^[1-9][0-9]*$")
+_MAX_NOVA_EXPLAINER_ENTRIES = 32
 GIS_SLOT_KEYS = ("start", "segev", "nova", "sderot", "hostages", "hostages_all")
 CLOCK_LAYOUT_FIELDS = ("leftPct", "topPct", "widthPct", "heightPct", "fontPx", "rotateDeg")
 
@@ -92,9 +95,73 @@ def normalize_projection_clock_layout(raw):
     return out
 
 
+def _json_number(value):
+    if type(value) not in (int, float):
+        return None
+    if type(value) is float and not math.isfinite(value):
+        return None
+    return value
+
+
+def _nova_explainer_position(raw):
+    if not isinstance(raw, dict) or set(raw) != {"leftPct", "topPct"}:
+        return None
+    left = _json_number(raw.get("leftPct"))
+    top = _json_number(raw.get("topPct"))
+    if left is None or top is None:
+        return None
+    return {
+        "leftPct": min(100.0, max(0.0, left)),
+        "topPct": min(100.0, max(0.0, top)),
+    }
+
+
+def _nova_explainer_camera(raw, strict):
+    if not isinstance(raw, dict):
+        return None if strict else {}
+    if strict and len(raw) > _MAX_NOVA_EXPLAINER_ENTRIES:
+        return None
+    out = {}
+    for key, value in raw.items():
+        if not isinstance(key, str) or _NOVA_EXPLAINER_ID.fullmatch(key) is None:
+            if strict:
+                return None
+            continue
+        position = _nova_explainer_position(value)
+        if position is None:
+            if strict:
+                return None
+            continue
+        if len(out) >= _MAX_NOVA_EXPLAINER_ENTRIES:
+            break
+        out[key] = position
+    return out
+
+
+def validate_nova_explainer_layout(raw):
+    if not isinstance(raw, dict) or set(raw) != {"close", "wide"}:
+        return None
+    close = _nova_explainer_camera(raw.get("close"), True)
+    wide = _nova_explainer_camera(raw.get("wide"), True)
+    if close is None or wide is None:
+        return None
+    return {"close": close, "wide": wide}
+
+
+def normalize_nova_explainer_maps(raw):
+    src = raw if isinstance(raw, dict) else {}
+    return {
+        "close": _nova_explainer_camera(src.get("close"), False),
+        "wide": _nova_explainer_camera(src.get("wide"), False),
+    }
+
+
 def normalize_nli_clock_layout(raw):
     src = raw if isinstance(raw, dict) else {}
+    overlays = src.get("gisOverlays")
+    nova = overlays.get("novaExplainers") if isinstance(overlays, dict) else None
     return {
         "gis": normalize_gis_clock_layout(src.get("gis")),
         "projection": normalize_projection_clock_layout(src.get("projection")),
+        "gisOverlays": {"novaExplainers": normalize_nova_explainer_maps(nova)},
     }

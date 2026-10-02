@@ -5,13 +5,38 @@ from django.apps import apps
 from django.db import connection, transaction
 from django.test import SimpleTestCase, TestCase
 
-from backend.projection_config_migration import convert_projection_calibration_payload, convert_projection_calibration_payload_to_v3, convert_projection_calibration_payload_to_v4, convert_projection_calibration_payload_to_v5
+from backend.projection_config_migration import convert_projection_calibration_payload, convert_projection_calibration_payload_to_v3, convert_projection_calibration_payload_to_v4, convert_projection_calibration_payload_to_v5, convert_projection_calibration_payload_to_v7
 from backend.projection_config_schema import legacy_projection_config_defaults
-from backend.projection_warp_schema import migrate_projection_config_to_v2, migrate_projection_config_to_v3
+from backend.projection_warp_schema import migrate_projection_config_to_v2, migrate_projection_config_to_v3, migrate_projection_config_to_v7
 from backend.models import OTEFProjectionCalibration, Table
 
 
 class ProjectionConfigMigrationTests(SimpleTestCase):
+    def test_v7_conversion_preserves_row_envelope_and_axes(self):
+        legacy = legacy_projection_config_defaults()
+        v7 = migrate_projection_config_to_v7(legacy)
+        selected = '00000000-0000-4000-8000-000000000001'
+        presets = [
+            {'id': 'original', 'name': 'Original calibration', 'config': legacy, 'readOnly': True},
+            {'id': selected, 'name': 'Desk', 'config': v7, 'readOnly': False},
+        ]
+        before = copy.deepcopy((legacy, presets))
+        working, converted = convert_projection_calibration_payload_to_v7(legacy, presets, selected, 19)
+        self.assertEqual((legacy, presets), before)
+        self.assertEqual(working['schemaVersion'], 7)
+        self.assertEqual([preset['config']['schemaVersion'] for preset in converted], [7, 7])
+        self.assertEqual(working['outputs']['left']['warp']['grid']['columnPositions'], [i / 6 for i in range(7)])
+        self.assertEqual([(p['id'], p['name'], p['readOnly']) for p in converted], [(p['id'], p['name'], p['readOnly']) for p in presets])
+        self.assertEqual(convert_projection_calibration_payload_to_v7(working, converted, selected, 19), (working, converted))
+
+    def test_historical_wrappers_preserve_validated_future_config_without_downcasting(self):
+        v7 = migrate_projection_config_to_v7(legacy_projection_config_defaults())
+        working, presets = convert_projection_calibration_payload_to_v4(v7, [
+            {'id': 'original', 'name': 'Original calibration', 'config': v7, 'readOnly': True},
+        ], 'original', 2)
+        self.assertEqual(working, v7)
+        self.assertEqual(presets[0]['config'], v7)
+
     def test_0030_does_not_guess_a_heading(self):
         import importlib
         migration = importlib.import_module('backend.migrations.0030_otefviewportstate_settlement_names').Migration
@@ -214,3 +239,46 @@ class ProjectionConfigV5InstalledMigrationTests(TestCase):
         with transaction.atomic(): migration.migrate_projection_configs(apps, schema_editor)
         row.refresh_from_db()
         self.assertEqual((row.working_config, row.presets), first)
+
+
+class ProjectionConfigV7InstalledMigrationTests(TestCase):
+    def test_v7_migration_preflights_and_converts_all_configs_without_envelope_changes(self):
+        migration = importlib.import_module('backend.migrations.0031_projection_config_v7')
+        self.assertEqual(migration.Migration.dependencies, [('backend', '0030_otefviewportstate_settlement_names')])
+        original = legacy_projection_config_defaults()
+        selected = '00000000-0000-4000-8000-000000000001'
+        presets = [
+            {'id': 'original', 'name': 'Original calibration', 'config': original, 'readOnly': True},
+            {'id': selected, 'name': 'Desk', 'config': migrate_projection_config_to_v2(original), 'readOnly': False},
+        ]
+        row = OTEFProjectionCalibration.objects.create(table=Table.objects.create(name='v7-row'),
+            working_config=original, presets=copy.deepcopy(presets), selected_preset_id=selected, revision=19)
+        schema_editor = type('SchemaEditor', (), {'connection': connection})()
+        with transaction.atomic(): migration.upgrade_projection_config_rows(apps, schema_editor)
+        row.refresh_from_db()
+        self.assertEqual((row.revision, row.selected_preset_id), (19, selected))
+        self.assertEqual([item['config']['schemaVersion'] for item in row.presets], [7, 7])
+        self.assertEqual([(item['id'], item['name'], item['readOnly']) for item in row.presets], [(item['id'], item['name'], item['readOnly']) for item in presets])
+        self.assertEqual(row.working_config['outputs']['right']['warp']['grid']['columnPositions'], [i / 7 for i in range(8)])
+        first = copy.deepcopy((row.working_config, row.presets))
+        with transaction.atomic(): migration.upgrade_projection_config_rows(apps, schema_editor)
+        row.refresh_from_db()
+        self.assertEqual((row.working_config, row.presets), first)
+
+    def test_invalid_later_preset_preflight_preserves_earlier_row_and_invalid_row(self):
+        migration = importlib.import_module('backend.migrations.0031_projection_config_v7')
+        legacy = legacy_projection_config_defaults()
+        first = OTEFProjectionCalibration.objects.create(table=Table.objects.create(name='v7-preflight-valid'),
+            working_config=copy.deepcopy(legacy), presets=[{'id': 'original', 'name': 'Original calibration', 'config': copy.deepcopy(legacy), 'readOnly': True}], revision=4)
+        bad = copy.deepcopy(legacy); bad['pre']['scale'] = True
+        second = OTEFProjectionCalibration.objects.create(table=Table.objects.create(name='v7-preflight-invalid'),
+            working_config=copy.deepcopy(legacy), presets=[{'id': 'original', 'name': 'Original calibration', 'config': copy.deepcopy(legacy), 'readOnly': True},
+                {'id': 'bad', 'name': 'Bad later preset', 'config': bad, 'readOnly': False}], revision=9)
+        before_first = (copy.deepcopy(first.working_config), copy.deepcopy(first.presets), first.revision, first.selected_preset_id)
+        before_second = (copy.deepcopy(second.working_config), copy.deepcopy(second.presets), second.revision, second.selected_preset_id)
+        schema_editor = type('SchemaEditor', (), {'connection': connection})()
+        with self.assertRaises(ValueError):
+            with transaction.atomic(): migration.upgrade_projection_config_rows(apps, schema_editor)
+        first.refresh_from_db(); second.refresh_from_db()
+        self.assertEqual((first.working_config, first.presets, first.revision, first.selected_preset_id), before_first)
+        self.assertEqual((second.working_config, second.presets, second.revision, second.selected_preset_id), before_second)

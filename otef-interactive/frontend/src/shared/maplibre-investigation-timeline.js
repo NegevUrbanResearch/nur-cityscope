@@ -730,7 +730,7 @@ function applyPlayingVisuals(map, state, phase, frame = null, targetAlarmMode = 
     const onsetElapsedMs = Number(alarmFrame.alarmOnset?.elapsedMs);
     const onsetConsumed = state.alarmOnsetHistory.has(onsetId);
     const onsetFinished = Number.isFinite(onsetElapsedMs) &&
-      onsetElapsedMs >= NLI_VISUAL_TOKENS.alarmRippleDurationMs;
+      onsetElapsedMs >= NLI_VISUAL_TOKENS.alarmEventDurationMs;
     if (onsetConsumed || onsetFinished) {
       alarmFrame = { ...alarmFrame, alarmOnset: null, alarmOnsetId: null };
       if (onsetFinished) state.alarmOnsetHistory.add(onsetId);
@@ -804,6 +804,22 @@ function applyPlayingVisuals(map, state, phase, frame = null, targetAlarmMode = 
   // then publish the target mode for captions and subsequent animation ticks.
   state.alarmMode = targetAlarmMode;
   updateCaption(state, phase, previousClock);
+  publishVisualFrame(state, resolvedFrame);
+}
+
+function publishVisualFrame(state, resolvedFrame) {
+  const callback = state.rendererDeps?.onVisualFrame;
+  if (typeof callback !== "function") return;
+  const renderPolygons = Boolean(state.polygonOn || isNovaNarrative(state));
+  const achieved = resolvedFrame?.achievedPolygonObjectIds;
+  const features = state.data?.polygonFeatures;
+  callback({
+    narrativeId: state.narrativeFocus?.id ?? null,
+    phase: resolvedFrame?.narrative?.phase,
+    novaBeatIndex: resolvedFrame?.narrative?.activeIndex,
+    achievedPolygonObjectIds: renderPolygons && Array.isArray(achieved) ? achieved : [],
+    polygonFeatures: Array.isArray(features) ? features : [],
+  });
 }
 
 function enablePolygonPlayback(map, state) {
@@ -995,7 +1011,7 @@ function stopPlayback(map, { preserveBasePaints = false } = {}) {
 }
 
 function onsetWindowJustClosed(previousFrame, frame) {
-  const duration = NLI_VISUAL_TOKENS.alarmRippleDurationMs;
+  const duration = NLI_VISUAL_TOKENS.alarmEventDurationMs;
   const previousElapsed = Number(previousFrame?.alarmOnset?.elapsedMs);
   const elapsed = Number(frame?.alarmOnset?.elapsedMs);
   return Number.isFinite(previousElapsed) && previousElapsed < duration
@@ -1153,6 +1169,7 @@ export function getInvestigationTimelineDiagnostics(map) {
  *   allowMapCaption?: boolean,
  *   getPersonSelection?: () => { personId?: string|null, pid?: string|null, datasetVersion?: string|null } | null,
  *   onClockFrame?: (clock: import('./nli-investigation-clock.js').NliInvestigationClock, nowMs: number) => void,
+ *   onVisualFrame?: (frame: { narrativeId: string|null, phase: string, novaBeatIndex: number, achievedPolygonObjectIds: number[], polygonFeatures: object[] }) => void,
  * }} [deps]
  */
 export async function syncInvestigationTimelineToMap(map, clockInput, layerGroups, deps = {}) {

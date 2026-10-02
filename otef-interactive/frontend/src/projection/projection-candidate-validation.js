@@ -1,7 +1,7 @@
 import { evaluateWarpMesh } from '../shared/projection-warp-geometry.js';
 import { validateProjectionBaselineMesh } from '../shared/projection-warp-assets.js';
 import { validateProjectionConfig } from '../shared/projection-config-schema.js';
-import { migrateNamesWallToV5, migrateNamesWallToV6 } from '../shared/nli-name-wall-config.js';
+import { migrateProjectionConfigToV7 } from '../shared/projection-config-schema.js';
 
 const SIDES = ['left', 'right'];
 const HASH = /^[a-f0-9]{64}$/i;
@@ -20,8 +20,7 @@ function sameInputs(left, right) {
   return validInput(left) && validInput(right) && left.datasetVersion === right.datasetVersion;
 }
 function projectionMeshConfig(config) {
-  if (config?.schemaVersion === 6) return migrateNamesWallToV6(config, config.namesWall?.rotateDeg);
-  return migrateNamesWallToV5(config);
+  return migrateProjectionConfigToV7(config, config?.namesWall?.rotateDeg ?? 35);
 }
 
 export async function readProjectionCandidateInputs({ fetchImpl = globalThis.fetch, signal } = {}) {
@@ -50,7 +49,7 @@ export function prepareProjectionSideMesh(config, side, baseline = null) {
     }
     source = baseline.mesh;
   }
-  return { config: candidate, mesh: evaluateWarpMesh(source, warp) };
+  return { config: candidate, mesh: evaluateWarpMesh(source, warp, { side, schemaVersion: candidate.schemaVersion }) };
 }
 
 export async function prepareProjectionPairMeshes({ config, loadBaseline, signal }) {
@@ -63,7 +62,7 @@ export async function prepareProjectionPairMeshes({ config, loadBaseline, signal
     const warp = candidate.outputs[side].warp;
     if (warp.enabled !== false && warp.baseline?.type === 'tdMesh') {
       if (typeof loadBaseline !== 'function') throw new Error(`Projection ${side} baseline unavailable`);
-      loaded[side] = await loadBaseline(side, signal);
+      loaded[side] = await loadBaseline(side, signal, warp.baseline);
       checkSignal(signal);
       if (!loaded[side]) throw new Error(`Projection ${side} baseline unavailable`);
     }
@@ -73,6 +72,49 @@ export async function prepareProjectionPairMeshes({ config, loadBaseline, signal
     throw new Error('Projection baselines came from different manifests');
   }
   return meshes;
+}
+
+/** Validates calibration geometry without loading release metadata or placing names. */
+export function createProjectionGeometryValidator({ loadBaseline, baselineCatalogLoader, timeoutMs = 75000 }) {
+  let active = null;
+  let sequence = 0;
+  let disposed = false;
+  const validateCandidate = async ({ config, generation, identity, revision }) => {
+    active?.controller.abort();
+    active = null;
+    if (disposed) return { identity, valid: false, reason: 'Geometry validator disposed' };
+    if (typeof identity !== 'string' || identity !== JSON.stringify(config)) return { identity, valid: false, reason: 'Stale projection geometry candidate' };
+    if (Object.keys(validateProjectionConfig(config)).length) return { identity, valid: false, reason: 'Invalid projection calibration geometry' };
+    const controller = new AbortController();
+    const request = { sequence: ++sequence, controller, generation, revision, identity };
+    active = request;
+    let timer;
+    let preparedSnapshot;
+    try {
+      const meshes = await Promise.race([
+        (async () => {
+          const candidate = clone(config);
+          const sources = baselineCatalogLoader ? await baselineCatalogLoader.prepare(candidate, controller.signal) : null;
+          preparedSnapshot = sources?.snapshot;
+          return prepareProjectionPairMeshes({ config: candidate, signal: controller.signal,
+            loadBaseline: sources ? async (side) => sources.loaded[side] : loadBaseline });
+        })(),
+        new Promise((_, reject) => {
+          controller.signal.addEventListener('abort', () => reject(abortError('Projection geometry preflight cancelled')), { once: true });
+          timer = setTimeout(() => { controller.abort(); reject(new Error('Projection geometry preflight timed out')); }, timeoutMs);
+        }),
+      ]);
+      if (disposed || active !== request || controller.signal.aborted) return { identity, valid: false, reason: 'Projection geometry preflight superseded' };
+      if (preparedSnapshot) baselineCatalogLoader.promote(preparedSnapshot);
+      return { identity, valid: Object.keys(meshes || {}).length === 2 };
+    } catch (error) {
+      return { identity, valid: false, reason: String(error?.message || error || 'Projection geometry validation failed').slice(0, 240) };
+    } finally {
+      clearTimeout(timer);
+      if (active === request) active = null;
+    }
+  };
+  return { validateCandidate, dispose() { if (disposed) return; disposed = true; active?.controller.abort(); active = null; } };
 }
 
 function boundedDiagnostics(value, candidate, datasetVersion) {

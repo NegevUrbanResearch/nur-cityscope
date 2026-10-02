@@ -185,6 +185,13 @@ This is the **main-area** body for the Navigation tab (`#remote-panel-navigation
   producer on the existing OTEF channel is the operational assumption; request
   and source correlation prevent stale transitions but do not provide
   multi-GIS arbitration.
+- Workshop Navigation keeps the compact **Open NLI record** / **Back to map**
+  button. Staff remote uses presentation-scale Open / Scroll up / Scroll down /
+  Back. Do not add a phone replica, iframe, or other copy of nli.org.il.
+- Archive paging is ephemeral `page_up` / `page_down` on the existing archive
+  session. GIS asks a localhost pager; the staff remote does not wait on a
+  paging result. If the live NLI column does not move, stop — do not add
+  banner clicking.
 - Treat cross-origin load, foreground focus, and display placement as manual
   exhibit checks.
 

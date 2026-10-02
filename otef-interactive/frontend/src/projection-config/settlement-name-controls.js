@@ -47,7 +47,7 @@ export function createSettlementNameControls(doc, {
   onLoad = () => {},
 } = {}) {
   const element = make(doc, "div", { className: "settlement-name-controls" });
-  const note = make(doc, "p", { className: "settlement-shared-note" }, "Font and rotation apply to every settlement on both projectors.");
+  const note = make(doc, "p", { className: "settlement-shared-note" }, "Position edits save automatically for this output. Font and rotation save automatically for both projectors. These edits are separate from projection calibration Live and Apply.");
   const outputLabel = make(doc, "label", { className: "settlement-name-field" }, "Output");
   const output = make(doc, "select", { ariaLabel: "Settlement output", dataset: { field: "output" } });
   output.append(make(doc, "option", { value: "left" }, "Left"), make(doc, "option", { value: "right" }, "Right"));

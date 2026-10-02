@@ -54,4 +54,13 @@ describe("bindProjectionPersonHalo", () => {
     expect(src).toMatch(/wakeInvestigationTimelinePersonGlow/);
     expect(src).not.toMatch(/createGisPersonSelection|createGisPersonController/);
   });
+
+  it("projection-main does not import the GIS Nova explainer overlay", () => {
+    const src = readFileSync(
+      resolve(dirname(fileURLToPath(import.meta.url)), "../../frontend/src/entries/projection-main.js"),
+      "utf8",
+    );
+    expect(src).not.toMatch(/nli-nova-explainer-overlay/);
+    expect(src).not.toMatch(/nliNovaExplainerHost/);
+  });
 });

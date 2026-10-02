@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import { createProjectionCaptionAdapter, drawProjectionCaptionForSpan } from "../../frontend/src/projection/projection-caption-adapter.js";
 import { createProjectionLegendAdapter } from "../../frontend/src/projection/projection-legend-adapter.js";
 import { createProjectionPatternAdapter } from "../../frontend/src/projection/projection-pattern-adapter.js";
+import { projectionOverlayMatrix } from "../../frontend/src/projection/projection-overlay-placement.js";
 import { DEFAULT_PROJECTION_CONFIG } from "../../frontend/src/shared/projection-config-schema.js";
 
 function canvasFactory() {
@@ -89,21 +90,15 @@ describe("projection overlay adapters", () => {
     const square = c.context.calls.find(([name]) => name === "rect");
     const label = c.context.calls.find(([name, value]) => name === "fillText" && value === "אב");
     const padding = 28 * 0.5;
-    const canvasWidth = 1920 * 0.4;
-    const expectedPointCenter = padding + 28 * 0.32 + 28 * 0.55 / 2;
-    const itemGap = 28 * 18 / 16;
-    const firstWidth = Math.max(28 * 1.23, 28 * 0.55 + 28 * 0.32 * 2) + 28 * 0.36
-      + (12 + Math.max(0, "אב".length - 1) * 28 * 0.01);
+    const expectedPointCenter = padding + 28 * 0.32 + 0.5 + 28 * 0.55 / 2;
     const squareCenterX = square[1] + square[3] / 2;
     expect(point?.[1]).toBeCloseTo(expectedPointCenter, 3);
     expect(label?.[2]).toBeGreaterThan(point?.[1]);
     expect(c.context.calls.some(([name, value]) => name === "fillText" && value === "Group")).toBe(false);
-    expect(squareCenterX).toBeGreaterThan(point[1]);
-    expect(squareCenterX).toBeCloseTo(padding + firstWidth + itemGap + 28 * 0.32 + 28 * 0.55 / 2, 1);
-    expect(square[1]).toBeLessThan(canvasWidth / 2);
+    expect(squareCenterX).toBeCloseTo(point[1], 3);
   });
 
-  test("legend places the first RTL item at inline-start", () => {
+  test("legend fills RTL columns from the right and keeps item order top to bottom", () => {
     const c = canvasFactory();
     const adapter = createProjectionLegendAdapter({ canvasFactory: () => c });
     adapter.sync({
@@ -125,9 +120,8 @@ describe("projection overlay adapters", () => {
     const squareCenterX = square[1] + square[3] / 2;
     const squareCenterY = square[2] + square[4] / 2;
     expect(point?.[1]).toBeGreaterThan(canvasWidth / 2);
-    expect(squareCenterX).toBeLessThan(point[1]);
-    expect(point[1] - squareCenterX).toBeLessThan(canvasWidth / 2);
-    expect(squareCenterY).toBeCloseTo(point[2], 0);
+    expect(squareCenterX).toBeCloseTo(point[1], 3);
+    expect(squareCenterY).toBeGreaterThan(point[2]);
   });
 
   test("legend renders structured gradient bands as nested canvas fills", () => {
@@ -194,6 +188,37 @@ describe("projection overlay adapters", () => {
     expect(adapter.draw().contentVersion).toBe(changed.contentVersion);
     adapter.sync({ ...base, layout: { ...layout, heightPct: 20 } });
     expect(adapter.draw().contentVersion).toBeGreaterThan(changed.contentVersion);
+  });
+
+  test("legend revisions invalidate on columns and font loads when fitted geometry is unchanged", () => {
+    const c = canvasFactory(); const adapter = createProjectionLegendAdapter({ canvasFactory: () => c });
+    const contentLayout = { columns: 1, scale: 1, placements: [], paintBounds: { x: 0, y: 0, width: 0, height: 0 } };
+    const base = { layout: { ...layout, columns: 1 }, language: "en", spanId: "left", visible: true,
+      pages: [["pack"]], pageIndex: 0, blocks: [], contentLayout, fontRevision: 0 };
+    adapter.sync(base);
+    const first = adapter.draw();
+    adapter.sync({ ...base, layout: { ...layout, columns: 2 } });
+    const columnsChanged = adapter.draw();
+    expect(columnsChanged.contentVersion).toBe(first.contentVersion + 1);
+    adapter.sync({ ...base, layout: { ...layout, columns: 2 }, fontRevision: 1 });
+    const fontChanged = adapter.draw();
+    expect(fontChanged.contentVersion).toBe(columnsChanged.contentVersion + 1);
+    adapter.sync({ ...base, layout: { ...layout, columns: 2 }, fontRevision: 1 });
+    expect(adapter.draw().contentVersion).toBe(fontChanged.contentVersion);
+  });
+
+  test("centers the floored raster placement around the saved box center", () => {
+    const c = canvasFactory(); const adapter = createProjectionLegendAdapter({ canvasFactory: () => c });
+    const saved = { leftPct: 12.25, topPct: 25.5, widthPct: 2.05, heightPct: 5.05, fontPx: 12, rotateDeg: 17 };
+    adapter.sync({ layout: saved, language: "en", spanId: "left", visible: true, pages: [], pageIndex: 0, blocks: [] });
+    const descriptor = adapter.draw();
+    const rasterWidthPct = Math.floor(1920 * saved.widthPct / 100) / 1920 * 100;
+    const rasterHeightPct = Math.floor(1080 * saved.heightPct / 100) / 1080 * 100;
+    const paintLayout = { ...saved, leftPct: saved.leftPct + (saved.widthPct - rasterWidthPct) / 2,
+      topPct: saved.topPct + (saved.heightPct - rasterHeightPct) / 2, widthPct: rasterWidthPct, heightPct: rasterHeightPct };
+    expect(descriptor.matrix).toEqual(projectionOverlayMatrix(paintLayout));
+    expect(descriptor.matrix).not.toEqual(projectionOverlayMatrix(saved));
+    adapter.dispose();
   });
 
   test("pattern revisions stay stable across repeated syncs and change after painting", () => {

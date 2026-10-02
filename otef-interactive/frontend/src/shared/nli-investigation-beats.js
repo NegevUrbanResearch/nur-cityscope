@@ -4,7 +4,7 @@
  */
 
 import { NLI_VISUAL_TOKENS } from "./nli-investigation-theme.js";
-import { NLI_NOVA_STORY, novaBeatIndexAtPosition } from "./nli-nova-story.js";
+import { NLI_NOVA_STORY, isNovaStoryBeats, novaBeatIndexAtPosition } from "./nli-nova-story.js";
 
 export const INVESTIGATION_POLYGONS_FULL_ID = "nli.investigation_polygons";
 export const INVESTIGATION_LINES_FULL_ID = "nli.lines";
@@ -160,7 +160,7 @@ export function timelinePhaseAt(elapsedMs, beats) {
 
 export function mapClockStoryPosition(beats, clock, positionMs, options = {}) {
   const list = Array.isArray(beats) ? beats : [];
-  if (options.narrativeId === "nova") {
+  if (options.narrativeId === "nova" || isNovaStoryBeats(list)) {
     const durationMs = list.length * NLI_NOVA_STORY.beatDurationMs;
     const absolute = Math.max(0, Number(positionMs) || 0);
     const cycleOrdinal = clock?.loop && durationMs ? Math.floor(absolute / durationMs) : 0;

@@ -774,6 +774,10 @@ export const nliTimelineHostMethods = {
 
   _paintNliPlayhead(clock) {
     if (this._nliScrub) return;
+    if (typeof this._nliStaffPaintPlayhead === "function") {
+      this._nliStaffPaintPlayhead(clock);
+      return;
+    }
     const sheet = this.sheet && typeof this.sheet.querySelector === "function" ? this.sheet : null;
     const content = sheet?.querySelector(".sheet-content") || sheet;
     if (!content) return;
@@ -836,6 +840,11 @@ export const nliTimelineHostMethods = {
     }, delay);
   },
 
+  _storeNliCachedFeatures(id, features) {
+    this._nliFeatureCache[id] = features;
+    this._nliStaffCacheChanged?.(id, features);
+  },
+
   async _ensureNliFeatureCache(ids, options = {}) {
     if (this.focusedGroupId !== "nli") return false;
     const wanted = Array.isArray(ids) && ids.length ? playableMembership(ids) : NLI_PLAYABLE_IDS.slice();
@@ -866,21 +875,21 @@ export const nliTimelineHostMethods = {
               ? layerRegistry.getLayerDataUrl(id)
               : null;
           if (!url || typeof fetch !== "function") {
-            if (live()) this._nliFeatureCache[id] = null;
+            if (live()) this._storeNliCachedFeatures(id, null);
             continue;
           }
           const res = await fetch(url, controller ? { signal: controller.signal } : undefined);
           if (!live()) return false;
           if (!res.ok) {
-            if (live()) this._nliFeatureCache[id] = null;
+            if (live()) this._storeNliCachedFeatures(id, null);
             continue;
           }
           const json = await res.json();
           if (!live()) return false;
-          this._nliFeatureCache[id] = Array.isArray(json?.features) ? json.features : [];
+          this._storeNliCachedFeatures(id, Array.isArray(json?.features) ? json.features : []);
           loaded = true;
         } catch {
-          if (live()) this._nliFeatureCache[id] = null;
+          if (live()) this._storeNliCachedFeatures(id, null);
         }
       }
       if (loaded && live()) this.render();

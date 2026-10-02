@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { applyProjectionLegendLayout, mountMapLegend } from "../../frontend/src/map/map-legend.js";
+import { createProjectionLegendAdapter } from "../../frontend/src/projection/projection-legend-adapter.js";
 
 function model() {
   return { packs: [{ id: "roads", name: "Roads", layers: [{
@@ -98,7 +99,7 @@ describe("mountMapLegend", () => {
     expect(element.style.display).toBe("");
   });
 
-  it("paginates from saved left geometry and refreshes metadata without placement writes", async () => {
+  it("fits projection content from saved left geometry and refreshes metadata without placement writes", async () => {
     const { element } = setupWithDocument();
     const settings = {
       language: "he",
@@ -117,7 +118,7 @@ describe("mountMapLegend", () => {
       buildModel: async () => groupedModel(),
     });
     await mounted.refresh();
-    const narrowPageCount = mounted.getRenderSnapshot().pages.length;
+    expect(mounted.getRenderSnapshot().pages).toHaveLength(1);
     expect(element.style.width).toBe("288px");
     expect(element.style.fontSize).toBe("14px");
     settings.language = "en";
@@ -127,7 +128,7 @@ describe("mountMapLegend", () => {
     expect(element.style.width).toBe("1440px");
     expect(element.style.fontSize).toBe("20px");
     expect(mounted.getRenderSnapshot().language).toBe("en");
-    expect(mounted.getRenderSnapshot().pages.length).toBeLessThan(narrowPageCount);
+    expect(mounted.getRenderSnapshot().pages).toHaveLength(1);
     expect(setPlacement).not.toHaveBeenCalled();
     mounted.dispose();
   });
@@ -288,6 +289,10 @@ describe("mountMapLegend", () => {
     expect(current.spanId).toBe("left");
     expect(current.visible).toBe(true);
     expect(current.blocks).toHaveLength(1);
+    expect(current.pages).toEqual([current.blocks.map((block) => block.id)]);
+    expect(current.pageIndex).toBe(0);
+    expect(current.contentLayout).toMatchObject({ columns: expect.any(Number), scale: expect.any(Number), placements: expect.any(Array) });
+    expect(current.fontRevision).toBe(0);
     expect(snapshots.at(-1).blocks).toEqual(current.blocks);
     mounted.dispose();
     expect(snapshots.at(-1).visible).toBe(false);
@@ -305,6 +310,7 @@ describe("mountMapLegend", () => {
     expect(rightSnapshots.at(-1).visible).toBe(false);
     right.dispose();
 
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
     const failedSnapshots = [];
     const failed = mountMapLegend({
       element: setup().element,
@@ -312,10 +318,100 @@ describe("mountMapLegend", () => {
       buildModel: async () => { throw new Error("fixture failure"); },
       onRenderSnapshot: (snapshot) => failedSnapshots.push(snapshot),
     });
-    await failed.refresh();
+    try {
+      await failed.refresh();
+      expect(warning).toHaveBeenCalledExactlyOnceWith("[MapLegend] build failed", expect.objectContaining({ message: "fixture failure" }));
+    } finally {
+      warning.mockRestore();
+    }
     expect(failedSnapshots.at(-1).visible).toBe(false);
     expect(failedSnapshots.at(-1).blocks).toEqual([]);
     failed.dispose();
+  });
+
+  it("keeps every oversized projection item in one fitted snapshot page while GIS still paginates", async () => {
+    const packs = Array.from({ length: 5 }, (_, packIndex) => ({
+      id: `pack-${packIndex}`,
+      name: `Pack ${packIndex}`,
+      layers: [{
+        id: `layer-${packIndex}`,
+        items: Array.from({ length: 8 }, (_, itemIndex) => ({
+          id: `item-${packIndex}-${itemIndex}`,
+          label: `Legend item ${packIndex} ${itemIndex}`,
+          shape: "line",
+          stroke: "#123456",
+        })),
+      }],
+    }));
+    const oversizedModel = { packs };
+    const { element } = setupWithDocument();
+    element.clientWidth = 180;
+    element.clientHeight = 72;
+    const projection = mountMapLegend({ element, surface: "projection", buildModel: async () => oversizedModel,
+      measureText: (text) => ({ width: text.length * 7, actualBoundingBoxRight: text.length * 7, actualBoundingBoxAscent: 12, actualBoundingBoxDescent: 4 }) });
+    await projection.refresh();
+    const snapshot = projection.getRenderSnapshot();
+    expect(snapshot.blocks.flatMap((block) => block.layers.flatMap((layer) => layer.items)).map((item) => item.id)).toHaveLength(40);
+    expect(snapshot.pages).toEqual([snapshot.blocks.map((block) => block.id)]);
+    expect(snapshot.pageIndex).toBe(0);
+    expect(projection.setPage(99)).toBe(0);
+    projection.dispose();
+
+    const gis = mountMapLegend({ element: setupWithDocument().element, surface: "gis", buildModel: async () => oversizedModel });
+    await gis.refresh();
+    expect(gis.getRenderSnapshot().pages.length).toBeGreaterThan(1);
+    gis.dispose();
+  });
+
+  it("uses identical fitted multiline placements in projection DOM and canvas", async () => {
+    const { element, content } = setupWithDocument();
+    element.parentElement = { getBoundingClientRect: () => ({ width: 1920, height: 1080 }) };
+    const layout = { leftPct: 4, topPct: 5, widthPct: 2.05, heightPct: 20, fontPx: 16, columns: 1, rotateDeg: 0 };
+    const metrics = (text) => ({ width: [...text].length * 5, actualBoundingBoxLeft: 0, actualBoundingBoxRight: [...text].length * 5,
+      actualBoundingBoxAscent: 12, actualBoundingBoxDescent: 4 });
+    const mounted = mountMapLegend({ element, surface: "projection", projectionSpan: "left", dataContext: { getLegendSettings: () => ({ language: "en", projection: { left: layout } }) },
+      buildModel: async () => ({ packs: [{ id: "mixed", layers: [{ id: "mixed.labels", items: [
+        { id: "latin-first", label: "North & South Hebrew שלום", shape: "line", stroke: "#123456" },
+        { id: "hebrew-first", label: "דרך South line", shape: "point", fill: "#fff" },
+      ] }] }] }), measureText: metrics });
+    await mounted.refresh();
+    const snapshot = mounted.getRenderSnapshot();
+    const domLines = [...content().innerHTML.matchAll(/class="map-legend-label map-legend-projection-line"[^>]*>(.*?)<\/text>/g)].map((match) => match[1]);
+    const planLines = snapshot.contentLayout.placements.flatMap((placement) => placement.labelLines.map((line) => line.replaceAll("&", "&amp;")));
+    expect(domLines).toEqual(planLines);
+    expect(snapshot.contentLayout.placements.map((placement) => placement.labelDirection)).toEqual(["ltr", "rtl"]);
+    expect(content().style.width).toBe("39px");
+    expect(Number.parseFloat(content().style.left)).toBeCloseTo(0.18, 6);
+    expect(content().style.transformOrigin).toBe("top left");
+
+    const calls = [];
+    const context = new Proxy({ measureText: metrics }, { get(target, key) { return key in target ? target[key] : (...args) => calls.push([key, ...args]); },
+      set(target, key, value) { target[key] = value; return true; } });
+    const canvas = { width: 0, height: 0, getContext: () => context };
+    const adapter = createProjectionLegendAdapter({ canvasFactory: () => canvas });
+    adapter.sync(snapshot);
+    adapter.draw();
+    expect(calls.filter(([name]) => name === "fillText").map(([, line]) => line)).toEqual(snapshot.contentLayout.placements.flatMap((placement) => placement.labelLines));
+    expect(calls.some(([name, x, y]) => name === "scale" && x === snapshot.contentLayout.scale && y === snapshot.contentLayout.scale)).toBe(true);
+    adapter.dispose();
+    mounted.dispose();
+  });
+
+  it("increments fontRevision after font loading even when fitted metrics stay identical", async () => {
+    const { element } = setupWithDocument();
+    let loadingDone;
+    element.ownerDocument.fonts = { addEventListener: (_name, callback) => { loadingDone = callback; }, removeEventListener() {} };
+    vi.stubGlobal("document", element.ownerDocument);
+    const measureText = (text) => ({ width: text.length * 6, actualBoundingBoxRight: text.length * 6, actualBoundingBoxAscent: 12, actualBoundingBoxDescent: 4 });
+    const mounted = mountMapLegend({ element, surface: "projection", buildModel: async () => model(), measureText });
+    await mounted.refresh();
+    const before = mounted.getRenderSnapshot();
+    loadingDone();
+    await vi.waitFor(() => expect(mounted.getRenderSnapshot().fontRevision).toBe(1));
+    const after = mounted.getRenderSnapshot();
+    expect(after.contentLayout).toEqual(before.contentLayout);
+    mounted.dispose();
+    vi.unstubAllGlobals();
   });
 
   it("renders same-pack GIS layers in one group without layer subtitles", async () => {
@@ -437,11 +533,11 @@ describe("mountMapLegend", () => {
     vi.unstubAllGlobals();
   });
 
-  it("shares one projection pack group across consecutive layers on a page without a heading", async () => {
+  it("renders projection pack layers as planner-positioned items without headings", async () => {
     const { element } = setup();
     const mounted = mountMapLegend({ element, surface: "projection", buildModel: async () => groupedModel() });
     await mounted.refresh();
-    expect(element.innerHTML.match(/class="map-legend-group"/g)).toHaveLength(1);
+    expect(element.innerHTML.match(/class="map-legend-item map-legend-projection-item"/g)).toHaveLength(6);
     expect(element.innerHTML.match(/class="map-legend-group-title"/g)).toBeNull();
     mounted.dispose();
   });
@@ -472,23 +568,20 @@ describe("mountMapLegend", () => {
     mounted.dispose();
   });
 
-  it("uses non-breaking legend labels, projection wrap rows, and Guttman type", () => {
+  it("uses non-breaking labels, absolute projection placements, and Guttman type", () => {
     const css = readFileSync(new URL("../../frontend/css/styles.css", import.meta.url), "utf8");
     expect(css).toMatch(/\.map-legend\s*\{[^}]*font(?:-family|):\s*"Guttman Hatzvi",\s*"Noto Sans Hebrew",\s*Arial,\s*sans-serif/s);
     expect(css).toMatch(/\.map-legend-label\s*\{[^}]*overflow-wrap:\s*normal[^}]*word-break:\s*keep-all/s);
-    expect(css).toMatch(/\.map-legend-projection \.map-legend-content\s*\{[^}]*display:\s*flex/s);
-    expect(css).toMatch(/\.map-legend-projection \.map-legend-layers\s*\{[^}]*display:\s*flex[^}]*flex-flow:\s*row wrap/s);
-    expect(css).toMatch(/\.map-legend-projection \.map-legend-layer\s*\{[^}]*display:\s*contents/s);
-    expect(css).toMatch(/\.map-legend-projection \.map-legend-item\s*\{[^}]*flex:\s*0 0 auto/s);
-    expect(css).toMatch(/\.map-legend-projection \.map-legend-group \+ \.map-legend-group\s*\{[^}]*border-inline-start:/s);
-    expect(css).not.toMatch(/\.map-legend-projection \.map-legend-layers\s*\{[^}]*grid-template-columns:\s*repeat\(2,/s);
+    expect(css).toMatch(/\.map-legend-projection \.map-legend-content\s*\{[^}]*position:\s*absolute[^}]*padding:\s*0/s);
+    expect(css).toMatch(/\.map-legend-projection \.map-legend-item\s*\{[^}]*display:\s*block/s);
+    expect(css).toMatch(/\.map-legend-gis \.map-legend-layers\s*\{[^}]*display:\s*flex[^}]*flex-flow:\s*row wrap/s);
     expect(css).toMatch(/\.map-legend-symbol--line\s*\{[^}]*box-shadow:\s*0 0 0 1px color-mix\(\s*in srgb,\s*var\(--legend-halo,\s*transparent\) 35%,\s*transparent\s*\)/s);
     expect(css).toMatch(/\.map-legend-symbol--alarm-shockwave::after\s*\{[^}]*border:\s*1(?:\.6)?px solid color-mix\(\s*in srgb,\s*var\(--legend-alarm-shockwave,\s*transparent\) 40%,\s*transparent\s*\)/s);
     expect(css).toMatch(/\.map-legend-symbol::before\s*\{[^}]*border-radius:\s*inherit/s);
     expect(css).toMatch(/\.map-legend-symbol--point\s*\{[^}]*border-radius:\s*50%/s);
   });
 
-  it("renders only a quiet page count for multi-page projection legends", async () => {
+  it("renders all projection content without a page count or paging timer", async () => {
     vi.useFakeTimers();
     const { element, pager } = setupWithDocument();
     element.clientWidth = 240;
@@ -498,19 +591,18 @@ describe("mountMapLegend", () => {
       surface: "projection",
       buildModel: async () => groupedModel(),
     });
+    const interval = vi.spyOn(globalThis, "setInterval");
     await mounted.refresh();
-    expect(pager().innerHTML).toMatch(/1 \/ [2-9]/);
-    expect(pager().innerHTML).not.toContain("More in the legend");
-    expect(pager().innerHTML).not.toContain("does not fit");
-    expect(pager().innerHTML).not.toContain("data-legend-prev");
-    expect(pager().innerHTML).not.toContain("data-legend-next");
+    expect(mounted.getRenderSnapshot().pages).toHaveLength(1);
+    expect(pager().innerHTML).toBe("");
+    expect(interval).not.toHaveBeenCalled();
+    interval.mockRestore();
     mounted.dispose();
     vi.useRealTimers();
   });
 
-  it("isolates page counts from RTL ordering", async () => {
-    vi.useFakeTimers();
-    const { element, pager } = setupWithDocument();
+  it("keeps Hebrew placement direction independent of the one-page snapshot", async () => {
+    const { element } = setupWithDocument();
     element.clientWidth = 240;
     element.clientHeight = 80;
     const mounted = mountMapLegend({
@@ -520,12 +612,12 @@ describe("mountMapLegend", () => {
       buildModel: async () => groupedModel(),
     });
     await mounted.refresh();
-    expect(pager().innerHTML).toMatch(/<span dir="ltr" data-legend-count>1 \/ [2-9]<\/span>/);
+    expect(element.dir).toBe("rtl");
+    expect(mounted.getRenderSnapshot().pages).toHaveLength(1);
     mounted.dispose();
-    vi.useRealTimers();
   });
 
-  it("uses the active projection span dwell before the full-span fallback", async () => {
+  it("does not schedule projection paging after fitting a one-page snapshot", async () => {
     vi.useFakeTimers();
     const { element, content } = setupWithDocument();
     element.parentElement = { getBoundingClientRect: () => ({ width: 500, height: 571.428571 }) };
@@ -548,8 +640,7 @@ describe("mountMapLegend", () => {
       buildModel: async () => groupedModel(),
     });
     await mounted.refresh();
-    vi.advanceTimersByTime(4000);
-    expect(interval).toHaveBeenCalledWith(expect.any(Function), 4000);
+    expect(interval).not.toHaveBeenCalled();
     interval.mockRestore();
     mounted.dispose();
     vi.useRealTimers();
@@ -677,23 +768,19 @@ describe("mountMapLegend", () => {
     vi.useRealTimers();
   });
 
-  it("measures projection content with the live panel font", async () => {
-    const { element, measurementStyles } = setupWithDocument();
-    vi.stubGlobal("getComputedStyle", () => ({
-      fontSize: "12px",
-      fontFamily: "Projection Sans",
-    }));
+  it("measures projection labels through the injected canonical metrics callback", async () => {
+    const { element } = setupWithDocument();
+    const measureText = vi.fn((text) => ({ width: text.length * 7, actualBoundingBoxRight: text.length * 7, actualBoundingBoxAscent: 12, actualBoundingBoxDescent: 4 }));
     const mounted = mountMapLegend({
       element,
       surface: "projection",
       buildModel: async () => model(),
+      measureText,
     });
     await mounted.refresh();
-    expect(measurementStyles).not.toHaveLength(0);
-    expect(measurementStyles.every((style) => style.fontSize === "12px")).toBe(true);
-    expect(measurementStyles.every((style) => style.fontFamily === "Projection Sans")).toBe(true);
+    expect(measureText).toHaveBeenCalledWith("A very long label that wraps");
+    expect(mounted.getRenderSnapshot().contentLayout.effectiveFontPx).toBeLessThanOrEqual(22);
     mounted.dispose();
-    vi.unstubAllGlobals();
   });
 
   it("omits the pack heading for NLI on GIS and projection", async () => {
@@ -757,5 +844,179 @@ describe("mountMapLegend", () => {
       expect(element.innerHTML).not.toContain(">October 7th<");
       mounted.dispose();
     }
+  });
+});
+
+// Parse the emitted DOM without a browser: inspect coordinates and CSS paint bounds,
+// rather than comparing serialized text or merely observing a canvas scale call.
+describe("projection legend paint geometry", () => {
+  const decode = (value) => value.replaceAll("&quot;", '"').replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&");
+  const parse = (html) => ({
+    querySelector(selector) { return this.querySelectorAll(selector)[0] || null; },
+    querySelectorAll(selector) {
+      return [...html.matchAll(/<(div|span|svg|text)\b([^>]*)>/g)].flatMap((match) => {
+        const attrs = Object.fromEntries([...match[2].matchAll(/([\w-]+)="([^"]*)"/g)].map((attr) => [attr[1], decode(attr[2])]));
+        const matches = selector === "svg text" ? match[1] === "text"
+          : selector.startsWith(".") ? (attrs.class || "").split(" ").includes(selector.slice(1))
+          : attrs["data-legend-item-id"] === selector.match(/data-legend-item-id="([^"]*)"/)?.[1];
+        if (!matches) return [];
+        const start = match.index + match[0].length;
+        const inner = html.slice(start, html.indexOf(`</${match[1]}>`, start));
+        const style = Object.fromEntries((attrs.style || "").split(";").filter(Boolean).map((entry) => {
+          const colon = entry.indexOf(":");
+          return [entry.startsWith("--") ? entry.slice(0, colon) : entry.slice(0, colon).replace(/-([a-z])/g, (_match, char) => char.toUpperCase()), entry.slice(colon + 1)];
+        }));
+        style.cssText = attrs.style || "";
+        return [{ ...parse(inner), style, textContent: decode(inner), getAttribute: (key) => attrs[key] ?? null }];
+      });
+    },
+  });
+  const number = (node, key) => Number.parseFloat(node.style[key]);
+  const metrics = (text) => ({ width: [...text].length * 6, actualBoundingBoxLeft: 2, actualBoundingBoxRight: [...text].length * 6 + 3,
+    actualBoundingBoxAscent: text.includes("g") ? 7 : 13, actualBoundingBoxDescent: text.includes("g") ? 6 : 1 });
+  const fixture = (items) => ({ packs: [{ id: "geometry", layers: [{ id: "geometry.layer", items }] }] });
+  const mount = async (items, layout = {}) => {
+    const setup = setupWithDocument();
+    const legend = mountMapLegend({ element: setup.element, surface: "projection", projectionSpan: "left", measureText: metrics,
+      dataContext: { getLegendSettings: () => ({ language: "en", projection: { left: { widthPct: 18, heightPct: 20, fontPx: 24, columns: 1, ...layout } } }) },
+      buildModel: async () => fixture(items) });
+    await legend.refresh();
+    return { ...setup, legend, snapshot: legend.getRenderSnapshot(), dom: parse(setup.content().innerHTML) };
+  };
+
+  it("keeps every GIS component in normal flow", async () => {
+    const { element } = setup();
+    const legend = mountMapLegend({ element, buildModel: async () => model() });
+    await legend.refresh();
+    const symbols = [...parse(element.innerHTML).querySelectorAll(".map-legend-symbol")];
+    expect(symbols).toHaveLength(3);
+    expect(symbols.map((node) => node.style.position || "")).toEqual(["", "", ""]);
+    expect(symbols.every((node) => !/NaN|undefined/.test(node.style.cssText))).toBe(true);
+    legend.dispose();
+  });
+
+  it("allows unscaled final items to reach the outer fitted clip", async () => {
+    const items = Array.from({ length: 40 }, (_, i) => ({ id: `item-${i}`, label: `Legend item ${i}`, shape: "line", stroke: "#fff" }));
+    const { element, content, legend, snapshot, dom } = await mount(items, { widthPct: 9.375, heightPct: 6.667 });
+    const plan = snapshot.contentLayout;
+    const last = dom.querySelector('[data-legend-item-id="item-39"]');
+    expect(plan.scale).toBeLessThan(1);
+    expect(number(last, "top")).toBeGreaterThan(number(content(), "height"));
+    expect(content().style.overflow).toBe("visible");
+    expect(element.style.overflow).toBe("hidden");
+    expect((number(last, "top") + number(last, "height")) * plan.scale).toBeLessThanOrEqual(number(content(), "height"));
+    expect(plan.paintBounds.y + plan.paintBounds.height).toBeLessThanOrEqual(number(content(), "height"));
+    legend.dispose();
+  });
+
+  it("paints multiline mixed-script labels at the planner alphabetic baselines", async () => {
+    const { legend, snapshot, dom } = await mount([
+      { id: "latin", label: "North gggg South Hebrew שלום", shape: "line", stroke: "#fff" },
+      { id: "hebrew", label: "דרך gggg South line", shape: "point", fill: "#fff" },
+    ], { widthPct: 5, heightPct: 35 });
+    const calls = [];
+    const context = new Proxy({}, { get: (target, key) => key in target ? target[key] : (...args) => calls.push([key, ...args]) });
+    const adapter = createProjectionLegendAdapter({ canvasFactory: () => ({ getContext: () => context }) });
+    adapter.sync(snapshot); adapter.draw();
+    const painted = calls.filter(([name]) => name === "fillText");
+    let offset = 0;
+    for (const placement of snapshot.contentLayout.placements) {
+      const item = dom.querySelector(`[data-legend-item-id="${placement.itemId}"]`);
+      const lines = [...item.querySelectorAll("svg text")];
+      expect(item.querySelector(".map-legend-projection-labels").style.overflow).toBe("visible");
+      expect(placement.labelLines.length).toBeGreaterThan(1);
+      expect(lines).toHaveLength(placement.labelLines.length);
+      lines.forEach((line, index) => {
+        const x = number(item, "left") + Number(line.getAttribute("x"));
+        const y = number(item, "top") + Number(line.getAttribute("y"));
+        expect(line.textContent).toBe(placement.labelLines[index]);
+        expect(line.getAttribute("dominant-baseline")).toBe("alphabetic");
+        expect(line.getAttribute("direction")).toBe(placement.labelDirection);
+        expect(line.getAttribute("text-anchor")).toBe("start");
+        const physicalAlign = line.getAttribute("direction") === "rtl" ? "right" : "left";
+        expect(physicalAlign).toBe(placement.labelGeometry.align);
+        expect(line.style.letterSpacing).toBe("0px");
+        expect([line.textContent, x, y]).toEqual(painted[offset++].slice(1));
+        expect(y).toBe(placement.labelGeometry.y + index * placement.labelGeometry.lineHeight);
+      });
+    }
+    adapter.dispose(); legend.dispose();
+  });
+
+  it("matches planner and canvas dimensions for ordinary symbols and a stroked decorated diamond", async () => {
+    const parts = [
+      { shape: "diamond", fill: "#abc", stroke: "#fff", strokeWidth: 4, alarmShockwave: true, alarmShockwaveColor: "#f00" },
+      { shape: "point", fill: "#abc", stroke: "#fff", strokeWidth: 3 },
+      { shape: "square", fill: "#abc", stroke: "#fff", strokeWidth: 2 },
+      { shape: "polygon", fill: "#abc", stroke: "#fff", strokeWidth: 0.5 },
+      { shape: "line", stroke: "#000", carrier: "#f00", strokeWidth: 3, dash: [4, 2] },
+    ];
+    const { legend, snapshot, dom } = await mount(parts.map((part, i) => ({ id: `shape-${i}`, label: "A", ...part })), { widthPct: 40, heightPct: 40 });
+    const calls = [];
+    const context = new Proxy({}, { get: (target, key) => key in target ? target[key] : (...args) => calls.push([key, ...args]) });
+    const adapter = createProjectionLegendAdapter({ canvasFactory: () => ({ getContext: () => context }) });
+    adapter.sync(snapshot); adapter.draw();
+    snapshot.contentLayout.placements.forEach((placement, index) => {
+      const component = placement.symbolGeometry.components[0];
+      const item = dom.querySelector(`[data-legend-item-id="${placement.itemId}"]`);
+      const symbol = item.querySelector(".map-legend-symbol");
+      const diamond = parts[index].shape === "diamond";
+      const outerWidth = number(symbol, "width") * (diamond ? Math.SQRT2 : 1);
+      const outerHeight = number(symbol, "height") * (diamond ? Math.SQRT2 : 1);
+      const stroke = parts[index].strokeWidth;
+      expect(outerWidth).toBeCloseTo(component.width + (diamond ? Math.SQRT2 * stroke : parts[index].shape === "line" ? 0 : stroke));
+      expect(outerHeight).toBeCloseTo(component.height + (diamond ? Math.SQRT2 * stroke : parts[index].shape === "line" ? 2 : stroke));
+      expect(number(item, "left") + number(symbol, "left") + number(symbol, "width") / 2).toBeCloseTo(component.x);
+      expect(number(item, "top") + number(symbol, "top") + number(symbol, "height") / 2).toBeCloseTo(component.y);
+      if (diamond) {
+        expect(symbol.style.borderRadius).toBe("0px");
+        const ring = item.querySelector(".map-legend-projection-shockwave");
+        expect(ring).not.toBeNull();
+        const radius = Math.max(component.width, component.height) / 2 + snapshot.layout.fontPx * 0.28;
+        expect(number(ring, "width")).toBeCloseTo(2 * radius + 1.6);
+        expect(number(ring, "height")).toBeCloseTo(2 * radius + 1.6);
+        expect(calls.some(([name, x, y, r]) => name === "arc" && x === component.x && y === component.y && r === radius)).toBe(true);
+        expect(outerWidth / 2).toBeLessThanOrEqual(component.width / 2 + component.extentX);
+        expect(number(ring, "width") / 2).toBeCloseTo(component.width / 2 + component.extentX);
+        expect(calls).toContainEqual(["moveTo", component.x, component.y - component.height / 2]);
+        expect(calls).toContainEqual(["lineTo", component.x + component.width / 2, component.y]);
+      } else if (parts[index].shape === "point") {
+        expect(calls).toContainEqual(["arc", component.x, component.y, component.width / 2, 0, Math.PI * 2]);
+      } else if (parts[index].shape === "line") {
+        const overlay = item.querySelector(".map-legend-projection-line-stroke");
+        expect(overlay).not.toBeNull();
+        expect(number(overlay, "height")).toBe(component.height);
+        expect(number(overlay, "top") + number(overlay, "height") / 2).toBeCloseTo(number(symbol, "height") / 2);
+        expect(symbol.style["--legend-fill"]).toBe(parts[index].carrier);
+      } else {
+        expect(calls).toContainEqual(["rect", component.x - component.width / 2, component.y - component.height / 2, component.width, component.height]);
+      }
+    });
+    adapter.dispose(); legend.dispose();
+  });
+  it.each([
+    ["default", undefined, 3],
+    ["fractional", 0.5, 2.5],
+  ])("matches the canvas carrier and overlay widths for a %s narrow stroke", async (_name, strokeWidth, carrierHeight) => {
+    const { legend, snapshot, dom } = await mount([{ id: "narrow", label: "A", shape: "line", stroke: "#000", carrier: "#f00", strokeWidth, dash: [4, 2] }]);
+    const strokes = [];
+    const context = new Proxy({}, { get: (target, key) => {
+      if (key === "stroke") return () => strokes.push(target.lineWidth);
+      return key in target ? target[key] : () => {};
+    } });
+    const adapter = createProjectionLegendAdapter({ canvasFactory: () => ({ getContext: () => context }) });
+    adapter.sync(snapshot); adapter.draw();
+    expect(strokes).toEqual([carrierHeight, 2]);
+    const placement = snapshot.contentLayout.placements[0];
+    const component = placement.symbolGeometry.components[0];
+    const item = dom.querySelector('[data-legend-item-id="narrow"]');
+    const symbol = item.querySelector(".map-legend-symbol");
+    const overlay = item.querySelector(".map-legend-projection-line-stroke");
+    expect(number(symbol, "height")).toBe(strokes[0]);
+    expect(number(overlay, "height")).toBe(strokes[1]);
+    expect(number(overlay, "top") + number(overlay, "height") / 2).toBe(number(symbol, "height") / 2);
+    expect(number(item, "top") + number(symbol, "top") + number(symbol, "height") / 2).toBe(component.y);
+    expect(strokes[0] / 2).toBeLessThanOrEqual(component.height / 2 + component.extentY);
+    adapter.dispose(); legend.dispose();
   });
 });

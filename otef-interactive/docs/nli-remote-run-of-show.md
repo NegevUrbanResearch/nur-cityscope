@@ -69,9 +69,9 @@ on this step. A failed open or close can be retried without leaving the step.
 | Notes | GIS screen | Projection / model | Order |
 | :--- | :--- | :--- | :---: |
 |  | Fit the reviewed Nova extent in black-and-white aerial imagery. Before play, show the 08:03 exhibit clock and preview beat 1. | Dim the model and focus on the Nova site at 08:03. Dim the other settlements. Only Nova remains prominent, with a square of light and a halo around it. Show the open-spaces layer in the background. | 1 |
-| The GIS map stays framed on the Nova site during the beats. | Remove the open-spaces layer. Play five authored beats in order, four seconds each (20 seconds total). Show only the active beat's time, title, and presenter copy; animate its polygons as they appear. | Show the Nova polygons in chronological order. The five scrubber marks run from 0% to 100%. Play begins at beat 1; natural completion holds beat 5 at 100%. Back/forward and scrub selection clamp at the first and last beat. | 2 |
-| The first part describes what happened collectively. Now move to Mor Levy's individual story. |  | Show the escape routes taken by people from Nova. Settlements light up when the escape routes intersect them. | 3 |
-| Begin Mor's story. The guide describes her background and the route she took. Open the presentation from the staff remote. | Cover the GIS map with slides 9–11. | Show Mor's route on the model: Nova, one of the lemon groves, and then the Midburn staging site. | 4 |
+| The GIS map stays framed on the Nova site during the beats. | Remove the open-spaces layer. Play five authored beats in order, eight seconds each (40 seconds total). Show only the active beat's time, title, and presenter copy; animate its polygons as they appear. | Show the Nova polygons in chronological order. The five scrubber marks run from 0% to 100%. Play begins at beat 1; natural completion holds beat 5 at 100%. Back/forward and scrub selection clamp at the first and last beat. | 2 |
+| The first part describes what happened collectively. Now move to Mor Levy's individual story. | Show the escape routes taken by people from Nova. Settlements light up when the escape routes intersect them. The Nova timeline stays ended. | Show the escape routes taken by people from Nova. Settlements light up when the escape routes intersect them. | 3 |
+| Begin Mor's story. The guide describes her background and the route she took. Slides 9–11 open in GIS after the cue is ready; Close stays on this step. | Cover the GIS map with slides 9–11. | Show Mor's route on the model: Nova, one of the lemon groves, and then the Midburn staging site. | 4 |
 | Memorial slides open automatically after the scene is sent. Close stays on this step. Do not replay the escape routes. Settled intersections stay on the completed route crossings. A failed open or close can be retried on this step. | Cover the GIS map with slides 12–16: images from the Nova site archive with memorial points. | Dim the model except for the settlements and settlement names intersected by Nova escape routes. Show points for people murdered at Nova only, as well as people kidnapped and murdered or kidnapped and returned alive. Completed Nova compounds remain visible even though this step stores no playable timeline rows. | 5 |
 
 [Return to the sequence](#projection-sequence-and-screen-content)
@@ -134,7 +134,7 @@ step.
   sequence is understood to refer to the Nova polygons. The implemented Nova
   beat membership is explicit in the shared manifest.
 - “Beats” means timeline events. Nova uses the following authored sequence;
-  each beat runs for four seconds, independently of its event-time label:
+  each beat runs for eight seconds, independently of its event-time label:
 
   | Beat | Event time | Title |
   | :---: | :--- | :--- |

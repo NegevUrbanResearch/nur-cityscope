@@ -56,13 +56,35 @@ def validate_names_wall_v5(value, path='namesWall', errors=None):
 
 def validate_names_wall_v6(value, path='namesWall', errors=None):
     if errors is None: errors = {}
-    if not _keys(value, ['activeMode', 'innerEdgeInsetPx', 'profiles', 'rotateDeg'], path, errors):
+    if not isinstance(value, dict):
+        errors[path] = 'must be an object'
         return errors
+    required = ['activeMode', 'innerEdgeInsetPx', 'profiles', 'rotateDeg']
+    allowed = required + ['strokeWidthPx']
+    for key in required:
+        if key not in value: errors[f'{path}.{key}'] = 'is required'
+    for key in value:
+        if key not in allowed: errors[f'{path}.{key}'] = 'unknown field'
     angle = value.get('rotateDeg')
     if isinstance(angle, bool) or not isinstance(angle, (int, float)) or (isinstance(angle, float) and not math.isfinite(angle)) or not -180 <= angle <= 180:
         errors[f'{path}.rotateDeg'] = 'must be a finite number between -180 and 180'
-    rest = {key: item for key, item in value.items() if key != 'rotateDeg'} if isinstance(value, dict) else value
+    rest = {key: item for key, item in value.items() if key not in ('rotateDeg', 'strokeWidthPx')}
+    profiles = rest.get('profiles')
+    if isinstance(profiles, dict):
+        normalized = dict(profiles)
+        for mode in ('wall', 'model'):
+            branch = normalized.get(mode)
+            if isinstance(branch, dict):
+                width = branch.get('strokeWidthPx')
+                if 'strokeWidthPx' in branch and (isinstance(width, bool) or not isinstance(width, int) or not 1 <= width <= 6):
+                    errors[f'{path}.profiles.{mode}.strokeWidthPx'] = 'must be an integer between 1 and 6'
+                branch = {key: item for key, item in branch.items() if key != 'strokeWidthPx'}
+            normalized[mode] = branch
+        rest['profiles'] = normalized
     validate_names_wall_v5(rest, path, errors)
+    width = value.get('strokeWidthPx')
+    if 'strokeWidthPx' in value and (isinstance(width, bool) or not isinstance(width, int) or not 1 <= width <= 6):
+        errors[f'{path}.strokeWidthPx'] = 'must be an integer between 1 and 6'
     return errors
 
 
@@ -120,6 +142,9 @@ def _number(value, path, low, high, errors):
         errors[path] = f'must be between {low} and {high}'
 
 def validate_projection_config(value):
+    if isinstance(value, dict) and value.get('schemaVersion') == 7 and not isinstance(value.get('schemaVersion'), bool):
+        from .projection_warp_schema import validate_projection_config_v7
+        return validate_projection_config_v7(value)
     if isinstance(value, dict) and value.get('schemaVersion') == 6 and not isinstance(value.get('schemaVersion'), bool):
         from .projection_warp_schema import validate_projection_config_v6
         return validate_projection_config_v6(value)
@@ -162,13 +187,27 @@ def validate_projection_config(value):
     return errors
 
 
-def _original_config(config, historical, version_six):
+def _original_config(config, historical, version_six, version_seven=None):
+    if isinstance(config, dict) and config.get('schemaVersion') == 7 and not isinstance(config.get('schemaVersion'), bool):
+        from .projection_warp_schema import migrate_projection_config_to_v7
+        try:
+            normalized = migrate_projection_config_to_v7(config)
+        except (TypeError, ValueError):
+            return False
+        stripped = {**normalized, 'namesWall': {key: value for key, value in normalized['namesWall'].items() if key != 'rotateDeg'}}
+        canonical = {**version_seven, 'namesWall': {key: value for key, value in version_seven['namesWall'].items() if key != 'rotateDeg'}}
+        return stripped == canonical
     if isinstance(config, dict) and config.get('schemaVersion') == 6 and not isinstance(config.get('schemaVersion'), bool):
         names = config.get('namesWall')
         angle = names.get('rotateDeg') if isinstance(names, dict) else None
         if isinstance(angle, bool) or not isinstance(angle, (int, float)) or (isinstance(angle, float) and not math.isfinite(angle)) or not -180 <= angle <= 180:
             return False
-        stripped = {**config, 'namesWall': {key: value for key, value in names.items() if key != 'rotateDeg'}}
+        from .projection_warp_schema import migrate_projection_config_to_v6
+        try:
+            normalized = migrate_projection_config_to_v6(config, angle)
+        except (TypeError, ValueError):
+            return False
+        stripped = {**normalized, 'namesWall': {key: value for key, value in normalized['namesWall'].items() if key != 'rotateDeg'}}
         canonical = {**version_six, 'namesWall': {key: value for key, value in version_six['namesWall'].items() if key != 'rotateDeg'}}
         return stripped == canonical
     return config in historical
@@ -198,6 +237,8 @@ def validate_projection_snapshot(value):
     previous = migrate_projection_config_to_v4(upgraded)
     current = migrate_projection_config_to_v5(upgraded)
     version_six = migrate_projection_config_to_v6(original, 35)
+    from .projection_warp_schema import migrate_projection_config_to_v7
+    version_seven = migrate_projection_config_to_v7(version_six, 35)
     ids = set()
     original_count = 0
     uuid_pattern = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$', re.I)
@@ -217,7 +258,7 @@ def validate_projection_snapshot(value):
         if isinstance(preset_id, str): ids.add(preset_id)
         if preset_id == 'original':
             original_count += 1
-            if read_only is not True or name != 'Original calibration' or not _original_config(preset.get('config'), (original, upgraded, historical, previous, current), version_six):
+            if read_only is not True or name != 'Original calibration' or not _original_config(preset.get('config'), (original, upgraded, historical, previous, current), version_six, version_seven):
                 errors[f'{path}'] = 'must be the immutable Original calibration preset'
         elif preset_id == TD_MIGRATION_PRESET_ID:
             if read_only is not True or name != TD_MIGRATION_PRESET_NAME:

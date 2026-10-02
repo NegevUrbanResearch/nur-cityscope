@@ -1,9 +1,12 @@
 import { expect, test, vi } from "vitest";
+import { readFileSync } from "node:fs";
 import { DEFAULT_PROJECTION_CONFIG } from "../../frontend/src/shared/projection-config-schema.js";
-import { createIdentityProjectionMesh } from "../../frontend/src/shared/projection-warp-geometry.js";
+import { createIdentityProjectionMesh, evaluateWarpPoint } from "../../frontend/src/shared/projection-warp-geometry.js";
 import { createWarpEditor, gridSelection, keystoneSelection } from "../../frontend/src/projection-config/warp-editor.js";
+import { variableTdMesh } from "../fixtures/td-variable-grid.js";
 
 const clone = (value) => structuredClone(value);
+const parityMesh = JSON.parse(readFileSync(new URL("../../../nur-io/django_api/backend/tests/fixtures/projection-grid-parity.json", import.meta.url), "utf8")).mesh;
 
 test("keystone and grid nudges use output pixels, signs, and group selection", () => {
   const changes = [];
@@ -73,6 +76,21 @@ test("a group nudge retains selection through undo and redo", () => {
   expect(editor.getConfig().outputs.left.warp.grid.offsets.slice(0, 7).every(([x]) => x === 0)).toBe(true);
   expect(editor.redo()).toBe(true);
   expect(editor.getConfig().outputs.left.warp.grid.offsets.slice(0, 7).every(([x]) => x === 1 / 1920)).toBe(true);
+});
+
+test("keystone and grid edits share the current projector history across mode switches", () => {
+  const editor = createWarpEditor({ config: clone(DEFAULT_PROJECTION_CONFIG), output: "left" });
+  editor.nudge("right");
+  const keystoneMoved = editor.getConfig().outputs.left.warp.keystone.corners[0];
+  editor.select(gridSelection("point", 0));
+  editor.nudge("down");
+  const gridMoved = editor.getConfig().outputs.left.warp.grid.offsets[0];
+  editor.select(keystoneSelection("corner", 0));
+  expect(editor.undo()).toBe(true);
+  expect(editor.getConfig().outputs.left.warp.grid.offsets[0]).not.toEqual(gridMoved);
+  expect(editor.getConfig().outputs.left.warp.keystone.corners[0]).toEqual(keystoneMoved);
+  expect(editor.undo()).toBe(true);
+  expect(editor.getConfig().outputs.left.warp.keystone.corners[0]).toEqual([0, 0]);
 });
 
 test("a zero-distance or repeated move does not publish a duplicate drag preview", () => {
@@ -157,4 +175,313 @@ test("invalid candidate stays local and bounded undo/redo restores edits", () =>
   expect(editor.undo()).toBe(true);
   expect(editor.redo()).toBe(true);
   expect(editor.getState().historyDepth).toBeLessThanOrEqual(2);
+});
+
+test("nonuniform TD grid handles match explicit-side evaluation at every source knot", () => {
+  const config = clone(DEFAULT_PROJECTION_CONFIG);
+  const warp = config.outputs.left.warp;
+  warp.baseline = { type: "tdMesh", assetId: "fixture", sha256: "a".repeat(64), width: 1920, height: 1080, origin: "top-left" };
+  warp.grid = {
+    columns: 3, rows: 3, columnPositions: [0, 0.25, 1], rowPositions: [0, 0.6, 1],
+    offsets: Array.from({ length: 9 }, (_, index) => [index / 100, -index / 200]),
+  };
+  const editor = createWarpEditor({ config, output: "left", baselineMesh: parityMesh });
+  editor.setMode("grid");
+  const handles = editor.getControlPoints();
+  expect(handles).toHaveLength(9);
+  for (let row = 0; row < 3; row += 1) for (let column = 0; column < 3; column += 1) {
+    const index = row * 3 + column;
+    const s = warp.grid.columnPositions[column]; const t = warp.grid.rowPositions[row];
+    const [x, y] = evaluateWarpPoint(0, 0, warp, s, t, { side: "left", schemaVersion: 7, mesh: parityMesh });
+    expect(handles[index]).toMatchObject({ s, t });
+    expect(handles[index].x).toBeCloseTo(x, 12);
+    expect(handles[index].y).toBeCloseTo(y, 12);
+  }
+});
+
+test.each(["uniform", "custom"])("changed TD captures expose editable %s browser knots", (layout) => {
+  const config = clone(DEFAULT_PROJECTION_CONFIG);
+  const warp = config.outputs.left.warp;
+  warp.baseline = { type: "tdMesh", assetId: "changed", sha256: "a".repeat(64), width: 1920, height: 1080, origin: "top-left" };
+  if (layout === "custom") {
+    warp.grid = { columns: 3, rows: 3, columnPositions: [0, 0.4, 1], rowPositions: [0, 0.6, 1], offsets: Array.from({ length: 9 }, () => [0, 0]) };
+  } else warp.grid.offsets = warp.grid.offsets.map(() => [0, 0]);
+  const editor = createWarpEditor({ config, output: "left", baselineMesh: variableTdMesh("left") });
+  editor.setMode("grid");
+  const count = warp.grid.columns * warp.grid.rows;
+  const start = editor.getControlPoints();
+  expect(start).toHaveLength(count);
+  for (const t of warp.grid.rowPositions) for (const s of warp.grid.columnPositions) {
+    expect(start.some((point) => Math.abs(point.s - s) <= 1e-12 && Math.abs(point.t - t) <= 1e-12)).toBe(true);
+  }
+
+  editor.select(gridSelection("point", Math.floor(count / 2)));
+  expect(editor.setPosition("x", 960)).toBe(true);
+  expect(editor.getControlPoints()[Math.floor(count / 2)].x).toBeCloseTo(0.5, 10);
+  expect(editor.setPosition("y", 540)).toBe(true);
+  expect(editor.getControlPoints()[Math.floor(count / 2)].y).toBeCloseTo(0.5, 10);
+  expect(editor.undo()).toBe(true);
+  expect(editor.redo()).toBe(true);
+
+  editor.select(gridSelection("row", 1));
+  expect(editor.setPosition("x", 960)).toBe(true);
+  const rowStart = editor.getControlPoints().slice(warp.grid.columns, 2 * warp.grid.columns);
+  expect(rowStart.reduce((sum, point) => sum + point.x, 0) / rowStart.length).toBeCloseTo(0.5, 10);
+  editor.setStep("fine");
+  expect(editor.nudge("right")).toBe(true);
+  expect(editor.nudge("right", { coarse: true })).toBe(true);
+  const rowMoved = editor.getControlPoints().slice(warp.grid.columns, 2 * warp.grid.columns);
+  expect(rowMoved.reduce((sum, point) => sum + point.x, 0) / rowMoved.length).toBeCloseTo(0.5 + 1.25 / 1920, 9);
+
+  editor.select(gridSelection("point", Math.floor(count / 2)));
+  const beforeDrag = editor.getControlPoints()[Math.floor(count / 2)];
+  expect(editor.pointerStart({ x: 100, y: 100 })).toBe(true);
+  expect(editor.pointerMove({ x: 101, y: 101 })).toBe(true);
+  expect(editor.pointerEnd()).toBe(true);
+  const afterDrag = editor.getControlPoints()[Math.floor(count / 2)];
+  expect(afterDrag.x - beforeDrag.x).toBeCloseTo(1 / 1920, 9);
+  expect(afterDrag.y - beforeDrag.y).toBeCloseTo(1 / 1080, 9);
+  expect(editor.undo()).toBe(true);
+  expect(editor.redo()).toBe(true);
+
+  expect(editor.resetResiduals()).toBe(true);
+  expect(editor.getConfig().outputs.left.warp.grid.offsets.every(([x, y]) => x === 0 && y === 0)).toBe(true);
+  expect(editor.getControlPoints()).toEqual(start);
+});
+
+test.each([["left", 49], ["right", 56]])("changed %s TD capture exposes all %i default browser handles", (side, count) => {
+  const config = clone(DEFAULT_PROJECTION_CONFIG);
+  const warp = config.outputs[side].warp;
+  warp.baseline = { type: "tdMesh", assetId: "changed", sha256: "a".repeat(64), width: 1920, height: 1080, origin: "top-left" };
+  warp.grid.offsets = warp.grid.offsets.map(() => [0, 0]);
+  const editor = createWarpEditor({ config, output: side, baselineMesh: variableTdMesh(side) });
+  editor.setMode("grid");
+  expect(editor.getControlPoints()).toHaveLength(count);
+});
+
+test.each(["left", "right"])("dense accepted %s capture remains responsive to grid edits", (side) => {
+  const baselineMesh = JSON.parse(readFileSync(new URL(`../../public/projection-calibration/td-baselines/${side}.json`, import.meta.url), "utf8"));
+  const config = clone(DEFAULT_PROJECTION_CONFIG);
+  const warp = config.outputs[side].warp;
+  warp.baseline = { type: "tdMesh", assetId: `accepted-${side}`, sha256: "a".repeat(64), width: 1920, height: 1080, origin: "top-left" };
+  warp.grid.offsets = warp.grid.offsets.map(() => [0, 0]);
+  const editor = createWarpEditor({ config, output: side, baselineMesh });
+  editor.setMode("grid");
+  const count = warp.grid.columns * warp.grid.rows;
+  expect(editor.getControlPoints()).toHaveLength(count);
+  const index = Math.floor(count / 2);
+  editor.select(gridSelection("point", index));
+  const beforeNudge = editor.getControlPoints()[index];
+  expect(editor.nudge("right", { coarse: true })).toBe(true);
+  const afterNudge = editor.getControlPoints()[index];
+  expect(afterNudge.x - beforeNudge.x).toBeCloseTo(1 / 1920, 9);
+  expect(editor.undo()).toBe(true);
+  expect(editor.redo()).toBe(true);
+
+  const beforeDrag = editor.getControlPoints()[index];
+  expect(editor.pointerStart({ x: 100, y: 100 })).toBe(true);
+  expect(editor.pointerMove({ x: 101, y: 100.25 })).toBe(true);
+  expect(editor.pointerEnd()).toBe(true);
+  const afterDrag = editor.getControlPoints()[index];
+  expect(afterDrag.x - beforeDrag.x).toBeCloseTo(1 / 1920, 9);
+  expect(afterDrag.y - beforeDrag.y).toBeCloseTo(0.25 / 1080, 9);
+});
+
+test("close custom TD knots keep distinct exact destinations instead of matching a nearby source vertex", () => {
+  const config = clone(DEFAULT_PROJECTION_CONFIG);
+  const warp = config.outputs.left.warp;
+  warp.baseline = { type: "tdMesh", assetId: "fixture", sha256: "a".repeat(64), width: 1920, height: 1080, origin: "top-left" };
+  warp.grid = {
+    columns: 4, rows: 3, columnPositions: [0, 0.0000005, 0.0000011, 1], rowPositions: [0, 0.5, 1],
+    offsets: Array.from({ length: 12 }, (_, index) => [index % 4 === 1 ? 0.01 : index % 4 === 2 ? 0.04 : 0, 0]),
+  };
+  const editor = createWarpEditor({ config, output: "left", baselineMesh: parityMesh }); editor.setMode("grid");
+  const handles = editor.getControlPoints();
+  expect(handles).toHaveLength(12);
+  for (const column of [1, 2]) {
+    const index = column;
+    const s = warp.grid.columnPositions[column], t = 0;
+    const [x, y] = evaluateWarpPoint(0, 0, warp, s, t, { side: "left", schemaVersion: 7, mesh: parityMesh });
+    expect(handles[index].s).toBe(s);
+    expect(handles[index].x).toBeCloseTo(x, 12);
+    expect(handles[index].y).toBeCloseTo(y, 12);
+  }
+  expect(handles[1].x).not.toBe(handles[2].x);
+});
+
+test("selection history restores a topology edit on both outputs", () => {
+  for (const output of ["left", "right"]) {
+    const config = clone(DEFAULT_PROJECTION_CONFIG); const editor = createWarpEditor({ config, output });
+    editor.setMode("grid"); editor.select(gridSelection("row", 6));
+    const before = editor.getConfig().outputs[output].warp.grid;
+    expect(editor.editGridLayout("counts", { columns: 3, rows: 3 })).toBe(true);
+    expect(editor.getState().selection).toMatchObject({ kind: "row", index: 2 });
+    expect(editor.undo()).toBe(true);
+    expect(editor.getConfig().outputs[output].warp.grid).toEqual(before);
+    expect(editor.getState().selection).toMatchObject({ kind: "row", index: 6 });
+    expect(editor.redo()).toBe(true);
+    expect(editor.getState().selection).toMatchObject({ kind: "row", index: 2 });
+  }
+});
+
+test("direct grid count edit commits once and undo/redo restore topology with selection", () => {
+  const onChange = vi.fn();
+  const config = clone(DEFAULT_PROJECTION_CONFIG);
+  const editor = createWarpEditor({ config, output: "left", onChange });
+  editor.select(gridSelection("row", 6));
+  const before = editor.getConfig().outputs.left.warp.grid;
+  expect(editor.editGridLayout("counts", { columns: 5, rows: 3 })).toBe(true);
+  expect(onChange).toHaveBeenCalledTimes(1);
+  expect(onChange).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ reason: "grid-layout", flush: true }));
+  expect(editor.getConfig().outputs.left.warp.grid).toMatchObject({ columns: 5, rows: 3, columnPositions: [0, 0.25, 0.5, 0.75, 1], rowPositions: [0, 0.5, 1] });
+  expect(editor.getState().selection).toMatchObject({ mode: "grid", kind: "row", index: 2 });
+  expect(editor.getState().historyDepth).toBe(1);
+  expect(editor.undo()).toBe(true);
+  expect(editor.getConfig().outputs.left.warp.grid).toEqual(before);
+  expect(editor.getState().selection).toMatchObject({ mode: "grid", kind: "row", index: 6 });
+  expect(editor.redo()).toBe(true);
+  expect(editor.getConfig().outputs.left.warp.grid.rows).toBe(3);
+  expect(editor.getState().selection).toMatchObject({ mode: "grid", kind: "row", index: 2 });
+});
+
+test("invalid direct grid edits keep config, selection, history, and notifications unchanged", () => {
+  const onChange = vi.fn();
+  const editor = createWarpEditor({ config: clone(DEFAULT_PROJECTION_CONFIG), output: "left", onChange });
+  editor.setMode("grid"); editor.select(gridSelection("column", 2));
+  const before = editor.getConfig(); const selection = editor.getState().selection;
+  expect(editor.editGridLayout("move", { axis: "column", index: 1, position: 100 })).toBe(false);
+  expect(editor.getConfig()).toEqual(before);
+  expect(editor.getState().selection).toEqual(selection);
+  expect(editor.getState().historyDepth).toBe(0);
+  expect(onChange).not.toHaveBeenCalled();
+});
+
+test("source, add, remove, and even edits each commit one undoable topology change", () => {
+  const config = clone(DEFAULT_PROJECTION_CONFIG);
+  config.outputs.left.warp.grid.columnPositions = [0, 0.1, 0.32, 0.51, 0.75, 0.9, 1];
+  config.outputs.left.warp.grid.rowPositions = [0, 0.12, 0.28, 0.5, 0.7, 0.88, 1];
+  const changes = vi.fn();
+  const editor = createWarpEditor({ config, output: "left", onChange: changes }); editor.setMode("grid");
+  editor.select(gridSelection("row", 2));
+  const beforeMove = editor.getConfig().outputs.left.warp.grid;
+  changes.mockClear();
+  expect(editor.editGridLayout("move", { axis: "row", index: 2, position: 31 })).toBe(true);
+  expect(changes).toHaveBeenCalledTimes(1); expect(changes.mock.calls[0][1]).toMatchObject({ reason: "grid-layout", flush: true });
+  expect(editor.getConfig().outputs.left.warp.grid.rowPositions[2]).toBeCloseTo(0.31);
+  expect(editor.undo()).toBe(true);
+  expect(editor.getConfig().outputs.left.warp.grid).toEqual(beforeMove);
+  const beforeAdd = editor.getConfig().outputs.left.warp.grid;
+  changes.mockClear();
+  expect(editor.editGridLayout("add", { axis: "column", position: 40 })).toBe(true);
+  expect(changes).toHaveBeenCalledTimes(1);
+  expect(editor.getConfig().outputs.left.warp.grid.columns).toBe(8);
+  expect(editor.undo()).toBe(true);
+  expect(editor.getConfig().outputs.left.warp.grid).toEqual(beforeAdd);
+  const beforeRemove = editor.getConfig().outputs.left.warp.grid;
+  changes.mockClear();
+  expect(editor.editGridLayout("remove", { axis: "row", index: 2 })).toBe(true);
+  expect(changes).toHaveBeenCalledTimes(1);
+  expect(editor.getConfig().outputs.left.warp.grid.rows).toBe(6);
+  expect(editor.undo()).toBe(true);
+  expect(editor.getConfig().outputs.left.warp.grid).toEqual(beforeRemove);
+  const beforeEven = editor.getConfig().outputs.left.warp.grid;
+  changes.mockClear();
+  expect(editor.editGridLayout("even", {})).toBe(true);
+  expect(changes).toHaveBeenCalledTimes(1);
+  expect(editor.getConfig().outputs.left.warp.grid.rowPositions).toEqual([0, 1 / 6, 2 / 6, 3 / 6, 4 / 6, 5 / 6, 1]);
+  expect(editor.undo()).toBe(true);
+  expect(editor.getConfig().outputs.left.warp.grid).toEqual(beforeEven);
+});
+
+test("residual reset clears offsets while retaining source axes and group selection", () => {
+  const config = clone(DEFAULT_PROJECTION_CONFIG);
+  config.outputs.left.warp.grid.columnPositions = [0, 0.2, 0.45, 0.7, 0.85, 0.95, 1];
+  config.outputs.left.warp.grid.rowPositions = [0, 0.15, 0.3, 0.55, 0.75, 0.9, 1];
+  config.outputs.left.warp.grid.offsets[8] = [0.01, -0.02];
+  const editor = createWarpEditor({ config, output: "left" }); editor.setMode("grid"); editor.select(gridSelection("row", 2));
+  expect(editor.resetResiduals()).toBe(true);
+  expect(editor.getConfig().outputs.left.warp.grid.columnPositions).toEqual(config.outputs.left.warp.grid.columnPositions);
+  expect(editor.getConfig().outputs.left.warp.grid.rowPositions).toEqual(config.outputs.left.warp.grid.rowPositions);
+  expect(editor.getConfig().outputs.left.warp.grid.offsets.every(([x, y]) => x === 0 && y === 0)).toBe(true);
+  expect(editor.getState().selection).toMatchObject({ kind: "row", index: 2 });
+});
+
+test("group mean positioning uses evaluated anchors and retains custom axes and keystone", () => {
+  const config = clone(DEFAULT_PROJECTION_CONFIG);
+  const warp = config.outputs.left.warp;
+  warp.grid.columnPositions = [0, 0.2, 0.45, 0.7, 0.85, 0.95, 1];
+  warp.grid.rowPositions = [0, 0.15, 0.3, 0.55, 0.75, 0.9, 1];
+  const beforeKeystone = clone(warp.keystone.corners);
+  const editor = createWarpEditor({ config, output: "left" }); editor.setMode("grid"); editor.select(gridSelection("row", 2));
+  expect(editor.setPosition("x", 500)).toBe(true);
+  const selected = editor.getControlPoints().slice(14, 21);
+  expect(selected.reduce((sum, point) => sum + point.x, 0) / selected.length).toBeCloseTo(500 / 1920, 12);
+  expect(editor.getConfig().outputs.left.warp.grid.columnPositions).toEqual(warp.grid.columnPositions);
+  expect(editor.getConfig().outputs.left.warp.grid.rowPositions).toEqual(warp.grid.rowPositions);
+  expect(editor.getConfig().outputs.left.warp.keystone.corners).toEqual(beforeKeystone);
+});
+
+test("an active pointer gesture rejects topology edits until the old gesture ends or cancels", () => {
+  for (const moved of [false, true]) {
+    const onChange = vi.fn();
+    const editor = createWarpEditor({ config: clone(DEFAULT_PROJECTION_CONFIG), output: "left", onChange });
+    editor.setMode("grid"); editor.select(gridSelection("point", 0));
+    const initial = editor.getConfig().outputs.left.warp.grid;
+    expect(editor.pointerStart({ x: 0, y: 0 })).toBe(true);
+    if (moved) expect(editor.pointerMove({ x: 8, y: 0 })).toBe(true);
+    const activeGrid = editor.getConfig().outputs.left.warp.grid;
+    onChange.mockClear();
+    const selection = editor.getState().selection;
+    expect(editor.editGridLayout("counts", { columns: 3, rows: 3 })).toBe(false);
+    expect(editor.getConfig().outputs.left.warp.grid).toEqual(activeGrid);
+    expect(editor.getState()).toMatchObject({ dragging: true, historyDepth: 0, selection });
+    expect(editor.getState().validationMessage).toContain("active pointer gesture");
+    expect(onChange).not.toHaveBeenCalled();
+    if (moved) expect(editor.pointerCancel()).toBe(true);
+    else expect(editor.pointerEnd()).toBe(true);
+    expect(editor.getConfig().outputs.left.warp.grid).toEqual(initial);
+    expect(editor.getState().dragging).toBe(false);
+    expect(editor.editGridLayout("counts", { columns: 3, rows: 3 })).toBe(true);
+    expect(editor.getConfig().outputs.left.warp.grid).toMatchObject({ columns: 3, rows: 3 });
+    const accepted = clone(editor.getConfig().outputs.left.warp.grid);
+    expect(editor.pointerMove({ x: 20, y: 0 })).toBe(false);
+    expect(editor.pointerEnd()).toBe(false);
+    expect(editor.pointerCancel()).toBe(false);
+    expect(editor.getConfig().outputs.left.warp.grid).toEqual(accepted);
+    expect(editor.getState().historyDepth).toBe(1);
+  }
+});
+
+test("an invalid warp move preserves the last valid geometry and reports why it was rejected", () => {
+  const editor = createWarpEditor({ config: clone(DEFAULT_PROJECTION_CONFIG), output: "left" });
+  const before = editor.getConfig();
+  editor.select(keystoneSelection("corner", 0));
+  expect(editor.setPosition("x", -5000)).toBe(false);
+  expect(editor.getConfig()).toEqual(before);
+  expect(editor.getState().validationMessage).toMatch(/^Move rejected: .+/);
+});
+
+test("undo, redo, authoritative rebase, and drag cancellation clear stale rejection feedback", () => {
+  const editor = createWarpEditor({ config: clone(DEFAULT_PROJECTION_CONFIG), output: "left" });
+  editor.nudge("right");
+  editor.setPosition("x", -5000);
+  expect(editor.getState().validationMessage).toMatch(/^Move rejected:/);
+  expect(editor.undo()).toBe(true);
+  expect(editor.getState().validationMessage).toBe("");
+  editor.setPosition("x", -5000);
+  expect(editor.redo()).toBe(true);
+  expect(editor.getState().validationMessage).toBe("");
+  editor.setPosition("x", -5000);
+  expect(editor.getState().validationMessage).toMatch(/^Move rejected:/);
+  expect(editor.setConfig(editor.getConfig(), { rebase: true })).toBe(true);
+  expect(editor.getState().validationMessage).toBe("");
+  editor.setPosition("x", -5000);
+  expect(editor.pointerCancel()).toBe(false);
+  expect(editor.getState().validationMessage).toBe("");
+  editor.setPosition("x", -5000);
+  editor.pointerStart({ x: 0, y: 0 });
+  editor.pointerMove({ x: 10000, y: 0 });
+  expect(editor.getState().validationMessage).toMatch(/^Move rejected:/);
+  expect(editor.pointerCancel()).toBe(true);
+  expect(editor.getState().validationMessage).toBe("");
 });

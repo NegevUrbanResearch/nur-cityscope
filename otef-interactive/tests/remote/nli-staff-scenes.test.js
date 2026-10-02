@@ -211,7 +211,7 @@ describe("NLI staff run of show", () => {
     const expected = [
       ["names_wall", "auto", "stay", false],
       ["segev", "manual", "stay", true],
-      ["nova_mor", "manual", "stay", true],
+      ["nova_mor", "auto", "stay", true],
       ["nova_memorial", "auto", "stay", true],
       ["sderot", "manual", "stay", true],
       ["shura", "auto", "stay", true],
@@ -277,6 +277,13 @@ describe("NLI staff run of show", () => {
     ]);
     expect(hostages.title).toEqual({ he: "חיים פרי וחטופים", en: "Haim Peri and hostages" });
     expect(hostages.steps).toHaveLength(4);
+    expect(hostages.steps[0]).toEqual({
+      title: { he: "ניר עוז", en: "Nir Oz" },
+      cue: { layers: FOCUS_LAYER_IDS, clock: "idle" },
+      kit: [],
+    });
+    expect(hostages.steps.every((step) => !step.kit.includes("archive"))).toBe(true);
+    expect(hostages.steps.every((step) => !("personQuery" in step))).toBe(true);
     expect(hostages.steps.map((step) => step.cue.clock)).toEqual(["idle", "idle", "idle", "idle"]);
     expect(hostages.steps[1].presentation).toEqual({ segmentId: "hostages", open: "manual", onClose: "stay" });
     for (const step of hostages.steps) {
@@ -305,7 +312,7 @@ describe("NLI staff run of show", () => {
     expect(mor.cue).toEqual({ layers: novaLayers, clock: "ended", escape: { mor: true } });
     expect(mor.kit).toEqual(["escape", "presentation"]);
     expect(mor.escapeKinds).toEqual(["mor"]);
-    expect(mor.presentation).toEqual({ segmentId: "nova_mor", open: "manual", onClose: "stay" });
+    expect(mor.presentation).toEqual({ segmentId: "nova_mor", open: "auto", onClose: "stay" });
     expect(mor).not.toHaveProperty("personQuery");
     expect(mor.kit).not.toContain("archive");
     expect(mor.note.he).toContain("מור");

@@ -904,7 +904,7 @@ describe("presentation open and close lifecycle", () => {
     expect(overlay()).toBeNull();
   });
 
-  test("opens names_wall as a black overlay without images and emits opened then ready", async () => {
+  test("opens names_wall with Hebrew archive copy without slide images and emits opened then ready", async () => {
     vi.useFakeTimers();
     if (typeof HTMLImageElement.prototype.decode !== "function") {
       Object.defineProperty(HTMLImageElement.prototype, "decode", {
@@ -935,8 +935,9 @@ describe("presentation open and close lifecycle", () => {
     expect(overlay().querySelector("img")).toBeNull();
     expect(overlay().querySelector(".nli-blackout-title")?.textContent).toBe("מאגר הזהויות");
     expect(overlay().querySelector(".nli-blackout-title")?.dir).toBe("rtl");
-    expect(overlay().querySelector(".nli-blackout-date")?.textContent).toBe("7/10");
-    expect(overlay().querySelector(".nli-blackout-date")?.dir).toBe("ltr");
+    expect(overlay().querySelector(".nli-blackout-date")?.textContent).toBe("ארכיון 7 באוקטובר");
+    expect(overlay().querySelector(".nli-blackout-date")?.dir).toBe("rtl");
+    expect(overlay().querySelector(".nli-blackout-date")?.lang).toBe("he");
     expect(results).toEqual([]);
     await vi.advanceTimersByTimeAsync(16);
     expect(overlay().style.opacity).toBe("1");

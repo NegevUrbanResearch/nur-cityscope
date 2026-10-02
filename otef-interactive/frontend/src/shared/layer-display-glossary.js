@@ -292,7 +292,7 @@ const LAYER_DISPLAY_LABELS = {
     en: "Infiltration routes",
   },
   "nli.lines.unconfirmed": {
-    he: "גישה לא מאומתת",
+    he: "צירי חדירה משוערים",
     en: "Unconfirmed approach",
   },
   "nli.alarms": {

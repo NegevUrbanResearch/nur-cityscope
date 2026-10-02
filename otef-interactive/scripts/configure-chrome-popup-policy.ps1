@@ -8,9 +8,13 @@
     unchanged.
 
     Install also adds --disable-features=CrossOriginOpenerPolicy to existing
-    Google Chrome shortcuts so GIS can close the named NLI archive window.
-    Chrome must be fully quit and started from an updated shortcut (or with
-    that flag) before the close path works.
+    Google Chrome shortcuts so archive close can work in the signed-in browser.
+    Debugging flags go only on a separate Desktop shortcut named OTEF GIS.lnk
+    (--user-data-dir=%LOCALAPPDATA%\OTEF\gis-chrome-profile,
+    --remote-debugging-port=9222, --remote-debugging-address=127.0.0.1).
+    That exhibit profile is not the signed-in Chrome profile. Open GIS from
+    OTEF GIS.lnk for archive paging. Remove undoes the flags and the OTEF GIS
+    shortcut and does not delete the profile folder.
 
     Install and Remove require an elevated Windows PowerShell session for the
     HKLM Chrome policies. Shortcut updates use the current user when elevation
@@ -18,9 +22,11 @@
 
 .PARAMETER Mode
     Install adds the localhost origin to the first unused numbered value in
-    each allowlist and adds the Chrome launch flag to Google Chrome.lnk shortcuts.
+    each allowlist, adds COOP to Google Chrome.lnk shortcuts, and creates
+    Desktop\OTEF GIS.lnk with the dedicated GIS debug profile.
     Remove removes entries whose value is exactly http://localhost:80 from both
-    keys and removes the launch flag from those shortcuts.
+    keys, removes COOP from Google Chrome.lnk shortcuts, and removes OTEF GIS.lnk.
+    It does not delete the gis-chrome-profile folder.
     Status reports the current entries and shortcut flags without changing
     the registry.
 
@@ -50,6 +56,11 @@ $Policies = @(
 $AllowedOrigin = 'http://localhost:80'
 $ChromeFeature = 'CrossOriginOpenerPolicy'
 $ChromeDisableFeatures = '--disable-features=CrossOriginOpenerPolicy'
+$ChromeUserDataDir = '--user-data-dir=%LOCALAPPDATA%\OTEF\gis-chrome-profile'
+$ChromeDebugPort = '--remote-debugging-port=9222'
+$ChromeDebugAddress = '--remote-debugging-address=127.0.0.1'
+$OtefGisShortcutName = 'OTEF GIS.lnk'
+$OtefGisUrl = 'http://localhost/otef-interactive/index.html?archivePager=1'
 
 function Test-IsAdministrator {
     try {
@@ -116,6 +127,30 @@ function Get-ChromeShortcutPaths {
         (Join-Path $env:PUBLIC 'Desktop\Google Chrome.lnk'),
         (Join-Path $env:APPDATA 'Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar\Google Chrome.lnk')
     )
+}
+
+function Get-OtefGisShortcutPath {
+    return (Join-Path ([Environment]::GetFolderPath('Desktop')) $OtefGisShortcutName)
+}
+
+function Get-ChromeExePath {
+    $candidates = @(
+        (Join-Path $env:ProgramFiles 'Google\Chrome\Application\chrome.exe')
+    )
+    $x86 = ${env:ProgramFiles(x86)}
+    if ($x86) {
+        $candidates += (Join-Path $x86 'Google\Chrome\Application\chrome.exe')
+    }
+    foreach ($candidate in $candidates) {
+        if ($candidate -and (Test-Path -LiteralPath $candidate)) {
+            return $candidate
+        }
+    }
+    return $null
+}
+
+function Get-OtefGisLaunchArguments {
+    return "$ChromeDisableFeatures $ChromeUserDataDir $ChromeDebugPort $ChromeDebugAddress $OtefGisUrl"
 }
 
 function Get-ShortcutArguments {
@@ -190,6 +225,37 @@ function Test-HasChromeFeature {
     return @($Matches[1] -split ',') -contains $Feature
 }
 
+function Add-ChromeArgument {
+    param(
+        [AllowEmptyString()][string]$Arguments = '',
+        [Parameter(Mandatory)][string]$Argument
+    )
+
+    $trimmed = if ($null -eq $Arguments) { '' } else { $Arguments.Trim() }
+    $parts = @()
+    if ($trimmed.Length -gt 0) {
+        $parts = @($trimmed -split '\s+' | Where-Object { $_ })
+    }
+    if ($parts -contains $Argument) {
+        return ($parts -join ' ')
+    }
+    return (($parts + $Argument) -join ' ')
+}
+
+function Remove-ChromeArgument {
+    param(
+        [AllowEmptyString()][string]$Arguments = '',
+        [Parameter(Mandatory)][string]$Argument
+    )
+
+    $trimmed = if ($null -eq $Arguments) { '' } else { $Arguments.Trim() }
+    if ($trimmed.Length -eq 0) {
+        return ''
+    }
+    $parts = @($trimmed -split '\s+' | Where-Object { $_ -and $_ -ne $Argument })
+    return ($parts -join ' ')
+}
+
 function Save-ShortcutArguments {
     param(
         [Parameter(Mandatory)]$Info,
@@ -198,6 +264,30 @@ function Save-ShortcutArguments {
 
     $Info.Shortcut.Arguments = $Arguments
     $Info.Shortcut.Save()
+}
+
+function Install-OtefGisShortcut {
+    $chrome = Get-ChromeExePath
+    if (-not $chrome) {
+        Write-Host 'Could not find chrome.exe; skipped OTEF GIS.lnk.' -ForegroundColor Yellow
+        return
+    }
+    $path = Get-OtefGisShortcutPath
+    $arguments = Get-OtefGisLaunchArguments
+    if ($PSCmdlet.ShouldProcess($path, "Create OTEF GIS shortcut")) {
+        try {
+            $shell = New-Object -ComObject WScript.Shell
+            $shortcut = $shell.CreateShortcut($path)
+            $shortcut.TargetPath = $chrome
+            $shortcut.Arguments = $arguments
+            $shortcut.WorkingDirectory = Split-Path -Parent $chrome
+            $shortcut.Description = 'OTEF GIS with NLI archive paging'
+            $shortcut.Save()
+            Write-Host "Wrote exhibit GIS shortcut: $path" -ForegroundColor Green
+        } catch {
+            Write-Host "Could not write $path : $_" -ForegroundColor Yellow
+        }
+    }
 }
 
 function Install-ChromeLaunchFlag {
@@ -211,14 +301,17 @@ function Install-ChromeLaunchFlag {
             continue
         }
         $next = Add-ChromeDisableFeature -Arguments $info.Arguments -Feature $ChromeFeature
+        $next = Remove-ChromeArgument -Arguments $next -Argument $ChromeUserDataDir
+        $next = Remove-ChromeArgument -Arguments $next -Argument $ChromeDebugPort
+        $next = Remove-ChromeArgument -Arguments $next -Argument $ChromeDebugAddress
         if ($next -eq $info.Arguments.Trim()) {
-            Write-Host "Launch flag already present: $path" -ForegroundColor Green
+            Write-Host "COOP flag already present: $path" -ForegroundColor Green
             continue
         }
         if ($PSCmdlet.ShouldProcess($path, "Add $ChromeDisableFeatures")) {
             try {
                 Save-ShortcutArguments -Info $info -Arguments $next
-                Write-Host "Added $ChromeDisableFeatures to $path" -ForegroundColor Green
+                Write-Host "Added NLI close flag to $path" -ForegroundColor Green
                 $updated++
             } catch {
                 Write-Host "Could not update $path : $_" -ForegroundColor Yellow
@@ -226,8 +319,9 @@ function Install-ChromeLaunchFlag {
         }
     }
     if ($updated -eq 0) {
-        Write-Host "No Google Chrome.lnk shortcuts were changed. Start GIS Chrome with $ChromeDisableFeatures after a full Chrome quit." -ForegroundColor Yellow
+        Write-Host 'No Google Chrome.lnk shortcuts were changed.' -ForegroundColor Yellow
     }
+    Install-OtefGisShortcut
 }
 
 function Remove-ChromeLaunchFlag {
@@ -240,22 +334,38 @@ function Remove-ChromeLaunchFlag {
             continue
         }
         $next = Remove-ChromeDisableFeature -Arguments $info.Arguments -Feature $ChromeFeature
+        $next = Remove-ChromeArgument -Arguments $next -Argument $ChromeUserDataDir
+        $next = Remove-ChromeArgument -Arguments $next -Argument $ChromeDebugPort
+        $next = Remove-ChromeArgument -Arguments $next -Argument $ChromeDebugAddress
         if ($next -eq $info.Arguments.Trim()) {
             continue
         }
-        if ($PSCmdlet.ShouldProcess($path, "Remove $ChromeDisableFeatures")) {
+        if ($PSCmdlet.ShouldProcess($path, "Remove $ChromeDisableFeatures $ChromeUserDataDir $ChromeDebugPort $ChromeDebugAddress")) {
             try {
                 Save-ShortcutArguments -Info $info -Arguments $next
-                Write-Host "Removed $ChromeDisableFeatures from $path" -ForegroundColor Green
+                Write-Host "Removed exhibit Chrome launch flags from $path" -ForegroundColor Green
             } catch {
                 Write-Host "Could not update $path : $_" -ForegroundColor Yellow
             }
         }
     }
+    $otefPath = Get-OtefGisShortcutPath
+    if ((Test-Path -LiteralPath $otefPath) -and $PSCmdlet.ShouldProcess($otefPath, 'Remove OTEF GIS shortcut')) {
+        try {
+            [System.IO.File]::Delete($otefPath)
+            Write-Host "Removed $otefPath" -ForegroundColor Green
+        } catch {
+            Write-Host "Could not remove $otefPath : $_" -ForegroundColor Yellow
+        }
+    }
+    Write-Host 'Did not delete the gis-chrome-profile folder.' -ForegroundColor Yellow
 }
 
 function Show-LaunchFlagStatus {
     Write-Host "Chrome NLI close flag: $ChromeDisableFeatures" -ForegroundColor Cyan
+    Write-Host "Chrome user-data-dir: $ChromeUserDataDir" -ForegroundColor Cyan
+    Write-Host "Chrome debug port: $ChromeDebugPort" -ForegroundColor Cyan
+    Write-Host "Chrome debug address: $ChromeDebugAddress" -ForegroundColor Cyan
     $found = $false
     foreach ($path in Get-ChromeShortcutPaths) {
         if (-not (Test-Path -LiteralPath $path)) {
@@ -279,7 +389,17 @@ function Show-LaunchFlagStatus {
     if (-not $found) {
         Write-Host 'No Google Chrome.lnk shortcuts found.' -ForegroundColor Yellow
     }
-    Write-Host 'Quit Chrome completely, then start GIS from an updated shortcut so the flag applies.' -ForegroundColor Yellow
+    $otefPath = Get-OtefGisShortcutPath
+    if (Test-Path -LiteralPath $otefPath) {
+        $info = Get-ShortcutArguments -Path $otefPath
+        Write-Host "  $otefPath (OTEF GIS)"
+        if ($info -and -not [string]::IsNullOrWhiteSpace($info.Arguments)) {
+            Write-Host "    $($info.Arguments)" -ForegroundColor Gray
+        }
+    } else {
+        Write-Host "OTEF GIS shortcut missing: $otefPath" -ForegroundColor Yellow
+    }
+    Write-Host 'Open GIS from Desktop\OTEF GIS.lnk for archive paging. Signed-in Chrome stays on the normal Google Chrome shortcuts.' -ForegroundColor Yellow
 }
 
 function Show-Status {

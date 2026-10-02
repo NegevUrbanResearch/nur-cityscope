@@ -3,6 +3,7 @@
  * Transparent background, no basemap, overlaid on model image.
  */
 import { itmBboxToWgs84SwNe } from "../map-utils/itm-bbox-to-wgs84-bounds.js";
+import { installMapLibreRasterAbortFix } from "../map/maplibre-raster-abort-fix.js";
 import { NLI_VISUAL_TOKENS } from "../shared/nli-investigation-theme.js";
 import { viewportToHighlightGeoJSON } from "./maplibre-projection-viewport-geojson.js";
 
@@ -33,6 +34,8 @@ if (!maplibregl || !Protocol) {
     "[maplibre-projection] Missing maplibregl/pmtiles globals. Ensure CDN scripts are loaded before projection-main.js.",
   );
 }
+
+installMapLibreRasterAbortFix(maplibregl);
 
 const pmtilesProtocol = new Protocol();
 maplibregl.addProtocol("pmtiles", pmtilesProtocol.tile);

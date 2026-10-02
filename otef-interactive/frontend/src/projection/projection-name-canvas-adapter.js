@@ -1,6 +1,5 @@
 import { planeToOutputUv } from '../shared/projection-config-geometry.js';
 import { nameRevealSchedule, NAME_FIELD_REVEAL_DURATION_MS } from '../shared/nli-name-field-animation.js';
-import { MODEL_NAME_STROKE_WIDTH } from '../shared/nli-name-wall-text-bounds.js';
 
 const WIDTH = 1920;
 const HEIGHT = 1080;
@@ -12,7 +11,7 @@ export function createProjectionNameCanvasAdapter({ document = globalThis.docume
   let opacity = 0, revealSeconds = 0, selectedPid = null;
   let presentation = { alphaFor: () => 1 }, version = 0;
   const paint = (entry) => {
-    const { canvas, ctx, placements, matrix, fontPx, fontFamily, color, mode } = entry;
+    const { canvas, ctx, placements, matrix, fontPx, fontFamily, color, strokeWidthPx } = entry;
     ctx.save();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -22,7 +21,7 @@ export function createProjectionNameCanvasAdapter({ document = globalThis.docume
     ctx.font = `${fontPx}px "${fontFamily}"`;
     ctx.fillStyle = color;
     ctx.strokeStyle = '#000000';
-    ctx.lineWidth = mode === 'model' ? MODEL_NAME_STROKE_WIDTH : 3;
+    ctx.lineWidth = strokeWidthPx;
     ctx.lineJoin = 'round';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -39,7 +38,7 @@ export function createProjectionNameCanvasAdapter({ document = globalThis.docume
     ctx.restore();
     entry.contentVersion = ++version;
   };
-  return {
+  const adapter = {
     prepare({ config, placements, fontPx = 12, fontFamily = 'Guttman Hatzvi', color = '#fff', logicalPlane } = {}) {
       if (disposed) throw new Error('name adapter is disposed');
       if (!config || !Array.isArray(placements) || !Number.isFinite(logicalPlane?.heading) ||
@@ -76,10 +75,21 @@ export function createProjectionNameCanvasAdapter({ document = globalThis.docume
         }
         indexByPid.set(String(item.id), identity.index);
       }
-      pending = { canvas, ctx, placements: own, matrix, fontPx, fontFamily, color, mode: config.namesWall?.activeMode,
+      const activeMode = config.namesWall?.activeMode;
+      const strokeWidthPx = config.namesWall?.profiles?.[activeMode]?.strokeWidthPx ?? (activeMode === 'wall' ? 3 : 2);
+      pending = { canvas, ctx, placements: own, allPlacements: placements, matrix, fontPx, fontFamily, color, strokeWidthPx,
         revealVertices: new Float32Array(vertices), indexByPid };
       paint(pending);
       return { source: canvas };
+    },
+    applyGeometry({ config, logicalPlane } = {}) {
+      if (disposed) throw new Error('name adapter is disposed');
+      if (!active) return false;
+      adapter.prepare({ config, placements: active.allPlacements, fontPx: active.fontPx,
+        fontFamily: active.fontFamily, color: active.color, logicalPlane });
+      adapter.commit();
+      adapter.finalize();
+      return true;
     },
     setPresentation(state) {
       if (disposed) return;
@@ -109,4 +119,5 @@ export function createProjectionNameCanvasAdapter({ document = globalThis.docume
       selectedIndex: active.indexByPid.get(selectedPid) ?? -1 } : null; },
     dispose() { disposed = true; pending = null; previous = null; hasRollback = false; active = null; },
   };
+  return adapter;
 }

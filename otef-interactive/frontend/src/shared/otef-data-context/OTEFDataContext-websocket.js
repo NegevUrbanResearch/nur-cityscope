@@ -200,24 +200,54 @@ function applyStateFromApi(ctx, state, options = {}) {
 function setupWebSocket(ctx) {
   if (ctx._wsClient) return;
 
-  let hasConnected = false;
+  let connectionGeneration = 0;
+  let hydrationPromise = null;
+  let archiveBridgeReady = false;
+  let archiveCommandsDisabled = false;
+  let queuedArchiveCommands = [];
+
+  const flushArchiveCommands = () => {
+    if (hydrationPromise || !archiveBridgeReady || archiveCommandsDisabled) return;
+    const commands = queuedArchiveCommands;
+    queuedArchiveCommands = [];
+    for (const command of commands) ctx._notify("archiveWindow", command);
+  };
+
+  ctx._markArchiveWindowBridgeReady = (ownsCommands = true) => {
+    archiveCommandsDisabled = ownsCommands !== true;
+    archiveBridgeReady = ownsCommands === true;
+    if (archiveCommandsDisabled) queuedArchiveCommands = [];
+    flushArchiveCommands();
+  };
 
   ctx._wsClient = new OTEFWebSocketClient(`/ws/${ctx._tableName}/`, {
     onConnect: async () => {
-      const isReconnect = hasConnected;
-      hasConnected = true;
-      ctx._setConnection(true);
-      if (!isReconnect) return;
+      const generation = ++connectionGeneration;
+      ctx._setConnection(false, "connecting");
       const coupledBaseline = ctx._captureNarrativeSceneBaseline();
-      try {
-        const state = await OTEF_API.getState(ctx._tableName, { forceFresh: true });
-        applyStateFromApi(ctx, state, { notify: true, coupledBaseline });
-      } catch (err) {
-        getLogger().error("[OTEFDataContext] Failed to refresh state after reconnect:", err);
-      }
+      hydrationPromise = (async () => {
+        try {
+          const state = await OTEF_API.getState(ctx._tableName, { forceFresh: true });
+          applyStateFromApi(ctx, state, { notify: true, coupledBaseline });
+        } catch (err) {
+          getLogger().error("[OTEFDataContext] Failed to refresh state after WebSocket connect:", err);
+        } finally {
+          if (generation !== connectionGeneration) return;
+          hydrationPromise = null;
+          ctx._setConnection(true);
+          flushArchiveCommands();
+        }
+      })();
+      await hydrationPromise;
     },
-    onDisconnect: () => ctx._setConnection(false),
-    onError: () => ctx._setConnection(false),
+    onDisconnect: () => {
+      connectionGeneration += 1;
+      ctx._setConnection(false);
+    },
+    onError: () => {
+      connectionGeneration += 1;
+      ctx._setConnection(false);
+    },
   });
   ctx._wsClient.on("connecting", () => ctx._setConnection(false, "connecting"));
 
@@ -536,6 +566,12 @@ function setupWebSocket(ctx) {
   });
   ctx._wsClient.on(OTEF_MESSAGE_TYPES.ARCHIVE_WINDOW_COMMAND, (msg = {}) => {
     if (msg.table && msg.table !== ctx._tableName) return;
+    if (archiveCommandsDisabled) return;
+    if (hydrationPromise || !archiveBridgeReady) {
+      queuedArchiveCommands.push(msg);
+      if (queuedArchiveCommands.length > 32) queuedArchiveCommands.shift();
+      return;
+    }
     ctx._notify("archiveWindow", msg);
   });
   ctx._wsClient.on(OTEF_MESSAGE_TYPES.ARCHIVE_WINDOW_RESULT, (msg = {}) => {

@@ -3,6 +3,7 @@ import { DEFAULT_PROJECTION_CONFIG as DEFAULTS, LEGACY_DEFAULT_PROJECTION_CONFIG
 import { migrateProjectionConfigToV2 } from '../../frontend/src/shared/projection-warp-schema.js';
 import { migrateNamesWallToV3, migrateNamesWallToV5 } from '../../frontend/src/shared/nli-name-wall-config.js';
 import { createProjectionConfigClient, TD_MIGRATION_PRESET_ID, validateProjectionConfigSnapshot } from '../../frontend/src/shared/projection-config-client.js';
+import { waitForProjectionConfigStartup } from '../../frontend/src/projection/projection-config-startup.js';
 
 const clone = (value) => JSON.parse(JSON.stringify(value));
 const stateFor = (revision, config = DEFAULTS) => ({
@@ -12,7 +13,7 @@ const stateFor = (revision, config = DEFAULTS) => ({
   selectedPresetId: 'original',
 });
 
-function harness({ revision = 0, config = DEFAULTS, validateCandidate } = {}) {
+function harness({ revision = 0, config = DEFAULTS, validateCandidate, connectOnStart = true, serviceFetch } = {}) {
   let now = 0;
   let timerId = 0;
   const timers = new Map();
@@ -22,11 +23,11 @@ function harness({ revision = 0, config = DEFAULTS, validateCandidate } = {}) {
   const socket = {
     on(event, callback) { if (!events.has(event)) events.set(event, new Set()); events.get(event).add(callback); },
     off(event, callback) { events.get(event)?.delete(callback); },
-    connect() { connected = true; for (const callback of events.get('connect') || []) callback(); },
+    connect() { if (!connectOnStart) return; connected = true; for (const callback of events.get('connect') || []) callback(); },
     getConnected() { return connected; },
     emit(payload) { for (const callback of events.get('otef_projection_config_changed') || []) callback(payload); for (const callback of events.get('message') || []) callback(payload); },
   };
-  const fetchImpl = vi.fn((url, options = {}) => new Promise((resolve, reject) => requests.push({ url, options, resolve, reject })));
+  const fetchImpl = serviceFetch || vi.fn((url, options = {}) => new Promise((resolve, reject) => requests.push({ url, options, resolve, reject })));
   const clock = {
     now: () => now,
     setTimeout: (callback, delay) => { const id = ++timerId; timers.set(id, { at: now + delay, callback }); return id; },
@@ -66,10 +67,96 @@ function harness({ revision = 0, config = DEFAULTS, validateCandidate } = {}) {
     resolveNext, resolveAt, rejectNext, pendingRequests: () => requests, lastRequest: () => requests[requests.length - 1],
     disconnect: () => { connected = false; for (const callback of events.get('disconnect') || []) callback(); },
     reconnect: () => { connected = true; for (const callback of events.get('connect') || []) callback(); },
-};
+    connect: () => { connected = true; for (const callback of events.get('connect') || []) callback(); },
+  };
 }
 
 beforeEach(() => vi.restoreAllMocks());
+
+test.each(['http', 'own websocket'])('Save returns its accepted checkpoint identity after %s and keeps receipt context out of state', async (ack) => {
+  const h = harness(); const starting = h.client.start(); h.resolveNext(stateFor(0)); await starting; h.client.setLive(false);
+  const notifications = []; const receipts = []; const unsubscribe = h.client.subscribe((state, receipt) => { notifications.push(state); receipts.push(receipt); });
+  const id = '11111111-1111-4111-8111-111111111111';
+  const saved = { ...stateFor(1), selectedPresetId: id, presets: [...stateFor(1).presets, { id, name: 'Desk', config: clone(DEFAULTS), readOnly: false }] };
+  const saving = h.client.save({ name: 'Desk' });
+  if (ack === 'own websocket') h.socket.emit({ type: 'otef_projection_config_changed', table: 'otef', sourceId: '00000000-0000-4000-8000-00000000000a', state: saved });
+  h.resolveNext(saved); expect(await saving).toMatchObject({ savedPresetId: id }); await h.flushPromises();
+  expect(receipts.filter(Boolean)).toEqual([{ origin: '00000000-0000-4000-8000-00000000000a', action: 'save' }]);
+  expect(receipts.at(-1)).toBeUndefined(); expect(h.client.getState()).not.toHaveProperty('savedPresetId');
+  expect(notifications.every((state) => !Object.hasOwn(state, 'savedPresetId') && !Object.hasOwn(state, 'receipt'))).toBe(true);
+  unsubscribe(); h.client.stop();
+});
+
+test.each(['foreign update', 'local edit'])('Save identity is null when its successful response is protected by a %s', async (race) => {
+  const h = harness(); const starting = h.client.start(); h.resolveNext(stateFor(0)); await starting; h.client.setLive(false);
+  const id = '11111111-1111-4111-8111-111111111111';
+  const saved = { ...stateFor(1), selectedPresetId: id, presets: [...stateFor(1).presets, { id, name: 'Desk', config: clone(DEFAULTS), readOnly: false }] };
+  const saving = h.client.save({ name: 'Desk' });
+  if (race === 'foreign update') h.socket.emit({ type: 'otef_projection_config_changed', table: 'otef', sourceId: '00000000-0000-4000-8000-00000000000b', state: stateFor(2) });
+  else { const edited = clone(DEFAULTS); edited.pre.tx = 0.2; h.client.setDraft(edited); }
+  const protectedDraft = h.client.getState().draft; h.resolveNext(saved);
+  expect(await saving).toMatchObject({ savedPresetId: null, hasLocalDraft: true, draft: protectedDraft });
+  await h.flushPromises(); h.client.stop();
+});
+
+test.each([
+  ["HTTP failure", (h) => h.resolveNext({}, 503), /503/],
+  ["network failure", (h) => h.rejectNext(new Error("offline")), /offline/],
+  ["invalid response", (h) => h.resolveNext({ invalid: true }), /invalid projection config response/],
+])("terminal %s settles the actual browser startup waiter with actionable client error", async (_label, failHydration, error) => {
+  const h = harness();
+  let unsubscribeCount = 0;
+  const subscribe = h.client.subscribe.bind(h.client);
+  vi.spyOn(h.client, 'subscribe').mockImplementation((listener) => {
+    const unsubscribe = subscribe(listener);
+    return () => { unsubscribeCount += 1; unsubscribe(); };
+  });
+  const starting = waitForProjectionConfigStartup(h.client);
+  failHydration(h);
+  const state = await starting;
+  expect(state.hydrationError).toMatch(error);
+  expect(h.client.getState().hydrationError).toMatch(error);
+  expect(unsubscribeCount).toBe(0);
+  expect(h.pendingRequests()).toHaveLength(0);
+});
+
+test("a disconnected start hydrates once after asynchronous connect and returns the accepted snapshot", async () => {
+  const h = harness({ connectOnStart: false });
+  let unsubscribeCount = 0;
+  const subscribe = h.client.subscribe.bind(h.client);
+  vi.spyOn(h.client, 'subscribe').mockImplementation((listener) => {
+    const unsubscribe = subscribe(listener);
+    return () => { unsubscribeCount += 1; unsubscribe(); };
+  });
+  const starting = waitForProjectionConfigStartup(h.client);
+  expect(h.fetchImpl).not.toHaveBeenCalled();
+  h.connect();
+  expect(h.fetchImpl).toHaveBeenCalledOnce();
+  h.resolveNext(stateFor(12));
+  await expect(starting).resolves.toMatchObject({ snapshot: { revision: 12 } });
+  await h.flushPromises();
+  expect(h.client.getState().snapshot?.revision).toBe(12);
+  expect(unsubscribeCount).toBe(1);
+  expect(h.fetchImpl).toHaveBeenCalledOnce();
+  expect(h.client.getState()).toMatchObject({ hydrating: false, snapshot: { revision: 12 } });
+});
+
+test("disposing a pending startup waiter unsubscribes and settles it", async () => {
+  const h = harness({ connectOnStart: false });
+  const controller = new AbortController();
+  let unsubscribeCount = 0;
+  const subscribe = h.client.subscribe.bind(h.client);
+  vi.spyOn(h.client, 'subscribe').mockImplementation((listener) => {
+    const unsubscribe = subscribe(listener);
+    return () => { unsubscribeCount += 1; unsubscribe(); };
+  });
+  const starting = waitForProjectionConfigStartup(h.client, { signal: controller.signal });
+  await Promise.resolve();
+  controller.abort();
+  await expect(starting).rejects.toMatchObject({ name: 'AbortError' });
+  expect(unsubscribeCount).toBe(1);
+  h.client.stop();
+});
 
 test('hydration converts historical working and preset configs to V4', async () => {
   const h = harness();
@@ -80,12 +167,29 @@ test('hydration converts historical working and preset configs to V4', async () 
   const starting = h.client.start(); h.resolveNext(saved); await starting;
   const state = h.client.getState();
   expect(state.snapshot.revision).toBe(9);
-  expect(state.snapshot.config.schemaVersion).toBe(5);
-  expect(state.snapshot.presets[1].config.schemaVersion).toBe(5);
+  expect(state.snapshot.config.schemaVersion).toBe(7);
+  expect(state.snapshot.presets[1].config.schemaVersion).toBe(7);
   expect(state.draft.namesWall.innerEdgeInsetPx).toEqual({ left: 0, right: 0 });
   expect(state.draft.namesWall.profiles.wall).not.toHaveProperty('seamGapPx');
   expect(state.draft.pre).toEqual(historical.pre);
   expect(state.migrationWarnings).toContain('The wall seam gap needs readjustment in final-output pixels.');
+  h.client.stop();
+});
+
+test('hydration normalizes old V6 configs and preserves the reserved Original calibration', async () => {
+  const h = harness();
+  const old = (await import('../../frontend/src/shared/nli-name-wall-config.js')).migrateNamesWallToV6(LEGACY_DEFAULT_PROJECTION_CONFIG, 35);
+  delete old.namesWall.profiles.wall.strokeWidthPx;
+  delete old.namesWall.profiles.model.strokeWidthPx;
+  const saved = stateFor(12, old);
+  saved.presets[0].config = clone(old);
+  saved.presets.push({ id: '11111111-1111-4111-8111-111111111111', name: 'Old profile', config: clone(old), readOnly: false });
+  const starting = h.client.start(); h.resolveNext(saved); await starting;
+  const state = h.client.getState();
+  expect(state.snapshot.config.namesWall.profiles).toMatchObject({ wall: { strokeWidthPx: 3 }, model: { strokeWidthPx: 2 } });
+  expect(state.snapshot.presets[0].config.namesWall.profiles).toMatchObject({ wall: { strokeWidthPx: 3 }, model: { strokeWidthPx: 2 } });
+  expect(state.snapshot.presets[1].config.namesWall.profiles).toMatchObject({ wall: { strokeWidthPx: 3 }, model: { strokeWidthPx: 2 } });
+  expect(state.draft.namesWall.profiles).toMatchObject({ wall: { strokeWidthPx: 3 }, model: { strokeWidthPx: 2 } });
   h.client.stop();
 });
 
@@ -135,6 +239,37 @@ test.each(['live', 'apply', 'save', 'load', 'revert'])(
     h.client.stop();
   },
 );
+
+test('candidate preflight fallback reports geometry validation rather than name placement', async () => {
+  const h = harness({ validateCandidate: async ({ identity }) => ({ identity, valid: false }) });
+  const started = h.client.start(); h.resolveNext(h.stateFor(0)); await started;
+  const candidate = clone(DEFAULTS); candidate.pre.tx = 0.025;
+  h.client.setDraft(candidate);
+  const applied = h.client.apply().then(() => null, (error) => error.message);
+  await h.advance(0); await h.flushPromises();
+  expect(await applied).toBe('projection geometry preflight unavailable');
+  expect(h.client.getState().previewError).toBe('projection geometry preflight unavailable');
+  h.client.stop();
+});
+
+test('explicit Apply with Live off still preflights and posts exactly once', async () => {
+  const validateCandidate = vi.fn(async ({ identity }) => ({ identity, valid: true }));
+  const h = harness({ validateCandidate });
+  const started = h.client.start(); h.resolveNext(h.stateFor(4)); await started;
+  h.client.setLive(false);
+  const candidate = clone(DEFAULTS); candidate.pre.tx = 0.125;
+  h.client.setDraft(candidate);
+  const applied = h.client.apply().then((value) => ({ value }), (error) => ({ error }));
+  await h.advance(0); await h.flushPromises();
+  expect(validateCandidate).toHaveBeenCalledOnce();
+  expect(h.pendingRequests()).toHaveLength(1);
+  expect(JSON.parse(h.lastRequest().options.body).config).toEqual(candidate);
+  h.resolveNext(stateFor(5, candidate));
+  expect((await applied).error).toBeUndefined();
+  expect(h.client.getState()).toMatchObject({ live: false, snapshot: { revision: 5, config: candidate } });
+  expect(h.pendingRequests()).toHaveLength(0);
+  h.client.stop();
+});
 
 test('an abandoned wall check cannot block a newer valid Live edit', async () => {
   const checks = [];
@@ -319,6 +454,68 @@ test('save reads a draft edited while it waits for the preview response', async 
   await saved;
 });
 
+test('automatic Live working geometry and named checkpoints survive a shared service across fresh clients', async () => {
+  const presetId = '11111111-1111-4111-8111-111111111111';
+  let stored = stateFor(0);
+  const writes = [];
+  const serviceFetch = async (_url, options = {}) => {
+    if (options.method === 'POST') {
+      const body = JSON.parse(options.body);
+      writes.push(clone(body));
+      if (body.baseRevision !== stored.revision) return { status: 409, ok: false, json: async () => ({ error: 'conflict', state: clone(stored) }) };
+      const next = clone(stored);
+      if (body.action === 'preview' || body.action === 'save') next.config = clone(body.config);
+      if (body.action === 'save') {
+        const id = body.presetId || presetId;
+        next.presets = next.presets.filter((preset) => preset.id !== id);
+        next.presets.push({ id, name: body.name, config: clone(body.config), readOnly: false });
+        next.selectedPresetId = id;
+      }
+      if (body.action === 'load') {
+        next.config = clone(next.presets.find((preset) => preset.id === body.presetId).config);
+        next.selectedPresetId = body.presetId;
+      }
+      next.revision += 1;
+      stored = next;
+    }
+    const response = clone(stored);
+    return { status: 200, ok: true, json: async () => response };
+  };
+  const h = harness({ serviceFetch }); await h.client.start();
+  expect(h.client.getState().live).toBe(true);
+  const working = clone(DEFAULTS); working.pre.tx = 0.17; working.outputs.left.crop.x0 = 0.04;
+  h.client.setDraft(working);
+  await h.advance(100); await h.flushPromises();
+  expect(writes).toHaveLength(1);
+  expect(writes[0]).toMatchObject({ action: 'preview', config: working });
+  expect(h.client.getState().pending).toBe(false);
+  const workingHydration = harness({ serviceFetch }); await workingHydration.client.start();
+  expect(workingHydration.client.getState().snapshot.config).toEqual(working);
+  expect(workingHydration.client.getState().snapshot.presets).toEqual(stateFor(0).presets);
+
+  const checkpoint = clone(working); checkpoint.pre.tx = 0.23; checkpoint.outputs.right.crop.y0 = 0.06;
+  await h.client.setLive(false); h.client.setDraft(checkpoint);
+  const saving = h.client.save({ presetId: null, name: 'Coast' });
+  await h.advance(100); await saving; await h.flushPromises();
+  expect(writes[1]).toMatchObject({ action: 'save', config: checkpoint, presetId: null, name: 'Coast' });
+  expect(h.client.getState().snapshot.presets.find((preset) => preset.id === presetId).config).toEqual(checkpoint);
+
+  const laterEdit = clone(checkpoint); laterEdit.pre.tx = 0.31; h.client.setDraft(laterEdit);
+  await h.advance(100); expect(writes).toHaveLength(2);
+  const savedHydration = harness({ serviceFetch }); await savedHydration.client.start();
+  expect(savedHydration.client.getState().snapshot.config).toEqual(checkpoint);
+  expect(savedHydration.client.getState().snapshot.presets.find((preset) => preset.id === presetId).config).toEqual(checkpoint);
+  const loading = h.client.load(presetId); await h.advance(100); const loaded = await loading;
+  expect(writes[2]).toMatchObject({ action: 'load', presetId });
+  expect(loaded).toMatchObject({ draft: checkpoint, hasLocalDraft: false, draftReplaced: true });
+
+  const reload = harness({ serviceFetch }); await reload.client.start();
+  expect(reload.client.getState().snapshot.config).toEqual(checkpoint);
+  expect(reload.client.getState().snapshot.presets.find((preset) => preset.id === presetId).config).toEqual(checkpoint);
+  expect(reload.client.getState().snapshot.selectedPresetId).toBe(presetId);
+  for (const instance of [h, workingHydration, savedHydration, reload]) instance.client.stop();
+});
+
 test('409 reports conflict, turns Live off, and does not retry', async () => {
   const onConflict = vi.fn();
   const h = harness();
@@ -437,7 +634,7 @@ test('late Load response cannot overwrite a draft preserved by a foreign update'
   const preserved = clone(h.client.getState().draft);
   h.socket.emit({ type: 'otef_projection_config_changed', table: 'otef', sourceId: '00000000-0000-4000-8000-00000000000b', state: h.stateFor(2, { ...clone(DEFAULTS), pre: { ...DEFAULTS.pre, tx: 0.2 } }) });
   h.resolveNext(h.stateFor(1, { ...clone(DEFAULTS), pre: { ...DEFAULTS.pre, tx: 0.7 } }));
-  await loading;
+  expect((await loading).draftReplaced).toBe(false);
   expect(h.client.getState().snapshot.revision).toBe(2);
   expect(h.client.getState().draft).toEqual(preserved);
   expect(h.client.getState().hasLocalDraft).toBe(true);
@@ -450,10 +647,29 @@ test('late Revert response cannot overwrite a draft preserved by a foreign updat
   const preserved = clone(h.client.getState().draft);
   h.socket.emit({ type: 'otef_projection_config_changed', table: 'otef', sourceId: '00000000-0000-4000-8000-00000000000b', state: h.stateFor(2, { ...clone(DEFAULTS), pre: { ...DEFAULTS.pre, tx: 0.2 } }) });
   h.resolveNext(h.stateFor(1, { ...clone(DEFAULTS), pre: { ...DEFAULTS.pre, tx: 0.7 } }));
-  await reverting;
+  expect((await reverting).draftReplaced).toBe(false);
   expect(h.client.getState().snapshot.revision).toBe(2);
   expect(h.client.getState().draft).toEqual(preserved);
   expect(h.client.getState().hasLocalDraft).toBe(true);
+});
+
+test.each(['load', 'revert'])('%s replacement outcomes belong to each request and never appear in subscribed state', async (operation) => {
+  const h = harness(); const starting = h.client.start(); h.resolveNext(stateFor(0)); await starting;
+  h.client.setLive(false);
+  const notifications = []; const unsubscribe = h.client.subscribe((state) => notifications.push(state));
+  const replace = () => operation === 'load' ? h.client.load('original') : h.client.revert();
+  const accepted = replace(); h.resolveNext(stateFor(1));
+  expect(await accepted).toMatchObject({ draftReplaced: true, draft: DEFAULTS });
+  await h.flushPromises();
+  const pending = replace(); await h.advance(100);
+  const edited = clone(DEFAULTS); edited.pre.tx = 0.19; h.client.setDraft(edited);
+  h.resolveNext(stateFor(2));
+  expect(await pending).toMatchObject({ draftReplaced: false, draft: edited, hasLocalDraft: true });
+  await h.flushPromises();
+  expect(h.client.getState()).not.toHaveProperty('draftReplaced');
+  expect(notifications.every((state) => !Object.hasOwn(state, 'draftReplaced'))).toBe(true);
+  expect(notifications.at(-1)).toMatchObject({ draft: edited, hasLocalDraft: true, pending: false });
+  unsubscribe(); h.client.stop();
 });
 
 test('superseded waiting control operation rejects its promise', async () => {
@@ -617,7 +833,7 @@ for (const [label, body, status] of [
   });
 }
 
-test('a V5 snapshot requires initialization and does not seed wall rotation or write', async () => {
+test('a V5 snapshot requires initialization, normalizes to v7, and does not write', async () => {
   const h = harness();
   const v5 = migrateNamesWallToV5(LEGACY_DEFAULT_PROJECTION_CONFIG);
   const snapshot = h.stateFor(4, v5);
@@ -627,10 +843,56 @@ test('a V5 snapshot requires initialization and does not seed wall rotation or w
   await started;
   const state = h.client.getState();
   expect(state.initializationRequired).toBe(true);
-  expect(state.draft?.namesWall?.rotateDeg).toBeUndefined();
+  expect(state.snapshot.config.schemaVersion).toBe(7);
+  expect(state.draft?.namesWall?.rotateDeg).toBe(35);
   expect(h.pendingRequests()).toHaveLength(0);
   await expect(h.client.apply()).rejects.toThrow(/initialization/i);
   expect(h.pendingRequests()).toHaveLength(0);
+  h.client.stop();
+});
+
+test('a V6 snapshot normalizes locally but stays gated by the installed schema version', async () => {
+  const h = harness();
+  const v6 = (await import('../../frontend/src/shared/nli-name-wall-config.js')).migrateNamesWallToV6(LEGACY_DEFAULT_PROJECTION_CONFIG, 35);
+  const snapshot = h.stateFor(4, v6);
+  snapshot.presets[0].config = clone(v6);
+  const started = h.client.start(); h.resolveNext(snapshot); await started;
+  expect(h.client.getState()).toMatchObject({ initializationRequired: true, snapshot: { config: { schemaVersion: 7 } } });
+  await expect(h.client.apply()).rejects.toThrow(/initialization/i);
+  expect(h.pendingRequests()).toHaveLength(0);
+  h.client.stop();
+});
+
+test('same-revision authoritative hydration refreshes installed schema while preserving draft and history', async () => {
+  const h = harness();
+  const { migrateNamesWallToV6 } = await import('../../frontend/src/shared/nli-name-wall-config.js');
+  const v6 = migrateNamesWallToV6(migrateNamesWallToV5(migrateProjectionConfigToV2(LEGACY_DEFAULT_PROJECTION_CONFIG)), 35);
+  const oldSnapshot = h.stateFor(4, v6); oldSnapshot.presets[0].config = clone(v6);
+  const started = h.client.start(); h.resolveNext(oldSnapshot); await started;
+  const draft = clone(DEFAULTS); draft.pre.tx = 0.27; h.client.setDraft(draft);
+  const upgraded = h.stateFor(4, DEFAULTS);
+  h.disconnect(); h.reconnect(); h.resolveNext(upgraded); await h.flushPromises();
+  expect(h.client.getState()).toMatchObject({ initializationRequired: false, snapshot: { revision: 4, config: { schemaVersion: 7 } }, draft, hasLocalDraft: true });
+  h.disconnect(); h.reconnect();
+  const authoritativeOld = h.stateFor(4, v6); authoritativeOld.presets[0].config = clone(v6);
+  h.resolveNext(authoritativeOld); await h.flushPromises();
+  expect(h.client.getState()).toMatchObject({ initializationRequired: true, snapshot: { revision: 4, config: { schemaVersion: 7 } }, draft, hasLocalDraft: true });
+  await expect(h.client.apply()).rejects.toThrow(/initialization/i);
+  expect(h.pendingRequests()).toHaveLength(0);
+});
+
+test('v7 snapshots preserve custom knot axes and reserve Original for canonical uniform topology', async () => {
+  const h = harness();
+  const snapshot = h.stateFor(8);
+  const custom = clone(DEFAULTS);
+  custom.outputs.left.warp.grid.columnPositions[1] = 0.1;
+  snapshot.presets.push({ id: '11111111-1111-4111-8111-111111111111', name: 'Custom grid', config: custom, readOnly: false });
+  expect(validateProjectionConfigSnapshot(snapshot)).toBe(true);
+  const started = h.client.start(); h.resolveNext(snapshot); await started;
+  expect(h.client.getState().snapshot.presets[1].config.outputs.left.warp.grid.columnPositions[1]).toBe(0.1);
+  const invalidOriginal = clone(snapshot);
+  invalidOriginal.presets[0].config.outputs.left.warp.grid.columnPositions[1] = 0.1;
+  expect(validateProjectionConfigSnapshot(invalidOriginal)).toBe(false);
   h.client.stop();
 });
 
@@ -647,7 +909,7 @@ test('schema_changed keeps the unsaved draft and does not retry', async () => {
   const result = pending.catch((error) => error);
   await h.advance(100);
   expect(h.pendingRequests()).toHaveLength(1);
-  h.resolveNext({ error: 'schema_changed', requiredSchemaVersion: 6, state: h.stateFor(1) }, 409);
+  h.resolveNext({ error: 'schema_changed', requiredSchemaVersion: 7, state: h.stateFor(1) }, 409);
   await h.flushPromises();
   const error = await result;
   expect(error.schemaChanged).toBe(true);

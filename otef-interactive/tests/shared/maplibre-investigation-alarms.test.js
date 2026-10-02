@@ -223,6 +223,8 @@ describe("investigation alarm helpers", () => {
     expect(source.setData).toHaveBeenCalledTimes(1);
     renderer.render({ activeBeat: 400, activeProgress: 0.2, alarmOnsetId: onset.id, alarmOnset: { ...onset, elapsedMs: 200 } }, data);
     renderer.render({ activeBeat: 400, activeProgress: 0.2, alarmOnsetId: onset.id, alarmOnset: { ...onset, elapsedMs: 950 } }, data);
+    expect(source.setData).toHaveBeenCalledTimes(1);
+    renderer.render({ activeBeat: 400, activeProgress: 0.2, alarmOnsetId: onset.id, alarmOnset: { ...onset, elapsedMs: 1800 } }, data);
     expect(source.setData).toHaveBeenCalledTimes(2);
     const rippleOpacity = map.setPaintProperty.mock.calls.filter(
       (call) => call[0] === "nli-investigation-alarm-ripple" && call[1] === "circle-opacity",
@@ -231,10 +233,12 @@ describe("investigation alarm helpers", () => {
     renderer.reset();
     expect(map.getSource("nli-investigation-alarm-points")).toBeFalsy();
     expect(map.getLayer("nli-investigation-alarm-ripple")).toBeFalsy();
+    expect(map.getLayer("nli-investigation-alarm-ripple-event")).toBeFalsy();
+    expect(map.getLayer("nli-investigation-alarm-ripple-event-2")).toBeFalsy();
     renderer.dispose();
   });
 
-  it("keeps the ripple as a monotonic ring with fill opacity zero", () => {
+  it("keeps the chorus ripple as a quieter monotonic ring with fill opacity zero", () => {
     const map = makeRendererMap();
     const renderer = createInvestigationAlarmRenderer(map, "gis");
     const data = {
@@ -242,26 +246,178 @@ describe("investigation alarm helpers", () => {
     };
     const renderAt = (nowMs) => renderer.render({
       activeBeat: 400,
-      completedBeats: [],
+      completedBeats: [400],
       nowMs,
-      alarmOnsetId: "cycle:400",
-      alarmOnset: { id: "cycle:400", beat: 400, elapsedMs: 0 },
     }, data);
     renderAt(0);
-    renderAt(1000);
-    renderAt(2000);
+    const chorus = map.getLayer("nli-investigation-alarm-ripple");
+    expect(chorus.paint["circle-stroke-opacity-transition"]).toEqual({ duration: 0, delay: 0 });
+    expect(chorus.filter).toEqual([
+      "all",
+      [">", ["coalesce", ["get", "count"], 0], 0],
+      ["!", ["boolean", ["get", "onset"], false]],
+    ]);
+    renderAt(1300);
+    renderAt(2470);
+    renderAt(2600);
+    renderAt(2730);
     const radii = map.setPaintProperty.mock.calls
       .filter((call) => call[0] === "nli-investigation-alarm-ripple" && call[1] === "circle-radius")
       .map((call) => call[2][2][2]);
-    expect(radii).toEqual([0, 25, 0]);
+    expect(radii).toEqual([0, 15, 28.5, 0, 1.5]);
     const fills = map.setPaintProperty.mock.calls
       .filter((call) => call[0] === "nli-investigation-alarm-ripple" && call[1] === "circle-opacity")
       .map((call) => call[2]);
-    expect(fills).toEqual([0, 0, 0]);
+    expect(fills).toEqual([0, 0, 0, 0, 0]);
     const strokes = map.setPaintProperty.mock.calls
       .filter((call) => call[0] === "nli-investigation-alarm-ripple" && call[1] === "circle-stroke-opacity")
       .map((call) => call[2]);
-    expect(strokes).toEqual([0.4, 0.2, 0.4]);
+    expect(strokes[0]).toBe(0);
+    expect(strokes[1]).toBeCloseTo(0.2);
+    expect(strokes[2]).toBeCloseTo(0.2 * Math.sin(Math.PI * 0.95));
+    expect(strokes[3]).toBe(0);
+    expect(strokes[4]).toBeGreaterThan(0);
+    expect(strokes[4]).toBeCloseTo(0.2 * Math.sin(Math.PI * 0.05));
+    renderer.dispose();
+  });
+
+  it("replaces chorus on same-beat onset cities with a shared two-ring event wave", () => {
+    const map = makeRendererMap();
+    const renderer = createInvestigationAlarmRenderer(map, "gis");
+    const data = {
+      alarmFeatures: [
+        { id: "A", properties: { city: "A", alarm_minutes: [400] }, geometry: { type: "Point", coordinates: [1, 2] } },
+        { id: "B", properties: { city: "B", alarm_minutes: [400] }, geometry: { type: "Point", coordinates: [3, 4] } },
+        { id: "C", properties: { city: "C", alarm_minutes: [360] }, geometry: { type: "Point", coordinates: [5, 6] } },
+      ],
+    };
+    const renderAt = (elapsedMs) => renderer.render({
+      activeBeat: 400,
+      completedBeats: [360],
+      nowMs: 5000,
+      alarmOnsetId: "cycle:400",
+      alarmOnset: { id: "cycle:400", beat: 400, elapsedMs },
+    }, data);
+    renderAt(0);
+    const rows = map.getSource("nli-investigation-alarm-points").setData.mock.calls.at(-1)[0];
+    expect(rows.features.map((feature) => feature.properties.onset)).toEqual([true, true, false]);
+    expect(map.getLayer("nli-investigation-alarm-ripple-event").filter).toEqual(["boolean", ["get", "onset"], false]);
+    expect(map.getLayer("nli-investigation-alarm-ripple-event-2").filter).toEqual(["boolean", ["get", "onset"], false]);
+    renderAt(220);
+    renderAt(700);
+    const firstRadii = map.setPaintProperty.mock.calls
+      .filter((call) => call[0] === "nli-investigation-alarm-ripple-event" && call[1] === "circle-radius")
+      .map((call) => call[2][2][2]);
+    const firstStrokes = map.setPaintProperty.mock.calls
+      .filter((call) => call[0] === "nli-investigation-alarm-ripple-event" && call[1] === "circle-stroke-opacity")
+      .map((call) => call[2]);
+    const secondRadii = map.setPaintProperty.mock.calls
+      .filter((call) => call[0] === "nli-investigation-alarm-ripple-event-2" && call[1] === "circle-radius")
+      .map((call) => call[2][2][2]);
+    const secondStrokes = map.setPaintProperty.mock.calls
+      .filter((call) => call[0] === "nli-investigation-alarm-ripple-event-2" && call[1] === "circle-stroke-opacity")
+      .map((call) => call[2]);
+    expect(firstRadii[0]).toBe(0);
+    expect(firstRadii[2]).toBeCloseTo(18);
+    expect(firstStrokes[0]).toBe(0);
+    expect(firstStrokes[2]).toBeCloseTo(0.85 * Math.sin(Math.PI * 0.5));
+    expect(secondRadii[0]).toBe(0);
+    expect(secondRadii[1]).toBe(0);
+    expect(secondRadii[2]).toBeCloseTo(42 * (480 / 1580));
+    expect(secondStrokes[0]).toBe(0);
+    expect(secondStrokes[1]).toBe(0);
+    expect(secondStrokes[2]).toBeGreaterThan(0);
+    const coreOpacity = map.setPaintProperty.mock.calls
+      .filter((call) => call[0] === "nli-investigation-alarm-circles" && call[1] === "circle-opacity")
+      .at(-1)[2];
+    expect(coreOpacity).toEqual([
+      "case",
+      ["<=", ["coalesce", ["get", "count"], 0], 0],
+      0,
+      ["boolean", ["get", "onset"], false],
+      0.55,
+      0.3,
+    ]);
+    renderer.dispose();
+  });
+
+  it("keeps the core flash at 900ms and rejoins chorus after the 1800ms event window", () => {
+    const map = makeRendererMap();
+    const renderer = createInvestigationAlarmRenderer(map, "gis");
+    const data = {
+      alarmFeatures: [{ id: "A", properties: { city: "A", alarm_minutes: [400] }, geometry: { type: "Point", coordinates: [1, 2] } }],
+    };
+    const renderAt = (elapsedMs) => renderer.render({
+      activeBeat: 400,
+      completedBeats: [],
+      nowMs: 8000,
+      alarmOnsetId: "cycle:400",
+      alarmOnset: { id: "cycle:400", beat: 400, elapsedMs },
+    }, data);
+    renderAt(400);
+    expect(map.getSource("nli-investigation-alarm-points").setData.mock.calls.at(-1)[0].features[0].properties.onset).toBe(true);
+    const flashing = map.setPaintProperty.mock.calls
+      .filter((call) => call[0] === "nli-investigation-alarm-circles" && call[1] === "circle-opacity")
+      .at(-1)[2];
+    expect(flashing[4]).toBe(0.55);
+    renderAt(1000);
+    expect(map.getSource("nli-investigation-alarm-points").setData.mock.calls.at(-1)[0].features[0].properties.onset).toBe(true);
+    const settledCore = map.setPaintProperty.mock.calls
+      .filter((call) => call[0] === "nli-investigation-alarm-circles" && call[1] === "circle-opacity")
+      .at(-1)[2];
+    expect(settledCore).toEqual(["case", ["<=", ["coalesce", ["get", "count"], 0], 0], 0, 0.3]);
+    renderAt(1799);
+    expect(map.getSource("nli-investigation-alarm-points").setData.mock.calls.at(-1)[0].features[0].properties.onset).toBe(true);
+    const lateEvent = map.setPaintProperty.mock.calls
+      .filter((call) => call[0] === "nli-investigation-alarm-ripple-event-2" && call[1] === "circle-stroke-opacity")
+      .at(-1)[2];
+    expect(lateEvent).toBeGreaterThan(0);
+    renderAt(1800);
+    expect(map.getSource("nli-investigation-alarm-points").setData.mock.calls.at(-1)[0].features[0].properties.onset).toBe(false);
+    const eventStroke = map.setPaintProperty.mock.calls
+      .filter((call) => call[0] === "nli-investigation-alarm-ripple-event" && call[1] === "circle-stroke-opacity")
+      .at(-1)[2];
+    expect(eventStroke).toBe(0);
+    renderer.dispose();
+  });
+
+  it("ended windowed playback counts alarms at the last completed beat, not the full-day total", () => {
+    const map = makeRendererMap();
+    const renderer = createInvestigationAlarmRenderer(map, "gis");
+    renderer.render({
+      narrative: { phase: "ended" },
+      activeBeat: null,
+      completedBeats: [389, 400],
+      nowMs: 20_000,
+    }, {
+      alarmFeatures: [{
+        id: "A",
+        properties: { city: "A", alarm_minutes: [389, 400, 401], alarm_count_total: 3 },
+        geometry: { type: "Point", coordinates: [1, 2] },
+      }],
+    });
+    const rows = map.getSource("nli-investigation-alarm-points").setData.mock.calls.at(-1)[0];
+    expect(rows.features[0].properties.count).toBe(2);
+    expect(rows.features[0].properties.onset).toBe(false);
+    renderer.dispose();
+  });
+
+  it("suppresses chorus and event rings in reduced motion", () => {
+    const map = makeRendererMap();
+    const renderer = createInvestigationAlarmRenderer(map, "gis");
+    renderer.render({
+      activeBeat: 400,
+      completedBeats: [],
+      nowMs: 1300,
+      motionMode: "reduced",
+      alarmOnsetId: "cycle:400",
+      alarmOnset: { id: "cycle:400", beat: 400, elapsedMs: 700 },
+    }, {
+      alarmFeatures: [{ id: "A", properties: { city: "A", alarm_minutes: [400] }, geometry: { type: "Point", coordinates: [1, 2] } }],
+    });
+    const strokes = ["nli-investigation-alarm-ripple", "nli-investigation-alarm-ripple-event", "nli-investigation-alarm-ripple-event-2"]
+      .map((id) => map.setPaintProperty.mock.calls.filter((call) => call[0] === id && call[1] === "circle-stroke-opacity").at(-1)[2]);
+    expect(strokes).toEqual([0, 0, 0]);
     renderer.dispose();
   });
 
@@ -553,6 +709,8 @@ describe("syncInvestigationTimelineToMap alarms", () => {
     expect(restored.length).toBeGreaterThan(0);
     expect(map.removeLayer).toHaveBeenCalledWith("nli-investigation-alarm-circles");
     expect(map.removeLayer).toHaveBeenCalledWith("nli-investigation-alarm-ripple");
+    expect(map.removeLayer).toHaveBeenCalledWith("nli-investigation-alarm-ripple-event");
+    expect(map.removeLayer).toHaveBeenCalledWith("nli-investigation-alarm-ripple-event-2");
     disposeInvestigationTimelineForMap(map);
   });
 
