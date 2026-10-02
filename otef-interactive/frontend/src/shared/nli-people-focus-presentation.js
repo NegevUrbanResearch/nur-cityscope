@@ -1,5 +1,6 @@
 import { NLI_VISUAL_TOKENS } from "./nli-investigation-theme.js";
 import { getLayerLifecycleRuntime } from "./layer-lifecycle-fade.js";
+import { applyPeopleFocusGroup, clearPeopleFocusGroup, forgetPeopleFocusGroupLayers } from "./nli-people-focus-group.js";
 
 export const PEOPLE_FOCUS_DIM = NLI_VISUAL_TOKENS.dimOpacity;
 const PEOPLE_FOCUS_TRANSITION = Object.freeze({
@@ -75,6 +76,7 @@ function runtimeOpacity(map, source, property) {
 }
 
 export function forgetPeopleFocusLayers(map, layerIds) {
+  if (Array.isArray(layerIds)) forgetPeopleFocusGroupLayers(map, layerIds);
   const state = originals.get(map);
   if (!state || !Array.isArray(layerIds)) return;
   for (const layerId of layerIds) {
@@ -89,6 +91,7 @@ export function forgetPeopleFocusLayers(map, layerIds) {
 export function applyPeopleFocusDim(map, selectedPid) {
   if (!map?.getPaintProperty || !map.setPaintProperty) return;
   const pid = selectedPid == null ? "" : String(selectedPid).trim();
+  if (applyPeopleFocusGroup(map, pid)) return;
   const state = paintState(map);
   for (const layer of peopleLayers(map)) {
     const instance = map.getLayer?.(layer.id);
@@ -121,6 +124,7 @@ export function applyPeopleFocusDim(map, selectedPid) {
 
 export function clearPeopleFocusDim(map) {
   if (!map?.setPaintProperty) return;
+  clearPeopleFocusGroup(map);
   for (const layer of peopleLayers(map)) {
     if (!map.getLayer?.(layer.id)) continue;
     for (const property of propertiesFor(layer)) {

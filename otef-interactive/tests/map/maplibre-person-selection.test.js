@@ -294,7 +294,7 @@ describe("GIS person selection visual", () => {
     map.setPaintProperty("nli__people__circle", "circle-opacity", 1);
     vi.spyOn(map, "addLayer");
     mountPersonHalo(map, { pid: "11", coordinates: [34.5, 31.4] });
-    expect(map.addLayer).not.toHaveBeenCalled();
+    expect(map.addLayer.mock.calls.every(([layer]) => layer.id !== PEOPLE_HALO_LAYER_ID)).toBe(true);
     expect(map.getLayer(PEOPLE_HALO_LAYER_ID)).toBeNull();
     expect(map.getSource(PEOPLE_SOURCE_ID)).toBeNull();
     expect(map.getPaintProperty("nli__people__circle", "circle-opacity")[0]).toBe("case");
