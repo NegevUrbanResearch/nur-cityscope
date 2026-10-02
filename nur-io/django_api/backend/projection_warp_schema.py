@@ -1,6 +1,7 @@
 import math
 import re
 from copy import deepcopy
+from .projection_baseline_manifest import resolve_projection_baseline_asset
 
 
 SIDES = {'left': {'columns': 7, 'rows': 7}, 'right': {'columns': 8, 'rows': 7}}
@@ -73,19 +74,14 @@ def validate_projection_warp(value, side, trusted_manifest=None, grid_v7=False):
         if baseline.get('width') != 1920: errors['baseline.width'] = 'must equal 1920'
         if baseline.get('height') != 1080: errors['baseline.height'] = 'must equal 1080'
         if baseline.get('origin') != 'top-left': errors['baseline.origin'] = 'must equal top-left'
-        assets = trusted_manifest.get('assets') if isinstance(trusted_manifest, dict) else None
-        asset = assets.get(side) if isinstance(assets, dict) else None
-        if baseline.get('type') == 'tdMesh' and trusted_manifest is not None and not isinstance(asset, dict):
-            errors['baseline.assetId'] = 'is not present in the trusted manifest'
-            errors['baseline.sha256'] = 'is not present in the trusted manifest'
-        elif baseline.get('type') == 'tdMesh' and isinstance(asset, dict):
-            digest = str(asset.get('sha256', ''))
-            digest = digest[7:] if digest.lower().startswith('sha256:') else digest
-            digest = digest.lower()
-            if baseline.get('assetId') != asset.get('assetId'): errors['baseline.assetId'] = 'is not present in the trusted manifest'
-            if str(baseline.get('sha256', '')).lower() != digest: errors['baseline.sha256'] = 'is not present in the trusted manifest'
-            if asset.get('width') is not None and baseline.get('width') != asset['width']: errors['baseline.width'] = 'does not match the trusted manifest'
-            if asset.get('height') is not None and baseline.get('height') != asset['height']: errors['baseline.height'] = 'does not match the trusted manifest'
+        if value.get('enabled') is True and baseline.get('type') == 'tdMesh' and trusted_manifest is not None:
+            try:
+                asset = resolve_projection_baseline_asset(trusted_manifest, side, baseline)
+                if asset.get('width') is not None and baseline.get('width') != asset['width']: errors['baseline.width'] = 'does not match the trusted manifest'
+                if asset.get('height') is not None and baseline.get('height') != asset['height']: errors['baseline.height'] = 'does not match the trusted manifest'
+            except (TypeError, ValueError):
+                errors['baseline.assetId'] = 'is not present in the trusted manifest'
+                errors['baseline.sha256'] = 'is not present in the trusted manifest'
     keystone = value.get('keystone')
     if _keys(keystone, ['corners'], 'keystone', errors):
         corners = keystone.get('corners')

@@ -2,6 +2,10 @@ import { describe, expect, test, vi } from "vitest";
 import { DEFAULT_PROJECTION_CONFIG as DEFAULTS } from "../../frontend/src/shared/projection-config-schema.js";
 import { projectionPlacementInputIdentity } from "../../frontend/src/projection/projection-names-run.js";
 import { createProjectionConfigClient } from "../../frontend/src/shared/projection-config-client.js";
+import { createIdentityProjectionMesh } from "../../frontend/src/shared/projection-warp-geometry.js";
+import { sha256Hex } from "../../frontend/src/shared/sha256-hex.js";
+import { projectionCatalog, deferred, response } from '../fixtures/projection-catalog.js';
+import { createProjectionBaselineCatalogLoader } from '../../frontend/src/projection/projection-captured-baseline.js';
 import {
   FIELD_DESCRIPTORS,
   NAMES_WALL_DESCRIPTORS,
@@ -141,6 +145,214 @@ function replacementHarness() {
 }
 
 describe("projection config controller", () => {
+  test.each(['identity', 'disabled', 'identity peer'])('pending TD load suspends full-config editor writes from %s and preserves latest fields', async (kind) => {
+    const previousDocument = globalThis.document, previousFetch = globalThis.fetch;
+    globalThis.document = documentStub();
+    const f = await projectionCatalog('/otef-interactive/public/projection-calibration/td-baselines/');
+    const gate = deferred();
+    globalThis.fetch = vi.fn((url, options) => url.endsWith('manifest.json') ? gate.promise : f.fetchImpl(url, options));
+    const client = fakeClient();
+    if (kind === 'disabled') { const initial = clone(DEFAULTS); initial.outputs.left.warp.enabled = false; client.report({ draft: initial }); }
+    const root = element('main');
+    const api = mountProjectionConfig(root, { client });
+    const action = (name) => find(root, (node) => node.dataset?.action === name);
+    try {
+      const output = kind === 'identity peer' ? 'right' : 'left';
+      find(root, (node) => node.dataset?.node === `${output}-keystone`).dispatch('click');
+      find(root, (node) => node.dataset?.action === 'warp-nudge' && node.dataset.direction === 'right').dispatch('click');
+      const pending = f.config('selected'); pending.outputs.right.warp = clone(DEFAULTS.outputs.right.warp);
+      pending.pre.tx = 0.12; pending.outputs.left.post.ty = -0.08;
+      client.report({ draft: pending, hasLocalDraft: true });
+      const input = find(root, (node) => node.dataset?.field === 'pre.tx' && node.dataset.input === 'number');
+      expect(input).not.toBeNull(); input.value = '15'; input.dispatch('input'); input.dispatch('blur');
+      const latest = clone(client.getState().draft);
+      expect(latest.pre.tx).toBe(0.15);
+      client.setDraft.mockClear(); client.apply.mockClear();
+      for (const name of ['warp-undo', 'warp-redo', 'warp-reset-selection']) action(name).dispatch('click');
+      find(root, (node) => node.dataset?.action === 'warp-nudge' && node.dataset.direction === 'up').dispatch('click');
+      const numeric = find(root, (node) => node.attributes?.['aria-label'] === 'Selected warp X position');
+      numeric.value = '32'; numeric.dispatch('change');
+      expect(client.getState().draft).toEqual(latest);
+      expect(client.setDraft).not.toHaveBeenCalled(); expect(client.apply).not.toHaveBeenCalled();
+      gate.resolve(response(new TextEncoder().encode(JSON.stringify(f.manifestB))));
+      await vi.waitFor(() => expect(find(root, (node) => node.textContent?.includes('TD baseline unavailable'))).toBeNull());
+      expect(action('warp-undo').disabled).toBe(true);
+      find(root, (node) => node.dataset?.action === 'warp-nudge' && node.dataset.direction === 'up').dispatch('click');
+      expect(client.getState().draft.pre).toEqual(latest.pre);
+      expect(client.getState().draft.outputs.left.post).toEqual(latest.outputs.left.post);
+      expect(client.getState().draft.outputs.left.warp.baseline).toEqual(latest.outputs.left.warp.baseline);
+    } finally { api.dispose(); globalThis.document = previousDocument; globalThis.fetch = previousFetch; }
+  });
+
+  test.each(['accept', 'switchback', 'dispose'])('editor fresh catalog %s preserves matching mesh, latest config and history without stale installation', async (operation) => {
+    const previousDocument = globalThis.document; globalThis.document = documentStub();
+    const f = await projectionCatalog('/otef-interactive/public/projection-calibration/td-baselines/');
+    const gate = deferred(); let deferFraming = false;
+    const fetchImpl = vi.fn((url, options) => deferFraming && url.endsWith('framing.json') ? gate.promise : f.fetchImpl(url, options));
+    const loader = createProjectionBaselineCatalogLoader({ fetchImpl, base: f.base, initialSnapshot: f.snapshotA });
+    const promote = vi.spyOn(loader, 'promote');
+    const client = fakeClient(); client.setLive(false); client.report({ draft: f.config(), hasLocalDraft: true });
+    const root = element('main'); const api = mountProjectionConfig(root, { client, baselineCatalogLoader: loader });
+    const action = (name) => find(root, (node) => node.dataset?.action === name);
+    const handle = () => find(root, (node) => node.attributes?.['data-index'] === '3' && node.attributes?.class?.includes('warp-handle'));
+    try {
+      action('warp-editor-open').dispatch('click');
+      find(root, (node) => node.dataset?.node === 'left-grid').dispatch('click');
+      await vi.waitFor(() => expect(promote).toHaveBeenCalledTimes(1));
+      find(root, (node) => node.dataset?.action === 'warp-nudge' && node.dataset.direction === 'up').dispatch('click');
+      const configA = clone(client.getState().draft), cxA = handle().attributes.cx;
+      expect(action('warp-undo').disabled).toBe(false);
+      deferFraming = true; const configB = f.config('selected'); configB.pre.tx = 0.17;
+      client.report({ draft: configB, hasLocalDraft: true });
+      await vi.waitFor(() => expect(fetchImpl.mock.calls.some(([url]) => url.endsWith('framing.json'))).toBe(true));
+      const latest = clone(configB); latest.pre.tx = 0.23; latest.outputs.right.post.tx = -0.04;
+      client.report({ draft: latest, hasLocalDraft: true });
+      const priorDraftWrites = client.setDraft.mock.calls.length;
+      if (operation === 'switchback') client.report({ draft: configA, hasLocalDraft: true });
+      if (operation === 'dispose') api.dispose();
+      const undo = action('warp-undo');
+      const cxBeforeCompletion = handle()?.attributes.cx, undoBeforeCompletion = undo?.disabled;
+      gate.resolve(response(f.payloads.get(`${f.base}framing.json`))); await new Promise((done) => setTimeout(done, 10));
+      expect(client.setDraft.mock.calls.length).toBe(priorDraftWrites); expect(client.apply).not.toHaveBeenCalled();
+      if (operation === 'accept') {
+        await vi.waitFor(() => expect(promote).toHaveBeenCalledTimes(2));
+        expect(handle().attributes.cx).not.toBe(cxA); expect(client.getState().draft).toEqual(latest);
+        expect(action('warp-undo').disabled).toBe(true); expect(loader.getSnapshot().manifest).toEqual(f.manifestB);
+        const prepared = await loader.prepare(latest); expect(prepared.loaded.left.manifest).toBe(prepared.loaded.right.manifest);
+        const before = fetchImpl.mock.calls.filter(([url]) => url.endsWith('manifest.json') || url.endsWith('framing.json')).length;
+        find(root, (node) => node.dataset?.node === 'left-grid').dispatch('click');
+        find(root, (node) => node.dataset?.action === 'warp-nudge' && node.dataset.direction === 'up').dispatch('click');
+        expect(fetchImpl.mock.calls.filter(([url]) => url.endsWith('manifest.json') || url.endsWith('framing.json')).length).toBe(before);
+      } else {
+        expect(promote).toHaveBeenCalledTimes(1); expect(loader.getSnapshot()).toBe(f.snapshotA);
+        expect(handle()?.attributes.cx).toBe(cxBeforeCompletion); expect(undo?.disabled).toBe(undoBeforeCompletion);
+        if (operation === 'switchback') {
+          expect(client.getState().draft).toEqual(configA); expect(handle().attributes.cx).toBe(cxA); expect(action('warp-undo').disabled).toBe(false);
+          deferFraming = false; client.report({ draft: configB, hasLocalDraft: true });
+          await vi.waitFor(() => expect(promote).toHaveBeenCalledTimes(2)); expect(f.count('manifest.json')).toBe(2);
+        }
+      }
+    } finally { api.dispose(); globalThis.document = previousDocument; }
+  });
+
+  test('pending baseline switch discards an active pointer without publishing rollback or retaining its drag after switchback', async () => {
+    const previousDocument = globalThis.document; globalThis.document = documentStub();
+    const f = await projectionCatalog('/otef-interactive/public/projection-calibration/td-baselines/'), gate = deferred();
+    const loader = createProjectionBaselineCatalogLoader({ base: f.base, initialSnapshot: f.snapshotA,
+      fetchImpl: (url, options) => url.endsWith('framing.json') ? gate.promise : f.fetchImpl(url, options) });
+    const client = fakeClient(); client.setLive(false);
+    const root = element('main'), api = mountProjectionConfig(root, { client, baselineCatalogLoader: loader });
+    try {
+      find(root, (node) => node.dataset?.action === 'warp-editor-open' && node.parentElement?.dataset?.node === 'left-grid').dispatch('click');
+      const surface = find(root, (node) => node.attributes?.class === 'warp-edit-surface');
+      surface.getBoundingClientRect = () => ({ left: 0, top: 0, width: 2064, height: 1224 });
+      surface.dispatch('pointerdown', { pointerId: 1, isPrimary: true, button: 0, clientX: 72, clientY: 72, preventDefault() {} });
+      surface.dispatch('pointermove', { pointerId: 1, clientX: 82, clientY: 72 });
+      const previous = clone(client.getState().draft), pending = f.config('selected');
+      expect(previous.outputs.left.warp.grid.offsets[0][0]).toBeGreaterThan(0);
+      const count = client.setDraft.mock.calls.length;
+      client.report({ draft: pending, hasLocalDraft: true });
+      surface.dispatch('pointerup', { pointerId: 1, clientX: 92, clientY: 72 });
+      expect(client.setDraft.mock.calls.length).toBe(count); expect(client.getState().draft).toEqual(pending);
+      client.report({ draft: previous, hasLocalDraft: true });
+      const columns = find(root, (node) => node.dataset?.gridLayoutField === 'columns');
+      columns.value = '4'; columns.dispatch('input'); columns.dispatch('blur');
+      expect(client.getState().draft.outputs.left.warp.grid.columns).toBe(4);
+      expect(client.getState().draft.pre).toEqual(previous.pre);
+      gate.resolve(response(f.payloads.get(`${f.base}framing.json`))); await new Promise((done) => setTimeout(done, 10));
+      expect(client.getState().draft.outputs.left.warp.baseline.type).toBe('identity');
+    } finally { api.dispose(); globalThis.document = previousDocument; }
+  });
+
+  test.each(['key order', 'hash case', 'local fields'])('equivalent TD reference preserves history: %s', async (kind) => {
+    const previousDocument = globalThis.document, previousFetch = globalThis.fetch;
+    globalThis.document = documentStub();
+    const f = await projectionCatalog('/otef-interactive/public/projection-calibration/td-baselines/'); globalThis.fetch = f.fetchImpl;
+    const client = fakeClient(); client.setLive(false); client.report({ draft: f.config('selected'), hasLocalDraft: true });
+    const root = element('main'); const api = mountProjectionConfig(root, { client });
+    try {
+      find(root, (node) => node.dataset?.node === 'left-keystone').dispatch('click');
+      await vi.waitFor(() => expect(f.count('selected/left.json')).toBe(1));
+      await vi.waitFor(() => expect(find(root, (node) => node.textContent?.includes('TD baseline unavailable'))).toBeNull());
+      find(root, (node) => node.dataset?.action === 'warp-nudge' && node.dataset.direction === 'up').dispatch('click');
+      const candidate = clone(client.getState().draft);
+      if (kind === 'key order') candidate.outputs.left.warp.baseline = Object.fromEntries(Object.entries(candidate.outputs.left.warp.baseline).reverse());
+      if (kind === 'hash case') candidate.outputs.left.warp.baseline.sha256 = candidate.outputs.left.warp.baseline.sha256.toUpperCase();
+      if (kind === 'local fields') candidate.pre.ty = 0.08;
+      client.report({ draft: candidate, hasLocalDraft: true });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      const undo = find(root, (node) => node.dataset?.action === 'warp-undo');
+      expect(undo.disabled).toBe(false); expect(f.count('manifest.json')).toBe(1); expect(f.count('selected/left.json')).toBe(1);
+      undo.dispatch('click'); expect(client.getState().draft.pre).toEqual(candidate.pre);
+      client.report({ draft: candidate, snapshot: { ...client.getState().snapshot, config: candidate, selectedPresetId: 'accepted-other' }, hasLocalDraft: false });
+      expect(undo.disabled).toBe(true);
+    } finally { api.dispose(); globalThis.document = previousDocument; globalThis.fetch = previousFetch; }
+  });
+  test('switching A to pending B and back to A restores the matching editor mesh and ignores delayed B', async () => {
+    const previousDocument = globalThis.document;
+    const previousFetch = globalThis.fetch;
+    globalThis.document = documentStub();
+    const configA = clone(DEFAULTS);
+    const configB = clone(DEFAULTS);
+    const meshBytes = (scale) => {
+      const mesh = createIdentityProjectionMesh({ side: 'left' });
+      mesh.logicalGrid = { columns: 7, rows: 7 };
+      mesh.vertices.forEach((point) => { point.x *= scale; });
+      return new TextEncoder().encode(JSON.stringify(mesh));
+    };
+    const bytesA = meshBytes(0.85);
+    const bytesB = meshBytes(0.72);
+    const hashA = await sha256Hex(bytesA);
+    const hashB = await sha256Hex(bytesB);
+    const framingBytes = new TextEncoder().encode(JSON.stringify(DEFAULTS));
+    const framingHash = await sha256Hex(framingBytes);
+    const entry = (assetId, path, sha256) => ({ assetId, path, sha256, logicalGrid: { columns: 7, rows: 7 } });
+    const manifest = { schemaVersion: 1, width: 1920, height: 1080,
+      assets: { left: entry('legacy-left', 'legacy-left.json', hashA), right: { ...entry('legacy-right', 'legacy-right.json', hashA), logicalGrid: { columns: 8, rows: 7 } } },
+      catalog: { left: [entry('capture-A', 'capture-A.json', hashA), entry('capture-B', 'capture-B.json', hashB)], right: [] },
+      framing: { path: '../td-source-config.json', sha256: framingHash } };
+    configA.outputs.left.warp.baseline = { type: 'tdMesh', assetId: 'capture-A', sha256: hashA, width: 1920, height: 1080, origin: 'top-left' };
+    configB.outputs.left.warp.baseline = { type: 'tdMesh', assetId: 'capture-B', sha256: hashB, width: 1920, height: 1080, origin: 'top-left' };
+    let releaseA;
+    let releaseB;
+    globalThis.fetch = vi.fn(async (url) => {
+      if (url.endsWith('manifest.json')) return { ok: true, async arrayBuffer() { return new TextEncoder().encode(JSON.stringify(manifest)).buffer; } };
+      if (url.endsWith('td-source-config.json')) return { ok: true, async arrayBuffer() { return framingBytes.buffer; } };
+      if (url.endsWith('capture-A.json')) return new Promise((resolve) => { releaseA = () => resolve({ ok: true, async arrayBuffer() { return bytesA.buffer; } }); });
+      if (url.endsWith('capture-B.json')) return new Promise((resolve) => { releaseB = () => resolve({ ok: true, async arrayBuffer() { return bytesB.buffer; } }); });
+      throw new Error(`unexpected fixture request: ${url}`);
+    });
+    const root = element('main'); root.ownerDocument = globalThis.document;
+    const client = fakeClient();
+    const api = mountProjectionConfig(root, { client });
+    try {
+      find(root, (node) => node.dataset?.action === 'warp-editor-open' && node.parentElement?.dataset?.node === 'left-grid').dispatch('click');
+      const handles = () => find(root, (node) => node.attributes?.['aria-label'] === 'Warp editing handles');
+      const handle3 = () => find(root, (node) => node.attributes?.['data-index'] === '3' && node.attributes?.class?.includes('warp-handle'));
+      const identityCx = handle3().attributes.cx;
+      client.report({ draft: configA, hasLocalDraft: true });
+      await vi.waitFor(() => expect(releaseA).toEqual(expect.any(Function)));
+      releaseA();
+      await vi.waitFor(() => expect(handle3().attributes.cx).not.toBe(identityCx));
+      const cxA = handle3().attributes.cx;
+      find(root, (node) => node.dataset?.action === 'warp-nudge' && node.dataset.direction === 'up').dispatch('click');
+      expect(client.getState().draft.outputs.left.warp.baseline.assetId).toBe('capture-A');
+      client.report({ draft: configB, hasLocalDraft: true });
+      await vi.waitFor(() => expect(releaseB).toEqual(expect.any(Function)));
+      await vi.waitFor(() => expect(find(root, (node) => node.textContent?.includes('TD baseline unavailable'))).not.toBeNull());
+      client.report({ draft: configA, hasLocalDraft: true });
+      await vi.waitFor(() => expect(handle3().attributes.cx).toBe(cxA));
+      releaseB();
+      await Promise.resolve(); await Promise.resolve();
+      expect(handle3().attributes.cx).toBe(cxA);
+      find(root, (node) => node.dataset?.action === 'warp-nudge' && node.dataset.direction === 'up').dispatch('click');
+      expect(client.getState().draft.outputs.left.warp.baseline.assetId).toBe('capture-A');
+      expect(handles().children.length).toBeGreaterThan(0);
+    } finally {
+      api.dispose(); globalThis.document = previousDocument; globalThis.fetch = previousFetch;
+    }
+  });
+
   test.each(["left-keystone", "right-keystone", "left-grid", "right-grid"])("%s retains its noninitial selection and navigation on ordinary reopen", (nodeId) => {
     const previousDocument = globalThis.document; const doc = documentStub();
     const events = new Map(); doc.defaultView.addEventListener = (type, fn) => events.set(type, fn);

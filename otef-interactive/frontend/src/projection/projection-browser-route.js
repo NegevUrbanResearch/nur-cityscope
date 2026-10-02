@@ -7,6 +7,7 @@ import { migrateProjectionConfigToV2 } from "../shared/projection-warp-schema.js
 import { migrateProjectionConfigToV7 } from "../shared/projection-config-schema.js";
 import {
   DEFAULT_PROJECTION_BASELINE,
+  createProjectionBaselineCatalogLoader,
   loadCapturedProjectionAsset,
   loadCapturedProjectionFraming,
 } from "./projection-captured-baseline.js";
@@ -168,7 +169,6 @@ export async function createProjectionBrowserSurface({
   let contextLost = false;
   let nameAdapter;
   let settlementAdapter;
-  let peerBaseline;
   let activeMesh;
   let previousPair = null;
   try {
@@ -182,14 +182,16 @@ export async function createProjectionBrowserSurface({
     const initialV6 = browserProjectionConfig(initialConfig);
     const startupConfig = initialV6 || browserProjectionConfig(baseline.framing);
     const initialWarp = startupConfig?.outputs?.[spanId]?.warp;
+    const catalogLoader = createProjectionBaselineCatalogLoader({ fetchImpl, initialSnapshot: baseline });
+    let startupSources;
     try {
-      baseline = await loadCapturedProjectionAsset({ fetchImpl, spanId, captured: baseline, signal });
+      startupSources = await catalogLoader.prepare(startupConfig, signal);
+      catalogLoader.promote(startupSources.snapshot);
+      baseline = startupSources.loaded[spanId] || { ...startupSources.snapshot, mesh: null, asset: null };
     } catch (error) {
       const bypassesBaseline = initialWarp?.enabled === false || initialWarp?.baseline?.type === "identity";
       if (error?.name === "AbortError" || !bypassesBaseline) throw error;
-      baseline.mesh = null;
-      baseline.asset = baseline.manifest.assets?.[spanId] || null;
-      baseline.meshError = error;
+      baseline = { ...baseline, mesh: null, asset: baseline.manifest.assets?.[spanId] || null, meshError: error };
     }
     await sourceReadyWithSignal(image, signal);
     if (disposed || signal?.aborted) throw abortError();
@@ -209,22 +211,18 @@ export async function createProjectionBrowserSurface({
       ...(nameAdapter?.descriptor() ? { names: nameAdapter.descriptor() } : {}),
       ...(settlementAdapter?.descriptor() ? { settlements: settlementAdapter.descriptor() } : {}),
       });
-    const initialMesh = initialWarp?.baseline?.type === "identity" || initialWarp?.enabled === false
-      ? evaluateWarpMesh(null, initialWarp, { side: spanId, schemaVersion: initialConfig?.schemaVersion })
-      : (baseline.mesh || evaluateWarpMesh(null, migrateProjectionConfigToV2(baseline.framing).outputs[spanId].warp, { side: spanId }));
+    const initialMesh = startupConfig?.outputs?.[spanId]?.warp
+      ? prepareProjectionSideMesh(startupConfig, spanId, baseline).mesh
+      : evaluateWarpMesh(null, migrateProjectionConfigToV2(baseline.framing).outputs[spanId].warp, { side: spanId });
     const renderer = rendererFactory({ canvas, mesh: initialMesh });
     activeMesh = initialMesh;
     compositor = createProjectionSurfaceCompositor({ renderer, sources: readScene() });
     let activeConfig = browserProjectionConfig(initialConfig) || browserProjectionConfig(baseline.framing);
     const prepareConfig = (candidate) => prepareProjectionSideMesh(candidate, spanId, baseline);
     const preparePair = async (candidate, requestSignal = signal) => {
-      const peer = spanId === 'left' ? 'right' : 'left';
-      const meshes = await prepareProjectionPairMeshes({ config: candidate, signal: requestSignal, loadBaseline: async (side, assetSignal) => {
-        if (side === spanId) return baseline;
-        if (!peerBaseline) peerBaseline = await loadCapturedProjectionAsset({ fetchImpl, spanId: peer, captured: baseline, signal: assetSignal });
-        return peerBaseline;
-      } });
-      return { config: browserProjectionConfig(candidate), mesh: meshes[spanId], meshes };
+      const sources = await catalogLoader.prepare(candidate, requestSignal);
+      const meshes = await prepareProjectionPairMeshes({ config: candidate, signal: requestSignal, loadBaseline: async (side) => sources.loaded[side] || null });
+      return { config: browserProjectionConfig(candidate), mesh: meshes[spanId], meshes, snapshot: sources.snapshot, loaded: sources.loaded };
     };
     nameAdapter = createProjectionNameCanvasAdapter({ document: doc, output: spanId });
     settlementAdapter = createProjectionSettlementNameAdapter({ document: doc, output: spanId });
@@ -301,21 +299,24 @@ export async function createProjectionBrowserSurface({
       getNameAdapter: () => nameAdapter,
       getSettlementAdapter: () => settlementAdapter,
       commitPair(prepared) {
-        previousPair = { candidate: prepared, config: activeConfig, mesh: activeMesh };
+        previousPair = { candidate: prepared, config: activeConfig, mesh: activeMesh, baseline };
         renderer.setMesh(prepared.mesh);
         activeMesh = prepared.mesh;
         activeConfig = prepared.config;
+        baseline = prepared.loaded?.[spanId] || { ...prepared.snapshot, mesh: null, asset: null };
       },
       rollbackPair(prepared) {
         if (!previousPair || previousPair.candidate !== prepared) return false;
         renderer.setMesh(previousPair.mesh);
         activeMesh = previousPair.mesh;
         activeConfig = previousPair.config;
+        baseline = previousPair.baseline;
         previousPair = null;
         return true;
       },
       finalizePair(prepared) {
         if (previousPair?.candidate !== prepared) return false;
+        catalogLoader.promote(prepared.snapshot);
         previousPair = null;
         return true;
       },

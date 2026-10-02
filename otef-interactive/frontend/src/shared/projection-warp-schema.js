@@ -1,4 +1,5 @@
 import { validateNamesWall, validateNamesWallV3, validateNamesWallV5, validateNamesWallV6 } from './nli-name-wall-config.js';
+import { resolveProjectionBaselineAsset } from './projection-baseline-manifest.js';
 
 const SIDES = Object.freeze({ left: { columns: 7, rows: 7 }, right: { columns: 8, rows: 7 } });
 const SAFETY_MIN = -1;
@@ -70,15 +71,15 @@ function validateProjectionWarpFields(value, side, { trustedManifest = null } = 
     if (value.baseline.width !== 1920) errors['baseline.width'] = 'must equal 1920';
     if (value.baseline.height !== 1080) errors['baseline.height'] = 'must equal 1080';
     if (value.baseline.origin !== 'top-left') errors['baseline.origin'] = 'must equal top-left';
-    const asset = trustedManifest?.assets?.[side];
-    if (value.baseline.type === 'tdMesh' && trustedManifest && (!asset || typeof asset !== 'object' || Array.isArray(asset))) {
-      errors['baseline.assetId'] = 'is not present in the trusted manifest';
-      errors['baseline.sha256'] = 'is not present in the trusted manifest';
-    } else if (value.baseline.type === 'tdMesh' && asset) {
-      if (value.baseline.assetId !== asset.assetId) errors['baseline.assetId'] = 'is not present in the trusted manifest';
-      if (value.baseline.sha256?.toLowerCase() !== String(asset.sha256 || '').toLowerCase().replace(/^sha256:/, '')) errors['baseline.sha256'] = 'is not present in the trusted manifest';
-      if (asset.width != null && value.baseline.width !== asset.width) errors['baseline.width'] = 'does not match the trusted manifest';
-      if (asset.height != null && value.baseline.height !== asset.height) errors['baseline.height'] = 'does not match the trusted manifest';
+    if (value.enabled === true && value.baseline.type === 'tdMesh' && trustedManifest) {
+      try {
+        const asset = resolveProjectionBaselineAsset(trustedManifest, side, value.baseline);
+        if (asset.width != null && value.baseline.width !== asset.width) errors['baseline.width'] = 'does not match the trusted manifest';
+        if (asset.height != null && value.baseline.height !== asset.height) errors['baseline.height'] = 'does not match the trusted manifest';
+      } catch (_error) {
+        errors['baseline.assetId'] = 'is not present in the trusted manifest';
+        errors['baseline.sha256'] = 'is not present in the trusted manifest';
+      }
     }
   }
   if (ownKeys(value.keystone, ['corners'], 'keystone', errors)) {

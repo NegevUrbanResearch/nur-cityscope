@@ -14,10 +14,24 @@ from django.test import Client, TestCase, TransactionTestCase
 from backend.models import OTEFProjectionCalibration, Table
 from backend.projection_config_service import get_projection_state, mutate_projection_state, ProjectionConflict
 from backend.projection_config_schema import legacy_projection_config_defaults
+from backend.projection_warp_assets import read_projection_baseline_manifest
 from backend.projection_warp_schema import migrate_projection_config_to_v2, migrate_projection_config_to_v5, migrate_projection_config_to_v6, migrate_projection_config_to_v7
 
 
 class ProjectionConfigApiTests(TestCase):
+    @patch('backend.projection_config_service.load_trusted_projection_asset', side_effect=AssertionError('disabled warp must not load an asset'))
+    def test_disabled_td_warp_skips_asset_trust_lookup(self, _loader):
+        initial = self.state()
+        config = copy.deepcopy(initial['config'])
+        config['outputs']['left']['warp'].update({
+            'enabled': False,
+            'baseline': {'type': 'tdMesh', 'assetId': 'removed-capture', 'sha256': 'd' * 64,
+                         'width': 1920, 'height': 1080, 'origin': 'top-left'},
+        })
+        response = self.post_action('preview', initial['revision'], config=config)
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()['config']['outputs']['left']['warp']['baseline']['assetId'], 'removed-capture')
+
     def test_v6_rejects_unknown_names_wall_profile(self):
         current = self.state()
         config = copy.deepcopy(current['config'])
@@ -136,23 +150,31 @@ class ProjectionConfigApiTests(TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             assets = {}
+            catalog = {'left': [], 'right': []}
             for side in ('left', 'right'):
                 payload = json.dumps(fixture[side]['expectedMesh'], separators=(',', ':')).encode()
-                (root / f'{side}.json').write_bytes(payload)
-                assets[side] = {'assetId': f'variable-{side}', 'path': f'{side}.json',
+                (root / f'legacy-{side}.json').write_bytes(payload)
+                (root / 'captures').mkdir(exist_ok=True)
+                (root / 'captures' / f'{side}.json').write_bytes(payload)
+                assets[side] = {'assetId': f'legacy-{side}', 'path': f'legacy-{side}.json',
                                 'sha256': hashlib.sha256(payload).hexdigest(),
                                 'logicalGrid': fixture[side]['expectedMesh']['logicalGrid']}
+                catalog[side].append({'assetId': f'variable-{side}', 'path': f'captures/{side}.json',
+                                      'sha256': hashlib.sha256(payload).hexdigest(),
+                                      'logicalGrid': fixture[side]['expectedMesh']['logicalGrid']})
                 config['outputs'][side]['warp']['baseline'] = {
-                    'type': 'tdMesh', 'assetId': assets[side]['assetId'], 'sha256': assets[side]['sha256'],
+                    'type': 'tdMesh', 'assetId': catalog[side][0]['assetId'], 'sha256': catalog[side][0]['sha256'],
                     'width': 1920, 'height': 1080, 'origin': 'top-left',
                 }
             (root / 'framing.json').write_text(json.dumps({'schemaVersion': 1}), encoding='utf-8')
             (root / 'manifest.json').write_text(json.dumps({
-                'schemaVersion': 1, 'width': 1920, 'height': 1080, 'assets': assets,
+                'schemaVersion': 1, 'width': 1920, 'height': 1080, 'assets': assets, 'catalog': catalog,
                 'framing': {'path': 'framing.json', 'sha256': 'c' * 64},
             }), encoding='utf-8')
             with patch('backend.projection_config_service.projection_baseline_root', return_value=root):
-                preview = self.post_action('preview', initial['revision'], config=config)
+                with patch('backend.projection_config_service.read_projection_baseline_manifest', wraps=read_projection_baseline_manifest) as manifest_reader:
+                    preview = self.post_action('preview', initial['revision'], config=config)
+                    self.assertEqual(manifest_reader.call_count, 1)
                 self.assertEqual(preview.status_code, 200, preview.content)
                 self.assertEqual(preview.json()['config'], config)
                 self.assertEqual(preview.json()['config']['pre'], original_pre)
@@ -188,6 +210,16 @@ class ProjectionConfigApiTests(TestCase):
                 rejected = self.post_action('preview', loaded.json()['revision'], config=changed)
                 self.assertEqual(rejected.status_code, 400)
                 self.assertIn('is not present in the trusted manifest', str(rejected.json()['fields']))
+                self.assertEqual(self.state(), loaded.json())
+                rejected_save = self.post_action('save', loaded.json()['revision'], config=changed, presetId=loaded.json()['selectedPresetId'], name='Invalid catalog')
+                self.assertEqual(rejected_save.status_code, 400)
+                self.assertEqual(self.state(), loaded.json())
+
+                trusted_manifest = json.loads((root / 'manifest.json').read_text(encoding='utf-8'))
+                trusted_manifest['catalog']['left'] = []
+                (root / 'manifest.json').write_text(json.dumps(trusted_manifest), encoding='utf-8')
+                rejected_load = self.post_action('load', loaded.json()['revision'], presetId=loaded.json()['selectedPresetId'])
+                self.assertEqual(rejected_load.status_code, 400)
                 self.assertEqual(self.state(), loaded.json())
 
     def setUp(self):

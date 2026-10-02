@@ -9,7 +9,7 @@ import { DEFAULT_PROJECTION_CONFIG } from "../../frontend/src/shared/projection-
 import { createIdentityProjectionMesh, evaluateWarpPoint } from "../../frontend/src/shared/projection-warp-geometry.js";
 import { validateProjectionBaselineMesh } from "../../frontend/src/shared/projection-warp-assets.js";
 import { migrateProjectionConfigToV2 } from "../../frontend/src/shared/projection-warp-schema.js";
-import { loadCapturedProjectionAsset } from "../../frontend/src/projection/projection-captured-baseline.js";
+import { createProjectionBaselineCatalogLoader, loadCapturedProjectionAsset } from "../../frontend/src/projection/projection-captured-baseline.js";
 import { createProjectionImageDescriptor } from "../../frontend/src/projection/projection-span-view.js";
 import { prepareProjectionPairMeshes } from "../../frontend/src/projection/projection-candidate-validation.js";
 import { createBaselineSampler } from "../../frontend/src/shared/projection-baseline-sampler.js";
@@ -178,7 +178,9 @@ test("uses geographic projective placement and viewport normalization for the im
 
 test("loads the captured 1920x1080 asset for the requested span", async () => {
   const framing = new TextEncoder().encode(JSON.stringify(framingConfig));
-  const mesh = new TextEncoder().encode(JSON.stringify({ width: 1920, height: 1080, vertices: [{ s: 0, t: 0, x: 0, y: 0, u: 0, v: 0 }, { s: 1, t: 0, x: 1, y: 0, u: 1, v: 0 }, { s: 0, t: 1, x: 0, y: 1, u: 0, v: 1 }], triangles: [0, 1, 2] }));
+  const meshValue = createIdentityProjectionMesh({ side: 'left' });
+  meshValue.logicalGrid = { columns: 7, rows: 7 };
+  const mesh = new TextEncoder().encode(JSON.stringify(meshValue));
   const manifest = completeBaselineManifest({ width: 1920, height: 1080, assets: { left: { path: "left.json", sha256: await sha256Hex(mesh) } }, framing: { path: "../td-source-config.json", sha256: await sha256Hex(framing) } });
   const fetchImpl = vi.fn(async (url) => ({ ok: true, async arrayBuffer() { return url.endsWith("manifest.json") ? new TextEncoder().encode(JSON.stringify(manifest)).buffer : (url.endsWith("td-source-config.json") ? framing : mesh).buffer; } }));
   const result = await loadCapturedProjectionBaseline({ fetchImpl, spanId: "left", base: "/baseline/" });
@@ -247,6 +249,133 @@ test('loads byte-hashed variable TD assets through pair preflight and preserves 
   expect(fetchImpl.mock.calls.some(([url]) => url.endsWith('right.json'))).toBe(true);
 });
 
+test('loads the exact selected catalog asset from its actual hashed bytes', async () => {
+  const mesh = variableTdMesh('left');
+  const defaultBytes = new TextEncoder().encode(JSON.stringify(mesh));
+  const selectedBytes = new TextEncoder().encode(JSON.stringify({ ...mesh, catalogMarker: 'selected' }));
+  const selectedHash = await sha256Hex(selectedBytes);
+  const manifest = completeBaselineManifest({ width: 1920, height: 1080,
+    assets: { left: { assetId: 'legacy-left', path: 'left.json', sha256: await sha256Hex(defaultBytes), logicalGrid: mesh.logicalGrid } },
+    catalog: { left: [{ assetId: 'capture-left', path: 'captures/unique/left.json', sha256: selectedHash, logicalGrid: mesh.logicalGrid }], right: [] },
+    framing: { path: '../td-source-config.json', sha256: await sha256Hex(new TextEncoder().encode(JSON.stringify(framingConfig))) },
+  });
+  const framingBytes = new TextEncoder().encode(JSON.stringify(framingConfig));
+  const fetchImpl = vi.fn(async (url) => ({ ok: true, async arrayBuffer() {
+    if (url.endsWith('manifest.json')) return new TextEncoder().encode(JSON.stringify(manifest)).buffer;
+    if (url.endsWith('td-source-config.json')) return framingBytes.buffer;
+    if (url.endsWith('captures/unique/left.json')) return selectedBytes.buffer;
+    return defaultBytes.buffer;
+  } }));
+  const loaded = await loadCapturedProjectionBaseline({ fetchImpl, spanId: 'left', base: '/baseline/' });
+  const selected = await loadCapturedProjectionAsset({ fetchImpl, spanId: 'left', baseline: { assetId: 'capture-left', sha256: selectedHash }, base: '/baseline/', captured: loaded });
+  expect(selected.mesh.catalogMarker).toBe('selected');
+  expect(selected.asset.assetId).toBe('capture-left');
+  expect(fetchImpl).toHaveBeenLastCalledWith('/baseline/captures/unique/left.json', { cache: 'no-store' });
+  await expect(loadCapturedProjectionAsset({ fetchImpl, spanId: 'left', baseline: { assetId: 'unknown', sha256: selectedHash }, base: '/baseline/', captured: loaded })).rejects.toThrow(/trusted|baseline|asset/i);
+});
+
+test('refreshes one coherent catalog snapshot for a newly registered ID and reuses it for later edits', async () => {
+  const framing = new TextEncoder().encode(JSON.stringify(framingConfig));
+  const makeMesh = (side, scale) => {
+    const mesh = createIdentityProjectionMesh({ side });
+    mesh.logicalGrid = { columns: side === 'left' ? 7 : 8, rows: 7 };
+    mesh.vertices.forEach((point) => { point.x *= scale; });
+    return new TextEncoder().encode(JSON.stringify(mesh));
+  };
+  const oldLeftBytes = makeMesh('left', 0.95);
+  const newLeftBytes = makeMesh('left', 0.81);
+  const rightBytes = makeMesh('right', 0.9);
+  const entry = async (side, assetId, path, bytes) => ({ assetId, path, sha256: await sha256Hex(bytes), logicalGrid: { columns: side === 'left' ? 7 : 8, rows: 7 } });
+  const oldLeft = await entry('left', 'historical-left', 'historical/left.json', oldLeftBytes);
+  const newLeft = await entry('left', 'new-left', 'captures/new/left.json', newLeftBytes);
+  const right = await entry('right', 'historical-right', 'historical/right.json', rightBytes);
+  const manifestA = completeBaselineManifest({ schemaVersion: 1, width: 1920, height: 1080,
+    assets: { left: oldLeft, right }, framing: { path: '../td-source-config.json', sha256: await sha256Hex(framing) } });
+  const manifestB = { ...manifestA, assets: { left: oldLeft, right }, catalog: { left: [newLeft], right: [] } };
+  const initialSnapshot = { manifest: manifestA, framing: framingConfig };
+  const payloads = new Map([
+    ['/baseline/manifest.json', new TextEncoder().encode(JSON.stringify(manifestB))],
+    ['/td-source-config.json', framing],
+    ['/baseline/captures/new/left.json', newLeftBytes],
+    ['/baseline/historical/left.json', oldLeftBytes],
+    ['/baseline/historical/right.json', rightBytes],
+  ]);
+  const fetchImpl = vi.fn(async (url) => ({ ok: payloads.has(url), async arrayBuffer() { return payloads.get(url).buffer; } }));
+  const loader = createProjectionBaselineCatalogLoader({ fetchImpl, base: '/baseline/', initialSnapshot });
+  const config = structuredClone(DEFAULT_PROJECTION_CONFIG);
+  config.outputs.left.warp.baseline = { type: 'tdMesh', assetId: newLeft.assetId, sha256: newLeft.sha256, width: 1920, height: 1080, origin: 'top-left' };
+  config.outputs.right.warp.baseline = { type: 'tdMesh', assetId: right.assetId, sha256: right.sha256, width: 1920, height: 1080, origin: 'top-left' };
+  const prepared = await loader.prepare(config);
+  expect(prepared.snapshot.manifest).toEqual(manifestB);
+  expect(prepared.loaded.left.manifest).toBe(prepared.loaded.right.manifest);
+  expect(prepared.loaded.left.asset.assetId).toBe('new-left');
+  expect(prepared.loaded.right.asset.assetId).toBe('historical-right');
+  expect(fetchImpl.mock.calls.filter(([url]) => url.endsWith('manifest.json'))).toHaveLength(1);
+  loader.promote(prepared.snapshot);
+  config.outputs.left.warp.grid.offsets[0] = [0.01, 0];
+  const edited = await loader.prepare(config);
+  expect(edited.snapshot).toBe(prepared.snapshot);
+  expect(fetchImpl.mock.calls.filter(([url]) => url.endsWith('manifest.json'))).toHaveLength(1);
+  expect(fetchImpl.mock.calls.filter(([url]) => url.endsWith('.json') && !url.endsWith('manifest.json'))).toHaveLength(3);
+});
+
+test('a canceled preparation cannot abort the same selected mesh load for its replacement', async () => {
+  const leftMesh = createIdentityProjectionMesh({ side: 'left' });
+  leftMesh.logicalGrid = { columns: 7, rows: 7 };
+  const rightMesh = createIdentityProjectionMesh({ side: 'right' });
+  rightMesh.logicalGrid = { columns: 8, rows: 7 };
+  const leftBytes = new TextEncoder().encode(JSON.stringify(leftMesh));
+  const rightBytes = new TextEncoder().encode(JSON.stringify(rightMesh));
+  const manifest = completeBaselineManifest({ width: 1920, height: 1080, assets: {
+    left: { assetId: 'left-cache', path: 'left-cache.json', sha256: await sha256Hex(leftBytes), logicalGrid: leftMesh.logicalGrid },
+    right: { assetId: 'right-cache', path: 'right-cache.json', sha256: await sha256Hex(rightBytes), logicalGrid: rightMesh.logicalGrid },
+  }, framing: { path: '../td-source-config.json', sha256: 'a'.repeat(64) } });
+  let releaseLeft;
+  let leftStarted;
+  const started = new Promise((resolve) => { leftStarted = resolve; });
+  const fetchImpl = vi.fn(async (url) => {
+    if (url.endsWith('left-cache.json')) { leftStarted(); return new Promise((resolve) => { releaseLeft = () => resolve({ ok: true, async arrayBuffer() { return leftBytes.buffer; } }); }); }
+    if (url.endsWith('right-cache.json')) return { ok: true, async arrayBuffer() { return rightBytes.buffer; } };
+    return { ok: true, async arrayBuffer() { return new Uint8Array().buffer; } };
+  });
+  const loader = createProjectionBaselineCatalogLoader({ fetchImpl, base: '/baseline/', initialSnapshot: { manifest, framing: framingConfig } });
+  const config = structuredClone(DEFAULT_PROJECTION_CONFIG);
+  config.outputs.left.warp.baseline = { type: 'tdMesh', assetId: 'left-cache', sha256: manifest.assets.left.sha256, width: 1920, height: 1080, origin: 'top-left' };
+  config.outputs.right.warp.baseline = { type: 'tdMesh', assetId: 'right-cache', sha256: manifest.assets.right.sha256, width: 1920, height: 1080, origin: 'top-left' };
+  const firstController = new AbortController();
+  const first = loader.prepare(config, firstController.signal);
+  await started;
+  firstController.abort();
+  await expect(first).rejects.toMatchObject({ name: 'AbortError' });
+  config.outputs.right.warp.grid.offsets[0] = [0.01, 0];
+  const second = loader.prepare(config);
+  await vi.waitFor(() => expect(releaseLeft).toEqual(expect.any(Function)));
+  releaseLeft();
+  const result = await second;
+  expect(result.loaded.left.asset.assetId).toBe('left-cache');
+  expect(result.loaded.right.asset.assetId).toBe('right-cache');
+  expect(fetchImpl.mock.calls.filter(([url]) => url.endsWith('left-cache.json'))).toHaveLength(1);
+});
+
+test('rejects the exact selected catalog mesh when its optional trusted origin disagrees', async () => {
+  const mesh = variableTdMesh('left');
+  mesh.origin = 'bottom-left';
+  const meshBytes = new TextEncoder().encode(JSON.stringify(mesh));
+  const meshHash = await sha256Hex(meshBytes);
+  const selected = { assetId: 'capture-left', path: 'captures/unique/left.json', sha256: meshHash, logicalGrid: mesh.logicalGrid, origin: 'top-left' };
+  const manifest = completeBaselineManifest({ width: 1920, height: 1080,
+    assets: { left: { assetId: 'legacy-left', path: 'left.json', sha256: 'a'.repeat(64), logicalGrid: mesh.logicalGrid }, right: { assetId: 'legacy-right', path: 'right.json', sha256: 'b'.repeat(64), logicalGrid: { columns: 5, rows: 3 } } },
+    catalog: { left: [selected], right: [] },
+    framing: { path: 'framing.json', sha256: 'c'.repeat(64) },
+  });
+  const fetchImpl = vi.fn(async () => ({ ok: true, async arrayBuffer() { return meshBytes.buffer; } }));
+
+  await expect(loadCapturedProjectionAsset({
+    fetchImpl, spanId: 'left', base: '/baseline/', captured: { manifest },
+    baseline: { assetId: selected.assetId, sha256: selected.sha256 },
+  })).rejects.toThrow(/origin does not match the trusted manifest/);
+});
+
 test("rejects matching malformed logical metadata during fetched and supplied baseline loading", async () => {
   const framing = new TextEncoder().encode(JSON.stringify(framingConfig));
   const meshValue = createIdentityProjectionMesh({ side: "left" });
@@ -287,7 +416,9 @@ test("rejects matching malformed logical metadata during fetched and supplied ba
 
 test("verifies the manifest-selected mesh and pinned framing bytes", async () => {
   const framing = new TextEncoder().encode(JSON.stringify(framingConfig));
-  const mesh = new TextEncoder().encode('{"width":1920,"height":1080}');
+  const meshValue = createIdentityProjectionMesh({ side: 'left' });
+  meshValue.logicalGrid = { columns: 7, rows: 7 };
+  const mesh = new TextEncoder().encode(JSON.stringify(meshValue));
   const manifest = completeBaselineManifest({
     width: 1920,
     height: 1080,
@@ -303,7 +434,7 @@ test("verifies the manifest-selected mesh and pinned framing bytes", async () =>
   }));
   const result = await loadCapturedProjectionBaseline({ fetchImpl, spanId: "left", base: "/baseline/" });
   expect(result.framing).toEqual(framingConfig);
-  expect(result.mesh).toEqual({ width: 1920, height: 1080 });
+  expect(result.mesh).toEqual(meshValue);
   expect(fetchImpl.mock.calls.map(([url]) => url)).toEqual([
     "/baseline/manifest.json",
     "/td-source-config.json",
@@ -379,7 +510,7 @@ test("identity startup tolerates an unavailable optional TD mesh preload", async
   });
   expect(initialMesh.vertices.length).toBe(49);
   expect(surface.getBaselineIdentity()).toEqual({ type: "identity" });
-  expect(fetchImpl.mock.calls.some(([url]) => url.endsWith("left.json"))).toBe(true);
+  expect(fetchImpl.mock.calls.some(([url]) => url.endsWith("left.json"))).toBe(false);
   surface.dispose();
   globalThis.document = oldDocument;
 });
@@ -428,7 +559,7 @@ test("disabled warp evaluates a diagnostic quad when its optional TD preload fai
   surface.applyConfig(disabled);
   expect(appliedMesh.vertices).toHaveLength(4);
   expect(surface.getBaselineIdentity()).toEqual({ type: "identity" });
-  expect(fetchImpl.mock.calls.some(([url]) => url.endsWith("left.json"))).toBe(true);
+  expect(fetchImpl.mock.calls.some(([url]) => url.endsWith("left.json"))).toBe(false);
   surface.dispose();
   globalThis.document = oldDocument;
 });
@@ -474,11 +605,13 @@ test("captured v1 startup preloads TD mesh for saved apply and disable/re-enable
   const disabledConfig = structuredClone(tdMeshConfig);
   disabledConfig.outputs.left.warp.enabled = false;
 
-  surface.applyConfig(tdMeshConfig);
+  let pair = await surface.preparePair(tdMeshConfig);
+  surface.commitPair(pair); surface.finalizePair(pair);
   expect(setMesh).toHaveBeenLastCalledWith(expect.objectContaining({ logicalGrid: { columns: 7, rows: 7 } }));
   surface.applyConfig(disabledConfig);
   expect(setMesh.mock.lastCall[0].vertices).toHaveLength(4);
-  surface.applyConfig(tdMeshConfig);
+  pair = await surface.preparePair(tdMeshConfig);
+  surface.commitPair(pair); surface.finalizePair(pair);
   expect(setMesh.mock.lastCall[0].vertices).toHaveLength(49);
   expect(fetchImpl.mock.calls.filter(([url]) => url.endsWith("left.json"))).toHaveLength(1);
   surface.dispose();

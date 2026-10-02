@@ -7,7 +7,7 @@ import {
   validateProjectionWarpV7,
   validateProjectionConfigV7,
 } from '../../frontend/src/shared/projection-warp-schema.js';
-import { validateProjectionConfig, migrateProjectionConfigToV7 } from '../../frontend/src/shared/projection-config-schema.js';
+import { DEFAULT_PROJECTION_CONFIG, validateProjectionConfig, migrateProjectionConfigToV7 } from '../../frontend/src/shared/projection-config-schema.js';
 import { validateProjectionBaselineManifest, validateProjectionBaselineMesh } from '../../frontend/src/shared/projection-warp-assets.js';
 import { createIdentityProjectionMesh } from '../../frontend/src/shared/projection-warp-geometry.js';
 
@@ -166,6 +166,44 @@ test('mesh logical metadata must still match its trusted manifest', () => {
     side: 'left', manifest,
     baseline: { assetId: 'fixture-left', sha256: 'a'.repeat(64) },
   })).toHaveProperty('logicalGrid', 'does not match the trusted manifest');
+});
+
+test('trusted mesh validation selects catalog metadata for the configured reference', () => {
+  const manifest = baselineManifest({ columns: 7, rows: 7 });
+  const selected = { assetId: 'capture-left', path: 'captures/left.json', sha256: 'd'.repeat(64), logicalGrid: { columns: 5, rows: 3 } };
+  manifest.catalog = { left: [selected], right: [] };
+  const mesh = createIdentityProjectionMesh({ side: 'left' });
+  mesh.logicalGrid = { columns: 5, rows: 3 };
+  expect(validateProjectionBaselineMesh(mesh, {
+    side: 'left', manifest,
+    baseline: { assetId: selected.assetId, sha256: selected.sha256 },
+  })).toEqual({});
+  expect(validateProjectionBaselineMesh(mesh, {
+    side: 'left', manifest,
+    baseline: { assetId: selected.assetId, sha256: 'e'.repeat(64) },
+  })).toMatchObject({ assetId: expect.any(String), sha256: expect.any(String) });
+});
+
+test('trusted mesh validation enforces an optional selected asset origin', () => {
+  const manifest = baselineManifest({ columns: 7, rows: 7 });
+  const selected = { assetId: 'capture-left', path: 'captures/left.json', sha256: 'd'.repeat(64), logicalGrid: { columns: 7, rows: 7 }, origin: 'top-left' };
+  manifest.catalog = { left: [selected], right: [] };
+  const mesh = createIdentityProjectionMesh({ side: 'left' });
+  const baseline = { assetId: selected.assetId, sha256: selected.sha256 };
+
+  expect(validateProjectionBaselineMesh(mesh, { side: 'left', manifest, baseline })).toEqual({});
+  mesh.origin = 'bottom-left';
+  expect(validateProjectionBaselineMesh(mesh, { side: 'left', manifest, baseline })).toHaveProperty('origin', 'does not match the trusted manifest');
+  delete selected.origin;
+  expect(validateProjectionBaselineMesh(mesh, { side: 'left', manifest, baseline })).toEqual({});
+});
+
+test('disabled TD warps keep structural validation and skip trusted membership', () => {
+  const manifest = baselineManifest({ columns: 7, rows: 7 });
+  const value = structuredClone(DEFAULT_PROJECTION_CONFIG.outputs.left.warp);
+  value.enabled = false;
+  value.baseline = { type: 'tdMesh', assetId: 'retired', sha256: 'd'.repeat(64), width: 1920, height: 1080, origin: 'top-left' };
+  expect(validateProjectionWarpV7(value, 'left', { trustedManifest: manifest })).toEqual({});
 });
 
 test.each([

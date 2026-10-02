@@ -62,7 +62,7 @@ export async function prepareProjectionPairMeshes({ config, loadBaseline, signal
     const warp = candidate.outputs[side].warp;
     if (warp.enabled !== false && warp.baseline?.type === 'tdMesh') {
       if (typeof loadBaseline !== 'function') throw new Error(`Projection ${side} baseline unavailable`);
-      loaded[side] = await loadBaseline(side, signal);
+      loaded[side] = await loadBaseline(side, signal, warp.baseline);
       checkSignal(signal);
       if (!loaded[side]) throw new Error(`Projection ${side} baseline unavailable`);
     }
@@ -75,7 +75,7 @@ export async function prepareProjectionPairMeshes({ config, loadBaseline, signal
 }
 
 /** Validates calibration geometry without loading release metadata or placing names. */
-export function createProjectionGeometryValidator({ loadBaseline, timeoutMs = 75000 }) {
+export function createProjectionGeometryValidator({ loadBaseline, baselineCatalogLoader, timeoutMs = 75000 }) {
   let active = null;
   let sequence = 0;
   let disposed = false;
@@ -89,15 +89,23 @@ export function createProjectionGeometryValidator({ loadBaseline, timeoutMs = 75
     const request = { sequence: ++sequence, controller, generation, revision, identity };
     active = request;
     let timer;
+    let preparedSnapshot;
     try {
       const meshes = await Promise.race([
-        prepareProjectionPairMeshes({ config: clone(config), loadBaseline, signal: controller.signal }),
+        (async () => {
+          const candidate = clone(config);
+          const sources = baselineCatalogLoader ? await baselineCatalogLoader.prepare(candidate, controller.signal) : null;
+          preparedSnapshot = sources?.snapshot;
+          return prepareProjectionPairMeshes({ config: candidate, signal: controller.signal,
+            loadBaseline: sources ? async (side) => sources.loaded[side] : loadBaseline });
+        })(),
         new Promise((_, reject) => {
           controller.signal.addEventListener('abort', () => reject(abortError('Projection geometry preflight cancelled')), { once: true });
           timer = setTimeout(() => { controller.abort(); reject(new Error('Projection geometry preflight timed out')); }, timeoutMs);
         }),
       ]);
       if (disposed || active !== request || controller.signal.aborted) return { identity, valid: false, reason: 'Projection geometry preflight superseded' };
+      if (preparedSnapshot) baselineCatalogLoader.promote(preparedSnapshot);
       return { identity, valid: Object.keys(meshes || {}).length === 2 };
     } catch (error) {
       return { identity, valid: false, reason: String(error?.message || error || 'Projection geometry validation failed').slice(0, 240) };

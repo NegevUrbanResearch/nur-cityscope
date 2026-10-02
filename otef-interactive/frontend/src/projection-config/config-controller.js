@@ -10,7 +10,8 @@ import { createUuid } from "../shared/uuid.js";
 import { createProjectionConfigView } from "./config-view.js";
 import { createWarpEditor } from "./warp-editor.js";
 import { recordProjectionTrace, projectionTraceTime } from './projection-trace-input.js';
-import { loadCapturedProjectionAsset } from "../projection/projection-captured-baseline.js";
+import { createProjectionBaselineCatalogLoader } from "../projection/projection-captured-baseline.js";
+import { normalizeProjectionBaselineHash } from '../shared/projection-baseline-manifest.js';
 import { openClockLayoutEditor } from "./clock-layout-editor-dialog.js";
 import { openNovaExplainerEditor } from "./nova-explainer-editor-dialog.js";
 import { openSettlementNameEditor } from "./settlement-name-editor-dialog.js";
@@ -118,7 +119,7 @@ export function projectionAppliedStatus(rows, revision) {
   return 'Applied';
 }
 
-export function mountProjectionConfig(root, { client, share, onExport, onImport, socket, outputController, candidateValidator, readNamesDataset = null, layoutClient, settlementClient = null, catalog = { entries: [] }, clockEditorFactory = openClockLayoutEditor, novaExplainerEditorFactory = openNovaExplainerEditor, settlementEditorFactory = openSettlementNameEditor, trace } = {}) {
+export function mountProjectionConfig(root, { client, share, onExport, onImport, socket, outputController, candidateValidator, baselineCatalogLoader = createProjectionBaselineCatalogLoader(), readNamesDataset = null, layoutClient, settlementClient = null, catalog = { entries: [] }, clockEditorFactory = openClockLayoutEditor, novaExplainerEditorFactory = openNovaExplainerEditor, settlementEditorFactory = openSettlementNameEditor, trace } = {}) {
   if (!client) throw new Error("projection config client is required");
   if (trace?.enabled) client.setLive(false);
   const sourceId = createUuid();
@@ -154,6 +155,12 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
   let showUnconfirmed = false;
   const validator = candidateValidator || { validateCandidate: async ({ identity }) => ({ identity, valid: false, reason: 'Geometry validator unavailable' }), dispose() {} };
   const namesTracker = createProjectionNamesStatusTracker();
+  let editorBaselineReady = false;
+  let editorBaselineSequence = 0;
+  let editorBaselineAbort = null;
+  let editorBaselineIdentity = null;
+  let editorBaselineMeshes = { left: null, right: null };
+  let requestedEditorBaselineIdentity = null;
   let namesRunPending = false;
   let namesDatasetVersion = "";
   let namesTargetRequest = 0;
@@ -227,13 +234,72 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     onWarpPointer: handleWarpPointer,
   });
   client.setValidateCandidate?.((args) => validator.validateCandidate(args));
-  Promise.all(["left", "right"].map(async (output) => {
-    try {
-      const baseline = await loadCapturedProjectionAsset({ spanId: output });
-      warpEditors[output].setBaselineMesh(baseline.mesh);
+  void syncWarpEditorsForConfig(state.draft || DEFAULT_PROJECTION_CONFIG, true);
+
+  function baselineIdentityFor(config) {
+    return Object.fromEntries(["left", "right"].map((output) => {
+      const warp = config?.outputs?.[output]?.warp;
+      return [output, warp?.enabled !== false && warp?.baseline?.type === "tdMesh"
+        ? JSON.stringify([output, warp.baseline.assetId, normalizeProjectionBaselineHash(warp.baseline.sha256)]) : null];
+    }));
+  }
+  function syncWarpEditorsForConfig(config, rebase = false) {
+    if (!config) return;
+    const identity = baselineIdentityFor(config);
+    if (editorBaselineIdentity && JSON.stringify(identity) === JSON.stringify(editorBaselineIdentity)) {
+      if (JSON.stringify(identity) !== JSON.stringify(requestedEditorBaselineIdentity)) {
+        editorBaselineSequence += 1;
+        editorBaselineAbort?.abort();
+        editorBaselineAbort = null;
+        requestedEditorBaselineIdentity = identity;
+      }
+      for (const output of ["left", "right"]) warpEditors[output].setBaselineMesh(editorBaselineMeshes[output]);
+      for (const output of ["left", "right"]) warpEditors[output].setConfig(config, { rebase });
+      editorBaselineReady = true;
+      return;
+    }
+    if (JSON.stringify(identity) === JSON.stringify(requestedEditorBaselineIdentity)) return;
+    requestedEditorBaselineIdentity = identity;
+    const token = ++editorBaselineSequence;
+    editorBaselineAbort?.abort();
+    editorBaselineAbort = null;
+    editorBaselineReady = false;
+    view.cancelWarpPointer({ notify: false });
+    // Clear editor drag state while its rollback callback is suspended. The
+    // pointer adapter has already dropped the gesture without publishing it.
+    for (const output of ["left", "right"]) warpEditors[output].pointerCancel();
+    for (const output of ["left", "right"]) warpEditors[output].setBaselineMesh(null);
+    for (const output of ["left", "right"]) warpEditors[output].setConfig(config, { rebase: false });
+    if (!Object.values(identity).some(Boolean)) {
+      for (const output of ["left", "right"]) warpEditors[output].setConfig(config, { rebase: true });
+      editorBaselineIdentity = identity;
+      editorBaselineMeshes = { left: null, right: null };
+      editorBaselineReady = true;
       refresh();
-    } catch { /* identity and disabled presets remain editable without TD assets */ }
-  }));
+      return;
+    }
+    const controller = new AbortController();
+    editorBaselineAbort = controller;
+    void baselineCatalogLoader.prepare(config, controller.signal).then(({ snapshot, loaded }) => {
+      if (disposed || controller.signal.aborted || token !== editorBaselineSequence ||
+        JSON.stringify(baselineIdentityFor(state.draft)) !== JSON.stringify(identity)) return;
+      const currentConfig = state.draft;
+      for (const output of ["left", "right"]) warpEditors[output].setBaselineMesh(loaded[output]?.mesh || null);
+      editorBaselineMeshes = { left: loaded.left?.mesh || null, right: loaded.right?.mesh || null };
+      for (const output of ["left", "right"]) warpEditors[output].setConfig(currentConfig, { rebase: true });
+      editorBaselineIdentity = identity;
+      requestedEditorBaselineIdentity = identity;
+      editorBaselineAbort = null;
+      baselineCatalogLoader.promote(snapshot);
+      editorBaselineReady = true;
+      refresh();
+    }).catch(() => {
+      if (disposed || controller.signal.aborted || token !== editorBaselineSequence) return;
+      requestedEditorBaselineIdentity = null;
+      editorBaselineAbort = null;
+      refresh();
+    });
+  }
 
   function rowText(row) {
     const identity = row.instanceId ? ` · ${row.instanceId}` : "";
@@ -248,7 +314,9 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     const traceStarted = projectionTraceTime(trace);
     recordProjectionTrace(trace, 'redraw', { surface: 'page', phase: 'start', live: Boolean(state.live) });
     const rows = [...statusRows.values()].map((row) => ({ ...row, text: rowText(row) }));
-    const warpStates = Object.fromEntries(["left", "right"].map((output) => [output, { ...warpEditors[output].getState(), config: warpEditors[output].getConfig(), handles: warpEditors[output].getControlPoints() }]));
+    const warpStates = Object.fromEntries(["left", "right"].map((output) => [output, { ...warpEditors[output].getState(),
+      ...(!editorBaselineReady ? { baselineAvailable: false, historyDepth: 0, redoDepth: 0 } : {}),
+      config: warpEditors[output].getConfig(), handles: warpEditors[output].getControlPoints() }]));
     view.update({ state: { ...state, selectedPresetId }, errors: fieldErrors,
       conflict: conflict || state.migrationWarnings?.join(' ') || '',
       statusText: pendingAction
@@ -501,10 +569,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     state = nextState;
     const snapshotSelected = state.snapshot?.selectedPresetId;
     const snapshotSelectionChanged = snapshotSelected && snapshotSelected !== previousSelected;
-    if (state.draft) {
-      const rebase = acceptedReplacement;
-      for (const output of ["left", "right"]) warpEditors[output].setConfig(state.draft, { rebase });
-    }
+    if (state.draft) syncWarpEditorsForConfig(state.draft, acceptedReplacement);
     // Follow the server selection after the cached snapshot, while preserving
     // an explicit local dropdown choice.
     if (!selectedPresetId || (snapshotSelectionChanged && (!previousSelected || selectedPresetId === previousSelected))) selectedPresetId = snapshotSelected || "original";
@@ -563,6 +628,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
   }
   function activeWarpOutput() { return selectedNode.startsWith("right-") ? "right" : "left"; }
   function handleWarpChange(output, candidate, meta = {}) {
+    if (disposed || !editorBaselineReady) return;
     try {
       setClientDraft(candidate);
       fieldErrors = {};
@@ -571,6 +637,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     refresh();
   }
   function handleWarpAction(action, value) {
+    if (disposed || (!editorBaselineReady && !["warp-select", "warp-mode", "warp-step"].includes(action))) return;
     return withWarpMutation(() => {
       const output = value?.output || activeWarpOutput();
       const editor = warpEditors[output];
@@ -590,6 +657,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     });
   }
   function handleWarpPointer(action, value) {
+    if (disposed || !editorBaselineReady) return;
     return withWarpMutation(() => {
       const output = value?.output || activeWarpOutput();
       const editor = warpEditors[output];
@@ -713,7 +781,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     sourceId,
     getStatusRows: () => [...statusRows.values()].map((row) => ({ ...row })),
     setConflict,
-    dispose() { if (disposed) return; disposed = true; syncLayoutUnload(); closeSettlementEditor(); closeClockEditor(); closeNovaExplainerEditor(); for (const action of clockCueActions) action.cancel(); clockCueActions.clear(); namesTargetRequest += 1; for (const editor of clockEditors) editor.dispose(); clockEditors.clear(); activeClockEditor = null; activeClockEditorNode = null; activeSettlementEditor = null; if (confirmationTimer !== null) clearTimeout(confirmationTimer); if (patternTimer !== null) clearInterval(patternTimer); socket?.send?.({ type: "otef_projection_pattern", table: "otef", output: activePattern.branch, pattern: "off", sourceId }); socket?.off?.("otef_projection_applied", statusMessage); socket?.off?.("otef_projection_names_status", namesStatusMessage); socket?.off?.("connect", onConnect); socket?.off?.("disconnect", onDisconnect); socket?.off?.('otef_person_selection_changed', onDatasetEvent); socket?.off?.('otef_narrative_scene_changed', onDatasetEvent); unsubscribe?.(); unsubscribeLayout?.(); unsubscribeSettlement?.(); unsubscribeOutput?.(); outputController?.dispose?.(); validator.dispose?.(); view.dispose(); client.stop?.(); },
+    dispose() { if (disposed) return; disposed = true; editorBaselineSequence += 1; editorBaselineAbort?.abort(); editorBaselineAbort = null; syncLayoutUnload(); closeSettlementEditor(); closeClockEditor(); closeNovaExplainerEditor(); for (const action of clockCueActions) action.cancel(); clockCueActions.clear(); namesTargetRequest += 1; for (const editor of clockEditors) editor.dispose(); clockEditors.clear(); activeClockEditor = null; activeClockEditorNode = null; activeSettlementEditor = null; if (confirmationTimer !== null) clearTimeout(confirmationTimer); if (patternTimer !== null) clearInterval(patternTimer); socket?.send?.({ type: "otef_projection_pattern", table: "otef", output: activePattern.branch, pattern: "off", sourceId }); socket?.off?.("otef_projection_applied", statusMessage); socket?.off?.("otef_projection_names_status", namesStatusMessage); socket?.off?.("connect", onConnect); socket?.off?.("disconnect", onDisconnect); socket?.off?.('otef_person_selection_changed', onDatasetEvent); socket?.off?.('otef_narrative_scene_changed', onDatasetEvent); unsubscribe?.(); unsubscribeLayout?.(); unsubscribeSettlement?.(); unsubscribeOutput?.(); outputController?.dispose?.(); validator.dispose?.(); view.dispose(); client.stop?.(); },
   };
 }
 

@@ -14,7 +14,7 @@ vi.mock("../../frontend/src/shared/projection-config-client.js", () => ({ create
 vi.mock("../../frontend/src/projection-config/config-controller.js", () => ({ mountProjectionConfig: (...args) => harness.mount(...args) }));
 vi.mock("../../frontend/src/projection-config/projection-trace.js", () => ({ createProjectionTrace: (...args) => harness.traceFactory(...args) }));
 vi.mock("../../frontend/src/projection-config/output-window-controller.js", () => ({ createOutputWindowController: () => ({ dispose() {} }) }));
-vi.mock("../../frontend/src/projection/projection-captured-baseline.js", () => ({ loadCapturedProjectionAsset: async () => ({}), loadCapturedProjectionFraming: async () => ({}) }));
+vi.mock("../../frontend/src/projection/projection-captured-baseline.js", () => ({ createProjectionBaselineCatalogLoader: () => ({}) }));
 vi.mock("../../frontend/src/projection/projection-candidate-validation.js", () => ({ createProjectionGeometryValidator: () => ({ validateCandidate: async () => ({}), dispose() {} }), readProjectionCandidateInputs: async () => ({ datasetVersion: "release" }) }));
 vi.mock("../../frontend/src/shared/nli-name-field-data.js", () => ({ disposeProjectionNameWallPreparation() {}, prepareProjectionNameWall() {} }));
 

@@ -6,7 +6,7 @@ import { renderQr } from "../shared/qr-code.js";
 import { OTEFWebSocketClient } from "../shared/websocket-client.js";
 import { mountProjectionConfig } from "../projection-config/config-controller.js";
 import { createOutputWindowController } from "../projection-config/output-window-controller.js";
-import { loadCapturedProjectionAsset, loadCapturedProjectionFraming } from '../projection/projection-captured-baseline.js';
+import { createProjectionBaselineCatalogLoader } from '../projection/projection-captured-baseline.js';
 import { createProjectionGeometryValidator, readProjectionCandidateInputs } from '../projection/projection-candidate-validation.js';
 import { OTEF_API } from "../shared/api-client.js";
 import { createClockLayoutClient } from "../projection-config/clock-layout-client.js";
@@ -88,18 +88,9 @@ export async function bootProjectionConfig({ document = globalThis.document, loc
   const client = createProjectionConfigClient({ fetchImpl, socket: ws, sourceId: createUuid(), onConflict: (message) => mounted?.setConflict?.(message) });
   const outputLocation = location?.href ? new URL("./projection.html", location.href).href : "projection.html";
   const outputController = createOutputWindowController({ location: outputLocation, open: globalThis.open, screenApi: globalThis, navigatorApi: globalThis.navigator, storage: (() => { try { return globalThis.localStorage; } catch { return null; } })() });
-  const capturedBySignal = new WeakMap();
-  const candidateValidator = createProjectionGeometryValidator({
-    loadBaseline: async (side, signal) => {
-      let captured = capturedBySignal.get(signal);
-      if (!captured) {
-        captured = loadCapturedProjectionFraming({ fetchImpl, signal });
-        capturedBySignal.set(signal, captured);
-      }
-      return loadCapturedProjectionAsset({ fetchImpl, spanId: side, captured: await captured, signal });
-    },
-  });
-  mounted = mountProjectionConfig(root, { client, socket: ws, layoutClient, settlementClient, catalog, outputController, candidateValidator,
+  const baselineCatalogLoader = createProjectionBaselineCatalogLoader({ fetchImpl });
+  const candidateValidator = createProjectionGeometryValidator({ baselineCatalogLoader });
+  mounted = mountProjectionConfig(root, { client, socket: ws, layoutClient, settlementClient, catalog, outputController, candidateValidator, baselineCatalogLoader,
     readNamesDataset: () => readProjectionCandidateInputs({ fetchImpl }),
     trace, share: () => shareConfigUrl({ location, fetchImpl, document, traceSessionId: trace.enabled ? traceSessionId : null }), onExport: downloadExport, onImport: readImportFile });
   return () => { mounted.dispose(); layoutClient.destroy(); settlementClient.destroy(); trace.dispose(); if (ownsSocket) ws.disconnect?.(); };

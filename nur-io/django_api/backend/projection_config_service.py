@@ -10,7 +10,7 @@ from django.conf import settings
 
 from .models import OTEFProjectionCalibration, Table, projection_config_defaults
 from .projection_config_schema import validate_projection_config
-from .projection_warp_assets import load_trusted_projection_asset
+from .projection_warp_assets import load_trusted_projection_asset, read_projection_baseline_manifest
 from .projection_warp_geometry import evaluate_warp_mesh
 from .projection_warp_schema import validate_projection_config_v2, validate_projection_config_v3, validate_projection_config_v4, validate_projection_config_v5, validate_projection_config_v6, validate_projection_config_v7, migrate_projection_config_to_v5, migrate_projection_config_to_v6, migrate_projection_config_to_v7
 
@@ -51,7 +51,22 @@ def validate_projection_config_for_persistence(config):
         return errors
     if config.get('schemaVersion') not in (2, 3, 4, 5, 6, 7):
         return {}
+    root = projection_baseline_root()
+    td_sides = [side for side in ('left', 'right')
+                if config['outputs'][side]['warp'].get('enabled') and
+                config['outputs'][side]['warp']['baseline']['type'] == 'tdMesh']
     manifest = None
+    validator = {2: validate_projection_config_v2, 3: validate_projection_config_v3, 4: validate_projection_config_v4, 5: validate_projection_config_v5, 6: validate_projection_config_v6, 7: validate_projection_config_v7}[config['schemaVersion']]
+    if td_sides:
+        try:
+            manifest, manifest_errors = read_projection_baseline_manifest(root)
+        except (OSError, ValueError, TypeError) as error:
+            return {f'outputs.{td_sides[0]}.warp.baseline': str(error)}
+        if manifest_errors:
+            return {f'outputs.{td_sides[0]}.warp.baseline': 'invalid projection baseline manifest: ' + '; '.join(f'{path} {message}' for path, message in manifest_errors.items())}
+        errors = validator(config, trusted_manifest=manifest)
+        if errors:
+            return errors
     for side in ('left', 'right'):
         warp = config['outputs'][side]['warp']
         if not warp.get('enabled'):
@@ -60,14 +75,9 @@ def validate_projection_config_for_persistence(config):
         mesh = None
         if baseline['type'] == 'tdMesh':
             try:
-                mesh, manifest, _ = load_trusted_projection_asset(projection_baseline_root(), side)
-            except (OSError, ValueError, TypeError) as error:
+                mesh, _loaded_manifest, _asset = load_trusted_projection_asset(root, side, baseline, manifest)
+            except (OSError, ValueError, TypeError, KeyError) as error:
                 return {f'outputs.{side}.warp.baseline': str(error)}
-        if baseline['type'] == 'tdMesh':
-            validator = {2: validate_projection_config_v2, 3: validate_projection_config_v3, 4: validate_projection_config_v4, 5: validate_projection_config_v5, 6: validate_projection_config_v6, 7: validate_projection_config_v7}[config['schemaVersion']]
-            errors = validator(config, trusted_manifest=manifest)
-            if errors:
-                return errors
         try:
             evaluate_warp_mesh(mesh, warp, side=side, schema_version=config['schemaVersion'])
         except (ValueError, TypeError, KeyError) as error:
