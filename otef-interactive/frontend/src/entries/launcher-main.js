@@ -146,6 +146,7 @@ export function initLauncher({
   const tailnetButton = document.getElementById("shareModeTailnet");
   const qrRemoteButton = document.getElementById("shareQrRemote");
   const qrNliButton = document.getElementById("shareQrNli");
+  const localShareHint = document.getElementById("localShareHint");
   let disposed = false;
   let hosts = { localOrigin: null, tailnetOrigin: null, fromShareFile: false };
   let mode = readStoredMode(storage);
@@ -154,6 +155,12 @@ export function initLauncher({
 
   const applyShare = () => {
     if (tailnetButton) tailnetButton.hidden = !hosts.tailnetOrigin;
+    if (localButton) localButton.textContent = hosts.localKind === "hotspot" ? "PC Hotspot" : "Local";
+    if (localShareHint) localShareHint.textContent = hosts.localKind === "hotspot"
+      ? hosts.localOrigin
+        ? `This saved PC hotspot address is assumed and unverified. Turn on the PC hotspot before scanning.${hosts.tailnetOrigin ? " If the local connection fails, choose Tailnet." : ""} If its IP changes after a PC restart, update the saved hotspot IP, restart the OTEF helper, then reload this launcher.`
+        : `PC hotspot address unavailable. Turn on the hotspot, restart the OTEF helper, then reload this launcher.${hosts.tailnetOrigin ? " Tailnet is available as a fallback." : ""}`
+      : "Local link uses the exhibit computer's active address.";
     mode = resolveShareMode(mode, hosts);
     qrTarget = resolveQrTarget(qrTarget);
     writeStoredMode(storage, mode);
@@ -162,14 +169,18 @@ export function initLauncher({
     setPressed(tailnetButton, mode === "tailnet");
     setPressed(qrRemoteButton, qrTarget === "remote");
     setPressed(qrNliButton, qrTarget === "nli");
-    const shareOrigin = hosts.fromShareFile || hosts.localOrigin ? originForMode(mode, hosts) : null;
+    const shareOrigin = originForMode(mode, hosts);
     for (const id of SHARE_REMOTE_IDS) setLink(document, id, shareOrigin ? linkFor(shareOrigin, id) : null);
     const qrHref = shareOrigin ? linkFor(shareOrigin, qrLinkId(qrTarget)) : null;
     if (shareUrl) shareUrl.textContent = qrHref || "—";
+    qrHost?.setAttribute?.("aria-label", `QR code for ${qrTarget === "nli" ? "NLI staff remote" : "regular remote"}`);
     if (shareStatus) {
-      shareStatus.textContent = qrHref
-        ? "Ready to connect."
-        : "Run start-otef to publish a share address.";
+      shareStatus.textContent = qrHref && mode === "local" && hosts.localKind === "hotspot"
+        ? `Saved hotspot address is unverified. Turn on the PC hotspot before scanning.${hosts.tailnetOrigin ? " Choose Tailnet if the local connection fails." : ""}`
+        : qrHref ? "Ready to connect."
+        : mode === "local" && !hosts.localOrigin && hosts.localKind === "hotspot"
+          ? `Local address unavailable. Turn on the PC hotspot, restart the OTEF helper, then reload this launcher${hosts.tailnetOrigin ? ", or use Tailnet." : "."}`
+          : "Run start-otef to publish a share address.";
     }
     if (!qrHost) return;
     if (qrHref) renderQr(qrHost, qrHref, { size: 256 });
@@ -230,6 +241,7 @@ export function initLauncher({
   void loadShareHosts({ location, fetchImpl }).then((loaded) => {
     if (disposed) return;
     hosts = loaded;
+    if (hosts.localKind === "hotspot") mode = hosts.localOrigin ? "local" : (hosts.tailnetOrigin ? "tailnet" : "local");
     applyShare();
   });
 
