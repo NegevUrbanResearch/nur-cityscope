@@ -63,4 +63,78 @@ describe("Chrome popup policy setup script", () => {
     expect(source).toContain("Remove-ItemProperty");
     expect(source).toContain("-Name $entry.Name");
   });
+
+  test("adds dedicated GIS debug flags even when COOP is already present", () => {
+    const source = readScript();
+
+    expect(source).toMatch(
+      /\$ChromeUserDataDir\s*=\s*'--user-data-dir=%LOCALAPPDATA%\\OTEF\\gis-chrome-profile'/,
+    );
+    expect(source).toMatch(/\$ChromeDebugPort\s*=\s*'--remote-debugging-port=9222'/);
+    expect(source).toMatch(/\$ChromeDebugAddress\s*=\s*'--remote-debugging-address=127\.0\.0\.1'/);
+    expect(source).toContain("ValidateSet('Install', 'Remove', 'Status')");
+    expect(source).toContain("OTEF GIS.lnk");
+    expect(source).toContain("function Install-OtefGisShortcut");
+    expect(source).toContain("Get-OtefGisLaunchArguments");
+
+    const installFn = source.slice(
+      source.indexOf("function Install-ChromeLaunchFlag"),
+      source.indexOf("function Remove-ChromeLaunchFlag"),
+    );
+    expect(installFn).toContain("Install-OtefGisShortcut");
+    expect(installFn).toContain("Remove-ChromeArgument");
+    expect(installFn).toContain("$ChromeUserDataDir");
+    expect(installFn).toContain("$ChromeDebugPort");
+    expect(installFn).toContain("$ChromeDebugAddress");
+    expect(installFn).not.toMatch(/Add-ChromeArgument -Arguments \$next -Argument \$ChromeUserDataDir/);
+
+    const otefFn = source.slice(
+      source.indexOf("function Install-OtefGisShortcut"),
+      source.indexOf("function Install-ChromeLaunchFlag"),
+    );
+    expect(otefFn).toContain("Get-OtefGisLaunchArguments");
+    expect(otefFn).toContain("OTEF GIS");
+    expect(source).toContain(
+      "$OtefGisUrl = 'http://localhost/otef-interactive/index.html?archivePager=1'",
+    );
+
+    const statusFn = source.slice(
+      source.indexOf("function Show-LaunchFlagStatus"),
+      source.indexOf("function Show-Status"),
+    );
+    expect(statusFn).toContain("$ChromeUserDataDir");
+    expect(statusFn).toContain("$ChromeDebugPort");
+    expect(statusFn).toContain("$ChromeDebugAddress");
+    expect(statusFn).toContain("OTEF GIS");
+  });
+
+  test("does not add archive ownership or a dedicated profile to personal Chrome shortcuts", () => {
+    const source = readScript();
+    const installFn = source.slice(
+      source.indexOf("function Install-ChromeLaunchFlag"),
+      source.indexOf("function Remove-ChromeLaunchFlag"),
+    );
+
+    expect(installFn).not.toContain("$OtefGisUrl");
+    expect(installFn).not.toContain("archivePager=1");
+    expect(installFn).not.toMatch(/Add-ChromeArgument -Arguments \$next -Argument \$ChromeUserDataDir/);
+  });
+
+  test("remove undoes debug and profile arguments without deleting the profile folder", () => {
+    const source = readScript();
+    const removeFn = source.slice(
+      source.indexOf("function Remove-ChromeLaunchFlag"),
+      source.indexOf("function Show-LaunchFlagStatus"),
+    );
+
+    expect(removeFn).toContain("Remove-ChromeDisableFeature");
+    expect(removeFn).toContain("Remove-ChromeArgument");
+    expect(removeFn).toContain("$ChromeUserDataDir");
+    expect(removeFn).toContain("$ChromeDebugPort");
+    expect(removeFn).toContain("$ChromeDebugAddress");
+    expect(removeFn).toContain("Get-OtefGisShortcutPath");
+    expect(removeFn.toLowerCase()).toContain("not delete");
+    expect(removeFn).not.toContain("Remove-Item");
+    expect(source).not.toMatch(/Remove-Item[\s\S]{0,240}gis-chrome-profile/);
+  });
 });

@@ -44,6 +44,25 @@ function Get-ProjectionPublishedPort {
     return $null
 }
 
+function Test-NliArchivePagerListening {
+    $client = $null
+    try {
+        $client = New-Object System.Net.Sockets.TcpClient
+        $wait = $client.BeginConnect('127.0.0.1', 7733, $null, $null)
+        if (-not $wait.AsyncWaitHandle.WaitOne(400)) {
+            return $false
+        }
+        $client.EndConnect($wait)
+        return [bool]$client.Connected
+    } catch {
+        return $false
+    } finally {
+        if ($null -ne $client) {
+            $client.Dispose()
+        }
+    }
+}
+
 function Get-ProjectionLocalOrigin([int]$Port, [string]$HostName = 'localhost') {
     if ($Port -eq 80) { return "http://$HostName" }
     return "http://$HostName`:$Port"
@@ -133,10 +152,52 @@ function Invoke-ProjectionStartup {
         Write-Error 'Failed to write hostname share file.'
         return $false
     }
+    $pagerPath = Join-Path $PSScriptRoot 'nli-archive-pager.mjs'
+    $pagerReady = $false
+    try {
+        if (-not (Test-NliArchivePagerListening)) {
+            Start-Process -WindowStyle Hidden node -ArgumentList @($pagerPath)
+        }
+        for ($attempt = 0; $attempt -lt 10; $attempt++) {
+            if (Test-NliArchivePagerListening) {
+                $pagerReady = $true
+                break
+            }
+            Start-Sleep -Milliseconds 200
+        }
+    } catch {
+        $pagerReady = $false
+    }
+    if (-not $pagerReady) {
+        Write-Host 'degraded-mode: NLI archive pager is not listening on 127.0.0.1:7733' -ForegroundColor Yellow
+    }
     $launcherUrl = "$origin/otef-interactive/launcher.html"
-    if ($null -eq $BrowserLauncher) { $BrowserLauncher = { param($url) Start-Process $url | Out-Null } }
-    & $BrowserLauncher $launcherUrl | Out-Null
-    Write-Host "OTEF ready: $launcherUrl" -ForegroundColor Green
+    $gisUrl = "$origin/otef-interactive/index.html?archivePager=1"
+    if ($null -eq $BrowserLauncher) {
+        $BrowserLauncher = {
+            param($url)
+            $chrome = @(
+                (Join-Path $env:ProgramFiles 'Google\Chrome\Application\chrome.exe')
+            )
+            $x86 = ${env:ProgramFiles(x86)}
+            if ($x86) { $chrome += (Join-Path $x86 'Google\Chrome\Application\chrome.exe') }
+            $exe = $chrome | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -First 1
+            $profile = Join-Path $env:LOCALAPPDATA 'OTEF\gis-chrome-profile'
+            if ($exe) {
+                Start-Process $exe -ArgumentList @(
+                    '--disable-features=CrossOriginOpenerPolicy',
+                    "--user-data-dir=$profile",
+                    '--remote-debugging-port=9222',
+                    '--remote-debugging-address=127.0.0.1',
+                    $url
+                ) | Out-Null
+                return
+            }
+            throw 'Chrome was not found; refusing to open the archive-owner GIS in the signed-in default browser.'
+        }
+    }
+    & $BrowserLauncher $gisUrl | Out-Null
+    Write-Host "OTEF ready: $gisUrl" -ForegroundColor Green
     return $true
 }
 

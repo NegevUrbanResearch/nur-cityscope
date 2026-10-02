@@ -344,11 +344,19 @@ describe("narrative state transport", () => {
     const { default: context } = await import("../../frontend/src/shared/OTEFDataContext.js");
     context._tableName = "otef";
     context._applyNarrativeScene(ACTIVE_SCENE);
+    const getState = vi.spyOn(api.OTEF_API, "getState").mockResolvedValue({
+      narrative_state: ACTIVE_SCENE.narrativeState,
+      basemap: ACTIVE_SCENE.basemap,
+      investigation_clock: ACTIVE_SCENE.investigationClock,
+      person_selection: ACTIVE_SCENE.personSelection,
+      escape_overlay: ACTIVE_SCENE.escapeOverlay,
+    });
     websocket.setupWebSocket(context);
     await context._wsClient.options.onConnect();
+    getState.mockClear();
 
     let resolveSnapshot;
-    vi.spyOn(api.OTEF_API, "getState").mockImplementation(() => new Promise((resolve) => {
+    getState.mockImplementation(() => new Promise((resolve) => {
       resolveSnapshot = resolve;
     }));
     const reconnect = context._wsClient.options.onConnect();
@@ -404,10 +412,18 @@ describe("narrative state transport", () => {
       narrativeState: { id: null, transition: "exit", revision: 2 },
       basemap: "dark",
     });
+    const getState = vi.spyOn(api.OTEF_API, "getState").mockResolvedValue({
+      narrative_state: { id: null, transition: "exit", revision: 2 },
+      basemap: "dark",
+      investigation_clock: ACTIVE_SCENE.investigationClock,
+      person_selection: ACTIVE_SCENE.personSelection,
+      escape_overlay: ACTIVE_SCENE.escapeOverlay,
+    });
     websocket.setupWebSocket(context);
     await context._wsClient.options.onConnect();
+    getState.mockClear();
     let resolveSnapshot;
-    vi.spyOn(api.OTEF_API, "getState").mockImplementation(() => new Promise((resolve) => {
+    getState.mockImplementation(() => new Promise((resolve) => {
       resolveSnapshot = resolve;
     }));
 

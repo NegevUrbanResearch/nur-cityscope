@@ -6,6 +6,11 @@ import { COPY, HOME_CUE, HOME_LAYER_IDS, IDENTITY_LAYER_IDS } from "../../fronte
 import { nliTimelineHostMethods } from "../../frontend/src/remote/nli-timeline-transport.js";
 import { shouldCloseViewerForNarrative } from "../../frontend/src/map/nli-reveal-presentation.js";
 import { setLocale } from "../../frontend/src/remote/remote-locale.js";
+import {
+  PEOPLE_INDEX_URL,
+  PEOPLE_RELEASE_METADATA_URL,
+} from "../../frontend/src/remote/remote-people-search.js";
+import { sha256Hex } from "../../frontend/src/shared/sha256-hex.js";
 
 const FIXTURE = `
   <div class="app">
@@ -38,18 +43,20 @@ const FIXTURE = `
             <input id="searchInput" />
             <ul id="searchResults"></ul>
             <p id="searchStatus" hidden></p>
-            <button type="button" id="freeArchiveBtn"></button>
+            <div id="searchArchiveMount"></div>
           </div>
         </div>
         <div id="kitEscape"></div>
         <div id="kitPresentation"></div>
         <div id="kitTimeline"></div>
-        <div id="kitArchive"><button type="button" id="archiveBtn"></button></div>
+        <div id="kitArchive"></div>
         <p id="kitIdle" hidden></p>
       </div>
-      <button type="button" id="prevBtn"></button>
-      <button type="button" id="nextBtn"></button>
-      <div id="nextChoices" hidden></div>
+      <div class="dock">
+        <button type="button" id="prevBtn"></button>
+        <button type="button" id="nextBtn"></button>
+        <div id="nextChoices" hidden></div>
+      </div>
     </section>
     <div id="staffPackMenus" hidden></div>
   </div>
@@ -152,6 +159,7 @@ function mount(options = {}) {
       return { ok: true, clock: h.clock };
     },
     clearPerson: (...args) => h.clearPerson(...args),
+    archiveWindowCommand: vi.fn().mockResolvedValue({ acknowledged: true }),
     narrativePresentationCommand: async (command) => {
       h.commands.push(command);
       return { status: "ok" };
@@ -170,13 +178,14 @@ function mount(options = {}) {
 
 async function bootRemote(session) {
   const { initNliStaffRemote } = await import("../../frontend/src/remote/nli-staff-remote.js");
-  initNliStaffRemote(session.dataContext);
+  session.remote = initNliStaffRemote(session.dataContext);
 }
 
 describe("NLI staff Home transitions", () => {
   let session;
 
   afterEach(() => {
+    session?.remote?.dispose();
     session?.h.dispose();
     session = null;
     setLocale("he", { force: true, persist: false });
@@ -772,6 +781,60 @@ describe("NLI staff Home transitions", () => {
       expect(el("stepTitle").textContent).toBe("Segev family");
     } finally {
       sync.mockRestore();
+    }
+  });
+
+  test("open archive kit paint includes page_down and keeps the player chrome", async () => {
+    const peopleIndex = {
+      datasetVersion: "v1",
+      people: [{ pid: "11", nameForms: ["Ada"], hasArchiveRecord: true }],
+    };
+    const indexBytes = new TextEncoder().encode(JSON.stringify(peopleIndex));
+    const digest = await sha256Hex(indexBytes);
+    const metadata = {
+      datasetVersion: "v1",
+      runtimeArtifactHashes: { "people-search-index.json": digest },
+    };
+    const metadataBytes = new TextEncoder().encode(JSON.stringify(metadata));
+    vi.stubGlobal("fetch", vi.fn(async (url) => {
+      const body = String(url) === PEOPLE_RELEASE_METADATA_URL ? metadataBytes : indexBytes;
+      if (String(url) !== PEOPLE_INDEX_URL && String(url) !== PEOPLE_RELEASE_METADATA_URL) {
+        return { ok: true, json: async () => ({}), arrayBuffer: async () => new Uint8Array().buffer };
+      }
+      return {
+        ok: true,
+        arrayBuffer: async () => body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength),
+      };
+    }));
+    try {
+      setLocale("en", { persist: false });
+      session = mount();
+      await bootRemote(session);
+      session.h.emit("connection", true);
+      await session.h.openCard('[data-show-step="identity-database"]');
+      session.h.emit("personSelection", { personId: "11", datasetVersion: "v1", revision: 2 });
+      await vi.waitFor(() => {
+        expect(el("searchArchiveMount").querySelector("[data-archive-action='open']")).toBeTruthy();
+      });
+      el("searchArchiveMount").querySelector("[data-archive-action='open']").click();
+      await vi.waitFor(() => expect(session.dataContext.archiveWindowCommand).toHaveBeenCalled());
+      const requestId = session.dataContext.archiveWindowCommand.mock.calls[0][3];
+      session.h.emit("archiveWindowResult", {
+        requestId,
+        personId: "11",
+        datasetVersion: "v1",
+        outcome: "navigation_attempted",
+      });
+      await vi.waitFor(() => {
+        expect(el("searchArchiveMount").innerHTML).toContain('data-archive-action="page_down"');
+      });
+      expect(el("stepTitle").textContent).toBe("Identity database");
+      expect(el("stepNote")).not.toBeNull();
+      expect(document.querySelector(".dock")).not.toBeNull();
+      expect(document.getElementById("archiveBtn")).toBeNull();
+      expect(document.getElementById("freeArchiveBtn")).toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
     }
   });
 

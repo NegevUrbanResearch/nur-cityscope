@@ -101,13 +101,16 @@ export function createRemotePeopleArchiveController(options = {}) {
   };
   let pendingSelectionTask = null;
 
-  const archiveButton = options.archiveButton || document.createElement("button");
-  if (!options.archiveButton) {
-    archiveButton.type = "button";
-    archiveButton.className = "place-search-archive-button";
-    archiveButton.hidden = true;
-    root?.append?.(archiveButton);
-  }
+  const archiveButton = options.archiveButton === undefined
+    ? (() => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "place-search-archive-button";
+      button.hidden = true;
+      root?.append?.(button);
+      return button;
+    })()
+    : options.archiveButton;
 
   const missingDialog = document.createElement("dialog");
   missingDialog.className = "nli-record-dialog";
@@ -134,20 +137,22 @@ export function createRemotePeopleArchiveController(options = {}) {
     transition("archive", { phase: open ? "open" : "closed" });
     navigationSection?.classList?.toggle?.("is-archive-open", open);
     syncArchiveButton();
-    if (open) archiveButton.focus?.();
+    if (open) archiveButton?.focus?.();
   }
 
   function syncArchiveButton() {
     const { phase, person } = state.archive;
     const open = phase === "open";
     const pending = phase === "opening" || phase === "closing";
-    archiveButton.textContent = t(
-      phase === "closing" ? "nliArchiveClosing" : pending ? "nliArchiveOpening" : (open ? "backToMap" : "openNliRecord"),
-    );
-    const narrativeActive = isNarrativeActive();
-    const connected = isConnected() !== false;
-    archiveButton.hidden = narrativeActive || (open || pending ? false : !(getMode() === "people" && state.person.acknowledged));
-    archiveButton.disabled = narrativeActive || pending || !connected;
+    if (archiveButton) {
+      archiveButton.textContent = t(
+        phase === "closing" ? "nliArchiveClosing" : pending ? "nliArchiveOpening" : (open ? "backToMap" : "openNliRecord"),
+      );
+      const narrativeActive = isNarrativeActive();
+      const connected = isConnected() !== false;
+      archiveButton.hidden = narrativeActive || (open || pending ? false : !(getMode() === "people" && state.person.acknowledged));
+      archiveButton.disabled = narrativeActive || pending || !connected;
+    }
     void person;
     onStateChange?.();
   }
@@ -244,7 +249,7 @@ export function createRemotePeopleArchiveController(options = {}) {
     }
   }
 
-  archiveButton.addEventListener("click", () => {
+  archiveButton?.addEventListener("click", () => {
     if (!isAlive() || isNarrativeActive() || state.archive.phase === "opening" || state.archive.phase === "closing") return;
     if (state.archive.phase === "open") {
       void closeArchive();
@@ -297,7 +302,7 @@ export function createRemotePeopleArchiveController(options = {}) {
           recoverableOpenRequestId: null,
         });
         navigationSection?.classList?.toggle?.("is-archive-open", true);
-        archiveButton.focus?.();
+        archiveButton?.focus?.();
         setStatus("");
         syncArchiveButton();
       }
@@ -316,7 +321,7 @@ export function createRemotePeopleArchiveController(options = {}) {
         recoverableOpenRequestId: null,
       });
       navigationSection?.classList?.toggle?.("is-archive-open", true);
-      archiveButton.focus?.();
+      archiveButton?.focus?.();
       setStatus("");
     } else {
       const recoverableOpenRequestId = result.outcome === "unavailable" && archive.requestAction === "open"
@@ -590,6 +595,26 @@ export function createRemotePeopleArchiveController(options = {}) {
     return true;
   }
 
+  async function pageArchive(direction) {
+    if (!isAlive() || state.archive.phase !== "open") return false;
+    const person = state.archive.person || state.person.acknowledged;
+    if (!person || (direction !== "up" && direction !== "down")) return false;
+    const send = dataContext?.archiveWindowCommand;
+    if (typeof send !== "function") return false;
+    const requestId = globalThis.crypto?.randomUUID?.() || `archive-${Date.now()}`;
+    try {
+      await send.call(dataContext,
+        direction === "up" ? "page_up" : "page_down",
+        person.pid,
+        person.datasetVersion,
+        requestId,
+      );
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   const personSubscription = dataContext?.subscribe?.("personSelection", handlePersonSnapshot);
   const archiveResultSubscription = dataContext?.subscribe?.("archiveWindowResult", handleArchiveResult);
   const narrativeSubscription = dataContext?.subscribe?.("narrativeState", () => {
@@ -607,6 +632,7 @@ export function createRemotePeopleArchiveController(options = {}) {
     clearPersonSelection,
     openArchive,
     closeArchive,
+    pageArchive,
     getArchivePhase: () => state.archive.phase,
     getAcknowledgedPerson: () => state.person.acknowledged,
     switchMode,

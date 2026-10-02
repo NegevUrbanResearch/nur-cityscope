@@ -34,9 +34,14 @@
 
   Running the script without `-Mode Install` only reports policy status. The
   same Install also adds `--disable-features=CrossOriginOpenerPolicy` to Google
-  Chrome shortcuts so GIS can close the NLI archive window. Quit Chrome fully
-  and start GIS from an updated shortcut before that close path works. This
-  setup is a technician action; the presenter interacts only with the remote.
+  Chrome shortcuts so archive close can work, and writes Desktop `OTEF GIS.lnk`
+  with a dedicated `--user-data-dir=%LOCALAPPDATA%\OTEF\gis-chrome-profile` and
+  `--remote-debugging-address=127.0.0.1`. Open GIS from that OTEF GIS shortcut
+  so the localhost pager can address that GIS profile on port 9222. Never enable
+  debugging on the signed-in Chrome profile. The presenter interacts only with
+  the remote.
+- `start-otef.ps1` / `start-otef.sh` start `nli-archive-pager.mjs` and warn if
+  7733 is down. The presenter still only uses the remote.
 - Phone remotes and QR need `otef-interactive/frontend/runtime/share.json`.
   `start-otef.ps1` / `start-otef.sh` write it once from this machine's hostname
   and optional `tailscale ip -4`. `setup.ps1` / `setup.sh` call that helper at

@@ -238,3 +238,11 @@ GIS; the projection continues to show the narrative scene.
   record in the same archive window. The remote is not told, so its archive
   button does not switch to "back to map".
 - Selecting a different person closes an open archive record.
+- **Staff remote paging:** after a person with an archive record is selected,
+  the staff remote shows presentation-scale **Open**, then **Scroll up** /
+  **Scroll down** and **Back to map**. Look at the wall (the GIS archive
+  window), not the phone. Tap pages one screen. Hold repeats every 500ms.
+  Search kit (Identity database) is the live path. Keep `#stepTitle`,
+  `#stepNote`, and the scene dock visible. Do not use a workshop Navigation
+  replica of nli.org.il. If the live NLI column does not move, stop — do not
+  add banner clicking.

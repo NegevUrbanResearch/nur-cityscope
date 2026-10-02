@@ -81,6 +81,52 @@ class OTEFArchiveWindowCommandTests(TestCase):
         self.assertEqual(get_layer.return_value.group_send.call_args.args[1]["message"]["action"], "close")
 
     @patch("channels.layers.get_channel_layer")
+    def test_page_down_broadcasts_ephemeral_command_without_persisting_archive_state(self, get_layer):
+        get_layer.return_value.group_send = AsyncMock()
+        response = self.command("page_down")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["acknowledged"])
+        get_layer.return_value.group_send.assert_called_once()
+        group, envelope = get_layer.return_value.group_send.call_args.args
+        self.assertEqual(group, "otef_channel")
+        self.assertEqual(envelope["message"], {
+            "type": "otef_archive_window_command",
+            "table": "otef",
+            "action": "page_down",
+            "personId": "11",
+            "datasetVersion": "v1",
+            "requestId": "request-1",
+            "sourceId": "remote-a",
+            "acknowledged": True,
+        })
+        self.assertNotIn("url", json.dumps(envelope).lower())
+        self.state.refresh_from_db()
+        self.assertEqual(self.state.person_selection["revision"], 3)
+        self.assertEqual(self.state.investigation_clock["revision"], 7)
+        self.assertEqual(self.state.viewport, {"zoom": 12})
+
+    @patch("channels.layers.get_channel_layer")
+    def test_page_up_rejects_selection_mismatch_without_broadcast(self, get_layer):
+        get_layer.return_value.group_send = AsyncMock()
+        self.assertEqual(self.command("page_up", personId="12").status_code, 409)
+        get_layer.return_value.group_send.assert_not_called()
+
+    @patch("channels.layers.get_channel_layer")
+    def test_page_down_rejects_playing_clock(self, get_layer):
+        get_layer.return_value.group_send = AsyncMock()
+        self.state.investigation_clock = {"phase": "playing", "revision": 8}
+        self.state.save(update_fields=["investigation_clock"])
+        self.assertEqual(self.command("page_down").status_code, 409)
+        get_layer.return_value.group_send.assert_not_called()
+
+    @patch("channels.layers.get_channel_layer")
+    def test_scroll_action_is_rejected_without_broadcast(self, get_layer):
+        get_layer.return_value.group_send = AsyncMock()
+        self.assertEqual(self.command("scroll").status_code, 400)
+        get_layer.return_value.group_send.assert_not_called()
+
+    @patch("channels.layers.get_channel_layer")
     def test_malformed_commands_fail_without_broadcast(self, get_layer):
         get_layer.return_value.group_send = AsyncMock()
         malformed = (

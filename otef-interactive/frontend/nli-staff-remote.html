@@ -570,6 +570,23 @@
         min-height: clamp(180px, 32dvh, 260px);
         max-height: 340px;
       }
+      #kitArchive:not([hidden]),
+      #searchKit.is-archive-open .archive-controls {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+      }
+      #kitArchive .presentation-controls .btn[data-archive-action="open"],
+      #searchKit .presentation-controls .btn[data-archive-action="open"] {
+        width: 100%;
+        flex: 1;
+        min-height: clamp(180px, 32dvh, 260px);
+        max-height: 340px;
+      }
+      #searchKit.is-archive-open .search,
+      #searchKit.is-archive-open .results,
+      #searchKit.is-archive-open .search-status { display: none; }
       .presentation-controls .btn { min-height: 72px; }
       .presentation-controls-heading {
         display: flex;
@@ -970,7 +987,6 @@
       }
       #kitSearch .search { margin-bottom: 0; }
       #kitSearch .search-status { margin: var(--gap) 0 0; }
-      #kitSearch #freeArchiveBtn { margin-block-start: var(--space); }
 
       .search-status {
         min-height: 1.2em;
@@ -1317,6 +1333,7 @@
           justify-content: flex-start;
         }
         #kitPresentation:not([hidden]),
+        #kitArchive:not([hidden]),
         .presentation-controls {
           flex: 0 0 auto;
         }
@@ -1400,15 +1417,13 @@
                     <ul class="results" id="searchResults"></ul>
                   </div>
                   <p class="search-status" id="searchStatus" role="status" hidden></p>
-                  <button type="button" class="btn" id="freeArchiveBtn" hidden>פתיחת ארכיון הספרייה</button>
+                  <div id="searchArchiveMount"></div>
                 </div>
               </div>
               <div class="kit-block" id="kitEscape" hidden></div>
               <div class="kit-block" id="kitPresentation" hidden></div>
               <div class="kit-block" id="kitTimeline" hidden></div>
-              <div class="kit-block kit-action" id="kitArchive" hidden>
-                <button type="button" class="btn" id="archiveBtn">פתיחת ארכיון הספרייה</button>
-              </div>
+              <div class="kit-block kit-action" id="kitArchive" hidden></div>
             </div>
           </div>
           <div class="dock">

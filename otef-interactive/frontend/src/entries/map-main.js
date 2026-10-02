@@ -6,7 +6,12 @@ import { applyLayerGroupsToMap, disposeLayerManagerForMap } from "../map/maplibr
 import { raiseDarkBasemapPlaceLabels } from "../map/dark-basemap-labels.js";
 import { attachGisFeaturePopups } from "../map/maplibre-gis-popups.js";
 import { createGisPersonSelection } from "../map/maplibre-person-selection.js";
-import { createNliArchiveCommandBridge, createNliArchiveWindowController } from "../map/nli-archive-window.js";
+import {
+  createNliArchiveCommandBridge,
+  createNliArchiveWindowController,
+  ownsArchiveWindowCommands,
+} from "../map/nli-archive-window.js";
+import { createNliArchivePagerClient } from "../map/nli-archive-pager-client.js";
 import { createGisPersonController } from "../map/maplibre-gis-person-controller.js";
 import { createNliNameFieldController } from "../shared/nli-name-field-controller.js";
 import { createGisNarrativeController } from "../map/nli-narrative-controller.js";
@@ -477,6 +482,7 @@ async function bootstrapMapRuntime() {
     });
     registerDisposer(() => narrativeController?.dispose?.());
     registerDisposer(OTEFDataContext.subscribe("narrativeState", (state) => narrativeController?.apply(state)));
+    const archivePager = createNliArchivePagerClient();
     const archiveBridge = createNliArchiveCommandBridge({
       windowController: archiveWindow,
       resolvePerson: (personId, datasetVersion) => personVisual.resolve(personId, datasetVersion),
@@ -487,8 +493,15 @@ async function bootstrapMapRuntime() {
         result.datasetVersion,
         result.requestId,
       ),
+      pageArchive: (direction, requestId) => archivePager.page(direction, requestId),
     });
-    registerDisposer(OTEFDataContext.subscribe("archiveWindow", (command) => { void archiveBridge.handleCommand(command); }));
+    const ownsArchiveCommands = ownsArchiveWindowCommands(window.location.search);
+    if (ownsArchiveCommands) {
+      registerDisposer(OTEFDataContext.subscribe("archiveWindow", (command) => {
+        void archiveBridge.handleCommand(command);
+      }));
+    }
+    OTEFDataContext._markArchiveWindowBridgeReady?.(ownsArchiveCommands);
     const syncContextPersonSelection = (selection) => {
       archiveBridge.handlePersonSelection(selection);
       wakeInvestigationTimelinePersonGlow(map);

@@ -61,18 +61,20 @@ const FIXTURE = `
             <input id="searchInput" />
             <ul id="searchResults"></ul>
             <p id="searchStatus" hidden></p>
-            <button type="button" id="freeArchiveBtn"></button>
+            <div id="searchArchiveMount"></div>
           </div>
         </div>
         <div id="kitEscape"></div>
         <div id="kitPresentation"></div>
         <div id="kitTimeline"></div>
-        <div id="kitArchive"><button type="button" id="archiveBtn"></button></div>
+        <div id="kitArchive"></div>
         <p id="kitIdle" hidden></p>
       </div>
-      <button type="button" id="prevBtn"></button>
-      <button type="button" id="nextBtn"></button>
-      <div id="nextChoices" hidden></div>
+      <div class="dock">
+        <button type="button" id="prevBtn"></button>
+        <button type="button" id="nextBtn"></button>
+        <div id="nextChoices" hidden></div>
+      </div>
     </section>
     <div id="staffPackMenus" hidden></div>
   </div>

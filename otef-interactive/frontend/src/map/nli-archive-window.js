@@ -1,6 +1,10 @@
 export const NLI_ARCHIVE_CHANNEL_NAME = "otef-nli-archive";
 const ARCHIVE_WINDOW_NAME = NLI_ARCHIVE_CHANNEL_NAME;
 
+export function ownsArchiveWindowCommands(search = "") {
+  return new URLSearchParams(search).get("archivePager") === "1";
+}
+
 /** Best-effort controller for the named NLI archive window. */
 export function createNliArchiveWindowController({
   windowOpen = (url, name) => window.open(url, name),
@@ -100,7 +104,7 @@ const samePerson = (left, right) => Boolean(
 );
 
 /** Coordinate ephemeral archive commands with the authoritative person selection. */
-export function createNliArchiveCommandBridge({ windowController, resolvePerson, getPersonSelection, emitResult = () => {} }) {
+export function createNliArchiveCommandBridge({ windowController, resolvePerson, getPersonSelection, emitResult = () => {}, pageArchive }) {
   let token = 0;
   let activePerson = null;
   let pendingPerson = null;
@@ -151,6 +155,12 @@ export function createNliArchiveCommandBridge({ windowController, resolvePerson,
       if (closeResult?.reason === "silent") return true;
       if (closeResult?.ok === true) await report(command, "closed");
       else if (closeResult?.ok === false && closeResult.reason === "unavailable") await report(command, "unavailable");
+      return true;
+    }
+    if (command.action === "page_up" || command.action === "page_down") {
+      if (!activePerson || !samePerson(command, activePerson)) return false;
+      const direction = command.action === "page_up" ? "up" : "down";
+      try { void pageArchive?.(direction, command.requestId); } catch (_error) {}
       return true;
     }
     if (command.action !== "open") return false;

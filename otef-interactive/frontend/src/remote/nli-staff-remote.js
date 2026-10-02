@@ -33,6 +33,10 @@ import {
   presentationControlsHtml,
   shouldAutoOpenNliPresentation,
 } from "./nli-staff-presentation.js";
+import {
+  archiveControlsHtml,
+  createArchivePageHold,
+} from "./nli-staff-archive-controls.js";
 
 const NO_ESCAPE = Object.freeze({ individual: false, overlap: false, mor: false, settled: false });
 const STAFF_PEOPLE_SEARCH_OPTIONS = { excludeStatuses: ["Kidnap survivor"] };
@@ -208,6 +212,7 @@ export function initNliStaffRemote(dataContext, { presenterManifest = presenterC
   let lastPlaces = [];
   let archiveUiReady = false;
   let peopleArchive = null;
+  let archivePageHold = null;
   let searchTransition = null;
   let searchActions = null;
   let packMenus = null;
@@ -610,20 +615,16 @@ export function initNliStaffRemote(dataContext, { presenterManifest = presenterC
         state.cueStatus === "applying" || state.searchPending,
       );
     }
+    archivePageHold?.clear?.();
     if (show.kitArchive) {
-      const phase = peopleArchive?.getArchivePhase?.() || "closed";
-      const pending = phase === "opening" || phase === "closing";
-      const open = phase === "open" || phase === "closing";
-      $("archiveBtn").textContent = t(
-        phase === "closing"
-          ? "nliArchiveClosing"
-          : pending
-            ? "nliArchiveOpening"
-            : open
-              ? "backToMap"
-              : "openNliRecord",
-      );
-      $("archiveBtn").disabled = state.searchPending || !state.connected || pending;
+      paintArchiveMount($("kitArchive"), { always: true });
+    } else if ($("kitArchive")) {
+      $("kitArchive").innerHTML = "";
+    }
+    const searchMount = $("searchArchiveMount");
+    if (searchMount) {
+      if (show.kitSearch) paintArchiveMount(searchMount);
+      else searchMount.innerHTML = "";
     }
     $("searchInput").disabled = state.searchPending;
     $("searchResults").querySelectorAll("button").forEach((button) => { button.disabled = state.searchPending; });
@@ -682,6 +683,32 @@ export function initNliStaffRemote(dataContext, { presenterManifest = presenterC
 
   function renderSearchStatus() {
     paintSearchStatus(state.searchPending ? txt("searchClearing") : state.searchError || "");
+  }
+
+  function archiveLocaleLabels() {
+    return {
+      openNliRecord: t("openNliRecord"),
+      backToMap: t("backToMap"),
+      nliArchiveScrollUp: t("nliArchiveScrollUp"),
+      nliArchiveScrollDown: t("nliArchiveScrollDown"),
+      nliArchiveRecord: t("nliArchiveRecord"),
+    };
+  }
+
+  function paintArchiveMount(el, { always = false } = {}) {
+    if (!el) return;
+    const phase = peopleArchive?.getArchivePhase?.() || "closed";
+    const person = peopleArchive?.getAcknowledgedPerson?.() || null;
+    if (!always && phase === "closed" && !person) {
+      el.innerHTML = "";
+      return;
+    }
+    el.innerHTML = archiveControlsHtml({
+      phase,
+      localeLabels: archiveLocaleLabels(),
+      personName: person?.name || "",
+      disabled: state.searchPending || !state.connected,
+    });
   }
 
   function render() {
@@ -950,7 +977,7 @@ export function initNliStaffRemote(dataContext, { presenterManifest = presenterC
     input: $("searchInput"),
     list: $("searchResults"),
     navigationSection: $("searchKit"),
-    archiveButton: $("freeArchiveBtn"),
+    archiveButton: null,
     dataContext,
     peopleRuntime: peopleSearch,
     getMode: () => "people",
@@ -970,6 +997,10 @@ export function initNliStaffRemote(dataContext, { presenterManifest = presenterC
       renderKit();
       renderSearchStatus();
     },
+  });
+  archivePageHold = createArchivePageHold({
+    page: (direction) => peopleArchive.pageArchive(direction),
+    isOpen: () => peopleArchive.getArchivePhase() === "open",
   });
   searchTransition = createNliStaffSearchTransition({
     clearPersonSelection: () => peopleArchive.clearPersonSelection(),
@@ -1141,14 +1172,36 @@ export function initNliStaffRemote(dataContext, { presenterManifest = presenterC
     consumeNliNovaEscapeClick(event, escapeHost);
   });
 
-  $("archiveBtn").addEventListener("click", () => {
-    if (peopleArchive.getArchivePhase() === "open") {
+  function archiveActionFrom(event) {
+    const button = event.target.closest?.("[data-archive-action]");
+    return { button, action: button?.dataset?.archiveAction };
+  }
+
+  function onArchiveClick(event) {
+    const { button, action } = archiveActionFrom(event);
+    if (!button || (action !== "open" && action !== "close")) return;
+    if (action === "close") {
       void peopleArchive.closeArchive();
       return;
     }
-    const query = currentStep()?.personQuery;
-    if (query) void selectAndOpenArchive(query);
-  });
+    if ($("kitArchive")?.contains(button)) {
+      const query = currentStep()?.personQuery;
+      if (query) void selectAndOpenArchive(query);
+      return;
+    }
+    void peopleArchive.openArchive();
+  }
+
+  function onArchivePointerDown(event) {
+    const { action } = archiveActionFrom(event);
+    if (action !== "page_up" && action !== "page_down") return;
+    archivePageHold?.start(event);
+  }
+
+  $("kitArchive")?.addEventListener("click", onArchiveClick);
+  $("searchArchiveMount")?.addEventListener("click", onArchiveClick);
+  $("kitArchive")?.addEventListener("pointerdown", onArchivePointerDown);
+  $("searchArchiveMount")?.addEventListener("pointerdown", onArchivePointerDown);
 
   $("searchInput").addEventListener("input", (event) => {
     if (state.searchPending) return;
@@ -1254,5 +1307,7 @@ export function initNliStaffRemote(dataContext, { presenterManifest = presenterC
     presenterCommands.dispose();
     presenterGate.dispose();
     presenterView.dispose();
+    archivePageHold?.destroy?.();
+    peopleArchive?.destroy?.();
   } };
 }

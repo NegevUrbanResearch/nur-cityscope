@@ -1328,7 +1328,7 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
     def _archive_window_command(self, table, request):
         payload = request.data if isinstance(request.data, dict) else {}
         action = payload.get("archiveAction")
-        if action not in ("open", "close"):
+        if action not in ("open", "close", "page_up", "page_down"):
             return Response({"error": "archive action must be open or close"}, status=status.HTTP_400_BAD_REQUEST)
         raw_values = {key: payload.get(key) for key in ("personId", "datasetVersion", "requestId", "sourceId")}
         if any(not isinstance(value, str) or not value.strip() or len(value.strip()) > 128 for value in raw_values.values()):
@@ -1339,7 +1339,7 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
             "personId": person_id, "datasetVersion": version, "requestId": request_id,
             "sourceId": source_id, "acknowledged": True,
         }
-        if action == "open":
+        if action in ("open", "page_up", "page_down"):
             with transaction.atomic():
                 state = OTEFViewportState.objects.select_for_update().filter(table=table).first()
                 selection = normalize_person_selection(state.person_selection if state else {})
