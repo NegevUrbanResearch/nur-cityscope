@@ -728,23 +728,26 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     refresh();
   }
   function handleWarpAction(action, value) {
-    if (disposed || (!editorBaselineReady && !["warp-select", "warp-mode", "warp-step"].includes(action))) return;
+    if (disposed || (!editorBaselineReady && !["warp-select", "warp-mode", "warp-step"].includes(action))) return false;
+    if (["warp-select", "warp-mode"].includes(action) && !finishPendingEdit()) return false;
     return withWarpMutation(() => {
       const output = value?.output || activeWarpOutput();
       const editor = warpEditors[output];
       if (!editor) return;
-      if (action === "warp-select") editor.select(value.selection);
-      if (action === "warp-mode") editor.setMode(value.mode);
-      if (action === "warp-step") editor.setStep(value.mode);
-      if (action === "warp-nudge") editor.nudge(value.direction, value);
-      if (action === "warp-set-position") editor.setPosition(value.axis, value.pixels);
-      if (action === "warp-reset-selection") editor.resetSelection();
-      if (action === "warp-reset-residuals") editor.resetResiduals();
-      if (action === "warp-undo") editor.undo();
-      if (action === "warp-redo") editor.redo();
-      if (action === "warp-enabled") editor.setEnabled(value.enabled);
-      if (action === "warp-grid-layout") editor.editGridLayout(value.operation, value);
+      let accepted = false;
+      if (action === "warp-select") accepted = editor.select(value.selection);
+      if (action === "warp-mode") accepted = editor.setMode(value.mode);
+      if (action === "warp-step") accepted = editor.setStep(value.mode);
+      if (action === "warp-nudge") accepted = editor.nudge(value.direction, value);
+      if (action === "warp-set-position") accepted = editor.setPosition(value.axis, value.pixels);
+      if (action === "warp-reset-selection") accepted = editor.resetSelection();
+      if (action === "warp-reset-residuals") accepted = editor.resetResiduals();
+      if (action === "warp-undo") accepted = editor.undo();
+      if (action === "warp-redo") accepted = editor.redo();
+      if (action === "warp-enabled") accepted = editor.setEnabled(value.enabled);
+      if (action === "warp-grid-layout") accepted = editor.editGridLayout(value.operation, value);
       refresh();
+      return accepted;
     });
   }
   function handleWarpPointer(action, value) {

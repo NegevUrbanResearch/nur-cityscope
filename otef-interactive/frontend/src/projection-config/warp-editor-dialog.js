@@ -140,11 +140,12 @@ export function createWarpEditorDialog({ document: doc, host, editorPanel, overl
     doc.removeEventListener?.("fullscreenchange", onFullscreenChange);
     doc.removeEventListener?.("keydown", onKeyDown);
   };
-  const close = () => {
+  const close = (force = false) => {
     if (modal.hidden) return;
     const returnTo = { element: opener, epoch: ++focusEpoch };
     closedFocus = returnTo;
-    onBeforeClose(); detachListeners(); clearFrame();
+    if (force !== true && onBeforeClose() === false) return false;
+    detachListeners(); clearFrame();
     overlay.classList?.remove?.("warp-preview-overlay");
     overlay.removeAttribute?.("tabindex");
     if (overlayHome?.appendChild) overlayHome.appendChild(overlay);
@@ -161,11 +162,11 @@ export function createWarpEditorDialog({ document: doc, host, editorPanel, overl
   const open = ({ side, mode, opener: activatingElement } = {}) => {
     if (disposed || !["left", "right"].includes(side) || !["keystone", "grid"].includes(mode)) return;
     if (!modal.hidden && session?.side === side) {
-      if (modal.dataset.mode !== mode) onBeforeSwitch();
+      if (modal.dataset.mode !== mode && onBeforeSwitch() === false) return false;
       modal.dataset.mode = mode; title.textContent = `${side === "left" ? "Left" : "Right"} · ${mode === "grid" ? "Grid Warp" : "Keystone"}`;
       return;
     }
-    if (!modal.hidden) { onBeforeSwitch(); clearFrame(); }
+    if (!modal.hidden) { if (onBeforeSwitch() === false) return false; clearFrame(); }
     else {
       focusEpoch += 1; closedFocus = null;
       opener = activatingElement || doc.activeElement;
@@ -202,7 +203,7 @@ export function createWarpEditorDialog({ document: doc, host, editorPanel, overl
     close,
     dispose() {
       if (disposed) return;
-      close(); disposed = true;
+      close(true); disposed = true;
       detachListeners();
       preview.dispose();
       traceUi?.dispose();

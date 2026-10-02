@@ -2063,6 +2063,21 @@ describe("projection config controller", () => {
     restore();
   });
 
+  test('rejected warp coordinates stay pending and block selection switches until cancelled', () => {
+    const { root, client, restore } = tracedWarpHarness();
+    const input = find(root, node => node.dataset?.field === 'warp.position.x');
+    const before = clone(client.getState().draft.outputs.left.warp);
+    input.value = '999999'; input.dispatch('input'); input.dispatch('change');
+    expect(client.getState().draft.outputs.left.warp).toEqual(before);
+    expect(input.attributes['aria-invalid']).toBe('true');
+    find(root, node => node.dataset?.action === 'warp-editor-close').dispatch('click');
+    expect(find(root, node => node.className === 'warp-editor-dialog').hidden).toBe(false);
+    input.dispatch('keydown', { key: 'Escape', preventDefault() {}, stopPropagation() {} });
+    find(root, node => node.dataset?.action === 'warp-editor-close').dispatch('click');
+    expect(find(root, node => node.className === 'warp-editor-dialog').hidden).toBe(true);
+    restore();
+  });
+
   test("invalid source-line geometry reports near Grid controls without draft, apply, or history writes", () => {
     const { root, client, trace, restore } = tracedWarpHarness();
     find(root, (node) => node.dataset?.action === "warp-editor-close").dispatch("click");

@@ -8,6 +8,27 @@ import { variableTdMesh } from "../fixtures/td-variable-grid.js";
 const clone = (value) => structuredClone(value);
 const parityMesh = JSON.parse(readFileSync(new URL("../../../nur-io/django_api/backend/tests/fixtures/projection-grid-parity.json", import.meta.url), "utf8")).mesh;
 
+test.each([
+  ['nudge', e => e.nudge('down')], ['numeric', e => e.setPosition('x', 50)],
+  ['reset', e => e.resetSelection()], ['reset all', e => e.resetResiduals()],
+  ['undo', e => e.undo()], ['redo', e => e.redo()],
+  ['enable', e => e.setEnabled(false)], ['selection', e => e.select(gridSelection())],
+  ['mode', e => e.setMode('grid')], ['step', e => e.setStep('coarse')],
+  ['layout', e => e.editGridLayout('even')],
+])('held drag rejects %s and retains one undo snapshot', (_label, command) => {
+  const initial = clone(DEFAULT_PROJECTION_CONFIG);
+  const editor = createWarpEditor({ config: initial });
+  editor.pointerStart({ x: 0, y: 0 }); editor.pointerMove({ x: 12, y: 0 });
+  const before = editor.getConfig();
+  expect(command(editor)).toBe(false);
+  expect(editor.getConfig()).toEqual(before);
+  expect(editor.getState().validationMessage).toBe('Finish or cancel the active adjustment first.');
+  editor.pointerMove({ x: 24, y: 0 }); editor.pointerEnd();
+  expect(editor.getState().historyDepth).toBe(1);
+  expect(editor.undo()).toBe(true);
+  expect(editor.getConfig().outputs.left.warp).toEqual(initial.outputs.left.warp);
+});
+
 test("keystone and grid nudges use output pixels, signs, and group selection", () => {
   const changes = [];
   const editor = createWarpEditor({ config: clone(DEFAULT_PROJECTION_CONFIG), output: "left", onChange: (config, meta) => changes.push({ config, meta }) });
@@ -435,7 +456,7 @@ test("an active pointer gesture rejects topology edits until the old gesture end
     expect(editor.editGridLayout("counts", { columns: 3, rows: 3 })).toBe(false);
     expect(editor.getConfig().outputs.left.warp.grid).toEqual(activeGrid);
     expect(editor.getState()).toMatchObject({ dragging: true, historyDepth: 0, selection });
-    expect(editor.getState().validationMessage).toContain("active pointer gesture");
+    expect(editor.getState().validationMessage).toContain("active adjustment");
     expect(onChange).not.toHaveBeenCalled();
     if (moved) expect(editor.pointerCancel()).toBe(true);
     else expect(editor.pointerEnd()).toBe(true);

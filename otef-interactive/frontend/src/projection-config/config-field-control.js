@@ -38,6 +38,7 @@ export function renderField(doc, descriptor, onField, onNudge, compact = false, 
   let pendingText = '';
   let pendingSign = 1;
   let targetChanged = false;
+  let focusedTarget = null;
   let externalError = '';
   let needsAcceptance = false;
   let rejectionError = '';
@@ -228,15 +229,16 @@ export function renderField(doc, descriptor, onField, onNudge, compact = false, 
     renderResult(result.kind === 'commit' ? session.candidate() : result);
     return result;
   };
-  const cancel = ({ notify = true } = {}) => { if (heldPointer !== null) retiredPointer = heldPointer; heldPointer = null; endRange(true, notify); stopHold(true, notify); session.cancel(); targetChanged = false; externalError = ''; needsAcceptance = false; rangeRejected = false; rejectionError = ''; refresh(true); };
+  const cancel = ({ notify = true } = {}) => { focusedTarget = null; if (heldPointer !== null) retiredPointer = heldPointer; heldPointer = null; endRange(true, notify); stopHold(true, notify); session.cancel(); targetChanged = false; externalError = ''; needsAcceptance = false; rangeRejected = false; rejectionError = ''; refresh(true); };
   listen(range, 'pointerdown', event => { retiredPointer = null; heldPointer = event.pointerId; beginRange(); range.setPointerCapture?.(event.pointerId); sendRange('start'); });
   listen(range, 'keydown', () => { retiredPointer = null; });
   for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) listen(range, type, event => {
     if (heldPointer === event.pointerId) { heldPointer = null; endRange(type !== 'pointerup'); range.releasePointerCapture?.(event.pointerId); }
     if (retiredPointer === event.pointerId) retiredPointer = null;
   });
+  if (descriptor.captureOnFocus) listen(number, 'focus', () => { focusedTarget ??= latest.resolvedPath; });
   listen(number, 'input', () => markInput(number.value));
-  listen(number, 'blur', () => finish());
+  listen(number, 'blur', () => { finish(); if (!session.isDirty()) focusedTarget = null; });
   listen(number, 'change', () => finish());
   listen(number, 'keydown', event => { if (event.key === 'Enter') { event.preventDefault(); finish(); } else if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation?.(); cancel(); } });
   listen(signButton, 'pointerdown', event => event.preventDefault?.());
@@ -291,6 +293,7 @@ export function renderField(doc, descriptor, onField, onNudge, compact = false, 
     update({ value: nextValue, resolvedPath = descriptor.path, error: nextError = '' }) {
       if (disposed) return;
       const resolvedChanged = latest.resolvedPath !== resolvedPath;
+      if (focusedTarget !== null && focusedTarget !== resolvedPath && !session.isDirty()) markInput(String(toDisplay(latest.value)), sign);
       if (session.isDirty() && session.candidate().resolvedPath !== resolvedPath) targetChanged = true;
       latest = { value: nextValue, resolvedPath }; externalError = String(nextError || ''); session.sync(latest);
       if (!rangeGesture) configureRange();
