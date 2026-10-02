@@ -26,6 +26,10 @@ vi.mock("../../frontend/src/shared/layer-registry.js", () => ({
 }));
 
 describe("map-main GIS style reload lifecycle", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
   test("wraps every GIS layer-group apply with a synchronous Nova victim filter", () => {
     const source = fs.readFileSync(
       path.resolve(import.meta.dirname, "../../frontend/src/entries/map-main.js"),
@@ -141,7 +145,8 @@ describe("map-main GIS style reload lifecycle", () => {
     expect(coordinator.getRequestedBasemap()).toBe("satellite");
     expect(settleSatellite).toEqual(expect.any(Function));
     settleSatellite({ status: "failed", basemapId: "dark" });
-    expect(coordinator.getRequestedBasemap()).toBe("dark");
+    expect(coordinator.getRequestedBasemap()).toBe("satellite");
+    expect(coordinator.getDisplayedBasemap()).toBe("dark");
     warn.mockRestore();
   });
 
@@ -165,7 +170,7 @@ describe("map-main GIS style reload lifecycle", () => {
     expect(coordinator.getRequestedBasemap()).toBe("satellite");
   });
 
-  test("synchronous settlement records the retained id before the setter returns", () => {
+  test("synchronous settlement distinguishes requested and displayed ids", () => {
     const completed = createGisBasemapStyleCoordinator({
       map: createFakeMapLibreMap(),
       initialBasemap: "dark",
@@ -188,11 +193,12 @@ describe("map-main GIS style reload lifecycle", () => {
       }),
     });
     expect(failed.request("satellite")).toBe(true);
-    expect(failed.getRequestedBasemap()).toBe("dark");
+    expect(failed.getRequestedBasemap()).toBe("satellite");
+    expect(failed.getDisplayedBasemap()).toBe("dark");
     warn.mockRestore();
   });
 
-  test("failure allows the same target again and a pending duplicate stays a no-op", () => {
+  test("failure retains the intent so repeated narrative updates do not restart it", () => {
     const pending = new Map();
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const setBasemap = vi.fn((map, id, options = {}) => {
@@ -211,13 +217,14 @@ describe("map-main GIS style reload lifecycle", () => {
     const settle = pending.get("satellite");
     expect(settle).toEqual(expect.any(Function));
     settle({ status: "failed", basemapId: "dark" });
-    expect(coordinator.getRequestedBasemap()).toBe("dark");
+    expect(coordinator.getRequestedBasemap()).toBe("satellite");
+    expect(coordinator.getDisplayedBasemap()).toBe("dark");
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("satellite"));
 
-    expect(coordinator.request("satellite")).toBe(true);
-    expect(setBasemap).toHaveBeenCalledTimes(2);
     expect(coordinator.request("satellite")).toBe(false);
-    expect(setBasemap).toHaveBeenCalledTimes(2);
+    expect(setBasemap).toHaveBeenCalledTimes(1);
+    expect(coordinator.request("satellite")).toBe(false);
+    expect(setBasemap).toHaveBeenCalledTimes(1);
     warn.mockRestore();
   });
 
@@ -239,8 +246,10 @@ describe("map-main GIS style reload lifecycle", () => {
     expect(settlements[0]).toEqual(expect.any(Function));
     settlements[0]({ status: "completed", basemapId: "satellite" });
     expect(coordinator.getRequestedBasemap()).toBe("osm");
+    expect(coordinator.getDisplayedBasemap()).toBe("dark");
     settlements[1]({ status: "failed", basemapId: "dark" });
-    expect(coordinator.getRequestedBasemap()).toBe("dark");
+    expect(coordinator.getRequestedBasemap()).toBe("osm");
+    expect(coordinator.getDisplayedBasemap()).toBe("dark");
     warn.mockRestore();
   });
 
@@ -261,6 +270,101 @@ describe("map-main GIS style reload lifecycle", () => {
     expect(settle).toEqual(expect.any(Function));
     settle({ status: "failed", basemapId: "dark" });
     expect(coordinator.getRequestedBasemap()).toBe("satellite");
+  });
+
+  function retryRig() {
+    vi.useFakeTimers();
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const settlements = [];
+    const setBasemap = vi.fn((map, id, options) => {
+      settlements.push(options.onSettled);
+      return true;
+    });
+    const coordinator = createGisBasemapStyleCoordinator({
+      map: createFakeMapLibreMap(), initialBasemap: "dark", setBasemap,
+    });
+    return { coordinator, setBasemap, settlements };
+  }
+
+  test("source timeout retries once after 500ms and a second timeout exhausts the intent", () => {
+    const { coordinator, setBasemap, settlements } = retryRig();
+    coordinator.request("satellite");
+    settlements[0]({ status: "failed", basemapId: "dark", reason: "source-timeout" });
+    expect(coordinator.request("satellite")).toBe(false);
+    vi.advanceTimersByTime(499);
+    expect(setBasemap).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(1);
+    expect(setBasemap).toHaveBeenCalledTimes(2);
+    expect(setBasemap.mock.calls[1][1]).toBe("satellite");
+    settlements[1]({ status: "failed", basemapId: "dark", reason: "source-timeout" });
+    vi.advanceTimersByTime(5000);
+    expect(coordinator.request("satellite")).toBe(false);
+    expect(setBasemap).toHaveBeenCalledTimes(2);
+    expect(coordinator.getRequestedBasemap()).toBe("satellite");
+    expect(coordinator.getDisplayedBasemap()).toBe("dark");
+  });
+
+  test.each(["source-error", "tiles-unavailable", "source-removed"])("%s does not automatically retry", (reason) => {
+    const { coordinator, setBasemap, settlements } = retryRig();
+    coordinator.request("satellite");
+    settlements[0]({ status: "failed", basemapId: "dark", reason });
+    vi.advanceTimersByTime(5000);
+    expect(coordinator.request("satellite")).toBe(false);
+    expect(setBasemap).toHaveBeenCalledTimes(1);
+  });
+
+  test("a different accepted intent cancels the timeout retry and resets its budget", () => {
+    const { coordinator, setBasemap, settlements } = retryRig();
+    coordinator.request("satellite");
+    settlements[0]({ status: "failed", basemapId: "dark", reason: "source-timeout" });
+    coordinator.request("osm");
+    vi.advanceTimersByTime(500);
+    expect(setBasemap).toHaveBeenCalledTimes(2);
+    settlements[1]({ status: "failed", basemapId: "dark", reason: "source-timeout" });
+    vi.advanceTimersByTime(500);
+    expect(setBasemap).toHaveBeenCalledTimes(3);
+    expect(setBasemap.mock.calls[2][1]).toBe("osm");
+  });
+
+  test("dispose cancels the timeout retry and rejects future requests", () => {
+    const { coordinator, setBasemap, settlements } = retryRig();
+    coordinator.request("satellite");
+    settlements[0]({ status: "failed", basemapId: "dark", reason: "source-timeout" });
+    coordinator.dispose();
+    vi.advanceTimersByTime(500);
+    expect(setBasemap).toHaveBeenCalledTimes(1);
+    expect(coordinator.request("osm")).toBe(false);
+  });
+
+  test("a synchronously rejected newer request preserves the earlier scheduled retry", () => {
+    const { coordinator, setBasemap, settlements } = retryRig();
+    coordinator.request("satellite");
+    settlements[0]({ status: "failed", basemapId: "dark", reason: "source-timeout" });
+    setBasemap.mockImplementationOnce((map, id, options) => {
+      options.onSettled({ status: "completed", basemapId: id });
+      return false;
+    });
+    expect(coordinator.request("osm")).toBe(false);
+    expect(coordinator.getRequestedBasemap()).toBe("satellite");
+    expect(coordinator.getDisplayedBasemap()).toBe("dark");
+    vi.advanceTimersByTime(500);
+    expect(setBasemap).toHaveBeenCalledTimes(3);
+    expect(setBasemap.mock.calls[2][1]).toBe("satellite");
+  });
+
+  test("a duplicate or stale settlement cannot consume another attempt's retry budget", () => {
+    const { coordinator, setBasemap, settlements } = retryRig();
+    coordinator.request("satellite");
+    settlements[0]({ status: "failed", basemapId: "dark", reason: "source-timeout" });
+    settlements[0]({ status: "failed", basemapId: "dark", reason: "source-timeout" });
+    vi.advanceTimersByTime(500);
+    expect(setBasemap).toHaveBeenCalledTimes(2);
+    settlements[0]({ status: "completed", basemapId: "satellite" });
+    expect(coordinator.getDisplayedBasemap()).toBe("dark");
+    settlements[1]({ status: "completed", basemapId: "satellite" });
+    expect(coordinator.getDisplayedBasemap()).toBe("satellite");
+    vi.advanceTimersByTime(5000);
+    expect(setBasemap).toHaveBeenCalledTimes(2);
   });
 
   test("curated refresh restores the narrative marker above a later curated layer only while current", async () => {

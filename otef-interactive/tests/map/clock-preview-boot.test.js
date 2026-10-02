@@ -374,7 +374,7 @@ describe("bootClockPreview frame behavior", () => {
     expect(rig.map.getLayer("projector_base.ישובים-line")).toBeTruthy();
   });
 
-  it("restores the local basemap after accepted failure so a later render can retry", async () => {
+  it("keeps failed basemap intent across repeated renders until a different scene requests it", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     await boot();
     setGISBasemap.mockImplementation((map, id, options = {}) => {
@@ -387,19 +387,50 @@ describe("bootClockPreview frame behavior", () => {
 
     setGISBasemap.mockImplementation(() => true);
     await render(2, "segev");
-    expect(setGISBasemap.mock.calls.length).toBe(callsAfterSyncFailure + 1);
+    expect(setGISBasemap.mock.calls.length).toBe(callsAfterSyncFailure);
+
+    await render(3, "home");
+    await render(4, "segev");
+    expect(setGISBasemap.mock.calls.length).toBe(callsAfterSyncFailure + 2);
     expect(setGISBasemap.mock.calls.at(-1)[1]).toBe("satellite_bw");
     const settle = setGISBasemap.mock.calls.at(-1)[2]?.onSettled;
     expect(settle).toEqual(expect.any(Function));
 
     settle({ status: "failed", basemapId: "osm" });
     expect(warn).toHaveBeenCalledWith(
-      "[gis-basemap] failed to show satellite_bw; retaining osm",
+      "[gis-basemap] failed to show satellite_bw; retaining osm; reason=unknown",
     );
-    await render(3, "segev");
+    await render(5, "segev");
     expect(setGISBasemap.mock.calls.at(-1)[1]).toBe("satellite_bw");
     expect(setGISBasemap.mock.calls.length).toBe(callsAfterSyncFailure + 2);
     warn.mockRestore();
+  });
+
+  it("uses one deliberate timeout retry across repeated renders and cancels a pending retry on disposal", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    await boot();
+    vi.useFakeTimers();
+    setGISBasemap.mockImplementation((map, id, options) => {
+      options.onSettled({ status: "failed", basemapId: "osm", reason: "source-timeout" });
+      return true;
+    });
+    await render(1, "segev");
+    await vi.advanceTimersByTimeAsync(500);
+    expect(setGISBasemap).toHaveBeenCalledTimes(2);
+    await render(2, "segev");
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(setGISBasemap).toHaveBeenCalledTimes(2);
+
+    setGISBasemap.mockImplementation(() => true);
+    await render(3, "home");
+    await render(4, "segev");
+    const pending = setGISBasemap.mock.calls.at(-1)[2].onSettled;
+    pending({ status: "failed", basemapId: "osm", reason: "source-timeout" });
+    const callsBeforeDispose = setGISBasemap.mock.calls.length;
+    await dispose();
+    dispose = null;
+    await vi.advanceTimersByTimeAsync(500);
+    expect(setGISBasemap.mock.calls.length).toBe(callsBeforeDispose);
   });
 
   it("restores the prior basemap when the setter returns false and ignores superseded or disposed settlements", async () => {
@@ -421,8 +452,8 @@ describe("bootClockPreview frame behavior", () => {
     accepted({ status: "failed", basemapId: "osm" });
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("satellite_bw"));
     await render(4, "segev");
-    expect(setGISBasemap.mock.calls.at(-1)[1]).toBe("satellite_bw");
-    const superseded = setGISBasemap.mock.calls.at(-1)[2].onSettled;
+    expect(setGISBasemap.mock.calls.length).toBe(callsAfterSegev + 1);
+    const superseded = accepted;
 
     await render(5, "home");
     expect(setGISBasemap.mock.calls.at(-1)[1]).toBe("osm");

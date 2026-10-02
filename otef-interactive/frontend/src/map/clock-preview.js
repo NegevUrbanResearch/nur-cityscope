@@ -3,7 +3,7 @@ import { createGisNarrativeController } from "./nli-narrative-controller.js";
 import { createGISMap, setGISBasemap } from "./maplibre-map.js";
 import { applyLayerGroupsToMap, clearAllLayers, disposeLayerManagerForMap } from "./maplibre-layer-manager.js";
 import { applyNarrativeHouseOutlineFilter, applyNarrativePeopleFilter } from "./nli-people-marker-filter.js";
-import { installGisStyleReload } from "../entries/map-main-style-lifecycle.js";
+import { createGisBasemapStyleCoordinator, installGisStyleReload } from "../entries/map-main-style-lifecycle.js";
 import { HOME_CUE, TIMELINE, NARRATIVES } from "../remote/nli-staff-script.js";
 import { getNliNarrative } from "../shared/nli-narratives.js";
 import { filterGroupsForGisMap } from "../shared/gis-layer-filter.js";
@@ -210,8 +210,11 @@ export async function bootClockPreview({ window: frameWindow, document: frameDoc
   applyNliExplainerLayout(clockHost, NLI_GIS_CLOCK_DEFAULT_LAYOUT);
   const escape = localEscapeContext();
   let currentScene = composeGisClockPreviewScene("home", registryGroups);
-  let activeBasemap = normalizeGisBasemap(snapshot.basemap || "osm");
-  let basemapGeneration = 0;
+  const basemapCoordinator = createGisBasemapStyleCoordinator({
+    map,
+    initialBasemap: normalizeGisBasemap(snapshot.basemap || "osm"),
+    setBasemap: setGISBasemap,
+  });
   let requestId = -1;
   let disposed = false;
   let styleRefresh = null;
@@ -268,27 +271,7 @@ export async function bootClockPreview({ window: frameWindow, document: frameDoc
     await syncTimeline();
   };
   const setBasemap = (nextBasemap) => {
-    const normalized = normalizeGisBasemap(nextBasemap);
-    if (normalized === activeBasemap) return;
-    const previousBasemap = activeBasemap;
-    const previousGeneration = basemapGeneration;
-    const generation = ++basemapGeneration;
-    activeBasemap = normalized;
-    const accepted = setGISBasemap(map, normalized, {
-      onSettled(result) {
-        if (disposed || generation !== basemapGeneration) return;
-        activeBasemap = result?.basemapId;
-        if (result?.status === "failed") {
-          console.warn(
-            `[gis-basemap] failed to show ${normalized}; retaining ${result.basemapId}`,
-          );
-        }
-      },
-    });
-    if (!accepted) {
-      activeBasemap = previousBasemap;
-      basemapGeneration = previousGeneration;
-    }
+    basemapCoordinator.request(normalizeGisBasemap(nextBasemap));
   };
 
   const renderState = async (state) => {
@@ -367,7 +350,7 @@ export async function bootClockPreview({ window: frameWindow, document: frameDoc
     if (disposed) return;
     disposed = true;
     renderGeneration += 1;
-    basemapGeneration += 1;
+    basemapCoordinator.dispose();
     cancelDrawWaits();
     frameWindow.removeEventListener("message", onMessage);
     map.off?.("load", onLoad);

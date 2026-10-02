@@ -1,6 +1,7 @@
 import { isGisBasemapId } from "../shared/gis-basemap.js";
 
 const coordinators = new WeakMap();
+const BASEMAP_RETRY_DELAY_MS = 500;
 
 /**
  * Rebuild overlays after a real MapLibre style load.
@@ -44,43 +45,65 @@ export function createGisBasemapStyleCoordinator({
   initialBasemap,
   setBasemap,
 } = {}) {
-  let requestedBasemap = initialBasemap;
-  let requestGeneration = 0;
+  let intent = { basemapId: initialBasemap, retryUsed: false, retryTimer: null };
+  let displayedBasemap = initialBasemap;
   let disposed = false;
 
-  const request = (nextBasemap) => {
-    if (typeof setBasemap !== "function" || !isGisBasemapId(nextBasemap)) return false;
-    if (nextBasemap === requestedBasemap) return false;
+  const cancelRetry = (record) => {
+    clearTimeout(record.retryTimer);
+    record.retryTimer = null;
+  };
 
-    const previousBasemap = requestedBasemap;
-    const previousGeneration = requestGeneration;
-    const generation = ++requestGeneration;
-    requestedBasemap = nextBasemap;
-    const accepted = setBasemap(map, nextBasemap, {
-      onSettled(result) {
-        if (disposed || generation !== requestGeneration) return;
-        requestedBasemap = result?.basemapId;
-        if (result?.status === "failed") {
-          console.warn(
-            `[gis-basemap] failed to show ${nextBasemap}; retaining ${result.basemapId}`,
-          );
-        }
-      },
-    });
-    if (!accepted) {
-      requestedBasemap = previousBasemap;
-      requestGeneration = previousGeneration;
+  const attempt = (record) => {
+    const token = {};
+    record.attempt = token;
+    let accepted;
+    let settled = false;
+    let synchronousResult;
+    const onSettled = (result) => {
+      if (accepted === undefined) {
+        synchronousResult = result;
+        return;
+      }
+      if (!accepted || settled || disposed || intent !== record || record.attempt !== token) return;
+      settled = true;
+      displayedBasemap = result?.basemapId;
+      if (result?.status !== "failed") return;
+      console.warn(`[gis-basemap] failed to show ${record.basemapId}; retaining ${result.basemapId}; reason=${result.reason || "unknown"}`);
+      if (result.reason !== "source-timeout" || record.retryUsed) return;
+      record.retryUsed = true;
+      record.retryTimer = setTimeout(() => {
+        record.retryTimer = null;
+        if (!disposed && intent === record) attempt(record);
+      }, BASEMAP_RETRY_DELAY_MS);
+    };
+    // A rejected setter must not settle the tentative intent or invalidate its predecessor.
+    accepted = Boolean(setBasemap(map, record.basemapId, { onSettled }));
+    if (synchronousResult !== undefined) onSettled(synchronousResult);
+    return accepted;
+  };
+
+  const request = (nextBasemap) => {
+    if (disposed || typeof setBasemap !== "function" || !isGisBasemapId(nextBasemap)) return false;
+    if (nextBasemap === intent.basemapId) return false;
+    const previous = intent;
+    const next = { basemapId: nextBasemap, retryUsed: false, retryTimer: null };
+    intent = next;
+    if (!attempt(next)) {
+      intent = previous;
       return false;
     }
+    cancelRetry(previous);
     return true;
   };
 
   return {
     request,
-    getRequestedBasemap: () => requestedBasemap,
+    getRequestedBasemap: () => intent.basemapId,
+    getDisplayedBasemap: () => displayedBasemap,
     dispose() {
       disposed = true;
-      requestGeneration += 1;
+      cancelRetry(intent);
     },
   };
 }

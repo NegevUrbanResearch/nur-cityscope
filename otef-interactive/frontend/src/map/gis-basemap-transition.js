@@ -73,6 +73,7 @@ function startCrossfade(map, state, generation, styles, targetId, onSettled, att
   const sourceId = reveal ? DARK_SOURCE_ID : sourceIdFor(targetId);
   let opened = false;
   let queued = null;
+  let failureReason = null;
 
   const handle = waitForReady(map, sourceId, {
     onReady() {
@@ -83,18 +84,20 @@ function startCrossfade(map, state, generation, styles, targetId, onSettled, att
       }
       beginFade();
     },
-    onFail() {
+    onFail(reason) {
       if (!isCurrent(state, generation, attempt)) return;
+      failureReason = reason;
       if (!opened) {
         queued = "fail";
         return;
       }
-      finishFailure(map, state, generation, styles, onSettled, attempt);
+      finishFailure(map, state, generation, styles, onSettled, attempt, reason);
     },
   });
   attempt.add(() => handle.cancel());
 
-  const knownReady = Boolean(map.getSource(sourceId) && map.isSourceLoaded(sourceId));
+  const knownReady = Boolean(map.getSource(sourceId) && map.isSourceLoaded(sourceId)
+    && hasDrawableCachedTiles(map, sourceId));
   if (reveal) {
     ensureDark(map, styles.dark, layerIdFor(state.completedId));
   } else {
@@ -105,7 +108,7 @@ function startCrossfade(map, state, generation, styles, targetId, onSettled, att
   opened = true;
 
   if (queued === "fail") {
-    finishFailure(map, state, generation, styles, onSettled, attempt);
+    finishFailure(map, state, generation, styles, onSettled, attempt, failureReason);
     return;
   }
   if (knownReady) handle.noteLoaded();
@@ -147,7 +150,7 @@ function armRenderedCompletion(map, state, generation, attempt, onComplete) {
 function finishSuccess(map, state, generation, styles, nextId, onSettled, attempt, sourceId) {
   if (!isCurrent(state, generation, attempt)) return;
   if (sourceId && !map.getSource(sourceId)) {
-    finishFailure(map, state, generation, styles, onSettled, attempt);
+    finishFailure(map, state, generation, styles, onSettled, attempt, "source-removed");
     return;
   }
 
@@ -162,20 +165,21 @@ function finishSuccess(map, state, generation, styles, nextId, onSettled, attemp
   onSettled?.({ status: "completed", basemapId: nextId });
 }
 
-function finishFailure(map, state, generation, styles, onSettled, attempt) {
+function finishFailure(map, state, generation, styles, onSettled, attempt, reason) {
   if (!isCurrent(state, generation, attempt)) return;
   state.generation += 1;
   attempt.cancel();
   state.pendingId = null;
   restoreRetainedRaster(map, state);
   removeGroupsExcept(map, state.completedId, styles);
-  onSettled?.({ status: "failed", basemapId: state.completedId });
+  onSettled?.({ status: "failed", basemapId: state.completedId, reason });
 }
 
 function waitForReady(map, sourceId, { onReady, onFail }) {
   let readinessSettled = false;
   let closed = false;
   let success = false;
+  let tileFailureSeen = false;
 
   const onSourceData = (event) => {
     if (closed || readinessSettled || event?.sourceId !== sourceId) return;
@@ -185,9 +189,11 @@ function waitForReady(map, sourceId, { onReady, onFail }) {
     // Content/idle events without a tile are not success evidence.
     if (event.tile && (kind == null || kind === "content")) {
       if (event.tile.state === "errored" || event.error) {
-        if (map.isSourceLoaded(sourceId) && !success) fail();
+        tileFailureSeen = true;
+        tryReady();
         return;
       }
+      if (event.tile.state !== "loaded" || event.tile.aborted) return;
       success = true;
     } else if (kind !== "idle") {
       return;
@@ -199,37 +205,56 @@ function waitForReady(map, sourceId, { onReady, onFail }) {
     if (closed) return;
     const id = event?.sourceId || event?.error?.sourceId;
     if (id !== sourceId) return;
-    fail();
+    if (event?.error?.name === "AbortError" || event?.tile?.aborted) {
+      tryReady();
+      return;
+    }
+    // A tile failure is not a source-wide failure. Other viewport tiles can
+    // supply imagery, and errored tiles count as settled in MapLibre.
+    if (!event.tile) {
+      fail("source-error");
+    } else if (!readinessSettled) {
+      tileFailureSeen = true;
+      tryReady();
+    }
   };
 
   const timer = setTimeout(() => {
-    fail();
+    tryReady();
+    if (!readinessSettled) fail(tileFailureSeen && !success ? "tiles-unavailable" : "source-timeout");
   }, GIS_BASEMAP_SOURCE_WAIT_MS);
 
   function tryReady() {
     if (closed || readinessSettled) return;
-    if (success && map.isSourceLoaded(sourceId)) ready();
+    if (success && map.getSource(sourceId) && map.isSourceLoaded(sourceId)) ready();
+  }
+
+  function stopReadinessWatch() {
+    clearTimeout(timer);
+    map.off("sourcedata", onSourceData);
+    map.off("render", tryReady);
   }
 
   function ready() {
     if (closed || readinessSettled) return;
     readinessSettled = true;
-    clearTimeout(timer);
-    map.off("sourcedata", onSourceData);
+    stopReadinessWatch();
     onReady();
   }
 
-  function fail() {
+  function fail(reason) {
     if (closed) return;
     closed = true;
-    clearTimeout(timer);
-    map.off("sourcedata", onSourceData);
+    stopReadinessWatch();
     map.off("error", onError);
-    onFail();
+    onFail(reason);
   }
 
   map.on("sourcedata", onSourceData);
   map.on("error", onError);
+  // Camera movement can remove the last pending tile without another data
+  // event. Render runs after MapLibre updates the source tile set.
+  map.on("render", tryReady);
   tryReady();
 
   return {
@@ -237,21 +262,25 @@ function waitForReady(map, sourceId, { onReady, onFail }) {
       if (closed) return;
       closed = true;
       readinessSettled = true;
-      clearTimeout(timer);
-      map.off("sourcedata", onSourceData);
+      stopReadinessWatch();
       map.off("error", onError);
     },
     retainErrorWatch() {
       if (closed) return;
       readinessSettled = true;
-      clearTimeout(timer);
-      map.off("sourcedata", onSourceData);
+      stopReadinessWatch();
     },
     noteLoaded() {
       success = true;
       tryReady();
     },
   };
+}
+
+function hasDrawableCachedTiles(map, sourceId) {
+  // MapLibre 5.24 reports errored/unused sources as loaded too. For a reused
+  // source, its renderable tile cache must also contain drawable imagery.
+  return (map.style?.tileManagers?.[sourceId]?.getRenderableIds?.()?.length || 0) > 0;
 }
 
 function ensureState(map, styles) {
