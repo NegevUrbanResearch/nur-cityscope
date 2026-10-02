@@ -13,6 +13,19 @@ test("clock layout dialog uses the available viewport width on narrow screens", 
   expect(dialogRule).not.toMatch(/width:\s*100vw/);
 });
 
+test("projection config chrome and workspace use scoped layout tokens and anchored utility overlays", () => {
+  const css = readFileSync(resolve(import.meta.dirname, "../../frontend/src/projection-config/config.css"), "utf8");
+  expect(css).toContain("--config-surface:");
+  expect(css).toContain("--config-space:");
+  expect(css).toMatch(/\.config-shell\s*\{[^}]*display:\s*grid/s);
+  expect(css).toMatch(/\.config-shell\s*\{[^}]*grid-template-rows:\s*auto auto minmax\(0, 1fr\)/s);
+  expect(css).toMatch(/\.config-workspace\s*\{[^}]*position:\s*relative/s);
+  expect(css).not.toMatch(/\.config-workspace\s*\{[^}]*top:\s*104px/s);
+  expect(css).toMatch(/\.config-disclosure-content\s*\{[^}]*position:\s*absolute/s);
+  const compactRules = css.slice(css.lastIndexOf("@media (max-width: 1100px), (max-height: 700px), (pointer: coarse), (hover: none), (orientation: portrait)"));
+  expect(compactRules.match(/\.config-workspace\s*\{([^}]*)\}/)?.[1] || "").toContain("display: grid");
+});
+
 test("view renders draggable node workspace and preserves an existing focused input", () => {
   const make = (tag = "div") => ({ tagName: tag.toUpperCase(), children: [], dataset: {}, style: {}, attributes: {}, classList: { toggle() {} }, appendChild(child) { this.children.push(child); child.parentElement = this; return child; }, append(...children) { children.forEach((child) => this.appendChild(child)); }, prepend(...children) { this.children.unshift(...children); }, remove() { if (this.parentElement) this.parentElement.children = this.parentElement.children.filter((child) => child !== this); }, setAttribute(key, value) { this.attributes[key] = value; }, removeAttribute(key) { delete this.attributes[key]; }, addEventListener(type, handler) { this.listeners ||= {}; (this.listeners[type] ||= []).push(handler); }, removeEventListener(type, handler) { this.listeners[type] = (this.listeners?.[type] || []).filter((entry) => entry !== handler); }, dispatch(type, event) { for (const handler of this.listeners?.[type] || []) handler({ currentTarget: this, target: this, ...event }); }, replaceChildren(...children) { this.children = children; } });
   const root = make("main");

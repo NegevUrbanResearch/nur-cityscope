@@ -51,6 +51,8 @@ test("shared style controls explain both projectors and reject an out-of-range f
   controls.render({ output: "right", citycode: "0067", catalog, position: { x: 1, y: 2 }, style: { fontFamily: "Guttman Hatzvi", fontPx: 14, rotateDeg: 35 }, enabled: true, positionRecord: { status: "Saved" }, styleRecord: { status: "Conflict" }, hydration: { status: "Saved" } });
   const note = find(controls.element, (node) => node.className === "settlement-shared-note");
   expect(note.textContent).toMatch(/both projectors/i);
+  expect(note.textContent).toMatch(/save automatically/i);
+  expect(note.textContent).toMatch(/Live and Apply/i);
   const font = find(controls.element, (node) => node.dataset?.field === "fontPx");
   font.value = "7";
   font.dispatch("change");
@@ -65,6 +67,7 @@ test("settlement controls and the compact selector keep a 44px touch size", () =
   const css = readFileSync(new URL("../../frontend/src/projection-config/config.css", import.meta.url), "utf8");
   expect(css).toMatch(/\.settlement-name-dialog :is\(button, input, select\)[\s\S]*min-height:\s*44px/);
   expect(css).toMatch(/orientation:\s*portrait/);
+  expect(css).toMatch(/@media \(max-width:\s*760px\)/);
   expect(css).toMatch(/\.node-selector\s*\{\s*display:\s*block/);
   expect(css).toMatch(/aspect-ratio:\s*16\s*\/\s*9/);
 });

@@ -40,6 +40,12 @@ After the final code patch, each TD Web Browser source was refreshed once to loa
 
 Physical acceptance requires direct observation on the exhibit hardware and network. Software evidence must not be presented as proof of phone reachability, projector alignment, downstream clipping, or GPU performance. Migration application and nginx image deployment are one-time deployment steps; ordinary calibration Save does not require either.
 
+## Projection configuration UI redesign — 2026-09-30
+
+This branch refines the projection configuration UI: warp preview pan/zoom and touch navigation, stable warp handles across zoom and orientation changes, touch-accessible precision controls, and the clock/settlement editors. Pointer handling now covers interaction immediately after closing menus and avoids stale touch positions during pinch navigation. At final UI HEAD `dcc32b38`, the focused projection-config suite passed: 22 files and 311 tests; `npm run build:frontend` passed. `git diff --check BASE..HEAD` also passed for the branch.
+
+The full frontend run had 286 passing and 11 failing files; across the run, 3,351 tests passed, 7 failed, and 1 was skipped. Failures were outside files changed for this UI work and included missing local data, ignored snapshot/hash mismatches, and contract issues. This full-suite result is not a pass. Browser, projector, and Galaxy Tab visual checks are deferred until the user says to continue.
+
 ## Node workspace correction — 2026-09-14
 
 The editor now uses a full-window desktop canvas with floating actions, draggable node headers, attached wires, pan/zoom/Fit, inline decimal entry, and fine nudges. Phone controls open directly at touch size. Root browser checks moved both Content and Shared pre nodes and observed wire path/position changes; manual scale 1.234 committed on Enter and fine nudge produced 1.235. Phone viewport had no horizontal overflow and 44px controls.

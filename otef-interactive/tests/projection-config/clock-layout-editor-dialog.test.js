@@ -78,6 +78,19 @@ test.each([
   expect(rig.client.getSlot(resource, slot)).toMatchObject({ acknowledged: latest, draft: null, status: "Saved" });
 });
 
+test("clock editor identifies its output or selected GIS scene and explains autosave", async () => {
+  const projection = await editorFixture("clock-projection");
+  expect(projection.find((node) => node.className === "clock-layout-header")?.children[0].textContent).toMatch(/Left/);
+  expect(projection.find((node) => node.className === "clock-layout-autosave-note")?.textContent).toMatch(/save automatically/i);
+  projection.editor.dispose(); projection.client.destroy();
+
+  const gis = await editorFixture("clock-gis");
+  expect(gis.find((node) => node.className === "clock-layout-header")?.children[0].textContent).toMatch(/Home/);
+  const scene = gis.find((node) => node.className?.includes("clock-layout-scene")).children[0];
+  scene.value = "segev"; scene.dispatch("change");
+  expect(gis.find((node) => node.className === "clock-layout-header")?.children[0].textContent).toMatch(/Segev/i);
+});
+
 test.each(["move", "release"])("projection gesture cancels on unavailable inverse at %s and keeps numeric editing usable", async (phase) => {
   const rig = await editorFixture(); rig.rendered();
   const hit = rig.find((node) => node.attributes?.class === "clock-layout-body-hit");

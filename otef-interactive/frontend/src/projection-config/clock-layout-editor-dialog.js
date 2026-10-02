@@ -61,7 +61,7 @@ export function openClockLayoutEditor({ nodeId, sceneId = "home", element = "clo
   const dialog = make(doc, "section", { className: "clock-layout-dialog", role: "dialog", ariaLabel: "Clock and legend layout editor", tabIndex: -1 });
   dialog.setAttribute?.("aria-modal", "true");
   const header = make(doc, "header", { className: "clock-layout-header" });
-  const title = make(doc, "h2", {}, selection.label);
+  const title = make(doc, "h2", {}, "");
   const closeButton = make(doc, "button", { type: "button", className: "clock-layout-close", ariaLabel: "Close editor" }, "Close");
   const statusControls = createClockLayoutStatus(doc, {
     onRetry: () => { void (editable() ? layoutClient.retry(selection.resource, selection.slot) : layoutClient.hydrate({ forceFresh: true })).catch(() => {}); },
@@ -84,6 +84,7 @@ export function openClockLayoutEditor({ nodeId, sceneId = "home", element = "clo
   stage.append(previewStatus, previewRetry, mappingStatus);
   const warningStatus = make(doc, "p", { className: "clock-layout-warning", role: "status", hidden: true });
   const panel = make(doc, "section", { className: "clock-layout-parameters", ariaLabel: "Layout parameters" });
+  const autosaveNote = make(doc, "p", { className: "clock-layout-autosave-note" }, "Layout edits save automatically. Projection calibration uses Live and Apply separately.");
   const sceneLabel = make(doc, "label", { className: "clock-layout-selection clock-layout-scene" }, "GIS scene");
   const sceneSelect = make(doc, "select", { ariaLabel: "GIS clock preview scene" });
   for (const [value, label] of Object.entries(GIS_LABEL)) sceneSelect.appendChild(make(doc, "option", { value }, label));
@@ -104,7 +105,7 @@ export function openClockLayoutEditor({ nodeId, sceneId = "home", element = "clo
   pageSelect.addEventListener("click", (event) => event.stopPropagation?.());
   pageSelect.addEventListener("change", () => { pageIndex = Number(pageSelect.value); updatePreview(); });
   let pageIndex = 0;
-  panel.append(sceneLabel, elementLabel, parameters.element, pages, warningStatus);
+  panel.append(sceneLabel, elementLabel, autosaveNote, parameters.element, pages, warningStatus);
   const exhibitButton = make(doc, "button", { type: "button", className: "clock-layout-show-exhibit" }, "Show on exhibit");
   const exhibitStatus = make(doc, "p", { className: "clock-layout-exhibit-status", role: "status", ariaLive: "polite" });
   exhibitButton.hidden = activeNode !== "clock-gis" || typeof onShowOnExhibit !== "function";
@@ -165,7 +166,8 @@ export function openClockLayoutEditor({ nodeId, sceneId = "home", element = "clo
     pageSelect.replaceChildren?.(...Array.from({ length: pageCount }, (_, index) => make(doc, "option", { value: String(index) }, `Page ${index + 1}`)));
     pageSelect.value = String(Math.min(pageIndex, pageCount - 1));
     exhibitButton.hidden = activeNode !== "clock-gis" || typeof onShowOnExhibit !== "function";
-    title.textContent = selection.label;
+    title.textContent = selection.surface === "gis" ? `GIS clock · ${selection.label}`
+      : `${selection.label} · Left output`;
     previewStatus.textContent = previewHealth === "Failed" ? `Preview unavailable: ${previewError}` : "Loading preview";
     previewStatus.hidden = previewHealth === "Ready";
     previewRetry.hidden = previewHealth !== "Failed";

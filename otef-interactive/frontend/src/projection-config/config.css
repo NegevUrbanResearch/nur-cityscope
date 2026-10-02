@@ -1,14 +1,17 @@
 :root { color-scheme: dark; font-family: Inter, system-ui, sans-serif; background: #0a0d12; color: #edf2f7; }
+.projection-config-app { --config-surface: #151a23; --config-surface-raised: #202936; --config-text: #edf2f7; --config-muted: #b8c5d6; --config-border: #3a4759; --config-accent: #6ee7b7; --config-space: 6px; --config-control-height: 44px; }
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 320px; background: #0a0d12; overflow-x: hidden; }
 .projection-config-app { height: 100vh; overflow: hidden; }
-.config-shell { position: relative; height: 100%; }
-.config-chrome { position: absolute; z-index: 10; top: 10px; left: 14px; right: 100px; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; pointer-events: none; }
-.config-chrome > * { pointer-events: auto; }
+.config-shell { position: relative; display: grid; grid-template-rows: auto auto minmax(0, 1fr); height: 100%; min-height: 0; }
 .config-header { display: flex; align-items: baseline; gap: 12px; }
 .config-header > div { font-size: 1.1rem; font-weight: 700; }
 .config-subtitle { color: #94a3b8; margin: 0; }
-.config-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; max-width: 100%; padding: 4px 6px; background: #151a23ed; border: 1px solid #283241; border-radius: 10px; }
+.config-command-bar { position: relative; z-index: 30; display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "toolbar utilities" "picker utilities" "status status"; align-items: start; gap: 4px var(--config-space); min-width: 0; padding: 4px 6px; }
+.config-toolbar { display: flex; grid-area: toolbar; flex-wrap: wrap; align-items: center; gap: 4px; max-width: 100%; min-width: 0; padding: 4px 6px; background: var(--config-surface); border: 1px solid var(--config-border); border-radius: 10px; }
+.config-toolbar :is(button, input, select), .config-toolbar .live-toggle { min-height: var(--config-control-height); }
+.live-control { display: grid; gap: 2px; align-items: center; }
+.live-scope-help, .preset-scope-help { color: var(--config-muted); font-size: .72rem; line-height: 1.25; }
 .config-toolbar input[type=text] { width: 126px; }
 .config-toolbar input[type=file] { max-width: 150px; }
 .config-toolbar select { max-width: 150px; }
@@ -33,8 +36,8 @@ button:hover { background: #2c3a4c; }
 .share-link { color: #7dd3fc; max-width: 100%; overflow-wrap: anywhere; }
 .share-qr { flex-basis: 100%; max-width: 240px; }
 .share-qr svg { display: block; width: min(240px, 100%); height: auto; }
-.config-workspace { position: absolute; inset: 0; }
-.graph-column { position: absolute; inset: 0; min-width: 0; min-height: 0; }
+.config-workspace { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; min-width: 0; min-height: 0; gap: var(--config-space); }
+.graph-column { position: relative; min-width: 0; min-height: 0; }
 .graph-column > h2 { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 h2, h3 { margin: 0 0 10px; }
 .node-graph-viewport { position: absolute; inset: 0; overflow: hidden; background-color: #0c121b; background-image: radial-gradient(#26374a 1px, transparent 1px); background-size: 18px 18px; cursor: grab; touch-action: none; }
@@ -57,6 +60,11 @@ h2, h3 { margin: 0 0 10px; }
 .config-field-label { display: block; color: #ccd6e2; font-size: .85rem; margin-bottom: 3px; }
 .config-field-row { display: grid; grid-template-columns: minmax(70px, 1fr) 76px 20px 44px 44px; align-items: center; gap: 5px; }
 .config-field-row input[type=range] { min-width: 60px; padding: 0; }
+.inspector-field .config-field-range-row { display: block; }
+.inspector-field .config-field-range-row input[type=range] { display: block; width: 100%; min-height: 36px; }
+.inspector-field .config-field-controls-row { grid-template-columns: minmax(52px, 1fr) minmax(80px, 104px) auto 44px 44px; gap: 8px; }
+.inspector-field .config-field-controls-row input[type=number] { width: 100%; min-height: 44px; padding: 6px 8px; }
+.inspector-field .config-field-controls-row .config-field-value { text-align: left; }
 .config-field-row input[type=number] { width: 70px; min-height: 44px; padding: 4px; }
 .config-node .config-field { margin-top: 5px; }
 .config-node .config-field-label { font-size: .75rem; margin-bottom: 2px; }
@@ -102,7 +110,7 @@ h2, h3 { margin: 0 0 10px; }
 .config-field-unit { color: #8998aa; font-size: .8rem; }
 .nudge { width: 44px; min-height: 44px; padding: 2px; }
 .config-field-error { display: block; min-height: 1em; color: #ff9b8c; }
-.inspector { position: absolute; z-index: 8; right: 12px; bottom: 12px; width: 340px; max-height: calc(100vh - 130px); overflow-y: auto; background: #111720ed; border: 1px solid #283241; border-radius: 10px; padding: 10px; }
+.inspector { position: relative; z-index: 8; width: 340px; max-height: 100%; min-height: 0; overflow-y: auto; background: #111720ed; border: 1px solid #283241; border-radius: 10px; padding: 10px; }
 .inspector-title { grid-column: 1 / -1; }
 .inspector-fields { grid-column: 1; grid-row: 2 / span 4; max-height: 420px; overflow: auto; padding-right: 4px; }
 .crop-diagram, .pattern-branch, .pattern-selector, .applied-status { grid-column: 2; }
@@ -170,6 +178,7 @@ h2, h3 { margin: 0 0 10px; }
 .clock-layout-handle { fill: #5ad6ae; stroke: #062b26; stroke-width: 4; vector-effect: non-scaling-stroke; cursor: nwse-resize; pointer-events: all; }
 .clock-layout-parameters { display: flex; flex-direction: column; min-width: 0; min-height: 0; gap: 8px; overflow-y: auto; padding: 8px; border-left: 1px solid #3a4a53; background: #172126; }
 .clock-layout-selection { display: grid; gap: 4px; margin: 0; color: #c7d6da; font-size: .8rem; }
+.clock-layout-autosave-note { margin: 0; color: #aab9c4; font-size: .78rem; line-height: 1.4; }
 .clock-layout-selection[hidden], .clock-layout-page-label[hidden], .clock-layout-dwell[hidden] { display: none; }
 .clock-layout-selection select { width: 100%; min-width: 0; }
 .clock-layout-field { display: grid; grid-template-columns: minmax(0, 1fr) minmax(88px, 1fr) 20px; align-items: center; gap: 6px; min-width: 0; color: #c7d6da; font-size: .82rem; }
@@ -193,7 +202,7 @@ h2, h3 { margin: 0 0 10px; }
   .clock-layout-stage { width: 100%; height: 100%; max-height: none; aspect-ratio: auto; }
   .clock-layout-parameters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-content: start; gap: 6px; border-left: 0; border-top: 1px solid #3a4a53; }
   .clock-layout-parameters .clock-layout-fields { grid-column: 1 / -1; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .clock-layout-warning { grid-column: 1 / -1; }
+  .clock-layout-warning, .clock-layout-autosave-note { grid-column: 1 / -1; }
   .clock-layout-advanced, .clock-layout-page-label, .clock-layout-show-exhibit, .clock-layout-exhibit-status { grid-column: 1 / -1; }
   .clock-layout-field { grid-template-columns: minmax(0, 1fr) minmax(68px, 1fr); }
   .clock-layout-unit { display: none; }
@@ -209,8 +218,7 @@ h2, h3 { margin: 0 0 10px; }
 }
 @media (max-width: 1100px), (max-height: 700px), (pointer: coarse), (hover: none) {
   .projection-config-app { min-height: 100vh; height: auto; padding: 10px; overflow: visible; }
-  .config-shell { height: auto; display: block; }
-  .config-chrome { position: static; display: block; pointer-events: auto; }
+  .config-shell { height: auto; min-height: 100vh; display: grid; grid-template-rows: auto auto minmax(0, 1fr); }
   .config-header { display: block; }
   .config-subtitle { margin-top: 5px; }
   .config-toolbar { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -239,7 +247,7 @@ h2, h3 { margin: 0 0 10px; }
   .names-wall-status { font-size: .72rem; }
 }
 @media (min-width: 700px) and (max-width: 1100px) and (max-height: 700px) and (pointer: fine) and (hover: hover) {
-  .config-chrome { top: 6px; left: 8px; right: 8px; max-height: 98px; overflow-y: auto; }
+  .config-chrome { top: 6px; left: 8px; right: 8px; max-height: none; overflow: visible; }
   .config-header { display: none; }
   .inspector { top: 112px; bottom: 8px; position: static; max-height: none; width: 100%; z-index: 12; }
   .inspector-fields { max-height: none; }
@@ -275,4 +283,104 @@ h2, h3 { margin: 0 0 10px; }
 .settlement-name-status-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 @media (orientation: portrait) {
   .settlement-name-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(190px, 42%); }
+}
+@media (max-width: 760px), (max-height: 600px) and (pointer: coarse) {
+  .settlement-name-dialog { gap: 6px; padding: max(6px, env(safe-area-inset-top)) max(6px, env(safe-area-inset-right)) max(6px, env(safe-area-inset-bottom)) max(6px, env(safe-area-inset-left)); }
+  .settlement-name-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(190px, 42%); gap: 6px; }
+  .settlement-name-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); align-content: start; }
+  .settlement-shared-note, .settlement-name-status-actions { grid-column: 1 / -1; }
+  .settlement-name-header { gap: 6px; }
+}
+
+/* Compact command bar with utility panels floating above the calibration workspace. */
+.config-toolbar { align-items: center; }
+.config-task-picker { display: none; }
+.loaded-preset-identity { color: #cbd5e1; font-size: .82rem; white-space: nowrap; max-width: min(260px, 25vw); overflow: hidden; text-overflow: ellipsis; }
+.config-utilities { position: relative; display: flex; flex-wrap: wrap; gap: 5px; pointer-events: auto; }
+.config-disclosure { position: relative; }
+.config-disclosure > summary { min-height: 36px; padding: 8px 11px; color: #edf2f7; background: #202936; border: 1px solid #3a4759; border-radius: 6px; cursor: pointer; }
+.config-disclosure[open] > summary { border-color: #6ee7b7; }
+.config-disclosure-content { position: absolute; z-index: 20; top: calc(100% + 5px); left: 0; width: min(440px, calc(100vw - 28px)); max-height: min(70vh, 560px); overflow: auto; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 10px; background: #151a23; border: 1px solid #3a4759; border-radius: 8px; box-shadow: 0 12px 32px #000a; }
+.config-disclosure-content > :is(input, select) { min-width: 0; max-width: 100%; }
+.config-disclosure-workstation .config-disclosure-content { width: min(680px, calc(100vw - 28px)); max-width: none; align-items: flex-start; }
+.config-disclosure-content.output-launch-controls { pointer-events: auto; }
+.config-disclosure-content.output-launch-controls > strong { flex-basis: 100%; }
+.config-disclosure-content .output-launch-status, .config-disclosure-content .output-launch-handoff { flex-basis: 100%; }
+.disclosure-close { margin-left: auto; min-height: 34px; }
+.config-status { position: relative; z-index: 1; }
+.node-selector { max-width: 100%; }
+@media (min-width: 1101px) and (min-height: 701px) and (pointer: fine) and (hover: hover) and (orientation: landscape) {
+  .config-toolbar { gap: 6px; }
+  .config-toolbar > :is(select, button, .live-toggle) { min-height: 36px; }
+}
+@media (max-width: 1100px), (max-height: 700px), (pointer: coarse), (hover: none), (orientation: portrait) {
+  .projection-config-app { height: auto; min-height: 100vh; overflow: visible; }
+  .config-shell { height: auto; min-height: 100vh; }
+  .config-header { display: block; }
+  .config-toolbar { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; }
+  .config-toolbar > * { width: 100%; min-width: 0; }
+  .loaded-preset-identity { grid-column: 1 / -1; max-width: none; white-space: normal; overflow: visible; text-overflow: clip; }
+  .config-task-picker { display: block; width: 100%; }
+  .config-utilities { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); width: 100%; }
+  .config-disclosure > summary { min-height: 44px; text-align: center; }
+  .config-disclosure-content { position: absolute; top: calc(100% + 4px); left: 0; right: auto; width: min(420px, calc(100vw - 16px)); max-height: min(68vh, 520px); }
+  .config-disclosure-more .config-disclosure-content { left: 50%; transform: translateX(-50%); }
+  .config-disclosure-workstation .config-disclosure-content { left: auto; right: 0; width: min(680px, calc(100vw - 16px)); }
+  .config-workspace { position: relative; inset: auto; display: block; min-height: 0; }
+  .graph-column { position: relative; inset: auto; padding: 8px; }
+  .node-selector { display: block; width: 100%; min-height: 44px; margin-bottom: 8px; }
+  .node-graph-viewport { display: none; }
+  .mobile-warp-open:not([hidden]) { display: block; }
+  .inspector { position: relative; inset: auto; width: 100%; max-height: none; display: block; margin: 0; }
+  .inspector-fields { display: grid; grid-template-columns: minmax(0, 1fr); max-height: none; overflow: visible; }
+}
+@media (max-width: 420px) {
+  .config-header > div { font-size: 1rem; }
+  .config-toolbar { gap: 4px; }
+  .config-toolbar > :is(button, input, select, .live-toggle) { min-height: 44px; padding: 6px; }
+  .config-utilities { grid-template-columns: 1fr; }
+  .config-disclosure-content, .config-disclosure-more .config-disclosure-content, .config-disclosure-workstation .config-disclosure-content { left: 0; right: auto; width: 100%; transform: none; }
+  .config-workspace { padding: 0 8px 12px; }
+  .graph-column { padding: 0; }
+  .inspector { padding: 8px; }
+}
+
+/* Keep the command surface in its own grid rows; utility panels float above the workspace. */
+.config-header { min-width: 0; padding: 8px 12px 2px; }
+.config-command-bar { grid-row: 2; }
+.config-toolbar { grid-area: toolbar; }
+.config-task-picker { grid-area: picker; }
+.config-utilities { grid-area: utilities; align-self: start; }
+.config-status { grid-area: status; }
+.config-workspace { grid-row: 3; }
+.graph-column { grid-column: 1; grid-row: 1; }
+.inspector { grid-column: 2; grid-row: 1; }
+.inspector:not([open]) { width: 44px; padding: 6px; overflow: hidden; }
+.inspector:not([open]) > :not(.inspector-title) { display: none; }
+.config-disclosure-error-indicator:not([hidden])::before { content: " · Error — open for details"; color: #ffb4a8; font-size: .75rem; font-weight: 600; }
+.disclosure-error-details { flex-basis: 100%; min-width: 0; margin: 4px 0; color: #ffb4a8; overflow-wrap: anywhere; }
+.disclosure-error-details[hidden] { display: none; }
+.preset-scope-help { flex-basis: 100%; }
+.config-disclosure-content { background: var(--config-surface); border-color: var(--config-border); }
+.config-disclosure > summary { color: var(--config-text); background: var(--config-surface-raised); border-color: var(--config-border); }
+.config-disclosure[open] > summary { border-color: var(--config-accent); }
+
+@media (max-width: 1100px), (max-height: 700px), (pointer: coarse), (hover: none), (orientation: portrait) {
+  .projection-config-app { height: auto; min-height: 100vh; overflow: visible; }
+  .config-shell { height: auto; min-height: 100vh; grid-template-rows: auto auto auto; }
+  .config-header { display: block; }
+  .config-command-bar { grid-template-columns: minmax(0, 1fr); grid-template-areas: "toolbar" "picker" "utilities" "status"; padding: 8px; gap: 6px; }
+  .config-toolbar { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; }
+  .config-toolbar > * { width: 100%; min-width: 0; }
+  .loaded-preset-identity { grid-column: 1 / -1; max-width: none; white-space: normal; overflow: visible; text-overflow: clip; }
+  .config-task-picker { display: block; width: 100%; }
+  .config-utilities { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); width: 100%; }
+  .config-disclosure > summary { min-height: var(--config-control-height); text-align: center; }
+  .config-disclosure-content { top: calc(100% + 4px); width: min(420px, calc(100vw - 16px)); max-height: min(68vh, 520px); }
+  .config-disclosure-more .config-disclosure-content { left: 50%; transform: translateX(-50%); }
+  .config-disclosure-workstation .config-disclosure-content { left: auto; right: 0; width: min(680px, calc(100vw - 16px)); }
+  .config-workspace { position: relative; display: grid; grid-template-columns: minmax(0, 1fr); min-height: 0; padding: 0 8px 12px; }
+  .graph-column { grid-column: 1; grid-row: 1; position: static; padding: 8px; }
+  .inspector { grid-column: 1; grid-row: 2; position: static; width: 100%; max-height: none; display: block; margin: 0; }
+  .inspector-fields { display: grid; grid-template-columns: minmax(0, 1fr); max-height: none; overflow: visible; }
 }

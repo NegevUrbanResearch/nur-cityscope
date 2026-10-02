@@ -69,8 +69,8 @@ function warpViewport(points = []) {
 
 function warpViewBoxValue(viewBox) { return `${viewBox.x} ${viewBox.y} ${viewBox.width} ${viewBox.height}`; }
 
-function renderField(doc, descriptor, onField, onNudge, compact = false) {
-  const wrap = make(doc, "div", { className: `config-field${compact ? " compact-field" : ""}`, dataset: { path: descriptor.path } });
+function renderField(doc, descriptor, onField, onNudge, compact = false, inspector = false) {
+  const wrap = make(doc, "div", { className: `config-field${compact ? " compact-field" : ""}${inspector ? " inspector-field" : ""}`, dataset: { path: descriptor.path } });
   const label = make(doc, "label", { className: "config-field-label" }, descriptor.label);
   wrap.appendChild(label);
   const row = make(doc, "div", { className: "config-field-row" });
@@ -87,16 +87,41 @@ function renderField(doc, descriptor, onField, onNudge, compact = false) {
   finePlus.setAttribute("aria-label", finePlus.title);
   fineMinus.dataset.path = descriptor.path; fineMinus.dataset.direction = "-1";
   finePlus.dataset.path = descriptor.path; finePlus.dataset.direction = "1";
+  const formatInputValue = (raw) => {
+    const numeric = Number(raw);
+    return String(raw ?? "").trim() === "" || !Number.isFinite(numeric)
+      ? ""
+      : descriptor.decimals === undefined ? String(numeric) : numeric.toFixed(descriptor.decimals);
+  };
+  const displayOutput = (raw) => {
+    if (!inspector) { value.textContent = String(raw ?? ""); return; }
+    const shown = formatInputValue(raw);
+    value.textContent = shown ? `${shown}${descriptor.unit ? ` ${descriptor.unit}` : ""}` : "";
+  };
+  let controlsRow = row;
   if (compact) row.append(range, value);
-  else row.append(range, number, unit, fineMinus, finePlus, ...(descriptor.commitOnChange ? [value] : []));
-  wrap.appendChild(row);
+  else if (inspector) {
+    row.className = "config-field-row config-field-range-row";
+    row.appendChild(range);
+    wrap.appendChild(row);
+    controlsRow = make(doc, "div", { className: "config-field-row config-field-controls-row" });
+    controlsRow.append(value, number, unit, fineMinus, finePlus);
+  } else row.append(range, number, unit, fineMinus, finePlus, ...(descriptor.commitOnChange ? [value] : []));
+  if (inspector) wrap.appendChild(controlsRow);
+  else wrap.appendChild(row);
   const error = make(doc, "small", { className: "config-field-error", role: "alert", dataset: { errorFor: descriptor.path } });
   wrap.appendChild(error);
-  const onInput = (event) => onField(descriptor.path, event.currentTarget.value, event.currentTarget.dataset.input);
+  const onInput = (event) => {
+    const raw = event.currentTarget.value;
+    displayOutput(raw);
+    if (number && event.currentTarget === range) number.value = formatInputValue(raw);
+    onField(descriptor.path, raw, event.currentTarget.dataset.input);
+  };
+  const onReleaseInput = () => displayOutput(range.value);
   const commitNumber = () => onField(descriptor.path, number.value, "number");
-  range.addEventListener("input", descriptor.commitOnChange ? () => { value.textContent = range.value; } : onInput);
+  range.addEventListener("input", descriptor.commitOnChange ? onReleaseInput : onInput);
   if (descriptor.commitOnChange) range.addEventListener("change", onInput);
-  number?.addEventListener("input", () => { value.textContent = number.value; });
+  number?.addEventListener("input", () => displayOutput(number.value));
   number?.addEventListener("blur", commitNumber);
   number?.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); if (number.blur) number.blur(); else commitNumber(); } });
   if (!compact) { fineMinus.addEventListener("click", () => onNudge(descriptor.path, -1)); finePlus.addEventListener("click", () => onNudge(descriptor.path, 1)); }
@@ -137,16 +162,19 @@ export function createProjectionConfigView(root, {
   let outputAssignmentsSignature = null;
   let selectedGraphNode = "pre";
   const app = make(doc, "div", { className: "config-shell" });
-  const chrome = make(doc, "div", { className: "config-chrome" });
   const heading = make(doc, "header", { className: "config-header" });
   heading.append(make(doc, "div", {}, "Projection calibration"), make(doc, "p", { className: "config-subtitle" }, "Tune the shared camera and fixed OTEF projector outputs."));
-  chrome.appendChild(heading);
+  const commandBar = make(doc, "section", { className: "config-command-bar", ariaLabel: "Calibration commands and utilities" });
 
   const toolbar = make(doc, "section", { className: "config-toolbar", ariaLabel: "Calibration actions" });
   controls.live = make(doc, "input", { type: "checkbox", id: "projection-live", checked: true, dataset: { action: "live" } });
   const liveLabel = make(doc, "label", { htmlFor: "projection-live", className: "live-toggle" }, "Live"); liveLabel.prepend(controls.live);
+  const liveControl = make(doc, "div", { className: "live-control" });
+  controls.liveHelp = make(doc, "small", { className: "live-scope-help" }, "Live sends geometry. Use Run later for the names wall.");
+  liveControl.append(liveLabel, controls.liveHelp);
   controls.apply = button(doc, "Apply once", "apply");
   controls.save = button(doc, "Save preset", "save");
+  controls.loadedPresetIdentity = make(doc, "span", { className: "loaded-preset-identity", role: "status" }, "Loaded: unknown");
   controls.saveName = make(doc, "input", { type: "text", placeholder: "Preset name", maxLength: 80, ariaLabel: "Preset name" });
   let presetNameEdited = false;
   controls.saveName.addEventListener("input", () => { presetNameEdited = true; });
@@ -161,8 +189,57 @@ export function createProjectionConfigView(root, {
   controls.shareStatus = make(doc, "span", { className: "share-status", role: "status" });
   controls.shareLink = make(doc, "a", { className: "share-link", target: "_blank", rel: "noreferrer", hidden: true }, "");
   controls.shareQr = make(doc, "div", { className: "share-qr", id: "shareQr", hidden: true });
-  toolbar.append(liveLabel, controls.apply, controls.save, controls.saveName, controls.saveNew, controls.presets, controls.load, controls.revert, controls.export, controls.import, controls.share, controls.shareStatus, controls.shareLink, controls.shareQr);
-  chrome.appendChild(toolbar);
+  toolbar.append(liveControl, controls.apply, controls.loadedPresetIdentity, controls.presets, controls.load);
+  commandBar.appendChild(toolbar);
+  const taskPicker = make(doc, "div", { className: "config-task-picker" });
+  commandBar.appendChild(taskPicker);
+
+  const utilityBar = make(doc, "section", { className: "config-utilities", ariaLabel: "Additional calibration tools" });
+  const disclosures = [];
+  const disclosure = (className, title, contentClass = "config-disclosure-content") => {
+    const details = make(doc, "details", { className: `config-disclosure ${className}` });
+    const summary = make(doc, "summary", {}, title);
+    const errorIndicator = make(doc, "span", { className: "disclosure-error-indicator", role: "img", ariaLabel: "Unresolved error", hidden: true });
+    summary.appendChild(errorIndicator);
+    const content = make(doc, "div", { className: contentClass });
+    const close = button(doc, "Close", "disclosure-close", "disclosure-close");
+    const errorDetails = make(doc, "p", { className: "disclosure-error-details", role: "alert", hidden: true });
+    close.addEventListener("click", () => { details.open = false; summary.focus(); });
+    summary.addEventListener("click", () => { if (!details.open) for (const other of disclosures) if (other !== details) other.open = false; });
+    content.append(close, errorDetails);
+    details.append(summary, content);
+    details.addEventListener("toggle", () => { if (details.open) for (const other of disclosures) if (other !== details) other.open = false; });
+    disclosures.push(details);
+    return { details, content, summary, errorIndicator, errorDetails };
+  };
+  const presetDisclosure = disclosure("config-disclosure-preset", "Preset management");
+  controls.presetErrorIndicator = presetDisclosure.errorIndicator;
+  controls.presetErrorDetails = presetDisclosure.errorDetails;
+  presetDisclosure.content.append(make(doc, "small", { className: "preset-scope-help" }, "Presets include geometry and people-wall settings. Clock and settlement layouts save independently."), controls.save, controls.saveName, controls.saveNew, controls.revert);
+  const moreDisclosure = disclosure("config-disclosure-more", "More");
+  controls.moreErrorIndicator = moreDisclosure.errorIndicator;
+  controls.moreErrorDetails = moreDisclosure.errorDetails;
+  moreDisclosure.content.append(controls.export, controls.import, controls.share, controls.shareStatus, controls.shareLink, controls.shareQr);
+  const outputDisclosure = disclosure("config-disclosure-workstation", "Workstation outputs", "config-disclosure-content output-launch-controls");
+  controls.outputErrorIndicator = outputDisclosure.errorIndicator;
+  controls.outputErrorDetails = outputDisclosure.errorDetails;
+  outputDisclosure.content.prepend(make(doc, "strong", {}, "Workstation browser outputs"));
+  utilityBar.append(presetDisclosure.details, moreDisclosure.details, outputDisclosure.details);
+  commandBar.appendChild(utilityBar);
+  const dismissDisclosures = (event) => {
+    if (event.type === "keydown") {
+      if (event.key !== "Escape") return;
+      const opened = disclosures.find((item) => item.open);
+      if (!opened) return;
+      event.preventDefault(); opened.open = false; opened.querySelector("summary")?.focus(); return;
+    }
+    if (!disclosures.some((item) => item.open)) return;
+    if (utilityBar.contains?.(event.target)) return;
+    if (event.type === "pointerdown" && event.target?.closest?.(".node-graph-viewport, .config-node, .warp-edit-surface")) event.stopPropagation?.();
+    for (const item of disclosures) if (item.open) item.open = false;
+  };
+  doc.addEventListener?.("pointerdown", dismissDisclosures, true);
+  doc.addEventListener?.("keydown", dismissDisclosures);
   controls.live.addEventListener("change", () => onAction("live", controls.live.checked));
   controls.apply.addEventListener("click", () => onAction("apply"));
   controls.save.addEventListener("click", () => onAction("save", controls.saveName.value));
@@ -174,8 +251,7 @@ export function createProjectionConfigView(root, {
   controls.share.addEventListener("click", () => onAction("share"));
   controls.presets.addEventListener("change", () => onAction("preset-select", controls.presets.value));
 
-  const outputToolbar = make(doc, "section", { className: "output-launch-controls", ariaLabel: "Workstation browser output controls" });
-  const outputTitle = make(doc, "strong", {}, "Workstation browser outputs");
+  const outputToolbar = outputDisclosure.content;
   controls.outputIdentify = button(doc, "Identify displays", "output-identify");
   controls.outputLeftDisplay = make(doc, "select", { ariaLabel: "Left projector display", dataset: { action: "output-left-display" } });
   controls.outputRightDisplay = make(doc, "select", { ariaLabel: "Right projector display", dataset: { action: "output-right-display" } });
@@ -186,7 +262,7 @@ export function createProjectionConfigView(root, {
   controls.outputHandoff = make(doc, "small", { className: "output-launch-handoff" }, "TD projectorWindows off → Open Both; Close Both → TD projectorWindows on. If this page reloads, manually close old browser output windows before reopening.");
   const leftLabel = make(doc, "label", { className: "output-display-label" }, "Left projector"); leftLabel.appendChild(controls.outputLeftDisplay);
   const rightLabel = make(doc, "label", { className: "output-display-label" }, "Right projector"); rightLabel.appendChild(controls.outputRightDisplay);
-  outputToolbar.append(outputTitle, controls.outputIdentify, leftLabel, rightLabel, controls.outputAssign, controls.outputOpenBoth, controls.outputCloseBoth, controls.outputStatus, controls.outputHandoff);
+  outputToolbar.append(controls.outputIdentify, leftLabel, rightLabel, controls.outputAssign, controls.outputOpenBoth, controls.outputCloseBoth, controls.outputStatus, controls.outputHandoff);
   const outputAction = (action, value) => { if (!touchOnlySurface) onOutputAction(action, value); };
   controls.outputIdentify.addEventListener("click", () => outputAction("identify"));
   controls.outputAssign.addEventListener("click", () => outputAction("assign", { left: controls.outputLeftDisplay.value, right: controls.outputRightDisplay.value }));
@@ -199,7 +275,6 @@ export function createProjectionConfigView(root, {
     controls.outputStatus.textContent = "Display opening is workstation-only. Use this page to tell the workstation operator which displays to assign and open.";
     controls.outputHandoff.textContent = "Phone/tablet instructions only: on the workstation, turn TD projectorWindows off before Open Both; Close Both before TD projectorWindows on.";
   }
-  chrome.appendChild(outputToolbar);
 
   const status = make(doc, "section", { className: "config-status", role: "status", ariaLive: "polite" });
   controls.status = make(doc, "span", { className: "draft-status" });
@@ -209,8 +284,8 @@ export function createProjectionConfigView(root, {
   controls.retryHydration = button(doc, "Retry settings check", "retry-hydration");
   status.append(controls.status, controls.conflict, controls.actionError, controls.connectionStatus, controls.retryHydration);
   controls.retryHydration.addEventListener("click", () => onAction("retry-hydration"));
-  chrome.appendChild(status);
-  app.appendChild(chrome);
+  commandBar.appendChild(status);
+  app.append(heading, commandBar);
 
   const workspace = make(doc, "div", { className: "config-workspace" });
   const graphColumn = make(doc, "section", { className: "graph-column" });
@@ -355,11 +430,11 @@ export function createProjectionConfigView(root, {
     if (!id.endsWith("-keystone") && !id.endsWith("-grid")) return;
     cancelActiveDrag(); onNode(id); dialog.open({ side: id.startsWith("right-") ? "right" : "left", mode: id.endsWith("-grid") ? "grid" : "keystone", opener: mobileOpen });
   });
-  graphColumn.append(selector, mobileOpen);
+  taskPicker.append(selector, mobileOpen);
   workspace.appendChild(graphColumn);
 
   const inspector = make(doc, "details", { className: "inspector", ariaLabel: "Calibration diagnostics" });
-  const mobileQuery = doc.defaultView?.matchMedia?.("(max-width: 1100px), (max-height: 700px), (pointer: coarse), (hover: none)") || globalThis.matchMedia?.("(max-width: 1100px), (max-height: 700px), (pointer: coarse), (hover: none)");
+  const mobileQuery = doc.defaultView?.matchMedia?.("(max-width: 1100px), (max-height: 700px), (pointer: coarse), (hover: none), (orientation: portrait)") || globalThis.matchMedia?.("(max-width: 1100px), (max-height: 700px), (pointer: coarse), (hover: none), (orientation: portrait)");
   inspector.open = Boolean(mobileQuery?.matches);
   const openOnPhone = (event) => { if (event.matches) inspector.open = true; };
   mobileQuery?.addEventListener?.("change", openOnPhone);
@@ -371,7 +446,7 @@ export function createProjectionConfigView(root, {
   controls.namesWallInspector.append(namesModeControl(), make(doc, "p", { className: "names-wall-units" }, namesWallUnitsHelp),
     make(doc, "p", { className: "names-wall-units names-wall-rotation" }, namesWallRotationHelp),
     modelSpacingHelp(), make(doc, "p", { className: "names-wall-units" }, "0 keeps the current positions. Increase to move the pages inward where space allows."), pageSpacingReset(), namesStatus());
-  for (const descriptor of descriptors) { const control = renderField(doc, descriptor, onField, onNudge); fields.set(`inspector:${descriptor.path}`, control); controls.inspectorFields.appendChild(control.wrap); }
+  for (const descriptor of descriptors) { const control = renderField(doc, descriptor, onField, onNudge, false, true); fields.set(`inspector:${descriptor.path}`, control); controls.inspectorFields.appendChild(control.wrap); }
   controls.warpPanel = make(doc, "section", { className: "warp-inspector", ariaLabel: "Warp editor" });
   controls.warpHeading = make(doc, "h3", {}, "Warp editor");
   controls.warpEnabled = make(doc, "input", { type: "checkbox", ariaLabel: "Enable browser warp" });
@@ -611,7 +686,16 @@ export function createProjectionConfigView(root, {
       : statusText;
     controls.conflict.textContent = conflict;
     controls.conflict.hidden = !conflict;
-    const actionError = errors.name || errors.import || errors.action || state.previewError || "";
+    const setUtilityError = (indicator, details, message) => {
+      const text = String(message || "");
+      indicator.hidden = !text;
+      details.textContent = text;
+      details.hidden = !text;
+    };
+    setUtilityError(controls.presetErrorIndicator, controls.presetErrorDetails, errors.preset || errors.name);
+    setUtilityError(controls.moreErrorIndicator, controls.moreErrorDetails, errors.more || errors.import || errors.share || errors.export);
+    setUtilityError(controls.outputErrorIndicator, controls.outputErrorDetails, outputState.error || errors.outputs || errors.output);
+    const actionError = errors.action || state.previewError || "";
     controls.actionError.textContent = actionError;
     controls.actionError.hidden = !actionError;
     controls.connectionStatus.textContent = state.hydrationError ? `Settings check failed: ${state.hydrationError}` : state.hydrating ? "Checking current settings…" : "";
@@ -631,12 +715,13 @@ export function createProjectionConfigView(root, {
     controls.outputRightDisplay.replaceChildren(...screens.map(optionFor));
     controls.outputLeftDisplay.value = outputSelection.left;
     controls.outputRightDisplay.value = outputSelection.right;
-    controls.outputStatus.textContent = touchOnlySurface ? "Display opening is workstation-only. Use this page to tell the workstation operator which displays to assign and open." : outputState.error || outputState.message || "Identify displays on the workstation.";
+    controls.outputStatus.textContent = touchOnlySurface ? "Display opening is workstation-only. Use this page to tell the workstation operator which displays to assign and open." : outputState.message || "Identify displays on the workstation.";
     const presets = state.snapshot?.presets || [];
     const selectedPreset = state.selectedPresetId || state.snapshot?.selectedPresetId || "original";
     controls.presets.replaceChildren(...presets.map((preset) => make(doc, "option", { value: preset.id }, preset.name)));
     controls.presets.value = selectedPreset;
     const loadedPreset = presets.find((preset) => preset.id === loadedPresetId);
+    controls.loadedPresetIdentity.textContent = `Loaded: ${loadedPreset?.name || "unknown"}`;
     if (loadedPreset && (loadedPresetId !== lastLoadedPresetId || loadedPresetLoadToken !== lastLoadedPresetLoadToken)) {
       const explicitLoad = lastLoadedPresetLoadToken !== null && loadedPresetLoadToken !== lastLoadedPresetLoadToken;
       if (!presetNameEdited || explicitLoad) controls.saveName.value = loadedPreset.name || "";
@@ -700,7 +785,7 @@ export function createProjectionConfigView(root, {
           || Boolean(descriptor.wallOnly && draft.namesWall?.activeMode !== "wall");
         const display = displayValue(descriptor, value);
         for (const input of [control.range, control.number]) if (input && doc.activeElement !== input) input.value = display;
-        control.value.textContent = `${display}${descriptor.unit ? ` ${descriptor.unit}` : ""}`;
+        if (doc.activeElement !== control.number) control.value.textContent = `${display}${descriptor.unit ? ` ${descriptor.unit}` : ""}`;
         const errorPath = namesWallProfileScoped(descriptor.path) && draft.namesWall?.activeMode
           ? `namesWall.profiles.${descriptor.wallOnly ? "wall" : draft.namesWall.activeMode}.${descriptor.path.slice("namesWall.".length)}`
           : descriptor.path;
@@ -724,7 +809,7 @@ export function createProjectionConfigView(root, {
     },
     cancelWarpPointer: cancelActiveDrag,
     closeWarpEditor: dialog.close,
-    dispose() { mobileQuery?.removeEventListener?.("change", openOnPhone); doc.removeEventListener?.("keydown", onKeyDown); dialog.dispose(); pointerInput.dispose(); canvas.dispose(); },
+    dispose() { mobileQuery?.removeEventListener?.("change", openOnPhone); doc.removeEventListener?.("keydown", onKeyDown); doc.removeEventListener?.("keydown", dismissDisclosures); doc.removeEventListener?.("pointerdown", dismissDisclosures, true); dialog.dispose(); pointerInput.dispose(); canvas.dispose(); },
   };
 }
 
