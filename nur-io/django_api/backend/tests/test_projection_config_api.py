@@ -14,6 +14,15 @@ from backend.projection_warp_schema import migrate_projection_config_to_v2, migr
 
 
 class ProjectionConfigApiTests(TestCase):
+    def test_v6_rejects_unknown_names_wall_profile(self):
+        current = self.state()
+        config = copy.deepcopy(current['config'])
+        config['namesWall']['profiles']['extra'] = {}
+        response = self.post_action('preview', current['revision'], config=config)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('namesWall.profiles.extra', response.json()['fields'])
+        self.assertEqual(self.state(), current)
+
     def test_installed_v6_rejects_stale_v5_write_before_mutation(self):
         current = self.state()
         stale = migrate_projection_config_to_v5(legacy_projection_config_defaults())
@@ -114,6 +123,30 @@ class ProjectionConfigApiTests(TestCase):
         saved = response.json()
         self.assertEqual(saved["selectedPresetId"], saved["presets"][-1]["id"])
         self.assertEqual(OTEFProjectionCalibration.objects.get(table__name="otef").revision, 1)
+
+    def test_preview_and_save_accept_per_profile_outline_widths(self):
+        state = self.state()
+        config = copy.deepcopy(state['config'])
+        config['namesWall']['profiles']['wall']['strokeWidthPx'] = 5
+        config['namesWall']['profiles']['model']['strokeWidthPx'] = 1
+        preview = self.post_action('preview', state['revision'], config=config)
+        self.assertEqual(preview.status_code, 200, preview.content)
+        self.assertEqual(preview.json()['config']['namesWall']['profiles']['wall']['strokeWidthPx'], 5)
+        self.assertEqual(preview.json()['config']['namesWall']['profiles']['model']['strokeWidthPx'], 1)
+        saved = self.post_action('save', preview.json()['revision'], config=config, presetId=None, name='Outline widths')
+        self.assertEqual(saved.status_code, 200, saved.content)
+        self.assertEqual(saved.json()['presets'][-1]['config']['namesWall']['profiles']['wall']['strokeWidthPx'], 5)
+        self.assertEqual(saved.json()['presets'][-1]['config']['namesWall']['profiles']['model']['strokeWidthPx'], 1)
+
+    def test_preview_normalizes_pre_outline_v6_configs_before_accepting_edits(self):
+        state = self.state()
+        old_config = copy.deepcopy(state['config'])
+        del old_config['namesWall']['profiles']['wall']['strokeWidthPx']
+        del old_config['namesWall']['profiles']['model']['strokeWidthPx']
+        response = self.post_action('preview', state['revision'], config=old_config)
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()['config']['namesWall']['profiles']['wall']['strokeWidthPx'], 3)
+        self.assertEqual(response.json()['config']['namesWall']['profiles']['model']['strokeWidthPx'], 2)
 
     def test_invalid_config_does_not_create_or_change_state(self):
         response = self.client.post("/api/otef/projection-config/", {"table": "otef", "baseRevision": 0, "action": "preview", "sourceId": self.source, "config": {}}, content_type="application/json")

@@ -858,6 +858,7 @@ describe("projection config controller", () => {
   test("Names wall numeric descriptors use the shared integer bounds", () => {
     expect(NAMES_WALL_DESCRIPTORS.map(({ path, min, max, step }) => [path, min, max, step])).toEqual([
       ["namesWall.rotateDeg", -180, 180, 1],
+      ["namesWall.strokeWidthPx", 1, 6, 1],
       ["namesWall.requestedFontPx", 1, 48, 1],
       ["namesWall.spacingPx", 0, 32, 1], ["namesWall.edgeInsetPx", 0, 256, 1],
       ["namesWall.inwardShiftPercent", 0, 100, 1],
@@ -881,6 +882,15 @@ describe("projection config controller", () => {
     setField("namesWall.inwardShiftPercent", 50);
     const mode = find(node, (item) => item.attributes?.["aria-label"] === "Names wall profile"); mode.value = "model"; mode.dispatch("change");
     setField("namesWall.innerEdgeInsetPx.left", 60); setField("namesWall.requestedFontPx", 6); setField("namesWall.spacingPx", 1);
+    expect(find(node, (item) => item.dataset?.field === "namesWall.strokeWidthPx" && item.dataset.input === "number").value).toBe("2");
+    setField("namesWall.strokeWidthPx", 3);
+    expect(client.getState().draft.namesWall.profiles.model.strokeWidthPx).toBe(3);
+    expect(client.getState().draft.namesWall.profiles.wall.strokeWidthPx).toBe(3);
+    mode.value = "wall"; mode.dispatch("change");
+    setField("namesWall.strokeWidthPx", 5);
+    expect(client.getState().draft.namesWall.profiles.wall.strokeWidthPx).toBe(5);
+    mode.value = "model"; mode.dispatch("change");
+    expect(find(node, (item) => item.dataset?.field === "namesWall.strokeWidthPx" && item.dataset.input === "number").value).toBe("3");
     action("apply").dispatch("click");
     await vi.waitFor(() => expect(client.apply).toHaveBeenCalledTimes(1));
     action("export").dispatch("click");

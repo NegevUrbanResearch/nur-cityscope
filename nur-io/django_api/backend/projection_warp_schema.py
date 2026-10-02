@@ -267,8 +267,16 @@ def migrate_projection_config_to_v6(config, rotate_deg):
     if validate_projection_config(config):
         raise ValueError('invalid projection config')
     if config['schemaVersion'] == 6:
-        return deepcopy(config)
+        result = deepcopy(config)
+        names = result['namesWall']
+        legacy_width = names.get('strokeWidthPx')
+        names.pop('strokeWidthPx', None)
+        for mode, width in (('wall', 3), ('model', 2)):
+            names['profiles'][mode].setdefault('strokeWidthPx', legacy_width if legacy_width is not None else width)
+        return result
     result = migrate_projection_config_to_v5(config)
     result['namesWall']['rotateDeg'] = normalize_rotation_deg(rotate_deg)
+    result['namesWall']['profiles']['wall']['strokeWidthPx'] = 3
+    result['namesWall']['profiles']['model']['strokeWidthPx'] = 2
     result['schemaVersion'] = 6
     return result

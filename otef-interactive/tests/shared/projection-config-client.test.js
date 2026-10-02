@@ -89,6 +89,23 @@ test('hydration converts historical working and preset configs to V4', async () 
   h.client.stop();
 });
 
+test('hydration normalizes old V6 configs and preserves the reserved Original calibration', async () => {
+  const h = harness();
+  const old = clone(DEFAULTS);
+  delete old.namesWall.profiles.wall.strokeWidthPx;
+  delete old.namesWall.profiles.model.strokeWidthPx;
+  const saved = stateFor(12, old);
+  saved.presets[0].config = clone(old);
+  saved.presets.push({ id: '11111111-1111-4111-8111-111111111111', name: 'Old profile', config: clone(old), readOnly: false });
+  const starting = h.client.start(); h.resolveNext(saved); await starting;
+  const state = h.client.getState();
+  expect(state.snapshot.config.namesWall.profiles).toMatchObject({ wall: { strokeWidthPx: 3 }, model: { strokeWidthPx: 2 } });
+  expect(state.snapshot.presets[0].config.namesWall.profiles).toMatchObject({ wall: { strokeWidthPx: 3 }, model: { strokeWidthPx: 2 } });
+  expect(state.snapshot.presets[1].config.namesWall.profiles).toMatchObject({ wall: { strokeWidthPx: 3 }, model: { strokeWidthPx: 2 } });
+  expect(state.draft.namesWall.profiles).toMatchObject({ wall: { strokeWidthPx: 3 }, model: { strokeWidthPx: 2 } });
+  h.client.stop();
+});
+
 test.each(['live', 'apply', 'save', 'load', 'revert'])(
   '%s waits for matching asynchronous wall preflight and never posts a newer draft under an older result', async (action) => {
     const checks = [];

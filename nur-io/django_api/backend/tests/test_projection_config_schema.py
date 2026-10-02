@@ -1,4 +1,5 @@
 import json
+import copy
 from pathlib import Path
 from django.test import SimpleTestCase
 from backend.projection_config_schema import validate_projection_config, validate_projection_snapshot, legacy_projection_config_defaults
@@ -93,6 +94,76 @@ class ProjectionConfigSchemaTests(SimpleTestCase):
         self.assertEqual(validate_projection_config(converted), {})
         passthrough = migrate_projection_config_to_v6(converted, -20)
         self.assertEqual(passthrough['namesWall']['rotateDeg'], 35)
+
+    def test_v6_outline_widths_are_per_profile_and_old_configs_remain_valid(self):
+        from backend.projection_config_schema import validate_names_wall_v6
+        from backend.projection_warp_schema import migrate_projection_config_to_v6
+
+        converted = migrate_projection_config_to_v6(migrate_projection_config_to_v5(legacy_projection_config_defaults()), 35)
+        self.assertEqual(converted['namesWall']['profiles']['wall']['strokeWidthPx'], 3)
+        self.assertEqual(converted['namesWall']['profiles']['model']['strokeWidthPx'], 2)
+        old_v6 = copy.deepcopy(converted)
+        del old_v6['namesWall']['profiles']['wall']['strokeWidthPx']
+        del old_v6['namesWall']['profiles']['model']['strokeWidthPx']
+        self.assertEqual(validate_projection_config(old_v6), {})
+        normalized = migrate_projection_config_to_v6(old_v6, 90)
+        self.assertEqual(normalized['namesWall']['profiles']['wall']['strokeWidthPx'], 3)
+        self.assertEqual(normalized['namesWall']['profiles']['model']['strokeWidthPx'], 2)
+        for mode, width in (('wall', 0), ('model', 7)):
+            invalid = copy.deepcopy(converted)
+            invalid['namesWall']['profiles'][mode]['strokeWidthPx'] = width
+            self.assertIn(f'namesWall.profiles.{mode}.strokeWidthPx', validate_names_wall_v6(invalid['namesWall']))
+        interim = copy.deepcopy(converted)
+        del interim['namesWall']['profiles']['wall']['strokeWidthPx']
+        del interim['namesWall']['profiles']['model']['strokeWidthPx']
+        interim['namesWall']['strokeWidthPx'] = 5
+        migrated = migrate_projection_config_to_v6(interim, 35)
+        self.assertEqual(migrated['namesWall']['profiles']['wall']['strokeWidthPx'], 5)
+        self.assertEqual(migrated['namesWall']['profiles']['model']['strokeWidthPx'], 5)
+        self.assertNotIn('strokeWidthPx', migrated['namesWall'])
+        explicit_width = copy.deepcopy(interim)
+        explicit_width['namesWall']['profiles']['wall']['strokeWidthPx'] = 4
+        migrated_explicit = migrate_projection_config_to_v6(explicit_width, 35)
+        self.assertEqual(migrated_explicit['namesWall']['profiles']['wall']['strokeWidthPx'], 4)
+        self.assertEqual(migrated_explicit['namesWall']['profiles']['model']['strokeWidthPx'], 5)
+        global_two = copy.deepcopy(converted)
+        del global_two['namesWall']['profiles']['wall']['strokeWidthPx']
+        del global_two['namesWall']['profiles']['model']['strokeWidthPx']
+        global_two['namesWall']['strokeWidthPx'] = 2
+        migrated_two = migrate_projection_config_to_v6(global_two, 35)
+        self.assertEqual(migrated_two['namesWall']['profiles']['wall']['strokeWidthPx'], 2)
+        self.assertEqual(migrated_two['namesWall']['profiles']['model']['strokeWidthPx'], 2)
+        extra_profile = copy.deepcopy(converted['namesWall'])
+        extra_profile['profiles']['extra'] = {}
+        self.assertIn('namesWall.profiles.extra', validate_names_wall_v6(extra_profile))
+        invalid_config = copy.deepcopy(converted)
+        invalid_config['namesWall']['profiles']['extra'] = {}
+        self.assertIn('namesWall.profiles.extra', validate_projection_config(invalid_config))
+
+    def test_interim_global_width_makes_original_preset_noncanonical(self):
+        from backend.projection_warp_schema import migrate_projection_config_to_v6
+        defaults = projection_config_defaults()
+        snapshot = {'revision': 1, 'config': defaults, 'presets': [
+            {'id': 'original', 'name': 'Original calibration', 'config': copy.deepcopy(defaults), 'readOnly': True},
+        ], 'selectedPresetId': 'original'}
+        snapshot['presets'][0]['config']['namesWall']['strokeWidthPx'] = 5
+        del snapshot['presets'][0]['config']['namesWall']['profiles']['wall']['strokeWidthPx']
+        del snapshot['presets'][0]['config']['namesWall']['profiles']['model']['strokeWidthPx']
+        self.assertIn('presets[0]', validate_projection_snapshot(snapshot))
+        self.assertEqual(migrate_projection_config_to_v6(snapshot['presets'][0]['config'], 35)['namesWall']['profiles']['wall']['strokeWidthPx'], 5)
+
+    def test_old_v6_original_preset_is_compared_after_outline_defaulting(self):
+        snapshot = {'revision': 3, 'config': projection_config_defaults(), 'presets': [
+            {'id': 'original', 'name': 'Original calibration', 'config': projection_config_defaults(), 'readOnly': True},
+            {'id': TD_MIGRATION_PRESET_ID, 'name': TD_MIGRATION_PRESET_NAME,
+             'config': migrate_projection_config_to_v4(migrate_projection_config_to_v2(legacy_projection_config_defaults())), 'readOnly': True},
+        ], 'selectedPresetId': 'original'}
+        for target in (snapshot['config'], snapshot['presets'][0]['config']):
+            del target['namesWall']['profiles']['wall']['strokeWidthPx']
+            del target['namesWall']['profiles']['model']['strokeWidthPx']
+        self.assertEqual(validate_projection_snapshot(snapshot), {})
+        snapshot['presets'][0]['config']['namesWall']['profiles']['wall']['strokeWidthPx'] = 4
+        self.assertIn('presets[0]', validate_projection_snapshot(snapshot))
 
     def test_defaults_are_v6_identity_warp_without_changing_framing(self):
         defaults = projection_config_defaults()

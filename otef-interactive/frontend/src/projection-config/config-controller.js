@@ -39,6 +39,7 @@ const FIELD_DESCRIPTORS = [
 ].map((descriptor) => ({ ...descriptor, displayMin: descriptor.displayMin ?? descriptor.min, displayMax: descriptor.displayMax ?? descriptor.max, displayStep: descriptor.displayStep ?? descriptor.step }));
 const NAMES_WALL_DESCRIPTORS = [
   { path: "namesWall.rotateDeg", node: "names-wall", label: "Rotation", min: -180, max: 180, step: 1, fine: 1, unit: "°" },
+  { path: "namesWall.strokeWidthPx", node: "names-wall", label: "Name outline", min: 1, max: 6, step: 1, fine: 1, unit: "px" },
   { path: "namesWall.requestedFontPx", node: "names-wall", label: "Requested font", min: 1, max: 48, step: 1, fine: 1, unit: "px" },
   { path: "namesWall.spacingPx", node: "names-wall", label: "Name spacing", min: 0, max: 32, step: 1, fine: 1, unit: "px" },
   { path: "namesWall.edgeInsetPx", node: "names-wall", label: "Edge inset", min: 0, max: 256, step: 1, fine: 1, unit: "px" },
@@ -63,12 +64,18 @@ function resolvedFieldPath(config, path) {
   const field = path.slice("namesWall.".length);
   if (field === "activeMode") return "namesWall.activeMode";
   if (field === "rotateDeg") return "namesWall.rotateDeg";
+  if (field === "strokeWidthPx") return `namesWall.profiles.${config.namesWall.activeMode}.strokeWidthPx`;
   if (field.startsWith("innerEdgeInsetPx.")) return path;
   if (field === "inwardShiftPercent") return "namesWall.profiles.wall.inwardShiftPercent";
   return `namesWall.profiles.${config.namesWall.activeMode}.${field}`;
 }
 function readField(config, path) { return path.split(".").reduce((target, key) => target?.[key], namesWallProfileScoped(path) ? { namesWall: config?.namesWall?.profiles?.[path === "namesWall.inwardShiftPercent" ? "wall" : config?.namesWall?.activeMode] } : config); }
-function normalizeConfig(config) { return config && [1, 2, 3, 4].includes(config.schemaVersion) ? migrateNamesWallToV5(config) : config; }
+function normalizeConfig(config) {
+  if (!config) return config;
+  if ([1, 2, 3, 4].includes(config.schemaVersion)) return migrateNamesWallToV5(config);
+  if (config.schemaVersion === 6) return migrateNamesWallToV6(config, config.namesWall?.rotateDeg ?? 35);
+  return config;
+}
 function normalizeState(value) {
   if (!value || typeof value !== "object") return value;
   const snapshot = value.snapshot && {

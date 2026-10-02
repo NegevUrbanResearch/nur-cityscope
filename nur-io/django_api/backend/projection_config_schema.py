@@ -56,13 +56,35 @@ def validate_names_wall_v5(value, path='namesWall', errors=None):
 
 def validate_names_wall_v6(value, path='namesWall', errors=None):
     if errors is None: errors = {}
-    if not _keys(value, ['activeMode', 'innerEdgeInsetPx', 'profiles', 'rotateDeg'], path, errors):
+    if not isinstance(value, dict):
+        errors[path] = 'must be an object'
         return errors
+    required = ['activeMode', 'innerEdgeInsetPx', 'profiles', 'rotateDeg']
+    allowed = required + ['strokeWidthPx']
+    for key in required:
+        if key not in value: errors[f'{path}.{key}'] = 'is required'
+    for key in value:
+        if key not in allowed: errors[f'{path}.{key}'] = 'unknown field'
     angle = value.get('rotateDeg')
     if isinstance(angle, bool) or not isinstance(angle, (int, float)) or (isinstance(angle, float) and not math.isfinite(angle)) or not -180 <= angle <= 180:
         errors[f'{path}.rotateDeg'] = 'must be a finite number between -180 and 180'
-    rest = {key: item for key, item in value.items() if key != 'rotateDeg'} if isinstance(value, dict) else value
+    rest = {key: item for key, item in value.items() if key not in ('rotateDeg', 'strokeWidthPx')}
+    profiles = rest.get('profiles')
+    if isinstance(profiles, dict):
+        normalized = dict(profiles)
+        for mode in ('wall', 'model'):
+            branch = normalized.get(mode)
+            if isinstance(branch, dict):
+                width = branch.get('strokeWidthPx')
+                if 'strokeWidthPx' in branch and (isinstance(width, bool) or not isinstance(width, int) or not 1 <= width <= 6):
+                    errors[f'{path}.profiles.{mode}.strokeWidthPx'] = 'must be an integer between 1 and 6'
+                branch = {key: item for key, item in branch.items() if key != 'strokeWidthPx'}
+            normalized[mode] = branch
+        rest['profiles'] = normalized
     validate_names_wall_v5(rest, path, errors)
+    width = value.get('strokeWidthPx')
+    if 'strokeWidthPx' in value and (isinstance(width, bool) or not isinstance(width, int) or not 1 <= width <= 6):
+        errors[f'{path}.strokeWidthPx'] = 'must be an integer between 1 and 6'
     return errors
 
 
@@ -168,7 +190,12 @@ def _original_config(config, historical, version_six):
         angle = names.get('rotateDeg') if isinstance(names, dict) else None
         if isinstance(angle, bool) or not isinstance(angle, (int, float)) or (isinstance(angle, float) and not math.isfinite(angle)) or not -180 <= angle <= 180:
             return False
-        stripped = {**config, 'namesWall': {key: value for key, value in names.items() if key != 'rotateDeg'}}
+        from .projection_warp_schema import migrate_projection_config_to_v6
+        try:
+            normalized = migrate_projection_config_to_v6(config, angle)
+        except (TypeError, ValueError):
+            return False
+        stripped = {**normalized, 'namesWall': {key: value for key, value in normalized['namesWall'].items() if key != 'rotateDeg'}}
         canonical = {**version_six, 'namesWall': {key: value for key, value in version_six['namesWall'].items() if key != 'rotateDeg'}}
         return stripped == canonical
     return config in historical

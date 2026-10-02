@@ -18,7 +18,27 @@ test('canonical fixture and defaults validate', () => {
   expect(DEFAULT_PROJECTION_CONFIG).toEqual(migrateNamesWallToV6(fixture, 35));
   expect(DEFAULT_PROJECTION_CONFIG.schemaVersion).toBe(6);
   expect(DEFAULT_PROJECTION_CONFIG.namesWall.rotateDeg).toBe(35);
+  expect(DEFAULT_PROJECTION_CONFIG.namesWall.profiles.wall.strokeWidthPx).toBe(3);
+  expect(DEFAULT_PROJECTION_CONFIG.namesWall.profiles.model.strokeWidthPx).toBe(2);
   expect(Object.isFrozen(DEFAULT_PROJECTION_CONFIG)).toBe(true);
+});
+
+test('V6 names wall outline widths default per profile and validate bounded integers', () => {
+  const current = migrateNamesWallToV6(migrateNamesWallToV5(fixture), 35);
+  expect(current.namesWall.profiles).toMatchObject({ wall: { strokeWidthPx: 3 }, model: { strokeWidthPx: 2 } });
+  delete current.namesWall.profiles.wall.strokeWidthPx;
+  delete current.namesWall.profiles.model.strokeWidthPx;
+  expect(validateProjectionConfig(current)).toEqual({});
+  expect(migrateNamesWallToV6(current, 90).namesWall.profiles).toMatchObject({ wall: { strokeWidthPx: 3 }, model: { strokeWidthPx: 2 } });
+  for (const invalid of [0, 7, 2.5, '3']) {
+    const candidate = migrateNamesWallToV6(migrateNamesWallToV5(fixture), 35);
+    candidate.namesWall.profiles.wall.strokeWidthPx = invalid;
+    expect(validateProjectionConfig(candidate)).toHaveProperty('namesWall.profiles.wall.strokeWidthPx');
+  }
+  const configured = migrateNamesWallToV6(migrateNamesWallToV5(fixture), 35);
+  configured.namesWall.profiles.wall.strokeWidthPx = 5;
+  configured.namesWall.profiles.model.strokeWidthPx = 1;
+  expect(validateProjectionConfig(configured)).toEqual({});
 });
 
 test('shared invalid fixture cases produce exact field paths', () => {
@@ -105,6 +125,7 @@ test('current V6 defaults and V5 export preserve the wall-only closeness setting
 test('V6 keeps an independent finite rotation and seeds old imports from the acknowledged angle', async () => {
   const wall = await import('../../frontend/src/shared/nli-name-wall-config.js');
   const schema = await import('../../frontend/src/shared/projection-config-schema.js');
+  const client = await import('../../frontend/src/shared/projection-config-client.js');
   const v5 = wall.migrateNamesWallToV5(fixture);
   const seeded = wall.migrateNamesWallToV6(v5, 395);
   expect(seeded.schemaVersion).toBe(6);
@@ -123,6 +144,32 @@ test('V6 keeps an independent finite rotation and seeds old imports from the ack
   expect(imported.config.outputs).toEqual(v5.outputs);
   const preserved = schema.parseProjectionImport(JSON.stringify({ schemaVersion: 6, name: 'Kept', config: seeded }));
   expect(preserved.config.namesWall.rotateDeg).toBe(35);
+  const oldV6 = clone(seeded);
+  delete oldV6.namesWall.profiles.wall.strokeWidthPx;
+  delete oldV6.namesWall.profiles.model.strokeWidthPx;
+  expect(schema.parseProjectionImport(JSON.stringify({ schemaVersion: 6, name: 'Old V6', config: oldV6 })).config.namesWall.profiles).toMatchObject({ wall: { strokeWidthPx: 3 }, model: { strokeWidthPx: 2 } });
+  const interim = clone(seeded);
+  delete interim.namesWall.profiles.wall.strokeWidthPx;
+  delete interim.namesWall.profiles.model.strokeWidthPx;
+  interim.namesWall.strokeWidthPx = 5;
+  const migratedInterim = wall.migrateNamesWallToV6(interim, 35);
+  expect(migratedInterim.namesWall.profiles).toMatchObject({ wall: { strokeWidthPx: 5 }, model: { strokeWidthPx: 5 } });
+  expect(migratedInterim.namesWall).not.toHaveProperty('strokeWidthPx');
+  const explicitWidth = clone(interim);
+  explicitWidth.namesWall.profiles.wall.strokeWidthPx = 4;
+  expect(wall.migrateNamesWallToV6(explicitWidth, 35).namesWall.profiles).toMatchObject({ wall: { strokeWidthPx: 4 }, model: { strokeWidthPx: 5 } });
+  expect(client.validateProjectionConfigSnapshot({ revision: 0, config: seeded, presets: [
+    { id: 'original', name: 'Original calibration', config: migratedInterim, readOnly: true },
+  ], selectedPresetId: 'original' })).toBe(false);
+  const globalTwo = clone(seeded);
+  delete globalTwo.namesWall.profiles.wall.strokeWidthPx;
+  delete globalTwo.namesWall.profiles.model.strokeWidthPx;
+  globalTwo.namesWall.strokeWidthPx = 2;
+  expect(wall.migrateNamesWallToV6(globalTwo, 35).namesWall.profiles).toMatchObject({ wall: { strokeWidthPx: 2 }, model: { strokeWidthPx: 2 } });
+  const extraProfile = clone(seeded);
+  extraProfile.namesWall.profiles.extra = {};
+  expect(wall.validateNamesWallV6(extraProfile.namesWall)).toHaveProperty('namesWall.profiles.extra');
+  expect(schema.validateProjectionConfigV6(extraProfile)).toHaveProperty('namesWall.profiles.extra');
   const exported = JSON.parse(schema.serializeProjectionExport('Kept', seeded));
   expect(exported.schemaVersion).toBe(6);
   expect(exported.config.namesWall.rotateDeg).toBe(35);

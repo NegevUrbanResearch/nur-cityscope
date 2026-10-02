@@ -42,7 +42,7 @@ function originalConfigOk(config) {
   if (config?.schemaVersion === 6) {
     const angle = config.namesWall?.rotateDeg;
     if (typeof angle !== 'number' || !Number.isFinite(angle) || angle < -180 || angle > 180) return false;
-    return equal(withoutRotation(config), withoutRotation(migrateNamesWallToV6(LEGACY_DEFAULT_PROJECTION_CONFIG, 35)));
+    return equal(withoutRotation(migrateNamesWallToV6(config, angle)), withoutRotation(migrateNamesWallToV6(LEGACY_DEFAULT_PROJECTION_CONFIG, 35)));
   }
   return [V5_DEFAULT_PROJECTION_CONFIG, V2_DEFAULT_PROJECTION_CONFIG, LEGACY_DEFAULT_PROJECTION_CONFIG].some((baseline) => equal(migrateNamesWallToV5(config), migrateNamesWallToV5(baseline)));
 }
@@ -74,10 +74,13 @@ function validSnapshot(value) {
 }
 
 function normalizeSnapshot(value, warnings = []) {
+  const normalizeConfig = (config) => config?.schemaVersion === 6
+    ? migrateNamesWallToV6(config, config.namesWall?.rotateDeg ?? 35, warnings)
+    : migrateNamesWallToV5(config, warnings);
   return {
     ...clone(value),
-    config: migrateNamesWallToV5(value.config, warnings),
-    presets: value.presets.map((preset) => ({ ...clone(preset), config: migrateNamesWallToV5(preset.config, warnings) })),
+    config: normalizeConfig(value.config),
+    presets: value.presets.map((preset) => ({ ...clone(preset), config: normalizeConfig(preset.config) })),
   };
 }
 

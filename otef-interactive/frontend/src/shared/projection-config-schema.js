@@ -81,7 +81,9 @@ export function parseProjectionImport(text, rotateDeg) {
   const warnings = [];
   const config = document.schemaVersion < 6 && rotateDeg !== undefined
     ? migrateNamesWallToV6(document.config, rotateDeg, warnings)
-    : migrateNamesWallToV5(document.config, warnings);
+    : document.schemaVersion === 6
+      ? migrateNamesWallToV6(document.config, document.config.namesWall?.rotateDeg, warnings)
+      : migrateNamesWallToV5(document.config, warnings);
   return { name: document.name.trim(), config, warnings };
 }
 const formatErrors = (errors) => `invalid projection config: ${Object.entries(errors).map(([path, message]) => `${path || 'document'} ${message}`).join('; ')}`;

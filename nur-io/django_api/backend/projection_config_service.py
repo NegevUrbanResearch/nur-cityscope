@@ -12,7 +12,7 @@ from .models import OTEFProjectionCalibration, Table, projection_config_defaults
 from .projection_config_schema import validate_projection_config
 from .projection_warp_assets import load_trusted_projection_asset
 from .projection_warp_geometry import evaluate_warp_mesh
-from .projection_warp_schema import validate_projection_config_v2, validate_projection_config_v3, validate_projection_config_v4, validate_projection_config_v5, validate_projection_config_v6, migrate_projection_config_to_v5
+from .projection_warp_schema import validate_projection_config_v2, validate_projection_config_v3, validate_projection_config_v4, validate_projection_config_v5, validate_projection_config_v6, migrate_projection_config_to_v5, migrate_projection_config_to_v6
 
 
 class ProjectionConfigError(Exception):
@@ -76,10 +76,20 @@ def validate_projection_config_for_persistence(config):
 
 
 def _snapshot(row):
+    config = row.working_config
+    presets = row.presets
+    if isinstance(config, dict) and config.get('schemaVersion') == 6:
+        config = migrate_projection_config_to_v6(config, config.get('namesWall', {}).get('rotateDeg', 35))
+        presets = [
+            {**preset, 'config': migrate_projection_config_to_v6(preset['config'], preset['config'].get('namesWall', {}).get('rotateDeg', 35))}
+            if isinstance(preset, dict) and isinstance(preset.get('config'), dict) and preset['config'].get('schemaVersion') == 6
+            else copy.deepcopy(preset)
+            for preset in presets
+        ]
     return {
         "revision": int(row.revision),
-        "config": copy.deepcopy(row.working_config),
-        "presets": copy.deepcopy(row.presets),
+        "config": copy.deepcopy(config),
+        "presets": copy.deepcopy(presets),
         "selectedPresetId": row.selected_preset_id,
     }
 
@@ -140,9 +150,9 @@ def _accept_config(row, config):
     if stored != 6 and incoming == 6:
         raise ProjectionConfigError("invalid", {"schemaVersion": "must match the installed schema"})
     try:
-        accepted = copy.deepcopy(config) if stored == 6 else migrate_projection_config_to_v5(config)
+        accepted = migrate_projection_config_to_v6(config, config.get('namesWall', {}).get('rotateDeg', 35)) if stored == 6 else migrate_projection_config_to_v5(config)
     except ValueError as error:
-        raise ProjectionConfigError("invalid", {"config": str(error)}) from error
+        raise ProjectionConfigError("invalid", validate_projection_config(config) or {"config": str(error)}) from error
     errors = validate_projection_config_for_persistence(accepted)
     if errors:
         raise ProjectionConfigError("invalid", errors)

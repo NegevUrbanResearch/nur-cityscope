@@ -128,23 +128,52 @@ export function normalizeRotationDeg(value) {
 }
 
 export function validateNamesWallV6(value, path = 'namesWall', errors = {}) {
-  if (!keys(value, ['activeMode', 'innerEdgeInsetPx', 'profiles', 'rotateDeg'], path, errors)) return errors;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) { errors[path] = 'must be an object'; return errors; }
+  const allowed = ['activeMode', 'innerEdgeInsetPx', 'profiles', 'rotateDeg', 'strokeWidthPx'];
+  for (const key of ['activeMode', 'innerEdgeInsetPx', 'profiles', 'rotateDeg']) if (!Object.hasOwn(value, key)) errors[`${path}.${key}`] = 'is required';
+  for (const key of Object.keys(value)) if (!allowed.includes(key)) errors[`${path}.${key}`] = 'unknown field';
   const angle = value.rotateDeg;
   if (typeof angle !== 'number' || !Number.isFinite(angle) || angle < -180 || angle > 180) errors[`${path}.rotateDeg`] = 'must be a finite number between -180 and 180';
   const rest = { ...value };
   delete rest.rotateDeg;
+  delete rest.strokeWidthPx;
+  if (rest.profiles && typeof rest.profiles === 'object' && !Array.isArray(rest.profiles)) {
+    rest.profiles = Object.fromEntries(Object.entries(rest.profiles).map(([mode, branch]) => {
+      if (!branch || typeof branch !== 'object' || Array.isArray(branch) || !['wall', 'model'].includes(mode)) return [mode, branch];
+      const { strokeWidthPx, ...historicalFields } = branch;
+      if (Object.hasOwn(branch, 'strokeWidthPx')) integer(strokeWidthPx, `${path}.profiles.${mode}.strokeWidthPx`, 1, 6, errors);
+      return [mode, historicalFields];
+    }));
+  }
   validateNamesWallV5(rest, path, errors);
+  if (Object.hasOwn(value, 'strokeWidthPx')) integer(value.strokeWidthPx, `${path}.strokeWidthPx`, 1, 6, errors);
   return errors;
+}
+
+function normalizeOutlineWidths(namesWall) {
+  const result = structuredClone(namesWall);
+  const legacyWidth = result.strokeWidthPx;
+  delete result.strokeWidthPx;
+  for (const [mode, width] of [['wall', 3], ['model', 2]]) {
+    const profile = result.profiles?.[mode];
+    if (profile && !Object.hasOwn(profile, 'strokeWidthPx')) profile.strokeWidthPx = legacyWidth ?? width;
+  }
+  return result;
 }
 
 export function migrateNamesWallToV6(config, rotateDeg, warnings = []) {
   if (!config || typeof config.schemaVersion !== 'number' || ![1, 2, 3, 4, 5, 6].includes(config.schemaVersion)) {
     throw new Error('projection config must be schema version 1, 2, 3, 4, 5, or 6');
   }
-  if (config.schemaVersion === 6) return structuredClone(config);
+  if (config.schemaVersion === 6) {
+    const result = structuredClone(config);
+    result.namesWall = normalizeOutlineWidths(result.namesWall);
+    return result;
+  }
   const angle = normalizeRotationDeg(rotateDeg);
   const result = migrateNamesWallToV5(config, warnings);
   result.namesWall.rotateDeg = angle;
+  result.namesWall = normalizeOutlineWidths(result.namesWall);
   result.schemaVersion = 6;
   return result;
 }

@@ -73,17 +73,19 @@ test('draws whole names only for the owned output with the exact logical plane',
   expect(new Set(Array.from({ length: 6 }, (_, i) => descriptor.revealVertices[i * 4 + 3])).size).toBe(1);
 });
 
-test('model text uses a thinner outline while wall text keeps its existing outline', () => {
+test('each names wall mode paints black outlines at its own configured width before fill', () => {
   const widths = [];
-  for (const mode of ['wall', 'model']) {
+  for (const [mode, width] of [['wall', 5], ['model', 1]]) {
     const f = fakeCanvas();
-    f.ctx.strokeText.mockImplementation(() => widths.push([mode, f.ctx.lineWidth]));
+    f.ctx.strokeText.mockImplementation(() => widths.push([mode, f.ctx.lineWidth, f.ctx.strokeStyle]));
     const config = structuredClone(DEFAULT_PROJECTION_CONFIG);
     config.namesWall.activeMode = mode;
+    config.namesWall.profiles[mode].strokeWidthPx = width;
     const adapter = createProjectionNameCanvasAdapter({ document: { createElement: () => f.canvas }, output: 'left' });
     adapter.prepare({ config, placements, logicalPlane: plane });
+    expect(f.ctx.strokeText.mock.invocationCallOrder[0]).toBeLessThan(f.ctx.fillText.mock.invocationCallOrder[0]);
   }
-  expect(widths).toEqual([['wall', 3], ['model', 1]]);
+  expect(widths).toEqual([['wall', 5, '#000000'], ['model', 1, '#000000']]);
 });
 
 test('model offsets move both paint calls while reveal quads stay at the guarded rectangle', () => {
