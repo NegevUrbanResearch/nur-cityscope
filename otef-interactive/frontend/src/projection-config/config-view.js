@@ -71,6 +71,7 @@ export function createProjectionConfigView(root, {
   onNamesMode = () => {},
   onNode = () => {},
   onOpenClockEditor = () => {},
+  onOpenNovaExplainerEditor = () => {},
   onOpenSettlementEditor = () => {},
   onSettlementOutput = () => {},
   onSettlementCitycode = () => {},
@@ -227,7 +228,9 @@ export function createProjectionConfigView(root, {
   const graphNodes = [
     ["content", "Content", "Feeds both projector outputs"], ["names-wall", "Names wall", "NLI memorial-name profile; does not change projection geometry"],
     ["settlement-names", "Settlement names", "Place settlement labels on the left and right projectors"],
-    ["clock-gis", "GIS Clock", "Clock layouts for GIS scenes"], ["clock-projection", "Projection Clock / Legend", "Shared left projection overlays"],
+    ["clock-gis", "GIS Clock", "Clock layouts for GIS scenes"],
+    ["nova-explainers", "Nova explainers", "Place Nova story cards on the GIS map"],
+    ["clock-projection", "Projection Clock / Legend", "Shared left projection overlays"],
     ["pre", "Shared pre-transform", "Affects both projectors"],
     ["left-crop", "Left Crop", "Left projector"], ["right-crop", "Right Crop", "Right projector"],
     ["left-fit", "Left Fit / post", "Left projector"], ["right-fit", "Right Fit / post", "Right projector"],
@@ -237,7 +240,7 @@ export function createProjectionConfigView(root, {
   ];
   const categoryGroups = {
     Geometry: ["pre", "left-crop", "right-crop", "left-fit", "right-fit", "left-keystone", "right-keystone", "left-grid", "right-grid", "left-output", "right-output"],
-    Overlays: ["clock-gis", "clock-projection"],
+    Overlays: ["clock-gis", "nova-explainers", "clock-projection"],
     Names: ["names-wall", "settlement-names"],
   };
   const actionRow = make(doc, "section", { className: "config-action-row", ariaLabel: "Workspace shortcuts and output windows" });
@@ -380,17 +383,24 @@ export function createProjectionConfigView(root, {
       openButton.addEventListener("click", (event) => { event.stopPropagation?.(); cancelActiveDrag(); onNode(id); onOpenSettlementEditor(); });
       card.appendChild(openButton);
     }
-    if (id === "clock-gis" || id === "clock-projection") {
+    if (id === "clock-gis" || id === "clock-projection" || id === "nova-explainers") {
       const layoutStatus = createClockLayoutStatus(doc, {
         onRetry: () => onClockRecovery("retry", id), onLoad: () => onClockRecovery("load", id),
       });
       clockNodeStatuses.set(id, layoutStatus); card.appendChild(layoutStatus.element);
-      const openButton = button(doc, "Open editor", "clock-editor-open", "clock-open-button");
-      openButton.addEventListener("click", (event) => { event.stopPropagation?.(); cancelActiveDrag(); onNode(id); onOpenClockEditor(id); });
-      card.addEventListener("dblclick", (event) => {
-        if (event.target === handle || event.target?.parentElement === handle || event.target === sceneControl || event.target === elementControl || event.target === openButton) return;
-        cancelActiveDrag(); onNode(id); onOpenClockEditor(id);
+      const openAction = id === "nova-explainers" ? "nova-explainer-editor-open" : "clock-editor-open";
+      const openButton = button(doc, "Open editor", openAction, "clock-open-button");
+      openButton.addEventListener("click", (event) => {
+        event.stopPropagation?.(); cancelActiveDrag(); onNode(id);
+        if (id === "nova-explainers") onOpenNovaExplainerEditor();
+        else onOpenClockEditor(id);
       });
+      if (id !== "nova-explainers") {
+        card.addEventListener("dblclick", (event) => {
+          if (event.target === handle || event.target?.parentElement === handle || event.target === sceneControl || event.target === elementControl || event.target === openButton) return;
+          cancelActiveDrag(); onNode(id); onOpenClockEditor(id);
+        });
+      }
       card.appendChild(openButton);
     }
     if (id !== "names-wall" && id !== "settlement-names") {
@@ -404,6 +414,7 @@ export function createProjectionConfigView(root, {
       event.preventDefault();
       onNode(id);
       if (event.key === "Enter" && (id === "clock-gis" || id === "clock-projection")) onOpenClockEditor(id);
+      if (event.key === "Enter" && id === "nova-explainers") onOpenNovaExplainerEditor();
       if (event.key === "Enter" && id === "settlement-names") onOpenSettlementEditor();
     });
     nodeMap.set(id, card); graph.appendChild(card);
@@ -787,6 +798,12 @@ export function createProjectionConfigView(root, {
     update, controls, fields, nodeMap, parameterDialog, setPresetName, canManageDisplays: true,
     getClockEditorOpener(node) {
       return nodeMap.get(node)?.querySelector?.('[data-action="clock-editor-open"]') || null;
+    },
+    getNovaExplainerEditorOpener() {
+      const card = nodeMap.get("nova-explainers");
+      return card?.querySelector?.('[data-action="nova-explainer-editor-open"]')
+        || [...(card?.children || [])].find((node) => node.dataset?.action === "nova-explainer-editor-open")
+        || null;
     },
     getSettlementEditorOpener() {
       return nodeMap.get("settlement-names")?.querySelector?.('[data-action="settlement-editor-open"]') || null;

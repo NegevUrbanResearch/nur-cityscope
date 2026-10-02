@@ -331,6 +331,22 @@ Every row is pending until the exhibit operator observes it.
 | Sderot entry focuses the police station; slides stay on GIS |  |  | pending |  |
 | Hostages: Nir Oz and Peri home, slides, Nir Oz people, all hostages |  |  | pending |  |
 
+## Nova polygon explainer cards
+
+Pending until an operator records these on the exhibit GIS with the real
+dataset. Leave every row pending until that check is actually performed.
+jsdom cannot prove card readability on the wall.
+
+| Check | Date | Operator | Result | Notes |
+|---|---|---|---|---|
+| Playback of five beats; names wrap; the fourth beat widens; all 14 names are visible at the end |  |  | pending |  |
+| Pause, seek backwards, and Stop |  |  | pending |  |
+| Leave and re-enter Nova and Mor while paused and while ended |  |  | pending |  |
+| Authored Close and Wide layouts stay clear of the clock, people plaque, and map controls; manual zoom does not switch the layout |  |  | pending |  |
+| Editor moves and resets Close and Wide independently; keyboard X/Y; GIS reload; conflict Retry and Load saved |  |  | pending |  |
+| Ordinary GIS clock preview and projection preview still work; projection has no explainer host |  |  | pending |  |
+| Closing and reopening the editor does not duplicate hosts or listeners |  |  | pending |  |
+
 ## Later exhibit acceptance
 
 These checks complete acceptance after the integration and window checks:

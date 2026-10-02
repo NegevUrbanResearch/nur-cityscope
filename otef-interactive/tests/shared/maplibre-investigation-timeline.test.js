@@ -3571,6 +3571,171 @@ describe("syncInvestigationTimelineToMap", () => {
     expect(map.getPaintProperty("nli-investigation-line-completed-carrier-line", "line-opacity")).toEqual(faded);
     disposeInvestigationTimelineForMap(map);
   });
+
+  describe("onVisualFrame", () => {
+    const novaAchievedThrough = (beatCount) => NLI_NOVA_STORY.beats
+      .slice(0, beatCount)
+      .flatMap((beat) => beat.polygonObjectIds);
+
+    function novaFeatures() {
+      return novaAchievedThrough(NLI_NOVA_STORY.beats.length).map((id) => ({
+        type: "Feature",
+        properties: { OBJECTID: id, Name: `polygon ${id}` },
+        geometry: STORY_POLYGON_A.geometry,
+      }));
+    }
+
+    function playingNova() {
+      return playNliClock(
+        idleNliClock(),
+        [INVESTIGATION_POLYGONS_FULL_ID],
+        NLI_NOVA_STORY.representativeMinutes,
+        0,
+        { narrativeId: "nova" },
+      );
+    }
+
+    async function syncNova(map, clock, deps = {}) {
+      const frames = [];
+      const features = deps.features || novaFeatures();
+      await syncInvestigationTimelineToMap(map, clock, polygonOnlyGroups(), withProcessedPolygons({
+        featuresById: { [INVESTIGATION_POLYGONS_FULL_ID]: features },
+        narrativeFocus: { id: "nova" },
+        motionMode: "reduced",
+        now: () => 0,
+        onVisualFrame: (frame) => frames.push(frame),
+        ...deps,
+        features: undefined,
+      }));
+      return { frames, features };
+    }
+
+    it("publishes beat 0 ids and the loaded feature array on the initial Nova frame", async () => {
+      const map = makeMap();
+      const { frames, features } = await syncNova(map, playingNova());
+      expect(frames).toHaveLength(1);
+      expect(frames[0]).toMatchObject({
+        narrativeId: "nova",
+        phase: "playing",
+        novaBeatIndex: 0,
+        achievedPolygonObjectIds: [97, 100, 104],
+      });
+      expect(frames[0].polygonFeatures).toBe(features);
+      disposeInvestigationTimelineForMap(map);
+    });
+
+    it("publishes the cumulative achieved set when the scheduled Nova frame advances", async () => {
+      const map = makeMap();
+      const callbacks = [];
+      let nowMs = 0;
+      vi.stubGlobal("requestAnimationFrame", (callback) => {
+        callbacks.push(callback);
+        return callbacks.length;
+      });
+      const frames = [];
+      const features = novaFeatures();
+      await syncInvestigationTimelineToMap(map, playingNova(), polygonOnlyGroups(), withProcessedPolygons({
+        featuresById: { [INVESTIGATION_POLYGONS_FULL_ID]: features },
+        narrativeFocus: { id: "nova" },
+        motionMode: "reduced",
+        now: () => nowMs,
+        onVisualFrame: (frame) => frames.push(frame),
+      }));
+      expect(frames[0].achievedPolygonObjectIds).toEqual([97, 100, 104]);
+      expect(frames[0].novaBeatIndex).toBe(0);
+      nowMs = 4000;
+      callbacks.shift()();
+      expect(frames.at(-1)).toMatchObject({
+        phase: "playing",
+        novaBeatIndex: 1,
+        achievedPolygonObjectIds: novaAchievedThrough(2),
+      });
+      expect(frames.at(-1).polygonFeatures).toBe(features);
+      disposeInvestigationTimelineForMap(map);
+    });
+
+    it("publishes an empty achieved set when Nova is idle", async () => {
+      const map = makeMap();
+      const { frames, features } = await syncNova(map, idleNliClock());
+      expect(frames.at(-1)).toMatchObject({
+        narrativeId: "nova",
+        phase: "idle",
+        achievedPolygonObjectIds: [],
+      });
+      expect(frames.at(-1).polygonFeatures).toBe(features);
+      disposeInvestigationTimelineForMap(map);
+    });
+
+    it("publishes the current achieved ids when Nova is paused and when playback evaluates to ended", async () => {
+      const map = makeMap();
+      const paused = pauseNliClock(playingNova(), 4000, { narrativeId: "nova" });
+      const pausedSync = await syncNova(map, paused, { now: () => 4000 });
+      expect(pausedSync.frames.at(-1)).toMatchObject({
+        phase: "paused",
+        novaBeatIndex: 1,
+        achievedPolygonObjectIds: novaAchievedThrough(2),
+      });
+
+      const endedMap = makeMap();
+      const endedSync = await syncNova(endedMap, playingNova(), { now: () => 20_000 });
+      expect(endedSync.frames.at(-1)).toMatchObject({
+        narrativeId: "nova",
+        phase: "ended",
+        novaBeatIndex: -1,
+        achievedPolygonObjectIds: novaAchievedThrough(NLI_NOVA_STORY.beats.length),
+      });
+      disposeInvestigationTimelineForMap(map);
+      disposeInvestigationTimelineForMap(endedMap);
+    });
+
+    it("publishes an empty achieved set when polygon rendering is hidden", async () => {
+      const map = makeMap();
+      const frames = [];
+      const hidden = [{ id: "nli", layers: [{ id: "investigation_polygons", enabled: false }] }];
+      await syncInvestigationTimelineToMap(map, playingNova(), hidden, withProcessedPolygons({
+        featuresById: { [INVESTIGATION_POLYGONS_FULL_ID]: novaFeatures() },
+        narrativeFocus: null,
+        motionMode: "reduced",
+        now: () => 0,
+        onVisualFrame: (frame) => frames.push(frame),
+      }));
+      expect(frames.at(-1).achievedPolygonObjectIds).toEqual([]);
+      expect(frames.at(-1).narrativeId).toBeNull();
+      disposeInvestigationTimelineForMap(map);
+    });
+
+    it("keeps polygon rendering unchanged when onVisualFrame is absent", async () => {
+      const map = makeMap();
+      const playing = playNliClock(
+        idleNliClock(),
+        [INVESTIGATION_POLYGONS_FULL_ID],
+        [492, 500],
+        0,
+      );
+      const at500 = { ...playing, positionMs: timelineBeatDurationMs(492), phase: "paused", seekKind: "none" };
+      const site100 = {
+        type: "Feature",
+        properties: {
+          OBJECTID: 100,
+          timeline_minutes: 500,
+          Notes: "מרחב לחימה - קרב",
+          מיקום: "נובה",
+        },
+        geometry: STORY_POLYGON_A.geometry,
+      };
+      await syncInvestigationTimelineToMap(map, at500, polygonOnlyGroups(), withProcessedPolygons({
+        featuresById: { [INVESTIGATION_POLYGONS_FULL_ID]: [site100] },
+        narrativeFocus: { id: "nova" },
+        displayProfile: "gis",
+        motionMode: "reduced",
+        now: () => 0,
+      }));
+      expect(map.getLayer("nli-investigation-polygon-category-fill-battle")).toBeTruthy();
+      const paint = map.getPaintProperty("nli-investigation-polygon-category-fill-battle", "fill-opacity");
+      expect(paint === 0.55 || JSON.stringify(paint).includes("0.55")).toBe(true);
+      disposeInvestigationTimelineForMap(map);
+    });
+  });
 });
 
 

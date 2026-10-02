@@ -53,12 +53,13 @@ test("view renders draggable node workspace and preserves an existing focused in
   root.ownerDocument = { createElement: make, createElementNS: (_ns, tag) => make(tag), listeners: {}, addEventListener(type, handler) { (this.listeners[type] ||= []).push(handler); }, removeEventListener(type, handler) { this.listeners[type] = (this.listeners[type] || []).filter((item) => item !== handler); }, dispatch(type, event) { for (const handler of this.listeners[type] || []) handler(event); }, defaultView: { location: { origin: "http://localhost" }, addEventListener() {}, removeEventListener() {}, matchMedia: (query) => ({ matches: query.includes("pointer: coarse"), addEventListener() {}, removeEventListener() {} }) } };
   const onNode = vi.fn();
   const onOpenClockEditor = vi.fn();
+  const onOpenNovaExplainerEditor = vi.fn();
   const onClockScene = vi.fn();
   const onClockElement = vi.fn();
   const onField = vi.fn();
   const onWarpPointer = vi.fn();
   const onWarpAction = vi.fn();
-  const view = createProjectionConfigView(root, { descriptors: [...FIELD_DESCRIPTORS, ...NAMES_WALL_DESCRIPTORS], onAction() {}, onNode, onOpenClockEditor, onClockScene, onClockElement, onField, onWarpPointer, onWarpAction });
+  const view = createProjectionConfigView(root, { descriptors: [...FIELD_DESCRIPTORS, ...NAMES_WALL_DESCRIPTORS], onAction() {}, onNode, onOpenClockEditor, onOpenNovaExplainerEditor, onClockScene, onClockElement, onField, onWarpPointer, onWarpAction });
   const descendants = (node) => [node, ...(node.children || []).flatMap(descendants)];
   expect(descendants(root).filter((node) => node.tagName === "IFRAME")).toHaveLength(0);
   expect(descendants(root).filter((node) => node.dataset?.action === "warp-editor-open")).toHaveLength(4);
@@ -75,7 +76,21 @@ test("view renders draggable node workspace and preserves an existing focused in
   expect(labels.join(" ")).toContain("Drag headers to move nodes");
   expect(labels.join(" ")).toContain("Left inner-edge clearance");
   expect(labels.join(" ")).toContain("Right inner-edge clearance");
-  expect([...view.nodeMap.keys()]).toEqual(["content", "names-wall", "settlement-names", "clock-gis", "clock-projection", "pre", "left-crop", "right-crop", "left-fit", "right-fit", "left-keystone", "right-keystone", "left-grid", "right-grid", "left-output", "right-output"]);
+  expect([...view.nodeMap.keys()]).toEqual(["content", "names-wall", "settlement-names", "clock-gis", "nova-explainers", "clock-projection", "pre", "left-crop", "right-crop", "left-fit", "right-fit", "left-keystone", "right-keystone", "left-grid", "right-grid", "left-output", "right-output"]);
+  const novaNode = view.nodeMap.get("nova-explainers");
+  expect(labels.join(" ")).toContain("Nova explainers");
+  expect(descendants(root).find((node) => node.dataset?.action === "focus-overlays").dataset.focusNodes).toBe("clock-gis nova-explainers clock-projection");
+  expect(descendants(novaNode).some((node) => node.textContent === "Show on exhibit")).toBe(false);
+  novaNode.children.find((node) => node.dataset?.action === "nova-explainer-editor-open").dispatch("click");
+  novaNode.dispatch("keydown", { key: "Enter", preventDefault() {} });
+  expect(onOpenNovaExplainerEditor).toHaveBeenCalledTimes(2);
+  expect(onOpenClockEditor).not.toHaveBeenCalled();
+  view.update({
+    state: { draft: structuredClone(DEFAULT_PROJECTION_CONFIG) },
+    clockLayouts: { "nova-explainers": { record: { status: "Conflict", acknowledged: { close: {}, wide: {} }, draft: { close: { "100": { leftPct: 4, topPct: 5 } }, wide: {} } } } },
+    clockHydration: { status: "Saved" },
+  });
+  expect(descendants(novaNode).find((node) => node.className === "clock-layout-status").textContent).toBe("Changed on another screen");
   const gisClockNode = view.nodeMap.get("clock-gis");
   gisClockNode.dispatch("click");
   expect(onNode).toHaveBeenLastCalledWith("clock-gis");

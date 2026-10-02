@@ -256,6 +256,11 @@ h2, h3 { margin: 0 0 10px; }
 .clock-layout-exhibit-status { min-height: 1.5em; margin: 0; color: #b8c5d6; font-size: .8rem; }
 .clock-layout-show-exhibit { margin-top: auto; min-height: 46px; border-color: #d6a84b; color: #ffdf8d; }
 .clock-layout-show-exhibit[hidden] { display: none; }
+.nova-explainer-cameras { display: flex; gap: 8px; }
+.nova-explainer-cameras button { flex: 1; min-height: 44px; }
+.nova-explainer-cameras button[aria-pressed="true"] { border-color: #78d6b3; color: #e8fff6; }
+.nova-explainer-card { fill: rgb(255 224 138 / 12%); stroke: #ffe08a; stroke-width: 4; vector-effect: non-scaling-stroke; cursor: move; pointer-events: all; }
+.nova-explainer-reset { min-height: 44px; }
 @media (max-width: 760px), (orientation: portrait) {
   .clock-layout-dialog { grid-template-rows: auto minmax(0, 1fr); gap: 6px; padding: max(6px, env(safe-area-inset-top)) max(6px, env(safe-area-inset-right)) max(6px, env(safe-area-inset-bottom)) max(6px, env(safe-area-inset-left)); }
   .clock-layout-header { grid-template-columns: minmax(0, 1fr) auto; gap: 6px; }

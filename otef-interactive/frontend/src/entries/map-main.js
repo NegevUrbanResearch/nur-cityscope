@@ -22,6 +22,7 @@ import { createNovaEscapeCoordinator } from "../shared/nli-nova-escape-coordinat
 import { createMorRouteCoordinator } from "../shared/nli-mor-route-coordinator.js";
 import { createGisBasemapStyleCoordinator } from "./map-main-style-lifecycle.js";
 import { bootClockPreview } from "../map/clock-preview.js";
+import { createNovaExplainerOverlay } from "../map/nli-nova-explainer-overlay.js";
 import { attachSettlementOrientationRuntime } from "../shared/nli-settlement-orientation.js";
 import {
   installMapLegendLifecycle,
@@ -335,16 +336,34 @@ async function bootstrapMapRuntime() {
       positionLegend();
     };
     applyStoredGisClockLayout();
+    const novaExplainerOverlay = createNovaExplainerOverlay({
+      map,
+      container: mapContainer,
+      getLayout: () => OTEFDataContext.getNliClockLayout?.()?.gisOverlays?.novaExplainers,
+      getNarrativeId: () => OTEFDataContext.getNarrativeState?.()?.id ?? null,
+      getEscapeMor: () => OTEFDataContext.getEscapeOverlay?.()?.mor === true,
+      motionMode: resolveMotionMode(),
+    });
+    registerDisposer(() => novaExplainerOverlay.dispose());
     registerDisposer(OTEFDataContext.subscribe("nliClockLayout", () => {
       applyStoredGisClockLayout();
+      novaExplainerOverlay.refresh();
     }));
     registerDisposer(OTEFDataContext.subscribe("narrativeState", () => {
       applyStoredGisClockLayout();
       raiseGisPlaceLabels();
+      novaExplainerOverlay.refresh();
+    }));
+    registerDisposer(OTEFDataContext.subscribe("escapeOverlay", () => {
+      novaExplainerOverlay.refresh();
     }));
     const raiseGisClockHost = () => {
       if (typeof mapContainer?.appendChild !== "function" || !nliGisClockHost) return;
       mapContainer.appendChild(nliGisClockHost);
+      const novaExplainerHost = document.getElementById("nliNovaExplainerHost");
+      if (novaExplainerHost && document.contains(novaExplainerHost)) {
+        mapContainer.appendChild(novaExplainerHost);
+      }
     };
     raiseGisClockHost();
     map.on?.("style.load", raiseGisClockHost);
@@ -396,6 +415,7 @@ async function bootstrapMapRuntime() {
         motionMode: resolveMotionMode(),
         captionEl: nliGisClockCaptionEl,
         allowMapCaption: false,
+        onVisualFrame: novaExplainerOverlay.sync,
         now: () =>
           typeof OTEFDataContext.correctedNow === "function"
             ? OTEFDataContext.correctedNow()

@@ -24,6 +24,8 @@ vi.mock("../../frontend/src/map/maplibre-map.js", () => ({
 }));
 
 import { bootClockPreview } from "../../frontend/src/map/clock-preview.js";
+import { getNliNarrative } from "../../frontend/src/shared/nli-narratives.js";
+import { NLI_NOVA_STORY } from "../../frontend/src/shared/nli-nova-story.js";
 import { getLayerLifecycleRuntime, peekLayerLifecycleRuntime } from "../../frontend/src/shared/layer-lifecycle-fade.js";
 import { applySettlementOrientationPaint } from "../../frontend/src/shared/nli-settlement-orientation.js";
 import { NLI_VISUAL_TOKENS } from "../../frontend/src/shared/nli-investigation-theme.js";
@@ -93,6 +95,8 @@ function createMapMock() {
     triggerRepaint: vi.fn(),
     stop: vi.fn(),
     flyTo: vi.fn(),
+    jumpTo: vi.fn(),
+    easeTo: vi.fn(),
     fitBounds: vi.fn(),
     setStyle: vi.fn(() => {
       sources.clear();
@@ -479,9 +483,16 @@ describe("bootClockPreview frame behavior", () => {
 
   it("awaits the supplied frame document font before creating the map", async () => {
     let releaseFonts = () => {};
-    const fontsLoad = vi.fn(() => new Promise((resolve) => {
-      releaseFonts = () => resolve([]);
-    }));
+    const pendingFontLoads = [];
+    let fontsReleased = false;
+    const fontsLoad = vi.fn(() => {
+      if (fontsReleased) return Promise.resolve([]);
+      return new Promise((resolve) => pendingFontLoads.push(resolve));
+    });
+    releaseFonts = () => {
+      fontsReleased = true;
+      for (const resolve of pendingFontLoads.splice(0)) resolve([]);
+    };
     const globalLoad = vi.fn(() => Promise.resolve([]));
     Object.defineProperty(document, "fonts", { configurable: true, value: { load: globalLoad } });
     const frameDocument = {
@@ -601,5 +612,223 @@ describe("bootClockPreview frame behavior", () => {
     runtime.commitBatch();
     expect(opacityWrites).not.toContain(NLI_VISUAL_TOKENS.dimOpacity);
     expect(rig.map.getPaintProperty(layerId, "fill-opacity")).toBe(1);
+  });
+
+  const STORY_IDS = NLI_NOVA_STORY.beats.flatMap((beat) => beat.polygonObjectIds);
+
+  function storyFeatures() {
+    return STORY_IDS.map((objectId) => ({
+      type: "Feature",
+      properties: { OBJECTID: objectId, Name: `Polygon ${objectId}` },
+      geometry: {
+        type: "Polygon",
+        coordinates: [[[34.47, 31.39], [34.471, 31.39], [34.471, 31.391], [34.47, 31.39]]],
+      },
+    }));
+  }
+
+  function savedExplainerLayout() {
+    const close = {};
+    const wide = {};
+    for (const id of STORY_IDS) {
+      close[String(id)] = { leftPct: 10, topPct: 20 };
+      wide[String(id)] = { leftPct: 60, topPct: 30 };
+    }
+    return { close, wide };
+  }
+
+  function installCardMetrics(container) {
+    Object.defineProperty(container, "clientWidth", { configurable: true, value: 1000 });
+    Object.defineProperty(container, "clientHeight", { configurable: true, value: 500 });
+    const prototypes = [HTMLElement.prototype, Element.prototype];
+    const saved = [];
+    for (const prototype of prototypes) {
+      for (const key of ["offsetLeft", "offsetTop", "offsetWidth", "offsetHeight"]) {
+        saved.push([prototype, key, Object.getOwnPropertyDescriptor(prototype, key)]);
+      }
+    }
+    const pixels = (element, prop) => Number.parseFloat(element.style?.[prop]) || 0;
+    const card = (element) => element.classList?.contains("nli-nova-explainer-card");
+    Object.defineProperty(HTMLElement.prototype, "offsetLeft", {
+      configurable: true,
+      get() { return card(this) ? pixels(this, "left") : 0; },
+    });
+    Object.defineProperty(HTMLElement.prototype, "offsetTop", {
+      configurable: true,
+      get() { return card(this) ? pixels(this, "top") : 0; },
+    });
+    Object.defineProperty(HTMLElement.prototype, "offsetWidth", {
+      configurable: true,
+      get() { return card(this) ? 80 : 0; },
+    });
+    Object.defineProperty(HTMLElement.prototype, "offsetHeight", {
+      configurable: true,
+      get() { return card(this) ? 40 : 0; },
+    });
+    return () => {
+      for (const [prototype, key, descriptor] of saved) {
+        if (descriptor) Object.defineProperty(prototype, key, descriptor);
+        else delete prototype[key];
+      }
+    };
+  }
+
+  async function renderExplainer(requestId, camera, layout) {
+    postState(parent, {
+      ...frameState(requestId, "nova"),
+      element: "novaExplainers",
+      novaExplainerCamera: camera,
+      novaExplainerLayout: layout,
+    });
+    await waitForListener(rig.map);
+    rig.map.emit("idle");
+    await vi.waitFor(() => expect(
+      messages(parent, "otef_clock_preview_rendered").some((message) => message.requestId === requestId),
+    ).toBe(true));
+    return messages(parent, "otef_clock_preview_rendered").find((message) => message.requestId === requestId);
+  }
+
+  it("rejects explainer requests with the wrong scene, camera, or layout", async () => {
+    await boot();
+    const layout = { close: {}, wide: {} };
+    postState(parent, { ...frameState(1, "segev"), element: "novaExplainers", novaExplainerCamera: "close", novaExplainerLayout: layout });
+    postState(parent, { ...frameState(2, "nova"), element: "novaExplainers", novaExplainerCamera: "zoom", novaExplainerLayout: layout });
+    postState(parent, { ...frameState(3, "nova"), element: "novaExplainers", novaExplainerCamera: "close", novaExplainerLayout: null });
+    postState(parent, { ...frameState(4, "nova"), element: "novaExplainers", novaExplainerCamera: "wide", novaExplainerLayout: [] });
+    await vi.waitFor(() => expect(messages(parent, "otef_clock_preview_error")).toHaveLength(4));
+    expect(messages(parent, "otef_clock_preview_error").map((message) => message.requestId)).toEqual([1, 2, 3, 4]);
+    expect(messages(parent, "otef_clock_preview_rendered")).toHaveLength(0);
+  });
+
+  it("renders both explainer cameras from an ended Nova clock with measured card geometry and no exhibit writes", async () => {
+    const fetchImpl = await boot();
+    const storageWrites = vi.spyOn(Storage.prototype, "setItem");
+    rig.registry.getLayerDataUrl.mockImplementation((fullId) => (
+      fullId === "nli.investigation_polygons" ? "/nova-polygons.geojson" : "/fixture.geojson"
+    ));
+    rig.map.project = vi.fn(() => ({ x: -40, y: -40 }));
+    globalThis.fetch = vi.fn(async (url) => ({
+      ok: true,
+      json: async () => (
+        String(url).includes("nova-polygons")
+          ? { type: "FeatureCollection", features: storyFeatures() }
+          : { type: "FeatureCollection", features: [] }
+      ),
+    }));
+    const restoreMetrics = installCardMetrics(document.getElementById("map"));
+    const layout = savedExplainerLayout();
+    const nova = getNliNarrative("nova");
+
+    const close = await renderExplainer(1, "close", layout);
+    const wide = await renderExplainer(2, "wide", layout);
+
+    expect(document.querySelectorAll("#nliNovaExplainerHost")).toHaveLength(1);
+    expect(close.novaExplainerCamera).toBe("close");
+    expect(wide.novaExplainerCamera).toBe("wide");
+    expect(close.novaExplainerCards.map((card) => card.objectId)).toEqual(STORY_IDS);
+    expect(wide.novaExplainerCards.map((card) => card.objectId)).toEqual(STORY_IDS);
+    expect(close.novaExplainerCards).toEqual(STORY_IDS.map((objectId) => ({
+      objectId,
+      name: `Polygon ${objectId}`,
+      box: { leftPct: 10, topPct: 20, widthPct: 8, heightPct: 8 },
+    })));
+    expect(wide.novaExplainerCards).toEqual(STORY_IDS.map((objectId) => ({
+      objectId,
+      name: `Polygon ${objectId}`,
+      box: { leftPct: 60, topPct: 30, widthPct: 8, heightPct: 8 },
+    })));
+    const wideCard = document.querySelector('.nli-nova-explainer-card[data-object-id="100"]');
+    expect(wideCard.style.left).toBe("600px");
+    expect(wideCard.style.top).toBe("150px");
+    expect(rig.map.jumpTo).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      center: nova.center, zoom: nova.zoom, duration: 0,
+    }));
+    expect(rig.map.jumpTo).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      center: nova.center, zoom: nova.beat4Zoom, duration: 0,
+    }));
+    expect(rig.map.jumpTo.mock.invocationCallOrder[0]).toBeGreaterThan(rig.map.flyTo.mock.invocationCallOrder[0]);
+    expect(rig.map.easeTo).not.toHaveBeenCalled();
+    const urls = [...fetchImpl.mock.calls, ...globalThis.fetch.mock.calls].map(([url]) => String(url));
+    expect(urls.some((url) => url.includes("/command/") || url.includes("investigation_clock"))).toBe(false);
+    expect(parent.postMessage.mock.calls.every(([message]) => String(message.type).startsWith("otef_clock_preview_"))).toBe(true);
+    expect(storageWrites).not.toHaveBeenCalled();
+    restoreMetrics();
+    storageWrites.mockRestore();
+  });
+
+  it("returns a null box for each achieved named polygon that has no rendered card", async () => {
+    await boot();
+    rig.registry.getLayerDataUrl.mockImplementation((fullId) => (
+      fullId === "nli.investigation_polygons" ? "/nova-polygons.geojson" : "/fixture.geojson"
+    ));
+    rig.map.project = vi.fn(() => ({ x: -40, y: -40 }));
+    globalThis.fetch = vi.fn(async (url) => ({
+      ok: true,
+      json: async () => (
+        String(url).includes("nova-polygons")
+          ? { type: "FeatureCollection", features: storyFeatures() }
+          : { type: "FeatureCollection", features: [] }
+      ),
+    }));
+    const rendered = await renderExplainer(1, "close", { close: {}, wide: {} });
+    expect(rendered.novaExplainerCards).toHaveLength(14);
+    expect(rendered.novaExplainerCards.every((card) => card.box === null)).toBe(true);
+    expect(document.querySelectorAll(".nli-nova-explainer-card")).toHaveLength(0);
+  });
+
+  it("keeps ordinary Nova preview on the idle 08:03 clock without explainer cards", async () => {
+    await boot();
+    await render(1, "nova");
+    const rendered = messages(parent, "otef_clock_preview_rendered").at(-1);
+    expect(document.getElementById("nliNovaExplainerHost")).not.toBeNull();
+    expect(document.querySelectorAll(".nli-nova-explainer-card")).toHaveLength(0);
+    expect(rendered).not.toHaveProperty("novaExplainerCamera");
+    expect(rendered).not.toHaveProperty("novaExplainerCards");
+    expect(document.querySelector("#nliGisClockHost .nli-investigation-timeline-caption").textContent).toContain("08:03");
+    expect(rig.map.jumpTo).not.toHaveBeenCalled();
+  });
+
+  it("disposes the single explainer overlay with the preview", async () => {
+    await boot();
+    expect(document.querySelectorAll("#nliNovaExplainerHost")).toHaveLength(1);
+    const moveListeners = rig.map.listenerCount("move");
+    await dispose();
+    dispose = null;
+    expect(document.getElementById("nliNovaExplainerHost")).toBeNull();
+    expect(rig.map.listenerCount("move")).toBeLessThan(moveListeners);
+  });
+
+  it("preloads Hadassah Friedlaender when that face is not already loaded", async () => {
+    let releaseFonts = () => {};
+    const pendingFontLoads = [];
+    let fontsReleased = false;
+    const fontsLoad = vi.fn(() => {
+      if (fontsReleased) return Promise.resolve([]);
+      return new Promise((resolve) => pendingFontLoads.push(resolve));
+    });
+    releaseFonts = () => {
+      fontsReleased = true;
+      for (const resolve of pendingFontLoads.splice(0)) resolve([]);
+    };
+    const fontsCheck = vi.fn((spec) => !String(spec).includes("Hadassah"));
+    const frameDocument = {
+      getElementById: (id) => document.getElementById(id),
+      fonts: { load: fontsLoad, check: fontsCheck },
+    };
+    createGISMap.mockClear();
+    const bootPromise = bootClockPreview({
+      window,
+      document: frameDocument,
+      fetchImpl: vi.fn(async () => ({
+        ok: true,
+        json: async () => ({ viewport: { bbox: [34, 31, 35, 32], zoom: 10 }, basemap: "osm" }),
+      })),
+    });
+    for (let step = 0; step < 20; step += 1) await Promise.resolve();
+    expect(fontsLoad).toHaveBeenCalledWith("14px 'Hadassah Friedlaender'");
+    expect(createGISMap).not.toHaveBeenCalled();
+    releaseFonts();
+    dispose = await bootPromise;
+    expect(createGISMap).toHaveBeenCalledTimes(1);
   });
 });

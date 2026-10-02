@@ -1,10 +1,17 @@
 import { createUuid } from "../shared/uuid.js";
+import { normalizeNovaExplainerMaps } from "../shared/nli-nova-explainer-layout.js";
 import { copyProjectionMesh } from "./clock-layout-geometry.js";
 import { validClockPreviewWarnings } from "../projection/clock-preview-warnings.js";
 
 const GIS_SCENES = new Set(["home", "timeline", "segev", "nova", "sderot", "hostages", "hostages_all"]);
 const LAYOUT_KEYS = ["leftPct", "topPct", "widthPct", "heightPct", "fontPx", "rotateDeg"];
 const PREVIEW_TIMEOUT_MS = 30000;
+
+const CARD_BOX_KEYS = ["leftPct", "topPct", "widthPct", "heightPct"];
+
+function plainObject(value) {
+  return value != null && typeof value === "object" && !Array.isArray(value);
+}
 
 function validLayout(layout) {
   return layout && typeof layout === "object" && !Array.isArray(layout)
@@ -13,9 +20,27 @@ function validLayout(layout) {
     && (!Object.hasOwn(layout, "columns") || (Number.isInteger(layout.columns) && layout.columns >= 0 && layout.columns <= 3));
 }
 
+function validNovaExplainerRequest(state) {
+  return state.sceneId === "nova"
+    && (state.novaExplainerCamera === "close" || state.novaExplainerCamera === "wide")
+    && plainObject(state.novaExplainerLayout);
+}
+
+function validNovaExplainerCards(cards) {
+  if (!Array.isArray(cards)) return false;
+  return cards.every((card) => plainObject(card)
+    && typeof card.objectId === "number" && Number.isFinite(card.objectId)
+    && typeof card.name === "string"
+    && (card.box === null || (plainObject(card.box) && CARD_BOX_KEYS.every((key) => Number.isFinite(card.box[key])))));
+}
+
 function validateState(surface, state) {
   if (!state || state.surface !== surface || !validLayout(state.clockLayout)) return false;
-  if (surface === "gis") return GIS_SCENES.has(state.sceneId) && state.output == null && state.legendLayout == null;
+  if (surface === "gis") {
+    if (!GIS_SCENES.has(state.sceneId) || state.output != null || state.legendLayout != null) return false;
+    if (state.element === "novaExplainers") return validNovaExplainerRequest(state);
+    return typeof state.element === "string" && state.element.length > 0;
+  }
   return state.sceneId === "home" && state.output === "left" && ["clock", "legend"].includes(state.element)
     && validLayout(state.legendLayout) && Number.isSafeInteger(state.pageIndex) && state.pageIndex >= 0;
 }
@@ -124,6 +149,10 @@ export function mountClockLayoutPreview({ container, surface, sessionId = create
       || message.pageCount < 1 || message.pageIndex < 0 || message.pageIndex >= message.pageCount) return;
     if (surface === "gis") {
       if (message.mesh !== null || message.meshIdentity !== null || message.pageIndex !== 0 || message.pageCount !== 1) return;
+      if (state.element === "novaExplainers" && (
+        message.novaExplainerCamera !== state.novaExplainerCamera
+        || !validNovaExplainerCards(message.novaExplainerCards)
+      )) return;
     }
     let mesh = null;
     if (surface === "projection") {
@@ -142,7 +171,11 @@ export function mountClockLayoutPreview({ container, surface, sessionId = create
   return {
     setState(next) {
       if (!validateState(surface, next)) throw new TypeError("Invalid clock layout preview state");
-      state = structuredClone(next);
+      const cloned = structuredClone(next);
+      if (surface === "gis" && cloned.element === "novaExplainers") {
+        cloned.novaExplainerLayout = normalizeNovaExplainerMaps(cloned.novaExplainerLayout);
+      }
+      state = cloned;
       sendState();
     },
     reload() {

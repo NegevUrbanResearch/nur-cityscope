@@ -15,9 +15,14 @@ const freeze = (value) => {
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const slotKey = (resource, slot) => `${resource}:${slot}`;
 
+function emptyNovaExplainers() {
+  return { close: {}, wide: {} };
+}
+
 function resourceDetails(resource, slot) {
   if (resource === "gisClock" && GIS_CLOCK_SLOTS.has(slot)) return { domain: "clock", surface: "gis", slot };
   if (resource === "projectionClock" && slot === "left") return { domain: "clock", surface: "projection", slot: "left" };
+  if (resource === "gisNovaExplainers" && slot === "novaExplainers") return { domain: "clock", surface: "gisOverlays", slot: "novaExplainers" };
   if (resource === "projectionLegend" && slot === "left") return { domain: "legend", span: "left", slot: "left" };
   throw new Error(`Unknown clock layout resource: ${resource}`);
 }
@@ -73,9 +78,12 @@ export function createClockLayoutClient({ getSnapshot, writeClockSlot, writeLege
 
   function slotLayout(domain, resource, slot) {
     const details = resourceDetails(resource, slot);
-    return details.domain === "clock"
-      ? domains.clock.snapshot?.[details.surface]?.[details.slot] ?? null
-      : domains.legend.snapshot?.[details.span] ?? null;
+    if (details.domain !== "clock") return domains.legend.snapshot?.[details.span] ?? null;
+    const value = domains.clock.snapshot?.[details.surface]?.[details.slot];
+    if (details.surface === "gisOverlays" && details.slot === "novaExplainers") {
+      return value && typeof value === "object" ? value : emptyNovaExplainers();
+    }
+    return value ?? null;
   }
 
   function refreshOnEqualMismatch(domainName) {
@@ -221,6 +229,11 @@ export function createClockLayoutClient({ getSnapshot, writeClockSlot, writeLege
         ensureRecord(resource, slot, value);
       }
     }
+    ensureRecord(
+      "gisNovaExplainers",
+      "novaExplainers",
+      slotLayout("clock", "gisNovaExplainers", "novaExplainers"),
+    );
     for (const [span, value] of Object.entries(domains.legend.snapshot || {})) {
       if (span === "left") ensureRecord("projectionLegend", span, value);
     }

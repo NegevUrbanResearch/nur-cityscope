@@ -7,6 +7,7 @@ export const GIS_SLOT = Object.freeze({ home: "start", timeline: "start", segev:
 export const GIS_LABEL = Object.freeze({ home: "Home", timeline: "Timeline", segev: "Segev", nova: "Nova", sderot: "Sderot", hostages: "Peri Family", hostages_all: "All Hostages" });
 
 export function resourceFor(nodeId, sceneId = "home", element = "clock") {
+  if (nodeId === "nova-explainers") return { surface: "gis", sceneId: "nova", resource: "gisNovaExplainers", slot: "novaExplainers", fallback: { close: {}, wide: {} }, label: "Nova explainers" };
   if (nodeId === "clock-gis") return { surface: "gis", sceneId, resource: "gisClock", slot: GIS_SLOT[sceneId], fallback: NLI_GIS_CLOCK_DEFAULT_LAYOUT, label: GIS_LABEL[sceneId] };
   if (element === "legend") return { surface: "projection", sceneId: "home", element, resource: "projectionLegend", slot: "left", fallback: LEGEND_LAYOUT_DEFAULT, label: "Projection legend" };
   return { surface: "projection", sceneId: "home", element: "clock", resource: "projectionClock", slot: "left", fallback: MapProjectionConfig.NLI_EXPLAINER_LAYOUT.left, label: "Projection clock" };

@@ -1,4 +1,7 @@
 // @vitest-environment jsdom
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const spies = vi.hoisted(() => ({
@@ -73,5 +76,16 @@ describe("isolated GIS clock preview boot", () => {
     expect(spies.presentation).not.toHaveBeenCalled();
     expect(spies.tableSwitcher).not.toHaveBeenCalled();
     expect(spies.websocketSetup).not.toHaveBeenCalled();
+  });
+
+  it("handles the explainer preview protocol in clock-preview rather than the live map-main path", () => {
+    const srcRoot = join(dirname(fileURLToPath(import.meta.url)), "../../frontend/src");
+    const mapMain = readFileSync(join(srcRoot, "entries/map-main.js"), "utf8");
+    const preview = readFileSync(join(srcRoot, "map/clock-preview.js"), "utf8");
+    expect(mapMain).not.toContain("novaExplainerCamera");
+    expect(mapMain).not.toContain("novaExplainerCards");
+    expect(preview).toContain("novaExplainerCamera");
+    expect(preview).toContain("novaExplainerCards");
+    expect(preview).toContain("createNovaExplainerOverlay");
   });
 });

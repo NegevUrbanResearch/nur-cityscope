@@ -343,14 +343,6 @@ body {
   }
 }
 
-.gis-person-bubble-popup {
-  --gis-person-selection-paper: #fffbf8;
-  --gis-person-selection-band: #e6ddd2;
-  --gis-person-selection-hairline: #c9bfb2;
-  --gis-person-selection-ink: #000;
-  --gis-person-selection-text-size: 24px;
-}
-
 .gis-person-bubble-popup .maplibregl-popup-content {
   border: 1px solid var(--gis-person-selection-hairline);
   border-radius: 0;
@@ -713,5 +705,66 @@ body {
 .nli-presentation-frame > video {
   position: absolute;
   object-fit: cover;
+}
+
+#nliNovaExplainerHost,
+.gis-person-bubble-popup {
+  --gis-person-selection-paper: #fffbf8;
+  --gis-person-selection-band: #e6ddd2;
+  --gis-person-selection-hairline: #c9bfb2;
+  --gis-person-selection-ink: #000;
+  --gis-person-selection-text-size: 24px;
+}
+
+#nliNovaExplainerHost {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+#nliNovaExplainerHost .nli-nova-explainer-card {
+  max-width: 280px;
+  border: 1px solid var(--gis-person-selection-hairline);
+  border-radius: 0;
+  background: var(--gis-person-selection-paper);
+  color: var(--gis-person-selection-ink);
+  box-shadow: none;
+}
+
+#nliNovaExplainerHost .nli-nova-explainer-card::before {
+  content: "";
+  display: block;
+  height: 4px;
+  background: var(--gis-person-selection-band);
+  border-bottom: 1px solid var(--gis-person-selection-hairline);
+}
+
+#nliNovaExplainerHost .nli-nova-explainer-card__name {
+  display: block;
+  padding: 8px 14px 9px;
+  font-family: "Hadassah Friedlaender", serif;
+  font-size: var(--gis-person-selection-text-size);
+  font-weight: 400;
+  font-synthesis: none;
+  line-height: 1.25;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+@keyframes nli-nova-explainer-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+#nliNovaExplainerHost .nli-nova-explainer-card--in {
+  animation: nli-nova-explainer-in 280ms linear;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #nliNovaExplainerHost .nli-nova-explainer-card--in {
+    animation: none;
+  }
 }
 

@@ -5,6 +5,7 @@
 
 import { MapProjectionConfig } from "../shared/map-projection-config.js";
 import { getNliNarrative } from "../shared/nli-narratives.js";
+import { normalizeNovaExplainerMaps } from "../shared/nli-nova-explainer-layout.js";
 import { parseProjectionSpanId } from "./projection-span-view.js";
 
 export const NLI_GIS_CLOCK_DEFAULT_LAYOUT = {
@@ -136,14 +137,22 @@ export function normalizeProjectionClockLayout(raw) {
 }
 
 export function emptyNliClockLayout() {
-  return { gis: {}, projection: {} };
+  return {
+    gis: {},
+    projection: {},
+    gisOverlays: { novaExplainers: { close: {}, wide: {} } },
+  };
 }
 
 export function normalizeNliClockLayout(raw) {
   const src = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+  const overlays = src.gisOverlays && typeof src.gisOverlays === "object" && !Array.isArray(src.gisOverlays)
+    ? src.gisOverlays
+    : {};
   return {
     gis: readGisClockLayoutStore(src.gis),
     projection: normalizeProjectionClockLayout(src.projection),
+    gisOverlays: { novaExplainers: normalizeNovaExplainerMaps(overlays.novaExplainers) },
   };
 }
 

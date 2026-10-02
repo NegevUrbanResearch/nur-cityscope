@@ -7,8 +7,10 @@ import {
   applyNliExplainerLayout,
   applyNliExplainerHostPresence,
   clampNliExplainerLayout,
+  emptyNliClockLayout,
   ensureNliExplainerHost,
   gisClockLayoutSlotId,
+  normalizeNliClockLayout,
   mergeGisClockLayout,
   mergeNliExplainerLayout,
   nliExplainerShouldPaintOnSpan,
@@ -278,4 +280,45 @@ it("styles.css chips wrap narrative; host overflow visible", () => {
   expect(css).not.toMatch(/\.nli-tl-chips\s*\{[^}]*overflow-wrap:\s*anywhere/);
   expect(css).not.toMatch(/\.nli-tl-chips\s*\{[^}]*overflow-wrap:\s*break-word/);
   expect(css).not.toMatch(/\.nli-investigation-timeline-caption\s+\.nli-tl-names/);
+});
+
+describe("nova explainer maps in the clock layout document", () => {
+  test("empty layout includes independent close and wide maps", () => {
+    expect(emptyNliClockLayout()).toEqual({
+      gis: {},
+      projection: {},
+      gisOverlays: { novaExplainers: { close: {}, wide: {} } },
+    });
+  });
+
+  test("normalize keeps clock slots and drops non-story explainer ids", () => {
+    const raw = {
+      gis: { start: { leftPct: 10, topPct: 80, widthPct: 20, heightPct: 8, fontPx: 22, rotateDeg: 0 } },
+      projection: { left: { leftPct: 40, topPct: 20, widthPct: 10, heightPct: 8, fontPx: 40, rotateDeg: 90 } },
+      gisOverlays: {
+        novaExplainers: {
+          close: { "100": { leftPct: 101, topPct: -1 }, "107": { leftPct: 1, topPct: 1 } },
+          wide: { "104": { leftPct: 8, topPct: 18 } },
+        },
+      },
+    };
+    expect(normalizeNliClockLayout(raw)).toEqual({
+      gis: { start: { leftPct: 10, topPct: 80, widthPct: 20, heightPct: 8, fontPx: 22, rotateDeg: 0 } },
+      projection: { left: { leftPct: 40, topPct: 20, widthPct: 10, heightPct: 8, fontPx: 40, rotateDeg: 90 } },
+      gisOverlays: {
+        novaExplainers: {
+          close: { "100": { leftPct: 100, topPct: 0 } },
+          wide: { "104": { leftPct: 8, topPct: 18 } },
+        },
+      },
+    });
+    expect(raw.gisOverlays.novaExplainers.close["100"].leftPct).toBe(101);
+  });
+
+  test("missing overlay data normalizes to empty maps", () => {
+    expect(normalizeNliClockLayout({ gis: {}, projection: {} }).gisOverlays).toEqual({
+      novaExplainers: { close: {}, wide: {} },
+    });
+    expect(normalizeNliClockLayout(null).gisOverlays.novaExplainers).toEqual({ close: {}, wide: {} });
+  });
 });

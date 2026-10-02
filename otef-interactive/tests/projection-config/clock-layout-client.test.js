@@ -537,4 +537,92 @@ describe("clock layout client", () => {
     expect(client.getSlot("gisClock", "start")).toMatchObject({ draft: null, status: "Saved" });
     client.destroy();
   });
+
+  const novaMaps = (closeLeft, wideLeft) => ({
+    close: { "100": { leftPct: closeLeft, topPct: 20 } },
+    wide: { "104": { leftPct: wideLeft, topPct: 18 } },
+  });
+
+  test("hydrates nova explainers when no positions are saved", async () => {
+    const client = createClockLayoutClient({ getSnapshot: async () => snapshot(), writeClockSlot: vi.fn() });
+    await client.hydrate();
+    expect(client.getSlot("gisNovaExplainers", "novaExplainers").acknowledged).toEqual({ close: {}, wide: {} });
+    client.destroy();
+  });
+
+  test("overlay and gis clock writes share one revision", async () => {
+    const initial = snapshot();
+    const layouts = structuredClone(initial.nli_clock_layout);
+    let revision = 0;
+    const writeClockSlot = vi.fn(async ({ surface, slot, layout, baseRevision }) => {
+      expect(baseRevision).toBe(revision);
+      if (surface === "gisOverlays") layouts.gisOverlays = { novaExplainers: layout };
+      else layouts[surface][slot] = layout;
+      return { status: "ok", nliClockLayout: structuredClone(layouts), nliClockLayoutRevision: ++revision };
+    });
+    const client = createClockLayoutClient({ getSnapshot: async () => initial, writeClockSlot });
+    await client.hydrate();
+    const overlay = novaMaps(12.5, 8);
+    await client.commit("gisNovaExplainers", "novaExplainers", overlay);
+    await client.commit("gisClock", "start", clockLayout(11));
+    expect(writeClockSlot.mock.calls[0][0]).toEqual({
+      surface: "gisOverlays", slot: "novaExplainers", layout: overlay, baseRevision: 0,
+    });
+    expect(writeClockSlot.mock.calls[1][0]).toMatchObject({ surface: "gis", slot: "start", baseRevision: 1 });
+    expect(client.getSlot("gisNovaExplainers", "novaExplainers").acknowledged).toEqual(overlay);
+    expect(client.getSlot("gisClock", "start").acknowledged).toEqual(clockLayout(11));
+    client.destroy();
+  });
+
+  test("a remote gis update keeps the nova explainer draft", async () => {
+    const socket = socketHarness();
+    const initial = snapshot();
+    initial.nli_clock_layout.gisOverlays = { novaExplainers: novaMaps(12.5, 8) };
+    const client = createClockLayoutClient({ getSnapshot: async () => initial, writeClockSlot: () => new Promise(() => {}), socket });
+    await client.hydrate();
+    const draft = novaMaps(30, 6);
+    const save = client.commit("gisNovaExplainers", "novaExplainers", draft);
+    const remote = structuredClone(initial.nli_clock_layout);
+    remote.gis.start = clockLayout(19);
+    socket.emit("otef_nli_clock_layout_changed", { nliClockLayout: remote, nliClockLayoutRevision: 1 });
+    expect(client.getSlot("gisClock", "start").acknowledged).toEqual(clockLayout(19));
+    expect(client.getSlot("gisNovaExplainers", "novaExplainers")).toMatchObject({ draft, status: "Saving" });
+    client.destroy();
+    await expect(save).rejects.toThrow("destroyed");
+  });
+
+  test("retry resubmits the whole nova explainer draft and load saved replaces both cameras", async () => {
+    const saved = novaMaps(12.5, 8);
+    const serverNext = novaMaps(1, 3);
+    const draft = novaMaps(30, 6);
+    const initial = snapshot();
+    initial.nli_clock_layout = { ...initial.nli_clock_layout, gisOverlays: { novaExplainers: structuredClone(saved) } };
+    const conflictDoc = structuredClone(initial.nli_clock_layout);
+    conflictDoc.gisOverlays = { novaExplainers: structuredClone(serverNext) };
+    const conflictSnapshot = { ...initial, nli_clock_layout: conflictDoc, nli_clock_layout_revision: 4 };
+    const getSnapshot = vi.fn().mockResolvedValueOnce(initial).mockResolvedValue(conflictSnapshot);
+    let writes = 0;
+    const writeClockSlot = vi.fn(async ({ layout, baseRevision }) => {
+      writes += 1;
+      if (writes === 1) return { status: 409, error: "conflict", nliClockLayout: conflictDoc, nliClockLayoutRevision: 4 };
+      const doc = structuredClone(conflictDoc);
+      doc.gisOverlays = { novaExplainers: layout };
+      return { status: "ok", nliClockLayout: doc, nliClockLayoutRevision: baseRevision + 1 };
+    });
+    const client = createClockLayoutClient({ getSnapshot, writeClockSlot });
+    await client.hydrate();
+    expect(client.getSlot("gisNovaExplainers", "novaExplainers").acknowledged).toEqual(saved);
+    await expect(client.commit("gisNovaExplainers", "novaExplainers", draft)).rejects.toMatchObject({ code: "conflict" });
+    expect(client.getSlot("gisNovaExplainers", "novaExplainers")).toMatchObject({ acknowledged: serverNext, draft, status: "Conflict" });
+    await client.retry("gisNovaExplainers", "novaExplainers");
+    expect(writeClockSlot.mock.calls[1][0]).toEqual({
+      surface: "gisOverlays", slot: "novaExplainers", layout: draft, baseRevision: 4,
+    });
+    expect(client.getSlot("gisNovaExplainers", "novaExplainers")).toMatchObject({ acknowledged: draft, draft: null, status: "Saved" });
+    const edited = novaMaps(7, 9);
+    client.commit("gisNovaExplainers", "novaExplainers", edited);
+    client.loadSaved("gisNovaExplainers", "novaExplainers");
+    expect(client.getSlot("gisNovaExplainers", "novaExplainers")).toMatchObject({ acknowledged: draft, draft: null, status: "Saved" });
+    client.destroy();
+  });
 });

@@ -593,6 +593,41 @@ describe("projection config controller", () => {
   });
 
 
+  test("Nova explainers editor opens from its card and disposes on node change or shutdown", () => {
+    const previousDocument = globalThis.document;
+    globalThis.document = documentStub();
+    const editor = { close: vi.fn(), dispose: vi.fn() };
+    const novaExplainerEditorFactory = vi.fn(() => editor);
+    const clockEditorFactory = vi.fn(() => ({ close: vi.fn(), dispose: vi.fn(), setSelection: vi.fn(), calibrationChanged: vi.fn() }));
+    const layoutClient = {
+      getSlot: vi.fn((resource) => resource === "gisNovaExplainers"
+        ? { acknowledged: { close: {}, wide: {} }, draft: { close: { "100": { leftPct: 4, topPct: 5 } }, wide: { "104": { leftPct: 8, topPct: 9 } } }, status: "Conflict" }
+        : { acknowledged: { leftPct: 8, topPct: 8, widthPct: 20, heightPct: 10, fontPx: 22, rotateDeg: 0 }, draft: null, status: "Saved" }),
+      getHydrationState: () => ({ status: "Saved" }),
+      subscribe: () => () => {},
+      destroy: vi.fn(),
+    };
+    const root = element("main");
+    const api = mountProjectionConfig(root, { client: fakeClient(), layoutClient, clockEditorFactory, novaExplainerEditorFactory });
+    const nova = find(root, (node) => node.dataset?.node === "nova-explainers");
+    expect(find(nova, (node) => node.textContent === "Nova explainers")).toBeTruthy();
+    expect(find(nova, (node) => node.textContent === "Show on exhibit")).toBeNull();
+    expect(find(nova, (node) => node.className === "clock-layout-status").textContent).toBe("Changed on another screen");
+    find(nova, (node) => node.dataset?.action === "nova-explainer-editor-open").dispatch("click");
+    expect(novaExplainerEditorFactory).toHaveBeenCalledOnce();
+    expect(novaExplainerEditorFactory.mock.calls[0][0].layoutClient).toBe(layoutClient);
+    expect(novaExplainerEditorFactory.mock.calls[0][0].onShowOnExhibit).toBeUndefined();
+    expect(clockEditorFactory).not.toHaveBeenCalled();
+    find(root, (node) => node.dataset?.node === "left-fit").dispatch("click");
+    expect(editor.dispose).toHaveBeenCalledOnce();
+    find(nova, (node) => node.dataset?.action === "nova-explainer-editor-open").dispatch("click");
+    expect(novaExplainerEditorFactory).toHaveBeenCalledTimes(2);
+    api.dispose();
+    expect(editor.dispose).toHaveBeenCalledTimes(2);
+    expect(layoutClient.destroy).not.toHaveBeenCalled();
+    globalThis.document = previousDocument;
+  });
+
   test("projection-opened reusable editor retains the GIS exhibit callback after switching nodes", () => {
     const previousDocument = globalThis.document; globalThis.document = documentStub();
     const editor = { close: vi.fn(), dispose: vi.fn(), setSelection: vi.fn(), calibrationChanged: vi.fn() };

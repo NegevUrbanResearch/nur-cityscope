@@ -804,6 +804,22 @@ function applyPlayingVisuals(map, state, phase, frame = null, targetAlarmMode = 
   // then publish the target mode for captions and subsequent animation ticks.
   state.alarmMode = targetAlarmMode;
   updateCaption(state, phase, previousClock);
+  publishVisualFrame(state, resolvedFrame);
+}
+
+function publishVisualFrame(state, resolvedFrame) {
+  const callback = state.rendererDeps?.onVisualFrame;
+  if (typeof callback !== "function") return;
+  const renderPolygons = Boolean(state.polygonOn || isNovaNarrative(state));
+  const achieved = resolvedFrame?.achievedPolygonObjectIds;
+  const features = state.data?.polygonFeatures;
+  callback({
+    narrativeId: state.narrativeFocus?.id ?? null,
+    phase: resolvedFrame?.narrative?.phase,
+    novaBeatIndex: resolvedFrame?.narrative?.activeIndex,
+    achievedPolygonObjectIds: renderPolygons && Array.isArray(achieved) ? achieved : [],
+    polygonFeatures: Array.isArray(features) ? features : [],
+  });
 }
 
 function enablePolygonPlayback(map, state) {
@@ -1153,6 +1169,7 @@ export function getInvestigationTimelineDiagnostics(map) {
  *   allowMapCaption?: boolean,
  *   getPersonSelection?: () => { personId?: string|null, pid?: string|null, datasetVersion?: string|null } | null,
  *   onClockFrame?: (clock: import('./nli-investigation-clock.js').NliInvestigationClock, nowMs: number) => void,
+ *   onVisualFrame?: (frame: { narrativeId: string|null, phase: string, novaBeatIndex: number, achievedPolygonObjectIds: number[], polygonFeatures: object[] }) => void,
  * }} [deps]
  */
 export async function syncInvestigationTimelineToMap(map, clockInput, layerGroups, deps = {}) {

@@ -12,6 +12,7 @@ import { recordProjectionTrace, projectionTraceTime } from './projection-trace-i
 import { loadCapturedProjectionAsset } from "../projection/projection-captured-baseline.js";
 import { migrateNamesWallToV5, migrateNamesWallToV6 } from "../shared/nli-name-wall-config.js";
 import { openClockLayoutEditor } from "./clock-layout-editor-dialog.js";
+import { openNovaExplainerEditor } from "./nova-explainer-editor-dialog.js";
 import { openSettlementNameEditor } from "./settlement-name-editor-dialog.js";
 import { shownSettlementPosition } from "./settlement-name-controls.js";
 import { createClockExhibitCueAction } from "./clock-exhibit-cue.js";
@@ -119,7 +120,7 @@ export function projectionAppliedStatus(rows, revision) {
   return 'Applied';
 }
 
-export function mountProjectionConfig(root, { client, share, onExport, onImport, socket, outputController, candidateValidator, readNamesDataset = null, layoutClient, settlementClient = null, catalog = { entries: [] }, clockEditorFactory = openClockLayoutEditor, settlementEditorFactory = openSettlementNameEditor, trace } = {}) {
+export function mountProjectionConfig(root, { client, share, onExport, onImport, socket, outputController, candidateValidator, readNamesDataset = null, layoutClient, settlementClient = null, catalog = { entries: [] }, clockEditorFactory = openClockLayoutEditor, novaExplainerEditorFactory = openNovaExplainerEditor, settlementEditorFactory = openSettlementNameEditor, trace } = {}) {
   if (!client) throw new Error("projection config client is required");
   if (trace?.enabled) client.setLive(false);
   const sourceId = createUuid();
@@ -134,6 +135,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
   let clockElement = "clock";
   let activeClockEditor = null;
   let activeClockEditorNode = null;
+  let activeNovaEditor = null;
   const clockEditors = new Set();
   const clockCueActions = new Set();
   let settlementOutput = "left";
@@ -182,8 +184,9 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     onField: handleField,
     onNudge: handleNudge,
     onNamesMode: handleNamesMode,
-    onNode: (node) => { view.cancelWarpPointer(); selectedNode = node; if (node === "clock-gis" || node === "clock-projection") syncClockEditor(node); else closeClockEditor(); if (node === "settlement-names") syncSettlementEditor(); else closeSettlementEditor(); if (node.endsWith("-keystone") || node.endsWith("-grid")) warpEditors[node.startsWith("right-") ? "right" : "left"].setMode(node.endsWith("-grid") ? "grid" : "keystone"); refresh(); },
+    onNode: (node) => { view.cancelWarpPointer(); selectedNode = node; if (node === "clock-gis" || node === "clock-projection") { closeNovaExplainerEditor(); syncClockEditor(node); } else closeClockEditor(); if (node !== "nova-explainers") closeNovaExplainerEditor(); if (node === "settlement-names") syncSettlementEditor(); else closeSettlementEditor(); if (node.endsWith("-keystone") || node.endsWith("-grid")) warpEditors[node.startsWith("right-") ? "right" : "left"].setMode(node.endsWith("-grid") ? "grid" : "keystone"); refresh(); },
     onOpenClockEditor: openClockEditor,
+    onOpenNovaExplainerEditor: openNovaEditor,
     onOpenSettlementEditor: openSettlementEditor,
     onSettlementOutput: (output) => { settlementOutput = output === "right" ? "right" : "left"; activeSettlementEditor?.setSelection({ output: settlementOutput, citycode: settlementCitycode }); refresh(); },
     onSettlementCitycode: (citycode) => { settlementCitycode = citycode; activeSettlementEditor?.setSelection({ output: settlementOutput, citycode }); refresh(); },
@@ -260,7 +263,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
       namesWallStatus: namesRunPending && !namesTracker.getState().pending
         ? { ...namesTracker.getState(), state: "rebuilding", pending: true, detail: "Starting names run…" }
         : namesTracker.getState(), namesRunDisabledReason: runNamesDisabledReason(), clockScene: clockSceneId, clockElement,
-      clockLayouts: layoutClient ? Object.fromEntries(["clock-gis", "clock-projection"].map((node) => [node, layoutFor(layoutClient, resourceFor(node, clockSceneId, clockElement))])) : {},
+      clockLayouts: layoutClient ? Object.fromEntries(["clock-gis", "nova-explainers", "clock-projection"].map((node) => [node, layoutFor(layoutClient, resourceFor(node, clockSceneId, clockElement))])) : {},
       clockHydration: layoutClient?.getHydrationState?.() || { status: layoutClient ? "Saved" : "Loading" },
       settlement: settlementViewState() });
     recordProjectionTrace(trace, 'redraw', { surface: 'page', phase: 'end', durationMs: projectionTraceTime(trace) - traceStarted });
@@ -314,11 +317,36 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     activeSettlementEditor = null;
     editor.close();
   }
+  function closeNovaExplainerEditor() {
+    if (!activeNovaEditor) return;
+    const editor = activeNovaEditor;
+    activeNovaEditor = null;
+    editor.dispose();
+  }
+  function openNovaEditor() {
+    if (!layoutClient) return;
+    view.cancelWarpPointer();
+    view.closeWarpEditor();
+    closeClockEditor();
+    closeSettlementEditor();
+    selectedNode = "nova-explainers";
+    if (activeNovaEditor) { refresh(); return; }
+    const editor = novaExplainerEditorFactory({
+      layoutClient,
+      manageBeforeUnload: false,
+      document: root?.ownerDocument || globalThis.document,
+      restoreFocus: () => view.getNovaExplainerEditorOpener(),
+      onClose: () => { if (activeNovaEditor === editor) activeNovaEditor = null; },
+    });
+    activeNovaEditor = editor;
+    refresh();
+  }
   function openSettlementEditor() {
     if (!settlementClient) return;
     view.cancelWarpPointer();
     view.closeWarpEditor();
     closeClockEditor();
+    closeNovaExplainerEditor();
     selectedNode = "settlement-names";
     if (activeSettlementEditor) { syncSettlementEditor(); refresh(); return; }
     const editor = settlementEditorFactory({
@@ -341,6 +369,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     view.cancelWarpPointer();
     view.closeWarpEditor();
     closeSettlementEditor();
+    closeNovaExplainerEditor();
     selectedNode = nodeId;
     if (activeClockEditor) { syncClockEditor(nodeId); refresh(); return; }
     const editor = clockEditorFactory({ nodeId, sceneId: clockSceneId, element: clockElement, layoutClient,
@@ -686,7 +715,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     sourceId,
     getStatusRows: () => [...statusRows.values()].map((row) => ({ ...row })),
     setConflict,
-    dispose() { if (disposed) return; disposed = true; syncLayoutUnload(); closeSettlementEditor(); closeClockEditor(); for (const action of clockCueActions) action.cancel(); clockCueActions.clear(); namesTargetRequest += 1; for (const editor of clockEditors) editor.dispose(); clockEditors.clear(); activeClockEditor = null; activeClockEditorNode = null; activeSettlementEditor = null; if (confirmationTimer !== null) clearTimeout(confirmationTimer); if (patternTimer !== null) clearInterval(patternTimer); socket?.send?.({ type: "otef_projection_pattern", table: "otef", output: activePattern.branch, pattern: "off", sourceId }); socket?.off?.("otef_projection_applied", statusMessage); socket?.off?.("otef_projection_names_status", namesStatusMessage); socket?.off?.("connect", onConnect); socket?.off?.("disconnect", onDisconnect); socket?.off?.('otef_person_selection_changed', onDatasetEvent); socket?.off?.('otef_narrative_scene_changed', onDatasetEvent); unsubscribe?.(); unsubscribeLayout?.(); unsubscribeSettlement?.(); unsubscribeOutput?.(); outputController?.dispose?.(); validator.dispose?.(); view.dispose(); client.stop?.(); },
+    dispose() { if (disposed) return; disposed = true; syncLayoutUnload(); closeSettlementEditor(); closeClockEditor(); closeNovaExplainerEditor(); for (const action of clockCueActions) action.cancel(); clockCueActions.clear(); namesTargetRequest += 1; for (const editor of clockEditors) editor.dispose(); clockEditors.clear(); activeClockEditor = null; activeClockEditorNode = null; activeSettlementEditor = null; if (confirmationTimer !== null) clearTimeout(confirmationTimer); if (patternTimer !== null) clearInterval(patternTimer); socket?.send?.({ type: "otef_projection_pattern", table: "otef", output: activePattern.branch, pattern: "off", sourceId }); socket?.off?.("otef_projection_applied", statusMessage); socket?.off?.("otef_projection_names_status", namesStatusMessage); socket?.off?.("connect", onConnect); socket?.off?.("disconnect", onDisconnect); socket?.off?.('otef_person_selection_changed', onDatasetEvent); socket?.off?.('otef_narrative_scene_changed', onDatasetEvent); unsubscribe?.(); unsubscribeLayout?.(); unsubscribeSettlement?.(); unsubscribeOutput?.(); outputController?.dispose?.(); validator.dispose?.(); view.dispose(); client.stop?.(); },
   };
 }
 

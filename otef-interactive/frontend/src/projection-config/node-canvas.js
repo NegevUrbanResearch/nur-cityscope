@@ -1,7 +1,7 @@
 import { recordProjectionTrace } from './projection-trace-input.js';
 
 const COLUMNS = [
-  ["content", "names-wall", "settlement-names"], ["clock-gis", "clock-projection"], ["pre"], ["left-crop", "right-crop"],
+  ["content", "names-wall", "settlement-names"], ["clock-gis", "nova-explainers", "clock-projection"], ["pre"], ["left-crop", "right-crop"],
   ["left-fit", "right-fit"], ["left-keystone", "right-keystone"],
   ["left-grid", "right-grid"], ["left-output", "right-output"],
 ];
@@ -26,7 +26,8 @@ export function layoutNodePositions(sizes) {
   const bottomHeight = Math.max(...["right-crop", "right-fit", "right-keystone", "right-grid", "right-output"].map(heightOf));
   const pathHeight = topHeight + ROW_GAP + bottomHeight;
   const contentColumnHeight = heightOf("content") + ROW_GAP + heightOf("names-wall") + ROW_GAP + heightOf("settlement-names");
-  const clockColumnHeight = heightOf("clock-gis") + ROW_GAP + heightOf("clock-projection");
+  const clockColumnHeight = heightOf("clock-gis") + ROW_GAP + heightOf("nova-explainers") + ROW_GAP + heightOf("clock-projection");
+  const overlayStack = new Set(["content", "names-wall", "settlement-names", "clock-gis", "nova-explainers", "clock-projection"]);
   const height = PAD * 2 + Math.max(pathHeight, contentColumnHeight, clockColumnHeight);
   const positions = {};
   let x = PAD;
@@ -36,10 +37,10 @@ export function layoutNodePositions(sizes) {
     for (const id of column) {
       const y = id.startsWith("left-") ? PAD
         : id.startsWith("right-") ? PAD + topHeight + ROW_GAP
-          : (id === "content" || id === "names-wall" || id === "settlement-names" || id === "clock-gis" || id === "clock-projection") ? stackY
+          : overlayStack.has(id) ? stackY
             : (height - heightOf(id)) / 2;
       positions[id] = { x, y };
-      if (id === "content" || id === "names-wall" || id === "settlement-names" || id === "clock-gis" || id === "clock-projection") stackY += heightOf(id) + ROW_GAP;
+      if (overlayStack.has(id)) stackY += heightOf(id) + ROW_GAP;
     }
     x += Math.max(...column.map(widthOf)) + COLUMN_GAP;
   }

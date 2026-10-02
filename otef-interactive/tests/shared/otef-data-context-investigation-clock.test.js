@@ -441,4 +441,79 @@ describe("OTEFDataContext investigation clock", () => {
     expect(queued).toMatchObject({ ok: false, stale: true });
     expect(OTEFDataContext.getInvestigationClock()).toMatchObject({ phase: "playing", revision: 2 });
   });
+
+  test("clock layout starts with empty nova explainer maps", async () => {
+    const { default: OTEFDataContext } = await import(
+      "../../frontend/src/shared/OTEFDataContext.js"
+    );
+    expect(OTEFDataContext.getNliClockLayout()).toEqual({
+      gis: {},
+      projection: {},
+      gisOverlays: { novaExplainers: { close: {}, wide: {} } },
+    });
+  });
+
+  test("HTTP snapshot and a newer clock-layout event retain distinct nova maps", async () => {
+    vi.doMock("../../frontend/src/shared/websocket-client.js", () => ({
+      OTEFWebSocketClient: class {
+        constructor() { this.listeners = new Map(); }
+        on(type, callback) { this.listeners.set(type, callback); }
+        connect() {}
+        disconnect() {}
+      },
+    }));
+    const websocket = await import(
+      "../../frontend/src/shared/otef-data-context/OTEFDataContext-websocket.js"
+    );
+    const { default: OTEFDataContext } = await import(
+      "../../frontend/src/shared/OTEFDataContext.js"
+    );
+    OTEFDataContext._tableName = "otef";
+    const httpLayout = {
+      gis: {},
+      projection: {},
+      gisOverlays: {
+        novaExplainers: {
+          close: { "100": { leftPct: 12.5, topPct: 20 }, "107": { leftPct: 1, topPct: 1 } },
+          wide: { "104": { leftPct: 8, topPct: 18 } },
+        },
+      },
+    };
+    websocket.applyStateFromApi(OTEFDataContext, {
+      nli_clock_layout: httpLayout,
+      nli_clock_layout_revision: 2,
+    });
+    expect(OTEFDataContext.getNliClockLayout().gisOverlays.novaExplainers).toEqual({
+      close: { "100": { leftPct: 12.5, topPct: 20 } },
+      wide: { "104": { leftPct: 8, topPct: 18 } },
+    });
+
+    websocket.setupWebSocket(OTEFDataContext);
+    const newer = {
+      gis: {},
+      projection: {},
+      gisOverlays: {
+        novaExplainers: {
+          close: { "100": { leftPct: 3, topPct: 4 } },
+          wide: { "100": { leftPct: 9, topPct: 10 } },
+        },
+      },
+    };
+    OTEFDataContext._wsClient.listeners.get("otef_nli_clock_layout_changed")({
+      table: "otef",
+      nliClockLayout: newer,
+      nliClockLayoutRevision: 3,
+    });
+    expect(OTEFDataContext.getNliClockLayout().gisOverlays.novaExplainers).toEqual({
+      close: { "100": { leftPct: 3, topPct: 4 } },
+      wide: { "100": { leftPct: 9, topPct: 10 } },
+    });
+    OTEFDataContext._wsClient.listeners.get("otef_nli_clock_layout_changed")({
+      table: "otef",
+      nliClockLayout: httpLayout,
+      nliClockLayoutRevision: 2,
+    });
+    expect(OTEFDataContext.getNliClockLayout().gisOverlays.novaExplainers.close["100"].leftPct).toBe(3);
+    expect(OTEFDataContext.getNliClockLayout().gisOverlays.novaExplainers.wide["100"].topPct).toBe(10);
+  });
 });

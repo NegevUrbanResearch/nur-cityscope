@@ -80,6 +80,8 @@ test("boots from one read per resource and draws Home clock plus real legend thr
   await vi.waitFor(() => expect(messages("otef_clock_preview_rendered")).toHaveLength(1));
   const reply = messages("otef_clock_preview_rendered")[0];
   expect(reply).toMatchObject({ requestId: 1, sceneId: "home", output: "left", mesh, pageIndex: 0, pageCount: 1 });
+  expect(reply).not.toHaveProperty("novaExplainerCamera");
+  expect(reply).not.toHaveProperty("novaExplainerCards");
   expect(reply.meshIdentity).toBeTypeOf("string");
   const layers = draws.at(-1); expect(layers.map((layer) => layer.id)).toContain("caption"); expect(layers.map((layer) => layer.id)).toContain("legend");
   expect(layers.find((layer) => layer.id === "caption").matrix).toEqual(projectionOverlayMatrix(layout));

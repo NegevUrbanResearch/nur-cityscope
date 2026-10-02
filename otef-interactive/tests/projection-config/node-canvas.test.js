@@ -109,12 +109,40 @@ test("mounted cards produce pixel wires; drag moves ports and dispose removes li
   expect(controls.zoomReset.listeners.size).toBe(0);
 });
 
-test("clock settings nodes occupy a separate column without calibration connectors", () => {
-  const { positions } = layoutNodePositions({});
-  expect(positions["clock-gis"]).toBeDefined();
-  expect(positions["clock-projection"]).toBeDefined();
+test("Nova explainers stacks in the GIS clock overlays column without overlap or a projector edge", () => {
+  const overlayIds = ["clock-gis", "nova-explainers", "clock-projection"];
+  const sizes = Object.fromEntries([...ids, "nova-explainers"].map((id) => [id, { width: 330, height: id.includes("crop") ? 430 : 300 }]));
+  const { positions } = layoutNodePositions(sizes);
+  expect(positions["nova-explainers"]).toEqual(expect.objectContaining({ x: positions["clock-gis"].x }));
+  expect(positions["nova-explainers"].y).toBeGreaterThanOrEqual(positions["clock-gis"].y + sizes["clock-gis"].height);
+  expect(positions["clock-projection"].y).toBeGreaterThanOrEqual(positions["nova-explainers"].y + sizes["nova-explainers"].height);
   expect(positions["clock-gis"].x).toBe(positions["clock-projection"].x);
-  expect(positions["clock-projection"].y).toBeGreaterThan(positions["clock-gis"].y);
+  for (const [index, a] of overlayIds.entries()) {
+    for (const b of overlayIds.slice(index + 1)) {
+      const left = positions[a];
+      const right = positions[b];
+      const overlap = left.x < right.x + sizes[b].width && left.x + sizes[a].width > right.x
+        && left.y < right.y + sizes[b].height && left.y + sizes[a].height > right.y;
+      expect(overlap, `${a} overlaps ${b}`).toBe(false);
+    }
+  }
+  const document = fakeElement();
+  const viewport = fakeElement(900, 560);
+  viewport.clientWidth = 900;
+  viewport.clientHeight = 560;
+  const graph = fakeElement();
+  const svg = fakeElement();
+  const wire = fakeElement();
+  const controls = { zoomIn: fakeElement(), zoomOut: fakeElement(), zoomReset: fakeElement(), zoomOne: fakeElement() };
+  const nodeMap = new Map([...ids, "nova-explainers"].map((id) => {
+    const card = fakeElement(330, 300);
+    card.header = fakeElement();
+    return [id, card];
+  }));
+  const canvas = createNodeCanvas({ document, viewport, graph, svg, wire, nodeMap, controls });
+  canvas.mount();
+  expect(wire.attributes.d.match(/M/g)).toHaveLength(11);
+  canvas.dispose();
 });
 
 test("a second eligible touch transfers a node drag to canvas navigation", () => {
