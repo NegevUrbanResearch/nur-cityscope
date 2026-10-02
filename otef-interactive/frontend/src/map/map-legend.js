@@ -2,6 +2,7 @@ import { buildLegendModel, getDashBackground } from "./legend-model-builder.js";
 import { escapeHtml } from "../shared/html-utils.js";
 import { resolveLegendLayout } from "../projection/legend-layout.js";
 import { OUTPUT_HEIGHT, OUTPUT_WIDTH } from "../projection/projection-overlay-placement.js";
+import { layoutProjectionLegend, PROJECTION_LEGEND_FONT, resolveLegendRasterSize } from "../projection/legend-content-layout.js";
 
 export function applyProjectionLegendLayout(element, layout, { span = "full", referenceElement } = {}) {
   if (!element?.style) return;
@@ -24,7 +25,7 @@ export function applyProjectionLegendLayout(element, layout, { span = "full", re
   });
 }
 
-function symbolMarkup(part = {}) {
+function symbolMarkup(part = {}, geometry = null, fontPx = 22) {
   const shape = part.shape || "polygon";
   const stroke = part.stroke ?? "transparent";
   const width = Number.isFinite(part.strokeWidth) ? part.strokeWidth : 1;
@@ -58,9 +59,23 @@ function symbolMarkup(part = {}) {
     ? `--legend-swatch-image:url("${part.swatchDataUrl}");`
     : "";
   const legendStroke = part.captivityBleed && part.swatchDataUrl ? "transparent" : stroke;
-  const legendStrokeWidth = part.captivityBleed && part.swatchDataUrl ? 0 : width;
-  const style = `--legend-fill:${background};--legend-fill-opacity:${fillOpacity};--legend-stroke:${legendStroke};--legend-stroke-width:${legendStrokeWidth}px;--legend-stroke-opacity:${strokeOpacity};--legend-halo:${halo};${part.alarmShockwave ? `--legend-alarm-shockwave:${shockwaveColor};` : ""}${swatchImage}`;
-  return `<span class="map-legend-symbol map-legend-symbol--${escapeHtml(shape)}${shockwave}${captivityBleed}" style="${escapeHtml(style)}" aria-hidden="true"></span>`;
+  const legendStrokeWidth = part.captivityBleed && part.swatchDataUrl ? 0 : (geometry ? width || 1 : width);
+  // CSS borders occupy the outer box; canvas strokes straddle the planned path.
+  // A diamond's planned width/height are its diagonals, not its rotated sides.
+  const border = shape === "line" || captivityBleed ? 0 : legendStrokeWidth;
+  const cssWidth = geometry ? geometry.width / (shape === "diamond" ? Math.SQRT2 : 1) + border : 0;
+  const cssHeight = geometry ? (shape === "line" && part.carrier
+    ? Math.max(2, (Number(part.strokeWidth) || 1) + 2)
+    : geometry.height / (shape === "diamond" ? Math.SQRT2 : 1) + border) : 0;
+  const position = geometry ? `position:absolute;left:${geometry.x - cssWidth / 2}px;top:${geometry.y - cssHeight / 2}px;width:${cssWidth}px;height:${cssHeight}px;margin:0;flex:none;${shape !== "point" && shape !== "line" ? "border-radius:0px;" : ""}` : "";
+  const lineStroke = geometry && shape === "line" && part.carrier
+    ? `<span class="map-legend-projection-line-stroke" style="position:absolute;left:0;top:${(cssHeight - geometry.height) / 2}px;width:${geometry.width}px;height:${geometry.height}px;background:${escapeHtml(background)}" aria-hidden="true"></span>`
+    : "";
+  if (lineStroke) background = part.carrier;
+  const style = `${position}--legend-fill:${background};--legend-fill-opacity:${fillOpacity};--legend-stroke:${legendStroke};--legend-stroke-width:${legendStrokeWidth}px;--legend-stroke-opacity:${strokeOpacity};--legend-halo:${halo};${part.alarmShockwave ? `--legend-alarm-shockwave:${shockwaveColor};` : ""}${swatchImage}`;
+  const ringSize = geometry && part.alarmShockwave ? Math.max(geometry.width, geometry.height) + fontPx * 0.56 + 1.6 : 0;
+  const ring = ringSize ? `<span class="map-legend-projection-shockwave" style="position:absolute;left:${geometry.x - ringSize / 2}px;top:${geometry.y - ringSize / 2}px;width:${ringSize}px;height:${ringSize}px;border:1.6px solid ${escapeHtml(shockwaveColor)};opacity:0.4;border-radius:50%;box-sizing:border-box" aria-hidden="true"></span>` : "";
+  return `<span class="map-legend-symbol map-legend-symbol--${escapeHtml(shape)}${shockwave}${captivityBleed}" style="${escapeHtml(style)}" aria-hidden="true">${lineStroke}</span>${ring}`;
 }
 
 function itemMarkup(item) {
@@ -69,7 +84,21 @@ function itemMarkup(item) {
     : Array.isArray(item.strokeSwatches) && item.strokeSwatches.length
       ? item.strokeSwatches.map((swatch) => ({ ...item, stroke: swatch.color, dash: swatch.dash, strokeWidth: swatch.width, strokeOpacity: swatch.opacity }))
       : [item];
-  return `<div class="map-legend-item" data-legend-item-id="${escapeHtml(item.id || "")}"><span class="map-legend-symbols">${components.map(symbolMarkup).join("")}</span><span class="map-legend-label" dir="auto">${escapeHtml(item.label || "")}</span></div>`;
+  return `<div class="map-legend-item" data-legend-item-id="${escapeHtml(item.id || "")}"><span class="map-legend-symbols">${components.map((part) => symbolMarkup(part)).join("")}</span><span class="map-legend-label" dir="auto">${escapeHtml(item.label || "")}</span></div>`;
+}
+
+function projectionItemMarkup(placement, fontPx, layerId = "") {
+  const geometry = placement.labelGeometry;
+  const symbolGeometry = placement.symbolGeometry;
+  // SVG text accepts the same alphabetic baseline as canvas, independent of
+  // each line's glyph ascent, descent, or the browser's CSS line-box leading.
+  const labels = placement.labelLines.map((line, index) =>
+    `<text class="map-legend-label map-legend-projection-line" x="${geometry.x - placement.x}" y="${geometry.y - placement.y + index * geometry.lineHeight}" dominant-baseline="alphabetic" direction="${geometry.direction}" text-anchor="start" style="letter-spacing:0px">${escapeHtml(line)}</text>`,
+  ).join("");
+  const symbols = symbolGeometry.components.map((component) => symbolMarkup(component.part, {
+    ...component, x: component.x - placement.x, y: component.y - placement.y,
+  }, fontPx)).join("");
+  return `<div class="map-legend-item map-legend-projection-item" data-legend-item-id="${escapeHtml(placement.itemId)}" data-legend-layer-id="${escapeHtml(layerId)}" data-legend-pack-id="${escapeHtml(placement.packId)}" style="position:absolute;left:${placement.x}px;top:${placement.y}px;width:${placement.width}px;height:${placement.height}px"><span class="map-legend-symbols map-legend-projection-symbols" style="position:absolute;left:0;top:0;width:${symbolGeometry.width}px;height:${symbolGeometry.height}px">${symbols}</span><svg xmlns="http://www.w3.org/2000/svg" class="map-legend-projection-labels" width="${placement.width}" height="${placement.height}" style="position:absolute;left:0;top:0;overflow:visible">${labels}</svg></div>`;
 }
 
 function layerMarkup(layer, items = layer.items || []) {
@@ -90,7 +119,7 @@ function makeChildren(element) {
   return { content, pager };
 }
 
-function mountMapLegend({ element, surface = "gis", projectionSpan = "full", dataContext, registry, buildModel = buildLegendModel, onRenderSnapshot } = {}) {
+function mountMapLegend({ element, surface = "gis", projectionSpan = "full", dataContext, registry, buildModel = buildLegendModel, onRenderSnapshot, measureText } = {}) {
   if (!element) return { refresh: async () => {}, setEditing: () => {}, setPage: () => 0, dispose: () => {} };
   const mode = surface === "projection" ? "projection" : "gis";
   const { content, pager } = makeChildren(element);
@@ -103,11 +132,38 @@ function mountMapLegend({ element, surface = "gis", projectionSpan = "full", dat
   let pages = [];
   let currentBlocks = [];
   let currentModel = null;
+  let contentLayout = null;
+  let fontRevision = 0;
+  let measurementCanvas = null;
+  let measurementContext = null;
+  if (mode === "projection") {
+    measurementCanvas = (element.ownerDocument || (typeof document !== "undefined" ? document : null))?.createElement?.("canvas") || null;
+    measurementContext = measurementCanvas?.getContext?.("2d") || null;
+  }
   const listeners = [];
   const on = (target, name, callback) => { target?.addEventListener?.(name, callback); if (target?.removeEventListener) listeners.push(() => target.removeEventListener(name, callback)); };
   const clearTimer = () => { if (timer != null) clearInterval(timer); timer = null; };
   const settings = () => dataContext?.getLegendSettings?.() || {};
   const language = () => settings().language === "en" ? "en" : "he";
+  const buildProjectionPlan = (blocks, layout) => {
+    const { width, height } = resolveLegendRasterSize(layout);
+    const context = measurementContext;
+    if (context) {
+      context.textAlign = "left";
+      context.textBaseline = "alphabetic";
+      context.font = `${layout.fontPx}px ${PROJECTION_LEGEND_FONT}`;
+      context.letterSpacing = "0px";
+    }
+    const measure = typeof measureText === "function"
+      ? measureText
+      : (text) => context?.measureText?.(text) || {};
+    return layoutProjectionLegend({ blocks, width, height, fontPx: layout.fontPx, columns: layout.columns, language: language(), measureText: measure });
+  };
+  const projectionBlocks = (model) => (model?.packs || []).flatMap((pack, index) => {
+    const layers = (pack.layers || []).map((layer) => ({ ...layer, items: layer.items || [] }));
+    if (!layers.some((layer) => layer.items.length)) return [];
+    return [{ id: String(pack.id || `pack-${index}`), pack, layers }];
+  });
   const panelHeight = () => Math.max(1, element.clientHeight || (mode === "projection" ? 400 : 130));
   const panelWidth = () => {
     if (mode === "gis" && typeof window !== "undefined" && Number.isFinite(window.innerWidth)) {
@@ -247,22 +303,55 @@ function mountMapLegend({ element, surface = "gis", projectionSpan = "full", dat
       }
     }
   };
-  const renderSnapshot = (visibleBlocks = []) => {
+  const renderSnapshot = (visibleBlocks = [], emptyProjection = false) => {
     const layout = resolveLegendLayout({ settings: settings(), span: projectionSpan });
+    const snapshotBlocks = mode === "projection" ? (emptyProjection ? [] : currentBlocks) : visibleBlocks;
+    const snapshotPages = mode === "projection" ? (snapshotBlocks.length ? [snapshotBlocks.map((block) => block.id)] : []) : pages;
     return {
       model: currentModel,
-      pages: pages.map((ids) => [...ids]),
-      pageIndex: page,
-      blocks: visibleBlocks.map((block) => ({ id: block.id, pack: block.pack, layers: block.layers || [] })),
+      pages: snapshotPages.map((ids) => [...ids]),
+      pageIndex: mode === "projection" ? 0 : page,
+      blocks: snapshotBlocks.map((block) => ({ id: block.id, pack: block.pack, layers: block.layers || [] })),
       language: language(),
       spanId: projectionSpan,
       visible: !(mode === "projection" && projectionSpan === "right") && layout?.visible !== false && visibleBlocks.length > 0,
       editing,
       layout,
+      contentLayout,
+      fontRevision,
       animationNow: Date.now(),
     };
   };
   const renderPage = () => {
+    if (mode === "projection") {
+      clearTimer();
+      const layout = resolveLegendLayout({ settings: settings(), span: projectionSpan });
+      const { width, height } = resolveLegendRasterSize(layout);
+      const reference = element.parentElement?.getBoundingClientRect?.() || {};
+      const referenceWidth = Number(reference.width) || OUTPUT_WIDTH;
+      const referenceHeight = Number(reference.height) || OUTPUT_HEIGHT;
+      const referenceScale = referenceWidth / OUTPUT_WIDTH;
+      const savedWidth = referenceWidth * (Number(layout.widthPct) || 0) / 100;
+      const savedHeight = referenceHeight * (Number(layout.heightPct) || 0) / 100;
+      const offsetX = (savedWidth - width * referenceScale) / 2;
+      const offsetY = (savedHeight - height * referenceScale) / 2;
+      const scale = (contentLayout?.scale || 1) * referenceScale;
+      if (content?.style) Object.assign(content.style, {
+        position: "absolute", left: `${offsetX}px`, top: `${offsetY}px`, width: `${width}px`, height: `${height}px`,
+        padding: "0", border: "0", boxSizing: "content-box", fontSize: `${Number(layout.fontPx) || 22}px`,
+        fontFamily: PROJECTION_LEGEND_FONT, transform: `scale(${scale})`, transformOrigin: "top left", overflow: "visible", direction: "ltr",
+      });
+      const byId = new Map(currentBlocks.map((block) => [block.id, block]));
+      const rendered = (contentLayout?.placements || []).map((placement) => {
+        const block = byId.get(placement.packId);
+        const layer = block?.layers?.find((candidate) => candidate.items?.includes(placement.item));
+        return projectionItemMarkup(placement, Number(layout.fontPx) || 22, layer?.id || "");
+      }).join("");
+      content.innerHTML = rendered;
+      if (pager) { pager.innerHTML = ""; pager.hidden = true; }
+      onRenderSnapshot?.(renderSnapshot(currentBlocks));
+      return;
+    }
     const ids = pages[page] || [];
     const visible = currentBlocks.filter((block) => ids.includes(block.id));
     const groups = [];
@@ -290,6 +379,18 @@ function mountMapLegend({ element, surface = "gis", projectionSpan = "full", dat
       element.dir = language() === "en" ? "ltr" : "rtl";
       const model = await buildModel({ surface: mode, dataContext, registry, language: current.language, summarizedGroupIds: current.summarizedGroupIds });
       if (disposed || version !== generation) return;
+      if (mode === "projection") {
+        const layout = resolveLegendLayout({ settings: current, span: projectionSpan });
+        currentBlocks = projectionBlocks(model);
+        currentModel = model;
+        pages = currentBlocks.length ? [currentBlocks.map((block) => block.id)] : [];
+        page = 0;
+        contentLayout = currentBlocks.length ? buildProjectionPlan(currentBlocks, layout) : null;
+        if (pager) pager.dataset.legendOverflow = "false";
+        element.classList?.toggle("map-legend-has-content", pages.length > 0);
+        renderPage();
+        return;
+      }
       const blocks = buildBlocks(model);
       const packed = packWrapPages(
         blocks,
@@ -310,6 +411,7 @@ function mountMapLegend({ element, surface = "gis", projectionSpan = "full", dat
       content.innerHTML = "";
       currentModel = null;
       currentBlocks = [];
+      contentLayout = null;
       pages = [];
       page = 0;
       renderPager();
@@ -324,7 +426,7 @@ function mountMapLegend({ element, surface = "gis", projectionSpan = "full", dat
     if (mode === "projection" && element.parentElement && element.parentElement !== element) observer.observe(element.parentElement);
     listeners.push(() => observer.disconnect());
   }
-  if (typeof document !== "undefined" && document.fonts?.addEventListener) { const callback = () => refresh(); document.fonts.addEventListener("loadingdone", callback); listeners.push(() => document.fonts.removeEventListener("loadingdone", callback)); }
+  if (typeof document !== "undefined" && document.fonts?.addEventListener) { const callback = () => { if (mode === "projection") fontRevision += 1; refresh(); }; document.fonts.addEventListener("loadingdone", callback); listeners.push(() => document.fonts.removeEventListener("loadingdone", callback)); }
   return {
     refresh,
     setEditing,
@@ -339,7 +441,7 @@ function mountMapLegend({ element, surface = "gis", projectionSpan = "full", dat
       return renderSnapshot(visible);
     },
     dispose() {
-      if (!disposed) onRenderSnapshot?.(renderSnapshot([]));
+      if (!disposed) onRenderSnapshot?.(renderSnapshot([], mode === "projection"));
       disposed = true;
       generation += 1;
       clearTimer();
@@ -347,7 +449,10 @@ function mountMapLegend({ element, surface = "gis", projectionSpan = "full", dat
       content.innerHTML = "";
       currentModel = null;
       currentBlocks = [];
+      contentLayout = null;
       pages = [];
+      measurementContext = null;
+      measurementCanvas = null;
     },
   };
 }

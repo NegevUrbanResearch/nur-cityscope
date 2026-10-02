@@ -45,6 +45,29 @@ test("clock bridge aborts older draws and cannot reply after disposal", async ()
   expect(parent.postMessage.mock.calls.filter(([data]) => data.type === "otef_clock_preview_rendered")).toHaveLength(0);
 });
 
+test("clock bridge accepts legacy and integer columns, rejects malformed values with existing guards", async () => {
+  const listeners = new Map(); const parent = { postMessage: vi.fn() };
+  const win = { parent, location: { origin: "http://localhost" }, addEventListener: (type, fn) => listeners.set(type, fn), removeEventListener() {} };
+  const renderState = vi.fn(async () => ({ meshIdentity: "mesh", mesh: {}, pageIndex: 0, pageCount: 1 }));
+  previewBridge.installProjectionClockPreviewBridge({ win, sessionId: "clock-1", renderState });
+  const send = (state, source = parent, origin = "http://localhost") => listeners.get("message")({ data: state, source, origin });
+  for (const columns of [undefined, 0, 1, 2, 3]) {
+    const request = clockRequest(renderState.mock.calls.length + 1, { element: "legend" });
+    if (columns !== undefined) request.legendLayout.columns = columns;
+    send(request);
+  }
+  await vi.waitFor(() => expect(renderState).toHaveBeenCalledTimes(5));
+  for (const columns of ["2", 1.5, -1, 4, null]) {
+    const request = clockRequest(10 + renderState.mock.calls.length, { element: "legend", legendLayout: { ...clockRequest(1).legendLayout, columns } });
+    send(request);
+  }
+  expect(renderState).toHaveBeenCalledTimes(5);
+  expect(parent.postMessage.mock.calls.filter(([message]) => message.type === "otef_clock_preview_error")).toHaveLength(5);
+  send(clockRequest(30), {}, "http://localhost");
+  send(clockRequest(31), parent, "http://other");
+  expect(renderState).toHaveBeenCalledTimes(5);
+});
+
 test("preview accepts only its same-origin parent and applies a validated draft locally", () => {
   const listeners = new Map();
   const parent = { postMessage: vi.fn() };

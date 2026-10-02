@@ -2,7 +2,8 @@ import { validateProjectionConfig } from "../shared/projection-config-schema.js"
 
 const CLOCK_LAYOUT_KEYS = ["leftPct", "topPct", "widthPct", "heightPct", "fontPx", "rotateDeg"];
 const finiteLayout = (value) => value && typeof value === "object" && !Array.isArray(value) &&
-  CLOCK_LAYOUT_KEYS.every((key) => Number.isFinite(value[key])) && value.widthPct > 0 && value.heightPct > 0 && value.fontPx > 0;
+  CLOCK_LAYOUT_KEYS.every((key) => Number.isFinite(value[key])) && value.widthPct > 0 && value.heightPct > 0 && value.fontPx > 0 &&
+  (!Object.hasOwn(value, "columns") || (Number.isInteger(value.columns) && value.columns >= 0 && value.columns <= 3));
 
 /** Separate child-only protocol; the ordinary warp preview keeps its existing messages. */
 export function installProjectionClockPreviewBridge({ win, sessionId, renderState }) {

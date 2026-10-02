@@ -6,7 +6,7 @@ import {
 import { shouldShowLayerOnGisMap } from "../../frontend/src/shared/gis-layer-filter.js";
 import { mountMapLegend } from "../../frontend/src/map/map-legend.js";
 
-it("selects and clamps a local legend page while editing without metadata commands", async () => {
+it("keeps the complete projection legend on one page while editing without metadata commands", async () => {
   let count = 3;
   const element = { clientWidth: 200, clientHeight: 100, innerHTML: "", classList: { toggle() {} } };
   const legend = mountMapLegend({ element, surface: "projection", projectionSpan: "left",
@@ -15,8 +15,9 @@ it("selects and clamps a local legend page while editing without metadata comman
       layers: [{ id: `layer-${index}`, items: [{ id: `item-${index}`, label: `Entry ${index}`, shape: "line" }] }] })) }) });
   legend.setEditing(true); await legend.refresh();
   expect(legend.setPage).toBeTypeOf("function");
-  expect(legend.setPage(99)).toBe(2);
-  expect(legend.getRenderSnapshot()).toMatchObject({ pageIndex: 2, editing: true });
+  expect(legend.getRenderSnapshot().pages).toHaveLength(1);
+  expect(legend.setPage(99)).toBe(0);
+  expect(legend.getRenderSnapshot()).toMatchObject({ pageIndex: 0, editing: true });
   expect(element.innerHTML).toContain("Entry 2");
   count = 1; await legend.refresh();
   expect(legend.setPage(2)).toBe(0);

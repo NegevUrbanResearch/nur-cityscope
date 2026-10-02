@@ -7,6 +7,7 @@ import {
   moveLayout,
   resizeClockLayout,
   resizeLegendLayout,
+  normalizeEditableLayout,
 } from "../../frontend/src/projection-config/clock-layout-geometry.js";
 
 const mesh = { width: 1920, height: 1080, vertices: [
@@ -15,6 +16,11 @@ const mesh = { width: 1920, height: 1080, vertices: [
 ], triangles: [0, 1, 2, 0, 2, 3] };
 
 describe("clock layout mesh geometry", () => {
+  test("editable layouts preserve valid legend columns while clock layouts omit them", () => {
+    const legend = normalizeEditableLayout({ leftPct: 5, topPct: 6, widthPct: 30, heightPct: 20, fontPx: 22, rotateDeg: 0, columns: 2 });
+    expect(legend.columns).toBe(2);
+    expect(normalizeEditableLayout({ leftPct: 5, topPct: 6, widthPct: 30, heightPct: 20, fontPx: 22, rotateDeg: 0 })).not.toHaveProperty("columns");
+  });
   test("maps source UV and output XY through nonidentity triangles", () => {
     const output = mapSourceUvToOutput(mesh, { u: 0.75, v: 0.25 });
     expect(output.x).toBeCloseTo(0.7, 7);
@@ -98,6 +104,7 @@ describe("projector plane gesture math", () => {
 
   test("moves by projector pixels while clamping the layout inside the plane", () => {
     expect(moveLayout(base, { x: 192, y: -108 })).toMatchObject({ leftPct: 40, topPct: 15 });
+    expect(moveLayout({ ...base, columns: 3 }, { x: 10, y: 10 })).toMatchObject({ columns: 3, fontPx: base.fontPx });
     expect(moveLayout({ ...base, leftPct: 90 }, { x: 1000, y: 0 }).leftPct).toBe(80);
   });
 
@@ -112,9 +119,10 @@ describe("projector plane gesture math", () => {
   });
 
   test("resizes a rotated legend from a corner and preserves the opposite corner", () => {
-    const resized = resizeLegendLayout(base, "bottom-right", { x: 80, y: 40 });
+    const resized = resizeLegendLayout({ ...base, columns: 3 }, "bottom-right", { x: 80, y: 40 });
     expect(resized.widthPct).not.toBe(base.widthPct);
     expect(resized.heightPct).not.toBe(base.heightPct);
+    expect(resized).toMatchObject({ columns: 3, fontPx: base.fontPx });
     const anchorBefore = rotatedTopLeft(base);
     const anchorAfter = rotatedTopLeft(resized);
     expect(anchorAfter.x).toBeCloseTo(anchorBefore.x, 5);

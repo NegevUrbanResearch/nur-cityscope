@@ -57,6 +57,62 @@ class LegendSettingsApiTests(TestCase):
         self.assertEqual(projection["right"]["dwellSeconds"], 30)
         self.assertEqual(response.json()["legendLayoutRevision"], 2)
 
+    def test_columns_values_round_trip_and_legacy_layout_keeps_seven_fields(self):
+        base = {"leftPct": 10, "topPct": 10, "widthPct": 20, "heightPct": 20, "fontPx": 22, "rotateDeg": 0, "dwellSeconds": 8}
+        for columns in range(4):
+            with self.subTest(columns=columns):
+                payload = {**base, "columns": columns}
+                with patch("backend.views.OTEFViewportStateViewSet._broadcast_legend_settings") as broadcast:
+                    with self.captureOnCommitCallbacks(execute=True):
+                        response = self.command(span="left", baseRevision=self.state.legend_layout_revision, layout=payload)
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.json()["legendProjection"]["left"]["columns"], columns)
+                self.assertEqual(response.json()["legendProjection"]["left"], payload)
+                listed = self.client.get("/api/otef_viewport/by-table/otef/")
+                self.assertEqual(listed.json()["legend_settings"]["projection"]["left"]["columns"], columns)
+                broadcast.assert_called_once()
+                _table, change, _meta = broadcast.call_args.args
+                self.assertEqual(change["legendProjection"]["left"]["columns"], columns)
+                self.state.refresh_from_db()
+
+        legacy = self.command(span="left", baseRevision=self.state.legend_layout_revision, layout=base)
+        self.assertEqual(legacy.status_code, 200)
+        self.assertEqual(legacy.json()["legendProjection"]["left"], base)
+        self.assertEqual(len(legacy.json()["legendProjection"]["left"]), 7)
+
+    def test_malformed_stored_columns_normalize_to_auto_without_adding_legacy_field(self):
+        base = {"leftPct": 10, "topPct": 10, "widthPct": 20, "heightPct": 20, "fontPx": 22, "rotateDeg": 0, "dwellSeconds": 8}
+        malformed = normalize_legend_settings({"projection": {"left": {**base, "columns": "2"}}})
+        self.assertEqual(malformed["projection"]["left"]["columns"], 0)
+        legacy = normalize_legend_settings({"projection": {"left": base}})
+        self.assertNotIn("columns", legacy["projection"]["left"])
+
+    def test_invalid_columns_are_rejected_without_storage_revision_or_broadcast(self):
+        base = {"leftPct": 10, "topPct": 10, "widthPct": 20, "heightPct": 20, "fontPx": 22, "rotateDeg": 0, "dwellSeconds": 8}
+        invalid = [True, False, -1, 4, 1.5, "2", None, {"value": 2}]
+        for columns in invalid:
+            with self.subTest(columns=columns):
+                layout = {**base, "columns": columns}
+                with patch("backend.views.OTEFViewportStateViewSet._broadcast_legend_settings") as broadcast:
+                    with self.captureOnCommitCallbacks(execute=True) as callbacks:
+                        response = self.command(span="left", baseRevision=0, layout=layout)
+                self.assertEqual(response.status_code, 400)
+                self.assertEqual(callbacks, [])
+                broadcast.assert_not_called()
+                self.state.refresh_from_db()
+                self.assertEqual(self.state.legend_settings, {})
+                self.assertEqual(self.state.legend_layout_revision, 0)
+
+        with patch("backend.views.OTEFViewportStateViewSet._broadcast_legend_settings") as broadcast:
+            with self.captureOnCommitCallbacks(execute=True) as callbacks:
+                response = self.command(span="left", baseRevision=0, layout={**base, "unknown": 1})
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(callbacks, [])
+        broadcast.assert_not_called()
+        self.state.refresh_from_db()
+        self.assertEqual(self.state.legend_settings, {})
+        self.assertEqual(self.state.legend_layout_revision, 0)
+
     def test_layout_conflict_preserves_raw_legend_metadata_and_other_spans(self):
         layout = {"leftPct": 10, "topPct": 10, "widthPct": 20, "heightPct": 20, "fontPx": 22, "rotateDeg": 0, "dwellSeconds": 8}
         self.state.legend_settings = {

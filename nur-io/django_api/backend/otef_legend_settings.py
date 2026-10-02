@@ -10,12 +10,17 @@ LEGEND_LAYOUT_FIELDS = ("leftPct", "topPct", "widthPct", "heightPct", "fontPx", 
 
 
 def validate_legend_slot_layout(raw):
-    if not isinstance(raw, dict) or set(raw) != set(LEGEND_LAYOUT_FIELDS):
+    required = set(LEGEND_LAYOUT_FIELDS)
+    allowed = required | {"columns"}
+    if not isinstance(raw, dict) or not required <= set(raw) or not set(raw) <= allowed:
+        return None
+    if "columns" in raw and (type(raw["columns"]) is not int or not 0 <= raw["columns"] <= 3):
         return None
     if any(
         type(value) not in (int, float)
         or (type(value) is float and not math.isfinite(value))
-        for value in raw.values()
+        for key, value in raw.items()
+        if key in required
     ):
         return None
     return normalize_legend_slot(raw)
@@ -36,6 +41,9 @@ def normalize_legend_slot(raw):
     if dwell != dwell or dwell in (float("inf"), float("-inf")):
         dwell = 8.0
     slot["dwellSeconds"] = min(30.0, max(4.0, dwell))
+    if "columns" in raw:
+        columns = raw["columns"]
+        slot["columns"] = columns if type(columns) is int and 0 <= columns <= 3 else 0
     return slot
 
 

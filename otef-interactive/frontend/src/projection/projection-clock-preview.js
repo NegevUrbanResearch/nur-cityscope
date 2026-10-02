@@ -16,6 +16,7 @@ import { createProjectionBrowserSurface } from "./projection-browser-route.js";
 import { createProjectionCaptionAdapter } from "./projection-caption-adapter.js";
 import { createProjectionLegendAdapter } from "./projection-legend-adapter.js";
 import { resolveLegendLayout } from "./legend-layout.js";
+import { resolveLegendRasterSize } from "./legend-content-layout.js";
 import { applyNliExplainerLayout, ensureNliExplainerHost } from "./nli-explainer-overlay.js";
 import { applyProjectionSpanView, createProjectionMapDescriptor } from "./projection-span-view.js";
 import { syncInvestigationTimelineToMap, getInvestigationTimelineRenderSnapshot, disposeInvestigationTimelineForMap } from "../shared/maplibre-investigation-timeline.js";
@@ -205,6 +206,12 @@ export async function bootProjectionClockPreview({ window: win, document: doc, f
       const editingClock = state.element === "clock";
       const warnings = measureClockPreviewWarnings({ layout: editingClock ? activeClockLayout : activeLegendLayout, mesh, surface: "projection",
         element: editingClock ? clockHost : legendElement, content: editingClock ? captionEl : legendElement, clock: editingClock });
+      if (!editingClock && legendSnapshot.contentLayout) {
+        const { width, height } = resolveLegendRasterSize(legendSnapshot.layout);
+        const bounds = legendSnapshot.contentLayout.paintBounds;
+        warnings.clipped = !!bounds && (bounds.x < -1e-7 || bounds.y < -1e-7
+          || bounds.x + bounds.width > width + 1e-7 || bounds.y + bounds.height > height + 1e-7);
+      }
       return { meshIdentity, mesh, pageIndex: legendSnapshot.pageIndex, pageCount: Math.max(1, legendSnapshot.pages.length), warnings };
     } });
     return dispose;

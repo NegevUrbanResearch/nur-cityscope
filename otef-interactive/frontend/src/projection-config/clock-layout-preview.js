@@ -9,7 +9,8 @@ const PREVIEW_TIMEOUT_MS = 30000;
 function validLayout(layout) {
   return layout && typeof layout === "object" && !Array.isArray(layout)
     && LAYOUT_KEYS.every((key) => Number.isFinite(layout[key]))
-    && layout.widthPct > 0 && layout.heightPct > 0 && layout.fontPx > 0;
+    && layout.widthPct > 0 && layout.heightPct > 0 && layout.fontPx > 0
+    && (!Object.hasOwn(layout, "columns") || (Number.isInteger(layout.columns) && layout.columns >= 0 && layout.columns <= 3));
 }
 
 function validateState(surface, state) {

@@ -8,9 +8,14 @@ export const LEGEND_LAYOUT_DEFAULT = Object.freeze({
   fontPx: 16,
   rotateDeg: 0,
   dwellSeconds: 8,
+  columns: 0,
 });
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+
+export function normalizeLegendColumns(value) {
+  return Number.isInteger(value) && value >= 0 && value <= 3 ? value : 0;
+}
 
 export function legendSpanKey(span) {
   return span === "left" || span === "right" ? span : "full";
@@ -24,6 +29,7 @@ export function clampLegendLayout(raw, fallback = LEGEND_LAYOUT_DEFAULT) {
   return {
     ...layout,
     dwellSeconds: clamp(Number.isFinite(dwell) ? dwell : Number(base.dwellSeconds) || 8, 4, 30),
+    columns: normalizeLegendColumns(source.columns),
   };
 }
 

@@ -30,9 +30,46 @@ function socketHarness() {
 }
 
 describe("clock layout client", () => {
+  test("eight-field legend drafts survive HTTP acknowledgements, metadata events, and other-span updates", async () => {
+    const socket = socketHarness();
+    const initial = snapshot();
+    initial.legend_settings.projection.left = { ...legendLayout(40), columns: 2 };
+    initial.legend_settings.projection.right = { ...legendLayout(60), columns: 3 };
+    let projection = structuredClone(initial.legend_settings.projection);
+    const client = createClockLayoutClient({ getSnapshot: async () => ({ ...initial, legend_settings: { ...initial.legend_settings, projection } }), socket,
+      writeLegendSlot: async ({ span, layout, baseRevision }) => {
+        projection = { ...projection, [span]: layout };
+        return { changeKind: "layout", legendProjection: projection, legendLayoutRevision: baseRevision + 1 };
+      } });
+    await client.hydrate();
+    const eightFieldDraft = { ...projection.left, columns: 1 };
+    await client.commit("projectionLegend", "left", eightFieldDraft);
+    expect(client.getSlot("projectionLegend", "left").acknowledged).toEqual(eightFieldDraft);
+    projection = { ...projection, left: { ...eightFieldDraft, leftPct: 44 } };
+    socket.emit("otef_legend_settings_changed", { changeKind: "layout", legendProjection: projection, legendLayoutRevision: 2 });
+    expect(client.getSlot("projectionLegend", "left").acknowledged).toMatchObject({ leftPct: 44, columns: 1 });
+    socket.emit("otef_legend_settings_changed", { changeKind: "metadata", legendSettingsPatch: { language: "he" } });
+    expect(client.getSlot("projectionLegend", "left").acknowledged.columns).toBe(1);
+    socket.emit("otef_legend_settings_changed", { changeKind: "layout", legendProjection: { ...projection, right: { ...projection.right, leftPct: 62 } }, legendLayoutRevision: 3 });
+    expect(client.getSlot("projectionLegend", "left").acknowledged.columns).toBe(1);
+    client.destroy();
+  });
+
+  test("seven-field legacy layout acknowledgement keeps its original shape", async () => {
+    const initial = snapshot();
+    const client = createClockLayoutClient({ getSnapshot: async () => initial,
+      writeLegendSlot: async ({ layout, baseRevision }) => ({ changeKind: "layout", legendProjection: { ...initial.legend_settings.projection, left: layout }, legendLayoutRevision: baseRevision + 1 }) });
+    await client.hydrate();
+    const legacy = legendLayout(41);
+    await client.commit("projectionLegend", "left", legacy);
+    expect(client.getSlot("projectionLegend", "left").acknowledged).toEqual(legacy);
+    expect(client.getSlot("projectionLegend", "left").acknowledged).not.toHaveProperty("columns");
+    client.destroy();
+  });
   test("historical slots survive events, HTTP acknowledgements and reconnect without becoming editable records", async () => {
     const socket = socketHarness();
     const initial = snapshot();
+    initial.legend_settings.projection.left = { ...initial.legend_settings.projection.left, columns: 1 };
     initial.nli_clock_layout.projection.full = clockLayout(41);
     initial.nli_clock_layout.projection.right = clockLayout(42);
     initial.nli_clock_layout.gis.historical = clockLayout(43);
@@ -51,16 +88,18 @@ describe("clock layout client", () => {
     await client.hydrate();
     current.nli_clock_layout.gis.start = clockLayout(15); current.nli_clock_layout_revision = 1;
     expect(() => socket.emit("otef_nli_clock_layout_changed", { nliClockLayout: current.nli_clock_layout, nliClockLayoutRevision: 1 })).not.toThrow();
-    current.legend_settings.projection.left = legendLayout(45); current.legend_layout_revision = 1;
+    current.legend_settings.projection.left = { ...legendLayout(45), columns: 2 }; current.legend_layout_revision = 1;
     expect(() => socket.emit("otef_legend_settings_changed", { changeKind: "layout", legendProjection: current.legend_settings.projection, legendLayoutRevision: 1 })).not.toThrow();
     expect(client.getSlot("gisClock", "start").acknowledged).toEqual(clockLayout(15));
-    expect(client.getSlot("projectionLegend", "left").acknowledged).toEqual(legendLayout(45));
+    expect(client.getSlot("projectionLegend", "left").acknowledged).toEqual({ ...legendLayout(45), columns: 2 });
     await client.commit("projectionClock", "left", clockLayout(32));
-    await client.commit("projectionLegend", "left", legendLayout(46));
+    await client.commit("projectionLegend", "left", { ...legendLayout(46), columns: 3 });
     socket.emit("disconnect"); socket.emit("connect");
     await vi.waitFor(() => expect(client.getHydrationState().status).toBe("Saved"));
     expect(current.nli_clock_layout.projection.full).toEqual(clockLayout(41));
     expect(current.nli_clock_layout.archive).toEqual({ preserved: true });
+    expect(client.getSlot("projectionLegend", "left").acknowledged.columns).toBe(3);
+    expect(current.legend_settings.projection.left.columns).toBe(3);
     client.destroy();
   });
 
@@ -342,6 +381,26 @@ describe("clock layout client", () => {
     expect(client.getSlot("gisClock", "start")).toMatchObject({
       acknowledged: clockLayout(19), draft: clockLayout(17), status: "Conflict",
       conflict: { layout: clockLayout(19), revision: 1 },
+    });
+    client.destroy();
+  });
+
+  test("a conflicting legend event preserves columns on acknowledged and retained draft layouts", async () => {
+    const socket = socketHarness();
+    const writeLegendSlot = vi.fn(() => new Promise(() => {}));
+    const client = createClockLayoutClient({ getSnapshot: async () => snapshot(), writeLegendSlot, socket });
+    await client.hydrate();
+    const draft = { ...legendLayout(17), columns: 1 };
+    const remote = { ...legendLayout(19), columns: 3 };
+    const save = client.commit("projectionLegend", "left", draft);
+    await vi.waitFor(() => expect(writeLegendSlot).toHaveBeenCalledTimes(1));
+    socket.emit("otef_legend_settings_changed", {
+      changeKind: "layout", legendProjection: { ...snapshot().legend_settings.projection, left: remote }, legendLayoutRevision: 1,
+    });
+    await expect(save).rejects.toMatchObject({ code: "conflict" });
+    expect(client.getSlot("projectionLegend", "left")).toMatchObject({
+      acknowledged: remote, draft, status: "Conflict",
+      conflict: { layout: remote, revision: 1 },
     });
     client.destroy();
   });

@@ -1,4 +1,5 @@
 import { projectionOverlayMatrix, OUTPUT_HEIGHT, OUTPUT_WIDTH } from "../projection/projection-overlay-placement.js";
+import { normalizeLegendColumns } from "../projection/legend-layout.js";
 
 const BARYCENTRIC_EPSILON = 1e-7;
 const DEGENERATE_EPSILON = 1e-12;
@@ -154,6 +155,7 @@ export function normalizeEditableLayout(layout) {
     fontPx: clamp(number(layout.fontPx, 22), MIN_FONT_PX, MAX_FONT_PX),
     rotateDeg: clamp(number(layout.rotateDeg, 0), -180, 180),
     ...(layout.dwellSeconds == null ? {} : { dwellSeconds: clamp(number(layout.dwellSeconds, 8), 4, 30) }),
+    ...(Object.hasOwn(layout, "columns") ? { columns: normalizeLegendColumns(layout.columns) } : {}),
   };
 }
 function dimensions(layout) {

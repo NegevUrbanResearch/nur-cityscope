@@ -9,6 +9,7 @@ import {
   getLegendCategoryCopy,
   getPackDisplayLabel,
 } from "../../frontend/src/shared/legend-copy.js";
+import { getLayerDisplayLabel } from "../../frontend/src/shared/layer-display-glossary.js";
 import { OPEN_SPACES_FILL_OPACITY_SCALE } from "../../frontend/src/shared/hatch-projection-presentation.js";
 
 function pointSymbol(fillColor) {
@@ -30,6 +31,41 @@ function registryFor({ config, groups = [] }) {
 }
 
 describe("legend content model", () => {
+  it("uses the approved unconfirmed-route glossary label on both legend surfaces", async () => {
+    expect(getLayerDisplayLabel("nli.lines.unconfirmed", "he", "fallback")).toBe("צירי חדירה משוערים");
+    expect(getLayerDisplayLabel("nli.lines.unconfirmed", "en", "fallback")).toBe("Unconfirmed approach");
+
+    const layers = [{ id: "lines", enabled: true }];
+    const config = {
+      id: "lines",
+      name: "lines",
+      geometryType: "line",
+      style: {
+        renderer: "simple",
+        defaultSymbol: { symbolLayers: [{ type: "stroke", color: "#c31f4f", width: 2 }] },
+      },
+    };
+    const groups = [{ id: "nli", layers }];
+    const registry = {
+      _initialized: true,
+      getGroups: () => groups,
+      getLayerConfig: () => config,
+      getPackStyleJsonForLayer: () => config.style,
+    };
+    for (const surface of ["gis", "projection"]) {
+      for (const language of ["he", "en"]) {
+        const model = await buildLegendModel({
+          dataContext: { getLayerGroups: () => groups },
+          registry,
+          language,
+          surface,
+        });
+        const item = model.packs[0].layers[0].items.find((entry) => entry.id === "nli.lines:unconfirmed");
+        expect(item?.label).toBe(language === "he" ? "צירי חדירה משוערים" : "Unconfirmed approach");
+      }
+    }
+  });
+
   it("uses bilingual NLI copy before legacy English legendLabel strings", async () => {
     const layers = [
       { id: "ציר_232", enabled: true },
@@ -179,7 +215,7 @@ describe("legend content model", () => {
     expect(layer.items[0].dash.array).toEqual([24 * 0.45, 24 * 0.55]);
     expect(layer.items[1].stroke).toBe("#c31f4f");
     expect(layer.items[1].carrier).toBeUndefined();
-    expect(layer.items[1].dash.array).toEqual([6, 6]);
+    expect(layer.items[1].dash.array).toEqual([9, 12]);
     expect(layer.items[1].strokeOpacity).toBe(0.95);
 
     const projection = legendLayerFromConfig({

@@ -153,7 +153,7 @@ body {
 .map-legend:empty { display: none; }
 .map-legend-content { min-width: 0; }
 .map-legend-gis { left: 50%; bottom: 20px; width: max-content; max-width: calc(100vw - 36px); padding: 8px 16px; padding-inline-end: 12px; transform: translateX(-50%); }
-.map-legend-projection { padding: .4em .5em; background: transparent; border: 0; box-shadow: none; }
+.map-legend-projection { padding: 0; background: transparent; border: 0; border-radius: 0; box-shadow: none; }
 .map-legend-group { min-width: 0; }
 .map-legend-group + .map-legend-group { margin-top: 17px; padding-top: 13px; border-top: 1px solid var(--legend-edge); }
 .map-legend-group-title { margin-bottom: .55em; color: var(--legend-sub); font-size: .55em; font-weight: 600; }
@@ -183,12 +183,12 @@ body {
 .map-legend-page-controls { display: flex; align-items: center; gap: 8px; }
 .map-legend-pager button { color: var(--legend-ink); background: transparent; border: 0; padding: 1px 3px; font: inherit; font-size: 14px; cursor: pointer; }
 .map-legend-measurement { position: absolute; visibility: hidden; pointer-events: none; }
-.map-legend-projection .map-legend-content { display: flex; gap: 22px; overflow: hidden; max-width: 100%; }
-.map-legend-projection .map-legend-group { flex: 0 1 max-content; min-width: 0; }
-.map-legend-projection .map-legend-layers { display: flex; flex-flow: row wrap; align-items: center; gap: 0 18px; }
-.map-legend-projection .map-legend-layer { display: contents; }
-.map-legend-projection .map-legend-item { flex: 0 0 auto; }
-.map-legend-projection .map-legend-group + .map-legend-group { margin-top: 0; padding: 0; padding-inline-start: 20px; border-top: 0; border-inline-start: 1px solid var(--legend-edge); }
+.map-legend-projection .map-legend-content { position: absolute; max-width: none; margin: 0; padding: 0; border: 0; overflow: visible; }
+.map-legend-projection .map-legend-item { display: block; min-width: 0; min-height: 0; margin: 0; gap: 0; }
+.map-legend-projection .map-legend-symbols { display: block; min-width: 0; margin: 0; }
+.map-legend-projection .map-legend-symbol { box-sizing: border-box; }
+.map-legend-projection .map-legend-projection-line { margin: 0; font-size: 1em; fill: currentColor; letter-spacing: 0; }
+.map-legend-projection .map-legend-symbol--alarm-shockwave::after { content: none; }
 .map-legend-projection .map-legend-group-title,
 .map-legend-projection .map-legend-layer-title,
 .map-legend-projection .map-legend-label,

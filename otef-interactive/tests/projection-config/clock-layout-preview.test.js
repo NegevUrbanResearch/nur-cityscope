@@ -114,3 +114,23 @@ test("projection validates and defensively copies meshes; malformed active repli
   expect(onRendered).toHaveBeenCalledTimes(1);
   preview.destroy();
 });
+
+test.each([0, 1, 2, 3])("projection preview accepts integer legend columns %i", (columns) => {
+  const { win, container } = harness();
+  const preview = mountClockLayoutPreview({ container, surface: "projection", sessionId: "columns" });
+  const layout = { leftPct: 8, topPct: 8, widthPct: 35, heightPct: 28, fontPx: 22, rotateDeg: 0 };
+  expect(() => preview.setState({ surface: "projection", sceneId: "home", output: "left", element: "legend", clockLayout: layout, legendLayout: { ...layout, columns }, pageIndex: 0 })).not.toThrow();
+  preview.destroy();
+});
+
+test("projection preview rejects malformed present legend columns and accepts legacy absence", () => {
+  const { container } = harness();
+  const preview = mountClockLayoutPreview({ container, surface: "projection", sessionId: "columns" });
+  const layout = { leftPct: 8, topPct: 8, widthPct: 35, heightPct: 28, fontPx: 22, rotateDeg: 0 };
+  const state = { surface: "projection", sceneId: "home", output: "left", element: "legend", clockLayout: layout, legendLayout: layout, pageIndex: 0 };
+  expect(() => preview.setState(state)).not.toThrow();
+  for (const columns of ["2", 1.5, -1, 4, null]) {
+    expect(() => preview.setState({ ...state, legendLayout: { ...layout, columns } })).toThrow(TypeError);
+  }
+  preview.destroy();
+});

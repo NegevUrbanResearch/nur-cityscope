@@ -121,7 +121,7 @@ test("projection child reports measured clipping for both clock and legend witho
   send(frameState(1)); await vi.waitFor(() => expect(messages("otef_clock_preview_rendered")).toHaveLength(1));
   expect(messages("otef_clock_preview_rendered")[0].warnings).toMatchObject({ clipped: true, mapping: "complete" });
   send(frameState(2, { element: "legend" })); await vi.waitFor(() => expect(messages("otef_clock_preview_rendered")).toHaveLength(2));
-  expect(messages("otef_clock_preview_rendered")[1].warnings.clipped).toBe(true);
+  expect(messages("otef_clock_preview_rendered")[1].warnings.clipped).toBe(false);
   rig.surface.getMesh = () => ({ ...mesh, triangles: [0, 1, 2] });
   send(frameState(3, { clockLayout: { ...layout, leftPct: 40, topPct: 40, rotateDeg: 0 } }));
   await vi.waitFor(() => expect(messages("otef_clock_preview_rendered")).toHaveLength(3));
