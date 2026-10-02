@@ -1,5 +1,6 @@
 import { validateProjectionConfig } from "../shared/projection-config-schema.js";
 import { evaluateWarpMesh } from "../shared/projection-warp-geometry.js";
+import { recordProjectionTrace, projectionTraceTime } from './projection-trace-input.js';
 
 const OUTPUT_WIDTH = 1920;
 const OUTPUT_HEIGHT = 1080;
@@ -62,6 +63,7 @@ export function createWarpEditor({
   onChange = () => {},
   validateCandidate = (candidate) => Object.keys(validateProjectionConfig(candidate)).length === 0,
   historyLimit = DEFAULT_HISTORY_LIMIT,
+  trace,
 } = {}) {
   if (!config?.outputs?.[output]?.warp) throw new Error(`warp editor requires ${output} warp config`);
   let current = clone(config);
@@ -71,16 +73,18 @@ export function createWarpEditor({
   let redoStack = [];
   let drag = null;
   let validationMessage = "";
+  let validationReason = '';
 
   const step = () => stepMode === "coarse" ? 1 : 0.25;
   const selectedIndices = () => indicesFor(selection, configWarp(current, output));
   const emit = (candidate, meta) => { current = candidate; onChange(clone(candidate), { ...meta, selection: clone(selection) }); };
   const valid = (candidate, { semantic = true, report = false } = {}) => {
-    const reject = (reason) => { if (report) validationMessage = "Move rejected: " + reason; return false; };
+    validationReason = '';
+    const reject = (reason, category = 'geometry_invalid') => { validationReason = category; if (report) validationMessage = "Move rejected: " + reason; return false; };
     try {
       if (!validateCandidate(candidate)) {
         const errors = validateProjectionConfig(candidate);
-        return reject(Object.values(errors)[0] || "configuration validation rejected the candidate.");
+        return reject(Object.values(errors)[0] || "configuration validation rejected the candidate.", 'configuration_invalid');
       }
       if (!semantic) { if (report) validationMessage = ""; return true; }
       const warp = configWarp(candidate, output);
@@ -89,7 +93,7 @@ export function createWarpEditor({
         if (report) validationMessage = "";
         return true;
       }
-      if (warp?.baseline?.type !== "tdMesh" || !baselineMesh) return reject("the TD baseline is unavailable.");
+      if (warp?.baseline?.type !== "tdMesh" || !baselineMesh) return reject("the TD baseline is unavailable.", 'baseline_unavailable');
       evaluateWarpMesh(baselineMesh, warp);
       if (report) validationMessage = "";
       return true;
@@ -151,6 +155,7 @@ export function createWarpEditor({
   function select(next) {
     if (!next || !["keystone", "grid"].includes(next.mode)) return false;
     selection = clone(next);
+    recordProjectionTrace(trace, 'selection', { output, mode: selection.mode, role: selection.kind, index: selection.index, indices: selectedIndices() });
     return true;
   }
   function setMode(mode) { if (selection.mode === mode) return true; return select(mode === "grid" ? gridSelection() : keystoneSelection()); }
@@ -193,6 +198,7 @@ export function createWarpEditor({
   function pointerMove(point) {
     if (!drag || !point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return false;
     if (point.x === drag.lastX && point.y === drag.lastY) return true;
+    const started = projectionTraceTime(trace);
     const dx = (point.x - drag.x) / OUTPUT_WIDTH;
     const dy = (point.y - drag.y) / OUTPUT_HEIGHT;
     const candidate = clone(current);
@@ -200,7 +206,8 @@ export function createWarpEditor({
     const points = pointsForSelection(candidate, output, selection);
     const indices = selectedIndices();
     for (const index of indices) { points[index][0] += dx; points[index][1] += dy; }
-    if (!valid(candidate, { report: true })) return false;
+    if (!valid(candidate, { report: true })) { recordProjectionTrace(trace, 'geometry', { output, phase: 'move', accepted: false, reason: validationReason, durationMs: projectionTraceTime(trace) - started }); return false; }
+    recordProjectionTrace(trace, 'geometry', { output, phase: 'move', accepted: true, durationMs: projectionTraceTime(trace) - started });
     drag.moved = drag.moved || dx !== 0 || dy !== 0;
     drag.lastX = point.x; drag.lastY = point.y;
     emit(candidate, { reason: "drag", flush: false });

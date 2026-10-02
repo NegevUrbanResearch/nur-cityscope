@@ -1,23 +1,66 @@
-import { expect, test, vi } from "vitest";
+import { beforeEach, expect, test, vi } from "vitest";
 
-const harness = vi.hoisted(() => ({ mount: null, getState: null, writeClock: null, writeLegend: null, socketCtor: null }));
+const harness = vi.hoisted(() => ({ mount: null, getState: null, writeClock: null, writeLegend: null, socketCtor: null, socketDisconnect: null, traceFactory: () => ({ enabled: false, dispose() {} }) }));
 vi.mock("../../frontend/src/shared/api-client.js", () => ({ OTEF_API: {
   getState: (...args) => harness.getState(...args),
   setNliClockLayout: (...args) => harness.writeClock(...args),
   setLegendSettings: (...args) => harness.writeLegend(...args),
 } }));
-vi.mock("../../frontend/src/shared/websocket-client.js", () => ({ OTEFWebSocketClient: class { constructor(...args) { harness.socketCtor(args); } } }));
+vi.mock("../../frontend/src/shared/websocket-client.js", () => ({ OTEFWebSocketClient: class { constructor(...args) { harness.socketCtor(args); } disconnect() { harness.socketDisconnect?.(); } on() {} off() {} } }));
 vi.mock("../../frontend/src/shared/layer-registry.js", () => ({ default: { init: async () => {} } }));
 vi.mock("../../frontend/src/shared/projection-config-client.js", () => ({ createProjectionConfigClient: () => ({
   getState: () => ({ snapshot: { config: {} }, draft: {} }), setValidateCandidate() {}, start() {}, stop() {}, subscribe() { return () => {}; },
 }) }));
 vi.mock("../../frontend/src/projection-config/config-controller.js", () => ({ mountProjectionConfig: (...args) => harness.mount(...args) }));
+vi.mock("../../frontend/src/projection-config/projection-trace.js", () => ({ createProjectionTrace: (...args) => harness.traceFactory(...args) }));
 vi.mock("../../frontend/src/projection-config/output-window-controller.js", () => ({ createOutputWindowController: () => ({ dispose() {} }) }));
 vi.mock("../../frontend/src/projection/projection-captured-baseline.js", () => ({ loadCapturedProjectionAsset: async () => ({}), loadCapturedProjectionFraming: async () => ({}) }));
 vi.mock("../../frontend/src/projection/projection-candidate-validation.js", () => ({ createProjectionGeometryValidator: () => ({ validateCandidate: async () => ({}), dispose() {} }), readProjectionCandidateInputs: async () => ({ datasetVersion: "release" }) }));
 vi.mock("../../frontend/src/shared/nli-name-field-data.js", () => ({ disposeProjectionNameWallPreparation() {}, prepareProjectionNameWall() {} }));
 
-import { bootProjectionConfig } from "../../frontend/src/entries/projection-config-main.js";
+import { bootProjectionConfig, readProjectionTraceSession, shareConfigUrl } from "../../frontend/src/entries/projection-config-main.js";
+
+beforeEach(() => { harness.traceFactory = () => ({ enabled: false, dispose() {} }); });
+
+test("projection trace opt-in requires exactly one valid UUID query value", () => {
+  const id = "123e4567-e89b-42d3-a456-426614174000";
+  expect(readProjectionTraceSession({ href: `https://example.test/config?projectionTrace=${id}` })).toBe(id);
+  expect(readProjectionTraceSession({ href: "https://example.test/config?projectionTrace=00000000-0000-0000-0000-000000000000" })).toBe("00000000-0000-0000-0000-000000000000");
+  expect(readProjectionTraceSession({ href: "https://example.test/config" })).toBeNull();
+  expect(readProjectionTraceSession({ href: "https://example.test/config?projectionTrace=bad" })).toBeNull();
+  expect(readProjectionTraceSession({ href: `https://example.test/config?projectionTrace=${id}&projectionTrace=bad` })).toBeNull();
+  expect(readProjectionTraceSession({ href: "not a URL" })).toBeNull();
+});
+
+test("config share URL carries only the active diagnostic session", async () => {
+  const id = "123e4567-e89b-42d3-a456-426614174000";
+  const location = { href: "http://example.test/otef-interactive/projection-config.html?projectionTrace=ignored", origin: "http://example.test" };
+  const document = { getElementById: () => null };
+  const normal = await shareConfigUrl({ location, document, traceSessionId: null });
+  const traced = await shareConfigUrl({ location, document, traceSessionId: id });
+  expect(normal.href).toBe("http://example.test/otef-interactive/projection-config.html");
+  expect(new URL(traced.href).searchParams.get("projectionTrace")).toBe(id);
+});
+
+test("config boot passes an opted-in trace the page window and disposes it before its owned socket", async () => {
+  const id = "123e4567-e89b-42d3-a456-426614174000";
+  const events = [];
+  const trace = { enabled: true, dispose: () => events.push("trace.dispose") };
+  harness.traceFactory = vi.fn(() => trace);
+  harness.getState = vi.fn(async () => ({ nli_clock_layout: { gis: {}, projection: {} }, nli_clock_layout_revision: 1, legend_settings: { projection: {} }, legend_layout_revision: 1 }));
+  harness.writeClock = vi.fn(); harness.writeLegend = vi.fn();
+  harness.socketCtor = vi.fn();
+  harness.socketDisconnect = () => events.push("socket.disconnect");
+  let options;
+  harness.mount = vi.fn((_root, value) => { options = value; return { dispose: () => events.push("mount.dispose") }; });
+  const win = { location: { search: `?projectionTrace=${id}` } };
+  const doc = { getElementById: () => ({}), defaultView: win };
+  const dispose = await bootProjectionConfig({ document: doc, location: { href: `http://localhost/otef-interactive/projection-config.html?projectionTrace=${id}`, origin: "http://localhost" }, fetchImpl: vi.fn() });
+  expect(harness.traceFactory).toHaveBeenCalledWith({ sessionId: id, socket: expect.anything(), window: win, document: doc });
+  expect(options.trace).toBe(trace);
+  dispose();
+  expect(events.slice(-2)).toEqual(["trace.dispose", "socket.disconnect"]);
+});
 
 test("config boot owns one layout client backed by OTEF_API and the existing socket", async () => {
   const initial = { leftPct: 8, topPct: 8, widthPct: 35, heightPct: 28, fontPx: 22, rotateDeg: 0 };

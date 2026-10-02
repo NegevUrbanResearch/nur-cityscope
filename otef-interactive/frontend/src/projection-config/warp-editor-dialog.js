@@ -1,8 +1,10 @@
 import { fitWarpViewport } from "./warp-viewport.js";
 import { createProjectionPreviewFrame } from "./projection-preview-frame.js";
+import { createProjectionTraceUi } from './projection-trace-ui.js';
+import { recordProjectionTrace } from './projection-trace-input.js';
 
 /** Owns one disposable projection frame. The config controller retains all draft and edit state. */
-export function createWarpEditorDialog({ document: doc, host, editorPanel, overlay, navigationControls, onBeforeClose = () => {}, onBeforeSwitch = () => {}, onBeforeResize = () => {}, onViewportChange = () => {}, onOrientationChange = () => {}, onApply = () => {}, onLive = () => {} }) {
+export function createWarpEditorDialog({ document: doc, host, editorPanel, overlay, navigationControls, onBeforeClose = () => {}, onBeforeSwitch = () => {}, onBeforeResize = () => {}, onViewportChange = () => {}, onOrientationChange = () => {}, onApply = () => {}, onLive = () => {}, trace }) {
   const win = doc.defaultView;
   const home = editorPanel.parentElement;
   const overlayHome = overlay.parentElement;
@@ -30,6 +32,8 @@ export function createWarpEditorDialog({ document: doc, host, editorPanel, overl
   const applied = doc.createElement("span"); applied.className = "warp-editor-applied";
   const retry = doc.createElement("button"); retry.type = "button"; retry.dataset.action = "warp-editor-retry"; retry.textContent = "Retry"; retry.hidden = true;
   footer.append(liveLabel, applyButton, applied, retry);
+  const traceUi = trace?.enabled ? createProjectionTraceUi({ document: doc, trace }) : null;
+  if (traceUi) footer.appendChild(traceUi.element);
   modal.append(header, body, footer); host.appendChild(modal);
 
   let session = null;
@@ -44,7 +48,7 @@ export function createWarpEditorDialog({ document: doc, host, editorPanel, overl
   let closedFocus = null;
   let viewBox = { x: -72, y: -72, width: 2064, height: 1224 };
   const setMessage = (message) => { status.textContent = message; };
-  const preview = createProjectionPreviewFrame({ document: doc, host: viewport, onStatus: (message, canRetry) => { setMessage(message); retry.hidden = !canRetry; } });
+  const preview = createProjectionPreviewFrame({ document: doc, host: viewport, trace, onStatus: (message, canRetry) => { setMessage(message); retry.hidden = !canRetry; } });
   const fit = () => {
     if (!session || !viewport.clientWidth || !viewport.clientHeight) return;
     const mapping = fitWarpViewport(viewBox, viewport.clientWidth, viewport.clientHeight);
@@ -52,6 +56,22 @@ export function createWarpEditorDialog({ document: doc, host, editorPanel, overl
     frame.style.transform = `translate(${mapping.image.left}px, ${mapping.image.top}px) scale(${mapping.scale})`;
     overlay.setAttribute("viewBox", `${viewBox.x} ${viewBox.y} ${viewBox.width} ${viewBox.height}`);
     onViewportChange();
+  };
+  const readViewportMapping = () => {
+    const rect = viewport.getBoundingClientRect?.();
+    if (!rect) return null;
+    return { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
+  };
+  const rememberViewportMapping = (current) => {
+    if (current && current === session && viewport.clientWidth && viewport.clientHeight) current.mapping = readViewportMapping();
+  };
+  const refreshViewportGeometry = (current = session) => {
+    if (!current || current !== session) return;
+    const next = readViewportMapping();
+    const previous = current.mapping;
+    if (previous && next && (previous.left !== next.left || previous.top !== next.top || previous.width !== next.width || previous.height !== next.height)) onBeforeResize();
+    fit();
+    rememberViewportMapping(current);
   };
   const clearFrame = () => {
     if (!session) return;
@@ -75,8 +95,9 @@ export function createWarpEditorDialog({ document: doc, host, editorPanel, overl
     const current = { frame, side, observer: null };
     session = current;
     const ResizeObserverType = win?.ResizeObserver || globalThis.ResizeObserver;
-    if (ResizeObserverType) { current.observer = new ResizeObserverType(() => { onBeforeResize(); fit(); }); current.observer.observe(viewport); }
+    if (ResizeObserverType) { current.observer = new ResizeObserverType(() => { if (current !== session) return; recordProjectionTrace(trace, 'viewport', { surface: 'dialog', phase: 'resize_observer', output: side }); refreshViewportGeometry(current); }); current.observer.observe(viewport); }
     fit();
+    rememberViewportMapping(current);
   };
   const requestFullscreen = () => {
     if (fullscreenPending || doc.fullscreenElement === modal || typeof modal.requestFullscreen !== "function") return;
@@ -87,7 +108,7 @@ export function createWarpEditorDialog({ document: doc, host, editorPanel, overl
     Promise.resolve(request).then(() => {
       fullscreenPending = false;
       if (disposed || !session) { exitOwnedFullscreen(closedFocus); ownFullscreen = false; }
-      else { ownFullscreen = doc.fullscreenElement === modal; fit(); }
+      else { ownFullscreen = doc.fullscreenElement === modal; refreshViewportGeometry(); }
     }).catch(() => { fullscreenPending = false; });
   };
   const onKeyDown = (event) => {
@@ -100,14 +121,15 @@ export function createWarpEditorDialog({ document: doc, host, editorPanel, overl
     if (event.shiftKey && doc.activeElement === first) { event.preventDefault(); last.focus(); }
     else if (!event.shiftKey && doc.activeElement === last) { event.preventDefault(); first.focus(); }
   };
-  const onResize = () => { onBeforeResize(); fit(); };
-  const onOrientation = () => { onOrientationChange(); fit(); };
+  const onResize = () => refreshViewportGeometry();
+  const onOrientation = () => { onOrientationChange(); fit(); rememberViewportMapping(session); };
+  const onFullscreenChange = () => refreshViewportGeometry();
   const attachListeners = () => {
     if (listenersAttached) return;
     listenersAttached = true;
     win?.addEventListener?.("resize", onResize);
     win?.addEventListener?.("orientationchange", onOrientation);
-    doc.addEventListener?.("fullscreenchange", fit);
+    doc.addEventListener?.("fullscreenchange", onFullscreenChange);
     doc.addEventListener?.("keydown", onKeyDown);
   };
   const detachListeners = () => {
@@ -115,7 +137,7 @@ export function createWarpEditorDialog({ document: doc, host, editorPanel, overl
     listenersAttached = false;
     win?.removeEventListener?.("resize", onResize);
     win?.removeEventListener?.("orientationchange", onOrientation);
-    doc.removeEventListener?.("fullscreenchange", fit);
+    doc.removeEventListener?.("fullscreenchange", onFullscreenChange);
     doc.removeEventListener?.("keydown", onKeyDown);
   };
   const close = () => {
@@ -183,6 +205,7 @@ export function createWarpEditorDialog({ document: doc, host, editorPanel, overl
       close(); disposed = true;
       detachListeners();
       preview.dispose();
+      traceUi?.dispose();
       modal.remove();
     },
   };

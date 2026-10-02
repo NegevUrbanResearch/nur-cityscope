@@ -1,9 +1,10 @@
 import { clampWarpViewBox, fitWarpViewport, transformWarpViewBox, warpPointFromClient } from "./warp-viewport.js";
+import { recordProjectionTrace } from './projection-trace-input.js';
 
 const HIT_RADIUS = 24;
 
 /** Bind one geometry gesture or a two-touch navigation gesture to the stable SVG. */
-export function bindWarpPointerInput({ surface, readGeometry, onSelect, onStart, onMove, onEnd, onCancel, onNavigate }) {
+export function bindWarpPointerInput({ surface, readGeometry, onSelect, onStart, onMove, onEnd, onCancel, onNavigate, trace }) {
   const doc = surface.ownerDocument;
   const win = doc?.defaultView;
   let active = null;
@@ -16,10 +17,11 @@ export function bindWarpPointerInput({ surface, readGeometry, onSelect, onStart,
     if (touches.has(gesture.pointerId)) ignoredCaptureLoss.add(gesture.pointerId);
     try { surface.releasePointerCapture?.(gesture.pointerId); } catch { ignoredCaptureLoss.delete(gesture.pointerId); }
   };
-  const cancelGeometry = ({ notify = true } = {}) => {
+  const cancelGeometry = ({ notify = true, reason = 'cancel' } = {}) => {
     if (!active) return false;
     const gesture = active;
     active = null;
+    recordProjectionTrace(trace, 'gesture', { surface: 'warp', phase: 'cancel', reason, output: gesture.output, pointerId: gesture.pointerId });
     release(gesture);
     if (notify) onCancel({ output: gesture.output });
     if (gesture.selectionChanged && gesture.previousSelection) {
@@ -44,10 +46,10 @@ export function bindWarpPointerInput({ surface, readGeometry, onSelect, onStart,
     onNavigate?.({ viewBox: gesture.startViewBox });
     return true;
   };
-  const cancel = ({ notify = true } = {}) => {
+  const cancel = ({ notify = true, reason = 'cancel' } = {}) => {
     const hadNavigation = cancelNavigation();
     const hadPan = cancelPan();
-    const hadGeometry = cancelGeometry({ notify });
+    const hadGeometry = cancelGeometry({ notify, reason });
     touches.clear();
     ignoredCaptureLoss.clear();
     return hadNavigation || hadPan || hadGeometry;
@@ -115,7 +117,7 @@ export function bindWarpPointerInput({ surface, readGeometry, onSelect, onStart,
     if (geometry.panMode && onNavigate) {
       pan = { pointerId: event.pointerId, rect, baseViewBox: geometry.baseViewBox || geometry.viewBox, startViewBox: { ...geometry.viewBox }, viewBox: { ...geometry.viewBox }, previous: { clientX: event.clientX, clientY: event.clientY } };
       event.preventDefault?.();
-      try { surface.setPointerCapture?.(event.pointerId); } catch { pan = null; }
+      try { surface.setPointerCapture?.(event.pointerId); recordProjectionTrace(trace, 'capture', { surface: 'warp', phase: 'request', pointerId: event.pointerId, accepted: true }); } catch { recordProjectionTrace(trace, 'capture', { surface: 'warp', phase: 'request', pointerId: event.pointerId, accepted: false, reason: 'capture_failed' }); pan = null; }
       return;
     }
     const { x, y, width: boxWidth, height: boxHeight } = geometry.viewBox;
@@ -136,9 +138,11 @@ export function bindWarpPointerInput({ surface, readGeometry, onSelect, onStart,
     const previousSelection = geometry.selection ? { mode: geometry.selection.mode, kind: geometry.selection.kind, index: geometry.selection.index } : null;
     const gesture = { pointerId: event.pointerId, rect, viewBox, output, selectionChanged, previousSelection };
     active = gesture;
+    recordProjectionTrace(trace, 'selection', { surface: 'warp', output, mode, index: hit.index, accepted: selectionChanged });
     event.preventDefault?.();
     if (selectionChanged) onSelect({ output, selection: { mode, kind: mode === "grid" ? "point" : "corner", index: hit.index } });
-    try { surface.setPointerCapture?.(gesture.pointerId); } catch { active = null; return; }
+    try { surface.setPointerCapture?.(gesture.pointerId); recordProjectionTrace(trace, 'capture', { surface: 'warp', phase: 'request', pointerId: gesture.pointerId, accepted: true }); } catch { recordProjectionTrace(trace, 'capture', { surface: 'warp', phase: 'request', pointerId: gesture.pointerId, accepted: false, reason: 'capture_failed' }); active = null; return; }
+    recordProjectionTrace(trace, 'gesture', { surface: 'warp', phase: 'start', output, mode, pointerId: gesture.pointerId });
     onStart(point(event, gesture));
   };
   const move = (event) => {
@@ -180,13 +184,14 @@ export function bindWarpPointerInput({ surface, readGeometry, onSelect, onStart,
     if (!matches(event)) return;
     const gesture = active;
     active = null;
+    recordProjectionTrace(trace, 'gesture', { surface: 'warp', phase: 'end', reason: 'pointerup', output: gesture.output, pointerId: gesture.pointerId });
     onEnd(point(event, gesture));
     release(gesture);
   };
   const lost = (event) => {
     if (navigation && (!event?.pointerId || navigation.ids.includes(event.pointerId))) cancelNavigation();
     if (pan && (!event?.pointerId || pan.pointerId === event.pointerId)) cancelPan();
-    if (matches(event)) cancelGeometry();
+    if (matches(event)) cancelGeometry({ reason: event.type === 'pointercancel' ? 'pointercancel' : 'lostcapture' });
     if (event?.pointerId != null) touches.delete(event.pointerId);
     ignoredCaptureLoss.delete(event?.pointerId);
   };
@@ -194,8 +199,8 @@ export function bindWarpPointerInput({ surface, readGeometry, onSelect, onStart,
     // Explicit release changes capture ownership, not whether a touch is still down.
     if (!ignoredCaptureLoss.delete(event.pointerId)) lost(event);
   };
-  const blur = () => { cancel(); };
-  const visibility = () => { if (doc.visibilityState === "hidden") cancel(); };
+  const blur = () => { cancel({ reason: 'blur' }); };
+  const visibility = () => { if (doc.visibilityState === "hidden") cancel({ reason: 'visibility' }); };
   const listeners = [[surface, "pointerdown", down], [surface, "pointermove", move], [surface, "pointerup", up], [surface, "pointercancel", lost], [surface, "lostpointercapture", captureLost], [win, "blur", blur], [doc, "visibilitychange", visibility]];
   for (const [target, type, handler] of listeners) target?.addEventListener?.(type, handler);
   return {

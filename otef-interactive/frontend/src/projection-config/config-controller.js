@@ -8,6 +8,7 @@ import { equalProjectionConfig } from "../shared/projection-config-client.js";
 import { createUuid } from "../shared/uuid.js";
 import { createProjectionConfigView } from "./config-view.js";
 import { createWarpEditor } from "./warp-editor.js";
+import { recordProjectionTrace, projectionTraceTime } from './projection-trace-input.js';
 import { loadCapturedProjectionAsset } from "../projection/projection-captured-baseline.js";
 import { migrateNamesWallToV5, migrateNamesWallToV6 } from "../shared/nli-name-wall-config.js";
 import { openClockLayoutEditor } from "./clock-layout-editor-dialog.js";
@@ -118,8 +119,9 @@ export function projectionAppliedStatus(rows, revision) {
   return 'Applied';
 }
 
-export function mountProjectionConfig(root, { client, share, onExport, onImport, socket, outputController, candidateValidator, readNamesDataset = null, layoutClient, settlementClient = null, catalog = { entries: [] }, clockEditorFactory = openClockLayoutEditor, settlementEditorFactory = openSettlementNameEditor } = {}) {
+export function mountProjectionConfig(root, { client, share, onExport, onImport, socket, outputController, candidateValidator, readNamesDataset = null, layoutClient, settlementClient = null, catalog = { entries: [] }, clockEditorFactory = openClockLayoutEditor, settlementEditorFactory = openSettlementNameEditor, trace } = {}) {
   if (!client) throw new Error("projection config client is required");
+  if (trace?.enabled) client.setLive(false);
   const sourceId = createUuid();
   let selectedNode = "pre";
   let selectedPresetId = null;
@@ -138,6 +140,8 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
   let settlementCitycode = catalog.entries?.find((entry) => entry?.citycode)?.citycode || "";
   let activeSettlementEditor = null;
   let localDraftNotification = false;
+  let warpMutationDepth = 0;
+  let warpRefreshPending = false;
   let pendingAction = null;
   let actionSequence = 0;
   let outputState = outputController?.getState?.() || { screens: [], assignments: { left: null, right: null }, supported: false, error: "", message: "Display management unavailable in this browser." };
@@ -169,10 +173,11 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
   let activePattern = { pattern: "off", branch: "left" };
   let patternTimer = null;
   const warpEditors = {
-    left: createWarpEditor({ config: state.draft || DEFAULT_PROJECTION_CONFIG, output: "left", onChange: (candidate, meta) => handleWarpChange("left", candidate, meta) }),
-    right: createWarpEditor({ config: state.draft || DEFAULT_PROJECTION_CONFIG, output: "right", onChange: (candidate, meta) => handleWarpChange("right", candidate, meta) }),
+    left: createWarpEditor({ config: state.draft || DEFAULT_PROJECTION_CONFIG, output: "left", trace, onChange: (candidate, meta) => handleWarpChange("left", candidate, meta) }),
+    right: createWarpEditor({ config: state.draft || DEFAULT_PROJECTION_CONFIG, output: "right", trace, onChange: (candidate, meta) => handleWarpChange("right", candidate, meta) }),
   };
   const view = createProjectionConfigView(root, {
+    trace,
     descriptors: ALL_FIELD_DESCRIPTORS,
     onField: handleField,
     onNudge: handleNudge,
@@ -238,6 +243,9 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
   function refresh() {
     if (disposed) return;
     syncLayoutUnload();
+    if (warpMutationDepth > 0) { warpRefreshPending = true; return; }
+    const traceStarted = projectionTraceTime(trace);
+    recordProjectionTrace(trace, 'redraw', { surface: 'page', phase: 'start', live: Boolean(state.live) });
     const rows = [...statusRows.values()].map((row) => ({ ...row, text: rowText(row) }));
     const warpStates = Object.fromEntries(["left", "right"].map((output) => [output, { ...warpEditors[output].getState(), config: warpEditors[output].getConfig(), handles: warpEditors[output].getControlPoints() }]));
     view.update({ state: { ...state, selectedPresetId }, errors: fieldErrors,
@@ -255,6 +263,18 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
       clockLayouts: layoutClient ? Object.fromEntries(["clock-gis", "clock-projection"].map((node) => [node, layoutFor(layoutClient, resourceFor(node, clockSceneId, clockElement))])) : {},
       clockHydration: layoutClient?.getHydrationState?.() || { status: layoutClient ? "Saved" : "Loading" },
       settlement: settlementViewState() });
+    recordProjectionTrace(trace, 'redraw', { surface: 'page', phase: 'end', durationMs: projectionTraceTime(trace) - traceStarted });
+  }
+  function withWarpMutation(mutation) {
+    warpMutationDepth += 1;
+    try { return mutation(); }
+    finally {
+      warpMutationDepth -= 1;
+      if (warpMutationDepth === 0 && warpRefreshPending) {
+        warpRefreshPending = false;
+        refresh();
+      }
+    }
   }
   function syncClockEditor(node = activeClockEditorNode) {
     if (!activeClockEditor) return;
@@ -434,6 +454,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
   }
   function handleState(nextState, receipt) {
     nextState = normalizeState(nextState);
+    recordProjectionTrace(trace, 'receipt', { receiptType: localDraftNotification ? 'local_draft' : 'configuration_received', ...(Number.isSafeInteger(nextState.snapshot?.revision) ? { revision: nextState.snapshot.revision } : {}), live: Boolean(nextState.live) });
     const incomingCalibration = nextState.snapshot?.config;
     if (incomingCalibration && JSON.stringify(incomingCalibration) !== JSON.stringify(lastCalibrationConfig)) {
       lastCalibrationConfig = structuredClone(incomingCalibration);
@@ -523,30 +544,34 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     refresh();
   }
   function handleWarpAction(action, value) {
-    const output = value?.output || activeWarpOutput();
-    const editor = warpEditors[output];
-    if (!editor) return;
-    if (action === "warp-select") editor.select(value.selection);
-    if (action === "warp-mode") editor.setMode(value.mode);
-    if (action === "warp-step") editor.setStep(value.mode);
-    if (action === "warp-nudge") editor.nudge(value.direction, value);
-    if (action === "warp-set-position") editor.setPosition(value.axis, value.pixels);
-    if (action === "warp-reset-selection") editor.resetSelection();
-    if (action === "warp-reset-residuals") editor.resetResiduals();
-    if (action === "warp-undo") editor.undo();
-    if (action === "warp-redo") editor.redo();
-    if (action === "warp-enabled") editor.setEnabled(value.enabled);
-    refresh();
+    return withWarpMutation(() => {
+      const output = value?.output || activeWarpOutput();
+      const editor = warpEditors[output];
+      if (!editor) return;
+      if (action === "warp-select") editor.select(value.selection);
+      if (action === "warp-mode") editor.setMode(value.mode);
+      if (action === "warp-step") editor.setStep(value.mode);
+      if (action === "warp-nudge") editor.nudge(value.direction, value);
+      if (action === "warp-set-position") editor.setPosition(value.axis, value.pixels);
+      if (action === "warp-reset-selection") editor.resetSelection();
+      if (action === "warp-reset-residuals") editor.resetResiduals();
+      if (action === "warp-undo") editor.undo();
+      if (action === "warp-redo") editor.redo();
+      if (action === "warp-enabled") editor.setEnabled(value.enabled);
+      refresh();
+    });
   }
   function handleWarpPointer(action, value) {
-    const output = value?.output || activeWarpOutput();
-    const editor = warpEditors[output];
-    if (!editor) return;
-    if (action === "start") editor.pointerStart(value);
-    if (action === "move") editor.pointerMove(value);
-    if (action === "end") { editor.pointerMove(value); editor.pointerEnd(); }
-    if (action === "cancel") editor.pointerCancel();
-    refresh();
+    return withWarpMutation(() => {
+      const output = value?.output || activeWarpOutput();
+      const editor = warpEditors[output];
+      if (!editor) return;
+      if (action === "start") editor.pointerStart(value);
+      if (action === "move") editor.pointerMove(value);
+      if (action === "end") { editor.pointerMove(value); editor.pointerEnd(); }
+      if (action === "cancel") editor.pointerCancel();
+      refresh();
+    });
   }
   function readPath(config, path) { return path.split(".").reduce((target, key) => target?.[key], config); }
   async function handleImport(file) {
@@ -630,6 +655,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
         !/^[a-f0-9]{64}$/i.test(wall.digest) || !Number.isSafeInteger(wall.expected) ||
         wall.expected < 1 || wall.placed !== wall.expected) return;
     }
+    recordProjectionTrace(trace, 'receipt', { receiptType: 'output_applied', output: message.output, revision: message.revision, accepted: message.success, live: Boolean(state.live) });
     namesTracker.observeInstance(message.output, message.instanceId);
     showUnconfirmed = false;
     statusRows.delete(`${message.output}:pending`);

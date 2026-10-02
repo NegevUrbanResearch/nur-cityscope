@@ -83,6 +83,42 @@ function fakeClient(initialSnapshot) {
   };
 }
 
+function tracedWarpHarness() {
+  const previousDocument = globalThis.document;
+  globalThis.document = documentStub();
+  const root = element("main");
+  const client = fakeClient();
+  const trace = {
+    enabled: true,
+    record: vi.fn(),
+    getStatus: () => ({ recording: false, connected: false, acknowledged: 0, queued: 0, pending: 0, dropped: 0 }),
+    subscribe: () => () => {},
+  };
+  const api = mountProjectionConfig(root, { client, trace });
+  client.setLive(false);
+  find(root, (node) => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-keystone").dispatch("click");
+  const surface = find(root, (node) => node.attributes?.class === "warp-edit-surface");
+  surface.getBoundingClientRect = () => ({ left: 0, top: 0, width: 2064, height: 1224 });
+  const redraws = () => trace.record.mock.calls.filter(([kind, detail]) => kind === "redraw" && detail.surface === "page" && detail.phase === "start").length;
+  const restore = () => { api.dispose(); globalThis.document = previousDocument; };
+  return { root, client, trace, surface, redraws, restore };
+}
+
+test('diagnostic config starts Live off and records receipts without calibration writes', () => {
+  const root = element(); root.ownerDocument = documentStub();
+  const client = fakeClient();
+  const socketHandlers = new Map();
+  const socket = { on: (type, fn) => socketHandlers.set(type, fn), off: (type) => socketHandlers.delete(type), getConnected: () => false };
+  const trace = { enabled: true, record: vi.fn(), getStatus: () => ({ recording: true, connected: true, acknowledged: 0, queued: 0, pending: 0, dropped: 0 }), subscribe: () => () => {} };
+  const mounted = mountProjectionConfig(root, { client, trace, socket });
+  expect(client.setLive).toHaveBeenCalledWith(false);
+  expect(client.apply).not.toHaveBeenCalled(); expect(client.save).not.toHaveBeenCalled(); expect(client.setDraft).not.toHaveBeenCalled();
+  expect(trace.record.mock.calls.some(([kind]) => kind === 'receipt')).toBe(true);
+  socketHandlers.get('otef_projection_applied')({ table: 'otef', output: 'left', instanceId: 'instance', revision: 2, success: true, route: 'browser', baseline: DEFAULTS.outputs.left.warp.baseline });
+  expect(trace.record.mock.calls).toContainEqual(['receipt', { receiptType: 'output_applied', output: 'left', revision: 2, accepted: true, live: false }]);
+  mounted.dispose();
+});
+
 function replacementHarness() {
   const presetId = "11111111-1111-4111-8111-111111111111";
   const snapshot = { revision: 0, config: clone(DEFAULTS), selectedPresetId: "original", presets: [
@@ -1347,6 +1383,80 @@ describe("projection config controller", () => {
     find(root, (node) => node.dataset?.action === "warp-undo").dispatch("click");
     expect(client.getState().draft.outputs.left.warp.keystone.corners[0][0]).toBe(0);
     api.dispose(); globalThis.document = previousDocument;
+  });
+
+  test("accepted warp movement and pointer-up redraw once while updating the draft immediately", () => {
+    const { root, client, trace, surface, redraws, restore } = tracedWarpHarness();
+    const initialWarp = clone(client.getState().draft.outputs.left.warp);
+    surface.dispatch("pointerdown", { pointerId: 1, isPrimary: true, button: 0, clientX: 72, clientY: 72, preventDefault() {} });
+    trace.record.mockClear();
+    surface.dispatch("pointermove", { pointerId: 1, clientX: 82, clientY: 72 });
+    expect(client.getState().draft.outputs.left.warp.keystone.corners[0][0]).toBeCloseTo(10 / 1920);
+    expect(redraws()).toBe(1);
+
+    surface.dispatch("pointerup", { pointerId: 1, clientX: 92, clientY: 72 });
+    expect(client.getState().draft.outputs.left.warp.keystone.corners[0][0]).toBeCloseTo(20 / 1920);
+    expect(redraws()).toBe(2);
+    find(root, (node) => node.dataset?.action === "warp-undo").dispatch("click");
+    expect(client.getState().draft.outputs.left.warp).toEqual(initialWarp);
+    expect(redraws()).toBe(3);
+    restore();
+  });
+
+  test("warp nudge and undo each redraw once", () => {
+    const { root, client, trace, redraws, restore } = tracedWarpHarness();
+    const arrow = find(root, (node) => node.dataset?.action === "warp-nudge" && node.dataset?.direction === "right");
+    const undo = find(root, (node) => node.dataset?.action === "warp-undo");
+    trace.record.mockClear();
+    arrow.dispatch("click");
+    expect(client.getState().draft.outputs.left.warp.keystone.corners[0][0]).not.toBe(0);
+    expect(redraws()).toBe(1);
+
+    trace.record.mockClear();
+    undo.dispatch("click");
+    expect(client.getState().draft.outputs.left.warp.keystone.corners[0][0]).toBe(0);
+    expect(redraws()).toBe(1);
+    restore();
+  });
+
+  test("warp pointer cancel rolls back and redraws once", () => {
+    const { client, trace, surface, redraws, restore } = tracedWarpHarness();
+    const initialWarp = clone(client.getState().draft.outputs.left.warp);
+    surface.dispatch("pointerdown", { pointerId: 1, isPrimary: true, button: 0, clientX: 72, clientY: 72, preventDefault() {} });
+    surface.dispatch("pointermove", { pointerId: 1, clientX: 82, clientY: 72 });
+    expect(client.getState().draft.outputs.left.warp).not.toEqual(initialWarp);
+    trace.record.mockClear();
+    surface.dispatch("pointercancel", { pointerId: 1 });
+    expect(client.getState().draft.outputs.left.warp).toEqual(initialWarp);
+    expect(redraws()).toBe(1);
+    restore();
+  });
+
+  test("warp draft errors still redraw once", () => {
+    const { client, trace, surface, redraws, restore } = tracedWarpHarness();
+    surface.dispatch("pointerdown", { pointerId: 1, isPrimary: true, button: 0, clientX: 72, clientY: 72, preventDefault() {} });
+    client.setDraft.mockImplementationOnce(() => { throw new Error("draft rejected"); });
+    trace.record.mockClear();
+    expect(() => surface.dispatch("pointermove", { pointerId: 1, clientX: 82, clientY: 72 })).not.toThrow();
+    expect(client.getState().draft.outputs.left.warp.keystone.corners[0][0]).toBe(0);
+    expect(redraws()).toBe(1);
+    restore();
+  });
+
+  test("asynchronous apply rejection redraws after the warp batch", async () => {
+    const { root, client, trace, surface, redraws, restore } = tracedWarpHarness();
+    client.apply.mockRejectedValueOnce(new Error("apply rejected"));
+    const actionError = find(root, (node) => node.className === "action-error");
+    client.setLive(true);
+    surface.dispatch("pointerdown", { pointerId: 1, isPrimary: true, button: 0, clientX: 72, clientY: 72, preventDefault() {} });
+    surface.dispatch("pointermove", { pointerId: 1, clientX: 82, clientY: 72 });
+    trace.record.mockClear();
+    surface.dispatch("pointerup", { pointerId: 1, clientX: 92, clientY: 72 });
+    expect(redraws()).toBe(1);
+    expect(actionError.textContent).not.toContain("apply rejected");
+    await vi.waitFor(() => expect(actionError.textContent).toContain("apply rejected"));
+    expect(redraws()).toBeGreaterThan(1);
+    restore();
   });
 
   test("an invalid release keeps the last valid drag position and one undo entry", () => {

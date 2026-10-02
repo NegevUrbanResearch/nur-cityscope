@@ -4,6 +4,14 @@ import { createWarpEditorDialog } from "../../frontend/src/projection-config/war
 import { DEFAULT_PROJECTION_CONFIG } from "../../frontend/src/shared/projection-config-schema.js";
 
 afterEach(() => { document.body.replaceChildren(); vi.useRealTimers(); });
+let resizeObserverDescriptor;
+afterEach(() => {
+  if (resizeObserverDescriptor) {
+    if (resizeObserverDescriptor.value === undefined) delete window.ResizeObserver;
+    else Object.defineProperty(window, "ResizeObserver", resizeObserverDescriptor);
+    resizeObserverDescriptor = undefined;
+  }
+});
 
 function setup(options = {}) {
   const host = document.createElement("main");
@@ -14,6 +22,17 @@ function setup(options = {}) {
   const opener = document.createElement("button"); host.append(opener); opener.focus();
   const dialog = createWarpEditorDialog({ document, host, editorPanel: panel, overlay, ...options });
   return { host, home, panel, overlay, opener, dialog };
+}
+
+function setViewportRect(viewport, rect) {
+  viewport.getBoundingClientRect = () => ({
+    ...rect,
+    x: rect.left,
+    y: rect.top,
+    right: rect.left + rect.width,
+    bottom: rect.top + rect.height,
+    toJSON() { return this; },
+  });
 }
 
 test("one disposable frame exists only for an explicitly open warp editor", () => {
@@ -39,18 +58,55 @@ test("one disposable frame exists only for an explicitly open warp editor", () =
   dialog.dispose();
 });
 
-test("resize and orientation changes cancel an active edit before refitting", () => {
+test("unchanged resize notifications preserve an active edit and changed mappings cancel before refitting", () => {
   const onBeforeResize = vi.fn();
-  const { dialog, opener } = setup({ onBeforeResize });
+  const order = [];
+  class TestResizeObserver {
+    constructor(callback) { this.callback = callback; TestResizeObserver.latest = this; }
+    observe() {}
+    disconnect() {}
+    notify() { this.callback([], this); }
+  }
+  resizeObserverDescriptor = Object.getOwnPropertyDescriptor(window, "ResizeObserver") || { value: undefined };
+  Object.defineProperty(window, "ResizeObserver", { configurable: true, value: TestResizeObserver });
+  const { dialog, opener } = setup({ onBeforeResize: () => { order.push("cancel"); onBeforeResize(); }, onViewportChange: () => order.push("fit") });
   window.dispatchEvent(new Event("resize"));
   expect(onBeforeResize).not.toHaveBeenCalled();
+  const viewport = document.querySelector(".warp-editor-viewport");
+  Object.defineProperties(viewport, { clientWidth: { configurable: true, value: 600 }, clientHeight: { configurable: true, value: 400 } });
+  let rect = { left: 20, top: 30, width: 600, height: 400 };
+  setViewportRect(viewport, rect);
   dialog.open({ side: "left", mode: "grid", opener });
+
+  // The observer's initial delivery and a window notification with the same
+  // viewport mapping must not cancel a pointer edit.
+  TestResizeObserver.latest.notify();
   window.dispatchEvent(new Event("resize"));
-  window.dispatchEvent(new Event("orientationchange"));
+  expect(onBeforeResize).not.toHaveBeenCalled();
+
+  // A moved viewport changes the pointer-to-output mapping, so cancel before fit.
+  rect = { ...rect, left: 21 };
+  setViewportRect(viewport, rect);
+  order.length = 0;
+  window.dispatchEvent(new Event("resize"));
+  expect(order).toEqual(["cancel", "fit"]);
   expect(onBeforeResize).toHaveBeenCalledTimes(1);
+
+  // A later ResizeObserver delivery with that same rect is also a no-op.
+  TestResizeObserver.latest.notify();
+  expect(onBeforeResize).toHaveBeenCalledTimes(1);
+
+  rect = { ...rect, width: 599 };
+  setViewportRect(viewport, rect);
+  order.length = 0;
+  TestResizeObserver.latest.notify();
+  expect(order).toEqual(["cancel", "fit"]);
+  expect(onBeforeResize).toHaveBeenCalledTimes(2);
+  window.dispatchEvent(new Event("orientationchange"));
+  expect(onBeforeResize).toHaveBeenCalledTimes(2);
   dialog.close();
   window.dispatchEvent(new Event("resize"));
-  expect(onBeforeResize).toHaveBeenCalledTimes(1);
+  expect(onBeforeResize).toHaveBeenCalledTimes(2);
   dialog.dispose();
 });
 
@@ -60,12 +116,32 @@ test("orientation callback runs independently from ordinary resize while the edi
   const { dialog, opener } = setup({ onBeforeResize, onOrientationChange });
   dialog.open({ side: "left", mode: "grid", opener });
   window.dispatchEvent(new Event("resize"));
-  expect(onBeforeResize).toHaveBeenCalledTimes(1);
+  expect(onBeforeResize).not.toHaveBeenCalled();
   expect(onOrientationChange).not.toHaveBeenCalled();
   window.dispatchEvent(new Event("orientationchange"));
-  expect(onBeforeResize).toHaveBeenCalledTimes(1);
+  expect(onBeforeResize).not.toHaveBeenCalled();
   expect(onOrientationChange).toHaveBeenCalledTimes(1);
   expect(dialog.isOpen()).toBe(true);
+  dialog.dispose();
+});
+
+test("fullscreen geometry changes cancel before refitting the viewport", () => {
+  const order = [];
+  const onBeforeResize = () => order.push("cancel");
+  const onViewportChange = () => order.push("fit");
+  const { dialog, opener } = setup({ onBeforeResize, onViewportChange });
+  dialog.open({ side: "left", mode: "grid", opener });
+  const editorViewport = document.querySelector(".warp-editor-viewport");
+  Object.defineProperties(editorViewport, { clientWidth: { configurable: true, value: 600 }, clientHeight: { configurable: true, value: 400 } });
+  let rect = { left: 20, top: 30, width: 600, height: 400 };
+  setViewportRect(editorViewport, rect);
+  // Seed a measurable mapping after open, as occurs once the dialog has layout.
+  window.dispatchEvent(new Event("resize"));
+  order.length = 0;
+  rect = { ...rect, width: 599 };
+  setViewportRect(editorViewport, rect);
+  document.dispatchEvent(new Event("fullscreenchange"));
+  expect(order).toEqual(["cancel", "fit"]);
   dialog.dispose();
 });
 

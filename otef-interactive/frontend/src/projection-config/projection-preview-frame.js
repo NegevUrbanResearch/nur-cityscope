@@ -1,7 +1,9 @@
+import { recordProjectionTrace } from './projection-trace-input.js';
+
 const FRAME_URL = (side) => `/otef-interactive/projection.html?span=${side}&preview=1&mapPixelRatio=1&outputMode=browser`;
 
 /** Owns a projection preview iframe and its origin/source/request guarded message channel. */
-export function createProjectionPreviewFrame({ document: doc, host, onStatus = () => {}, timeoutMs = 30000, frameClass = "warp-editor-frame", titleForSide = (side) => `${side} projection output` }) {
+export function createProjectionPreviewFrame({ document: doc, host, onStatus = () => {}, timeoutMs = 30000, frameClass = "warp-editor-frame", titleForSide = (side) => `${side} projection output`, trace }) {
   const win = doc.defaultView;
   const origin = win?.location?.origin;
   let current = null;
@@ -37,10 +39,12 @@ export function createProjectionPreviewFrame({ document: doc, host, onStatus = (
     if (message.type === "otef_projection_preview_ready") {
       if (session.ready) return;
       session.ready = true; clearTimeout(session.timer); session.timer = null;
+      recordProjectionTrace(trace, 'receipt', { receiptType: 'preview_ready', output: session.side });
       setStatus("Ready"); send();
       return;
     }
     if (message.type !== "otef_projection_preview_applied" || !session.ready || message.requestId !== session.requestId) return;
+    recordProjectionTrace(trace, 'receipt', { receiptType: 'preview_applied', output: session.side, accepted: Boolean(message.success) });
     if (session.requestKind === "geometry") {
       if (message.success) { session.calibrated = true; session.calibratedIdentity = session.pendingGeometryIdentity; session.frame.style.visibility = "visible"; }
       session.pendingGeometryRequestId = null; session.pendingGeometryIdentity = null;

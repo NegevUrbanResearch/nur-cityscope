@@ -1,3 +1,5 @@
+import { recordProjectionTrace } from './projection-trace-input.js';
+
 const COLUMNS = [
   ["content", "names-wall", "settlement-names"], ["clock-gis", "clock-projection"], ["pre"], ["left-crop", "right-crop"],
   ["left-fit", "right-fit"], ["left-keystone", "right-keystone"],
@@ -13,6 +15,7 @@ const EDGES = [
 const PAD = 28;
 const COLUMN_GAP = 48;
 const ROW_GAP = 64;
+const INTERACTIVE_TOUCH_SELECTOR = "input, button, select, textarea, a, label, [contenteditable], [role='button']";
 const leftOf = (card) => Number.isFinite(card.offsetLeft) ? card.offsetLeft : Number.parseFloat(card.style.left) || 0;
 const topOf = (card) => Number.isFinite(card.offsetTop) ? card.offsetTop : Number.parseFloat(card.style.top) || 0;
 
@@ -65,9 +68,13 @@ export function zoomAt(view, factor, anchor) {
   };
 }
 
-export function createNodeCanvas({ document, viewport, graph, svg, wire, nodeMap, controls }) {
+export function createNodeCanvas({ document, viewport, graph, svg, wire, nodeMap, controls, trace }) {
   let view = { x: 0, y: 0, scale: 1 };
   let drag = null;
+  const touches = new Map();
+  let pinch = null;
+  let touchSequencePinched = false;
+  let interactionListeners = false;
   let framing = "initial";
   let selectedNode = "pre";
   let focusedNodes = null;
@@ -78,7 +85,7 @@ export function createNodeCanvas({ document, viewport, graph, svg, wire, nodeMap
     width: card.offsetWidth || 280,
     height: card.offsetHeight || 300,
   }]));
-  const paint = () => { graph.style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.scale})`; };
+  const paint = () => { graph.style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.scale})`; recordProjectionTrace(trace, 'viewport', { surface: 'graph', phase: 'paint', viewX: view.x, viewY: view.y, scale: view.scale }); };
 
   function updateWires() {
     let width = 0;
@@ -189,15 +196,118 @@ export function createNodeCanvas({ document, viewport, graph, svg, wire, nodeMap
     zoom(event.deltaY < 0 ? 1.1 : 1 / 1.1, { x: event.clientX - rect.left, y: event.clientY - rect.top });
   };
 
+  function syncInteractionListeners() {
+    const active = Boolean(drag || touches.size);
+    if (active === interactionListeners) return;
+    interactionListeners = active;
+    const method = active ? "addEventListener" : "removeEventListener";
+    document?.[method]?.("pointermove", onDocumentMove);
+    document?.[method]?.("pointerup", onDocumentEnd);
+    document?.[method]?.("pointercancel", onDocumentEnd);
+    document?.[method]?.("lostpointercapture", onDocumentEnd);
+    document?.[method]?.("visibilitychange", onVisibilityChange);
+    document?.[method]?.("blur", onWindowBlur);
+    const windowTarget = document?.defaultView || globalThis.window;
+    if (windowTarget && windowTarget !== document) windowTarget[method]?.("blur", onWindowBlur);
+  }
+
+  const localPoint = (event) => {
+    const rect = viewport.getBoundingClientRect();
+    return { x: event.clientX - rect.left, y: event.clientY - rect.top };
+  };
+
+  function startPinch() {
+    const pair = [...touches.entries()].slice(0, 2);
+    if (pair.length !== 2) return;
+    const [aId, a] = pair[0]; const [bId, b] = pair[1];
+    const dx = b.x - a.x; const dy = b.y - a.y;
+    const distance = Math.hypot(dx, dy);
+    if (!(distance > 0)) return;
+    const centroid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    pinch = {
+      ids: [aId, bId], distance, scale: view.scale,
+      worldX: (centroid.x - view.x) / view.scale,
+      worldY: (centroid.y - view.y) / view.scale,
+    };
+  }
+
+  function updatePinch() {
+    if (!pinch) return;
+    const a = touches.get(pinch.ids[0]); const b = touches.get(pinch.ids[1]);
+    if (!a || !b) return;
+    const distance = Math.hypot(b.x - a.x, b.y - a.y);
+    const scale = Math.min(2, Math.max(0.18, pinch.scale * distance / pinch.distance));
+    const centroid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    view = { x: centroid.x - pinch.worldX * scale, y: centroid.y - pinch.worldY * scale, scale };
+    framing = "custom";
+    focusedNodes = null;
+    paint();
+  }
+
+  function trackTouchDown(event) {
+    if (event.pointerType !== "touch") return false;
+    const target = event.target;
+    if (target?.closest?.(INTERACTIVE_TOUCH_SELECTOR)) return true;
+    if (!touches.has(event.pointerId)) touches.set(event.pointerId, localPoint(event));
+    syncInteractionListeners();
+    if (!touchSequencePinched && touches.size === 2) {
+      endDrag(undefined, true);
+      touchSequencePinched = true;
+      startPinch();
+      return true;
+    }
+    return touchSequencePinched;
+  }
+
+  function moveTouch(event) {
+    if (event.pointerType !== "touch" || !touches.has(event.pointerId)) return;
+    touches.set(event.pointerId, localPoint(event));
+    updatePinch();
+  }
+
+  function endTouch(event) {
+    if (event?.pointerId !== undefined && touches.has(event.pointerId)) {
+      touches.delete(event.pointerId);
+      if (pinch?.ids.includes(event.pointerId)) pinch = null;
+    }
+    if (!touches.size) {
+      pinch = null;
+      touchSequencePinched = false;
+    }
+    syncInteractionListeners();
+  }
+
+  function onDocumentMove(event) {
+    moveTouch(event);
+    moveDrag(event);
+  }
+
+  function onDocumentEnd(event) {
+    if (event?.type === "pointerup") moveTouch(event);
+    endDrag(event);
+    endTouch(event);
+  }
+
+  function onWindowBlur() {
+    endDrag(undefined, true);
+    touches.clear();
+    pinch = null;
+    touchSequencePinched = false;
+    syncInteractionListeners();
+  }
+
+  function onVisibilityChange() {
+    if (document?.visibilityState === "hidden") onWindowBlur();
+  }
+
   function endDrag(event, force = false) {
     if (!drag || (!force && event?.pointerId !== drag.pointerId)) return;
     drag = null;
-    document?.removeEventListener?.("pointermove", moveDrag);
-    document?.removeEventListener?.("pointerup", onDragEnd);
-    document?.removeEventListener?.("pointercancel", onDragEnd);
+    syncInteractionListeners();
   }
   function moveDrag(event) {
     if (!drag || event.pointerId !== drag.pointerId) return;
+    if (drag.pointerType === "touch" && touchSequencePinched) return;
     const dx = event.clientX - drag.x;
     const dy = event.clientY - drag.y;
     if (drag.node) {
@@ -212,16 +322,14 @@ export function createNodeCanvas({ document, viewport, graph, svg, wire, nodeMap
     framing = "custom";
   }
   function beginDrag(event, node = null) {
-    if (event.button !== 0 || event.isPrimary === false || drag) return;
+    if (event.button !== 0 || event.isPrimary === false || drag || touchSequencePinched) return;
     event.preventDefault?.();
-    drag = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, node, left: node ? leftOf(node) : 0, top: node ? topOf(node) : 0, viewX: view.x, viewY: view.y };
-    document?.addEventListener?.("pointermove", moveDrag);
-    document?.addEventListener?.("pointerup", onDragEnd);
-    document?.addEventListener?.("pointercancel", onDragEnd);
+    drag = { pointerId: event.pointerId, pointerType: event.pointerType, x: event.clientX, y: event.clientY, node, left: node ? leftOf(node) : 0, top: node ? topOf(node) : 0, viewX: view.x, viewY: view.y };
+    syncInteractionListeners();
   }
-  const onDragEnd = (event) => endDrag(event);
   const onBackgroundDown = (event) => {
-    if (event.target === viewport || event.target === graph || event.target === svg) beginDrag(event);
+    const consumed = trackTouchDown(event);
+    if (!consumed && (event.target === viewport || event.target === graph || event.target === svg)) beginDrag(event);
   };
 
   function mount() {
@@ -234,7 +342,12 @@ export function createNodeCanvas({ document, viewport, graph, svg, wire, nodeMap
     for (const [id, card] of nodeMap) {
       const header = card.querySelector?.("h3") || card.children?.find?.((child) => child.tagName === "H3");
       if (!header) continue;
-      const onHeaderDown = (event) => { event.stopPropagation?.(); beginDrag(event, card); };
+      const onHeaderDown = (event) => {
+        const interactive = event.target?.closest?.(INTERACTIVE_TOUCH_SELECTOR);
+        const consumed = trackTouchDown(event);
+        event.stopPropagation?.();
+        if (!consumed && !interactive) beginDrag(event, card);
+      };
       header.addEventListener("pointerdown", onHeaderDown);
       headers.push([header, onHeaderDown]);
     }
@@ -259,6 +372,10 @@ export function createNodeCanvas({ document, viewport, graph, svg, wire, nodeMap
     if (!mounted) return;
     mounted = false;
     endDrag(undefined, true);
+    touches.clear();
+    pinch = null;
+    touchSequencePinched = false;
+    syncInteractionListeners();
     observer?.disconnect();
     observer = null;
     viewport.removeEventListener("pointerdown", onBackgroundDown);

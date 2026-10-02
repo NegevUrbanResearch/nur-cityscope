@@ -226,7 +226,13 @@ class GeneralConsumer(AsyncWebsocketConsumer):
         message_type = data.get('type')
         table_name = data.get('table', 'otef')
 
-        if message_type == 'otef_viewport_control':
+        if message_type == 'otef_projection_trace':
+            # Diagnostics are validated and ACKed to this socket only. Keep them
+            # outside all state, calibration, and room-broadcast paths.
+            from .projection_trace import handle_projection_trace
+            await handle_projection_trace(self, data)
+
+        elif message_type == 'otef_viewport_control':
             # Pan/zoom command - either execute server-side or forward to GIS
             action = data.get('action')
 

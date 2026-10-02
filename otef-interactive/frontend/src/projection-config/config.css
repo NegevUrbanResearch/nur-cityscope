@@ -8,6 +8,8 @@ body { margin: 0; min-width: 320px; background: #0c1016; overflow-x: hidden; }
 .config-subtitle { display: none; }
 .config-command-bar { position: relative; z-index: 30; display: grid; grid-template-rows: 64px 48px; gap: 4px; min-width: 0; padding: 4px 8px; background: var(--config-surface); border-bottom: 1px solid var(--config-divider); }
 .config-command-bar:has(.config-alerts:not([hidden])) { grid-template-rows: 64px 48px auto; }
+.config-command-bar:has(> .projection-trace-status) { grid-template-rows: 64px 48px auto; }
+.config-command-bar:has(> .projection-trace-status):has(.config-alerts:not([hidden])) { grid-template-rows: 64px 48px auto auto; }
 .config-primary-row { display: grid; grid-template-columns: 160px minmax(180px, 240px) minmax(0, 1fr) 52px 104px 64px; align-items: start; gap: 4px; min-width: 0; }
 .config-primary-row > *, .config-preset-group, .compact-live, .config-save-column, .config-tools { min-width: 0; }
 .config-preset-group { display: grid; grid-template-rows: 48px 16px; min-width: 0; }
@@ -121,7 +123,7 @@ h2, h3 { margin: 0 0 10px; }
 .warp-view-controls { display: flex; align-items: center; gap: 6px; }
 .warp-view-command-group, .warp-history-command-group { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 4px; }
 .warp-pan-toggle[aria-pressed="true"] { outline: 2px solid currentColor; outline-offset: 1px; }
-.warp-editor-message { margin-right: auto; color: var(--config-muted); font-size: 13px; line-height: 18px; overflow-wrap: anywhere; }
+.warp-editor-message { flex: 1 1 100%; min-width: 0; height: 36px; min-height: 36px; max-height: 36px; margin-right: auto; overflow-x: hidden; overflow-y: auto; color: var(--config-muted); font-size: 13px; line-height: 18px; overflow-wrap: anywhere; }
 .warp-editor-body { display: grid; grid-template-columns: minmax(0, 1fr); min-height: 0; gap: 8px; }
 .warp-editor-body:has(.warp-editor-fine-panel:not([hidden])) { grid-template-columns: minmax(0, 1fr) 320px; gap: 12px; }
 .warp-editor-viewport { position: relative; min-height: 0; min-width: 0; overflow: hidden; border-radius: 12px; background: var(--config-canvas); }

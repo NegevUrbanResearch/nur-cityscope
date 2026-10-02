@@ -49,6 +49,7 @@ function fakeElement(width = 330, height = 300) {
     addEventListener(type, handler) { this.listeners.set(type, handler); },
     removeEventListener(type) { this.listeners.delete(type); },
     setAttribute(name, value) { this.attributes[name] = String(value); },
+    closest() { return this.excluded ? this : null; },
     querySelector() { return this.header; },
     emit(type, event = {}) { this.listeners.get(type)?.({ target: this, button: 0, clientX: 0, clientY: 0, stopPropagation() {}, preventDefault() {}, ...event }); },
   };
@@ -96,6 +97,12 @@ test("mounted cards produce pixel wires; drag moves ports and dispose removes li
   const expectedX = viewport.clientWidth / 2 - rightFit.offsetLeft - rightFit.offsetWidth / 2;
   const expectedY = viewport.clientHeight / 2 - rightFit.offsetTop - rightFit.offsetHeight / 2;
   expect(graph.style.transform).toBe(`translate(${expectedX}px, ${expectedY}px) scale(1)`);
+  controls.zoomIn.emit("click");
+  expect(readTransform(graph).scale).toBeCloseTo(1.2);
+  controls.zoomOut.emit("click");
+  expect(readTransform(graph).scale).toBeCloseTo(1);
+  controls.zoomReset.emit("click");
+  expect(readTransform(graph).scale).toBeLessThanOrEqual(1);
   canvas.dispose();
   expect(viewport.listeners.size).toBe(0);
   expect(nodeMap.get("pre").header.listeners.size).toBe(0);
@@ -110,7 +117,7 @@ test("clock settings nodes occupy a separate column without calibration connecto
   expect(positions["clock-projection"].y).toBeGreaterThan(positions["clock-gis"].y);
 });
 
-test("a graph drag remains owned by its initiating pointer until that pointer ends or cancels", () => {
+test("a second eligible touch transfers a node drag to canvas navigation", () => {
   const document = fakeElement();
   const viewport = fakeElement(900, 560);
   viewport.clientWidth = 900; viewport.clientHeight = 560;
@@ -127,25 +134,143 @@ test("a graph drag remains owned by its initiating pointer until that pointer en
   expect(pre.offsetLeft).toBe(initialX);
   document.emit("pointerup", { pointerId: 22, pointerType: "touch", isPrimary: false });
   pre.header.emit("pointerdown", { pointerId: 11, pointerType: "touch", isPrimary: true, clientX: 100, clientY: 100 });
-  pre.header.emit("pointerdown", { pointerId: 22, pointerType: "touch", isPrimary: false, clientX: 500, clientY: 100 });
-  document.emit("pointermove", { pointerId: 22, clientX: 800, clientY: 100 });
-  document.emit("pointerup", { pointerId: 22 });
-  expect(pre.offsetLeft).toBe(initialX);
   document.emit("pointermove", { pointerId: 11, pointerType: "touch", isPrimary: true, clientX: 130, clientY: 100 });
   expect(pre.offsetLeft).toBe(initialX + 30 / 0.8);
-  document.emit("pointercancel", { pointerId: 22 });
+  pre.header.emit("pointerdown", { pointerId: 22, pointerType: "touch", isPrimary: false, clientX: 500, clientY: 100 });
   document.emit("pointermove", { pointerId: 11, pointerType: "touch", isPrimary: true, clientX: 150, clientY: 100 });
-  expect(pre.offsetLeft).toBe(initialX + 50 / 0.8);
-  document.emit("pointercancel", { pointerId: 11, pointerType: "touch", isPrimary: true });
+  expect(pre.offsetLeft).toBe(initialX + 30 / 0.8);
+  document.emit("pointerup", { pointerId: 22, pointerType: "touch" });
   document.emit("pointermove", { pointerId: 11, pointerType: "touch", isPrimary: true, clientX: 180, clientY: 100 });
-  expect(pre.offsetLeft).toBe(initialX + 50 / 0.8);
+  expect(pre.offsetLeft).toBe(initialX + 30 / 0.8);
+  document.emit("pointercancel", { pointerId: 11, pointerType: "touch" });
+  document.emit("pointermove", { pointerId: 11, pointerType: "touch", isPrimary: true, clientX: 180, clientY: 100 });
+  expect(pre.offsetLeft).toBe(initialX + 30 / 0.8);
   pre.header.emit("pointerdown", { pointerId: 33, clientX: 0, clientY: 0 });
   document.emit("pointermove", { pointerId: 33, clientX: 10, clientY: 0 });
-  expect(pre.offsetLeft).toBe(initialX + 60 / 0.8);
+  expect(pre.offsetLeft).toBeGreaterThan(initialX + 30 / 0.8);
   expect(document.listeners.has("pointermove")).toBe(true);
   canvas.dispose();
   expect(document.listeners.has("pointermove")).toBe(false);
   expect(document.listeners.has("pointerup")).toBe(false);
+});
+
+function makeTouchCanvas() {
+  const document = fakeElement();
+  const viewport = fakeElement(900, 560);
+  viewport.clientWidth = 900; viewport.clientHeight = 560;
+  viewport.getBoundingClientRect = () => ({ left: 40, top: 20 });
+  const graph = fakeElement(); const svg = fakeElement(); const wire = fakeElement();
+  const controls = { zoomIn: fakeElement(), zoomOut: fakeElement(), zoomReset: fakeElement(), zoomOne: fakeElement() };
+  const nodeMap = new Map(ids.map((id) => { const card = fakeElement(330); card.header = fakeElement(); return [id, card]; }));
+  const canvas = createNodeCanvas({ document, viewport, graph, svg, wire, nodeMap, controls });
+  canvas.mount();
+  return { document, viewport, graph, controls, nodeMap, canvas };
+}
+
+function readTransform(graph) {
+  const [, x, y, scale] = graph.style.transform.match(/translate\(([-\d.]+)px, ([-\d.]+)px\) scale\(([-\d.]+)\)/);
+  return { x: Number(x), y: Number(y), scale: Number(scale) };
+}
+
+test("two eligible touches pinch around their moving centroid, including a nonprimary second touch", () => {
+  const { document, viewport, graph, nodeMap, canvas } = makeTouchCanvas();
+  const initial = readTransform(graph);
+  viewport.emit("pointerdown", { pointerId: 41, pointerType: "touch", isPrimary: true, clientX: 140, clientY: 120 });
+  viewport.emit("pointerdown", { target: nodeMap.get("content"), pointerId: 42, pointerType: "touch", isPrimary: false, clientX: 340, clientY: 120 });
+  document.emit("pointermove", { pointerId: 41, pointerType: "touch", clientX: 160, clientY: 140 });
+  document.emit("pointermove", { pointerId: 42, pointerType: "touch", clientX: 400, clientY: 140 });
+  const after = readTransform(graph);
+  const centroid = { x: 280 - 40, y: 140 - 20 };
+  const beforeCentroid = { x: 240 - 40, y: 120 - 20 };
+  expect(after.scale).toBeCloseTo(initial.scale * 1.2);
+  expect((beforeCentroid.x - initial.x) / initial.scale).toBeCloseTo((centroid.x - after.x) / after.scale);
+  expect((beforeCentroid.y - initial.y) / initial.scale).toBeCloseTo((centroid.y - after.y) / after.scale);
+  canvas.dispose();
+});
+
+test("a second touch converts a header drag to canvas pinch and the leftover finger cannot resume node drag", () => {
+  const { document, viewport, graph, nodeMap, canvas } = makeTouchCanvas();
+  const pre = nodeMap.get("pre");
+  const initialLeft = pre.offsetLeft;
+  pre.header.emit("pointerdown", { pointerId: 51, pointerType: "touch", isPrimary: true, clientX: 140, clientY: 120 });
+  document.emit("pointermove", { pointerId: 51, pointerType: "touch", clientX: 150, clientY: 120 });
+  expect(pre.offsetLeft).toBe(initialLeft + 10 / 0.8);
+  viewport.emit("pointerdown", { pointerId: 52, pointerType: "touch", isPrimary: false, clientX: 350, clientY: 120 });
+  const afterPinchStart = graph.style.transform;
+  document.emit("pointermove", { pointerId: 51, pointerType: "touch", clientX: 170, clientY: 120 });
+  expect(pre.offsetLeft).toBe(initialLeft + 10 / 0.8);
+  document.emit("pointerup", { pointerId: 52, pointerType: "touch" });
+  document.emit("pointermove", { pointerId: 51, pointerType: "touch", clientX: 220, clientY: 120 });
+  expect(pre.offsetLeft).toBe(initialLeft + 10 / 0.8);
+  expect(graph.style.transform).not.toBe(afterPinchStart);
+  canvas.dispose();
+});
+
+test("pinch clamps at both scale limits, ignores a third touch, reverses, and uses pointerup coordinates", () => {
+  const { document, viewport, graph, canvas } = makeTouchCanvas();
+  viewport.emit("pointerdown", { pointerId: 55, pointerType: "touch", isPrimary: true, clientX: 140, clientY: 120 });
+  viewport.emit("pointerdown", { pointerId: 56, pointerType: "touch", isPrimary: false, clientX: 340, clientY: 120 });
+  viewport.emit("pointerdown", { pointerId: 57, pointerType: "touch", isPrimary: false, clientX: 440, clientY: 120 });
+  document.emit("pointermove", { pointerId: 56, pointerType: "touch", clientX: 940, clientY: 120 });
+  expect(readTransform(graph).scale).toBe(2);
+  document.emit("pointermove", { pointerId: 57, pointerType: "touch", clientX: 20, clientY: 400 });
+  expect(readTransform(graph).scale).toBe(2);
+  document.emit("pointermove", { pointerId: 56, pointerType: "touch", clientX: 141, clientY: 120 });
+  expect(readTransform(graph).scale).toBe(0.18);
+  document.emit("pointermove", { pointerId: 56, pointerType: "touch", clientX: 540, clientY: 120 });
+  expect(readTransform(graph).scale).toBeCloseTo(1.6);
+  document.emit("pointerup", { type: "pointerup", pointerId: 56, pointerType: "touch", clientX: 340, clientY: 120 });
+  expect(readTransform(graph).scale).toBeCloseTo(0.8);
+  document.emit("lostpointercapture", { pointerId: 55, pointerType: "touch" });
+  document.emit("pointercancel", { pointerId: 57, pointerType: "touch" });
+  expect(document.listeners.has("pointermove")).toBe(false);
+  canvas.dispose();
+});
+
+test("zero-distance touches do not create an invalid pinch transform", () => {
+  const { document, viewport, graph, canvas } = makeTouchCanvas();
+  const initial = graph.style.transform;
+  viewport.emit("pointerdown", { pointerId: 58, pointerType: "touch", isPrimary: true, clientX: 140, clientY: 120 });
+  viewport.emit("pointerdown", { pointerId: 59, pointerType: "touch", isPrimary: false, clientX: 140, clientY: 120 });
+  document.emit("pointermove", { pointerId: 59, pointerType: "touch", clientX: 240, clientY: 120 });
+  expect(graph.style.transform).toBe(initial);
+  document.emit("pointercancel", { pointerId: 58, pointerType: "touch" });
+  document.emit("pointercancel", { pointerId: 59, pointerType: "touch" });
+  canvas.dispose();
+});
+
+test("touch cancellation, excluded controls, blur, and dispose clean up gesture listeners", () => {
+  const { document, viewport, graph, controls, nodeMap, canvas } = makeTouchCanvas();
+  const control = fakeElement(); control.excluded = true;
+  const pre = nodeMap.get("pre");
+  const initialLeft = pre.offsetLeft;
+  pre.header.emit("pointerdown", { target: control, pointerId: 60, pointerType: "touch", isPrimary: true, clientX: 100, clientY: 100 });
+  document.emit("pointermove", { pointerId: 60, pointerType: "touch", clientX: 160, clientY: 100 });
+  expect(pre.offsetLeft).toBe(initialLeft);
+  viewport.emit("pointerdown", { target: control, pointerId: 61, pointerType: "touch", isPrimary: true, clientX: 100, clientY: 100 });
+  viewport.emit("pointerdown", { pointerId: 62, pointerType: "touch", isPrimary: true, clientX: 200, clientY: 100 });
+  document.emit("pointercancel", { pointerId: 62, pointerType: "touch" });
+  document.emit("pointercancel", { pointerId: 61, pointerType: "touch" });
+  expect(document.listeners.has("pointermove")).toBe(false);
+  const labelTarget = fakeElement();
+  labelTarget.closest = (selector) => selector.split(",").some((part) => part.trim() === "label") ? labelTarget : null;
+  const beforeLabelTouch = graph.style.transform;
+  viewport.emit("pointerdown", { target: labelTarget, pointerId: 65, pointerType: "touch", isPrimary: true, clientX: 100, clientY: 100 });
+  viewport.emit("pointerdown", { target: nodeMap.get("content"), pointerId: 66, pointerType: "touch", isPrimary: false, clientX: 200, clientY: 100 });
+  document.emit("pointermove", { pointerId: 66, pointerType: "touch", clientX: 300, clientY: 100 });
+  document.emit("pointercancel", { pointerId: 65, pointerType: "touch" });
+  document.emit("pointercancel", { pointerId: 66, pointerType: "touch" });
+  expect(graph.style.transform).toBe(beforeLabelTouch);
+  viewport.emit("pointerdown", { pointerId: 63, pointerType: "touch", isPrimary: true, clientX: 100, clientY: 100 });
+  document.emit("blur");
+  expect(document.listeners.has("pointermove")).toBe(false);
+  document.visibilityState = "hidden";
+  viewport.emit("pointerdown", { pointerId: 64, pointerType: "touch", isPrimary: true, clientX: 100, clientY: 100 });
+  document.emit("visibilitychange");
+  expect(document.listeners.has("pointermove")).toBe(false);
+  canvas.dispose();
+  expect(viewport.listeners.size).toBe(0);
+  expect(controls.zoomIn.listeners.size).toBe(0);
 });
 
 test("focusNodes frames the union of existing target nodes and ignores missing IDs", () => {

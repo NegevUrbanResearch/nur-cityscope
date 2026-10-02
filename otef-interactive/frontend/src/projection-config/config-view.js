@@ -8,6 +8,8 @@ import { createSettlementNameControls } from "./settlement-name-controls.js";
 import { createParameterEditorDialog } from "./parameter-editor-dialog.js";
 import { createParameterEditorPreviews } from "./parameter-editor-previews.js";
 import { displayValue, renderField } from "./config-field-control.js";
+import { createProjectionTraceUi } from './projection-trace-ui.js';
+import { bindProjectionTraceInput, bindProjectionTracePage, recordProjectionTrace, projectionTraceTime } from './projection-trace-input.js';
 
 const docFor = (root) => root?.ownerDocument || globalThis.document;
 const WARP_OUTPUT_WIDTH = 1920;
@@ -81,6 +83,7 @@ export function createProjectionConfigView(root, {
   onClockRecovery = () => {},
   onWarpAction = () => {},
   onWarpPointer = () => {},
+  trace,
 } = {}) {
   const doc = docFor(root);
   if (!root || !doc?.createElement) throw new Error("projection config root is required");
@@ -94,6 +97,8 @@ export function createProjectionConfigView(root, {
   let selectedGraphNode = "pre";
   const app = make(doc, "div", { className: "config-shell" });
   const commandBar = make(doc, "header", { className: "config-command-bar", ariaLabel: "Projection calibration commands" });
+  const traceUi = trace?.enabled ? createProjectionTraceUi({ document: doc, trace }) : null;
+  const disposePageTrace = bindProjectionTracePage({ document: doc, trace });
   const toolbar = make(doc, "section", { className: "config-primary-row", ariaLabel: "Calibration actions" });
   const heading = make(doc, "div", { className: "config-header", ariaLabel: "Projection calibration" });
   heading.append(make(doc, "span", {}, "Projection"));
@@ -263,6 +268,7 @@ export function createProjectionConfigView(root, {
   updateOutputPlacement();
   toolbar.append(heading, presetGroup, liveControl, saveColumn, controls.tools);
   commandBar.append(toolbar, actionRow, status);
+  if (traceUi) commandBar.appendChild(traceUi.element);
   app.append(commandBar);
   const nodeMap = new Map();
   const patternControls = new Map();
@@ -427,8 +433,10 @@ export function createProjectionConfigView(root, {
     dialog.setViewBox(effectiveWarpViewBox);
     updateWarpMarkerRadii();
   };
+  let latestWarpRect = null;
   function updateWarpMarkerRadii() {
     const rect = controls.warpSurface.getBoundingClientRect?.() || { width: WARP_OUTPUT_WIDTH, height: WARP_OUTPUT_HEIGHT };
+    latestWarpRect = rect;
     if (!rect.width || !rect.height) return;
     const viewBox = effectiveWarpViewBox || warpViewBox;
     controls.warpSurface.querySelectorAll?.(".warp-handle").forEach((circle) => {
@@ -526,16 +534,17 @@ export function createProjectionConfigView(root, {
   app.appendChild(controls.editorHome);
   app.appendChild(workspace);
   root.appendChild(app);
-  const dialog = createWarpEditorDialog({ document: doc, host: root, editorPanel: controls.warpPanel, overlay: controls.warpSurface, navigationControls,
-    onBeforeClose: cancelActiveDrag,
-    onBeforeSwitch: cancelActiveDrag,
-    onBeforeResize: cancelActiveDrag,
+  const dialog = createWarpEditorDialog({ document: doc, host: root, editorPanel: controls.warpPanel, overlay: controls.warpSurface, navigationControls, trace,
+    onBeforeClose: () => cancelActiveDrag({ reason: 'close' }),
+    onBeforeSwitch: () => cancelActiveDrag({ reason: 'switch' }),
+    onBeforeResize: () => cancelActiveDrag({ reason: 'resize' }),
     onViewportChange: updateWarpMarkerRadii,
-    onOrientationChange: cancelActiveDrag,
+    onOrientationChange: () => cancelActiveDrag({ reason: 'orientationchange' }),
     onApply: () => onAction("apply"), onLive: (live) => onAction("live", live) });
   parameterDialog = createParameterEditorDialog({ document: doc, host: root, onField, onNudge,
     createPreview: (previewHost, onStatus) => createParameterEditorPreviews({ document: doc, host: previewHost, onStatus }) });
   pointerInput = bindWarpPointerInput({
+    trace,
     surface: controls.warpSurface,
     readGeometry: () => dialog.isOpen() ? { rect: controls.warpSurface.getBoundingClientRect?.() || { left: 0, top: 0, width: 1920, height: 1080 }, viewBox: effectiveWarpViewBox || warpViewBox, baseViewBox: warpViewBox, panMode: warpPanMode, handles: currentHandles, selection: currentSelection, mode: selectedGraphNode.endsWith("-grid") ? "grid" : "keystone", side: selectedGraphNode.startsWith("right-") ? "right" : "left" } : null,
     onNavigate: ({ viewBox }) => applyViewBox(viewBox),
@@ -545,7 +554,9 @@ export function createProjectionConfigView(root, {
     onEnd: (point) => onWarpPointer("end", point),
     onCancel: (point) => onWarpPointer("cancel", point),
   });
-  const canvas = createNodeCanvas({ document: doc, viewport: graphViewport, graph, svg, wire: wirePath, nodeMap, controls: { zoomIn, zoomOut, zoomReset, zoomOne } });
+  const disposeWarpTrace = bindProjectionTraceInput({ surface: controls.warpSurface, surfaceName: 'warp', trace, readGeometry: () => ({ viewBox: effectiveWarpViewBox || warpViewBox, selection: currentSelection, mode: selectedGraphNode.endsWith('-grid') ? 'grid' : 'keystone', side: selectedGraphNode.startsWith('right-') ? 'right' : 'left' }) });
+  const disposeGraphTrace = bindProjectionTraceInput({ surface: graphViewport, surfaceName: 'graph', trace });
+  const canvas = createNodeCanvas({ document: doc, viewport: graphViewport, graph, svg, wire: wirePath, nodeMap, controls: { zoomIn, zoomOut, zoomReset, zoomOne }, trace });
   canvas.mount();
 
   const setNode = (node) => {
@@ -560,6 +571,8 @@ export function createProjectionConfigView(root, {
     const warpState = warpStates?.[output];
     controls.warpPanel.hidden = !isWarpNode || !warpState;
     if (!warpState || !isWarpNode) return;
+    const traceStarted = projectionTraceTime(trace);
+    recordProjectionTrace(trace, 'redraw', { surface: 'warp', phase: 'start', output, dragging: Boolean(warpState.dragging) });
     const mode = node.endsWith("-grid") ? "grid" : "keystone";
     const target = `${output}:${mode}`;
     const targetChanged = target !== warpViewTarget;
@@ -622,6 +635,10 @@ export function createProjectionConfigView(root, {
     if (focusedHandleIndex !== null) controls.warpSurface.querySelector?.(`.warp-handle[data-index="${focusedHandleIndex}"]`)?.focus?.();
     dialog.setViewBox(displayViewBox);
     updateWarpMarkerRadii();
+    if (trace?.enabled) {
+      const rect = latestWarpRect || { left: 0, top: 0, width: 0, height: 0 };
+      recordProjectionTrace(trace, 'redraw', { surface: 'warp', phase: 'end', output, mode, columns, rows, baselineType: warp?.baseline?.type || 'unknown', durationMs: projectionTraceTime(trace) - traceStarted, rectX: rect.left ?? 0, rectY: rect.top ?? 0, rectWidth: rect.width, rectHeight: rect.height, viewX: displayViewBox.x, viewY: displayViewBox.y, viewWidth: displayViewBox.width, viewHeight: displayViewBox.height });
+    }
   };
   const update = ({ state = {}, errors = {}, conflict = "", statusText = "", draftDiffersFromAccepted = false, savePending = false, selectedNode = "pre", loadedPresetId = null, loadedPresetLoadToken = 0, statusRows = [], appliedSummary = 'Pending', outputState = {}, warpStates = {}, activePattern = { pattern: "off" }, namesWallStatus = null, namesRunDisabledReason = "", clockScene = "home", clockElement = "clock", clockLayouts = {}, clockHydration = { status: "Loading" }, settlement = null } = {}) => {
     if (state.draft) currentDraft = state.draft;
@@ -777,7 +794,7 @@ export function createProjectionConfigView(root, {
     cancelWarpPointer: cancelActiveDrag,
     closeWarpEditor: dialog.close,
     sendRunNamesPreview: (config) => dialog.sendRunNamesPreview(config),
-    dispose() { outputPlacementQuery?.removeEventListener?.("change", updateOutputPlacement); doc.removeEventListener?.("keydown", onKeyDown); doc.removeEventListener?.("keydown", dismissDisclosures); doc.removeEventListener?.("pointerdown", dismissDisclosures, true); parameterDialog.dispose(); dialog.dispose(); pointerInput.dispose(); canvas.dispose(); },
+    dispose() { disposePageTrace(); disposeWarpTrace(); disposeGraphTrace(); traceUi?.dispose(); outputPlacementQuery?.removeEventListener?.("change", updateOutputPlacement); doc.removeEventListener?.("keydown", onKeyDown); doc.removeEventListener?.("keydown", dismissDisclosures); doc.removeEventListener?.("pointerdown", dismissDisclosures, true); parameterDialog.dispose(); dialog.dispose(); pointerInput.dispose(); canvas.dispose(); },
   };
 }
 
