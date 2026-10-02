@@ -57,14 +57,15 @@ function setup(
     flyTo: vi.fn(),
   });
   const bubble = popup();
+  const Popup = vi.fn(function Popup() { return bubble; });
   const visual = createGisPersonSelection({
     map,
-    maplibregl: { Popup: vi.fn(function Popup() { return bubble; }) },
+    maplibregl: { Popup },
     fetchJson,
     hashBytes,
     ...extra,
   });
-  return { map, bubble, visual, fetchJson, hashBytes };
+  return { map, bubble, visual, fetchJson, hashBytes, Popup };
 }
 
 describe("GIS person selection visual", () => {
@@ -75,10 +76,36 @@ describe("GIS person selection visual", () => {
     expect(PEOPLE_RELEASE_METADATA_URL).toBe(`${base}release-metadata.json`);
   });
 
-  test("applies the selection text-size token to each bounded bubble line", () => {
+  test("styles the name plaque as a slide citation, not a white UI card", () => {
     const css = readFileSync(new URL("../../frontend/css/styles.css", import.meta.url), "utf8");
-    expect(css).toMatch(/\.gis-person-bubble__name,\s*\.gis-person-bubble__location\s*\{[\s\S]*font-size:\s*var\(--gis-person-selection-text-size\)/);
-    expect(css).toMatch(/--gis-person-selection-color:\s*#d4d4d4/);
+    expect(css).toMatch(/\.gis-person-bubble-popup\s*\{[^}]*--gis-person-selection-paper:\s*#fffbf8/);
+    expect(css).toMatch(/\.gis-person-bubble-popup\s*\{[^}]*--gis-person-selection-band:\s*#e6ddd2/);
+    expect(css).toMatch(/\.gis-person-bubble-popup\s*\{[^}]*--gis-person-selection-hairline:\s*#c9bfb2/);
+    expect(css).toMatch(/\.gis-person-bubble-popup\s*\{[^}]*--gis-person-selection-text-size:\s*24px/);
+    expect(css).toMatch(/\.gis-person-bubble-popup\s+\.maplibregl-popup-content\s*\{[^}]*background:\s*var\(--gis-person-selection-paper\)/);
+    expect(css).toMatch(/\.gis-person-bubble-popup\s+\.maplibregl-popup-content\s*\{[^}]*min-width:\s*0/);
+    expect(css).toMatch(/\.gis-person-bubble-popup\s+\.maplibregl-popup-content\s*\{[^}]*border-radius:\s*0/);
+    expect(css).toMatch(/\.gis-person-bubble-popup\s+\.maplibregl-popup-content\s*\{[^}]*box-shadow:\s*none/);
+    expect(css).toMatch(/\.gis-person-bubble-popup\s+\.maplibregl-popup-content\s*\{[^}]*padding:\s*0/);
+    expect(css).toMatch(/\.gis-person-bubble-popup\.maplibregl-popup-anchor-bottom[\s\S]{0,220}?\{[^}]*border-top-color:\s*var\(--gis-person-selection-paper\)/);
+    expect(css).toMatch(/\.gis-person-bubble::before\s*\{[^}]*background:\s*var\(--gis-person-selection-band\)/);
+    expect(css).toMatch(/\.gis-person-bubble__name\s*\{[^}]*font-family:\s*"Hadassah Friedlaender"/);
+    expect(css).toMatch(/\.gis-person-bubble__name\s*\{[^}]*font-weight:\s*400/);
+    expect(css).toMatch(/\.gis-person-bubble__name\s*\{[^}]*font-synthesis:\s*none/);
+    expect(css).toMatch(/\.gis-person-bubble__name\s*\{[^}]*-webkit-line-clamp:\s*2/);
+    expect(css).not.toMatch(/\.gis-person-bubble-popup--link\s+\.gis-person-bubble__name\s*\{[^}]*text-decoration:\s*underline/);
+    expect(css).not.toMatch(/\.gis-person-bubble__location/);
+    expect(css).not.toMatch(/\.gis-person-bubble__name\s*\{[^}]*font-weight:\s*700/);
+  });
+
+  test("builds a close-button-free popup that can shrink around a short name", () => {
+    const d = setup();
+    expect(d.Popup).toHaveBeenCalledWith(expect.objectContaining({
+      className: "gis-person-bubble-popup",
+      closeButton: false,
+      closeOnClick: false,
+      maxWidth: "280px",
+    }));
   });
 
   test("normalizes exact PIDs and versions, and rejects malformed or duplicate runtime data", () => {
@@ -117,7 +144,7 @@ describe("GIS person selection visual", () => {
     await expect(d.visual.load()).rejects.toThrow(/hash|bytes/i);
   });
 
-  test("show dims other people without a halo overlay and escaped name/location popup", async () => {
+  test("show dims other people without a halo overlay and escaped name-only popup", async () => {
     const d = setup();
     d.map.addLayer({ id: "nli__people__circle", type: "circle", source: "nli.people" });
     d.map.setPaintProperty("nli__people__circle", "circle-opacity", 1);
@@ -127,8 +154,10 @@ describe("GIS person selection visual", () => {
     expect(d.map.getSource(PEOPLE_SOURCE_ID)).toBeNull();
     expect(d.map.getPaintProperty("nli__people__circle", "circle-opacity")[0]).toBe("case");
     expect(d.bubble.setHTML.mock.calls[0][0]).toContain("&lt;Ada&gt;");
-    expect(d.bubble.setHTML.mock.calls[0][0]).toContain("Alumim");
-    expect(d.bubble.setHTML.mock.calls[0][0].match(/dir="auto"/g)).toHaveLength(3);
+    expect(d.bubble.setHTML.mock.calls[0][0]).toContain('class="gis-person-bubble__name"');
+    expect(d.bubble.setHTML.mock.calls[0][0]).not.toContain("Alumim");
+    expect(d.bubble.setHTML.mock.calls[0][0]).not.toMatch(/gis-person-bubble__location/);
+    expect(d.bubble.setHTML.mock.calls[0][0].match(/dir="auto"/g)).toHaveLength(2);
     expect(d.bubble.setHTML.mock.calls[0][0]).not.toMatch(/nli_url|button|archive/i);
   });
 
@@ -142,6 +171,13 @@ describe("GIS person selection visual", () => {
     expect(d.map.getPaintProperty("nli__people__circle", "circle-opacity")[0]).toBe("case");
     d.visual.hide();
     expect(d.map.getPaintProperty("nli__people__circle", "circle-opacity")).toBe(1);
+  });
+
+  test("show does not mount a plaque when the person has no usable name", () => {
+    const d = setup();
+    d.visual.show({ pid: "11", coordinates: [30, 20], name: "   ", nliUrl: "https://www.nli.org.il/he/authorities/11" });
+    expect(d.bubble.setHTML).not.toHaveBeenCalled();
+    expect(d.bubble.addTo).not.toHaveBeenCalled();
   });
 
   test("clicking the bubble hands the person with an archive record to onBubbleClick", async () => {

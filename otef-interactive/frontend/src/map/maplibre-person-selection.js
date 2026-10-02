@@ -121,7 +121,7 @@ export function loadPeopleRuntime({ fetchJson: fetcher = fetchJson, hashBytes = 
 }
 
 const escapeHtml = (value) => clean(value).replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]));
-const popupMarkup = (person) => `<div class="gis-person-bubble" dir="auto">${person.name ? `<div class="gis-person-bubble__name" dir="auto">${escapeHtml(person.name)}</div>` : ""}${person.location ? `<div class="gis-person-bubble__location" dir="auto">${escapeHtml(person.location)}</div>` : ""}</div>`;
+const popupMarkup = (person) => `<div class="gis-person-bubble" dir="auto">${person.name ? `<div class="gis-person-bubble__name" dir="auto">${escapeHtml(person.name)}</div>` : ""}</div>`;
 const motionReduced = (value) => value === true || value === "reduced";
 
 function readCamera(map) {
@@ -169,7 +169,7 @@ export function syncPersonHaloPaint() {
 /** Own one reusable MapLibre halo and bubble. */
 export function createGisPersonSelection({ map, maplibregl, fetchJson: fetcher, hashBytes, peopleUrl, indexUrl, metadataUrl, beginCameraTravel, onBubbleClick } = {}) {
   let disposed = false; let current = null; let renderToken = 0; let cameraListener = null; let overviewCamera = null;
-  const popup = typeof maplibregl?.Popup === "function" ? new maplibregl.Popup({ className: "gis-person-bubble-popup", closeButton: false, closeOnClick: false, maxWidth: "240px", offset: 14 }) : null;
+  const popup = typeof maplibregl?.Popup === "function" ? new maplibregl.Popup({ className: "gis-person-bubble-popup", closeButton: false, closeOnClick: false, maxWidth: "280px", offset: 14 }) : null;
   const runtimePromise = loadPeopleRuntime({ fetchJson: fetcher, hashBytes, peopleUrl, indexUrl, metadataUrl });
   const removeVisual = () => {
     try { popup?.remove(); } catch {}
@@ -186,6 +186,7 @@ export function createGisPersonSelection({ map, maplibregl, fetchJson: fetcher, 
   };
   const showBubble = (person, token) => {
     if (disposed || token !== renderToken || current !== person || !popup) return;
+    if (!clean(person.name)) return;
     popup.setLngLat(person.coordinates).setHTML(popupMarkup(person)).addTo(map);
     const element = popup.getElement?.();
     if (!element) return;

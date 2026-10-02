@@ -343,38 +343,70 @@ body {
   }
 }
 
-.gis-person-bubble-popup .maplibregl-popup-content {
-  --gis-person-selection-color: #d4d4d4;
-  --gis-person-selection-halo: 2px;
-  --gis-person-selection-padding: 8px 10px;
-  --gis-person-selection-contrast: #171717;
-  --gis-person-selection-secondary-contrast: #4a2732;
-  --gis-person-selection-text-size: 13px;
-  border: var(--gis-person-selection-halo) solid var(--gis-person-selection-color);
-  border-radius: 7px;
-  background: #fff;
-  color: var(--gis-person-selection-contrast);
-  box-shadow: 0 2px 8px rgba(35, 18, 24, 0.2);
-  min-width: 120px;
-  max-width: 240px;
-  padding: var(--gis-person-selection-padding);
+.gis-person-bubble-popup {
+  --gis-person-selection-paper: #fffbf8;
+  --gis-person-selection-band: #e6ddd2;
+  --gis-person-selection-hairline: #c9bfb2;
+  --gis-person-selection-ink: #000;
+  --gis-person-selection-text-size: 24px;
 }
 
-.gis-person-bubble { direction: auto; line-height: 1.35; }
+.gis-person-bubble-popup .maplibregl-popup-content {
+  border: 1px solid var(--gis-person-selection-hairline);
+  border-radius: 0;
+  background: var(--gis-person-selection-paper);
+  color: var(--gis-person-selection-ink);
+  box-shadow: none;
+  min-width: 0;
+  max-width: 280px;
+  padding: 0;
+}
+
+.gis-person-bubble-popup.maplibregl-popup-anchor-bottom .maplibregl-popup-tip,
+.gis-person-bubble-popup.maplibregl-popup-anchor-bottom-left .maplibregl-popup-tip,
+.gis-person-bubble-popup.maplibregl-popup-anchor-bottom-right .maplibregl-popup-tip {
+  border-top-color: var(--gis-person-selection-paper);
+}
+
+.gis-person-bubble-popup.maplibregl-popup-anchor-top .maplibregl-popup-tip,
+.gis-person-bubble-popup.maplibregl-popup-anchor-top-left .maplibregl-popup-tip,
+.gis-person-bubble-popup.maplibregl-popup-anchor-top-right .maplibregl-popup-tip {
+  border-bottom-color: var(--gis-person-selection-paper);
+}
+
+.gis-person-bubble-popup.maplibregl-popup-anchor-left .maplibregl-popup-tip {
+  border-right-color: var(--gis-person-selection-paper);
+}
+
+.gis-person-bubble-popup.maplibregl-popup-anchor-right .maplibregl-popup-tip {
+  border-left-color: var(--gis-person-selection-paper);
+}
+
+.gis-person-bubble { direction: auto; }
+.gis-person-bubble::before {
+  content: "";
+  display: block;
+  height: 4px;
+  background: var(--gis-person-selection-band);
+  border-bottom: 1px solid var(--gis-person-selection-hairline);
+}
 .gis-person-bubble-popup--link { cursor: pointer; }
-.gis-person-bubble-popup--link .gis-person-bubble__name { text-decoration: underline; }
-.gis-person-bubble__name,
-.gis-person-bubble__location {
+.gis-person-bubble__name {
   display: -webkit-box;
+  padding: 8px 14px 9px;
+  color: var(--gis-person-selection-ink);
+  font-family: "Hadassah Friedlaender", serif;
   font-size: var(--gis-person-selection-text-size);
+  font-weight: 400;
+  font-synthesis: none;
+  line-height: 1.25;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 1;
+  -webkit-line-clamp: 2;
   overflow: hidden;
+  overflow-wrap: anywhere;
   text-overflow: ellipsis;
   white-space: normal;
 }
-.gis-person-bubble__name { font-weight: 700; }
-.gis-person-bubble__location { margin-top: 2px; color: var(--gis-person-selection-secondary-contrast); }
 
 /* Pink line curated layer: node markers (no numbers), tooltip on hover */
 .pink-line-node-marker {
@@ -630,6 +662,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
+  background: #fffbf8 url("../img/nli-slide-background.png") center / 100% 100% no-repeat;
 }
 .nli-blackout-copy {
   display: flex;
@@ -641,7 +674,7 @@ body {
 }
 .nli-blackout-title {
   margin: 0;
-  color: #f4f1ea;
+  color: #000;
   font-family: "Hadassah Friedlaender", serif;
   font-size: clamp(2.4rem, 6.6vw, 5.4rem);
   font-weight: 400;
@@ -649,7 +682,7 @@ body {
 }
 .nli-blackout-date {
   margin: 0;
-  color: #d8d2c8;
+  color: #333;
   font-family: "Narkiss Block", sans-serif;
   font-size: clamp(1rem, 3vw, 2.35rem);
   font-weight: 400;
