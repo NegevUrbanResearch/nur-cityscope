@@ -63,11 +63,10 @@ test("shared style controls explain both projectors and reject an out-of-range f
   expect(find(controls.element, (node) => node.className === "settlement-name-status").textContent).toBe("Changed on another screen");
 });
 
-test("settlement controls and the compact selector keep a 44px touch size", () => {
+test("settlement controls keep responsive touch sizing", () => {
   const css = readFileSync(new URL("../../frontend/src/projection-config/config.css", import.meta.url), "utf8");
   expect(css).toMatch(/\.settlement-name-dialog :is\(button, input, select\)[\s\S]*min-height:\s*44px/);
   expect(css).toMatch(/orientation:\s*portrait/);
   expect(css).toMatch(/@media \(max-width:\s*760px\)/);
-  expect(css).toMatch(/\.node-selector\s*\{\s*display:\s*block/);
   expect(css).toMatch(/aspect-ratio:\s*16\s*\/\s*9/);
 });

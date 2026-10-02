@@ -70,6 +70,7 @@ export function createNodeCanvas({ document, viewport, graph, svg, wire, nodeMap
   let drag = null;
   let framing = "initial";
   let selectedNode = "pre";
+  let focusedNodes = null;
   let mounted = false;
   let observer = null;
   const headers = [];
@@ -121,6 +122,7 @@ export function createNodeCanvas({ document, viewport, graph, svg, wire, nodeMap
     if (!(width > 0 && height > 0)) return;
     view = fitTransform(updateWires(), { width, height });
     framing = "fit";
+    focusedNodes = null;
     paint();
   }
 
@@ -133,7 +135,29 @@ export function createNodeCanvas({ document, viewport, graph, svg, wire, nodeMap
       scale,
     };
     framing = "focus";
+    focusedNodes = null;
     paint();
+  }
+
+  function focusNodes(ids) {
+    const targets = [...new Set(Array.isArray(ids) ? ids : [])].filter((id) => nodeMap.has(id));
+    if (!targets.length || !viewport.clientWidth || !viewport.clientHeight) return false;
+    const cards = targets.map((id) => nodeMap.get(id));
+    const left = Math.min(...cards.map(leftOf));
+    const top = Math.min(...cards.map(topOf));
+    const right = Math.max(...cards.map((card) => leftOf(card) + (card.offsetWidth || 280)));
+    const bottom = Math.max(...cards.map((card) => topOf(card) + (card.offsetHeight || 300)));
+    const bounds = { width: right - left, height: bottom - top };
+    const scale = Math.min(1, (viewport.clientWidth - PAD * 2) / bounds.width, (viewport.clientHeight - PAD * 2) / bounds.height);
+    view = {
+      x: viewport.clientWidth / 2 - (left + right) / 2 * scale,
+      y: viewport.clientHeight / 2 - (top + bottom) / 2 * scale,
+      scale,
+    };
+    focusedNodes = targets;
+    framing = "focus-group";
+    paint();
+    return true;
   }
 
   function frameOpening() {
@@ -223,6 +247,7 @@ export function createNodeCanvas({ document, viewport, graph, svg, wire, nodeMap
         if (framing === "initial") { layout(); frameOpening(); }
         else if (framing === "fit") { layout(); fit(); }
         else if (framing === "focus") { updateWires(); focusNode(selectedNode, view.scale); }
+        else if (framing === "focus-group") { updateWires(); focusNodes(focusedNodes || []); }
         else updateWires();
       });
       observer.observe(viewport);
@@ -246,5 +271,5 @@ export function createNodeCanvas({ document, viewport, graph, svg, wire, nodeMap
     controls.zoomOne.removeEventListener("click", zoomOne);
   }
 
-  return { mount, fit, updateWires, setSelected: (id) => { if (nodeMap.has(id)) selectedNode = id; }, dispose };
+  return { mount, fit, focusNodes, updateWires, setSelected: (id) => { if (nodeMap.has(id)) selectedNode = id; }, dispose };
 }

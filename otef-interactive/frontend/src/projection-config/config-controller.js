@@ -99,11 +99,14 @@ export function fineStepFor(descriptor) { return descriptor.fine; }
 
 function statusText(state, selectedPresetId) {
   if (state.hydrationError) return "Settings check failed";
-  if (state.hydrating) return "Checking settings";
+  if (state.hydrating) return "Connecting";
+  if (state.connected === false) return "Disconnected";
+  if (state.previewError) return "Failed";
+  if (state.pending) return "Applying changes";
   const selected = state.snapshot?.presets?.find((preset) => preset.id === selectedPresetId);
   const checkpoint = selected?.config || state.snapshot?.config;
   if (state.hasLocalDraft || (state.draft && state.snapshot && !equalProjectionConfig(state.draft, state.snapshot.config))) return "Local draft";
-  if (state.pending || !checkpoint || !state.snapshot || !equalProjectionConfig(state.snapshot.config, checkpoint)) return "Live changes";
+  if (!checkpoint || !state.snapshot || !equalProjectionConfig(state.snapshot.config, checkpoint)) return "Accepted · preset needs saving";
   return "Saved";
 }
 
@@ -135,7 +138,9 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
   let settlementCitycode = catalog.entries?.find((entry) => entry?.citycode)?.citycode || "";
   let activeSettlementEditor = null;
   let localDraftNotification = false;
-  let outputState = outputController?.getState?.() || { screens: [], assignments: { left: null, right: null }, error: "", message: "Workstation output controls unavailable." };
+  let pendingAction = null;
+  let actionSequence = 0;
+  let outputState = outputController?.getState?.() || { screens: [], assignments: { left: null, right: null }, supported: false, error: "", message: "Display management unavailable in this browser." };
   let statusRows = new Map();
   let expectedRevision = Number.isSafeInteger(state.snapshot?.revision) ? state.snapshot.revision : null;
   let reconnectStatusRevision = null;
@@ -227,8 +232,8 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
   function rowText(row) {
     const identity = row.instanceId ? ` · ${row.instanceId}` : "";
     const label = row.output[0].toUpperCase() + row.output.slice(1);
-    if (row.revision !== expectedRevision) return `${label} · Not confirmed${identity}`;
-    return row.success ? `${label} applied${identity}` : `${label} · ${row.error || "Not confirmed"}${identity}`;
+    const status = row.revision !== expectedRevision ? "Not confirmed" : row.success ? "Applied" : row.error || "Not confirmed";
+    return `${label} · revision ${row.revision} · ${status}${identity}`;
   }
   function refresh() {
     if (disposed) return;
@@ -237,8 +242,13 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     const warpStates = Object.fromEntries(["left", "right"].map((output) => [output, { ...warpEditors[output].getState(), config: warpEditors[output].getConfig(), handles: warpEditors[output].getControlPoints() }]));
     view.update({ state: { ...state, selectedPresetId }, errors: fieldErrors,
       conflict: conflict || state.migrationWarnings?.join(' ') || '',
-      statusText: statusText(state, loadedPresetId), selectedNode, loadedPresetId, loadedPresetLoadToken, statusRows: rows,
-      appliedSummary: projectionAppliedStatus(rows, expectedRevision), outputState, warpStates,
+      statusText: pendingAction
+        ? ({ save: "Saving preset", apply: "Applying changes", load: "Loading preset", revert: "Reverting settings" }[pendingAction.kind])
+        : conflict ? "Conflict" : fieldErrors.action || state.previewError ? "Failed" : statusText(state, loadedPresetId),
+      draftDiffersFromAccepted: Boolean(state.draft && state.snapshot?.config && !equalProjectionConfig(state.draft, state.snapshot.config)),
+      savePending: pendingAction?.kind === "save",
+      selectedNode, loadedPresetId, loadedPresetLoadToken, statusRows: rows,
+      appliedSummary: projectionAppliedStatus(rows, expectedRevision), outputState, warpStates, activePattern,
       namesWallStatus: namesRunPending && !namesTracker.getState().pending
         ? { ...namesTracker.getState(), state: "rebuilding", pending: true, detail: "Starting names run…" }
         : namesTracker.getState(), namesRunDisabledReason: runNamesDisabledReason(), clockScene: clockSceneId, clockElement,
@@ -422,7 +432,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     if (confirmationTimer !== null) clearTimeout(confirmationTimer);
     confirmationTimer = setTimeout(() => { confirmationTimer = null; showUnconfirmed = true; const nextRows = new Map(statusRows); if (![...nextRows.values()].some((row) => row.output === "left")) nextRows.set("left:pending", { output: "left", instanceId: "", revision: next, success: false }); if (![...nextRows.values()].some((row) => row.output === "right")) nextRows.set("right:pending", { output: "right", instanceId: "", revision: next, success: false }); statusRows = nextRows; refresh(); }, 5000);
   }
-  function handleState(nextState) {
+  function handleState(nextState, receipt) {
     nextState = normalizeState(nextState);
     const incomingCalibration = nextState.snapshot?.config;
     if (incomingCalibration && JSON.stringify(incomingCalibration) !== JSON.stringify(lastCalibrationConfig)) {
@@ -438,7 +448,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     const draftChanged = !equalProjectionConfig(previousDraft, nextState.draft);
     const nextSelected = nextState.snapshot?.selectedPresetId;
     const selectionChanged = nextSelected && nextSelected !== previousSelected;
-    const acceptedReplacement = !localDraftNotification && (firstHydration || (!nextState.hasLocalDraft && (draftChanged || selectionChanged)));
+    const acceptedReplacement = !localDraftNotification && receipt?.action !== "save" && (firstHydration || (!nextState.hasLocalDraft && (draftChanged || selectionChanged)));
     if (acceptedReplacement) view.cancelWarpPointer({ notify: false });
     state = nextState;
     const snapshotSelected = state.snapshot?.selectedPresetId;
@@ -450,7 +460,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     // Follow the server selection after the cached snapshot, while preserving
     // an explicit local dropdown choice.
     if (!selectedPresetId || (snapshotSelectionChanged && (!previousSelected || selectedPresetId === previousSelected))) selectedPresetId = snapshotSelected || "original";
-    if (!loadedPresetId || (snapshotSelectionChanged && (!previousSelected || loadedPresetId === previousSelected))) loadedPresetId = snapshotSelected || loadedPresetId;
+    if (!loadedPresetId || (!state.hasLocalDraft && snapshotSelectionChanged && (!previousSelected || loadedPresetId === previousSelected))) loadedPresetId = snapshotSelected || loadedPresetId;
     expectRevision(state);
     const targetUpdate = firstHydration || (Number.isSafeInteger(revision) && revision !== previousRevision)
       ? updateNamesTarget(!namesDatasetVersion)
@@ -558,20 +568,38 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
   }
   async function handleAction(action, value) {
     if (disposed) return;
+    let actionToken = null;
+    const runPending = async (kind, operation) => {
+      const promise = operation();
+      actionToken = ++actionSequence;
+      if (fieldErrors.action) { fieldErrors = { ...fieldErrors }; delete fieldErrors.action; }
+      pendingAction = { kind, token: actionToken };
+      refresh();
+      try { return await promise; }
+      finally {
+        if (pendingAction?.token === actionToken) { pendingAction = null; refresh(); }
+      }
+    };
+    const rebaseWarpHistory = () => {
+      const accepted = normalizeState(client.getState?.() || state);
+      if (!accepted.draft) return;
+      view.cancelWarpPointer({ notify: false });
+      for (const output of ["left", "right"]) warpEditors[output].setConfig(accepted.draft, { rebase: true });
+    };
     try {
       if (action === "live") await client.setLive(Boolean(value));
       if (action === "retry-hydration") await client.retryHydration();
-      if (action === "apply") await client.apply();
-      if (action === "save-new") { if (!String(value || "").trim()) { fieldErrors = { name: "Enter a preset name" }; refresh(); return; } await client.save({ presetId: null, name: String(value).trim() }); selectedPresetId = loadedPresetId = client.getState?.().snapshot?.selectedPresetId || selectedPresetId; }
-      if (action === "save") { const selected = state.snapshot?.presets?.find((preset) => preset.id === loadedPresetId); if (!selected || selected.readOnly || !String(value || "").trim()) { fieldErrors = { name: selected?.readOnly ? `${selected.name || "Selected preset"} is immutable` : "Enter a preset name" }; refresh(); return; } await client.save({ presetId: loadedPresetId, name: String(value).trim() }); selectedPresetId = loadedPresetId = client.getState?.().snapshot?.selectedPresetId || loadedPresetId; }
-      if (action === "load") { const requested = value; await client.load(requested); selectedPresetId = loadedPresetId = requested; loadedPresetLoadToken += 1; }
+      if (action === "apply") await runPending("apply", () => client.apply());
+      if (action === "save-new") { if (!String(value || "").trim()) { fieldErrors = { name: "Enter a preset name" }; refresh(); return; } const result = await runPending("save", () => client.save({ presetId: null, name: String(value).trim() })); if (actionToken === actionSequence && result?.savedPresetId) selectedPresetId = loadedPresetId = result.savedPresetId; }
+      if (action === "save") { const selected = state.snapshot?.presets?.find((preset) => preset.id === loadedPresetId); if (!selected || selected.readOnly || !String(value || "").trim()) { fieldErrors = { name: selected?.readOnly ? `${selected.name || "Selected preset"} is immutable` : "Enter a preset name" }; refresh(); return; } const result = await runPending("save", () => client.save({ presetId: loadedPresetId, name: String(value).trim() })); if (actionToken === actionSequence && result?.savedPresetId) selectedPresetId = loadedPresetId = result.savedPresetId; }
+      if (action === "load") { const requested = value; const result = await runPending("load", () => client.load(requested)); if (result?.draftReplaced) { selectedPresetId = loadedPresetId = requested; loadedPresetLoadToken += 1; rebaseWarpHistory(); } }
       if (action === "preset-select") { selectedPresetId = value; }
-      if (action === "revert") await client.revert();
+      if (action === "revert") { const result = await runPending("revert", () => client.revert()); if (result?.draftReplaced) rebaseWarpHistory(); }
       if (action === "export") { const selected = state.snapshot?.presets?.find((preset) => preset.id === loadedPresetId); const content = serializeProjectionExport(selected?.name || "Calibration", state.draft); onExport?.(content, selected?.name || "Calibration"); }
       if (action === "import") await handleImport(value);
       if (action === "share") { const result = await share?.(); const href = typeof result === "string" ? result : result?.href; view.controls.shareLink.href = href || ""; view.controls.shareLink.textContent = href || ""; view.controls.shareLink.hidden = !href; view.controls.shareQr.hidden = !href || !result?.qrRendered; if (!href) view.controls.shareQr.replaceChildren(); view.controls.shareStatus.textContent = href ? (result?.copied ? "Copied link" : "Select the link to copy") : "Share unavailable on this network."; }
       if (action === "pattern") setPattern(value);
-    } catch (error) { if (action === "share") { view.controls.shareLink.href = ""; view.controls.shareLink.textContent = ""; view.controls.shareLink.hidden = true; view.controls.shareQr.hidden = true; view.controls.shareQr.replaceChildren(); view.controls.shareStatus.textContent = "Share unavailable on this network."; } else if (error?.fields) fieldErrors = error.fields; else if (error?.message?.includes("conflict")) conflict = error.message; else fieldErrors = { action: error?.message || String(error) }; refresh(); }
+    } catch (error) { if (actionToken !== null && actionToken !== actionSequence) return; if (action === "share") { view.controls.shareLink.href = ""; view.controls.shareLink.textContent = ""; view.controls.shareLink.hidden = true; view.controls.shareQr.hidden = true; view.controls.shareQr.replaceChildren(); view.controls.shareStatus.textContent = "Share unavailable on this network."; } else if (error?.fields) fieldErrors = error.fields; else if (error?.message?.includes("conflict")) conflict = error.message; else fieldErrors = { action: error?.message || String(error) }; refresh(); }
     refresh();
   }
   function sendPattern() {
@@ -579,7 +607,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     socket.send({ type: "otef_projection_pattern", table: "otef", output: activePattern.branch, pattern: activePattern.pattern, sourceId });
   }
   function setPattern(next = {}) {
-    if (patternTimer !== null) clearInterval(patternTimer);
+    if (patternTimer !== null) { clearInterval(patternTimer); patternTimer = null; }
     if (activePattern.pattern !== "off" && (next.pattern === "off" || next.branch !== activePattern.branch)) socket?.send?.({ type: "otef_projection_pattern", table: "otef", output: activePattern.branch, pattern: "off", sourceId });
     activePattern = { pattern: next.pattern || "off", branch: next.branch || "left" };
     if (activePattern.pattern !== "off") { sendPattern(); patternTimer = setInterval(sendPattern, 1000); }

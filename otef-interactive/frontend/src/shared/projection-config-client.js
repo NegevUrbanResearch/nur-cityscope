@@ -152,10 +152,10 @@ export function createProjectionConfigClient({
     return Boolean(snapshot?.config && snapshot.config.schemaVersion < 6);
   }
 
-  function notify() {
+  function notify(receipt) {
     const state = getState();
     if (typeof onState === 'function') onState(state);
-    for (const listener of subscribers) listener(getState());
+    for (const listener of subscribers) listener(getState(), receipt);
   }
 
   function setConnected(value) {
@@ -223,8 +223,19 @@ export function createProjectionConfigClient({
     } else if (fromHydrate) {
       live = false;
     }
-    notify();
+    // Receipt context lasts only for this adoption. An own checkpoint Save
+    // changes preset selection without replacing the editing session.
+    notify(origin === sourceId && matchesSaveAcknowledgement(inFlight, next)
+      ? { origin, action: 'save' } : undefined);
     return true;
+  }
+
+  function matchesSaveAcknowledgement(request, next) {
+    if (request?.action !== 'save' || request.retired || next.revision !== request.sentRevision + 1) return false;
+    const checkpoint = next.presets.find((preset) => preset.id === next.selectedPresetId);
+    return Boolean(checkpoint && !checkpoint.readOnly && checkpoint.name === String(request.body.name ?? '').trim() &&
+      (!request.body.presetId || checkpoint.id === request.body.presetId) &&
+      equalProjectionConfig(next.config, request.body.config) && equalProjectionConfig(checkpoint.config, request.body.config));
   }
 
   async function hydrate() {
@@ -349,16 +360,27 @@ export function createProjectionConfigClient({
       if (!validSnapshot(bodyResponse)) throw new Error('invalid projection config response');
       previewError = null;
       const adopted = receiveSnapshot(bodyResponse, { origin: sourceId });
+      let draftReplaced = false;
+      let savedPresetId = null;
+      const responseIsCurrent = equal(snapshot, normalizeSnapshot(bodyResponse));
       if (request.action === 'load' || request.action === 'revert') {
-        const responseIsCurrent = equal(snapshot, normalizeSnapshot(bodyResponse));
         if ((adopted || responseIsCurrent) && conflictGeneration === request.conflictGeneration && draftVersion === sentVersion) {
           draft = migrateNamesWallToV5(bodyResponse.config);
+          hasLocalDraft = false;
+          draftReplaced = true;
+        }
+      } else if (request.action === 'save') {
+        if (responseIsCurrent && conflictGeneration === request.conflictGeneration && draftVersion === sentVersion && matchesSaveAcknowledgement(request, bodyResponse)) {
+          savedPresetId = bodyResponse.selectedPresetId;
           hasLocalDraft = false;
         }
       } else if (draftVersion === sentVersion && snapshot && equal(draft, snapshot.config)) {
         hasLocalDraft = false;
       }
-      request.resolve(getState());
+      // Persistence callers need this request's accepted outcome, not just
+      // HTTP success. Keep receipt/outcome fields out of the shared state.
+      request.resolve(request.action === 'load' || request.action === 'revert'
+        ? { ...getState(), draftReplaced } : request.action === 'save' ? { ...getState(), savedPresetId } : getState());
     }).catch((error) => {
       if (request.retired) return;
       request.failed = true;

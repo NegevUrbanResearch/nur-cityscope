@@ -153,7 +153,7 @@ export function createWarpEditor({
     selection = clone(next);
     return true;
   }
-  function setMode(mode) { return select(mode === "grid" ? gridSelection() : keystoneSelection()); }
+  function setMode(mode) { if (selection.mode === mode) return true; return select(mode === "grid" ? gridSelection() : keystoneSelection()); }
   function setStep(mode) { if (!["fine", "coarse"].includes(mode)) return false; stepMode = mode; return true; }
   function moveByPixels(dx, dy, meta = {}) {
     return moveNormalized(Number(dx) / OUTPUT_WIDTH, Number(dy) / OUTPUT_HEIGHT, { reason: meta.reason || "nudge", flush: meta.flush ?? true }, { record: meta.record !== false });

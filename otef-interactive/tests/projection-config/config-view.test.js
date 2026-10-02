@@ -13,33 +13,44 @@ test("clock layout dialog uses the available viewport width on narrow screens", 
   expect(dialogRule).not.toMatch(/width:\s*100vw/);
 });
 
+test("projection config uses a compact two-row header and anchored Tools overlay", () => {
+  const css = readFileSync(resolve(import.meta.dirname, "../../frontend/src/projection-config/config.css"), "utf8");
+  expect(css).toContain("--config-surface:");
+  expect(css).toContain("--config-space:");
+  expect(css).toMatch(/\.config-shell\s*\{[^}]*display:\s*grid/s);
+  expect(css).toMatch(/\.config-shell\s*\{[^}]*grid-template-rows:\s*minmax\(0, auto\) minmax\(0, 1fr\)/s);
+  expect(css).toMatch(/\.config-workspace\s*\{[^}]*position:\s*relative/s);
+  expect(css).not.toMatch(/\.config-workspace\s*\{[^}]*top:\s*104px/s);
+  expect(css).toMatch(/\.config-command-bar\s*\{[^}]*grid-template-rows:\s*64px 48px/s);
+  expect(css).toMatch(/\.config-primary-row\s*\{[^}]*display:\s*grid/s);
+  expect(css).toMatch(/@media\s*\(max-width:\s*1050px\)\s*\{[^}]*\.config-primary-row\s*\{[^}]*minmax\(0, 240px\) minmax\(0, 1fr\) 52px 104px 64px/s);
+  expect(css).toMatch(/@media\s*\(max-width:\s*600px\)\s*\{[^}]*\.config-primary-row\s*\{[^}]*minmax\(0, 1fr\) 52px 104px 64px/s);
+  expect(css).toMatch(/\.compact-live\s*\{[^}]*grid-column:\s*-4/s);
+  expect(css).toMatch(/\.config-save-column\s*\{[^}]*grid-column:\s*-3/s);
+  expect(css).toMatch(/\.config-tools\s*\{[^}]*grid-column:\s*-2/s);
+  expect(css).toMatch(/\.output-command-actions\s*\{[^}]*grid-column:\s*3/s);
+  expect(css).toMatch(/\.disclosure-error-indicator:not\(\[hidden\]\)::before\s*\{[^}]*content:\s*"!"[^}]*width:\s*10px/s);
+  expect(css).toMatch(/\.config-tools-content\s*\{[^}]*position:\s*absolute/s);
+  const overlayRule = css.match(/\.config-tools-content\s*\{([^}]*)\}/)?.[1] ?? "";
+  expect(overlayRule).toMatch(/right:\s*0/);
+  expect(overlayRule).toMatch(/overscroll-behavior:\s*contain/);
+  expect(css).toMatch(/\.node-graph-viewport\s*\{[^}]*position:\s*absolute/s);
+  expect(css).not.toMatch(/@media[^{}]*\{[^{}]*\.node-graph-viewport\s*\{[^}]*display:\s*none/s);
+  expect(css).toMatch(/\.config-category-action, \.output-command\s*\{[^}]*height:\s*48px/s);
+  expect(css).toMatch(/\.output-capability-notice:not\(\[hidden\]\)\s*\{[^}]*display:\s*block/s);
+  expect(css).toMatch(/\.applied-summary\s*\{[^}]*font-size:\s*12px/s);
+});
+
 test("warp handle outlines stay constant in CSS pixels while zooming", () => {
   const css = readFileSync(resolve(import.meta.dirname, "../../frontend/src/projection-config/config.css"), "utf8");
   const handleRule = css.match(/\.warp-handle\s*\{([^}]*)\}/)?.[1] ?? "";
   expect(handleRule).toContain("vector-effect: non-scaling-stroke");
 });
 
-test("projection config chrome and workspace use scoped layout tokens and anchored utility overlays", () => {
-  const css = readFileSync(resolve(import.meta.dirname, "../../frontend/src/projection-config/config.css"), "utf8");
-  expect(css).toContain("--config-surface:");
-  expect(css).toContain("--config-space:");
-  expect(css).toMatch(/\.config-shell\s*\{[^}]*display:\s*grid/s);
-  expect(css).toMatch(/\.config-shell\s*\{[^}]*grid-template-rows:\s*auto auto minmax\(0, 1fr\)/s);
-  expect(css).toMatch(/\.config-workspace\s*\{[^}]*position:\s*relative/s);
-  expect(css).not.toMatch(/\.config-workspace\s*\{[^}]*top:\s*104px/s);
-  expect(css).toMatch(/\.disclosure-error-indicator:not\(\[hidden\]\)::before\s*\{[^}]*content:\s*"[^\"]*Error[^\"]*open for details"/s);
-  expect(css).toMatch(/\.config-disclosure-content\s*\{[^}]*position:\s*absolute/s);
-  const overlayRule = css.match(/\.config-disclosure-content\s*\{([^}]*)\}/)?.[1] ?? "";
-  expect(overlayRule).toMatch(/left:\s*auto/);
-  expect(overlayRule).toMatch(/right:\s*0/);
-  const compactRules = css.slice(css.lastIndexOf("@media (max-width: 1100px), (max-height: 700px), (pointer: coarse), (hover: none), (orientation: portrait)"));
-  expect(compactRules.match(/\.config-workspace\s*\{([^}]*)\}/)?.[1] || "").toContain("display: grid");
-});
-
 test("view renders draggable node workspace and preserves an existing focused input", () => {
   const make = (tag = "div") => ({ tagName: tag.toUpperCase(), children: [], dataset: {}, style: {}, attributes: {}, classList: { toggle() {} }, appendChild(child) { if (child.parentElement) child.parentElement.children = child.parentElement.children.filter((item) => item !== child); this.children.push(child); child.parentElement = this; return child; }, append(...children) { children.forEach((child) => this.appendChild(child)); }, prepend(...children) { children.forEach((child) => { if (child.parentElement) child.parentElement.children = child.parentElement.children.filter((item) => item !== child); this.children.unshift(child); child.parentElement = this; }); }, remove() { if (this.parentElement) this.parentElement.children = this.parentElement.children.filter((child) => child !== this); }, setAttribute(key, value) { this.attributes[key] = value; }, removeAttribute(key) { delete this.attributes[key]; }, addEventListener(type, handler) { this.listeners ||= {}; (this.listeners[type] ||= []).push(handler); }, removeEventListener(type, handler) { this.listeners[type] = (this.listeners?.[type] || []).filter((entry) => entry !== handler); }, dispatch(type, event) { for (const handler of this.listeners?.[type] || []) handler({ currentTarget: this, target: this, ...event }); }, replaceChildren(...children) { this.children = children; children.forEach((child) => { child.parentElement = this; }); } });
   const root = make("main");
-  root.ownerDocument = { createElement: make, createElementNS: (_ns, tag) => make(tag), listeners: {}, addEventListener(type, handler) { (this.listeners[type] ||= []).push(handler); }, removeEventListener(type, handler) { this.listeners[type] = (this.listeners[type] || []).filter((item) => item !== handler); }, dispatch(type, event) { for (const handler of this.listeners[type] || []) handler(event); }, defaultView: { location: { origin: "http://localhost" }, addEventListener() {}, removeEventListener() {}, matchMedia: () => ({ matches: true, addEventListener() {}, removeEventListener() {} }) } };
+  root.ownerDocument = { createElement: make, createElementNS: (_ns, tag) => make(tag), listeners: {}, addEventListener(type, handler) { (this.listeners[type] ||= []).push(handler); }, removeEventListener(type, handler) { this.listeners[type] = (this.listeners[type] || []).filter((item) => item !== handler); }, dispatch(type, event) { for (const handler of this.listeners[type] || []) handler(event); }, defaultView: { location: { origin: "http://localhost" }, addEventListener() {}, removeEventListener() {}, matchMedia: (query) => ({ matches: query.includes("pointer: coarse"), addEventListener() {}, removeEventListener() {} }) } };
   const onNode = vi.fn();
   const onOpenClockEditor = vi.fn();
   const onClockScene = vi.fn();
@@ -51,7 +62,7 @@ test("view renders draggable node workspace and preserves an existing focused in
   const descendants = (node) => [node, ...(node.children || []).flatMap(descendants)];
   expect(descendants(root).filter((node) => node.tagName === "IFRAME")).toHaveLength(0);
   expect(descendants(root).filter((node) => node.dataset?.action === "warp-editor-open")).toHaveLength(4);
-  expect(descendants(root).filter((node) => node.dataset?.action === "projection-names-run").length).toBeGreaterThanOrEqual(3);
+  expect(descendants(root).filter((node) => node.dataset?.action === "projection-names-run")).toHaveLength(1);
   expect(descendants(root).filter((node) => node.dataset?.action === "preview-expand")).toHaveLength(0);
   const labels = [];
   const walk = (node) => {
@@ -60,7 +71,7 @@ test("view renders draggable node workspace and preserves an existing focused in
     for (const child of node.children || []) walk(child);
   };
   walk(root);
-  expect(labels.join(" ")).toContain("Crop diagram");
+  expect(labels.join(" ")).toContain("Adjust");
   expect(labels.join(" ")).toContain("Drag headers to move nodes");
   expect(labels.join(" ")).toContain("Left inner-edge clearance");
   expect(labels.join(" ")).toContain("Right inner-edge clearance");
@@ -90,24 +101,20 @@ test("view renders draggable node workspace and preserves an existing focused in
   gisClockNode.dispatch("dblclick", { target: gisScene });
   gisClockNode.dispatch("keydown", { key: "Enter", target: gisScene });
   expect(onOpenClockEditor).not.toHaveBeenCalled();
-  const nodeSelector = descendants(root).find((node) => node.className === "node-selector");
-  const clockMobileOpen = descendants(root).find((node) => node.dataset?.action === "warp-editor-open-mobile");
   view.update({ state: { draft: structuredClone(DEFAULT_PROJECTION_CONFIG) }, selectedNode: "clock-gis", clockScene: "nova", clockElement: "legend" });
   expect(gisScene.value).toBe("nova");
-  expect(view.controls.clockSceneInspector.value).toBe("nova");
-  view.controls.clockSceneInspector.value = "timeline"; view.controls.clockSceneInspector.dispatch("change");
+  expect(gisScene.value).toBe("nova");
+  gisScene.value = "timeline"; gisScene.dispatch("change");
   expect(onClockScene).toHaveBeenLastCalledWith("timeline");
   view.update({ state: { draft: structuredClone(DEFAULT_PROJECTION_CONFIG) }, selectedNode: "clock-projection", clockScene: "nova", clockElement: "legend" });
   expect(overlay.value).toBe("legend");
-  expect(view.controls.clockElementInspector.value).toBe("legend");
+  expect(overlay.value).toBe("legend");
   view.update({ state: { draft: structuredClone(DEFAULT_PROJECTION_CONFIG) }, selectedNode: "clock-gis" });
-  expect(clockMobileOpen.hidden).toBe(false);
-  nodeSelector.value = "clock-gis"; clockMobileOpen.dispatch("click");
-  expect(onOpenClockEditor).toHaveBeenCalledWith("clock-gis");
+  expect(view.nodeMap.has("clock-gis")).toBe(true);
+  expect(descendants(root).find((node) => node.dataset?.action === "warp-editor-open-mobile")).toBeUndefined();
   onNode.mockClear();
   const graphColumn = root.children[0].children.find((node) => node.tagName === "DIV" && node.className === "config-workspace").children[0];
-  const inspector = root.children[0].children.find((node) => node.className === "config-workspace").children[1];
-  expect(inspector.open).toBe(true);
+  expect(root.querySelector?.(".inspector")).toBeUndefined();
   const viewport = graphColumn.children.find((node) => node.className === "node-graph-viewport");
   expect(viewport.className).toBe("node-graph-viewport");
   const graphSvg = viewport.children.find((node) => node.className === "node-graph").children[0];
@@ -120,7 +127,6 @@ test("view renders draggable node workspace and preserves an existing focused in
   view.update({ state: { draft: namesDraft }, selectedNode: "names-wall", namesWallStatus: { state: "auto-reduced", requestedFontPx: 12, effectiveFontPx: 9, minimumFontPx: 8, expected: 1228, placed: 1228 } });
   const outline = view.fields.get("names-wall:namesWall.strokeWidthPx");
   expect(outline.number.value).toBe("3");
-  expect(view.fields.get("inspector:namesWall.strokeWidthPx").number.value).toBe("3");
   outline.number.value = "4";
   outline.number.dispatch("blur");
   expect(onField).toHaveBeenCalledWith("namesWall.strokeWidthPx", "4", "number");
@@ -128,7 +134,6 @@ test("view renders draggable node workspace and preserves an existing focused in
   namesDraft.namesWall.activeMode = "model";
   view.update({ state: { draft: namesDraft }, selectedNode: "names-wall", namesWallStatus: { state: "auto-reduced", requestedFontPx: 12, effectiveFontPx: 9, minimumFontPx: 8, expected: 1228, placed: 1228 } });
   expect(outline.number.value).toBe("2");
-  expect(view.fields.get("inspector:namesWall.strokeWidthPx").number.value).toBe("2");
   onField.mockClear();
   outline.number.value = "1";
   outline.number.dispatch("blur");
@@ -137,7 +142,6 @@ test("view renders draggable node workspace and preserves an existing focused in
   namesDraft.namesWall.activeMode = "wall";
   view.update({ state: { draft: namesDraft }, selectedNode: "names-wall" });
   expect(outline.number.value).toBe("4");
-  expect(view.fields.get("inspector:namesWall.strokeWidthPx").number.value).toBe("4");
   const closeness = view.fields.get("names-wall:namesWall.inwardShiftPercent");
   expect(closeness.wrap.hidden).toBe(false);
   expect(closeness.value.parentElement).toBe(closeness.range.parentElement);
@@ -162,9 +166,8 @@ test("view renders draggable node workspace and preserves an existing focused in
   expect(resetPages.hidden).toBe(true);
   const modelHelps = [
     ...view.nodeMap.get("names-wall").children,
-    ...view.controls.namesWallInspector.children,
   ].filter((node) => node.className?.includes("names-wall-model-help"));
-  expect(modelHelps).toHaveLength(2);
+  expect(modelHelps).toHaveLength(1);
   expect(modelHelps.every((node) => node.textContent === "Rows spread across the model. Set 0 for the tightest fit." && !node.hidden)).toBe(true);
   expect(namesDraft.namesWall.profiles.model).toMatchObject({ requestedFontPx: 12, spacingPx: 2 });
   namesDraft.namesWall.activeMode = "wall";
@@ -176,22 +179,18 @@ test("view renders draggable node workspace and preserves an existing focused in
   draft.outputs.right.post.tx = 2;
   view.update({ state: { draft } });
   expect(descendants(root).filter((node) => node.tagName === "IFRAME")).toHaveLength(0);
-  expect(Number(view.controls.cropSvg.rightRect.attributes.x)).toBeCloseTo(40.8);
-  expect(view.controls.cropSvg.leftVisibleRect.hidden).toBe(false);
-  expect(view.controls.cropSvg.rightVisibleRect.hidden).toBe(true);
   const warpEditor = createWarpEditor({ config: draft, output: "left" });
-  inspector.open = false;
   view.update({ state: { draft }, selectedNode: "left-keystone", warpStates: { left: { ...warpEditor.getState(), config: warpEditor.getConfig(), handles: warpEditor.getControlPoints() } } });
-  expect(inspector.open).toBe(true);
   expect(view.controls.warpPanel.hidden).toBe(false);
   expect(view.controls.warpEnabled.attributes["aria-label"]).toBe("Enable browser warp");
   expect(view.controls.warpSurface.children.length).toBe(6);
   expect(view.controls.warpStep.parentElement.className).toBe("warp-fine-primary");
   expect(view.controls.warpArrows.parentElement.className).toBe("warp-fine-primary");
   expect(view.controls.warpStatus.parentElement.className).toBe("warp-fine-primary");
-  expect(view.controls.warpSelection.parentElement.className).toBe("warp-fine-primary");
   const undoButton = descendants(root).find((node) => node.dataset?.warpAction === "warp-undo");
-  expect(undoButton.parentElement.className).toBe("warp-fine-primary");
+  expect(undoButton.parentElement.className).toBe("warp-history-command-group");
+  expect(undoButton.parentElement.role).toBe("group");
+  expect(undoButton.parentElement.attributes["aria-label"]).toBe("Undo and redo");
   view.update({ state: { draft }, selectedNode: "left-keystone", warpStates: { left: { ...warpEditor.getState(), config: warpEditor.getConfig(), handles: [{ x: -0.05, y: -0.1 }, { x: 1.05, y: -0.1 }, { x: -0.05, y: 1.1 }, { x: 1.05, y: 1.1 }] } } });
   const fittedViewBox = view.controls.warpSurface.attributes.viewBox.split(" ").map(Number);
   expect(fittedViewBox[0]).toBeLessThan(0);
@@ -200,24 +199,23 @@ test("view renders draggable node workspace and preserves an existing focused in
   const rightIdentityWarpEditor = createWarpEditor({ config: draft, output: "right" });
   rightIdentityWarpEditor.setMode("grid");
   view.update({ state: { draft }, selectedNode: "right-grid", warpStates: { right: { ...rightIdentityWarpEditor.getState(), config: rightIdentityWarpEditor.getConfig(), handles: rightIdentityWarpEditor.getControlPoints() } } });
-  expect(view.controls.warpMode.value).toBe("grid");
-  expect(view.controls.warpSelection.children.at(-1).tagName).toBe("SELECT");
-  expect(view.controls.warpSelection.children.at(-1).children.length).toBeGreaterThan(56);
+  expect(root.querySelector?.(".warp-mode")).toBeUndefined();
+  expect(root.querySelector?.(".warp-selection-picker")).toBeUndefined();
   expect(view.controls.warpSurface.children.some((node) => node.attributes.class === "warp-grid-line")).toBe(true);
   view.controls.warpSurface.dispatch("pointerdown", { button: 0, pointerId: 1, clientX: 40, clientY: 40 });
   expect(onWarpPointer).not.toHaveBeenCalled();
   expect(view.cancelWarpPointer).toBeTypeOf("function");
   root.ownerDocument.dispatch("keydown", { key: "ArrowRight", target: view.controls.warpSurface, preventDefault: vi.fn() });
   expect(onWarpAction).not.toHaveBeenCalledWith("warp-nudge", expect.anything());
-  const focused = view.fields.get("inspector:pre.tx").number;
-  focused.value = "1.";
-  root.ownerDocument.activeElement = focused;
+  const inlineFocused = view.fields.get("pre:pre.tx").number;
+  root.ownerDocument.activeElement = inlineFocused;
+  inlineFocused.value = "1.";
   draft.pre.tx = 0.02;
   view.update({ state: { draft } });
-  expect(focused.value).toBe("1.");
-  focused.value = "-";
+  expect(inlineFocused.value).toBe("1.");
+  inlineFocused.value = "-";
   view.update({ state: { draft } });
-  expect(focused.value).toBe("-");
+  expect(inlineFocused.value).toBe("-");
   expect(view.fields.get("pre:pre.tx").range.value).toBe("2.00");
   const inline = view.fields.get("pre:pre.tx").number;
   const inlineRow = view.fields.get("pre:pre.tx").wrap.children.find((node) => node.className === "config-field-row");
@@ -270,9 +268,7 @@ test("view renders draggable node workspace and preserves an existing focused in
   root.ownerDocument.dispatch("keydown", { key: "ArrowRight", target: view.controls.warpSurface, preventDefault: vi.fn() });
   expect(onWarpAction).not.toHaveBeenCalled();
   view.update({ state: { draft }, selectedNode: "right-grid", warpStates: { right: { ...rightIdentityWarpEditor.getState(), config: rightIdentityWarpEditor.getConfig(), handles: rightIdentityWarpEditor.getControlPoints() } } });
-  const mobileOpen = descendants(root).find((node) => node.dataset?.action === "warp-editor-open-mobile");
-  expect(mobileOpen.hidden).toBe(false);
-  mobileOpen.dispatch("click");
+  view.nodeMap.get("right-grid").children.find((node) => node.dataset?.action === "warp-editor-open").dispatch("click");
   expect(descendants(root).filter((node) => node.tagName === "IFRAME")).toHaveLength(1);
   expect(descendants(root).find((node) => node.tagName === "IFRAME").src).toContain("span=right");
   descendants(root).find((node) => node.dataset?.action === "warp-editor-close").dispatch("click");
@@ -305,35 +301,33 @@ test("Names wall keeps controls editable and reports installed output status wit
   view.dispose();
 });
 
-test("repeated refresh keeps inspector fields scoped to the selected node", () => {
+test("repeated refresh keeps inline fields scoped to their graph nodes", () => {
   const make = (tag = "div") => ({ tagName: tag.toUpperCase(), children: [], dataset: {}, style: {}, attributes: {}, classList: { toggle() {} }, appendChild(child) { this.children.push(child); child.parentElement = this; return child; }, append(...children) { children.forEach((child) => this.appendChild(child)); }, prepend(...children) { this.children.unshift(...children); }, remove() {}, setAttribute(key, value) { this.attributes[key] = value; }, removeAttribute(key) { delete this.attributes[key]; }, addEventListener(type, handler) { this.listeners ||= {}; (this.listeners[type] ||= []).push(handler); }, removeEventListener() {}, dispatch(type, event) { for (const handler of this.listeners?.[type] || []) handler({ currentTarget: this, target: this, ...event }); }, replaceChildren(...children) { this.children = children; } });
   const root = make("main"); root.ownerDocument = { createElement: make, createElementNS: (_ns, tag) => make(tag), defaultView: { matchMedia: () => ({ matches: false }) } };
   const view = createProjectionConfigView(root, { descriptors: [...FIELD_DESCRIPTORS, ...NAMES_WALL_DESCRIPTORS] });
   const draft = structuredClone(DEFAULT_PROJECTION_CONFIG);
   for (let n = 0; n < 3; n += 1) view.update({ state: { draft }, selectedNode: "right-fit" });
-  expect(view.fields.get("inspector:outputs.right.post.scale").wrap.hidden).toBe(false);
-  expect(view.fields.get("inspector:outputs.right.post.tx").wrap.hidden).toBe(false);
-  expect(view.fields.get("inspector:outputs.right.post.ty").wrap.hidden).toBe(false);
-  expect(view.fields.get("inspector:pre.scale").wrap.hidden).toBe(true);
-  expect(view.fields.get("inspector:outputs.right.crop.x0").wrap.hidden).toBe(true);
-  expect(view.fields.get("inspector:namesWall.requestedFontPx").wrap.hidden).toBe(true);
+  expect(view.fields.get("right-fit:outputs.right.post.scale").wrap.hidden).toBe(false);
+  expect(view.fields.get("right-fit:outputs.right.post.tx").wrap.hidden).toBe(false);
+  expect(view.fields.get("right-fit:outputs.right.post.ty").wrap.hidden).toBe(false);
+  expect(view.fields.has("inspector:pre.scale")).toBe(false);
   draft.namesWall.activeMode = "model";
   view.update({ state: { draft }, selectedNode: "names-wall" });
-  expect(view.fields.get("inspector:namesWall.requestedFontPx").wrap.hidden).toBe(false);
-  expect(view.fields.get("inspector:namesWall.inwardShiftPercent").wrap.hidden).toBe(true);
-  expect(view.fields.get("inspector:namesWall.innerEdgeInsetPx.left").wrap.hidden).toBe(false);
-  const rotation = view.fields.get("inspector:namesWall.rotateDeg");
+  expect(view.fields.get("names-wall:namesWall.requestedFontPx").wrap.hidden).toBe(false);
+  expect(view.fields.get("names-wall:namesWall.inwardShiftPercent").wrap.hidden).toBe(true);
+  expect(view.fields.get("names-wall:namesWall.innerEdgeInsetPx.left").wrap.hidden).toBe(false);
+  const rotation = view.fields.get("names-wall:namesWall.rotateDeg");
   expect(rotation.wrap.hidden).toBe(false);
   expect(rotation.number.value).toBe(String(draft.namesWall.rotateDeg));
   expect(view.fields.get("names-wall:namesWall.rotateDeg").number.value).toBe(String(draft.namesWall.rotateDeg));
-  const rotationHelp = [...view.nodeMap.get("names-wall").children, ...view.controls.namesWallInspector.children]
+  const rotationHelp = [...view.nodeMap.get("names-wall").children]
     .filter((node) => node.className?.includes("names-wall-rotation"));
   expect(rotationHelp.length).toBeGreaterThan(0);
   expect(rotationHelp.every((node) => /both wall and model/i.test(node.textContent) && /Live, Apply, and Save/i.test(node.textContent))).toBe(true);
   const editor = createWarpEditor({ config: draft, output: "right" });
   view.update({ state: { draft }, selectedNode: "right-grid", warpStates: { right: { ...editor.getState(), config: editor.getConfig(), handles: editor.getControlPoints() } } });
   expect(view.controls.warpPanel.hidden).toBe(false);
-  expect(view.fields.get("inspector:outputs.right.post.scale").wrap.hidden).toBe(true);
+  expect(view.fields.get("right-fit:outputs.right.post.scale").wrap.hidden).toBe(false);
   view.dispose();
 });
 

@@ -140,6 +140,27 @@ test("readiness timeout exposes retry without discarding the draft", () => {
   dialog.dispose();
 });
 
+test("retry refits the replacement frame to the current navigated viewport immediately", () => {
+  vi.useFakeTimers();
+  const { dialog, opener, overlay } = setup();
+  const viewport = document.querySelector(".warp-editor-viewport");
+  Object.defineProperties(viewport, { clientWidth: { configurable: true, value: 600 }, clientHeight: { configurable: true, value: 400 } });
+  dialog.open({ side: "left", mode: "grid", opener });
+  dialog.setViewBox({ x: -240, y: -90, width: 2400, height: 1260 });
+  const first = document.querySelector(".warp-editor-frame");
+  const fittedTransform = first.style.transform;
+  expect(fittedTransform).not.toBe("");
+  expect(overlay.getAttribute("viewBox")).toBe("-240 -90 2400 1260");
+
+  vi.advanceTimersByTime(30000);
+  document.querySelector('[data-action="warp-editor-retry"]').click();
+  const replacement = document.querySelector(".warp-editor-frame");
+  expect(replacement).not.toBe(first);
+  expect(replacement.style.transform).toBe(fittedTransform);
+  expect(overlay.getAttribute("viewBox")).toBe("-240 -90 2400 1260");
+  dialog.dispose();
+});
+
 test("a ready reply after the deadline cannot revive the timed-out frame", () => {
   vi.useFakeTimers();
   const { dialog, opener } = setup();
@@ -211,45 +232,15 @@ test("Run names for older applied geometry cannot replace a newer pending draft 
   dialog.dispose();
 });
 
-test("Fine adjustment begins collapsed and toggling does not activate overlay", () => {
+test("warp controls remain visible without a Fine adjustment toggle", () => {
   const { dialog, opener } = setup();
   dialog.open({ side: "left", mode: "keystone", opener });
-  const toggle = document.querySelector('[data-action="warp-editor-fine"]');
   const panel = document.querySelector(".warp-editor-fine-panel");
-  expect(panel.hidden).toBe(true);
-  toggle.click(); expect(panel.hidden).toBe(false);
-  dialog.close(); dialog.open({ side: "left", mode: "grid", opener });
-  expect(panel.hidden).toBe(true);
-  dialog.dispose();
-});
-
-test("touch and no-hover openings expose Fine by default while desktop remains collapsed", () => {
-  const previousMatchMedia = window.matchMedia;
-  window.matchMedia = (query) => ({
-    matches: query === "(pointer: coarse)", media: query, onchange: null,
-    addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {}, dispatchEvent() { return false; },
-  });
-  const { dialog, opener } = setup();
-  dialog.open({ side: "left", mode: "keystone", opener });
-  expect(document.querySelector(".warp-editor-fine-panel").hidden).toBe(false);
-  expect(document.querySelector('[data-action="warp-editor-fine"]').getAttribute("aria-expanded")).toBe("true");
-  dialog.close();
-  window.matchMedia = (query) => ({ matches: query === "(hover: none)", media: query, onchange: null, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {}, dispatchEvent() { return false; } });
-  dialog.open({ side: "right", mode: "grid", opener });
-  expect(document.querySelector(".warp-editor-fine-panel").hidden).toBe(false);
-  dialog.close();
-  window.matchMedia = (query) => ({ matches: false, media: query, onchange: null, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {}, dispatchEvent() { return false; } });
-  dialog.open({ side: "right", mode: "grid", opener });
-  const panel = document.querySelector(".warp-editor-fine-panel");
-  const toggle = document.querySelector('[data-action="warp-editor-fine"]');
-  expect(panel.hidden).toBe(true);
-  expect(toggle.getAttribute("aria-expanded")).toBe("false");
-  toggle.click();
   expect(panel.hidden).toBe(false);
-  expect(toggle.getAttribute("aria-expanded")).toBe("true");
+  expect(document.querySelector('[data-action="warp-editor-fine"]')).toBeNull();
+  dialog.close(); dialog.open({ side: "left", mode: "grid", opener });
+  expect(panel.hidden).toBe(false);
   dialog.dispose();
-  if (previousMatchMedia === undefined) delete window.matchMedia;
-  else window.matchMedia = previousMatchMedia;
 });
 
 test("modal contains focus, restores page interaction on Escape, and forwards Apply and Live", () => {
@@ -260,13 +251,9 @@ test("modal contains focus, restores page interaction on Escape, and forwards Ap
   dialog.open({ side: "left", mode: "keystone", opener });
   expect(background.inert).toBe(true);
   expect(document.body.style.overflow).toBe("hidden");
-  const first = document.querySelector('[data-action="warp-editor-fine"]');
-  const runNames = document.querySelector('[data-action="projection-names-run"]');
-  expect(runNames).toBeTruthy();
-  dialog.update({}, { namesRunStatus: "Names stale. Finish geometry, then Run names.", namesRunDisabledReason: "Apply the pending calibration first." });
-  expect(document.querySelector(".warp-editor-names-status").textContent).toContain("Finish geometry");
-  expect(runNames.disabled).toBe(true);
-  const last = document.querySelector('.warp-editor-footer button:not([data-action="projection-names-run"]):not([hidden])');
+  const first = document.querySelector('[data-action="warp-editor-close"]');
+  expect(document.querySelector('[data-action="projection-names-run"]')).toBeNull();
+  const last = document.querySelector('.warp-editor-footer button:not([hidden])');
   first.focus(); document.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true }));
   expect(document.activeElement).toBe(last);
   document.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true }));

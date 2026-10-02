@@ -44,12 +44,12 @@ async function mountSettlementConfigFixture() {
     root, writeOperation, settlementClient,
     selectNode(id) { root.querySelector(`[data-node="${id}"]`).click(); },
     setOutput(output) {
-      const select = root.querySelector(".settlement-settings-inspector [data-field='output']");
+      const select = root.querySelector(".settlement-name-controls [data-field='output']");
       select.value = output;
       select.dispatchEvent(new Event("change"));
     },
     setCitycode(citycode) {
-      const select = root.querySelector(".settlement-settings-inspector [data-field='citycode']");
+      const select = root.querySelector(".settlement-name-controls [data-field='citycode']");
       select.value = citycode;
       select.dispatchEvent(new Event("change"));
     },
@@ -103,12 +103,12 @@ test("a closed modal keeps the pending draft and both domains warn before unload
   vi.useFakeTimers();
   const app = await mountSettlementConfigFixture();
   app.selectNode("settlement-names");
-  const input = app.root.querySelector(".settlement-settings-inspector [data-field='x']");
+  const input = app.root.querySelector(".settlement-name-controls [data-field='x']");
   input.value = "640";
   input.dispatchEvent(new Event("change"));
   await app.openEditor();
   await app.closeEditor();
-  expect(app.root.querySelector(".settlement-settings-inspector [data-field='x']").value).toBe("640");
+  expect(app.root.querySelector(".settlement-name-controls [data-field='x']").value).toBe("640");
   const unload = () => { const event = new Event("beforeunload", { cancelable: true }); window.dispatchEvent(event); return event.defaultPrevented; };
   expect(unload()).toBe(true);
   await vi.advanceTimersByTimeAsync(150);

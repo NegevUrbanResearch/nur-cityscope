@@ -77,7 +77,8 @@ export function createOutputWindowController({
   const onPageHide = () => identifier.close();
   screenApi?.addEventListener?.("pagehide", onPageHide);
   let generation = 0; let operationToken = 0; let openingPromise = null;
-  let state = { screens: [], assignments, error: "", message: "Detecting connected displays…", ownedSpans: [] };
+  const supported = typeof screenApi?.getScreenDetails === "function";
+  let state = { screens: [], assignments, supported, error: "", message: supported ? "Detecting connected displays…" : "Display management unavailable in this browser.", ownedSpans: [] };
   function setState(patch) { state = { ...state, ...patch, ownedSpans: [...owned.keys()] }; subscriptions.forEach((listener) => listener(state)); return state; }
   function pruneOwned() {
     for (const [span, win] of owned) {

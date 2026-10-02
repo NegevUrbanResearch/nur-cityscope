@@ -1,7 +1,7 @@
 import { expect, test, vi } from "vitest";
 import { createNodeCanvas, fitTransform, layoutNodePositions, zoomAt } from "../../frontend/src/projection-config/node-canvas.js";
 
-const ids = ["content", "names-wall", "pre", "left-crop", "right-crop", "left-fit", "right-fit", "left-keystone", "right-keystone", "left-grid", "right-grid", "left-output", "right-output"];
+const ids = ["content", "names-wall", "settlement-names", "clock-gis", "clock-projection", "pre", "left-crop", "right-crop", "left-fit", "right-fit", "left-keystone", "right-keystone", "left-grid", "right-grid", "left-output", "right-output"];
 
 test("node layout separates every card and fit shows the complete graph", () => {
   const sizes = Object.fromEntries(ids.map((id) => [id, { width: 330, height: id.includes("crop") ? 430 : 300 }]));
@@ -146,4 +146,58 @@ test("a graph drag remains owned by its initiating pointer until that pointer en
   canvas.dispose();
   expect(document.listeners.has("pointermove")).toBe(false);
   expect(document.listeners.has("pointerup")).toBe(false);
+});
+
+test("focusNodes frames the union of existing target nodes and ignores missing IDs", () => {
+  const document = fakeElement();
+  const viewport = fakeElement(900, 560);
+  viewport.clientWidth = 900; viewport.clientHeight = 560;
+  const graph = fakeElement(); const svg = fakeElement(); const wire = fakeElement();
+  const controls = { zoomIn: fakeElement(), zoomOut: fakeElement(), zoomReset: fakeElement(), zoomOne: fakeElement() };
+  const nodeMap = new Map(ids.map((id) => { const card = fakeElement(330); card.header = fakeElement(); return [id, card]; }));
+  const canvas = createNodeCanvas({ document, viewport, graph, svg, wire, nodeMap, controls });
+  canvas.mount();
+  expect(canvas.focusNodes(["missing", "left-crop", "left-grid"])).toBe(true);
+  const crop = nodeMap.get("left-crop"); const grid = nodeMap.get("left-grid");
+  const transform = graph.style.transform.match(/translate\(([-\d.]+)px, ([-\d.]+)px\) scale\(([-\d.]+)\)/);
+  const [, x, y, scale] = transform.map(Number);
+  const left = Math.min(crop.offsetLeft, grid.offsetLeft);
+  const top = Math.min(crop.offsetTop, grid.offsetTop);
+  const right = Math.max(crop.offsetLeft + crop.offsetWidth, grid.offsetLeft + grid.offsetWidth);
+  const bottom = Math.max(crop.offsetTop + crop.offsetHeight, grid.offsetTop + grid.offsetHeight);
+  expect(Number(scale) * (right - left)).toBeLessThanOrEqual(900 - 56);
+  expect(Number(scale) * (bottom - top)).toBeLessThanOrEqual(560 - 56);
+  expect(Number(x) + (left + right) / 2 * Number(scale)).toBeCloseTo(450);
+  expect(Number(y) + (top + bottom) / 2 * Number(scale)).toBeCloseTo(280);
+  const previous = graph.style.transform;
+  expect(canvas.focusNodes(["missing"])).toBe(false);
+  expect(graph.style.transform).toBe(previous);
+  canvas.dispose();
+});
+
+test("a focused group stays framed after node movement and viewport resize", () => {
+  let resize;
+  globalThis.ResizeObserver = class { constructor(callback) { resize = callback; } observe() {} disconnect() {} };
+  const document = fakeElement();
+  const viewport = fakeElement(900, 560);
+  viewport.clientWidth = 900; viewport.clientHeight = 560;
+  const graph = fakeElement(); const svg = fakeElement(); const wire = fakeElement();
+  const controls = { zoomIn: fakeElement(), zoomOut: fakeElement(), zoomReset: fakeElement(), zoomOne: fakeElement() };
+  const nodeMap = new Map(ids.map((id) => { const card = fakeElement(330); card.header = fakeElement(); return [id, card]; }));
+  const canvas = createNodeCanvas({ document, viewport, graph, svg, wire, nodeMap, controls });
+  canvas.mount();
+  canvas.focusNodes(["clock-gis", "clock-projection"]);
+  const clock = nodeMap.get("clock-gis");
+  clock.style.left = `${clock.offsetLeft + 80}px`;
+  viewport.clientWidth = 520; viewport.clientHeight = 720;
+  resize();
+  const [, x, y, scale] = graph.style.transform.match(/translate\(([-\d.]+)px, ([-\d.]+)px\) scale\(([-\d.]+)\)/).map(Number);
+  const a = nodeMap.get("clock-gis"); const b = nodeMap.get("clock-projection");
+  const left = Math.min(a.offsetLeft, b.offsetLeft); const right = Math.max(a.offsetLeft + a.offsetWidth, b.offsetLeft + b.offsetWidth);
+  const top = Math.min(a.offsetTop, b.offsetTop); const bottom = Math.max(a.offsetTop + a.offsetHeight, b.offsetTop + b.offsetHeight);
+  expect(Number(x) + (left + right) / 2 * Number(scale)).toBeCloseTo(260);
+  expect(Number(y) + (top + bottom) / 2 * Number(scale)).toBeCloseTo(360);
+  expect(Number(scale) * (right - left)).toBeLessThanOrEqual(520 - 56);
+  canvas.dispose();
+  delete globalThis.ResizeObserver;
 });
