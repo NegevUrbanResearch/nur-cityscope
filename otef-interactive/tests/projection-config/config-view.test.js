@@ -13,34 +13,18 @@ test("clock layout dialog uses the available viewport width on narrow screens", 
   expect(dialogRule).not.toMatch(/width:\s*100vw/);
 });
 
-test("projection config uses a compact two-row header and anchored Tools overlay", () => {
+test("command bands wrap direct actions without fixed header rows", () => {
   const css = readFileSync(resolve(import.meta.dirname, "../../frontend/src/projection-config/config.css"), "utf8");
-  expect(css).toContain("--config-surface:");
-  expect(css).toContain("--config-space:");
-  expect(css).toMatch(/\.config-shell\s*\{[^}]*display:\s*grid/s);
-  expect(css).toMatch(/\.config-shell\s*\{[^}]*grid-template-rows:\s*minmax\(0, auto\) minmax\(0, 1fr\)/s);
-  expect(css).toMatch(/\.config-workspace\s*\{[^}]*position:\s*relative/s);
-  expect(css).not.toMatch(/\.config-workspace\s*\{[^}]*top:\s*104px/s);
-  expect(css).toMatch(/\.config-command-bar\s*\{[^}]*grid-template-rows:\s*64px 48px/s);
-  expect(css).toMatch(/\.config-primary-row\s*\{[^}]*display:\s*grid/s);
-  expect(css).toMatch(/@media\s*\(max-width:\s*1050px\)\s*\{[^}]*\.config-primary-row\s*\{[^}]*minmax\(0, 240px\) minmax\(0, 1fr\) 52px 104px 64px/s);
-  expect(css).toMatch(/@media\s*\(max-width:\s*600px\)\s*\{[^}]*\.config-primary-row\s*\{[^}]*minmax\(0, 1fr\) 52px 104px 64px/s);
-  expect(css).toMatch(/\.compact-live\s*\{[^}]*grid-column:\s*-4/s);
-  expect(css).toMatch(/\.config-save-column\s*\{[^}]*grid-column:\s*-3/s);
-  expect(css).toMatch(/\.config-tools\s*\{[^}]*grid-column:\s*-2/s);
-  expect(css).toMatch(/\.output-command-actions\s*\{[^}]*grid-column:\s*3/s);
-  expect(css).toMatch(/\.disclosure-error-indicator:not\(\[hidden\]\)::before\s*\{[^}]*content:\s*"!"[^}]*width:\s*10px/s);
-  expect(css).toMatch(/\.config-tools-content\s*\{[^}]*position:\s*absolute/s);
-  const overlayRule = css.match(/\.config-tools-content\s*\{([^}]*)\}/)?.[1] ?? "";
-  expect(overlayRule).toMatch(/right:\s*0/);
-  expect(overlayRule).toMatch(/overscroll-behavior:\s*contain/);
-  expect(css).toMatch(/\.node-graph-viewport\s*\{[^}]*position:\s*absolute/s);
-  expect(css).not.toMatch(/@media[^{}]*\{[^{}]*\.node-graph-viewport\s*\{[^}]*display:\s*none/s);
-  expect(css).toMatch(/\.config-category-action, \.output-command\s*\{[^}]*height:\s*48px/s);
-  expect(css).toMatch(/\.output-capability-notice:not\(\[hidden\]\)\s*\{[^}]*display:\s*block/s);
-  expect(css).toMatch(/\.applied-summary\s*\{[^}]*font-size:\s*12px/s);
+  expect(css).toMatch(/\.config-command-groups\s*\{[^}]*grid-template-columns:\s*minmax\(0,1fr\) minmax\(0,1fr\)/s);
+  expect(css).toMatch(/\.config-workspace-band\s*\{[^}]*flex-wrap:\s*wrap/s);
+  expect(css).not.toMatch(/grid-template-rows:\s*64px 48px/);
+  expect(css).toMatch(/\.config-command-bar button, \.config-command-bar select\s*\{[^}]*min-height:\s*44px/s);
+  expect(css).toMatch(/@media\s*\(max-width:\s*700px\)\s*\{[^}]*\.config-command-groups\s*\{[^}]*grid-template-columns:\s*1fr/s);
+  expect(css).not.toMatch(/\.config-tools-content\s*\{[^}]*position:\s*absolute/s);
+  expect(css).toMatch(/\.config-command-bar \[data-action='apply'\][^{]*\{[^}]*background:\s*var\(--config-accent\)/s);
+  expect(css).toMatch(/^body\s*\{[^}]*min-width:\s*0/m);
+  expect(css).toMatch(/\.preset-commands, \.display-commands\s*\{[^}]*grid-template-rows:\s*subgrid/s);
 });
-
 test("warp handle outlines stay constant in CSS pixels while zooming", () => {
   const css = readFileSync(resolve(import.meta.dirname, "../../frontend/src/projection-config/config.css"), "utf8");
   const handleRule = css.match(/\.warp-handle\s*\{([^}]*)\}/)?.[1] ?? "";

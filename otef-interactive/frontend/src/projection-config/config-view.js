@@ -1,3 +1,4 @@
+import { createConfigCommandBar } from './config-command-bar.js';
 import { DEFAULT_PROJECTION_CONFIG } from "../shared/projection-config-schema.js";
 import { createNodeCanvas } from "./node-canvas.js";
 import { createWarpEditorDialog } from "./warp-editor-dialog.js";
@@ -91,133 +92,15 @@ export function createProjectionConfigView(root, {
   if (!root || !doc?.createElement) throw new Error("projection config root is required");
   root.className = "projection-config-app";
   const fields = new Map();
-  const controls = {};
+
   const clockNodeStatuses = new Map();
-  let outputSelection = { left: "", right: "" };
-  let outputScreensSignature = null;
-  let outputAssignmentsSignature = null;
   let selectedGraphNode = "pre";
   const app = make(doc, "div", { className: "config-shell" });
-  const commandBar = make(doc, "header", { className: "config-command-bar", ariaLabel: "Projection calibration commands" });
+  const commandBar = createConfigCommandBar({ document: doc, onAction, onOutputAction });
+  const controls = commandBar.controls;
+  const setPresetName = commandBar.setPresetName;
   const traceUi = trace?.enabled ? createProjectionTraceUi({ document: doc, trace }) : null;
   const disposePageTrace = bindProjectionTracePage({ document: doc, trace });
-  const toolbar = make(doc, "section", { className: "config-primary-row", ariaLabel: "Calibration actions" });
-  const heading = make(doc, "div", { className: "config-header", ariaLabel: "Projection calibration" });
-  heading.append(make(doc, "span", {}, "Projection"));
-  controls.live = make(doc, "input", { type: "checkbox", id: "projection-live", checked: true, ariaLabel: "Live", dataset: { action: "live" } });
-  const liveLabel = make(doc, "label", { htmlFor: "projection-live", className: "live-toggle" }, "Live"); liveLabel.prepend(controls.live);
-  const liveControl = make(doc, "div", { className: "compact-live" });
-  liveControl.append(liveLabel);
-  controls.apply = button(doc, "Apply once", "apply");
-  controls.parameterUndo = button(doc, 'Undo parameter', 'parameter-undo');
-  controls.parameterRedo = button(doc, 'Redo parameter', 'parameter-redo');
-  controls.parameterUndo.addEventListener('click', () => onAction('parameter-undo'));
-  controls.parameterRedo.addEventListener('click', () => onAction('parameter-redo'));
-  controls.save = button(doc, "Save preset", "save");
-  controls.saveStatus = make(doc, "span", { className: "config-save-status", role: "status" });
-  const saveColumn = make(doc, "div", { className: "config-save-column" });
-  saveColumn.append(controls.save, controls.saveStatus);
-  controls.loadedPresetIdentity = make(doc, "span", { className: "loaded-preset-identity", role: "status" }, "Loaded: unknown");
-  controls.saveName = make(doc, "input", { type: "text", placeholder: "Preset name", maxLength: 80, ariaLabel: "Preset name" });
-  let presetNameEdited = false;
-  controls.saveName.addEventListener("input", () => { presetNameEdited = true; });
-  const setPresetName = (value) => { controls.saveName.value = String(value || ""); presetNameEdited = true; };
-  controls.saveNew = button(doc, "Save as new", "save-new");
-  controls.presets = make(doc, "select", { ariaLabel: "Preset", title: "Selection is pending until you choose Load in Tools" });
-  controls.load = button(doc, "Load", "load");
-  controls.revert = button(doc, "Revert", "revert");
-  const presetGroup = make(doc, "div", { className: "config-preset-group", ariaLabel: "Selected preset and acknowledged loaded preset" });
-  presetGroup.append(controls.presets, controls.loadedPresetIdentity);
-  controls.appliedSummary = make(doc, "span", { className: "applied-summary", role: "status", ariaLive: "polite" }, "Outputs: pending");
-  controls.toolsAppliedSummary = make(doc, "span", { className: "tools-applied-summary" }, "Outputs: pending");
-  controls.status = make(doc, "span", { className: "draft-status" });
-  controls.tools = make(doc, "details", { className: "config-tools" });
-  controls.toolsSummary = make(doc, "summary", { title: "Preset loading, output status, display setup, and advanced actions" });
-  controls.toolsSummary.append(make(doc, "span", {}, "Tools"));
-  controls.toolsErrorIndicator = make(doc, "span", { className: "disclosure-error-indicator", role: "img", ariaLabel: "Tools contains an unresolved error", hidden: true });
-  controls.toolsSummary.appendChild(controls.toolsErrorIndicator);
-  const toolsContent = make(doc, "div", { className: "config-tools-content" });
-  controls.toolsClose = button(doc, "Close", "tools-close", "tools-close");
-  controls.toolsErrorDetails = make(doc, "p", { className: "disclosure-error-details", hidden: true });
-  toolsContent.append(controls.toolsClose, controls.toolsErrorDetails);
-  controls.toolsClose.addEventListener("click", () => { controls.tools.open = false; controls.toolsSummary.focus(); });
-  controls.tools.append(controls.toolsSummary, toolsContent);
-  controls.applyLiveDescription = make(doc, "span", { id: "projection-apply-live-description", className: "visually-hidden" }, "Live off. Use Apply once in Tools, or Apply & save.");
-  controls.live.setAttribute("aria-describedby", "projection-apply-live-description");
-  controls.apply.setAttribute("aria-describedby", "projection-apply-live-description");
-  liveControl.append(controls.applyLiveDescription);
-  const toolsApplied = make(doc, "section", { className: "config-tools-section tools-applied-section" });
-  controls.applied = make(doc, "section", { className: "applied-status" });
-  controls.appliedRows = make(doc, "div", { className: "applied-details" });
-  controls.applied.append(controls.appliedRows);
-  toolsApplied.append(make(doc, "h2", {}, "Output acknowledgements"), controls.toolsAppliedSummary, controls.applied);
-  toolsContent.append(toolsApplied);
-  const presetTools = make(doc, "section", { className: "config-tools-section config-tools-presets" });
-  controls.toolsPresetContext = make(doc, "p", { className: "tools-preset-context" });
-  controls.originalCheckpointGuidance = make(doc, "p", { className: "original-checkpoint-guidance", hidden: true });
-  presetTools.append(make(doc, "h2", {}, "Apply and load"), controls.apply, controls.load, controls.toolsPresetContext, controls.originalCheckpointGuidance);
-  toolsContent.append(presetTools);
-  const presetManage = make(doc, "section", { className: "config-tools-section config-tools-manage" });
-  presetManage.append(make(doc, "h2", {}, "Preset management"), controls.saveName, controls.saveNew, controls.revert,
-    make(doc, "small", { className: "preset-scope-help" }, "Presets include geometry and people-wall settings. Clock and settlement layouts save independently."));
-  toolsContent.append(presetManage);
-  const toolsOutputCommands = make(doc, "section", { className: "config-tools-section tools-output-commands", hidden: true });
-  toolsOutputCommands.append(make(doc, "h2", {}, "Output windows"));
-  toolsContent.append(toolsOutputCommands);
-  const utilityBar = make(doc, "section", { className: "config-tools-section config-tools-display" });
-  utilityBar.append(make(doc, "h2", {}, "Display setup"), make(doc, "strong", {}, "Workstation browser outputs"));
-  toolsContent.append(utilityBar);
-  toolsContent.appendChild(controls.status);
-  const status = make(doc, "section", { className: "config-alerts", ariaLabel: "Calibration warnings and errors" });
-  controls.liveWarning = make(doc, "p", { className: "live-draft-warning", role: "alert", hidden: true });
-  controls.conflict = make(doc, "p", { className: "conflict-banner", role: "alert" });
-  controls.actionError = make(doc, "p", { className: "action-error", role: "alert" });
-  controls.connectionStatus = make(doc, "p", { className: "connection-status", role: "status" });
-  controls.outputCapabilityNotice = make(doc, "small", { className: "output-capability-notice", role: "status", hidden: true });
-  controls.retryHydration = button(doc, "Retry settings check", "retry-hydration");
-  status.append(controls.liveWarning, controls.conflict, controls.actionError, controls.connectionStatus, controls.retryHydration, controls.outputCapabilityNotice);
-  controls.retryHydration.addEventListener("click", () => onAction("retry-hydration"));
-  const dismissDisclosures = (event) => {
-    if (event.type === "keydown") {
-      if (event.key !== "Escape" || !controls.tools.open) return;
-      event.preventDefault(); controls.tools.open = false; controls.toolsSummary.focus(); return;
-    }
-    if (!controls.tools.open || controls.tools.contains?.(event.target)) return;
-    controls.tools.open = false;
-  };
-  doc.addEventListener?.("pointerdown", dismissDisclosures, true);
-  doc.addEventListener?.("keydown", dismissDisclosures);
-  controls.live.addEventListener("change", () => onAction("live", controls.live.checked));
-  controls.apply.addEventListener("click", () => onAction("apply"));
-  controls.save.addEventListener("click", () => onAction("save", controls.saveName.value));
-  controls.saveNew.addEventListener("click", () => onAction("save-new", controls.saveName.value));
-  controls.load.addEventListener("click", () => onAction("load", controls.presets.value));
-  controls.revert.addEventListener("click", () => onAction("revert"));
-  controls.presets.addEventListener("change", () => onAction("preset-select", controls.presets.value));
-
-  const outputToolbar = utilityBar;
-  controls.outputRefresh = button(doc, "Refresh displays", "output-refresh");
-  controls.outputIdentify = button(doc, "Identify displays", "output-identify");
-  controls.outputLeftDisplay = make(doc, "select", { ariaLabel: "Left projector display", dataset: { action: "output-left-display" } });
-  controls.outputRightDisplay = make(doc, "select", { ariaLabel: "Right projector display", dataset: { action: "output-right-display" } });
-  controls.outputAssign = button(doc, "Save display assignment", "output-assign");
-  controls.outputOpenBoth = button(doc, "Open both", "output-open-both", "output-command");
-  controls.outputCloseBoth = button(doc, "Close both", "output-close-both", "output-command");
-  controls.outputStatus = make(doc, "span", { className: "output-launch-status", role: "status", ariaLive: "polite" });
-  controls.outputHandoff = make(doc, "small", { className: "output-launch-handoff" }, "TD projectorWindows off → Open Both; Close Both → TD projectorWindows on. If this page reloads, manually close old browser output windows before reopening.");
-  const leftLabel = make(doc, "label", { className: "output-display-label" }, "Left projector"); leftLabel.appendChild(controls.outputLeftDisplay);
-  const rightLabel = make(doc, "label", { className: "output-display-label" }, "Right projector"); rightLabel.appendChild(controls.outputRightDisplay);
-  outputToolbar.append(controls.outputRefresh, controls.outputIdentify, leftLabel, rightLabel, controls.outputAssign, controls.outputStatus, controls.outputHandoff);
-  const outputAction = (action, value) => onOutputAction(action, value);
-  controls.outputRefresh.addEventListener("click", () => outputAction("refresh"));
-  controls.outputIdentify.addEventListener("click", () => outputAction("identify"));
-  controls.outputAssign.addEventListener("click", () => outputAction("assign", { left: controls.outputLeftDisplay.value, right: controls.outputRightDisplay.value }));
-  controls.outputOpenBoth.addEventListener("click", () => outputAction("open"));
-  controls.outputCloseBoth.addEventListener("click", () => outputAction("close"));
-  controls.outputLeftDisplay.addEventListener("change", () => { outputSelection.left = controls.outputLeftDisplay.value; });
-  controls.outputRightDisplay.addEventListener("change", () => { outputSelection.right = controls.outputRightDisplay.value; });
-  for (const control of [controls.outputRefresh, controls.outputIdentify, controls.outputAssign, controls.outputLeftDisplay, controls.outputRightDisplay]) control.disabled = false;
-
   const workspace = make(doc, "div", { className: "config-workspace" });
   const graphColumn = make(doc, "section", { className: "graph-column" });
   const graphTitle = make(doc, "h2", {}, "Calibration path");
@@ -248,36 +131,15 @@ export function createProjectionConfigView(root, {
     Overlays: ["clock-gis", "nova-explainers", "clock-projection"],
     Names: ["names-wall", "settlement-names"],
   };
-  const actionRow = make(doc, "section", { className: "config-action-row", ariaLabel: "Workspace shortcuts and output windows" });
-  const categoryActions = make(doc, "div", { className: "config-category-actions", ariaLabel: "Focus graph category" });
+  const categoryActions = controls.workspaceNav;
   for (const [category, nodeIds] of Object.entries(categoryGroups)) {
     const shortcut = button(doc, category, `focus-${category.toLowerCase()}`, "config-category-action");
     shortcut.dataset.focusNodes = nodeIds.join(" ");
-    shortcut.addEventListener("click", () => {
-      canvas.focusNodes(nodeIds);
-    });
+    shortcut.addEventListener("click", () => canvas.focusNodes(nodeIds));
     categoryActions.appendChild(shortcut);
   }
-  const outputActions = make(doc, "div", { className: "output-command-actions", ariaLabel: "Projection output windows" });
-  outputActions.append(controls.outputOpenBoth, controls.outputCloseBoth);
-  actionRow.append(categoryActions, controls.appliedSummary, outputActions);
-  const outputPlacementQuery = doc.defaultView?.matchMedia?.("(max-width: 359px)");
-  const updateOutputPlacement = () => {
-    const buttons = [controls.outputOpenBoth, controls.outputCloseBoth];
-    const focused = buttons.find((control) => control === doc.activeElement);
-    const useTools = Boolean(outputPlacementQuery?.matches);
-    if (useTools && focused) controls.tools.open = true;
-    const target = useTools ? toolsOutputCommands : outputActions;
-    target.append(...buttons);
-    toolsOutputCommands.hidden = !useTools;
-    if (focused && doc.activeElement !== focused) focused.focus();
-  };
-  outputPlacementQuery?.addEventListener?.("change", updateOutputPlacement);
-  updateOutputPlacement();
-  toolbar.append(heading, presetGroup, liveControl, saveColumn, controls.parameterUndo, controls.parameterRedo, controls.tools);
-  commandBar.append(toolbar, actionRow, status);
-  if (traceUi) commandBar.appendChild(traceUi.element);
-  app.append(commandBar);
+  if (traceUi) controls.toolsContent.appendChild(traceUi.element);
+  app.append(commandBar.element);
   const nodeMap = new Map();
   const patternControls = new Map();
   let parameterDialog = null;
@@ -535,8 +397,6 @@ export function createProjectionConfigView(root, {
   let currentHandles = [];
   let currentSelection = null;
   let currentWarpGrid = null;
-  let lastLoadedPresetId = null;
-  let lastLoadedPresetLoadToken = null;
   let pointerInput;
   function cancelActiveDrag(options) { pointerInput?.cancel(options); controls.gridLayout?.cancel(); }
   const warpOutput = () => selectedGraphNode.startsWith("right-") ? "right" : "left";
@@ -577,7 +437,6 @@ export function createProjectionConfigView(root, {
     onWarpAction("warp-nudge", { direction, coarse: Boolean(event.shiftKey), fine: Boolean(event.altKey) });
   };
   doc.addEventListener?.("keydown", onKeyDown);
-  controls.appliedFailure = make(doc, "p", { className: "applied-failure", role: "alert", hidden: true });
   const settlementControls = createSettlementNameControls(doc, {
     onOutput: onSettlementOutput,
     onCitycode: onSettlementCitycode,
@@ -589,7 +448,7 @@ export function createProjectionConfigView(root, {
   nodeMap.get("settlement-names")?.appendChild(settlementControls.element);
   controls.editorHome = make(doc, "div", { className: "editor-home", hidden: true });
   controls.editorHome.appendChild(controls.warpPanel);
-  status.append(controls.appliedFailure);
+
   app.appendChild(controls.editorHome);
   app.appendChild(workspace);
   root.appendChild(app);
@@ -728,93 +587,7 @@ export function createProjectionConfigView(root, {
     if (state.draft) currentDraft = state.draft;
     currentFieldErrors = errors.fields || errors.field || errors;
     currentStatus = statusText;
-    controls.live.checked = Boolean(state.live);
-    controls.parameterUndo.disabled = !parameterHistory.undo; controls.parameterRedo.disabled = !parameterHistory.redo;
-    controls.applyLiveDescription.textContent = state.live ? "Live on. Changes update automatically." : "Live off. Use Apply once in Tools, or Apply & save.";
-    const dirtyLocalDraft = Boolean(state.hasLocalDraft || draftDiffersFromAccepted);
-    controls.status.textContent = dirtyLocalDraft && !state.live
-      ? `${statusText}. Changes have not reached the outputs. Apply or save before reload. Reloading discards this local draft.`
-      : statusText;
-    controls.save.textContent = draftDiffersFromAccepted ? "Apply & save" : "Save preset";
-    controls.save.setAttribute("aria-label", draftDiffersFromAccepted ? "Apply and save preset" : "Save preset");
-    controls.save.title = draftDiffersFromAccepted ? "Apply & save preset" : "Save preset";
-    controls.saveStatus.textContent = statusText || (dirtyLocalDraft ? "Unsaved changes" : "");
-    controls.liveWarning.textContent = dirtyLocalDraft && !state.live ? controls.status.textContent : "";
-    controls.liveWarning.hidden = !(dirtyLocalDraft && !state.live);
-    controls.conflict.textContent = conflict;
-    controls.conflict.hidden = !conflict;
-    const setUtilityError = (indicator, details, message) => {
-      const text = String(message || "");
-      indicator.hidden = !text;
-      details.textContent = text;
-      details.hidden = !text;
-    };
-    const presetError = errors.preset || errors.name;
-    const displayError = outputState.error || errors.outputs || errors.output;
-    const visibleErrors = new Map();
-    const addVisibleError = (section, message) => {
-      const text = String(message || "");
-      if (text && !visibleErrors.has(text)) visibleErrors.set(text, `${section}: ${text}`);
-    };
-    addVisibleError("Preset management", presetError);
-    addVisibleError("Display setup", displayError);
-    addVisibleError("Calibration action", errors.action);
-    addVisibleError("Output preview", state.previewError);
-    const actionError = [...visibleErrors.values()].join(" · ");
-    const toolsError = actionError;
-    setUtilityError(controls.toolsErrorIndicator, controls.toolsErrorDetails, toolsError);
-    controls.toolsSummary.title = toolsError ? `Tools contains an error: ${toolsError}` : "Preset loading, output status, display setup, and advanced actions";
-    controls.toolsSummary.setAttribute("aria-label", toolsError ? `Tools. ${toolsError}` : "Tools");
-    controls.actionError.textContent = actionError;
-    controls.actionError.hidden = !actionError;
-    controls.connectionStatus.textContent = state.hydrationError ? `Settings check failed: ${state.hydrationError}` : state.hydrating ? "Connecting to current settings…" : state.connected === false ? "Disconnected from current settings. Live remains off until settings are reconciled." : "";
-    controls.connectionStatus.hidden = !state.hydrating && !state.hydrationError && state.connected !== false;
-    controls.retryHydration.hidden = !state.hydrationError;
-    const screens = Array.isArray(outputState.screens) ? [...outputState.screens].sort((a, b) => a.displayNumber - b.displayNumber) : [];
-    const assignments = outputState.assignments || {};
-    const optionFor = (screen) => make(doc, "option", { value: screen.key }, `Display ${screen.displayNumber}`);
-    const unsupportedOutputControl = outputState.supported === false;
-    controls.outputIdentify.disabled = unsupportedOutputControl || screens.length === 0;
-    for (const control of [controls.outputRefresh, controls.outputAssign, controls.outputLeftDisplay, controls.outputRightDisplay, controls.outputOpenBoth, controls.outputCloseBoth]) control.disabled = unsupportedOutputControl;
-    const selectedKey = (assignment) => screens.find((screen) => assignment?.key === screen.key || (assignment?.label === screen.label && ["left", "top", "width", "height"].every((key) => Number(assignment?.bounds?.[key]) === Number(screen[key]))))?.key || "";
-    const screensSignature = screens.map((screen) => screen.key).join("|");
-    const assignmentsSignature = JSON.stringify(assignments);
-    if (screensSignature !== outputScreensSignature || assignmentsSignature !== outputAssignmentsSignature) outputSelection = { left: selectedKey(assignments.left), right: selectedKey(assignments.right) };
-    outputScreensSignature = screensSignature;
-    outputAssignmentsSignature = assignmentsSignature;
-    controls.outputLeftDisplay.replaceChildren(...screens.map(optionFor));
-    controls.outputRightDisplay.replaceChildren(...screens.map(optionFor));
-    controls.outputLeftDisplay.value = outputSelection.left;
-    controls.outputRightDisplay.value = outputSelection.right;
-    const capabilityMessage = "Open/close outputs on the workstation; this browser does not support display management.";
-    controls.outputCapabilityNotice.textContent = capabilityMessage;
-    controls.outputCapabilityNotice.hidden = !unsupportedOutputControl;
-    controls.outputStatus.textContent = unsupportedOutputControl
-      ? capabilityMessage
-      : outputState.message || "Identify displays on the workstation.";
-    const presets = state.snapshot?.presets || [];
-    const selectedPreset = state.selectedPresetId || state.snapshot?.selectedPresetId || "original";
-    controls.presets.replaceChildren(...presets.map((preset) => make(doc, "option", { value: preset.id }, preset.name)));
-    controls.presets.value = selectedPreset;
-    const loadedPreset = presets.find((preset) => preset.id === loadedPresetId);
-    controls.loadedPresetIdentity.textContent = `Loaded: ${loadedPreset?.name || "unknown"}`;
-    controls.loadedPresetIdentity.title = `Loaded: ${loadedPreset?.name || "unknown"}`;
-    controls.presets.setAttribute("aria-describedby", "projection-loaded-preset-identity");
-    controls.loadedPresetIdentity.id = "projection-loaded-preset-identity";
-    const selectedPresetName = presets.find((preset) => preset.id === selectedPreset)?.name || "unknown";
-    controls.toolsPresetContext.textContent = `Selected: ${selectedPresetName}. ${controls.loadedPresetIdentity.textContent}. Loading is explicit.`;
-    controls.toolsPresetContext.title = controls.toolsPresetContext.textContent;
-    controls.save.disabled = Boolean(savePending || !loadedPreset || loadedPreset.readOnly);
-    controls.saveNew.disabled = Boolean(savePending);
-    controls.originalCheckpointGuidance.hidden = !loadedPreset?.readOnly;
-    controls.originalCheckpointGuidance.textContent = loadedPreset?.readOnly ? `${loadedPreset.name || "Loaded preset"} is immutable. Use Save as new.` : "";
-    if (loadedPreset && (loadedPresetId !== lastLoadedPresetId || loadedPresetLoadToken !== lastLoadedPresetLoadToken)) {
-      const explicitLoad = lastLoadedPresetLoadToken !== null && loadedPresetLoadToken !== lastLoadedPresetLoadToken;
-      if (!presetNameEdited || explicitLoad) controls.saveName.value = loadedPreset.name || "";
-      if (explicitLoad) presetNameEdited = false;
-      lastLoadedPresetId = loadedPresetId;
-      lastLoadedPresetLoadToken = loadedPresetLoadToken;
-    }
+    commandBar.update({ state, parameterHistory, errors, conflict, statusText, draftDiffersFromAccepted, savePending, loadedPresetId, loadedPresetLoadToken, statusRows, appliedSummary, outputState });
     const draft = state.draft || DEFAULT_PROJECTION_CONFIG;
     setNode(selectedNode);
     controls.gisClockScene.value = clockScene;
@@ -851,17 +624,6 @@ export function createProjectionConfigView(root, {
       const fieldError = errors[errorPath] || Object.entries(errors).find(([key]) => errorPath.startsWith(`${key}.`))?.[1] || "";
       control.update({value, resolvedPath: errorPath, error: fieldError});
     }
-    const outputAcknowledgement = `Outputs: ${({ Applied: "applied", Pending: "pending", Failed: "failed", Unconfirmed: "unconfirmed" }[appliedSummary] || String(appliedSummary).toLowerCase())}`;
-    controls.appliedSummary.textContent = outputAcknowledgement;
-    controls.toolsAppliedSummary.textContent = outputAcknowledgement;
-    const outputFailures = statusRows.filter((row) => row.success === false && row.instanceId).map((row) => {
-      const label = row.output[0].toUpperCase() + row.output.slice(1);
-      return `${label} output: ${row.error || "Application not confirmed"}`;
-    });
-    controls.appliedFailure.textContent = outputFailures.join(" · ");
-    controls.appliedFailure.hidden = outputFailures.length === 0;
-    controls.appliedRows.replaceChildren(...statusRows.map((row) => make(doc, "p", { className: row.success ? "applied" : "not-confirmed" }, row.text)));
-    status.hidden = !(controls.liveWarning.hidden === false || conflict || actionError || !controls.connectionStatus.hidden || !controls.outputCapabilityNotice.hidden || outputFailures.length > 0);
   };
   setNode("pre");
   return {
@@ -890,7 +652,7 @@ export function createProjectionConfigView(root, {
     cancelNumericEdits: options => { for (const control of [...fields.values(), ...controls.warpCoordinateFields.values()]) control.cancel(options); parameterDialog.cancel(options); },
     closeWarpEditor: dialog.close,
     sendRunNamesPreview: (config) => dialog.sendRunNamesPreview(config),
-    dispose() { for (const control of [...fields.values(), ...controls.warpCoordinateFields.values()]) control.dispose(); settlementControls.dispose(); disposePageTrace(); disposeWarpTrace(); disposeGraphTrace(); traceUi?.dispose(); outputPlacementQuery?.removeEventListener?.("change", updateOutputPlacement); doc.removeEventListener?.("keydown", onKeyDown); doc.removeEventListener?.("keydown", dismissDisclosures); doc.removeEventListener?.("pointerdown", dismissDisclosures, true); parameterDialog.dispose(); dialog.dispose(); pointerInput.dispose(); canvas.dispose(); },
+    dispose() { for (const control of [...fields.values(), ...controls.warpCoordinateFields.values()]) control.dispose(); settlementControls.dispose(); disposePageTrace(); disposeWarpTrace(); disposeGraphTrace(); traceUi?.dispose(); commandBar.dispose(); doc.removeEventListener?.("keydown", onKeyDown); parameterDialog.dispose(); dialog.dispose(); pointerInput.dispose(); canvas.dispose(); },
   };
 }
 

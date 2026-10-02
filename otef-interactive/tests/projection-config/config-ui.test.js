@@ -187,7 +187,8 @@ test("category shortcuts call actual graph node groups and leave every node moun
   expect(root.querySelectorAll(".config-node")).toHaveLength(17);
   expect(root.querySelector(".node-selector")).toBeNull();
   expect(root.querySelector('[data-action="warp-editor-open-mobile"]')).toBeNull();
-  expect(root.querySelectorAll(".config-action-row button")).toHaveLength(5);
+  expect(root.querySelectorAll("nav[aria-label='Workspace'] button")).toHaveLength(3);
+  expect(root.querySelectorAll(".output-command-actions button")).toHaveLength(3);
   expect(root.querySelector('[data-action="export"]')).toBeNull();
   expect(root.querySelector('[data-action="share"]')).toBeNull();
   expect(root.querySelector('[data-action="output-open-left"]')).toBeNull();
@@ -502,7 +503,7 @@ test("preset selection remains pending until explicit Load", () => {
   expect(loaded.textContent).toContain("TD");
 });
 
-test("top overlays open singly and retain error access", () => {
+test("one flat Tools panel retains independent error access", () => {
   const { root, update } = makeView();
   update({ errors: { action: "Preset load failed" } });
   const panels = [...root.querySelectorAll("details.config-tools")];
@@ -516,7 +517,7 @@ test("top overlays open singly and retain error access", () => {
   expect(root.querySelector(".action-error").hidden).toBe(false);
 });
 
-test("overlay dismissal preserves drafts and the correct focus owner", () => {
+test("Tools dismissal preserves drafts and the correct focus owner", () => {
   const { root } = makeView({ coarse: false });
   const presetPanel = root.querySelector(".config-tools");
   const trigger = presetPanel.querySelector("summary");
@@ -630,27 +631,20 @@ test.each(["mouse", "coarse-pointer landscape", "portrait"])("%s workspace keeps
   expect(root.querySelector(".node-selector")).toBeNull();
 });
 
-test("preset and display setup failures stay visible from collapsed disclosures", () => {
+test("preset and display errors remain visible independently of Tools", () => {
   const { root, update, onAction } = makeView();
   update({ errors: { name: "Preset save failed" }, outputState: { error: "Display assignment failed" } });
-
   const tools = root.querySelector(".config-tools");
-  const indicator = tools.querySelector("summary .disclosure-error-indicator");
-  expect(indicator.className).toBe("disclosure-error-indicator");
-  expect(indicator.getAttribute("aria-label")).toBe("Tools contains an unresolved error");
-  expect(indicator.hidden).toBe(false);
-  expect(root.querySelector(".action-error").hidden).toBe(false);
-  expect(root.querySelector(".action-error").textContent).toContain("Preset save failed");
-
-  expect(root.querySelector(".config-command-bar").contains(tools)).toBe(true);
-  expect([...tools.querySelectorAll(".config-tools-section h2")].map((heading) => heading.textContent)).toContain("Apply and load");
+  const error = root.querySelector(".action-error");
+  expect(error.hidden).toBe(false);
+  expect(error.closest(".config-operation-status")).not.toBeNull();
+  expect(tools.contains(error)).toBe(false);
+  expect(error.textContent).toContain("Preset save failed");
+  expect(error.textContent).toContain("Display assignment failed");
   tools.querySelector("summary").click();
-  expect(tools.querySelector(".disclosure-error-details").hidden).toBe(false);
-  expect(tools.querySelector(".disclosure-error-details").textContent).toContain("Preset save failed");
-  expect(tools.querySelector(".disclosure-error-details").textContent).toContain("Display assignment failed");
+  expect(error.hidden).toBe(false);
   expect(onAction).not.toHaveBeenCalled();
 });
-
 test("preset creation remains available alongside preset selection and save", () => {
   const { root, view } = makeView();
   expect(root.contains(view.controls.save)).toBe(true);
@@ -755,29 +749,29 @@ test("fine nudge calls the existing callback once with the field and direction",
   expect(onNudge).toHaveBeenCalledWith("pre.tx", -1);
 });
 
-test("compact command header keeps all actions in two rows and one dismissible Tools panel", () => {
+test("aligned command bands keep direct actions outside one dismissible flat Tools panel", () => {
   const { root, view, onAction, onOutputAction, update } = makeView({ coarse: false });
   const header = root.querySelector(".config-command-bar");
   expect(header.children).toHaveLength(3);
   expect(header.querySelectorAll("details")).toHaveLength(1);
   const tools = header.querySelector("details.config-tools");
   expect(tools.querySelector("summary").textContent).toContain("Tools");
-  expect(tools.contains(view.controls.apply)).toBe(true);
-  expect(tools.contains(view.controls.load)).toBe(true);
-  expect(tools.contains(view.controls.saveNew)).toBe(true);
-  expect(tools.contains(view.controls.outputRefresh)).toBe(true);
-  expect(header.querySelector(".config-action-row").contains(view.controls.outputOpenBoth)).toBe(true);
-  expect(header.querySelector(".config-action-row").contains(view.controls.outputCloseBoth)).toBe(true);
-  expect(view.controls.outputOpenBoth.textContent).toBe("Open both");
-  expect(view.controls.outputCloseBoth.textContent).toBe("Close both");
-  expect(view.controls.live.parentElement.parentElement.className).toBe("compact-live");
+  expect(tools.contains(view.controls.apply)).toBe(false);
+  expect(tools.contains(view.controls.load)).toBe(false);
+  expect(tools.contains(view.controls.saveNew)).toBe(false);
+  expect(tools.contains(view.controls.outputRefresh)).toBe(false);
+  expect(header.querySelector(".display-commands").contains(view.controls.outputOpenBoth)).toBe(true);
+  expect(header.querySelector(".display-commands").contains(view.controls.outputCloseBoth)).toBe(true);
+  expect(view.controls.outputOpenBoth.textContent).toBe("Open");
+  expect(view.controls.outputCloseBoth.textContent).toBe("Close");
+  expect(view.controls.live.parentElement.parentElement.className).toBe("calibration-commit-controls");
   expect(view.controls.live.getAttribute("aria-label")).toBe("Live");
   expect(view.controls.live.parentElement.textContent).toBe("Live");
   expect(view.controls.live.getAttribute("aria-describedby")).toBe("projection-apply-live-description");
   update({ state: { live: true } });
   expect(root.querySelector("#projection-apply-live-description").textContent).toBe("Live on. Changes update automatically.");
   update({ state: { live: false } });
-  expect(root.querySelector("#projection-apply-live-description").textContent).toBe("Live off. Use Apply once in Tools, or Apply & save.");
+  expect(root.querySelector("#projection-apply-live-description").textContent).toBe("Live off. Use Apply once, or Apply & save.");
   update({ statusText: "Saved" });
   expect(header.querySelector(".config-save-status").textContent).toContain("Saved");
 
@@ -793,7 +787,7 @@ test("compact command header keeps all actions in two rows and one dismissible T
   view.controls.outputOpenBoth.click();
   view.controls.outputCloseBoth.click();
   expect(onAction.mock.calls).toEqual([["preset-select", "td"], ["load", "td"], ["apply"], ["save", "TD"]]);
-  expect(onOutputAction.mock.calls).toEqual([["open", undefined], ["close", undefined]]);
+  expect(onOutputAction.mock.calls).toEqual([["open"], ["close"]]);
 
   const trigger = tools.querySelector("summary");
   trigger.click();
@@ -807,14 +801,15 @@ test("compact command header keeps all actions in two rows and one dismissible T
   view.dispose();
 });
 
-test("narrow output relocation keeps the native button instances visible and focused", () => {
+test("narrow width keeps the native output buttons direct and focused", () => {
   const { root, view, setSmallWidth } = makeView({ coarse: false });
   const open = view.controls.outputOpenBoth;
   const tools = view.controls.tools;
   open.focus();
   setSmallWidth(true);
-  expect(tools.open).toBe(true);
-  expect(root.querySelector(".tools-output-commands").contains(open)).toBe(true);
+  expect(tools.open).toBe(false);
+  expect(open.closest("details")).toBeNull();
+  expect(root.querySelector(".display-commands").contains(open)).toBe(true);
   expect(document.activeElement).toBe(open);
   setSmallWidth(false);
   expect(root.querySelector(".output-command-actions").contains(open)).toBe(true);
@@ -862,7 +857,7 @@ test("Save follows the acknowledged checkpoint and explicit pending state", () =
   update({ state: { draft: customDraft, snapshot, selectedPresetId: "original" }, loadedPresetId: "original", loadedPresetLoadToken: 3 });
   expect(view.controls.save.disabled).toBe(true);
   expect(view.controls.saveNew.disabled).toBe(false);
-  expect(view.controls.tools.querySelector(".original-checkpoint-guidance").textContent).toContain("Original is immutable");
+  expect(view.controls.originalCheckpointGuidance.textContent).toContain("Original is immutable");
 
   update({ state: { draft: customDraft, snapshot, selectedPresetId: "td" }, loadedPresetId: "td", loadedPresetLoadToken: 4, savePending: true });
   expect(view.controls.save.disabled).toBe(true);
