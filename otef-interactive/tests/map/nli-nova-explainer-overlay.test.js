@@ -145,6 +145,52 @@ describe("createNovaExplainerOverlay", () => {
     expect(ui.card(98)).toBeNull();
   });
 
+  it("drops the estimated-time parenthetical from the Eitan Mor kidnapping name", () => {
+    const ui = mount();
+    ui.overlay.sync(visual({
+      achievedPolygonObjectIds: [106],
+      novaBeatIndex: 4,
+      polygonFeatures: [polygon(106, "חטיפת איתן מור, רום ברסלבסקי ומורן סטלה ינאי (זמן משוער - ייתכן שנחטפו בזמנים שונים לאורך הצהריים)")],
+    }));
+    expect(ui.card(106).textContent).toBe("חטיפת איתן מור, רום ברסלבסקי ומורן סטלה ינאי");
+  });
+
+  it("removes the fighting-focus numbers from explainer names", () => {
+    const ui = mount();
+    ui.overlay.sync(visual({
+      achievedPolygonObjectIds: [97, 98],
+      novaBeatIndex: 1,
+      polygonFeatures: [
+        polygon(97, "מוקד לחימה 1 - כביש 232"),
+        polygon(98, "מוקד לחימה 2 - נקודת הטנק הדרומית"),
+      ],
+    }));
+    expect(ui.card(97).textContent).toBe("מוקד לחימה - כביש 232");
+    expect(ui.card(98).textContent).toBe("מוקד לחימה - נקודת הטנק הדרומית");
+  });
+
+  it("fades cards from earlier beats and keeps the current beat readable", () => {
+    const ui = mount();
+    ui.overlay.sync(visual({
+      novaBeatIndex: 1,
+      achievedPolygonObjectIds: [97, 100, 104, 98, 99, 186],
+      polygonFeatures: [
+        polygon(97, "כביש 232"),
+        polygon(100, "חניון"),
+        polygon(104, "מתחם"),
+        polygon(98, "טנק"),
+        polygon(99, "יער"),
+        polygon(186, "בריחה"),
+      ],
+    }));
+    expect(ui.card(97).classList.contains("nli-nova-explainer-card--past")).toBe(true);
+    expect(ui.card(100).classList.contains("nli-nova-explainer-card--past")).toBe(true);
+    expect(ui.card(98).classList.contains("nli-nova-explainer-card--past")).toBe(false);
+    expect(ui.card(99).classList.contains("nli-nova-explainer-card--past")).toBe(false);
+    expect(ui.leader(97).classList.contains("nli-nova-explainer-leader--past")).toBe(true);
+    expect(ui.leader(98).classList.contains("nli-nova-explainer-leader--past")).toBe(false);
+  });
+
   it("removes cards immediately when a later id is seeked away and keeps them while paused", () => {
     const ui = mount();
     const features = [polygon(97, "כביש 232"), polygon(100, "חניון")];

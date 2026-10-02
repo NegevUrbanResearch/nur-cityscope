@@ -326,7 +326,7 @@ Every row is pending until the exhibit operator observes it.
 | Check | Date | Operator | pass/fail | Notes |
 |---|---|---|---|---|
 | Nova entry fits the reviewed extent and shows 08:03 before Play |  |  | pending |  |
-| Nova compounds play five four-second beats; Stop returns to 08:03 |  |  | pending |  |
+| Nova compounds play five eight-second beats; Stop returns to 08:03 |  |  | pending |  |
 | Nova escape routes, Mor Levy route and slides, and memorial slides |  |  | pending |  |
 | Sderot entry focuses the police station; slides stay on GIS |  |  | pending |  |
 | Hostages: Nir Oz and Peri home, slides, Nir Oz people, all hostages |  |  | pending |  |

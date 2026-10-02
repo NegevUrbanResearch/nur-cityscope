@@ -61,11 +61,18 @@ const beats = Object.freeze(authoredBeats.map((beat) => Object.freeze({
 
 export const NLI_NOVA_STORY = Object.freeze({
   startMinutes: 483,
-  beatDurationMs: 4000,
+  beatDurationMs: 8000,
   manualRevealMs: 320,
   beats,
   representativeMinutes: Object.freeze(beats.map((beat) => beat.representativeMinute)),
 });
+
+export function isNovaStoryBeats(beats) {
+  const list = Array.isArray(beats) ? beats : [];
+  const expected = NLI_NOVA_STORY.representativeMinutes;
+  return list.length === expected.length
+    && expected.every((minute, index) => Number(list[index]) === minute);
+}
 
 function clampedBeatIndex(index) {
   const number = Number(index);

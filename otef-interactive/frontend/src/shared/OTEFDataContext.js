@@ -3,7 +3,7 @@ import { acceptSettlementNameSnapshot, validateSettlementNameSettings } from "./
 import { normalizeGisBasemap } from "./gis-basemap.js";
 import { normalizeEscapeOverlay } from "./nli-escape-overlay.js";
 import { emptyNliClockLayout, normalizeNliClockLayout } from "../projection/nli-explainer-overlay.js";
-import { idleNliClock, normalizeNliClock } from "./nli-investigation-clock.js";
+import { adoptNliClock, idleNliClock, normalizeNliClock } from "./nli-investigation-clock.js";
 import { normalizeNarrativeState } from "./nli-narratives.js";
 import { normalizePersonSelection } from "./person-selection.js";
 import { OTEFDataContextInternals } from "./otef-data-context/index.js";
@@ -390,7 +390,7 @@ class OTEFDataContextClass {
    * @param {unknown} clock
    */
   _setInvestigationClock(clock) {
-    const next = normalizeNliClock(clock);
+    const next = adoptNliClock(this._investigationClock, clock);
     if (Number.isFinite(next.serverNowMs)) {
       this._clockOffsetMs = next.serverNowMs - Date.now();
     }
@@ -682,10 +682,10 @@ class OTEFDataContextClass {
     }
 
     const incomingBasemap = normalizeGisBasemap(scene.basemap);
-    const incomingClock = normalizeNliClock(scene.investigationClock);
     const incomingPerson = normalizePersonSelection(scene.personSelection);
     const incomingOverlay = normalizeEscapeOverlay(scene.escapeOverlay, incoming.id);
     const localClock = normalizeNliClock(this._investigationClock);
+    const incomingClock = normalizeNliClock(scene.investigationClock);
     const localPerson = normalizePersonSelection(this._personSelection);
     const hydrate = options.hydrate === true;
     const baseline = options.coupledBaseline;

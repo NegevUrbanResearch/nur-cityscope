@@ -701,16 +701,16 @@ describe("narrative state transport", () => {
     const first = context.patchInvestigationClock(firstSelection);
     const final = context.patchInvestigationClock(finalSelection);
     await vi.waitFor(() => expect(requests).toHaveLength(1));
-    expect(requests[0].next.positionMs).toBe(4000);
+    expect(requests[0].next.positionMs).toBe(8000);
     expect(context._clockPatchQueue).toBeTruthy();
 
     requests[0].resolve({ investigation_clock: { ...firstSelection, revision: 8 } });
     await vi.waitFor(() => expect(requests).toHaveLength(2));
-    expect(requests[1].next.positionMs).toBe(12000);
+    expect(requests[1].next.positionMs).toBe(24000);
     requests[1].resolve({ investigation_clock: { ...finalSelection, revision: 9 } });
     await Promise.all([first, final]);
     expect(context.getNarrativeState()).toMatchObject({ id: "nova", revision: 4 });
-    expect(context.getInvestigationClock()).toMatchObject({ phase: "paused", positionMs: 12000, revision: 9 });
+    expect(context.getInvestigationClock()).toMatchObject({ phase: "paused", positionMs: 24000, revision: 9 });
   });
 
   test("an ordinary clock response advances the acknowledged clock", async () => {

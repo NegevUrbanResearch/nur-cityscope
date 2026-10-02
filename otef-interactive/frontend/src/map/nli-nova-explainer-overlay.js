@@ -5,6 +5,7 @@ import {
   novaExplainerCamera,
   polygonAnchorLngLat,
 } from "../shared/nli-nova-explainer-layout.js";
+import { NLI_NOVA_STORY } from "../shared/nli-nova-story.js";
 
 const STORY_IDS = new Set(NOVA_EXPLAINER_OBJECT_IDS);
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -21,9 +22,24 @@ function canonicalObjectId(value) {
   return null;
 }
 
+const EITAN_MOR_DISPLAY_NAME = "חטיפת איתן מור, רום ברסלבסקי ומורן סטלה ינאי";
+const EITAN_MOR_NAME_SUFFIX = " (זמן משוער - ייתכן שנחטפו בזמנים שונים לאורך הצהריים)";
+
 function literalName(value) {
   if (typeof value !== "string") return null;
-  return value.trim() ? value : null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (trimmed === `${EITAN_MOR_DISPLAY_NAME}${EITAN_MOR_NAME_SUFFIX}`) return EITAN_MOR_DISPLAY_NAME;
+  if (/^מוקד לחימה \d+ -/.test(trimmed)) return trimmed.replace(/^מוקד לחימה \d+ -/, "מוקד לחימה -");
+  return value;
+}
+
+function currentBeatObjectIds(frame) {
+  const beats = NLI_NOVA_STORY.beats;
+  let index = Number.isInteger(frame?.novaBeatIndex) ? frame.novaBeatIndex : -1;
+  if (index < 0 && frame?.phase === "ended") index = beats.length - 1;
+  if (index < 0 || index >= beats.length) return new Set();
+  return new Set(beats[index].polygonObjectIds);
 }
 
 function finitePoint(point) {
@@ -163,6 +179,7 @@ export function createNovaExplainerOverlay({
     const { width, height } = containerSize();
     const savedMaps = normalizeNovaExplainerMaps(typeof getLayout === "function" ? getLayout() : null);
     const camera = cameraFor(frame);
+    const currentIds = currentBeatObjectIds(frame);
     const models = [];
     const seen = new Set();
     for (const rawId of achieved) {
@@ -177,7 +194,7 @@ export function createNovaExplainerOverlay({
       const saved = savedMaps[camera]?.[String(id)] || null;
       const onCanvas = anchor ? anchorOnCanvas(anchor, width, height) : false;
       if (!saved && !onCanvas) continue;
-      models.push({ id, name, anchor, saved, width, height });
+      models.push({ id, name, anchor, saved, width, height, past: currentIds.size > 0 && !currentIds.has(id) });
     }
     return models;
   }
@@ -203,6 +220,7 @@ export function createNovaExplainerOverlay({
     }
     const nameEl = card.querySelector(".nli-nova-explainer-card__name");
     if (nameEl.textContent !== model.name) nameEl.textContent = model.name;
+    card.classList.toggle("nli-nova-explainer-card--past", model.past === true);
     const maxWidthPx = `${maxWidth}px`;
     if (card.style.maxWidth !== maxWidthPx) card.style.maxWidth = maxWidthPx;
     return card;
@@ -265,6 +283,7 @@ export function createNovaExplainerOverlay({
     setAttr(dot, "cx", fmt(item.anchor.x));
     setAttr(dot, "cy", fmt(item.anchor.y));
     setAttr(line, "points", leaderPoints(item.anchor, item.box));
+    group.classList.toggle("nli-nova-explainer-leader--past", item.past === true);
     return group;
   }
 
@@ -302,7 +321,7 @@ export function createNovaExplainerOverlay({
     const leaders = [];
     for (const item of pending) {
       const box = placeCard(item.card, item.model, item.size);
-      if (item.model.anchor) leaders.push({ id: item.model.id, anchor: item.model.anchor, box });
+      if (item.model.anchor) leaders.push({ id: item.model.id, anchor: item.model.anchor, box, past: item.model.past === true });
     }
     for (const key of measured.keys()) {
       if (!usedKeys.has(key)) measured.delete(key);

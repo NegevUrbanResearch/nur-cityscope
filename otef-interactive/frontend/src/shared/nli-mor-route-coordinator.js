@@ -7,7 +7,7 @@ export const MOR_ROUTE_HEAD_SOURCE_ID = "nli-mor-route-head";
 export const MOR_ROUTE_LAYER_ID = "nli-mor-route-line";
 export const MOR_ROUTE_HEAD_LAYER_ID = "nli-mor-route-head";
 const TURQUOISE = "#00FFC5";
-const REVEAL_MS = 4200;
+const REVEAL_MS = 10000;
 
 function clamp(value) { return Math.max(0, Math.min(1, Number(value) || 0)); }
 function finiteCoordinate(point) { return Array.isArray(point) && Number.isFinite(point?.[0]) && Number.isFinite(point?.[1]); }

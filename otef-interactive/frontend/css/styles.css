@@ -762,6 +762,11 @@ body {
   animation: nli-nova-explainer-in 280ms linear;
 }
 
+#nliNovaExplainerHost .nli-nova-explainer-card--past,
+#nliNovaExplainerHost .nli-nova-explainer-leader--past {
+  opacity: 0.42;
+}
+
 @media (prefers-reduced-motion: reduce) {
   #nliNovaExplainerHost .nli-nova-explainer-card--in {
     animation: none;

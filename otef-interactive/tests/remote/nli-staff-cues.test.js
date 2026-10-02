@@ -279,7 +279,7 @@ describe("NLI staff cue runner", () => {
     const clock = buildNovaEndedClock();
     expect(clock).toMatchObject({
       phase: "ended",
-      positionMs: 20000,
+      positionMs: 40000,
       anchorMs: null,
       loop: false,
       beats: [...NLI_NOVA_STORY.representativeMinutes],

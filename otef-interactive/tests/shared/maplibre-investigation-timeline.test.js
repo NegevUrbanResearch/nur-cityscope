@@ -374,13 +374,13 @@ describe("syncInvestigationTimelineToMap", () => {
       narrativeFocus: { id: "nova" },
       captionEl,
       nliCaptionMode: "clock-only",
-      now: () => 13_500,
+      now: () => 25_500,
     });
     await syncInvestigationTimelineToMap(map, {
       ...playing,
       phase: "paused",
-      positionMs: 12_000,
-      anchorMs: 13_500,
+      positionMs: 24_000,
+      anchorMs: 25_500,
       seekKind: "jump",
     }, polygonOnlyGroups(), deps);
     expect(captionEl.innerHTML).toContain("10:30");
@@ -416,7 +416,7 @@ describe("syncInvestigationTimelineToMap", () => {
     }));
 
     expect(captionEl.innerHTML).toContain("08:12");
-    for (nowMs = 100; nowMs <= 17_500; nowMs += 100) {
+    for (nowMs = 100; nowMs <= 33_500; nowMs += 100) {
       const callback = callbacks.shift();
       expect(callback, `scheduled frame at ${nowMs}ms`).toBeTypeOf("function");
       callback();
@@ -3643,7 +3643,7 @@ describe("syncInvestigationTimelineToMap", () => {
       }));
       expect(frames[0].achievedPolygonObjectIds).toEqual([97, 100, 104]);
       expect(frames[0].novaBeatIndex).toBe(0);
-      nowMs = 4000;
+      nowMs = 8000;
       callbacks.shift()();
       expect(frames.at(-1)).toMatchObject({
         phase: "playing",
@@ -3668,8 +3668,8 @@ describe("syncInvestigationTimelineToMap", () => {
 
     it("publishes the current achieved ids when Nova is paused and when playback evaluates to ended", async () => {
       const map = makeMap();
-      const paused = pauseNliClock(playingNova(), 4000, { narrativeId: "nova" });
-      const pausedSync = await syncNova(map, paused, { now: () => 4000 });
+      const paused = pauseNliClock(playingNova(), 8000, { narrativeId: "nova" });
+      const pausedSync = await syncNova(map, paused, { now: () => 8000 });
       expect(pausedSync.frames.at(-1)).toMatchObject({
         phase: "paused",
         novaBeatIndex: 1,
@@ -3677,7 +3677,7 @@ describe("syncInvestigationTimelineToMap", () => {
       });
 
       const endedMap = makeMap();
-      const endedSync = await syncNova(endedMap, playingNova(), { now: () => 20_000 });
+      const endedSync = await syncNova(endedMap, playingNova(), { now: () => 40_000 });
       expect(endedSync.frames.at(-1)).toMatchObject({
         narrativeId: "nova",
         phase: "ended",

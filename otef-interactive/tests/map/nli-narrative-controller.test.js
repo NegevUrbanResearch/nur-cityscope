@@ -147,20 +147,20 @@ describe("GIS Segev narrative scene", () => {
     const d = await setup();
     d.controller.apply({ id: "nova", transition: "enter", revision: 1 });
     d.map.flyTo.mockClear();
-    d.controller.syncInvestigationClock({ phase: "paused", beats: NLI_NOVA_STORY.representativeMinutes, positionMs: 3 * 4000 }, 0);
+    d.controller.syncInvestigationClock({ phase: "paused", beats: NLI_NOVA_STORY.representativeMinutes, positionMs: 3 * NLI_NOVA_STORY.beatDurationMs }, 0);
     expect(d.map.flyTo).toHaveBeenCalledWith({ zoom: NLI_NARRATIVES.nova.beat4Zoom, essential: true, duration: 1000 });
     expect(novaStoryBoundsFit({ center: NLI_NARRATIVES.nova.center, zoom: NLI_NARRATIVES.nova.beat4Zoom })).toBe(true);
 
     d.map.flyTo.mockClear();
-    d.controller.syncInvestigationClock({ phase: "paused", beats: NLI_NOVA_STORY.representativeMinutes, positionMs: 3 * 4000 + 500 }, 0);
+    d.controller.syncInvestigationClock({ phase: "paused", beats: NLI_NOVA_STORY.representativeMinutes, positionMs: 3 * NLI_NOVA_STORY.beatDurationMs + 500 }, 0);
     expect(d.map.flyTo).not.toHaveBeenCalled();
-    d.controller.syncInvestigationClock({ phase: "paused", beats: NLI_NOVA_STORY.representativeMinutes, positionMs: 4 * 4000 }, 0);
+    d.controller.syncInvestigationClock({ phase: "paused", beats: NLI_NOVA_STORY.representativeMinutes, positionMs: 4 * NLI_NOVA_STORY.beatDurationMs }, 0);
     expect(d.map.flyTo).not.toHaveBeenCalled();
   });
 
   test("Nova opened on beat 4 starts at the original center with a slightly wider frame", async () => {
     const d = await setup({
-      clock: { phase: "paused", beats: NLI_NOVA_STORY.representativeMinutes, positionMs: 3 * 4000 },
+      clock: { phase: "paused", beats: NLI_NOVA_STORY.representativeMinutes, positionMs: 3 * NLI_NOVA_STORY.beatDurationMs },
     });
     d.controller.apply({ id: "nova", transition: "enter", revision: 1 });
     expect(d.map.flyTo).toHaveBeenCalledTimes(1);
@@ -170,9 +170,9 @@ describe("GIS Segev narrative scene", () => {
   test("returning to a Nova beat before Argamani restores the close camera", async () => {
     const d = await setup();
     d.controller.apply({ id: "nova", transition: "enter", revision: 1 });
-    d.controller.syncInvestigationClock({ phase: "paused", beats: NLI_NOVA_STORY.representativeMinutes, positionMs: 3 * 4000 }, 0);
+    d.controller.syncInvestigationClock({ phase: "paused", beats: NLI_NOVA_STORY.representativeMinutes, positionMs: 3 * NLI_NOVA_STORY.beatDurationMs }, 0);
     d.map.flyTo.mockClear();
-    d.controller.syncInvestigationClock({ phase: "paused", beats: NLI_NOVA_STORY.representativeMinutes, positionMs: 2 * 4000 }, 0);
+    d.controller.syncInvestigationClock({ phase: "paused", beats: NLI_NOVA_STORY.representativeMinutes, positionMs: 2 * NLI_NOVA_STORY.beatDurationMs }, 0);
     expect(d.map.flyTo).toHaveBeenCalledWith({ center: NLI_NARRATIVES.nova.center, zoom: 15, essential: true, duration: 1000 });
   });
 
@@ -193,7 +193,7 @@ describe("GIS Segev narrative scene", () => {
   test("Mor route restores the Argamani frame when its overlay closes on beat 4", async () => {
     const d = await setup();
     d.controller.apply({ id: "nova", transition: "enter", revision: 1 });
-    d.controller.syncInvestigationClock({ phase: "paused", beats: NLI_NOVA_STORY.representativeMinutes, positionMs: 3 * 4000 }, 0);
+    d.controller.syncInvestigationClock({ phase: "paused", beats: NLI_NOVA_STORY.representativeMinutes, positionMs: 3 * NLI_NOVA_STORY.beatDurationMs }, 0);
     d.listeners.get("escapeOverlay")({ mor: true });
     d.map.flyTo.mockClear();
     d.listeners.get("escapeOverlay")({ mor: false });

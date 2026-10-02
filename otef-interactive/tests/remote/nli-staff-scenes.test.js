@@ -211,7 +211,7 @@ describe("NLI staff run of show", () => {
     const expected = [
       ["names_wall", "auto", "stay", false],
       ["segev", "manual", "stay", true],
-      ["nova_mor", "manual", "stay", true],
+      ["nova_mor", "auto", "stay", true],
       ["nova_memorial", "auto", "stay", true],
       ["sderot", "manual", "stay", true],
       ["shura", "auto", "stay", true],
@@ -312,7 +312,7 @@ describe("NLI staff run of show", () => {
     expect(mor.cue).toEqual({ layers: novaLayers, clock: "ended", escape: { mor: true } });
     expect(mor.kit).toEqual(["escape", "presentation"]);
     expect(mor.escapeKinds).toEqual(["mor"]);
-    expect(mor.presentation).toEqual({ segmentId: "nova_mor", open: "manual", onClose: "stay" });
+    expect(mor.presentation).toEqual({ segmentId: "nova_mor", open: "auto", onClose: "stay" });
     expect(mor).not.toHaveProperty("personQuery");
     expect(mor.kit).not.toContain("archive");
     expect(mor.note.he).toContain("מור");

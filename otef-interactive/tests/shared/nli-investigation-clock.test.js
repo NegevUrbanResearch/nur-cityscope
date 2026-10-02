@@ -14,6 +14,7 @@ import {
   evaluateClock,
   flashPreviousClock,
   idleNliClock,
+  adoptNliClock,
   normalizeNliClock,
   nliPlayableIdsFromGroups,
   pauseNliClock,
@@ -385,27 +386,27 @@ describe("Nova fixed-duration clock", () => {
   const options = { narrativeId: "nova" };
   const novaBeats = NLI_NOVA_STORY.representativeMinutes;
 
-  it("maps five representative minutes to a 20-second play with no lead-in or hold", () => {
+  it("maps five representative minutes to a 40-second play with no lead-in or hold", () => {
     const playing = playNliClock(idleNliClock(), [polygons], novaBeats, 1_000);
     expect(evaluateClock(playing, 1_000, options)).toMatchObject({
       phase: "playing", index: 0, clock: 492, beatElapsedMs: 0, leadIn: false,
     });
-    expect(evaluateClock(playing, 4_999, options)).toMatchObject({ index: 0, clock: 492 });
-    expect(evaluateClock(playing, 5_000, options)).toMatchObject({ index: 1, clock: 506 });
-    expect(evaluateClock(playing, 13_000, options)).toMatchObject({ index: 3, clock: 630 });
-    expect(evaluateClock(playing, 16_999, options)).toMatchObject({ index: 3, clock: 630 });
-    expect(evaluateClock(playing, 17_000, options)).toMatchObject({ index: 4, clock: 720 });
-    expect(evaluateClock(playing, 20_999, options)).toMatchObject({ index: 4, clock: 720 });
-    expect(clockStoryDurationMs(novaBeats, playing, options)).toBe(20_000);
-    expect(evaluateClock(playing, 21_000, options)).toMatchObject({
+    expect(evaluateClock(playing, 8_999, options)).toMatchObject({ index: 0, clock: 492 });
+    expect(evaluateClock(playing, 9_000, options)).toMatchObject({ index: 1, clock: 506 });
+    expect(evaluateClock(playing, 25_000, options)).toMatchObject({ index: 3, clock: 630 });
+    expect(evaluateClock(playing, 32_999, options)).toMatchObject({ index: 3, clock: 630 });
+    expect(evaluateClock(playing, 33_000, options)).toMatchObject({ index: 4, clock: 720 });
+    expect(evaluateClock(playing, 40_999, options)).toMatchObject({ index: 4, clock: 720 });
+    expect(clockStoryDurationMs(novaBeats, playing, options)).toBe(40_000);
+    expect(evaluateClock(playing, 41_000, options)).toMatchObject({
       phase: "ended", mode: "hold", index: -1,
     });
   });
 
   it("pause and resume retain the active Nova reveal position", () => {
     const playing = playNliClock(idleNliClock(), [polygons], novaBeats, 1_000);
-    const paused = pauseNliClock(playing, 5_750, options);
-    expect(paused).toMatchObject({ phase: "paused", positionMs: 4_750 });
+    const paused = pauseNliClock(playing, 9_750, options);
+    expect(paused).toMatchObject({ phase: "paused", positionMs: 8_750 });
     expect(evaluateClock(paused, 99_000, options)).toMatchObject({
       phase: "paused", index: 1, clock: 506, beatElapsedMs: 750,
     });
@@ -415,29 +416,29 @@ describe("Nova fixed-duration clock", () => {
     });
   });
 
-  it("ends when paused at or after 20 seconds and can replay from beat one", () => {
+  it("ends when paused at or after 40 seconds and can replay from beat one", () => {
     const playing = playNliClock(idleNliClock(), [polygons], novaBeats, 0);
-    expect(pauseNliClock(playing, 19_999, options).phase).toBe("paused");
-    expect(pauseNliClock(playing, 20_000, options)).toMatchObject({
-      phase: "ended", positionMs: 20_000,
+    expect(pauseNliClock(playing, 39_999, options).phase).toBe("paused");
+    expect(pauseNliClock(playing, 40_000, options)).toMatchObject({
+      phase: "ended", positionMs: 40_000,
     });
-    expect(pauseNliClock(playing, 20_001, options)).toMatchObject({
-      phase: "ended", positionMs: 20_000,
+    expect(pauseNliClock(playing, 40_001, options)).toMatchObject({
+      phase: "ended", positionMs: 40_000,
     });
     const ended = endNliClock(playing, options);
-    expect(ended).toMatchObject({ phase: "ended", positionMs: 20_000 });
+    expect(ended).toMatchObject({ phase: "ended", positionMs: 40_000 });
     const replayed = replayNliClock(ended, 30_000);
     expect(replayed).toMatchObject({ phase: "playing", positionMs: 0, anchorMs: 30_000 });
     expect(evaluateClock(replayed, 30_000, options)).toMatchObject({ index: 0, clock: 492 });
   });
 
-  it("uses four-second boundaries for seek and step and does not wrap", () => {
+  it("uses eight-second boundaries for seek and step and does not wrap", () => {
     const playing = playNliClock(idleNliClock(), [polygons], novaBeats, 0);
     expect(seekNliClock(playing, 3, 7_000, undefined, options)).toMatchObject({
-      phase: "paused", positionMs: 12_000,
+      phase: "paused", positionMs: 24_000,
     });
-    expect(stepNliClock(playing, 1, 3_999, undefined, options)).toMatchObject({
-      phase: "paused", positionMs: 4_000,
+    expect(stepNliClock(playing, 1, 7_999, undefined, options)).toMatchObject({
+      phase: "paused", positionMs: 8_000,
     });
     const first = seekNliClock(playing, 0, 0, undefined, options);
     const last = seekNliClock(playing, 4, 0, undefined, options);
@@ -450,10 +451,37 @@ describe("Nova fixed-duration clock", () => {
     expect(stopped).toEqual(idleNliClock());
   });
 
-  it("keeps national fixed timeline calculations unchanged without Nova context", () => {
-    expect(clockStoryDurationMs(novaBeats)).not.toBe(20_000);
-    expect(evaluateClock(playNliClock(idleNliClock(), [polygons], novaBeats, 0), 4_000).index)
-      .toBe(1);
+  it("uses eight-second Nova duration from the beat list even without narrativeId", () => {
+    const playing = playNliClock(idleNliClock(), [polygons], novaBeats, 0);
+    expect(clockStoryDurationMs(novaBeats, playing)).toBe(40_000);
+    expect(evaluateClock(playing, 19_999)).toMatchObject({
+      phase: "playing", index: 2, clock: 540,
+    });
+    expect(evaluateClock(playing, 20_000)).toMatchObject({
+      phase: "playing", index: 2, clock: 540,
+    });
+    expect(evaluateClock(playing, 24_000)).toMatchObject({
+      phase: "playing", index: 3, clock: 630,
+    });
+    expect(evaluateClock(playing, 40_000)).toMatchObject({ phase: "ended", index: -1 });
+  });
+
+  it("keeps a live Nova play running when an ended clock arrives at the old 20-second total", () => {
+    const playing = playNliClock(idleNliClock(), [polygons], novaBeats, 0, options);
+    const staleEnd = {
+      ...playing,
+      phase: "ended",
+      positionMs: 20_000,
+      anchorMs: null,
+      revision: (playing.revision || 0) + 1,
+    };
+    const adopted = adoptNliClock(playing, staleEnd);
+    expect(adopted.phase).toBe("playing");
+    expect(evaluateClock(adopted, 24_000, options)).toMatchObject({
+      index: 3, clock: 630,
+    });
+    const completed = adoptNliClock(playing, endNliClock(playing, options));
+    expect(completed).toMatchObject({ phase: "ended", positionMs: 40_000 });
   });
 });
 

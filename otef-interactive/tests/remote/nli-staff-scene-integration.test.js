@@ -675,6 +675,42 @@ describe("NLI staff scene integration", () => {
     });
   });
 
+  test("Mor opens its slides when the cue is ready, keeps its route active, and can reopen", async () => {
+    setLocale("en", { persist: false });
+    session = mount();
+    await boot(session);
+    await openCard('[data-open="nova"]');
+    await clickNextReady("The compounds");
+    await clickNextReady("Escape routes");
+    expect(session.h.commands.filter((command) => command.segmentId === "nova_mor")).toHaveLength(0);
+
+    let releaseMorCue;
+    const originalSetEscapeOverlay = session.dataContext.setEscapeOverlay;
+    session.dataContext.setEscapeOverlay = vi.fn(async (...args) => {
+      await new Promise((resolve) => { releaseMorCue = resolve; });
+      return originalSetEscapeOverlay(...args);
+    });
+    el("nextBtn").click();
+    await vi.waitFor(() => expect(releaseMorCue).toBeTypeOf("function"));
+    expect(el("stepTitle").textContent).toBe("Mor Levy");
+    expect(el("cueStatus").dataset.status).not.toBe("ready");
+    expect(session.h.commands.filter((command) => command.segmentId === "nova_mor")).toHaveLength(0);
+
+    releaseMorCue();
+    await vi.waitFor(() => {
+      expect(el("cueStatus").dataset.status).toBe("ready");
+      expect(session.h.commands.filter((command) => command.segmentId === "nova_mor" && command.presentationAction === "open")).toHaveLength(1);
+    });
+    expect(views(session).every((view) => view.escape.mor)).toBe(true);
+
+    el("kitPresentation").querySelector('[data-presentation-action="close"]').click();
+    await vi.waitFor(() => expect(session.h.commands.at(-1)).toMatchObject({ segmentId: "nova_mor", presentationAction: "close" }));
+    await vi.waitFor(() => expect(el("kitPresentation").querySelector('[data-presentation-action="open"]')).not.toBeNull());
+    el("kitPresentation").querySelector('[data-presentation-action="open"]').click();
+    await vi.waitFor(() => expect(session.h.commands.filter((command) => command.segmentId === "nova_mor" && command.presentationAction === "open")).toHaveLength(2));
+    expect(views(session).every((view) => view.escape.mor)).toBe(true);
+  });
+
   test("a failed Home reset stays retryable and followers ignore the rejected narrative", async () => {
     setLocale("en", { persist: false });
     session = mount();

@@ -17,7 +17,7 @@ import {
   timelineBeatDurationMs,
   timelineSpanMs,
 } from "./nli-investigation-beats.js";
-import { novaBeatStartMs } from "./nli-nova-story.js";
+import { isNovaStoryBeats, novaBeatStartMs, NLI_NOVA_STORY } from "./nli-nova-story.js";
 
 const PHASES = ["idle", "playing", "paused", "ended"];
 const SEEK_KINDS = ["none", "jump"];
@@ -547,6 +547,28 @@ export function normalizeNliClock(raw) {
     normalized.leadInMinutes = Number(src.leadInMinutes);
   }
   return normalized;
+}
+
+/**
+ * Keep a live Nova play running when a stale client ends at a shorter duration
+ * than the current story (the old 5×4s = 20s total).
+ *
+ * @param {NliInvestigationClock|null|undefined} local
+ * @param {unknown} incoming
+ * @returns {NliInvestigationClock}
+ */
+export function adoptNliClock(local, incoming) {
+  const next = normalizeNliClock(incoming);
+  const prev = local && typeof local === "object" ? local : idleNliClock();
+  if (next.phase !== "ended" || !isNovaStoryBeats(next.beats)) return next;
+  const duration = next.beats.length * NLI_NOVA_STORY.beatDurationMs;
+  if (nonnegativeNumber(next.positionMs) >= duration) return next;
+  if (prev.phase !== "playing" || !isNovaStoryBeats(prev.beats)) return next;
+  return {
+    ...prev,
+    revision: next.revision,
+    serverNowMs: next.serverNowMs,
+  };
 }
 
 /**

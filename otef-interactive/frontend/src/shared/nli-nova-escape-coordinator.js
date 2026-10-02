@@ -59,7 +59,7 @@ export function createNovaEscapeCoordinator({
   onParallelImpactIdsChanged,
 } = {}) {
   const resolvedProfile = NLI_DISPLAY_PROFILES[profile] ? profile : "gis";
-  const ribbonsAllowed = surface === "projection";
+  const ribbonsAllowed = surface === "projection" || surface === "gis";
   const notifyParallelImpact = surface === "projection" && typeof onParallelImpactIdsChanged === "function"
     ? onParallelImpactIdsChanged
     : null;

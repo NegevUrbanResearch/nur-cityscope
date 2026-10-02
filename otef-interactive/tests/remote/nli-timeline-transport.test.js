@@ -1240,7 +1240,7 @@ describe("nli timeline transport", () => {
     expect(ctx.patchInvestigationClock.mock.calls[0][0].phase).toBe("ended");
   });
 
-  test("Nova end timer uses an exact twenty-second duration", async () => {
+  test("Nova end timer uses an exact forty-second duration", async () => {
     vi.useFakeTimers();
     const playing = playNliClock(idleNliClock(), [INVESTIGATION_POLYGONS_FULL_ID], NLI_NOVA_STORY.representativeMinutes, 1000);
     const now = 1000;
@@ -1251,11 +1251,11 @@ describe("nli timeline transport", () => {
     });
     const c = makeController();
     c._syncNliEndedTimer(playing);
-    await vi.advanceTimersByTimeAsync(19999);
+    await vi.advanceTimersByTimeAsync(39999);
     expect(ctx.patchInvestigationClock).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
     expect(ctx.patchInvestigationClock.mock.calls[0][0].phase).toBe("ended");
-    expect(ctx.patchInvestigationClock.mock.calls[0][0].positionMs).toBe(20000);
+    expect(ctx.patchInvestigationClock.mock.calls[0][0].positionMs).toBe(40000);
   });
 
   test("Nova scrub cancel restores the exact pointer-down position and stays paused", async () => {
@@ -1492,7 +1492,7 @@ describe("nli timeline transport", () => {
     commands.dispose(); gate.dispose();
   });
 
-  test("Nova local ticker updates copy, marks, and playhead at each four-second beat", async () => {
+  test("Nova local ticker updates copy, marks, and playhead at each eight-second beat", async () => {
     vi.useFakeTimers();
     const playing = playNliClock(idleNliClock(), [INVESTIGATION_POLYGONS_FULL_ID], NLI_NOVA_STORY.representativeMinutes, 1000);
     let now = 1000;

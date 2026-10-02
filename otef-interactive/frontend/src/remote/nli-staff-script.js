@@ -257,8 +257,8 @@ export const NARRATIVES = [
       {
         title: { he: "המתחמים", en: "The compounds" },
         note: {
-          he: "פוליגוני הנובה עולים בחמישה ביטים בני ארבע שניות, לפי הרצף המתועד.",
-          en: "Nova polygons appear in five four-second beats, following the documented sequence.",
+          he: "פוליגוני הנובה עולים בחמישה ביטים בני שמונה שניות, לפי הרצף המתועד.",
+          en: "Nova polygons appear in five eight-second beats, following the documented sequence.",
         },
         cue: { layers: NOVA_TIMELINE_LAYER_IDS, clock: {}, escape: {} },
         kit: ["timeline"],
@@ -282,7 +282,7 @@ export const NARRATIVES = [
         cue: { layers: NOVA_TIMELINE_LAYER_IDS, clock: "ended", escape: { mor: true } },
         kit: ["escape", "presentation"],
         escapeKinds: ["mor"],
-        presentation: { segmentId: "nova_mor", open: "manual", onClose: "stay" },
+        presentation: { segmentId: "nova_mor", open: "auto", onClose: "stay" },
       },
       {
         title: { he: "הנצחה", en: "Memorial" },

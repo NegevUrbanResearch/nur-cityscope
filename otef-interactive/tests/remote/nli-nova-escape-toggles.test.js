@@ -97,6 +97,7 @@ describe("remote Nova fleeing overlay toggles", () => {
 
   test("explicit individual and Mor kinds render even when the live flag is off", async () => {
     const { setLocale } = await import("../../frontend/src/remote/remote-locale.js");
+    const { materialIcon } = await import("../../frontend/src/remote/nli-staff-icons.js");
     const { nliNovaEscapeTogglesHtml } = await import(
       "../../frontend/src/remote/nli-nova-escape-toggles.js"
     );
@@ -108,6 +109,8 @@ describe("remote Nova fleeing overlay toggles", () => {
     );
     expect(individual).toContain('data-nli-nova-escape="individual"');
     expect(individual).toContain('aria-pressed="false"');
+    expect(individual).toContain("Start animation");
+    expect(individual).toContain(materialIcon("play"));
     expect(individual).not.toContain("Fleeing density (overlap count)");
     expect(individual).not.toContain('data-nli-nova-escape="mor"');
 
@@ -118,9 +121,34 @@ describe("remote Nova fleeing overlay toggles", () => {
     );
     expect(mor).toContain('data-nli-nova-escape="mor"');
     expect(mor).toContain("Mor Levy route");
+    expect(mor).toContain("Start animation");
+    expect(mor).toContain(materialIcon("play"));
     expect(mor).toContain('aria-pressed="false"');
     expect(mor).not.toContain('data-nli-nova-escape="individual"');
     expect(mor).not.toContain('data-nli-nova-escape="overlap"');
+  });
+
+  test("route controls name their start and stop action in Hebrew and English", async () => {
+    const { setLocale } = await import("../../frontend/src/remote/remote-locale.js");
+    const { materialIcon } = await import("../../frontend/src/remote/nli-staff-icons.js");
+    const { nliNovaEscapeTogglesHtml } = await import(
+      "../../frontend/src/remote/nli-nova-escape-toggles.js"
+    );
+    const state = { id: "nova", transition: "enter", revision: 1 };
+
+    setLocale("en", { force: true });
+    const stopped = nliNovaEscapeTogglesHtml(state, { individual: false, mor: false }, ["individual", "mor"]);
+    expect(stopped.match(/Start animation/g)).toHaveLength(2);
+    expect(stopped).toContain(materialIcon("play"));
+    const running = nliNovaEscapeTogglesHtml(state, { individual: true, mor: true }, ["individual", "mor"]);
+    expect(running.match(/Stop animation/g)).toHaveLength(2);
+    expect(running).toContain(materialIcon("stop"));
+
+    setLocale("he", { force: true });
+    const stoppedHe = nliNovaEscapeTogglesHtml(state, { individual: false, mor: false }, ["individual", "mor"]);
+    expect(stoppedHe.match(/הפעלת אנימציה/g)).toHaveLength(2);
+    const runningHe = nliNovaEscapeTogglesHtml(state, { individual: true, mor: true }, ["individual", "mor"]);
+    expect(runningHe.match(/עצירת אנימציה/g)).toHaveLength(2);
   });
 
   test("click PATCHes overlay and does not setNarrative", async () => {

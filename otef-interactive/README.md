@@ -243,7 +243,7 @@ Each narrative is started from the staff remote. Step-by-step details are in
 the [staff remote guide](docs/nli-staff-remote-steps.md).
 
 - **Nova and Mor Levy (`nova`)**: fits the reviewed Nova extent and shows 08:03
-  before playback. The compounds step plays five authored four-second beats;
+  before playback. The compounds step plays five authored eight-second beats;
   later steps show escape routes, Mor Levy's route and slides, and the memorial
   slides.
 - **Sderot (`sderot`)**: one step focused on the Sderot police station, with
