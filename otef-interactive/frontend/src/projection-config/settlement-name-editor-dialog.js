@@ -266,6 +266,7 @@ export function openSettlementNameEditor({
   }
   function close() {
     if (!active) return;
+    controls.dispose();
     active = false;
     if (gesture) cancelGesture({ pointerId: gesture.pointerId });
     unsubscribe?.();

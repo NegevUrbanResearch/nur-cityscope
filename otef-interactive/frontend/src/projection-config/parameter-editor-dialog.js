@@ -50,14 +50,9 @@ export function createParameterEditorDialog({ document: doc, host, onField = () 
     latestConfig = config;
     preview?.update?.(config);
     for (const [path, control] of fieldControls) {
-      const descriptor = control.descriptor;
       const value = pathValue(config, path);
-      const display = value == null ? "" : descriptor.display === "percentage" ? (Number(value) * 100).toFixed(descriptor.decimals ?? 0) : descriptor.decimals === undefined ? String(value) : Number(value).toFixed(descriptor.decimals);
-      for (const input of [control.range, control.number]) if (input && doc.activeElement !== input) input.value = display;
-      if (doc.activeElement !== control.number) control.value.textContent = `${display}${descriptor.unit ? ` ${descriptor.unit}` : ""}`;
       const error = fieldErrors[path] || Object.entries(fieldErrors).find(([key]) => path.startsWith(`${key}.`))?.[1] || "";
-      control.error.textContent = String(error || "");
-      control.wrap.classList?.toggle("has-error", Boolean(error));
+      control.update({ value, resolvedPath: path, error });
     }
   };
   const open = ({ nodeId, title: heading, descriptors = [], opener: activatingElement } = {}) => {
@@ -72,6 +67,7 @@ export function createParameterEditorDialog({ document: doc, host, onField = () 
     }
     modal.dataset.node = nodeId || "";
     title.textContent = heading || "Adjust parameters";
+    for (const control of fieldControls.values()) control.dispose();
     fields.replaceChildren(); fieldControls = new Map();
     for (const descriptor of descriptors) {
       const control = renderField(doc, descriptor, onField, onNudge, false, true);
@@ -82,10 +78,12 @@ export function createParameterEditorDialog({ document: doc, host, onField = () 
     }
     preview?.open?.(nodeId);
     preview?.update?.(latestConfig);
+    renderValues({ config: latestConfig });
     closeButton.focus();
   };
   const close = () => {
     if (modal.hidden) return;
+    for (const control of fieldControls.values()) control.cancel();
     modal.hidden = true;
     preview?.close?.();
     doc.removeEventListener?.("keydown", onKeyDown);
@@ -100,7 +98,9 @@ export function createParameterEditorDialog({ document: doc, host, onField = () 
     open,
     update: renderValues,
     close,
+    finish() { return [...fieldControls.values()].map(control => control.finish()); },
+    cancel() { for (const control of fieldControls.values()) control.cancel(); },
     isOpen: () => !modal.hidden,
-    dispose() { if (disposed) return; close(); disposed = true; preview?.dispose?.(); doc.removeEventListener?.("keydown", onKeyDown); modal.remove(); fieldControls.clear(); },
+    dispose() { if (disposed) return; close(); disposed = true; for (const control of fieldControls.values()) control.dispose(); preview?.dispose?.(); doc.removeEventListener?.("keydown", onKeyDown); modal.remove(); fieldControls.clear(); },
   };
 }

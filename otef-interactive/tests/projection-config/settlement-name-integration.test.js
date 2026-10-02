@@ -105,6 +105,7 @@ test("a closed modal keeps the pending draft and both domains warn before unload
   app.selectNode("settlement-names");
   const input = app.root.querySelector(".settlement-name-controls [data-field='x']");
   input.value = "640";
+  input.dispatchEvent(new Event('input'));
   input.dispatchEvent(new Event("change"));
   await app.openEditor();
   await app.closeEditor();
@@ -124,4 +125,19 @@ test("enter opens the editor and escape restores the node button", async () => {
   document.querySelector(".settlement-name-dialog").dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
   expect(document.querySelector("iframe")).toBeNull();
   expect(document.activeElement).toBe(card.querySelector("[data-action='settlement-editor-open']"));
+});
+
+test('signed settlement input from zero saves separately and blocks a changed output', async () => {
+  const warning=vi.spyOn(console,'warn').mockImplementation(()=>{});
+  vi.useFakeTimers(); const app=await mountSettlementConfigFixture();
+  const input=app.root.querySelector('.settlement-name-controls [data-field="x"]');
+  input.closest('.config-field').querySelector('[data-action="numeric-sign"]').click();
+  input.value='2,5'; input.dispatchEvent(new Event('input')); input.dispatchEvent(new Event('change'));
+  await vi.advanceTimersByTimeAsync(150);
+  expect(app.writeOperation).toHaveBeenCalledWith(expect.objectContaining({operation:'position',output:'left',position:{x:-2.5,y:350}}));
+  app.writeOperation.mockClear(); input.value='25'; input.dispatchEvent(new Event('input')); app.setOutput('right');
+  input.dispatchEvent(new Event('blur')); await vi.advanceTimersByTimeAsync(150);
+  expect(app.writeOperation).not.toHaveBeenCalled();
+  expect(input.closest('.config-field').querySelector('[data-action="numeric-use-mine"]').disabled).toBe(true);
+  expect(warning).toHaveBeenCalledWith('[SettlementNameClient] position offscreen'); warning.mockRestore();
 });

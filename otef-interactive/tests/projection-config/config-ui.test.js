@@ -716,11 +716,11 @@ test("Adjust slider commits its formatted local value before a synchronous refre
   ({ update } = fixture);
   fixture.view.nodeMap.get("pre").querySelector('[data-action="parameter-editor-open"]').click();
   const wrap = fixture.root.querySelector('.parameter-editor-dialog [data-field="pre.tx"]').closest(".config-field");
-  control = { wrap, range: wrap.querySelector('input[type="range"]'), number: wrap.querySelector('input[type="number"]'), value: wrap.querySelector(".config-field-value") };
+  control = { wrap, range: wrap.querySelector('input[type="range"]'), number: wrap.querySelector('input[data-input="number"]'), value: wrap.querySelector(".config-field-value") };
   expect(control.wrap.classList.contains("parameter-field-layout")).toBe(true);
   control.range.value = "125";
   control.range.dispatchEvent(new Event("input", { bubbles: true }));
-  expect(onField).toHaveBeenCalledWith("pre.tx", "125", "range");
+  expect(onField).toHaveBeenCalledWith("pre.tx", "125", "range", {baseValue:.01,resolvedPath:'pre.tx',override:false});
   expect(control.number.value).toBe("125.00");
   expect(control.value.textContent).toBe("125.00 %");
 });
@@ -737,7 +737,7 @@ test("release-commit slider previews locally and syncs its paired number on chan
   control.range.dispatchEvent(new Event("change", { bubbles: true }));
   expect(control.number.value).toBe("50");
   expect(onField).toHaveBeenCalledTimes(1);
-  expect(onField).toHaveBeenCalledWith("namesWall.inwardShiftPercent", "50", "range");
+  expect(onField).toHaveBeenCalledWith("namesWall.inwardShiftPercent", "50", "range", expect.objectContaining({resolvedPath:'namesWall.profiles.wall.inwardShiftPercent',override:false}));
 });
 
 test("blank numeric values survive refresh without showing zero", () => {

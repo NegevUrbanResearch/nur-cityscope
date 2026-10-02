@@ -847,15 +847,11 @@ export function createProjectionConfigView(root, {
       const control = fields.get(`${descriptor.node}:${descriptor.path}`);
       if (!control) continue;
       control.wrap.hidden = Boolean(descriptor.wallOnly && draft.namesWall?.activeMode !== "wall");
-      const display = displayValue(descriptor, value);
-      for (const input of [control.range, control.number]) if (input && doc.activeElement !== input) input.value = display;
-      if (doc.activeElement !== control.number) control.value.textContent = `${display}${descriptor.unit ? ` ${descriptor.unit}` : ""}`;
       const errorPath = namesWallProfileScoped(descriptor.path) && draft.namesWall?.activeMode
         ? `namesWall.profiles.${descriptor.wallOnly ? "wall" : draft.namesWall.activeMode}.${descriptor.path.slice("namesWall.".length)}`
         : descriptor.path;
       const fieldError = errors[errorPath] || Object.entries(errors).find(([key]) => errorPath.startsWith(`${key}.`))?.[1] || "";
-      control.error.textContent = fieldError;
-      control.wrap.classList?.toggle("has-error", Boolean(fieldError));
+      control.update({value, resolvedPath: errorPath, error: fieldError});
     }
     const outputAcknowledgement = `Outputs: ${({ Applied: "applied", Pending: "pending", Failed: "failed", Unconfirmed: "unconfirmed" }[appliedSummary] || String(appliedSummary).toLowerCase())}`;
     controls.appliedSummary.textContent = outputAcknowledgement;
@@ -885,9 +881,11 @@ export function createProjectionConfigView(root, {
       return nodeMap.get("settlement-names")?.querySelector?.('[data-action="settlement-editor-open"]') || null;
     },
     cancelWarpPointer: cancelActiveDrag,
+    finishNumericEdits: () => [...fields.values()].map(control => control.finish()),
+    cancelNumericEdits: () => { for (const control of fields.values()) control.cancel(); parameterDialog.cancel(); },
     closeWarpEditor: dialog.close,
     sendRunNamesPreview: (config) => dialog.sendRunNamesPreview(config),
-    dispose() { disposePageTrace(); disposeWarpTrace(); disposeGraphTrace(); traceUi?.dispose(); outputPlacementQuery?.removeEventListener?.("change", updateOutputPlacement); doc.removeEventListener?.("keydown", onKeyDown); doc.removeEventListener?.("keydown", dismissDisclosures); doc.removeEventListener?.("pointerdown", dismissDisclosures, true); parameterDialog.dispose(); dialog.dispose(); pointerInput.dispose(); canvas.dispose(); },
+    dispose() { for (const control of fields.values()) control.dispose(); settlementControls.dispose(); disposePageTrace(); disposeWarpTrace(); disposeGraphTrace(); traceUi?.dispose(); outputPlacementQuery?.removeEventListener?.("change", updateOutputPlacement); doc.removeEventListener?.("keydown", onKeyDown); doc.removeEventListener?.("keydown", dismissDisclosures); doc.removeEventListener?.("pointerdown", dismissDisclosures, true); parameterDialog.dispose(); dialog.dispose(); pointerInput.dispose(); canvas.dispose(); },
   };
 }
 
