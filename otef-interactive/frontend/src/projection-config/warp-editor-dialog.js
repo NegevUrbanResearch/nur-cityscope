@@ -3,7 +3,7 @@ import { fitWarpViewport } from "./warp-viewport.js";
 const FRAME_URL = (side) => `/otef-interactive/projection.html?span=${side}&preview=1&mapPixelRatio=1&outputMode=browser`;
 
 /** Owns one disposable projection frame. The config controller retains all draft and edit state. */
-export function createWarpEditorDialog({ document: doc, host, editorPanel, overlay, onBeforeClose = () => {}, onBeforeSwitch = () => {}, onFineToggle = () => {}, onBeforeResize = () => {}, onApply = () => {}, onLive = () => {} }) {
+export function createWarpEditorDialog({ document: doc, host, editorPanel, overlay, navigationControls, onBeforeClose = () => {}, onBeforeSwitch = () => {}, onFineToggle = () => {}, onBeforeResize = () => {}, onViewportChange = () => {}, onOrientationChange = () => {}, onApply = () => {}, onLive = () => {} }) {
   const win = doc.defaultView;
   const origin = win?.location?.origin;
   const home = editorPanel.parentElement;
@@ -19,7 +19,9 @@ export function createWarpEditorDialog({ document: doc, host, editorPanel, overl
   const status = doc.createElement("span"); status.className = "warp-editor-message"; status.setAttribute("role", "status");
   const fineToggle = doc.createElement("button"); fineToggle.type = "button"; fineToggle.dataset.action = "warp-editor-fine"; fineToggle.textContent = "Fine adjustment"; fineToggle.setAttribute("aria-expanded", "false");
   const closeButton = doc.createElement("button"); closeButton.type = "button"; closeButton.dataset.action = "warp-editor-close"; closeButton.textContent = "Close";
-  header.append(title, status, fineToggle, closeButton);
+  header.append(title, status);
+  if (navigationControls) header.appendChild(navigationControls);
+  header.append(fineToggle, closeButton);
   const body = doc.createElement("div"); body.className = "warp-editor-body";
   const viewport = doc.createElement("div"); viewport.className = "warp-editor-viewport";
   const finePanel = doc.createElement("aside"); finePanel.className = "warp-editor-fine-panel"; finePanel.hidden = true;
@@ -46,6 +48,7 @@ export function createWarpEditorDialog({ document: doc, host, editorPanel, overl
   let focusEpoch = 0;
   let closedFocus = null;
   let viewBox = { x: -72, y: -72, width: 2064, height: 1224 };
+  const touchVisible = () => Boolean(win?.matchMedia?.("(pointer: coarse)")?.matches || win?.matchMedia?.("(hover: none)")?.matches);
   const setMessage = (message) => { status.textContent = message; };
   const fit = () => {
     if (!session || !viewport.clientWidth || !viewport.clientHeight) return;
@@ -53,6 +56,7 @@ export function createWarpEditorDialog({ document: doc, host, editorPanel, overl
     const frame = session.frame;
     frame.style.transform = `translate(${mapping.image.left}px, ${mapping.image.top}px) scale(${mapping.scale})`;
     overlay.setAttribute("viewBox", `${viewBox.x} ${viewBox.y} ${viewBox.width} ${viewBox.height}`);
+    onViewportChange();
   };
   const clearFrame = () => {
     if (!session) return;
@@ -137,12 +141,13 @@ export function createWarpEditorDialog({ document: doc, host, editorPanel, overl
     else if (!event.shiftKey && doc.activeElement === last) { event.preventDefault(); first.focus(); }
   };
   const onResize = () => { onBeforeResize(); fit(); };
+  const onOrientation = () => { onOrientationChange(); fit(); };
   const attachListeners = () => {
     if (listenersAttached) return;
     listenersAttached = true;
     win?.addEventListener?.("message", onMessage);
     win?.addEventListener?.("resize", onResize);
-    win?.addEventListener?.("orientationchange", onResize);
+    win?.addEventListener?.("orientationchange", onOrientation);
     doc.addEventListener?.("fullscreenchange", fit);
     doc.addEventListener?.("keydown", onKeyDown);
   };
@@ -151,7 +156,7 @@ export function createWarpEditorDialog({ document: doc, host, editorPanel, overl
     listenersAttached = false;
     win?.removeEventListener?.("message", onMessage);
     win?.removeEventListener?.("resize", onResize);
-    win?.removeEventListener?.("orientationchange", onResize);
+    win?.removeEventListener?.("orientationchange", onOrientation);
     doc.removeEventListener?.("fullscreenchange", fit);
     doc.removeEventListener?.("keydown", onKeyDown);
   };
@@ -193,7 +198,7 @@ export function createWarpEditorDialog({ document: doc, host, editorPanel, overl
     }
     modal.dataset.mode = mode;
     title.textContent = `${side === "left" ? "Left" : "Right"} · ${mode === "grid" ? "Grid Warp" : "Keystone"}`;
-    finePanel.hidden = true; fineToggle.setAttribute("aria-expanded", "false");
+    finePanel.hidden = !touchVisible(); fineToggle.setAttribute("aria-expanded", String(!finePanel.hidden));
     finePanel.appendChild(editorPanel); viewport.appendChild(overlay);
     overlay.classList?.add?.("warp-preview-overlay");
     overlay.setAttribute("preserveAspectRatio", "xMidYMid meet");

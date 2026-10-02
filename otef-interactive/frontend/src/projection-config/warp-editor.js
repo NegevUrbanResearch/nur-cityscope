@@ -70,23 +70,30 @@ export function createWarpEditor({
   let undoStack = [];
   let redoStack = [];
   let drag = null;
+  let validationMessage = "";
 
   const step = () => stepMode === "coarse" ? 1 : 0.25;
   const selectedIndices = () => indicesFor(selection, configWarp(current, output));
   const emit = (candidate, meta) => { current = candidate; onChange(clone(candidate), { ...meta, selection: clone(selection) }); };
-  const valid = (candidate, { semantic = true } = {}) => {
+  const valid = (candidate, { semantic = true, report = false } = {}) => {
+    const reject = (reason) => { if (report) validationMessage = "Move rejected: " + reason; return false; };
     try {
-      if (!validateCandidate(candidate)) return false;
-      if (!semantic) return true;
+      if (!validateCandidate(candidate)) {
+        const errors = validateProjectionConfig(candidate);
+        return reject(Object.values(errors)[0] || "configuration validation rejected the candidate.");
+      }
+      if (!semantic) { if (report) validationMessage = ""; return true; }
       const warp = configWarp(candidate, output);
       if (warp?.enabled === false || warp?.baseline?.type === "identity") {
         evaluateWarpMesh(null, warp);
+        if (report) validationMessage = "";
         return true;
       }
-      if (warp?.baseline?.type !== "tdMesh" || !baselineMesh) return false;
+      if (warp?.baseline?.type !== "tdMesh" || !baselineMesh) return reject("the TD baseline is unavailable.");
       evaluateWarpMesh(baselineMesh, warp);
+      if (report) validationMessage = "";
       return true;
-    } catch { return false; }
+    } catch (error) { return reject(error?.message || "the geometry is invalid."); }
   };
   const remember = (snapshot) => {
     undoStack.push(clone(configWarp(snapshot, output)));
@@ -94,7 +101,7 @@ export function createWarpEditor({
     redoStack = [];
   };
   const apply = (candidate, meta = {}, { record = true } = {}) => {
-    if (!valid(candidate)) return false;
+    if (!valid(candidate, { report: true })) return false;
     if (record) remember(current);
     emit(candidate, meta);
     return true;
@@ -136,6 +143,7 @@ export function createWarpEditor({
     const candidate = clone(current);
     candidate.outputs[output].warp = clone(warp);
     if (!valid(candidate)) return false;
+    validationMessage = "";
     emit(candidate, { reason, flush });
     return true;
   };
@@ -192,7 +200,7 @@ export function createWarpEditor({
     const points = pointsForSelection(candidate, output, selection);
     const indices = selectedIndices();
     for (const index of indices) { points[index][0] += dx; points[index][1] += dy; }
-    if (!valid(candidate)) return false;
+    if (!valid(candidate, { report: true })) return false;
     drag.moved = drag.moved || dx !== 0 || dy !== 0;
     drag.lastX = point.x; drag.lastY = point.y;
     emit(candidate, { reason: "drag", flush: false });
@@ -205,16 +213,18 @@ export function createWarpEditor({
     return true;
   }
   function pointerCancel() {
-    if (!drag) return false;
+    if (!drag) { validationMessage = ""; return false; }
     const shouldFlush = drag.moved;
     const start = drag.startWarp;
     drag = null;
+    validationMessage = "";
     if (shouldFlush) restoreWarp(start, "drag-cancel", true);
     return true;
   }
   function setConfig(next, { rebase = true } = {}) {
     if (!valid(next, { semantic: false })) return false;
     current = clone(next);
+    validationMessage = "";
     if (rebase) { undoStack = []; redoStack = []; drag = null; }
     return true;
   }
@@ -244,7 +254,7 @@ export function createWarpEditor({
   };
   return {
     getConfig: () => clone(current),
-    getState: () => ({ output, selection: { ...clone(selection), indices: selectedIndices() }, stepMode, dragging: Boolean(drag), historyDepth: undoStack.length, redoDepth: redoStack.length, baselineAvailable: baselineAvailable() }),
+    getState: () => ({ output, selection: { ...clone(selection), indices: selectedIndices() }, stepMode, dragging: Boolean(drag), historyDepth: undoStack.length, redoDepth: redoStack.length, baselineAvailable: baselineAvailable(), validationMessage }),
     getControlPoints,
     select, setMode, setStep, moveByPixels, nudge, setPosition, resetSelection, resetResiduals, setEnabled, undo, redo,
     pointerStart, pointerMove, pointerEnd, pointerCancel, setConfig, setBaselineMesh,

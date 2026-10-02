@@ -27,3 +27,56 @@ export function warpPointFromClient(event, rect, viewBox) {
     y: viewBox.y + (event.clientY - rect.top - mapping.insetY) / mapping.scale,
   };
 }
+
+export function warpMarkerRadius(viewBox, width, height, screenRadius) {
+  return screenRadius / fitWarpViewport(viewBox, width, height).scale;
+}
+
+export function transformWarpViewBox(viewBox, rect, { from, to = from, factor = 1 } = {}) {
+  const finite = (value) => Number.isFinite(value);
+  const validPoint = (point) => point && finite(point.clientX) && finite(point.clientY);
+  if (
+    !viewBox || !finite(viewBox.x) || !finite(viewBox.y) ||
+    !finite(viewBox.width) || !finite(viewBox.height) || viewBox.width <= 0 || viewBox.height <= 0 ||
+    !rect || !finite(rect.left) || !finite(rect.top) || !finite(rect.width) || !finite(rect.height) ||
+    rect.width <= 0 || rect.height <= 0 || !validPoint(from) || !validPoint(to) ||
+    !finite(factor) || factor <= 0
+  ) return viewBox;
+
+  const scaledView = {
+    x: viewBox.x,
+    y: viewBox.y,
+    width: viewBox.width / factor,
+    height: viewBox.height / factor,
+  };
+  if (!finite(scaledView.width) || !finite(scaledView.height) || scaledView.width <= 0 || scaledView.height <= 0) return viewBox;
+
+  const anchor = warpPointFromClient(from, rect, viewBox);
+  const moved = warpPointFromClient(to, rect, scaledView);
+  const transformed = {
+    ...scaledView,
+    x: scaledView.x + anchor.x - moved.x,
+    y: scaledView.y + anchor.y - moved.y,
+  };
+  return finite(transformed.x) && finite(transformed.y) ? transformed : viewBox;
+}
+
+export function clampWarpViewBox(viewBox, baseViewBox, { minZoom = 0.5, maxZoom = 8, anchor = null, rect = null } = {}) {
+  if (!viewBox || !baseViewBox || !Number.isFinite(viewBox.width) || !Number.isFinite(viewBox.height) || viewBox.width <= 0 || viewBox.height <= 0) return viewBox;
+  const zoom = Math.max(minZoom, Math.min(maxZoom, baseViewBox.width / viewBox.width));
+  const width = baseViewBox.width / zoom;
+  const height = baseViewBox.height / zoom;
+  if (anchor && rect && [anchor.clientX, anchor.clientY, rect.left, rect.top, rect.width, rect.height].every(Number.isFinite) && rect.width > 0 && rect.height > 0) {
+    const world = warpPointFromClient(anchor, rect, viewBox);
+    const mapping = fitWarpViewport({ x: 0, y: 0, width, height }, rect.width, rect.height);
+    return {
+      x: world.x - (anchor.clientX - rect.left - mapping.insetX) / mapping.scale,
+      y: world.y - (anchor.clientY - rect.top - mapping.insetY) / mapping.scale,
+      width,
+      height,
+    };
+  }
+  const centerX = viewBox.x + viewBox.width / 2;
+  const centerY = viewBox.y + viewBox.height / 2;
+  return { x: centerX - width / 2, y: centerY - height / 2, width, height };
+}

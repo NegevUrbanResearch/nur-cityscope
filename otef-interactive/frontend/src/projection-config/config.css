@@ -92,16 +92,21 @@ h2, h3 { margin: 0 0 10px; }
 .warp-editor-dialog button { min-width: 44px; min-height: 44px; }
 .warp-editor-header, .warp-editor-footer { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .warp-editor-title { margin: 0; font-size: 1rem; }
+.warp-view-controls { display: flex; align-items: center; gap: 6px; }
+.warp-pan-toggle[aria-pressed="true"] { outline: 2px solid currentColor; outline-offset: 1px; }
 .warp-editor-message { margin-right: auto; color: #b8c5d6; }
 .warp-editor-body { display: grid; grid-template-columns: minmax(0, 1fr); min-height: 0; gap: 8px; }
-.warp-editor-body:has(.warp-editor-fine-panel:not([hidden])) { grid-template-columns: minmax(0, 1fr) minmax(280px, 340px); }
+.warp-editor-body:has(.warp-editor-fine-panel:not([hidden])) { grid-template-columns: minmax(0, 1fr) 280px; }
 .warp-editor-viewport { position: relative; min-height: 0; min-width: 0; overflow: hidden; background: #000; }
 .warp-editor-frame { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; border: 0; pointer-events: none; transform-origin: 0 0; }
 .warp-editor-viewport > .warp-edit-surface { position: absolute; inset: 0; z-index: 2; width: 100%; height: 100%; min-height: 0; margin: 0; aspect-ratio: auto; border: 0; background: transparent; }
 .warp-editor-fine-panel { min-width: 0; min-height: 0; overflow: hidden; }
 .warp-editor-fine-panel > .warp-inspector { margin: 0; height: 100%; display: flex; flex-direction: column; overflow: hidden; }
-.warp-editor-fine-panel .warp-fine-primary { flex: 0 0 auto; }
+.warp-editor-fine-panel .warp-fine-primary { flex: 0 1 auto; min-height: 0; overflow-y: auto; }
 .warp-editor-fine-panel .warp-fine-secondary { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+.warp-editor-fine-panel .warp-fine-primary > .warp-selection { margin: 3px 0; gap: 3px; }
+.warp-editor-fine-panel .warp-fine-primary > .warp-selection-status { min-height: 1.2em; margin: 3px 0; }
+.warp-editor-fine-panel .warp-fine-primary > .warp-step, .warp-editor-fine-panel .warp-fine-primary > .warp-arrows { margin-top: 4px; }
 .warp-editor-applied { color: #b8c5d6; }
 .warp-editor-footer label { display: inline-flex; align-items: center; gap: 6px; }
 .config-node .config-field-value { min-width: 60px; }
@@ -127,7 +132,7 @@ h2, h3 { margin: 0 0 10px; }
 .warp-edit-surface.warp-preview-overlay { position: absolute; inset: 0; z-index: 3; width: 100%; height: 100%; margin: 0; aspect-ratio: auto; border: 0; border-radius: 0; background: transparent; pointer-events: auto; }
 .warp-output-rect { fill: none; stroke: #f6c453; stroke-width: 4; stroke-dasharray: 18 12; vector-effect: non-scaling-stroke; pointer-events: none; }
 .warp-grid-line { fill: none; stroke: #79c9b2; stroke-width: 3; opacity: .75; vector-effect: non-scaling-stroke; pointer-events: none; }
-.warp-handle { fill: #77d8b0; stroke: #07110f; stroke-width: 5; cursor: grab; }
+.warp-handle { fill: #77d8b0; stroke: #07110f; stroke-width: 5; vector-effect: non-scaling-stroke; cursor: grab; }
 .warp-handle.selected { fill: #ffd166; stroke: #fff3c4; }
 .warp-selection-status { min-height: 2.4em; margin: 8px 0; color: #c0d8d0; font-size: .8rem; }
 .warp-numeric { display: grid; grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 5px; margin-top: 6px; color: #b8c5d6; font-size: .78rem; }
@@ -300,7 +305,7 @@ h2, h3 { margin: 0 0 10px; }
 .config-disclosure { position: relative; }
 .config-disclosure > summary { min-height: 36px; padding: 8px 11px; color: #edf2f7; background: #202936; border: 1px solid #3a4759; border-radius: 6px; cursor: pointer; }
 .config-disclosure[open] > summary { border-color: #6ee7b7; }
-.config-disclosure-content { position: absolute; z-index: 20; top: calc(100% + 5px); left: 0; width: min(440px, calc(100vw - 28px)); max-height: min(70vh, 560px); overflow: auto; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 10px; background: #151a23; border: 1px solid #3a4759; border-radius: 8px; box-shadow: 0 12px 32px #000a; }
+.config-disclosure-content { position: absolute; z-index: 20; top: calc(100% + 5px); left: auto; right: 0; width: min(440px, calc(100vw - 28px)); max-height: min(70vh, 560px); overflow: auto; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 10px; background: #151a23; border: 1px solid #3a4759; border-radius: 8px; box-shadow: 0 12px 32px #000a; }
 .config-disclosure-content > :is(input, select) { min-width: 0; max-width: 100%; }
 .config-disclosure-workstation .config-disclosure-content { width: min(680px, calc(100vw - 28px)); max-width: none; align-items: flex-start; }
 .config-disclosure-content.output-launch-controls { pointer-events: auto; }
@@ -357,7 +362,7 @@ h2, h3 { margin: 0 0 10px; }
 .inspector { grid-column: 2; grid-row: 1; }
 .inspector:not([open]) { width: 44px; padding: 6px; overflow: hidden; }
 .inspector:not([open]) > :not(.inspector-title) { display: none; }
-.config-disclosure-error-indicator:not([hidden])::before { content: " · Error — open for details"; color: #ffb4a8; font-size: .75rem; font-weight: 600; }
+.disclosure-error-indicator:not([hidden])::before { content: "Error — open for details"; display: inline-block; margin-left: 7px; padding: 2px 5px; border: 1px solid #ffb4a8; border-radius: 4px; color: #17120f; background: #ffb4a8; font-size: .72rem; font-weight: 700; }
 .disclosure-error-details { flex-basis: 100%; min-width: 0; margin: 4px 0; color: #ffb4a8; overflow-wrap: anywhere; }
 .disclosure-error-details[hidden] { display: none; }
 .preset-scope-help { flex-basis: 100%; }

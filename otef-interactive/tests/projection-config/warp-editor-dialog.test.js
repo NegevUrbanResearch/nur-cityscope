@@ -47,10 +47,37 @@ test("resize and orientation changes cancel an active edit before refitting", ()
   dialog.open({ side: "left", mode: "grid", opener });
   window.dispatchEvent(new Event("resize"));
   window.dispatchEvent(new Event("orientationchange"));
-  expect(onBeforeResize).toHaveBeenCalledTimes(2);
+  expect(onBeforeResize).toHaveBeenCalledTimes(1);
   dialog.close();
   window.dispatchEvent(new Event("resize"));
-  expect(onBeforeResize).toHaveBeenCalledTimes(2);
+  expect(onBeforeResize).toHaveBeenCalledTimes(1);
+  dialog.dispose();
+});
+
+test("orientation callback runs independently from ordinary resize while the editor remains open", () => {
+  const onBeforeResize = vi.fn();
+  const onOrientationChange = vi.fn();
+  const { dialog, opener } = setup({ onBeforeResize, onOrientationChange });
+  dialog.open({ side: "left", mode: "grid", opener });
+  window.dispatchEvent(new Event("resize"));
+  expect(onBeforeResize).toHaveBeenCalledTimes(1);
+  expect(onOrientationChange).not.toHaveBeenCalled();
+  window.dispatchEvent(new Event("orientationchange"));
+  expect(onBeforeResize).toHaveBeenCalledTimes(1);
+  expect(onOrientationChange).toHaveBeenCalledTimes(1);
+  expect(dialog.isOpen()).toBe(true);
+  dialog.dispose();
+});
+
+test("navigation controls are appended to the private header without replacing dialog actions", () => {
+  const navigationControls = document.createElement("div");
+  navigationControls.className = "warp-view-controls";
+  const { dialog, opener } = setup({ navigationControls });
+  dialog.open({ side: "left", mode: "grid", opener });
+  expect(document.querySelector(".warp-editor-header .warp-view-controls")).toBe(navigationControls);
+  expect(document.querySelector("[data-action=warp-editor-close]")).not.toBeNull();
+  expect(document.querySelector(".warp-editor-footer input[aria-label='Editor Live']")).not.toBeNull();
+  expect(document.querySelector(".warp-editor-footer button").textContent).toBe("Apply once");
   dialog.dispose();
 });
 
@@ -151,6 +178,35 @@ test("Fine adjustment begins collapsed and toggling does not activate overlay", 
   dialog.close(); dialog.open({ side: "left", mode: "grid", opener });
   expect(panel.hidden).toBe(true);
   dialog.dispose();
+});
+
+test("touch and no-hover openings expose Fine by default while desktop remains collapsed", () => {
+  const previousMatchMedia = window.matchMedia;
+  window.matchMedia = (query) => ({
+    matches: query === "(pointer: coarse)", media: query, onchange: null,
+    addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {}, dispatchEvent() { return false; },
+  });
+  const { dialog, opener } = setup();
+  dialog.open({ side: "left", mode: "keystone", opener });
+  expect(document.querySelector(".warp-editor-fine-panel").hidden).toBe(false);
+  expect(document.querySelector('[data-action="warp-editor-fine"]').getAttribute("aria-expanded")).toBe("true");
+  dialog.close();
+  window.matchMedia = (query) => ({ matches: query === "(hover: none)", media: query, onchange: null, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {}, dispatchEvent() { return false; } });
+  dialog.open({ side: "right", mode: "grid", opener });
+  expect(document.querySelector(".warp-editor-fine-panel").hidden).toBe(false);
+  dialog.close();
+  window.matchMedia = (query) => ({ matches: false, media: query, onchange: null, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {}, dispatchEvent() { return false; } });
+  dialog.open({ side: "right", mode: "grid", opener });
+  const panel = document.querySelector(".warp-editor-fine-panel");
+  const toggle = document.querySelector('[data-action="warp-editor-fine"]');
+  expect(panel.hidden).toBe(true);
+  expect(toggle.getAttribute("aria-expanded")).toBe("false");
+  toggle.click();
+  expect(panel.hidden).toBe(false);
+  expect(toggle.getAttribute("aria-expanded")).toBe("true");
+  dialog.dispose();
+  if (previousMatchMedia === undefined) delete window.matchMedia;
+  else window.matchMedia = previousMatchMedia;
 });
 
 test("modal contains focus, restores page interaction on Escape, and forwards Apply and Live", () => {

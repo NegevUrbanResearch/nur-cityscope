@@ -75,6 +75,21 @@ test("a group nudge retains selection through undo and redo", () => {
   expect(editor.getConfig().outputs.left.warp.grid.offsets.slice(0, 7).every(([x]) => x === 1 / 1920)).toBe(true);
 });
 
+test("keystone and grid edits share the current projector history across mode switches", () => {
+  const editor = createWarpEditor({ config: clone(DEFAULT_PROJECTION_CONFIG), output: "left" });
+  editor.nudge("right");
+  const keystoneMoved = editor.getConfig().outputs.left.warp.keystone.corners[0];
+  editor.select(gridSelection("point", 0));
+  editor.nudge("down");
+  const gridMoved = editor.getConfig().outputs.left.warp.grid.offsets[0];
+  editor.select(keystoneSelection("corner", 0));
+  expect(editor.undo()).toBe(true);
+  expect(editor.getConfig().outputs.left.warp.grid.offsets[0]).not.toEqual(gridMoved);
+  expect(editor.getConfig().outputs.left.warp.keystone.corners[0]).toEqual(keystoneMoved);
+  expect(editor.undo()).toBe(true);
+  expect(editor.getConfig().outputs.left.warp.keystone.corners[0]).toEqual([0, 0]);
+});
+
 test("a zero-distance or repeated move does not publish a duplicate drag preview", () => {
   const onChange = vi.fn();
   const editor = createWarpEditor({ config: clone(DEFAULT_PROJECTION_CONFIG), output: "left", onChange });
@@ -157,4 +172,38 @@ test("invalid candidate stays local and bounded undo/redo restores edits", () =>
   expect(editor.undo()).toBe(true);
   expect(editor.redo()).toBe(true);
   expect(editor.getState().historyDepth).toBeLessThanOrEqual(2);
+});
+
+test("an invalid warp move preserves the last valid geometry and reports why it was rejected", () => {
+  const editor = createWarpEditor({ config: clone(DEFAULT_PROJECTION_CONFIG), output: "left" });
+  const before = editor.getConfig();
+  editor.select(keystoneSelection("corner", 0));
+  expect(editor.setPosition("x", -5000)).toBe(false);
+  expect(editor.getConfig()).toEqual(before);
+  expect(editor.getState().validationMessage).toMatch(/^Move rejected: .+/);
+});
+
+test("undo, redo, authoritative rebase, and drag cancellation clear stale rejection feedback", () => {
+  const editor = createWarpEditor({ config: clone(DEFAULT_PROJECTION_CONFIG), output: "left" });
+  editor.nudge("right");
+  editor.setPosition("x", -5000);
+  expect(editor.getState().validationMessage).toMatch(/^Move rejected:/);
+  expect(editor.undo()).toBe(true);
+  expect(editor.getState().validationMessage).toBe("");
+  editor.setPosition("x", -5000);
+  expect(editor.redo()).toBe(true);
+  expect(editor.getState().validationMessage).toBe("");
+  editor.setPosition("x", -5000);
+  expect(editor.getState().validationMessage).toMatch(/^Move rejected:/);
+  expect(editor.setConfig(editor.getConfig(), { rebase: true })).toBe(true);
+  expect(editor.getState().validationMessage).toBe("");
+  editor.setPosition("x", -5000);
+  expect(editor.pointerCancel()).toBe(false);
+  expect(editor.getState().validationMessage).toBe("");
+  editor.setPosition("x", -5000);
+  editor.pointerStart({ x: 0, y: 0 });
+  editor.pointerMove({ x: 10000, y: 0 });
+  expect(editor.getState().validationMessage).toMatch(/^Move rejected:/);
+  expect(editor.pointerCancel()).toBe(true);
+  expect(editor.getState().validationMessage).toBe("");
 });

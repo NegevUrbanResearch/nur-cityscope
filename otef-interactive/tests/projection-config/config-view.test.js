@@ -13,6 +13,12 @@ test("clock layout dialog uses the available viewport width on narrow screens", 
   expect(dialogRule).not.toMatch(/width:\s*100vw/);
 });
 
+test("warp handle outlines stay constant in CSS pixels while zooming", () => {
+  const css = readFileSync(resolve(import.meta.dirname, "../../frontend/src/projection-config/config.css"), "utf8");
+  const handleRule = css.match(/\.warp-handle\s*\{([^}]*)\}/)?.[1] ?? "";
+  expect(handleRule).toContain("vector-effect: non-scaling-stroke");
+});
+
 test("projection config chrome and workspace use scoped layout tokens and anchored utility overlays", () => {
   const css = readFileSync(resolve(import.meta.dirname, "../../frontend/src/projection-config/config.css"), "utf8");
   expect(css).toContain("--config-surface:");
@@ -21,13 +27,17 @@ test("projection config chrome and workspace use scoped layout tokens and anchor
   expect(css).toMatch(/\.config-shell\s*\{[^}]*grid-template-rows:\s*auto auto minmax\(0, 1fr\)/s);
   expect(css).toMatch(/\.config-workspace\s*\{[^}]*position:\s*relative/s);
   expect(css).not.toMatch(/\.config-workspace\s*\{[^}]*top:\s*104px/s);
+  expect(css).toMatch(/\.disclosure-error-indicator:not\(\[hidden\]\)::before\s*\{[^}]*content:\s*"[^\"]*Error[^\"]*open for details"/s);
   expect(css).toMatch(/\.config-disclosure-content\s*\{[^}]*position:\s*absolute/s);
+  const overlayRule = css.match(/\.config-disclosure-content\s*\{([^}]*)\}/)?.[1] ?? "";
+  expect(overlayRule).toMatch(/left:\s*auto/);
+  expect(overlayRule).toMatch(/right:\s*0/);
   const compactRules = css.slice(css.lastIndexOf("@media (max-width: 1100px), (max-height: 700px), (pointer: coarse), (hover: none), (orientation: portrait)"));
   expect(compactRules.match(/\.config-workspace\s*\{([^}]*)\}/)?.[1] || "").toContain("display: grid");
 });
 
 test("view renders draggable node workspace and preserves an existing focused input", () => {
-  const make = (tag = "div") => ({ tagName: tag.toUpperCase(), children: [], dataset: {}, style: {}, attributes: {}, classList: { toggle() {} }, appendChild(child) { this.children.push(child); child.parentElement = this; return child; }, append(...children) { children.forEach((child) => this.appendChild(child)); }, prepend(...children) { this.children.unshift(...children); }, remove() { if (this.parentElement) this.parentElement.children = this.parentElement.children.filter((child) => child !== this); }, setAttribute(key, value) { this.attributes[key] = value; }, removeAttribute(key) { delete this.attributes[key]; }, addEventListener(type, handler) { this.listeners ||= {}; (this.listeners[type] ||= []).push(handler); }, removeEventListener(type, handler) { this.listeners[type] = (this.listeners?.[type] || []).filter((entry) => entry !== handler); }, dispatch(type, event) { for (const handler of this.listeners?.[type] || []) handler({ currentTarget: this, target: this, ...event }); }, replaceChildren(...children) { this.children = children; } });
+  const make = (tag = "div") => ({ tagName: tag.toUpperCase(), children: [], dataset: {}, style: {}, attributes: {}, classList: { toggle() {} }, appendChild(child) { if (child.parentElement) child.parentElement.children = child.parentElement.children.filter((item) => item !== child); this.children.push(child); child.parentElement = this; return child; }, append(...children) { children.forEach((child) => this.appendChild(child)); }, prepend(...children) { children.forEach((child) => { if (child.parentElement) child.parentElement.children = child.parentElement.children.filter((item) => item !== child); this.children.unshift(child); child.parentElement = this; }); }, remove() { if (this.parentElement) this.parentElement.children = this.parentElement.children.filter((child) => child !== this); }, setAttribute(key, value) { this.attributes[key] = value; }, removeAttribute(key) { delete this.attributes[key]; }, addEventListener(type, handler) { this.listeners ||= {}; (this.listeners[type] ||= []).push(handler); }, removeEventListener(type, handler) { this.listeners[type] = (this.listeners?.[type] || []).filter((entry) => entry !== handler); }, dispatch(type, event) { for (const handler of this.listeners?.[type] || []) handler({ currentTarget: this, target: this, ...event }); }, replaceChildren(...children) { this.children = children; children.forEach((child) => { child.parentElement = this; }); } });
   const root = make("main");
   root.ownerDocument = { createElement: make, createElementNS: (_ns, tag) => make(tag), listeners: {}, addEventListener(type, handler) { (this.listeners[type] ||= []).push(handler); }, removeEventListener(type, handler) { this.listeners[type] = (this.listeners[type] || []).filter((item) => item !== handler); }, dispatch(type, event) { for (const handler of this.listeners[type] || []) handler(event); }, defaultView: { location: { origin: "http://localhost" }, addEventListener() {}, removeEventListener() {}, matchMedia: () => ({ matches: true, addEventListener() {}, removeEventListener() {} }) } };
   const onNode = vi.fn();
@@ -178,7 +188,10 @@ test("view renders draggable node workspace and preserves an existing focused in
   expect(view.controls.warpSurface.children.length).toBe(6);
   expect(view.controls.warpStep.parentElement.className).toBe("warp-fine-primary");
   expect(view.controls.warpArrows.parentElement.className).toBe("warp-fine-primary");
-  expect(view.controls.warpActions.parentElement.className).toBe("warp-fine-secondary");
+  expect(view.controls.warpStatus.parentElement.className).toBe("warp-fine-primary");
+  expect(view.controls.warpSelection.parentElement.className).toBe("warp-fine-primary");
+  const undoButton = descendants(root).find((node) => node.dataset?.warpAction === "warp-undo");
+  expect(undoButton.parentElement.className).toBe("warp-fine-primary");
   view.update({ state: { draft }, selectedNode: "left-keystone", warpStates: { left: { ...warpEditor.getState(), config: warpEditor.getConfig(), handles: [{ x: -0.05, y: -0.1 }, { x: 1.05, y: -0.1 }, { x: -0.05, y: 1.1 }, { x: 1.05, y: 1.1 }] } } });
   const fittedViewBox = view.controls.warpSurface.attributes.viewBox.split(" ").map(Number);
   expect(fittedViewBox[0]).toBeLessThan(0);
@@ -246,6 +259,8 @@ test("view renders draggable node workspace and preserves an existing focused in
   expect(onWarpAction).toHaveBeenCalledTimes(1);
   expect(onWarpAction).toHaveBeenCalledWith("warp-nudge", { direction: "right" });
   expect(view.controls.warpSurface.focus).toHaveBeenCalledOnce();
+  undoButton.dispatch("click");
+  expect(onWarpAction).toHaveBeenLastCalledWith("warp-undo", {});
   onWarpAction.mockClear();
   root.ownerDocument.dispatch("keydown", { key: "ArrowLeft", target: view.controls.warpPositionX, preventDefault: vi.fn() });
   root.ownerDocument.dispatch("keydown", { key: "ArrowLeft", target: root, preventDefault: vi.fn() });

@@ -562,6 +562,33 @@ describe("projection config controller", () => {
     api.dispose(); globalThis.document = previousDocument;
   });
 
+  test("warp history survives close/reopen and orientation change", () => {
+    const previousDocument = globalThis.document;
+    const doc = documentStub();
+    const windowListeners = new Map();
+    doc.defaultView.addEventListener = (type, callback) => windowListeners.set(type, callback);
+    doc.defaultView.removeEventListener = (type) => windowListeners.delete(type);
+    doc.defaultView.dispatch = (type) => windowListeners.get(type)?.({ type });
+    globalThis.document = doc;
+    const root = element("main"); const client = fakeClient();
+    const api = mountProjectionConfig(root, { client });
+    client.setLive(false);
+    const action = (name) => find(root, (node) => node.dataset?.action === name);
+    const nudgeRight = () => find(root, (node) => node.dataset?.action === "warp-nudge" && node.dataset?.direction === "right").dispatch("click");
+    find(root, (node) => node.dataset?.node === "left-keystone").dispatch("click");
+    action("warp-editor-open").dispatch("click");
+    nudgeRight();
+    const keystoneMoved = clone(client.getState().draft.outputs.left.warp.keystone.corners);
+    action("warp-editor-close").dispatch("click");
+    find(root, (node) => node.dataset?.node === "left-keystone").dispatch("click");
+    action("warp-editor-open").dispatch("click");
+    doc.defaultView.dispatch("orientationchange");
+    action("warp-undo").dispatch("click");
+    expect(client.getState().draft.outputs.left.warp.keystone.corners).not.toEqual(keystoneMoved);
+    expect(client.getState().draft.outputs.left.warp.keystone.corners[0][0]).toBe(0);
+    api.dispose(); globalThis.document = previousDocument;
+  });
+
   test("own Live acknowledgement preserves warp history independently per output", () => {
     const previousDocument = globalThis.document;
     globalThis.document = documentStub();
@@ -587,6 +614,23 @@ describe("projection config controller", () => {
     expect(client.getState().draft.outputs.left.warp.keystone.corners).toEqual(initial.outputs.left.warp.keystone.corners);
     expect(client.getState().draft.outputs.right.warp.keystone.corners).toEqual(rightMoved.outputs.right.warp.keystone.corners);
     expect(client.getState().draft.outputs.left.warp.keystone.corners).not.toEqual(leftMoved.outputs.left.warp.keystone.corners);
+    api.dispose(); globalThis.document = previousDocument;
+  });
+
+  test("accepted external replacement rebases warp history", () => {
+    const previousDocument = globalThis.document;
+    globalThis.document = documentStub();
+    const root = element("main"); const client = fakeClient();
+    const api = mountProjectionConfig(root, { client });
+    client.setLive(false);
+    find(root, (node) => node.dataset?.node === "left-keystone").dispatch("click");
+    find(root, (node) => node.dataset?.action === "warp-nudge" && node.dataset?.direction === "right").dispatch("click");
+    expect(client.getState().draft.outputs.left.warp.keystone.corners[0][0]).toBeCloseTo(0.25 / 1920);
+    const authoritative = clone(client.getState().draft);
+    authoritative.outputs.left.warp.keystone.corners[0] = [0.12, 0.03];
+    client.report({ draft: authoritative, hasLocalDraft: false });
+    find(root, (node) => node.dataset?.action === "warp-undo").dispatch("click");
+    expect(client.getState().draft.outputs.left.warp.keystone.corners[0]).toEqual([0.12, 0.03]);
     api.dispose(); globalThis.document = previousDocument;
   });
 
