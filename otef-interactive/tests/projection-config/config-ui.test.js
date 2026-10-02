@@ -702,14 +702,14 @@ test("supported browser hides the workstation-only output capability notice", ()
   expect(root.querySelector(".output-capability-notice").hidden).toBe(true);
 });
 
-test("Adjust slider commits its formatted local value before a synchronous refresh", () => {
+test("Adjust Fine slider commits its exact canonical local delta before a synchronous refresh", () => {
   let update;
   let control;
-  const onField = vi.fn((path, raw, source) => {
-    expect(control.value.textContent).toBe("125.00 %");
-    expect(control.number.value).toBe("125.00");
+  const onField = vi.fn((path, raw, source, meta) => {
+    expect(control.value.textContent).toBe("1.01 %");
+    expect(control.number.value).toBe("1.01");
     const draft = structuredClone(DEFAULT_PROJECTION_CONFIG);
-    draft.pre.tx = Number(raw) / 100;
+    draft.pre.tx = meta.canonicalValue;
     update({ state: { draft } });
   });
   const fixture = makeView({ coarse: false, onField });
@@ -718,11 +718,12 @@ test("Adjust slider commits its formatted local value before a synchronous refre
   const wrap = fixture.root.querySelector('.parameter-editor-dialog [data-field="pre.tx"]').closest(".config-field");
   control = { wrap, range: wrap.querySelector('input[type="range"]'), number: wrap.querySelector('input[data-input="number"]'), value: wrap.querySelector(".config-field-value") };
   expect(control.wrap.classList.contains("parameter-field-layout")).toBe(true);
-  control.range.value = "125";
+  expect(control.range.value).toBe('0');
+  control.range.value = "1";
   control.range.dispatchEvent(new Event("input", { bubbles: true }));
-  expect(onField).toHaveBeenCalledWith("pre.tx", "125", "range", {baseValue:.01,resolvedPath:'pre.tx',override:false});
-  expect(control.number.value).toBe("125.00");
-  expect(control.value.textContent).toBe("125.00 %");
+  expect(onField).toHaveBeenCalledWith("pre.tx", "1.01", "range", {baseValue:.01,resolvedPath:'pre.tx',canonicalValue:.01+.0001,phase:'start',gestureId:expect.any(String)});
+  expect(control.number.value).toBe("1.01");
+  expect(control.value.textContent).toBe("1.01 %");
 });
 
 test("release-commit slider previews locally and syncs its paired number on change", () => {

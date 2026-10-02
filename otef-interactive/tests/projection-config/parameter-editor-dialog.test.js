@@ -8,6 +8,14 @@ const descriptors = [
 ];
 const makeConfig = () => ({ pre: { scale: 1.25 }, outputs: { left: { crop: { x0: 0.1 } } } });
 afterEach(() => { document.body.replaceChildren(); vi.restoreAllMocks(); });
+test('opening retains current parameter history controls and forwards undo', () => {
+  const host=document.createElement('main'); document.body.append(host); const onAction=vi.fn();
+  const dialog=createParameterEditorDialog({document,host,onAction});
+  dialog.update({config:makeConfig(),parameterHistory:{undo:2,redo:0}}); dialog.open({nodeId:'pre',descriptors:[descriptors[0]]});
+  expect(host.querySelector('[data-action="parameter-undo"]').disabled).toBe(false);
+  expect(host.querySelector('[data-action="parameter-redo"]').disabled).toBe(true);
+  host.querySelector('[data-action="parameter-undo"]').click(); expect(onAction).toHaveBeenCalledWith('parameter-undo'); dialog.dispose();
+});
 
 test("opens only the selected node fields and forwards a numeric edit once", () => {
   const host = document.createElement("main"); document.body.appendChild(host);

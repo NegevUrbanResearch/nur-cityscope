@@ -278,7 +278,7 @@ test("view renders draggable node workspace and preserves an existing focused in
   inlineFocused.dispatch('input');
   view.update({ state: { draft } });
   expect(inlineFocused.value).toBe("-");
-  expect(view.fields.get("pre:pre.tx").range.value).toBe("2.00");
+  expect(view.fields.get("pre:pre.tx").range.value).toBe("0");
   const inline = view.fields.get("pre:pre.tx").number;
   const inlineRow = view.fields.get("pre:pre.tx").wrap.children.find((node) => node.className === "config-field-row");
   expect(inlineRow.children.at(-1).attributes["aria-label"]).toContain("Increase Base-view X offset");

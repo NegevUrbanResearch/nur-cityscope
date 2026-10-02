@@ -8,6 +8,7 @@ import {
 import { equalProjectionConfig } from "../shared/projection-config-client.js";
 import { createUuid } from "../shared/uuid.js";
 import { createProjectionConfigView } from "./config-view.js";
+import { createParameterHistory } from './parameter-history.js';
 import { createWarpEditor } from "./warp-editor.js";
 import { recordProjectionTrace, projectionTraceTime } from './projection-trace-input.js';
 import { createProjectionBaselineCatalogLoader } from "../projection/projection-captured-baseline.js";
@@ -69,10 +70,10 @@ function resolvedFieldPath(config, path) {
   const field = path.slice("namesWall.".length);
   if (field === "activeMode") return "namesWall.activeMode";
   if (field === "rotateDeg") return "namesWall.rotateDeg";
-  if (field === "strokeWidthPx") return `namesWall.profiles.${config.namesWall.activeMode}.strokeWidthPx`;
+  if (field === "strokeWidthPx") return `namesWall.profiles.${config?.namesWall?.activeMode || 'wall'}.strokeWidthPx`;
   if (field.startsWith("innerEdgeInsetPx.")) return path;
   if (field === "inwardShiftPercent") return "namesWall.profiles.wall.inwardShiftPercent";
-  return `namesWall.profiles.${config.namesWall.activeMode}.${field}`;
+  return `namesWall.profiles.${config?.namesWall?.activeMode || 'wall'}.${field}`;
 }
 function readField(config, path) { return path.split(".").reduce((target, key) => target?.[key], namesWallProfileScoped(path) ? { namesWall: config?.namesWall?.profiles?.[path === "namesWall.inwardShiftPercent" ? "wall" : config?.namesWall?.activeMode] } : config); }
 function normalizeConfig(config) {
@@ -141,6 +142,10 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
   let settlementCitycode = catalog.entries?.find((entry) => entry?.citycode)?.citycode || "";
   let activeSettlementEditor = null;
   let localDraftNotification = false;
+  const parameterHistory = createParameterHistory();
+  const scalarGestures = new Map();
+  const nudgeAnchors = new Map();
+  let restoringParameter = false;
   let warpMutationDepth = 0;
   let warpRefreshPending = false;
   let pendingAction = null;
@@ -317,7 +322,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     const warpStates = Object.fromEntries(["left", "right"].map((output) => [output, { ...warpEditors[output].getState(),
       ...(!editorBaselineReady ? { baselineAvailable: false, historyDepth: 0, redoDepth: 0 } : {}),
       config: warpEditors[output].getConfig(), handles: warpEditors[output].getControlPoints() }]));
-    view.update({ state: { ...state, selectedPresetId }, errors: fieldErrors,
+    view.update({ state: { ...state, selectedPresetId }, errors: fieldErrors, parameterHistory: parameterHistory.state(),
       conflict: conflict || state.migrationWarnings?.join(' ') || '',
       statusText: pendingAction
         ? ({ save: "Saving preset", apply: "Applying changes", load: "Loading preset", revert: "Reverting settings" }[pendingAction.kind])
@@ -565,6 +570,15 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     const nextSelected = nextState.snapshot?.selectedPresetId;
     const selectionChanged = nextSelected && nextSelected !== previousSelected;
     const acceptedReplacement = !localDraftNotification && receipt?.action !== "save" && (firstHydration || (!nextState.hasLocalDraft && (draftChanged || selectionChanged)));
+    if (!localDraftNotification && draftChanged) {
+      const changed = ALL_FIELD_DESCRIPTORS.flatMap(descriptor => {
+        const paths = new Set([resolvedFieldPath(previousDraft, descriptor.path), resolvedFieldPath(nextState.draft, descriptor.path)]);
+        return [...paths].filter(path => !Object.is(readPath(previousDraft, path), readPath(nextState.draft, path)));
+      });
+      parameterHistory.invalidate(changed);
+      for (const path of changed) { nudgeAnchors.delete(path); for (const [id, gesture] of scalarGestures) if (gesture.path === path) scalarGestures.delete(id); }
+    }
+    if (acceptedReplacement) { parameterHistory.clear(); nudgeAnchors.clear(); scalarGestures.clear(); }
     if (acceptedReplacement) view.cancelWarpPointer({ notify: false });
     state = nextState;
     const snapshotSelected = state.snapshot?.selectedPresetId;
@@ -611,26 +625,72 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     if (descriptor.wallOnly && state.draft.namesWall.activeMode !== "wall") return reject("Target changed while editing. Use latest and restart.", resolvedPath);
     if (editPath !== undefined && editPath !== resolvedPath) return reject("Target changed while editing. Use latest and restart.", resolvedPath);
     const current = readPath(state.draft, resolvedPath);
+    const gesture = gestureId ? scalarGestures.get(gestureId) : null;
+    if (['update', 'end', 'cancel'].includes(phase) && gestureId && !gesture) return reject('Gesture ended or the value changed. Use latest and restart.', resolvedPath);
+    if (gesture && (gesture.path !== resolvedPath || !Object.is(current, gesture.last))) return reject('Value changed while editing. Use latest and restart.', resolvedPath);
+    if (phase === 'cancel') {
+      restoringParameter = true;
+      try {
+        const accepted = commitScalar({ path, resolvedPath, value: gesture.before, baseValue: current });
+        if (accepted) { scalarGestures.delete(gestureId); nudgeAnchors.delete(resolvedPath); }
+        return accepted;
+      } finally { restoringParameter = false; }
+    }
     if (baseValue !== undefined && !override && !Object.is(current, baseValue)) return reject("Value changed while editing. Use latest or use my value.", resolvedPath);
     if (!Number.isFinite(value)) return reject("must be a finite number", resolvedPath);
     if (value < descriptor.min || value > descriptor.max) return reject(`must be between ${fieldInputValue(descriptor, descriptor.min)} and ${fieldInputValue(descriptor, descriptor.max)}${descriptor.unit ? ` ${descriptor.unit}` : ""}`, resolvedPath);
     if (Object.is(current, value)) {
+      if (phase === 'start' && gestureId) scalarGestures.set(gestureId, { path: resolvedPath, before: current, last: current });
+      if (phase === 'end' && gesture) { parameterHistory.record({ path: resolvedPath, before: gesture.before, after: current }); scalarGestures.delete(gestureId); }
       fieldErrors = Object.fromEntries(Object.entries(fieldErrors).filter(([key]) => key !== resolvedPath && !key.startsWith(`${resolvedPath}.`) && !resolvedPath.startsWith(`${key}.`)));
       refresh(); return true;
     }
     const candidate = setPath(state.draft, resolvedPath, value);
     if (!validCandidate(candidate, resolvedPath)) return false;
-    try { setClientDraft(candidate); return true; }
+    try {
+      setClientDraft(candidate);
+      if (!restoringParameter) {
+        if (gestureId && phase) {
+          const active = gesture || { path: resolvedPath, before: current, last: current };
+          active.last = value;
+          if (phase === 'end') { parameterHistory.record({ path: resolvedPath, before: active.before, after: value }); scalarGestures.delete(gestureId); }
+          else scalarGestures.set(gestureId, active);
+        } else parameterHistory.record({ path: resolvedPath, before: current, after: value });
+      }
+      refresh(); return true;
+    }
     catch (error) { return reject(error.message, resolvedPath); }
   }
   function handleField(path, raw, inputKind, editMeta = {}) {
     const descriptor = descriptorFor(path);
     if (!descriptor) return false;
-    return commitScalar({ path, ...editMeta, value: fieldValueFromInput(descriptor, raw) });
+    if (!editMeta.phase || editMeta.phase === 'start') nudgeAnchors.delete(resolvedFieldPath(state.draft, path));
+    return commitScalar({ path, ...editMeta, value: editMeta.canonicalValue !== undefined ? editMeta.canonicalValue : fieldValueFromInput(descriptor, raw) });
   }
-  function handleNudge(path, direction) {
-    const descriptor = descriptorFor(path); const value = readField(state.draft, path) + direction * fineStepFor(descriptor);
-    handleField(path, String(fieldInputValue(descriptor, value)));
+  function handleNudge(path, direction, meta = {}) {
+    const descriptor = descriptorFor(path); if (!descriptor || !state.draft) return false;
+    const resolvedPath = resolvedFieldPath(state.draft, path); const current = readPath(state.draft, resolvedPath);
+    if (meta.phase === 'sensitivity') { nudgeAnchors.delete(resolvedPath); return true; }
+    let anchor = nudgeAnchors.get(resolvedPath);
+    if (!anchor || !Object.is(anchor.last, current) || anchor.step !== descriptor.fine || meta.phase === 'start') anchor = { base: current, count: 0, last: current, step: descriptor.fine };
+    const count = meta.count !== undefined ? meta.count * direction : anchor.count + direction;
+    const value = count === 0 ? anchor.base : anchor.base + count * descriptor.fine;
+    const accepted = commitScalar({ path, resolvedPath, value, baseValue: current, ...meta });
+    if (accepted && meta.phase !== 'cancel') { anchor.count = count; anchor.last = value; nudgeAnchors.set(resolvedPath, anchor); }
+    return accepted;
+  }
+  function restoreParameter(direction) {
+    if (!finishPendingEdit()) return false;
+    const entry = direction === 'undo' ? parameterHistory.peekUndo() : parameterHistory.peekRedo();
+    if (!entry) return false;
+    const descriptor = ALL_FIELD_DESCRIPTORS.find(item => resolvedFieldPath(state.draft, item.path) === entry.path);
+    if (!descriptor) { fieldErrors = { action: 'Parameter target changed. Use the current profile.' }; refresh(); return false; }
+    restoringParameter = true;
+    try {
+      const accepted = commitScalar({ path: descriptor.path, resolvedPath: entry.path, value: direction === 'undo' ? entry.before : entry.after, baseValue: direction === 'undo' ? entry.after : entry.before });
+      if (accepted) { direction === 'undo' ? parameterHistory.commitUndo() : parameterHistory.commitRedo(); nudgeAnchors.delete(entry.path); }
+      refresh(); return accepted;
+    } finally { restoringParameter = false; }
   }
   function handleNamesMode(mode) {
     if (!finishPendingEdit()) return false;
@@ -652,7 +712,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
   function discardPendingEdit() {
     if (!hasHeldGesture() && !view.hasPendingEdit()) return true;
     if (win?.confirm?.("Discard the pending edit or gesture and replace the calibration draft?") !== true) return false;
-    view.cancelNumericEdits();
+    view.cancelNumericEdits({ notify: false }); scalarGestures.clear(); nudgeAnchors.clear();
     view.cancelWarpPointer({ notify: false });
     for (const editor of Object.values(warpEditors)) editor.retireGesture();
     fieldErrors = {}; refresh();
@@ -714,11 +774,12 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
       } else config = normalizeConfig(config);
       const importErrors = validateProjectionConfig(config);
       if (Object.keys(importErrors).length) throw new Error(`invalid imported projection config: ${Object.entries(importErrors).map(([path, message]) => `${path} ${message}`).join("; ")}`);
-      client.setLive(false); setClientDraft(config); view.setPresetName(parsed.name || ""); fieldErrors = {}; conflict = [...new Set(warnings)].join(" "); refresh();
+      client.setLive(false); setClientDraft(config); parameterHistory.clear(); nudgeAnchors.clear(); scalarGestures.clear(); view.setPresetName(parsed.name || ""); fieldErrors = {}; conflict = [...new Set(warnings)].join(" "); refresh();
     } catch (error) { fieldErrors = { import: error.message }; refresh(); }
   }
   async function handleAction(action, value) {
     if (disposed) return;
+    if (action === 'parameter-undo' || action === 'parameter-redo') return restoreParameter(action === 'parameter-undo' ? 'undo' : 'redo');
     if (["apply", "save", "save-new", "preset-select"].includes(action) && !finishPendingEdit()) return false;
     if (["load", "revert", "import"].includes(action) && !discardPendingEdit()) return false;
     let actionToken = null;
@@ -738,6 +799,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
       if (!accepted.draft) return;
       view.cancelWarpPointer({ notify: false });
       for (const output of ["left", "right"]) warpEditors[output].setConfig(accepted.draft, { rebase: true });
+      parameterHistory.clear(); nudgeAnchors.clear(); scalarGestures.clear();
     };
     try {
       if (action === "live") await client.setLive(Boolean(value));

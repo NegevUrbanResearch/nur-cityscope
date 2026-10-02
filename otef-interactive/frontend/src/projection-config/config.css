@@ -442,3 +442,15 @@ h2, h3 { margin: 0 0 10px; }
 @container (max-width: 599px) {
   .parameter-editor-previews:has(.parameter-preview-slot:not([hidden]) ~ .parameter-preview-slot:not([hidden])) { grid-template-columns: 1fr; }
 }
+
+.numeric-sensitivity { min-height: 44px; margin-block: 4px; }
+.numeric-sensitivity[aria-pressed='true'] { border-width: 2px; font-weight: 700; }
+.config-field .nudge { touch-action: none; }
+.numeric-step { display: inline-block; margin-inline-start: 8px; font-size: 12px; }
+.parameter-field-layout .config-field-controls-row,
+.parameter-field-layout .config-field-controls-row:has(.numeric-sign) { display: flex; flex-wrap: wrap; min-width: 0; }
+.parameter-field-layout .config-field-controls-row > .config-field-value { flex: 1 0 100%; }
+.parameter-field-layout .config-field-controls-row > input[data-input=number] { flex: 1 1 80px; min-width: 60px; width: 80px; }
+.parameter-field-layout .config-field-controls-row > button { flex: 0 0 48px; min-height: 48px; }
+.parameter-editor-header > [data-action='parameter-undo'],
+.parameter-editor-header > [data-action='parameter-redo'] { grid-column: auto; grid-row: auto; min-height: 44px; }

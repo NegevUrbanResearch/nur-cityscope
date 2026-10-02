@@ -147,6 +147,78 @@ function replacementHarness() {
 }
 
 describe("projection config controller", () => {
+  test('held nudges produce one undo entry, own acknowledgments retain it and foreign same-field changes invalidate it', async () => {
+    const root=element('main'); root.ownerDocument=documentStub(); const client=fakeClient(); const factory=vi.spyOn(configView,'createProjectionConfigView'); const api=mountProjectionConfig(root,{client});
+    const {onNudge,onField}=factory.mock.calls.at(-1)[1];
+    try {
+      const base=client.getState().draft.pre.scale;
+      onNudge('pre.scale',1,{phase:'start',gestureId:'hold',count:1});
+      onNudge('pre.scale',1,{phase:'update',gestureId:'hold',count:5});
+      onNudge('pre.scale',1,{phase:'end',gestureId:'hold',count:5});
+      const acknowledged=clone(client.getState().draft); client.report({hasLocalDraft:false,snapshot:{...client.getState().snapshot,revision:3,config:acknowledged}});
+      expect(await api.handleAction('parameter-undo')).toBe(true); expect(client.getState().draft.pre.scale).toBe(base);
+      expect(await api.handleAction('parameter-undo')).toBe(false);
+      expect(await api.handleAction('parameter-redo')).toBe(true); expect(client.getState().draft.pre.scale).toBe(base+.005);
+      await api.handleAction('parameter-undo'); onField('pre.tx','2','number'); expect(await api.handleAction('parameter-redo')).toBe(false);
+      onField('pre.scale','2','number'); const foreign=clone(client.getState().draft); foreign.pre.scale=3; client.report({draft:foreign,hasLocalDraft:true});
+      await api.handleAction('parameter-undo'); expect(client.getState().draft.pre.scale).toBe(3); expect(client.getState().draft.pre.tx).toBe(DEFAULTS.pre.tx);
+    } finally {api.dispose();factory.mockRestore();}
+  });
+  test('invalid Undo leaves its stacks and latest draft unchanged with the validator reason', async () => {
+    const root=element('main'); root.ownerDocument=documentStub(); const client=fakeClient(); const factory=vi.spyOn(configView,'createProjectionConfigView'); const api=mountProjectionConfig(root,{client});
+    const {onField}=factory.mock.calls.at(-1)[1];
+    try {
+      const initial=clone(client.getState().draft); initial.outputs.left.crop.x0=.4; client.report({draft:initial});
+      onField('outputs.left.crop.x0','10','number');
+      const foreign=clone(client.getState().draft); foreign.outputs.left.crop.x1=.2; client.report({draft:foreign,hasLocalDraft:true});
+      expect(await api.handleAction('parameter-undo')).toBe(false); expect(client.getState().draft).toEqual(foreign);
+      expect(find(root,n=>n.dataset?.action==='parameter-undo').disabled).toBe(false);
+      expect(find(root,n=>n.dataset?.action==='parameter-redo').disabled).toBe(true);
+      expect(find(root,n=>n.dataset?.errorFor==='outputs.left.crop.x0').textContent).not.toBe('');
+    } finally {api.dispose();factory.mockRestore();}
+  });
+  test('real client reversing adjacent nudges returns exactly to imported base without a dirty draft', async () => {
+    const root = element('main'); root.ownerDocument = documentStub(); const h = replacementHarness();
+    h.snapshot.config.pre.scale = 1.23456789123456;
+    h.snapshot.config.pre.tx = .123456789123456;
+    const api = mountProjectionConfig(root, { client: h.client });
+    try {
+      h.respond(h.snapshot); await vi.waitFor(() => expect(h.client.getState().hydrating).toBe(false)); h.client.setLive(false);
+      const nudge = (path, direction) => find(root, n => n.dataset?.action === 'fine-nudge' && n.dataset.path === path && n.dataset.direction === direction).dispatch('click');
+      for (const path of ['pre.scale', 'pre.tx']) { nudge(path, '1'); nudge(path, '-1'); }
+      expect(h.client.getState().draft.pre.scale).toBe(h.snapshot.config.pre.scale);
+      expect(h.client.getState().draft.pre.tx).toBe(h.snapshot.config.pre.tx);
+      expect(h.client.getState().hasLocalDraft).toBe(false);
+    } finally { api.dispose(); }
+  });
+  test('canonical Fine gestures coalesce, cancel only their path and Undo preserves unrelated output', async () => {
+    const root = element('main'); root.ownerDocument = documentStub(); const client = fakeClient();
+    const factory = vi.spyOn(configView, 'createProjectionConfigView'); const api = mountProjectionConfig(root, { client });
+    const { onField } = factory.mock.calls.at(-1)[1];
+    try {
+      const base = .123456789123456; const draft = clone(client.getState().draft); draft.pre.tx = base; client.report({draft});
+      const send = (value, phase, id = 'slider') => onField('pre.tx', 'ignored', 'range', { canonicalValue: value, phase, gestureId: id });
+      expect(send(base + .0001, 'start')).toBe(true); expect(send(base + .0002, 'update')).toBe(true); send(base + .0002, 'end');
+      await api.handleAction('parameter-undo'); expect(client.getState().draft.pre.tx).toBe(base);
+      await api.handleAction('parameter-redo'); expect(client.getState().draft.pre.tx).toBe(base + .0002);
+      send(base + .0003, 'start', 'cancelled');
+      const unrelated = clone(client.getState().draft); unrelated.outputs.right.post.tx = .25; client.report({draft: unrelated, hasLocalDraft: true});
+      send(base + .0003, 'cancel', 'cancelled'); expect(client.getState().draft.pre.tx).toBe(base + .0002);
+      expect(client.getState().draft.outputs.right.post.tx).toBe(.25);
+      await api.handleAction('parameter-undo'); expect(client.getState().draft.pre.tx).toBe(base);
+      expect(client.getState().draft.outputs.right.post.tx).toBe(.25); expect(client.getState().live).toBe(true);
+    } finally { api.dispose(); factory.mockRestore(); }
+  });
+  test('invalid crop Fine commit keeps Apply blocked and issues no client request', async () => {
+    const root = element('main'); root.ownerDocument = documentStub(); const client = fakeClient(); const api = mountProjectionConfig(root, {client});
+    try {
+      const range = find(root, n => n.dataset?.field === 'outputs.left.crop.x0' && n.dataset.input === 'range');
+      find(root, n => n.dataset?.path === 'outputs.left.crop.x0').children.find(n => n.dataset?.action === 'numeric-sensitivity').dispatch('click');
+      range.dispatch('pointerdown', {pointerId: 2}); range.value = '99.9'; range.dispatch('input'); range.dispatch('pointerup', {pointerId: 2});
+      await api.handleAction('apply'); expect(client.apply).not.toHaveBeenCalled(); expect(client.setDraft).not.toHaveBeenCalled();
+      expect(find(root, n => n.dataset?.errorFor === 'outputs.left.crop.x0').textContent).toMatch(/extent|edge|below|accepted/i);
+    } finally {api.dispose();}
+  });
   test('controller independently checks exact canonical baselines, resolved targets and override', () => {
     const root = element('main'); root.ownerDocument = documentStub(); const client = fakeClient();
     const factory = vi.spyOn(configView, 'createProjectionConfigView'); const api = mountProjectionConfig(root, { client });
@@ -351,6 +423,7 @@ describe("projection config controller", () => {
     const api = mountProjectionConfig(root, { client });
     try {
       const range = find(root, node => node.dataset?.field === 'pre.scale' && node.dataset.input === 'range');
+      find(root, n => n.dataset?.path === 'pre.scale').children.find(n => n.dataset?.action === 'numeric-sensitivity').dispatch('click');
       range.dispatch('pointerdown', { pointerId: 9 }); range.value = '1.5'; range.dispatch('input'); const draft = clone(client.getState().draft); client.setDraft.mockClear();
       api.handleAction(action, 'original'); expect(root.ownerDocument.defaultView.confirm).toHaveBeenCalledTimes(1);
       range.value = '2'; range.dispatch('input'); range.dispatch('change');

@@ -109,6 +109,10 @@ export function createProjectionConfigView(root, {
   const liveControl = make(doc, "div", { className: "compact-live" });
   liveControl.append(liveLabel);
   controls.apply = button(doc, "Apply once", "apply");
+  controls.parameterUndo = button(doc, 'Undo parameter', 'parameter-undo');
+  controls.parameterRedo = button(doc, 'Redo parameter', 'parameter-redo');
+  controls.parameterUndo.addEventListener('click', () => onAction('parameter-undo'));
+  controls.parameterRedo.addEventListener('click', () => onAction('parameter-redo'));
   controls.save = button(doc, "Save preset", "save");
   controls.saveStatus = make(doc, "span", { className: "config-save-status", role: "status" });
   const saveColumn = make(doc, "div", { className: "config-save-column" });
@@ -270,7 +274,7 @@ export function createProjectionConfigView(root, {
   };
   outputPlacementQuery?.addEventListener?.("change", updateOutputPlacement);
   updateOutputPlacement();
-  toolbar.append(heading, presetGroup, liveControl, saveColumn, controls.tools);
+  toolbar.append(heading, presetGroup, liveControl, saveColumn, controls.parameterUndo, controls.parameterRedo, controls.tools);
   commandBar.append(toolbar, actionRow, status);
   if (traceUi) commandBar.appendChild(traceUi.element);
   app.append(commandBar);
@@ -605,7 +609,7 @@ export function createProjectionConfigView(root, {
     onViewportChange: updateWarpMarkerRadii,
     onOrientationChange: () => cancelActiveDrag({ reason: 'orientationchange' }),
     onApply: () => onAction("apply"), onLive: (live) => onAction("live", live) });
-  parameterDialog = createParameterEditorDialog({ document: doc, host: root, onField, onNudge,
+  parameterDialog = createParameterEditorDialog({ document: doc, host: root, onField, onNudge, onAction,
     createPreview: (previewHost, onStatus) => createParameterEditorPreviews({ document: doc, host: previewHost, onStatus }) });
   pointerInput = bindWarpPointerInput({
     trace,
@@ -727,11 +731,12 @@ export function createProjectionConfigView(root, {
       recordProjectionTrace(trace, 'redraw', { surface: 'warp', phase: 'end', output, mode, columns, rows, baselineType: warp?.baseline?.type || 'unknown', durationMs: projectionTraceTime(trace) - traceStarted, rectX: rect.left ?? 0, rectY: rect.top ?? 0, rectWidth: rect.width, rectHeight: rect.height, viewX: displayViewBox.x, viewY: displayViewBox.y, viewWidth: displayViewBox.width, viewHeight: displayViewBox.height });
     }
   };
-  const update = ({ state = {}, errors = {}, conflict = "", statusText = "", draftDiffersFromAccepted = false, savePending = false, selectedNode = "pre", loadedPresetId = null, loadedPresetLoadToken = 0, statusRows = [], appliedSummary = 'Pending', outputState = {}, warpStates = {}, activePattern = { pattern: "off" }, namesWallStatus = null, namesRunDisabledReason = "", clockScene = "home", clockElement = "clock", clockLayouts = {}, clockHydration = { status: "Loading" }, settlement = null } = {}) => {
+  const update = ({ state = {}, parameterHistory = { undo: 0, redo: 0 }, errors = {}, conflict = "", statusText = "", draftDiffersFromAccepted = false, savePending = false, selectedNode = "pre", loadedPresetId = null, loadedPresetLoadToken = 0, statusRows = [], appliedSummary = 'Pending', outputState = {}, warpStates = {}, activePattern = { pattern: "off" }, namesWallStatus = null, namesRunDisabledReason = "", clockScene = "home", clockElement = "clock", clockLayouts = {}, clockHydration = { status: "Loading" }, settlement = null } = {}) => {
     if (state.draft) currentDraft = state.draft;
     currentFieldErrors = errors.fields || errors.field || errors;
     currentStatus = statusText;
     controls.live.checked = Boolean(state.live);
+    controls.parameterUndo.disabled = !parameterHistory.undo; controls.parameterRedo.disabled = !parameterHistory.redo;
     controls.applyLiveDescription.textContent = state.live ? "Live on. Changes update automatically." : "Live off. Use Apply once in Tools, or Apply & save.";
     const dirtyLocalDraft = Boolean(state.hasLocalDraft || draftDiffersFromAccepted);
     controls.status.textContent = dirtyLocalDraft && !state.live
@@ -838,7 +843,7 @@ export function createProjectionConfigView(root, {
     for (const run of namesRunButtons) { run.disabled = Boolean(namesRunDisabledReason); run.title = namesRunDisabledReason || "Run names for the applied calibration."; }
     renderWarpPanel(warpStates, selectedNode);
     dialog.update(draft, { live: state.live, appliedSummary, namesRunStatus: wallMessage, namesRunDisabledReason });
-    parameterDialog.update({ config: draft, fieldErrors: errors.fields || errors.field || errors, status: controls.status.textContent });
+    parameterDialog.update({ config: draft, fieldErrors: errors.fields || errors.field || errors, status: controls.status.textContent, parameterHistory });
     for (const [output, control] of patternControls) control.value = activePattern.branch === output ? activePattern.pattern : "off";
     for (const descriptor of descriptors) {
       const value = namesWallProfileScoped(descriptor.path)
@@ -889,7 +894,7 @@ export function createProjectionConfigView(root, {
     },
     hasPendingEdit: () => [...fields.values()].some(control => control.isPending()) || parameterDialog.isPending(),
     hasHeldNumericEdit: () => [...fields.values()].some(control => control.isHeld()) || parameterDialog.isHeld(),
-    cancelNumericEdits: () => { for (const control of fields.values()) control.cancel(); parameterDialog.cancel(); },
+    cancelNumericEdits: options => { for (const control of fields.values()) control.cancel(options); parameterDialog.cancel(options); },
     closeWarpEditor: dialog.close,
     sendRunNamesPreview: (config) => dialog.sendRunNamesPreview(config),
     dispose() { for (const control of fields.values()) control.dispose(); settlementControls.dispose(); disposePageTrace(); disposeWarpTrace(); disposeGraphTrace(); traceUi?.dispose(); outputPlacementQuery?.removeEventListener?.("change", updateOutputPlacement); doc.removeEventListener?.("keydown", onKeyDown); doc.removeEventListener?.("keydown", dismissDisclosures); doc.removeEventListener?.("pointerdown", dismissDisclosures, true); parameterDialog.dispose(); dialog.dispose(); pointerInput.dispose(); canvas.dispose(); },
