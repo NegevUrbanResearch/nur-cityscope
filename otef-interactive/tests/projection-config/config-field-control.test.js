@@ -28,6 +28,16 @@ it('a controller conflict discovered during finish retains both conflict actions
   expect(onField).toHaveBeenLastCalledWith(descriptor.path, '2', 'number', { baseValue: 3, resolvedPath: descriptor.path, override: true });
 });
 
+it('only a previously controller-rejected edit acknowledges correction to an unchanged baseline', () => {
+  const { c, onField } = setup(0); onField.mockReturnValue(false);
+  input(c, '2'); expect(c.finish().kind).toBe('invalid');
+  onField.mockReturnValue(true); input(c, '0'); expect(c.finish().kind).toBe('unchanged');
+  expect(onField).toHaveBeenCalledTimes(2);
+  expect(onField).toHaveBeenLastCalledWith(descriptor.path, '0', 'number', { baseValue: 0, resolvedPath: descriptor.path, override: false });
+  expect(c.error.textContent).toBe(''); expect(c.number.getAttribute('aria-invalid')).toBe('false');
+  c.finish(); expect(onField).toHaveBeenCalledTimes(2);
+});
+
 it.each(['pointerup', 'pointercancel', 'lostpointercapture'])('range discard stops held events and %s releases suppression for keyboard editing', terminal => {
   const { c, onField } = setup(1);
   const pointer = type => { const event = new Event(type); Object.defineProperty(event, 'pointerId', { value: 7 }); c.range.dispatchEvent(event); };

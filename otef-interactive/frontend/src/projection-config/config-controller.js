@@ -614,7 +614,10 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     if (baseValue !== undefined && !override && !Object.is(current, baseValue)) return reject("Value changed while editing. Use latest or use my value.", resolvedPath);
     if (!Number.isFinite(value)) return reject("must be a finite number", resolvedPath);
     if (value < descriptor.min || value > descriptor.max) return reject(`must be between ${fieldInputValue(descriptor, descriptor.min)} and ${fieldInputValue(descriptor, descriptor.max)}${descriptor.unit ? ` ${descriptor.unit}` : ""}`, resolvedPath);
-    if (Object.is(current, value)) { fieldErrors = {}; refresh(); return true; }
+    if (Object.is(current, value)) {
+      fieldErrors = Object.fromEntries(Object.entries(fieldErrors).filter(([key]) => key !== resolvedPath && !key.startsWith(`${resolvedPath}.`) && !resolvedPath.startsWith(`${key}.`)));
+      refresh(); return true;
+    }
     const candidate = setPath(state.draft, resolvedPath, value);
     if (!validCandidate(candidate, resolvedPath)) return false;
     try { setClientDraft(candidate); return true; }

@@ -249,6 +249,56 @@ describe("projection config controller", () => {
     } finally { api.dispose(); }
   });
 
+  test.each(['save', 'save-new'])('correcting a rejected crop to its original value clears validation before %s without a draft write', async action => {
+    const root = element('main'); root.ownerDocument = documentStub(); const client = fakeClient();
+    client.getState().snapshot.selectedPresetId = 'desk'; client.getState().snapshot.presets.push({ id: 'desk', name: 'Desk', config: clone(DEFAULTS) });
+    const api = mountProjectionConfig(root, { client });
+    const inputFor = path => find(root, node => node.dataset?.field === path && node.dataset.input === 'number');
+    const errorFor = path => find(root, node => node.dataset?.errorFor === path);
+    try {
+      const path = 'outputs.left.crop.x0', input = inputFor(path);
+      input.value = '85'; input.dispatch('input'); await api.handleAction(action, 'Desk');
+      expect(client.save).not.toHaveBeenCalled(); expect(errorFor(path).textContent).toMatch(/extent/i);
+      input.value = '0'; input.dispatch('input'); await api.handleAction(action, 'Desk');
+      expect(client.save).toHaveBeenCalledTimes(1); expect(client.setDraft).not.toHaveBeenCalled(); expect(client.getState().draft).toEqual(DEFAULTS);
+      for (const edge of ['x0', 'x1', 'y0', 'y1']) {
+        const cropPath = `outputs.left.crop.${edge}`;
+        expect(errorFor(cropPath).textContent).toBe(''); expect(inputFor(cropPath).attributes['aria-invalid']).toBe('false');
+      }
+    } finally { api.dispose(); }
+  });
+
+  test.each(['pre.scale', 'outputs.left.crop.x0'])('an unchanged crop correction retains another rejected pending edit at %s', async pendingPath => {
+    const root = element('main'); root.ownerDocument = documentStub(); const client = fakeClient(); const api = mountProjectionConfig(root, { client });
+    const inputFor = path => find(root, node => node.dataset?.field === path && node.dataset.input === 'number');
+    const errorFor = path => find(root, node => node.dataset?.errorFor === path);
+    try {
+      const corrected = inputFor('outputs.left.crop.x1'); corrected.value = '0.1'; corrected.dispatch('input'); corrected.dispatch('blur');
+      const pending = inputFor(pendingPath); pending.value = pendingPath === 'pre.scale' ? '9' : '85'; pending.dispatch('input'); pending.dispatch('blur');
+      expect(errorFor(pendingPath).textContent).not.toBe('');
+      corrected.value = '60'; corrected.dispatch('input'); corrected.dispatch('blur');
+      expect(errorFor(pendingPath).textContent).not.toBe(''); expect(pending.attributes['aria-invalid']).toBe('true');
+      await api.handleAction('save-new', 'Desk'); expect(client.save).not.toHaveBeenCalled(); expect(client.setDraft).not.toHaveBeenCalled();
+      expect(pending.value).toBe(pendingPath === 'pre.scale' ? '9' : '85'); expect(errorFor(pendingPath).textContent).not.toBe(''); expect(pending.attributes['aria-invalid']).toBe('true');
+    } finally { api.dispose(); }
+  });
+
+  test('unchanged crop correction leaves an actual deferred preflight alive without another draft notification or POST', async () => {
+    const root = element('main'); root.ownerDocument = documentStub(); const h = replacementHarness(); const checks = [];
+    const api = mountProjectionConfig(root, { client: h.client, candidateValidator: { validateCandidate: args => new Promise(resolve => checks.push({ ...args, resolve })), dispose() {} } });
+    try {
+      h.respond(h.snapshot); await vi.waitFor(() => expect(h.client.getState().hydrating).toBe(false)); h.client.setLive(false);
+      const applying = h.client.apply(); await vi.waitFor(() => expect(checks).toHaveLength(1));
+      const before = h.client.getState(); const listener = vi.fn(); const unsubscribe = h.client.subscribe(listener); listener.mockClear();
+      const input = find(root, node => node.dataset?.field === 'outputs.left.crop.x0' && node.dataset.input === 'number');
+      input.value = '85'; input.dispatch('input'); input.dispatch('blur'); input.value = '0'; input.dispatch('input'); input.dispatch('blur');
+      expect(find(root, node => node.dataset?.errorFor === 'outputs.left.crop.x0').textContent).toBe('');
+      expect(h.client.getState()).toEqual(before); expect(listener).not.toHaveBeenCalled(); expect(checks[0].signal.aborted).toBe(false); expect(h.requests).toHaveLength(0);
+      unsubscribe(); checks[0].resolve({ identity: checks[0].identity, valid: true }); await vi.waitFor(() => expect(h.requests).toHaveLength(1));
+      h.respond({ ...h.snapshot, revision: 1 }); await applying; expect(h.requests).toHaveLength(0); expect(checks).toHaveLength(1);
+    } finally { api.dispose(); }
+  });
+
   test.each(['load', 'revert', 'import'])('%s confirms pending text once and keeps the draft until replacement succeeds', async action => {
     const root = element('main'); root.ownerDocument = documentStub(); const confirm = vi.fn(() => false); root.ownerDocument.defaultView.confirm = confirm;
     const client = fakeClient(); let resolve; const replacement = new Promise(done => { resolve = done; });

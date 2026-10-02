@@ -39,6 +39,8 @@ export function renderField(doc, descriptor, onField, onNudge, compact = false, 
   let pendingSign = 1;
   let targetChanged = false;
   let externalError = '';
+  let needsAcceptance = false;
+  let rejectionError = '';
   let disposed = false;
   let heldPointer = null;
   let retiredPointer = null;
@@ -99,7 +101,7 @@ export function renderField(doc, descriptor, onField, onNudge, compact = false, 
     signButton.setAttribute('aria-pressed', String(sign < 0));
   };
   const renderResult = (result = session.candidate()) => {
-    const message = externalError || result.error || '';
+    const message = externalError || rejectionError || result.error || '';
     error.textContent = message;
     wrap.classList?.toggle('has-error', Boolean(message));
     for (const input of [range, number]) input?.setAttribute('aria-invalid', String(Boolean(message)));
@@ -117,7 +119,7 @@ export function renderField(doc, descriptor, onField, onNudge, compact = false, 
   const markInput = (raw, inputSign = sign) => {
     pendingText = raw; pendingSign = inputSign;
     session.input(raw, inputSign);
-    externalError = '';
+    externalError = ''; rejectionError = '';
     const parsed = parseNumericText(raw, { sign: inputSign, signed });
     if (parsed.ok) { if (signed && parsed.value !== 0) sign = parsed.value < 0 ? -1 : 1; displayOutput(parsed.value); showSign(); }
     else displayOutput('');
@@ -129,9 +131,11 @@ export function renderField(doc, descriptor, onField, onNudge, compact = false, 
     if (override && result.kind === 'conflict' && !targetChanged && result.resolvedPath === latest.resolvedPath) {
       session.cancel(); session.input(pendingText, pendingSign); result = session.candidate();
     }
-    if (result.kind === 'commit') {
-      const shown = toDisplay(result.value);
-      if (!Number.isFinite(shown) || (!signed && shown < 0) || (descriptor.validate && !descriptor.validate(result.value))) result = { ...result, kind: 'invalid', error: 'Enter a number within the allowed bounds.' };
+    const correction = result.kind === 'unchanged' && session.isDirty() && needsAcceptance;
+    if (result.kind === 'commit' || correction) {
+      const candidateValue = correction ? result.baseValue : result.value;
+      const shown = toDisplay(candidateValue);
+      if (!Number.isFinite(shown) || (!signed && shown < 0) || (descriptor.validate && !descriptor.validate(candidateValue))) result = { ...result, kind: 'invalid', error: 'Enter a number within the allowed bounds.' };
       else {
         const meta = { baseValue: result.baseValue, resolvedPath: result.resolvedPath, override };
         const enteredText = number?.value;
@@ -141,8 +145,10 @@ export function renderField(doc, descriptor, onField, onNudge, compact = false, 
           if (number) number.value = enteredText;
           const pending = session.candidate();
           result = { ...result, kind: pending.kind === 'conflict' ? 'conflict' : 'invalid', error: externalError || pending.error || 'Value was not accepted. Check the field bounds.' };
+          needsAcceptance = true; rejectionError = result.error;
         } else {
-          latest = { value: result.value, resolvedPath: result.resolvedPath };
+          needsAcceptance = false; rejectionError = '';
+          latest = { value: candidateValue, resolvedPath: result.resolvedPath };
           session.sync(latest); session.cancel(); targetChanged = false; externalError = ''; refresh();
         }
       }
@@ -151,7 +157,7 @@ export function renderField(doc, descriptor, onField, onNudge, compact = false, 
     renderResult(result.kind === 'commit' ? session.candidate() : result);
     return result;
   };
-  const cancel = () => { if (heldPointer !== null) retiredPointer = heldPointer; heldPointer = null; session.cancel(); targetChanged = false; externalError = ''; refresh(true); };
+  const cancel = () => { if (heldPointer !== null) retiredPointer = heldPointer; heldPointer = null; session.cancel(); targetChanged = false; externalError = ''; needsAcceptance = false; rejectionError = ''; refresh(true); };
   listen(range, 'pointerdown', event => { retiredPointer = null; heldPointer = event.pointerId; });
   listen(range, 'keydown', () => { retiredPointer = null; });
   for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) listen(range, type, event => {
