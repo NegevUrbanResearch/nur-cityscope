@@ -3,6 +3,7 @@ import { DEFAULT_PROJECTION_CONFIG as DEFAULTS, LEGACY_DEFAULT_PROJECTION_CONFIG
 import { migrateProjectionConfigToV2 } from '../../frontend/src/shared/projection-warp-schema.js';
 import { migrateNamesWallToV3, migrateNamesWallToV5 } from '../../frontend/src/shared/nli-name-wall-config.js';
 import { createProjectionConfigClient, TD_MIGRATION_PRESET_ID, validateProjectionConfigSnapshot } from '../../frontend/src/shared/projection-config-client.js';
+import { waitForProjectionConfigStartup } from '../../frontend/src/projection/projection-config-startup.js';
 
 const clone = (value) => JSON.parse(JSON.stringify(value));
 const stateFor = (revision, config = DEFAULTS) => ({
@@ -12,7 +13,7 @@ const stateFor = (revision, config = DEFAULTS) => ({
   selectedPresetId: 'original',
 });
 
-function harness({ revision = 0, config = DEFAULTS, validateCandidate } = {}) {
+function harness({ revision = 0, config = DEFAULTS, validateCandidate, connectOnStart = true } = {}) {
   let now = 0;
   let timerId = 0;
   const timers = new Map();
@@ -22,7 +23,7 @@ function harness({ revision = 0, config = DEFAULTS, validateCandidate } = {}) {
   const socket = {
     on(event, callback) { if (!events.has(event)) events.set(event, new Set()); events.get(event).add(callback); },
     off(event, callback) { events.get(event)?.delete(callback); },
-    connect() { connected = true; for (const callback of events.get('connect') || []) callback(); },
+    connect() { if (!connectOnStart) return; connected = true; for (const callback of events.get('connect') || []) callback(); },
     getConnected() { return connected; },
     emit(payload) { for (const callback of events.get('otef_projection_config_changed') || []) callback(payload); for (const callback of events.get('message') || []) callback(payload); },
   };
@@ -66,10 +67,70 @@ function harness({ revision = 0, config = DEFAULTS, validateCandidate } = {}) {
     resolveNext, resolveAt, rejectNext, pendingRequests: () => requests, lastRequest: () => requests[requests.length - 1],
     disconnect: () => { connected = false; for (const callback of events.get('disconnect') || []) callback(); },
     reconnect: () => { connected = true; for (const callback of events.get('connect') || []) callback(); },
-};
+    connect: () => { connected = true; for (const callback of events.get('connect') || []) callback(); },
+  };
 }
 
 beforeEach(() => vi.restoreAllMocks());
+
+test.each([
+  ["HTTP failure", (h) => h.resolveNext({}, 503), /503/],
+  ["network failure", (h) => h.rejectNext(new Error("offline")), /offline/],
+  ["invalid response", (h) => h.resolveNext({ invalid: true }), /invalid projection config response/],
+])("terminal %s settles the actual browser startup waiter with actionable client error", async (_label, failHydration, error) => {
+  const h = harness();
+  let unsubscribeCount = 0;
+  const subscribe = h.client.subscribe.bind(h.client);
+  vi.spyOn(h.client, 'subscribe').mockImplementation((listener) => {
+    const unsubscribe = subscribe(listener);
+    return () => { unsubscribeCount += 1; unsubscribe(); };
+  });
+  const starting = waitForProjectionConfigStartup(h.client);
+  failHydration(h);
+  const state = await starting;
+  expect(state.hydrationError).toMatch(error);
+  expect(h.client.getState().hydrationError).toMatch(error);
+  expect(unsubscribeCount).toBe(0);
+  expect(h.pendingRequests()).toHaveLength(0);
+});
+
+test("a disconnected start hydrates once after asynchronous connect and returns the accepted snapshot", async () => {
+  const h = harness({ connectOnStart: false });
+  let unsubscribeCount = 0;
+  const subscribe = h.client.subscribe.bind(h.client);
+  vi.spyOn(h.client, 'subscribe').mockImplementation((listener) => {
+    const unsubscribe = subscribe(listener);
+    return () => { unsubscribeCount += 1; unsubscribe(); };
+  });
+  const starting = waitForProjectionConfigStartup(h.client);
+  expect(h.fetchImpl).not.toHaveBeenCalled();
+  h.connect();
+  expect(h.fetchImpl).toHaveBeenCalledOnce();
+  h.resolveNext(stateFor(12));
+  await expect(starting).resolves.toMatchObject({ snapshot: { revision: 12 } });
+  await h.flushPromises();
+  expect(h.client.getState().snapshot?.revision).toBe(12);
+  expect(unsubscribeCount).toBe(1);
+  expect(h.fetchImpl).toHaveBeenCalledOnce();
+  expect(h.client.getState()).toMatchObject({ hydrating: false, snapshot: { revision: 12 } });
+});
+
+test("disposing a pending startup waiter unsubscribes and settles it", async () => {
+  const h = harness({ connectOnStart: false });
+  const controller = new AbortController();
+  let unsubscribeCount = 0;
+  const subscribe = h.client.subscribe.bind(h.client);
+  vi.spyOn(h.client, 'subscribe').mockImplementation((listener) => {
+    const unsubscribe = subscribe(listener);
+    return () => { unsubscribeCount += 1; unsubscribe(); };
+  });
+  const starting = waitForProjectionConfigStartup(h.client, { signal: controller.signal });
+  await Promise.resolve();
+  controller.abort();
+  await expect(starting).rejects.toMatchObject({ name: 'AbortError' });
+  expect(unsubscribeCount).toBe(1);
+  h.client.stop();
+});
 
 test('hydration converts historical working and preset configs to V4', async () => {
   const h = harness();
@@ -152,6 +213,37 @@ test.each(['live', 'apply', 'save', 'load', 'revert'])(
     h.client.stop();
   },
 );
+
+test('candidate preflight fallback reports geometry validation rather than name placement', async () => {
+  const h = harness({ validateCandidate: async ({ identity }) => ({ identity, valid: false }) });
+  const started = h.client.start(); h.resolveNext(h.stateFor(0)); await started;
+  const candidate = clone(DEFAULTS); candidate.pre.tx = 0.025;
+  h.client.setDraft(candidate);
+  const applied = h.client.apply().then(() => null, (error) => error.message);
+  await h.advance(0); await h.flushPromises();
+  expect(await applied).toBe('projection geometry preflight unavailable');
+  expect(h.client.getState().previewError).toBe('projection geometry preflight unavailable');
+  h.client.stop();
+});
+
+test('explicit Apply with Live off still preflights and posts exactly once', async () => {
+  const validateCandidate = vi.fn(async ({ identity }) => ({ identity, valid: true }));
+  const h = harness({ validateCandidate });
+  const started = h.client.start(); h.resolveNext(h.stateFor(4)); await started;
+  h.client.setLive(false);
+  const candidate = clone(DEFAULTS); candidate.pre.tx = 0.125;
+  h.client.setDraft(candidate);
+  const applied = h.client.apply().then((value) => ({ value }), (error) => ({ error }));
+  await h.advance(0); await h.flushPromises();
+  expect(validateCandidate).toHaveBeenCalledOnce();
+  expect(h.pendingRequests()).toHaveLength(1);
+  expect(JSON.parse(h.lastRequest().options.body).config).toEqual(candidate);
+  h.resolveNext(stateFor(5, candidate));
+  expect((await applied).error).toBeUndefined();
+  expect(h.client.getState()).toMatchObject({ live: false, snapshot: { revision: 5, config: candidate } });
+  expect(h.pendingRequests()).toHaveLength(0);
+  h.client.stop();
+});
 
 test('an abandoned wall check cannot block a newer valid Live edit', async () => {
   const checks = [];

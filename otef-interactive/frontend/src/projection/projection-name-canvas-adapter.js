@@ -38,7 +38,7 @@ export function createProjectionNameCanvasAdapter({ document = globalThis.docume
     ctx.restore();
     entry.contentVersion = ++version;
   };
-  return {
+  const adapter = {
     prepare({ config, placements, fontPx = 12, fontFamily = 'Guttman Hatzvi', color = '#fff', logicalPlane } = {}) {
       if (disposed) throw new Error('name adapter is disposed');
       if (!config || !Array.isArray(placements) || !Number.isFinite(logicalPlane?.heading) ||
@@ -77,10 +77,19 @@ export function createProjectionNameCanvasAdapter({ document = globalThis.docume
       }
       const activeMode = config.namesWall?.activeMode;
       const strokeWidthPx = config.namesWall?.profiles?.[activeMode]?.strokeWidthPx ?? (activeMode === 'wall' ? 3 : 2);
-      pending = { canvas, ctx, placements: own, matrix, fontPx, fontFamily, color, strokeWidthPx,
+      pending = { canvas, ctx, placements: own, allPlacements: placements, matrix, fontPx, fontFamily, color, strokeWidthPx,
         revealVertices: new Float32Array(vertices), indexByPid };
       paint(pending);
       return { source: canvas };
+    },
+    applyGeometry({ config, logicalPlane } = {}) {
+      if (disposed) throw new Error('name adapter is disposed');
+      if (!active) return false;
+      adapter.prepare({ config, placements: active.allPlacements, fontPx: active.fontPx,
+        fontFamily: active.fontFamily, color: active.color, logicalPlane });
+      adapter.commit();
+      adapter.finalize();
+      return true;
     },
     setPresentation(state) {
       if (disposed) return;
@@ -110,4 +119,5 @@ export function createProjectionNameCanvasAdapter({ document = globalThis.docume
       selectedIndex: active.indexByPid.get(selectedPid) ?? -1 } : null; },
     dispose() { disposed = true; pending = null; previous = null; hasRollback = false; active = null; },
   };
+  return adapter;
 }

@@ -32,7 +32,7 @@ async function boot(search) {
   const context = await import("../../frontend/src/shared/OTEFDataContext.js");
   const init = vi.spyOn(context.default, "init");
   await import("../../frontend/src/entries/projection-main.js");
-  await new Promise((resolve) => setTimeout(resolve, 0));
+  await vi.dynamicImportSettled();
   return { init };
 }
 

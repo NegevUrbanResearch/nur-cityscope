@@ -1,7 +1,7 @@
 import { describe, expect, test, vi } from 'vitest';
 import { DEFAULT_PROJECTION_CONFIG } from '../../frontend/src/shared/projection-config-schema.js';
 import { createIdentityProjectionMesh } from '../../frontend/src/shared/projection-warp-geometry.js';
-import { createProjectionCandidateValidator, prepareProjectionPairMeshes, projectionCandidateResult, readProjectionCandidateInputs } from '../../frontend/src/projection/projection-candidate-validation.js';
+import { createProjectionCandidateValidator, createProjectionGeometryValidator, prepareProjectionPairMeshes, projectionCandidateResult, readProjectionCandidateInputs } from '../../frontend/src/projection/projection-candidate-validation.js';
 
 const config = () => structuredClone(DEFAULT_PROJECTION_CONFIG);
 const inputs = { heading: 35, datasetVersion: 'validation-fixture' };
@@ -180,6 +180,30 @@ describe('candidate validator', () => {
 });
 
 describe('pair mesh preparation', () => {
+  test('geometry preflight validates both meshes without reading release metadata or placing names', async () => {
+    const candidate = config();
+    const assets = Object.fromEntries(['left', 'right'].map((side) => [side, {
+      assetId: `${side}-id`, sha256: side === 'left' ? 'a'.repeat(64) : 'b'.repeat(64), logicalGrid: { columns: side === 'left' ? 7 : 8, rows: 7 },
+    }]));
+    for (const side of ['left', 'right']) candidate.outputs[side].warp.baseline = {
+      type: 'tdMesh', assetId: assets[side].assetId, sha256: assets[side].sha256,
+      width: 1920, height: 1080, origin: 'top-left',
+    };
+    const manifest = { assets };
+    const loadBaseline = vi.fn(async (side) => ({ mesh: createIdentityProjectionMesh({ side }), manifest }));
+    const readInputs = vi.fn(async () => { throw new Error('release metadata unavailable'); });
+    const prepareWall = vi.fn(async () => { throw new Error('name worker must not run'); });
+    const validator = createProjectionGeometryValidator({ loadBaseline, readInputs, prepareWall });
+
+    const result = await validator.validateCandidate({ config: candidate, identity: JSON.stringify(candidate), generation: 1, revision: 3 });
+
+    expect(result).toMatchObject({ valid: true, identity: JSON.stringify(candidate) });
+    expect(loadBaseline).toHaveBeenCalledTimes(2);
+    expect(readInputs).not.toHaveBeenCalled();
+    expect(prepareWall).not.toHaveBeenCalled();
+    validator.dispose();
+  });
+
   test('identity and disabled warps need no source mesh', async () => {
     const candidate = config();
     candidate.outputs.left.warp.enabled = false;

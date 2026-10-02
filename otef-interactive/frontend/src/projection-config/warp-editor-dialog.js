@@ -3,7 +3,7 @@ import { fitWarpViewport } from "./warp-viewport.js";
 const FRAME_URL = (side) => `/otef-interactive/projection.html?span=${side}&preview=1&mapPixelRatio=1&outputMode=browser`;
 
 /** Owns one disposable projection frame. The config controller retains all draft and edit state. */
-export function createWarpEditorDialog({ document: doc, host, editorPanel, overlay, navigationControls, onBeforeClose = () => {}, onBeforeSwitch = () => {}, onFineToggle = () => {}, onBeforeResize = () => {}, onViewportChange = () => {}, onOrientationChange = () => {}, onApply = () => {}, onLive = () => {} }) {
+export function createWarpEditorDialog({ document: doc, host, editorPanel, overlay, navigationControls, onRunNames = () => {}, onBeforeClose = () => {}, onBeforeSwitch = () => {}, onFineToggle = () => {}, onBeforeResize = () => {}, onViewportChange = () => {}, onOrientationChange = () => {}, onApply = () => {}, onLive = () => {} }) {
   const win = doc.defaultView;
   const origin = win?.location?.origin;
   const home = editorPanel.parentElement;
@@ -32,7 +32,10 @@ export function createWarpEditorDialog({ document: doc, host, editorPanel, overl
   const applyButton = doc.createElement("button"); applyButton.type = "button"; applyButton.textContent = "Apply once";
   const applied = doc.createElement("span"); applied.className = "warp-editor-applied";
   const retry = doc.createElement("button"); retry.type = "button"; retry.dataset.action = "warp-editor-retry"; retry.textContent = "Retry"; retry.hidden = true;
-  footer.append(liveLabel, applyButton, applied, retry);
+  const namesStatus = doc.createElement("span"); namesStatus.className = "warp-editor-names-status"; namesStatus.setAttribute("role", "status"); namesStatus.setAttribute("aria-live", "polite");
+  const namesRun = doc.createElement("button"); namesRun.type = "button"; namesRun.dataset.action = "projection-names-run"; namesRun.textContent = "Run names";
+  namesRun.addEventListener("click", onRunNames);
+  footer.append(liveLabel, applyButton, applied, retry, namesStatus, namesRun);
   modal.append(header, body, footer); host.appendChild(modal);
 
   let session = null;
@@ -65,14 +68,21 @@ export function createWarpEditorDialog({ document: doc, host, editorPanel, overl
     session.frame.remove();
     session = null;
   };
-  const send = () => {
-    if (!session?.ready || !latest || !origin) return;
-    const identity = JSON.stringify(latest);
-    if (identity === session.sentIdentity) return;
-    session.sentIdentity = identity;
+  const send = ({ config = latest, force = false, runNames = false } = {}) => {
+    if (!session?.ready || !config || !origin) return false;
+    const identity = JSON.stringify(config);
+    if (runNames && (!session.calibrated || session.pendingGeometryRequestId != null || identity !== session.calibratedIdentity)) return false;
+    if (!force && identity === session.sentIdentity) return false;
+    if (!runNames) session.sentIdentity = identity;
     const requestId = ++session.requestId;
-    session.frame.contentWindow?.postMessage({ type: "otef_projection_preview_config", output: session.side, requestId, config: latest }, origin);
-    setMessage("Rendering current draft…");
+    session.requestKind = runNames ? "names" : "geometry";
+    if (!runNames) {
+      session.pendingGeometryRequestId = requestId;
+      session.pendingGeometryIdentity = identity;
+    }
+    session.frame.contentWindow?.postMessage({ type: "otef_projection_preview_config", output: session.side, requestId, config, ...(runNames ? { runNames: true } : {}) }, origin);
+    setMessage(runNames ? "Running names for applied calibration…" : "Rendering current draft…");
+    return true;
   };
   const restoreFocus = (returnTo) => {
     if (returnTo && focusEpoch === returnTo.epoch && modal.hidden) returnTo.element?.focus?.();
@@ -93,7 +103,10 @@ export function createWarpEditorDialog({ document: doc, host, editorPanel, overl
     frame.tabIndex = -1;
     frame.src = FRAME_URL(side);
     viewport.appendChild(frame);
-    const current = { frame, side, generation: ++generation, ready: false, timedOut: false, requestId: 0, sentIdentity: null, observer: null, timer: null };
+    const current = { frame, side, generation: ++generation, ready: false, calibrated: false, calibratedIdentity: null,
+      pendingGeometryRequestId: null, pendingGeometryIdentity: null, requestKind: null, timedOut: false, requestId: 0,
+      sentIdentity: null, observer: null, timer: null };
+    frame.style.visibility = "hidden";
     session = current;
     setMessage("Loading projection output…"); retry.hidden = true;
     current.timer = setTimeout(() => {
@@ -114,6 +127,15 @@ export function createWarpEditorDialog({ document: doc, host, editorPanel, overl
       current.ready = true; clearTimeout(current.timer); current.timer = null;
       setMessage("Ready"); retry.hidden = true; send();
     } else if (message.type === "otef_projection_preview_applied" && current.ready && message.requestId === current.requestId) {
+      if (current.requestKind === "geometry") {
+        if (message.success) {
+          current.calibrated = true;
+          current.calibratedIdentity = current.pendingGeometryIdentity;
+          current.frame.style.visibility = "visible";
+        }
+        current.pendingGeometryRequestId = null;
+        current.pendingGeometryIdentity = null;
+      } else if (message.success) current.frame.style.visibility = "visible";
       setMessage(message.success ? "Current draft" : `Preview unavailable: ${String(message.error || "render failed").slice(0, 240)}`);
       retry.hidden = Boolean(message.success);
     }
@@ -218,12 +240,16 @@ export function createWarpEditorDialog({ document: doc, host, editorPanel, overl
   return {
     open,
     isOpen() { return !modal.hidden; },
-    update(config, { live, appliedSummary } = {}) {
+    update(config, { live, appliedSummary, namesRunStatus, namesRunDisabledReason } = {}) {
       latest = config;
       if (live !== undefined) liveInput.checked = Boolean(live);
       if (appliedSummary !== undefined) applied.textContent = appliedSummary;
+      if (namesRunStatus !== undefined) namesStatus.textContent = namesRunStatus;
+      namesRun.disabled = Boolean(namesRunDisabledReason);
+      namesRun.title = namesRunDisabledReason || "Run names for the applied calibration.";
       send();
     },
+    sendRunNamesPreview(config) { return send({ config, force: true, runNames: true }); },
     setViewBox(next) { if (!next) return; viewBox = { ...next }; fit(); },
     close,
     dispose() {

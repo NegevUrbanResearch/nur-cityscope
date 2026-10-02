@@ -1,4 +1,5 @@
 import { expect, test, vi } from "vitest";
+import { readFileSync } from "node:fs";
 import { DEFAULT_PROJECTION_CONFIG } from "../../frontend/src/shared/projection-config-schema.js";
 import { installProjectionPreviewBridge } from "../../frontend/src/projection/projection-preview-bridge.js";
 import * as previewBridge from "../../frontend/src/projection/projection-preview-bridge.js";
@@ -112,6 +113,54 @@ test('an asynchronous paired preview apply uses the prepared wall and ignores a 
   expect(parent.postMessage.mock.calls.filter(([message]) => message.requestId === 1)).toHaveLength(0);
   expect(map.setEffectiveProjectionConfig).not.toHaveBeenCalled();
   expect(names.setProjectionConfig).not.toHaveBeenCalled();
+});
+
+test('explicit Run names is passed through the unchanged preview applied handshake', async () => {
+  const listeners = new Map(); const parent = { postMessage: vi.fn() };
+  const win = { parent, location: { origin: 'http://localhost' },
+    addEventListener: (type, callback) => listeners.set(type, callback), removeEventListener() {} };
+  const config = structuredClone(DEFAULT_PROJECTION_CONFIG);
+  const applyProjectionConfig = vi.fn(async () => ({ committed: true }));
+  installProjectionPreviewBridge({ win, output: 'right', map: {}, nameFieldController: {},
+    syncContextInvestigation() {}, applyProjectionConfig });
+  listeners.get('message')({ source: parent, origin: 'http://localhost', data: {
+    type: 'otef_projection_preview_config', output: 'right', requestId: 7, runNames: true, config,
+  } });
+  await vi.waitFor(() => expect(parent.postMessage).toHaveBeenLastCalledWith({
+    type: 'otef_projection_preview_applied', output: 'right', requestId: 7, success: true,
+  }, 'http://localhost'));
+  expect(applyProjectionConfig).toHaveBeenCalledWith(config, expect.objectContaining({ runNames: true, signal: expect.any(AbortSignal) }));
+});
+
+test('new geometry cancels an independent names run before starting its apply', () => {
+  const listeners = new Map(); const parent = { postMessage: vi.fn() };
+  const win = { parent, location: { origin: 'http://localhost' },
+    addEventListener: (type, callback) => listeners.set(type, callback), removeEventListener() {} };
+  const calls = [];
+  const applyProjectionConfig = vi.fn((_config, context) => { calls.push(context); return { committed: true }; });
+  installProjectionPreviewBridge({ win, output: 'left', map: {}, nameFieldController: {}, syncContextInvestigation() {}, applyProjectionConfig });
+  const config = structuredClone(DEFAULT_PROJECTION_CONFIG);
+  const send = (requestId, runNames) => listeners.get('message')({ source: parent, origin: 'http://localhost', data: {
+    type: 'otef_projection_preview_config', output: 'left', requestId, runNames, config,
+  } });
+  send(1, true);
+  const namesSignal = calls[0].signal;
+  send(2, false);
+  expect(namesSignal.aborted).toBe(true);
+  expect(calls[1]).toMatchObject({ runNames: false });
+  expect(calls[1].signal.aborted).toBe(false);
+});
+
+test('preview geometry remaps installed names and draws without preparing a wall per draft', () => {
+  const source = readFileSync(new URL('../../frontend/src/entries/projection-main.js', import.meta.url), 'utf8');
+  const start = source.indexOf('applyPreviewProjectionConfig = async');
+  const end = source.indexOf('if (previewMode) registerDisposer(installProjectionPreviewBridge', start);
+  const geometry = source.slice(start, end);
+  expect(geometry).toContain('nameFieldController.applyProjectionConfigGeometry(config, generation)');
+  expect(geometry).toContain('drawAfterMapRender(map, () => browserSurface.draw()');
+  expect(geometry).toContain('if (!drawn) throw new Error(\'Projection preview draw failed\')');
+  expect(geometry).not.toContain('prepareProjectionNameWall');
+  expect(geometry).not.toContain('prepareProjectionCandidate');
 });
 
 test('preview validation replies with exact identity and complete wall without applying the renderer', async () => {

@@ -434,12 +434,12 @@ export function createProjectionConfigClient({
       preflighting = null;
       const stale = stopped || !connected || hydrating || snapshot?.revision !== revision ||
         conflictGeneration !== check.conflictGeneration || draftVersion !== check.version || intent ||
-        (operation.action === 'preview' && !live);
+        (operation.action === 'preview' && !live && operation.explicitApply !== true);
       if (stale) {
         operation.reject(new Error('projection config operation superseded'));
         if (live) schedulePreview();
       } else if (!result?.valid || result.identity !== identity) {
-        const message = result?.reason || 'complete names wall preview unavailable';
+        const message = result?.reason || 'projection geometry preflight unavailable';
         previewError = message;
         operation.reject(new Error(message));
       } else {
@@ -451,7 +451,7 @@ export function createProjectionConfigClient({
     }).catch((error) => {
       if (preflighting !== check) return;
       preflighting = null;
-      previewError = error?.message || 'complete names wall preview unavailable';
+      previewError = error?.message || 'projection geometry preflight unavailable';
       operation.reject(error);
       notify();
       scheduleDrain();
@@ -487,7 +487,7 @@ export function createProjectionConfigClient({
   function apply() {
     if (setupRequired()) return Promise.reject(new Error('initialization required'));
     if (!draft || !snapshot || !connected || stopped || hydrating) return Promise.reject(new Error(hydrating ? 'projection config is hydrating' : 'projection config is disconnected'));
-    return new Promise((resolve, reject) => waitForMutation({ action: 'preview', dynamicDraft: true, version: draftVersion, resolve, reject }));
+    return new Promise((resolve, reject) => waitForMutation({ action: 'preview', dynamicDraft: true, explicitApply: true, version: draftVersion, resolve, reject }));
   }
 
   function save({ presetId = null, name } = {}) {

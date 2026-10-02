@@ -8,6 +8,7 @@ vi.mock("../../frontend/src/shared/nli-name-field-data.js", () => ({
 }));
 
 const { createNliNameFieldController } = await import("../../frontend/src/shared/nli-name-field-controller.js");
+const { cancelProjectionPreviewNames, commitProjectionPreviewNamesCandidate } = await import("../../frontend/src/projection/projection-preview-task.js");
 const { loadNliNameField } = await import("../../frontend/src/shared/nli-name-field-data.js");
 
 const field = (datasetVersion = "v1") => ({
@@ -39,7 +40,7 @@ const groupedField = () => {
   return data;
 };
 
-function setup({ profile = "projection", projectionSpan, applyProjectionConfig = true, motionMode = "reduced", snapshot = { personId: null, datasetVersion: null, revision: 0 }, onWallEnabledChange } = {}) {
+function setup({ profile = "projection", projectionSpan, applyProjectionConfig = true, manualProjectionPreparation = false, motionMode = "reduced", snapshot = { personId: null, datasetVersion: null, revision: 0 }, onWallEnabledChange } = {}) {
   const map = createFakeMapLibreMap({ layers: [
     { id: "nli__people_names__labels", type: "symbol", layout: { visibility: "visible" } },
   ] });
@@ -67,7 +68,7 @@ function setup({ profile = "projection", projectionSpan, applyProjectionConfig =
     if (topic === "personSelection") state.snapshot = value;
     listeners.get(topic)?.(value);
   };
-  const controller = createNliNameFieldController({ map, context, displayProfile: profile, projectionSpan, loadField: loadNliNameField, motionMode, onWallEnabledChange });
+  const controller = createNliNameFieldController({ map, context, displayProfile: profile, projectionSpan, loadField: loadNliNameField, motionMode, onWallEnabledChange, manualProjectionPreparation });
   if (applyProjectionConfig) controller.setProjectionConfig(DEFAULTS, 1);
   return { map, context, controller, emit, state };
 }
@@ -99,6 +100,15 @@ const markedField = (marker, datasetVersion = "v1") => {
 beforeEach(() => { loadNliNameField.mockReset(); });
 afterEach(() => vi.useRealTimers());
 
+it("manual browser projection preparation suppresses the automatic legacy names worker", async () => {
+  const d = setup({ manualProjectionPreparation: true });
+  d.controller.setProjectionConfig(DEFAULTS, 1);
+  enable(d);
+  await settle();
+  expect(loadNliNameField).not.toHaveBeenCalled();
+  d.controller.dispose();
+});
+
 describe("createNliNameFieldController", () => {
   const canvasField = () => ({ ...groupedField(),
     placements: [{ id: 'p-1', name: 'One', output: 'left', x: 0, y: 0, width: 20, height: 10 },
@@ -108,12 +118,26 @@ describe("createNliNameFieldController", () => {
   });
   const canvasAdapter = () => {
     let opacity = 0, revealSeconds = 0;
-    return { prepare: vi.fn(), commit: vi.fn(), rollback: vi.fn(), finalize: vi.fn(),
+    return { prepare: vi.fn(), applyGeometry: vi.fn(() => true), commit: vi.fn(), rollback: vi.fn(), finalize: vi.fn(),
       setPresentation: vi.fn(), setOpacity: vi.fn((value) => { opacity = value; }),
       setRevealSeconds: vi.fn((value) => { revealSeconds = value; }), setSelectedPid: vi.fn(),
       descriptor: () => ({ source: {}, opacity, revealSeconds }), getOpacity: () => opacity,
       getRevealSeconds: () => revealSeconds };
   };
+  it('remaps installed names through new geometry without replacing their placement field', async () => {
+    const d = setup({ applyProjectionConfig: false, projectionSpan: 'left' });
+    const adapter = canvasAdapter(); d.controller.installProjectionCanvas(adapter);
+    const installed = canvasField();
+    await d.controller.prepareProjectionCandidate({ generation: 1, config: DEFAULTS, field: installed, revision: 1 });
+    d.controller.commitProjectionCandidate(1); d.controller.finalizeProjectionCandidate(1);
+    const next = structuredClone(DEFAULTS); next.outputs.left.crop.x1 = 0.65;
+    expect(d.controller.applyProjectionConfigGeometry(next, 2)).toBe(true);
+    expect(adapter.applyGeometry).toHaveBeenCalledOnce();
+    expect(adapter.applyGeometry.mock.calls[0][0]).toMatchObject({ config: next, logicalPlane: installed.logicalPlane });
+    expect(loadNliNameField).not.toHaveBeenCalled();
+    expect(d.controller.getProjectionNameDiagnostics()).toMatchObject({ installedRevision: 1, requestedRevision: 2, state: 'stale' });
+    d.controller.dispose();
+  });
   it('stagger clock freezes on hide, resumes on reversal, and restarts after complete hide', async () => {
     vi.useFakeTimers();
     const d = setup({ applyProjectionConfig: false, projectionSpan: 'left', motionMode: 'full' });
@@ -415,6 +439,43 @@ describe("createNliNameFieldController", () => {
       .rejects.toThrow('capacity');
     expect(adapter.commit).toHaveBeenCalledTimes(1);
     expect(d.map.getSource('nli-name-field').data.features).toHaveLength(2);
+    d.controller.dispose();
+  });
+  it('rolls back a staged Canvas candidate when cancellation lands after preparation and before commit', async () => {
+    const d = setup({ applyProjectionConfig: false, projectionSpan: 'left' });
+    const adapter = canvasAdapter(); d.controller.installProjectionCanvas(adapter);
+    const abort = new AbortController();
+    await expect(commitProjectionPreviewNamesCandidate({
+      prepare: async () => {
+        await d.controller.prepareProjectionCandidate({ generation: 7, config: DEFAULTS, field: canvasField(), revision: 7, signal: abort.signal });
+        abort.abort();
+      },
+      isCurrent: () => !abort.signal.aborted,
+      commit: () => d.controller.commitProjectionCandidate(7),
+      draw: () => true,
+      finalize: () => d.controller.finalizeProjectionCandidate(7),
+      rollback: () => d.controller.rollbackProjectionCandidate(7),
+    })).rejects.toMatchObject({ name: 'AbortError' });
+    expect(adapter.prepare).toHaveBeenCalledOnce();
+    expect(adapter.commit).not.toHaveBeenCalled();
+    expect(adapter.rollback).toHaveBeenCalledOnce();
+    expect(d.controller.getProjectionNameDiagnostics().state).not.toBe('idle');
+    d.controller.dispose();
+  });
+  it('rolls a prepared Canvas candidate back before newer geometry is allowed to proceed', async () => {
+    const d = setup({ applyProjectionConfig: false, projectionSpan: 'left' });
+    const adapter = canvasAdapter(); d.controller.installProjectionCanvas(adapter);
+    await d.controller.prepareProjectionCandidate({ generation: 8, config: DEFAULTS, field: canvasField(), revision: 8 });
+    const order = [];
+    await cancelProjectionPreviewNames({
+      abort: () => order.push('abort'),
+      rollback: () => { d.controller.rollbackProjectionCandidate(8); order.push('rollback'); },
+      pending: Promise.resolve(),
+    });
+    order.push('geometry');
+    expect(order).toEqual(['abort', 'rollback', 'geometry']);
+    expect(adapter.commit).not.toHaveBeenCalled();
+    expect(adapter.rollback).toHaveBeenCalledOnce();
     d.controller.dispose();
   });
   it("dims settlement labels updated during the reveal without waiting for idle", async () => {

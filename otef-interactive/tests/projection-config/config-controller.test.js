@@ -1,6 +1,7 @@
 import { describe, expect, test, vi } from "vitest";
 import { DEFAULT_PROJECTION_CONFIG as DEFAULTS, LEGACY_DEFAULT_PROJECTION_CONFIG } from "../../frontend/src/shared/projection-config-schema.js";
 import { migrateNamesWallToV5 } from "../../frontend/src/shared/nli-name-wall-config.js";
+import { projectionPlacementInputIdentity } from "../../frontend/src/projection/projection-names-run.js";
 import {
   FIELD_DESCRIPTORS,
   NAMES_WALL_DESCRIPTORS,
@@ -121,44 +122,99 @@ describe("projection config controller", () => {
     api.dispose(); globalThis.document = previousDocument;
   });
 
-  test('uses an injected validator for inspection and mutations without preview frames', async () => {
+  test('geometry edits do not trigger names placement; explicit candidate checks use the geometry validator', async () => {
     const previousDocument = globalThis.document;
     globalThis.document = documentStub();
     const root = element('main'); const client = fakeClient();
     const config = clone(client.getState().draft);
-    const candidateValidator = { validateCandidate: vi.fn(async ({ identity }) => ({ identity, valid: true,
-      wall: { datasetVersion: 'release', mode: 'wall', digest: 'a'.repeat(64), expected: 1, placed: 1 },
-      diagnostics: { state: 'valid', datasetVersion: 'release', mode: 'wall', requestedFontPx: 12, effectiveFontPx: 12, expected: 1, placed: 1 },
-    })), dispose: vi.fn() };
-    const api = mountProjectionConfig(root, { client, candidateValidator });
+    const candidateValidator = { validateCandidate: vi.fn(async ({ identity }) => ({ identity, valid: true })), dispose: vi.fn() };
+    const api = mountProjectionConfig(root, { client, candidateValidator, readNamesDataset: async () => ({ datasetVersion: 'release' }) });
     const frames = []; const collect = (node) => { if (node.tagName === 'IFRAME') frames.push(node); for (const child of node.children || []) collect(child); };
     collect(root); expect(frames).toHaveLength(0);
-    await vi.waitFor(() => expect(candidateValidator.validateCandidate).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(candidateValidator.validateCandidate).not.toHaveBeenCalled();
     expect((await client.validateCandidate({ config, identity: JSON.stringify(config), generation: 1, revision: 3 })).valid).toBe(true);
-    await vi.waitFor(() => expect(find(root, (node) => node.className === 'names-wall-status').textContent).toContain('Valid'));
+    expect(candidateValidator.validateCandidate).toHaveBeenCalledOnce();
+    expect(find(root, (node) => node.className === 'names-wall-status').textContent).toContain('Waiting for names output status');
     api.dispose(); expect(candidateValidator.dispose).toHaveBeenCalledOnce(); globalThis.document = previousDocument;
   });
-  test("missing candidate validation remains unconfirmed and mutation preflight is fresh", async () => {
+  test("ordinary hydration and draft changes do not start a names preflight worker", async () => {
     const previousDocument = globalThis.document;
     globalThis.document = documentStub();
     const root = element("main");
     const client = fakeClient();
     const api = mountProjectionConfig(root, { client });
     const status = find(root, (node) => node.className === "names-wall-status");
-    await vi.waitFor(() => expect(status.textContent).toContain("Building"));
-    expect(status.textContent).not.toContain("Invalid");
-    expect(status.textContent).not.toContain("Draft is unsaved");
-    expect(status.textContent).not.toContain("retain their previous complete wall");
+    expect(status.textContent).toContain("Waiting for names output status");
+    expect(find(root, (node) => node.dataset?.action === "projection-names-run")).toBeTruthy();
 
     const config = clone(client.getState().draft);
     const identity = JSON.stringify(config);
     const first = await client.validateCandidate({ config, identity, generation: 1, revision: 3 });
     const second = await client.validateCandidate({ config, identity, generation: 2, revision: 4 });
-    expect(first).not.toBe(second);
-    expect(second.reason).toBe("Candidate validator unavailable");
+    expect(first.reason).toBe("Geometry validator unavailable");
+    expect(second.reason).toBe("Geometry validator unavailable");
     api.dispose(); globalThis.document = previousDocument;
   });
-  test('dataset event revalidates an identical draft only when current inputs change', async () => {
+  test("Run names requires an applied Live snapshot and sends the exact placement target once ready", async () => {
+    const previousDocument = globalThis.document; globalThis.document = documentStub();
+    const client = fakeClient(); const sent = [];
+    const socketHandlers = new Map();
+    const socket = { on: (type, handler) => socketHandlers.set(type, handler), off() {}, send: (message) => sent.push(message), getConnected: () => true };
+    const candidateValidator = { validateCandidate: vi.fn(async ({ identity }) => ({ identity, valid: true })), dispose() {} };
+    let holdDatasetRead = false; let releaseDatasetRead; let runReads = 0;
+    const root = element('main');
+    const api = mountProjectionConfig(root, { client, socket, candidateValidator, readNamesDataset: async () => {
+      if (holdDatasetRead) { runReads += 1; await new Promise((resolve) => { releaseDatasetRead = resolve; }); }
+      return { datasetVersion: 'release-1' };
+    } });
+    await vi.waitFor(() => expect(sent.some((message) => message.type === 'otef_projection_status_request')).toBe(true));
+    const button = find(root, (node) => node.dataset?.action === 'projection-names-run');
+    client.report({ live: false });
+    const changed = clone(client.getState().draft); changed.pre.tx += 0.01;
+    client.report({ draft: changed, hasLocalDraft: true });
+    button.dispatch('click');
+    expect(sent.filter((message) => message.type === 'otef_projection_names_run')).toHaveLength(0);
+    client.report({ draft: clone(client.getState().snapshot.config), hasLocalDraft: false, pending: true });
+    button.dispatch('click');
+    expect(sent.filter((message) => message.type === 'otef_projection_names_run')).toHaveLength(0);
+    client.report({ pending: false });
+    const applied = (output, replacementInstanceId = null) => {
+      const warp = client.getState().snapshot.config.outputs[output].warp;
+      const baseline = warp.enabled === false ? { type: 'identity' } : (warp.baseline || { type: 'identity' });
+      const instanceId = replacementInstanceId || (output === 'left' ? '10000000-0000-4000-8000-000000000001' : '20000000-0000-4000-8000-000000000002');
+      socketHandlers.get('otef_projection_applied')({ table: 'otef', output, instanceId, revision: 2, success: true, route: 'browser', baseline });
+    };
+    applied('left'); applied('right');
+    expect(button.title).toBe('Run names for the applied calibration.');
+    holdDatasetRead = true;
+    button.dispatch('click');
+    expect(button.disabled).toBe(true);
+    button.dispatch('click');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(runReads).toBe(1);
+    expect(button.disabled).toBe(true);
+    releaseDatasetRead();
+    await vi.waitFor(() => expect(sent.filter((message) => message.type === 'otef_projection_names_run')).toHaveLength(1));
+    expect(sent.find((message) => message.type === 'otef_projection_names_run')).toMatchObject({
+      table: 'otef', revision: 2, datasetVersion: 'release-1', placementIdentity: expect.stringMatching(/^[a-f0-9]{64}$/i), requestId: expect.stringMatching(/^[0-9a-f-]{36}$/i),
+    });
+    const run = sent.find((message) => message.type === 'otef_projection_names_run');
+    const reportNames = (output, instanceId, requestId, state) => socketHandlers.get('otef_projection_names_status')({
+      type: 'otef_projection_names_status', table: 'otef', output, instanceId, requestId, revision: run.revision,
+      datasetVersion: run.datasetVersion, placementIdentity: run.placementIdentity, state, installed: null,
+    });
+    reportNames('left', '10000000-0000-4000-8000-000000000001', run.requestId, 'rebuilding');
+    reportNames('right', '20000000-0000-4000-8000-000000000002', run.requestId, 'rebuilding');
+    const replacementId = '30000000-0000-4000-8000-000000000003';
+    applied('left', replacementId);
+    expect(button.disabled).toBe(true);
+    reportNames('left', replacementId, null, 'stale');
+    expect(button.disabled).toBe(false);
+    expect(client.getState().live).toBe(false);
+    api.dispose(); globalThis.document = previousDocument;
+  });
+  test('dataset events refresh target identity without launching placement workers', async () => {
     const previousDocument = globalThis.document;
     const doc = documentStub(); const handlers = new Map();
     doc.defaultView.addEventListener = (type, fn) => handlers.set(type, fn);
@@ -167,38 +223,131 @@ describe("projection config controller", () => {
     const socketHandlers = new Map();
     const socket = { on: (type, fn) => socketHandlers.set(type, fn), off: (type) => socketHandlers.delete(type) };
     let datasetVersion = 'release';
-    const candidateValidator = {
-      readInputs: vi.fn(async () => ({ heading: 35, datasetVersion })),
-      getLastInputs: () => ({ heading: 35, datasetVersion }),
-      validateCandidate: vi.fn(async ({ identity }) => ({ identity, valid: true,
-        wall: { datasetVersion, mode: 'wall', digest: 'a'.repeat(64), expected: 1, placed: 1 },
-        diagnostics: { state: 'valid', datasetVersion, mode: 'wall', requestedFontPx: 12, effectiveFontPx: 12, expected: 1, placed: 1 },
-      })), dispose: vi.fn(),
-    };
-    const api = mountProjectionConfig(element('main'), { client: fakeClient(), socket, candidateValidator });
-    await vi.waitFor(() => expect(candidateValidator.validateCandidate).toHaveBeenCalledTimes(1));
+    const readNamesDataset = vi.fn(async () => ({ datasetVersion }));
+    const candidateValidator = { validateCandidate: vi.fn(async ({ identity }) => ({ identity, valid: true })), dispose: vi.fn() };
+    const api = mountProjectionConfig(element('main'), { client: fakeClient(), socket, candidateValidator, readNamesDataset });
+    await vi.waitFor(() => expect(readNamesDataset).toHaveBeenCalledTimes(1));
     socketHandlers.get('otef_person_selection_changed')({ personSelection: { datasetVersion } });
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(candidateValidator.validateCandidate).toHaveBeenCalledTimes(1);
+    expect(readNamesDataset).toHaveBeenCalledTimes(2);
+    expect(candidateValidator.validateCandidate).not.toHaveBeenCalled();
     datasetVersion = 'next-release';
     socketHandlers.get('otef_narrative_scene_changed')({ datasetVersion });
-    await vi.waitFor(() => expect(candidateValidator.validateCandidate).toHaveBeenCalledTimes(2));
-    expect(candidateValidator.validateCandidate.mock.calls[1][0].identity).toBe(candidateValidator.validateCandidate.mock.calls[0][0].identity);
+    await vi.waitFor(() => expect(readNamesDataset).toHaveBeenCalledTimes(3));
+    expect(candidateValidator.validateCandidate).not.toHaveBeenCalled();
     expect(handlers.has('storage')).toBe(false);
     api.dispose(); expect(socketHandlers.has('otef_person_selection_changed')).toBe(false);
     expect(handlers.has('storage')).toBe(false); globalThis.document = previousDocument;
   });
-  test('paired wall status requires matching revision, digest, dataset, and all duplicate instances', () => {
+  test('fresh editor replays names status only after the newest hydrated target is ready', async () => {
+    const previousDocument = globalThis.document; globalThis.document = documentStub();
+    const client = fakeClient(null); const socketHandlers = new Map(); const sent = [];
+    const socket = { on: (type, handler) => socketHandlers.set(type, handler), off() {}, send: (message) => sent.push(message), getConnected: () => true };
+    const reads = [];
+    const readNamesDataset = vi.fn(() => new Promise((resolve) => reads.push(resolve)));
+    const originalDigest = globalThis.crypto.subtle.digest.bind(globalThis.crypto.subtle);
+    const deferredDigests = [];
+    const digestSpy = vi.spyOn(globalThis.crypto.subtle, 'digest').mockImplementation((algorithm, bytes) =>
+      new Promise((resolve) => deferredDigests.push(async () => resolve(await originalDigest(algorithm, bytes)))));
+    const candidateValidator = { validateCandidate: vi.fn(), dispose: vi.fn() };
+    const root = element('main');
+    const api = mountProjectionConfig(root, { client, socket, candidateValidator, readNamesDataset });
+    const earlyIdentity = 'a'.repeat(64);
+    for (const output of ['left', 'right']) socketHandlers.get('otef_projection_names_status')({
+      type: 'otef_projection_names_status', table: 'otef', output,
+      instanceId: output === 'left' ? '10000000-0000-4000-8000-000000000001' : '20000000-0000-4000-8000-000000000002',
+      requestId: null, revision: 2, datasetVersion: 'release-1', placementIdentity: earlyIdentity,
+      state: 'current', installed: null,
+    });
+    expect(sent.filter((message) => message.type === 'otef_projection_status_request')).toHaveLength(0);
+    const snapshot = clone(fakeClient().getState().snapshot);
+    client.hydrate(snapshot);
+    await vi.waitFor(() => expect(reads).toHaveLength(1));
+    client.report({ snapshot: { ...snapshot, revision: 3 }, draft: clone(snapshot.config) });
+    await vi.waitFor(() => expect(reads).toHaveLength(2));
+    reads[0]({ datasetVersion: 'obsolete-release' });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(sent.filter((message) => message.type === 'otef_projection_status_request')).toHaveLength(0);
+    reads[1]({ datasetVersion: 'release-1' });
+    await vi.waitFor(() => expect(deferredDigests).toHaveLength(1));
+    expect(sent.filter((message) => message.type === 'otef_projection_status_request')).toHaveLength(0);
+    await deferredDigests[0](); digestSpy.mockRestore();
+    await vi.waitFor(() => expect(sent.filter((message) => message.type === 'otef_projection_status_request')).toHaveLength(1));
+    const placementIdentity = await projectionPlacementInputIdentity(snapshot.config);
+    const installed = { revision: 3, datasetVersion: 'release-1', placementIdentity, mode: 'wall', digest: 'b'.repeat(64), expected: 1200, placed: 1200 };
+    for (const output of ['left', 'right']) socketHandlers.get('otef_projection_names_status')({
+      type: 'otef_projection_names_status', table: 'otef', output,
+      instanceId: output === 'left' ? '10000000-0000-4000-8000-000000000001' : '20000000-0000-4000-8000-000000000002',
+      requestId: null, revision: 3, datasetVersion: 'release-1', placementIdentity, state: 'current', installed,
+    });
+    expect(find(root, (node) => node.className === 'names-wall-status').textContent).toContain('Names current');
+    expect(sent.some((message) => message.type === 'otef_projection_names_run')).toBe(false);
+    expect(candidateValidator.validateCandidate).not.toHaveBeenCalled();
+    api.dispose(); globalThis.document = previousDocument;
+  });
+  test('fresh editor disposal suppresses a deferred target replay', async () => {
+    const previousDocument = globalThis.document; globalThis.document = documentStub();
+    const client = fakeClient(null); const socketHandlers = new Map(); const sent = [];
+    const socket = { on: (type, handler) => socketHandlers.set(type, handler), off() {}, send: (message) => sent.push(message), getConnected: () => true };
+    let resolveDataset;
+    const api = mountProjectionConfig(element('main'), { client, socket, readNamesDataset: () => new Promise((resolve) => { resolveDataset = resolve; }) });
+    const snapshot = clone(fakeClient().getState().snapshot);
+    client.hydrate(snapshot);
+    await vi.waitFor(() => expect(resolveDataset).toBeTypeOf('function'));
+    api.dispose();
+    resolveDataset({ datasetVersion: 'release-1' });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(sent.filter((message) => message.type === 'otef_projection_status_request')).toHaveLength(0);
+    globalThis.document = previousDocument;
+  });
+  test('accepted revision changes replay after the cached-dataset target hash is ready', async () => {
+    const previousDocument = globalThis.document; globalThis.document = documentStub();
+    const client = fakeClient(); const socketHandlers = new Map(); const sent = [];
+    const socket = { on: (type, handler) => socketHandlers.set(type, handler), off() {}, send: (message) => sent.push(message), getConnected: () => true };
+    const root = element('main');
+    const api = mountProjectionConfig(root, { client, socket, readNamesDataset: async () => ({ datasetVersion: 'release-1' }) });
+    const statusRequestCount = () => sent.filter((message) => message.type === 'otef_projection_status_request').length;
+    await vi.waitFor(() => expect(statusRequestCount()).toBe(1));
+    const initial = client.getState().snapshot;
+    const initialIdentity = await projectionPlacementInputIdentity(initial.config);
+    const emitCurrent = (revision, placementIdentity) => {
+      const installed = { revision, datasetVersion: 'release-1', placementIdentity, mode: 'wall', digest: 'b'.repeat(64), expected: 1200, placed: 1200 };
+      for (const output of ['left', 'right']) socketHandlers.get('otef_projection_names_status')({
+        type: 'otef_projection_names_status', table: 'otef', output,
+        instanceId: output === 'left' ? '10000000-0000-4000-8000-000000000001' : '20000000-0000-4000-8000-000000000002',
+        requestId: null, revision, datasetVersion: 'release-1', placementIdentity, state: 'current', installed,
+      });
+    };
+    emitCurrent(initial.revision, initialIdentity);
+    expect(find(root, (node) => node.className === 'names-wall-status').textContent).toContain('Names current');
+    const nextConfig = clone(initial.config); nextConfig.pre.scale += 0.01;
+    const originalDigest = globalThis.crypto.subtle.digest.bind(globalThis.crypto.subtle);
+    let releaseDigest;
+    const digestSpy = vi.spyOn(globalThis.crypto.subtle, 'digest').mockImplementation((algorithm, bytes) =>
+      new Promise((resolve) => { releaseDigest = async () => resolve(await originalDigest(algorithm, bytes)); }));
+    client.report({ snapshot: { ...initial, revision: initial.revision + 1, config: nextConfig }, draft: clone(nextConfig), hasLocalDraft: false, pending: false });
+    await vi.waitFor(() => expect(releaseDigest).toBeTypeOf('function'));
+    emitCurrent(initial.revision + 1, 'c'.repeat(64));
+    expect(statusRequestCount()).toBe(1);
+    await releaseDigest(); digestSpy.mockRestore();
+    await vi.waitFor(() => expect(statusRequestCount()).toBe(2));
+    const nextIdentity = await projectionPlacementInputIdentity(nextConfig);
+    emitCurrent(initial.revision + 1, nextIdentity);
+    expect(find(root, (node) => node.className === 'names-wall-status').textContent).toContain('Names current');
+    expect(sent.some((message) => message.type === 'otef_projection_names_run')).toBe(false);
+    api.dispose(); globalThis.document = previousDocument;
+  });
+  test('geometry apply status requires both current outputs and rejects duplicate instances', () => {
     const wall = { datasetVersion: 'release', mode: 'wall', digest: 'a'.repeat(64), expected: 1228, placed: 1228 };
     const left = { output: 'left', instanceId: 'left-a', revision: 8, success: true, wall };
     const right = { output: 'right', instanceId: 'right-a', revision: 8, success: true, wall };
     expect(projectionAppliedStatus([left], 8)).toBe('Pending');
     expect(projectionAppliedStatus([left, right], 8)).toBe('Applied');
-    expect(projectionAppliedStatus([left, { ...right, wall: { ...wall, digest: 'b'.repeat(64) } }], 8)).toBe('Unconfirmed');
+    expect(projectionAppliedStatus([left, { ...right, wall: { ...wall, digest: 'b'.repeat(64) } }], 8)).toBe('Applied');
     expect(projectionAppliedStatus([left, right, { ...left, instanceId: 'left-b', wall: { ...wall, datasetVersion: 'other' } }], 8)).toBe('Unconfirmed');
     expect(projectionAppliedStatus([left, { ...right, revision: 7 }], 8)).toBe('Pending');
     expect(projectionAppliedStatus([left, { ...right, success: false, error: 'draw failed' }], 8)).toBe('Failed');
-    expect(projectionAppliedStatus([{ ...left, wall: undefined }, { ...right, wall: undefined }], 8)).toBe('Renderer applied');
+    expect(projectionAppliedStatus([{ ...left, wall: undefined }, { ...right, wall: undefined }], 8)).toBe('Applied');
   });
   test('editor clears paired wall Applied on duplicate conflict and reconnect', () => {
     const previousDocument = globalThis.document;
@@ -211,10 +360,22 @@ describe("projection config controller", () => {
     ack('left', 'left-a'); ack('right', 'right-a');
     expect(find(root, (node) => node.className === 'applied-summary').textContent).toBe('Applied');
     ack('left', 'left-b', { ...wall, digest: 'b'.repeat(64) });
-    expect(api.getStatusRows()).toHaveLength(3);
-    expect(find(root, (node) => node.className === 'applied-summary').textContent).toBe('Unconfirmed');
+    expect(api.getStatusRows()).toHaveLength(2);
+    expect(find(root, (node) => node.className === 'applied-summary').textContent).toBe('Applied');
     listeners.get('disconnect')();
     expect(find(root, (node) => node.className === 'applied-summary').textContent).toBe('Pending');
+    api.dispose(); globalThis.document = previousDocument;
+  });
+  test('geometry acknowledgements remain valid while previous installed names use another mode', () => {
+    const previousDocument = globalThis.document; globalThis.document = documentStub();
+    const listeners = new Map(); const root = element('main');
+    const socket = { on: (event, handler) => listeners.set(event, handler), off: (event) => listeners.delete(event), send: vi.fn(), getConnected: () => true };
+    const api = mountProjectionConfig(root, { client: fakeClient(), socket });
+    const wall = { datasetVersion: 'release', mode: 'model', digest: 'a'.repeat(64), expected: 1, placed: 1 };
+    for (const output of ['left', 'right']) listeners.get('otef_projection_applied')({ table: 'otef', output,
+      instanceId: output === 'left' ? '10000000-0000-4000-8000-000000000001' : '20000000-0000-4000-8000-000000000002',
+      revision: 2, success: true, route: 'browser', baseline: { type: 'identity' }, wall });
+    expect(find(root, (node) => node.className === 'applied-summary').textContent).toBe('Applied');
     api.dispose(); globalThis.document = previousDocument;
   });
   test("shows hydration failure with a retry action and automatic preview errors", async () => {
@@ -230,6 +391,16 @@ describe("projection config controller", () => {
     expect(find(root, (node) => node.className === "action-error").textContent).toMatch(/preview failed/);
     retry.dispatch("click");
     await vi.waitFor(() => expect(client.retryHydration).toHaveBeenCalledTimes(1));
+    api.dispose(); globalThis.document = previousDocument;
+  });
+
+  test("shows the cause of an Apply failure in the action error channel", async () => {
+    const previousDocument = globalThis.document; globalThis.document = documentStub();
+    const client = fakeClient();
+    client.apply.mockRejectedValue(new Error("projection config operation superseded"));
+    const root = element("main"); const api = mountProjectionConfig(root, { client });
+    find(root, (node) => node.dataset?.action === "apply").dispatch("click");
+    await vi.waitFor(() => expect(find(root, (node) => node.className === "action-error").textContent).toBe("projection config operation superseded"));
     api.dispose(); globalThis.document = previousDocument;
   });
   test("empty numeric entry never applies a zero draft", () => {
@@ -334,7 +505,7 @@ describe("projection config controller", () => {
     api.dispose(); globalThis.document = previousDocument;
   });
 
-  test("first hydration re-requests status and reconnect renews the selected pattern", () => {
+  test("first hydration re-requests status and reconnect renews the selected pattern", async () => {
     vi.useFakeTimers();
     const previousDocument = globalThis.document;
     globalThis.document = documentStub();
@@ -345,22 +516,22 @@ describe("projection config controller", () => {
     };
     const client = fakeClient(null);
     const root = element("main");
-    const api = mountProjectionConfig(root, { client, socket });
+    const api = mountProjectionConfig(root, { client, socket, readNamesDataset: async () => ({ datasetVersion: 'release-1' }) });
     const snapshot = { revision: 4, config: clone(DEFAULTS), presets: [{ id: "original", name: "Original calibration", config: clone(DEFAULTS), readOnly: true }], selectedPresetId: "original" };
     listeners.get("otef_projection_applied")({ table: "otef", output: "left", instanceId: "first", revision: 4, success: true, route: "browser", baseline: { type: "identity" } });
     expect(api.getStatusRows()).toHaveLength(0);
     const beforeHydration = socket.send.mock.calls.length;
     client.hydrate(snapshot);
-    expect(socket.send.mock.calls.slice(beforeHydration).some(([message]) => message.type === "otef_projection_status_request")).toBe(true);
+    await vi.waitFor(() => expect(socket.send.mock.calls.slice(beforeHydration).some(([message]) => message.type === "otef_projection_status_request")).toBe(true));
     listeners.get("otef_projection_applied")({ table: "otef", output: "left", instanceId: "first", revision: 4, success: true, route: "browser", baseline: { type: "identity" } });
     listeners.get("otef_projection_applied")({ table: "otef", output: "left", instanceId: "second", revision: 4, success: true, route: "browser", baseline: { type: "identity" } });
-    expect(api.getStatusRows()).toHaveLength(2);
+    expect(api.getStatusRows()).toHaveLength(1);
     listeners.get("otef_projection_applied")({ table: "otef", output: "left", instanceId: "missing-route", revision: 4, success: true, baseline: { type: "identity" } });
     listeners.get("otef_projection_applied")({ table: "otef", output: "left", instanceId: "missing-baseline", revision: 4, success: true, route: "browser" });
-    expect(api.getStatusRows()).toHaveLength(2);
+    expect(api.getStatusRows()).toHaveLength(1);
     listeners.get("otef_projection_applied")({ table: "otef", output: "left", instanceId: "wrong-route", revision: 4, success: true, route: "td" });
     listeners.get("otef_projection_applied")({ table: "otef", output: "left", instanceId: "wrong-baseline", revision: 4, success: true, route: "browser", baseline: { type: "tdMesh", assetId: "other" } });
-    expect(api.getStatusRows()).toHaveLength(2);
+    expect(api.getStatusRows()).toHaveLength(1);
     const pattern = find(root, (node) => node.attributes?.["aria-label"] === "Pattern");
     pattern.value = "grid"; pattern.dispatch("change");
     listeners.get("disconnect")();
@@ -374,7 +545,7 @@ describe("projection config controller", () => {
     expect(api.getStatusRows()).toHaveLength(0);
     const beforeRehydration = socket.send.mock.calls.length;
     client.hydrate({ ...snapshot, revision: 5 });
-    expect(socket.send.mock.calls.slice(beforeRehydration).some(([message]) => message.type === "otef_projection_status_request")).toBe(true);
+    await vi.waitFor(() => expect(socket.send.mock.calls.slice(beforeRehydration).some(([message]) => message.type === "otef_projection_status_request")).toBe(true));
     vi.advanceTimersByTime(1100);
     expect(socket.send.mock.calls.slice(beforeReconnect).filter(([message]) => message.type === "otef_projection_pattern" && message.pattern === "grid").length).toBeGreaterThanOrEqual(2);
     vi.advanceTimersByTime(3900);

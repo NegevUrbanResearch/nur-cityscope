@@ -12,6 +12,7 @@ import {
   createProjectionImageDescriptor,
   createProjectionImageReadiness,
   createProjectionMapDescriptor,
+  drawAfterMapRender,
   computeSpanJumpTo,
   computeTesugaPostFillJumpTo,
   computeTesugaPreT3JumpTo,
@@ -24,6 +25,26 @@ import {
   spanWidthZoomDelta,
   uvInsideSpanRect,
 } from "../../frontend/src/projection/projection-span-view.js";
+
+test("calibrated preview draw waits for the matching MapLibre render event", async () => {
+  const listeners = new Map();
+  const map = {
+    on: vi.fn((type, listener) => { listeners.set(type, listener); }),
+    off: vi.fn((type) => listeners.delete(type)),
+    triggerRepaint: vi.fn(),
+  };
+  const draw = vi.fn(() => true);
+  let settled = false;
+  const completion = drawAfterMapRender(map, draw).then((result) => { settled = true; return result; });
+  await Promise.resolve();
+  expect(map.triggerRepaint).toHaveBeenCalledOnce();
+  expect(draw).not.toHaveBeenCalled();
+  expect(settled).toBe(false);
+  listeners.get("render")?.({ type: "render" });
+  await expect(completion).resolves.toBe(true);
+  expect(draw).toHaveBeenCalledOnce();
+  expect(map.off).toHaveBeenCalledWith("render", expect.any(Function));
+});
 
 test("image readiness publishes a generation and requests repaint after decode", async () => {
   let resolveDecode;

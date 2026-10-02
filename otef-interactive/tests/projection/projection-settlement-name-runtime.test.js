@@ -104,6 +104,11 @@ test("context style updates both outputs and wall rotation does not overwrite it
   data.emit("settlementNames");
   await vi.waitFor(() => expect(left.getLabels().find((item) => item.citycode === "0067")).toMatchObject({ x: 510, y: 350, rotateDeg: -20 }));
   expect(right.getLabels().find((item) => item.citycode === "0067")).toMatchObject({ x: 1200, y: 360, rotateDeg: -20 });
+  data.state.settings.style = { ...data.state.settings.style, rotateDeg: 12 };
+  data.state.revision += 1;
+  data.emit("settlementNames");
+  await vi.waitFor(() => expect(left.getLabels().find((item) => item.citycode === "0067")).toMatchObject({ x: 510, y: 350, rotateDeg: 12 }));
+  expect(right.getLabels().find((item) => item.citycode === "0067")).toMatchObject({ x: 1200, y: 360, rotateDeg: 12 });
   disposeLeft();
   disposeRight();
 });

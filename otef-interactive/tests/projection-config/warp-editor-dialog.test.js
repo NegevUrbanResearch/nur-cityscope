@@ -168,6 +168,49 @@ test("failed preview application offers retry for the selected frame", () => {
   dialog.dispose();
 });
 
+test("Run names cannot replace the first pending geometry acknowledgement", () => {
+  const config = structuredClone(DEFAULT_PROJECTION_CONFIG);
+  const { dialog, opener } = setup();
+  dialog.update(config);
+  dialog.open({ side: "left", mode: "keystone", opener });
+  const frame = document.querySelector("iframe");
+  const send = vi.spyOn(frame.contentWindow, "postMessage");
+  window.dispatchEvent(new MessageEvent("message", { origin: location.origin, source: frame.contentWindow,
+    data: { type: "otef_projection_preview_ready", output: "left" } }));
+  const geometryRequest = send.mock.calls[0][0];
+  expect(dialog.sendRunNamesPreview(config)).toBe(false);
+  expect(send).toHaveBeenCalledOnce();
+  window.dispatchEvent(new MessageEvent("message", { origin: location.origin, source: frame.contentWindow,
+    data: { type: "otef_projection_preview_applied", output: "left", requestId: geometryRequest.requestId, success: true } }));
+  expect(frame.style.visibility).toBe("visible");
+  expect(document.querySelector(".warp-editor-message").textContent).toBe("Current draft");
+  dialog.dispose();
+});
+
+test("Run names for older applied geometry cannot replace a newer pending draft acknowledgement", () => {
+  const appliedConfig = structuredClone(DEFAULT_PROJECTION_CONFIG);
+  const pendingConfig = structuredClone(appliedConfig); pendingConfig.pre.tx += 0.01;
+  const { dialog, opener } = setup();
+  dialog.update(appliedConfig);
+  dialog.open({ side: "right", mode: "grid", opener });
+  const frame = document.querySelector("iframe");
+  const send = vi.spyOn(frame.contentWindow, "postMessage");
+  window.dispatchEvent(new MessageEvent("message", { origin: location.origin, source: frame.contentWindow,
+    data: { type: "otef_projection_preview_ready", output: "right" } }));
+  const firstRequest = send.mock.calls[0][0];
+  window.dispatchEvent(new MessageEvent("message", { origin: location.origin, source: frame.contentWindow,
+    data: { type: "otef_projection_preview_applied", output: "right", requestId: firstRequest.requestId, success: true } }));
+  dialog.update(pendingConfig);
+  const latestRequest = send.mock.calls[1][0];
+  expect(dialog.sendRunNamesPreview(appliedConfig)).toBe(false);
+  expect(send).toHaveBeenCalledTimes(2);
+  window.dispatchEvent(new MessageEvent("message", { origin: location.origin, source: frame.contentWindow,
+    data: { type: "otef_projection_preview_applied", output: "right", requestId: latestRequest.requestId, success: true } }));
+  expect(frame.style.visibility).toBe("visible");
+  expect(document.querySelector(".warp-editor-message").textContent).toBe("Current draft");
+  dialog.dispose();
+});
+
 test("Fine adjustment begins collapsed and toggling does not activate overlay", () => {
   const { dialog, opener } = setup();
   dialog.open({ side: "left", mode: "keystone", opener });
@@ -218,12 +261,18 @@ test("modal contains focus, restores page interaction on Escape, and forwards Ap
   expect(background.inert).toBe(true);
   expect(document.body.style.overflow).toBe("hidden");
   const first = document.querySelector('[data-action="warp-editor-fine"]');
-  const last = document.querySelector(".warp-editor-footer > button:not([hidden])");
+  const runNames = document.querySelector('[data-action="projection-names-run"]');
+  expect(runNames).toBeTruthy();
+  dialog.update({}, { namesRunStatus: "Names stale. Finish geometry, then Run names.", namesRunDisabledReason: "Apply the pending calibration first." });
+  expect(document.querySelector(".warp-editor-names-status").textContent).toContain("Finish geometry");
+  expect(runNames.disabled).toBe(true);
+  const last = document.querySelector('.warp-editor-footer button:not([data-action="projection-names-run"]):not([hidden])');
   first.focus(); document.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true }));
   expect(document.activeElement).toBe(last);
   document.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true }));
   expect(document.activeElement).toBe(first);
-  last.click(); expect(onApply).toHaveBeenCalledTimes(1);
+  Array.from(document.querySelectorAll(".warp-editor-footer button")).find((button) => button.textContent === "Apply once").click();
+  expect(onApply).toHaveBeenCalledTimes(1);
   const live = document.querySelector('.warp-editor-footer input[type="checkbox"]');
   live.checked = true; live.dispatchEvent(new Event("change", { bubbles: true }));
   expect(onLive).toHaveBeenCalledWith(true);

@@ -75,6 +75,41 @@ export async function prepareProjectionPairMeshes({ config, loadBaseline, signal
   return meshes;
 }
 
+/** Validates calibration geometry without loading release metadata or placing names. */
+export function createProjectionGeometryValidator({ loadBaseline, timeoutMs = 75000 }) {
+  let active = null;
+  let sequence = 0;
+  let disposed = false;
+  const validateCandidate = async ({ config, generation, identity, revision }) => {
+    active?.controller.abort();
+    active = null;
+    if (disposed) return { identity, valid: false, reason: 'Geometry validator disposed' };
+    if (typeof identity !== 'string' || identity !== JSON.stringify(config)) return { identity, valid: false, reason: 'Stale projection geometry candidate' };
+    if (Object.keys(validateProjectionConfig(config)).length) return { identity, valid: false, reason: 'Invalid projection calibration geometry' };
+    const controller = new AbortController();
+    const request = { sequence: ++sequence, controller, generation, revision, identity };
+    active = request;
+    let timer;
+    try {
+      const meshes = await Promise.race([
+        prepareProjectionPairMeshes({ config: clone(config), loadBaseline, signal: controller.signal }),
+        new Promise((_, reject) => {
+          controller.signal.addEventListener('abort', () => reject(abortError('Projection geometry preflight cancelled')), { once: true });
+          timer = setTimeout(() => { controller.abort(); reject(new Error('Projection geometry preflight timed out')); }, timeoutMs);
+        }),
+      ]);
+      if (disposed || active !== request || controller.signal.aborted) return { identity, valid: false, reason: 'Projection geometry preflight superseded' };
+      return { identity, valid: Object.keys(meshes || {}).length === 2 };
+    } catch (error) {
+      return { identity, valid: false, reason: String(error?.message || error || 'Projection geometry validation failed').slice(0, 240) };
+    } finally {
+      clearTimeout(timer);
+      if (active === request) active = null;
+    }
+  };
+  return { validateCandidate, dispose() { if (disposed) return; disposed = true; active?.controller.abort(); active = null; } };
+}
+
 function boundedDiagnostics(value, candidate, datasetVersion) {
   if (!value || typeof value !== 'object' || !['valid', 'invalid'].includes(value.state)) return null;
   const mode = candidate.namesWall.activeMode;

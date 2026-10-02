@@ -88,6 +88,22 @@ test('each names wall mode paints black outlines at its own configured width bef
   expect(widths).toEqual([['wall', 5, '#000000'], ['model', 1, '#000000']]);
 });
 
+test('geometry remap reuses installed placements and repaints through the new output transform', () => {
+  const created = [];
+  const document = { createElement: () => { const next = fakeCanvas(); created.push(next); return next.canvas; } };
+  const adapter = createProjectionNameCanvasAdapter({ document, output: 'left' });
+  adapter.prepare({ config: DEFAULT_PROJECTION_CONFIG, placements, logicalPlane: plane }); adapter.commit();
+  const before = adapter.descriptor();
+  const nextConfig = structuredClone(DEFAULT_PROJECTION_CONFIG); nextConfig.outputs.left.crop.x1 = 0.65;
+  expect(adapter.applyGeometry({ config: nextConfig, logicalPlane: plane })).toBe(true);
+  const after = adapter.descriptor();
+  expect(created).toHaveLength(2);
+  expect(created[1].ctx.fillText).toHaveBeenCalledExactlyOnceWith(placements[0].name, placements[0].x, placements[0].y);
+  expect(after.source).not.toBe(before.source);
+  expect(after.contentVersion).toBeGreaterThan(before.contentVersion);
+  expect(Array.from(after.revealVertices.slice(0, 2))).not.toEqual(Array.from(before.revealVertices.slice(0, 2)));
+});
+
 test('model offsets move both paint calls while reveal quads stay at the guarded rectangle', () => {
   const f = fakeCanvas();
   const config = structuredClone(DEFAULT_PROJECTION_CONFIG);

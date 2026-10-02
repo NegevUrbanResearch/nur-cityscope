@@ -51,6 +51,7 @@ test("view renders draggable node workspace and preserves an existing focused in
   const descendants = (node) => [node, ...(node.children || []).flatMap(descendants)];
   expect(descendants(root).filter((node) => node.tagName === "IFRAME")).toHaveLength(0);
   expect(descendants(root).filter((node) => node.dataset?.action === "warp-editor-open")).toHaveLength(4);
+  expect(descendants(root).filter((node) => node.dataset?.action === "projection-names-run").length).toBeGreaterThanOrEqual(3);
   expect(descendants(root).filter((node) => node.dataset?.action === "preview-expand")).toHaveLength(0);
   const labels = [];
   const walk = (node) => {
@@ -152,10 +153,9 @@ test("view renders draggable node workspace and preserves an existing focused in
   resetPages.dispatch("click");
   expect(onField).toHaveBeenCalledWith("namesWall.inwardShiftPercent", "0", "number");
   onField.mockClear();
-  view.update({ state: { draft: namesDraft }, selectedNode: "names-wall", namesWallStatus: { state: "auto-reduced", requestedFontPx: 12, effectiveFontPx: 9, minimumFontPx: 8, expected: 1228, placed: 1228 } });
+  view.update({ state: { draft: namesDraft }, selectedNode: "names-wall", namesWallStatus: { state: "current", detail: "Names current · 1228 of 1228 placed." } });
   const wallStatus = view.nodeMap.get("names-wall").children.find((node) => node.className === "names-wall-status");
-  expect(wallStatus.textContent).toContain("Auto-reduced");
-  expect(wallStatus.textContent).toContain("using 9 px");
+  expect(wallStatus.textContent).toContain("Names current · 1228 of 1228 placed");
   namesDraft.namesWall.activeMode = "model";
   view.update({ state: { draft: namesDraft }, selectedNode: "names-wall" });
   expect(closeness.wrap.hidden).toBe(true);
@@ -281,27 +281,25 @@ test("view renders draggable node workspace and preserves an existing focused in
   view.dispose();
 });
 
-test("Names wall keeps controls editable while showing pending and incomplete candidates", () => {
+test("Names wall keeps controls editable and reports installed output status with Run action", () => {
   const make = (tag = "div") => ({ tagName: tag.toUpperCase(), children: [], dataset: {}, style: {}, attributes: {}, classList: { toggle() {} }, appendChild(child) { this.children.push(child); child.parentElement = this; return child; }, append(...children) { children.forEach((child) => this.appendChild(child)); }, prepend(...children) { this.children.unshift(...children); }, remove() {}, setAttribute(key, value) { this.attributes[key] = value; }, addEventListener(type, handler) { this.listeners ||= {}; (this.listeners[type] ||= []).push(handler); }, removeEventListener() {}, replaceChildren(...children) { this.children = children; } });
   const root = make("main");
   root.ownerDocument = { createElement: make, createElementNS: (_ns, tag) => make(tag), defaultView: { location: { origin: "http://localhost" }, addEventListener() {}, removeEventListener() {}, matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }) } };
   const view = createProjectionConfigView(root, { descriptors: [...FIELD_DESCRIPTORS, ...NAMES_WALL_DESCRIPTORS], onField() {}, onNamesMode() {} });
   const draft = structuredClone(DEFAULT_PROJECTION_CONFIG);
-  view.update({ state: { draft }, selectedNode: "names-wall", namesWallStatus: { state: "building", requestedFontPx: 12, minimumFontPx: 8, expected: null, placed: null } });
+  view.update({ state: { draft }, selectedNode: "names-wall", namesWallStatus: { state: "rebuilding", detail: "Rebuilding names on both outputs…" }, namesRunDisabledReason: "Apply the pending calibration before running names." });
   const control = view.fields.get("names-wall:namesWall.requestedFontPx");
   expect(control.number.disabled).not.toBe(true);
-  expect(view.nodeMap.get("names-wall").children.find((node) => node.className === "names-wall-status").dataset.state).toBe("building");
-  view.update({ state: { draft, snapshot: { config: structuredClone(draft) } }, selectedNode: "names-wall", namesWallStatus: { state: "invalid", requestedFontPx: 6, minimumFontPx: 6, expected: 1228, placed: 1201, reason: "invalid Tkuma ring" } });
+  expect(view.nodeMap.get("names-wall").children.find((node) => node.className === "names-wall-status").dataset.state).toBe("rebuilding");
+  const run = view.nodeMap.get("names-wall").children.find((node) => node.dataset?.action === "projection-names-run");
+  expect(run.disabled).toBe(true);
+  expect(run.title).toContain("Apply");
+  view.update({ state: { draft, snapshot: { config: structuredClone(draft) } }, selectedNode: "names-wall", namesWallStatus: { state: "failed", detail: "placement failed; run names to retry." } });
   const status = view.nodeMap.get("names-wall").children.find((node) => node.className === "names-wall-status");
-  expect(status.textContent).toContain("1201 of 1228");
-  expect(status.textContent).toContain("effective none");
-  expect(status.textContent).toContain("Saved calibration cannot display a complete names wall");
-  expect(status.textContent).not.toContain("cannot fit");
-  expect(status.textContent).not.toContain("Draft is unsaved");
-  view.update({ state: { draft, snapshot: { config: structuredClone(draft) }, hasLocalDraft: true }, selectedNode: "names-wall", namesWallStatus: { state: "invalid", requestedFontPx: 6, minimumFontPx: 6, expected: 1228, placed: 1201, reason: "capacity at minimum" } });
-  expect(status.textContent).toContain("Draft is unsaved");
-  expect(status.textContent).toContain("output state is unconfirmed");
-  expect(status.textContent).not.toContain("last complete wall");
+  expect(status.textContent).toContain("placement failed");
+  view.update({ state: { draft, snapshot: { config: structuredClone(draft) } }, selectedNode: "names-wall", namesWallStatus: { state: "stale", detail: "Geometry changed. Finish geometry, then Run names." } });
+  expect(status.textContent).toContain("Finish geometry, then Run names");
+  expect(run.disabled).toBe(false);
   expect(status.title).toContain("reference-plane pixels");
   expect(control.number.disabled).not.toBe(true);
   view.dispose();

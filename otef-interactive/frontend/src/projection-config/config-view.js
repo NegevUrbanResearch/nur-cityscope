@@ -132,6 +132,7 @@ function renderField(doc, descriptor, onField, onNudge, compact = false, inspect
 export function createProjectionConfigView(root, {
   descriptors = [],
   onAction = () => {},
+  onRunNames = () => {},
   onOutputAction = () => {},
   onField = () => {},
   onNudge = () => {},
@@ -253,25 +254,31 @@ export function createProjectionConfigView(root, {
   controls.presets.addEventListener("change", () => onAction("preset-select", controls.presets.value));
 
   const outputToolbar = outputDisclosure.content;
+  controls.outputRefresh = button(doc, "Refresh displays", "output-refresh");
   controls.outputIdentify = button(doc, "Identify displays", "output-identify");
   controls.outputLeftDisplay = make(doc, "select", { ariaLabel: "Left projector display", dataset: { action: "output-left-display" } });
   controls.outputRightDisplay = make(doc, "select", { ariaLabel: "Right projector display", dataset: { action: "output-right-display" } });
   controls.outputAssign = button(doc, "Save display assignment", "output-assign");
   controls.outputOpenBoth = button(doc, "Open Both", "output-open-both");
+  controls.outputOpenLeft = button(doc, "Open Left", "output-open-left");
+  controls.outputOpenRight = button(doc, "Open Right", "output-open-right");
   controls.outputCloseBoth = button(doc, "Close Both", "output-close-both");
   controls.outputStatus = make(doc, "span", { className: "output-launch-status", role: "status", ariaLive: "polite" });
   controls.outputHandoff = make(doc, "small", { className: "output-launch-handoff" }, "TD projectorWindows off → Open Both; Close Both → TD projectorWindows on. If this page reloads, manually close old browser output windows before reopening.");
   const leftLabel = make(doc, "label", { className: "output-display-label" }, "Left projector"); leftLabel.appendChild(controls.outputLeftDisplay);
   const rightLabel = make(doc, "label", { className: "output-display-label" }, "Right projector"); rightLabel.appendChild(controls.outputRightDisplay);
-  outputToolbar.append(controls.outputIdentify, leftLabel, rightLabel, controls.outputAssign, controls.outputOpenBoth, controls.outputCloseBoth, controls.outputStatus, controls.outputHandoff);
+  outputToolbar.append(controls.outputRefresh, controls.outputIdentify, leftLabel, rightLabel, controls.outputAssign, controls.outputOpenBoth, controls.outputOpenLeft, controls.outputOpenRight, controls.outputCloseBoth, controls.outputStatus, controls.outputHandoff);
   const outputAction = (action, value) => { if (!touchOnlySurface) onOutputAction(action, value); };
+  controls.outputRefresh.addEventListener("click", () => outputAction("refresh"));
   controls.outputIdentify.addEventListener("click", () => outputAction("identify"));
   controls.outputAssign.addEventListener("click", () => outputAction("assign", { left: controls.outputLeftDisplay.value, right: controls.outputRightDisplay.value }));
   controls.outputOpenBoth.addEventListener("click", () => outputAction("open"));
+  controls.outputOpenLeft.addEventListener("click", () => outputAction("open-left"));
+  controls.outputOpenRight.addEventListener("click", () => outputAction("open-right"));
   controls.outputCloseBoth.addEventListener("click", () => outputAction("close"));
   controls.outputLeftDisplay.addEventListener("change", () => { outputSelection.left = controls.outputLeftDisplay.value; });
   controls.outputRightDisplay.addEventListener("change", () => { outputSelection.right = controls.outputRightDisplay.value; });
-  for (const control of [controls.outputIdentify, controls.outputAssign, controls.outputOpenBoth, controls.outputCloseBoth, controls.outputLeftDisplay, controls.outputRightDisplay]) control.disabled = touchOnlySurface;
+  for (const control of [controls.outputRefresh, controls.outputIdentify, controls.outputAssign, controls.outputOpenBoth, controls.outputOpenLeft, controls.outputOpenRight, controls.outputCloseBoth, controls.outputLeftDisplay, controls.outputRightDisplay]) control.disabled = touchOnlySurface;
   if (touchOnlySurface) {
     controls.outputStatus.textContent = "Display opening is workstation-only. Use this page to tell the workstation operator which displays to assign and open.";
     controls.outputHandoff.textContent = "Phone/tablet instructions only: on the workstation, turn TD projectorWindows off before Open Both; Close Both before TD projectorWindows on.";
@@ -314,6 +321,7 @@ export function createProjectionConfigView(root, {
   const nodeMap = new Map();
   const namesModeControls = [];
   const namesStatusControls = [];
+  const namesRunButtons = [];
   const modelSpacingHelpControls = [];
   const pageSpacingResetControls = [];
   const namesWallUnitsHelp = "Font, spacing, and edge inset use reference-plane pixels. Inner-edge clearances reserve final-output pixels in both modes and repack names.";
@@ -341,6 +349,13 @@ export function createProjectionConfigView(root, {
     namesStatusControls.push(status);
     return status;
   }
+  function namesRunControl() {
+    const run = button(doc, "Run names", "projection-names-run");
+    run.dataset.action = "projection-names-run";
+    run.addEventListener("click", (event) => { event.stopPropagation?.(); onRunNames(); });
+    namesRunButtons.push(run);
+    return run;
+  }
   function modelSpacingHelp() {
     const help = make(doc, "p", { className: "names-wall-units names-wall-model-help" }, "Rows spread across the model. Set 0 for the tightest fit.");
     modelSpacingHelpControls.push(help);
@@ -357,7 +372,7 @@ export function createProjectionConfigView(root, {
     card.append(handle, make(doc, "p", { className: "node-description" }, description));
     if (id === "names-wall") {
       card.append(namesModeControl(), make(doc, "p", { className: "names-wall-units" }, namesWallUnitsHelp),
-        make(doc, "p", { className: "names-wall-units names-wall-rotation" }, namesWallRotationHelp));
+        make(doc, "p", { className: "names-wall-units names-wall-rotation" }, namesWallRotationHelp), namesRunControl());
     }
     let sceneControl = null;
     let elementControl = null;
@@ -445,7 +460,7 @@ export function createProjectionConfigView(root, {
   controls.inspectorFields = make(doc, "div", { className: "inspector-fields" });
   controls.namesWallInspector = make(doc, "section", { className: "names-wall-inspector", ariaLabel: "Names wall profile controls" });
   controls.namesWallInspector.append(namesModeControl(), make(doc, "p", { className: "names-wall-units" }, namesWallUnitsHelp),
-    make(doc, "p", { className: "names-wall-units names-wall-rotation" }, namesWallRotationHelp),
+    make(doc, "p", { className: "names-wall-units names-wall-rotation" }, namesWallRotationHelp), namesRunControl(),
     modelSpacingHelp(), make(doc, "p", { className: "names-wall-units" }, "0 keeps the current positions. Increase to move the pages inward where space allows."), pageSpacingReset(), namesStatus());
   for (const descriptor of descriptors) { const control = renderField(doc, descriptor, onField, onNudge, false, true); fields.set(`inspector:${descriptor.path}`, control); controls.inspectorFields.appendChild(control.wrap); }
   controls.warpPanel = make(doc, "section", { className: "warp-inspector", ariaLabel: "Warp editor" });
@@ -604,6 +619,7 @@ export function createProjectionConfigView(root, {
   app.appendChild(workspace);
   root.appendChild(app);
   const dialog = createWarpEditorDialog({ document: doc, host: root, editorPanel: controls.warpPanel, overlay: controls.warpSurface, navigationControls,
+    onRunNames,
     onBeforeClose: cancelActiveDrag,
     onBeforeSwitch: cancelActiveDrag,
     onFineToggle: cancelActiveDrag,
@@ -724,7 +740,7 @@ export function createProjectionConfigView(root, {
     dialog.setViewBox(displayViewBox);
     updateWarpMarkerRadii();
   };
-  const update = ({ state = {}, errors = {}, conflict = "", statusText = "", selectedNode = "pre", loadedPresetId = null, loadedPresetLoadToken = 0, statusRows = [], appliedSummary = 'Pending', outputState = {}, warpStates = {}, namesWallStatus = null, clockScene = "home", clockElement = "clock", clockLayouts = {}, clockHydration = { status: "Loading" }, settlement = null } = {}) => {
+  const update = ({ state = {}, errors = {}, conflict = "", statusText = "", selectedNode = "pre", loadedPresetId = null, loadedPresetLoadToken = 0, statusRows = [], appliedSummary = 'Pending', outputState = {}, warpStates = {}, namesWallStatus = null, namesRunDisabledReason = "", clockScene = "home", clockElement = "clock", clockLayouts = {}, clockHydration = { status: "Loading" }, settlement = null } = {}) => {
     controls.live.checked = Boolean(state.live);
     const dirtyLocalDraft = Boolean(state.hasLocalDraft || (state.draft && state.snapshot && JSON.stringify(state.draft) !== JSON.stringify(state.snapshot.config)));
     controls.status.textContent = dirtyLocalDraft && !state.live
@@ -792,29 +808,16 @@ export function createProjectionConfigView(root, {
     for (const select of namesModeControls) select.value = wallConfig?.activeMode || "wall";
     for (const reset of pageSpacingResetControls) reset.hidden = wallConfig?.activeMode !== "wall";
     const wallStatus = namesWallStatus || { state: "building", expected: null, placed: null };
-    const requested = wallStatus.requestedFontPx ?? wallConfig?.profiles?.[wallConfig?.activeMode]?.requestedFontPx ?? "—";
-    const effective = wallStatus.effectiveFontPx;
-    const counts = Number.isSafeInteger(wallStatus.expected) && Number.isSafeInteger(wallStatus.placed) ? `${wallStatus.placed} of ${wallStatus.expected}; left ${wallStatus.left ?? "—"}, right ${wallStatus.right ?? "—"}` : "counts pending";
-    let wallMessage = `Building · requested ${requested} px; effective pending; ${counts}.`;
-    if (wallStatus.state === "valid" || wallStatus.state === "auto-reduced") {
-      wallMessage = wallStatus.state === "auto-reduced"
-        ? `Auto-reduced · requested ${requested} px; using ${effective} px; ${counts}.`
-        : `Valid · requested ${requested} px; effective ${effective ?? requested} px; ${counts}.`;
-    } else if (wallStatus.state === "invalid") {
-      const unsaved = state.hasLocalDraft || (state.draft && state.snapshot && JSON.stringify(state.draft) !== JSON.stringify(state.snapshot.config));
-      const context = unsaved ? "Draft is unsaved; output state is unconfirmed." : "Saved calibration cannot display a complete names wall; output state is unconfirmed.";
-      wallMessage = `Invalid · requested ${requested} px; effective none; ${counts}. ${context}${wallStatus.reason ? ` ${wallStatus.reason}` : ""}`;
-    } else if (wallStatus.reason) {
-      wallMessage = `Building · requested ${requested} px; effective pending; ${counts}. ${wallStatus.reason}`;
-    }
+    const wallMessage = wallStatus.detail || "Waiting for names output status…";
     for (const status of namesStatusControls) {
       status.textContent = wallMessage;
-      status.dataset.state = wallStatus.state || "building";
-      status.classList?.toggle("is-invalid", wallStatus.state === "invalid");
-      status.classList?.toggle("is-reduced", wallStatus.state === "auto-reduced");
+      status.dataset.state = wallStatus.state || "initializing";
+      status.classList?.toggle("is-invalid", wallStatus.state === "failed");
+      status.classList?.toggle("is-reduced", false);
     }
+    for (const run of namesRunButtons) { run.disabled = Boolean(namesRunDisabledReason); run.title = namesRunDisabledReason || "Run names for the applied calibration."; }
     renderWarpPanel(warpStates, selectedNode);
-    dialog.update(draft, { live: state.live, appliedSummary });
+    dialog.update(draft, { live: state.live, appliedSummary, namesRunStatus: wallMessage, namesRunDisabledReason });
     const setDiagramRect = (element, rect) => { if (!element) return; element.hidden = !rect; element.setAttribute("visibility", rect ? "visible" : "hidden"); if (!rect) { element.setAttribute("width", "0"); element.setAttribute("height", "0"); return; } element.setAttribute("x", String(4 + rect.x0 * 92)); element.setAttribute("y", String(8 + rect.y0 * 26)); element.setAttribute("width", String(Math.max(0, (rect.x1 - rect.x0) * 92))); element.setAttribute("height", String(Math.max(0, (rect.y1 - rect.y0) * 26))); };
     const left = draft.outputs?.left; const right = draft.outputs?.right;
     setDiagramRect(controls.cropSvg?.leftRect, left?.crop); setDiagramRect(controls.cropSvg?.rightRect, right?.crop);
@@ -855,6 +858,7 @@ export function createProjectionConfigView(root, {
     },
     cancelWarpPointer: cancelActiveDrag,
     closeWarpEditor: dialog.close,
+    sendRunNamesPreview: (config) => dialog.sendRunNamesPreview(config),
     dispose() { mobileQuery?.removeEventListener?.("change", openOnPhone); doc.removeEventListener?.("keydown", onKeyDown); doc.removeEventListener?.("keydown", dismissDisclosures); doc.removeEventListener?.("pointerdown", dismissDisclosures, true); dialog.dispose(); pointerInput.dispose(); canvas.dispose(); },
   };
 }

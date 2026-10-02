@@ -115,6 +115,7 @@ export function createNliNameFieldController({
   projectionSpan,
   loadField = defaultLoadNliNameField,
   motionMode = "full",
+  manualProjectionPreparation = false,
 } = {}) {
   let disposed = false;
   let enabled = false;
@@ -134,6 +135,7 @@ export function createNliNameFieldController({
   let requestedRevision = null;
   let installedRevision = null;
   let requestedConfig = displayProfile === "projection" ? null : DEFAULT_PROJECTION_CONFIG;
+  let installedConfig = null;
   let buildInFlight = false;
   let rebuildState = "idle";
   let rebuildError = null;
@@ -420,7 +422,8 @@ export function createNliNameFieldController({
     }
   };
   const startProjectionBuild = async () => {
-    if (!enabled || !requestedConfig || buildInFlight || disposed || canvasAdapter) return;
+    if (!enabled || !requestedConfig || buildInFlight || disposed || canvasAdapter ||
+      (displayProfile === "projection" && manualProjectionPreparation)) return;
     const generation = requestGeneration;
     const revision = requestedRevision;
     const projectionConfig = structuredClone(requestedConfig);
@@ -615,13 +618,14 @@ export function createNliNameFieldController({
     },
     commitProjectionCandidate(generation) {
       if (!preparedCanvas || preparedCanvas.generation !== generation || disposed) throw new Error('stale projection Canvas commit');
-      previousCanvas = { generation, field, ready, installedRevision, installedGeneration, requestedConfig, requestedRevision,
+      previousCanvas = { generation, field, ready, installedRevision, installedGeneration, requestedConfig, requestedRevision, installedConfig,
         revealElapsedMs };
       const next = preparedCanvas;
       canvasAdapter.commit();
       field = next.field;
       ready = true;
       requestedConfig = next.config;
+      installedConfig = next.config;
       requestedRevision = next.revision;
       installedRevision = next.revision;
       installedGeneration = requestGeneration;
@@ -649,7 +653,7 @@ export function createNliNameFieldController({
         const old = previousCanvas;
         const sameDataset = old.field?.datasetVersion === field?.datasetVersion;
         freezeReveal();
-        ({ field, ready, installedRevision, installedGeneration, requestedConfig, requestedRevision } = old);
+        ({ field, ready, installedRevision, installedGeneration, requestedConfig, requestedRevision, installedConfig } = old);
         previousCanvas = null;
         if (ready && field) mountInstalledField();
         else removeOwned();
@@ -715,6 +719,32 @@ export function createNliNameFieldController({
       hideProjectionField();
       publishDiagnostics();
       void startProjectionBuild();
+      return true;
+    },
+    applyProjectionConfigGeometry(config, revision) {
+      if (map?._otefProjectionConfigRollback === true) return api._rollbackProjectionConfig(config, revision);
+      if (Object.keys(validateProjectionConfig(config)).length || !Number.isSafeInteger(revision) || revision < 0 ||
+        (Number.isFinite(requestedRevision) && revision < requestedRevision)) return false;
+      const wallConfig = config.schemaVersion === 6
+        ? migrateNamesWallToV6(config, config.namesWall.rotateDeg)
+        : migrateNamesWallToV5(config);
+      if (!canvasAdapter) return api.setProjectionConfig(wallConfig, revision);
+      if (ready && field && installedConfig) {
+        const remapped = { ...wallConfig, namesWall: installedConfig.namesWall };
+        try {
+          if (canvasAdapter.applyGeometry?.({ config: remapped, logicalPlane: field.logicalPlane }) === false) return false;
+        } catch (error) {
+          rebuildError = String(error?.message || error);
+          rebuildState = 'stale';
+          publishDiagnostics();
+          return false;
+        }
+      }
+      requestedConfig = structuredClone(wallConfig);
+      requestedRevision = revision;
+      rebuildState = ready && field ? 'stale' : 'pending';
+      rebuildError = null;
+      publishDiagnostics();
       return true;
     },
     getProjectionNameDiagnostics() {

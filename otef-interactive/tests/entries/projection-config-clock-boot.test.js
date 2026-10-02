@@ -7,13 +7,14 @@ vi.mock("../../frontend/src/shared/api-client.js", () => ({ OTEF_API: {
   setLegendSettings: (...args) => harness.writeLegend(...args),
 } }));
 vi.mock("../../frontend/src/shared/websocket-client.js", () => ({ OTEFWebSocketClient: class { constructor(...args) { harness.socketCtor(args); } } }));
+vi.mock("../../frontend/src/shared/layer-registry.js", () => ({ default: { init: async () => {} } }));
 vi.mock("../../frontend/src/shared/projection-config-client.js", () => ({ createProjectionConfigClient: () => ({
   getState: () => ({ snapshot: { config: {} }, draft: {} }), setValidateCandidate() {}, start() {}, stop() {}, subscribe() { return () => {}; },
 }) }));
 vi.mock("../../frontend/src/projection-config/config-controller.js", () => ({ mountProjectionConfig: (...args) => harness.mount(...args) }));
 vi.mock("../../frontend/src/projection-config/output-window-controller.js", () => ({ createOutputWindowController: () => ({ dispose() {} }) }));
 vi.mock("../../frontend/src/projection/projection-captured-baseline.js", () => ({ loadCapturedProjectionAsset: async () => ({}), loadCapturedProjectionFraming: async () => ({}) }));
-vi.mock("../../frontend/src/projection/projection-candidate-validation.js", () => ({ createProjectionCandidateValidator: () => ({ validateCandidate: async () => ({}), readInputs: async () => ({}), dispose() {} }), readProjectionCandidateInputs: async () => ({}) }));
+vi.mock("../../frontend/src/projection/projection-candidate-validation.js", () => ({ createProjectionGeometryValidator: () => ({ validateCandidate: async () => ({}), dispose() {} }), readProjectionCandidateInputs: async () => ({ datasetVersion: "release" }) }));
 vi.mock("../../frontend/src/shared/nli-name-field-data.js", () => ({ disposeProjectionNameWallPreparation() {}, prepareProjectionNameWall() {} }));
 
 import { bootProjectionConfig } from "../../frontend/src/entries/projection-config-main.js";

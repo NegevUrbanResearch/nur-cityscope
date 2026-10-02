@@ -333,6 +333,42 @@ export function runWhenMapIdle(map, fn) {
   else fn();
 }
 
+export function drawAfterMapRender(map, draw, { signal, beforeRender } = {}) {
+  if (typeof map?.on !== "function" || typeof draw !== "function") return Promise.reject(new Error("projection map render is unavailable"));
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const cleanup = () => {
+      map.off?.("render", onRender);
+      map.off?.("error", onError);
+      signal?.removeEventListener?.("abort", onAbort);
+    };
+    const finish = (callback, value) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      callback(value);
+    };
+    const onRender = () => {
+      if (signal?.aborted) { finish(reject, Object.assign(new Error("projection draw cancelled"), { name: "AbortError" })); return; }
+      try { finish(resolve, draw() === true); }
+      catch (error) { finish(reject, error); }
+    };
+    const onError = (event) => {
+      if (!event?.error || event.sourceId || event.source || event.tile) return;
+      finish(reject, event.error);
+    };
+    const onAbort = () => finish(reject, Object.assign(new Error("projection draw cancelled"), { name: "AbortError" }));
+    if (signal?.aborted) { finish(reject, Object.assign(new Error("projection draw cancelled"), { name: "AbortError" })); return; }
+    map.on("render", onRender);
+    map.on("error", onError);
+    signal?.addEventListener?.("abort", onAbort, { once: true });
+    try {
+      beforeRender?.();
+      map.triggerRepaint?.();
+    } catch (error) { finish(reject, error); }
+  });
+}
+
 export function clearProjectionSpanView({ map, imageEl, containerEl }) {
   restoreCamera(map, getSpanBaseSnapshot(map));
   resetSpanDom(imageEl, containerEl, map);

@@ -16,6 +16,8 @@ import { shownSettlementPosition } from "./settlement-name-controls.js";
 import { createClockExhibitCueAction } from "./clock-exhibit-cue.js";
 import { OTEF_API } from "../shared/api-client.js";
 import { resourceFor, layoutFor, layoutFieldEdit } from "./clock-layout-controls.js";
+import { projectionPlacementInputIdentity } from "../projection/projection-names-run.js";
+import { createProjectionNamesStatusTracker } from "../projection/projection-names-status.js";
 
 const FIELD_DESCRIPTORS = [
   { path: "pre.scale", node: "pre", label: "Scale", min: 0.1, max: 8, step: 0.01, fine: 0.001, unit: "×", decimals: 3 },
@@ -109,15 +111,11 @@ export function projectionAppliedStatus(rows, revision) {
   const current = rows.filter((row) => row.revision === revision);
   if (current.some((row) => row.success === false && row.instanceId)) return 'Failed';
   if (!['left', 'right'].every((output) => current.some((row) => row.output === output && row.success))) return 'Pending';
-  const successful = current.filter((row) => row.success);
-  const walls = successful.map((row) => row.wall);
-  if (walls.every((wall) => wall == null)) return 'Renderer applied';
-  if (walls.some((wall) => wall == null)) return 'Unconfirmed';
-  const identity = (wall) => [wall.datasetVersion, wall.mode, wall.digest, wall.expected, wall.placed].join('|');
-  return new Set(walls.map(identity)).size === 1 ? 'Applied' : 'Unconfirmed';
+  if (['left', 'right'].some((output) => current.filter((row) => row.output === output && row.instanceId).length !== 1)) return 'Unconfirmed';
+  return 'Applied';
 }
 
-export function mountProjectionConfig(root, { client, share, onExport, onImport, socket, outputController, candidateValidator, layoutClient, settlementClient = null, catalog = { entries: [] }, clockEditorFactory = openClockLayoutEditor, settlementEditorFactory = openSettlementNameEditor } = {}) {
+export function mountProjectionConfig(root, { client, share, onExport, onImport, socket, outputController, candidateValidator, readNamesDataset = null, layoutClient, settlementClient = null, catalog = { entries: [] }, clockEditorFactory = openClockLayoutEditor, settlementEditorFactory = openSettlementNameEditor } = {}) {
   if (!client) throw new Error("projection config client is required");
   const sourceId = createUuid();
   let selectedNode = "pre";
@@ -145,12 +143,12 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
   let loadedPresetId = state.snapshot?.selectedPresetId || "original";
   let loadedPresetLoadToken = 0;
   let showUnconfirmed = false;
-  let wallValidation = { identity: "", revision: null, pending: false, result: null };
-  let wallInspectionId = 0;
-  let wallMutationId = 0;
-  let inputCheckId = 0;
-  let validatedInputs = null;
-  const validator = candidateValidator || { validateCandidate: async ({ identity }) => ({ identity, valid: false, reason: 'Candidate validator unavailable' }), dispose() {} };
+  const validator = candidateValidator || { validateCandidate: async ({ identity }) => ({ identity, valid: false, reason: 'Geometry validator unavailable' }), dispose() {} };
+  const namesTracker = createProjectionNamesStatusTracker();
+  let namesRunPending = false;
+  let namesDatasetVersion = "";
+  let namesTargetRequest = 0;
+  let namesStatusReplayPending = false;
   const win = root?.ownerDocument?.defaultView || globalThis.document?.defaultView;
   let layoutUnloadAttached = false;
   const layoutBeforeUnload = (event) => {
@@ -212,11 +210,12 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
       refresh();
     },
     onAction: handleAction,
+    onRunNames: runNames,
     onOutputAction: handleOutputAction,
     onWarpAction: handleWarpAction,
     onWarpPointer: handleWarpPointer,
   });
-  client.setValidateCandidate?.(validateWallCandidate);
+  client.setValidateCandidate?.((args) => validator.validateCandidate(args));
   Promise.all(["left", "right"].map(async (output) => {
     try {
       const baseline = await loadCapturedProjectionAsset({ spanId: output });
@@ -240,7 +239,9 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
       conflict: conflict || state.migrationWarnings?.join(' ') || '',
       statusText: statusText(state, loadedPresetId), selectedNode, loadedPresetId, loadedPresetLoadToken, statusRows: rows,
       appliedSummary: projectionAppliedStatus(rows, expectedRevision), outputState, warpStates,
-      namesWallStatus: wallStatusForDraft(), clockScene: clockSceneId, clockElement,
+      namesWallStatus: namesRunPending && !namesTracker.getState().pending
+        ? { ...namesTracker.getState(), state: "rebuilding", pending: true, detail: "Starting names run…" }
+        : namesTracker.getState(), namesRunDisabledReason: runNamesDisabledReason(), clockScene: clockSceneId, clockElement,
       clockLayouts: layoutClient ? Object.fromEntries(["clock-gis", "clock-projection"].map((node) => [node, layoutFor(layoutClient, resourceFor(node, clockSceneId, clockElement))])) : {},
       clockHydration: layoutClient?.getHydrationState?.() || { status: layoutClient ? "Saved" : "Loading" },
       settlement: settlementViewState() });
@@ -327,62 +328,84 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     activeClockEditor = editor; activeClockEditorNode = nodeId; clockEditors.add(editor);
     refresh();
   }
-  function wallStatusForDraft() {
-    const config = state.draft;
-    const profile = config?.namesWall?.profiles?.[config?.namesWall?.activeMode];
-    if (!profile) return { state: "building", reason: "Names wall settings are unavailable.", expected: null, placed: null };
-    const identity = JSON.stringify(config);
-    if (wallValidation.identity !== identity || (wallValidation.revision !== expectedRevision && wallValidation.targetRevision !== expectedRevision) || wallValidation.pending) return { state: "building", ...profile, expected: null, placed: null };
-    const result = wallValidation.result;
-    if (!result) return { state: "building", ...profile, expected: null, placed: null };
-    if (!result.valid && result.diagnostics?.state !== "invalid") return { ...profile, state: "building", expected: null, placed: null, reason: `Validation unavailable: ${result.reason || "preflight failed"}.` };
-    return { ...profile, ...(result.diagnostics || {}), state: result.valid ? (Number(result.diagnostics?.effectiveFontPx) < profile.requestedFontPx ? "auto-reduced" : "valid") : "invalid", reason: result.reason || result.diagnostics?.reason || "" };
+  function runNamesDisabledReason() {
+    if (namesRunPending || namesTracker.getState().pending) return "Names are rebuilding on both outputs.";
+    if (state.pending || state.hasLocalDraft || !state.draft || !state.snapshot?.config || !equalProjectionConfig(state.draft, state.snapshot.config)) return "Apply the pending calibration before running names.";
+    if (!['left', 'right'].every((output) => {
+      const rows = [...statusRows.values()].filter((row) => row.output === output && row.revision === expectedRevision && row.instanceId);
+      return rows.length === 1 && rows[0].success;
+    })) return "Wait for both outputs to apply the current calibration.";
+    if (namesTracker.getState().state === "rebuilding") return "Names are rebuilding on both outputs.";
+    if (!socket?.getConnected?.() && socket?.isConnected !== true) return "Projection outputs are disconnected.";
+    return "";
   }
-  function validateWallCandidate({ config, generation, identity, revision }) {
-    const exactIdentity = identity || JSON.stringify(config);
-    // Every mutation gets a new immutable paired preflight for its revision.
-    // The display-only inspection below is never reused for Apply, Live, or presets.
-    const mutationId = ++wallMutationId;
-    wallInspectionId += 1;
-    if (JSON.stringify(state.draft) === exactIdentity) { wallValidation = { identity: exactIdentity, revision: expectedRevision, pending: true, result: null }; refresh(); }
-    const currentCandidate = () => mutationId === wallMutationId && JSON.stringify(state.draft) === exactIdentity &&
-      (!Number.isSafeInteger(expectedRevision) || revision === expectedRevision || revision === expectedRevision + 1);
-    return Promise.resolve().then(() => validator.validateCandidate({ config, generation, identity: exactIdentity, revision })).then((result) => {
-      if (currentCandidate()) { validatedInputs = validator.getLastInputs?.() || validatedInputs; wallValidation = { identity: exactIdentity, revision: expectedRevision, targetRevision: result.valid ? revision : null, pending: false, result }; refresh(); }
-      return result;
-    }, (error) => {
-      if (currentCandidate()) { wallValidation = { identity: exactIdentity, revision: expectedRevision, pending: false, result: { valid: false, identity: exactIdentity, reason: error?.message || "Wall validation unavailable" } }; refresh(); }
-      throw error;
-    });
-  }
-  function checkDraftWall() {
-    if (!state.draft || Object.keys(validateProjectionConfig(state.draft)).length) return;
-    const identity = JSON.stringify(state.draft);
-    const revision = expectedRevision;
-    if (wallValidation.identity === identity && (wallValidation.revision === revision || wallValidation.targetRevision === revision)) {
-      if (wallValidation.pending) return;
-      return;
+  async function updateNamesTarget(readDataset = false) {
+    const snapshot = state.snapshot;
+    if (!snapshot?.config || !Number.isSafeInteger(snapshot.revision) || snapshot.revision < 0) { namesTracker.setTarget(null); refresh(); return false; }
+    const token = ++namesTargetRequest;
+    try {
+      if (readDataset) {
+        const inputs = await readNamesDataset?.();
+        if (disposed || token !== namesTargetRequest || state.snapshot?.revision !== snapshot.revision) return false;
+        namesDatasetVersion = typeof inputs?.datasetVersion === "string" && inputs.datasetVersion.trim() && inputs.datasetVersion.length <= 128 ? inputs.datasetVersion : "";
+      }
+      const placementIdentity = await projectionPlacementInputIdentity(snapshot.config);
+      if (disposed || token !== namesTargetRequest || state.snapshot?.revision !== snapshot.revision) return false;
+      const changed = namesDatasetVersion
+        ? namesTracker.setTarget({ revision: snapshot.revision, datasetVersion: namesDatasetVersion, placementIdentity })
+        : namesTracker.setTarget(null);
+      if (changed) namesRunPending = false;
+      refresh();
+      return Boolean(namesDatasetVersion);
+    } catch {
+      if (token === namesTargetRequest) { namesTracker.setTarget(null); namesRunPending = false; }
+      refresh();
+      return false;
     }
-    const inspectionId = ++wallInspectionId;
-    wallValidation = { identity, revision, pending: true, result: null };
+  }
+  async function runNames() {
+    const reason = runNamesDisabledReason();
+    if (reason) { fieldErrors = { action: reason }; refresh(); return false; }
+    if (typeof readNamesDataset !== "function") { fieldErrors = { action: "Names dataset identity is unavailable." }; refresh(); return false; }
+    const snapshot = state.snapshot;
+    const config = clone(snapshot.config);
+    const revision = snapshot.revision;
+    if (!Number.isSafeInteger(revision) || revision < 0) return false;
+    namesRunPending = true;
     refresh();
-    Promise.resolve().then(() => validator.validateCandidate({ config: clone(state.draft), generation: -1, identity, revision })).then((result) => {
-      if (inspectionId !== wallInspectionId || JSON.stringify(state.draft) !== identity || expectedRevision !== revision) return;
-      validatedInputs = validator.getLastInputs?.() || validatedInputs;
-      wallValidation = { identity, revision, pending: false, result };
+    try {
+      const inputs = await readNamesDataset();
+      const datasetVersion = inputs?.datasetVersion;
+      if (disposed || state.snapshot?.revision !== revision || !equalProjectionConfig(state.draft, config) ||
+        state.pending || state.hasLocalDraft || typeof datasetVersion !== "string" || !datasetVersion.trim() || datasetVersion.length > 128) {
+        namesRunPending = false; refresh(); return false;
+      }
+      const placementIdentity = await projectionPlacementInputIdentity(config);
+      namesDatasetVersion = datasetVersion;
+      namesTracker.setTarget({ revision, datasetVersion, placementIdentity });
+      const requestId = createUuid();
+      if (!namesTracker.beginRequest(requestId)) { namesRunPending = false; refresh(); return false; }
+      socket?.send?.({ type: "otef_projection_names_run", table: "otef", requestId, revision, datasetVersion, placementIdentity });
+      view.sendRunNamesPreview?.(config);
+      fieldErrors = {};
       refresh();
-    }, (error) => {
-      if (inspectionId !== wallInspectionId || JSON.stringify(state.draft) !== identity || expectedRevision !== revision) return;
-      wallValidation = { identity, revision, pending: false, result: { valid: false, identity, reason: error?.message || "Wall validation unavailable" } };
+      return true;
+    } catch (error) {
+      namesRunPending = false;
+      fieldErrors = { action: error?.message || "Names dataset identity is unavailable." };
       refresh();
-    });
+      return false;
+    }
   }
   async function handleOutputAction(action, value) {
     if (!outputController) { fieldErrors = { action: "Workstation output controls are unavailable in this browser." }; refresh(); return; }
     try {
       if (action === "identify") await outputController.identifyDisplays();
+      if (action === "refresh") await outputController.refreshDisplays();
       if (action === "assign") outputController.assignDisplays(value);
       if (action === "open") await outputController.openBoth();
+      if (action === "open-left") await outputController.openSide("left");
+      if (action === "open-right") await outputController.openSide("right");
       if (action === "close") outputController.closeBoth();
       outputState = outputController.getState?.() || outputState;
     } catch (error) {
@@ -429,11 +452,21 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     if (!selectedPresetId || (snapshotSelectionChanged && (!previousSelected || selectedPresetId === previousSelected))) selectedPresetId = snapshotSelected || "original";
     if (!loadedPresetId || (snapshotSelectionChanged && (!previousSelected || loadedPresetId === previousSelected))) loadedPresetId = snapshotSelected || loadedPresetId;
     expectRevision(state);
-    if (firstHydration || draftChanged || (Number.isSafeInteger(revision) && revision !== previousRevision)) checkDraftWall();
+    const targetUpdate = firstHydration || (Number.isSafeInteger(revision) && revision !== previousRevision)
+      ? updateNamesTarget(!namesDatasetVersion)
+      : null;
+    if ((firstHydration || (Number.isSafeInteger(revision) && revision !== previousRevision)) &&
+      (socket?.getConnected?.() || socket?.isConnected === true)) namesStatusReplayPending = true;
     const advancedAfterReconnect = reconnectStatusRevision !== null && revision !== reconnectStatusRevision;
-    if ((firstHydration || advancedAfterReconnect) && Number.isSafeInteger(revision) && (socket?.getConnected?.() || socket?.isConnected === true)) {
-      reconnectStatusRevision = null;
-      requestStatus();
+    if (!firstHydration && advancedAfterReconnect && Number.isSafeInteger(revision) && (socket?.getConnected?.() || socket?.isConnected === true)) namesStatusReplayPending = true;
+    if (namesStatusReplayPending && targetUpdate && Number.isSafeInteger(revision) && (socket?.getConnected?.() || socket?.isConnected === true)) {
+      void targetUpdate.then((ready) => {
+        if (ready && !disposed && namesStatusReplayPending && state.snapshot?.revision === revision && (socket?.getConnected?.() || socket?.isConnected === true)) {
+          namesStatusReplayPending = false;
+          reconnectStatusRevision = null;
+          requestStatus();
+        }
+      });
     }
     refresh();
   }
@@ -538,7 +571,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
       if (action === "import") await handleImport(value);
       if (action === "share") { const result = await share?.(); const href = typeof result === "string" ? result : result?.href; view.controls.shareLink.href = href || ""; view.controls.shareLink.textContent = href || ""; view.controls.shareLink.hidden = !href; view.controls.shareQr.hidden = !href || !result?.qrRendered; if (!href) view.controls.shareQr.replaceChildren(); view.controls.shareStatus.textContent = href ? (result?.copied ? "Copied link" : "Select the link to copy") : "Share unavailable on this network."; }
       if (action === "pattern") setPattern(value);
-    } catch (error) { if (action === "share") { view.controls.shareLink.href = ""; view.controls.shareLink.textContent = ""; view.controls.shareLink.hidden = true; view.controls.shareQr.hidden = true; view.controls.shareQr.replaceChildren(); view.controls.shareStatus.textContent = "Share unavailable on this network."; } else if (error?.fields) fieldErrors = error.fields; else if (error?.message?.includes("conflict")) conflict = error.message; else fieldErrors = { action, message: error?.message || String(error) }; refresh(); }
+    } catch (error) { if (action === "share") { view.controls.shareLink.href = ""; view.controls.shareLink.textContent = ""; view.controls.shareLink.hidden = true; view.controls.shareQr.hidden = true; view.controls.shareQr.replaceChildren(); view.controls.shareStatus.textContent = "Share unavailable on this network."; } else if (error?.fields) fieldErrors = error.fields; else if (error?.message?.includes("conflict")) conflict = error.message; else fieldErrors = { action: error?.message || String(error) }; refresh(); }
     refresh();
   }
   function sendPattern() {
@@ -565,60 +598,41 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
       if (!wall || typeof wall !== 'object' || Array.isArray(wall) ||
         Object.keys(wall).sort().join('|') !== 'datasetVersion|digest|expected|mode|placed' ||
         typeof wall.datasetVersion !== 'string' || !wall.datasetVersion || wall.datasetVersion.length > 128 ||
-        wall.mode !== state.snapshot?.config?.namesWall?.activeMode ||
+        !["wall", "model"].includes(wall.mode) ||
         !/^[a-f0-9]{64}$/i.test(wall.digest) || !Number.isSafeInteger(wall.expected) ||
         wall.expected < 1 || wall.placed !== wall.expected) return;
     }
+    namesTracker.observeInstance(message.output, message.instanceId);
     showUnconfirmed = false;
     statusRows.delete(`${message.output}:pending`);
+    for (const key of statusRows.keys()) if (key.startsWith(`${message.output}:`) && key !== `${message.output}:${message.instanceId}`) statusRows.delete(key);
     statusRows.set(`${message.output}:${message.instanceId}`, message); refresh();
   }
   function requestStatus() { socket?.send?.({ type: "otef_projection_status_request", table: "otef", sourceId }); }
-  async function recheckInputs() {
-    if (disposed || typeof validator.readInputs !== 'function') return;
-    const checkId = ++inputCheckId;
-    let inputs;
-    try { inputs = await validator.readInputs(); }
-    catch { inputs = null; }
-    if (disposed || checkId !== inputCheckId) return;
-    const before = JSON.stringify(validatedInputs);
-    const after = JSON.stringify(inputs);
-    if (validatedInputs === null && inputs !== null) { validatedInputs = inputs; return; }
-    if (before === after) return;
-    validatedInputs = inputs;
-    wallInspectionId += 1;
-    wallMutationId += 1;
-    wallValidation = { identity: '', revision: null, pending: false, result: null };
-    checkDraftWall();
-  }
-  const onDatasetEvent = () => { void recheckInputs(); };
-  const onPageReturn = () => { void recheckInputs(); };
-  const onVisibility = () => { if (globalThis.document?.visibilityState === 'visible') void recheckInputs(); };
+  const namesStatusMessage = (message) => { if (namesTracker.accept(message)) { if (!namesTracker.getState().pending) namesRunPending = false; refresh(); } };
+  const onDatasetEvent = () => { void updateNamesTarget(true).then((ready) => { if (ready && !disposed) requestStatus(); }); };
   const unsubscribe = client.subscribe(handleState);
   const unsubscribeLayout = layoutClient?.subscribe?.(refresh);
   const unsubscribeSettlement = settlementClient?.subscribe?.(() => { syncLayoutUnload(); refresh(); });
   const unsubscribeOutput = outputController?.subscribe?.((nextState) => { outputState = nextState; refresh(); });
   if (view.canManageDisplays) outputController?.refreshDisplays?.().catch(() => {});
   socket?.on?.("otef_projection_applied", statusMessage);
-  const onConnect = () => { reconnectStatusRevision = expectedRevision; expectRevision(state, true); requestStatus(); void recheckInputs(); if (activePattern.pattern !== "off") setPattern(activePattern); refresh(); };
+  socket?.on?.("otef_projection_names_status", namesStatusMessage);
+  const onConnect = () => { namesTracker.setConnected(true); reconnectStatusRevision = expectedRevision; expectRevision(state, true); void updateNamesTarget(true).then((ready) => { if (ready && !disposed) requestStatus(); }); if (activePattern.pattern !== "off") setPattern(activePattern); refresh(); };
   socket?.on?.("connect", onConnect);
-  const onDisconnect = () => { reconnectStatusRevision = null; socket?.send?.({ type: "otef_projection_pattern", table: "otef", output: activePattern.branch, pattern: "off", sourceId }); statusRows = new Map(); if (patternTimer !== null) { clearInterval(patternTimer); patternTimer = null; } refresh(); };
+  const onDisconnect = () => { namesRunPending = false; namesTracker.setConnected(false); reconnectStatusRevision = null; socket?.send?.({ type: "otef_projection_pattern", table: "otef", output: activePattern.branch, pattern: "off", sourceId }); statusRows = new Map(); if (patternTimer !== null) { clearInterval(patternTimer); patternTimer = null; } refresh(); };
   socket?.on?.("disconnect", onDisconnect);
   socket?.on?.('otef_person_selection_changed', onDatasetEvent);
   socket?.on?.('otef_narrative_scene_changed', onDatasetEvent);
-  win?.addEventListener?.('pageshow', onPageReturn);
-  win?.addEventListener?.('focus', onPageReturn);
-  globalThis.document?.addEventListener?.('visibilitychange', onVisibility);
-  if (socket?.getConnected?.() || socket?.isConnected === true) requestStatus();
-  checkDraftWall();
-  void recheckInputs();
+  if (socket?.getConnected?.() || socket?.isConnected === true) void updateNamesTarget(true).then((ready) => { if (ready && !disposed) requestStatus(); });
+  else void updateNamesTarget(true);
   void client.start?.();
   refresh();
   return {
     sourceId,
     getStatusRows: () => [...statusRows.values()].map((row) => ({ ...row })),
     setConflict,
-    dispose() { if (disposed) return; disposed = true; syncLayoutUnload(); closeSettlementEditor(); closeClockEditor(); for (const action of clockCueActions) action.cancel(); clockCueActions.clear(); inputCheckId += 1; wallInspectionId += 1; wallMutationId += 1; for (const editor of clockEditors) editor.dispose(); clockEditors.clear(); activeClockEditor = null; activeClockEditorNode = null; activeSettlementEditor = null; if (confirmationTimer !== null) clearTimeout(confirmationTimer); if (patternTimer !== null) clearInterval(patternTimer); socket?.send?.({ type: "otef_projection_pattern", table: "otef", output: activePattern.branch, pattern: "off", sourceId }); socket?.off?.("otef_projection_applied", statusMessage); socket?.off?.("connect", onConnect); socket?.off?.("disconnect", onDisconnect); socket?.off?.('otef_person_selection_changed', onDatasetEvent); socket?.off?.('otef_narrative_scene_changed', onDatasetEvent); win?.removeEventListener?.('pageshow', onPageReturn); win?.removeEventListener?.('focus', onPageReturn); globalThis.document?.removeEventListener?.('visibilitychange', onVisibility); unsubscribe?.(); unsubscribeLayout?.(); unsubscribeSettlement?.(); unsubscribeOutput?.(); outputController?.dispose?.(); validator.dispose?.(); view.dispose(); client.stop?.(); },
+    dispose() { if (disposed) return; disposed = true; syncLayoutUnload(); closeSettlementEditor(); closeClockEditor(); for (const action of clockCueActions) action.cancel(); clockCueActions.clear(); namesTargetRequest += 1; for (const editor of clockEditors) editor.dispose(); clockEditors.clear(); activeClockEditor = null; activeClockEditorNode = null; activeSettlementEditor = null; if (confirmationTimer !== null) clearTimeout(confirmationTimer); if (patternTimer !== null) clearInterval(patternTimer); socket?.send?.({ type: "otef_projection_pattern", table: "otef", output: activePattern.branch, pattern: "off", sourceId }); socket?.off?.("otef_projection_applied", statusMessage); socket?.off?.("otef_projection_names_status", namesStatusMessage); socket?.off?.("connect", onConnect); socket?.off?.("disconnect", onDisconnect); socket?.off?.('otef_person_selection_changed', onDatasetEvent); socket?.off?.('otef_narrative_scene_changed', onDatasetEvent); unsubscribe?.(); unsubscribeLayout?.(); unsubscribeSettlement?.(); unsubscribeOutput?.(); outputController?.dispose?.(); validator.dispose?.(); view.dispose(); client.stop?.(); },
   };
 }
 

@@ -17,6 +17,7 @@ import uuid
 _PROJECTION_OUTPUTS = {"left", "right"}
 _PROJECTION_PATTERNS = {"off", "grid", "output_id"}
 _PROJECTION_ROUTES = {"browser", "maplibre", "td"}
+_PROJECTION_NAMES_STATES = {"initializing", "stale", "rebuilding", "failed", "current"}
 _PROJECTION_SHA256 = re.compile(r"^(?:sha256:)?[0-9a-f]{64}$", re.IGNORECASE)
 
 
@@ -55,6 +56,61 @@ def _valid_projection_wall(value):
     return type(expected) is int and type(placed) is int and 0 < expected <= 100000 and 0 <= placed <= expected
 
 
+def _valid_projection_names_run(data):
+    if set(data) != {"type", "table", "requestId", "revision", "datasetVersion", "placementIdentity"}:
+        return None
+    if not _valid_uuid(data.get("requestId")):
+        return None
+    revision = data.get("revision")
+    if isinstance(revision, bool) or not isinstance(revision, int) or revision < 0 or revision > 9007199254740991:
+        return None
+    dataset_version = data.get("datasetVersion")
+    identity = data.get("placementIdentity")
+    if not isinstance(dataset_version, str) or not 0 < len(dataset_version) <= 128:
+        return None
+    if not isinstance(identity, str) or not re.fullmatch(r"[0-9a-f]{64}", identity, re.IGNORECASE):
+        return None
+    return {key: data[key] for key in ("type", "table", "requestId", "revision", "datasetVersion", "placementIdentity")}
+
+
+def _valid_projection_names_status(data):
+    allowed = {"type", "table", "output", "instanceId", "requestId", "revision", "datasetVersion",
+               "placementIdentity", "state", "installed", "error"}
+    required = allowed - {"error"}
+    if set(data) - allowed or not required.issubset(data):
+        return None
+    if data.get("output") not in _PROJECTION_OUTPUTS or not _valid_uuid(data.get("instanceId")):
+        return None
+    if data.get("requestId") is not None and not _valid_uuid(data.get("requestId")):
+        return None
+    revision = data.get("revision")
+    if isinstance(revision, bool) or not isinstance(revision, int) or revision < 0 or revision > 9007199254740991:
+        return None
+    version = data.get("datasetVersion")
+    identity = data.get("placementIdentity")
+    if not isinstance(version, str) or len(version) > 128:
+        return None
+    if not isinstance(identity, str) or (identity and not re.fullmatch(r"[0-9a-f]{64}", identity, re.IGNORECASE)):
+        return None
+    if data.get("state") not in _PROJECTION_NAMES_STATES:
+        return None
+    if "error" in data and (not isinstance(data["error"], str) or not 0 < len(data["error"]) <= 240):
+        return None
+    installed = data.get("installed")
+    if installed is not None:
+        keys = {"revision", "datasetVersion", "placementIdentity", "mode", "digest", "expected", "placed"}
+        if not isinstance(installed, dict) or set(installed) != keys:
+            return None
+        if (isinstance(installed.get("revision"), bool) or not isinstance(installed.get("revision"), int) or installed["revision"] < 0 or
+            not isinstance(installed.get("datasetVersion"), str) or not 0 < len(installed["datasetVersion"]) <= 128 or
+            not isinstance(installed.get("placementIdentity"), str) or not re.fullmatch(r"[0-9a-f]{64}", installed["placementIdentity"], re.IGNORECASE) or
+            installed.get("mode") not in ("wall", "model") or not isinstance(installed.get("digest"), str) or not re.fullmatch(r"[0-9a-f]{64}", installed["digest"], re.IGNORECASE) or
+            type(installed.get("expected")) is not int or type(installed.get("placed")) is not int or
+            not 0 < installed["expected"] <= 100000 or installed["placed"] != installed["expected"]):
+            return None
+    return {key: data[key] for key in data}
+
+
 def _valid_projection_transient(data):
     if not isinstance(data, dict) or data.get("table") != "otef":
         return None
@@ -73,6 +129,10 @@ def _valid_projection_transient(data):
         if set(data) != {"type", "table", "sourceId"} or not _valid_uuid(data.get("sourceId")):
             return None
         return {key: data[key] for key in ("type", "table", "sourceId")}
+    if message_type == "otef_projection_names_run":
+        return _valid_projection_names_run(data)
+    if message_type == "otef_projection_names_status":
+        return _valid_projection_names_status(data)
     if message_type == "otef_projection_applied":
         allowed = {"type", "table", "output", "revision", "instanceId", "success", "error", "route", "baseline", "wall"}
         if set(data) - allowed or not {"type", "table", "output", "revision", "instanceId", "success"}.issubset(data):
@@ -224,6 +284,8 @@ class GeneralConsumer(AsyncWebsocketConsumer):
             'otef_projection_pattern',
             'otef_projection_status_request',
             'otef_projection_applied',
+            'otef_projection_names_run',
+            'otef_projection_names_status',
         }:
             # These are intentionally ephemeral. Validate at the socket boundary,
             # relay in memory, and never involve the calibration or viewport rows.

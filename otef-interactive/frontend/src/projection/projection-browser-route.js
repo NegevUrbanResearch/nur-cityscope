@@ -218,11 +218,11 @@ export async function createProjectionBrowserSurface({
     compositor = createProjectionSurfaceCompositor({ renderer, sources: readScene() });
     let activeConfig = browserProjectionConfig(initialConfig) || browserProjectionConfig(baseline.framing);
     const prepareConfig = (candidate) => prepareProjectionSideMesh(candidate, spanId, baseline);
-    const preparePair = async (candidate) => {
+    const preparePair = async (candidate, requestSignal = signal) => {
       const peer = spanId === 'left' ? 'right' : 'left';
-      const meshes = await prepareProjectionPairMeshes({ config: candidate, signal, loadBaseline: async (side, requestSignal) => {
+      const meshes = await prepareProjectionPairMeshes({ config: candidate, signal: requestSignal, loadBaseline: async (side, assetSignal) => {
         if (side === spanId) return baseline;
-        if (!peerBaseline) peerBaseline = await loadCapturedProjectionAsset({ fetchImpl, spanId: peer, captured: baseline, signal: requestSignal });
+        if (!peerBaseline) peerBaseline = await loadCapturedProjectionAsset({ fetchImpl, spanId: peer, captured: baseline, signal: assetSignal });
         return peerBaseline;
       } });
       return { config: browserProjectionConfig(candidate), mesh: meshes[spanId], meshes };

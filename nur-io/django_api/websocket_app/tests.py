@@ -5,6 +5,46 @@ from .consumers import GeneralConsumer
 
 
 class ProjectionTransientRelayTests(IsolatedAsyncioTestCase):
+    async def test_names_run_and_status_relay_exact_ephemeral_payloads(self):
+        consumer = GeneralConsumer()
+        consumer.room_group_name = "otef_channel"
+        consumer.channel_layer = type("Layer", (), {"group_send": AsyncMock()})()
+        request_id = "33333333-3333-4333-8333-333333333333"
+        instance_id = "11111111-1111-4111-8111-111111111111"
+        run = {"type": "otef_projection_names_run", "table": "otef", "requestId": request_id,
+               "revision": 7, "datasetVersion": "release-v1", "placementIdentity": "a" * 64}
+        status = {"type": "otef_projection_names_status", "table": "otef", "output": "left",
+                  "instanceId": instance_id, "requestId": request_id, "revision": 7,
+                  "datasetVersion": "release-v1", "placementIdentity": "a" * 64,
+                  "state": "current", "installed": {"revision": 7, "datasetVersion": "release-v1",
+                  "placementIdentity": "a" * 64, "mode": "wall", "digest": "b" * 64,
+                  "expected": 1228, "placed": 1228}}
+        await consumer.handle_otef_message(run)
+        await consumer.handle_otef_message(status)
+        relayed = [call.args[1]["message"] for call in consumer.channel_layer.group_send.await_args_list]
+        self.assertEqual(relayed, [run, status])
+
+    async def test_names_transient_messages_reject_extra_or_malformed_fields(self):
+        consumer = GeneralConsumer()
+        consumer.room_group_name = "otef_channel"
+        consumer.channel_layer = type("Layer", (), {"group_send": AsyncMock()})()
+        base_run = {"type": "otef_projection_names_run", "table": "otef",
+                    "requestId": "33333333-3333-4333-8333-333333333333", "revision": 7,
+                    "datasetVersion": "release-v1", "placementIdentity": "a" * 64}
+        base_status = {"type": "otef_projection_names_status", "table": "otef", "output": "left",
+                       "instanceId": "11111111-1111-4111-8111-111111111111", "requestId": None,
+                       "revision": 7, "datasetVersion": "release-v1", "placementIdentity": "a" * 64,
+                       "state": "stale", "installed": None}
+        invalid = [
+            {**base_run, "extra": "x"}, {**base_run, "revision": True},
+            {**base_run, "placementIdentity": "short"}, {**base_run, "requestId": "invalid"},
+            {**base_status, "extra": "x"}, {**base_status, "state": "unknown"},
+            {**base_status, "installed": {"digest": "x"}},
+        ]
+        for message in invalid:
+            await consumer.handle_otef_message(message)
+        consumer.channel_layer.group_send.assert_not_awaited()
+
     async def test_pattern_and_status_are_relayed_without_database_writes(self):
         consumer = GeneralConsumer()
         consumer.room_group_name = "otef_channel"

@@ -114,6 +114,8 @@ export function installProjectionPreviewBridge({ win, output, map, nameFieldCont
   let validationAbort = null;
   let applyGeneration = 0;
   let applyAbort = null;
+  let namesGeneration = 0;
+  let namesAbort = null;
   const onMessage = (event) => {
     const message = event.data;
     if (event.source !== win.parent || event.origin !== origin || !['otef_projection_preview_config', 'otef_projection_preview_validate'].includes(message?.type) || message.output !== output || !Number.isSafeInteger(message.requestId)) return;
@@ -153,6 +155,32 @@ export function installProjectionPreviewBridge({ win, output, map, nameFieldCont
       reply({ type: "otef_projection_preview_applied", requestId: message.requestId, success: false, error: "Invalid calibration draft" });
       return;
     }
+    const runNames = message.runNames === true;
+    if (runNames) {
+      namesAbort?.abort();
+      namesAbort = new AbortController();
+      const generation = ++namesGeneration;
+      const signal = namesAbort.signal;
+      const finishNames = (prepared) => {
+        if (generation !== namesGeneration || signal.aborted) return;
+        if (prepared === false) throw new Error("Projection names rejected applied calibration");
+        syncContextInvestigation();
+        reply({ type: "otef_projection_preview_applied", requestId: message.requestId, success: true });
+      };
+      const failNames = (error) => {
+        if (generation === namesGeneration && !signal.aborted)
+          reply({ type: "otef_projection_preview_applied", requestId: message.requestId, success: false, error: error.message || "Names preview failed" });
+      };
+      try {
+        const prepared = applyProjectionConfig?.(message.config, { generation, signal, runNames: true });
+        if (prepared && typeof prepared.then === "function") Promise.resolve(prepared).then(finishNames).catch(failNames);
+        else finishNames(prepared);
+      } catch (error) { failNames(error); }
+      return;
+    }
+    namesGeneration++;
+    namesAbort?.abort();
+    namesAbort = null;
     applyAbort?.abort();
     applyAbort = new AbortController();
     const generation = ++applyGeneration;
@@ -169,12 +197,12 @@ export function installProjectionPreviewBridge({ win, output, map, nameFieldCont
     const fail = (error) => { if (generation === applyGeneration && !applyAbort.signal.aborted)
       reply({ type: "otef_projection_preview_applied", requestId: message.requestId, success: false, error: error.message || "Preview failed" }); };
     try {
-      const prepared = applyProjectionConfig?.(message.config, { generation, signal: applyAbort.signal });
+      const prepared = applyProjectionConfig?.(message.config, { generation, signal: applyAbort.signal, runNames: false });
       if (prepared && typeof prepared.then === 'function') Promise.resolve(prepared).then(finish).catch(fail);
       else finish(prepared);
     } catch (error) { fail(error); }
   };
   win.addEventListener("message", onMessage);
   reply({ type: "otef_projection_preview_ready" });
-  return () => { validationGeneration++; validationAbort?.abort(); applyGeneration++; applyAbort?.abort(); win.removeEventListener("message", onMessage); };
+  return () => { validationGeneration++; validationAbort?.abort(); applyGeneration++; applyAbort?.abort(); namesGeneration++; namesAbort?.abort(); win.removeEventListener("message", onMessage); };
 }

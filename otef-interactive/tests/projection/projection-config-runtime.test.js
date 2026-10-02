@@ -1,9 +1,11 @@
 import { describe, expect, test, vi } from "vitest";
 import { DEFAULT_PROJECTION_CONFIG } from "../../frontend/src/shared/projection-config-schema.js";
 import { createProjectionConfigRuntime } from "../../frontend/src/projection/projection-config-runtime.js";
+import { projectionPlacementInputIdentity } from "../../frontend/src/projection/projection-names-run.js";
 import { applyProjectionSpanView } from "../../frontend/src/projection/projection-span-view.js";
 import { createNliNameFieldController } from "../../frontend/src/shared/nli-name-field-controller.js";
 import { createFakeMapLibreMap } from "../helpers/fake-maplibre-map.js";
+import { createProjectionNameCanvasAdapter } from "../../frontend/src/projection/projection-name-canvas-adapter.js";
 
 function makeHarness(spanId = "left", instanceId = "11111111-1111-4111-8111-111111111111", options = {}) {
   let listener;
@@ -33,16 +35,20 @@ function makeHarness(spanId = "left", instanceId = "11111111-1111-4111-8111-1111
     map, spanId, client, socket, instanceId,
       requestFrame: (fn) => { queued.push(fn); return queued.length; },
       cancelFrame: vi.fn(),
-      applyConfig: (config, revision) => { applied.push({ config, revision }); options.applyConfig?.(config, revision, { render: () => [...renderListeners].forEach((fn) => fn()) }); },
+      applyConfig: (config, revision, geometryPair) => { applied.push({ config, revision, geometryPair }); options.applyConfig?.(config, revision, { render: () => [...renderListeners].forEach((fn) => fn()) }); },
       drawCompletion: options.drawCompletion,
       route: options.route,
       baseline: options.baseline,
+      prepareGeometry: options.prepareGeometry,
+      rollbackGeometry: options.rollbackGeometry,
+      finalizeGeometry: options.finalizeGeometry,
       prepareCandidate: options.prepareCandidate,
       commitCandidate: options.commitCandidate,
       rollbackCandidate: options.rollbackCandidate,
       finalizeCandidate: options.finalizeCandidate,
       isWallEnabled: options.isWallEnabled,
       getDatasetVersion: options.getDatasetVersion,
+      getDatasetIdentityError: options.getDatasetIdentityError,
       clock: options.clock,
   });
   return {
@@ -88,7 +94,7 @@ function realSpanAndNames() {
   map.getPadding = () => camera.padding;
   map.unproject = ([x, y]) => ({ lng: camera.center.lng + (x - 800) / 1000, lat: camera.center.lat + (y - 450) / 1000 });
   map.jumpTo = (next) => { camera = { ...camera, ...next, zoom: Math.min(22, next.zoom ?? camera.zoom) }; };
-  const controller = createNliNameFieldController({ map, context: { subscribe: () => () => {} }, projectionSpan: "left" });
+  const controller = createNliNameFieldController({ map, context: { subscribe: () => () => {}, getPersonSelection: () => null }, projectionSpan: "left" });
   let effective = DEFAULT_PROJECTION_CONFIG;
   map.getEffectiveProjectionConfig = () => effective;
   map.setEffectiveProjectionConfig = (config, revision) => {
@@ -100,245 +106,484 @@ function realSpanAndNames() {
 }
 
 describe("projection config runtime", () => {
-  test.each(['prepare', 'render'])('dataset replacement during %s rejects the old wall and applies the current one', async (phase) => {
-    let version = 'v1';
-    const pending = [];
-    const prepare = vi.fn(() => new Promise((resolve) => pending.push(resolve)));
-    const commit = vi.fn(); const rollback = vi.fn();
-    const h = makeHarness('left', '11111111-1111-4111-8111-111111111111', {
-      prepareCandidate: prepare, commitCandidate: commit, rollbackCandidate: rollback,
-      drawCompletion: () => true, getDatasetVersion: () => version,
+  test('abandoned geometry restores consumers before a newer mesh preparation fails', async () => {
+    let visibleConfig;
+    const h = makeHarness('left', undefined, {
+      prepareGeometry: async (_config, revision) => {
+        if (revision === 3) throw new Error('invalid peer mesh');
+        return { revision };
+      },
+      rollbackGeometry: vi.fn(), drawCompletion: () => true,
+      applyConfig: (config) => { visibleConfig = config; },
     });
-    const pair = (datasetVersion) => ({ wall: { datasetVersion, digest: datasetVersion === 'v1' ? 'a'.repeat(64) : 'b'.repeat(64), diagnostics: { expected: 1228, placed: 1228 } } });
-    await h.runtime.start(); h.state(8); h.frame();
-    if (phase === 'render') { pending[0](pair('v1')); await Promise.resolve(); await Promise.resolve(); h.frame(); expect(commit).toHaveBeenCalledOnce(); }
-    version = 'v2'; h.runtime.datasetChanged(); h.frame();
-    expect(prepare).toHaveBeenCalledTimes(2);
-    if (phase === 'prepare') { pending[0](pair('v1')); await Promise.resolve(); await Promise.resolve(); expect(commit).not.toHaveBeenCalled(); }
-    else expect(rollback).toHaveBeenCalled();
-    pending[1](pair('v2')); await Promise.resolve(); await Promise.resolve(); h.frame(); h.render();
-    expect(h.sent().filter((item) => item.success && item.wall?.datasetVersion === 'v1')).toHaveLength(0);
-    expect(h.sent()).toContainEqual(expect.objectContaining({ revision: 8, success: true, wall: expect.objectContaining({ datasetVersion: 'v2', digest: 'b'.repeat(64) }) }));
+    const first = structuredClone(DEFAULT_PROJECTION_CONFIG);
+    const second = structuredClone(first); second.pre.scale += 0.1;
+    const third = structuredClone(second); third.pre.scale += 0.1;
+    await h.runtime.start(); h.state(1, first); h.frame();
+    await vi.waitFor(() => expect(h.applied).toHaveLength(1)); h.render();
+    h.state(2, second); h.frame();
+    await vi.waitFor(() => expect(visibleConfig).toEqual(second));
+    h.state(3, third); h.frame();
+    await vi.waitFor(() => expect(h.sent()).toContainEqual(expect.objectContaining({ revision: 3, success: false })));
+    expect(visibleConfig).toEqual(first);
     h.runtime.stop();
   });
-  test('status retries retain an applied digest while the memorial layer is hidden', async () => {
-    let enabled = true;
-    const wall = { datasetVersion: 'release', digest: 'a'.repeat(64), diagnostics: { expected: 1228, placed: 1228 } };
-    const h = makeHarness('left', '11111111-1111-4111-8111-111111111111', {
-      prepareCandidate: () => Promise.resolve({ wall }), commitCandidate: vi.fn(), drawCompletion: () => true,
-      isWallEnabled: () => enabled,
+
+  test('real names controller restores completed glyphs before newer geometry after render resolution', async () => {
+    const { controller } = realSpanAndNames();
+    const adapter = createProjectionNameCanvasAdapter({ output: 'left', document: { createElement: () => {
+      const ctx = { save() {}, restore() {}, setTransform() {}, clearRect() {}, fillText: vi.fn(), strokeText() {} };
+      return { getContext: () => ctx, ctx };
+    } } });
+    controller.installProjectionCanvas(adapter);
+    let builds = 0;
+    const h = makeHarness('left', undefined, {
+      drawCompletion: () => true, getDatasetVersion: () => 'v1',
+      applyConfig: (config, revision) => controller.applyProjectionConfigGeometry(config, revision),
+      prepareCandidate: async (config, revision, generation, signal) => {
+        const name = ++builds === 1 ? 'Completed' : 'Cancelled';
+        const feature = { type: 'Feature', properties: { pid: 'one', name, visible_spans: ['left'] }, geometry: { type: 'Point', coordinates: [34.5, 31.5] } };
+        const field = { datasetVersion: 'v1', digest: 'a'.repeat(64), fontSize: 12,
+          geojson: { type: 'FeatureCollection', features: [feature] }, byPid: new Map([['one', { feature }]]),
+          placements: [{ id: 'one', name, output: 'left', x: 0, y: 0, width: 20, height: 10 }],
+          logicalPlane: { heading: 17, planeScale: 1 },
+          diagnostics: { state: 'valid', expected: 1, placed: 1, missing: 0, extra: 0, duplicate: 0 } };
+        const wall = await controller.prepareProjectionCandidate({ config, revision, generation, signal, field });
+        return { wall, generation };
+      },
+      commitCandidate: (pair) => controller.commitProjectionCandidate(pair.generation),
+      rollbackCandidate: (pair) => controller.rollbackProjectionCandidate(pair.generation),
+      finalizeCandidate: (pair) => controller.finalizeProjectionCandidate(pair.generation),
     });
-    await h.runtime.start(); h.state(8); h.frame(); await Promise.resolve(); await Promise.resolve(); h.frame(); h.render();
-    expect(h.sent().filter((item) => item.type === 'otef_projection_applied').at(-1).wall?.digest).toBe(wall.digest);
-    enabled = false;
-    h.runtime.requestStatus(); h.render();
-    expect(h.sent().filter((item) => item.type === 'otef_projection_applied').at(-1)).toMatchObject({ revision: 8, success: true });
-    expect(h.sent().filter((item) => item.type === 'otef_projection_applied').at(-1).wall?.digest).toBe(wall.digest);
-    h.runtime.stop();
+    const config = structuredClone(DEFAULT_PROJECTION_CONFIG);
+    await h.runtime.start(); h.state(1, config); h.frame(); h.render();
+    await vi.waitFor(() => expect(adapter.descriptor()).not.toBeNull()); h.render();
+    await vi.waitFor(() => expect(h.sent()).toContainEqual(expect.objectContaining({ state: 'current' })));
+    const requestId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+    h.socketListeners.get('otef_projection_names_run')({ type: 'otef_projection_names_run', table: 'otef', requestId,
+      revision: 1, datasetVersion: 'v1', placementIdentity: await projectionPlacementInputIdentity(config) });
+    await vi.waitFor(() => expect(adapter.descriptor().source.ctx.fillText).toHaveBeenCalledWith('Cancelled', 0, 0));
+    const next = structuredClone(config); next.outputs.left.crop.x1 = 0.65;
+    let superseded = false;
+    h.map.on('render', () => { if (!superseded) { superseded = true; h.state(2, next); h.frame(); } });
+    h.render();
+    await Promise.resolve(); await Promise.resolve();
+    expect(adapter.descriptor().source.ctx.fillText).toHaveBeenCalledWith('Completed', 0, 0);
+    expect(adapter.descriptor().source.ctx.fillText).not.toHaveBeenCalledWith('Cancelled', 0, 0);
+    expect(controller.getProjectionNameDiagnostics()).toMatchObject({ installedRevision: 1, requestedRevision: 2 });
+    h.runtime.stop(); controller.dispose();
   });
-  test('a hidden renderer revision prepares and acknowledges the current wall', async () => {
-    let enabled = false;
-    const wall = { datasetVersion: 'release', digest: 'a'.repeat(64), diagnostics: { expected: 1228, placed: 1228 } };
-    const prepare = vi.fn(() => Promise.resolve({ wall }));
+
+  test('geometry revisions retain the installed names and do not schedule placement work', async () => {
+    let visibleWall = 'initial';
+    const prepare = vi.fn(async () => ({ wall: { datasetVersion: 'v1', digest: 'a'.repeat(64), diagnostics: { expected: 2, placed: 2 } } }));
+    const commit = vi.fn((pair) => { visibleWall = pair.wall.digest; });
+    const rollback = vi.fn(() => { visibleWall = 'initial'; });
     const h = makeHarness('left', '11111111-1111-4111-8111-111111111111', {
-      prepareCandidate: prepare, commitCandidate: vi.fn(), drawCompletion: () => true, isWallEnabled: () => enabled,
+      prepareCandidate: prepare, commitCandidate: commit, rollbackCandidate: rollback, drawCompletion: () => true,
+      getDatasetVersion: () => 'v1',
     });
-    await h.runtime.start(); h.state(8); h.frame(); await Promise.resolve(); await Promise.resolve(); h.frame(); h.render();
-    expect(h.sent().filter((item) => item.type === 'otef_projection_applied').at(-1).wall?.digest).toBe(wall.digest);
-    enabled = true; h.runtime.requestStatus(); h.render();
+    await h.runtime.start(); h.state(1); h.frame(); h.render();
+    await vi.waitFor(() => expect(visibleWall).toBe('a'.repeat(64)));
+    h.frame(); h.render();
+    await vi.waitFor(() => expect(h.sent().some((item) => item.type === 'otef_projection_names_status' && item.state === 'current')).toBe(true));
+    const next = structuredClone(DEFAULT_PROJECTION_CONFIG); next.outputs.left.post.scale += 0.1;
+    h.state(2, next); h.frame(); h.render();
     expect(prepare).toHaveBeenCalledOnce();
-    expect(h.sent().filter((item) => item.type === 'otef_projection_applied').at(-1).wall?.digest).toBe(wall.digest);
+    expect(visibleWall).toBe('a'.repeat(64));
+    await vi.waitFor(() => expect(h.sent().some((item) => item.type === 'otef_projection_names_status' && item.state === 'stale' && item.revision === 2)).toBe(true));
+    expect(h.sent()).toContainEqual(expect.objectContaining({ type: 'otef_projection_applied', revision: 2, success: true }));
     h.runtime.stop();
   });
-  test('a changed dataset is rechecked when a pending preparation resolves even without a notification', async () => {
-    let version = 'v1'; const pending = [];
-    const prepare = vi.fn(() => new Promise((resolve) => pending.push(resolve)));
-    const commit = vi.fn();
-    const h = makeHarness('left', '11111111-1111-4111-8111-111111111111', {
-      prepareCandidate: prepare, commitCandidate: commit, drawCompletion: () => true, getDatasetVersion: () => version,
+
+  test('an explicit names run is idempotent and commits only for its current applied target', async () => {
+    const prepared = { wall: { datasetVersion: 'v1', digest: 'b'.repeat(64), diagnostics: { expected: 2, placed: 2 } } };
+    const prepare = vi.fn(async () => prepared); const commit = vi.fn(); const rollback = vi.fn();
+    const h = makeHarness('right', '22222222-2222-4222-8222-222222222222', {
+      prepareCandidate: prepare, commitCandidate: commit, rollbackCandidate: rollback, drawCompletion: () => true,
+      getDatasetVersion: () => 'v1',
     });
-    const pair = (datasetVersion) => ({ wall: { datasetVersion, digest: 'a'.repeat(64), diagnostics: { expected: 2, placed: 2 } } });
-    await h.runtime.start(); h.state(8); h.frame(); version = 'v2';
-    pending[0](pair('v1')); await Promise.resolve(); await Promise.resolve();
-    expect(commit).not.toHaveBeenCalled();
-    h.frame(); expect(prepare).toHaveBeenCalledTimes(2);
-    pending[1](pair('v2')); await Promise.resolve(); await Promise.resolve(); h.frame(); h.render();
-    expect(h.sent().filter((item) => item.success && item.wall?.datasetVersion === 'v1')).toHaveLength(0);
-    expect(h.sent()).toContainEqual(expect.objectContaining({ success: true, wall: expect.objectContaining({ datasetVersion: 'v2' }) }));
+    const config = structuredClone(DEFAULT_PROJECTION_CONFIG);
+    await h.runtime.start(); h.state(7, config); h.frame(); h.render();
+    await vi.waitFor(() => expect(prepare).toHaveBeenCalledOnce());
+    h.frame(); h.render();
+    await vi.waitFor(() => expect(h.sent().some((item) => item.type === 'otef_projection_names_status' && item.state === 'current')).toBe(true));
+    const requestId = '33333333-3333-4333-8333-333333333333';
+    const identity = await projectionPlacementInputIdentity(config);
+    const command = { type: 'otef_projection_names_run', table: 'otef', requestId, revision: 7, datasetVersion: 'v1', placementIdentity: identity };
+    const run = h.socketListeners.get('otef_projection_names_run');
+    run(command); run(command);
+    await vi.waitFor(() => expect(prepare).toHaveBeenCalledTimes(2));
+    h.frame(); h.render();
+    await vi.waitFor(() => expect(h.sent().some((item) => item.type === 'otef_projection_names_status' && item.requestId === requestId && item.state === 'current')).toBe(true));
+    expect(commit).toHaveBeenCalledTimes(2);
     h.runtime.stop();
   });
-  test('a dataset update after Applied immediately replaces the old confirmation and retries', async () => {
+
+  test('cold-start wall failure leaves applied geometry usable and reconnect does not retry placement', async () => {
+    const prepare = vi.fn(async () => { throw new Error('layout failed'); });
+    const h = makeHarness('left', '11111111-1111-4111-8111-111111111111', {
+      prepareCandidate: prepare, drawCompletion: () => true, getDatasetVersion: () => 'v1',
+    });
+    await h.runtime.start(); h.state(4); h.frame(); h.render();
+    await vi.waitFor(() => expect(prepare).toHaveBeenCalledOnce());
+    expect(h.applied).toHaveLength(1);
+    expect(h.sent()).toContainEqual(expect.objectContaining({ type: 'otef_projection_applied', revision: 4, success: true }));
+    expect(h.sent()).toContainEqual(expect.objectContaining({ type: 'otef_projection_names_status', state: 'failed' }));
+    h.socketListeners.get('disconnect')(); h.socketListeners.get('connect')(); h.runtime.requestStatus();
+    expect(prepare).toHaveBeenCalledOnce();
+    h.runtime.stop();
+  });
+
+  test('dataset changes stale installed names without rebuilding until Run uses the new dataset', async () => {
     let version = 'v1';
-    const wallForVersion = () => ({ datasetVersion: version, digest: version === 'v1' ? 'a'.repeat(64) : 'b'.repeat(64), diagnostics: { expected: 2, placed: 2 } });
+    const prepare = vi.fn(async () => ({ wall: { datasetVersion: version, digest: (version === 'v1' ? 'a' : 'b').repeat(64), diagnostics: { expected: 2, placed: 2 } } }));
     const h = makeHarness('left', '11111111-1111-4111-8111-111111111111', {
-      prepareCandidate: () => Promise.resolve({ wall: wallForVersion() }), commitCandidate: vi.fn(),
-      drawCompletion: () => true, getDatasetVersion: () => version,
+      prepareCandidate: prepare, commitCandidate: vi.fn(), drawCompletion: () => true, getDatasetVersion: () => version,
     });
-    await h.runtime.start(); h.state(8); h.frame(); await Promise.resolve(); await Promise.resolve(); h.frame(); h.render();
-    expect(h.sent().filter((item) => item.type === 'otef_projection_applied').at(-1).wall?.datasetVersion).toBe('v1');
+    const config = structuredClone(DEFAULT_PROJECTION_CONFIG);
+    await h.runtime.start(); h.state(8, config); h.frame(); h.render();
+    await vi.waitFor(() => expect(prepare).toHaveBeenCalledOnce());
+    h.frame(); h.render();
+    await vi.waitFor(() => expect(h.sent().some((item) => item.type === 'otef_projection_names_status' && item.state === 'current')).toBe(true));
     version = 'v2'; h.runtime.datasetChanged();
-    expect(h.sent().filter((item) => item.type === 'otef_projection_applied').at(-1)).toMatchObject({ success: false, error: expect.stringMatching(/dataset changed/) });
+    expect(prepare).toHaveBeenCalledOnce();
+    expect(h.sent()).toContainEqual(expect.objectContaining({ type: 'otef_projection_names_status', state: 'stale' }));
+    const command = { type: 'otef_projection_names_run', table: 'otef', requestId: '44444444-4444-4444-8444-444444444444',
+      revision: 8, datasetVersion: 'v2', placementIdentity: await projectionPlacementInputIdentity(config) };
+    h.socketListeners.get('otef_projection_names_run')(command);
+    await vi.waitFor(() => expect(prepare).toHaveBeenCalledTimes(2));
+    h.frame(); h.render();
+    await vi.waitFor(() => expect(h.sent().some((item) => item.type === 'otef_projection_names_status' && item.requestId === command.requestId && item.state === 'current')).toBe(true));
+    h.runtime.stop();
+  });
+
+  test('failed manual placement restores names only and keeps the latest geometry', async () => {
+    let calls = 0;
+    const rollback = vi.fn();
+    const prepareCandidate = vi.fn(async () => {
+      if (++calls === 1) return { wall: { datasetVersion: 'v1', digest: 'a'.repeat(64), diagnostics: { expected: 2, placed: 2 } } };
+      return { wall: { datasetVersion: 'v1', digest: 'b'.repeat(64), diagnostics: { expected: 2, placed: 1 } } };
+    });
+    const h = makeHarness('left', '11111111-1111-4111-8111-111111111111', {
+      prepareCandidate, rollbackCandidate: rollback, drawCompletion: () => true, getDatasetVersion: () => 'v1',
+    });
+    const config = structuredClone(DEFAULT_PROJECTION_CONFIG);
+    await h.runtime.start(); h.state(1, config); h.frame(); h.render();
+    await vi.waitFor(() => expect(prepareCandidate).toHaveBeenCalledOnce());
+    h.frame(); h.render();
+    await vi.waitFor(() => expect(h.sent().some((item) => item.type === 'otef_projection_names_status' && item.state === 'current')).toBe(true));
+    const next = structuredClone(config); next.outputs.left.post.scale += 0.2;
+    h.state(2, next); h.frame(); h.render();
+    const requestId = '55555555-5555-4555-8555-555555555555';
+    h.socketListeners.get('otef_projection_names_run')({ type: 'otef_projection_names_run', table: 'otef', requestId,
+      revision: 2, datasetVersion: 'v1', placementIdentity: await projectionPlacementInputIdentity(next) });
+    await vi.waitFor(() => expect(prepareCandidate).toHaveBeenCalledTimes(2));
+    h.frame(); h.render();
+    await vi.waitFor(() => expect(h.sent().some((item) => item.type === 'otef_projection_names_status' && item.requestId === requestId && item.state === 'failed')).toBe(true));
+    expect(h.applied.at(-1)).toMatchObject({ revision: 2, config: next });
+    expect(rollback).toHaveBeenCalledWith(expect.anything(), expect.anything(), 2, { namesOnly: true });
+    expect(h.sent()).toContainEqual(expect.objectContaining({ type: 'otef_projection_applied', revision: 2, success: true }));
+    h.runtime.stop();
+  });
+
+  test('paired mesh preparation gates geometry acknowledgement and leaves last good config on rejection', async () => {
+    const prepareGeometry = vi.fn(async (_config, revision) => {
+      if (revision === 2) throw new Error('peer mesh invalid');
+      return { revision };
+    });
+    const h = makeHarness('left', '11111111-1111-4111-8111-111111111111', { prepareGeometry, drawCompletion: () => true });
+    const next = structuredClone(DEFAULT_PROJECTION_CONFIG); next.pre.scale += 0.1;
+    await h.runtime.start(); h.state(1); h.frame();
+    await vi.waitFor(() => expect(h.applied).toHaveLength(1));
+    h.render();
+    const invalid = structuredClone(next); invalid.pre.scale += 0.1;
+    h.state(2, invalid); h.frame();
+    await vi.waitFor(() => expect(h.sent()).toContainEqual(expect.objectContaining({ type: 'otef_projection_applied', revision: 2, success: false, error: 'peer mesh invalid' })));
+    expect(h.applied.map(({ revision }) => revision)).toEqual([1]);
+    h.runtime.stop();
+  });
+
+  test('equivalent placement inputs promote completed names only after the next geometry draw', async () => {
+    const prepare = vi.fn(async () => ({ wall: { datasetVersion: 'v1', digest: 'a'.repeat(64), diagnostics: { expected: 2, placed: 2 } } }));
+    const h = makeHarness('left', '11111111-1111-4111-8111-111111111111', {
+      prepareCandidate: prepare, drawCompletion: () => true, getDatasetVersion: () => 'v1',
+    });
+    const config = structuredClone(DEFAULT_PROJECTION_CONFIG);
+    await h.runtime.start(); h.state(1, config); h.frame(); h.render();
+    await vi.waitFor(() => expect(prepare).toHaveBeenCalledOnce()); h.frame(); h.render();
+    await vi.waitFor(() => expect(h.sent()).toContainEqual(expect.objectContaining({ type: 'otef_projection_names_status', state: 'current', revision: 1 })));
+
+    h.state(2, structuredClone(config)); h.frame();
+    await vi.waitFor(() => expect(h.sent()).toContainEqual(expect.objectContaining({ type: 'otef_projection_names_status', state: 'stale', revision: 2 })));
+    expect(h.sent()).toContainEqual(expect.objectContaining({ type: 'otef_projection_names_status', state: 'stale', revision: 2,
+      installed: expect.objectContaining({ revision: 1, digest: 'a'.repeat(64), expected: 2, placed: 2 }) }));
+    expect(prepare).toHaveBeenCalledOnce();
+    h.render();
+    await vi.waitFor(() => expect(h.sent()).toContainEqual(expect.objectContaining({ type: 'otef_projection_names_status', state: 'current', revision: 2,
+      installed: expect.objectContaining({ revision: 2, digest: 'a'.repeat(64), expected: 2, placed: 2 }) })));
+    expect(prepare).toHaveBeenCalledOnce();
+    h.runtime.stop();
+  });
+
+  test('rejected names runs return bounded status correlated to the immutable request target', async () => {
+    const prepare = vi.fn(async () => ({ wall: { datasetVersion: 'accepted-release', digest: 'd'.repeat(64), diagnostics: { expected: 1, placed: 1 } } }));
+    const h = makeHarness('left', '11111111-1111-4111-8111-111111111111', {
+      prepareCandidate: prepare, drawCompletion: () => true, getDatasetVersion: () => 'accepted-release',
+    });
+    await h.runtime.start(); h.state(3); h.frame(); h.render();
+    await vi.waitFor(() => expect(prepare).toHaveBeenCalledOnce()); h.frame(); h.render();
+    await vi.waitFor(() => expect(h.sent()).toContainEqual(expect.objectContaining({ type: 'otef_projection_names_status', state: 'current', revision: 3 })));
+    const command = { type: 'otef_projection_names_run', table: 'otef', requestId: 'abbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      revision: 3, datasetVersion: 'stale-release', placementIdentity: 'c'.repeat(64) };
+    h.socketListeners.get('otef_projection_names_run')(command);
+    await vi.waitFor(() => expect(h.sent()).toContainEqual(expect.objectContaining({
+      type: 'otef_projection_names_status', requestId: command.requestId, revision: command.revision,
+      datasetVersion: command.datasetVersion, placementIdentity: command.placementIdentity, state: 'stale',
+    })));
+    expect(prepare).toHaveBeenCalledOnce();
     h.runtime.requestStatus();
-    expect(h.sent().filter((item) => item.type === 'otef_projection_applied').at(-1).success).toBe(false);
-    h.frame(); await Promise.resolve(); await Promise.resolve(); h.frame(); h.render();
-    expect(h.sent().filter((item) => item.type === 'otef_projection_applied').at(-1).wall?.datasetVersion).toBe('v2');
+    expect(h.sent().at(-1)).toMatchObject({ type: 'otef_projection_names_status', requestId: null, revision: 3,
+      datasetVersion: 'accepted-release', state: 'current', installed: { revision: 3, digest: 'd'.repeat(64) } });
     h.runtime.stop();
   });
-  test('datasetChanged adopts null→v1 without restart and still restarts v1→v2', async () => {
-    let version = null;
-    const h = makeHarness('left', '11111111-1111-4111-8111-111111111111', {
-      drawCompletion: () => true, getDatasetVersion: () => version,
+
+  test('accepted release identity load failure is reported after geometry succeeds', async () => {
+    const prepare = vi.fn();
+    const h = makeHarness('right', '22222222-2222-4222-8222-222222222222', {
+      prepareCandidate: prepare, drawCompletion: () => true, getDatasetIdentityError: () => 'Name wall release metadata unavailable',
     });
-    await h.runtime.start();
-    h.state(8); h.frame(); h.render();
-    const sentBefore = h.sent().length;
-    version = 'v1';
-    expect(h.runtime.datasetChanged()).toBe(false);
-    expect(h.sent()).toHaveLength(sentBefore);
-    expect(h.runtime.datasetChanged()).toBe(false);
-    version = null;
-    expect(h.runtime.datasetChanged()).toBe(false);
-    expect(h.sent()).toHaveLength(sentBefore);
-    version = 'v2';
-    expect(h.runtime.datasetChanged()).toBe(true);
-    expect(h.sent().filter((item) => item.type === 'otef_projection_applied').at(-1)).toMatchObject({
-      success: false, error: expect.stringMatching(/dataset changed/),
-    });
+    await h.runtime.start(); h.state(6); h.frame(); h.render();
+    await vi.waitFor(() => expect(h.sent()).toContainEqual(expect.objectContaining({
+      type: 'otef_projection_names_status', state: 'failed', revision: 6,
+      error: 'Name wall release metadata unavailable', placementIdentity: expect.stringMatching(/^[a-f0-9]{64}$/),
+    })));
+    await vi.waitFor(() => expect(h.sent().at(-1)).toMatchObject({
+      type: 'otef_projection_names_status', state: 'failed', revision: 6,
+      datasetVersion: '', error: 'Name wall release metadata unavailable', installed: null,
+    }));
+    h.runtime.requestStatus();
+    expect(h.sent().at(-1)).toMatchObject({ type: 'otef_projection_names_status', state: 'failed', revision: 6,
+      datasetVersion: '', error: 'Name wall release metadata unavailable', installed: null });
+    expect(h.sent()).toContainEqual(expect.objectContaining({ type: 'otef_projection_applied', revision: 6, success: true }));
+    expect(h.sent().some((message) => message.type === 'otef_projection_names_status' && message.state === 'current')).toBe(false);
+    expect(prepare).not.toHaveBeenCalled();
     h.runtime.stop();
   });
-  test.each(['prepare', 'render'])('reconnect restarts the same first revision abandoned during %s', async (phase) => {
-    const pending = [];
-    const prepare = vi.fn(() => new Promise((resolve) => pending.push(resolve)));
-    const commit = vi.fn();
-    const h = makeHarness('left', '11111111-1111-4111-8111-111111111111', {
-      prepareCandidate: prepare, commitCandidate: commit, drawCompletion: () => true,
+
+  test('disconnect cancels an active names run into stale status and reconnect does not restart it', async () => {
+    let resolveRun;
+    let prepares = 0;
+    const prepareCandidate = vi.fn(() => {
+      prepares += 1;
+      if (prepares === 1) return Promise.resolve({ wall: { datasetVersion: 'v1', digest: 'a'.repeat(64), diagnostics: { expected: 1, placed: 1 } } });
+      return new Promise((resolve) => { resolveRun = resolve; });
     });
-    await h.runtime.start(); h.state(4); h.frame();
-    if (phase === 'render') { pending[0]({ wall: null }); await Promise.resolve(); await Promise.resolve(); h.frame(); expect(commit).toHaveBeenCalledOnce(); }
+    const h = makeHarness('left', '11111111-1111-4111-8111-111111111111', {
+      prepareCandidate, commitCandidate: vi.fn(), drawCompletion: () => true, getDatasetVersion: () => 'v1',
+    });
+    const config = structuredClone(DEFAULT_PROJECTION_CONFIG);
+    await h.runtime.start(); h.state(3, config); h.frame(); h.render();
+    await vi.waitFor(() => expect(prepareCandidate).toHaveBeenCalledOnce()); h.render();
+    await vi.waitFor(() => expect(h.sent()).toContainEqual(expect.objectContaining({ type: 'otef_projection_names_status', state: 'current' })));
+    const requestId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    h.socketListeners.get('otef_projection_names_run')({ type: 'otef_projection_names_run', table: 'otef', requestId,
+      revision: 3, datasetVersion: 'v1', placementIdentity: await projectionPlacementInputIdentity(config) });
+    await vi.waitFor(() => expect(h.sent()).toContainEqual(expect.objectContaining({ type: 'otef_projection_names_status', state: 'rebuilding', requestId })));
     h.socketListeners.get('disconnect')();
     h.socketListeners.get('connect')();
-    h.state(4); // Ordinary hydration may return the same revision.
-    h.frame();
-    expect(prepare).toHaveBeenCalledTimes(2);
-    pending[1]({ wall: null }); await Promise.resolve(); await Promise.resolve(); h.frame(); h.render();
-    expect(h.sent()).toContainEqual(expect.objectContaining({ revision: 4, success: true }));
-    h.runtime.stop();
-  });
-  test('acknowledges the complete wall only after local draw and repeats that identity on status retry', async () => {
-    const timers = new Map(); let now = 0; let id = 0; let resolvePrepare;
-    const h = makeHarness('left', '11111111-1111-4111-8111-111111111111', {
-      clock: { setTimeout: (fn, ms) => { const key = ++id; timers.set(key, { fn, at: now + ms }); return key; }, clearTimeout: (key) => timers.delete(key) },
-      prepareCandidate: () => new Promise((resolve) => { resolvePrepare = resolve; }),
-      commitCandidate: vi.fn(), drawCompletion: () => true,
-    });
-    await h.runtime.start(); h.state(7); h.frame();
-    now = 1500;
-    for (const [key, timer] of [...timers]) if (timer.at <= now) { timers.delete(key); timer.fn(); }
-    expect(h.sent().filter((message) => message.type === 'otef_projection_applied')).toHaveLength(0);
-    resolvePrepare({ wall: { datasetVersion: 'release', digest: 'a'.repeat(64), diagnostics: { expected: 1228, placed: 1228 } } });
-    await Promise.resolve(); await Promise.resolve(); h.frame();
-    expect(h.sent().filter((message) => message.type === 'otef_projection_applied')).toHaveLength(0);
-    h.render();
-    expect(h.sent()).toContainEqual(expect.objectContaining({ revision: 7, success: true, wall: {
-      datasetVersion: 'release', mode: 'wall', digest: 'a'.repeat(64), expected: 1228, placed: 1228,
-    } }));
-    h.runtime.requestStatus(); h.render();
-    expect(h.sent().filter((message) => message.success && message.wall?.digest === 'a'.repeat(64))).toHaveLength(2);
-    h.runtime.stop();
-  });
-  test('prepares an asynchronous local renderer and wall pair before one frame commit, then finalizes after draw', async () => {
-    let resolve;
-    const prepare = vi.fn(() => new Promise((done) => { resolve = done; }));
-    const commit = vi.fn(); const rollback = vi.fn(); const finalize = vi.fn();
-    const h = makeHarness('left', '11111111-1111-4111-8111-111111111111', {
-      prepareCandidate: prepare, commitCandidate: commit, rollbackCandidate: rollback, finalizeCandidate: finalize,
-      drawCompletion: () => true,
-    });
-    await h.runtime.start(); h.state(8); h.frame();
-    expect(prepare).toHaveBeenCalledOnce();
-    expect(commit).not.toHaveBeenCalled();
-    resolve({ digest: 'wall-8' }); await Promise.resolve(); await Promise.resolve();
-    h.frame();
-    expect(commit).toHaveBeenCalledWith(expect.objectContaining({ digest: 'wall-8' }), DEFAULT_PROJECTION_CONFIG, 8);
-    h.render();
-    expect(finalize).toHaveBeenCalledOnce();
-    expect(rollback).not.toHaveBeenCalled();
-  });
-
-  test('stale preparation never commits and a failed draw rolls back the local pair', async () => {
-    const pending = new Map();
-    const prepare = vi.fn((_config, revision) => new Promise((resolve) => pending.set(revision, resolve)));
-    const commit = vi.fn(); const rollback = vi.fn();
-    const h = makeHarness('left', '11111111-1111-4111-8111-111111111111', {
-      prepareCandidate: prepare, commitCandidate: commit, rollbackCandidate: rollback, drawCompletion: () => false,
-    });
-    await h.runtime.start(); h.state(1); h.frame(); h.state(2);
-    pending.get(1)({ digest: 'old' }); await Promise.resolve(); await Promise.resolve(); h.frame();
-    expect(commit).not.toHaveBeenCalled();
-    pending.get(2)({ digest: 'new' }); await Promise.resolve(); await Promise.resolve(); h.frame();
-    expect(commit).toHaveBeenCalledOnce();
-    h.error({ error: new Error('draw failed') });
-    expect(rollback).toHaveBeenCalledTimes(2);
-    expect(h.sent()).toContainEqual(expect.objectContaining({ revision: 2, success: false }));
-  });
-  test('stopping or invalidating a committed pending pair restores the previous wall', async () => {
-    for (const action of ['stop', 'invalidate']) {
-      let visibleWall = 'previous';
-      const rollback = vi.fn(() => { visibleWall = 'previous'; });
-      const h = makeHarness('left', '11111111-1111-4111-8111-111111111111', {
-        prepareCandidate: () => Promise.resolve({ wall: 'candidate' }),
-        commitCandidate: () => { visibleWall = 'candidate'; },
-        rollbackCandidate: rollback,
-        drawCompletion: () => true,
-      });
-      await h.runtime.start(); h.state(4); h.frame();
-      await Promise.resolve(); await Promise.resolve(); h.frame();
-      expect(visibleWall).toBe('candidate');
-      h.runtime[action]();
-      expect(visibleWall).toBe('previous');
-      expect(rollback).toHaveBeenCalledOnce();
-    }
-  });
-
-  test('a status request during asynchronous preparation does not start the same revision twice', async () => {
-    const prepare = vi.fn((_config, revision) => revision === 1 ? Promise.resolve({ wall: 'previous' }) : new Promise(() => {}));
-    const h = makeHarness('left', '11111111-1111-4111-8111-111111111111', { prepareCandidate: prepare });
-    await h.runtime.start(); h.state(1); h.frame();
-    await Promise.resolve(); await Promise.resolve(); h.frame(); h.render();
-    h.state(7); h.frame();
-    h.runtime.requestStatus(); h.frame();
-    expect(prepare).toHaveBeenCalledTimes(2);
-    h.runtime.stop();
-  });
-  test('aborts an active local layout before starting the latest rapid Live revision', async () => {
-    let active = 0;
-    let maximumActive = 0;
-    const jobs = [];
-    const prepareCandidate = vi.fn((_config, revision, _generation, signal) => new Promise((resolve, reject) => {
-      active += 1;
-      maximumActive = Math.max(maximumActive, active);
-      let settled = false;
-      const finish = (error) => {
-        if (settled) return;
-        settled = true;
-        active -= 1;
-        if (error) reject(error); else resolve({ revision });
-      };
-      signal?.addEventListener('abort', () => finish(new Error('cancelled layout')), { once: true });
-      jobs.push({ finish });
-    }));
-    const h = makeHarness('left', '11111111-1111-4111-8111-111111111111', { prepareCandidate });
-    await h.runtime.start();
-    h.state(1); h.frame();
-    h.state(2); h.frame();
-    h.state(3); h.frame();
-    const observed = maximumActive;
-    jobs.forEach((job) => job.finish());
+    h.runtime.requestStatus();
+    expect(h.sent().at(-1)).toMatchObject({ type: 'otef_projection_names_status', state: 'stale', requestId: null,
+      installed: { revision: 3, datasetVersion: 'v1', digest: 'a'.repeat(64) } });
+    expect(prepares).toBe(2);
+    resolveRun({ wall: { datasetVersion: 'v1', digest: 'b'.repeat(64), diagnostics: { expected: 1, placed: 1 } } });
     await Promise.resolve(); await Promise.resolve();
-    expect(observed).toBe(1);
-    expect(prepareCandidate).toHaveBeenCalledTimes(3);
+    expect(h.sent()).not.toContainEqual(expect.objectContaining({ type: 'otef_projection_names_status', requestId, state: 'current' }));
     h.runtime.stop();
   });
+
+  test('geometry render failure restores every config consumer after rolling back the paired mesh', async () => {
+    const rollbackGeometry = vi.fn();
+    const consumers = { camera: null, labels: null, pattern: null };
+    const h = makeHarness('left', '11111111-1111-4111-8111-111111111111', {
+      prepareGeometry: async (_config, revision) => ({ revision }), rollbackGeometry, drawCompletion: () => true,
+      applyConfig: (config) => {
+        consumers.camera = structuredClone(config);
+        consumers.labels = structuredClone(config);
+        consumers.pattern = structuredClone(config);
+      },
+    });
+    const first = structuredClone(DEFAULT_PROJECTION_CONFIG);
+    const second = structuredClone(first); second.pre.scale += 0.05;
+    await h.runtime.start(); h.state(1, first); h.frame();
+    await vi.waitFor(() => expect(h.applied).toHaveLength(1)); h.render();
+    h.state(2, second); h.frame();
+    await vi.waitFor(() => expect(h.applied).toHaveLength(2));
+    h.error({ error: new Error('compositor draw failed') });
+    expect(rollbackGeometry).toHaveBeenCalledWith({ revision: 2 }, first, 2);
+    expect(h.applied.at(-1)).toMatchObject({ config: first, revision: 2 });
+    expect(consumers).toEqual({ camera: first, labels: first, pattern: first });
+    h.runtime.stop();
+  });
+
+  test('rejects a wrong-dataset names candidate before commit and keeps rollback available', async () => {
+    let prepares = 0;
+    const commit = vi.fn(); const rollback = vi.fn(); const finalize = vi.fn();
+    const prepareCandidate = vi.fn(async () => ({ wall: { datasetVersion: ++prepares === 1 ? 'v1' : 'v2',
+      digest: (prepares === 1 ? 'a' : 'b').repeat(64), diagnostics: { expected: 2, placed: 2 } } }));
+    const h = makeHarness('left', '11111111-1111-4111-8111-111111111111', {
+      prepareCandidate, commitCandidate: commit, rollbackCandidate: rollback, finalizeCandidate: finalize,
+      drawCompletion: () => true, getDatasetVersion: () => 'v1',
+    });
+    const config = structuredClone(DEFAULT_PROJECTION_CONFIG);
+    await h.runtime.start(); h.state(1, config); h.frame(); h.render();
+    await vi.waitFor(() => expect(prepareCandidate).toHaveBeenCalledOnce()); h.frame(); h.render();
+    await vi.waitFor(() => expect(h.sent().some((x) => x.type === 'otef_projection_names_status' && x.state === 'current')).toBe(true));
+    const requestId = '66666666-6666-4666-8666-666666666666';
+    h.socketListeners.get('otef_projection_names_run')({ type: 'otef_projection_names_run', table: 'otef', requestId,
+      revision: 1, datasetVersion: 'v1', placementIdentity: await projectionPlacementInputIdentity(config) });
+    await vi.waitFor(() => expect(h.sent().some((x) => x.type === 'otef_projection_names_status' && x.requestId === requestId && x.state === 'failed')).toBe(true));
+    expect(commit).toHaveBeenCalledOnce();
+    expect(finalize).toHaveBeenCalledOnce();
+    expect(rollback).toHaveBeenCalledWith(expect.anything(), expect.anything(), 1, { namesOnly: true });
+    h.runtime.stop();
+  });
+
+  test('invalidation cancels a committed names candidate before a later render can confirm it', async () => {
+    let prepares = 0;
+    const prepareCandidate = vi.fn(async () => ({ wall: { datasetVersion: 'v1', digest: (++prepares).toString(16).padStart(64, 'a'), diagnostics: { expected: 2, placed: 2 } } }));
+    const h = makeHarness('left', '11111111-1111-4111-8111-111111111111', {
+      prepareCandidate, commitCandidate: vi.fn(), finalizeCandidate: vi.fn(), drawCompletion: () => true, getDatasetVersion: () => 'v1',
+    });
+    const config = structuredClone(DEFAULT_PROJECTION_CONFIG);
+    await h.runtime.start(); h.state(1, config); h.frame(); h.render();
+    await vi.waitFor(() => expect(prepareCandidate).toHaveBeenCalledOnce()); h.frame(); h.render();
+    await vi.waitFor(() => expect(h.sent().some((x) => x.type === 'otef_projection_names_status' && x.state === 'current')).toBe(true));
+    const requestId = '77777777-7777-4777-8777-777777777777';
+    h.socketListeners.get('otef_projection_names_run')({ type: 'otef_projection_names_run', table: 'otef', requestId,
+      revision: 1, datasetVersion: 'v1', placementIdentity: await projectionPlacementInputIdentity(config) });
+    await vi.waitFor(() => expect(prepareCandidate).toHaveBeenCalledTimes(2));
+    h.runtime.invalidate(); h.render();
+    await Promise.resolve(); await Promise.resolve();
+    expect(h.sent()).not.toContainEqual(expect.objectContaining({ type: 'otef_projection_names_status', requestId, state: 'current' }));
+    h.runtime.stop();
+  });
+
+  test('cold geometry applies without dataset identity and retries one name build when identity arrives', async () => {
+    let version = null;
+    const prepareCandidate = vi.fn(async () => ({ wall: { datasetVersion: 'v1', digest: 'c'.repeat(64), diagnostics: { expected: 1, placed: 1 } } }));
+    const h = makeHarness('left', '11111111-1111-4111-8111-111111111111', { prepareCandidate, drawCompletion: () => true, getDatasetVersion: () => version });
+    await h.runtime.start(); h.state(1); h.frame(); h.render();
+    await vi.waitFor(() => expect(h.sent().some((x) => x.type === 'otef_projection_names_status' && /Waiting/.test(x.error || ''))).toBe(true));
+    expect(h.applied).toHaveLength(1);
+    expect(prepareCandidate).not.toHaveBeenCalled();
+    version = 'v1';
+    expect(h.runtime.datasetChanged()).toBe(true);
+    await vi.waitFor(() => expect(prepareCandidate).toHaveBeenCalledOnce());
+    h.frame(); h.render();
+    await vi.waitFor(() => expect(h.sent().some((x) => x.type === 'otef_projection_names_status' && x.state === 'current')).toBe(true));
+    h.socketListeners.get('disconnect')(); h.socketListeners.get('connect')(); h.runtime.requestStatus();
+    expect(prepareCandidate).toHaveBeenCalledOnce();
+    h.runtime.stop();
+  });
+
+  test('a Run target is rechecked after async identity calculation before placement starts', async () => {
+    let prepares = 0;
+    const prepareCandidate = vi.fn(async () => ({ wall: { datasetVersion: 'v1', digest: (++prepares).toString(16).padStart(64, 'a'), diagnostics: { expected: 1, placed: 1 } } }));
+    const h = makeHarness('left', '11111111-1111-4111-8111-111111111111', { prepareCandidate, drawCompletion: () => true, getDatasetVersion: () => 'v1' });
+    const first = structuredClone(DEFAULT_PROJECTION_CONFIG);
+    await h.runtime.start(); h.state(1, first); h.frame(); h.render();
+    await vi.waitFor(() => expect(prepareCandidate).toHaveBeenCalledOnce()); h.frame(); h.render();
+    await vi.waitFor(() => expect(h.sent().some((x) => x.type === 'otef_projection_names_status' && x.state === 'current')).toBe(true));
+    const firstIdentity = await projectionPlacementInputIdentity(first);
+    const second = structuredClone(first); second.pre.scale += 0.02;
+    const secondIdentity = await projectionPlacementInputIdentity(second);
+    const deferredDigests = [];
+    vi.stubGlobal('crypto', { subtle: { digest: () => new Promise((resolve) => deferredDigests.push(resolve)) } });
+    try {
+      const requestId = '88888888-8888-4888-8888-888888888888';
+      h.socketListeners.get('otef_projection_names_run')({ type: 'otef_projection_names_run', table: 'otef', requestId,
+        revision: 1, datasetVersion: 'v1', placementIdentity: firstIdentity });
+      await vi.waitFor(() => expect(deferredDigests).toHaveLength(1));
+      h.state(2, second); h.frame(); h.render();
+      await vi.waitFor(() => expect(deferredDigests).toHaveLength(2));
+      deferredDigests[1](Uint8Array.from(secondIdentity.match(/../g), (byte) => Number.parseInt(byte, 16)).buffer);
+      await Promise.resolve();
+      deferredDigests[0](Uint8Array.from(firstIdentity.match(/../g), (byte) => Number.parseInt(byte, 16)).buffer);
+      await Promise.resolve(); await Promise.resolve();
+      expect(prepareCandidate).toHaveBeenCalledOnce();
+      expect(h.sent()).not.toContainEqual(expect.objectContaining({ type: 'otef_projection_names_status', requestId, state: 'rebuilding' }));
+    } finally { vi.unstubAllGlobals(); }
+    h.runtime.stop();
+  });
+
+  test('run candidate target is rechecked after its async identity hash before commit', async () => {
+    let prepares = 0; let resolveCandidate;
+    const prepareCandidate = vi.fn(() => {
+      if (++prepares === 1) return Promise.resolve({ wall: { datasetVersion: 'v1', digest: 'a'.repeat(64), diagnostics: { expected: 1, placed: 1 } } });
+      return new Promise((resolve) => { resolveCandidate = resolve; });
+    });
+    const commitCandidate = vi.fn(); const rollbackCandidate = vi.fn();
+    const h = makeHarness('left', '11111111-1111-4111-8111-111111111111', {
+      prepareCandidate, commitCandidate, rollbackCandidate, drawCompletion: () => true, getDatasetVersion: () => 'v1',
+    });
+    const first = structuredClone(DEFAULT_PROJECTION_CONFIG);
+    await h.runtime.start(); h.state(1, first); h.frame(); h.render();
+    await vi.waitFor(() => expect(prepareCandidate).toHaveBeenCalledOnce()); h.frame(); h.render();
+    await vi.waitFor(() => expect(h.sent().some((x) => x.type === 'otef_projection_names_status' && x.state === 'current')).toBe(true));
+    const firstIdentity = await projectionPlacementInputIdentity(first);
+    const second = structuredClone(first); second.pre.scale += 0.03;
+    const secondIdentity = await projectionPlacementInputIdentity(second);
+    const deferredDigests = [];
+    vi.stubGlobal('crypto', { subtle: { digest: () => new Promise((resolve) => deferredDigests.push(resolve)) } });
+    const bytes = (hash) => Uint8Array.from(hash.match(/../g), (byte) => Number.parseInt(byte, 16)).buffer;
+    try {
+      h.socketListeners.get('otef_projection_names_run')({ type: 'otef_projection_names_run', table: 'otef',
+        requestId: '99999999-9999-4999-8999-999999999999', revision: 1, datasetVersion: 'v1', placementIdentity: firstIdentity });
+      await vi.waitFor(() => expect(deferredDigests).toHaveLength(1)); deferredDigests[0](bytes(firstIdentity));
+      await vi.waitFor(() => expect(prepareCandidate).toHaveBeenCalledTimes(2));
+      resolveCandidate({ wall: { datasetVersion: 'v1', digest: 'b'.repeat(64), diagnostics: { expected: 1, placed: 1 } } });
+      await vi.waitFor(() => expect(deferredDigests).toHaveLength(2));
+      h.state(2, second); h.frame(); h.render();
+      await vi.waitFor(() => expect(deferredDigests).toHaveLength(3)); deferredDigests[2](bytes(secondIdentity));
+      await Promise.resolve(); deferredDigests[1](bytes(firstIdentity));
+      await Promise.resolve(); await Promise.resolve();
+      expect(commitCandidate).toHaveBeenCalledOnce();
+      expect(h.sent()).not.toContainEqual(expect.objectContaining({ type: 'otef_projection_names_status', requestId: '99999999-9999-4999-8999-999999999999', state: 'current' }));
+    } finally { vi.unstubAllGlobals(); }
+    h.runtime.stop();
+  });
+
+  test('geometry superseding the completed candidate render prevents finalize and current status', async () => {
+    let prepares = 0;
+    const prepareCandidate = vi.fn(async () => ({ wall: { datasetVersion: 'v1', digest: (++prepares).toString(16).padStart(64, 'a'), diagnostics: { expected: 1, placed: 1 } } }));
+    const commitCandidate = vi.fn(); const rollbackCandidate = vi.fn(); const finalizeCandidate = vi.fn();
+    const h = makeHarness('left', '11111111-1111-4111-8111-111111111111', {
+      prepareCandidate, commitCandidate, rollbackCandidate, finalizeCandidate, drawCompletion: () => true, getDatasetVersion: () => 'v1',
+    });
+    const config = structuredClone(DEFAULT_PROJECTION_CONFIG);
+    await h.runtime.start(); h.state(1, config); h.frame(); h.render();
+    await vi.waitFor(() => expect(prepareCandidate).toHaveBeenCalledOnce()); h.frame(); h.render();
+    await vi.waitFor(() => expect(h.sent().some((x) => x.type === 'otef_projection_names_status' && x.state === 'current')).toBe(true));
+    const requestId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    h.socketListeners.get('otef_projection_names_run')({ type: 'otef_projection_names_run', table: 'otef', requestId,
+      revision: 1, datasetVersion: 'v1', placementIdentity: await projectionPlacementInputIdentity(config) });
+    await vi.waitFor(() => expect(prepareCandidate).toHaveBeenCalledTimes(2));
+    let superseded = false;
+    h.map.on('render', () => {
+      if (superseded) return;
+      superseded = true;
+      const next = structuredClone(config); next.outputs.right.post.scale += 0.01;
+      h.state(2, next); h.frame(); h.render();
+    });
+    h.render();
+    await Promise.resolve(); await Promise.resolve();
+    expect(finalizeCandidate).toHaveBeenCalledOnce();
+    expect(rollbackCandidate).toHaveBeenCalledWith(expect.anything(), expect.anything(), 1, { namesOnly: true });
+    expect(h.sent()).not.toContainEqual(expect.objectContaining({ type: 'otef_projection_names_status', requestId, state: 'current' }));
+    h.runtime.stop();
+  });
+
   test("zoom-clamped revision rolls camera, mask, and image back and reports failure before recovery", async () => {
     const { map, controller, image, container, canvas, getCamera, getEffective } = realSpanAndNames();
     let listener;

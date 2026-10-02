@@ -240,6 +240,31 @@ test("closed utility disclosures do not block graph or warp pointerdown handlers
   expect(warpPointerdown).toBe(true);
 });
 
+test("Run names force-sends the applied config only after calibration applies", () => {
+  const { root, view, update } = makeView({ coarse: false });
+  const editor = createWarpEditor({ config: DEFAULT_PROJECTION_CONFIG, output: "left" });
+  update({ selectedNode: "left-keystone", warpStates: { left: { ...editor.getState(), config: editor.getConfig(), handles: editor.getControlPoints() } } });
+  root.querySelector(".config-node[data-node='left-keystone'] .warp-open-button").click();
+  const frame = root.querySelector(".warp-editor-frame");
+  const postMessage = vi.spyOn(frame.contentWindow, "postMessage");
+  window.dispatchEvent(new MessageEvent("message", { data: { type: "otef_projection_preview_ready", output: "left" }, origin: window.location.origin, source: frame.contentWindow }));
+  expect(postMessage).toHaveBeenCalledTimes(1);
+  expect(frame.style.visibility).toBe("hidden");
+  expect(view.sendRunNamesPreview(DEFAULT_PROJECTION_CONFIG)).toBe(false);
+  const geometryRequestId = postMessage.mock.calls[0][0].requestId;
+  window.dispatchEvent(new MessageEvent("message", { data: { type: "otef_projection_preview_applied", output: "left", requestId: geometryRequestId, success: true }, origin: window.location.origin, source: frame.contentWindow }));
+  postMessage.mockClear();
+  expect(frame.style.visibility).toBe("visible");
+  expect(view.sendRunNamesPreview(DEFAULT_PROJECTION_CONFIG)).toBe(true);
+  expect(view.sendRunNamesPreview(DEFAULT_PROJECTION_CONFIG)).toBe(true);
+  expect(postMessage.mock.calls.map(([message]) => message)).toEqual([
+    expect.objectContaining({ type: "otef_projection_preview_config", runNames: true, config: DEFAULT_PROJECTION_CONFIG, requestId: 2 }),
+    expect.objectContaining({ type: "otef_projection_preview_config", runNames: true, config: DEFAULT_PROJECTION_CONFIG, requestId: 3 }),
+  ]);
+  window.dispatchEvent(new MessageEvent("message", { data: { type: "otef_projection_preview_applied", output: "left", requestId: 3, success: true }, origin: window.location.origin, source: frame.contentWindow }));
+  expect(frame.style.visibility).toBe("visible");
+});
+
 test("touch Move view enables one-finger preview panning", () => {
   const { root, onWarpAction, onWarpPointer, update } = makeView({ coarse: true });
   const editor = createWarpEditor({ config: DEFAULT_PROJECTION_CONFIG, output: "left" });
@@ -322,7 +347,7 @@ test("workstation actions remain unavailable on touch", () => {
   const { root, view, onOutputAction } = makeView();
   const panel = root.querySelector(".config-disclosure-workstation");
   expect(panel.textContent).toContain("workstation-only");
-  for (const control of [view.controls.outputIdentify, view.controls.outputAssign, view.controls.outputOpenBoth, view.controls.outputCloseBoth]) {
+  for (const control of [view.controls.outputRefresh, view.controls.outputIdentify, view.controls.outputAssign, view.controls.outputOpenBoth, view.controls.outputOpenLeft, view.controls.outputOpenRight, view.controls.outputCloseBoth]) {
     expect(control.disabled).toBe(true);
     control.click();
   }
