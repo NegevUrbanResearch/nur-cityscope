@@ -19,16 +19,35 @@ export const ALARM_COUNT_RADIUS_STOPS = NLI_VISUAL_TOKENS.alarmRadiusStops;
 const ALARM_LAYER_ID_PREFIX = INVESTIGATION_ALARMS_FULL_ID.replace(/\./g, "__");
 const ALARM_CIRCLE_LAYER_ID = "nli-investigation-alarm-circles";
 const ALARM_RIPPLE_LAYER_ID = "nli-investigation-alarm-ripple";
+const ALARM_EVENT_RIPPLE_LAYER_ID = "nli-investigation-alarm-ripple-event";
+const ALARM_EVENT_RIPPLE_2_LAYER_ID = "nli-investigation-alarm-ripple-event-2";
+const ALARM_OWNED_LAYER_IDS = [
+  ALARM_EVENT_RIPPLE_2_LAYER_ID,
+  ALARM_EVENT_RIPPLE_LAYER_ID,
+  ALARM_RIPPLE_LAYER_ID,
+  ALARM_CIRCLE_LAYER_ID,
+];
 const ALARM_POINTS_SOURCE_ID = "nli-investigation-alarm-points";
 const ALARM_COUNT_CAP = 77;
 const ALARM_PULSE_MS = NLI_VISUAL_TOKENS.alarmRippleDurationMs;
-const ALARM_RIPPLE_LOOP_MS = 2000;
+const ALARM_EVENT_MS = NLI_VISUAL_TOKENS.alarmEventDurationMs;
+const ALARM_RIPPLE_LOOP_MS = NLI_VISUAL_TOKENS.alarmChorusLoopMs;
 const ALARM_RADIUS_HIDDEN = 1;
 const ALARM_FLASH_PULSE_PX = 3;
-const ALARM_RIPPLE_EXPANSION_PX = 50;
+const ALARM_RIPPLE_EXPANSION_PX = NLI_VISUAL_TOKENS.alarmChorusExpansionPx;
 const ALARM_OPACITY_SETTLED = 0.3;
 const ALARM_OPACITY_ACTIVE = 0.55;
-const ALARM_RIPPLE_OPACITY = 0.4;
+const ALARM_RIPPLE_OPACITY = NLI_VISUAL_TOKENS.alarmChorusOpacity;
+const ALARM_EVENT_RING_MS = 1400;
+const ALARM_EVENT_SECOND_DELAY_MS = 220;
+const ALARM_EVENT_SECOND_RING_MS = ALARM_EVENT_MS - ALARM_EVENT_SECOND_DELAY_MS;
+const ALARM_EVENT_EXPANSION_PX = 36;
+const ALARM_EVENT_SECOND_EXPANSION_PX = 42;
+const ALARM_EVENT_OPACITY = 0.85;
+const ALARM_EVENT_SECOND_OPACITY = 0.5;
+const ALARM_EVENT_STROKE_WIDTH = 2.4;
+const ALARM_EVENT_SECOND_STROKE_WIDTH = 1.6;
+const ALARM_CHORUS_STROKE_WIDTH = 1.2;
 const ALARM_PAINT_KEYS = ["circle-radius", "circle-color", "circle-opacity", "circle-stroke-width"];
 
 function isFiniteMinute(value) {
@@ -94,11 +113,43 @@ function rippleExpansionPx(loopMs) {
 }
 
 function rippleStrokeOpacity(loopMs) {
-  return ALARM_RIPPLE_OPACITY * (1 - loopMs / ALARM_RIPPLE_LOOP_MS);
+  const phase = loopMs / ALARM_RIPPLE_LOOP_MS;
+  return ALARM_RIPPLE_OPACITY * Math.sin(Math.PI * phase);
+}
+
+function rippleLayerPaint(strokeWidth) {
+  return {
+    "circle-radius": 0,
+    "circle-color": NLI_VISUAL_TOKENS.alarmYellow,
+    "circle-opacity": 0,
+    "circle-stroke-color": NLI_VISUAL_TOKENS.alarmYellow,
+    "circle-stroke-opacity": 0,
+    "circle-stroke-opacity-transition": { duration: 0, delay: 0 },
+    "circle-stroke-width": strokeWidth,
+  };
+}
+
+function eventRing(elapsedMs, delayMs, durationMs, expandPx, peakOpacity) {
+  const t = Number(elapsedMs) - delayMs;
+  if (!Number.isFinite(t) || t < 0 || t >= durationMs) return { expansion: 0, opacity: 0 };
+  const phase = t / durationMs;
+  return {
+    expansion: expandPx * phase,
+    opacity: peakOpacity * Math.sin(Math.PI * phase),
+  };
 }
 
 function overlayCount() {
   return ["coalesce", ["get", "count"], 0];
+}
+
+function countClockFromFrame(frame) {
+  const raw = frame?.activeBeat;
+  if (raw != null && Number.isFinite(Number(raw))) return Number(raw);
+  if (frame?.narrative?.phase !== "ended") return null;
+  const completed = Array.isArray(frame?.completedBeats) ? frame.completedBeats : [];
+  const last = completed[completed.length - 1];
+  return last != null && Number.isFinite(Number(last)) ? Number(last) : null;
 }
 
 function overlayOnset() {
@@ -152,7 +203,7 @@ function safelyGetLayer(map, id) {
 }
 
 function removeOwned(map) {
-  for (const id of [ALARM_RIPPLE_LAYER_ID, ALARM_CIRCLE_LAYER_ID]) {
+  for (const id of ALARM_OWNED_LAYER_IDS) {
     try { if (safelyGetLayer(map, id) && typeof map.removeLayer === "function") map.removeLayer(id); } catch (_) { /* style can disappear */ }
   }
   try { if (safelyGetSource(map, ALARM_POINTS_SOURCE_ID) && typeof map.removeSource === "function") map.removeSource(ALARM_POINTS_SOURCE_ID); } catch (_) { /* style can disappear */ }
@@ -280,7 +331,7 @@ export function createInvestigationAlarmRenderer(map, profile = NLI_DISPLAY_PROF
   }
 
   function ownedAlarmLayersMissing() {
-    return !safelyGetLayer(map, ALARM_CIRCLE_LAYER_ID) || !safelyGetLayer(map, ALARM_RIPPLE_LAYER_ID);
+    return ALARM_OWNED_LAYER_IDS.some((id) => !safelyGetLayer(map, id));
   }
 
   function mount() {
@@ -310,15 +361,22 @@ export function createInvestigationAlarmRenderer(map, profile = NLI_DISPLAY_PROF
       id: ALARM_RIPPLE_LAYER_ID,
       type: "circle",
       source: ALARM_POINTS_SOURCE_ID,
-      filter: [">", overlayCount(), 0],
-      paint: {
-        "circle-radius": 0,
-        "circle-color": NLI_VISUAL_TOKENS.alarmYellow,
-        "circle-opacity": 0,
-        "circle-stroke-color": NLI_VISUAL_TOKENS.alarmYellow,
-        "circle-stroke-opacity": 0,
-        "circle-stroke-width": 1.6,
-      },
+      filter: ["all", [">", overlayCount(), 0], ["!", overlayOnset()]],
+      paint: rippleLayerPaint(ALARM_CHORUS_STROKE_WIDTH),
+    }, { type: "geojson", data: featureCollection([]) }, beforeId);
+    addSourceAndLayer(map, ALARM_POINTS_SOURCE_ID, {
+      id: ALARM_EVENT_RIPPLE_LAYER_ID,
+      type: "circle",
+      source: ALARM_POINTS_SOURCE_ID,
+      filter: overlayOnset(),
+      paint: rippleLayerPaint(ALARM_EVENT_STROKE_WIDTH),
+    }, { type: "geojson", data: featureCollection([]) }, beforeId);
+    addSourceAndLayer(map, ALARM_POINTS_SOURCE_ID, {
+      id: ALARM_EVENT_RIPPLE_2_LAYER_ID,
+      type: "circle",
+      source: ALARM_POINTS_SOURCE_ID,
+      filter: overlayOnset(),
+      paint: rippleLayerPaint(ALARM_EVENT_SECOND_STROKE_WIDTH),
     }, { type: "geojson", data: featureCollection([]) }, beforeId);
     mounted = true;
     completeInvestigationOverlayMount(map, INVESTIGATION_ALARMS_FULL_ID);
@@ -330,17 +388,16 @@ export function createInvestigationAlarmRenderer(map, profile = NLI_DISPLAY_PROF
     const features = Array.isArray(data) ? data : Array.isArray(data.alarmFeatures) ? data.alarmFeatures : [];
     const onset = frame?.alarmOnset || null;
     const onsetId = frame?.alarmOnsetId || onset?.id || null;
-    const elapsedMs = Number.isFinite(Number(onset?.elapsedMs)) ? Math.max(0, Number(onset.elapsedMs)) : ALARM_PULSE_MS;
-    const onsetActive = !!onsetId && elapsedMs < ALARM_PULSE_MS &&
+    const elapsedMs = Number.isFinite(Number(onset?.elapsedMs)) ? Math.max(0, Number(onset.elapsedMs)) : ALARM_EVENT_MS;
+    const onsetActive = !!onsetId && elapsedMs < ALARM_EVENT_MS &&
       (onsetId === activeOnsetId || !seenOnsets.has(onsetId));
     if (onsetActive) {
       activeOnsetId = onsetId;
       seenOnsets.add(onsetId);
-    } else if (onsetId !== activeOnsetId || elapsedMs >= ALARM_PULSE_MS) {
+    } else if (onsetId !== activeOnsetId || elapsedMs >= ALARM_EVENT_MS) {
       activeOnsetId = null;
     }
-    const rawActiveBeat = frame?.activeBeat;
-    const activeBeat = rawActiveBeat != null && Number.isFinite(Number(rawActiveBeat)) ? Number(rawActiveBeat) : null;
+    const activeBeat = countClockFromFrame(frame);
     const completed = Array.isArray(frame?.completedBeats) ? frame.completedBeats : [];
     const hasExplicitWindowStart = Object.prototype.hasOwnProperty.call(frame || {}, "alarmOnsetWindowStart");
     const explicitWindowStart = frame?.alarmOnsetWindowStart;
@@ -380,22 +437,35 @@ export function createInvestigationAlarmRenderer(map, profile = NLI_DISPLAY_PROF
     }
     lastFrame = frame;
     lastData = data;
-    const allowFlash = onsetActive;
+    const allowFlash = onsetActive && elapsedMs < ALARM_PULSE_MS;
     const basePaint = alarmCirclePaint(elapsedMs, allowFlash, resolvedProfile);
     const settled = interpolateStopsExpression(alarmCountInputExpr(), ALARM_COUNT_RADIUS_STOPS, radiusMultiplier);
     const loopMs = rippleLoopMs(frame?.nowMs);
     const allowRipple = frame?.motionMode !== "reduced";
-    const expansion = allowRipple ? rippleExpansionPx(loopMs) : 0;
-    const rippleRadius = ["case", [">", overlayCount(), 0], ["+", settled, expansion], 0];
+    const chorusExpansion = allowRipple ? rippleExpansionPx(loopMs) : 0;
+    const firstEvent = allowRipple && onsetActive
+      ? eventRing(elapsedMs, 0, ALARM_EVENT_RING_MS, ALARM_EVENT_EXPANSION_PX, ALARM_EVENT_OPACITY)
+      : { expansion: 0, opacity: 0 };
+    const secondEvent = allowRipple && onsetActive
+      ? eventRing(elapsedMs, ALARM_EVENT_SECOND_DELAY_MS, ALARM_EVENT_SECOND_RING_MS, ALARM_EVENT_SECOND_EXPANSION_PX, ALARM_EVENT_SECOND_OPACITY)
+      : { expansion: 0, opacity: 0 };
+    const chorusRadius = ["case", [">", overlayCount(), 0], ["+", settled, chorusExpansion], 0];
+    const firstEventRadius = ["case", [">", overlayCount(), 0], ["+", settled, firstEvent.expansion], 0];
+    const secondEventRadius = ["case", [">", overlayCount(), 0], ["+", settled, secondEvent.expansion], 0];
     if (typeof map?.setPaintProperty === "function") {
       try {
         setOwnedPaint(ALARM_CIRCLE_LAYER_ID, "circle-radius", basePaint.radius);
         setOwnedPaint(ALARM_CIRCLE_LAYER_ID, "circle-color", NLI_VISUAL_TOKENS.alarmYellow);
         setOwnedPaint(ALARM_CIRCLE_LAYER_ID, "circle-opacity", basePaint.opacity);
-        setOwnedPaint(ALARM_RIPPLE_LAYER_ID, "circle-radius", rippleRadius);
-        const opacity = allowRipple ? rippleStrokeOpacity(loopMs) : 0;
+        setOwnedPaint(ALARM_RIPPLE_LAYER_ID, "circle-radius", chorusRadius);
         setOwnedPaint(ALARM_RIPPLE_LAYER_ID, "circle-opacity", 0);
-        setOwnedPaint(ALARM_RIPPLE_LAYER_ID, "circle-stroke-opacity", opacity);
+        setOwnedPaint(ALARM_RIPPLE_LAYER_ID, "circle-stroke-opacity", allowRipple ? rippleStrokeOpacity(loopMs) : 0);
+        setOwnedPaint(ALARM_EVENT_RIPPLE_LAYER_ID, "circle-radius", firstEventRadius);
+        setOwnedPaint(ALARM_EVENT_RIPPLE_LAYER_ID, "circle-opacity", 0);
+        setOwnedPaint(ALARM_EVENT_RIPPLE_LAYER_ID, "circle-stroke-opacity", firstEvent.opacity);
+        setOwnedPaint(ALARM_EVENT_RIPPLE_2_LAYER_ID, "circle-radius", secondEventRadius);
+        setOwnedPaint(ALARM_EVENT_RIPPLE_2_LAYER_ID, "circle-opacity", 0);
+        setOwnedPaint(ALARM_EVENT_RIPPLE_2_LAYER_ID, "circle-stroke-opacity", secondEvent.opacity);
       } catch (_) { /* style can disappear between reconciliation calls */ }
     }
   }
@@ -404,7 +474,7 @@ export function createInvestigationAlarmRenderer(map, profile = NLI_DISPLAY_PROF
     if (disposed) return;
     if (resetDone) return;
     resetDone = true;
-    const overlayIds = [ALARM_CIRCLE_LAYER_ID, ALARM_RIPPLE_LAYER_ID].filter((id) => safelyGetLayer(map, id));
+    const overlayIds = ALARM_OWNED_LAYER_IDS.filter((id) => safelyGetLayer(map, id));
     const generation = ++hideGeneration;
     const finish = () => {
       if (generation !== hideGeneration) return;

@@ -666,7 +666,7 @@ describe("Task 8 investigation timeline coordinator", () => {
     }];
     await syncInvestigationTimelineToMap(map, stableClock, groups, {
       featuresById: { "nli.alarms": alarmFeatures },
-      now: () => 900,
+      now: () => 1800,
     });
     const first = map.getSource("nli-investigation-alarm-points").data.features;
     expect(first[0].properties.onset).toBe(false);
@@ -679,7 +679,7 @@ describe("Task 8 investigation timeline coordinator", () => {
     map.emit("style.load");
     await syncInvestigationTimelineToMap(map, stableClock, groups, {
       featuresById: { "nli.alarms": alarmFeatures },
-      now: () => 900,
+      now: () => 1800,
     });
     const after = map.getSource("nli-investigation-alarm-points").data.features;
     expect(after[0].properties.onset).toBe(false);
@@ -724,7 +724,7 @@ describe("Task 8 investigation timeline coordinator", () => {
     ]));
   });
 
-  it("keeps one alarm onset through manual RAF samples until 900ms, then ends it once", async () => {
+  it("keeps one alarm onset through manual RAF samples until 1800ms, then ends it once", async () => {
     const map = mapWithHostLayers();
     let now = 0;
     const clock = playNliClock(idleNliClock(), [INVESTIGATION_ALARMS_FULL_ID], [400], 0);
@@ -745,15 +745,15 @@ describe("Task 8 investigation timeline coordinator", () => {
     now = 66;
     expect(map.driveAnimationFrame(66)).toBe(true);
     expect(onset()).toBe(true);
-    now = 899;
-    expect(map.driveAnimationFrame(899)).toBe(true);
+    now = 1799;
+    expect(map.driveAnimationFrame(1799)).toBe(true);
     expect(onset()).toBe(true);
-    now = 900;
-    expect(map.driveAnimationFrame(900)).toBe(true);
+    now = 1800;
+    expect(map.driveAnimationFrame(1800)).toBe(true);
     expect(onset()).toBe(false);
     const rowsAtEnd = map.calls.filter((call) => call.method === "setData" && call.id === "nli-investigation-alarm-points").length;
-    now = 966;
-    expect(map.driveAnimationFrame(966)).toBe(true);
+    now = 1866;
+    expect(map.driveAnimationFrame(1866)).toBe(true);
     expect(onset()).toBe(false);
     expect(map.calls.filter((call) => call.method === "setData" && call.id === "nli-investigation-alarm-points").length).toBe(rowsAtEnd);
   });
@@ -788,19 +788,19 @@ describe("Task 8 investigation timeline coordinator", () => {
     expect(ringOpacity()).toBeGreaterThan(0);
     expect(map.pendingAnimationFrameCount()).toBe(1);
 
-    now = 899;
-    expect(map.driveAnimationFrame(899)).toBe(true);
+    now = 1799;
+    expect(map.driveAnimationFrame(1799)).toBe(true);
     expect(onset()).toBe(true);
     expect(ringOpacity()).toBeGreaterThan(0);
 
-    now = 900;
-    expect(map.driveAnimationFrame(900)).toBe(true);
+    now = 1800;
+    expect(map.driveAnimationFrame(1800)).toBe(true);
     expect(onset()).toBe(false);
     expect(ringOpacity()).toBeGreaterThan(0);
     expect(map.pendingAnimationFrameCount()).toBe(1);
 
-    now = 966;
-    expect(map.driveAnimationFrame(966)).toBe(true);
+    now = 1866;
+    expect(map.driveAnimationFrame(1866)).toBe(true);
     expect(onset()).toBe(false);
     expect(ringOpacity()).toBeGreaterThan(0);
     expect(map.pendingAnimationFrameCount()).toBe(1);
@@ -850,19 +850,19 @@ describe("Task 8 investigation timeline coordinator", () => {
       .map((call) => call.data.features[0]?.properties?.onset);
     expect(remountOnsets()).toEqual([true]);
 
-    now = 899;
-    expect(map.driveAnimationFrame(899)).toBe(true);
+    now = 1799;
+    expect(map.driveAnimationFrame(1799)).toBe(true);
     expect(onset()).toBe(true);
     expect(remountOnsets()).toEqual([true]);
 
-    now = 900;
-    expect(map.driveAnimationFrame(900)).toBe(true);
+    now = 1800;
+    expect(map.driveAnimationFrame(1800)).toBe(true);
     expect(onset()).toBe(false);
     expect(remountOnsets()).toEqual([true, false]);
     expect(map.pendingAnimationFrameCount()).toBe(1);
 
-    now = 966;
-    expect(map.driveAnimationFrame(966)).toBe(true);
+    now = 1866;
+    expect(map.driveAnimationFrame(1866)).toBe(true);
     expect(onset()).toBe(false);
     expect(remountOnsets()).toEqual([true, false]);
   });

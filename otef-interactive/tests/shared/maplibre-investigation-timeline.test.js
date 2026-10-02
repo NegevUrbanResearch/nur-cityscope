@@ -1623,7 +1623,7 @@ describe("syncInvestigationTimelineToMap", () => {
     await syncInvestigationTimelineToMap(map, clock, groups, deps);
     expect(flashingCities()).toEqual(["B"]);
 
-    now = 10_000 + 1600;
+    now = 10_000 + 1800;
     rafCb();
     expect(flashingCities()).toEqual([]);
 
@@ -2839,6 +2839,22 @@ describe("syncInvestigationTimelineToMap", () => {
     expect(expression).toContain("1");
     expect(expression).toContain("עיר א");
     expect(dottedOrientationPaintCalls(map)).toEqual([]);
+    disposeInvestigationTimelineForMap(map);
+  });
+
+  it("ended windowed playback keeps play fade instead of restoring Home opacity", async () => {
+    const map = makeOrientationMap();
+    const deps = orientationDeps();
+    const playing = playClock([INVESTIGATION_POLYGONS_FULL_ID], [400]);
+    await syncInvestigationTimelineToMap(map, playing, polygonOnlyGroups(), deps);
+    await syncInvestigationTimelineToMap(map, endNliClock(playing), polygonOnlyGroups(), deps);
+
+    expect(map.getPaintProperty(YISHUVIM_FILL_ID, "fill-opacity")).toBe(0.08);
+    expect(map.getPaintProperty(YISHUVIM_LINE_ID, "line-opacity")).toBe(0.08);
+    expect(map.getPaintProperty(LOCATIONS_LINE_ID, "line-opacity")).toBe(0.08);
+    expect(map.getPaintProperty(SHEMOT_LABEL_ID, "text-opacity")).toEqual(
+      ["case", ["in", ["get", "cityname"], ["literal", ["עיר א"]]], 1, 0.18],
+    );
     disposeInvestigationTimelineForMap(map);
   });
 
