@@ -2,6 +2,7 @@ import { describe, expect, test, vi } from "vitest";
 import { DEFAULT_PROJECTION_CONFIG as DEFAULTS } from "../../frontend/src/shared/projection-config-schema.js";
 import { projectionPlacementInputIdentity } from "../../frontend/src/projection/projection-names-run.js";
 import { createProjectionConfigClient } from "../../frontend/src/shared/projection-config-client.js";
+import * as configView from "../../frontend/src/projection-config/config-view.js";
 import { createIdentityProjectionMesh } from "../../frontend/src/shared/projection-warp-geometry.js";
 import { sha256Hex } from "../../frontend/src/shared/sha256-hex.js";
 import { projectionCatalog, deferred, response } from '../fixtures/projection-catalog.js';
@@ -34,7 +35,8 @@ function element(tag = "div") {
     dispatch(type, detail = {}) { for (const handler of this.listeners?.[type] || []) handler({ currentTarget: this, target: this, ...detail }); },
     querySelectorAll() { return []; },
     querySelector() { return null; },
-    classList: { toggle() {} },
+    classList: { toggle() {}, add() {} },
+    focus() {},
   };
 }
 
@@ -145,6 +147,224 @@ function replacementHarness() {
 }
 
 describe("projection config controller", () => {
+  test('controller independently checks exact canonical baselines, resolved targets and override', () => {
+    const root = element('main'); root.ownerDocument = documentStub(); const client = fakeClient();
+    const factory = vi.spyOn(configView, 'createProjectionConfigView'); const api = mountProjectionConfig(root, { client });
+    const onField = factory.mock.calls.at(-1)[1].onField;
+    try {
+      const initial = clone(client.getState().draft); initial.pre.scale = 1.23456; client.report({ draft: initial });
+      const metadata = { baseValue: 1.23456, resolvedPath: 'pre.scale' };
+      const latest = clone(initial); latest.pre.scale = 2; client.report({ draft: latest });
+      expect(onField('pre.scale', '1.5', 'number', metadata)).toBe(false); expect(client.setDraft).not.toHaveBeenCalled(); expect(client.getState().draft).toEqual(latest);
+      expect(find(root, node => node.dataset?.errorFor === 'pre.scale').textContent).toMatch(/changed while editing/i);
+      expect(onField('pre.scale', '1.5', 'number', { ...metadata, override: true })).toBe(true); expect(client.getState().draft.pre.scale).toBe(1.5);
+      const target = clone(client.getState().draft); target.namesWall.activeMode = 'model'; client.report({ draft: target }); client.setDraft.mockClear();
+      expect(onField('namesWall.requestedFontPx', '20', 'number', { baseValue: target.namesWall.profiles.wall.requestedFontPx, resolvedPath: 'namesWall.profiles.wall.requestedFontPx', override: true })).toBe(false);
+      expect(client.getState().draft).toEqual(target); expect(client.setDraft).not.toHaveBeenCalled();
+      const current = clone(target); current.pre.tx = 0.2; client.report({ draft: current });
+      expect(onField('pre.scale', '1.6', 'number', { baseValue: 1.5, resolvedPath: 'pre.scale' })).toBe(true); expect(client.getState().draft.pre.tx).toBe(0.2);
+      client.setDraft.mockClear(); expect(onField('pre.scale', '1.6', 'number', { baseValue: 1.6, resolvedPath: 'pre.scale' })).toBe(true); expect(client.setDraft).not.toHaveBeenCalled();
+    } finally { api.dispose(); factory.mockRestore(); }
+  });
+  test.each([false, true])('real-client foreign replacement preserves scalar text safely (edited=%s)', async (edited) => {
+    const root = element('main'); root.ownerDocument = documentStub();
+    const h = replacementHarness(); h.snapshot.config.pre.scale = 1.23456;
+    const api = mountProjectionConfig(root, { client: h.client });
+    try {
+      h.respond(h.snapshot); await vi.waitFor(() => expect(h.client.getState().hydrating).toBe(false)); h.client.setLive(false);
+      const input = find(root, node => node.dataset?.field === 'pre.scale' && node.dataset.input === 'number');
+      input.dispatch('focus');
+      if (edited) { input.value = '1.5'; input.dispatch('input'); }
+      const next = clone(h.snapshot); next.revision = 1; next.config.pre.scale = 2; h.foreign(next);
+      input.dispatch('blur');
+      expect(h.client.getState().draft.pre.scale).toBe(2);
+      expect(h.client.getState().hasLocalDraft).toBe(false);
+      if (edited) {
+        expect(find(root, node => node.dataset?.errorFor === 'pre.scale').textContent).toMatch(/changed while editing/i);
+        find(root, node => node.dataset?.path === 'pre.scale').children.find(node => node.dataset?.action === 'numeric-use-mine').dispatch('click');
+        expect(h.client.getState().draft.pre.scale).toBe(1.5);
+      }
+      expect(h.requests).toHaveLength(0);
+    } finally { api.dispose(); }
+  });
+
+  test('edited field tolerates an unrelated replacement but cannot override a changed profile', () => {
+    const root = element('main'); root.ownerDocument = documentStub(); const client = fakeClient();
+    const api = mountProjectionConfig(root, { client });
+    try {
+      const scale = find(root, node => node.dataset?.field === 'pre.scale' && node.dataset.input === 'number');
+      scale.value = '1.5'; scale.dispatch('input');
+      const next = clone(client.getState().draft); next.pre.tx = 0.2; client.report({ draft: next }); scale.dispatch('blur');
+      expect(client.getState().draft.pre).toMatchObject({ scale: 1.5, tx: 0.2 });
+      const field = find(root, node => node.dataset?.field === 'namesWall.requestedFontPx' && node.dataset.input === 'number');
+      field.value = '20'; field.dispatch('input');
+      const profile = clone(client.getState().draft); profile.namesWall.activeMode = 'model'; client.report({ draft: profile });
+      field.dispatch('blur');
+      const wrap = find(root, node => node.dataset?.path === 'namesWall.requestedFontPx');
+      const mine = wrap.children.find(node => node.dataset?.action === 'numeric-use-mine');
+      expect(mine.disabled).toBe(true); mine.dispatch('click'); expect(client.getState().draft).toEqual(profile);
+    } finally { api.dispose(); }
+  });
+
+  test.each(['apply', 'save', 'save-new'])('%s finishes valid text before consuming the candidate', async action => {
+    const root = element('main'); root.ownerDocument = documentStub(); const client = fakeClient();
+    client.getState().snapshot.selectedPresetId = 'desk'; client.getState().snapshot.presets.push({ id: 'desk', name: 'Desk', config: clone(DEFAULTS) });
+    const api = mountProjectionConfig(root, { client });
+    try {
+      const input = find(root, node => node.dataset?.field === 'pre.scale' && node.dataset.input === 'number');
+      input.value = '1.5'; input.dispatch('input');
+      find(root, node => node.dataset?.action === action).dispatch('click');
+      expect(client.getState().draft.pre.scale).toBe(1.5);
+      expect(action === 'apply' ? client.apply : client.save).toHaveBeenCalledTimes(1);
+    } finally { api.dispose(); }
+  });
+
+  test.each(['apply', 'save', 'save-new', 'node', 'profile', 'editor'])('%s rejects invalid displayed text without relying on blur', action => {
+    const root = element('main'); root.ownerDocument = documentStub(); const client = fakeClient();
+    client.getState().snapshot.selectedPresetId = 'desk'; client.getState().snapshot.presets.push({ id: 'desk', name: 'Desk', config: clone(DEFAULTS) });
+    const editorFactory = vi.fn(); const api = mountProjectionConfig(root, { client, clockEditorFactory: editorFactory });
+    try {
+      const selected = vi.spyOn(find(root, node => node.dataset?.node === 'pre').classList, 'toggle');
+      const input = find(root, node => node.dataset?.field === 'pre.scale' && node.dataset.input === 'number');
+      input.value = '1.'; input.dispatch('input');
+      if (action === 'node') find(root, node => node.dataset?.node === 'left-fit').dispatch('click');
+      else if (action === 'profile') { const select = find(root, node => node.className === 'names-wall-mode'); select.value = 'model'; select.dispatch('change'); }
+      else if (action === 'editor') find(root, node => node.dataset?.action === 'clock-editor-open').dispatch('click');
+      else find(root, node => node.dataset?.action === action).dispatch('click');
+      expect(client.apply).not.toHaveBeenCalled(); expect(client.save).not.toHaveBeenCalled(); expect(editorFactory).not.toHaveBeenCalled();
+      expect(client.getState().draft).toEqual(DEFAULTS); expect(input.value).toBe('1.');
+      expect(selected.mock.calls.every(([name, value]) => name !== 'selected' || value === true)).toBe(true);
+      if (action === 'profile') expect(find(root, node => node.className === 'names-wall-mode').value).toBe('wall');
+    } finally { api.dispose(); }
+  });
+
+  test.each(['apply', 'save-new'])('%s rejects a finite scalar that fails whole-candidate crop validation', action => {
+    const root = element('main'); root.ownerDocument = documentStub(); const client = fakeClient(); const api = mountProjectionConfig(root, { client });
+    try {
+      const input = find(root, node => node.dataset?.field === 'outputs.left.crop.x0' && node.dataset.input === 'number');
+      input.value = '99.99'; input.dispatch('input');
+      find(root, node => node.dataset?.action === action).dispatch('click');
+      expect(client.setDraft).not.toHaveBeenCalled(); expect(client.apply).not.toHaveBeenCalled(); expect(client.save).not.toHaveBeenCalled();
+      expect(input.value).toBe('99.99'); expect(input.attributes['aria-invalid']).toBe('true');
+    } finally { api.dispose(); }
+  });
+
+  test.each(['load', 'revert', 'import'])('%s confirms pending text once and keeps the draft until replacement succeeds', async action => {
+    const root = element('main'); root.ownerDocument = documentStub(); const confirm = vi.fn(() => false); root.ownerDocument.defaultView.confirm = confirm;
+    const client = fakeClient(); let resolve; const replacement = new Promise(done => { resolve = done; });
+    client.load.mockImplementation(() => replacement); client.revert.mockImplementation(() => replacement);
+    const imported = vi.fn(() => replacement); const api = mountProjectionConfig(root, { client, onImport: imported });
+    try {
+      const input = find(root, node => node.dataset?.field === 'pre.scale' && node.dataset.input === 'number'); input.value = '1.'; input.dispatch('input');
+      const trigger = () => action === 'import' ? api.handleAction('import', {}) : find(root, node => node.dataset?.action === action).dispatch('click');
+      trigger(); expect(confirm).toHaveBeenCalledTimes(1); expect(client.load).not.toHaveBeenCalled(); expect(client.revert).not.toHaveBeenCalled(); expect(imported).not.toHaveBeenCalled();
+      confirm.mockReturnValue(true); trigger(); expect(confirm).toHaveBeenCalledTimes(2); expect(client.getState().draft).toEqual(DEFAULTS); expect(client.setDraft).not.toHaveBeenCalled();
+      expect(action === 'import' ? imported : client[action]).toHaveBeenCalledTimes(1);
+      resolve(action === 'import' ? { config: clone(DEFAULTS) } : { draftReplaced: false }); await Promise.resolve();
+    } finally { api.dispose(); }
+  });
+
+  test.each(['apply', 'save', 'save-new', 'node', 'profile', 'editor'])('%s rejects while a scalar range pointer is held', action => {
+    const root = element('main'); root.ownerDocument = documentStub(); const client = fakeClient();
+    client.getState().snapshot.selectedPresetId = 'desk'; client.getState().snapshot.presets.push({ id: 'desk', name: 'Desk', config: clone(DEFAULTS) });
+    const api = mountProjectionConfig(root, { client });
+    try {
+      const range = find(root, node => node.dataset?.field === 'pre.scale' && node.dataset.input === 'range'); range.dispatch('pointerdown', { pointerId: 9 });
+      const selected = vi.spyOn(find(root, node => node.dataset?.node === 'pre').classList, 'toggle');
+      if (action === 'node') find(root, node => node.dataset?.node === 'left-fit').dispatch('click');
+      else if (action === 'profile') { const select = find(root, node => node.className === 'names-wall-mode'); select.value = 'model'; select.dispatch('change'); }
+      else if (action === 'editor') find(root, node => node.dataset?.action === 'parameter-editor-open').dispatch('click');
+      else find(root, node => node.dataset?.action === action).dispatch('click');
+      expect(client.apply).not.toHaveBeenCalled(); expect(client.save).not.toHaveBeenCalled(); expect(client.getState().draft).toEqual(DEFAULTS);
+      expect(selected).toHaveBeenLastCalledWith('selected', true);
+      expect(find(root, node => node.className === 'parameter-editor-dialog').hidden).toBe(true);
+      range.dispatch('pointerup', { pointerId: 9 });
+      api.handleAction('apply'); expect(client.apply).toHaveBeenCalledTimes(1);
+    } finally { api.dispose(); }
+  });
+
+  test.each(['apply', 'save-new', 'node'])('%s rejects a held warp pointer', action => {
+    const h = tracedWarpHarness();
+    try {
+      h.surface.dispatch('pointerdown', { pointerId: 4, isPrimary: true, button: 0, clientX: 72, clientY: 72, preventDefault() {} });
+      h.client.apply.mockClear(); h.client.save.mockClear();
+      if (action === 'node') find(h.root, node => node.dataset?.node === 'pre').dispatch('click');
+      else find(h.root, node => node.dataset?.action === action).dispatch('click');
+      expect(h.client.apply).not.toHaveBeenCalled(); expect(h.client.save).not.toHaveBeenCalled();
+      expect(find(h.root, node => node.className === 'action-error').textContent).toMatch(/active gesture/i);
+    } finally { h.restore(); }
+  });
+
+  test.each(['load', 'revert'])('confirmed %s retires a held scalar range and ignores its remaining native events', async action => {
+    const root = element('main'); root.ownerDocument = documentStub(); root.ownerDocument.defaultView.confirm = vi.fn(() => true);
+    const client = fakeClient(); let resolve; client[action].mockImplementation(() => new Promise(done => { resolve = done; }));
+    const api = mountProjectionConfig(root, { client });
+    try {
+      const range = find(root, node => node.dataset?.field === 'pre.scale' && node.dataset.input === 'range');
+      range.dispatch('pointerdown', { pointerId: 9 }); range.value = '1.5'; range.dispatch('input'); const draft = clone(client.getState().draft); client.setDraft.mockClear();
+      api.handleAction(action, 'original'); expect(root.ownerDocument.defaultView.confirm).toHaveBeenCalledTimes(1);
+      range.value = '2'; range.dispatch('input'); range.dispatch('change');
+      expect(client.getState().draft).toEqual(draft); expect(client.setDraft).not.toHaveBeenCalled();
+      range.dispatch('pointerup', { pointerId: 9 }); range.dispatch('change'); expect(client.setDraft).not.toHaveBeenCalled();
+      resolve({ draftReplaced: false }); await Promise.resolve();
+      range.dispatch('pointerdown', { pointerId: 10 }); range.value = '1.6'; range.dispatch('input'); range.dispatch('pointerup', { pointerId: 10 });
+      expect(client.getState().draft.pre.scale).toBe(1.6); expect(client.setDraft).toHaveBeenCalledTimes(1);
+    } finally { api.dispose(); }
+  });
+
+  test.each(['load', 'revert'])('confirmed %s retires a moved warp without publishing rollback before acknowledgement', async action => {
+    const h = tracedWarpHarness(); const confirm = vi.fn(() => false); globalThis.document.defaultView.confirm = confirm;
+    let resolve; h.client[action].mockImplementation(() => new Promise(done => { resolve = done; }));
+    try {
+      find(h.root, node => node.dataset?.action === 'warp-nudge' && node.dataset.direction === 'right').dispatch('click');
+      expect(find(h.root, node => node.dataset?.action === 'warp-undo').disabled).toBe(false);
+      h.surface.dispatch('pointerdown', { pointerId: 4, isPrimary: true, button: 0, clientX: 72, clientY: 72, preventDefault() {} });
+      h.surface.dispatch('pointermove', { pointerId: 4, clientX: 82, clientY: 72 });
+      const draft = clone(h.client.getState().draft); h.client.setDraft.mockClear(); h.client.apply.mockClear();
+      const button = find(h.root, node => node.dataset?.action === action); button.dispatch('click');
+      expect(confirm).toHaveBeenCalledTimes(1); expect(h.client[action]).not.toHaveBeenCalled();
+      confirm.mockReturnValue(true); button.dispatch('click'); expect(confirm).toHaveBeenCalledTimes(2); expect(h.client[action]).toHaveBeenCalledTimes(1);
+      h.surface.dispatch('pointerup', { pointerId: 4, clientX: 92, clientY: 72 });
+      expect(h.client.getState().draft).toEqual(draft); expect(h.client.setDraft).not.toHaveBeenCalled(); expect(h.client.apply).not.toHaveBeenCalled();
+      expect(find(h.root, node => node.dataset?.action === 'warp-undo').disabled).toBe(false);
+      resolve({ draftReplaced: false }); await Promise.resolve();
+      find(h.root, node => node.dataset?.action === 'apply').dispatch('click'); expect(h.client.apply).toHaveBeenCalledTimes(1);
+      find(h.root, node => node.dataset?.action === 'warp-nudge' && node.dataset.direction === 'up').dispatch('click');
+      expect(h.client.setDraft).toHaveBeenCalledTimes(1);
+    } finally { h.restore(); }
+  });
+
+  test('commands finish the parameter dialog owner and preserve rejected text', () => {
+    const root = element('main'); root.ownerDocument = documentStub(); const client = fakeClient(); const api = mountProjectionConfig(root, { client });
+    try {
+      find(root, node => node.dataset?.action === 'parameter-editor-open').dispatch('click');
+      const dialog = find(root, node => node.className === 'parameter-editor-dialog');
+      const input = find(dialog, node => node.dataset?.field === 'pre.scale' && node.dataset.input === 'number');
+      input.value = '1.'; input.dispatch('input'); api.handleAction('apply'); expect(client.apply).not.toHaveBeenCalled(); expect(input.value).toBe('1.');
+      input.value = '1.5'; input.dispatch('input'); api.handleAction('apply'); expect(client.apply).toHaveBeenCalledTimes(1); expect(client.getState().draft.pre.scale).toBe(1.5);
+    } finally { api.dispose(); }
+  });
+
+  test.each(['apply', 'save-new'])('%s rejects conflicted text until the operator chooses a conflict action', action => {
+    const root = element('main'); root.ownerDocument = documentStub(); const client = fakeClient(); const api = mountProjectionConfig(root, { client });
+    try {
+      const input = find(root, node => node.dataset?.field === 'pre.scale' && node.dataset.input === 'number'); input.value = '1.5'; input.dispatch('input');
+      const next = clone(DEFAULTS); next.pre.scale = 2; client.report({ draft: next });
+      api.handleAction(action, 'Desk'); expect(client.apply).not.toHaveBeenCalled(); expect(client.save).not.toHaveBeenCalled(); expect(client.getState().draft).toEqual(next);
+      const field = find(root, node => node.dataset?.path === 'pre.scale'); field.children.find(node => node.dataset?.action === 'numeric-use-latest').dispatch('click');
+      api.handleAction(action, 'Desk'); expect(action === 'apply' ? client.apply : client.save).toHaveBeenCalledTimes(1); expect(client.getState().draft).toEqual(next);
+    } finally { api.dispose(); }
+  });
+
+  test('controller bounds errors report percentage display units and retain text for correction', () => {
+    const root = element('main'); root.ownerDocument = documentStub(); const client = fakeClient(); const api = mountProjectionConfig(root, { client });
+    try {
+      const input = find(root, node => node.dataset?.field === 'pre.tx' && node.dataset.input === 'number'); input.value = '201'; input.dispatch('input');
+      api.handleAction('apply'); expect(client.apply).not.toHaveBeenCalled(); expect(client.setDraft).not.toHaveBeenCalled(); expect(input.value).toBe('201');
+      expect(find(root, node => node.dataset?.errorFor === 'pre.tx').textContent).toBe('must be between -200 and 200 %');
+      input.value = '150'; input.dispatch('input'); api.handleAction('apply'); expect(client.getState().draft.pre.tx).toBe(1.5); expect(client.apply).toHaveBeenCalledTimes(1);
+    } finally { api.dispose(); }
+  });
   test.each(['identity', 'disabled', 'identity peer'])('pending TD load suspends full-config editor writes from %s and preserves latest fields', async (kind) => {
     const previousDocument = globalThis.document, previousFetch = globalThis.fetch;
     globalThis.document = documentStub();
@@ -1314,6 +1534,9 @@ describe("projection config controller", () => {
     expect(client.getState().live).toBe(false);
     const name = find(root, (node) => node.attributes?.["aria-label"] === "Preset name");
     name.value = "Imported";
+    action("save-new").dispatch("click");
+    expect(client.save).not.toHaveBeenCalled();
+    offset.dispatch("keydown", { key: "Escape", preventDefault() {}, stopPropagation() {} });
     action("save-new").dispatch("click");
     await vi.waitFor(() => expect(client.save).toHaveBeenCalledWith({ presetId: null, name: "Imported" }));
     expect(client.savedDrafts.at(-1).pre.tx).toBe(0.012);

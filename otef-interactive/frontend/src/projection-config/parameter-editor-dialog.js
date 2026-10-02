@@ -99,6 +99,8 @@ export function createParameterEditorDialog({ document: doc, host, onField = () 
     update: renderValues,
     close,
     finish() { return [...fieldControls.values()].map(control => control.finish()); },
+    isPending: () => [...fieldControls.values()].some(control => control.isPending()),
+    isHeld: () => [...fieldControls.values()].some(control => control.isHeld()),
     cancel() { for (const control of fieldControls.values()) control.cancel(); },
     isOpen: () => !modal.hidden,
     dispose() { if (disposed) return; close(); disposed = true; for (const control of fieldControls.values()) control.dispose(); preview?.dispose?.(); doc.removeEventListener?.("keydown", onKeyDown); modal.remove(); fieldControls.clear(); },

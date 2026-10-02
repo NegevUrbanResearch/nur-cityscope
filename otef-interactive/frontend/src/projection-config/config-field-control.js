@@ -40,6 +40,8 @@ export function renderField(doc, descriptor, onField, onNudge, compact = false, 
   let targetChanged = false;
   let externalError = '';
   let disposed = false;
+  let heldPointer = null;
+  let retiredPointer = null;
   const listeners = [];
   const listen = (node, type, handler) => { if (!node) return; node.addEventListener(type, handler); listeners.push(() => node.removeEventListener?.(type, handler)); };
   const wrap = make(doc, "div", { className: `config-field${compact ? " compact-field" : ""}${editorLayout ? " parameter-field-layout" : ""}`, dataset: { path: descriptor.path } });
@@ -132,16 +134,30 @@ export function renderField(doc, descriptor, onField, onNudge, compact = false, 
       if (!Number.isFinite(shown) || (!signed && shown < 0) || (descriptor.validate && !descriptor.validate(result.value))) result = { ...result, kind: 'invalid', error: 'Enter a number within the allowed bounds.' };
       else {
         const meta = { baseValue: result.baseValue, resolvedPath: result.resolvedPath, override };
-        latest = { value: result.value, resolvedPath: result.resolvedPath };
-        session.sync(latest); session.cancel(); refresh();
-        onField(descriptor.path, String(shown), inputKind, meta);
+        const enteredText = number?.value;
+        if (number) number.value = formatInputValue(signed ? Math.abs(shown) : shown);
+        const accepted = onField(descriptor.path, String(shown), inputKind, meta);
+        if (accepted === false) {
+          if (number) number.value = enteredText;
+          const pending = session.candidate();
+          result = { ...result, kind: pending.kind === 'conflict' ? 'conflict' : 'invalid', error: externalError || pending.error || 'Value was not accepted. Check the field bounds.' };
+        } else {
+          latest = { value: result.value, resolvedPath: result.resolvedPath };
+          session.sync(latest); session.cancel(); targetChanged = false; externalError = ''; refresh();
+        }
       }
     }
     if (result.kind === 'unchanged') { session.cancel(); targetChanged = false; refresh(); }
     renderResult(result.kind === 'commit' ? session.candidate() : result);
     return result;
   };
-  const cancel = () => { session.cancel(); targetChanged = false; externalError = ''; refresh(true); };
+  const cancel = () => { if (heldPointer !== null) retiredPointer = heldPointer; heldPointer = null; session.cancel(); targetChanged = false; externalError = ''; refresh(true); };
+  listen(range, 'pointerdown', event => { retiredPointer = null; heldPointer = event.pointerId; });
+  listen(range, 'keydown', () => { retiredPointer = null; });
+  for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) listen(range, type, event => {
+    if (heldPointer === event.pointerId) heldPointer = null;
+    if (retiredPointer === event.pointerId) retiredPointer = null;
+  });
   listen(number, 'input', () => markInput(number.value));
   listen(number, 'blur', () => finish());
   listen(number, 'change', () => finish());
@@ -155,8 +171,8 @@ export function renderField(doc, descriptor, onField, onNudge, compact = false, 
     if (parsed.ok) number.value = String(Math.abs(parsed.value));
     markInput(number.value); showSign(); number.focus?.();
   });
-  listen(range, 'input', () => { markInput(range.value, 1); if (number && !descriptor.commitOnChange) number.value = signed ? String(Math.abs(Number(range.value))) : range.value; if (!descriptor.commitOnChange) finish('range'); });
-  listen(range, 'change', () => finish('range'));
+  listen(range, 'input', () => { if (retiredPointer !== null) { range.value = displayValue(descriptor, latest.value); return; } markInput(range.value, 1); if (number && !descriptor.commitOnChange) number.value = signed ? String(Math.abs(Number(range.value))) : range.value; if (!descriptor.commitOnChange) finish('range'); });
+  listen(range, 'change', () => { if (retiredPointer === null) finish('range'); });
   listen(useLatest, 'click', event => { event.stopPropagation?.(); cancel(); });
   listen(useMine, 'click', event => { event.stopPropagation?.(); finish('number', true); });
   if (!compact) { listen(fineMinus, 'click', () => { cancel(); onNudge(descriptor.path, -1); }); listen(finePlus, 'click', () => { cancel(); onNudge(descriptor.path, 1); }); }
@@ -169,7 +185,7 @@ export function renderField(doc, descriptor, onField, onNudge, compact = false, 
       range.value = displayValue(descriptor, nextValue);
       if (!session.isDirty()) refresh(resolvedChanged); else renderResult();
     },
-    finish, cancel,
-    dispose() { cancel(); disposed = true; listeners.forEach(remove => remove()); },
+    finish, cancel, isPending: () => session.isDirty(), isHeld: () => heldPointer !== null,
+    dispose() { cancel(); retiredPointer = null; disposed = true; listeners.forEach(remove => remove()); },
   };
 }

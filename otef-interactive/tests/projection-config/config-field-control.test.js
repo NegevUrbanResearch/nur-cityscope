@@ -18,6 +18,27 @@ it('a target switch remains blocked even if the original target returns',()=>{ c
 it('sign-only selection starts magnitude editing so leaving the field commits it',()=>{ const {c,onField}=setup(3); c.wrap.querySelector('[data-action="numeric-sign"]').click(); expect(document.activeElement).toBe(c.number); c.number.blur(); expect(onField).toHaveBeenCalledWith(descriptor.path,'-3','number',{baseValue:3,resolvedPath:descriptor.path,override:false}); });
 it('changing only the sign preserves the exact baseline magnitude',()=>{ const {c,onField}=setup(1.23456); c.wrap.querySelector('[data-action="numeric-sign"]').click(); c.finish(); expect(onField).toHaveBeenCalledWith(descriptor.path,'-1.23456','number',{baseValue:1.23456,resolvedPath:descriptor.path,override:false}); });
 
+it('a controller conflict discovered during finish retains both conflict actions and the candidate', () => {
+  const { c, onField } = setup(1);
+  onField.mockImplementation(() => { c.update({ value: 3, resolvedPath: descriptor.path, error: 'Value changed while editing. Use latest or use my value.' }); return false; });
+  input(c, '2'); expect(c.finish().kind).toBe('conflict'); expect(c.number.value).toBe('2'); expect(c.isPending()).toBe(true);
+  expect(c.wrap.querySelector('[data-action="numeric-use-latest"]').hidden).toBe(false);
+  expect(c.wrap.querySelector('[data-action="numeric-use-mine"]').hidden).toBe(false);
+  onField.mockReturnValue(true); c.wrap.querySelector('[data-action="numeric-use-mine"]').click();
+  expect(onField).toHaveBeenLastCalledWith(descriptor.path, '2', 'number', { baseValue: 3, resolvedPath: descriptor.path, override: true });
+});
+
+it.each(['pointerup', 'pointercancel', 'lostpointercapture'])('range discard stops held events and %s releases suppression for keyboard editing', terminal => {
+  const { c, onField } = setup(1);
+  const pointer = type => { const event = new Event(type); Object.defineProperty(event, 'pointerId', { value: 7 }); c.range.dispatchEvent(event); };
+  pointer('pointerdown'); expect(c.isHeld()).toBe(true); c.cancel(); expect(c.isHeld()).toBe(false);
+  c.range.value = '2'; c.range.dispatchEvent(new Event('input')); c.range.dispatchEvent(new Event('change')); expect(onField).not.toHaveBeenCalled();
+  pointer(terminal); c.range.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight' }));
+  c.range.value = '3'; c.range.dispatchEvent(new Event('input')); expect(onField).toHaveBeenCalledTimes(1);
+  expect(onField).toHaveBeenLastCalledWith(descriptor.path, '3', 'range', { baseValue: 1, resolvedPath: descriptor.path, override: false });
+  c.dispose(); pointer('pointerdown'); expect(c.isHeld()).toBe(false);
+});
+
 it('retains a negative sign at zero after blur and uses it when editing resumes', () => {
   const { c, onField } = setup(0);
   const sign = c.wrap.querySelector('[data-action="numeric-sign"]');

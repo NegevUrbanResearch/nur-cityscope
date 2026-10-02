@@ -366,7 +366,7 @@ export function createProjectionConfigView(root, {
     if (["pre", "left-crop", "right-crop", "left-fit", "right-fit"].includes(id)) {
       const adjust = button(doc, "Adjust", "parameter-editor-open", "parameter-editor-open-button");
       adjust.addEventListener("click", (event) => {
-        event.stopPropagation?.(); cancelActiveDrag(); onNode(id);
+        event.stopPropagation?.(); if (onNode(id) === false) return;
         parameterDialog?.open({ nodeId: id, title: label, descriptors: nodeFields, opener: adjust });
         parameterDialog?.update({ config: currentDraft, fieldErrors: currentFieldErrors, status: currentStatus });
       });
@@ -376,12 +376,12 @@ export function createProjectionConfigView(root, {
     if (id.endsWith("-keystone") || id.endsWith("-grid")) card.appendChild(make(doc, "p", { className: "warp-node-summary" }, "Select to edit corners, points, and residuals."));
     if (id.endsWith("-keystone") || id.endsWith("-grid")) {
       const openButton = button(doc, "Edit", "warp-editor-open", "warp-open-button");
-      openButton.addEventListener("click", (event) => { event.stopPropagation?.(); cancelActiveDrag(); onNode(id); dialog.open({ side: id.startsWith("right-") ? "right" : "left", mode: id.endsWith("-grid") ? "grid" : "keystone", opener: openButton }); });
+      openButton.addEventListener("click", (event) => { event.stopPropagation?.(); if (onNode(id) === false) return; dialog.open({ side: id.startsWith("right-") ? "right" : "left", mode: id.endsWith("-grid") ? "grid" : "keystone", opener: openButton }); });
       card.appendChild(openButton);
     }
     if (id === "settlement-names") {
       const openButton = button(doc, "Open editor", "settlement-editor-open", "settlement-open-button");
-      openButton.addEventListener("click", (event) => { event.stopPropagation?.(); cancelActiveDrag(); onNode(id); onOpenSettlementEditor(); });
+      openButton.addEventListener("click", (event) => { event.stopPropagation?.(); if (onNode(id) === false) return; onOpenSettlementEditor(); });
       card.appendChild(openButton);
     }
     if (id === "clock-gis" || id === "clock-projection" || id === "nova-explainers") {
@@ -392,14 +392,14 @@ export function createProjectionConfigView(root, {
       const openAction = id === "nova-explainers" ? "nova-explainer-editor-open" : "clock-editor-open";
       const openButton = button(doc, "Open editor", openAction, "clock-open-button");
       openButton.addEventListener("click", (event) => {
-        event.stopPropagation?.(); cancelActiveDrag(); onNode(id);
+        event.stopPropagation?.(); if (onNode(id) === false) return;
         if (id === "nova-explainers") onOpenNovaExplainerEditor();
         else onOpenClockEditor(id);
       });
       if (id !== "nova-explainers") {
         card.addEventListener("dblclick", (event) => {
           if (event.target === handle || event.target?.parentElement === handle || event.target === sceneControl || event.target === elementControl || event.target === openButton) return;
-          cancelActiveDrag(); onNode(id); onOpenClockEditor(id);
+          if (onNode(id) === false) return; onOpenClockEditor(id);
         });
       }
       card.appendChild(openButton);
@@ -413,7 +413,7 @@ export function createProjectionConfigView(root, {
     card.addEventListener("keydown", (event) => {
       if (event.target !== card || (event.key !== "Enter" && event.key !== " ")) return;
       event.preventDefault();
-      onNode(id);
+      if (onNode(id) === false) return;
       if (event.key === "Enter" && (id === "clock-gis" || id === "clock-projection")) onOpenClockEditor(id);
       if (event.key === "Enter" && id === "nova-explainers") onOpenNovaExplainerEditor();
       if (event.key === "Enter" && id === "settlement-names") onOpenSettlementEditor();
@@ -882,6 +882,13 @@ export function createProjectionConfigView(root, {
     },
     cancelWarpPointer: cancelActiveDrag,
     finishNumericEdits: () => [...fields.values()].map(control => control.finish()),
+    finishPendingEdit: () => {
+      const results = [...fields.values()].filter(control => control.isPending()).map(control => control.finish());
+      if (parameterDialog.isPending()) results.push(...parameterDialog.finish());
+      return results.every(result => result.kind === 'commit' || result.kind === 'unchanged');
+    },
+    hasPendingEdit: () => [...fields.values()].some(control => control.isPending()) || parameterDialog.isPending(),
+    hasHeldNumericEdit: () => [...fields.values()].some(control => control.isHeld()) || parameterDialog.isHeld(),
     cancelNumericEdits: () => { for (const control of fields.values()) control.cancel(); parameterDialog.cancel(); },
     closeWarpEditor: dialog.close,
     sendRunNamesPreview: (config) => dialog.sendRunNamesPreview(config),

@@ -189,12 +189,12 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     onField: handleField,
     onNudge: handleNudge,
     onNamesMode: handleNamesMode,
-    onNode: (node) => { view.cancelWarpPointer(); selectedNode = node; if (node === "clock-gis" || node === "clock-projection") { closeNovaExplainerEditor(); syncClockEditor(node); } else closeClockEditor(); if (node !== "nova-explainers") closeNovaExplainerEditor(); if (node === "settlement-names") syncSettlementEditor(); else closeSettlementEditor(); if (node.endsWith("-keystone") || node.endsWith("-grid")) warpEditors[node.startsWith("right-") ? "right" : "left"].setMode(node.endsWith("-grid") ? "grid" : "keystone"); refresh(); },
+    onNode: (node) => { if (!finishPendingEdit()) return false; view.cancelWarpPointer(); selectedNode = node; if (node === "clock-gis" || node === "clock-projection") { closeNovaExplainerEditor(); syncClockEditor(node); } else closeClockEditor(); if (node !== "nova-explainers") closeNovaExplainerEditor(); if (node === "settlement-names") syncSettlementEditor(); else closeSettlementEditor(); if (node.endsWith("-keystone") || node.endsWith("-grid")) warpEditors[node.startsWith("right-") ? "right" : "left"].setMode(node.endsWith("-grid") ? "grid" : "keystone"); refresh(); return true; },
     onOpenClockEditor: openClockEditor,
     onOpenNovaExplainerEditor: openNovaEditor,
     onOpenSettlementEditor: openSettlementEditor,
-    onSettlementOutput: (output) => { settlementOutput = output === "right" ? "right" : "left"; activeSettlementEditor?.setSelection({ output: settlementOutput, citycode: settlementCitycode }); refresh(); },
-    onSettlementCitycode: (citycode) => { settlementCitycode = citycode; activeSettlementEditor?.setSelection({ output: settlementOutput, citycode }); refresh(); },
+    onSettlementOutput: (output) => { if (!finishPendingEdit()) return; settlementOutput = output === "right" ? "right" : "left"; activeSettlementEditor?.setSelection({ output: settlementOutput, citycode: settlementCitycode }); refresh(); },
+    onSettlementCitycode: (citycode) => { if (!finishPendingEdit()) return; settlementCitycode = citycode; activeSettlementEditor?.setSelection({ output: settlementOutput, citycode }); refresh(); },
     onSettlementPosition: (position) => { if (!settlementClient || !settlementCitycode) return; void settlementClient.commit({ kind: "position", output: settlementOutput, citycode: settlementCitycode }, position, { numeric: true }).catch(() => {}); },
     onSettlementStyle: (style) => { if (!settlementClient) return; void settlementClient.commit({ kind: "style" }, style, { numeric: true }).catch(() => {}); },
     onSettlementRecovery: (action) => {
@@ -211,8 +211,8 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
       }
       refresh();
     },
-    onClockScene: (sceneId) => { clockSceneId = sceneId; activeClockEditor?.setSelection({ nodeId: "clock-gis", sceneId: clockSceneId, element: clockElement }); refresh(); },
-    onClockElement: (nextElement) => { clockElement = nextElement; activeClockEditor?.setSelection({ nodeId: "clock-projection", sceneId: clockSceneId, element: clockElement }); refresh(); },
+    onClockScene: (sceneId) => { if (!finishPendingEdit()) return; clockSceneId = sceneId; activeClockEditor?.setSelection({ nodeId: "clock-gis", sceneId: clockSceneId, element: clockElement }); refresh(); },
+    onClockElement: (nextElement) => { if (!finishPendingEdit()) return; clockElement = nextElement; activeClockEditor?.setSelection({ nodeId: "clock-projection", sceneId: clockSceneId, element: clockElement }); refresh(); },
     onClockField: (key, raw) => {
       if (!layoutClient || !["clock-gis", "clock-projection"].includes(selectedNode) || layoutClient.getHydrationState?.().status === "Failed") return;
       const selection = resourceFor(selectedNode, clockSceneId, clockElement);
@@ -602,23 +602,35 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     localDraftNotification = true;
     try { client.setDraft(candidate); } finally { localDraftNotification = false; }
   }
-  function handleField(path, raw) {
-    const descriptor = descriptorFor(path); if (!descriptor) return;
-    if (descriptor.wallOnly && state.draft?.namesWall?.activeMode !== "wall") return;
-    if (!state.draft) { fieldErrors = { [path]: "Waiting for calibration settings" }; refresh(); return; }
-    const value = fieldValueFromInput(descriptor, raw);
+  function commitScalar({ path, resolvedPath: editPath, value, baseValue, override = false, phase, gestureId }) {
+    const descriptor = descriptorFor(path);
+    if (!descriptor) return false;
+    const reject = (message, key = path) => { fieldErrors = { [key]: message }; refresh(); return false; };
+    if (!state.draft) return reject("Waiting for calibration settings");
     const resolvedPath = resolvedFieldPath(state.draft, path);
+    if (descriptor.wallOnly && state.draft.namesWall.activeMode !== "wall") return reject("Target changed while editing. Use latest and restart.", resolvedPath);
+    if (editPath !== undefined && editPath !== resolvedPath) return reject("Target changed while editing. Use latest and restart.", resolvedPath);
+    const current = readPath(state.draft, resolvedPath);
+    if (baseValue !== undefined && !override && !Object.is(current, baseValue)) return reject("Value changed while editing. Use latest or use my value.", resolvedPath);
+    if (!Number.isFinite(value)) return reject("must be a finite number", resolvedPath);
+    if (value < descriptor.min || value > descriptor.max) return reject(`must be between ${fieldInputValue(descriptor, descriptor.min)} and ${fieldInputValue(descriptor, descriptor.max)}${descriptor.unit ? ` ${descriptor.unit}` : ""}`, resolvedPath);
+    if (Object.is(current, value)) { fieldErrors = {}; refresh(); return true; }
     const candidate = setPath(state.draft, resolvedPath, value);
-    if (!Number.isFinite(value)) { fieldErrors = { [path]: "must be a finite number" }; refresh(); return; }
-    if (value < descriptor.min || value > descriptor.max) { fieldErrors = { [path]: `must be between ${descriptor.min} and ${descriptor.max}` }; refresh(); return; }
-    if (!validCandidate(candidate, resolvedPath)) return;
-    try { setClientDraft(candidate); } catch (error) { fieldErrors = { [path]: error.message }; refresh(); }
+    if (!validCandidate(candidate, resolvedPath)) return false;
+    try { setClientDraft(candidate); return true; }
+    catch (error) { return reject(error.message, resolvedPath); }
+  }
+  function handleField(path, raw, inputKind, editMeta = {}) {
+    const descriptor = descriptorFor(path);
+    if (!descriptor) return false;
+    return commitScalar({ path, ...editMeta, value: fieldValueFromInput(descriptor, raw) });
   }
   function handleNudge(path, direction) {
     const descriptor = descriptorFor(path); const value = readField(state.draft, path) + direction * fineStepFor(descriptor);
     handleField(path, String(fieldInputValue(descriptor, value)));
   }
   function handleNamesMode(mode) {
+    if (!finishPendingEdit()) return false;
     if (!state.draft || !["wall", "model"].includes(mode)) return;
     const candidate = setPath(state.draft, "namesWall.activeMode", mode);
     if (!validCandidate(candidate, "namesWall.activeMode")) return;
@@ -627,6 +639,22 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     refresh();
   }
   function activeWarpOutput() { return selectedNode.startsWith("right-") ? "right" : "left"; }
+  function hasHeldGesture() { return Object.values(warpEditors).some(editor => editor.getState().dragging) || view.hasHeldNumericEdit(); }
+  function finishPendingEdit() {
+    if (hasHeldGesture()) { fieldErrors = { ...fieldErrors, action: "Finish or cancel the active gesture before continuing." }; refresh(); return false; }
+    const finished = view.finishPendingEdit();
+    if (!finished) refresh();
+    return finished;
+  }
+  function discardPendingEdit() {
+    if (!hasHeldGesture() && !view.hasPendingEdit()) return true;
+    if (win?.confirm?.("Discard the pending edit or gesture and replace the calibration draft?") !== true) return false;
+    view.cancelNumericEdits();
+    view.cancelWarpPointer({ notify: false });
+    for (const editor of Object.values(warpEditors)) editor.retireGesture();
+    fieldErrors = {}; refresh();
+    return true;
+  }
   function handleWarpChange(output, candidate, meta = {}) {
     if (disposed || !editorBaselineReady) return;
     try {
@@ -688,6 +716,8 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
   }
   async function handleAction(action, value) {
     if (disposed) return;
+    if (["apply", "save", "save-new", "preset-select"].includes(action) && !finishPendingEdit()) return false;
+    if (["load", "revert", "import"].includes(action) && !discardPendingEdit()) return false;
     let actionToken = null;
     const runPending = async (kind, operation) => {
       const promise = operation();
@@ -779,6 +809,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
   refresh();
   return {
     sourceId,
+    handleAction,
     getStatusRows: () => [...statusRows.values()].map((row) => ({ ...row })),
     setConflict,
     dispose() { if (disposed) return; disposed = true; editorBaselineSequence += 1; editorBaselineAbort?.abort(); editorBaselineAbort = null; syncLayoutUnload(); closeSettlementEditor(); closeClockEditor(); closeNovaExplainerEditor(); for (const action of clockCueActions) action.cancel(); clockCueActions.clear(); namesTargetRequest += 1; for (const editor of clockEditors) editor.dispose(); clockEditors.clear(); activeClockEditor = null; activeClockEditorNode = null; activeSettlementEditor = null; if (confirmationTimer !== null) clearTimeout(confirmationTimer); if (patternTimer !== null) clearInterval(patternTimer); socket?.send?.({ type: "otef_projection_pattern", table: "otef", output: activePattern.branch, pattern: "off", sourceId }); socket?.off?.("otef_projection_applied", statusMessage); socket?.off?.("otef_projection_names_status", namesStatusMessage); socket?.off?.("connect", onConnect); socket?.off?.("disconnect", onDisconnect); socket?.off?.('otef_person_selection_changed', onDatasetEvent); socket?.off?.('otef_narrative_scene_changed', onDatasetEvent); unsubscribe?.(); unsubscribeLayout?.(); unsubscribeSettlement?.(); unsubscribeOutput?.(); outputController?.dispose?.(); validator.dispose?.(); view.dispose(); client.stop?.(); },

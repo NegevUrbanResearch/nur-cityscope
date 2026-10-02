@@ -170,7 +170,7 @@ export function createProjectionConfigClient({
       if (timer !== null) { clearTimer(timer); timer = null; }
       queuedPreview = null;
       live = false;
-      if (preflighting) { preflighting.operation.reject(new Error('projection config connection lost')); preflighting = null; }
+      cancelPreflight('projection config connection lost');
       if (intent) {
         intent.reject(new Error('projection config connection lost'));
         intent = null;
@@ -199,7 +199,7 @@ export function createProjectionConfigClient({
     cancelQueuedPreviews();
     live = false;
     conflictGeneration += 1;
-    if (preflighting) { preflighting.operation.reject(new Error('projection config conflict')); preflighting = null; }
+    cancelPreflight('projection config conflict');
     if (intent) {
       intent.reject(new Error('projection config conflict'));
       intent = null;
@@ -451,6 +451,7 @@ export function createProjectionConfigClient({
     if (!preflighting) return;
     const pending = preflighting;
     preflighting = null;
+    pending.controller.abort();
     pending.operation.reject(new Error(reason));
   }
 
@@ -462,11 +463,11 @@ export function createProjectionConfigClient({
     const config = clone(target);
     const identity = JSON.stringify(config);
     const revision = snapshot.revision;
-    const check = { operation, version: operation.version, revision, conflictGeneration, identity };
+    const check = { operation, version: operation.version, revision, conflictGeneration, identity, controller: new AbortController() };
     preflighting = check;
     notify();
     Promise.resolve().then(() => typeof validateCandidate === 'function'
-      ? validateCandidate({ config: clone(config), generation: operation.version, identity, revision: revision + 1 })
+      ? validateCandidate({ config: clone(config), generation: operation.version, identity, revision: revision + 1, signal: check.controller.signal })
       : { identity, valid: true }).then((result) => {
       if (preflighting !== check) return;
       preflighting = null;
@@ -507,8 +508,10 @@ export function createProjectionConfigClient({
 
   function setDraft(config) {
     if (!config || Object.keys(validateProjectionConfig(config)).length) throw new Error('invalid projection config');
+    const nextDraft = migrateProjectionConfigToV7(config, config?.namesWall?.rotateDeg ?? 35);
+    if (draft && equal(draft, nextDraft)) return;
     cancelPreflight('projection config operation superseded');
-    draft = migrateProjectionConfigToV7(config, config?.namesWall?.rotateDeg ?? 35);
+    draft = clone(nextDraft);
     draftVersion += 1;
     hasLocalDraft = !snapshot || !equal(draft, snapshot.config);
     if (live) schedulePreview();
@@ -589,7 +592,7 @@ export function createProjectionConfigClient({
     hydrationGeneration += 1;
     if (timer !== null) { clearTimer(timer); timer = null; }
     queuedPreview = null;
-    if (preflighting) { preflighting.operation.reject(new Error('projection config client stopped')); preflighting = null; }
+    cancelPreflight('projection config client stopped');
     if (intent) {
       intent.reject(new Error('projection config client stopped'));
       intent = null;
