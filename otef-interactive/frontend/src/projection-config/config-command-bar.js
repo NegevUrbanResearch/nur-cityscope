@@ -93,10 +93,10 @@ export function createConfigCommandBar({ document: doc, onAction = () => {}, onO
   listen(doc, 'pointerdown', event => {
     if (controls.tools.open && !controls.tools.contains?.(event.target)) controls.tools.open = false;
   }, true);
-  let presetNameEdited = false, lastLoadedPresetId = null, lastLoadedPresetLoadToken = null;
+  let overwriteName = '', copyNameEdited = false, lastLoadedPresetId = null, lastLoadedPresetLoadToken = null;
   let outputSelection = { left: '', right: '' }, outputScreensSignature = null, outputAssignmentsSignature = null;
   const showCopy = (show) => { controls.saveCopyPanel.hidden = !show; controls.saveNew.setAttribute('aria-expanded', String(show)); if (show) controls.saveName.focus?.(); else controls.saveNew.focus?.(); };
-  listen(controls.saveName, 'input', () => { presetNameEdited = true; });
+  listen(controls.saveName, 'input', () => { copyNameEdited = true; });
   listen(controls.saveNew, 'click', () => showCopy(true));
   listen(controls.saveCopyCancel, 'click', () => showCopy(false));
   listen(controls.saveCopyPanel, 'keydown', event => {
@@ -106,7 +106,7 @@ export function createConfigCommandBar({ document: doc, onAction = () => {}, onO
   listen(controls.saveCopyConfirm, 'click', () => onAction('save-new', controls.saveName.value));
   for (const [name, action] of [['apply', 'apply'], ['revert', 'revert'], ['parameterUndo', 'parameter-undo'], ['parameterRedo', 'parameter-redo'], ['retryHydration', 'retry-hydration']]) listen(controls[name], 'click', () => onAction(action));
   listen(controls.live, 'change', () => onAction('live', controls.live.checked));
-  listen(controls.save, 'click', () => onAction('save', controls.saveName.value));
+  listen(controls.save, 'click', () => onAction('save', overwriteName));
   listen(controls.load, 'click', () => onAction('load', controls.presets.value));
   listen(controls.presets, 'change', () => onAction('preset-select', controls.presets.value));
   for (const [name, action] of [['outputRefresh', 'refresh'], ['outputIdentify', 'identify'], ['outputOpenBoth', 'open'], ['outputCloseBoth', 'close']]) listen(controls[name], 'click', () => onOutputAction(action));
@@ -163,8 +163,9 @@ export function createConfigCommandBar({ document: doc, onAction = () => {}, onO
     controls.originalCheckpointGuidance.textContent = loadedPreset?.readOnly ? `${loadedPreset.name || 'Loaded preset'} is immutable. Use Save copy.` : '';
     if (loadedPreset && (loadedPresetId !== lastLoadedPresetId || loadedPresetLoadToken !== lastLoadedPresetLoadToken)) {
       const explicitLoad = lastLoadedPresetLoadToken !== null && loadedPresetLoadToken !== lastLoadedPresetLoadToken;
-      if (!presetNameEdited || explicitLoad) controls.saveName.value = loadedPreset.name || '';
-      if (explicitLoad) presetNameEdited = false;
+      overwriteName = loadedPreset.name || '';
+      if (!copyNameEdited || explicitLoad) controls.saveName.value = overwriteName;
+      if (explicitLoad) copyNameEdited = false;
       lastLoadedPresetId = loadedPresetId; lastLoadedPresetLoadToken = loadedPresetLoadToken;
     }
     const outputAcknowledgement = `Outputs: ${({ Applied: 'applied', Pending: 'pending', Failed: 'failed', Unconfirmed: 'unconfirmed' }[appliedSummary] || String(appliedSummary).toLowerCase())}`;
@@ -174,5 +175,5 @@ export function createConfigCommandBar({ document: doc, onAction = () => {}, onO
     controls.appliedRows.replaceChildren(...statusRows.map(row => make(doc, 'p', { className: row.success ? 'applied' : 'not-confirmed' }, row.text)));
     controls.alerts.hidden = !(controls.liveWarning.hidden === false || conflict || visibleErrors.size || !controls.connectionStatus.hidden || unsupported || failures.length);
   };
-  return { element, controls, update, setPresetName(value) { controls.saveName.value = String(value || ''); presetNameEdited = true; }, dispose() { listeners.forEach(remove => remove()); } };
+  return { element, controls, update, setPresetName(value) { overwriteName = controls.saveName.value = String(value || ''); copyNameEdited = true; }, dispose() { listeners.forEach(remove => remove()); } };
 }

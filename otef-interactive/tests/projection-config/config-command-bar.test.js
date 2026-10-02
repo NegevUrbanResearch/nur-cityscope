@@ -32,6 +32,31 @@ test('command bar exposes the extracted construction and state interface', () =>
   expect(module.createConfigCommandBar).toBeTypeOf('function');
 });
 
+test.each([['Cancel', 'Cancelled copy title'], ['Cancel', ''], ['Escape', 'Cancelled copy title'], ['Escape', '']])('%s copy name %j cannot rename or block direct Save', async (dismiss, name) => {
+  const { window: dom } = new JSDOM('<main></main>', { url: 'http://localhost' });
+  const config = structuredClone(DEFAULT_PROJECTION_CONFIG); config.pre.tx = 0.012;
+  const state = { live: false, connected: true, draft: config, snapshot: { revision: 1, config, ...snapshot, selectedPresetId: 'desk' } };
+  const savedConfigs = [];
+  const client = {
+    getState: () => state, subscribe(fn) { fn(state); return () => {}; }, start: vi.fn(), stop: vi.fn(), setValidateCandidate() {},
+    save: vi.fn(async () => { savedConfigs.push(structuredClone(state.draft)); return state; }),
+  };
+  const root = dom.document.querySelector('main'); const api = mountProjectionConfig(root, { client });
+  try {
+    const select = root.querySelector('select[aria-label="Preset"]'); select.value = 'other'; select.dispatchEvent(new dom.Event('change'));
+    root.querySelector('[data-action="save-new"]').click();
+    const input = root.querySelector('input[aria-label="Preset name"]'); input.value = name; input.dispatchEvent(new dom.Event('input', { bubbles: true }));
+    if (dismiss === 'Cancel') root.querySelector('[data-action="save-copy-cancel"]').click();
+    else input.dispatchEvent(new dom.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(input.closest('[role="dialog"]').hidden).toBe(true);
+    expect(dom.document.activeElement).toBe(root.querySelector('[data-action="save-new"]'));
+    expect(client.save).not.toHaveBeenCalled();
+    root.querySelector('[data-action="save"]').click();
+    await vi.waitFor(() => expect(client.save).toHaveBeenCalledWith({ presetId: 'desk', name: 'Desk' }));
+    expect(savedConfigs).toEqual([config]);
+  } finally { api.dispose(); dom.close(); }
+});
+
 test('direct commands preserve loaded identity and open one accessible Save copy name entry', () => {
   expect(module.createConfigCommandBar).toBeTypeOf('function');
   const { window } = new JSDOM('<main></main>');

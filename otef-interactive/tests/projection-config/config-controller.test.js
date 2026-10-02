@@ -84,6 +84,29 @@ function clickCommand(root, action) {
   find(root, node => node.dataset?.action === action).dispatch('click');
   if (action === 'save-new') find(root, node => node.dataset?.action === 'save-copy-confirm').dispatch('click');
 }
+
+test('Import keeps its explicit save name while subsequent copy edits stay separate', async () => {
+  const root = element('main'); root.ownerDocument = documentStub(); const client = fakeClient();
+  client.getState().snapshot.presets.push({ id: 'desk', name: 'Desk', config: clone(DEFAULTS) });
+  client.getState().snapshot.selectedPresetId = 'desk';
+  const imported = clone(DEFAULTS); imported.pre.tx = 0.012;
+  const api = mountProjectionConfig(root, { client, onImport: async () => ({ name: 'Imported desk', config: imported }) });
+  const action = name => find(root, node => node.dataset?.action === name);
+  try {
+    await api.handleAction('import', {});
+    const input = find(root, node => node.attributes?.['aria-label'] === 'Preset name');
+    expect(input.value).toBe('Imported desk');
+    action('save-new').dispatch('click'); input.value = ''; input.dispatch('input'); action('save-copy-cancel').dispatch('click');
+    action('save').dispatch('click');
+    await vi.waitFor(() => expect(client.save).toHaveBeenCalledWith({ presetId: 'desk', name: 'Imported desk' }));
+    expect(client.savedDrafts).toEqual([imported]);
+    action('save-new').dispatch('click'); input.value = 'Imported copy'; input.dispatch('input'); action('save-copy-confirm').dispatch('click');
+    await vi.waitFor(() => expect(client.save).toHaveBeenLastCalledWith({ presetId: null, name: 'Imported copy' }));
+    await api.handleAction('load', 'desk');
+    action('save').dispatch('click');
+    await vi.waitFor(() => expect(client.save).toHaveBeenLastCalledWith({ presetId: 'desk', name: 'Imported desk' }));
+  } finally { api.dispose(); }
+});
 function fakeClient(initialSnapshot) {
   let state = { snapshot: { revision: 2, config: clone(DEFAULTS), presets: [{ id: "original", name: "Original calibration", config: clone(DEFAULTS), readOnly: true }], selectedPresetId: "original" }, draft: clone(DEFAULTS), live: true, connected: true, pending: false, hasLocalDraft: false };
   const listeners = new Set();
