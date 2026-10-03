@@ -70,6 +70,20 @@ it('nudge finishes a valid pending value first and leaves invalid text untouched
   c.dispose();
 });
 function setup(value=0, extra={}) { const onField=vi.fn(); const c=renderField(document,{...descriptor,...extra},onField,()=>{}); document.body.append(c.wrap); c.update({value,resolvedPath:descriptor.path}); const coarse=c.wrap.querySelector('[data-mode="coarse"]'); if(coarse?.getAttribute('aria-pressed')==='false') coarse.click(); return {c,onField}; }
+it('rejected value feedback uses displayed descriptor bounds and preserves a specific controller error', () => {
+  const percentage = { path: 'outputs.left.offset', label: 'Offset', min: 0, max: 1, displayMin: 0, displayMax: 100, display: 'percentage', unit: '%' };
+  const onField = vi.fn(() => false); const c = renderField(document, percentage, onField, () => {}); c.update({ value: .25 });
+  input(c, '125');
+  expect(c.finish().error).toContain('0 and 100%');
+  expect(c.number.value).toBe('125');
+  c.dispose();
+
+  const rejected = renderField(document, percentage, () => { rejected.update({ value: .25, error: 'The crop extent must remain at least 1%.' }); return false; }, () => {});
+  rejected.update({ value: .25 }); input(rejected, '80');
+  expect(rejected.finish().error).toBe('The crop extent must remain at least 1%.');
+  expect(rejected.error.textContent).toBe('The crop extent must remain at least 1%.');
+  rejected.dispose();
+});
 it('optical continuous fields start in Fine with visible Coarse option and exact local zero', () => {
   const onField=vi.fn(); const base=.123456789123456;
   const c=renderField(document,{...descriptor,display:'percentage',step:.001,fine:.0001},onField,()=>{}); c.update({value:base});

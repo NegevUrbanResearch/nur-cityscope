@@ -51,6 +51,13 @@ export function renderField(doc, descriptor, onField, onNudge, compact = false, 
   let suppressNudgeClick = false;
   let rangeRejected = false;
   const gestureId = () => `${id}-${++nextControlId}`;
+  const boundsError = () => {
+    if (!Number.isFinite(descriptor.min) || !Number.isFinite(descriptor.max)) return 'Value was not accepted. Check the field bounds.';
+    const minimum = descriptor.displayMin ?? toDisplay(descriptor.min);
+    const maximum = descriptor.displayMax ?? toDisplay(descriptor.max);
+    const unit = descriptor.display === 'percentage' ? '%' : descriptor.unit;
+    return `Enter a value between ${minimum} and ${maximum}${unit ? `${unit === '%' ? '' : ' '}${unit}` : ""}.`;
+  };
   const listeners = [];
   const listen = (node, type, handler) => { if (!node) return; node.addEventListener(type, handler); listeners.push(() => node.removeEventListener?.(type, handler)); };
   const wrap = make(doc, "div", { className: `config-field${compact ? " compact-field" : ""}${editorLayout ? " parameter-field-layout" : ""}`, dataset: { path: descriptor.path } });
@@ -168,7 +175,7 @@ export function renderField(doc, descriptor, onField, onNudge, compact = false, 
       canonicalValue: candidate, baseValue: active.last, resolvedPath: active.path, phase, gestureId: active.id,
     });
     if (accepted !== false && phase !== 'cancel') { active.last = candidate; latest.value = candidate; rangeRejected = false; rejectionError = ''; session.sync(latest); refresh(); }
-    if (accepted === false) { rangeRejected = true; rejectionError = externalError || 'Value was not accepted. Check the field bounds.'; renderResult(); }
+    if (accepted === false) { rangeRejected = true; rejectionError = externalError || boundsError(); renderResult(); }
     return accepted !== false;
   }
   function endRange(cancelled = false, notify = true) {
@@ -195,7 +202,7 @@ export function renderField(doc, descriptor, onField, onNudge, compact = false, 
   function sendNudge(direction, meta) {
     const accepted = meta ? onNudge(descriptor.path, direction, meta) : onNudge(descriptor.path, direction);
     rangeRejected = accepted === false;
-    rejectionError = rangeRejected ? externalError || 'Value was not accepted. Check the field bounds.' : '';
+    rejectionError = rangeRejected ? externalError || boundsError() : '';
     renderResult(); return accepted !== false;
   }
   const markInput = (raw, inputSign = sign) => {
@@ -219,7 +226,7 @@ export function renderField(doc, descriptor, onField, onNudge, compact = false, 
     if (result.kind === 'commit' || correction) {
       const candidateValue = correction ? result.baseValue : result.value;
       const shown = toDisplay(candidateValue);
-      if (!Number.isFinite(shown) || (!signed && shown < 0) || (descriptor.validate && !descriptor.validate(candidateValue))) result = { ...result, kind: 'invalid', error: 'Enter a number within the allowed bounds.' };
+      if (!Number.isFinite(shown) || (!signed && shown < 0) || (descriptor.validate && !descriptor.validate(candidateValue))) result = { ...result, kind: 'invalid', error: boundsError() };
       else {
         const meta = { baseValue: result.baseValue, resolvedPath: result.resolvedPath, override };
         const enteredText = number?.value;
@@ -228,7 +235,7 @@ export function renderField(doc, descriptor, onField, onNudge, compact = false, 
         if (accepted === false) {
           if (number) number.value = enteredText;
           const pending = session.candidate();
-          result = { ...result, kind: pending.kind === 'conflict' ? 'conflict' : 'invalid', error: externalError || pending.error || 'Value was not accepted. Check the field bounds.' };
+          result = { ...result, kind: pending.kind === 'conflict' ? 'conflict' : 'invalid', error: externalError || pending.error || boundsError() };
           needsAcceptance = true; rejectionError = result.error;
         } else {
           needsAcceptance = false; rejectionError = '';

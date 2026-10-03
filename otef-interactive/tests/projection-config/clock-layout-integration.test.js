@@ -97,11 +97,37 @@ test("clock numeric bounds reject raw out-of-range text before layout normalizat
   input.value = "999"; input.dispatchEvent(new Event("input")); input.dispatchEvent(new Event("change"));
   expect(input.value).toBe("999");
   expect(input.getAttribute("aria-invalid")).toBe("true");
+  expect(input.closest(".config-field").querySelector(".config-field-error").textContent).toContain("-180");
+  expect(input.closest(".config-field").querySelector(".config-field-error").textContent).toContain("180");
+  expect(input.closest(".config-field").querySelector(".config-field-error").textContent).toContain("deg");
+  expect(input.closest(".config-field").querySelector(".config-field-error").textContent).not.toContain("Value was not accepted");
   expect(layoutClient.commit).not.toHaveBeenCalled();
   input.closest(".config-field").querySelector('[data-action="numeric-cancel-edit"]').click();
   input.value = "90"; input.dispatchEvent(new Event("input")); input.dispatchEvent(new Event("change"));
   expect(layoutClient.commit).toHaveBeenCalledTimes(1);
   expect(layoutClient.commit).toHaveBeenCalledWith("gisClock", "start", expect.objectContaining({ rotateDeg: 90 }), { numeric: true });
+});
+
+test("clock box coordinate errors use declared 0–100% bounds and valid X normalizes against the complete box", async () => {
+  const layout = { leftPct: 8, topPct: 8, widthPct: 35, heightPct: 28, fontPx: 22, rotateDeg: 0 };
+  const layoutClient = { getSlot: () => ({ acknowledged: layout, draft: null, status: "Saved" }), subscribe: () => () => {}, commit: vi.fn() };
+  const { root } = mount({ layoutClient });
+  root.querySelector('[data-node="clock-gis"] [data-action="clock-editor-open"]').click();
+  const input = document.querySelector('.clock-layout-dialog [data-field="leftPct"]');
+  expect(input.max).toBe("65");
+  input.value = "999"; input.dispatchEvent(new Event("input")); input.dispatchEvent(new Event("change"));
+  const error = input.closest(".config-field").querySelector(".config-field-error");
+  expect(input.value).toBe("999");
+  expect(input.getAttribute("aria-invalid")).toBe("true");
+  expect(error.textContent).toContain("0");
+  expect(error.textContent).toContain("100");
+  expect(error.textContent).toContain("%");
+  expect(layoutClient.commit).not.toHaveBeenCalled();
+
+  input.closest(".config-field").querySelector('[data-action="numeric-cancel-edit"]').click();
+  input.value = "95"; input.dispatchEvent(new Event("input")); input.dispatchEvent(new Event("change"));
+  expect(layoutClient.commit).toHaveBeenCalledTimes(1);
+  expect(layoutClient.commit).toHaveBeenCalledWith("gisClock", "start", expect.objectContaining({ leftPct: 65 }), { numeric: true });
 });
 
 test.each(["saved", "load"])("clock drafts protect unload across slot switches until %s", async (completion) => {
