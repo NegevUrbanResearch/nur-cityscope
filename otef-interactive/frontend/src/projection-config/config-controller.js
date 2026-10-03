@@ -339,6 +339,10 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
       if (pendingPreview?.ok && pendingPreview.baseWarpIdentity !== JSON.stringify(editor.getConfig().outputs[output].warp)) {
         gridPreviews[output] = { ...pendingPreview, id: ++gridPreviewSequence, ok: false, status: "error", error: "The warp changed. Preview the grid edit again." };
       }
+      const placement = gridPlacements[output];
+      if (placement?.preview && placement.preview.baseWarpIdentity !== JSON.stringify(editor.getConfig().outputs[output].warp)) {
+        gridPlacements[output] = { ...placement, preview: null, error: "The warp changed. Choose a new source percentage or click to place again." };
+      }
       return [output, { ...editor.getState(), gridLayoutPreview: gridPreviews[output], gridPlacement: gridPlacements[output],
       ...(!editorBaselineReady ? { baselineAvailable: false, historyDepth: 0, redoDepth: 0 } : {}),
       config: editor.getConfig(), baselineMesh: editorBaselineMeshes[output], evaluatedMesh, handles: editor.getControlPoints() }];

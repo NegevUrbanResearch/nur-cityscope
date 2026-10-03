@@ -540,6 +540,29 @@ describe("projection config controller", () => {
     } finally { api.dispose(); globalThis.document = previousDocument; }
   });
 
+  test("an accepted warp replacement retires the initial Add preview but keeps its percentage", () => {
+    const previousDocument = globalThis.document; globalThis.document = documentStub();
+    const root = element("main"); const client = fakeClient(); const api = mountProjectionConfig(root, { client });
+    try {
+      client.setLive(true);
+      find(root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+      client.setDraft.mockClear(); client.apply.mockClear();
+      find(root, node => node.dataset?.gridLayoutAction === "add-row").dispatch("click");
+      const position = find(root, node => node.dataset?.gridLayoutField === "addRowPosition");
+      expect(find(root, node => node.attributes?.class === "warp-grid-preview-line candidate")).toBeTruthy();
+
+      const accepted = clone(client.getState().draft);
+      accepted.outputs.left.warp.keystone.corners[0][0] = 0.02;
+      client.report({ draft: accepted, snapshot: { ...client.getState().snapshot, revision: 3, config: accepted }, hasLocalDraft: false });
+
+      expect(find(root, node => node.attributes?.class === "warp-grid-preview-line candidate")).toBeNull();
+      expect(find(root, node => node.dataset?.gridLayoutField === "addRowPosition").value).toBe(position.value);
+      expect(find(root, node => node.className === "warp-grid-layout-preview-status").textContent).toContain("warp changed");
+      expect(client.setDraft).not.toHaveBeenCalled(); expect(client.apply).not.toHaveBeenCalled();
+      expect(find(root, node => node.dataset?.action === "warp-undo").disabled).toBe(true);
+    } finally { api.dispose(); globalThis.document = previousDocument; }
+  });
+
   test("maximum-count Add placement keeps the source percentage and explains why no candidate line is available", () => {
     const previousDocument = globalThis.document; globalThis.document = documentStub();
     const root = element("main"); const client = fakeClient(); const api = mountProjectionConfig(root, { client });
