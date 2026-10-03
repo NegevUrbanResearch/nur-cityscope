@@ -92,12 +92,22 @@ export function createProjectionConfigView(root, {
   onWarpEditorVisibility = () => {},
   onWarpFieldCancel = () => {},
   onWarpPointer = () => {},
+  warpEditorFactory = createWarpEditor,
+  requestVisualFrame = null,
+  cancelVisualFrame = null,
   trace,
 } = {}) {
   const doc = docFor(root);
   if (!root || !doc?.createElement) throw new Error("projection config root is required");
   root.className = "projection-config-app";
   const fields = new Map();
+  const nativeRequestFrame = doc.defaultView?.requestAnimationFrame?.bind(doc.defaultView);
+  const nativeCancelFrame = doc.defaultView?.cancelAnimationFrame?.bind(doc.defaultView);
+  const requestFrame = requestVisualFrame || nativeRequestFrame || null;
+  const cancelFrame = cancelVisualFrame || nativeCancelFrame || (() => {});
+  let pendingWarpFrame = null;
+  let latestWarpPaint = null;
+  let disposed = false;
 
   const clockNodeStatuses = new Map();
   let selectedGraphNode = "pre";
@@ -156,6 +166,9 @@ export function createProjectionConfigView(root, {
   app.append(commandBar.element);
   const nodeMap = new Map();
   const warpNodePreviews = new Map();
+  const miniGeometryCache = new Map();
+  const meshObjectIds = new WeakMap();
+  let nextMeshObjectId = 0;
   const patternControls = new Map();
   const inlinePendingTargetNotes = new Map();
   let parameterDialog = null;
@@ -177,11 +190,31 @@ export function createProjectionConfigView(root, {
       const grid = warp?.grid;
       const rows = grid?.rows || 7;
       const columns = grid?.columns || (preview.output === "right" ? 8 : 7);
-      let handles = state?.selection?.mode === preview.mode && Array.isArray(state.handles) ? state.handles : [];
-      if (state && state.selection?.mode !== preview.mode && state.config?.outputs?.[preview.output]?.warp) {
-        const stage = createWarpEditor({ config: state.config, output: preview.output, baselineMesh: state.baselineMesh });
-        stage.setMode(preview.mode);
-        handles = stage.getControlPoints();
+      let handles = [];
+      if (state && warp && state.selection?.mode === preview.mode && Array.isArray(state.handles)) handles = state.handles;
+      else if (preview.mode === "keystone" && Array.isArray(warp?.keystone?.corners)) {
+        const geometryKey = `${preview.output}:keystone:${JSON.stringify(warp.keystone.corners)}`;
+        const retained = miniGeometryCache.get(id);
+        if (retained?.key === geometryKey) handles = retained.handles;
+        else {
+          handles = warp.keystone.corners.map(([x, y]) => ({ x, y }));
+          miniGeometryCache.set(id, { key: geometryKey, handles });
+        }
+      } else if (preview.mode === "grid" && state && warp) {
+        let meshId = 0;
+        if (state.baselineMesh && typeof state.baselineMesh === "object") {
+          meshId = meshObjectIds.get(state.baselineMesh) || ++nextMeshObjectId;
+          meshObjectIds.set(state.baselineMesh, meshId);
+        }
+        const geometryKey = `${preview.output}:grid:${state.config?.schemaVersion ?? "unknown"}:${meshId}:${JSON.stringify(warp)}`;
+        const retained = miniGeometryCache.get(id);
+        if (retained?.key === geometryKey) handles = retained.handles;
+        else {
+          const stage = warpEditorFactory({ config: state.config, output: preview.output, baselineMesh: state.baselineMesh });
+          stage.setMode("grid");
+          handles = stage.getControlPoints();
+          miniGeometryCache.set(id, { key: geometryKey, handles });
+        }
       }
       if (preview.mode === "grid" && handles.length === 0 && grid) {
         const xPositions = grid.columnPositions || Array.from({ length: columns }, (_, column) => column / (columns - 1));
@@ -204,22 +237,42 @@ export function createProjectionConfigView(root, {
       const stateText = state ? `${WARP_OUTPUT_WIDTH} × ${WARP_OUTPUT_HEIGHT} px · ${enabled ? "Enabled" : "Disabled"} · ${target}${baselineText}` : `${WARP_OUTPUT_WIDTH} × ${WARP_OUTPUT_HEIGHT} px · Warp state loading`;
       preview.summary.textContent = stateText;
       preview.element.setAttribute("aria-label", `${id.replace("-", " ")} geometry, ${stateText}`);
-      const boundsPoints = [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 0, y: 1 }, { x: 1, y: 1 }, ...handles];
-      const minX = Math.min(...boundsPoints.map((point) => point.x * WARP_OUTPUT_WIDTH));
-      const maxX = Math.max(...boundsPoints.map((point) => point.x * WARP_OUTPUT_WIDTH));
-      const minY = Math.min(...boundsPoints.map((point) => point.y * WARP_OUTPUT_HEIGHT));
-      const maxY = Math.max(...boundsPoints.map((point) => point.y * WARP_OUTPUT_HEIGHT));
-      const paddingX = WARP_OUTPUT_WIDTH * 0.08;
-      const paddingY = WARP_OUTPUT_HEIGHT * 0.08;
-      preview.mesh.setAttribute("viewBox", `${minX - paddingX} ${minY - paddingY} ${Math.max(WARP_OUTPUT_WIDTH, maxX - minX) + paddingX * 2} ${Math.max(WARP_OUTPUT_HEIGHT, maxY - minY) + paddingY * 2}`);
-      const elements = [svgNode(doc, "rect", { class: "warp-node-frame", x: "0", y: "0", width: String(WARP_OUTPUT_WIDTH), height: String(WARP_OUTPUT_HEIGHT) })];
+      let render = preview.renderState;
+      const topologyKey = JSON.stringify([preview.output, preview.mode, WARP_OUTPUT_WIDTH, WARP_OUTPUT_HEIGHT, rows, columns, grid?.columnPositions || null, grid?.rowPositions || null, warp?.baseline || null, handles.length]);
+      if (!render || render.topologyKey !== topologyKey) {
+        const lines = preview.mode === "grid" && handles.length >= rows * columns ? rows + columns : handles.length >= 4 ? 1 : 0;
+        const frame = svgNode(doc, "rect", { class: "warp-node-frame", x: "0", y: "0", width: String(WARP_OUTPUT_WIDTH), height: String(WARP_OUTPUT_HEIGHT) });
+        const paths = Array.from({ length: lines }, () => svgNode(doc, "path", { class: "warp-node-line" }));
+        const markers = handles.map(() => svgNode(doc, "circle", { class: "warp-node-handle", r: "36" }));
+        preview.mesh.replaceChildren(frame, ...paths, ...markers);
+        render = { topologyKey, frame, paths, markers, handles: null, viewBox: null };
+        preview.renderState = render;
+      }
       const pathFor = (points) => points.map((point, pointIndex) => `${pointIndex ? "L" : "M"}${point.x * WARP_OUTPUT_WIDTH} ${point.y * WARP_OUTPUT_HEIGHT}`).join(" ");
-      if (preview.mode === "grid" && handles.length >= rows * columns) {
-        for (let row = 0; row < rows; row += 1) elements.push(svgNode(doc, "path", { class: "warp-node-line", d: pathFor(handles.slice(row * columns, (row + 1) * columns)) }));
-        for (let column = 0; column < columns; column += 1) elements.push(svgNode(doc, "path", { class: "warp-node-line", d: pathFor(Array.from({ length: rows }, (_, row) => handles[row * columns + column])) }));
-      } else if (handles.length >= 4) elements.push(svgNode(doc, "path", { class: "warp-node-line", d: `${pathFor([handles[0], handles[1], handles[3], handles[2]])} Z` }));
-      handles.forEach((point, pointIndex) => elements.push(svgNode(doc, "circle", { class: selected.has(pointIndex) ? "warp-node-handle selected" : "warp-node-handle", cx: String(point.x * WARP_OUTPUT_WIDTH), cy: String(point.y * WARP_OUTPUT_HEIGHT), r: "36" })));
-      preview.mesh.replaceChildren(...elements);
+      const geometryChanged = render.handles !== handles;
+      if (geometryChanged) {
+        if (preview.mode === "grid" && handles.length >= rows * columns) {
+          for (let row = 0; row < rows; row += 1) render.paths[row].setAttribute("d", pathFor(handles.slice(row * columns, (row + 1) * columns)));
+          for (let column = 0; column < columns; column += 1) render.paths[rows + column].setAttribute("d", pathFor(Array.from({ length: rows }, (_, row) => handles[row * columns + column])));
+        } else if (handles.length >= 4) render.paths[0].setAttribute("d", `${pathFor([handles[0], handles[1], handles[3], handles[2]])} Z`);
+        handles.forEach((point, pointIndex) => {
+          const marker = render.markers[pointIndex];
+          marker.setAttribute("cx", String(point.x * WARP_OUTPUT_WIDTH)); marker.setAttribute("cy", String(point.y * WARP_OUTPUT_HEIGHT));
+        });
+        render.handles = handles;
+      }
+      handles.forEach((_point, pointIndex) => render.markers[pointIndex].setAttribute("class", selected.has(pointIndex) ? "warp-node-handle selected" : "warp-node-handle"));
+      if (geometryChanged || !render.viewBox) {
+        const boundsPoints = [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 0, y: 1 }, { x: 1, y: 1 }, ...handles];
+        const minX = Math.min(...boundsPoints.map((point) => point.x * WARP_OUTPUT_WIDTH));
+        const maxX = Math.max(...boundsPoints.map((point) => point.x * WARP_OUTPUT_WIDTH));
+        const minY = Math.min(...boundsPoints.map((point) => point.y * WARP_OUTPUT_HEIGHT));
+        const maxY = Math.max(...boundsPoints.map((point) => point.y * WARP_OUTPUT_HEIGHT));
+        const paddingX = WARP_OUTPUT_WIDTH * 0.08;
+        const paddingY = WARP_OUTPUT_HEIGHT * 0.08;
+        render.viewBox = `${minX - paddingX} ${minY - paddingY} ${Math.max(WARP_OUTPUT_WIDTH, maxX - minX) + paddingX * 2} ${Math.max(WARP_OUTPUT_HEIGHT, maxY - minY) + paddingY * 2}`;
+        preview.mesh.setAttribute("viewBox", render.viewBox);
+      }
     }
   };
   function pageSpacingReset() {
@@ -332,7 +385,7 @@ export function createProjectionConfigView(root, {
       const mesh = svgNode(doc, "svg", { class: "warp-node-mesh", viewBox: `0 0 ${WARP_OUTPUT_WIDTH} ${WARP_OUTPUT_HEIGHT}`, "aria-hidden": "true", focusable: "false" });
       const summary = make(doc, "p", { className: "warp-node-summary" }, `${WARP_OUTPUT_WIDTH} × ${WARP_OUTPUT_HEIGHT} px · Warp state loading`);
       geometry.append(mesh, summary); card.appendChild(geometry);
-      warpNodePreviews.set(id, { output, mode, element: geometry, mesh, summary });
+      warpNodePreviews.set(id, { output, mode, element: geometry, mesh, summary, renderState: null });
     }
     if (id.endsWith("-keystone") || id.endsWith("-grid")) {
       const openButton = button(doc, "Edit", "warp-editor-open", "warp-open-button");
@@ -505,6 +558,11 @@ export function createProjectionConfigView(root, {
   let currentEvaluatedMesh = null;
   let currentGridPlacement = null;
   let currentWarpEnabled = true;
+  let currentWarpOutput = "left";
+  let currentWarpMode = "keystone";
+  let currentWarpState = null;
+  let warpSurfaceRenderState = null;
+  let warpPaintGeneration = 0;
   let activeWarpAdjusting = false;
   let pointerInput;
   function cancelActiveDrag(options) {
@@ -658,6 +716,82 @@ export function createProjectionConfigView(root, {
     canvas.setSelected(selected);
     for (const [id, card] of nodeMap) card.classList?.toggle("selected", id === selected);
   };
+  const paintWarpSurface = ({ output, mode, rows, columns, warp, warpState, handles, selectionKind, selectedIndex, selectedIndices, displayViewBox }) => {
+    const grid = warp?.grid;
+    const candidate = warpState.gridLayoutPreview || warpState.gridPlacement?.preview;
+    const candidateGrid = candidate?.grid;
+    const candidateHandles = candidate?.handles;
+    const candidateVisible = mode === "grid" && candidate?.ok && candidateGrid && candidateHandles?.length === candidateGrid.rows * candidateGrid.columns;
+    const topologyKey = JSON.stringify([output, mode, WARP_OUTPUT_WIDTH, WARP_OUTPUT_HEIGHT, rows, columns,
+      grid?.columnPositions || null, grid?.rowPositions || null, warp?.baseline || null, handles.length,
+      candidateVisible ? [candidateGrid.rows, candidateGrid.columns] : null]);
+    const focusedHandleIndex = doc.activeElement?.classList?.contains?.("warp-handle") ? Number(doc.activeElement.getAttribute("data-index")) : null;
+    if (!warpSurfaceRenderState || warpSurfaceRenderState.topologyKey !== topologyKey) {
+      const rect = svgNode(doc, "rect", { class: "warp-output-rect", x: "0", y: "0", width: String(WARP_OUTPUT_WIDTH), height: String(WARP_OUTPUT_HEIGHT) });
+      const mainPathCount = mode === "grid" && handles.length >= rows * columns ? rows + columns : handles.length >= 4 ? 1 : 0;
+      const mainPaths = Array.from({ length: mainPathCount }, () => svgNode(doc, "path", { class: "warp-grid-line" }));
+      const previewPathCount = candidateVisible ? candidateGrid.rows + candidateGrid.columns : 0;
+      const previewPaths = Array.from({ length: previewPathCount }, () => svgNode(doc, "path", { class: "warp-grid-preview-line" }));
+      const markers = handles.map((_point, index) => {
+        const label = mode === "keystone" ? ["top-left corner", "top-right corner", "bottom-left corner", "bottom-right corner"][index] || `corner ${index + 1}` : `point ${index + 1}, row ${Math.floor(index / columns) + 1}, column ${index % columns + 1}`;
+        const marker = svgNode(doc, "circle", { cx: "0", cy: "0", r: "5", class: "warp-handle", "data-index": String(index), tabindex: "-1", role: "button", "aria-label": `Select ${label}` });
+        marker.addEventListener("keydown", (event) => {
+          if (event.key !== "Enter" && event.key !== " ") return;
+          event.preventDefault?.();
+          if (pointerInput?.isActive() || !finishCoordinates()) return;
+          cancelActiveDrag({ reason: "selection" });
+          const selection = currentWarpMode === "keystone" ? { mode: currentWarpMode, kind: "corner", index } : gridSelectionForHandle(currentWarpState?.selection, index, currentWarpGrid?.columns || 7);
+          onWarpAction("warp-select", { output: currentWarpOutput, selection });
+        });
+        return marker;
+      });
+      controls.warpSurface.replaceChildren(rect, ...mainPaths, ...previewPaths, ...markers);
+      warpSurfaceRenderState = { topologyKey, rect, mainPaths, previewPaths, markers };
+      if (focusedHandleIndex !== null) warpSurfaceRenderState.markers[focusedHandleIndex]?.focus?.();
+    }
+    const render = warpSurfaceRenderState;
+    const pathFor = (points) => points.map((point, index) => `${index ? "L" : "M"}${point.x * WARP_OUTPUT_WIDTH} ${point.y * WARP_OUTPUT_HEIGHT}`).join(" ");
+    if (mode === "grid" && handles.length >= rows * columns) {
+      const geometryChanged = render.handles !== handles;
+      for (let row = 0; row < rows; row += 1) {
+        render.mainPaths[row].setAttribute("class", `warp-grid-line${selectionKind === "row" && selectedIndex === row ? " selected" : ""}`);
+        if (geometryChanged) render.mainPaths[row].setAttribute("d", pathFor(handles.slice(row * columns, (row + 1) * columns)));
+      }
+      for (let column = 0; column < columns; column += 1) {
+        const path = render.mainPaths[rows + column];
+        path.setAttribute("class", `warp-grid-line${selectionKind === "column" && selectedIndex === column ? " selected" : ""}`);
+        if (geometryChanged) path.setAttribute("d", pathFor(Array.from({ length: rows }, (_, row) => handles[row * columns + column])));
+      }
+    } else if (handles.length >= 4 && render.mainPaths[0]) {
+      render.mainPaths[0].setAttribute("class", "warp-grid-line");
+      if (render.handles !== handles) render.mainPaths[0].setAttribute("d", `${pathFor([handles[0], handles[1], handles[3], handles[2]])} Z`);
+    }
+    if (candidateVisible) {
+      const candidateChanged = render.candidateHandles !== candidateHandles;
+      for (let row = 0; row < candidateGrid.rows; row += 1) {
+        const selected = candidate.operation === "add" && candidate.values?.axis === "row" && candidate.selection?.index === row;
+        render.previewPaths[row].setAttribute("class", `warp-grid-preview-line${selected ? " candidate" : ""}`);
+        if (candidateChanged) render.previewPaths[row].setAttribute("d", pathFor(candidateHandles.slice(row * candidateGrid.columns, (row + 1) * candidateGrid.columns)));
+      }
+      for (let column = 0; column < candidateGrid.columns; column += 1) {
+        const selected = candidate.operation === "add" && candidate.values?.axis === "column" && candidate.selection?.index === column;
+        const path = render.previewPaths[candidateGrid.rows + column];
+        path.setAttribute("class", `warp-grid-preview-line${selected ? " candidate" : ""}`);
+        if (candidateChanged) path.setAttribute("d", pathFor(Array.from({ length: candidateGrid.rows }, (_, row) => candidateHandles[row * candidateGrid.columns + column])));
+      }
+    }
+    const geometryChanged = render.handles !== handles;
+    handles.forEach((point, index) => {
+      const selected = selectedIndices.has(index);
+      const marker = render.markers[index];
+      if (geometryChanged) { marker.setAttribute("cx", String(point.x * WARP_OUTPUT_WIDTH)); marker.setAttribute("cy", String(point.y * WARP_OUTPUT_HEIGHT)); }
+      marker.setAttribute("r", selected ? "8" : "5"); marker.setAttribute("class", `warp-handle${selected ? " selected" : ""}`);
+    });
+    render.handles = handles;
+    render.candidateHandles = candidateHandles;
+    const viewBoxKey = warpViewBoxValue(displayViewBox);
+    if (render.viewBoxKey !== viewBoxKey) { controls.warpSurface.setAttribute("viewBox", viewBoxKey); render.viewBoxKey = viewBoxKey; }
+  };
   const renderWarpPanel = (warpStates, node) => {
     const output = node.startsWith("right-") ? "right" : "left";
     const isWarpNode = node.endsWith("-keystone") || node.endsWith("-grid");
@@ -721,56 +855,64 @@ export function createProjectionConfigView(root, {
     controls.warpSurface.setAttribute("data-correction-bypassed", String(!correctionEnabled));
     controls.warpUndo.disabled ||= adjusting || !correctionEnabled;
     controls.warpRedo.disabled ||= adjusting || !correctionEnabled;
-    const viewPoints = allHandles;
-    const nextFit = warpViewport(viewPoints);
+    const nextFit = warpViewport(allHandles);
     warpViewBox = nextFit;
     if (!effectiveWarpViewBox || targetChanged) { setWarpInteractionMode("edit"); effectiveWarpViewBox = nextFit; }
     const displayViewBox = pointerInput.activeViewBox() || effectiveWarpViewBox;
-    controls.warpSurface.setAttribute("viewBox", warpViewBoxValue(displayViewBox));
-    const focusedHandleIndex = doc.activeElement?.classList?.contains?.("warp-handle") ? Number(doc.activeElement.getAttribute("data-index")) : null;
-    controls.warpSurface.replaceChildren();
-    controls.warpSurface.appendChild(svgNode(doc, "rect", { class: "warp-output-rect", x: "0", y: "0", width: String(WARP_OUTPUT_WIDTH), height: String(WARP_OUTPUT_HEIGHT) }));
-    const pathFor = (points) => points.map((point, index) => `${index ? "L" : "M"}${point.x * WARP_OUTPUT_WIDTH} ${point.y * WARP_OUTPUT_HEIGHT}`).join(" ");
-    if (mode === "grid" && allHandles.length >= columns * rows) {
-      for (let row = 0; row < rows; row += 1) controls.warpSurface.appendChild(svgNode(doc, "path", { class: `warp-grid-line${selectionKind === "row" && selectedIndex === row ? " selected" : ""}`, d: pathFor(allHandles.slice(row * columns, (row + 1) * columns)) }));
-      for (let column = 0; column < columns; column += 1) controls.warpSurface.appendChild(svgNode(doc, "path", { class: `warp-grid-line${selectionKind === "column" && selectedIndex === column ? " selected" : ""}`, d: pathFor(Array.from({ length: rows }, (_, row) => allHandles[row * columns + column])) }));
-      const candidate = warpState.gridLayoutPreview || warpState.gridPlacement?.preview;
-      const candidateGrid = candidate?.grid;
-      const candidateHandles = candidate?.handles;
-      if (candidate?.ok && candidateGrid && candidateHandles?.length === candidateGrid.rows * candidateGrid.columns) {
-        for (let row = 0; row < candidateGrid.rows; row += 1) {
-          const selectedCandidate = candidate.operation === "add" && candidate.values?.axis === "row" && candidate.selection?.index === row;
-          controls.warpSurface.appendChild(svgNode(doc, "path", { class: `warp-grid-preview-line${selectedCandidate ? " candidate" : ""}`, d: pathFor(candidateHandles.slice(row * candidateGrid.columns, (row + 1) * candidateGrid.columns)) }));
-        }
-        for (let column = 0; column < candidateGrid.columns; column += 1) {
-          const selectedCandidate = candidate.operation === "add" && candidate.values?.axis === "column" && candidate.selection?.index === column;
-          controls.warpSurface.appendChild(svgNode(doc, "path", { class: `warp-grid-preview-line${selectedCandidate ? " candidate" : ""}`, d: pathFor(Array.from({ length: candidateGrid.rows }, (_, row) => candidateHandles[row * candidateGrid.columns + column])) }));
-        }
-      }
-    } else if (allHandles.length >= 4) {
-      controls.warpSurface.appendChild(svgNode(doc, "path", { class: "warp-grid-line", d: `${pathFor([allHandles[0], allHandles[1], allHandles[3], allHandles[2]])} Z` }));
-    }
-    allHandles.forEach((point, index) => {
-      const selected = selectedIndices.has(index);
-      const label = mode === "keystone" ? ["top-left corner", "top-right corner", "bottom-left corner", "bottom-right corner"][index] || `corner ${index + 1}` : `point ${index + 1}, row ${Math.floor(index / columns) + 1}, column ${index % columns + 1}`;
-      const circle = svgNode(doc, "circle", { cx: point.x * WARP_OUTPUT_WIDTH, cy: point.y * WARP_OUTPUT_HEIGHT, r: selected ? "8" : "5", class: `warp-handle${selected ? " selected" : ""}`, "data-index": String(index), tabindex: "-1", role: "button", "aria-label": `Select ${label}` });
-      circle.addEventListener("keydown", (event) => {
-        if (event.key !== "Enter" && event.key !== " ") return;
-        event.preventDefault?.();
-        if (pointerInput?.isActive() || !finishCoordinates()) return;
-        cancelActiveDrag({ reason: "selection" });
-        const selection = mode === "keystone" ? { mode, kind: "corner", index } : gridSelectionForHandle(warpState.selection, index, columns);
-        onWarpAction("warp-select", { output, selection });
-      });
-      controls.warpSurface.appendChild(circle);
-    });
-    if (focusedHandleIndex !== null) controls.warpSurface.querySelector?.(`.warp-handle[data-index="${focusedHandleIndex}"]`)?.focus?.();
+    paintWarpSurface({ output, mode, rows, columns, warp, warpState, handles: allHandles, selectionKind, selectedIndex, selectedIndices, displayViewBox });
     dialog.setViewBox(displayViewBox);
     updateWarpMarkerRadii();
     if (trace?.enabled) {
       const rect = latestWarpRect || { left: 0, top: 0, width: 0, height: 0 };
       recordProjectionTrace(trace, 'redraw', { surface: 'warp', phase: 'end', output, mode, columns, rows, baselineType: warp?.baseline?.type || 'unknown', durationMs: projectionTraceTime(trace) - traceStarted, rectX: rect.left ?? 0, rectY: rect.top ?? 0, rectWidth: rect.width, rectHeight: rect.height, viewX: displayViewBox.x, viewY: displayViewBox.y, viewWidth: displayViewBox.width, viewHeight: displayViewBox.height });
     }
+  };
+  const syncWarpInteractionState = (warpStates, node) => {
+    const output = node.startsWith("right-") ? "right" : "left";
+    const isWarpNode = node.endsWith("-keystone") || node.endsWith("-grid");
+    const warpState = isWarpNode ? warpStates?.[output] : null;
+    currentWarpOutput = output;
+    currentWarpMode = node.endsWith("-grid") ? "grid" : "keystone";
+    currentWarpState = warpState;
+    warpPanelView.setState({ output, nodeId: node, editorState: warpState });
+    activeWarpAdjusting = Boolean(warpState?.adjusting ?? warpState?.dragging);
+    warpPanelView.setAdjusting(activeWarpAdjusting);
+    dialog.updateAdjustmentGuard();
+    if (!warpState) {
+      currentHandles = [];
+      currentSelection = null;
+      currentWarpGrid = null;
+      currentEvaluatedMesh = null;
+      currentGridPlacement = null;
+      currentWarpEnabled = false;
+      return;
+    }
+    const warp = warpState.config?.outputs?.[output]?.warp;
+    currentWarpGrid = warp?.grid || null;
+    currentHandles = Array.isArray(warpState.handles) ? warpState.handles : [];
+    currentEvaluatedMesh = warpState.evaluatedMesh || null;
+    currentGridPlacement = warpState.gridPlacement || null;
+    currentSelection = warpState.selection;
+    currentWarpEnabled = warp?.enabled !== false;
+  };
+  const paintLatestWarpUpdate = () => {
+    pendingWarpFrame = null;
+    const latest = latestWarpPaint;
+    latestWarpPaint = null;
+    if (disposed || !latest) return;
+    renderWarpPanel(latest.warpStates, latest.node);
+    updateWarpNodePreviews(latest.warpStates);
+  };
+  const scheduleWarpUpdate = (warpStates, node) => {
+    syncWarpInteractionState(warpStates, node);
+    latestWarpPaint = { warpStates, node };
+    if (!requestFrame) { paintLatestWarpUpdate(); return; }
+    if (pendingWarpFrame !== null) return;
+    const generation = ++warpPaintGeneration;
+    pendingWarpFrame = requestFrame(() => {
+      if (generation !== warpPaintGeneration) return;
+      paintLatestWarpUpdate();
+    });
   };
   const renderOptionalHealth = (clockState = { status: "Loading" }, settlementState = null) => {
     const modules = [
@@ -818,8 +960,7 @@ export function createProjectionConfigView(root, {
       status.classList?.toggle("is-reduced", false);
     }
     for (const run of namesRunButtons) { run.disabled = Boolean(namesRunDisabledReason); run.title = namesRunDisabledReason || "Run names for the applied calibration."; }
-    renderWarpPanel(warpStates, selectedNode);
-    updateWarpNodePreviews(warpStates);
+    scheduleWarpUpdate(warpStates, selectedNode);
     dialog.update(draft, { live: state.live, appliedSummary, namesRunStatus: wallMessage, namesRunDisabledReason,
       reconciliation: state.reconciliation });
     parameterDialog.update({ config: draft, fieldErrors: errors.fields || errors.field || errors, status: controls.status.textContent, parameterHistory });
@@ -890,7 +1031,7 @@ export function createProjectionConfigView(root, {
     cancelNumericEdits: options => { for (const control of [...fields.values(), ...controls.warpCoordinateFields.values()]) control.cancel(options); parameterDialog.cancel(options); },
     closeWarpEditor: dialog.close,
     sendRunNamesPreview: (config) => dialog.sendRunNamesPreview(config),
-    dispose() { for (const control of fields.values()) control.dispose(); warpPanelView.dispose(); settlementControls.dispose(); disposePageTrace(); disposeWarpTrace(); disposeGraphTrace(); traceUi?.dispose(); commandBar.dispose(); doc.removeEventListener?.("keydown", onKeyDown); parameterDialog.dispose(); dialog.dispose(); pointerInput.dispose(); canvas.dispose(); },
+    dispose() { if (disposed) return; disposed = true; warpPaintGeneration += 1; if (pendingWarpFrame !== null) { cancelFrame(pendingWarpFrame); pendingWarpFrame = null; } latestWarpPaint = null; for (const control of fields.values()) control.dispose(); warpPanelView.dispose(); settlementControls.dispose(); disposePageTrace(); disposeWarpTrace(); disposeGraphTrace(); traceUi?.dispose(); commandBar.dispose(); doc.removeEventListener?.("keydown", onKeyDown); parameterDialog.dispose(); dialog.dispose(); pointerInput.dispose(); canvas.dispose(); },
   };
 }
 

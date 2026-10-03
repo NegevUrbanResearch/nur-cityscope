@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { expect, test, vi } from "vitest";
 import { createProjectionConfigView } from "../../frontend/src/projection-config/config-view.js";
 import { DEFAULT_PROJECTION_CONFIG } from "../../frontend/src/shared/projection-config-schema.js";
+import { createIdentityProjectionMesh } from "../../frontend/src/shared/projection-warp-geometry.js";
 import { FIELD_DESCRIPTORS, NAMES_WALL_DESCRIPTORS } from "../../frontend/src/projection-config/config-controller.js";
 import { createWarpEditor, gridSelection } from "../../frontend/src/projection-config/warp-editor.js";
 
@@ -67,7 +68,8 @@ test("tablet warp panel pairs the preview with one scrolling control region", ()
 test("view renders draggable node workspace and preserves an existing focused input", () => {
   const make = (tag = "div") => ({ tagName: tag.toUpperCase(), children: [], dataset: {}, style: {}, attributes: {}, classList: { toggle() {}, add() {} }, appendChild(child) { if (child.parentElement) child.parentElement.children = child.parentElement.children.filter((item) => item !== child); this.children.push(child); child.parentElement = this; return child; }, append(...children) { children.forEach((child) => this.appendChild(child)); }, prepend(...children) { children.forEach((child) => { if (child.parentElement) child.parentElement.children = child.parentElement.children.filter((item) => item !== child); this.children.unshift(child); child.parentElement = this; }); }, remove() { if (this.parentElement) this.parentElement.children = this.parentElement.children.filter((child) => child !== this); }, focus() {}, setAttribute(key, value) { this.attributes[key] = value; }, removeAttribute(key) { delete this.attributes[key]; }, addEventListener(type, handler) { this.listeners ||= {}; (this.listeners[type] ||= []).push(handler); }, removeEventListener(type, handler) { this.listeners[type] = (this.listeners?.[type] || []).filter((entry) => entry !== handler); }, dispatch(type, event) { for (const handler of this.listeners?.[type] || []) handler({ currentTarget: this, target: this, ...event }); }, replaceChildren(...children) { this.children = children; children.forEach((child) => { child.parentElement = this; }); } });
   const root = make("main");
-  root.ownerDocument = { createElement: make, createElementNS: (_ns, tag) => make(tag), createTextNode: (text) => ({ nodeType: 3, textContent: String(text), parentElement: null }), listeners: {}, addEventListener(type, handler) { (this.listeners[type] ||= []).push(handler); }, removeEventListener(type, handler) { this.listeners[type] = (this.listeners[type] || []).filter((item) => item !== handler); }, dispatch(type, event) { for (const handler of this.listeners[type] || []) handler(event); }, defaultView: { location: { origin: "http://localhost" }, addEventListener() {}, removeEventListener() {}, matchMedia: (query) => ({ matches: query.includes("pointer: coarse"), addEventListener() {}, removeEventListener() {} }) } };
+  let svgCreateCount = 0;
+  root.ownerDocument = { createElement: make, createElementNS: (_ns, tag) => { svgCreateCount += 1; return make(tag); }, createTextNode: (text) => ({ nodeType: 3, textContent: String(text), parentElement: null }), listeners: {}, addEventListener(type, handler) { (this.listeners[type] ||= []).push(handler); }, removeEventListener(type, handler) { this.listeners[type] = (this.listeners[type] || []).filter((item) => item !== handler); }, dispatch(type, event) { for (const handler of this.listeners[type] || []) handler(event); }, defaultView: { location: { origin: "http://localhost" }, addEventListener() {}, removeEventListener() {}, matchMedia: (query) => ({ matches: query.includes("pointer: coarse"), addEventListener() {}, removeEventListener() {} }) } };
   const onNode = vi.fn();
   const onOpenClockEditor = vi.fn();
   const onOpenNovaExplainerEditor = vi.fn();
@@ -77,7 +79,8 @@ test("view renders draggable node workspace and preserves an existing focused in
   const onField = vi.fn();
   const onWarpPointer = vi.fn();
   const onWarpAction = vi.fn();
-  const view = createProjectionConfigView(root, { descriptors: [...FIELD_DESCRIPTORS, ...NAMES_WALL_DESCRIPTORS], onAction() {}, onNode, onNamesMode, onRunNames, onOpenClockEditor, onOpenNovaExplainerEditor, onClockScene, onClockElement, onField, onWarpPointer, onWarpAction });
+  const warpEditorFactory = vi.fn((options) => createWarpEditor(options));
+  const view = createProjectionConfigView(root, { descriptors: [...FIELD_DESCRIPTORS, ...NAMES_WALL_DESCRIPTORS], onAction() {}, onNode, onNamesMode, onRunNames, onOpenClockEditor, onOpenNovaExplainerEditor, onClockScene, onClockElement, onField, onWarpPointer, onWarpAction, warpEditorFactory });
   const descendants = (node) => [node, ...(node.children || []).flatMap(descendants)];
   expect(descendants(root).filter((node) => node.tagName === "IFRAME")).toHaveLength(0);
   expect(descendants(root).filter((node) => node.dataset?.action === "warp-editor-open")).toHaveLength(4);
@@ -306,7 +309,9 @@ test("view renders draggable node workspace and preserves an existing focused in
   view.update({ state: { draft } });
   expect(descendants(root).filter((node) => node.tagName === "IFRAME")).toHaveLength(0);
   const warpEditor = createWarpEditor({ config: draft, output: "left" });
-  view.update({ state: { draft }, selectedNode: "left-keystone", warpStates: { left: { ...warpEditor.getState(), config: warpEditor.getConfig(), handles: warpEditor.getControlPoints() } } });
+  const leftWarpState = () => ({ ...warpEditor.getState(), config: warpEditor.getConfig(), handles: warpEditor.getControlPoints() });
+  const leftWarpStates = () => ({ left: leftWarpState() });
+  view.update({ state: { draft }, selectedNode: "left-keystone", warpStates: leftWarpStates() });
   const leftGeometryPreview = descendants(view.nodeMap.get("left-keystone")).find((node) => node.className === "warp-node-geometry");
   expect(leftGeometryPreview).toBeDefined();
   expect(leftGeometryPreview.attributes["aria-label"]).toContain("1920 × 1080");
@@ -320,6 +325,61 @@ test("view renders draggable node workspace and preserves an existing focused in
   expect(miniViewBox[0]).toBeLessThan(0); expect(miniViewBox[1]).toBeLessThan(0);
   expect(miniViewBox[2]).toBeGreaterThan(1920); expect(miniViewBox[3]).toBeGreaterThan(1080);
   expect(leftKeystoneMesh.children.filter((node) => node.attributes?.class?.includes("warp-node-handle"))).toHaveLength(4);
+  const activeHandleNodes = view.controls.warpSurface.children.filter((node) => node.attributes?.class?.includes("warp-handle"));
+  const miniHandleNodes = leftKeystoneMesh.children.filter((node) => node.attributes?.class?.includes("warp-node-handle"));
+  const inactiveDerivations = warpEditorFactory.mock.calls.length;
+  const svgCreations = svgCreateCount;
+  for (let index = 0; index < 100; index += 1) view.update({ state: { draft }, selectedNode: "left-keystone", warpStates: leftWarpStates() });
+  expect(view.controls.warpSurface.children.filter((node) => node.attributes?.class?.includes("warp-handle"))).toEqual(activeHandleNodes);
+  expect(leftKeystoneMesh.children.filter((node) => node.attributes?.class?.includes("warp-node-handle"))).toEqual(miniHandleNodes);
+  expect(svgCreateCount).toBe(svgCreations);
+  expect(warpEditorFactory).toHaveBeenCalledTimes(inactiveDerivations);
+  const movedHandles = warpEditor.getControlPoints().map((point) => ({ ...point }));
+  movedHandles[0].x -= 0.01;
+  view.update({ state: { draft }, selectedNode: "left-keystone", warpStates: { left: { ...leftWarpState(), handles: movedHandles } } });
+  expect(view.controls.warpSurface.children.filter((node) => node.attributes?.class?.includes("warp-handle"))).toEqual(activeHandleNodes);
+  expect(view.controls.warpSurface.children.find((node) => node.attributes?.["data-index"] === "0").attributes.cx).toBe(String(movedHandles[0].x * 1920));
+  const firstMiniHandle = leftKeystoneMesh.children.find((node) => node.attributes?.class?.includes("warp-node-handle"));
+  expect(firstMiniHandle.attributes.cx).toBe(String(movedHandles[0].x * 1920));
+  warpEditor.select({ mode: "keystone", kind: "corner", index: 1 });
+  view.update({ state: { draft }, selectedNode: "left-keystone", warpStates: leftWarpStates() });
+  expect(view.controls.warpSurface.children.filter((node) => node.attributes?.class?.includes("warp-handle"))).toEqual(activeHandleNodes);
+  expect(view.controls.warpSurface.children.find((node) => node.attributes?.["data-index"] === "1").attributes.class).toContain("selected");
+  warpEditor.select({ mode: "keystone", kind: "corner", index: 0 });
+  view.update({ state: { draft }, selectedNode: "left-keystone", warpStates: leftWarpStates() });
+  const tdConfig = structuredClone(draft);
+  tdConfig.outputs.right.warp.baseline = { type: "tdMesh", assetId: "captured-mesh", sha256: "a".repeat(64), width: 1920, height: 1080, origin: "top-left" };
+  const tdEditor = createWarpEditor({ config: tdConfig, output: "right" });
+  tdEditor.setMode("keystone");
+  const tdWarpState = (baselineMesh) => ({ ...tdEditor.getState(), config: tdEditor.getConfig(), baselineMesh, handles: tdEditor.getControlPoints() });
+  view.update({ state: { draft: tdConfig }, selectedNode: "right-keystone", warpStates: { right: tdWarpState(null) } });
+  const unavailableDerivations = warpEditorFactory.mock.calls.length;
+  const capturedMesh = createIdentityProjectionMesh({ side: "right" });
+  tdEditor.setBaselineMesh(capturedMesh);
+  view.update({ state: { draft: tdConfig }, selectedNode: "right-keystone", warpStates: { right: tdWarpState(capturedMesh) } });
+  const readyDerivations = warpEditorFactory.mock.calls.length;
+  expect(readyDerivations).toBeGreaterThan(unavailableDerivations);
+  const capturedRightGridMesh = descendants(view.nodeMap.get("right-grid")).find((node) => node.className === "warp-node-geometry")?.children.find((node) => node.attributes?.class === "warp-node-mesh");
+  expect(capturedRightGridMesh.children.filter((node) => node.attributes?.class?.includes("warp-node-handle"))).toHaveLength(56);
+  view.update({ state: { draft: tdConfig }, selectedNode: "right-keystone", warpStates: { right: tdWarpState(capturedMesh) } });
+  expect(warpEditorFactory).toHaveBeenCalledTimes(readyDerivations);
+  const rightTopologyConfig = structuredClone(draft);
+  rightTopologyConfig.outputs.right.warp.grid.rows = 8;
+  rightTopologyConfig.outputs.right.warp.grid.rowPositions = Array.from({ length: 8 }, (_, row) => row / 7);
+  rightTopologyConfig.outputs.right.warp.grid.offsets = Array.from({ length: 64 }, () => [0, 0]);
+  const rightTopologyEditor = createWarpEditor({ config: rightTopologyConfig, output: "right" });
+  rightTopologyEditor.setMode("grid");
+  const rightTopologyState = () => ({ ...rightTopologyEditor.getState(), config: rightTopologyEditor.getConfig(), handles: rightTopologyEditor.getControlPoints() });
+  const topologySvgBefore = svgCreateCount;
+  view.update({ state: { draft: rightTopologyConfig }, selectedNode: "right-grid", warpStates: { right: rightTopologyState() } });
+  expect(view.controls.warpSurface.children).toHaveLength(81);
+  const topologyHandleNodes = view.controls.warpSurface.children.filter((node) => node.attributes?.class?.includes("warp-handle"));
+  const topologySvgAfter = svgCreateCount;
+  expect(topologySvgAfter).toBeGreaterThan(topologySvgBefore);
+  view.update({ state: { draft: rightTopologyConfig }, selectedNode: "right-grid", warpStates: { right: rightTopologyState() } });
+  expect(svgCreateCount).toBe(topologySvgAfter);
+  expect(view.controls.warpSurface.children.filter((node) => node.attributes?.class?.includes("warp-handle"))).toEqual(topologyHandleNodes);
+  view.update({ state: { draft }, selectedNode: "left-keystone", warpStates: leftWarpStates() });
   expect(view.controls.warpPanel.hidden).toBe(false);
   expect(view.controls.warpEnabled.attributes["aria-label"]).toBe("Enable browser warp");
   expect(view.controls.warpSurface.children.length).toBe(6);
@@ -566,6 +626,36 @@ test("view renders draggable node workspace and preserves an existing focused in
   expect(descendants(root).filter((node) => node.tagName === "IFRAME")).toHaveLength(0);
   expect(view.dispose).toBeTypeOf("function");
   view.dispose();
+
+  const scheduledRoot = make("main"); scheduledRoot.ownerDocument = root.ownerDocument;
+  const frames = new Map(); const cancelledFrames = [];
+  let nextFrameId = 0;
+  const scheduledView = createProjectionConfigView(scheduledRoot, {
+    descriptors: [],
+    requestVisualFrame(callback) { const id = ++nextFrameId; frames.set(id, callback); return id; },
+    cancelVisualFrame(id) { cancelledFrames.push(id); frames.delete(id); },
+  });
+  const scheduledEditor = createWarpEditor({ config: draft, output: "left" });
+  const makeScheduledState = (x, validationMessage = "") => ({ ...scheduledEditor.getState(), config: scheduledEditor.getConfig(), handles: [
+    { x, y: 0 }, { x: 1, y: 0 }, { x: 0, y: 1 }, { x: 1, y: 1 },
+  ], validationMessage });
+  scheduledView.update({ state: { draft }, selectedNode: "left-keystone", warpStates: { left: makeScheduledState(0) } });
+  scheduledView.update({ state: { draft }, selectedNode: "left-keystone", warpStates: { left: makeScheduledState(0.02, "latest visual state") } });
+  expect(frames.size).toBe(1);
+  const paint = frames.values().next().value;
+  paint(); frames.clear();
+  expect(scheduledView.controls.warpStatus.textContent).toContain("latest visual state");
+  expect(scheduledView.controls.warpSurface.children.find((node) => node.attributes?.["data-index"] === "0").attributes.cx).toBe("38.4");
+  scheduledView.update({ state: { draft }, selectedNode: "left-keystone", warpStates: { left: makeScheduledState(0.03, "retired state") } });
+  expect(frames.size).toBe(1);
+  const stalePaint = frames.values().next().value;
+  const retainedHandle = scheduledView.controls.warpSurface.children.find((node) => node.attributes?.["data-index"] === "0");
+  const retainedX = retainedHandle.attributes.cx;
+  scheduledView.dispose();
+  expect(cancelledFrames).toHaveLength(1);
+  stalePaint();
+  expect(scheduledView.controls.warpSurface.children.find((node) => node.attributes?.["data-index"] === "0")).toBe(retainedHandle);
+  expect(retainedHandle.attributes.cx).toBe(retainedX);
 });
 
 test("Grid Warp selection controls reserve 48px targets without a nested status scroller", () => {

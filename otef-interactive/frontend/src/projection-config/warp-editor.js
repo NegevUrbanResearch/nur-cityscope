@@ -77,6 +77,7 @@ export function createWarpEditor({
   let validationMessage = "";
   let validationReason = '';
   let evaluationCache = null;
+  let controlPointsCache = null;
 
   const allowCommand = () => {
     if (!drag && !nudgeGesture) return true;
@@ -443,6 +444,12 @@ export function createWarpEditor({
   function clearValidation() { validationMessage = ""; validationReason = ""; }
   function getControlPoints() {
     const warp = configWarp(current, output);
+    if (controlPointsCache?.warp === warp && controlPointsCache.mesh === baselineMesh && controlPointsCache.mode === selection.mode) return controlPointsCache.points;
+    const retain = (points) => {
+      const stable = Object.freeze(points.map((point) => Object.freeze(point)));
+      controlPointsCache = { warp, mesh: baselineMesh, mode: selection.mode, points: stable };
+      return stable;
+    };
     const grid = warp?.grid || {};
     const columns = grid.columns || sideDimensions(output).columns;
     const rows = grid.rows || sideDimensions(output).rows;
@@ -450,20 +457,20 @@ export function createWarpEditor({
     const axesY = grid.rowPositions || Array.from({ length: rows }, (_, index) => index / (rows - 1));
     const regular = axesY.flatMap((t) => axesX.map((s) => ({ s, t, x: s, y: t })));
     const usesTdMesh = warp?.enabled !== false && warp?.baseline?.type === "tdMesh";
-    if (usesTdMesh && !baselineMesh) return [];
+    if (usesTdMesh && !baselineMesh) return retain([]);
     let evaluated = null;
-    try { evaluated = evaluate(current); } catch { if (usesTdMesh) return []; }
+    try { evaluated = evaluate(current); } catch { if (usesTdMesh) return retain([]); }
     const exactKnots = current.schemaVersion === 7 || Object.hasOwn(grid, "columnPositions") || Object.hasOwn(grid, "rowPositions");
     const tolerance = exactKnots ? 1e-12 : 1e-6;
-    if (usesTdMesh && exactKnots && regular.some((point) => !evaluated?.vertices?.some((candidate) => Math.abs(candidate.s - point.s) <= tolerance && Math.abs(candidate.t - point.t) <= tolerance))) return [];
+    if (usesTdMesh && exactKnots && regular.some((point) => !evaluated?.vertices?.some((candidate) => Math.abs(candidate.s - point.s) <= tolerance && Math.abs(candidate.t - point.t) <= tolerance))) return retain([]);
     const points = regular.map((point) => {
       const match = evaluated?.vertices?.find((candidate) => Math.abs(candidate.s - point.s) <= tolerance && Math.abs(candidate.t - point.t) <= tolerance);
       return { s: point.s, t: point.t, x: match?.x ?? point.x, y: match?.y ?? point.y };
     });
-    if (selection.mode !== "keystone") return points;
+    if (selection.mode !== "keystone") return retain(points);
     // Keystone handles are the four output-plane homography controls. Grid
     // handles remain the evaluated destinations of the imported TD mesh.
-    return (warp.keystone?.corners || []).map(([x, y]) => ({ s: x, t: y, x, y }));
+    return retain((warp.keystone?.corners || []).map(([x, y]) => ({ s: x, t: y, x, y })));
   }
   const baselineAvailable = () => {
     const warp = configWarp(current, output);
