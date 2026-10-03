@@ -564,10 +564,10 @@ h2, h3 { margin: 0 0 10px; }
   }
 }
 @media (orientation: portrait) {
-  .warp-editor-dialog[data-presentation="panel"] .warp-editor-body { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto auto; align-content: start; overflow-x: hidden; overflow-y: auto; }
-  .warp-editor-dialog[data-presentation="panel"] .warp-editor-viewport { grid-column: 1; grid-row: 1; width: 100%; height: auto; min-height: 160px; max-height: 44dvh; aspect-ratio: 16 / 9; }
-  .warp-editor-dialog[data-presentation="panel"] .warp-editor-fine-panel { grid-column: 1; grid-row: 2; }
-  .warp-editor-dialog[data-presentation="panel"] .warp-editor-topology-controls { grid-column: 1 / -1; grid-row: 3; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .warp-editor-dialog[data-presentation="panel"] .warp-editor-body { display: flex; flex: 1 1 0; flex-direction: column; min-height: 0; overflow-x: hidden; overflow-y: auto; gap: 6px; }
+  .warp-editor-dialog[data-presentation="panel"] .warp-editor-viewport { flex: 0 0 auto; align-self: stretch; width: 100%; height: auto; min-height: 160px; max-height: 44dvh; aspect-ratio: 16 / 9; }
+  .warp-editor-dialog[data-presentation="panel"] .warp-editor-fine-panel { flex: 0 0 auto; align-self: stretch; width: 100%; min-height: 0; overflow: visible; }
+  .warp-editor-dialog[data-presentation="panel"] .warp-editor-topology-controls { flex: 0 0 auto; width: 100%; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .warp-editor-dialog[data-presentation="panel"] .warp-numeric { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .warp-editor-dialog[data-presentation="panel"] .warp-numeric .config-field-row input[data-input="number"] { min-width: 88px; }
 }
