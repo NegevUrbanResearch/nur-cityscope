@@ -449,6 +449,7 @@ describe("createNliNameFieldController", () => {
       prepare: async () => {
         await d.controller.prepareProjectionCandidate({ generation: 7, config: DEFAULTS, field: canvasField(), revision: 7, signal: abort.signal });
         abort.abort();
+        d.controller.rollbackProjectionCandidate(7); // The request owner retires its staged candidate before the helper unwinds.
       },
       isCurrent: () => !abort.signal.aborted,
       commit: () => d.controller.commitProjectionCandidate(7),

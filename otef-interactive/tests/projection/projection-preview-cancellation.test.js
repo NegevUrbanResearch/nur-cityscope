@@ -1,5 +1,5 @@
 import { expect, test, vi } from "vitest";
-import { cancelProjectionPreviewNames, rollbackProjectionPreviewApply, settleProjectionPreviewTaskOnAbort } from "../../frontend/src/projection/projection-preview-task.js";
+import { cancelProjectionPreviewNames, commitProjectionPreviewNamesCandidate, rollbackProjectionPreviewApply, settleProjectionPreviewTaskOnAbort } from "../../frontend/src/projection/projection-preview-task.js";
 
 function deferred() {
   let resolve;
@@ -100,4 +100,46 @@ test("a superseded stalled rollback cannot resume its redraw or start a stale ro
 
   await expect(rollbackProjectionPreviewApply({ isCurrent: () => false, rollback, redraw: draw })).resolves.toBe(false);
   expect(rollback).toHaveBeenCalledOnce();
+});
+
+test.each([
+  ["operation timeout", ({ operationSignal }) => operationSignal.abort()],
+  ["new geometry", ({ requestSignal }) => requestSignal.abort()],
+  ["preview disposal", ({ requestSignal, retireRequest }) => { retireRequest(); requestSignal.abort(); }],
+])(
+  "retired names preparation after %s does not rollback or draw",
+  async (_reason, retire) => {
+    const preparation = deferred();
+    const operation = new AbortController();
+    const request = new AbortController();
+    let requestCurrent = true;
+    const commit = vi.fn(); const draw = vi.fn(() => true);
+    const rollback = vi.fn(); const finalize = vi.fn();
+    const candidate = commitProjectionPreviewNamesCandidate({
+      prepare: () => preparation.promise,
+      isCurrent: () => requestCurrent && !operation.signal.aborted && !request.signal.aborted,
+      commit, draw, rollback, finalize,
+    });
+    retire({ operationSignal: operation, requestSignal: request, retireRequest: () => { requestCurrent = false; } });
+    preparation.resolve();
+    await expect(candidate).rejects.toMatchObject({ name: "AbortError" });
+    expect(commit).not.toHaveBeenCalled();
+    expect(rollback).not.toHaveBeenCalled();
+    expect(draw).not.toHaveBeenCalled();
+    expect(finalize).not.toHaveBeenCalled();
+  },
+);
+
+test("current names draw failure still rolls back and redraws the accepted state", async () => {
+  const current = true;
+  const order = [];
+  await expect(commitProjectionPreviewNamesCandidate({
+    prepare: vi.fn(),
+    isCurrent: () => current,
+    commit: () => order.push("commit"),
+    draw: () => { order.push("draw"); return order.filter((item) => item === "draw").length > 1; },
+    finalize: () => order.push("finalize"),
+    rollback: () => order.push("rollback"),
+  })).rejects.toThrow("Projection names draw failed");
+  expect(order).toEqual(["commit", "draw", "rollback", "draw"]);
 });

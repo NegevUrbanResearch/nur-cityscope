@@ -5,7 +5,7 @@ function runBoundedPreviewOperation(operation, parentSignal) {
   let completedSynchronously = false;
   let value;
   const task = withRequestDeadline((signal) => {
-    value = operation(signal);
+    value = operation({ signal, requestSignal: parentSignal });
     completedSynchronously = true;
     return value;
   }, { timeoutMs: 30000, signal: parentSignal });
@@ -192,7 +192,7 @@ export function installProjectionPreviewBridge({ win, output, map, nameFieldCont
           reply({ type: "otef_projection_preview_applied", requestId: message.requestId, success: false, error: error.message || "Names preview failed" });
       };
       try {
-        const bounded = runBoundedPreviewOperation((operationSignal) => applyProjectionConfig?.(message.config, { generation, signal: operationSignal, runNames: true }), signal);
+        const bounded = runBoundedPreviewOperation((operationContext) => applyProjectionConfig?.(message.config, { generation, ...operationContext, runNames: true }), signal);
         if (bounded.synchronous) finishNames(bounded.value);
         else bounded.task.then(finishNames).catch(failNames);
       } catch (error) { failNames(error); }
@@ -217,7 +217,7 @@ export function installProjectionPreviewBridge({ win, output, map, nameFieldCont
     const fail = (error) => { if (generation === applyGeneration && !applyAbort.signal.aborted)
       reply({ type: "otef_projection_preview_applied", requestId: message.requestId, success: false, error: error.message || "Preview failed" }); };
     try {
-      const bounded = runBoundedPreviewOperation((operationSignal) => applyProjectionConfig?.(message.config, { generation, signal: operationSignal, runNames: false }), applyAbort.signal);
+      const bounded = runBoundedPreviewOperation((operationContext) => applyProjectionConfig?.(message.config, { generation, ...operationContext, runNames: false }), applyAbort.signal);
       if (bounded.synchronous) finish(bounded.value);
       else bounded.task.then(finish).catch(fail);
     } catch (error) { fail(error); }

@@ -51,8 +51,10 @@ export async function commitProjectionPreviewNamesCandidate({ prepare, isCurrent
     finalize();
     return { committed: true };
   } catch (error) {
-    rollback();
-    draw();
+    if (isCurrent()) {
+      rollback();
+      if (isCurrent()) draw();
+    }
     throw error;
   }
 }
