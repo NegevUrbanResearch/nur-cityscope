@@ -56,6 +56,25 @@ test("a rejected relative-pad start releases local ownership without late moveme
   panel.dispose();
 });
 
+test("retirement drops pad ownership before releasing capture can dispatch lostpointercapture", () => {
+  const onPointer = vi.fn();
+  const panel = createWarpPanelView({ document, onPointer });
+  const pad = panel.controls.relativePad;
+  pad.getBoundingClientRect = () => ({ left: 0, top: 0, width: 200, height: 200 });
+  pad.setPointerCapture = vi.fn();
+  pad.releasePointerCapture = vi.fn((pointerId) => {
+    const lost = new Event("lostpointercapture", { bubbles: true });
+    Object.assign(lost, { pointerId });
+    pad.dispatchEvent(lost);
+  });
+  pad.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 46, button: 0, clientX: 100, clientY: 100, bubbles: true }));
+  panel.retireGestures();
+  pad.dispatchEvent(new PointerEvent("pointermove", { pointerId: 46, clientX: 110, clientY: 100, bubbles: true }));
+  expect(onPointer.mock.calls.map(([phase]) => phase)).toEqual(["start"]);
+  expect(pad.releasePointerCapture).toHaveBeenCalledWith(46);
+  panel.dispose();
+});
+
 test.each(["lostpointercapture", "escape", "blur", "visibilitychange"])("relative pad %s cancels captured geometry without history", (terminal) => {
   const config = structuredClone(DEFAULT_PROJECTION_CONFIG);
   config.outputs.left.warp.baseline = { type: "identity", width: 1920, height: 1080, origin: "top-left" };

@@ -115,7 +115,7 @@ export function createWarpPanelView({ document: doc, onAction = () => {}, onPoin
   };
   const onBlur = () => cancelPad();
   const onVisibility = () => { if (doc.visibilityState === "hidden") cancelPad(); };
-  doc.addEventListener?.("keydown", cancelPadOnEscape);
+  doc.addEventListener?.("keydown", cancelPadOnEscape, true);
   doc.addEventListener?.("visibilitychange", onVisibility);
   doc.defaultView?.addEventListener?.("blur", onBlur);
   const history = make(doc, "div", "warp-history-controls", ""); history.setAttribute("aria-label", "Warp history");
@@ -176,6 +176,9 @@ export function createWarpPanelView({ document: doc, onAction = () => {}, onPoin
         const slot = axis === "x" ? 0 : 1; const dimension = axis === "x" ? WIDTH : HEIGHT;
         const mean = selected.length ? selected.reduce((sum, point) => sum + (slot === 0 ? point.x : point.y), 0) / selected.length : 0;
         control.update({ value: mean * dimension, resolvedPath: warpCoordinateTargetKey(output, mode, selection), error: state.validationMessage || "" });
+        if (control.range) control.range.disabled = Boolean(state.adjusting);
+        if (control.number) control.number.disabled = Boolean(state.adjusting);
+        if (control.signButton) control.signButton.disabled = Boolean(state.adjusting);
       }
       warpStep.value = state.stepMode || "fine";
       warpUndo.disabled = !(state.historyDepth > 0) || Boolean(state.adjusting);
@@ -187,15 +190,20 @@ export function createWarpPanelView({ document: doc, onAction = () => {}, onPoin
     },
     retireGestures() {
       if (hold) { clearTimeout(hold.delay); clearInterval(hold.repeat); hold = null; suppressClick = true; }
-      if (padGesture) { try { relativePad.releasePointerCapture?.(padGesture.pointer); } catch {} padGesture = null; }
+      if (padGesture) { const retired = padGesture; padGesture = null; try { relativePad.releasePointerCapture?.(retired.pointer); } catch {} }
     },
     cancelGestures() { stopHold(true); return cancelPad(); },
     setAdjusting(adjusting) {
       const blocked = Boolean(adjusting);
-      [...selectionButtons, selectionPicker, warpStep, ...nudgePad.children, relativePad, warpReset, warpResetAll, ...coordinateFields.values()].forEach((item) => { if (item?.disabled !== undefined) item.disabled = blocked; });
+      [...selectionButtons, selectionPicker, warpStep, ...nudgePad.children, relativePad, warpReset, warpResetAll].forEach((item) => { if (item?.disabled !== undefined) item.disabled = blocked; });
+      for (const control of coordinateFields.values()) {
+        if (control.number) control.number.disabled = blocked;
+        if (control.range) control.range.disabled = blocked;
+        if (control.signButton) control.signButton.disabled = blocked;
+      }
       warpUndo.disabled = blocked || !(state?.historyDepth > 0);
       warpRedo.disabled = blocked || !(state?.redoDepth > 0);
     },
-    dispose() { stopHold(true); this.cancelGestures(); doc.removeEventListener?.("keydown", cancelPadOnEscape); doc.removeEventListener?.("visibilitychange", onVisibility); doc.defaultView?.removeEventListener?.("blur", onBlur); for (const control of coordinateFields.values()) control.dispose(); },
+    dispose() { stopHold(true); this.cancelGestures(); doc.removeEventListener?.("keydown", cancelPadOnEscape, true); doc.removeEventListener?.("visibilitychange", onVisibility); doc.defaultView?.removeEventListener?.("blur", onBlur); for (const control of coordinateFields.values()) control.dispose(); },
   };
 }

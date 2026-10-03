@@ -497,7 +497,12 @@ export function createProjectionConfigView(root, {
   let currentWarpEnabled = true;
   let activeWarpAdjusting = false;
   let pointerInput;
-  function cancelActiveDrag(options) { pointerInput?.cancel(options); controls.gridLayout?.cancel(); warpPanelView.cancelGestures(); }
+  function cancelActiveDrag(options) {
+    pointerInput?.cancel(options);
+    controls.gridLayout?.cancel();
+    if (options?.notify === false) warpPanelView.retireGestures();
+    else warpPanelView.cancelGestures();
+  }
   const warpOutput = () => selectedGraphNode.startsWith("right-") ? "right" : "left";
   const finishCoordinates = () => [...controls.warpCoordinateFields.values()].filter(control => control.isPending()).every(control => ['commit', 'unchanged'].includes(control.finish().kind));
   const onKeyDown = (event) => {
@@ -517,7 +522,9 @@ export function createProjectionConfigView(root, {
     const selection = currentSelection || { mode, kind: mode === "grid" ? "point" : "corner", index: 0 };
     if (selection.kind === "all") return;
     const gridColumns = currentWarpGrid?.columns || (warpOutput() === "right" ? 8 : 7);
-    const step = mode === "keystone"
+    const step = selection.kind === "edge"
+      ? direction === "left" || direction === "up" ? -1 : 1
+      : mode === "keystone"
       ? direction === "left" ? -1 : direction === "right" ? 1 : direction === "up" ? -2 : 2
       : selection.kind === "row" ? direction === "up" || direction === "left" ? -1 : 1
         : selection.kind === "column" ? direction === "left" || direction === "up" ? -1 : 1
@@ -526,7 +533,7 @@ export function createProjectionConfigView(root, {
       : selection.kind === "column" ? currentWarpGrid?.columns || 7
         : selection.kind === "edge" ? 4
           : mode === "grid" ? (currentWarpGrid?.rows || 7) * gridColumns : 4;
-    const index = (Number(selection.index || 0) + step + count) % count;
+    const index = ((Number(selection.index || 0) + step) % count + count) % count;
     onWarpAction("warp-select", { output: warpOutput(), selection: { mode, kind: selection.kind, index } });
   };
   doc.addEventListener?.("keydown", onKeyDown);

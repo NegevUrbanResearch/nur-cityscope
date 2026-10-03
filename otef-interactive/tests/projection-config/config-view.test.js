@@ -524,6 +524,23 @@ test("view renders draggable node workspace and preserves an existing focused in
   expect(onWarpAction).not.toHaveBeenCalledWith("warp-nudge", expect.anything());
   onWarpAction.mockClear();
   view.closeWarpEditor();
+  for (const output of ["left", "right"]) for (const mode of ["keystone", "grid"]) for (const { index, key, expectedIndex } of [
+    { index: 0, key: "ArrowUp", expectedIndex: 3 }, { index: 0, key: "ArrowLeft", expectedIndex: 3 },
+    { index: 0, key: "ArrowDown", expectedIndex: 1 }, { index: 0, key: "ArrowRight", expectedIndex: 1 },
+    { index: 3, key: "ArrowDown", expectedIndex: 0 }, { index: 3, key: "ArrowRight", expectedIndex: 0 },
+    { index: 3, key: "ArrowUp", expectedIndex: 2 }, { index: 3, key: "ArrowLeft", expectedIndex: 2 },
+  ]) {
+    const editor = createWarpEditor({ config: draft, output });
+    editor.setMode(mode);
+    editor.select({ mode, kind: "edge", index });
+    view.update({ state: { draft }, selectedNode: `${output}-${mode}`, warpStates: { [output]: { ...editor.getState(), config: editor.getConfig(), handles: editor.getControlPoints() } } });
+    view.controls.enlargeEdit.dispatch("click");
+    onWarpAction.mockClear();
+    root.ownerDocument.dispatch("keydown", { key, target: view.controls.warpSurface, preventDefault() {} });
+    expect(onWarpAction).toHaveBeenCalledWith("warp-select", { output, selection: { mode, kind: "edge", index: expectedIndex } });
+    expect(onWarpAction).not.toHaveBeenCalledWith("warp-nudge", expect.anything());
+    view.closeWarpEditor();
+  }
   view.update({ state: { draft }, selectedNode: "right-grid", warpStates: { right: { ...rightIdentityWarpEditor.getState(), config: rightIdentityWarpEditor.getConfig(), handles: rightIdentityWarpEditor.getControlPoints() } } });
   const warpBody = descendants(root).find((node) => node.className === "warp-editor-body");
   expect(warpBody.children.at(-1)).toBe(view.controls.gridLayout.element);

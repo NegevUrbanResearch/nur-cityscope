@@ -322,7 +322,7 @@ export function renderField(doc, descriptor, onField, onNudge, compact = false, 
     for (const terminal of ['pointerup', 'pointercancel', 'lostpointercapture']) listen(nudge, terminal, event => { if (hold?.pointer === event.pointerId) stopHold(terminal !== 'pointerup'); });
     listen(nudge, 'keydown', event => { if (event.key === 'Escape') { event.preventDefault?.(); stopHold(true); } });
   }
-  return { wrap, range, number, value, error,
+  return { wrap, range, number, signButton, value, error,
     update({ value: nextValue, resolvedPath = descriptor.path, error: nextError = '' }) {
       if (disposed) return;
       const resolvedChanged = latest.resolvedPath !== resolvedPath;
