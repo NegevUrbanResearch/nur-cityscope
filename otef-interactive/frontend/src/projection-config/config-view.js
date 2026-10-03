@@ -538,6 +538,7 @@ export function createProjectionConfigView(root, {
     applyViewBox(next, { anchor: { clientX: event.clientX, clientY: event.clientY }, rect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height } });
   }, { passive: false });
   controls.gridLayout = createGridLayoutControls(doc, (name, value) => {
+    if (name === "placement-input") return onWarpAction("warp-grid-placement-edit", { output: warpOutput(), axis: value });
     if (pointerInput?.isActive() || !finishCoordinates()) return;
     const output = warpOutput();
     const grid = currentWarpGrid;
@@ -556,7 +557,7 @@ export function createProjectionConfigView(root, {
     else if (name === "remove-row" || name === "remove-column") { operation = "remove"; payload = { axis: name === "remove-row" ? "row" : "column", index: name === "remove-row" ? rowIndex : columnIndex }; }
     else if (name === "even") { operation = "even"; payload = { axis: selection.kind === "column" ? "column" : "row" }; }
     else if (name === "rebuild") { operation = "rebuild"; payload = { rows: grid?.rows, columns: grid?.columns }; }
-    if (operation) onWarpAction("warp-grid-layout", { output, operation, ...payload });
+    if (operation) return onWarpAction("warp-grid-layout", { output, operation, ...payload });
   });
   controls.gridLayout.element.className = `${controls.gridLayout.element.className} warp-editor-topology-controls`;
   controls.warpEnabled.addEventListener("change", () => onWarpAction("warp-enabled", { output: selectedGraphNode.startsWith("right-") ? "right" : "left", enabled: controls.warpEnabled.checked }));

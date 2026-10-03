@@ -783,6 +783,115 @@ test("Add placement immediately previews its visible default percentage without 
   } finally { api.dispose(); globalThis.document = previousDocument; }
 });
 
+test.each([["row", "add-row", "addRowPosition", "rowPositions"], ["column", "add-column", "addColumnPosition", "columnPositions"]])("semantic %s placement rejection keeps its source percentage pending until correction or Cancel", async (axis, addAction, fieldName, positionsKey) => {
+  const candidateValidator = { validateCandidate: vi.fn(async ({ identity }) => ({ identity, valid: true })), dispose() {} };
+  const h = tracedWarpHarness({ candidateValidator });
+  try {
+    find(h.root, node => node.dataset?.action === "warp-editor-close").dispatch("click");
+    const config = clone(h.client.getState().draft);
+    config.outputs.left.warp.grid[positionsKey] = [0, 0.14, 0.32, 0.5, 0.68, 0.84, 1];
+    h.client.report({ draft: config, hasLocalDraft: true });
+    find(h.root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+    find(h.root, node => node.dataset?.gridLayoutAction === addAction).dispatch("click");
+    const input = find(h.root, node => node.dataset?.gridLayoutField === fieldName);
+    globalThis.document.activeElement = input;
+    input.value = "50"; input.dispatch("input"); input.dispatch("change");
+    await vi.waitFor(() => expect(find(h.root, node => node.className === "warp-grid-layout-preview-status").textContent).toContain("distinct interior position"));
+    h.client.setDraft.mockClear(); h.client.apply.mockClear();
+
+    find(h.root, node => node.dataset?.action === "warp-editor-close").dispatch("click");
+    const title = find(h.root, node => node.className === "warp-editor-title");
+    const originalTitle = title.textContent;
+    find(h.root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "right-grid").dispatch("click");
+    find(h.root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-keystone").dispatch("click");
+    const picker = find(h.root, node => node.className === "warp-selection-picker");
+    const originalSelection = picker.value; picker.value = String(Number(originalSelection) + 1); picker.dispatch("change");
+    expect(title.textContent).toBe(originalTitle);
+    expect(picker.value).toBe(originalSelection);
+    expect(input.value).toBe("50");
+    await h.api.handleAction("apply");
+    h.client.setLive.mockClear(); h.client.save.mockClear();
+    await h.api.handleAction("save-new", "Rejected placement copy");
+    await h.api.handleAction("live", true);
+    expect(find(h.root, node => node.className === "warp-editor-dialog").hidden).toBe(false);
+    expect(input.value).toBe("50");
+    expect(h.client.apply).not.toHaveBeenCalled();
+    expect(h.client.save).not.toHaveBeenCalled();
+    expect(h.client.setLive).not.toHaveBeenCalled();
+    expect(h.client.setDraft).not.toHaveBeenCalled();
+
+    input.value = "25"; input.dispatch("input"); input.dispatch("change");
+    await vi.waitFor(() => expect(candidateValidator.validateCandidate).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(candidateValidator.validateCandidate.mock.results[0].value).resolves.toEqual(expect.objectContaining({ valid: true })));
+    const confirm = find(h.root, node => node.dataset?.action === "warp-grid-layout-confirm");
+    if (!confirm.disabled && !confirm.hidden) {
+      expect(input.value).toBe("25");
+      expect(h.client.setDraft).not.toHaveBeenCalled();
+      confirm.dispatch("click");
+    }
+    await vi.waitFor(() => expect(h.client.setDraft).toHaveBeenCalledTimes(1));
+  } finally { h.restore(); }
+});
+
+test("delayed rejected Add percentage validation stays pending until explicit placement Cancel", async () => {
+  const checks = [];
+  const candidateValidator = { validateCandidate: vi.fn(({ identity }) => new Promise(resolve => checks.push({ identity, resolve }))), dispose() {} };
+  const h = tracedWarpHarness({ candidateValidator });
+  try {
+    find(h.root, node => node.dataset?.action === "warp-editor-close").dispatch("click");
+    find(h.root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+    find(h.root, node => node.dataset?.gridLayoutAction === "add-row").dispatch("click");
+    const input = find(h.root, node => node.dataset?.gridLayoutField === "addRowPosition");
+    globalThis.document.activeElement = input;
+    input.value = "20"; input.dispatch("input"); input.dispatch("change");
+    await vi.waitFor(() => expect(checks).toHaveLength(1));
+    h.client.setDraft.mockClear(); h.client.apply.mockClear();
+    find(h.root, node => node.dataset?.action === "warp-editor-close").dispatch("click");
+    await h.api.handleAction("apply");
+    expect(find(h.root, node => node.className === "warp-editor-dialog").hidden).toBe(false);
+    expect(input.value).toBe("20");
+    expect(h.client.apply).not.toHaveBeenCalled();
+    expect(h.client.setDraft).not.toHaveBeenCalled();
+
+    checks[0].resolve({ identity: checks[0].identity, valid: false, reason: "Candidate geometry was rejected." });
+    await vi.waitFor(() => expect(find(h.root, node => node.className === "warp-grid-layout-preview-status").textContent).toContain("Candidate geometry was rejected."));
+    expect(input.value).toBe("20");
+    expect(h.client.setDraft).not.toHaveBeenCalled();
+
+    find(h.root, node => node.dataset?.action === "warp-grid-layout-cancel").dispatch("click");
+    expect(input.value).not.toBe("20");
+    find(h.root, node => node.dataset?.action === "warp-editor-close").dispatch("click");
+    expect(find(h.root, node => node.className === "warp-editor-dialog").hidden).toBe(true);
+    expect(h.client.apply).not.toHaveBeenCalled();
+    expect(h.client.setDraft).not.toHaveBeenCalled();
+  } finally { h.restore(); }
+});
+
+test("cancelling an in-flight Add percentage retires its late validator result", async () => {
+  const checks = [];
+  const candidateValidator = { validateCandidate: vi.fn(({ identity }) => new Promise(resolve => checks.push({ identity, resolve }))), dispose() {} };
+  const h = tracedWarpHarness({ candidateValidator });
+  try {
+    find(h.root, node => node.dataset?.action === "warp-editor-close").dispatch("click");
+    find(h.root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+    find(h.root, node => node.dataset?.gridLayoutAction === "add-row").dispatch("click");
+    const input = find(h.root, node => node.dataset?.gridLayoutField === "addRowPosition");
+    globalThis.document.activeElement = input;
+    input.value = "20"; input.dispatch("input"); input.dispatch("change");
+    await vi.waitFor(() => expect(checks).toHaveLength(1));
+    h.client.setDraft.mockClear(); h.client.apply.mockClear();
+
+    find(h.root, node => node.dataset?.action === "warp-grid-layout-cancel").dispatch("click");
+    checks[0].resolve({ identity: checks[0].identity, valid: true });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(input.value).not.toBe("20");
+    expect(h.client.setDraft).not.toHaveBeenCalled();
+    expect(h.client.apply).not.toHaveBeenCalled();
+    find(h.root, node => node.dataset?.action === "warp-editor-close").dispatch("click");
+    expect(find(h.root, node => node.className === "warp-editor-dialog").hidden).toBe(true);
+  } finally { h.restore(); }
+});
+
 test("rejected Add row source percentage stays visible until corrected or placement is cancelled", () => {
   const h = tracedWarpHarness();
   try {

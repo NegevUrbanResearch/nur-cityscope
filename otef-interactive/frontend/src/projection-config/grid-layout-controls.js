@@ -20,6 +20,9 @@ export function createGridLayoutControls(doc, onAction = () => {}) {
   const actions = new Map();
   const committed = new WeakMap();
   const edited = new WeakSet();
+  const placementAttempts = new WeakMap();
+  const placementRuns = new WeakMap();
+  let placementSequence = 0;
   let localErrorInput = null;
   let localErrorMessage = "";
   let latestState = null;
@@ -36,17 +39,54 @@ export function createGridLayoutControls(doc, onAction = () => {}) {
   };
   const commitPlacement = (input) => {
     if (!edited.has(input)) return true;
+    if (placementRuns.has(input)) return false;
     const axis = input === addRowPosition ? "row" : "column";
     if (latestState?.placement?.axis !== axis) return false;
+    if (placementAttempts.get(input) === input.value) return false;
     const number = Number(input.value);
     if (!input.value.trim() || !Number.isFinite(number) || number <= 0 || number >= 100) {
       showInputError(input, `${axis === "row" ? "Row" : "Column"} position must be strictly between 0% and 100%.`);
       return false;
     }
-    edited.delete(input);
     clearInputError(input);
-    onAction(axis === "row" ? "place-row" : "place-column", number);
-    return true;
+    const attempt = input.value;
+    const token = ++placementSequence;
+    placementAttempts.set(input, attempt);
+    placementRuns.set(input, token);
+    // The placement callback runs the shared pending-edit guard itself. Temporarily
+    // remove this field from that guard, then restore ownership until validation
+    // either stages a candidate or rejects it.
+    edited.delete(input);
+    let result;
+    try { result = onAction(axis === "row" ? "place-row" : "place-column", number); }
+    catch (error) { edited.add(input); placementRuns.delete(input); throw error; }
+    if (result && typeof result.then === "function") {
+      edited.add(input);
+      Promise.resolve(result).then(accepted => {
+        if (placementRuns.get(input) !== token) return;
+        placementRuns.delete(input);
+        if (accepted) {
+          edited.delete(input);
+          placementAttempts.delete(input);
+          clearInputError(input);
+          if (latestState) update(latestState);
+        }
+      }, () => {
+        if (placementRuns.get(input) !== token) return;
+        placementRuns.delete(input);
+        edited.add(input);
+      });
+      return false;
+    }
+    placementRuns.delete(input);
+    if (result) {
+      placementAttempts.delete(input);
+      clearInputError(input);
+      if (latestState) update(latestState);
+      return true;
+    }
+    edited.add(input);
+    return false;
   };
   const makeField = (name, label, { min, max, step = "1" } = {}) => {
     const wrapper = doc.createElement("label"); wrapper.className = "warp-grid-layout-field"; wrapper.append(doc.createTextNode(label));
@@ -56,6 +96,14 @@ export function createGridLayoutControls(doc, onAction = () => {}) {
     wrapper.appendChild(input); section.appendChild(wrapper); fields.set(name, input);
     input.addEventListener("input", () => {
       edited.add(input);
+      const isPlacementField = name === "addRowPosition" || name === "addColumnPosition";
+      if (isPlacementField && placementAttempts.get(input) !== input.value) {
+        if (placementRuns.has(input)) {
+          placementRuns.delete(input);
+          onAction("placement-input", name === "addRowPosition" ? "row" : name === "addColumnPosition" ? "column" : null);
+        }
+        placementAttempts.delete(input);
+      }
       if (input.value.trim() && Number.isFinite(Number(input.value))) clearInputError(input);
     });
     const commit = () => {
@@ -125,8 +173,8 @@ export function createGridLayoutControls(doc, onAction = () => {}) {
     sourceX.disabled = columnIndex === 0 || columnIndex === columnsCount - 1;
     const defaultRow = (rowAxis[clamp(rowIndex, 0, rowsCount - 2)] + rowAxis[clamp(rowIndex + 1, 1, rowsCount - 1)]) / 2;
     const defaultColumn = (columnAxis[clamp(columnIndex, 0, columnsCount - 2)] + columnAxis[clamp(columnIndex + 1, 1, columnsCount - 1)]) / 2;
-    if (force || placement?.axis !== "row") sync(addRowPosition, percentText(defaultRow), percentText(defaultRow), force);
-    if (force || placement?.axis !== "column") sync(addColumnPosition, percentText(defaultColumn), percentText(defaultColumn), force);
+    if (force || (!edited.has(addRowPosition) && placement?.axis !== "row")) sync(addRowPosition, percentText(defaultRow), percentText(defaultRow), force);
+    if (force || (!edited.has(addColumnPosition) && placement?.axis !== "column")) sync(addColumnPosition, percentText(defaultColumn), percentText(defaultColumn), force);
     for (const [name, button] of actions) {
       const axis = name.includes("column") ? columnAxis : rowAxis;
       const index = name.includes("column") ? columnIndex : rowIndex;
@@ -140,7 +188,7 @@ export function createGridLayoutControls(doc, onAction = () => {}) {
     error.textContent = errorMessage || (localErrorInput ? localErrorMessage : "");
   }
   const cancel = () => {
-    for (const input of fields.values()) edited.delete(input);
+    for (const input of fields.values()) { edited.delete(input); placementRuns.delete(input); placementAttempts.delete(input); }
     for (const input of fields.values()) clearInputError(input);
     if (latestState) { forceSync = true; update(latestState); }
     forceSync = true;

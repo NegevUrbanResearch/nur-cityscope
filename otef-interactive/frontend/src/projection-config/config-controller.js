@@ -909,6 +909,16 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     if (disposed || (!editorBaselineReady && !["warp-select", "warp-mode", "warp-step"].includes(action))) return false;
     if (["warp-select", "warp-mode"].includes(action) && !finishPendingEdit()) return false;
     if (action === "warp-grid-layout") return startGridLayoutPreview(value?.output || activeWarpOutput(), value?.operation, value || {});
+    if (action === "warp-grid-placement-edit") {
+      const output = value?.output || activeWarpOutput();
+      if (gridPlacements[output]?.axis === value?.axis) {
+        gridPreviewSequence += 1;
+        gridPreviews[output] = null;
+        gridPlacements[output] = { ...gridPlacements[output], preview: null, error: "" };
+        refresh();
+      }
+      return true;
+    }
     if (action === "warp-grid-placement") {
       const output = value?.output || activeWarpOutput();
       const axis = value?.axis;
@@ -1007,7 +1017,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
   async function handleAction(action, value) {
     if (disposed) return;
     if (action === 'parameter-undo' || action === 'parameter-redo') return restoreParameter(action === 'parameter-undo' ? 'undo' : 'redo');
-    if (["apply", "save", "save-new", "preset-select"].includes(action) && !finishPendingEdit()) return false;
+    if ((["apply", "save", "save-new", "preset-select"].includes(action) || (action === "live" && Boolean(value))) && !finishPendingEdit()) return false;
     if (["load", "revert", "import"].includes(action) && !discardPendingEdit()) return false;
     let actionToken = null;
     const runPending = async (kind, operation) => {
