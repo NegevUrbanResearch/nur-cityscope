@@ -91,7 +91,11 @@ export function createSettlementNameControls(doc, {
   load.addEventListener("click", (event) => { stop(event); onLoad(); });
   return {
     element,
+    output,
+    city,
     finish: () => [...sessions.values()].map(control=>control.finish()),
+    hasPending: () => [...sessions.values()].some(control => control.isPending()),
+    isHeld: () => [...sessions.values()].some(control => control.isHeld()),
     cancel: () => { for (const control of sessions.values()) control.cancel(); },
     dispose: () => { for (const control of sessions.values()) control.dispose(); },
     render(state = {}) {

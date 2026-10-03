@@ -657,13 +657,14 @@ export function createProjectionConfigView(root, {
     onIsAdjusting: () => activeWarpAdjusting,
     onEscape: () => {
       if (activeWarpAdjusting) { cancelActiveDrag({ reason: "escape" }); return true; }
+      if (currentGridPlacement) { onWarpAction("warp-grid-placement", { axis: null }); return true; }
       const pending = [...controls.warpCoordinateFields.values()].filter((control) => control.isPending());
       if (!pending.length) return false;
       for (const control of pending) control.cancel({ clearControllerError: true });
       return true;
     },
-    onBeforeClose: () => { if (activeWarpAdjusting || !finishCoordinates()) return false; cancelActiveDrag({ reason: 'close' }); },
-    onBeforeSwitch: () => { if (activeWarpAdjusting || !finishCoordinates()) return false; cancelActiveDrag({ reason: 'switch' }); },
+    onBeforeClose: () => { if (activeWarpAdjusting || !finishCoordinates() || !controls.gridLayout.finishPendingEdit()) return false; cancelActiveDrag({ reason: 'close' }); },
+    onBeforeSwitch: () => { if (activeWarpAdjusting || !finishCoordinates() || !controls.gridLayout.finishPendingEdit()) return false; cancelActiveDrag({ reason: 'switch' }); },
     onBeforeResize: () => cancelActiveDrag({ reason: 'resize' }),
     onViewportChange: updateWarpMarkerRadii,
     onOrientationChange: () => cancelActiveDrag({ reason: 'orientationchange' }),
@@ -687,7 +688,7 @@ export function createProjectionConfigView(root, {
       : "",
     onVisibilityChange: (visible) => {
       workspace.dataset.editing = String(visible);
-      if (visible) parameterDialog.headerElement?.appendChild(optionalHealthPanel);
+      if (visible) parameterDialog.bodyElement?.prepend(optionalHealthPanel);
       else editorRegion.appendChild(optionalHealthPanel);
       const showNamesTools = visible && activeParameterNode === "names-wall";
       namesEditorTools.hidden = !showNamesTools; namesEditorNotes.hidden = !showNamesTools;
@@ -1078,11 +1079,11 @@ export function createProjectionConfigView(root, {
     finishPendingEdit: () => {
       const results = [...fields.values(), ...controls.warpCoordinateFields.values()].filter(control => control.isPending()).map(control => control.finish());
       if (parameterDialog.isPending()) results.push(...parameterDialog.finish());
-      return results.every(result => result.kind === 'commit' || result.kind === 'unchanged');
+      return results.every(result => result.kind === 'commit' || result.kind === 'unchanged') && controls.gridLayout.finishPendingEdit();
     },
-    hasPendingEdit: () => [...fields.values(), ...controls.warpCoordinateFields.values()].some(control => control.isPending()) || parameterDialog.isPending(),
+    hasPendingEdit: () => [...fields.values(), ...controls.warpCoordinateFields.values()].some(control => control.isPending()) || parameterDialog.isPending() || controls.gridLayout.hasPendingEdit(),
     hasHeldNumericEdit: () => [...fields.values()].some(control => control.isHeld()) || parameterDialog.isHeld(),
-    cancelNumericEdits: options => { for (const control of [...fields.values(), ...controls.warpCoordinateFields.values()]) control.cancel(options); parameterDialog.cancel(options); },
+    cancelNumericEdits: options => { for (const control of [...fields.values(), ...controls.warpCoordinateFields.values()]) control.cancel(options); parameterDialog.cancel(options); controls.gridLayout.cancel(); },
     closeWarpEditor: dialog.close,
     sendRunNamesPreview: (config) => dialog.sendRunNamesPreview(config),
     dispose() { if (disposed) return; disposed = true; cancelPendingWarpPaint(); for (const control of fields.values()) control.dispose(); warpPanelView.dispose(); settlementControls.dispose(); disposePageTrace(); disposeWarpTrace(); disposeGraphTrace(); traceUi?.dispose(); commandBar.dispose(); doc.removeEventListener?.("keydown", onKeyDown); parameterDialog.dispose(); dialog.dispose(); pointerInput.dispose(); canvas.dispose(); },

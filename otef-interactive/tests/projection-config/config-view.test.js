@@ -27,9 +27,10 @@ test("command bands wrap direct actions without fixed header rows", () => {
   expect(css).toMatch(/\.preset-commands, \.display-commands\s*\{[^}]*grid-template-rows:\s*subgrid/s);
 });
 
-test("scalar optional recovery occupies a full header row and reflows its message and Retry", () => {
+test("scalar optional recovery shares the single scrolling editor body without expanding its header", () => {
   const css = readFileSync(resolve(import.meta.dirname, "../../frontend/src/projection-config/config.css"), "utf8");
-  expect(css).toMatch(/\.parameter-editor-dialog\[data-presentation="panel"\] \.parameter-editor-header > \.projection-optional-health\s*\{[^}]*grid-column:\s*1\s*\/\s*-1/s);
+  expect(css).toMatch(/\.parameter-editor-dialog\[data-presentation="panel"\] \.parameter-editor-body\s*\{[^}]*overflow-y:\s*auto/s);
+  expect(css).not.toMatch(/\.parameter-editor-header > \.projection-optional-health\s*\{/);
   expect(css).toMatch(/@container\s*\(max-width:\s*500px\)\s*\{[^}]*\.projection-optional-health-row\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/s);
   expect(css).toMatch(/\.projection-optional-health-row button\s*\{[^}]*min-height:\s*44px/s);
 });
@@ -116,6 +117,13 @@ test("view renders draggable node workspace and preserves an existing focused in
   expect(enlarge.parentElement.parentElement.className).toBe("config-workspace");
   expect(enlarge.parentElement.parentElement.children[0].className).toBe("graph-column");
   expect(enlarge.parentElement.parentElement.children[1]).toBe(enlarge.parentElement);
+  view.update({ state: { draft: structuredClone(DEFAULT_PROJECTION_CONFIG) }, selectedNode: "pre", clockHydration: { status: "Failed", error: "offline" } });
+  enlarge.dispatch("click");
+  const healthPanel = descendants(view.parameterDialog.element).find(node => node.className === "projection-optional-health");
+  expect(view.parameterDialog.isOpen()).toBe(true);
+  expect(healthPanel.hidden).toBe(false);
+  expect(healthPanel.parentElement).toBe(view.parameterDialog.bodyElement);
+  expect(view.parameterDialog.bodyElement.className).toBe("parameter-editor-body");
   for (const descriptor of [...FIELD_DESCRIPTORS, ...NAMES_WALL_DESCRIPTORS]) {
     const field = view.fields.get(`${descriptor.node}:${descriptor.path}`);
     if (!field) continue;

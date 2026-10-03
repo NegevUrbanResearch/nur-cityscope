@@ -809,6 +809,74 @@ test("rejected Add row source percentage stays visible until corrected or placem
   } finally { h.restore(); }
 });
 
+test.each(["Back", "right Grid", "another row", "Apply"])("rejected Add row percentage blocks %s without a write", async (action) => {
+  const h = tracedWarpHarness();
+  try {
+    h.client.setLive(true);
+    find(h.root, node => node.dataset?.action === "warp-editor-close").dispatch("click");
+    find(h.root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+    find(h.root, node => node.dataset?.gridLayoutAction === "add-row").dispatch("click");
+    const position = find(h.root, node => node.dataset?.gridLayoutField === "addRowPosition");
+    globalThis.document.activeElement = position;
+    position.value = "100"; position.dispatch("input"); position.dispatch("change"); position.dispatch("blur");
+    h.client.setDraft.mockClear(); h.client.apply.mockClear();
+
+    if (action === "Back") find(h.root, node => node.dataset?.action === "warp-editor-close").dispatch("click");
+    if (action === "right Grid") find(h.root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "right-grid").dispatch("click");
+    if (action === "another row") {
+      const picker = find(h.root, node => node.className === "warp-selection-picker");
+      const before = picker.value; picker.value = String(Number(before) + 1); picker.dispatch("change");
+      expect(picker.value).toBe(before);
+    }
+    if (action === "Apply") await h.api.handleAction("apply");
+
+    expect(position.value).toBe("100");
+    expect(position.attributes["aria-invalid"]).toBe("true");
+    expect(find(h.root, node => node.className === "warp-editor-dialog").hidden).toBe(false);
+    expect(h.client.getState().draft.outputs.left.warp.grid.rows).toBe(7);
+    expect(h.client.setDraft).not.toHaveBeenCalled();
+    expect(h.client.apply).not.toHaveBeenCalled();
+  } finally { h.restore(); }
+});
+
+test.each([["row", "addRowPosition", "add-row"], ["column", "addColumnPosition", "add-column"]])("rejected Add %s percentage remains pending until placement is explicitly cancelled", async (axis, fieldName, actionName) => {
+  const h = tracedWarpHarness();
+  try {
+    find(h.root, node => node.dataset?.action === "warp-editor-close").dispatch("click");
+    find(h.root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+    find(h.root, node => node.dataset?.gridLayoutAction === actionName).dispatch("click");
+    const input = find(h.root, node => node.dataset?.gridLayoutField === fieldName);
+    globalThis.document.activeElement = input;
+    input.value = "100"; input.dispatch("input"); input.dispatch("change"); input.dispatch("blur");
+    expect(input.value).toBe("100");
+    expect(input.attributes["aria-invalid"]).toBe("true");
+    expect(find(h.root, node => node.className === "warp-grid-layout-error").textContent).toContain(axis === "row" ? "Row position" : "Column position");
+    await h.api.handleAction("apply");
+    expect(h.client.apply).not.toHaveBeenCalled();
+    find(h.root, node => node.dataset?.gridLayoutAction === actionName).dispatch("click");
+    expect(input.value).not.toBe("100");
+    expect(input.attributes["aria-invalid"]).toBeUndefined();
+  } finally { h.restore(); }
+});
+
+test("Escape cancels rejected grid-placement text without closing the editor or writing", () => {
+  const h = tracedWarpHarness();
+  try {
+    find(h.root, node => node.dataset?.action === "warp-editor-close").dispatch("click");
+    find(h.root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+    find(h.root, node => node.dataset?.gridLayoutAction === "add-row").dispatch("click");
+    const input = find(h.root, node => node.dataset?.gridLayoutField === "addRowPosition");
+    input.value = "100"; input.dispatch("input"); input.dispatch("change"); input.dispatch("blur");
+    const dialog = find(h.root, node => node.className === "warp-editor-dialog");
+    globalThis.document.dispatch("keydown", { key: "Escape", preventDefault() {} });
+    expect(dialog.hidden).toBe(false);
+    expect(input.value).not.toBe("100");
+    expect(input.attributes["aria-invalid"]).toBeUndefined();
+    expect(find(h.root, node => node.dataset?.gridLayoutAction === "add-row").textContent).toBe("Add row");
+    expect(h.client.setDraft).not.toHaveBeenCalled(); expect(h.client.apply).not.toHaveBeenCalled();
+  } finally { h.restore(); }
+});
+
 test("grid placement accessible instructions name the actual row and column axes", () => {
   const h = tracedWarpHarness();
   try {

@@ -400,13 +400,13 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     activeClockEditorNode = node;
     activeClockEditor.setSelection({ nodeId: node, sceneId: clockSceneId, element: clockElement });
   }
-  function closeClockEditor() {
+  function closeClockEditor({ force = false } = {}) {
     for (const action of clockCueActions) action.cancel();
     clockCueActions.clear();
     if (!activeClockEditor) return;
     const editor = activeClockEditor;
     activeClockEditor = null; activeClockEditorNode = null;
-    editor.close();
+    if (force) editor.dispose?.(); else editor.close();
   }
   function settlementViewState() {
     if (!settlementClient) return null;
@@ -428,11 +428,11 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
   function syncSettlementEditor() {
     activeSettlementEditor?.setSelection({ output: settlementOutput, citycode: settlementCitycode });
   }
-  function closeSettlementEditor() {
+  function closeSettlementEditor({ force = false } = {}) {
     if (!activeSettlementEditor) return;
     const editor = activeSettlementEditor;
     activeSettlementEditor = null;
-    editor.close();
+    if (force) editor.dispose?.(); else editor.close();
   }
   function closeNovaExplainerEditor() {
     if (!activeNovaEditor) return;
@@ -874,17 +874,23 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
   function ownsGridTopologyContext(output, generation, node = `${output}-grid`) {
     return gridContextGeneration === generation && gridContextNode === node && selectedNode === node;
   }
-  function hasHeldGesture() { return Object.values(warpEditors).some(editor => editor.getState().adjusting) || view.hasHeldNumericEdit(); }
+  function hasHeldGesture() { return Object.values(warpEditors).some(editor => editor.getState().adjusting) || view.hasHeldNumericEdit() || Boolean(activeClockEditor?.isHeld?.() || activeSettlementEditor?.isHeld?.()); }
   function finishPendingEdit() {
     if (hasHeldGesture()) { fieldErrors = { ...fieldErrors, action: "Finish or cancel the active gesture before continuing." }; refresh(); return false; }
     const finished = view.finishPendingEdit();
     if (!finished) refresh();
-    return finished;
+    if (!finished) return false;
+    const clockFinished = activeClockEditor?.finishPendingEdit?.() ?? true;
+    const settlementFinished = activeSettlementEditor?.finishPendingEdit?.() ?? true;
+    if (!clockFinished || !settlementFinished) refresh();
+    return clockFinished && settlementFinished;
   }
   function discardPendingEdit() {
-    if (!hasHeldGesture() && !view.hasPendingEdit()) return true;
+    const optionalPending = activeClockEditor?.hasPendingEdit?.() || activeSettlementEditor?.hasPendingEdit?.();
+    if (!hasHeldGesture() && !view.hasPendingEdit() && !optionalPending) return true;
     if (win?.confirm?.("Discard the pending edit or gesture and replace the calibration draft?") !== true) return false;
     view.cancelNumericEdits({ notify: false }); scalarGestures.clear(); nudgeAnchors.clear();
+    activeClockEditor?.cancelPendingEdit?.(); activeSettlementEditor?.cancelPendingEdit?.();
     view.cancelWarpPointer({ notify: false });
     for (const editor of Object.values(warpEditors)) editor.retireGesture();
     fieldErrors = {}; refresh();
@@ -919,7 +925,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
         const position = ((positions[Math.min(index, positions.length - 2)] + positions[Math.min(index + 1, positions.length - 1)]) / 2) * 100;
         const preview = editor.previewGridLayout("add", { axis, position });
         gridPlacements[output] = { axis, position, error: preview.ok ? "" : preview.error, blocked: !preview.ok && /maximum count/i.test(preview.error || ""), preview: preview.ok ? preview : null };
-      } else gridPlacements[output] = null;
+      } else { gridPlacements[output] = null; view.controls.gridLayout.cancel(); }
       refresh();
       return true;
     }
@@ -938,6 +944,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
       gridPreviewSequence += 1;
       gridPreviews[output] = null;
       gridPlacements[output] = null;
+      view.controls.gridLayout.cancel();
       refresh();
       return true;
     }
@@ -1112,7 +1119,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
       activeSettlementEditor?.setSelection?.({ output: settlementOutput, citycode: settlementCitycode });
       refresh();
     },
-    dispose() { if (disposed) return; disposed = true; editorBaselineSequence += 1; editorBaselineAbort?.abort(); editorBaselineAbort = null; syncLayoutUnload(); closeSettlementEditor(); closeClockEditor(); closeNovaExplainerEditor(); for (const action of clockCueActions) action.cancel(); clockCueActions.clear(); namesTargetRequest += 1; for (const editor of clockEditors) editor.dispose(); clockEditors.clear(); activeClockEditor = null; activeClockEditorNode = null; activeSettlementEditor = null; if (confirmationTimer !== null) clearTimeout(confirmationTimer); if (patternTimer !== null) clearInterval(patternTimer); socket?.send?.({ type: "otef_projection_pattern", table: "otef", output: activePattern.branch, pattern: "off", sourceId }); socket?.off?.("otef_projection_applied", statusMessage); socket?.off?.("otef_projection_names_status", namesStatusMessage); socket?.off?.("connect", onConnect); socket?.off?.("disconnect", onDisconnect); socket?.off?.('otef_person_selection_changed', onDatasetEvent); socket?.off?.('otef_narrative_scene_changed', onDatasetEvent); unsubscribe?.(); unsubscribeLayout?.(); unsubscribeSettlement?.(); unsubscribeOutput?.(); outputController?.dispose?.(); validator.dispose?.(); view.dispose(); client.stop?.(); },
+    dispose() { if (disposed) return; disposed = true; editorBaselineSequence += 1; editorBaselineAbort?.abort(); editorBaselineAbort = null; syncLayoutUnload(); closeSettlementEditor({ force: true }); closeClockEditor({ force: true }); closeNovaExplainerEditor(); for (const action of clockCueActions) action.cancel(); clockCueActions.clear(); namesTargetRequest += 1; for (const editor of clockEditors) editor.dispose(); clockEditors.clear(); activeClockEditor = null; activeClockEditorNode = null; activeSettlementEditor = null; if (confirmationTimer !== null) clearTimeout(confirmationTimer); if (patternTimer !== null) clearInterval(patternTimer); socket?.send?.({ type: "otef_projection_pattern", table: "otef", output: activePattern.branch, pattern: "off", sourceId }); socket?.off?.("otef_projection_applied", statusMessage); socket?.off?.("otef_projection_names_status", namesStatusMessage); socket?.off?.("connect", onConnect); socket?.off?.("disconnect", onDisconnect); socket?.off?.('otef_person_selection_changed', onDatasetEvent); socket?.off?.('otef_narrative_scene_changed', onDatasetEvent); unsubscribe?.(); unsubscribeLayout?.(); unsubscribeSettlement?.(); unsubscribeOutput?.(); outputController?.dispose?.(); validator.dispose?.(); view.dispose(); client.stop?.(); },
   };
 }
 

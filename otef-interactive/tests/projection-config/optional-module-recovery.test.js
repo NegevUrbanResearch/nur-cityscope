@@ -120,12 +120,14 @@ test("active compact warp, focused warp, and scalar editors expose independent o
    const compactScalar=app.root.querySelector(".parameter-editor-dialog .projection-optional-health");
    expect(compactScalar).toBe(route); expect(compactScalar.textContent).toContain("clock offline");
    const scalarHeader = app.root.querySelector(".parameter-editor-dialog .parameter-editor-header");
-   expect(compactScalar.parentElement).toBe(scalarHeader);
+   const scalarBody = app.root.querySelector(".parameter-editor-dialog .parameter-editor-body");
+   expect(compactScalar.parentElement).toBe(scalarBody);
    expect(scalarHeader.querySelector("h2")).not.toBeNull();
    expect(scalarHeader.querySelector("[data-action='parameter-undo']")).not.toBeNull();
    expect(scalarHeader.querySelector("[data-action='parameter-redo']")).not.toBeNull();
    expect(scalarHeader.querySelector("[data-action='parameter-editor-close']")).not.toBeNull();
-   expect(app.root.querySelector(".parameter-editor-dialog .parameter-editor-body .parameter-editor-fields").children.length).toBeGreaterThan(0);
+   expect(scalarBody.querySelector(".parameter-editor-fields").children.length).toBeGreaterThan(0);
+   expect(scalarBody.querySelector("[data-action='retry-clock-settings']")).toBe(compactScalar.querySelector("[data-action='retry-clock-settings']"));
    compactScalar.querySelector("[data-action='retry-settlement-settings']").click();
    expect(hydrateSettlement).toHaveBeenCalledTimes(3);
    expect(app.writeOperation).not.toHaveBeenCalled();

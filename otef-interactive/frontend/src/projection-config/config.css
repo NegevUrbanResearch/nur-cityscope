@@ -595,7 +595,7 @@ h2, h3 { margin: 0 0 10px; }
 .parameter-editor-dialog[data-presentation="panel"] .parameter-editor-header > [data-action="parameter-undo"] { grid-column: 2; grid-row: 2; }
 .parameter-editor-dialog[data-presentation="panel"] .parameter-editor-header > [data-action="parameter-redo"] { grid-column: 3; grid-row: 2; }
 .parameter-editor-dialog[data-presentation="panel"] .parameter-editor-header > [data-action="parameter-editor-close"] { grid-column: 4; grid-row: 2; }
-.parameter-editor-dialog[data-presentation="panel"] .parameter-editor-header > .projection-optional-health { grid-column: 1 / -1; width: 100%; }
+.parameter-editor-dialog[data-presentation="panel"] .parameter-editor-body > .projection-optional-health { flex: 0 0 auto; width: 100%; }
 .parameter-editor-dialog[data-presentation="panel"] .parameter-editor-header > button { width: 100%; max-width: 88px; min-height: 48px; padding: 4px; font-size: 11px; line-height: 13px; white-space: normal; }
 @container (max-width: 500px) {
   .parameter-editor-dialog[data-presentation="panel"] .projection-optional-health-row { grid-template-columns: minmax(0, 1fr); align-items: start; }

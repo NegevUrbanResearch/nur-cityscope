@@ -34,6 +34,20 @@ export function createGridLayoutControls(doc, onAction = () => {}) {
     input.setAttribute("aria-invalid", "true"); input.setCustomValidity?.(message);
     error.textContent = message;
   };
+  const commitPlacement = (input) => {
+    if (!edited.has(input)) return true;
+    const axis = input === addRowPosition ? "row" : "column";
+    if (latestState?.placement?.axis !== axis) return false;
+    const number = Number(input.value);
+    if (!input.value.trim() || !Number.isFinite(number) || number <= 0 || number >= 100) {
+      showInputError(input, `${axis === "row" ? "Row" : "Column"} position must be strictly between 0% and 100%.`);
+      return false;
+    }
+    edited.delete(input);
+    clearInputError(input);
+    onAction(axis === "row" ? "place-row" : "place-column", number);
+    return true;
+  };
   const makeField = (name, label, { min, max, step = "1" } = {}) => {
     const wrapper = doc.createElement("label"); wrapper.className = "warp-grid-layout-field"; wrapper.append(doc.createTextNode(label));
     const input = doc.createElement("input"); input.type = "number"; input.dataset.gridLayoutField = name; input.setAttribute("aria-label", label); input.inputMode = "decimal"; input.step = step;
@@ -45,19 +59,9 @@ export function createGridLayoutControls(doc, onAction = () => {}) {
       if (input.value.trim() && Number.isFinite(Number(input.value))) clearInputError(input);
     });
     const commit = () => {
-      if (!edited.has(input)) return;
+      if (!edited.has(input)) return true;
       if (name === "addRowPosition" || name === "addColumnPosition") {
-        const axis = name === "addRowPosition" ? "row" : "column";
-        if (latestState?.placement?.axis !== axis) return;
-        const number = Number(input.value);
-        if (!input.value.trim() || !Number.isFinite(number) || number <= 0 || number >= 100) {
-          showInputError(input, `${axis === "row" ? "Row" : "Column"} position must be strictly between 0% and 100%.`);
-          return;
-        }
-        edited.delete(input);
-        clearInputError(input);
-        onAction(axis === "row" ? "place-row" : "place-column", number);
-        return;
+        return commitPlacement(input);
       }
       edited.delete(input);
       const current = committed.get(input);
@@ -65,13 +69,14 @@ export function createGridLayoutControls(doc, onAction = () => {}) {
       if (!input.value.trim() || !Number.isFinite(number)) {
         showInputError(input, `${label} must be a finite number. Restored the last valid value.`);
         input.value = String(current ?? "");
-        return;
+        return true;
       }
       const signature = String(number);
-      if (current === signature) { clearInputError(input); return; }
+      if (current === signature) { clearInputError(input); return true; }
       clearInputError(input);
       committed.set(input, signature);
       onAction(name, number);
+      return true;
     };
     input.addEventListener("change", commit);
     input.addEventListener("blur", commit);
@@ -140,5 +145,7 @@ export function createGridLayoutControls(doc, onAction = () => {}) {
     if (latestState) { forceSync = true; update(latestState); }
     forceSync = true;
   };
-  return { element: section, fields, actions, update, cancel };
+  const pendingPlacementInputs = () => [addRowPosition, addColumnPosition].filter(input => edited.has(input));
+  const finishPendingEdit = () => pendingPlacementInputs().every(commitPlacement);
+  return { element: section, fields, actions, update, cancel, finishPendingEdit, hasPendingEdit: () => pendingPlacementInputs().length > 0 };
 }

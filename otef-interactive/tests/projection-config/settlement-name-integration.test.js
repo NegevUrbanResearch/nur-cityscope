@@ -142,6 +142,30 @@ test('signed settlement input from zero saves separately and blocks a changed ou
   expect(warning).toHaveBeenCalledWith('[SettlementNameClient] position offscreen'); warning.mockRestore();
 });
 
+test("settlement editor retains invalid input across Close and output changes, then finishes valid position on the captured output", async () => {
+  const app = await mountSettlementConfigFixture();
+  app.selectNode("settlement-names");
+  await app.openEditor();
+  const dialog = document.querySelector(".settlement-name-dialog");
+  const rotation = dialog.querySelector('[data-field="rotateDeg"]');
+  rotation.value = "-"; rotation.dispatchEvent(new Event("input")); rotation.dispatchEvent(new Event("change"));
+  await app.closeEditor();
+  const output = dialog.querySelector('[aria-label="Settlement output"]');
+  output.value = "right"; output.dispatchEvent(new Event("change"));
+  app.root.querySelector('[data-node="left-grid"]').click();
+  expect(document.querySelector(".settlement-name-dialog")).toBe(dialog);
+  expect(output.value).toBe("left");
+  expect(rotation.value).toBe("-");
+  expect(app.writeOperation).not.toHaveBeenCalled();
+  rotation.closest(".config-field").querySelector('[data-action="numeric-cancel-edit"]').click();
+  const x = dialog.querySelector('[data-field="x"]');
+  x.value = "700"; x.dispatchEvent(new Event("input")); x.dispatchEvent(new Event("change"));
+  output.value = "right"; output.dispatchEvent(new Event("change"));
+  await vi.waitFor(() => expect(app.writeOperation).toHaveBeenCalledTimes(1));
+  expect(app.writeOperation).toHaveBeenCalledWith(expect.objectContaining({ operation: "position", output: "left", citycode: "0067", position: expect.objectContaining({ x: 700 }) }));
+  expect(output.value).toBe("right");
+});
+
 test("catalog publication updates settlement choices without changing saved settings", async () => {
   const retrySettlementCatalog = vi.fn();
   const app = await mountSettlementConfigFixture({ catalogStatus: { status: "error", error: "offline" }, retrySettlementCatalog });

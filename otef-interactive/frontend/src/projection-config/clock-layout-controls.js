@@ -91,6 +91,8 @@ export function createClockLayoutParameters(doc, { onField = () => {} } = {}) {
   element.insertBefore(columnsLabel, advanced);
   return { element, controls, advanced,
     finish: () => [...sessions.values()].map(control=>control.finish()),
+    hasPending: () => [...sessions.values()].some(control => control.isPending()),
+    isHeld: () => [...sessions.values()].some(control => control.isHeld()),
     cancel: () => { for (const control of sessions.values()) control.cancel(); },
     dispose: () => { for (const control of sessions.values()) control.dispose(); },
     render(layout, { enabled = true, legend = false, identity = 'clock' } = {}) {

@@ -81,8 +81,8 @@ export function openSettlementNameEditor({
   stage.append(mapping, retry);
   const controls = createSettlementNameControls(doc, {
     catalog,
-    onOutput: (next) => { setSelection({ output: next, citycode: activeCitycode }); onSelection({ output: activeOutput, citycode: activeCitycode }); },
-    onCitycode: (next) => { setSelection({ output: activeOutput, citycode: next }); onSelection({ output: activeOutput, citycode: activeCitycode }); },
+    onOutput: (next) => { if (setSelection({ output: next, citycode: activeCitycode })) onSelection({ output: activeOutput, citycode: activeCitycode }); else controls.output.value = activeOutput; },
+    onCitycode: (next) => { if (setSelection({ output: activeOutput, citycode: next })) onSelection({ output: activeOutput, citycode: activeCitycode }); else controls.city.value = activeCitycode; },
     onPosition: (position) => { void settingsClient.commit({ kind: "position", output: activeOutput, citycode: activeCitycode }, position, { numeric: true }).catch(() => {}); publish(); },
     onStyle: (style) => { void settingsClient.commit({ kind: "style" }, style, { numeric: true }).catch(() => {}); publish(); },
     onRetry: () => {
@@ -263,13 +263,14 @@ export function openSettlementNameEditor({
   win?.addEventListener?.("resize", onResize);
   retry.addEventListener("click", () => invalidate());
   closeButton.addEventListener("click", close);
-  dialog.addEventListener("keydown", (event) => { if (event.key === "Escape") { event.preventDefault?.(); close(); } });
+  dialog.addEventListener("keydown", (event) => { if (event.key === "Escape") { event.preventDefault?.(); if (controls.hasPending()) controls.cancel(); else close(); } });
   const beforeUnload = (event) => { if (settingsClient.hasUnsavedWork?.()) { event.preventDefault?.(); event.returnValue = ""; } };
   if (manageBeforeUnload) win?.addEventListener?.("beforeunload", beforeUnload);
   publish();
   fitPreview();
 
   function setSelection({ output: nextOutput, citycode: nextCitycode } = {}) {
+    if (!finishPendingEdit()) return false;
     const outputChanged = nextOutput && nextOutput !== activeOutput;
     if (nextOutput === "left" || nextOutput === "right") activeOutput = nextOutput;
     if (typeof nextCitycode === "string" && nextCitycode) activeCitycode = nextCitycode;
@@ -277,9 +278,16 @@ export function openSettlementNameEditor({
     renderControls();
     if (outputChanged) invalidate();
     else publish();
+    return true;
   }
-  function close() {
+  function finishPendingEdit() {
+    if (controls.isHeld()) return false;
+    return controls.finish().every(result => result.kind === "commit" || result.kind === "unchanged");
+  }
+  function close({ force = false } = {}) {
     if (!active) return;
+    if (!force && !finishPendingEdit()) return false;
+    controls.cancel();
     controls.dispose();
     active = false;
     if (gesture) cancelGesture({ pointerId: gesture.pointerId });
@@ -292,6 +300,8 @@ export function openSettlementNameEditor({
     if (restoreFocus) restoreFocus()?.focus?.();
     else opener?.focus?.();
     onClose();
+    return true;
   }
-  return { close, setSelection, setCatalog, calibrationChanged() { invalidate(); } };
+  return { close, setSelection, setCatalog, finishPendingEdit, hasPendingEdit: controls.hasPending, isHeld: controls.isHeld, cancelPendingEdit: controls.cancel,
+    dispose() { close({ force: true }); }, calibrationChanged() { invalidate(); } };
 }
