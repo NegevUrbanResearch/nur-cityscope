@@ -385,6 +385,33 @@ test("Run names for older applied geometry cannot replace a newer pending draft 
   dialog.dispose();
 });
 
+test("Run names Applied wait times out and exposes Retry", () => {
+  vi.useFakeTimers();
+  const config = structuredClone(DEFAULT_PROJECTION_CONFIG);
+  const { dialog, opener } = setup();
+  dialog.update(config);
+  dialog.open({ side: "left", mode: "keystone", opener });
+  const frame = document.querySelector("iframe");
+  const send = vi.spyOn(frame.contentWindow, "postMessage");
+  window.dispatchEvent(new MessageEvent("message", { origin: location.origin, source: frame.contentWindow,
+    data: { type: "otef_projection_preview_ready", output: "left" } }));
+  const geometry = send.mock.calls[0][0];
+  window.dispatchEvent(new MessageEvent("message", { origin: location.origin, source: frame.contentWindow,
+    data: { type: "otef_projection_preview_applied", output: "left", requestId: geometry.requestId, success: true } }));
+  expect(dialog.sendRunNamesPreview(config)).toBe(true);
+  const names = send.mock.calls[1][0];
+  expect(names.runNames).toBe(true);
+  vi.advanceTimersByTime(30000);
+  expect(document.querySelector(".warp-editor-message").textContent).toMatch(/did not finish/i);
+  expect(document.querySelector('[data-action="warp-editor-retry"]').hidden).toBe(false);
+  window.dispatchEvent(new MessageEvent("message", { origin: location.origin, source: frame.contentWindow,
+    data: { type: "otef_projection_preview_applied", output: "left", requestId: names.requestId, success: true } }));
+  expect(document.querySelector(".warp-editor-message").textContent).toMatch(/did not finish/i);
+  expect(frame.style.visibility).toBe("visible");
+  dialog.dispose();
+  vi.useRealTimers();
+});
+
 test("warp controls remain visible without a Fine adjustment toggle", () => {
   const { dialog, opener } = setup();
   dialog.open({ side: "left", mode: "keystone", opener });

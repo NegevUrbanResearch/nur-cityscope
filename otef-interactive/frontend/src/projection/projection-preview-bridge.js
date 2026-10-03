@@ -1,4 +1,20 @@
 import { validateProjectionConfig } from "../shared/projection-config-schema.js";
+import { withRequestDeadline } from "../shared/request-deadline.js";
+
+function runBoundedPreviewOperation(operation, parentSignal) {
+  let completedSynchronously = false;
+  let value;
+  const task = withRequestDeadline((signal) => {
+    value = operation(signal);
+    completedSynchronously = true;
+    return value;
+  }, { timeoutMs: 30000, signal: parentSignal });
+  if (completedSynchronously && !(value && typeof value.then === "function")) {
+    task.catch(() => {});
+    return { synchronous: true, value };
+  }
+  return { synchronous: false, task };
+}
 
 const CLOCK_LAYOUT_KEYS = ["leftPct", "topPct", "widthPct", "heightPct", "fontPx", "rotateDeg"];
 const finiteLayout = (value) => value && typeof value === "object" && !Array.isArray(value) &&
@@ -117,6 +133,7 @@ export function installProjectionPreviewBridge({ win, output, map, nameFieldCont
   let applyAbort = null;
   let namesGeneration = 0;
   let namesAbort = null;
+  let lastConfigRequestId = 0;
   const onMessage = (event) => {
     const message = event.data;
     if (event.source !== win.parent || event.origin !== origin || !['otef_projection_preview_config', 'otef_projection_preview_validate'].includes(message?.type) || message.output !== output || !Number.isSafeInteger(message.requestId)) return;
@@ -156,6 +173,8 @@ export function installProjectionPreviewBridge({ win, output, map, nameFieldCont
       reply({ type: "otef_projection_preview_applied", requestId: message.requestId, success: false, error: "Invalid calibration draft" });
       return;
     }
+    if (message.requestId <= lastConfigRequestId) return;
+    lastConfigRequestId = message.requestId;
     const runNames = message.runNames === true;
     if (runNames) {
       namesAbort?.abort();
@@ -173,9 +192,9 @@ export function installProjectionPreviewBridge({ win, output, map, nameFieldCont
           reply({ type: "otef_projection_preview_applied", requestId: message.requestId, success: false, error: error.message || "Names preview failed" });
       };
       try {
-        const prepared = applyProjectionConfig?.(message.config, { generation, signal, runNames: true });
-        if (prepared && typeof prepared.then === "function") Promise.resolve(prepared).then(finishNames).catch(failNames);
-        else finishNames(prepared);
+        const bounded = runBoundedPreviewOperation((operationSignal) => applyProjectionConfig?.(message.config, { generation, signal: operationSignal, runNames: true }), signal);
+        if (bounded.synchronous) finishNames(bounded.value);
+        else bounded.task.then(finishNames).catch(failNames);
       } catch (error) { failNames(error); }
       return;
     }
@@ -198,9 +217,9 @@ export function installProjectionPreviewBridge({ win, output, map, nameFieldCont
     const fail = (error) => { if (generation === applyGeneration && !applyAbort.signal.aborted)
       reply({ type: "otef_projection_preview_applied", requestId: message.requestId, success: false, error: error.message || "Preview failed" }); };
     try {
-      const prepared = applyProjectionConfig?.(message.config, { generation, signal: applyAbort.signal, runNames: false });
-      if (prepared && typeof prepared.then === 'function') Promise.resolve(prepared).then(finish).catch(fail);
-      else finish(prepared);
+      const bounded = runBoundedPreviewOperation((operationSignal) => applyProjectionConfig?.(message.config, { generation, signal: operationSignal, runNames: false }), applyAbort.signal);
+      if (bounded.synchronous) finish(bounded.value);
+      else bounded.task.then(finish).catch(fail);
     } catch (error) { fail(error); }
   };
   win.addEventListener("message", onMessage);

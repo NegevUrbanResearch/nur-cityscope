@@ -333,14 +333,17 @@ export function runWhenMapIdle(map, fn) {
   else fn();
 }
 
-export function drawAfterMapRender(map, draw, { signal, beforeRender } = {}) {
+export function drawAfterMapRender(map, draw, { signal, beforeRender, timeoutMs = null } = {}) {
   if (typeof map?.on !== "function" || typeof draw !== "function") return Promise.reject(new Error("projection map render is unavailable"));
+  if (timeoutMs != null && (!Number.isFinite(timeoutMs) || timeoutMs < 0)) return Promise.reject(new RangeError("timeoutMs must be a non-negative finite number"));
   return new Promise((resolve, reject) => {
     let settled = false;
+    let deadlineTimer = null;
     const cleanup = () => {
       map.off?.("render", onRender);
       map.off?.("error", onError);
       signal?.removeEventListener?.("abort", onAbort);
+      if (deadlineTimer !== null) clearTimeout(deadlineTimer);
     };
     const finish = (callback, value) => {
       if (settled) return;
@@ -362,6 +365,11 @@ export function drawAfterMapRender(map, draw, { signal, beforeRender } = {}) {
     map.on("render", onRender);
     map.on("error", onError);
     signal?.addEventListener?.("abort", onAbort, { once: true });
+    if (timeoutMs != null) deadlineTimer = setTimeout(() => {
+      const error = new Error(`projection draw timed out after ${timeoutMs}ms`);
+      error.code = "projection_draw_timeout";
+      finish(reject, error);
+    }, timeoutMs);
     try {
       beforeRender?.();
       map.triggerRepaint?.();

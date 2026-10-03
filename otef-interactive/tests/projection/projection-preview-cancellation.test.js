@@ -1,5 +1,5 @@
 import { expect, test, vi } from "vitest";
-import { cancelProjectionPreviewNames, settleProjectionPreviewTaskOnAbort } from "../../frontend/src/projection/projection-preview-task.js";
+import { cancelProjectionPreviewNames, rollbackProjectionPreviewApply, settleProjectionPreviewTaskOnAbort } from "../../frontend/src/projection/projection-preview-task.js";
 
 function deferred() {
   let resolve;
@@ -67,4 +67,37 @@ test("newer geometry cancels an explicit Run names before its late preparation c
   preparation.resolve();
   await Promise.resolve();
   expect(namesCommitted).toBe(false);
+});
+
+test("a superseded stalled rollback cannot resume its redraw or start a stale rollback", async () => {
+  const controller = new AbortController();
+  let current = true;
+  const rollback = vi.fn();
+  const draw = vi.fn();
+  let resolveRender;
+  const render = new Promise((resolve) => { resolveRender = resolve; });
+  const pending = rollbackProjectionPreviewApply({
+    isCurrent: () => current,
+    signal: controller.signal,
+    rollback,
+    redraw: (signal) => new Promise((resolve, reject) => {
+      const onAbort = () => reject(Object.assign(new Error("cancelled"), { name: "AbortError" }));
+      signal.addEventListener("abort", onAbort, { once: true });
+      render.then(() => {
+        signal.removeEventListener("abort", onAbort);
+        if (!signal.aborted) draw();
+        resolve();
+      });
+    }),
+  });
+  expect(rollback).toHaveBeenCalledOnce();
+  current = false;
+  controller.abort();
+  await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+  resolveRender();
+  await Promise.resolve();
+  expect(draw).not.toHaveBeenCalled();
+
+  await expect(rollbackProjectionPreviewApply({ isCurrent: () => false, rollback, redraw: draw })).resolves.toBe(false);
+  expect(rollback).toHaveBeenCalledOnce();
 });

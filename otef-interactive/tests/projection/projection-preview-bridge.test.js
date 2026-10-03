@@ -95,6 +95,25 @@ test("preview accepts only its same-origin parent and applies a validated draft 
   expect(listeners.has("message")).toBe(false);
 });
 
+test("preview ignores a reordered request ID after accepting a newer config", () => {
+  const listeners = new Map(); const parent = { postMessage: vi.fn() };
+  const win = { parent, location: { origin: "http://localhost" },
+    addEventListener: (type, callback) => listeners.set(type, callback), removeEventListener() {} };
+  const config = structuredClone(DEFAULT_PROJECTION_CONFIG);
+  const applyProjectionConfig = vi.fn(() => ({ committed: true }));
+  const dispose = installProjectionPreviewBridge({ win, output: "left", map: {}, nameFieldController: {},
+    syncContextInvestigation() {}, applyProjectionConfig });
+  const send = (requestId) => listeners.get("message")({ source: parent, origin: "http://localhost", data: {
+    type: "otef_projection_preview_config", output: "left", requestId, config,
+  } });
+  send(4); send(3);
+  expect(applyProjectionConfig).toHaveBeenCalledOnce();
+  expect(parent.postMessage).toHaveBeenLastCalledWith({
+    type: "otef_projection_preview_applied", output: "left", requestId: 4, success: true,
+  }, "http://localhost");
+  dispose();
+});
+
 test("preview exposes the candidate apply hook before local camera consumers", () => {
   const listeners = new Map();
   const parent = { postMessage: vi.fn() };
@@ -136,6 +155,54 @@ test('an asynchronous paired preview apply uses the prepared wall and ignores a 
   expect(parent.postMessage.mock.calls.filter(([message]) => message.requestId === 1)).toHaveLength(0);
   expect(map.setEffectiveProjectionConfig).not.toHaveBeenCalled();
   expect(names.setProjectionConfig).not.toHaveBeenCalled();
+});
+
+test('the whole geometry apply is bounded and its operation signal aborts on timeout', async () => {
+  vi.useFakeTimers();
+  const listeners = new Map(); const parent = { postMessage: vi.fn() };
+  const win = { parent, location: { origin: 'http://localhost' },
+    addEventListener: (type, callback) => listeners.set(type, callback), removeEventListener() {} };
+  let operationSignal;
+  const applyProjectionConfig = vi.fn((_config, context) => {
+    operationSignal = context.signal;
+    return new Promise(() => {});
+  });
+  const dispose = installProjectionPreviewBridge({ win, output: 'left', map: {}, nameFieldController: {},
+    syncContextInvestigation: vi.fn(), applyProjectionConfig });
+  listeners.get('message')({ source: parent, origin: 'http://localhost', data: {
+    type: 'otef_projection_preview_config', output: 'left', requestId: 1, config: structuredClone(DEFAULT_PROJECTION_CONFIG),
+  } });
+  expect(operationSignal.aborted).toBe(false);
+  await vi.advanceTimersByTimeAsync(30000);
+  expect(operationSignal.aborted).toBe(true);
+  expect(parent.postMessage).toHaveBeenLastCalledWith(expect.objectContaining({
+    type: 'otef_projection_preview_applied', output: 'left', requestId: 1, success: false,
+  }), 'http://localhost');
+  dispose(); vi.useRealTimers();
+});
+
+test('the whole names operation is bounded and its operation signal aborts on timeout', async () => {
+  vi.useFakeTimers();
+  const listeners = new Map(); const parent = { postMessage: vi.fn() };
+  const win = { parent, location: { origin: 'http://localhost' },
+    addEventListener: (type, callback) => listeners.set(type, callback), removeEventListener() {} };
+  let operationSignal;
+  const applyProjectionConfig = vi.fn((_config, context) => {
+    operationSignal = context.signal;
+    return new Promise(() => {});
+  });
+  const dispose = installProjectionPreviewBridge({ win, output: 'right', map: {}, nameFieldController: {},
+    syncContextInvestigation: vi.fn(), applyProjectionConfig });
+  listeners.get('message')({ source: parent, origin: 'http://localhost', data: {
+    type: 'otef_projection_preview_config', output: 'right', requestId: 2, runNames: true,
+    config: structuredClone(DEFAULT_PROJECTION_CONFIG),
+  } });
+  await vi.advanceTimersByTimeAsync(30000);
+  expect(operationSignal.aborted).toBe(true);
+  expect(parent.postMessage).toHaveBeenLastCalledWith(expect.objectContaining({
+    type: 'otef_projection_preview_applied', output: 'right', requestId: 2, success: false,
+  }), 'http://localhost');
+  dispose(); vi.useRealTimers();
 });
 
 test('explicit Run names is passed through the unchanged preview applied handshake', async () => {
@@ -181,6 +248,10 @@ test('preview geometry remaps installed names and draws without preparing a wall
   const geometry = source.slice(start, end);
   expect(geometry).toContain('nameFieldController.applyProjectionConfigGeometry(config, generation)');
   expect(geometry).toContain('drawAfterMapRender(map, () => browserSurface.draw()');
+  expect(geometry).toContain('timeoutMs: 15000');
+  expect(geometry).toContain('timeoutMs: 5000');
+  expect(geometry).toContain('generation !== previewApplySequence');
+  expect(geometry).toContain('await rollbackProjectionPreviewApply');
   expect(geometry).toContain('if (!drawn) throw new Error(\'Projection preview draw failed\')');
   expect(geometry).not.toContain('prepareProjectionNameWall');
   expect(geometry).not.toContain('prepareProjectionCandidate');
