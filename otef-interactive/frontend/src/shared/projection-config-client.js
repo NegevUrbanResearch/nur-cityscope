@@ -110,6 +110,7 @@ export function createProjectionConfigClient({
 
   let started = false;
   let stopped = false;
+  let lifecycleGeneration = 0;
   let connected = false;
   let snapshot = null;
   let installedSchemaVersion = null;
@@ -248,8 +249,9 @@ export function createProjectionConfigClient({
     }
     // Receipt context lasts only for this adoption. An own checkpoint Save
     // changes preset selection without replacing the editing session.
-    notify(origin === sourceId && matchesSaveAcknowledgement(inFlight, next)
-      ? { origin, action: 'save' } : undefined);
+    const acknowledgedSave = origin === sourceId && matchesSaveAcknowledgement(inFlight, next) ? inFlight : null;
+    notify(acknowledgedSave ? { origin, action: 'save' } : undefined);
+    if (acknowledgedSave) settleSaveAcknowledgement(acknowledgedSave, next);
     return true;
   }
 
@@ -259,6 +261,19 @@ export function createProjectionConfigClient({
     return Boolean(checkpoint && !checkpoint.readOnly && checkpoint.name === String(request.body.name ?? '').trim() &&
       (!request.body.presetId || checkpoint.id === request.body.presetId) &&
       equalProjectionConfig(next.config, request.body.config) && equalProjectionConfig(checkpoint.config, request.body.config));
+  }
+
+  function settleSaveAcknowledgement(request, next) {
+    if (inFlight !== request || request.retired || stopped) return;
+    const savedPresetId = conflictGeneration === request.conflictGeneration && draftVersion === request.sentVersion
+      ? next.selectedPresetId : null;
+    if (savedPresetId) hasLocalDraft = false;
+    request.retired = true;
+    inFlight = null;
+    request.controller?.abort();
+    notify();
+    request.resolve({ ...getState(), savedPresetId });
+    scheduleDrain();
   }
 
   async function hydrate() {
@@ -300,7 +315,8 @@ export function createProjectionConfigClient({
     return getState();
   }
 
-  function socketMessage(message) {
+  function socketMessage(message, generation = lifecycleGeneration) {
+    if (!started || stopped || generation !== lifecycleGeneration) return;
     if (!message || message.type !== 'otef_projection_config_changed' || message.table !== table || !isUuid(message.sourceId)) return;
     receiveSnapshot(message.state, { origin: message.sourceId });
   }
@@ -631,12 +647,14 @@ export function createProjectionConfigClient({
     return new Promise((resolve, reject) => waitForMutation({ action: 'revert', version: draftVersion, resolve, reject }));
   }
 
-  function onConnect() {
+  function onConnect(generation = lifecycleGeneration) {
+    if (!started || stopped || generation !== lifecycleGeneration) return;
     setConnected(true);
     if (hasLocalDraft) live = false;
     hydrationPromise = hydrate().finally(() => { hydrationPromise = null; });
   }
-  function onDisconnect() {
+  function onDisconnect(generation = lifecycleGeneration) {
+    if (!started || stopped || generation !== lifecycleGeneration) return;
     setConnected(false);
   }
 
@@ -649,8 +667,12 @@ export function createProjectionConfigClient({
     if (started && !stopped) return Promise.resolve(getState());
     started = true;
     stopped = false;
+    const generation = ++lifecycleGeneration;
     if (socket?.on) {
-      for (const [event, handler] of [['connect', onConnect], ['disconnect', onDisconnect], ['otef_projection_config_changed', socketMessage]]) {
+      const connectHandler = () => onConnect(generation);
+      const disconnectHandler = () => onDisconnect(generation);
+      const messageHandler = (message) => socketMessage(message, generation);
+      for (const [event, handler] of [['connect', connectHandler], ['disconnect', disconnectHandler], ['otef_projection_config_changed', messageHandler]]) {
         socket.on(event, handler); handlers.push([event, handler]);
       }
     }
@@ -671,6 +693,7 @@ export function createProjectionConfigClient({
   function stop() {
     stopped = true;
     started = false;
+    lifecycleGeneration += 1;
     hydrationGeneration += 1;
     reconciliationGeneration += 1;
     hydrationController?.abort(); hydrationController = null;
