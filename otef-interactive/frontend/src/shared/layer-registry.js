@@ -12,7 +12,7 @@
  */
 
 export class LayerRegistry {
-  constructor({ fetchImpl = globalThis.fetch } = {}) {
+  constructor({ fetchImpl = globalThis.fetch?.bind(globalThis) } = {}) {
     this._fetch = fetchImpl;
     this._manifest = null;
     this._packManifests = new Map(); // packId -> manifest
