@@ -27,6 +27,14 @@ test("command bands wrap direct actions without fixed header rows", () => {
   expect(css).toMatch(/\.preset-commands, \.display-commands\s*\{[^}]*grid-template-rows:\s*subgrid/s);
 });
 
+test("narrow workspace reserves a visible graph stage and uses the existing shell scroll", () => {
+  const css = readFileSync(resolve(import.meta.dirname, "../../frontend/src/projection-config/config.css"), "utf8");
+  expect(css).toMatch(/\.config-shell\s*\{[^}]*overflow-y:\s*auto/s);
+  expect(css).toMatch(/@media\s*\(max-width:\s*700px\)\s*\{\s*\.config-workspace\s*\{[^}]*grid-template-rows:\s*minmax\(220px,\s*1fr\) auto/s);
+  expect(css).not.toMatch(/\.config-workspace\s*\{[^}]*overflow-y:\s*auto/s);
+  expect(css).toMatch(/\.config-enlarge-edit, \.config-editor-region button\s*\{[^}]*min-height:\s*44px/s);
+});
+
 test("scalar optional recovery shares the single scrolling editor body without expanding its header", () => {
   const css = readFileSync(resolve(import.meta.dirname, "../../frontend/src/projection-config/config.css"), "utf8");
   expect(css).toMatch(/\.parameter-editor-dialog\[data-presentation="panel"\] \.parameter-editor-body\s*\{[^}]*overflow-y:\s*auto/s);

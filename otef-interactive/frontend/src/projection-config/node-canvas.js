@@ -13,6 +13,7 @@ const EDGES = [
   ["left-grid", "left-output"], ["right-grid", "right-output"],
 ];
 const PAD = 28;
+const MIN_FIT_SCALE = 0.01;
 const COLUMN_GAP = 48;
 const ROW_GAP = 64;
 const INTERACTIVE_TOUCH_SELECTOR = "input, button, select, textarea, a, label, [contenteditable], [role='button']";
@@ -51,7 +52,7 @@ export function fitTransform(bounds, viewport) {
   if (!(bounds.width > 0 && bounds.height > 0 && viewport.width > 0 && viewport.height > 0)) {
     return { x: 0, y: 0, scale: 1 };
   }
-  const scale = Math.min(1, (viewport.width - PAD * 2) / bounds.width, (viewport.height - PAD * 2) / bounds.height);
+  const scale = Math.max(MIN_FIT_SCALE, Math.min(1, (viewport.width - PAD * 2) / bounds.width, (viewport.height - PAD * 2) / bounds.height));
   return {
     x: (viewport.width - bounds.width * scale) / 2,
     y: (viewport.height - bounds.height * scale) / 2,
@@ -156,7 +157,7 @@ export function createNodeCanvas({ document, viewport, graph, svg, wire, nodeMap
     const right = Math.max(...cards.map((card) => leftOf(card) + (card.offsetWidth || 280)));
     const bottom = Math.max(...cards.map((card) => topOf(card) + (card.offsetHeight || 300)));
     const bounds = { width: right - left, height: bottom - top };
-    const scale = Math.min(1, (viewport.clientWidth - PAD * 2) / bounds.width, (viewport.clientHeight - PAD * 2) / bounds.height);
+    const scale = Math.max(MIN_FIT_SCALE, Math.min(1, (viewport.clientWidth - PAD * 2) / bounds.width, (viewport.clientHeight - PAD * 2) / bounds.height));
     view = {
       x: viewport.clientWidth / 2 - (left + right) / 2 * scale,
       y: viewport.clientHeight / 2 - (top + bottom) / 2 * scale,

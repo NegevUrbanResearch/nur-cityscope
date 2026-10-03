@@ -506,6 +506,9 @@ h2, h3 { margin: 0 0 10px; }
   .warp-editor-header > .warp-view-controls { grid-column: 1 / -1; grid-row: 3; flex-wrap: wrap; }
   .warp-editor-header > [data-action="warp-editor-close"] { grid-column: 2; grid-row: 1 / span 2; }
 }
+@media (max-width: 700px) {
+  .config-workspace { grid-template-rows: minmax(220px, 1fr) auto; }
+}
 @media (pointer: coarse) {
   .config-node h3 { min-height: 48px; }
   .config-node :is(button, input, select), .graph-controls button { min-height: 48px; }

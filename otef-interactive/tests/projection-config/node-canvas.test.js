@@ -21,6 +21,17 @@ test("node layout separates every card and fit shows the complete graph", () => 
   expect(fitted.y + bounds.height * fitted.scale).toBeLessThanOrEqual(560);
 });
 
+test("compact fit stays positive for small but nonzero viewports", () => {
+  const { bounds } = layoutNodePositions(Object.fromEntries(ids.map((id) => [id, { width: 330, height: 300 }])));
+  const phone = fitTransform(bounds, { width: 375, height: 220 });
+  expect(phone.scale).toBeGreaterThan(0);
+  expect(phone.scale).toBeLessThanOrEqual(1);
+  const tiny = fitTransform(bounds, { width: 20, height: 30 });
+  expect(tiny.scale).toBeGreaterThan(0);
+  expect(Number.isFinite(tiny.x)).toBe(true);
+  expect(Number.isFinite(tiny.y)).toBe(true);
+});
+
 test("Names wall sits beside Content without joining the transform path", () => {
   const sizes = Object.fromEntries(ids.map((id) => [id, { width: 330, height: 300 }]));
   const { positions } = layoutNodePositions(sizes);
