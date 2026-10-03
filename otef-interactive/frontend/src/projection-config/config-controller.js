@@ -8,6 +8,7 @@ import {
 import { equalProjectionConfig } from "../shared/projection-config-client.js";
 import { createUuid } from "../shared/uuid.js";
 import { createProjectionConfigView } from "./config-view.js";
+import { deriveGridSelectionIndices } from "./grid-layout-controls.js";
 import { createParameterHistory } from './parameter-history.js';
 import { createWarpEditor } from "./warp-editor.js";
 import { warpCoordinateTargetKey } from "./warp-panel-view.js";
@@ -170,6 +171,8 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
   const gridPreviews = { left: null, right: null };
   const gridPlacements = { left: null, right: null };
   let gridPreviewSequence = 0;
+  let gridContextGeneration = 0;
+  let gridContextNode = null;
   let namesRunPending = false;
   let namesDatasetVersion = "";
   let namesTargetRequest = 0;
@@ -199,8 +202,9 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     onFieldCancel: handleFieldCancel,
     onNudge: handleNudge,
     onWarpFieldCancel: (output) => { warpEditors[output].clearValidation(); refresh(); },
+    onWarpEditorVisibility: (visible) => setGridTopologyContext(Boolean(visible)),
     onNamesMode: handleNamesMode,
-    onNode: (node) => { if (!finishPendingEdit()) return false; view.cancelWarpPointer(); selectedNode = node; if (node === "clock-gis" || node === "clock-projection") { closeNovaExplainerEditor(); syncClockEditor(node); } else closeClockEditor(); if (node !== "nova-explainers") closeNovaExplainerEditor(); if (node === "settlement-names") syncSettlementEditor(); else closeSettlementEditor(); if (node.endsWith("-keystone") || node.endsWith("-grid")) warpEditors[node.startsWith("right-") ? "right" : "left"].setMode(node.endsWith("-grid") ? "grid" : "keystone"); refresh(); return true; },
+    onNode: (node) => { if (!finishPendingEdit()) return false; view.cancelWarpPointer(); setGridTopologyContext(false); selectedNode = node; if (node === "clock-gis" || node === "clock-projection") { closeNovaExplainerEditor(); syncClockEditor(node); } else closeClockEditor(); if (node !== "nova-explainers") closeNovaExplainerEditor(); if (node === "settlement-names") syncSettlementEditor(); else closeSettlementEditor(); if (node.endsWith("-keystone") || node.endsWith("-grid")) warpEditors[node.startsWith("right-") ? "right" : "left"].setMode(node.endsWith("-grid") ? "grid" : "keystone"); if (view.isWarpEditorOpen?.()) setGridTopologyContext(true); refresh(); return true; },
     onOpenClockEditor: openClockEditor,
     onOpenNovaExplainerEditor: openNovaEditor,
     onOpenSettlementEditor: openSettlementEditor,
@@ -333,7 +337,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
       let evaluatedMesh = null;
       try { evaluatedMesh = editor.getEvaluatedMesh(); } catch {}
       if (pendingPreview?.ok && pendingPreview.baseWarpIdentity !== JSON.stringify(editor.getConfig().outputs[output].warp)) {
-        gridPreviews[output] = { ...pendingPreview, ok: false, status: "error", error: "The warp changed. Preview the grid edit again." };
+        gridPreviews[output] = { ...pendingPreview, id: ++gridPreviewSequence, ok: false, status: "error", error: "The warp changed. Preview the grid edit again." };
       }
       return [output, { ...editor.getState(), gridLayoutPreview: gridPreviews[output], gridPlacement: gridPlacements[output],
       ...(!editorBaselineReady ? { baselineAvailable: false, historyDepth: 0, redoDepth: 0 } : {}),
@@ -698,6 +702,9 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
   function currentGridDraftIdentity() { return JSON.stringify(state.draft || DEFAULT_PROJECTION_CONFIG); }
   async function startGridLayoutPreview(output, operation, values) {
     if (!finishPendingEdit()) return false;
+    const contextGeneration = gridContextGeneration;
+    const contextNode = `${output}-grid`;
+    if (!ownsGridTopologyContext(output, contextGeneration, contextNode)) return false;
     const editor = warpEditors[output];
     if (!editor || editor.getState().adjusting) return false;
     const id = ++gridPreviewSequence;
@@ -708,13 +715,13 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
       return false;
     }
     const baseDraftIdentity = currentGridDraftIdentity();
-    const pending = { ...preview, id, status: "validating" };
+    const pending = { ...preview, id, status: "validating", contextGeneration, contextNode };
     gridPreviews[output] = pending;
     refresh();
     try {
       const candidate = gridCandidate(editor, output, preview);
       const result = await validateGridCandidate(candidate, id);
-      if (disposed || gridPreviews[output]?.id !== id) return false;
+      if (disposed || gridPreviews[output]?.id !== id || gridPreviews[output]?.status !== "validating" || !ownsGridTopologyContext(output, contextGeneration, contextNode)) return false;
       if (preview.output !== output || JSON.stringify(editor.getConfig().outputs[output].warp) !== preview.baseWarpIdentity || currentGridDraftIdentity() !== baseDraftIdentity) {
         gridPreviews[output] = { ...pending, ok: false, status: "error", error: "The draft changed while checking this preview. Preview the grid edit again." };
         refresh();
@@ -738,7 +745,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
       refresh();
       return committed;
     } catch (error) {
-      if (gridPreviews[output]?.id === id) {
+      if (gridPreviews[output]?.id === id && ownsGridTopologyContext(output, contextGeneration, contextNode)) {
         gridPreviews[output] = { ...pending, ok: false, status: "error", error: error?.message || "Candidate validation failed." };
         refresh();
       }
@@ -748,7 +755,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
   async function confirmGridLayoutPreview(output) {
     const pending = gridPreviews[output];
     const editor = warpEditors[output];
-    if (!pending?.ok || pending.status !== "ready" || !editor || editor.getState().adjusting) return false;
+    if (!pending?.ok || pending.status !== "ready" || !editor || editor.getState().adjusting || !ownsGridTopologyContext(output, pending.contextGeneration, pending.contextNode)) return false;
     if (JSON.stringify(editor.getConfig().outputs[output].warp) !== pending.baseWarpIdentity) {
       gridPreviews[output] = { ...pending, ok: false, status: "error", error: "The warp changed. Preview the grid edit again." };
       refresh();
@@ -761,7 +768,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     try {
       const candidate = gridCandidate(editor, output, pending);
       const result = await validateGridCandidate(candidate, token);
-      if (disposed || gridPreviews[output]?.id !== pending.id) return false;
+      if (disposed || gridPreviews[output]?.id !== pending.id || gridPreviews[output]?.status !== "validating" || !ownsGridTopologyContext(output, pending.contextGeneration, pending.contextNode)) return false;
       if (JSON.stringify(editor.getConfig().outputs[output].warp) !== pending.baseWarpIdentity || currentGridDraftIdentity() !== latestDraftIdentity) {
         gridPreviews[output] = { ...pending, ok: false, status: "error", error: "The draft changed while checking this confirmation. Preview the grid edit again." };
         refresh();
@@ -779,7 +786,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
       refresh();
       return committed;
     } catch (error) {
-      if (gridPreviews[output]?.id === pending.id) {
+      if (gridPreviews[output]?.id === pending.id && ownsGridTopologyContext(output, pending.contextGeneration, pending.contextNode)) {
         gridPreviews[output] = { ...pending, ok: false, status: "error", error: error?.message || "Candidate validation failed." };
         refresh();
       }
@@ -828,6 +835,19 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     refresh();
   }
   function activeWarpOutput() { return selectedNode.startsWith("right-") ? "right" : "left"; }
+  function setGridTopologyContext(active) {
+    gridContextGeneration += 1;
+    gridPreviewSequence += 1;
+    gridContextNode = active && selectedNode.endsWith("-grid") ? selectedNode : null;
+    for (const output of ["left", "right"]) {
+      gridPreviews[output] = null;
+      gridPlacements[output] = null;
+    }
+    refresh();
+  }
+  function ownsGridTopologyContext(output, generation, node = `${output}-grid`) {
+    return gridContextGeneration === generation && gridContextNode === node && selectedNode === node;
+  }
   function hasHeldGesture() { return Object.values(warpEditors).some(editor => editor.getState().adjusting) || view.hasHeldNumericEdit(); }
   function finishPendingEdit() {
     if (hasHeldGesture()) { fieldErrors = { ...fieldErrors, action: "Finish or cancel the active gesture before continuing." }; refresh(); return false; }
@@ -860,9 +880,20 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     if (action === "warp-grid-placement") {
       const output = value?.output || activeWarpOutput();
       const axis = value?.axis;
+      const generation = gridContextGeneration;
+      if (!ownsGridTopologyContext(output, generation)) return false;
       gridPreviewSequence += 1;
       gridPreviews[output] = null;
-      gridPlacements[output] = axis ? { axis, error: "" } : null;
+      if (axis) {
+        const editor = warpEditors[output];
+        const grid = editor.getConfig().outputs[output].warp.grid;
+        const { rowIndex, columnIndex } = deriveGridSelectionIndices(grid, editor.getState().selection);
+        const positions = axis === "row" ? grid.rowPositions : grid.columnPositions;
+        const index = axis === "row" ? rowIndex : columnIndex;
+        const position = ((positions[Math.min(index, positions.length - 2)] + positions[Math.min(index + 1, positions.length - 1)]) / 2) * 100;
+        const preview = editor.previewGridLayout("add", { axis, position });
+        gridPlacements[output] = { axis, position, error: preview.ok ? "" : preview.error, blocked: !preview.ok && /maximum count/i.test(preview.error || ""), preview: preview.ok ? preview : null };
+      } else gridPlacements[output] = null;
       refresh();
       return true;
     }

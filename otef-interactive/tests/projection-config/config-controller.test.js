@@ -424,6 +424,144 @@ function replacementHarness() {
 }
 
 describe("projection config controller", () => {
+  test("a left grid candidate is retired when editing moves to the right grid", async () => {
+    const previousDocument = globalThis.document; globalThis.document = documentStub();
+    const root = element("main"); const client = fakeClient(); const checks = [];
+    const api = mountProjectionConfig(root, { client, candidateValidator: { validateCandidate: args => new Promise(resolve => checks.push({ ...args, resolve })), dispose() {} } });
+    try {
+      client.setLive(true);
+      find(root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+      client.setDraft.mockClear(); client.apply.mockClear();
+      const rows = find(root, node => node.dataset?.gridLayoutField === "rows");
+      rows.value = "8"; rows.dispatch("input"); rows.dispatch("change");
+      await vi.waitFor(() => expect(checks).toHaveLength(1));
+      find(root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "right-grid").dispatch("click");
+      checks[0].resolve({ identity: checks[0].identity, valid: true });
+      await new Promise(resolve => setTimeout(resolve, 0));
+      expect(client.getState().draft.outputs.left.warp.grid.rows).toBe(7);
+      expect(client.setDraft).not.toHaveBeenCalled(); expect(client.apply).not.toHaveBeenCalled();
+      expect(find(root, node => node.className === "warp-editor-title").textContent).toContain("Right · Grid Warp");
+      find(root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+      expect(find(root, node => node.dataset?.action === "warp-undo").disabled).toBe(true);
+    } finally { api.dispose(); globalThis.document = previousDocument; }
+  });
+
+  test("a deferred grid candidate cannot revive after accepted warp identity changes away and back", async () => {
+    const previousDocument = globalThis.document; globalThis.document = documentStub();
+    const root = element("main"); const client = fakeClient(); const checks = [];
+    const api = mountProjectionConfig(root, { client, candidateValidator: { validateCandidate: args => new Promise(resolve => checks.push({ ...args, resolve })), dispose() {} } });
+    try {
+      client.setLive(true);
+      find(root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+      client.setDraft.mockClear(); client.apply.mockClear();
+      const rows = find(root, node => node.dataset?.gridLayoutField === "rows");
+      rows.value = "8"; rows.dispatch("input"); rows.dispatch("change");
+      await vi.waitFor(() => expect(checks).toHaveLength(1));
+      const base = clone(client.getState().draft); const changed = clone(base);
+      changed.outputs.left.warp.keystone.corners[0][0] = 0.02;
+      client.report({ draft: changed, hasLocalDraft: true });
+      client.report({ draft: base, hasLocalDraft: true });
+      checks[0].resolve({ identity: checks[0].identity, valid: true });
+      await new Promise(resolve => setTimeout(resolve, 0));
+      expect(client.getState().draft.outputs.left.warp.grid.rows).toBe(7);
+      expect(client.setDraft).not.toHaveBeenCalled(); expect(client.apply).not.toHaveBeenCalled();
+      expect(find(root, node => node.className === "warp-grid-layout-preview-status").textContent).toContain("warp changed");
+    } finally { api.dispose(); globalThis.document = previousDocument; }
+  });
+
+  test("a deferred explicit grid confirmation is retired when editing moves to the right grid", async () => {
+    const previousDocument = globalThis.document; globalThis.document = documentStub();
+    const root = element("main"); const client = fakeClient(); const checks = [];
+    const api = mountProjectionConfig(root, { client, candidateValidator: { validateCandidate: args => new Promise(resolve => checks.push({ ...args, resolve })), dispose() {} } });
+    try {
+      client.setLive(true);
+      find(root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+      find(root, node => node.dataset?.warpSelectionKind === "row").dispatch("click");
+      const picker = find(root, node => node.className === "warp-selection-picker"); picker.value = "2"; picker.dispatch("change");
+      client.setDraft.mockClear(); client.apply.mockClear();
+      find(root, node => node.dataset?.gridLayoutAction === "remove-row").dispatch("click");
+      await vi.waitFor(() => expect(checks).toHaveLength(1));
+      checks[0].resolve({ identity: checks[0].identity, valid: true });
+      await vi.waitFor(() => expect(find(root, node => node.dataset?.action === "warp-grid-layout-confirm").disabled).toBe(false));
+      find(root, node => node.dataset?.action === "warp-grid-layout-confirm").dispatch("click");
+      await vi.waitFor(() => expect(checks).toHaveLength(2));
+      find(root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "right-grid").dispatch("click");
+      checks[1].resolve({ identity: checks[1].identity, valid: true });
+      await new Promise(resolve => setTimeout(resolve, 0));
+      expect(client.getState().draft.outputs.left.warp.grid.rows).toBe(7);
+      expect(client.setDraft).not.toHaveBeenCalled(); expect(client.apply).not.toHaveBeenCalled();
+      find(root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+      expect(find(root, node => node.dataset?.action === "warp-undo").disabled).toBe(true);
+    } finally { api.dispose(); globalThis.document = previousDocument; }
+  });
+
+  test("a deferred explicit confirmation cannot revive after accepted warp identity changes away and back", async () => {
+    const previousDocument = globalThis.document; globalThis.document = documentStub();
+    const root = element("main"); const client = fakeClient(); const checks = [];
+    const api = mountProjectionConfig(root, { client, candidateValidator: { validateCandidate: args => new Promise(resolve => checks.push({ ...args, resolve })), dispose() {} } });
+    try {
+      client.setLive(true);
+      find(root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+      find(root, node => node.dataset?.warpSelectionKind === "row").dispatch("click");
+      const picker = find(root, node => node.className === "warp-selection-picker"); picker.value = "2"; picker.dispatch("change");
+      client.setDraft.mockClear(); client.apply.mockClear();
+      find(root, node => node.dataset?.gridLayoutAction === "remove-row").dispatch("click");
+      await vi.waitFor(() => expect(checks).toHaveLength(1));
+      checks[0].resolve({ identity: checks[0].identity, valid: true });
+      await vi.waitFor(() => expect(find(root, node => node.dataset?.action === "warp-grid-layout-confirm").disabled).toBe(false));
+      find(root, node => node.dataset?.action === "warp-grid-layout-confirm").dispatch("click");
+      await vi.waitFor(() => expect(checks).toHaveLength(2));
+      const base = clone(client.getState().draft); const changed = clone(base);
+      changed.outputs.left.warp.keystone.corners[0][0] = 0.02;
+      client.report({ draft: changed, hasLocalDraft: true });
+      client.report({ draft: base, hasLocalDraft: true });
+      checks[1].resolve({ identity: checks[1].identity, valid: true });
+      await new Promise(resolve => setTimeout(resolve, 0));
+      expect(client.getState().draft.outputs.left.warp.grid.rows).toBe(7);
+      expect(client.setDraft).not.toHaveBeenCalled(); expect(client.apply).not.toHaveBeenCalled();
+      expect(find(root, node => node.className === "warp-grid-layout-preview-status").textContent).toContain("warp changed");
+    } finally { api.dispose(); globalThis.document = previousDocument; }
+  });
+
+  test("Add placement immediately previews its visible default percentage without draft or history writes", () => {
+    const previousDocument = globalThis.document; globalThis.document = documentStub();
+    const root = element("main"); const client = fakeClient(); const api = mountProjectionConfig(root, { client });
+    try {
+      client.setLive(true);
+      find(root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+      client.setDraft.mockClear(); client.apply.mockClear();
+      find(root, node => node.dataset?.gridLayoutAction === "add-row").dispatch("click");
+      const position = find(root, node => node.dataset?.gridLayoutField === "addRowPosition").value;
+      const status = find(root, node => node.className === "warp-grid-layout-preview-status").textContent;
+      expect(status).toContain(`Add row at ${Number(position).toFixed(2)}% source Y`);
+      expect(find(root, node => node.attributes?.class === "warp-grid-preview-line candidate")).toBeTruthy();
+      expect(client.setDraft).not.toHaveBeenCalled(); expect(client.apply).not.toHaveBeenCalled();
+      expect(find(root, node => node.dataset?.action === "warp-undo").disabled).toBe(true);
+    } finally { api.dispose(); globalThis.document = previousDocument; }
+  });
+
+  test("maximum-count Add placement keeps the source percentage and explains why no candidate line is available", () => {
+    const previousDocument = globalThis.document; globalThis.document = documentStub();
+    const root = element("main"); const client = fakeClient(); const api = mountProjectionConfig(root, { client });
+    try {
+      const maximum = clone(client.getState().draft);
+      const grid = maximum.outputs.left.warp.grid;
+      grid.rows = 16; grid.rowPositions = Array.from({ length: 16 }, (_, index) => index / 15);
+      grid.offsets = Array.from({ length: 16 * grid.columns }, () => [0, 0]);
+      client.report({ draft: maximum, snapshot: { ...client.getState().snapshot, config: maximum }, hasLocalDraft: true });
+      find(root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+      client.setDraft.mockClear(); client.apply.mockClear();
+      const add = find(root, node => node.dataset?.gridLayoutAction === "add-row");
+      expect(add.disabled).toBe(false);
+      add.dispatch("click");
+      const position = find(root, node => node.dataset?.gridLayoutField === "addRowPosition");
+      expect(position.disabled).toBe(false);
+      expect(find(root, node => node.className === "warp-grid-layout-preview-status").textContent).toContain("maximum count");
+      expect(find(root, node => node.className === "warp-grid-layout-preview-status").textContent).toContain(`${Number(position.value).toFixed(2)}% source Y`);
+      expect(client.setDraft).not.toHaveBeenCalled(); expect(client.apply).not.toHaveBeenCalled();
+    } finally { api.dispose(); globalThis.document = previousDocument; }
+  });
+
   test("grid topology preview cancellation is write-free and confirmation validates and merges the latest draft once", async () => {
     const previousDocument = globalThis.document; globalThis.document = documentStub();
     const root = element("main"); root.ownerDocument = globalThis.document;

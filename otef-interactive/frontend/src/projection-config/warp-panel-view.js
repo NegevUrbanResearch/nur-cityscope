@@ -214,7 +214,9 @@ export function createWarpPanelView({ document: doc, onAction = () => {}, onPoin
         gridPreviewCancel.disabled = Boolean(state.adjusting);
       } else if (placement) {
         gridPreviewStatus.dataset.state = placement.error ? "error" : "placement";
-        gridPreviewStatus.textContent = placement.error || `Add ${placement.axis}: click inside the evaluated mesh or enter a source percentage.`;
+        const percent = Number.isFinite(Number(placement.position)) ? ` at ${Number(placement.position).toFixed(2)}% source ${placement.axis === "row" ? "Y" : "X"}` : "";
+        const guidance = placement.blocked ? "Change the grid count to make room." : placement.error ? "Click again or enter a source percentage." : "Click the viewer or enter a source percentage.";
+        gridPreviewStatus.textContent = `Add ${placement.axis}${percent}. ${placement.error ? `${placement.error} ` : ""}${guidance}`;
         gridPreviewConfirm.disabled = true;
         gridPreviewCancel.disabled = Boolean(state.adjusting);
       }

@@ -88,6 +88,7 @@ export function createProjectionConfigView(root, {
   onClockField = () => {},
   onClockRecovery = () => {},
   onWarpAction = () => {},
+  onWarpEditorVisibility = () => {},
   onWarpFieldCancel = () => {},
   onWarpPointer = () => {},
   trace,
@@ -561,7 +562,7 @@ export function createProjectionConfigView(root, {
   app.appendChild(workspace);
   root.appendChild(app);
   const dialog = createWarpEditorDialog({ document: doc, host: editorRegion, editorPanel: controls.warpPanel, overlay: controls.warpSurface, topologyControls: controls.gridLayout.element, navigationControls, presentation: "panel", trace,
-    onVisibilityChange: (visible) => { workspace.dataset.editing = String(visible); },
+    onVisibilityChange: (visible) => { workspace.dataset.editing = String(visible); onWarpEditorVisibility(visible); },
     onPresentationChange: (focused) => {
       root.dataset.warpFullViewport = String(focused);
       commandBar.element.inert = Boolean(focused);
@@ -711,7 +712,7 @@ export function createProjectionConfigView(root, {
     if (mode === "grid" && allHandles.length >= columns * rows) {
       for (let row = 0; row < rows; row += 1) controls.warpSurface.appendChild(svgNode(doc, "path", { class: `warp-grid-line${selectionKind === "row" && selectedIndex === row ? " selected" : ""}`, d: pathFor(allHandles.slice(row * columns, (row + 1) * columns)) }));
       for (let column = 0; column < columns; column += 1) controls.warpSurface.appendChild(svgNode(doc, "path", { class: `warp-grid-line${selectionKind === "column" && selectedIndex === column ? " selected" : ""}`, d: pathFor(Array.from({ length: rows }, (_, row) => allHandles[row * columns + column])) }));
-      const candidate = warpState.gridLayoutPreview;
+      const candidate = warpState.gridLayoutPreview || warpState.gridPlacement?.preview;
       const candidateGrid = candidate?.grid;
       const candidateHandles = candidate?.handles;
       if (candidate?.ok && candidateGrid && candidateHandles?.length === candidateGrid.rows * candidateGrid.columns) {
@@ -831,6 +832,7 @@ export function createProjectionConfigView(root, {
       return nodeMap.get("settlement-names")?.querySelector?.('[data-action="settlement-editor-open"]') || null;
     },
     cancelWarpPointer: cancelActiveDrag,
+    isWarpEditorOpen: () => dialog.isOpen(),
     retireWarpGestures: () => warpPanelView.retireGestures(),
     finishNumericEdits: () => [...fields.values()].map(control => control.finish()),
     finishPendingEdit: () => {

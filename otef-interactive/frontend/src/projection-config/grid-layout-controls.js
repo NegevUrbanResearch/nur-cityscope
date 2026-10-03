@@ -125,7 +125,7 @@ export function createGridLayoutControls(doc, onAction = () => {}) {
       const axis = name.includes("column") ? columnAxis : rowAxis;
       const index = name.includes("column") ? columnIndex : rowIndex;
       const count = axis.length;
-      button.disabled = (name === "remove-row" || name === "remove-column") && (index === 0 || index === count - 1 || count <= 2) || (name === "add-row" && rowsCount >= 16) || (name === "add-column" && columnsCount >= 16) || ((name === "move-row" || name === "move-column") && (index === 0 || index === count - 1));
+      button.disabled = (name === "remove-row" || name === "remove-column") && (index === 0 || index === count - 1 || count <= 2) || ((name === "move-row" || name === "move-column") && (index === 0 || index === count - 1));
       if (button.disabled) button.title = name.startsWith("remove") ? "Boundary grid lines are fixed; at least two lines are required." : name.startsWith("add") ? "Maximum grid count is 16." : "Boundary source positions are fixed at 0% and 100%.";
     }
     for (const [axis, input] of [["row", addRowPosition], ["column", addColumnPosition]]) input.setAttribute("aria-label", `Add ${axis} at ${axis === "row" ? "Y" : "X"} (%)${placement?.axis === axis ? "; enter a source percentage or click the viewer" : "; choose Add ${axis} to place a line"}`);
