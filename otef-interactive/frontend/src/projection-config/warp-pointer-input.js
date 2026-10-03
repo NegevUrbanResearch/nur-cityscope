@@ -19,6 +19,7 @@ export function bindWarpPointerInput({ surface, readGeometry, onSelect, onStart,
   let active = null;
   let navigation = null;
   let pan = null;
+  let interactionMode = null;
   const touches = new Map();
   const ignoredCaptureLoss = new Set();
 
@@ -32,7 +33,7 @@ export function bindWarpPointerInput({ surface, readGeometry, onSelect, onStart,
     active = null;
     recordProjectionTrace(trace, 'gesture', { surface: 'warp', phase: 'cancel', reason, output: gesture.output, pointerId: gesture.pointerId });
     release(gesture);
-    if (notify) onCancel({ output: gesture.output });
+    if (notify && gesture.dragStarted) onCancel({ output: gesture.output });
     if (gesture.selectionChanged && gesture.previousSelection) {
       const { mode, kind, index } = gesture.previousSelection;
       onSelect({ output: gesture.output, selection: { mode, kind, index } });
@@ -65,6 +66,18 @@ export function bindWarpPointerInput({ surface, readGeometry, onSelect, onStart,
   };
   const matches = (event) => active && event.pointerId === active.pointerId;
   const point = (event, gesture) => ({ ...warpPointFromClient(event, gesture.rect, gesture.viewBox), output: gesture.output });
+  const beginDrag = (event, gesture) => {
+    if (!gesture.canEdit || gesture.dragStarted || Math.hypot(event.clientX - gesture.clientX, event.clientY - gesture.clientY) < 6) return false;
+    gesture.dragStarted = true;
+    const outputPoint = { x: gesture.startPoint.x, y: gesture.startPoint.y };
+    onStart({ ...outputPoint, outputPoint, clientX: gesture.clientX, clientY: gesture.clientY, output: gesture.output });
+    recordProjectionTrace(trace, 'gesture', { surface: 'warp', phase: 'start', output: gesture.output, pointerId: gesture.pointerId });
+    return true;
+  };
+  const editMove = (event, gesture) => {
+    beginDrag(event, gesture);
+    if (gesture.dragStarted) onMove(point(event, gesture));
+  };
   const mid = (a, b) => ({ clientX: (a.clientX + b.clientX) / 2, clientY: (a.clientY + b.clientY) / 2 });
   const distance = (a, b) => Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
 
@@ -113,6 +126,7 @@ export function bindWarpPointerInput({ surface, readGeometry, onSelect, onStart,
     if (event.pointerType === "touch") {
       touches.set(event.pointerId, { clientX: event.clientX, clientY: event.clientY });
       if (touches.size >= 2) {
+        if (active) cancelGeometry({ notify: active.dragStarted, reason: 'second-touch' });
         beginNavigation();
         event.preventDefault?.();
         return;
@@ -123,7 +137,7 @@ export function bindWarpPointerInput({ surface, readGeometry, onSelect, onStart,
     if (!geometry?.rect || !geometry?.viewBox || !Array.isArray(geometry.handles)) return;
     const { left, top, width, height } = geometry.rect;
     const rect = { left, top, width, height };
-    if (geometry.panMode && onNavigate) {
+    if ((interactionMode || (geometry.panMode ? "move" : "edit")) === "move" && onNavigate) {
       pan = { pointerId: event.pointerId, rect, baseViewBox: geometry.baseViewBox || geometry.viewBox, startViewBox: { ...geometry.viewBox }, viewBox: { ...geometry.viewBox }, previous: { clientX: event.clientX, clientY: event.clientY } };
       event.preventDefault?.();
       try { surface.setPointerCapture?.(event.pointerId); recordProjectionTrace(trace, 'capture', { surface: 'warp', phase: 'request', pointerId: event.pointerId, accepted: true }); } catch { recordProjectionTrace(trace, 'capture', { surface: 'warp', phase: 'request', pointerId: event.pointerId, accepted: false, reason: 'capture_failed' }); pan = null; }
@@ -145,7 +159,7 @@ export function bindWarpPointerInput({ surface, readGeometry, onSelect, onStart,
     const mode = geometry.mode || geometry.selection?.mode;
     const selectionChanged = !geometry.selection?.indices?.includes(hit.index);
     const previousSelection = geometry.selection ? { mode: geometry.selection.mode, kind: geometry.selection.kind, index: geometry.selection.index } : null;
-    const gesture = { pointerId: event.pointerId, rect, viewBox, output, selectionChanged, previousSelection };
+    const gesture = { pointerId: event.pointerId, rect, viewBox, output, selectionChanged, previousSelection, clientX: event.clientX, clientY: event.clientY, lastClientX: event.clientX, lastClientY: event.clientY, startPoint: warpPointFromClient(event, rect, viewBox), canEdit: geometry.editable !== false, dragStarted: false };
     active = gesture;
     recordProjectionTrace(trace, 'selection', { surface: 'warp', output, mode, index: hit.index, accepted: selectionChanged });
     event.preventDefault?.();
@@ -156,8 +170,7 @@ export function bindWarpPointerInput({ surface, readGeometry, onSelect, onStart,
       onSelect({ output, selection });
     }
     try { surface.setPointerCapture?.(gesture.pointerId); recordProjectionTrace(trace, 'capture', { surface: 'warp', phase: 'request', pointerId: gesture.pointerId, accepted: true }); } catch { recordProjectionTrace(trace, 'capture', { surface: 'warp', phase: 'request', pointerId: gesture.pointerId, accepted: false, reason: 'capture_failed' }); active = null; return; }
-    recordProjectionTrace(trace, 'gesture', { surface: 'warp', phase: 'start', output, mode, pointerId: gesture.pointerId });
-    onStart(point(event, gesture));
+    recordProjectionTrace(trace, 'gesture', { surface: 'warp', phase: 'intent', output, mode, pointerId: gesture.pointerId });
   };
   const move = (event) => {
     if (event.pointerType === "touch" && touches.has(event.pointerId)) {
@@ -174,7 +187,10 @@ export function bindWarpPointerInput({ surface, readGeometry, onSelect, onStart,
       updateNavigation();
       return;
     }
-    if (matches(event)) onMove(point(event, active));
+    if (matches(event) && (!active.dragStarted || event.clientX !== active.lastClientX || event.clientY !== active.lastClientY)) {
+      editMove(event, active);
+      active.lastClientX = event.clientX; active.lastClientY = event.clientY;
+    }
   };
   const up = (event) => {
     ignoredCaptureLoss.delete(event.pointerId);
@@ -197,9 +213,10 @@ export function bindWarpPointerInput({ surface, readGeometry, onSelect, onStart,
     if (event.pointerType === "touch") touches.delete(event.pointerId);
     if (!matches(event)) return;
     const gesture = active;
+    if (!gesture.dragStarted || event.clientX !== gesture.lastClientX || event.clientY !== gesture.lastClientY) beginDrag(event, gesture);
     active = null;
     recordProjectionTrace(trace, 'gesture', { surface: 'warp', phase: 'end', reason: 'pointerup', output: gesture.output, pointerId: gesture.pointerId });
-    onEnd(point(event, gesture));
+    if (gesture.dragStarted) onEnd(point(event, gesture));
     release(gesture);
   };
   const lost = (event) => {
@@ -219,6 +236,7 @@ export function bindWarpPointerInput({ surface, readGeometry, onSelect, onStart,
   for (const [target, type, handler] of listeners) target?.addEventListener?.(type, handler);
   return {
     cancel,
+    setInteractionMode(mode) { if (!["edit", "move"].includes(mode)) return false; if (active || pan || navigation) return false; interactionMode = mode; return true; },
     activeViewBox: () => navigation?.viewBox || pan?.viewBox || active?.viewBox || null,
     isActive: () => Boolean(active || navigation || pan),
     dispose() { cancel(); for (const [target, type, handler] of listeners) target?.removeEventListener?.(type, handler); },

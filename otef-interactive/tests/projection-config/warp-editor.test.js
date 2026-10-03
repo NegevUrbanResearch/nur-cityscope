@@ -473,6 +473,59 @@ test("an active pointer gesture rejects topology edits until the old gesture end
   }
 });
 
+test("retiring a gesture before foreign rebase emits no rollback and rejects later movement", () => {
+  const changed = vi.fn();
+  const editor = createWarpEditor({ config: clone(DEFAULT_PROJECTION_CONFIG), onChange: changed });
+  editor.pointerStart({ x: 0, y: 0 });
+  editor.pointerMove({ x: 10, y: 0 });
+  changed.mockClear();
+  expect(editor.retireGesture()).toBeUndefined();
+  const foreignConfig = clone(DEFAULT_PROJECTION_CONFIG);
+  foreignConfig.outputs.left.warp.keystone.corners[0][0] = 0.02;
+  expect(editor.setConfig(foreignConfig, { rebase: true })).toBe(true);
+  expect(changed).not.toHaveBeenCalled();
+  expect(editor.pointerMove({ x: 20, y: 0 })).toBe(false);
+  expect(editor.getConfig().outputs.left.warp.keystone.corners[0][0]).toBe(0.02);
+});
+
+test("own acknowledgment without rebase retains the drag and creates one Undo entry", () => {
+  const config = clone(DEFAULT_PROJECTION_CONFIG);
+  const editor = createWarpEditor({ config });
+  expect(editor.pointerStart({ x: 0, y: 0 })).toBe(true);
+  expect(editor.pointerMove({ x: 10, y: 0 })).toBe(true);
+  const acknowledged = editor.getConfig();
+  expect(editor.setConfig(acknowledged, { rebase: false })).toBe(true);
+  expect(editor.getState().dragging).toBe(true);
+  expect(editor.pointerMove({ x: 20, y: 0 })).toBe(true);
+  expect(editor.pointerEnd()).toBe(true);
+  expect(editor.getState().historyDepth).toBe(1);
+  expect(editor.undo()).toBe(true);
+  expect(editor.getConfig().outputs.left.warp).toEqual(config.outputs.left.warp);
+});
+
+test("disabled correction blocks geometry edits but keeps selection and explicit enable available", () => {
+  const onChange = vi.fn();
+  const config = clone(DEFAULT_PROJECTION_CONFIG);
+  config.outputs.left.warp.enabled = false;
+  config.outputs.left.warp.keystone.corners[0] = [0.03, 0.02];
+  const editor = createWarpEditor({ config, onChange });
+  const before = editor.getConfig();
+  expect(editor.select(gridSelection("point", 4))).toBe(true);
+  expect(editor.getState().selection).toMatchObject({ mode: "grid", kind: "point", index: 4 });
+  expect(editor.nudge("right")).toBe(false);
+  expect(editor.setPosition("x", 600)).toBe(false);
+  expect(editor.resetSelection()).toBe(false);
+  expect(editor.resetResiduals()).toBe(false);
+  expect(editor.editGridLayout("counts", { columns: 3, rows: 3 })).toBe(false);
+  expect(editor.pointerStart({ x: 0, y: 0 })).toBe(false);
+  expect(editor.getConfig().outputs.left.warp.keystone.corners[0]).toEqual([0.03, 0.02]);
+  expect(editor.getConfig().outputs.left.warp.grid).toEqual(before.outputs.left.warp.grid);
+  expect(onChange).not.toHaveBeenCalled();
+  expect(editor.setEnabled(true)).toBe(true);
+  expect(onChange).toHaveBeenCalledOnce();
+  expect(editor.getConfig().outputs.left.warp.enabled).toBe(true);
+});
+
 test("an invalid warp move preserves the last valid geometry and reports why it was rejected", () => {
   const editor = createWarpEditor({ config: clone(DEFAULT_PROJECTION_CONFIG), output: "left" });
   const before = editor.getConfig();

@@ -769,7 +769,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
       if (action === "move") editor.pointerMove(value);
       if (action === "end") { editor.pointerMove(value); editor.pointerEnd(); }
       if (action === "cancel") editor.pointerCancel();
-      refresh();
+      if (action !== "start") refresh();
     });
   }
   function readPath(config, path) { return path.split(".").reduce((target, key) => target?.[key], config); }
