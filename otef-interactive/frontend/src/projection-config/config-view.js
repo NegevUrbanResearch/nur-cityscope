@@ -83,6 +83,7 @@ export function createProjectionConfigView(root, {
   onSettlementPosition = () => {},
   onSettlementStyle = () => {},
   onSettlementRecovery = () => {},
+  onRetrySettlementCatalog = () => {},
   onClockScene = () => {},
   onClockElement = () => {},
   onClockField = () => {},
@@ -553,6 +554,7 @@ export function createProjectionConfigView(root, {
     onStyle: onSettlementStyle,
     onRetry: () => onSettlementRecovery("retry"),
     onLoad: () => onSettlementRecovery("load"),
+    onRetryCatalog: onRetrySettlementCatalog,
   });
   nodeMap.get("settlement-names")?.appendChild(settlementControls.element);
   controls.editorHome = make(doc, "div", { className: "editor-home", hidden: true });

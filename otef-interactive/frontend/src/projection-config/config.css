@@ -439,6 +439,8 @@ h2, h3 { margin: 0 0 10px; }
 .settlement-preview-retry { position: absolute; left: 8px; top: 8px; z-index: 3; }
 .settlement-shared-note { margin: 0; color: #d4e0e6; font-size: .8rem; }
 .settlement-name-controls { display: grid; gap: 6px; align-content: start; overflow: auto; }
+.settlement-catalog-status, .settlement-catalog-retry { grid-column: 1 / -1; }
+.settlement-catalog-status { margin: 0; color: #ffdf8d; font-size: .8rem; }
 .settlement-name-field { display: grid; gap: 4px; }
 .settlement-name-status-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 @media (orientation: portrait) {
@@ -448,7 +450,7 @@ h2, h3 { margin: 0 0 10px; }
   .settlement-name-dialog { gap: 6px; padding: max(6px, env(safe-area-inset-top)) max(6px, env(safe-area-inset-right)) max(6px, env(safe-area-inset-bottom)) max(6px, env(safe-area-inset-left)); }
   .settlement-name-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(190px, 42%); gap: 6px; }
   .settlement-name-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); align-content: start; }
-  .settlement-shared-note, .settlement-name-status-actions { grid-column: 1 / -1; }
+  .settlement-shared-note, .settlement-name-status-actions, .settlement-catalog-status, .settlement-catalog-retry { grid-column: 1 / -1; }
   .settlement-name-header { gap: 6px; }
 }
 

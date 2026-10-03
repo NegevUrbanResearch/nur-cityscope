@@ -111,6 +111,8 @@ export function createSettlementNameClient({ getSnapshot, writeOperation, socket
   const domain = { settings: null, revision: -1, refreshing: false };
   let writeQueue = Promise.resolve();
   let destroyed = false;
+  let hydrationGeneration = 0;
+  let hydrationAbortController = null;
   let connectedOnce = false;
   let hydration = { status: "Loading", error: null };
   const page = typeof globalThis.addEventListener === "function" ? globalThis : null;
@@ -167,14 +169,16 @@ export function createSettlementNameClient({ getSnapshot, writeOperation, socket
     if (domain.refreshing || destroyed || typeof getSnapshot !== "function") return;
     domain.refreshing = true;
     Promise.resolve().then(() => getSnapshot({ forceFresh: true })).then((snapshot) => {
+      if (destroyed) return;
       const parsed = readSnapshot(snapshot);
       acceptDocument(parsed?.settings, parsed?.revision, { authoritative: true });
     }).catch((error) => {
+      if (destroyed) return;
       getLogger().warn("[SettlementNameClient] Failed to refresh settlement names:", error);
       hydration = { ...hydration, error: error?.message || "Settlement names unavailable" };
       emit();
     }).finally(() => {
-      domain.refreshing = false;
+      if (!destroyed) domain.refreshing = false;
     });
   }
 
@@ -276,11 +280,12 @@ export function createSettlementNameClient({ getSnapshot, writeOperation, socket
   socket?.on?.("connect", onConnect);
   page?.addEventListener?.("beforeunload", onBeforeUnload);
 
-  async function hydrate(options = {}) {
+  async function hydrateRequest(options, generation, signal) {
     hydration = { status: "Loading", error: null };
     emit();
     try {
-      const snapshot = await getSnapshot(options);
+      const snapshot = await getSnapshot({ ...options, signal });
+      if (destroyed || generation !== hydrationGeneration) return false;
       const parsed = readSnapshot(snapshot);
       if (!parsed || !Number.isInteger(parsed.revision)) throw new Error("Settlement name settings snapshot is incomplete");
       if (uninitialized(parsed.settings, parsed.revision)) throw initializationError();
@@ -290,20 +295,24 @@ export function createSettlementNameClient({ getSnapshot, writeOperation, socket
       emit();
       return true;
     } catch (error) {
+      if (destroyed || generation !== hydrationGeneration) return false;
       const canRefresh = options.forceFresh !== true && options._refresh !== true && error?.code !== "initialization_required";
       if (canRefresh) {
-        try {
-          return await hydrate({ ...options, forceFresh: true, _refresh: true });
-        } catch (refreshError) {
-          hydration = { status: "Failed", error: refreshError?.message || "Settlement names unavailable" };
-          emit();
-          throw refreshError;
-        }
+        return hydrateRequest({ ...options, forceFresh: true, _refresh: true }, generation, signal);
       }
       hydration = { status: "Failed", error: error?.message || "Settlement names unavailable" };
       emit();
       throw error;
     }
+  }
+
+  async function hydrate(options = {}) {
+    if (destroyed) return false;
+    const generation = ++hydrationGeneration;
+    hydrationAbortController?.abort();
+    const requestController = new AbortController();
+    hydrationAbortController = requestController;
+    return hydrateRequest(options, generation, requestController.signal);
   }
 
   function updateRecordForDraft(record, value, options = {}) {
@@ -615,6 +624,9 @@ export function createSettlementNameClient({ getSnapshot, writeOperation, socket
 
   function destroy() {
     destroyed = true;
+    hydrationGeneration += 1;
+    hydrationAbortController?.abort();
+    hydrationAbortController = null;
     for (const entry of timers.values()) {
       clearTimeout(entry.timer);
       entry.waiters.splice(0).forEach((resolve) => resolve(undefined));

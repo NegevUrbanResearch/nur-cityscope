@@ -125,7 +125,7 @@ export function projectionAppliedStatus(rows, revision) {
   return 'Applied';
 }
 
-export function mountProjectionConfig(root, { client, share, onExport, onImport, socket, outputController, candidateValidator, baselineCatalogLoader = createProjectionBaselineCatalogLoader(), readNamesDataset = null, layoutClient, settlementClient = null, catalog = { entries: [] }, clockEditorFactory = openClockLayoutEditor, novaExplainerEditorFactory = openNovaExplainerEditor, settlementEditorFactory = openSettlementNameEditor, trace } = {}) {
+export function mountProjectionConfig(root, { client, share, onExport, onImport, socket, outputController, candidateValidator, baselineCatalogLoader = createProjectionBaselineCatalogLoader(), readNamesDataset = null, layoutClient, settlementClient = null, catalog = { entries: [] }, catalogStatus = { status: "ready" }, retrySettlementCatalog = () => {}, clockEditorFactory = openClockLayoutEditor, novaExplainerEditorFactory = openNovaExplainerEditor, settlementEditorFactory = openSettlementNameEditor, trace } = {}) {
   if (!client) throw new Error("projection config client is required");
   if (trace?.enabled) client.setLive(false);
   const sourceId = createUuid();
@@ -229,6 +229,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
       }
       refresh();
     },
+    onRetrySettlementCatalog: retrySettlementCatalog,
     onClockScene: (sceneId) => { if (!finishPendingEdit()) return; clockSceneId = sceneId; activeClockEditor?.setSelection({ nodeId: "clock-gis", sceneId: clockSceneId, element: clockElement }); refresh(); },
     onClockElement: (nextElement) => { if (!finishPendingEdit()) return; clockElement = nextElement; activeClockEditor?.setSelection({ nodeId: "clock-projection", sceneId: clockSceneId, element: clockElement }); refresh(); },
     onClockField: (key, raw) => {
@@ -400,6 +401,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
       output: settlementOutput,
       citycode: settlementCitycode,
       catalog,
+      catalogStatus,
       position: shownSettlementPosition(settings, positionRecord, settlementOutput, settlementCitycode),
       style: styleRecord?.draft || styleRecord?.acknowledged || settings?.style || null,
       positionRecord,
@@ -1082,6 +1084,17 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     handleAction,
     getStatusRows: () => [...statusRows.values()].map((row) => ({ ...row })),
     setConflict,
+    setSettlementCatalog(nextCatalog, { status = "ready", error = null } = {}) {
+      if (disposed) return;
+      catalog = nextCatalog && Array.isArray(nextCatalog.entries) ? nextCatalog : { entries: [] };
+      catalogStatus = { status, error };
+      if (!catalog.entries.some((entry) => entry?.citycode === settlementCitycode)) {
+        settlementCitycode = catalog.entries.find((entry) => typeof entry?.citycode === "string")?.citycode || "";
+      }
+      activeSettlementEditor?.setCatalog?.(catalog);
+      activeSettlementEditor?.setSelection?.({ output: settlementOutput, citycode: settlementCitycode });
+      refresh();
+    },
     dispose() { if (disposed) return; disposed = true; editorBaselineSequence += 1; editorBaselineAbort?.abort(); editorBaselineAbort = null; syncLayoutUnload(); closeSettlementEditor(); closeClockEditor(); closeNovaExplainerEditor(); for (const action of clockCueActions) action.cancel(); clockCueActions.clear(); namesTargetRequest += 1; for (const editor of clockEditors) editor.dispose(); clockEditors.clear(); activeClockEditor = null; activeClockEditorNode = null; activeSettlementEditor = null; if (confirmationTimer !== null) clearTimeout(confirmationTimer); if (patternTimer !== null) clearInterval(patternTimer); socket?.send?.({ type: "otef_projection_pattern", table: "otef", output: activePattern.branch, pattern: "off", sourceId }); socket?.off?.("otef_projection_applied", statusMessage); socket?.off?.("otef_projection_names_status", namesStatusMessage); socket?.off?.("connect", onConnect); socket?.off?.("disconnect", onDisconnect); socket?.off?.('otef_person_selection_changed', onDatasetEvent); socket?.off?.('otef_narrative_scene_changed', onDatasetEvent); unsubscribe?.(); unsubscribeLayout?.(); unsubscribeSettlement?.(); unsubscribeOutput?.(); outputController?.dispose?.(); validator.dispose?.(); view.dispose(); client.stop?.(); },
   };
 }

@@ -102,6 +102,11 @@ export function openSettlementNameEditor({
   closeButton.focus?.();
 
   function snapshot() { return settingsClient.getSnapshot()?.settings || null; }
+  function setCatalog(nextCatalog) {
+    catalog = nextCatalog && Array.isArray(nextCatalog.entries) ? nextCatalog : { entries: [] };
+    if (!catalog.entries.some((entry) => entry?.citycode === activeCitycode)) activeCitycode = catalog.entries[0]?.citycode || "";
+    renderControls();
+  }
   function positionRecord() { return settingsClient.getTarget({ kind: "position", output: activeOutput, citycode: activeCitycode }); }
   function styleRecord() { return settingsClient.getTarget({ kind: "style" }); }
   function shownPosition() {
@@ -279,5 +284,5 @@ export function openSettlementNameEditor({
     else opener?.focus?.();
     onClose();
   }
-  return { close, setSelection, calibrationChanged() { invalidate(); } };
+  return { close, setSelection, setCatalog, calibrationChanged() { invalidate(); } };
 }

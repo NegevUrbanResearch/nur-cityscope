@@ -49,6 +49,8 @@ export function createClockLayoutClient({ getSnapshot, writeClockSlot, writeLege
   const pendingEvents = new Map();
   let writeQueue = Promise.resolve();
   let destroyed = false;
+  let hydrationGeneration = 0;
+  let hydrationAbortController = null;
   let connectedOnce = false;
   let hydration = { status: "Loading", error: null };
 
@@ -90,10 +92,12 @@ export function createClockLayoutClient({ getSnapshot, writeClockSlot, writeLege
     const domain = domains[domainName];
     if (domain.refreshing || destroyed || typeof getSnapshot !== "function") return;
     domain.refreshing = true;
-    Promise.resolve().then(() => getSnapshot({ forceFresh: true })).then((snapshot) => acceptSnapshot(snapshot, { authoritative: true })).catch((error) => {
-      getLogger().warn("[ClockLayoutClient] Failed to refresh layout revision:", error);
+    Promise.resolve().then(() => getSnapshot({ forceFresh: true })).then((snapshot) => {
+      if (!destroyed) acceptSnapshot(snapshot, { authoritative: true });
+    }).catch((error) => {
+      if (!destroyed) getLogger().warn("[ClockLayoutClient] Failed to refresh layout revision:", error);
     }).finally(() => {
-      domain.refreshing = false;
+      if (!destroyed) domain.refreshing = false;
     });
   }
 
@@ -212,14 +216,22 @@ export function createClockLayoutClient({ getSnapshot, writeClockSlot, writeLege
   socket?.on?.("connect", onConnect);
 
   async function hydrate(options = {}) {
+    if (destroyed) return false;
+    const generation = ++hydrationGeneration;
+    hydrationAbortController?.abort();
+    const requestController = new AbortController();
+    hydrationAbortController = requestController;
     hydration = { status: "Loading", error: null }; emit();
     let snapshot;
     try {
-      snapshot = await getSnapshot(options);
+      snapshot = await getSnapshot({ ...options, signal: requestController.signal });
+      if (destroyed || generation !== hydrationGeneration) return false;
       requireCompleteSnapshot(snapshot);
     } catch (error) {
+      if (destroyed || generation !== hydrationGeneration) return false;
       hydration = { status: "Failed", error: error?.message || "Layout settings unavailable" }; emit(); throw error;
     }
+    if (destroyed || generation !== hydrationGeneration) return false;
     acceptSnapshot(snapshot, { authoritative: options.forceFresh === true });
     for (const [surface, layout] of Object.entries(domains.clock.snapshot || {})) {
       if (!["gis", "projection"].includes(surface) || !layout || typeof layout !== "object") continue;
@@ -428,6 +440,9 @@ export function createClockLayoutClient({ getSnapshot, writeClockSlot, writeLege
 
   function destroy() {
     destroyed = true;
+    hydrationGeneration += 1;
+    hydrationAbortController?.abort();
+    hydrationAbortController = null;
     for (const entry of timers.values()) clearTimeout(entry.timer);
     timers.clear();
     socket?.off?.(CLOCK_EVENT, onClock);
