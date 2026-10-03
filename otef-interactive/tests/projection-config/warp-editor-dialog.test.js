@@ -218,6 +218,22 @@ test("focused viewport toggles in place, preserves field focus, and only default
   Object.defineProperty(window, "innerWidth", { configurable: true, value: oldWidth });
 });
 
+test("forced teardown clears full-viewport ownership even while adjustment state is active", () => {
+  const onPresentationChange = vi.fn();
+  let adjusting = false;
+  const { dialog, opener, host } = setup({ presentation: "panel", onIsAdjusting: () => adjusting, onPresentationChange });
+  dialog.open({ side: "left", mode: "grid", opener });
+  dialog.setFullViewport(true);
+  adjusting = true;
+  expect(dialog.isFullViewport()).toBe(true);
+  dialog.close(true);
+  expect(dialog.isOpen()).toBe(false);
+  expect(dialog.isFullViewport()).toBe(false);
+  expect(host.dataset.warpFullViewport).toBe("false");
+  expect(onPresentationChange).toHaveBeenLastCalledWith(false);
+  dialog.dispose();
+});
+
 test("only trusted ready sends the latest draft once and stale frames cannot reply", () => {
   const { dialog, opener } = setup();
   const first = structuredClone(DEFAULT_PROJECTION_CONFIG);

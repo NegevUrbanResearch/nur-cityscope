@@ -347,6 +347,19 @@ test("view renders draggable node workspace and preserves an existing focused in
   rightIdentityWarpEditor.setMode("grid");
   rightIdentityWarpEditor.select(gridSelection("point", 9));
   view.update({ state: { draft }, selectedNode: "right-grid", warpStates: { right: { ...rightIdentityWarpEditor.getState(), config: rightIdentityWarpEditor.getConfig(), handles: rightIdentityWarpEditor.getControlPoints() } } });
+  const coordinateX = view.controls.warpCoordinateFields.get("x");
+  coordinateX.number.dispatch("focus");
+  coordinateX.number.value = "1.3"; coordinateX.number.dispatch("input");
+  view.update({ state: { draft }, selectedNode: "right-grid", warpStates: { right: { ...rightIdentityWarpEditor.getState(), config: rightIdentityWarpEditor.getConfig(), handles: rightIdentityWarpEditor.getControlPoints() } } });
+  expect(coordinateX.number.value).toBe("1.3");
+  expect(coordinateX.finish().kind).toBe("commit");
+  expect(onWarpAction).toHaveBeenLastCalledWith("warp-set-position", expect.objectContaining({ output: "right", axis: "x", pixels: 1.3, coordinateTarget: { output: "right", mode: "grid", kind: "point", index: 9, indices: [9] } }));
+  coordinateX.number.dispatch("focus");
+  coordinateX.number.value = "-"; coordinateX.number.dispatch("input");
+  view.update({ state: { draft }, selectedNode: "right-grid", warpStates: { right: { ...rightIdentityWarpEditor.getState(), config: rightIdentityWarpEditor.getConfig(), handles: rightIdentityWarpEditor.getControlPoints() } } });
+  expect(coordinateX.number.value).toBe("-");
+  expect(coordinateX.isPending()).toBe(true);
+  coordinateX.cancel();
   const rightGridMesh = descendants(view.nodeMap.get("right-grid")).find((node) => node.className === "warp-node-geometry")?.children.find((node) => node.attributes?.class === "warp-node-mesh");
   const rightKeystoneMesh = descendants(view.nodeMap.get("right-keystone")).find((node) => node.className === "warp-node-geometry")?.children.find((node) => node.attributes?.class === "warp-node-mesh");
   expect(rightGridMesh.children.filter((node) => node.attributes?.class === "warp-node-line")).toHaveLength(15);
@@ -386,6 +399,22 @@ test("view renders draggable node workspace and preserves an existing focused in
   view.update({ state: { draft }, selectedNode: "right-grid", warpStates: { right: { ...rightIdentityWarpEditor.getState(), config: rightIdentityWarpEditor.getConfig(), handles: rightIdentityWarpEditor.getControlPoints() } } });
   view.controls.warpSurface.children.find((item) => item.attributes["data-index"] === "19").dispatch("keydown", { key: "Enter", preventDefault() {} });
   expect(onWarpAction).toHaveBeenLastCalledWith("warp-select", { output: "right", selection: { mode: "grid", kind: "row", index: 2 } });
+  const inspectGroup = (output, mode, kind, index, expectedStatus, expectedPicker, expectedReset) => {
+    const editor = createWarpEditor({ config: draft, output });
+    editor.setMode(mode);
+    editor.select(mode === "grid" ? gridSelection(kind, index) : { mode: "keystone", kind, index });
+    view.update({ state: { draft }, selectedNode: `${output}-${mode}`, warpStates: { [output]: { ...editor.getState(), config: editor.getConfig(), handles: editor.getControlPoints() } } });
+    expect(view.controls.warpSelectionButtons.find((button) => button.dataset.warpSelectionKind === kind).attributes["aria-pressed"]).toBe("true");
+    expect(view.controls.warpStatus.textContent).toContain(expectedStatus);
+    expect(view.controls.warpSelectionPicker.children.map((option) => option.textContent)).toEqual(expectedPicker);
+    expect(view.controls.warpSelectionPicker.hidden).toBe(kind === "all");
+    expect(view.controls.warpReset.textContent).toBe(expectedReset);
+  };
+  const edgeOptions = ["Top edge", "Right edge", "Bottom edge", "Left edge"];
+  inspectGroup("left", "keystone", "edge", 2, "Bottom edge · 2 points", edgeOptions, "Reset edge");
+  inspectGroup("right", "keystone", "all", 0, "All four corners", [], "Reset all");
+  inspectGroup("left", "grid", "edge", 3, "Left edge · 7 points", edgeOptions, "Reset edge");
+  inspectGroup("right", "grid", "all", 0, "All grid points · 56 points", [], "Reset all");
   const leftGridEditor = createWarpEditor({ config: draft, output: "left" });
   leftGridEditor.setMode("grid");
   leftGridEditor.select(gridSelection("point", 6));
@@ -460,11 +489,11 @@ test("view renders draggable node workspace and preserves an existing focused in
   view.controls.enlargeEdit.dispatch("click");
   onWarpAction.mockClear();
   root.ownerDocument.dispatch("keydown", { key: "ArrowRight", target: view.controls.warpSurface, shiftKey: true, preventDefault: vi.fn() });
-  expect(onWarpAction).toHaveBeenCalledWith("warp-nudge", { direction: "right", coarse: false, fine: false });
+  expect(onWarpAction).toHaveBeenCalledWith("warp-select", { output: "right", selection: { mode: "grid", kind: "row", index: 2 } });
   onWarpAction.mockClear();
   for (const [key, direction] of [["ArrowUp", "up"], ["ArrowDown", "down"], ["ArrowLeft", "left"], ["ArrowRight", "right"]]) {
     root.ownerDocument.dispatch("keydown", { key, target: view.controls.warpSurface, preventDefault: vi.fn() });
-    expect(onWarpAction).toHaveBeenLastCalledWith("warp-nudge", { direction, coarse: false, fine: false });
+    expect(onWarpAction).toHaveBeenLastCalledWith("warp-select", { output: "right", selection: { mode: "grid", kind: "row", index: { up: 0, down: 2, left: 0, right: 2 }[direction] } });
   }
   root.ownerDocument.dispatch("keydown", { key: "ArrowUp", target: view.controls.warpSurface, altKey: true, preventDefault: vi.fn() });
   expect(onWarpAction).toHaveBeenLastCalledWith("warp-nudge", { direction: "up", coarse: false, fine: true });
@@ -487,6 +516,14 @@ test("view renders draggable node workspace and preserves an existing focused in
   expect(descendants(root).filter((node) => node.tagName === "IFRAME")).toHaveLength(0);
   root.ownerDocument.dispatch("keydown", { key: "ArrowRight", target: view.controls.warpSurface, preventDefault: vi.fn() });
   expect(onWarpAction).not.toHaveBeenCalled();
+  view.update({ state: { draft }, selectedNode: "left-keystone", warpStates: { left: { ...warpEditor.getState(), config: warpEditor.getConfig(), handles: warpEditor.getControlPoints() } } });
+  view.controls.enlargeEdit.dispatch("click");
+  onWarpAction.mockClear();
+  root.ownerDocument.dispatch("keydown", { key: "ArrowDown", target: view.controls.warpSurface, preventDefault: vi.fn() });
+  expect(onWarpAction).toHaveBeenCalledWith("warp-select", { output: "left", selection: { mode: "keystone", kind: "corner", index: 2 } });
+  expect(onWarpAction).not.toHaveBeenCalledWith("warp-nudge", expect.anything());
+  onWarpAction.mockClear();
+  view.closeWarpEditor();
   view.update({ state: { draft }, selectedNode: "right-grid", warpStates: { right: { ...rightIdentityWarpEditor.getState(), config: rightIdentityWarpEditor.getConfig(), handles: rightIdentityWarpEditor.getControlPoints() } } });
   const warpBody = descendants(root).find((node) => node.className === "warp-editor-body");
   expect(warpBody.children.at(-1)).toBe(view.controls.gridLayout.element);
@@ -501,13 +538,15 @@ test("view renders draggable node workspace and preserves an existing focused in
   view.dispose();
 });
 
-test("Grid Warp selection controls reserve 48px targets and a fixed-height status slot", () => {
+test("Grid Warp selection controls reserve 48px targets without a nested status scroller", () => {
   const css = readFileSync(resolve(import.meta.dirname, "../../frontend/src/projection-config/config.css"), "utf8");
   const controlsRule = css.match(/\.warp-selection-controls \.warp-selection-button, \.warp-selection-controls \.warp-selection-picker\s*\{([^}]*)\}/)?.[1] ?? "";
-  const statusRule = css.match(/\.warp-editor-fine-panel \.warp-fine-primary > \.warp-selection-status\s*\{([^}]*)\}/)?.[1] ?? "";
+  const statusRule = css.match(/\.warp-selection-status\s*\{([^}]*)\}/)?.[1] ?? "";
   expect(controlsRule).toContain("min-height: 48px");
-  expect(statusRule).toContain("height: 36px");
-  expect(statusRule).toContain("min-height: 36px");
+  expect(statusRule).toContain("height: auto");
+  expect(statusRule).toContain("overflow: visible");
+  expect((css.match(/^\.warp-selection-status\s*\{/gm) || []).length).toBe(1);
+  expect((css.match(/^\.warp-numeric\s*\{/gm) || []).length).toBe(1);
 });
 
 
@@ -584,10 +623,10 @@ test("invalid warp coordinates preserve handles and show an accessible error", (
   }
   expect(onWarpAction).not.toHaveBeenCalled();
   view.controls.warpPositionX.value = "-12.5"; view.controls.warpPositionX.dispatch("input"); view.controls.warpPositionX.dispatch("change");
-  expect(onWarpAction).toHaveBeenCalledWith("warp-set-position", { axis: "x", pixels: -12.5, output: "left" });
+  expect(onWarpAction).toHaveBeenCalledWith("warp-set-position", expect.objectContaining({ axis: "x", pixels: -12.5, output: "left", coordinateTarget: expect.objectContaining({ output: "left" }) }));
   expect(view.controls.warpPositionX.attributes["aria-invalid"]).toBe("false");
   view.controls.warpPositionY.value = "-4.25"; view.controls.warpPositionY.dispatch("input"); view.controls.warpPositionY.dispatch("change");
-  expect(onWarpAction).toHaveBeenCalledWith("warp-set-position", { axis: "y", pixels: -4.25, output: "left" });
+  expect(onWarpAction).toHaveBeenCalledWith("warp-set-position", expect.objectContaining({ axis: "y", pixels: -4.25, output: "left", coordinateTarget: expect.objectContaining({ output: "left" }) }));
   expect(onWarpAction).toHaveBeenCalledTimes(2);
   for (const axis of ['x', 'y']) {
     const coordinate = view.controls.warpCoordinateFields.get(axis);
@@ -597,7 +636,7 @@ test("invalid warp coordinates preserve handles and show an accessible error", (
     const sign = coordinate.wrap.children[1].children.find(node => node.dataset?.action === 'numeric-sign');
     sign.dispatch('click');
     coordinate.number.value = '5'; coordinate.number.dispatch('input'); coordinate.number.dispatch('change');
-    expect(onWarpAction).toHaveBeenLastCalledWith('warp-set-position', { axis, pixels: -5, output: 'left' });
+    expect(onWarpAction).toHaveBeenLastCalledWith('warp-set-position', expect.objectContaining({ axis, pixels: -5, output: 'left', coordinateTarget: expect.objectContaining({ output: 'left' }) }));
     onWarpAction.mockReturnValueOnce(false);
     coordinate.number.value = '9'; coordinate.number.dispatch('input'); coordinate.number.dispatch('change');
     expect(coordinate.isPending()).toBe(true);

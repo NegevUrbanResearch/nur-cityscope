@@ -160,18 +160,21 @@ export function bindWarpPointerInput({ surface, readGeometry, onSelect, onStart,
     const selection = geometry.selection;
     const columns = Math.max(1, Math.floor(Number(geometry.columns) || 1));
     const rows = Math.max(1, Math.floor(Number(geometry.rows) || Math.ceil(geometry.handles.length / columns)));
-    if (geometry.mode === "grid" && selection?.kind === "row") {
-      const row = Math.max(0, Math.min(rows - 1, Math.floor(Number(selection.index) || 0)));
-      const indices = Array.from({ length: columns }, (_, column) => row * columns + column).filter((index) => screenPoints[index]);
-      const closest = indices.reduce((best, index) => !best || Math.hypot(event.clientX - screenPoints[index].x, event.clientY - screenPoints[index].y) < best.distance ? { index, distance: Math.hypot(event.clientX - screenPoints[index].x, event.clientY - screenPoints[index].y) } : best, null);
-      const lineDistance = indices.slice(1).reduce((best, index, offset) => Math.min(best, distanceToSegment({ x: event.clientX, y: event.clientY }, screenPoints[indices[offset]], screenPoints[index])), Infinity);
-      if (closest && lineDistance <= HIT_RADIUS) hit = { ...closest, selection: { mode: "grid", kind: "row", index: row } };
-    } else if (geometry.mode === "grid" && selection?.kind === "column") {
-      const column = Math.max(0, Math.min(columns - 1, Math.floor(Number(selection.index) || 0)));
-      const indices = Array.from({ length: rows }, (_, row) => row * columns + column).filter((index) => screenPoints[index]);
-      const closest = indices.reduce((best, index) => !best || Math.hypot(event.clientX - screenPoints[index].x, event.clientY - screenPoints[index].y) < best.distance ? { index, distance: Math.hypot(event.clientX - screenPoints[index].x, event.clientY - screenPoints[index].y) } : best, null);
-      const lineDistance = indices.slice(1).reduce((best, index, offset) => Math.min(best, distanceToSegment({ x: event.clientX, y: event.clientY }, screenPoints[indices[offset]], screenPoints[index])), Infinity);
-      if (closest && lineDistance <= HIT_RADIUS) hit = { ...closest, selection: { mode: "grid", kind: "column", index: column } };
+    if (geometry.mode === "grid" && (selection?.kind === "row" || selection?.kind === "column")) {
+      const kind = selection.kind;
+      const lineCount = kind === "row" ? rows : columns;
+      const lineLength = kind === "row" ? columns : rows;
+      let nearestLine = null;
+      for (let line = 0; line < lineCount; line += 1) {
+        const indices = Array.from({ length: lineLength }, (_, offset) => kind === "row" ? line * columns + offset : offset * columns + line).filter((index) => screenPoints[index]);
+        const lineDistance = indices.slice(1).reduce((best, index, offset) => Math.min(best, distanceToSegment({ x: event.clientX, y: event.clientY }, screenPoints[indices[offset]], screenPoints[index])), Infinity);
+        if (lineDistance < (nearestLine?.distance ?? Infinity) || lineDistance === nearestLine?.distance && line === selection.index) nearestLine = { line, distance: lineDistance, index: indices[0] };
+      }
+      if (nearestLine && nearestLine.distance <= HIT_RADIUS) {
+        const indices = Array.from({ length: lineLength }, (_, offset) => kind === "row" ? nearestLine.line * columns + offset : offset * columns + nearestLine.line).filter((index) => screenPoints[index]);
+        const closest = indices.reduce((best, index) => { const distance = Math.hypot(event.clientX - screenPoints[index].x, event.clientY - screenPoints[index].y); return !best || distance < best.distance ? { index, distance } : best; }, null);
+        hit = { ...closest, selection: { mode: "grid", kind, index: nearestLine.line } };
+      }
     }
     if (!hit) geometry.handles.forEach((handle, index) => {
       if (!Number.isFinite(handle?.x) || !Number.isFinite(handle?.y)) return;

@@ -69,6 +69,19 @@ test("screen-space hits between selected-row handles still start the row drag", 
 });
 
 test.each([
+  { kind: "row", selected: 0, target: 1, x: 160, y: 180 },
+  { kind: "column", selected: 0, target: 1, x: 320, y: 270 },
+])("screen-space hit between handles selects a different $kind", ({ kind, selected, target, x, y }) => {
+  const rows = 7; const columns = 7;
+  const handles = Array.from({ length: rows * columns }, (_, item) => ({ x: (item % columns) / (columns - 1), y: Math.floor(item / columns) / (rows - 1) }));
+  const indices = kind === "row" ? Array.from({ length: columns }, (_, column) => selected * columns + column) : Array.from({ length: rows }, (_, row) => row * columns + selected);
+  const f = fixture({ handles, rows, columns, selection: { mode: "grid", kind, index: selected, indices }, rect: { left: 0, top: 0, width: 1920, height: 1080 } });
+  f.fire("pointerdown", { clientX: x, clientY: y });
+  expect(f.calls.select).toHaveBeenCalledWith({ output: "left", selection: { mode: "grid", kind, index: target } });
+  f.binder.dispose();
+});
+
+test.each([
   { kind: "row", columns: 8, rows: 7, selectedIndex: 0, hitIndex: 3, expectedKind: "row", expectedIndex: 0 },
   { kind: "column", columns: 8, rows: 7, selectedIndex: 2, hitIndex: 10, expectedKind: "column", expectedIndex: 2 },
 ])("hitting a selected $kind member preserves the group selection", ({ kind, columns, rows, selectedIndex, hitIndex, expectedKind, expectedIndex }) => {

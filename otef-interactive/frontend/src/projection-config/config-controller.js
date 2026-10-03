@@ -10,6 +10,7 @@ import { createUuid } from "../shared/uuid.js";
 import { createProjectionConfigView } from "./config-view.js";
 import { createParameterHistory } from './parameter-history.js';
 import { createWarpEditor } from "./warp-editor.js";
+import { warpCoordinateTargetKey } from "./warp-panel-view.js";
 import { recordProjectionTrace, projectionTraceTime } from './projection-trace-input.js';
 import { createProjectionBaselineCatalogLoader } from "../projection/projection-captured-baseline.js";
 import { normalizeProjectionBaselineHash } from '../shared/projection-baseline-manifest.js';
@@ -742,9 +743,10 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     if (disposed || (!editorBaselineReady && !["warp-select", "warp-mode", "warp-step"].includes(action))) return false;
     if (["warp-select", "warp-mode"].includes(action) && !finishPendingEdit()) return false;
     return withWarpMutation(() => {
-      const output = value?.output || activeWarpOutput();
+      const output = value?.coordinateTarget?.output || value?.output || activeWarpOutput();
       const editor = warpEditors[output];
       if (!editor) return;
+      if (action === "warp-set-position" && value?.coordinateTarget && warpCoordinateTargetKey(output, editor.getState().selection.mode, editor.getState().selection) !== JSON.stringify(value.coordinateTarget)) return false;
       let accepted = false;
       if (action === "warp-select") accepted = editor.select(value.selection);
       if (action === "warp-mode") accepted = editor.setMode(value.mode);

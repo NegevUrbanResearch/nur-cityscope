@@ -181,8 +181,66 @@ function tracedWarpHarness() {
   surface.getBoundingClientRect = () => ({ left: 0, top: 0, width: 2064, height: 1224 });
   const redraws = () => trace.record.mock.calls.filter(([kind, detail]) => kind === "redraw" && detail.surface === "page" && detail.phase === "start").length;
   const restore = () => { api.dispose(); globalThis.document = previousDocument; };
-  return { root, client, trace, surface, redraws, restore };
+  return { root, client, trace, surface, redraws, api, restore };
 }
+
+test("relative pad start disables presentation toggle and blocks consuming commands before movement", async () => {
+  const { root, client, api, restore } = tracedWarpHarness();
+  await api.handleAction("warp-nudge", { direction: "right", fine: true, output: "left" });
+  const pad = find(root, (node) => node.className === "warp-relative-pad");
+  const toggle = find(root, (node) => node.dataset?.action === "warp-full-viewport");
+  pad.getBoundingClientRect = () => ({ left: 0, top: 0, width: 200, height: 200 });
+  pad.dispatch("pointerdown", { pointerId: 29, button: 0, clientX: 100, clientY: 100, preventDefault() {} });
+  expect(toggle.disabled).toBe(true);
+  expect(find(root, (node) => node.dataset?.action === "warp-undo").disabled).toBe(true);
+  expect(find(root, (node) => node.dataset?.action === "warp-redo").disabled).toBe(true);
+  expect(await api.handleAction("apply")).toBe(false);
+  expect(client.apply).not.toHaveBeenCalled();
+  const fullViewport = root.dataset?.warpFullViewport;
+  toggle.dispatch("click");
+  expect(root.dataset?.warpFullViewport).toBe(fullViewport);
+  expect(client.setDraft).not.toHaveBeenCalled();
+  restore();
+});
+
+test("Back cancels a relative-pad gesture before hiding its workspace", () => {
+  const { root, client, restore } = tracedWarpHarness();
+  const pad = find(root, (node) => node.className === "warp-relative-pad");
+  const back = find(root, (node) => node.dataset?.action === "warp-editor-close");
+  pad.getBoundingClientRect = () => ({ left: 0, top: 0, width: 200, height: 200 });
+  pad.dispatch("pointerdown", { pointerId: 30, button: 0, clientX: 100, clientY: 100, preventDefault() {} });
+  pad.dispatch("pointermove", { pointerId: 30, clientX: 110, clientY: 100 });
+  expect(client.getState().draft.outputs.left.warp.keystone.corners[0][0]).not.toBe(0);
+  back.dispatch("click");
+  expect(find(root, (node) => node.className === "warp-editor-dialog").hidden).toBe(false);
+  expect(client.getState().draft.outputs.left.warp.keystone.corners[0][0]).not.toBe(0);
+  pad.dispatch("lostpointercapture", { pointerId: 30 });
+  expect(client.getState().draft.outputs.left.warp.keystone.corners[0][0]).toBe(0);
+  back.dispatch("click");
+  expect(find(root, (node) => node.className === "warp-editor-dialog").hidden).toBe(true);
+  expect(find(root, (node) => node.className === "warp-editor-dialog").dataset.fullViewport).toBe("false");
+  expect(client.getState().draft.outputs.left.warp.keystone.corners[0][0]).toBe(0);
+  restore();
+});
+
+test("Escape cancels a relative-pad gesture first and a second Escape closes", () => {
+  const { root, client, restore } = tracedWarpHarness();
+  const pad = find(root, (node) => node.className === "warp-relative-pad");
+  const dialog = find(root, (node) => node.className === "warp-editor-dialog");
+  pad.getBoundingClientRect = () => ({ left: 0, top: 0, width: 200, height: 200 });
+  pad.dispatch("pointerdown", { pointerId: 32, button: 0, clientX: 100, clientY: 100, preventDefault() {} });
+  pad.dispatch("pointermove", { pointerId: 32, clientX: 110, clientY: 100 });
+  const dispatchEscape = () => {
+    const event = { key: "Escape", target: pad, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; }, stopImmediatePropagation() { this.immediateStopped = true; } };
+    for (const handler of globalThis.document.listeners.keydown || []) { handler(event); if (event.immediateStopped) break; }
+  };
+  dispatchEscape();
+  expect(dialog.hidden).toBe(false);
+  expect(client.getState().draft.outputs.left.warp.keystone.corners[0][0]).toBe(0);
+  dispatchEscape();
+  expect(dialog.hidden).toBe(true);
+  restore();
+});
 
 test('diagnostic config starts Live off and records receipts without calibration writes', () => {
   const root = element(); root.ownerDocument = documentStub();

@@ -406,7 +406,12 @@ export function createProjectionConfigView(root, {
       if (action === "warp-reset-residuals" && doc.defaultView?.confirm?.("Reset all warp geometry for this output? This does not change presets." ) !== true) return false;
       return onWarpAction(action, { output, ...value });
     },
-    onPointer: (action, value) => { if (action === "start" && !finishCoordinates()) return false; return onWarpPointer(action, value); },
+    onPointer: (action, value) => {
+      if (action === "start" && !finishCoordinates()) return false;
+      const accepted = onWarpPointer(action, value);
+      if (action === "start" && accepted) { activeWarpAdjusting = true; warpPanelView.setAdjusting(true); dialog?.updateAdjustmentGuard?.(); }
+      return accepted;
+    },
     onNudgeFocus: () => controls.warpSurface.focus?.(),
   });
   Object.assign(controls, warpPanelView.controls);
@@ -492,7 +497,7 @@ export function createProjectionConfigView(root, {
   let currentWarpEnabled = true;
   let activeWarpAdjusting = false;
   let pointerInput;
-  function cancelActiveDrag(options) { pointerInput?.cancel(options); controls.gridLayout?.cancel(); }
+  function cancelActiveDrag(options) { pointerInput?.cancel(options); controls.gridLayout?.cancel(); warpPanelView.cancelGestures(); }
   const warpOutput = () => selectedGraphNode.startsWith("right-") ? "right" : "left";
   const finishCoordinates = () => [...controls.warpCoordinateFields.values()].filter(control => control.isPending()).every(control => ['commit', 'unchanged'].includes(control.finish().kind));
   const onKeyDown = (event) => {
@@ -504,7 +509,25 @@ export function createProjectionConfigView(root, {
     const direction = { ArrowUp: "up", ArrowDown: "down", ArrowLeft: "left", ArrowRight: "right" }[event.key];
     if (!direction) return;
     event.preventDefault?.();
-    onWarpAction("warp-nudge", { direction, coarse: Boolean(event.altKey && event.shiftKey), fine: Boolean(event.altKey && !event.shiftKey) });
+    if (event.altKey) {
+      onWarpAction("warp-nudge", { direction, coarse: Boolean(event.shiftKey), fine: !event.shiftKey });
+      return;
+    }
+    const mode = selectedGraphNode.endsWith("-grid") ? "grid" : "keystone";
+    const selection = currentSelection || { mode, kind: mode === "grid" ? "point" : "corner", index: 0 };
+    if (selection.kind === "all") return;
+    const gridColumns = currentWarpGrid?.columns || (warpOutput() === "right" ? 8 : 7);
+    const step = mode === "keystone"
+      ? direction === "left" ? -1 : direction === "right" ? 1 : direction === "up" ? -2 : 2
+      : selection.kind === "row" ? direction === "up" || direction === "left" ? -1 : 1
+        : selection.kind === "column" ? direction === "left" || direction === "up" ? -1 : 1
+          : direction === "left" ? -1 : direction === "right" ? 1 : direction === "up" ? -gridColumns : gridColumns;
+    const count = selection.kind === "row" ? currentWarpGrid?.rows || 7
+      : selection.kind === "column" ? currentWarpGrid?.columns || 7
+        : selection.kind === "edge" ? 4
+          : mode === "grid" ? (currentWarpGrid?.rows || 7) * gridColumns : 4;
+    const index = (Number(selection.index || 0) + step + count) % count;
+    onWarpAction("warp-select", { output: warpOutput(), selection: { mode, kind: selection.kind, index } });
   };
   doc.addEventListener?.("keydown", onKeyDown);
   const settlementControls = createSettlementNameControls(doc, {
@@ -531,13 +554,14 @@ export function createProjectionConfigView(root, {
     },
     onIsAdjusting: () => activeWarpAdjusting,
     onEscape: () => {
+      if (activeWarpAdjusting) { cancelActiveDrag({ reason: "escape" }); return true; }
       const pending = [...controls.warpCoordinateFields.values()].filter((control) => control.isPending());
       if (!pending.length) return false;
       for (const control of pending) control.cancel({ clearControllerError: true });
       return true;
     },
-    onBeforeClose: () => { if (!finishCoordinates()) return false; cancelActiveDrag({ reason: 'close' }); },
-    onBeforeSwitch: () => { if (!finishCoordinates()) return false; cancelActiveDrag({ reason: 'switch' }); },
+    onBeforeClose: () => { if (activeWarpAdjusting || !finishCoordinates()) return false; cancelActiveDrag({ reason: 'close' }); },
+    onBeforeSwitch: () => { if (activeWarpAdjusting || !finishCoordinates()) return false; cancelActiveDrag({ reason: 'switch' }); },
     onBeforeResize: () => cancelActiveDrag({ reason: 'resize' }),
     onViewportChange: updateWarpMarkerRadii,
     onOrientationChange: () => cancelActiveDrag({ reason: 'orientationchange' }),
@@ -583,7 +607,7 @@ export function createProjectionConfigView(root, {
   const setNode = (node) => {
     const selected = node || "pre";
     const previous = selectedGraphNode;
-    if (dialog.isOpen() && previous !== selected) dialog.close();
+    if (dialog.isOpen() && previous !== selected && dialog.close() === false) return false;
     selectedGraphNode = selected;
     workspace.dataset.selectedNode = selected;
     editorNodeHeading.textContent = graphNodes.find(([id]) => id === selected)?.[1] || "Selected node";
@@ -624,13 +648,15 @@ export function createProjectionConfigView(root, {
     currentWarpGrid = warp?.grid || null;
     currentHandles = allHandles;
     currentSelection = warpState.selection;
-    const selectionKind = ["row", "column", "point"].includes(warpState.selection?.kind) ? warpState.selection.kind : "point";
+    const selectionKind = warpState.selection?.kind || (mode === "grid" ? "point" : "corner");
     const selectedIndex = Number(warpState.selection?.index ?? 0);
     const selectedIndices = new Set(warpState.selection?.indices || []);
     const chosen = [...selectedIndices].map((index) => allHandles[index]).filter(Boolean);
     const baselineStatus = warpState.baselineAvailable === false ? " · TD baseline unavailable; reload after repairing the asset" : "";
     const validationStatus = adjusting ? " · Finish or cancel the active adjustment first." : warpState.validationMessage ? ` · ${warpState.validationMessage}` : "";
-    const selectedName = mode === "keystone"
+    const selectedName = selectionKind === "all" ? mode === "grid" ? `All grid points · ${selectedIndices.size} points` : "All four corners"
+      : selectionKind === "edge" ? `${["Top edge", "Right edge", "Bottom edge", "Left edge"][Math.max(0, Math.min(3, selectedIndex))]} · ${selectedIndices.size} points`
+      : mode === "keystone"
       ? ["Top-left corner", "Top-right corner", "Bottom-left corner", "Bottom-right corner"][selectedIndex] || `Corner ${selectedIndex + 1}`
       : selectionKind === "row" ? `Row ${selectedIndex + 1} · ${selectedIndices.size} points`
         : selectionKind === "column" ? `Column ${selectedIndex + 1} · ${selectedIndices.size} points`
@@ -643,11 +669,8 @@ export function createProjectionConfigView(root, {
     for (const control of controls.warpSelectionButtons) control.setAttribute("aria-pressed", String(control.dataset.warpSelectionKind === selectionKind));
     controls.warpPositionLabels[0].textContent = selectionKind === "point" || mode === "keystone" ? "X px" : "Mean X px";
     controls.warpPositionLabels[1].textContent = selectionKind === "point" || mode === "keystone" ? "Y px" : "Mean Y px";
-    controls.warpReset.textContent = mode === "grid" ? `Reset ${selectionKind}` : "Reset point";
-    const mean = (axis) => chosen.length ? chosen.reduce((sum, point) => sum + (axis === 0 ? point.x : point.y), 0) / chosen.length : 0;
-    const coordinateTarget = JSON.stringify({ output, mode: warpState.selection?.mode || mode, kind: warpState.selection?.kind, index: warpState.selection?.index, indices: warpState.selection?.indices || [] });
+    controls.warpReset.textContent = selectionKind === "all" ? "Reset all" : selectionKind === "edge" ? "Reset edge" : mode === "grid" ? `Reset ${selectionKind}` : "Reset corner";
     for (const [axis, control] of controls.warpCoordinateFields) {
-      control.update({ value: mean(axis === 'x' ? 0 : 1) * (axis === 'x' ? WARP_OUTPUT_WIDTH : WARP_OUTPUT_HEIGHT), resolvedPath: coordinateTarget, error: warpState.validationMessage });
       control.number.disabled = adjusting || !correctionEnabled;
       control.wrap.querySelectorAll?.('button').forEach(button => { if (button.dataset.action === 'numeric-sign') button.disabled = adjusting || !correctionEnabled; });
     }

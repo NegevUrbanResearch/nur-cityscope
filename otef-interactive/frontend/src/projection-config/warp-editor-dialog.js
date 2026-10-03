@@ -52,14 +52,12 @@ export function createWarpEditorDialog({ document: doc, host, editorPanel, overl
   let listenersAttached = false;
   let focusEpoch = 0;
   let closedFocus = null;
-  let manualFullViewport = null;
   let fullViewport = false;
   const appRoot = host.closest?.(".projection-config-app") || host;
-  const setFullViewport = (next, manual = true) => {
+  const setFullViewport = (next) => {
     if (!session || Boolean(next) === fullViewport) return false;
     if (onIsAdjusting()) { setMessage("Finish or cancel the active adjustment before changing the editor layout."); return false; }
     fullViewport = Boolean(next);
-    if (manual) manualFullViewport = fullViewport;
     modal.dataset.fullViewport = String(fullViewport);
     if (appRoot.dataset) appRoot.dataset.warpFullViewport = String(fullViewport);
     fullViewportButton.textContent = fullViewport ? "Exit full-screen" : "Full-screen";
@@ -136,7 +134,7 @@ export function createWarpEditorDialog({ document: doc, host, editorPanel, overl
   };
   const onKeyDown = (event) => {
     if (modal.hidden) return;
-    if (event.key === "Escape") { event.preventDefault(); if (!onEscape()) close(); return; }
+    if (event.key === "Escape") { if (event.defaultPrevented) return; event.preventDefault(); if (!onEscape()) close(); return; }
     if (isPanel || event.key !== "Tab") return;
     const focusables = [...modal.querySelectorAll("button:not([hidden]), input:not([hidden]), select:not([hidden])")].filter((item) => !item.disabled && !item.closest("[hidden]"));
     if (!focusables.length) return;
@@ -168,8 +166,16 @@ export function createWarpEditorDialog({ document: doc, host, editorPanel, overl
     const returnTo = { element: opener, epoch: ++focusEpoch };
     closedFocus = returnTo;
     if (force !== true && onBeforeClose() === false) return false;
-    if (fullViewport) setFullViewport(false, false);
-    manualFullViewport = null;
+    if (fullViewport) {
+      fullViewport = false;
+      modal.dataset.fullViewport = "false";
+      if (appRoot.dataset) appRoot.dataset.warpFullViewport = "false";
+      fullViewportButton.textContent = "Full-screen";
+      fullViewportButton.setAttribute("aria-label", "Full-screen");
+      fullViewportButton.setAttribute("aria-pressed", "false");
+      onPresentationChange(false);
+      refreshViewportGeometry();
+    }
     detachListeners(); clearFrame();
     overlay.classList?.remove?.("warp-preview-overlay");
     overlay.removeAttribute?.("tabindex");
@@ -217,7 +223,7 @@ export function createWarpEditorDialog({ document: doc, host, editorPanel, overl
     makeFrame(side);
     if (openingNewSession) {
       modal.dataset.fullViewport = "false";
-      setFullViewport(isPanel && Number(win?.innerWidth) <= 1100, false);
+      setFullViewport(isPanel && Number(win?.innerWidth) <= 1100);
     }
     closeButton.focus?.();
     onVisibilityChange(true);
@@ -240,6 +246,7 @@ export function createWarpEditorDialog({ document: doc, host, editorPanel, overl
       fullViewportButton.disabled = Boolean(onIsAdjusting());
       preview.update(config);
     },
+    updateAdjustmentGuard() { fullViewportButton.disabled = Boolean(onIsAdjusting()); },
     sendRunNamesPreview(config) { return preview.sendRunNamesPreview(config); },
     setViewBox(next) { if (!next) return; viewBox = { ...next }; fit(); },
     close,

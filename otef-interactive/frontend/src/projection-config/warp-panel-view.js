@@ -9,6 +9,11 @@ const make = (doc, tag, className, text) => {
   return node;
 };
 
+export function warpCoordinateTarget(output, mode, selection = {}) {
+  return { output, mode: selection.mode || mode, kind: selection.kind, index: selection.index, indices: selection.indices || [] };
+}
+export const warpCoordinateTargetKey = (output, mode, selection) => JSON.stringify(warpCoordinateTarget(output, mode, selection));
+
 /** Builds the shared selection, position, step, adjustment, and history controls. */
 export function createWarpPanelView({ document: doc, onAction = () => {}, onPointer = () => {}, onNudgeFocus = () => {} }) {
   if (!doc?.createElement) throw new Error("warp panel requires a document");
@@ -31,7 +36,11 @@ export function createWarpPanelView({ document: doc, onAction = () => {}, onPoin
   const coordinateFields = new Map();
   for (const axis of ["x", "y"]) {
     const control = renderField(doc, { path: `warp.position.${axis}`, label: `Selected warp ${axis.toUpperCase()} position`, unit: "px", min: -Infinity, max: Infinity, range: false, nudges: false, decimals: 2, captureOnFocus: true },
-      (_path, raw) => onAction("warp-set-position", { axis, pixels: Number(raw) }), null, false, false,
+      (_path, raw, _inputKind, meta) => {
+        let coordinateTarget;
+        try { coordinateTarget = JSON.parse(meta?.resolvedPath || "{}"); } catch {}
+        return onAction("warp-set-position", { axis, pixels: Number(raw), output: coordinateTarget?.output, coordinateTarget });
+      }, null, false, false,
       (_path, _value, meta) => onAction("warp-field-cancel", { axis, ...meta }));
     coordinateFields.set(axis, control); position.appendChild(control.wrap);
   }
@@ -66,6 +75,13 @@ export function createWarpPanelView({ document: doc, onAction = () => {}, onPoin
   const relativePad = make(doc, "div", "warp-relative-pad"); relativePad.setAttribute("role", "application"); relativePad.setAttribute("aria-label", "Relative warp adjustment pad"); relativePad.tabIndex = 0;
   const padLabel = make(doc, "span", "warp-relative-pad-label", "Drag to adjust"); relativePad.appendChild(padLabel);
   let padGesture = null;
+  const cancelPad = (event = null) => {
+    if (!padGesture || event?.pointerId !== undefined && padGesture.pointer !== event.pointerId) return false;
+    const gesture = padGesture; padGesture = null;
+    try { relativePad.releasePointerCapture?.(gesture.pointer); } catch {}
+    onPointer("cancel", { x: 0, y: 0, output: gesture.output });
+    return true;
+  };
   const padPoint = (event) => {
     const sensitivity = warpStep.value === "coarse" ? 1 : 0.25;
     return { x: (event.clientX - padGesture.startX) / Math.max(1, padGesture.rect.width) * WIDTH * sensitivity, y: (event.clientY - padGesture.startY) / Math.max(1, padGesture.rect.height) * HEIGHT * sensitivity, output: padGesture.output };
@@ -76,7 +92,10 @@ export function createWarpPanelView({ document: doc, onAction = () => {}, onPoin
     const output = element.dataset.output || "left";
     padGesture = { pointer: event.pointerId, output, startX: event.clientX, startY: event.clientY, rect };
     relativePad.setPointerCapture?.(event.pointerId); event.preventDefault?.();
-    onPointer("start", { x: 0, y: 0, output });
+    if (onPointer("start", { x: 0, y: 0, output }) === false) {
+      padGesture = null;
+      try { relativePad.releasePointerCapture?.(event.pointerId); } catch {}
+    }
   });
   relativePad.addEventListener("pointermove", (event) => { if (padGesture?.pointer === event.pointerId) onPointer("move", padPoint(event)); });
   const endPad = (event, cancel) => {
@@ -86,6 +105,19 @@ export function createWarpPanelView({ document: doc, onAction = () => {}, onPoin
   };
   relativePad.addEventListener("pointerup", (event) => endPad(event, false));
   relativePad.addEventListener("pointercancel", (event) => endPad(event, true));
+  relativePad.addEventListener("lostpointercapture", (event) => cancelPad(event));
+  relativePad.addEventListener("keydown", (event) => { if (event.key === "Escape" && cancelPad()) { event.preventDefault?.(); event.stopPropagation?.(); event.stopImmediatePropagation?.(); } });
+  const cancelPadOnEscape = (event) => {
+    if (event.key !== "Escape" || !hold && !padGesture) return;
+    event.preventDefault?.(); event.stopImmediatePropagation?.();
+    if (hold) stopHold(true);
+    cancelPad();
+  };
+  const onBlur = () => cancelPad();
+  const onVisibility = () => { if (doc.visibilityState === "hidden") cancelPad(); };
+  doc.addEventListener?.("keydown", cancelPadOnEscape);
+  doc.addEventListener?.("visibilitychange", onVisibility);
+  doc.defaultView?.addEventListener?.("blur", onBlur);
   const history = make(doc, "div", "warp-history-controls", ""); history.setAttribute("aria-label", "Warp history");
   const warpUndo = make(doc, "button", "warp-action", "Undo"); warpUndo.type = "button"; warpUndo.dataset.action = "warp-undo"; warpUndo.dataset.warpAction = "warp-undo"; warpUndo.addEventListener("click", () => onAction("warp-undo", { output: element.dataset.output }));
   warpUndo.setAttribute("aria-label", "Warp Undo");
@@ -132,9 +164,10 @@ export function createWarpPanelView({ document: doc, onAction = () => {}, onPoin
       const rows = warp?.grid?.rows || 7, columns = warp?.grid?.columns || (output === "right" ? 8 : 7);
       const indices = selection.indices || [];
       const pointCount = rows * columns;
-      const pickerCount = mode === "grid" ? selection.kind === "row" ? rows : selection.kind === "column" ? columns : pointCount : selection.kind === "edge" ? 4 : 4;
-      const options = Array.from({ length: pickerCount }, (_, index) => { const option = doc.createElement("option"); option.value = String(index); option.textContent = mode === "grid" ? selection.kind === "row" ? `Row ${index + 1}` : selection.kind === "column" ? `Column ${index + 1}` : `Point ${index + 1} · Row ${Math.floor(index / columns) + 1}, Column ${index % columns + 1}` : selection.kind === "edge" ? `Edge ${index + 1}` : `Corner ${index + 1}`; return option; });
-      selectionPicker.replaceChildren(...options); selectionPicker.value = String(Math.min(pickerCount - 1, selection.index || 0));
+      const pickerCount = selection.kind === "all" ? 0 : selection.kind === "edge" ? 4 : mode === "grid" ? selection.kind === "row" ? rows : selection.kind === "column" ? columns : pointCount : 4;
+      const edgeNames = ["Top edge", "Right edge", "Bottom edge", "Left edge"];
+      const options = Array.from({ length: pickerCount }, (_, index) => { const option = doc.createElement("option"); option.value = String(index); option.textContent = selection.kind === "edge" ? edgeNames[index] : mode === "grid" ? selection.kind === "row" ? `Row ${index + 1}` : selection.kind === "column" ? `Column ${index + 1}` : `Point ${index + 1} · Row ${Math.floor(index / columns) + 1}, Column ${index % columns + 1}` : `Corner ${index + 1}`; return option; });
+      selectionPicker.replaceChildren(...options); selectionPicker.hidden = selection.kind === "all"; if (pickerCount) selectionPicker.value = String(Math.min(pickerCount - 1, selection.index || 0));
       selectionControls.hidden = false;
       selectionButtons.forEach((button) => { const kind = button.dataset.warpSelectionKind; button.hidden = mode === "grid" ? !["point", "row", "column", "edge", "all"].includes(kind) : !["corner", "edge", "all"].includes(kind); button.setAttribute("aria-pressed", String(kind === selection.kind)); });
       const points = state.handles || [];
@@ -142,19 +175,27 @@ export function createWarpPanelView({ document: doc, onAction = () => {}, onPoin
       for (const [axis, control] of coordinateFields) {
         const slot = axis === "x" ? 0 : 1; const dimension = axis === "x" ? WIDTH : HEIGHT;
         const mean = selected.length ? selected.reduce((sum, point) => sum + (slot === 0 ? point.x : point.y), 0) / selected.length : 0;
-        control.update({ value: mean * dimension, resolvedPath: `${output}:${mode}:${selection.kind}:${selection.index}`, error: state.validationMessage || "" });
+        control.update({ value: mean * dimension, resolvedPath: warpCoordinateTargetKey(output, mode, selection), error: state.validationMessage || "" });
       }
       warpStep.value = state.stepMode || "fine";
       warpUndo.disabled = !(state.historyDepth > 0) || Boolean(state.adjusting);
       warpRedo.disabled = !(state.redoDepth > 0) || Boolean(state.adjusting);
-      warpReset.textContent = mode === "grid" ? `Reset ${selection.kind}` : "Reset corner";
-      selectionStatus.textContent = `${mode === "grid" ? `${selection.kind} ${Number(selection.index || 0) + 1}` : `${selection.kind} ${Number(selection.index || 0) + 1}`} · ${state.stepMode === "coarse" ? "1 px" : "0.25 px"}${state.validationMessage ? ` · ${state.validationMessage}` : ""}`;
+      warpReset.textContent = selection.kind === "all" ? "Reset all" : selection.kind === "edge" ? "Reset edge" : mode === "grid" ? `Reset ${selection.kind}` : "Reset corner";
+      const groupName = selection.kind === "all" ? mode === "grid" ? "All grid points" : "All four corners" : selection.kind === "edge" ? edgeNames[Math.max(0, Math.min(3, Number(selection.index) || 0))] : `${selection.kind} ${Number(selection.index || 0) + 1}`;
+      selectionStatus.textContent = `${groupName} · ${indices.length} points · ${state.stepMode === "coarse" ? "1 px" : "0.25 px"}${state.validationMessage ? ` · ${state.validationMessage}` : ""}`;
       [...selectionButtons, selectionPicker, warpStep, ...nudgePad.children, relativePad, warpReset, ...coordinateFields.values()].forEach((item) => { if (item?.disabled !== undefined) item.disabled = Boolean(state.adjusting); });
     },
     retireGestures() {
       if (hold) { clearTimeout(hold.delay); clearInterval(hold.repeat); hold = null; suppressClick = true; }
       if (padGesture) { try { relativePad.releasePointerCapture?.(padGesture.pointer); } catch {} padGesture = null; }
     },
-    dispose() { stopHold(true); for (const control of coordinateFields.values()) control.dispose(); if (padGesture) { const gesture = padGesture; padGesture = null; onPointer("cancel", { x: 0, y: 0, output: gesture.output }); } },
+    cancelGestures() { stopHold(true); return cancelPad(); },
+    setAdjusting(adjusting) {
+      const blocked = Boolean(adjusting);
+      [...selectionButtons, selectionPicker, warpStep, ...nudgePad.children, relativePad, warpReset, warpResetAll, ...coordinateFields.values()].forEach((item) => { if (item?.disabled !== undefined) item.disabled = blocked; });
+      warpUndo.disabled = blocked || !(state?.historyDepth > 0);
+      warpRedo.disabled = blocked || !(state?.redoDepth > 0);
+    },
+    dispose() { stopHold(true); this.cancelGestures(); doc.removeEventListener?.("keydown", cancelPadOnEscape); doc.removeEventListener?.("visibilitychange", onVisibility); doc.defaultView?.removeEventListener?.("blur", onBlur); for (const control of coordinateFields.values()) control.dispose(); },
   };
 }
