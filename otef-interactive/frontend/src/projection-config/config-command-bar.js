@@ -84,7 +84,13 @@ export function createConfigCommandBar({ document: doc, onAction = () => {}, onO
     controls[name] = make(doc, 'p', { className, role, hidden: true }); controls.alerts.appendChild(controls[name]);
   }
   controls.alerts.appendChild(button('retryHydration', 'Retry settings check', 'retry-hydration'));
-  controls.operationStatus.append(controls.status, controls.saveStatus, controls.appliedSummary, controls.outputStatus, controls.alerts);
+  controls.reconciliation = make(doc, 'section', { className: 'warp-editor-reconciliation', dataset: { role: 'reconciliation-recovery' }, ariaLabel: 'Uncertain settings recovery', hidden: true });
+  controls.reconciliationMessage = make(doc, 'p', { className: 'warp-editor-reconciliation-message', role: 'status', ariaLive: 'polite' });
+  controls.reconciliationRetry = button('reconciliationRetry', 'Retry settings check', 'reconciliation-retry');
+  controls.reconciliationKeepLocal = button('reconciliationKeepLocal', 'Keep local draft', 'reconciliation-keep-local');
+  controls.reconciliationUseAccepted = button('reconciliationUseAccepted', 'Use accepted settings', 'reconciliation-use-accepted');
+  controls.reconciliation.append(controls.reconciliationMessage, controls.reconciliationRetry, controls.reconciliationKeepLocal, controls.reconciliationUseAccepted);
+  controls.operationStatus.append(controls.status, controls.saveStatus, controls.appliedSummary, controls.outputStatus, controls.alerts, controls.reconciliation);
   element.append(groups, band, controls.operationStatus);
   listen(doc, 'keydown', event => {
     if (event.key !== 'Escape' || !controls.tools.open) return;
@@ -104,7 +110,7 @@ export function createConfigCommandBar({ document: doc, onAction = () => {}, onO
     if (event.key === 'Enter' && event.target === controls.saveName && !controls.saveCopyConfirm.disabled) { event.preventDefault(); controls.saveCopyConfirm.click?.(); }
   });
   listen(controls.saveCopyConfirm, 'click', () => onAction('save-new', controls.saveName.value));
-  for (const [name, action] of [['apply', 'apply'], ['revert', 'revert'], ['parameterUndo', 'parameter-undo'], ['parameterRedo', 'parameter-redo'], ['retryHydration', 'retry-hydration']]) listen(controls[name], 'click', () => onAction(action));
+  for (const [name, action] of [['apply', 'apply'], ['revert', 'revert'], ['parameterUndo', 'parameter-undo'], ['parameterRedo', 'parameter-redo'], ['retryHydration', 'retry-hydration'], ['reconciliationRetry', 'reconciliation-retry'], ['reconciliationKeepLocal', 'reconciliation-keep-local'], ['reconciliationUseAccepted', 'reconciliation-use-accepted']]) listen(controls[name], 'click', () => onAction(action));
   listen(controls.live, 'change', () => onAction('live', controls.live.checked));
   listen(controls.save, 'click', () => onAction('save', overwriteName));
   listen(controls.load, 'click', () => onAction('load', controls.presets.value));
@@ -114,6 +120,8 @@ export function createConfigCommandBar({ document: doc, onAction = () => {}, onO
   for (const [side, name] of [['left', 'outputLeftDisplay'], ['right', 'outputRightDisplay']]) listen(controls[name], 'change', () => { outputSelection[side] = controls[name].value; });
   const update = ({ state = {}, parameterHistory = { undo: 0, redo: 0 }, errors = {}, conflict = '', statusText = '', draftDiffersFromAccepted = false, savePending = false, loadedPresetId = null, loadedPresetLoadToken = 0, statusRows = [], appliedSummary = 'Pending', outputState = {} } = {}) => {
     controls.live.checked = Boolean(state.live);
+    controls.live.disabled = Boolean(state.reconciliation);
+    controls.apply.disabled = Boolean(state.reconciliation);
     controls.parameterUndo.disabled = !parameterHistory.undo; controls.parameterRedo.disabled = !parameterHistory.redo;
     controls.applyLiveDescription.textContent = state.live ? 'Live on. Changes update automatically.' : 'Live off. Use Apply once, or Apply & save.';
     const dirtyLocalDraft = Boolean(state.hasLocalDraft || draftDiffersFromAccepted);
@@ -133,6 +141,13 @@ export function createConfigCommandBar({ document: doc, onAction = () => {}, onO
     controls.connectionStatus.textContent = state.hydrationError ? `Settings check failed: ${state.hydrationError}` : state.hydrating ? 'Connecting to current settings…' : state.connected === false ? 'Disconnected from current settings. Live remains off until settings are reconciled.' : '';
     controls.connectionStatus.hidden = !state.hydrating && !state.hydrationError && state.connected !== false;
     controls.retryHydration.hidden = !state.hydrationError;
+    const reconciliation = state.reconciliation;
+    controls.reconciliation.hidden = !reconciliation;
+    controls.reconciliationMessage.textContent = reconciliation
+      ? `${reconciliation.message || 'Review the uncertain settings write.'}${Number.isSafeInteger(state.snapshot?.revision) ? ` Current revision: ${state.snapshot.revision}.` : ''}${state.live ? ' Live remains on, with updates paused during recovery.' : ' Live is off.'}`
+      : '';
+    controls.reconciliationRetry.hidden = reconciliation?.status !== 'read-error';
+    controls.reconciliationKeepLocal.hidden = controls.reconciliationUseAccepted.hidden = reconciliation?.status !== 'needs-choice';
     const screens = Array.isArray(outputState.screens) ? [...outputState.screens].sort((a, b) => a.displayNumber - b.displayNumber) : [];
     const assignments = outputState.assignments || {};
     const unsupported = outputState.supported === false;
@@ -157,8 +172,9 @@ export function createConfigCommandBar({ document: doc, onAction = () => {}, onO
     controls.presets.title = `${selectedPresetName}. Choose Load to apply this preset.`;
     controls.toolsPresetContext.textContent = loadedPresetId !== selectedPreset ? `Selected: ${selectedPresetName}. Choose Load to apply.` : '';
     controls.toolsPresetContext.hidden = !controls.toolsPresetContext.textContent;
-    controls.save.disabled = Boolean(savePending || !loadedPreset || loadedPreset.readOnly);
-    controls.saveNew.disabled = Boolean(savePending); controls.saveCopyConfirm.disabled = Boolean(savePending);
+    controls.save.disabled = Boolean(reconciliation || savePending || !loadedPreset || loadedPreset.readOnly);
+    controls.saveNew.disabled = Boolean(reconciliation || savePending); controls.saveCopyConfirm.disabled = Boolean(reconciliation || savePending);
+    controls.load.disabled = controls.revert.disabled = Boolean(reconciliation || savePending);
     controls.originalCheckpointGuidance.hidden = !loadedPreset?.readOnly;
     controls.originalCheckpointGuidance.textContent = loadedPreset?.readOnly ? `${loadedPreset.name || 'Loaded preset'} is immutable. Use Save copy.` : '';
     if (loadedPreset && (loadedPresetId !== lastLoadedPresetId || loadedPresetLoadToken !== lastLoadedPresetLoadToken)) {

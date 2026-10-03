@@ -33,6 +33,10 @@ body { margin: 0; min-width: 0; background: #0c1016; overflow-x: hidden; }
 .config-operation-status .draft-status { flex: 1 1 auto; }
 .config-operation-status .applied-summary { display: block; font-size: 12px; }
 .config-alerts { flex-basis: 100%; }
+.warp-editor-reconciliation { display: flex; flex: 1 1 100%; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-width: 0; padding: 8px 10px; border: 1px solid var(--config-warning); border-radius: 6px; background: var(--config-surface-raised); color: var(--config-text); }
+.warp-editor-reconciliation[hidden] { display: none; }
+.warp-editor-reconciliation-message { flex: 1 1 240px; min-width: 0; margin: 0; color: var(--config-warning); font-size: 13px; line-height: 18px; overflow-wrap: anywhere; }
+.warp-editor-reconciliation button { min-height: 40px; }
 .tools-preset-context, .original-checkpoint-guidance { margin: 7px 0 0; color: var(--config-muted); font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
 .config-tools { flex: 0 0 auto; }
 .config-tools > summary { min-height: 44px; min-width: 44px; padding-inline: 4px; display: flex; align-items: center; gap: 6px; cursor: pointer; list-style: none; color: var(--config-muted); }

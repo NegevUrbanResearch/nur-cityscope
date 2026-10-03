@@ -8,6 +8,7 @@ import {
 } from './projection-config-schema.js';
 import { migrateNamesWallToV5, migrateNamesWallToV6 } from './nli-name-wall-config.js';
 import { migrateProjectionConfigToV2 } from './projection-warp-schema.js';
+import { withRequestDeadline } from './request-deadline.js';
 
 const API_URL = '/api/otef/projection-config/';
 const TABLE = 'otef';
@@ -125,6 +126,10 @@ export function createProjectionConfigClient({
   let hydrationPromise = null;
   let hydrating = false;
   let hydrationError = null;
+  let reconciliation = null;
+  let reconciliationGeneration = 0;
+  let reconciliationController = null;
+  let hydrationController = null;
   let previewError = null;
   let migrationWarnings = [];
   let conflictGeneration = 0;
@@ -146,6 +151,7 @@ export function createProjectionConfigClient({
       hasLocalDraft,
       hydrating,
       hydrationError,
+      reconciliation: reconciliation ? { ...reconciliation } : null,
       previewError,
       migrationWarnings: [...migrationWarnings],
       initializationRequired: Boolean(snapshot?.config && installedSchemaVersion < 7),
@@ -183,6 +189,7 @@ export function createProjectionConfigClient({
         uncertain.controller?.abort();
         uncertain.reject(new Error('projection config connection lost'));
       }
+      hydrationController?.abort();
     }
     if (typeof onConnection === 'function') onConnection(connected);
     notify();
@@ -215,7 +222,7 @@ export function createProjectionConfigClient({
     notify();
   }
 
-  function receiveSnapshot(next, { origin, fromHydrate = false } = {}) {
+  function receiveSnapshot(next, { origin, fromHydrate = false, preserveLive = false } = {}) {
     if (!validSnapshot(next)) return false;
     if (snapshot && next.revision < snapshot.revision) return false;
     if (snapshot && next.revision === snapshot.revision) {
@@ -236,7 +243,7 @@ export function createProjectionConfigClient({
     if (!hasLocalDraft) {
       draft = clone(snapshot.config);
       hasLocalDraft = false;
-    } else if (fromHydrate) {
+    } else if (fromHydrate && !preserveLive) {
       live = false;
     }
     // Receipt context lasts only for this adoption. An own checkpoint Save
@@ -256,16 +263,23 @@ export function createProjectionConfigClient({
 
   async function hydrate() {
     const generation = ++hydrationGeneration;
+    hydrationController?.abort();
+    const controller = new AbortController();
+    hydrationController = controller;
     hydrating = true;
     hydrationError = null;
     notify();
     let body;
     try {
-      const response = await fetchImpl(`${API_URL}?table=${encodeURIComponent(table)}`, { method: 'GET' });
+      const { response, body: hydratedBody } = await withRequestDeadline(async (signal) => {
+        const response = await fetchImpl(`${API_URL}?table=${encodeURIComponent(table)}`, { method: 'GET', signal });
+        const body = await responseBody(response);
+        return { response, body };
+      }, { signal: controller.signal, setTimer, clearTimer });
       const status = response?.status ?? 200;
       const ok = response?.ok ?? (status >= 200 && status < 300);
       if (!ok) throw new Error(`projection config hydration failed (${status})`);
-      body = await responseBody(response);
+      body = hydratedBody;
     } catch (error) {
       if (generation === hydrationGeneration) {
         hydrationError = error?.message || 'projection config hydration failed';
@@ -281,6 +295,7 @@ export function createProjectionConfigClient({
     }
     receiveSnapshot(body, { fromHydrate: true });
     hydrating = false;
+    if (hydrationController === controller) hydrationController = null;
     notify();
     return getState();
   }
@@ -291,14 +306,14 @@ export function createProjectionConfigClient({
   }
 
   function schedulePreview() {
-    if (!started || stopped || !connected || hydrating || !live || !draft || !snapshot || intent || setupRequired()) return;
+    if (!started || stopped || !connected || hydrating || reconciliation || !live || !draft || !snapshot || intent || setupRequired()) return;
     queuedPreview = { config: clone(draft), version: draftVersion };
     scheduleDrain();
   }
 
   function postMutation(operation) {
-    if (!snapshot || !connected || hydrating || stopped) {
-      operation.reject(new Error(hydrating ? 'projection config is hydrating' : 'projection config is disconnected'));
+    if (!snapshot || !connected || hydrating || reconciliation || stopped) {
+      operation.reject(new Error(reconciliation ? 'resolve uncertain projection config write first' : hydrating ? 'projection config is hydrating' : 'projection config is disconnected'));
       return;
     }
     if (inFlight) {
@@ -327,23 +342,17 @@ export function createProjectionConfigClient({
     inFlight = request;
     lastSendAt = now();
     notify();
-    let fetchPromise;
-    try {
-      fetchPromise = fetchImpl(API_URL, {
+    withRequestDeadline(async (signal) => {
+      const response = await fetchImpl(API_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
-        ...(controller ? { signal: controller.signal } : {}),
+        signal,
       });
-    } catch (error) {
-      fetchPromise = Promise.reject(error);
-    }
-    Promise.resolve(fetchPromise).then(async (response) => {
       const bodyResponse = await responseBody(response);
-      if (request.retired) {
-        if (validSnapshot(bodyResponse)) receiveSnapshot(bodyResponse, { origin: sourceId });
-        return;
-      }
+      return { response, bodyResponse };
+    }, { signal: controller?.signal, setTimer, clearTimer }).then(({ response, bodyResponse }) => {
+      if (request.retired || inFlight !== request || stopped) return;
       const status = response?.status ?? 200;
       const ok = response?.ok ?? (status >= 200 && status < 300);
       if (!ok || status === 409) {
@@ -398,7 +407,21 @@ export function createProjectionConfigClient({
       request.resolve(request.action === 'load' || request.action === 'revert'
         ? { ...getState(), draftReplaced } : request.action === 'save' ? { ...getState(), savedPresetId } : getState());
     }).catch((error) => {
-      if (request.retired) return;
+      if (request.retired || inFlight !== request || stopped) return;
+      if (error?.code === 'request_timeout') {
+        request.retired = true;
+        request.failed = true;
+        inFlight = null;
+        cancelQueuedPreviews();
+        hasLocalDraft = Boolean(draft) || hasLocalDraft;
+        const uncertain = new Error('projection config write outcome is uncertain; review the latest accepted settings');
+        uncertain.code = 'uncertain_write';
+        if (intent) { intent.reject(uncertain); intent = null; }
+        request.reject(uncertain);
+        notify();
+        beginReconciliation();
+        return;
+      }
       request.failed = true;
       if (request.action === 'preview' && !request.dynamicDraft) previewError = error?.message || 'automatic preview failed';
       cancelQueuedPreviews();
@@ -417,8 +440,62 @@ export function createProjectionConfigClient({
     });
   }
 
+  async function beginReconciliation() {
+    const generation = ++reconciliationGeneration;
+    reconciliationController?.abort();
+    const controller = new AbortController();
+    reconciliationController = controller;
+    reconciliation = { status: 'reading', message: 'Checking the latest accepted settings…' };
+    notify();
+    try {
+      const { response, body } = await withRequestDeadline(async (signal) => {
+        const response = await fetchImpl(`${API_URL}?table=${encodeURIComponent(table)}`, { method: 'GET', signal });
+        const body = await responseBody(response);
+        return { response, body };
+      }, { signal: controller.signal, setTimer, clearTimer });
+      const status = response?.status ?? 200;
+      const ok = response?.ok ?? (status >= 200 && status < 300);
+      if (!ok) throw new Error(`accepted settings check failed (${status})`);
+      if (!validSnapshot(body)) throw new Error('invalid accepted settings response');
+      if (generation !== reconciliationGeneration || stopped) return;
+      receiveSnapshot(body, { fromHydrate: true, preserveLive: true });
+      reconciliation = { status: 'needs-choice', message: 'The write may have reached the server. Choose which settings to keep.' };
+      reconciliationController = null;
+      notify();
+    } catch (error) {
+      if (generation !== reconciliationGeneration || stopped || controller.signal.aborted) return;
+      reconciliation = { status: 'read-error', message: error?.message || 'Could not check accepted settings.' };
+      reconciliationController = null;
+      notify();
+    }
+  }
+
+  function retryReconciliation() {
+    if (reconciliation?.status !== 'read-error' || !started || stopped || !connected) return Promise.reject(new Error('reconciliation retry unavailable'));
+    return beginReconciliation();
+  }
+
+  function resolveReconciliation(choice) {
+    if (reconciliation?.status !== 'needs-choice') throw new Error('accepted settings choice is not ready');
+    if (choice !== 'keep-local' && choice !== 'use-accepted') throw new TypeError('invalid accepted settings choice');
+    cancelQueuedPreviews();
+    cancelPreflight('uncertain projection config write resolved');
+    if (intent) { intent.reject(new Error('uncertain projection config write resolved')); intent = null; }
+    live = false;
+    if (choice === 'use-accepted') {
+      draft = snapshot ? clone(snapshot.config) : null;
+      hasLocalDraft = false;
+      draftVersion += 1;
+    } else {
+      hasLocalDraft = Boolean(draft && snapshot && !equal(draft, snapshot.config));
+    }
+    reconciliation = null;
+    notify();
+    return getState();
+  }
+
   function scheduleDrain() {
-    if (timer !== null || inFlight || preflighting || !started || stopped || !connected || hydrating || !snapshot) return;
+    if (timer !== null || inFlight || preflighting || !started || stopped || !connected || hydrating || reconciliation || !snapshot) return;
     if (!intent && (!queuedPreview || !live)) return;
     const wait = Math.max(0, WRITE_INTERVAL - (now() - lastSendAt));
     if (wait === 0 && intent) {
@@ -430,7 +507,7 @@ export function createProjectionConfigClient({
   }
 
   function drain() {
-    if (inFlight || preflighting || !started || stopped || !connected || hydrating || !snapshot) return;
+    if (inFlight || preflighting || !started || stopped || !connected || hydrating || reconciliation || !snapshot) return;
     const wait = WRITE_INTERVAL - (now() - lastSendAt);
     if (wait > 0) { scheduleDrain(); return; }
     if (intent) {
@@ -519,6 +596,7 @@ export function createProjectionConfigClient({
   }
 
   function setLive(value) {
+    if (reconciliation) { if (!value) live = false; notify(); return Promise.resolve(getState()); }
     live = Boolean(value);
     if (!live) { cancelQueuedPreviews(); scheduleDrain(); }
     else schedulePreview();
@@ -526,24 +604,28 @@ export function createProjectionConfigClient({
   }
 
   function apply() {
+    if (reconciliation) return Promise.reject(new Error('resolve uncertain projection config write first'));
     if (setupRequired()) return Promise.reject(new Error('initialization required'));
     if (!draft || !snapshot || !connected || stopped || hydrating) return Promise.reject(new Error(hydrating ? 'projection config is hydrating' : 'projection config is disconnected'));
     return new Promise((resolve, reject) => waitForMutation({ action: 'preview', dynamicDraft: true, explicitApply: true, version: draftVersion, resolve, reject }));
   }
 
   function save({ presetId = null, name } = {}) {
+    if (reconciliation) return Promise.reject(new Error('resolve uncertain projection config write first'));
     if (setupRequired()) return Promise.reject(new Error('initialization required'));
     if (!draft || !snapshot || !connected || stopped || hydrating) return Promise.reject(new Error(hydrating ? 'projection config is hydrating' : 'projection config is disconnected'));
     return new Promise((resolve, reject) => waitForMutation({ action: 'save', dynamicDraft: true, version: draftVersion, presetId, name, resolve, reject }));
   }
 
   function load(presetId) {
+    if (reconciliation) return Promise.reject(new Error('resolve uncertain projection config write first'));
     if (setupRequired()) return Promise.reject(new Error('initialization required'));
     if (!snapshot || !connected || stopped || hydrating) return Promise.reject(new Error(hydrating ? 'projection config is hydrating' : 'projection config is disconnected'));
     return new Promise((resolve, reject) => waitForMutation({ action: 'load', presetId, version: draftVersion, resolve, reject }));
   }
 
   function revert() {
+    if (reconciliation) return Promise.reject(new Error('resolve uncertain projection config write first'));
     if (setupRequired()) return Promise.reject(new Error('initialization required'));
     if (!snapshot || !connected || stopped || hydrating) return Promise.reject(new Error(hydrating ? 'projection config is hydrating' : 'projection config is disconnected'));
     return new Promise((resolve, reject) => waitForMutation({ action: 'revert', version: draftVersion, resolve, reject }));
@@ -590,12 +672,23 @@ export function createProjectionConfigClient({
     stopped = true;
     started = false;
     hydrationGeneration += 1;
+    reconciliationGeneration += 1;
+    hydrationController?.abort(); hydrationController = null;
+    reconciliationController?.abort(); reconciliationController = null;
+    reconciliation = null;
     if (timer !== null) { clearTimer(timer); timer = null; }
     queuedPreview = null;
     cancelPreflight('projection config client stopped');
     if (intent) {
       intent.reject(new Error('projection config client stopped'));
       intent = null;
+    }
+    if (inFlight) {
+      const pending = inFlight;
+      pending.retired = true;
+      inFlight = null;
+      pending.controller?.abort();
+      pending.reject(new Error('projection config client stopped'));
     }
     if (socket?.off) for (const [event, handler] of handlers) socket.off(event, handler);
     handlers.length = 0;
@@ -614,7 +707,7 @@ export function createProjectionConfigClient({
     validateCandidate = callback;
   }
 
-  return { start, stop, retryHydration, setDraft, setLive, apply, save, load, revert, getState, subscribe, setValidateCandidate };
+  return { start, stop, retryHydration, retryReconciliation, resolveReconciliation, setDraft, setLive, apply, save, load, revert, getState, subscribe, setValidateCandidate };
 }
 
 export { TD_MIGRATION_PRESET_ID, TD_MIGRATION_PRESET_NAME, validSnapshot as validateProjectionConfigSnapshot };

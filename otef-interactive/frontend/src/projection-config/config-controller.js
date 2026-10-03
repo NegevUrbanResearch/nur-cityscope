@@ -103,6 +103,9 @@ export function fineStepFor(descriptor) { return descriptor.fine; }
 
 function statusText(state, selectedPresetId) {
   if (state.hydrationError) return "Settings check failed";
+  if (state.reconciliation?.status === "reading") return "Checking accepted settings";
+  if (state.reconciliation?.status === "needs-choice") return "Review accepted settings";
+  if (state.reconciliation?.status === "read-error") return "Accepted settings check failed";
   if (state.hydrating) return "Connecting";
   if (state.connected === false) return "Disconnected";
   if (state.previewError) return "Failed";
@@ -1000,6 +1003,9 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
       for (const output of ["left", "right"]) warpEditors[output].setConfig(accepted.draft, { rebase: true });
       parameterHistory.clear(); nudgeAnchors.clear(); scalarGestures.clear();
     };
+    if (action === "reconciliation-retry") { await client.retryReconciliation?.(); refresh(); return; }
+    if (action === "reconciliation-keep-local") { client.resolveReconciliation?.("keep-local"); refresh(); return; }
+    if (action === "reconciliation-use-accepted") { client.resolveReconciliation?.("use-accepted"); rebaseWarpHistory(); refresh(); return; }
     try {
       if (action === "live") await client.setLive(Boolean(value));
       if (action === "retry-hydration") await client.retryHydration();

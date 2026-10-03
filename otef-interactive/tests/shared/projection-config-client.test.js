@@ -71,6 +71,122 @@ function harness({ revision = 0, config = DEFAULTS, validateCandidate, connectOn
   };
 }
 
+test('uncertain POST times out once, ignores late receipt, and requires a fresh-revision explicit publish choice', async () => {
+  const h = harness();
+  const starting = h.client.start(); h.resolveNext(stateFor(0)); await starting;
+  const draft = clone(DEFAULTS); draft.pre.tx = 0.41;
+  h.client.setDraft(draft);
+  const applying = h.client.apply();
+  const applyError = applying.then(() => null, error => error);
+  const queuedSave = h.client.save({ name: 'queued checkpoint' });
+  const queuedError = queuedSave.then(() => null, error => error);
+  await h.flushPromises();
+  expect(h.pendingRequests()).toHaveLength(1);
+  const latePost = h.pendingRequests()[0];
+
+  await h.advance(15000);
+  expect(await applyError).toMatchObject({ code: 'uncertain_write', message: expect.stringMatching(/uncertain/i) });
+  expect(await queuedError).toMatchObject({ code: 'uncertain_write', message: expect.stringMatching(/uncertain/i) });
+  expect(h.client.getState()).toMatchObject({ live: true, draft, reconciliation: { status: 'reading' } });
+  expect(h.pendingRequests()).toHaveLength(2);
+  expect(h.pendingRequests()[1].options.method).toBe('GET');
+
+  h.resolveAt(1, stateFor(3));
+  await h.flushPromises();
+  expect(h.client.getState()).toMatchObject({
+    snapshot: { revision: 3 }, draft, hasLocalDraft: true, live: true,
+    reconciliation: { status: 'needs-choice' },
+  });
+  const duringRecoveryEdit = clone(draft); duringRecoveryEdit.pre.tx = 0.47;
+  h.client.setDraft(duringRecoveryEdit);
+  await h.advance(30000);
+  expect(h.pendingRequests()).toHaveLength(1);
+  h.resolveAt(0, stateFor(9));
+  expect(latePost.options.signal.aborted).toBe(true);
+  await h.flushPromises();
+  expect(h.client.getState().snapshot.revision).toBe(3);
+
+  h.client.resolveReconciliation('keep-local');
+  expect(h.client.getState().live).toBe(false);
+  const editedWhileLiveOff = clone(duringRecoveryEdit); editedWhileLiveOff.pre.tx = 0.52;
+  h.client.setDraft(editedWhileLiveOff);
+  await h.advance(30000);
+  expect(h.pendingRequests()).toHaveLength(0);
+  const nextApply = h.client.apply();
+  await h.flushPromises();
+  expect(h.pendingRequests()).toHaveLength(1);
+  expect(JSON.parse(h.pendingRequests()[0].options.body).baseRevision).toBe(3);
+  h.resolveNext(stateFor(4, editedWhileLiveOff));
+  await nextApply; await h.flushPromises();
+  expect(h.client.getState()).toMatchObject({ reconciliation: null, snapshot: { revision: 4 } });
+
+  const presetId = '22222222-2222-4222-8222-222222222222';
+  const saving = h.client.save({ name: 'Fresh revision' });
+  await h.advance(100);
+  expect(JSON.parse(h.pendingRequests()[0].options.body)).toMatchObject({ action: 'save', baseRevision: 4 });
+  const checkpoint = { ...stateFor(5, editedWhileLiveOff), selectedPresetId: presetId,
+    presets: [...stateFor(5).presets, { id: presetId, name: 'Fresh revision', config: editedWhileLiveOff, readOnly: false }] };
+  h.resolveNext(checkpoint); expect(await saving).toMatchObject({ savedPresetId: presetId }); await h.flushPromises();
+
+  await h.client.setLive(true);
+  const liveDraft = clone(editedWhileLiveOff); liveDraft.pre.tx = 0.61; h.client.setDraft(liveDraft);
+  await h.advance(100);
+  expect(JSON.parse(h.pendingRequests()[0].options.body)).toMatchObject({ action: 'preview', baseRevision: 5 });
+  h.resolveNext(stateFor(6, liveDraft));
+  await h.flushPromises();
+  h.client.stop();
+});
+
+test('failed uncertain-write read exposes retry and Use accepted replaces draft', async () => {
+  const h = harness();
+  const starting = h.client.start(); h.resolveNext(stateFor(0)); await starting;
+  const draft = clone(DEFAULTS); draft.pre.tx = 0.3; h.client.setDraft(draft);
+  const applying = h.client.apply(); const applyError = applying.then(() => null, error => error); await h.flushPromises();
+  await h.advance(15000);
+  expect(await applyError).toMatchObject({ code: 'uncertain_write' });
+  expect(h.client.getState().reconciliation.status).toBe('reading');
+  expect(h.pendingRequests()[1].options.method).toBe('GET');
+  h.resolveAt(1, {}, 503); await h.flushPromises();
+  expect(h.client.getState().reconciliation.status).toBe('read-error');
+  const retry = h.client.retryReconciliation();
+  expect(h.pendingRequests()[1].options.method).toBe('GET');
+  h.resolveAt(1, stateFor(2)); await retry;
+  expect(h.client.getState().reconciliation.status).toBe('needs-choice');
+  h.client.resolveReconciliation('use-accepted');
+  expect(h.client.getState()).toMatchObject({ draft: DEFAULTS, hasLocalDraft: false, live: false, reconciliation: null });
+  h.client.stop();
+});
+
+test('POST deadline includes a stalled response body and stop aborts an active request', async () => {
+  const h = harness();
+  const starting = h.client.start(); h.resolveNext(stateFor(0)); await starting;
+  const draft = clone(DEFAULTS); draft.pre.tx = 0.25; h.client.setDraft(draft);
+  const applying = h.client.apply(); const applyError = applying.then(() => null, error => error);
+  await h.flushPromises();
+  const post = h.pendingRequests()[0];
+  post.resolve({ status: 200, ok: true, json: () => new Promise(() => {}) });
+  await h.advance(15000);
+  expect(await applyError).toMatchObject({ code: 'uncertain_write' });
+  expect(h.client.getState().reconciliation.status).toBe('reading');
+
+  h.client.stop();
+  expect(h.pendingRequests()[0].options.signal.aborted).toBe(true);
+  expect(h.client.getState().reconciliation).toBe(null);
+
+  const h2 = harness();
+  const started = h2.client.start(); h2.resolveNext(stateFor(0)); await started;
+  const stopping = h2.client.apply(); const stoppedError = stopping.then(() => null, error => error);
+  const queued = h2.client.save({ name: 'stopped queued intent' }); const queuedError = queued.then(() => null, error => error);
+  await h2.flushPromises();
+  const inFlight = h2.pendingRequests()[0];
+  h2.client.stop();
+  expect(await stoppedError).toMatchObject({ message: expect.stringMatching(/stopped/i) });
+  expect(await queuedError).toMatchObject({ message: expect.stringMatching(/stopped/i) });
+  expect(inFlight.options.signal.aborted).toBe(true);
+  await h2.flushPromises();
+  expect(h2.client.getState().pending).toBe(false);
+});
+
 beforeEach(() => vi.restoreAllMocks());
 
 test('does not schedule Live or disturb preflight for an identical draft', async () => {
@@ -110,6 +226,8 @@ test.each(['http', 'own websocket'])('Save returns its accepted checkpoint ident
   const saving = h.client.save({ name: 'Desk' });
   if (ack === 'own websocket') h.socket.emit({ type: 'otef_projection_config_changed', table: 'otef', sourceId: '00000000-0000-4000-8000-00000000000a', state: saved });
   h.resolveNext(saved); expect(await saving).toMatchObject({ savedPresetId: id }); await h.flushPromises();
+  await h.advance(15000);
+  expect(h.client.getState().reconciliation).toBe(null);
   expect(receipts.filter(Boolean)).toEqual([{ origin: '00000000-0000-4000-8000-00000000000a', action: 'save' }]);
   expect(receipts.at(-1)).toBeUndefined(); expect(h.client.getState()).not.toHaveProperty('savedPresetId');
   expect(notifications.every((state) => !Object.hasOwn(state, 'savedPresetId') && !Object.hasOwn(state, 'receipt'))).toBe(true);

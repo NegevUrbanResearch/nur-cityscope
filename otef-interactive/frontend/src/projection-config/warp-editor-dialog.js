@@ -4,7 +4,7 @@ import { createProjectionTraceUi } from './projection-trace-ui.js';
 import { recordProjectionTrace } from './projection-trace-input.js';
 
 /** Owns one disposable projection frame. The config controller retains all draft and edit state. */
-export function createWarpEditorDialog({ document: doc, host, editorPanel, overlay, topologyControls, navigationControls, presentation = "dialog", onVisibilityChange = () => {}, onPresentationChange = () => {}, onIsAdjusting = () => false, onEscape = () => false, onBeforeClose = () => {}, onBeforeSwitch = () => {}, onBeforeResize = () => {}, onViewportChange = () => {}, onOrientationChange = () => {}, onApply = () => {}, onLive = () => {}, trace }) {
+export function createWarpEditorDialog({ document: doc, host, editorPanel, overlay, topologyControls, navigationControls, reconciliationControls = null, presentation = "dialog", onVisibilityChange = () => {}, onPresentationChange = () => {}, onIsAdjusting = () => false, onEscape = () => false, onBeforeClose = () => {}, onBeforeSwitch = () => {}, onBeforeResize = () => {}, onViewportChange = () => {}, onOrientationChange = () => {}, onApply = () => {}, onLive = () => {}, trace }) {
   const win = doc.defaultView;
   const home = editorPanel.parentElement;
   const overlayHome = overlay.parentElement;
@@ -32,6 +32,7 @@ export function createWarpEditorDialog({ document: doc, host, editorPanel, overl
   body.append(viewport, finePanel);
   if (topologyControls) body.appendChild(topologyControls);
   const footer = doc.createElement("footer"); footer.className = "warp-editor-footer";
+  const reconciliationHome = reconciliationControls?.parentElement || null;
   const liveLabel = doc.createElement("label"); liveLabel.className = "live-toggle"; liveLabel.textContent = "Live";
   const liveInput = doc.createElement("input"); liveInput.type = "checkbox"; liveInput.setAttribute("aria-label", "Editor Live"); liveLabel.prepend(liveInput);
   const applyButton = doc.createElement("button"); applyButton.type = "button"; applyButton.textContent = "Apply once";
@@ -181,6 +182,7 @@ export function createWarpEditorDialog({ document: doc, host, editorPanel, overl
     overlay.removeAttribute?.("tabindex");
     if (overlayHome?.appendChild) overlayHome.appendChild(overlay);
     if (home?.appendChild) home.appendChild(editorPanel);
+    if (reconciliationHome?.appendChild && reconciliationControls?.parentElement !== reconciliationHome) reconciliationHome.appendChild(reconciliationControls);
     modal.hidden = true;
     for (const [element, wasInert] of inertSiblings) element.inert = wasInert;
     inertSiblings = [];
@@ -203,6 +205,7 @@ export function createWarpEditorDialog({ document: doc, host, editorPanel, overl
     else {
       focusEpoch += 1; closedFocus = null;
       opener = activatingElement || doc.activeElement;
+      if (reconciliationControls) footer.appendChild(reconciliationControls);
       if (!isPanel) {
         if (doc.body?.style) { oldOverflow = doc.body.style.overflow; doc.body.style.overflow = "hidden"; }
         inertSiblings = [...host.children].filter((child) => child !== modal).map((child) => [child, child.inert]);
@@ -240,9 +243,12 @@ export function createWarpEditorDialog({ document: doc, host, editorPanel, overl
     isOpen() { return !modal.hidden; },
     isFullViewport() { return fullViewport; },
     setFullViewport,
-    update(config, { live, appliedSummary } = {}) {
+    update(config, { live, appliedSummary, reconciliation = null } = {}) {
       if (live !== undefined) liveInput.checked = Boolean(live);
       if (appliedSummary !== undefined) applied.textContent = appliedSummary;
+      const recoveryActive = Boolean(reconciliation);
+      liveInput.disabled = recoveryActive;
+      applyButton.disabled = recoveryActive;
       fullViewportButton.disabled = Boolean(onIsAdjusting());
       preview.update(config);
     },
