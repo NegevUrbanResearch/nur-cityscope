@@ -37,6 +37,8 @@ export function openSettlementNameEditor({
   citycode = "",
   settingsClient,
   catalog = { entries: [] },
+  catalogStatus = { status: "ready" },
+  onRetryCatalog = () => {},
   document = globalThis.document,
   onSelection = () => {},
   onClose = () => {},
@@ -84,11 +86,16 @@ export function openSettlementNameEditor({
     onPosition: (position) => { void settingsClient.commit({ kind: "position", output: activeOutput, citycode: activeCitycode }, position, { numeric: true }).catch(() => {}); publish(); },
     onStyle: (style) => { void settingsClient.commit({ kind: "style" }, style, { numeric: true }).catch(() => {}); publish(); },
     onRetry: () => {
-      void Promise.all([
-        settingsClient.retry({ kind: "position", output: activeOutput, citycode: activeCitycode }),
-        settingsClient.retry({ kind: "style" }),
-      ]).catch(() => {});
+      if (settingsClient.getHydrationState?.().status === "Failed") {
+        void settingsClient.hydrate({ forceFresh: true }).catch(() => {});
+      } else if (activeCitycode) {
+        void Promise.all([
+          settingsClient.retry({ kind: "position", output: activeOutput, citycode: activeCitycode }),
+          settingsClient.retry({ kind: "style" }),
+        ]).catch(() => {});
+      }
     },
+    onRetryCatalog,
     onLoad: () => {
       settingsClient.loadSaved({ kind: "position", output: activeOutput, citycode: activeCitycode });
       settingsClient.loadSaved({ kind: "style" });
@@ -102,8 +109,9 @@ export function openSettlementNameEditor({
   closeButton.focus?.();
 
   function snapshot() { return settingsClient.getSnapshot()?.settings || null; }
-  function setCatalog(nextCatalog) {
+  function setCatalog(nextCatalog, nextCatalogStatus = catalogStatus) {
     catalog = nextCatalog && Array.isArray(nextCatalog.entries) ? nextCatalog : { entries: [] };
+    catalogStatus = nextCatalogStatus || { status: "ready" };
     if (!catalog.entries.some((entry) => entry?.citycode === activeCitycode)) activeCitycode = catalog.entries[0]?.citycode || "";
     renderControls();
   }
@@ -119,6 +127,7 @@ export function openSettlementNameEditor({
       output: activeOutput,
       citycode: activeCitycode,
       catalog,
+      catalogStatus,
       position: shownPosition(),
       style: styleRecord().draft || styleRecord().acknowledged || settings?.style,
       positionRecord: positionRecord(),

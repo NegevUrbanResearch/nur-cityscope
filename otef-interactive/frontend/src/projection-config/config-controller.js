@@ -216,16 +216,21 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     onSettlementPosition: (position) => { if (!settlementClient || !settlementCitycode) return; void settlementClient.commit({ kind: "position", output: settlementOutput, citycode: settlementCitycode }, position, { numeric: true }).catch(() => {}); },
     onSettlementStyle: (style) => { if (!settlementClient) return; void settlementClient.commit({ kind: "style" }, style, { numeric: true }).catch(() => {}); },
     onSettlementRecovery: (action) => {
-      if (!settlementClient || !settlementCitycode) return;
+      if (!settlementClient) return;
+      const hydrationFailed = settlementClient.getHydrationState?.().status === "Failed";
+      if (action === "retry" && hydrationFailed) {
+        void settlementClient.hydrate({ forceFresh: true }).catch(() => {});
+        refresh();
+        return;
+      }
+      if (!settlementCitycode) return;
       const position = { kind: "position", output: settlementOutput, citycode: settlementCitycode };
       const style = { kind: "style" };
       if (action === "load") {
         settlementClient.loadSaved(position);
         settlementClient.loadSaved(style);
       } else {
-        void (settlementClient.getHydrationState?.().status === "Failed"
-          ? settlementClient.hydrate({ forceFresh: true })
-          : Promise.all([settlementClient.retry(position), settlementClient.retry(style)])).catch(() => {});
+        void Promise.all([settlementClient.retry(position), settlementClient.retry(style)]).catch(() => {});
       }
       refresh();
     },
@@ -456,6 +461,8 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
       citycode: settlementCitycode,
       settingsClient: settlementClient,
       catalog,
+      catalogStatus,
+      onRetryCatalog: retrySettlementCatalog,
       manageBeforeUnload: false,
       document: root?.ownerDocument || globalThis.document,
       onSelection: ({ output, citycode }) => { settlementOutput = output; settlementCitycode = citycode; refresh(); },
@@ -1091,7 +1098,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
       if (!catalog.entries.some((entry) => entry?.citycode === settlementCitycode)) {
         settlementCitycode = catalog.entries.find((entry) => typeof entry?.citycode === "string")?.citycode || "";
       }
-      activeSettlementEditor?.setCatalog?.(catalog);
+      activeSettlementEditor?.setCatalog?.(catalog, catalogStatus);
       activeSettlementEditor?.setSelection?.({ output: settlementOutput, citycode: settlementCitycode });
       refresh();
     },

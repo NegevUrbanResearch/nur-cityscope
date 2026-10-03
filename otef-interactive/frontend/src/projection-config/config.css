@@ -193,6 +193,13 @@ h2, h3 { margin: 0 0 10px; }
 .warp-editor-header, .warp-editor-footer { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .warp-editor-header { min-width: 0; padding-bottom: 8px; border-bottom: 1px solid var(--config-divider); }
 .warp-editor-footer { padding-top: 8px; border-top: 1px solid var(--config-divider); }
+.projection-optional-health { flex: 1 1 100%; min-width: 0; padding: 8px; border: 1px solid var(--config-divider); border-radius: 8px; background: var(--config-canvas); }
+.projection-optional-health[hidden], .projection-optional-health-row[hidden] { display: none; }
+.projection-optional-health h3 { margin: 0 0 6px; font-size: 13px; line-height: 18px; }
+.projection-optional-health-list { display: grid; gap: 4px; }
+.projection-optional-health-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; }
+.projection-optional-health-message { min-width: 0; margin: 0; color: var(--config-muted); font-size: 13px; line-height: 18px; overflow-wrap: anywhere; }
+.projection-optional-health-row button { min-height: 44px; }
 .warp-editor-title { margin: 0; font-size: 17px; line-height: 24px; font-weight: 600; }
 .warp-view-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; max-width: 100%; min-width: 0; }
 .warp-view-command-group, .warp-history-command-group { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 4px; }
