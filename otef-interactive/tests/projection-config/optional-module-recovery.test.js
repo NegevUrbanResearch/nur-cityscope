@@ -124,3 +124,45 @@ test("active compact warp, focused warp, and scalar editors expose independent o
    expect(app.writeOperation).not.toHaveBeenCalled();
  } finally { app.settlementClient.destroy(); Object.defineProperty(window,"innerWidth",{configurable:true,value:priorWidth}); }
 });
+
+test("reopening focused warp restores the shared optional recovery surface", async () => {
+ const priorWidth = window.innerWidth;
+ Object.defineProperty(window, "innerWidth", { configurable: true, value: 1024 });
+ const retrySettlementCatalog = vi.fn();
+ const app = await mountSettlementConfigFixture({ catalogStatus: { status: "error", error: "catalog offline" }, retrySettlementCatalog });
+ try {
+  app.selectNode("left-grid");
+  app.root.querySelector("[data-action='warp-editor-open']").click();
+  const health = app.root.querySelector(".warp-editor-dialog .projection-optional-health");
+  expect(health).not.toBeNull();
+  app.root.querySelector("[data-action='warp-editor-close']").click();
+  app.root.querySelector("[data-action='warp-editor-open']").click();
+  expect(app.root.querySelector(".warp-editor-dialog").dataset.fullViewport).toBe("true");
+  expect(app.root.querySelector(".warp-editor-dialog .projection-optional-health")).toBe(health);
+  expect(health.textContent).toContain("catalog offline");
+  health.querySelector("[data-action='retry-settlement-catalog']").click();
+  expect(retrySettlementCatalog).toHaveBeenCalledOnce();
+  expect(app.writeOperation).not.toHaveBeenCalled();
+ } finally { app.settlementClient.destroy(); Object.defineProperty(window, "innerWidth", { configurable: true, value: priorWidth }); }
+});
+
+test("closing a scalar editor before opening warp restores health inside the warp route", async () => {
+ const priorWidth = window.innerWidth;
+ Object.defineProperty(window, "innerWidth", { configurable: true, value: 1440 });
+ const retrySettlementCatalog = vi.fn();
+ const app = await mountSettlementConfigFixture({ catalogStatus: { status: "error", error: "catalog offline" }, retrySettlementCatalog });
+ try {
+  app.selectNode("left-crop");
+  app.root.querySelector(".config-editor-region > .config-enlarge-edit").click();
+  const health = app.root.querySelector(".parameter-editor-dialog .projection-optional-health");
+  expect(health).not.toBeNull();
+  app.root.querySelector("[data-action='parameter-editor-close']").click();
+  app.selectNode("left-grid");
+  app.root.querySelector("[data-action='warp-editor-open']").click();
+  expect(app.root.querySelector(".warp-editor-dialog .projection-optional-health")).toBe(health);
+  expect(health.textContent).toContain("catalog offline");
+  health.querySelector("[data-action='retry-settlement-catalog']").click();
+  expect(retrySettlementCatalog).toHaveBeenCalledOnce();
+  expect(app.writeOperation).not.toHaveBeenCalled();
+ } finally { app.settlementClient.destroy(); Object.defineProperty(window, "innerWidth", { configurable: true, value: priorWidth }); }
+});

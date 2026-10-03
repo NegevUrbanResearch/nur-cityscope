@@ -207,6 +207,7 @@ export function createWarpEditorDialog({ document: doc, host, editorPanel, overl
       focusEpoch += 1; closedFocus = null;
       opener = activatingElement || doc.activeElement;
       if (reconciliationControls) footer.appendChild(reconciliationControls);
+      if (optionalHealthElement) footer.appendChild(optionalHealthElement);
       if (!isPanel) {
         if (doc.body?.style) { oldOverflow = doc.body.style.overflow; doc.body.style.overflow = "hidden"; }
         inertSiblings = [...host.children].filter((child) => child !== modal).map((child) => [child, child.inert]);
