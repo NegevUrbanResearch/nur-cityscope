@@ -556,6 +556,9 @@ h2, h3 { margin: 0 0 10px; }
   .warp-editor-dialog[data-presentation="panel"] .warp-editor-topology-controls .warp-grid-layout-field:nth-of-type(5),
   .warp-editor-dialog[data-presentation="panel"] .warp-editor-topology-controls .warp-grid-layout-field:nth-of-type(6) { grid-column: auto; }
   .warp-editor-dialog[data-presentation="panel"] .warp-editor-topology-controls button { min-height: 44px; }
+  .warp-editor-dialog[data-presentation="panel"] .warp-numeric { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; }
+  .warp-editor-dialog[data-presentation="panel"] .warp-numeric > .config-field { grid-column: 1 / -1; }
+  .warp-editor-dialog[data-presentation="panel"] .warp-numeric .config-field-row input[data-input="number"] { min-width: 88px; }
   @media (orientation: landscape) and (max-height: 850px) {
     .warp-editor-dialog[data-presentation="panel"] .warp-numeric { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; }
   }
@@ -595,5 +598,7 @@ h2, h3 { margin: 0 0 10px; }
   .warp-editor-dialog[data-presentation="panel"] .warp-editor-viewport { min-height: 120px; max-height: 140px; aspect-ratio: 2.2; }
   @media (orientation: landscape) and (max-height: 1000px) {
     .warp-editor-dialog[data-presentation="panel"] .warp-numeric { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; }
+    .warp-editor-dialog[data-presentation="panel"] .warp-numeric > .config-field { grid-column: 1 / -1; }
+    .warp-editor-dialog[data-presentation="panel"] .warp-numeric .config-field-row input[data-input="number"] { min-width: 88px; }
   }
 }
