@@ -674,6 +674,13 @@ test("warp editor reuses derived control points until accepted geometry changes"
   const replaced = editor.getControlPoints();
   expect(replaced).not.toBe(moved);
   expect(replaced[8].x).toBeCloseTo(moved[8].x + 0.02);
+  const customKnots = editor.getConfig();
+  customKnots.outputs.left.warp.grid.columnPositions = Array.from({ length: 7 }, (_, index) => index / 6);
+  customKnots.outputs.left.warp.grid.columnPositions[1] = 0.12;
+  expect(editor.setConfig(customKnots, { rebase: true })).toBe(true);
+  const reknotted = editor.getControlPoints();
+  expect(reknotted).not.toBe(replaced);
+  expect(reknotted[1].s).toBe(0.12);
 
   const tdConfig = structuredClone(DEFAULT_PROJECTION_CONFIG);
   tdConfig.outputs.right.warp.baseline = { type: "tdMesh", assetId: "captured", sha256: "b".repeat(64), width: 1920, height: 1080, origin: "top-left" };

@@ -3,6 +3,7 @@ import { DEFAULT_PROJECTION_CONFIG as DEFAULTS } from "../../frontend/src/shared
 import { projectionPlacementInputIdentity } from "../../frontend/src/projection/projection-names-run.js";
 import { createProjectionConfigClient } from "../../frontend/src/shared/projection-config-client.js";
 import * as configView from "../../frontend/src/projection-config/config-view.js";
+import * as warpGeometry from "../../frontend/src/shared/projection-warp-geometry.js";
 import { createIdentityProjectionMesh } from "../../frontend/src/shared/projection-warp-geometry.js";
 import { sha256Hex } from "../../frontend/src/shared/sha256-hex.js";
 import { projectionCatalog, deferred, response } from '../fixtures/projection-catalog.js';
@@ -141,7 +142,7 @@ function fakeClient(initialSnapshot) {
   let state = { snapshot: { revision: 2, config: clone(DEFAULTS), presets: [{ id: "original", name: "Original calibration", config: clone(DEFAULTS), readOnly: true }], selectedPresetId: "original" }, draft: clone(DEFAULTS), live: true, connected: true, pending: false, hasLocalDraft: false };
   const listeners = new Set();
   const savedDrafts = [];
-  const notify = () => listeners.forEach((listener) => listener({ ...state, snapshot: clone(state.snapshot), draft: clone(state.draft) }));
+  const notify = (receipt) => listeners.forEach((listener) => listener({ ...state, snapshot: clone(state.snapshot), draft: clone(state.draft) }, receipt));
   if (initialSnapshot === null) state = { ...state, snapshot: null, draft: null };
   let validateCandidate;
   return {
@@ -150,7 +151,7 @@ function fakeClient(initialSnapshot) {
     setValidateCandidate(handler) { validateCandidate = handler; },
     validateCandidate(args) { return validateCandidate(args); },
     hydrate(snapshot) { state = { ...state, snapshot: clone(snapshot), draft: clone(snapshot.config) }; notify(); },
-    report(changes) { state = { ...state, ...changes }; notify(); },
+    report(changes, receipt) { state = { ...state, ...changes }; notify(receipt); },
     subscribe(listener) { listeners.add(listener); listener(state); return () => listeners.delete(listener); },
     start: vi.fn(async () => state), stop: vi.fn(),
     retryHydration: vi.fn(async () => state),
@@ -193,6 +194,88 @@ function tracedWarpHarness({ candidateValidator } = {}) {
   const restore = () => { api.dispose(); globalThis.document = previousDocument; };
   return { root, client, trace, surface, redraws, api, restore };
 }
+
+test("mounted controller reuses unchanged TD geometry publications and rebases an identical foreign replacement", async () => {
+  const previousDocument = globalThis.document;
+  globalThis.document = documentStub();
+  const config = clone(DEFAULTS);
+  for (const output of ["left", "right"]) {
+    config.outputs[output].warp.baseline = { type: "tdMesh", assetId: `${output}-capture`, sha256: "a".repeat(64), width: 1920, height: 1080, origin: "top-left" };
+  }
+  const meshes = {
+    left: createIdentityProjectionMesh({ side: "left" }),
+    right: createIdentityProjectionMesh({ side: "right" }),
+  };
+  const replacementLoad = deferred();
+  const replacementMeshes = {
+    left: createIdentityProjectionMesh({ side: "left" }),
+    right: createIdentityProjectionMesh({ side: "right" }),
+  };
+  let prepareCount = 0;
+  const client = fakeClient();
+  client.report({ draft: clone(config), hasLocalDraft: true });
+  const updates = [];
+  const actualCreate = configView.createProjectionConfigView;
+  const viewSpy = vi.spyOn(configView, "createProjectionConfigView").mockImplementation((root, options) => {
+    const view = actualCreate(root, options);
+    const actualUpdate = view.update;
+    view.update = (state) => { updates.push(state.warpStates); actualUpdate(state); };
+    return view;
+  });
+  const evaluateSpy = vi.spyOn(warpGeometry, "evaluateWarpMesh");
+  const root = element("main"); root.ownerDocument = globalThis.document;
+  const api = mountProjectionConfig(root, {
+    client,
+    readNamesDataset: async () => null,
+    baselineCatalogLoader: { prepare: async () => {
+      prepareCount += 1;
+      if (prepareCount === 1) return { snapshot: {}, loaded: { left: { mesh: meshes.left }, right: { mesh: meshes.right } } };
+      return replacementLoad.promise;
+    }, promote() {} },
+    candidateValidator: { validate: () => ({ valid: true }), dispose() {} },
+  });
+  try {
+    await vi.waitFor(() => expect(updates.at(-1)?.left.baselineAvailable).toBe(true));
+    const before = updates.at(-1);
+    const callsBefore = evaluateSpy.mock.calls.length;
+    for (let index = 0; index < 100; index += 1) {
+      client.report({ draft: clone(config), snapshot: clone(client.getState().snapshot), hasLocalDraft: true });
+    }
+    const afterUnchanged = updates.at(-1);
+    expect(evaluateSpy).toHaveBeenCalledTimes(callsBefore);
+    expect(afterUnchanged.left.handles).toBe(before.left.handles);
+    expect(afterUnchanged.right.handles).toBe(before.right.handles);
+
+    const foreignSnapshot = clone(client.getState().snapshot);
+    foreignSnapshot.revision += 1;
+    foreignSnapshot.config = clone(config);
+    const callsBeforeForeign = evaluateSpy.mock.calls.length;
+    client.report({ draft: clone(config), snapshot: foreignSnapshot, hasLocalDraft: false }, { foreign: true });
+    const afterForeign = updates.at(-1);
+    expect(evaluateSpy.mock.calls.length).toBeGreaterThan(callsBeforeForeign);
+    expect(afterForeign.left.handles).not.toBe(afterUnchanged.left.handles);
+    expect(afterForeign.right.handles).not.toBe(afterUnchanged.right.handles);
+
+    const replacementConfig = clone(config);
+    replacementConfig.outputs.left.warp.baseline.assetId = "left-capture-replaced";
+    replacementConfig.outputs.left.warp.baseline.sha256 = "b".repeat(64);
+    client.report({ draft: replacementConfig, hasLocalDraft: true });
+    expect(prepareCount).toBe(2);
+    expect(updates.at(-1).left.baselineAvailable).toBe(false);
+    expect(updates.at(-1).left.baselineMesh).toBeNull();
+    const beforeReplacement = updates.at(-1).left.handles;
+    replacementLoad.resolve({ snapshot: {}, loaded: { left: { mesh: replacementMeshes.left }, right: { mesh: replacementMeshes.right } } });
+    await vi.waitFor(() => expect(updates.at(-1)?.left.baselineAvailable).toBe(true));
+    const afterReplacement = updates.at(-1).left;
+    expect(afterReplacement.baselineMesh).toBe(replacementMeshes.left);
+    expect(afterReplacement.handles).not.toBe(beforeReplacement);
+  } finally {
+    api.dispose();
+    evaluateSpy.mockRestore();
+    viewSpy.mockRestore();
+    globalThis.document = previousDocument;
+  }
+});
 
 test("relative pad start disables presentation toggle and blocks consuming commands before movement", async () => {
   const { root, client, api, restore } = tracedWarpHarness();

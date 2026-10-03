@@ -627,6 +627,19 @@ test('queued drag is canceled and local draft preserved by a foreign update', as
   expect(h.client.getState().live).toBe(false);
 });
 
+test('accepted foreign revisions carry private origin metadata while own revisions remain ordinary acknowledgments', async () => {
+  const h = harness();
+  const started = h.client.start(); h.resolveNext(h.stateFor(0)); await started;
+  const receipts = [];
+  const unsubscribe = h.client.subscribe((_state, receipt) => receipts.push(receipt));
+  h.socket.emit({ type: 'otef_projection_config_changed', table: 'otef', sourceId: '00000000-0000-4000-8000-00000000000b', state: h.stateFor(1) });
+  expect(receipts.at(-1)).toEqual({ origin: '00000000-0000-4000-8000-00000000000b', foreign: true });
+  h.socket.emit({ type: 'otef_projection_config_changed', table: 'otef', sourceId: '00000000-0000-4000-8000-00000000000a', state: h.stateFor(2) });
+  expect(receipts.at(-1)).toBeUndefined();
+  expect(h.client.getState()).not.toHaveProperty('receipt');
+  unsubscribe(); h.client.stop();
+});
+
 test('foreign update during an in-flight preview cancels trailing work and preserves the draft', async () => {
   const h = harness();
   const started = h.client.start(); h.resolveNext(h.stateFor(0)); await started;

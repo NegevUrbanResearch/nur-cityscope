@@ -240,14 +240,17 @@ export function createWarpPanelView({ document: doc, onAction = () => {}, onPoin
     cancelGestures() { stopHold(true); return cancelPad(); },
     setAdjusting(adjusting) {
       const blocked = Boolean(adjusting);
-      [...selectionButtons, selectionPicker, warpStep, ...nudgePad.children, relativePad, warpReset, warpResetAll].forEach((item) => { if (item?.disabled !== undefined) item.disabled = blocked; });
+      const correctionEnabled = state?.config?.outputs?.[element.dataset.output]?.warp?.enabled !== false;
+      const editBlocked = blocked || !correctionEnabled;
+      [...selectionButtons, selectionPicker].forEach((item) => { if (item?.disabled !== undefined) item.disabled = blocked; });
+      [warpStep, ...nudgePad.children, relativePad, warpReset, warpResetAll].forEach((item) => { if (item?.disabled !== undefined) item.disabled = editBlocked; });
       for (const control of coordinateFields.values()) {
-        if (control.number) control.number.disabled = blocked;
-        if (control.range) control.range.disabled = blocked;
-        if (control.signButton) control.signButton.disabled = blocked;
+        if (control.number) control.number.disabled = editBlocked;
+        if (control.range) control.range.disabled = editBlocked;
+        if (control.signButton) control.signButton.disabled = editBlocked;
       }
-      warpUndo.disabled = blocked || !(state?.historyDepth > 0);
-      warpRedo.disabled = blocked || !(state?.redoDepth > 0);
+      warpUndo.disabled = editBlocked || !(state?.historyDepth > 0);
+      warpRedo.disabled = editBlocked || !(state?.redoDepth > 0);
     },
     dispose() { stopHold(true); this.cancelGestures(); doc.removeEventListener?.("keydown", cancelPadOnEscape, true); doc.removeEventListener?.("visibilitychange", onVisibility); doc.defaultView?.removeEventListener?.("blur", onBlur); for (const control of coordinateFields.values()) control.dispose(); },
   };

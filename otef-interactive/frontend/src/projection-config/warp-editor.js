@@ -310,9 +310,14 @@ export function createWarpEditor({
   }
   function setConfig(next, { rebase = true } = {}) {
     if (!valid(next, { semantic: false })) return false;
+    const previousWarp = configWarp(current, output);
+    const nextWarp = configWarp(next, output);
+    const sameWarp = current.schemaVersion === next.schemaVersion && JSON.stringify(previousWarp) === JSON.stringify(nextWarp);
+    const canRetainGeometry = !rebase && sameWarp;
     const canReuseEvaluation = !rebase && evaluationCache?.mesh === baselineMesh && evaluationCache.config?.schemaVersion === next.schemaVersion &&
-      JSON.stringify(configWarp(evaluationCache.config, output)) === JSON.stringify(configWarp(next, output));
+      JSON.stringify(configWarp(evaluationCache.config, output)) === JSON.stringify(nextWarp);
     current = clone(next);
+    if (canRetainGeometry) current.outputs[output].warp = previousWarp;
     if (canReuseEvaluation) evaluationCache.config = current;
     validationMessage = "";
     if (rebase) { undoStack = []; redoStack = []; drag = null; nudgeGesture = null; }

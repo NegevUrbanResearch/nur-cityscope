@@ -108,6 +108,13 @@ export function createProjectionConfigView(root, {
   let pendingWarpFrame = null;
   let latestWarpPaint = null;
   let disposed = false;
+  let warpPaintGeneration = 0;
+  const cancelPendingWarpPaint = () => {
+    warpPaintGeneration += 1;
+    if (pendingWarpFrame !== null) cancelFrame(pendingWarpFrame);
+    pendingWarpFrame = null;
+    latestWarpPaint = null;
+  };
 
   const clockNodeStatuses = new Map();
   let selectedGraphNode = "pre";
@@ -562,10 +569,10 @@ export function createProjectionConfigView(root, {
   let currentWarpMode = "keystone";
   let currentWarpState = null;
   let warpSurfaceRenderState = null;
-  let warpPaintGeneration = 0;
   let activeWarpAdjusting = false;
   let pointerInput;
   function cancelActiveDrag(options) {
+    if (options?.notify === false) cancelPendingWarpPaint();
     pointerInput?.cancel(options);
     controls.gridLayout?.cancel();
     if (options?.notify === false) warpPanelView.retireGestures();
@@ -876,8 +883,16 @@ export function createProjectionConfigView(root, {
     currentWarpState = warpState;
     warpPanelView.setState({ output, nodeId: node, editorState: warpState });
     activeWarpAdjusting = Boolean(warpState?.adjusting ?? warpState?.dragging);
-    warpPanelView.setAdjusting(activeWarpAdjusting);
-    dialog.updateAdjustmentGuard();
+    const syncAvailability = () => {
+      warpPanelView.setAdjusting(activeWarpAdjusting);
+      controls.warpEnabled.disabled = activeWarpAdjusting || !currentWarpEnabled;
+      controls.warpEnableAction.hidden = currentWarpEnabled;
+      controls.warpEnableAction.disabled = activeWarpAdjusting;
+      if (activeWarpAdjusting || !currentWarpEnabled) {
+        for (const input of [...controls.gridLayout.fields.values(), ...controls.gridLayout.actions.values()]) input.disabled = true;
+      }
+      dialog.updateAdjustmentGuard();
+    };
     if (!warpState) {
       currentHandles = [];
       currentSelection = null;
@@ -885,6 +900,7 @@ export function createProjectionConfigView(root, {
       currentEvaluatedMesh = null;
       currentGridPlacement = null;
       currentWarpEnabled = false;
+      syncAvailability();
       return;
     }
     const warp = warpState.config?.outputs?.[output]?.warp;
@@ -894,6 +910,7 @@ export function createProjectionConfigView(root, {
     currentGridPlacement = warpState.gridPlacement || null;
     currentSelection = warpState.selection;
     currentWarpEnabled = warp?.enabled !== false;
+    syncAvailability();
   };
   const paintLatestWarpUpdate = () => {
     pendingWarpFrame = null;
@@ -1019,7 +1036,7 @@ export function createProjectionConfigView(root, {
     },
     cancelWarpPointer: cancelActiveDrag,
     isWarpEditorOpen: () => dialog.isOpen(),
-    retireWarpGestures: () => warpPanelView.retireGestures(),
+    retireWarpGestures: () => { cancelPendingWarpPaint(); warpPanelView.retireGestures(); },
     finishNumericEdits: () => [...fields.values()].map(control => control.finish()),
     finishPendingEdit: () => {
       const results = [...fields.values(), ...controls.warpCoordinateFields.values()].filter(control => control.isPending()).map(control => control.finish());
@@ -1031,7 +1048,7 @@ export function createProjectionConfigView(root, {
     cancelNumericEdits: options => { for (const control of [...fields.values(), ...controls.warpCoordinateFields.values()]) control.cancel(options); parameterDialog.cancel(options); },
     closeWarpEditor: dialog.close,
     sendRunNamesPreview: (config) => dialog.sendRunNamesPreview(config),
-    dispose() { if (disposed) return; disposed = true; warpPaintGeneration += 1; if (pendingWarpFrame !== null) { cancelFrame(pendingWarpFrame); pendingWarpFrame = null; } latestWarpPaint = null; for (const control of fields.values()) control.dispose(); warpPanelView.dispose(); settlementControls.dispose(); disposePageTrace(); disposeWarpTrace(); disposeGraphTrace(); traceUi?.dispose(); commandBar.dispose(); doc.removeEventListener?.("keydown", onKeyDown); parameterDialog.dispose(); dialog.dispose(); pointerInput.dispose(); canvas.dispose(); },
+    dispose() { if (disposed) return; disposed = true; cancelPendingWarpPaint(); for (const control of fields.values()) control.dispose(); warpPanelView.dispose(); settlementControls.dispose(); disposePageTrace(); disposeWarpTrace(); disposeGraphTrace(); traceUi?.dispose(); commandBar.dispose(); doc.removeEventListener?.("keydown", onKeyDown); parameterDialog.dispose(); dialog.dispose(); pointerInput.dispose(); canvas.dispose(); },
   };
 }
 
