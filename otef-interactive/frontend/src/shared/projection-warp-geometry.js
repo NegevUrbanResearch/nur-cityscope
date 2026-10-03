@@ -164,6 +164,40 @@ export function validateWarpMesh(mesh) {
   return mesh;
 }
 
+export function invertRenderedMeshPoint(evaluatedMesh, { x, y } = {}) {
+  const vertices = evaluatedMesh?.vertices;
+  const triangles = evaluatedMesh?.triangles;
+  if (!finite(x) || !finite(y) || !Array.isArray(vertices) || !Array.isArray(triangles) || triangles.length < 3 || triangles.length % 3) {
+    return { ok: false, reason: 'degenerate' };
+  }
+  const solutions = [];
+  let degenerate = false;
+  for (let index = 0; index < triangles.length; index += 3) {
+    const ids = triangles.slice(index, index + 3);
+    if (!ids.every((id) => Number.isInteger(id) && id >= 0 && id < vertices.length)) { degenerate = true; continue; }
+    const [a, b, c] = ids.map((id) => vertices[id]);
+    if (![a, b, c].every((point) => point && ['x', 'y', 's', 't'].every((key) => finite(point[key])))) { degenerate = true; continue; }
+    const abx = b.x - a.x, aby = b.y - a.y, acx = c.x - a.x, acy = c.y - a.y;
+    const area = abx * acy - aby * acx;
+    const scale = Math.max(1, Math.abs(abx), Math.abs(aby), Math.abs(acx), Math.abs(acy));
+    if (Math.abs(area) <= Number.EPSILON * 64 * scale * scale) { degenerate = true; continue; }
+    const apx = x - a.x, apy = y - a.y;
+    const weightB = (apx * acy - apy * acx) / area;
+    const weightC = (abx * apy - aby * apx) / area;
+    const weightA = 1 - weightB - weightC;
+    const tolerance = 1e-9;
+    if (weightA < -tolerance || weightB < -tolerance || weightC < -tolerance || weightA > 1 + tolerance || weightB > 1 + tolerance || weightC > 1 + tolerance) continue;
+    const solution = {
+      s: weightA * a.s + weightB * b.s + weightC * c.s,
+      t: weightA * a.t + weightB * b.t + weightC * c.t,
+    };
+    if (!solutions.some((point) => Math.abs(point.s - solution.s) <= 1e-8 && Math.abs(point.t - solution.t) <= 1e-8)) solutions.push(solution);
+    if (solutions.length > 1) return { ok: false, reason: 'ambiguous' };
+  }
+  if (solutions.length === 1) return { ok: true, ...solutions[0] };
+  return { ok: false, reason: degenerate ? 'degenerate' : 'outside' };
+}
+
 export function createFullFrameProjectionMesh({ side = 'left' } = {}) {
   return {
     version: 1,

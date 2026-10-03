@@ -7,6 +7,7 @@ import { variableTdMesh } from "../fixtures/td-variable-grid.js";
 
 const clone = (value) => structuredClone(value);
 const parityMesh = JSON.parse(readFileSync(new URL("../../../nur-io/django_api/backend/tests/fixtures/projection-grid-parity.json", import.meta.url), "utf8")).mesh;
+const renderParity = JSON.parse(readFileSync(new URL("../../../nur-io/django_api/backend/tests/fixtures/projection-grid-render-parity.json", import.meta.url), "utf8"));
 
 test.each([
   ['nudge', e => e.nudge('down')], ['numeric', e => e.setPosition('x', 50)],
@@ -471,6 +472,59 @@ test("an active pointer gesture rejects topology edits until the old gesture end
     expect(editor.getConfig().outputs.left.warp.grid).toEqual(accepted);
     expect(editor.getState().historyDepth).toBe(1);
   }
+});
+
+test("grid previews stay side-effect free and confirmation merges the latest non-warp draft", () => {
+  const changes = vi.fn();
+  const config = clone(DEFAULT_PROJECTION_CONFIG);
+  config.outputs.left.warp.baseline = { type: "identity", width: 1920, height: 1080, origin: "top-left" };
+  const editor = createWarpEditor({ config, output: "left", onChange: changes });
+  editor.setMode("grid"); editor.select(gridSelection("column", 2));
+  const before = editor.getConfig();
+  const preview = editor.previewGridLayout("remove", { axis: "column", index: 2 });
+  expect(preview).toMatchObject({ ok: true, selection: { mode: "grid", kind: "column", index: 1 }, requiresConfirmation: true });
+  expect(preview.grid.columns).toBe(6);
+  expect(editor.getConfig()).toEqual(before);
+  expect(editor.getState().historyDepth).toBe(0);
+  expect(changes).not.toHaveBeenCalled();
+
+  const latest = editor.getConfig(); latest.pre.scale = 1.5;
+  expect(editor.setConfig(latest, { rebase: false })).toBe(true);
+  expect(editor.commitGridLayoutPreview(preview)).toBe(true);
+  expect(editor.getConfig().pre.scale).toBe(1.5);
+  expect(editor.getConfig().outputs.left.warp.grid.columns).toBe(6);
+  expect(editor.getState().historyDepth).toBe(1);
+  expect(changes).toHaveBeenCalledTimes(1);
+  expect(editor.undo()).toBe(true);
+  expect(editor.getConfig().outputs.left.warp.grid.columns).toBe(7);
+});
+
+test("stale grid previews are rejected after the warp changes", () => {
+  const editor = createWarpEditor({ config: clone(DEFAULT_PROJECTION_CONFIG), output: "left" });
+  const preview = editor.previewGridLayout("remove", { axis: "row", index: 2 });
+  const changed = editor.getConfig(); changed.outputs.left.warp.keystone.corners[0][0] = 0.01;
+  editor.setConfig(changed, { rebase: false });
+  expect(editor.commitGridLayoutPreview(preview)).toBe(false);
+  expect(editor.getConfig().outputs.left.warp.grid.rows).toBe(7);
+  expect(editor.getState().historyDepth).toBe(0);
+});
+
+test("insert preview selects the new line and warns on the existing sampled layout comparison", () => {
+  const config = clone(DEFAULT_PROJECTION_CONFIG);
+  config.outputs.left.warp.baseline = clone(renderParity.warp.baseline);
+  config.outputs.left.warp.grid = clone(renderParity.warp.grid);
+  config.outputs.left.warp.grid.offsets[4] = [.01, .005];
+  const editor = createWarpEditor({ config, output: "left", baselineMesh: renderParity.mesh });
+  editor.setMode("grid"); editor.select(gridSelection("row", 1));
+  const inserted = editor.previewGridLayout("add", { axis: "row", position: 45 });
+  expect(inserted).toMatchObject({ ok: true, selection: { mode: "grid", kind: "row", index: 1 }, grid: { rows: 4 } });
+  expect(inserted.baseWarpIdentity).toBe(JSON.stringify(config.outputs.left.warp));
+  const moved = editor.previewGridLayout("move", { axis: "column", index: 1, position: 52 });
+  expect(moved.ok).toBe(true);
+  expect(moved.comparison).toMatchObject({ comparison: "sampled-only" });
+  expect(moved.comparison.maximumDifferencePx).toBeGreaterThan(.01);
+  expect(moved.warning).toContain("Sampled layout difference");
+  expect(moved.requiresConfirmation).toBe(true);
 });
 
 test("a held nudge accumulates from its captured warp and records once on end", () => {

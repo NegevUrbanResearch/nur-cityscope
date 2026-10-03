@@ -5,19 +5,36 @@ import { createWarpEditor, gridSelection } from "../../frontend/src/projection-c
 import { DEFAULT_PROJECTION_CONFIG } from "../../frontend/src/shared/projection-config-schema.js";
 import { createIdentityProjectionMesh } from "../../frontend/src/shared/projection-warp-geometry.js";
 
-function fixture({ handles = [{ x: 0.25, y: 0.25 }], selection = { mode: "grid", kind: "point", index: 0, indices: [0] }, rows = 7, columns = 7, rect = { left: 0, top: 0, width: 960, height: 540 }, viewBox = { x: 0, y: 0, width: 1920, height: 1080 } } = {}) {
+function fixture({ handles = [{ x: 0.25, y: 0.25 }], selection = { mode: "grid", kind: "point", index: 0, indices: [0] }, rows = 7, columns = 7, rect = { left: 0, top: 0, width: 960, height: 540 }, viewBox = { x: 0, y: 0, width: 1920, height: 1080 }, evaluatedMesh = null, placementAxis = null } = {}) {
   const listeners = new Map();
   const surface = {
     ownerDocument: { visibilityState: "visible", addEventListener(type, callback) { listeners.set(`doc:${type}`, callback); }, removeEventListener(type) { listeners.delete(`doc:${type}`); }, defaultView: { addEventListener(type, callback) { listeners.set(`win:${type}`, callback); }, removeEventListener(type) { listeners.delete(`win:${type}`); } } },
     addEventListener(type, callback) { listeners.set(type, callback); }, removeEventListener(type) { listeners.delete(type); },
     setPointerCapture: vi.fn(), releasePointerCapture: vi.fn(), focus: vi.fn(),
   };
-  const calls = { select: vi.fn(), start: vi.fn(), move: vi.fn(), end: vi.fn(), cancel: vi.fn(), navigate: vi.fn() };
-  const geometry = { rect, viewBox, handles, selection, rows, columns, side: "left", mode: selection.mode };
-  const binder = bindWarpPointerInput({ surface, readGeometry: () => geometry, onSelect: calls.select, onStart: calls.start, onMove: calls.move, onEnd: calls.end, onCancel: calls.cancel, onNavigate: calls.navigate });
+  const calls = { select: vi.fn(), start: vi.fn(), move: vi.fn(), end: vi.fn(), cancel: vi.fn(), navigate: vi.fn(), insert: vi.fn() };
+  const geometry = { rect, viewBox, handles, selection, rows, columns, side: "left", mode: selection.mode, evaluatedMesh, placementAxis };
+  const binder = bindWarpPointerInput({ surface, readGeometry: () => geometry, onSelect: calls.select, onStart: calls.start, onMove: calls.move, onEnd: calls.end, onCancel: calls.cancel, onNavigate: calls.navigate, onInsert: calls.insert });
   const fire = (type, event = {}) => listeners.get(type)?.({ type, pointerId: 1, isPrimary: true, button: 0, clientX: 240, clientY: 135, preventDefault: vi.fn(), ...event });
   return { surface, calls, geometry, binder, fire };
 }
+
+test("viewer insertion requires Add placement mode and uses the evaluated mesh inverse", () => {
+  const evaluatedMesh = { vertices: [
+    { s: 0, t: 0, x: .2, y: .1 }, { s: 1, t: 0, x: 1.2, y: .2 }, { s: 0, t: 1, x: .3, y: 1.6 },
+  ], triangles: [0, 1, 2] };
+  const f = fixture({ handles: [{ x: 0, y: 0 }], evaluatedMesh, selection: { mode: "grid", kind: "row", index: 1, indices: [7, 8, 9, 10, 11, 12, 13] }, rect: { left: 0, top: 0, width: 1920, height: 1080 } });
+  const x = .43 * 1920, y = .57 * 1080;
+  f.fire("pointerdown", { clientX: x, clientY: y });
+  expect(f.calls.insert).not.toHaveBeenCalled();
+  f.geometry.placementAxis = "row";
+  f.geometry.handles = [{ x: .43, y: .57 }]; // Placement clicks take priority even when they land on a handle.
+  f.fire("pointerdown", { clientX: x, clientY: y });
+  expect(f.calls.insert).toHaveBeenCalledWith({ output: "left", axis: "row", position: expect.closeTo(30) });
+  expect(f.calls.select).not.toHaveBeenCalled();
+  expect(f.calls.start).not.toHaveBeenCalled();
+  f.binder.dispose();
+});
 
 test.each([
   { side: "left", rows: 7, columns: 7, index: 17, expected: { mode: "grid", kind: "row", index: 2 } },

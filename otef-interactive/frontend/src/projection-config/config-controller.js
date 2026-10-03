@@ -167,6 +167,9 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
   let editorBaselineIdentity = null;
   let editorBaselineMeshes = { left: null, right: null };
   let requestedEditorBaselineIdentity = null;
+  const gridPreviews = { left: null, right: null };
+  const gridPlacements = { left: null, right: null };
+  let gridPreviewSequence = 0;
   let namesRunPending = false;
   let namesDatasetVersion = "";
   let namesTargetRequest = 0;
@@ -324,9 +327,18 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     const traceStarted = projectionTraceTime(trace);
     recordProjectionTrace(trace, 'redraw', { surface: 'page', phase: 'start', live: Boolean(state.live) });
     const rows = [...statusRows.values()].map((row) => ({ ...row, text: rowText(row) }));
-    const warpStates = Object.fromEntries(["left", "right"].map((output) => [output, { ...warpEditors[output].getState(),
+    const warpStates = Object.fromEntries(["left", "right"].map((output) => {
+      const editor = warpEditors[output];
+      const pendingPreview = gridPreviews[output];
+      let evaluatedMesh = null;
+      try { evaluatedMesh = editor.getEvaluatedMesh(); } catch {}
+      if (pendingPreview?.ok && pendingPreview.baseWarpIdentity !== JSON.stringify(editor.getConfig().outputs[output].warp)) {
+        gridPreviews[output] = { ...pendingPreview, ok: false, status: "error", error: "The warp changed. Preview the grid edit again." };
+      }
+      return [output, { ...editor.getState(), gridLayoutPreview: gridPreviews[output], gridPlacement: gridPlacements[output],
       ...(!editorBaselineReady ? { baselineAvailable: false, historyDepth: 0, redoDepth: 0 } : {}),
-      config: warpEditors[output].getConfig(), baselineMesh: editorBaselineMeshes[output], handles: warpEditors[output].getControlPoints() }]));
+      config: editor.getConfig(), baselineMesh: editorBaselineMeshes[output], evaluatedMesh, handles: editor.getControlPoints() }];
+    }));
     view.update({ state: { ...state, selectedPresetId }, errors: fieldErrors, parameterHistory: parameterHistory.state(),
       conflict: conflict || state.migrationWarnings?.join(' ') || '',
       statusText: pendingAction
@@ -672,6 +684,108 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     if (!editMeta.phase || editMeta.phase === 'start') nudgeAnchors.delete(resolvedFieldPath(state.draft, path));
     return commitScalar({ path, ...editMeta, value: editMeta.canonicalValue !== undefined ? editMeta.canonicalValue : fieldValueFromInput(descriptor, raw) });
   }
+  function gridCandidate(editor, output, preview) {
+    const candidate = editor.getConfig();
+    candidate.outputs[output].warp.grid = clone(preview.grid);
+    return candidate;
+  }
+  async function validateGridCandidate(candidate, token) {
+    const identity = JSON.stringify(candidate);
+    const revision = Number.isSafeInteger(expectedRevision) ? expectedRevision + 1 : 1;
+    const result = await validator.validateCandidate({ config: clone(candidate), identity, generation: token, revision });
+    return result?.valid === true && result.identity === identity ? { valid: true } : { valid: false, reason: result?.reason || "Candidate geometry was rejected." };
+  }
+  function currentGridDraftIdentity() { return JSON.stringify(state.draft || DEFAULT_PROJECTION_CONFIG); }
+  async function startGridLayoutPreview(output, operation, values) {
+    if (!finishPendingEdit()) return false;
+    const editor = warpEditors[output];
+    if (!editor || editor.getState().adjusting) return false;
+    const id = ++gridPreviewSequence;
+    const preview = editor.previewGridLayout(operation, values);
+    if (!preview.ok) {
+      gridPreviews[output] = { ...preview, id, status: "error", requiresConfirmation: true };
+      refresh();
+      return false;
+    }
+    const baseDraftIdentity = currentGridDraftIdentity();
+    const pending = { ...preview, id, status: "validating" };
+    gridPreviews[output] = pending;
+    refresh();
+    try {
+      const candidate = gridCandidate(editor, output, preview);
+      const result = await validateGridCandidate(candidate, id);
+      if (disposed || gridPreviews[output]?.id !== id) return false;
+      if (preview.output !== output || JSON.stringify(editor.getConfig().outputs[output].warp) !== preview.baseWarpIdentity || currentGridDraftIdentity() !== baseDraftIdentity) {
+        gridPreviews[output] = { ...pending, ok: false, status: "error", error: "The draft changed while checking this preview. Preview the grid edit again." };
+        refresh();
+        return false;
+      }
+      if (!result.valid) {
+        gridPreviews[output] = { ...pending, ok: false, status: "error", error: result.reason };
+        refresh();
+        return false;
+      }
+      if (preview.requiresConfirmation) {
+        gridPlacements[output] = null;
+        gridPreviews[output] = { ...pending, status: "ready" };
+        refresh();
+        return true;
+      }
+      gridPreviews[output] = null;
+      gridPlacements[output] = null;
+      const committed = withWarpMutation(() => editor.commitGridLayoutPreview(preview));
+      if (!committed) gridPreviews[output] = { ...pending, ok: false, status: "error", error: editor.getState().validationMessage || "The preview is stale." };
+      refresh();
+      return committed;
+    } catch (error) {
+      if (gridPreviews[output]?.id === id) {
+        gridPreviews[output] = { ...pending, ok: false, status: "error", error: error?.message || "Candidate validation failed." };
+        refresh();
+      }
+      return false;
+    }
+  }
+  async function confirmGridLayoutPreview(output) {
+    const pending = gridPreviews[output];
+    const editor = warpEditors[output];
+    if (!pending?.ok || pending.status !== "ready" || !editor || editor.getState().adjusting) return false;
+    if (JSON.stringify(editor.getConfig().outputs[output].warp) !== pending.baseWarpIdentity) {
+      gridPreviews[output] = { ...pending, ok: false, status: "error", error: "The warp changed. Preview the grid edit again." };
+      refresh();
+      return false;
+    }
+    const token = ++gridPreviewSequence;
+    const latestDraftIdentity = currentGridDraftIdentity();
+    gridPreviews[output] = { ...pending, status: "validating" };
+    refresh();
+    try {
+      const candidate = gridCandidate(editor, output, pending);
+      const result = await validateGridCandidate(candidate, token);
+      if (disposed || gridPreviews[output]?.id !== pending.id) return false;
+      if (JSON.stringify(editor.getConfig().outputs[output].warp) !== pending.baseWarpIdentity || currentGridDraftIdentity() !== latestDraftIdentity) {
+        gridPreviews[output] = { ...pending, ok: false, status: "error", error: "The draft changed while checking this confirmation. Preview the grid edit again." };
+        refresh();
+        return false;
+      }
+      if (!result.valid) {
+        gridPreviews[output] = { ...pending, ok: false, status: "error", error: result.reason };
+        refresh();
+        return false;
+      }
+      gridPreviews[output] = null;
+      gridPlacements[output] = null;
+      const committed = withWarpMutation(() => editor.commitGridLayoutPreview(pending));
+      if (!committed) gridPreviews[output] = { ...pending, ok: false, status: "error", error: editor.getState().validationMessage || "The preview is stale." };
+      refresh();
+      return committed;
+    } catch (error) {
+      if (gridPreviews[output]?.id === pending.id) {
+        gridPreviews[output] = { ...pending, ok: false, status: "error", error: error?.message || "Candidate validation failed." };
+        refresh();
+      }
+      return false;
+    }
+  }
   function handleFieldCancel(path, resolvedPath = path) {
     const target = resolvedPath || path;
     const next = Object.fromEntries(Object.entries(fieldErrors).filter(([key]) => key !== target && !key.startsWith(`${target}.`) && !target.startsWith(`${key}.`)));
@@ -742,6 +856,34 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
   function handleWarpAction(action, value) {
     if (disposed || (!editorBaselineReady && !["warp-select", "warp-mode", "warp-step"].includes(action))) return false;
     if (["warp-select", "warp-mode"].includes(action) && !finishPendingEdit()) return false;
+    if (action === "warp-grid-layout") return startGridLayoutPreview(value?.output || activeWarpOutput(), value?.operation, value || {});
+    if (action === "warp-grid-placement") {
+      const output = value?.output || activeWarpOutput();
+      const axis = value?.axis;
+      gridPreviewSequence += 1;
+      gridPreviews[output] = null;
+      gridPlacements[output] = axis ? { axis, error: "" } : null;
+      refresh();
+      return true;
+    }
+    if (action === "warp-grid-placement-error") {
+      const output = value?.output || activeWarpOutput();
+      if (gridPlacements[output]?.axis === value?.axis) {
+        const reason = value.reason === "ambiguous" ? "This viewer location overlaps multiple source positions. Enter a source percentage instead." : value.reason === "degenerate" ? "This part of the evaluated mesh cannot be inverted. Enter a source percentage instead." : "This click is outside the evaluated mesh. Enter a source percentage instead.";
+        gridPlacements[output] = { ...gridPlacements[output], error: reason };
+        refresh();
+      }
+      return false;
+    }
+    if (action === "warp-grid-layout-confirm") return confirmGridLayoutPreview(value?.output || activeWarpOutput());
+    if (action === "warp-grid-layout-cancel") {
+      const output = value?.output || activeWarpOutput();
+      gridPreviewSequence += 1;
+      gridPreviews[output] = null;
+      gridPlacements[output] = null;
+      refresh();
+      return true;
+    }
     return withWarpMutation(() => {
       const output = value?.coordinateTarget?.output || value?.output || activeWarpOutput();
       const editor = warpEditors[output];

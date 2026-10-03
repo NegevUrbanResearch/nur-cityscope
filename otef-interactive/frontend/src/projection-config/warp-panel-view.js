@@ -24,6 +24,14 @@ export function createWarpPanelView({ document: doc, onAction = () => {}, onPoin
   const stepRow = make(doc, "div", "warp-step-row");
   const adjustmentRow = make(doc, "div", "warp-adjustment-row");
   const historyRow = make(doc, "div", "warp-history-row");
+  const gridPreviewRow = make(doc, "div", "warp-grid-layout-preview");
+  gridPreviewRow.hidden = true;
+  const gridPreviewStatus = make(doc, "p", "warp-grid-layout-preview-status"); gridPreviewStatus.setAttribute("role", "status"); gridPreviewStatus.setAttribute("aria-live", "polite");
+  const gridPreviewConfirm = make(doc, "button", "warp-action", "Confirm grid change"); gridPreviewConfirm.type = "button"; gridPreviewConfirm.dataset.action = "warp-grid-layout-confirm";
+  const gridPreviewCancel = make(doc, "button", "warp-action", "Cancel preview"); gridPreviewCancel.type = "button"; gridPreviewCancel.dataset.action = "warp-grid-layout-cancel";
+  gridPreviewConfirm.addEventListener("click", () => onAction("warp-grid-layout-confirm", { output: element.dataset.output }));
+  gridPreviewCancel.addEventListener("click", () => onAction("warp-grid-layout-cancel", { output: element.dataset.output }));
+  gridPreviewRow.append(gridPreviewStatus, gridPreviewConfirm, gridPreviewCancel);
   const selectionStatus = make(doc, "p", "warp-selection-status"); selectionStatus.setAttribute("role", "status");
   const selectionControls = make(doc, "div", "warp-selection-controls"); selectionControls.setAttribute("role", "group"); selectionControls.setAttribute("aria-label", "Warp selection");
   const selectionButtons = [];
@@ -130,7 +138,7 @@ export function createWarpPanelView({ document: doc, onAction = () => {}, onPoin
   positionRow.appendChild(position);
   stepRow.append(stepLabel, warpStep);
   adjustmentRow.append(nudgePad, relativePad);
-  element.append(selectionRow, positionRow, stepRow, adjustmentRow, historyRow);
+  element.append(selectionRow, positionRow, stepRow, adjustmentRow, gridPreviewRow, historyRow);
   historyRow.appendChild(history);
   const controls = { warpPanel: element, warpStatus: selectionStatus, warpSelectionControls: selectionControls, warpSelectionButtons: selectionButtons, warpSelectionPicker: selectionPicker, warpNumeric: position, warpCoordinateFields: coordinateFields, warpPositionX: coordinateFields.get("x").number, warpPositionY: coordinateFields.get("y").number, warpPositionLabels: [...coordinateFields.values()].map((control) => control.wrap.children[0]), warpStep, warpArrows: nudgePad, warpUndo, warpRedo, warpReset, warpResetAll, warpActions: history, relativePad, warpHistoryRow: historyRow };
   let state = null;
@@ -186,6 +194,30 @@ export function createWarpPanelView({ document: doc, onAction = () => {}, onPoin
       warpReset.textContent = selection.kind === "all" ? "Reset all" : selection.kind === "edge" ? "Reset edge" : mode === "grid" ? `Reset ${selection.kind}` : "Reset corner";
       const groupName = selection.kind === "all" ? mode === "grid" ? "All grid points" : "All four corners" : selection.kind === "edge" ? edgeNames[Math.max(0, Math.min(3, Number(selection.index) || 0))] : `${selection.kind} ${Number(selection.index || 0) + 1}`;
       selectionStatus.textContent = `${groupName} · ${indices.length} points · ${state.stepMode === "coarse" ? "1 px" : "0.25 px"}${state.validationMessage ? ` · ${state.validationMessage}` : ""}`;
+      const preview = state.gridLayoutPreview;
+      const placement = state.gridPlacement;
+      gridPreviewRow.hidden = !preview && !placement;
+      gridPreviewConfirm.hidden = !preview?.requiresConfirmation;
+      gridPreviewCancel.hidden = !preview && !placement;
+      if (preview) {
+        const grid = state.config?.outputs?.[output]?.warp?.grid;
+        const axis = preview.values?.axis;
+        const beforeCount = axis === "row" ? grid?.rows : grid?.columns;
+        const afterCount = axis === "row" ? preview.grid?.rows : preview.grid?.columns;
+        const scope = preview.operation === "remove" ? `Remove ${axis} ${Number(preview.values?.index ?? 0) + 1}: ${beforeCount} to ${afterCount} lines.`
+          : preview.operation === "rebuild" || preview.operation === "counts" ? `Rebuild uniform grid: ${grid?.columns} columns by ${grid?.rows} rows.` : "Review the grid change before applying it.";
+        const addPosition = preview.operation === "add" ? ` Candidate at ${Number(preview.values?.position).toFixed(2)}% source ${preview.values?.axis === "row" ? "Y" : "X"}.` : "";
+        gridPreviewStatus.textContent = preview.error || (preview.status === "validating" ? "Checking grid candidate…" : preview.warning ? `${preview.warning} ${preview.requiresConfirmation && ["remove", "rebuild", "counts"].includes(preview.operation) ? scope : ""}${addPosition}` : `${scope}${addPosition}`);
+        gridPreviewStatus.dataset.state = preview.error ? "error" : preview.warning ? "warning" : preview.status || "ready";
+        gridPreviewConfirm.hidden = !preview.requiresConfirmation;
+        gridPreviewConfirm.disabled = Boolean(state.adjusting || !preview.ok || preview.status !== "ready");
+        gridPreviewCancel.disabled = Boolean(state.adjusting);
+      } else if (placement) {
+        gridPreviewStatus.dataset.state = placement.error ? "error" : "placement";
+        gridPreviewStatus.textContent = placement.error || `Add ${placement.axis}: click inside the evaluated mesh or enter a source percentage.`;
+        gridPreviewConfirm.disabled = true;
+        gridPreviewCancel.disabled = Boolean(state.adjusting);
+      }
       [...selectionButtons, selectionPicker, warpStep, ...nudgePad.children, relativePad, warpReset, ...coordinateFields.values()].forEach((item) => { if (item?.disabled !== undefined) item.disabled = Boolean(state.adjusting); });
     },
     retireGestures() {

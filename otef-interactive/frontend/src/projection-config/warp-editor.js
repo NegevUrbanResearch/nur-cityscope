@@ -1,6 +1,6 @@
 import { validateProjectionConfig } from "../shared/projection-config-schema.js";
-import { evaluateWarpMesh } from "../shared/projection-warp-geometry.js";
-import { insertGridLine, moveGridLine, removeGridLine, uniformGrid } from "../shared/projection-grid-topology.js";
+import { compareRenderedLayouts, evaluateWarpMesh } from "../shared/projection-warp-geometry.js";
+import { insertGridLine, moveGridLine, removeGridLine, resizeGridAxis, uniformGrid } from "../shared/projection-grid-topology.js";
 import { recordProjectionTrace, projectionTraceTime } from './projection-trace-input.js';
 
 const OUTPUT_WIDTH = 1920;
@@ -370,6 +370,75 @@ export function createWarpEditor({
     emit(candidate, { reason: "grid-layout", flush: true });
     return true;
   }
+  function previewGridLayout(operation, values = {}) {
+    if (drag || nudgeGesture) return { ok: false, error: 'Finish or cancel the active adjustment first.' };
+    if (configWarp(current, output)?.enabled === false) return { ok: false, error: 'Correction is bypassed. Enable correction to edit geometry.' };
+    const sourceWarp = configWarp(current, output);
+    if (!sourceWarp?.grid) return { ok: false, error: 'The grid is unavailable.' };
+    try {
+      const candidate = clone(current);
+      const oldGrid = candidate.outputs[output].warp.grid;
+      let grid;
+      let nextSelection = clone(selection);
+      if (operation === 'resize') {
+        const axis = values.axis;
+        grid = resizeGridAxis(oldGrid, axis, Number(values.count));
+      } else if (operation === 'even') {
+        const axis = values.axis || (selection.kind === 'column' ? 'column' : 'row');
+        const count = axis === 'column' ? oldGrid.columns : oldGrid.rows;
+        grid = resizeGridAxis(oldGrid, axis, count);
+      } else if (operation === 'rebuild' || operation === 'counts') {
+        grid = uniformGrid(oldGrid, Number(values.columns ?? oldGrid.columns), Number(values.rows ?? oldGrid.rows));
+      } else if (operation === 'move') grid = moveGridLine(oldGrid, values.axis, values.index, Number(values.position) / 100);
+      else if (operation === 'add') grid = insertGridLine(oldGrid, values.axis, Number(values.position) / 100);
+      else if (operation === 'remove') grid = removeGridLine(oldGrid, values.axis, values.index);
+      else return { ok: false, error: 'Choose a grid layout operation.' };
+      candidate.outputs[output].warp.grid = grid;
+      const errors = validateProjectionConfig(candidate);
+      if (Object.keys(errors).length) return { ok: false, error: Object.values(errors)[0] };
+      const evaluatedPreview = evaluateWarpMesh(sourceWarp.baseline?.type === 'tdMesh' ? baselineMesh : null, candidate.outputs[output].warp, { side: output, schemaVersion: candidate.schemaVersion });
+      const previewHandles = (grid.rowPositions || []).flatMap((t) => (grid.columnPositions || []).map((s) => {
+        const vertex = evaluatedPreview.vertices.find((point) => Math.abs(point.s - s) <= 1e-12 && Math.abs(point.t - t) <= 1e-12);
+        return vertex ? { s, t, x: vertex.x, y: vertex.y } : null;
+      }));
+      if (previewHandles.some((point) => !point)) return { ok: false, error: 'The candidate mesh does not contain every grid knot.' };
+      if (operation === 'add') {
+        const axis = values.axis;
+        const key = axis === 'row' ? 'rowPositions' : 'columnPositions';
+        const inserted = Number(values.position) / 100;
+        const index = grid[key].findIndex((position) => Math.abs(position - inserted) <= 1e-12);
+        nextSelection = gridSelection(axis, index);
+      } else nextSelection = remapGridSelection(selection, oldGrid, grid, operation, values);
+      const comparison = compareRenderedLayouts(baselineMesh, sourceWarp, candidate.outputs[output].warp, { side: output });
+      const baseWarpIdentity = JSON.stringify(sourceWarp);
+      const requiresConfirmation = operation === 'remove' || operation === 'rebuild' || operation === 'counts' || comparison.maximumDifferencePx > 0.01;
+      const preview = {
+        ok: true, output, grid: clone(grid), selection: nextSelection, handles: previewHandles, baseWarpIdentity,
+        operation, values: clone(values), comparison, requiresConfirmation,
+        warning: comparison.maximumDifferencePx > 0.01 ? `Sampled layout difference: ${comparison.maximumDifferencePx.toFixed(3)} output px.` : '',
+      };
+      return clone(preview);
+    } catch (error) {
+      return { ok: false, error: error?.message || 'The grid layout is invalid.' };
+    }
+  }
+  function commitGridLayoutPreview(preview) {
+    if (!allowGeometryCommand() || !preview?.ok || preview.output !== output) return false;
+    if (JSON.stringify(configWarp(current, output)) !== preview.baseWarpIdentity) {
+      validationReason = 'stale_grid_preview';
+      validationMessage = 'The warp changed. Preview the grid edit again.';
+      return false;
+    }
+    const candidate = clone(current);
+    candidate.outputs[output].warp.grid = clone(preview.grid);
+    if (!valid(candidate, { report: true })) return false;
+    remember(current, selection);
+    selection = clone(preview.selection);
+    redoStack = [];
+    validationMessage = '';
+    emit(candidate, { reason: 'grid-layout', flush: true });
+    return true;
+  }
   function retireGesture() { drag = null; nudgeGesture = null; validationMessage = ""; }
   function clearValidation() { validationMessage = ""; validationReason = ""; }
   function getControlPoints() {
@@ -405,9 +474,10 @@ export function createWarpEditor({
   return {
     getConfig: () => clone(current),
     getState: () => ({ output, selection: { ...clone(selection), indices: selectedIndices() }, stepMode, dragging: Boolean(drag), adjusting: Boolean(drag || nudgeGesture), historyDepth: undoStack.length, redoDepth: redoStack.length, baselineAvailable: baselineAvailable(), validationMessage }),
+    getEvaluatedMesh: () => evaluate(current),
     getControlPoints,
     select, setMode, setStep, moveByPixels, nudge, setPosition, resetSelection, resetResiduals, setEnabled, undo, redo,
-    pointerStart, pointerMove, pointerEnd, pointerCancel, beginNudgeGesture, endNudgeGesture, cancelNudgeGesture, retireGesture, clearValidation, setConfig, setBaselineMesh, editGridLayout,
+    pointerStart, pointerMove, pointerEnd, pointerCancel, beginNudgeGesture, endNudgeGesture, cancelNudgeGesture, retireGesture, clearValidation, setConfig, setBaselineMesh, editGridLayout, previewGridLayout, commitGridLayoutPreview,
   };
 }
 

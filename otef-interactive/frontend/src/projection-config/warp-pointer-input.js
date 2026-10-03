@@ -1,4 +1,5 @@
 import { clampWarpViewBox, fitWarpViewport, transformWarpViewBox, warpPointFromClient } from "./warp-viewport.js";
+import { invertRenderedMeshPoint } from "../shared/projection-warp-geometry.js";
 import { recordProjectionTrace } from './projection-trace-input.js';
 
 const HIT_RADIUS = 24;
@@ -13,7 +14,7 @@ export function gridSelectionForHandle(selection, index, columns) {
 }
 
 /** Bind one geometry gesture or a two-touch navigation gesture to the stable SVG. */
-export function bindWarpPointerInput({ surface, readGeometry, onSelect, onStart, onMove, onEnd, onCancel, onNavigate, trace }) {
+export function bindWarpPointerInput({ surface, readGeometry, onSelect, onStart, onMove, onEnd, onCancel, onNavigate, onInsert, onInsertFailure, trace }) {
   const doc = surface.ownerDocument;
   const win = doc?.defaultView;
   let active = null;
@@ -147,6 +148,17 @@ export function bindWarpPointerInput({ surface, readGeometry, onSelect, onStart,
       pan = { pointerId: event.pointerId, rect, baseViewBox: geometry.baseViewBox || geometry.viewBox, startViewBox: { ...geometry.viewBox }, viewBox: { ...geometry.viewBox }, previous: { clientX: event.clientX, clientY: event.clientY } };
       event.preventDefault?.();
       try { surface.setPointerCapture?.(event.pointerId); recordProjectionTrace(trace, 'capture', { surface: 'warp', phase: 'request', pointerId: event.pointerId, accepted: true }); } catch { recordProjectionTrace(trace, 'capture', { surface: 'warp', phase: 'request', pointerId: event.pointerId, accepted: false, reason: 'capture_failed' }); pan = null; }
+      return;
+    }
+    const placementAxis = geometry.mode === "grid" && ["row", "column"].includes(geometry.placementAxis) ? geometry.placementAxis : null;
+    if (placementAxis && geometry.editable !== false && geometry.evaluatedMesh && onInsert) {
+      const placementPoint = warpPointFromClient(event, rect, geometry.viewBox);
+      const inverse = invertRenderedMeshPoint(geometry.evaluatedMesh, { x: placementPoint.x / 1920, y: placementPoint.y / 1080 });
+      if (inverse.ok) {
+        onInsert({ output: geometry.side || geometry.output, axis: placementAxis, position: inverse[placementAxis === "row" ? "t" : "s"] * 100 });
+        event.preventDefault?.();
+        recordProjectionTrace(trace, 'gesture', { surface: 'warp', phase: 'insert', output: geometry.side || geometry.output, axis: placementAxis });
+      } else onInsertFailure?.({ output: geometry.side || geometry.output, axis: placementAxis, reason: inverse.reason });
       return;
     }
     const { x, y, width: boxWidth, height: boxHeight } = geometry.viewBox;

@@ -51,6 +51,28 @@ test("remove, move, and uniform count changes return independent resampled grids
   expect(removed.offsets).not.toBe(original.offsets);
 });
 
+test("resizing one axis preserves the other custom source axis", () => {
+  const { resizeGridAxis } = requireTopology();
+  const customColumns = { ...structuredClone(fixture.grid), columnPositions: [0, 0.53, 1] };
+  const next = resizeGridAxis(customColumns, "row", 5);
+  expect(next.columnPositions).toEqual(customColumns.columnPositions);
+  expect(next.rows).toBe(5);
+  expect(next.offsets).toHaveLength(next.rows * next.columns);
+});
+
+test("axis resize accepts every supported count and rejects invalid counts or axes", () => {
+  const { resizeGridAxis } = requireTopology();
+  for (let count = 2; count <= 16; count += 1) {
+    const next = resizeGridAxis(fixture.grid, "column", count);
+    expect(next.columns).toBe(count);
+    expect(next.columnPositions[0]).toBe(0);
+    expect(next.columnPositions.at(-1)).toBe(1);
+    expect(next.columnPositions.every((position, index, axis) => index === 0 || position > axis[index - 1])).toBe(true);
+  }
+  expect(() => resizeGridAxis(fixture.grid, "row", 17)).toThrow();
+  expect(() => resizeGridAxis(fixture.grid, "depth", 4)).toThrow();
+});
+
 test("topology rejects invalid axes, counts, line edits, and nonfinite samples", () => {
   const { uniformAxis, gridInterval, sampleGridOffset, insertGridLine, removeGridLine, moveGridLine, uniformGrid } = requireTopology();
   for (const count of [true, 1, 17, 2.5, Infinity, NaN]) expect(() => uniformAxis(count)).toThrow();

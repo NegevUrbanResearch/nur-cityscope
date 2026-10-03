@@ -171,7 +171,7 @@ function fakeClient(initialSnapshot) {
   };
 }
 
-function tracedWarpHarness() {
+function tracedWarpHarness({ candidateValidator } = {}) {
   const previousDocument = globalThis.document;
   globalThis.document = documentStub();
   const root = element("main");
@@ -182,7 +182,7 @@ function tracedWarpHarness() {
     getStatus: () => ({ recording: false, connected: false, acknowledged: 0, queued: 0, pending: 0, dropped: 0 }),
     subscribe: () => () => {},
   };
-  const api = mountProjectionConfig(root, { client, trace });
+  const api = mountProjectionConfig(root, { client, trace, candidateValidator });
   client.setLive(false);
   find(root, (node) => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-keystone").dispatch("click");
   const surface = find(root, (node) => node.attributes?.class === "warp-edit-surface");
@@ -424,6 +424,39 @@ function replacementHarness() {
 }
 
 describe("projection config controller", () => {
+  test("grid topology preview cancellation is write-free and confirmation validates and merges the latest draft once", async () => {
+    const previousDocument = globalThis.document; globalThis.document = documentStub();
+    const root = element("main"); root.ownerDocument = globalThis.document;
+    const client = fakeClient(); const checks = [];
+    const api = mountProjectionConfig(root, { client, candidateValidator: { validateCandidate: args => new Promise(resolve => checks.push({ ...args, resolve })), dispose() {} } });
+    try {
+      client.setLive(false);
+      find(root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+      find(root, node => node.dataset?.warpSelectionKind === "row").dispatch("click");
+      const picker = find(root, node => node.className === "warp-selection-picker"); picker.value = "2"; picker.dispatch("change");
+      const remove = find(root, node => node.dataset?.gridLayoutAction === "remove-row");
+      client.setDraft.mockClear(); client.apply.mockClear();
+      remove.dispatch("click"); await vi.waitFor(() => expect(checks).toHaveLength(1));
+      expect(client.setDraft).not.toHaveBeenCalled(); expect(client.apply).not.toHaveBeenCalled();
+      find(root, node => node.dataset?.action === "warp-grid-layout-cancel").dispatch("click");
+      checks[0].resolve({ identity: checks[0].identity, valid: true }); await Promise.resolve();
+      expect(client.setDraft).not.toHaveBeenCalled();
+
+      remove.dispatch("click"); await vi.waitFor(() => expect(checks).toHaveLength(2));
+      checks[1].resolve({ identity: checks[1].identity, valid: true });
+      await vi.waitFor(() => expect(find(root, node => node.dataset?.action === "warp-grid-layout-confirm").disabled).toBe(false));
+      const latest = clone(client.getState().draft); latest.pre.scale = 1.5; client.report({ draft: latest, hasLocalDraft: true });
+      find(root, node => node.dataset?.action === "warp-grid-layout-confirm").dispatch("click");
+      await vi.waitFor(() => expect(checks).toHaveLength(3));
+      expect(client.setDraft).not.toHaveBeenCalled();
+      checks[2].resolve({ identity: checks[2].identity, valid: true });
+      await vi.waitFor(() => expect(client.setDraft).toHaveBeenCalledTimes(1));
+      expect(client.getState().draft.pre.scale).toBe(1.5);
+      expect(client.getState().draft.outputs.left.warp.grid.rows).toBe(6);
+      expect(client.setDraft.mock.calls[0][0].outputs.left.warp.grid.rows).toBe(6);
+    } finally { api.dispose(); globalThis.document = previousDocument; }
+  });
+
   test('real-client Live Undo validates and publishes the exact restored scalar after its own acknowledgment', async () => {
     const root=element('main'); root.ownerDocument=documentStub(); const h=replacementHarness(); const checks=[];
     h.snapshot.config.pre.tx=.123456789123456;
@@ -1025,7 +1058,8 @@ describe("projection config controller", () => {
     const loader = createProjectionBaselineCatalogLoader({ base: f.base, initialSnapshot: f.snapshotA,
       fetchImpl: (url, options) => url.endsWith('framing.json') ? gate.promise : f.fetchImpl(url, options) });
     const client = fakeClient(); client.setLive(false);
-    const root = element('main'), api = mountProjectionConfig(root, { client, baselineCatalogLoader: loader });
+    const candidateValidator = { validateCandidate: async ({ identity }) => ({ identity, valid: true }), dispose() {} };
+    const root = element('main'), api = mountProjectionConfig(root, { client, baselineCatalogLoader: loader, candidateValidator });
     try {
       find(root, (node) => node.dataset?.action === 'warp-editor-open' && node.parentElement?.dataset?.node === 'left-grid').dispatch('click');
       const surface = find(root, (node) => node.attributes?.class === 'warp-edit-surface');
@@ -1041,7 +1075,10 @@ describe("projection config controller", () => {
       client.report({ draft: previous, hasLocalDraft: true });
       const columns = find(root, (node) => node.dataset?.gridLayoutField === 'columns');
       columns.value = '4'; columns.dispatch('input'); columns.dispatch('blur');
-      expect(client.getState().draft.outputs.left.warp.grid.columns).toBe(4);
+      const confirm = find(root, (node) => node.dataset?.action === 'warp-grid-layout-confirm');
+      await vi.waitFor(() => expect(confirm.disabled).toBe(false));
+      confirm.dispatch('click');
+      await vi.waitFor(() => expect(client.getState().draft.outputs.left.warp.grid.columns).toBe(4));
       expect(client.getState().draft.pre).toEqual(previous.pre);
       gate.resolve(response(f.payloads.get(`${f.base}framing.json`))); await new Promise((done) => setTimeout(done, 10));
       expect(client.getState().draft.outputs.left.warp.baseline.type).toBe('identity');
@@ -2455,29 +2492,30 @@ describe("projection config controller", () => {
     restore();
   });
 
-  test("Grid layout edit preserves selection through synchronous draft notification and flushes once in Live", async () => {
-    const { root, client, trace, redraws, restore } = tracedWarpHarness();
+  test("Grid axis resize preserves selection and flushes once in Live after candidate validation", async () => {
+    const { root, client, trace, redraws, restore } = tracedWarpHarness({ candidateValidator: { validateCandidate: async ({ identity }) => ({ identity, valid: true }), dispose() {} } });
     find(root, (node) => node.dataset?.action === "warp-editor-close").dispatch("click");
     client.setLive(true);
     find(root, (node) => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
-    const chooseRow = find(root, (node) => node.dataset?.warpSelectionKind === "row");
-    chooseRow.dispatch("click");
-    const rowPicker = find(root, (node) => node.className === "warp-selection-picker");
-    rowPicker.value = "2"; rowPicker.dispatch("change");
+    const chooseColumn = find(root, (node) => node.dataset?.warpSelectionKind === "column");
+    chooseColumn.dispatch("click");
+    const columnPicker = find(root, (node) => node.className === "warp-selection-picker");
+    columnPicker.value = "2"; columnPicker.dispatch("change");
     const before = clone(client.getState().draft.outputs.left.warp.grid);
     client.setDraft.mockClear(); client.apply.mockClear(); trace.record.mockClear();
     const rows = find(root, (node) => node.dataset?.gridLayoutField === "rows");
     rows.value = "3"; rows.dispatch("input"); rows.dispatch("change");
+    await vi.waitFor(() => expect(client.getState().draft.outputs.left.warp.grid.rows).toBe(3));
     expect(client.getState().draft.outputs.left.warp.grid.rows).toBe(3);
     expect(client.setDraft).toHaveBeenCalledTimes(1);
     expect(client.apply).toHaveBeenCalledTimes(1);
-    expect(redraws()).toBe(1);
-    expect(rowPicker.value).toBe("2");
+    expect(redraws()).toBeGreaterThan(0); // Preview, validation, and commit each refresh the shared panel.
+    expect(columnPicker.value).toBe("2");
     find(root, (node) => node.dataset?.action === "warp-undo").dispatch("click");
     expect(client.getState().draft.outputs.left.warp.grid).toEqual(before);
     expect(client.setDraft).toHaveBeenCalledTimes(2);
     expect(client.apply).toHaveBeenCalledTimes(2);
-    expect(rowPicker.value).toBe("2");
+    expect(columnPicker.value).toBe("2");
     restore();
   });
 
@@ -2597,7 +2635,7 @@ describe("projection config controller", () => {
     restore();
   });
 
-  test("invalid source-line geometry reports near Grid controls without draft, apply, or history writes", () => {
+  test("invalid source-line geometry reports in the preview status without draft, apply, or history writes", async () => {
     const { root, client, trace, restore } = tracedWarpHarness();
     find(root, (node) => node.dataset?.action === "warp-editor-close").dispatch("click");
     find(root, (node) => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
@@ -2611,8 +2649,36 @@ describe("projection config controller", () => {
     expect(client.setDraft).not.toHaveBeenCalled();
     expect(client.apply).not.toHaveBeenCalled();
     expect(find(root, (node) => node.dataset?.action === "warp-undo").disabled).toBe(true);
-    expect(find(root, (node) => node.className === "warp-grid-layout-error").textContent).toContain("between its neighbors");
+    await vi.waitFor(() => expect(find(root, (node) => node.className === "warp-grid-layout-preview-status").textContent).toContain("between its neighbors"));
     restore();
+  });
+
+  test("invalid or stale async grid candidates expose a reason without draft, history, or Live writes", async () => {
+    const checks = [];
+    const candidateValidator = { validateCandidate: vi.fn(({ identity }) => candidateValidator.validateCandidate.mock.calls.length === 1
+      ? Promise.resolve({ identity, valid: false, reason: "Candidate geometry was rejected." })
+      : new Promise(resolve => checks.push({ identity, resolve }))), dispose() {} };
+    const { root, client, api, restore } = tracedWarpHarness({ candidateValidator });
+    try {
+      find(root, node => node.dataset?.action === "warp-editor-close").dispatch("click");
+      find(root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+      find(root, node => node.dataset?.warpSelectionKind === "row").dispatch("click");
+      const picker = find(root, node => node.className === "warp-selection-picker"); picker.value = "2"; picker.dispatch("change");
+      const remove = find(root, node => node.dataset?.gridLayoutAction === "remove-row");
+      client.setDraft.mockClear(); client.apply.mockClear();
+      remove.dispatch("click"); await vi.waitFor(() => expect(candidateValidator.validateCandidate).toHaveBeenCalledTimes(1));
+      await vi.waitFor(() => expect(find(root, node => node.className === "warp-grid-layout-preview-status").textContent).toContain("Candidate geometry was rejected."));
+      expect(client.setDraft).not.toHaveBeenCalled(); expect(client.apply).not.toHaveBeenCalled();
+      find(root, node => node.dataset?.action === "warp-grid-layout-cancel").dispatch("click");
+
+      remove.dispatch("click"); await vi.waitFor(() => expect(checks).toHaveLength(1));
+      const replacement = clone(client.getState().draft); replacement.outputs.left.warp.keystone.corners[0][0] = .02;
+      client.report({ draft: replacement, hasLocalDraft: true });
+      checks[0].resolve({ identity: checks[0].identity, valid: true });
+      await vi.waitFor(() => expect(find(root, node => node.className === "warp-grid-layout-preview-status").textContent).toContain("warp changed"));
+      expect(client.setDraft).not.toHaveBeenCalled(); expect(client.apply).not.toHaveBeenCalled();
+      expect(find(root, node => node.dataset?.action === "warp-undo").disabled).toBe(true);
+    } finally { restore(); }
   });
 
   test("accepted replacement cancels a pending source input and syncs the new source axis", () => {

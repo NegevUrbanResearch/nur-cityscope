@@ -277,7 +277,13 @@ h2, h3 { margin: 0 0 10px; }
 .warp-inspector[hidden] { display: none; }
 .warp-precision-panel { display: grid; grid-template-columns: minmax(0, 1fr); align-content: start; gap: 6px; min-width: 0; padding: 8px; border: 1px solid var(--config-divider); border-radius: 10px; background: var(--config-surface-raised); }
 .warp-precision-panel > h3 { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
-.warp-selection-row, .warp-position-row, .warp-step-row, .warp-adjustment-row, .warp-history-row { min-width: 0; }
+.warp-selection-row, .warp-position-row, .warp-step-row, .warp-adjustment-row, .warp-grid-layout-preview, .warp-history-row { min-width: 0; }
+.warp-grid-layout-preview { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 6px; padding: 6px; border: 1px solid var(--config-divider); border-radius: 8px; }
+.warp-grid-layout-preview[hidden] { display: none; }
+.warp-grid-layout-preview-status { min-width: 0; margin: 0; overflow-wrap: anywhere; color: var(--config-muted); font-size: .8rem; }
+.warp-grid-layout-preview-status[data-state="error"] { color: var(--config-error); }
+.warp-grid-layout-preview button { min-height: 44px; }
+.warp-grid-layout-preview button[hidden] { display: none; }
 .warp-selection-controls { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; margin: 0 0 4px; }
 .warp-selection-picker { width: 100%; min-width: 0; min-height: 44px; margin: 0; }
 .warp-selection-button, .warp-action { min-width: 0; min-height: 48px; padding: 4px; font-size: .78rem; }
@@ -306,6 +312,8 @@ h2, h3 { margin: 0 0 10px; }
 .warp-output-rect { fill: none; stroke: #f6c453; stroke-width: 4; stroke-dasharray: 18 12; vector-effect: non-scaling-stroke; pointer-events: none; }
 .warp-grid-line { fill: none; stroke: #79c9b2; stroke-width: 3; opacity: .75; vector-effect: non-scaling-stroke; pointer-events: none; }
 .warp-grid-line.selected { stroke: #ffd166; stroke-width: 5; opacity: 1; }
+.warp-grid-preview-line { fill: none; stroke: #f4a261; stroke-width: 2; stroke-dasharray: 8 6; opacity: .82; vector-effect: non-scaling-stroke; pointer-events: none; }
+.warp-grid-preview-line.candidate { stroke: #fff; stroke-width: 5; stroke-dasharray: 3 5; opacity: 1; }
 .warp-handle { fill: #77d8b0; stroke: #07110f; stroke-width: 2; vector-effect: non-scaling-stroke; cursor: grab; }
 .warp-handle.selected { fill: #ffd166; stroke: #fff3c4; }
 .warp-handle:focus-visible { outline: 3px solid #fff3c4; outline-offset: 4px; }
@@ -522,11 +530,12 @@ h2, h3 { margin: 0 0 10px; }
   .warp-editor-dialog[data-presentation="panel"] .warp-editor-fine-panel { grid-column: 2; grid-row: 1; }
   .warp-editor-dialog[data-presentation="panel"] .warp-editor-topology-controls { grid-column: 1; grid-row: 2; align-self: start; }
   .warp-editor-dialog[data-presentation="panel"] .warp-editor-viewport { align-self: start; min-height: 160px; max-height: none; aspect-ratio: 16 / 9; }
-  .warp-editor-dialog[data-presentation="panel"] .warp-precision-panel { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-areas: "selection position" "selection step" "adjustment adjustment" "history history"; align-content: start; gap: 4px; }
+  .warp-editor-dialog[data-presentation="panel"] .warp-precision-panel { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-areas: "selection position" "selection step" "adjustment adjustment" "preview preview" "history history"; align-content: start; gap: 4px; }
   .warp-editor-dialog[data-presentation="panel"] .warp-selection-row { grid-area: selection; }
   .warp-editor-dialog[data-presentation="panel"] .warp-position-row { grid-area: position; }
   .warp-editor-dialog[data-presentation="panel"] .warp-step-row { grid-area: step; }
   .warp-editor-dialog[data-presentation="panel"] .warp-adjustment-row { grid-area: adjustment; }
+  .warp-editor-dialog[data-presentation="panel"] .warp-grid-layout-preview { grid-area: preview; }
   .warp-editor-dialog[data-presentation="panel"] .warp-history-row { grid-area: history; }
   .warp-editor-dialog[data-presentation="panel"] .warp-editor-topology-controls { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; margin: 0; padding: 4px; }
   .warp-editor-dialog[data-presentation="panel"] .warp-editor-topology-controls .warp-grid-layout-hint { display: none; }

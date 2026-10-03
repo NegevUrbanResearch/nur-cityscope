@@ -397,6 +397,19 @@ test("view renders draggable node workspace and preserves an existing focused in
   expect(view.controls.warpSurface.children.filter((item) => item.attributes.class?.startsWith("warp-handle") && item.attributes.class.includes("selected"))).toHaveLength(7);
   rightIdentityWarpEditor.select(gridSelection("row", 1));
   view.update({ state: { draft }, selectedNode: "right-grid", warpStates: { right: { ...rightIdentityWarpEditor.getState(), config: rightIdentityWarpEditor.getConfig(), handles: rightIdentityWarpEditor.getControlPoints() } } });
+  onWarpAction.mockClear();
+  view.controls.gridLayout.actions.get("add-row").dispatch("click");
+  expect(onWarpAction).toHaveBeenCalledWith("warp-grid-placement", { output: "right", axis: "row" });
+  onWarpAction.mockClear();
+  view.update({ state: { draft }, selectedNode: "right-grid", warpStates: { right: { ...rightIdentityWarpEditor.getState(), config: rightIdentityWarpEditor.getConfig(), handles: rightIdentityWarpEditor.getControlPoints(), gridPlacement: { axis: "row", error: "" } } } });
+  const placementField = view.controls.gridLayout.fields.get("addRowPosition");
+  placementField.value = "48"; placementField.dispatch("input"); placementField.dispatch("change");
+  expect(onWarpAction).toHaveBeenCalledWith("warp-grid-layout", { output: "right", operation: "add", axis: "row", position: 48 });
+  const topologyCandidate = rightIdentityWarpEditor.previewGridLayout("add", { axis: "row", position: 48 });
+  view.update({ state: { draft }, selectedNode: "right-grid", warpStates: { right: { ...rightIdentityWarpEditor.getState(), config: rightIdentityWarpEditor.getConfig(), handles: rightIdentityWarpEditor.getControlPoints(), gridLayoutPreview: { ...topologyCandidate, status: "ready" } } } });
+  expect(view.controls.warpSurface.children.filter((item) => item.attributes.class === "warp-grid-preview-line candidate")).toHaveLength(1);
+  expect(view.controls.warpSurface.children.filter((item) => item.attributes.class === "warp-grid-preview-line").length).toBeGreaterThan(0);
+  expect(descendants(view.controls.warpPanel).find((node) => node.className === "warp-grid-layout-preview-status")?.textContent).toContain("48.00% source Y");
   view.controls.warpSurface.children.find((item) => item.attributes["data-index"] === "19").dispatch("keydown", { key: "Enter", preventDefault() {} });
   expect(onWarpAction).toHaveBeenLastCalledWith("warp-select", { output: "right", selection: { mode: "grid", kind: "row", index: 2 } });
   const inspectGroup = (output, mode, kind, index, expectedStatus, expectedPicker, expectedReset) => {
