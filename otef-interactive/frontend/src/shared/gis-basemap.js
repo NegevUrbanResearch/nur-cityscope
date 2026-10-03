@@ -5,7 +5,7 @@ export const GIS_BASEMAP_IDS = Object.freeze([
   "dark",
 ]);
 
-export const GIS_BASEMAP_FADE_MS = 600;
+export const GIS_BASEMAP_FADE_MS = 400;
 export const GIS_BASEMAP_SOURCE_WAIT_MS = 2000;
 
 export function isGisBasemapId(value) {

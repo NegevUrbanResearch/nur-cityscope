@@ -48,7 +48,7 @@ function createEsriRasterStyle(paint) {
         id: "esri-tiles",
         type: "raster",
         source: "esri",
-        ...(paint ? { paint } : {}),
+        paint: { "raster-fade-duration": 500, ...paint },
       },
     ],
   };
@@ -96,7 +96,7 @@ const BASEMAP_STYLES = {
         attribution: "&copy; OpenStreetMap contributors",
       },
     },
-    layers: [{ id: "osm-tiles", type: "raster", source: "osm" }],
+    layers: [{ id: "osm-tiles", type: "raster", source: "osm", paint: { "raster-fade-duration": 500 } }],
   },
   satellite: createEsriRasterStyle(),
   satellite_bw: createEsriRasterStyle({ "raster-saturation": -1 }),
