@@ -254,10 +254,11 @@ export function createProjectionConfigView(root, {
     return help;
   }
   const namesEditorTools = make(doc, "div", { className: "names-wall-editor-tools", hidden: true });
-  namesEditorTools.append(namesModeControl(), make(doc, "p", { className: "names-wall-units" }, namesWallUnitsHelp),
+  namesEditorTools.append(namesModeControl(), pageSpacingReset(), namesRunControl(), namesStatus());
+  const namesEditorNotes = make(doc, "div", { className: "names-wall-editor-notes", hidden: true });
+  namesEditorNotes.append(make(doc, "p", { className: "names-wall-units" }, namesWallUnitsHelp),
     make(doc, "p", { className: "names-wall-units names-wall-rotation" }, namesWallRotationHelp), modelSpacingHelp(),
-    make(doc, "p", { className: "names-wall-units" }, "0 keeps the current positions. Increase to move the pages inward where space allows."),
-    pageSpacingReset(), namesRunControl(), namesStatus());
+    make(doc, "p", { className: "names-wall-units" }, "0 keeps the current positions. Increase to move the pages inward where space allows."));
   const svg = svgNode(doc, "svg", { class: "graph-connectors", "aria-hidden": "true" });
   const wirePath = svgNode(doc, "path", { "vector-effect": "non-scaling-stroke" });
   svg.appendChild(wirePath);
@@ -305,7 +306,7 @@ export function createProjectionConfigView(root, {
         event.stopPropagation?.(); if (onNode(id) === false) return;
         activeParameterNode = id;
         parameterDialog?.open({ nodeId: id, title: label, descriptors: nodeFields, opener: adjust });
-        if (id === "names-wall") parameterDialog?.fieldsElement.appendChild(namesEditorTools);
+        if (id === "names-wall") { parameterDialog?.fieldsElement.prepend(namesEditorTools); parameterDialog?.fieldsElement.appendChild(namesEditorNotes); }
         parameterDialog?.update({ config: currentDraft, fieldErrors: currentFieldErrors, status: currentStatus });
       });
       card.appendChild(adjust);
@@ -377,7 +378,7 @@ export function createProjectionConfigView(root, {
     if (parameterEditorNodes.has(id) && selectedFields.length) {
       activeParameterNode = id;
       parameterDialog?.open({ nodeId: id, title: graphNodes.find(([nodeId]) => nodeId === id)?.[1], descriptors: selectedFields, opener: enlargeEdit });
-      if (id === "names-wall") parameterDialog?.fieldsElement.appendChild(namesEditorTools);
+      if (id === "names-wall") { parameterDialog?.fieldsElement.prepend(namesEditorTools); parameterDialog?.fieldsElement.appendChild(namesEditorNotes); }
       parameterDialog?.update({ config: currentDraft, fieldErrors: currentFieldErrors, status: currentStatus });
     } else if (id.endsWith("-keystone") || id.endsWith("-grid")) {
       dialog.open({ side: id.startsWith("right-") ? "right" : "left", mode: id.endsWith("-grid") ? "grid" : "keystone", opener: enlargeEdit });
@@ -573,7 +574,14 @@ export function createProjectionConfigView(root, {
       return `namesWall.profiles.${profile}.${field}`;
     },
     isFieldVisible: (descriptor, config) => !descriptor.wallOnly || config.namesWall?.activeMode === "wall",
-    onVisibilityChange: (visible) => { workspace.dataset.editing = String(visible); namesEditorTools.hidden = !visible || activeParameterNode !== "names-wall"; },
+    contextForConfig: (nodeId, config) => nodeId === "names-wall"
+      ? `${config.namesWall?.activeMode === "model" ? "Model-oriented" : "Regular wall"} profile`
+      : "",
+    onVisibilityChange: (visible) => {
+      workspace.dataset.editing = String(visible);
+      const showNamesTools = visible && activeParameterNode === "names-wall";
+      namesEditorTools.hidden = !showNamesTools; namesEditorNotes.hidden = !showNamesTools;
+    },
     createPreview: (previewHost, onStatus) => createParameterEditorPreviews({ document: doc, host: previewHost, onStatus }) });
   pointerInput = bindWarpPointerInput({
     trace,

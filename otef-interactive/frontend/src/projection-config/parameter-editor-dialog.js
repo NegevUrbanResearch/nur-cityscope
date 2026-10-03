@@ -10,7 +10,7 @@ export function presentationError(path, error) {
 }
 
 /** Enlarged controls for one geometry node. Values remain owned by the view/controller. */
-export function createParameterEditorDialog({ document: doc, host, presentation = "dialog", onField = () => {}, onCancelField = () => {}, onNudge = () => {}, onAction = () => {}, createPreview = null, onVisibilityChange = () => {}, resolveFieldPath = (_descriptor, _config) => null, isFieldVisible = () => true }) {
+export function createParameterEditorDialog({ document: doc, host, presentation = "dialog", onField = () => {}, onCancelField = () => {}, onNudge = () => {}, onAction = () => {}, createPreview = null, onVisibilityChange = () => {}, resolveFieldPath = (_descriptor, _config) => null, isFieldVisible = () => true, contextForConfig = () => "" }) {
   if (!doc?.createElement || !host) throw new Error("parameter editor host is required");
   if (!["dialog", "panel"].includes(presentation)) throw new TypeError("parameter editor presentation must be dialog or panel");
   const modal = doc.createElement("section");
@@ -24,12 +24,13 @@ export function createParameterEditorDialog({ document: doc, host, presentation 
   modal.setAttribute("aria-labelledby", "parameter-editor-title");
   const header = doc.createElement("header"); header.className = "parameter-editor-header";
   const title = doc.createElement("h2"); title.id = "parameter-editor-title";
+  const titleContext = doc.createElement("span"); titleContext.className = "parameter-editor-title-context"; titleContext.hidden = true;
   const status = doc.createElement("p"); status.className = "parameter-editor-status"; status.setAttribute("role", "status"); status.setAttribute("aria-live", "polite");
   const closeButton = doc.createElement("button"); closeButton.type = "button"; closeButton.dataset.action = "parameter-editor-close"; closeButton.textContent = presentation === "panel" ? "Back to nodes" : "Close";
   const undo = doc.createElement('button'); undo.type = 'button'; undo.textContent = 'Undo parameter'; undo.dataset.action = 'parameter-undo';
   const redo = doc.createElement('button'); redo.type = 'button'; redo.textContent = 'Redo parameter'; redo.dataset.action = 'parameter-redo';
   undo.addEventListener('click', () => onAction('parameter-undo')); redo.addEventListener('click', () => onAction('parameter-redo'));
-  header.append(title, status, undo, redo, closeButton);
+  header.append(title, titleContext, status, undo, redo, closeButton);
   const body = doc.createElement("div"); body.className = "parameter-editor-body";
   const fields = doc.createElement("div"); fields.className = "parameter-editor-fields";
   const previewColumn = doc.createElement("section"); previewColumn.className = "parameter-editor-preview-column";
@@ -72,6 +73,9 @@ export function createParameterEditorDialog({ document: doc, host, presentation 
     if (nextStatus !== undefined) status.textContent = String(nextStatus || "");
     if (!config) return;
     latestConfig = config;
+    const context = String(contextForConfig(modal.dataset.node, config) || "");
+    titleContext.textContent = context;
+    titleContext.hidden = !context;
     preview?.update?.(config);
     for (const [path, control] of fieldControls) {
       const descriptor = control.descriptor;
@@ -135,6 +139,7 @@ export function createParameterEditorDialog({ document: doc, host, presentation 
   return {
     open,
     element: modal,
+    titleContext,
     fieldsElement: fields,
     presentation,
     update: renderValues,

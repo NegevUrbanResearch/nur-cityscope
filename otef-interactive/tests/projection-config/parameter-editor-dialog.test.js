@@ -17,6 +17,20 @@ test('opening retains current parameter history controls and forwards undo', () 
   host.querySelector('[data-action="parameter-undo"]').click(); expect(onAction).toHaveBeenCalledWith('parameter-undo'); dialog.dispose();
 });
 
+test("Names profile context follows the active profile beside the editor heading", () => {
+  const host = document.createElement("main"); document.body.append(host);
+  const contextForConfig = (nodeId, config) => nodeId === "names-wall"
+    ? `${config.namesWall.activeMode === "wall" ? "Regular wall" : "Model-oriented"} profile`
+    : "";
+  const dialog = createParameterEditorDialog({ document, host, presentation: "panel", contextForConfig });
+  const config = { ...makeConfig(), namesWall: { activeMode: "wall" } };
+  dialog.open({ nodeId: "names-wall", title: "Names wall" }); dialog.update({ config });
+  expect(dialog.titleContext.textContent).toBe("Regular wall profile");
+  config.namesWall.activeMode = "model"; dialog.update({ config });
+  expect(dialog.titleContext.textContent).toBe("Model-oriented profile");
+  dialog.dispose();
+});
+
 test("opens only the selected node fields and forwards a numeric edit once", () => {
   const host = document.createElement("main"); document.body.appendChild(host);
   const opener = document.createElement("button"); opener.textContent = "Adjust"; host.appendChild(opener);

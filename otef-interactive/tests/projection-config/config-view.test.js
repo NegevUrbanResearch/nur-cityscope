@@ -55,6 +55,9 @@ test("tablet warp panel pairs the preview with one scrolling control region", ()
   expect(css).toMatch(/@container\s*\(max-width:\s*699px\)\s*\{[^}]*\.warp-editor-dialog\[data-presentation="panel"\] \.warp-editor-viewport\s*\{[^}]*max-height:\s*140px/s);
   expect(css).toMatch(/@container\s*\(max-width:\s*699px\)\s*\{[^]*?@media\s*\(orientation:\s*landscape\) and \(max-height:\s*1000px\)\s*\{[^}]*\.warp-editor-dialog\[data-presentation="panel"\] \.warp-numeric\s*\{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/s);
   expect(css).toContain('.parameter-editor-dialog[data-presentation="panel"] .parameter-editor-previews:has(.parameter-preview-slot:not([hidden]) ~ .parameter-preview-slot:not([hidden])) { grid-template-columns: repeat(2, minmax(0, 1fr)); }');
+  expect(css).toContain('.parameter-editor-dialog[data-presentation="panel"] .parameter-editor-previews.single-preview .parameter-preview-slot { width: min(100%, 360px); }');
+  expect(css).toContain('.parameter-editor-dialog[data-presentation="panel"] .parameter-editor-previews.single-preview .parameter-preview-slot { width: min(100%, 213px); }');
+  expect(css).toMatch(/\.parameter-editor-dialog\[data-presentation="panel"\] \.parameter-editor-header\s*\{[^}]*grid-template-rows:\s*auto auto/s);
   const miniMeshStroke = css.match(/\.warp-node-line\s*\{([^}]*)\}/)?.[1] ?? "";
   expect(miniMeshStroke).not.toContain("vector-effect: non-scaling-stroke");
   expect(css).toMatch(/\.warp-node-handle\s*\{[^}]*fill:\s*#79c9b2/s);
@@ -127,6 +130,16 @@ test("view renders draggable node workspace and preserves an existing focused in
   expect(view.parameterDialog.isOpen()).toBe(true); expect(view.parameterDialog.element.dataset.node).toBe("names-wall");
   const panelText = descendants(view.parameterDialog.element).map((node) => node.textContent).join(" ");
   expect(panelText).toContain("Names current · 1228 of 1228 placed.");
+  expect(view.parameterDialog.titleContext.textContent).toBe("Regular wall profile");
+  const namesTools = view.parameterDialog.fieldsElement.children[0];
+  expect(namesTools.className).toBe("names-wall-editor-tools");
+  const firstNamesFieldIndex = [...view.parameterDialog.fieldsElement.children].findIndex((node) => node.dataset?.path === "namesWall.rotateDeg");
+  expect(firstNamesFieldIndex).toBeGreaterThan([...view.parameterDialog.fieldsElement.children].indexOf(namesTools));
+  const namesNotes = view.parameterDialog.fieldsElement.children.at(-1);
+  expect(namesNotes.className).toBe("names-wall-editor-notes");
+  expect([...view.parameterDialog.fieldsElement.children].indexOf(namesNotes)).toBeGreaterThan(firstNamesFieldIndex);
+  expect(descendants(namesTools).some((node) => node.dataset?.action === "projection-names-run")).toBe(true);
+  expect(descendants(namesTools).some((node) => node.className === "names-wall-status")).toBe(true);
   const panelFields = path => descendants(view.parameterDialog.element).find((node) => node.dataset?.field === path && node.dataset.input === "number");
   const panelFont = panelFields("namesWall.requestedFontPx");
   expect(panelFont.value).toBe("17");
@@ -140,6 +153,7 @@ test("view renders draggable node workspace and preserves an existing focused in
   namesPanelDraft.namesWall.activeMode = "model";
   view.update({ state: { draft: namesPanelDraft }, selectedNode: "names-wall", namesWallStatus: { state: "current", detail: "Names current · 1228 of 1228 placed." } });
   expect(panelFont.value).toBe("23"); expect(wallOnlyField.hidden).toBe(true);
+  expect(view.parameterDialog.titleContext.textContent).toBe("Model-oriented profile");
   onField.mockClear(); panelFont.value = "24"; panelFont.dispatch("input"); panelFont.dispatch("change");
   expect(onField).toHaveBeenLastCalledWith("namesWall.requestedFontPx", "24", "number", expect.objectContaining({ resolvedPath: "namesWall.profiles.model.requestedFontPx" }));
   const panelRun = descendants(view.parameterDialog.element).find((node) => node.dataset?.action === "projection-names-run");
