@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import proj4 from 'proj4';
 import { test, expect, vi } from 'vitest';
 import { evaluateWarpMesh } from '../../frontend/src/shared/projection-warp-geometry.js';
@@ -12,21 +13,29 @@ import { nameRevealSchedule } from '../../frontend/src/shared/nli-name-field-ani
 import { createProjectionNameCanvasAdapter } from '../../frontend/src/projection/projection-name-canvas-adapter.js';
 import { planeToOutputUv } from '../../frontend/src/shared/projection-config-geometry.js';
 
-const snapshotPath = '../.superpowers/sdd/memorial-wall-revision-699-snapshot.json';
+// Optional acceptance artifacts are supplied explicitly outside protected history directories.
+// Expected files: wall-snapshot.json, left-mesh.json, right-mesh.json, and the two wall-metrics JSON files.
+const acceptanceArtifactDir = process.env.OTEF_NAME_WALL_ACCEPTANCE_ARTIFACT_DIR
+  ? resolve(process.env.OTEF_NAME_WALL_ACCEPTANCE_ARTIFACT_DIR)
+  : null;
+if (acceptanceArtifactDir && /(^|[\\/])(?:\.superpowers|docs[\\/]superpowers)(?:[\\/]|$)/i.test(acceptanceArtifactDir)) {
+  throw new Error('Name wall acceptance artifacts must use an allowed fixture directory.');
+}
+const acceptanceArtifact = (name) => resolve(acceptanceArtifactDir || '.', name);
 const metricsPaths = [
-  '../.superpowers/sdd/memorial-wall-browser-guttman-metrics-center-middle-rtl.json',
-  '../.superpowers/sdd/memorial-wall-browser-guttman-metrics-4-8-center-middle-rtl.json',
+  acceptanceArtifact('wall-metrics-center-middle-rtl.json'),
+  acceptanceArtifact('wall-metrics-4-8-center-middle-rtl.json'),
 ];
 const sourcePath = 'public/processed/layers/nli/people_names.geojson';
 const metadataPath = 'public/processed/layers/nli/release-metadata.json';
 const read = (path) => JSON.parse(readFileSync(path, 'utf8'));
 
-test('captured current wall keeps every PID whole, safe, and stable in both modes', async () => {
+test.skipIf(!acceptanceArtifactDir)('optional name wall artifacts keep every PID whole, safe, and stable in both modes', async () => {
   proj4.defs('EPSG:2039', '+proj=tmerc +lat_0=31.73439361111111 +lon_0=35.20451694444445 +k=1.0000067 +x_0=219529.584 +y_0=626907.39 +ellps=GRS80 +towgs84=-24.0024,-17.1032,-17.8444,0.33077,-1.85269,1.66969,5.4248 +units=m +no_defs');
-  const saved = read(snapshotPath);
+  const saved = read(acceptanceArtifact('wall-snapshot.json'));
   const config = migrateNamesWallToV5(saved.config || saved);
   const meshes = Object.fromEntries(['left', 'right'].map((side) => [side, evaluateWarpMesh(
-    read(`public/projection-calibration/td-baselines/${side}.json`), config.outputs[side].warp,
+    read(acceptanceArtifact(`${side}-mesh.json`)), config.outputs[side].warp,
   )]));
   const logicalPlane = { heading: 35, planeScale: config.pre.scale * Math.min(config.outputs.left.post.scale, config.outputs.right.post.scale) };
   const coverageStart = performance.now();

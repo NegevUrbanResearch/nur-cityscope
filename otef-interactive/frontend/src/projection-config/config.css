@@ -199,6 +199,8 @@ h2, h3 { margin: 0 0 10px; }
 .projection-optional-health-list { display: grid; gap: 4px; }
 .projection-optional-health-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; }
 .projection-optional-health-message { min-width: 0; margin: 0; color: var(--config-muted); font-size: 13px; line-height: 18px; overflow-wrap: anywhere; }
+.projection-optional-health-action-error { min-width: 0; margin: 0; color: var(--config-error); font-size: 13px; line-height: 18px; overflow-wrap: anywhere; }
+.projection-optional-health-action-error[hidden] { display: none; }
 .projection-optional-health-row button { min-height: 44px; }
 .warp-editor-title { margin: 0; font-size: 17px; line-height: 24px; font-weight: 600; }
 .warp-view-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; max-width: 100%; min-width: 0; }
@@ -593,7 +595,12 @@ h2, h3 { margin: 0 0 10px; }
 .parameter-editor-dialog[data-presentation="panel"] .parameter-editor-header > [data-action="parameter-undo"] { grid-column: 2; grid-row: 2; }
 .parameter-editor-dialog[data-presentation="panel"] .parameter-editor-header > [data-action="parameter-redo"] { grid-column: 3; grid-row: 2; }
 .parameter-editor-dialog[data-presentation="panel"] .parameter-editor-header > [data-action="parameter-editor-close"] { grid-column: 4; grid-row: 2; }
+.parameter-editor-dialog[data-presentation="panel"] .parameter-editor-header > .projection-optional-health { grid-column: 1 / -1; width: 100%; }
 .parameter-editor-dialog[data-presentation="panel"] .parameter-editor-header > button { width: 100%; max-width: 88px; min-height: 48px; padding: 4px; font-size: 11px; line-height: 13px; white-space: normal; }
+@container (max-width: 500px) {
+  .parameter-editor-dialog[data-presentation="panel"] .projection-optional-health-row { grid-template-columns: minmax(0, 1fr); align-items: start; }
+  .parameter-editor-dialog[data-presentation="panel"] .projection-optional-health-row button { justify-self: start; }
+}
 @container (max-width: 699px) {
   .warp-editor-dialog[data-presentation="panel"] .warp-editor-viewport { min-height: 120px; max-height: 140px; aspect-ratio: 2.2; }
   @media (orientation: landscape) and (max-height: 1000px) {

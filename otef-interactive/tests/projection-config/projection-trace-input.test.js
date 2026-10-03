@@ -54,7 +54,7 @@ test('failed diagnostics cannot interrupt existing touch drag behavior', () => {
   const onStart = vi.fn(), onMove = vi.fn(), onEnd = vi.fn();
   const binder = bindWarpPointerInput({ surface: svg, trace, readGeometry: () => ({ rect: svg.getBoundingClientRect(), viewBox: { x: 0, y: 0, width: 1920, height: 1080 }, handles: [{ x: .25, y: .25 }], side: 'left', mode: 'grid', selection: { indices: [0] } }), onStart, onMove, onEnd, onCancel: vi.fn(), onSelect: vi.fn() });
   expect(() => recordProjectionTrace(trace, 'gesture', { phase: 'start' })).not.toThrow();
-  event(svg, 'pointerdown'); event(svg, 'pointermove', { clientX: 245 }); event(svg, 'pointerup', { clientX: 245 });
+  event(svg, 'pointerdown'); event(svg, 'pointermove', { clientX: 247 }); event(svg, 'pointerup', { clientX: 247 });
   expect(onStart).toHaveBeenCalledOnce(); expect(onMove).toHaveBeenCalledOnce(); expect(onEnd).toHaveBeenCalledOnce(); binder.dispose(); svg.remove();
 });
 
@@ -65,6 +65,8 @@ test('explicit capture failure and cancellation reasons are distinguishable', ()
   event(svg, 'pointerdown');
   expect(trace.record.mock.calls).toContainEqual(['capture', expect.objectContaining({ accepted: false, reason: 'capture_failed' })]);
   event(svg, 'pointerdown'); event(svg, 'pointercancel');
+  expect(onCancel).not.toHaveBeenCalled();
+  event(svg, 'pointerdown'); event(svg, 'pointermove', { clientX: 247 }); event(svg, 'pointercancel', { clientX: 247 });
   expect(trace.record.mock.calls).toContainEqual(['gesture', expect.objectContaining({ phase: 'cancel', reason: 'pointercancel' })]);
   expect(onCancel).toHaveBeenCalledOnce(); expect(JSON.stringify(trace.record.mock.calls)).not.toContain('secret error'); binder.dispose(); svg.remove();
 });

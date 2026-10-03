@@ -823,8 +823,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
   function handleFieldCancel(path, resolvedPath = path) {
     const target = resolvedPath || path;
     const next = Object.fromEntries(Object.entries(fieldErrors).filter(([key]) => key !== target && !key.startsWith(`${target}.`) && !target.startsWith(`${key}.`)));
-    if (Object.keys(next).length === Object.keys(fieldErrors).length) return;
-    fieldErrors = next;
+    if (Object.keys(next).length !== Object.keys(fieldErrors).length) fieldErrors = next;
     refresh();
   }
   function handleNudge(path, direction, meta = {}) {

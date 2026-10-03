@@ -15,7 +15,7 @@ export function warpCoordinateTarget(output, mode, selection = {}) {
 export const warpCoordinateTargetKey = (output, mode, selection) => JSON.stringify(warpCoordinateTarget(output, mode, selection));
 
 /** Builds the shared selection, position, step, adjustment, and history controls. */
-export function createWarpPanelView({ document: doc, onAction = () => {}, onPointer = () => {}, onNudgeFocus = () => {} }) {
+export function createWarpPanelView({ document: doc, onAction = () => {}, onPointer = () => {}, onNudgeFocus = () => {}, canChangeSelection = () => true }) {
   if (!doc?.createElement) throw new Error("warp panel requires a document");
   const element = make(doc, "section", "warp-precision-panel");
   element.setAttribute("aria-label", "Warp adjustment");
@@ -144,12 +144,12 @@ export function createWarpPanelView({ document: doc, onAction = () => {}, onPoin
   let state = null;
   let pickerTopologyKey = null;
   selectionPicker.addEventListener("change", () => {
-    if (!state) return;
+    if (!state || !canChangeSelection()) return;
     const selection = state.selection || {};
     onAction("warp-select", { output: element.dataset.output, selection: { mode: selection.mode, kind: selection.kind, index: Number(selectionPicker.value) || 0 } });
   });
   selectionButtons.forEach((button) => button.addEventListener("click", () => {
-    if (!state) return;
+    if (!state || !canChangeSelection()) return;
     const selection = state.selection || {};
     const mode = selection.mode || (element.dataset.nodeId?.endsWith("-grid") ? "grid" : "keystone");
     const kind = button.dataset.warpSelectionKind;

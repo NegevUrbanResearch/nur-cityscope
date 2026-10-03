@@ -436,6 +436,24 @@ test("reconciliation retry rejection is shown through the controller action erro
   } finally { api.dispose(); globalThis.document = previousDocument; }
 });
 
+test("focused recovery Retry rejection is visible in the active editor recovery surface", async () => {
+  const previousDocument = globalThis.document; globalThis.document = documentStub();
+  const root = element("main"); const client = fakeClient();
+  client.report({ reconciliation: { status: "read-error", message: "Accepted settings check failed." } });
+  client.retryReconciliation.mockRejectedValueOnce(new Error("reconciliation retry unavailable"));
+  const api = mountProjectionConfig(root, { client });
+  try {
+    find(root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+    find(root, node => node.dataset?.action === "warp-full-viewport").dispatch("click");
+    await api.handleAction("reconciliation-retry");
+    const contextualError = find(root, node => node.className === "projection-optional-health-action-error");
+    expect(contextualError.hidden).toBe(false);
+    expect(contextualError.textContent).toContain("reconciliation retry unavailable");
+    expect(find(root, node => node.className === "action-error").textContent).toContain("reconciliation retry unavailable");
+    expect(find(root, node => node.dataset?.action === "reconciliation-retry").hidden).toBe(false);
+  } finally { api.dispose(); globalThis.document = previousDocument; }
+});
+
 test("Back cancels a relative-pad gesture before hiding its workspace", () => {
   const { root, client, restore } = tracedWarpHarness();
   const pad = find(root, (node) => node.className === "warp-relative-pad");
@@ -748,7 +766,7 @@ describe("projection config controller", () => {
     } finally { api.dispose(); globalThis.document = previousDocument; }
   });
 
-  test("Add placement immediately previews its visible default percentage without draft or history writes", () => {
+test("Add placement immediately previews its visible default percentage without draft or history writes", () => {
     const previousDocument = globalThis.document; globalThis.document = documentStub();
     const root = element("main"); const client = fakeClient(); const api = mountProjectionConfig(root, { client });
     try {
@@ -762,8 +780,83 @@ describe("projection config controller", () => {
       expect(find(root, node => node.attributes?.class === "warp-grid-preview-line candidate")).toBeTruthy();
       expect(client.setDraft).not.toHaveBeenCalled(); expect(client.apply).not.toHaveBeenCalled();
       expect(find(root, node => node.dataset?.action === "warp-undo").disabled).toBe(true);
-    } finally { api.dispose(); globalThis.document = previousDocument; }
-  });
+  } finally { api.dispose(); globalThis.document = previousDocument; }
+});
+
+test("rejected Add row source percentage stays visible until corrected or placement is cancelled", () => {
+  const h = tracedWarpHarness();
+  try {
+    const config = clone(h.client.getState().draft);
+    config.outputs.left.warp.grid.rowPositions = [0, 0.14, 0.32, 0.5, 0.68, 0.84, 1];
+    h.client.report({ draft: config, hasLocalDraft: true });
+    h.client.setLive(true);
+    find(h.root, node => node.dataset?.action === "warp-editor-close").dispatch("click");
+    find(h.root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+    h.client.setDraft.mockClear(); h.client.apply.mockClear();
+    const add = find(h.root, node => node.dataset?.gridLayoutAction === "add-row");
+    add.dispatch("click");
+    const position = find(h.root, node => node.dataset?.gridLayoutField === "addRowPosition");
+    position.value = "14"; position.dispatch("input"); position.dispatch("change"); position.dispatch("blur");
+    expect(position.value).toBe("14");
+    position.value = "101"; position.dispatch("input"); position.dispatch("change"); position.dispatch("blur");
+    expect(position.value).toBe("101");
+    expect(position.attributes["aria-invalid"]).toBe("true");
+    expect(h.client.setDraft).not.toHaveBeenCalled(); expect(h.client.apply).not.toHaveBeenCalled();
+    expect(find(h.root, node => node.dataset?.action === "warp-undo").disabled).toBe(true);
+    add.dispatch("click");
+    expect(position.value).not.toBe("101");
+    expect(h.client.setDraft).not.toHaveBeenCalled(); expect(h.client.apply).not.toHaveBeenCalled();
+  } finally { h.restore(); }
+});
+
+test("grid placement accessible instructions name the actual row and column axes", () => {
+  const h = tracedWarpHarness();
+  try {
+    find(h.root, node => node.dataset?.action === "warp-editor-close").dispatch("click");
+    find(h.root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+    const row = find(h.root, node => node.dataset?.gridLayoutField === "addRowPosition");
+    const column = find(h.root, node => node.dataset?.gridLayoutField === "addColumnPosition");
+    expect(row.attributes["aria-label"]).toBe("Add row at Y (%); choose Add row to place a line");
+    expect(column.attributes["aria-label"]).toBe("Add column at X (%); choose Add column to place a line");
+  } finally { h.restore(); }
+});
+
+test.each(["invalid scalar", "held warp adjustment"])("%s blocks preset, clock, and settlement selectors without writes", async (pendingKind) => {
+  const previousDocument = globalThis.document; const doc = documentStub(); globalThis.document = doc;
+  const root = element("main"); root.ownerDocument = doc; const client = fakeClient();
+  client.getState().snapshot.presets.push({ id: "desk", name: "Desk", config: clone(DEFAULTS) });
+  const api = mountProjectionConfig(root, { client });
+  try {
+    client.setDraft.mockClear(); client.apply.mockClear(); client.save.mockClear(); client.setLive.mockClear();
+    let pad = null;
+    if (pendingKind === "invalid scalar") {
+      const scalar = find(root, node => node.dataset?.field === "pre.scale" && node.dataset?.input === "number");
+      scalar.value = "-"; scalar.dispatch("input");
+    } else {
+      find(root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+      pad = find(root, node => node.className === "warp-relative-pad");
+      pad.getBoundingClientRect = () => ({ left: 0, top: 0, width: 200, height: 200 });
+      pad.dispatch("pointerdown", { pointerId: 55, button: 0, clientX: 100, clientY: 100, preventDefault() {} });
+    }
+
+    const preset = find(root, node => node.attributes?.["aria-label"] === "Preset");
+    preset.value = "desk";
+    await api.handleAction("preset-select", "desk");
+    expect(preset.value).toBe("original");
+    const scene = find(root, node => node.dataset?.action === "clock-scene");
+    scene.value = "timeline"; scene.dispatch("change");
+    expect(scene.value).toBe("home");
+    const elementSelect = find(root, node => node.dataset?.action === "clock-element");
+    elementSelect.value = "legend"; elementSelect.dispatch("change");
+    expect(elementSelect.value).toBe("clock");
+    const settlementOutput = find(root, node => node.attributes?.["aria-label"] === "Settlement output");
+    settlementOutput.value = "right"; settlementOutput.dispatch("change");
+    expect(settlementOutput.value).toBe("left");
+    expect(client.setDraft).not.toHaveBeenCalled(); expect(client.apply).not.toHaveBeenCalled();
+    expect(client.save).not.toHaveBeenCalled(); expect(client.setLive).not.toHaveBeenCalled();
+    if (pad) pad.dispatch("lostpointercapture", { pointerId: 55 });
+  } finally { api.dispose(); globalThis.document = previousDocument; }
+});
 
   test("an accepted warp replacement retires the initial Add preview but keeps its percentage", () => {
     const previousDocument = globalThis.document; globalThis.document = documentStub();
@@ -774,6 +867,7 @@ describe("projection config controller", () => {
       client.setDraft.mockClear(); client.apply.mockClear();
       find(root, node => node.dataset?.gridLayoutAction === "add-row").dispatch("click");
       const position = find(root, node => node.dataset?.gridLayoutField === "addRowPosition");
+      const percentageBefore = position.value;
       expect(find(root, node => node.attributes?.class === "warp-grid-preview-line candidate")).toBeTruthy();
 
       const accepted = clone(client.getState().draft);
@@ -781,7 +875,7 @@ describe("projection config controller", () => {
       client.report({ draft: accepted, snapshot: { ...client.getState().snapshot, revision: 3, config: accepted }, hasLocalDraft: false });
 
       expect(find(root, node => node.attributes?.class === "warp-grid-preview-line candidate")).toBeNull();
-      expect(find(root, node => node.dataset?.gridLayoutField === "addRowPosition").value).toBe(position.value);
+      expect(find(root, node => node.dataset?.gridLayoutField === "addRowPosition").value).toBe(percentageBefore);
       expect(find(root, node => node.className === "warp-grid-layout-preview-status").textContent).toContain("warp changed");
       expect(client.setDraft).not.toHaveBeenCalled(); expect(client.apply).not.toHaveBeenCalled();
       expect(find(root, node => node.dataset?.action === "warp-undo").disabled).toBe(true);
@@ -1108,7 +1202,7 @@ describe("projection config controller", () => {
     } finally { api.dispose(); }
   });
 
-  test('a foreign Model profile keeps pending Wall-only Cancel visible and Back works without writes', () => {
+test('a foreign Model profile keeps pending Wall-only Cancel visible and Back works without writes', () => {
     const doc = documentStub(); const root = element('main'); root.ownerDocument = doc; const client = fakeClient();
     const api = mountProjectionConfig(root, { client });
     const inputFor = (container, path) => find(container, node => node.dataset?.field === path && node.dataset.input === 'number');
@@ -1155,8 +1249,30 @@ describe("projection config controller", () => {
       expect(client.getState().draft).toEqual(foreignModel);
       expect(client.setDraft).not.toHaveBeenCalled(); expect(client.apply).not.toHaveBeenCalled();
       expect(client.save).not.toHaveBeenCalled(); expect(client.setLive).not.toHaveBeenCalled();
-    } finally { api.dispose(); }
-  });
+  } finally { api.dispose(); }
+});
+
+test('Cancel immediately hides a retained Wall-only wrapper when no controller error exists', () => {
+  const doc = documentStub(); const root = element('main'); root.ownerDocument = doc; const client = fakeClient();
+  const api = mountProjectionConfig(root, { client });
+  try {
+    client.setDraft.mockClear(); client.apply.mockClear();
+    find(root, node => node.dataset?.node === 'names-wall').dispatch('click');
+    find(root, node => node.className === 'config-enlarge-edit').dispatch('click');
+    const panel = find(root, node => node.className === 'parameter-editor-dialog');
+    const wallShiftWrap = find(panel, node => node.dataset?.path === 'namesWall.inwardShiftPercent');
+    const wallShift = find(wallShiftWrap, node => node.dataset?.input === 'number');
+    wallShift.value = '4'; wallShift.dispatch('input');
+    const model = clone(client.getState().draft); model.namesWall.activeMode = 'model';
+    client.report({ draft: model, hasLocalDraft: false });
+    expect(wallShiftWrap.hidden).toBe(false);
+    expect(find(wallShiftWrap, node => node.className === 'config-field-pending-target').hidden).toBe(false);
+    find(wallShiftWrap, node => node.dataset?.action === 'numeric-cancel-edit').dispatch('click');
+    expect(wallShiftWrap.hidden).toBe(true);
+    expect(find(wallShiftWrap, node => node.className === 'config-field-pending-target').hidden).toBe(true);
+    expect(client.setDraft).not.toHaveBeenCalled(); expect(client.apply).not.toHaveBeenCalled();
+  } finally { api.dispose(); }
+});
 
   test('header Escape retires rejected crop validation and its status refresh without writing state', () => {
     const doc = documentStub(); const root = element('main'); root.ownerDocument = doc; const client = fakeClient();

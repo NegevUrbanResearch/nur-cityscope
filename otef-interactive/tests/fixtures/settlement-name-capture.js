@@ -63,18 +63,18 @@ function projectionConfig(meshHash) {
   };
 }
 
-function manifestFor(side, meshHash) {
-  const { columns, rows } = SIDES[side];
+function manifestFor(meshHashes) {
   return {
+    schemaVersion: 1,
     width: 1920,
     height: 1080,
-    assets: {
-      [side]: {
-        assetId: `fixture-${side}`,
-        sha256: meshHash,
-        logicalGrid: { columns, rows },
-      },
-    },
+    assets: Object.fromEntries(Object.entries(SIDES).map(([side, { columns, rows }]) => [side, {
+      assetId: `fixture-${side}`,
+      path: `warp/${side}.json`,
+      sha256: meshHashes[side],
+      logicalGrid: { columns, rows },
+    }])),
+    framing: { path: "framing.json", sha256: "c".repeat(64) },
   };
 }
 
@@ -100,8 +100,9 @@ function processedSourceBytes() {
   return JSON.stringify(settlementSource());
 }
 
-function outputFixture(side, config, logicalMesh, meshHash, liveHash) {
-  const manifest = manifestFor(side, meshHash);
+function outputFixture(side, config, logicalMesh, meshHashes, liveHash) {
+  const meshHash = meshHashes[side];
+  const manifest = manifestFor(meshHashes);
   const prepared = prepareProjectionSideMesh(config, side, { mesh: logicalMesh, manifest });
   return {
     output: side,
@@ -184,8 +185,8 @@ export function completeCaptureFixture() {
       citycodes: ["0067", "0424"],
     },
     outputs: {
-      left: outputFixture("left", config, meshes.left, meshHash.left, liveHash),
-      right: outputFixture("right", config, meshes.right, meshHash.right, liveHash),
+      left: outputFixture("left", config, meshes.left, meshHash, liveHash),
+      right: outputFixture("right", config, meshes.right, meshHash, liveHash),
     },
   };
 }

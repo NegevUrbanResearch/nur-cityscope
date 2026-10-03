@@ -47,7 +47,6 @@ export function createGridLayoutControls(doc, onAction = () => {}) {
     const commit = () => {
       if (!edited.has(input)) return;
       if (name === "addRowPosition" || name === "addColumnPosition") {
-        edited.delete(input);
         const axis = name === "addRowPosition" ? "row" : "column";
         if (latestState?.placement?.axis !== axis) return;
         const number = Number(input.value);
@@ -55,6 +54,7 @@ export function createGridLayoutControls(doc, onAction = () => {}) {
           showInputError(input, `${axis === "row" ? "Row" : "Column"} position must be strictly between 0% and 100%.`);
           return;
         }
+        edited.delete(input);
         clearInputError(input);
         onAction(axis === "row" ? "place-row" : "place-column", number);
         return;
@@ -120,7 +120,8 @@ export function createGridLayoutControls(doc, onAction = () => {}) {
     sourceX.disabled = columnIndex === 0 || columnIndex === columnsCount - 1;
     const defaultRow = (rowAxis[clamp(rowIndex, 0, rowsCount - 2)] + rowAxis[clamp(rowIndex + 1, 1, rowsCount - 1)]) / 2;
     const defaultColumn = (columnAxis[clamp(columnIndex, 0, columnsCount - 2)] + columnAxis[clamp(columnIndex + 1, 1, columnsCount - 1)]) / 2;
-    sync(addRowPosition, percentText(defaultRow), percentText(defaultRow), force); sync(addColumnPosition, percentText(defaultColumn), percentText(defaultColumn), force);
+    if (force || placement?.axis !== "row") sync(addRowPosition, percentText(defaultRow), percentText(defaultRow), force);
+    if (force || placement?.axis !== "column") sync(addColumnPosition, percentText(defaultColumn), percentText(defaultColumn), force);
     for (const [name, button] of actions) {
       const axis = name.includes("column") ? columnAxis : rowAxis;
       const index = name.includes("column") ? columnIndex : rowIndex;
@@ -128,7 +129,7 @@ export function createGridLayoutControls(doc, onAction = () => {}) {
       button.disabled = (name === "remove-row" || name === "remove-column") && (index === 0 || index === count - 1 || count <= 2) || ((name === "move-row" || name === "move-column") && (index === 0 || index === count - 1));
       if (button.disabled) button.title = name.startsWith("remove") ? "Boundary grid lines are fixed; at least two lines are required." : name.startsWith("add") ? "Maximum grid count is 16." : "Boundary source positions are fixed at 0% and 100%.";
     }
-    for (const [axis, input] of [["row", addRowPosition], ["column", addColumnPosition]]) input.setAttribute("aria-label", `Add ${axis} at ${axis === "row" ? "Y" : "X"} (%)${placement?.axis === axis ? "; enter a source percentage or click the viewer" : "; choose Add ${axis} to place a line"}`);
+    for (const [axis, input] of [["row", addRowPosition], ["column", addColumnPosition]]) input.setAttribute("aria-label", `Add ${axis} at ${axis === "row" ? "Y" : "X"} (%)${placement?.axis === axis ? "; enter a source percentage or click the viewer" : `; choose Add ${axis} to place a line`}`);
     actions.get("add-row").textContent = placement?.axis === "row" ? "Cancel row placement" : "Add row";
     actions.get("add-column").textContent = placement?.axis === "column" ? "Cancel column placement" : "Add column";
     error.textContent = errorMessage || (localErrorInput ? localErrorMessage : "");

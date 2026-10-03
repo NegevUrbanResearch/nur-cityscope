@@ -119,6 +119,13 @@ test("active compact warp, focused warp, and scalar editors expose independent o
    app.selectNode("left-crop"); app.root.querySelector(".config-editor-region > .config-enlarge-edit").click();
    const compactScalar=app.root.querySelector(".parameter-editor-dialog .projection-optional-health");
    expect(compactScalar).toBe(route); expect(compactScalar.textContent).toContain("clock offline");
+   const scalarHeader = app.root.querySelector(".parameter-editor-dialog .parameter-editor-header");
+   expect(compactScalar.parentElement).toBe(scalarHeader);
+   expect(scalarHeader.querySelector("h2")).not.toBeNull();
+   expect(scalarHeader.querySelector("[data-action='parameter-undo']")).not.toBeNull();
+   expect(scalarHeader.querySelector("[data-action='parameter-redo']")).not.toBeNull();
+   expect(scalarHeader.querySelector("[data-action='parameter-editor-close']")).not.toBeNull();
+   expect(app.root.querySelector(".parameter-editor-dialog .parameter-editor-body .parameter-editor-fields").children.length).toBeGreaterThan(0);
    compactScalar.querySelector("[data-action='retry-settlement-settings']").click();
    expect(hydrateSettlement).toHaveBeenCalledTimes(3);
    expect(app.writeOperation).not.toHaveBeenCalled();

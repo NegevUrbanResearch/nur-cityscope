@@ -26,6 +26,13 @@ test("command bands wrap direct actions without fixed header rows", () => {
   expect(css).toMatch(/^body\s*\{[^}]*min-width:\s*0/m);
   expect(css).toMatch(/\.preset-commands, \.display-commands\s*\{[^}]*grid-template-rows:\s*subgrid/s);
 });
+
+test("scalar optional recovery occupies a full header row and reflows its message and Retry", () => {
+  const css = readFileSync(resolve(import.meta.dirname, "../../frontend/src/projection-config/config.css"), "utf8");
+  expect(css).toMatch(/\.parameter-editor-dialog\[data-presentation="panel"\] \.parameter-editor-header > \.projection-optional-health\s*\{[^}]*grid-column:\s*1\s*\/\s*-1/s);
+  expect(css).toMatch(/@container\s*\(max-width:\s*500px\)\s*\{[^}]*\.projection-optional-health-row\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/s);
+  expect(css).toMatch(/\.projection-optional-health-row button\s*\{[^}]*min-height:\s*44px/s);
+});
 test("warp handle outlines stay constant in CSS pixels while zooming", () => {
   const css = readFileSync(resolve(import.meta.dirname, "../../frontend/src/projection-config/config.css"), "utf8");
   const handleRule = css.match(/\.warp-handle\s*\{([^}]*)\}/)?.[1] ?? "";

@@ -16,7 +16,7 @@ function createFakeMap() {
 }
 
 describe("bindProjectionPersonHalo", () => {
-  it("subscribes, dims without a halo overlay, remounts on style.load, clears, and never flyTo", async () => {
+  it("subscribes, mounts and retires projection focus layers across style reload, and never flyTo", async () => {
     const map = createFakeMap();
     const resolve = vi.fn(() => ({ pid: "11", coordinates: [34.5, 31.4] }));
     let handler;
@@ -32,14 +32,22 @@ describe("bindProjectionPersonHalo", () => {
     await vi.waitFor(() => {
       expect(map.getPaintProperty("nli__people__circle", "circle-opacity")[0]).toBe("case");
     });
-    expect(map.addLayer).not.toHaveBeenCalled();
+    const projectionFocusLayers = () => map.getStyle().layers.map((layer) => layer.id)
+      .filter((id) => id.startsWith("nli-people-focus-"));
+    expect(projectionFocusLayers()).toContain("nli-people-focus-begin");
+    expect(projectionFocusLayers()).toContain("nli-people-focus-end");
+    expect(projectionFocusLayers().some((id) => id.includes("copy-nli__people__circle"))).toBe(true);
     expect(map.getLayer("otef-person-selection-halo")).toBeNull();
+    expect(map.getSource("otef-person-selection")).toBeNull();
     expect(map.flyTo).not.toHaveBeenCalled();
     map.emit("style.load");
-    expect(map.addLayer).not.toHaveBeenCalled();
+    expect(projectionFocusLayers()).toContain("nli-people-focus-begin");
+    expect(projectionFocusLayers()).toContain("nli-people-focus-end");
     expect(map.getLayer("otef-person-selection-halo")).toBeNull();
+    expect(map.getSource("otef-person-selection")).toBeNull();
     expect(map.getPaintProperty("nli__people__circle", "circle-opacity")[0]).toBe("case");
     handler(null);
+    expect(projectionFocusLayers()).toHaveLength(0);
     expect(map.getPaintProperty("nli__people__circle", "circle-opacity")).toBe(1);
     dispose();
   });

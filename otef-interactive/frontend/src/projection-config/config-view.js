@@ -461,7 +461,7 @@ export function createProjectionConfigView(root, {
     else if (id === "settlement-names") onOpenSettlementEditor();
   });
 
-  const warpPanelView = createWarpPanelView({ document: doc,
+  const warpPanelView = createWarpPanelView({ document: doc, canChangeSelection: () => !pointerInput?.isActive(),
     onAction: (action, value = {}) => {
       const output = value.output || (selectedGraphNode.startsWith("right-") ? "right" : "left");
       if (action === "warp-field-cancel") return onWarpFieldCancel(output);
@@ -625,6 +625,7 @@ export function createProjectionConfigView(root, {
   nodeMap.get("settlement-names")?.appendChild(settlementControls.element);
   const optionalHealthPanel = make(doc, "section", { className: "projection-optional-health", ariaLabel: "Optional tool status and recovery", hidden: true });
   const optionalHealthHeading = make(doc, "h3", {}, "Optional tools");
+  const optionalHealthActionError = make(doc, "p", { className: "projection-optional-health-action-error", role: "alert", hidden: true });
   const optionalHealthList = make(doc, "div", { className: "projection-optional-health-list" });
   const optionalHealthRows = new Map();
   for (const [id, label, action] of [
@@ -638,7 +639,7 @@ export function createProjectionConfigView(root, {
     retry.addEventListener("click", (event) => { event.stopPropagation?.(); action(); });
     row.append(message, retry); optionalHealthList.appendChild(row); optionalHealthRows.set(id, { row, message, retry, label });
   }
-  optionalHealthPanel.append(optionalHealthHeading, optionalHealthList);
+  optionalHealthPanel.append(optionalHealthHeading, optionalHealthActionError, optionalHealthList);
   editorRegion.appendChild(optionalHealthPanel);
   controls.editorHome = make(doc, "div", { className: "editor-home", hidden: true });
   controls.editorHome.appendChild(controls.warpPanel);
@@ -965,7 +966,7 @@ export function createProjectionConfigView(root, {
       paintLatestWarpUpdate();
     });
   };
-  const renderOptionalHealth = (clockState = { status: "Loading" }, settlementState = null) => {
+  const renderOptionalHealth = (clockState = { status: "Loading" }, settlementState = null, actionError = "") => {
     const modules = [
       ["clock-settings", clockState, "Clock and legend settings"],
       ["settlement-settings", settlementState?.hydration || { status: "Saved" }, "Settlement settings"],
@@ -984,7 +985,9 @@ export function createProjectionConfigView(root, {
       row.retry.hidden = !failed;
       active ||= failed || loading;
     }
-    optionalHealthPanel.hidden = !active;
+    optionalHealthActionError.textContent = String(actionError || "");
+    optionalHealthActionError.hidden = !actionError;
+    optionalHealthPanel.hidden = !active && !actionError;
   };
   const update = ({ state = {}, parameterHistory = { undo: 0, redo: 0 }, errors = {}, conflict = "", statusText = "", draftDiffersFromAccepted = false, savePending = false, selectedNode = "pre", loadedPresetId = null, loadedPresetLoadToken = 0, statusRows = [], appliedSummary = 'Pending', outputState = {}, warpStates = {}, activePattern = { pattern: "off" }, namesWallStatus = null, namesRunDisabledReason = "", clockScene = "home", clockElement = "clock", clockLayouts = {}, clockHydration = { status: "Loading" }, settlement = null } = {}) => {
     if (state.draft) currentDraft = state.draft;
@@ -997,7 +1000,7 @@ export function createProjectionConfigView(root, {
     controls.projectionElement.value = clockElement;
     for (const [id, status] of clockNodeStatuses) status.render(clockLayouts[id]?.record, clockHydration);
     settlementControls.render(settlement || { hydration: { status: "Loading" }, enabled: false });
-    renderOptionalHealth(clockHydration, settlement);
+    renderOptionalHealth(clockHydration, settlement, workspace.dataset.editing === "true" ? errors.action : "");
     const wallConfig = draft.namesWall;
     for (const help of modelSpacingHelpControls) help.hidden = wallConfig?.activeMode !== "model";
     for (const select of namesModeControls) select.value = wallConfig?.activeMode || "wall";
