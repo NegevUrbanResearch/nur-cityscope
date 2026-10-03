@@ -148,6 +148,8 @@ h2, h3 { margin: 0 0 10px; }
 .node-description, .diagram-explanation { color: var(--config-muted); font-size: .88rem; margin: 0 0 10px; }
 .config-node .node-description { margin-bottom: 5px; font-size: .75rem; }
 .config-field { margin-top: 10px; }
+.config-field-pending-target { margin: 6px 0 0; padding: 6px 8px; border-left: 3px solid var(--config-warning); color: var(--config-text); font-size: .8rem; }
+.config-field-pending-target[hidden] { display: none; }
 .config-field-label { display: block; color: var(--config-text); font-size: .85rem; margin-bottom: 3px; }
 .config-field-row { display: grid; grid-template-columns: minmax(70px, 1fr) 76px 20px 44px 44px; align-items: center; gap: 5px; }
 .config-field-row input[type=range] { min-width: 60px; padding: 0; }

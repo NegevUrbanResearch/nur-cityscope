@@ -194,6 +194,66 @@ test("panel Back keeps a pointer-down on the target until the click finishes the
   panel.dispose();
 });
 
+test("a pending wall-only field stays visible with its captured profile label after Model becomes active", () => {
+  const host = document.createElement("aside"); document.body.appendChild(host);
+  const wallField = { path: "namesWall.inwardShiftPercent", node: "names-wall", label: "Bring pages together", min: 0, max: 100, step: 1, fine: 1, unit: "%", wallOnly: true };
+  const wall = { namesWall: { activeMode: "wall", profiles: { wall: { inwardShiftPercent: 0 } } } };
+  const model = { namesWall: { activeMode: "model", profiles: { wall: { inwardShiftPercent: 0 } } } };
+  const panel = createParameterEditorDialog({
+    document, host, presentation: "panel",
+    resolveFieldPath: (_descriptor, config) => `namesWall.profiles.${config.namesWall.activeMode === "model" ? "wall" : "wall"}.inwardShiftPercent`,
+    isFieldVisible: (descriptor, config) => !descriptor.wallOnly || config.namesWall.activeMode === "wall",
+    pendingTargetLabel: () => "Pending edit still targets the Regular wall profile. Cancel this field before returning to nodes.",
+    contextForConfig: (_node, config) => config.namesWall.activeMode === "model" ? "Model-oriented profile" : "Regular wall profile",
+  });
+  panel.update({ config: wall }); panel.open({ nodeId: "names-wall", title: "Names wall", descriptors: [wallField] });
+  const input = host.querySelector('[data-input="number"]'); input.focus(); input.value = "-"; input.dispatchEvent(new Event("input", { bubbles: true }));
+  panel.update({ config: model });
+  const wrapper = input.closest(".config-field");
+  expect(panel.isPending()).toBe(true);
+  expect(wrapper.hidden).toBe(false);
+  expect(host.querySelector(".config-field-pending-target").textContent).toMatch(/Regular wall/i);
+  expect(host.querySelector('[data-action="numeric-cancel-edit"]').hidden).toBe(false);
+  expect(panel.titleContext.textContent).toBe("Model-oriented profile");
+  expect(host.querySelector('[data-action="parameter-editor-close"]').click()).toBeUndefined();
+  expect(panel.isOpen()).toBe(true);
+  host.querySelector('[data-action="numeric-cancel-edit"]').click();
+  expect(panel.isPending()).toBe(false);
+  expect(panel.close()).toBe(true);
+  panel.dispose();
+});
+
+test.each([
+  ["dirty", "5", 0],
+  ["conflicting", "5", 8],
+])("a %s wall-only field remains directly cancellable after the profile update", (_state, text, nextWallValue) => {
+  const host = document.createElement("aside"); document.body.appendChild(host);
+  const wallField = { path: "namesWall.inwardShiftPercent", node: "names-wall", label: "Bring pages together", min: 0, max: 100, step: 1, fine: 1, wallOnly: true };
+  const config = (activeMode, value) => ({ namesWall: { activeMode, profiles: { wall: { inwardShiftPercent: value } } } });
+  const onCancelField = vi.fn();
+  const panel = createParameterEditorDialog({
+    document, host, presentation: "panel", onCancelField,
+    resolveFieldPath: () => "namesWall.profiles.wall.inwardShiftPercent",
+    isFieldVisible: (descriptor, state) => !descriptor.wallOnly || state.namesWall.activeMode === "wall",
+    pendingTargetLabel: () => "Pending edit still targets the Regular wall profile.",
+  });
+  panel.update({ config: config("wall", 0) });
+  panel.open({ nodeId: "names-wall", descriptors: [wallField] });
+  const input = host.querySelector('[data-input="number"]'); input.value = text; input.dispatchEvent(new Event("input", { bubbles: true }));
+  panel.update({ config: config("model", nextWallValue) });
+  const wrapper = input.closest(".config-field");
+  expect(panel.isPending()).toBe(true);
+  expect(wrapper.hidden).toBe(false);
+  expect(host.querySelector(".config-field-pending-target").textContent).toMatch(/Regular wall/i);
+  expect(host.querySelector('[data-action="numeric-cancel-edit"]').hidden).toBe(false);
+  if (nextWallValue !== 0) expect(host.querySelector('[data-action="numeric-use-latest"]').hidden).toBe(false);
+  host.querySelector('[data-action="numeric-cancel-edit"]').click();
+  expect(onCancelField).toHaveBeenCalledWith(wallField.path, "namesWall.profiles.wall.inwardShiftPercent");
+  expect(panel.isPending()).toBe(false);
+  expect(panel.close()).toBe(true);
+  panel.dispose();
+});
+
 test("Escape cancels pending panel text before the next Escape closes it", () => {
   const host = document.createElement("aside"); document.body.appendChild(host);
   const opener = document.createElement("button"); document.body.appendChild(opener);

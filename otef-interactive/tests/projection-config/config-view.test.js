@@ -159,6 +159,18 @@ test("view renders draggable node workspace and preserves an existing focused in
   const panelRun = descendants(view.parameterDialog.element).find((node) => node.dataset?.action === "projection-names-run");
   panelRun.dispatch("click"); expect(onRunNames).toHaveBeenCalledTimes(1);
   view.parameterDialog.close();
+  namesPanelDraft.namesWall.activeMode = "wall";
+  view.update({ state: { draft: namesPanelDraft }, selectedNode: "names-wall" });
+  const inlineWallOnly = view.fields.get("names-wall:namesWall.inwardShiftPercent");
+  inlineWallOnly.number.value = "-"; inlineWallOnly.number.dispatch("input");
+  namesPanelDraft.namesWall.activeMode = "model";
+  view.update({ state: { draft: namesPanelDraft }, selectedNode: "names-wall" });
+  expect(inlineWallOnly.wrap.hidden).toBe(false);
+  expect(descendants(inlineWallOnly.wrap).find((node) => node.className === "config-field-pending-target").textContent).toMatch(/Regular wall/i);
+  expect(descendants(inlineWallOnly.wrap).find((node) => node.dataset?.action === "numeric-cancel-edit").hidden).toBe(false);
+  inlineWallOnly.cancel();
+  view.update({ state: { draft: namesPanelDraft }, selectedNode: "names-wall" });
+  expect(inlineWallOnly.wrap.hidden).toBe(true);
   view.update({ state: { draft: snapshot }, selectedNode: "pre" });
   const workspaceCss = readFileSync(resolve(import.meta.dirname, "../../frontend/src/projection-config/config.css"), "utf8");
   expect(workspaceCss).toMatch(/\.config-workspace\s*\{[^}]*grid-template-columns:\s*minmax\(0, ?1fr\) minmax\(340px, ?420px\)/s);

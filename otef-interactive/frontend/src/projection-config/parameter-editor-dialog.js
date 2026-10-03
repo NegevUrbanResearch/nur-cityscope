@@ -10,7 +10,7 @@ export function presentationError(path, error) {
 }
 
 /** Enlarged controls for one geometry node. Values remain owned by the view/controller. */
-export function createParameterEditorDialog({ document: doc, host, presentation = "dialog", onField = () => {}, onCancelField = () => {}, onNudge = () => {}, onAction = () => {}, createPreview = null, onVisibilityChange = () => {}, resolveFieldPath = (_descriptor, _config) => null, isFieldVisible = () => true, contextForConfig = () => "" }) {
+export function createParameterEditorDialog({ document: doc, host, presentation = "dialog", onField = () => {}, onCancelField = () => {}, onNudge = () => {}, onAction = () => {}, createPreview = null, onVisibilityChange = () => {}, resolveFieldPath = (_descriptor, _config) => null, isFieldVisible = () => true, pendingTargetLabel = (descriptor, resolvedPath) => `Pending edit still targets ${descriptor.label || resolvedPath}. Cancel this field before returning to nodes.`, contextForConfig = () => "" }) {
   if (!doc?.createElement || !host) throw new Error("parameter editor host is required");
   if (!["dialog", "panel"].includes(presentation)) throw new TypeError("parameter editor presentation must be dialog or panel");
   const modal = doc.createElement("section");
@@ -80,7 +80,14 @@ export function createParameterEditorDialog({ document: doc, host, presentation 
     for (const [path, control] of fieldControls) {
       const descriptor = control.descriptor;
       const resolvedPath = resolveFieldPath(descriptor, config) || path;
-      control.wrap.hidden = !isFieldVisible(descriptor, config);
+      const profileVisible = isFieldVisible(descriptor, config);
+      const retainPending = !profileVisible && control.isPending();
+      control.wrap.hidden = !profileVisible && !retainPending;
+      const targetNote = control.pendingTargetNote;
+      if (targetNote) {
+        targetNote.hidden = !retainPending;
+        targetNote.textContent = retainPending ? pendingTargetLabel(descriptor, resolvedPath, config) : "";
+      }
       const value = pathValue(config, resolvedPath);
       const rawError = fieldErrors[resolvedPath] || Object.entries(fieldErrors).find(([key]) => resolvedPath.startsWith(`${key}.`))?.[1] || "";
       control.update({ value, resolvedPath, error: presentationError(resolvedPath, rawError) });
@@ -107,6 +114,11 @@ export function createParameterEditorDialog({ document: doc, host, presentation 
       const control = renderField(doc, descriptor, onField, onNudge, false, true, onCancelField);
       control.wrap.classList.add("parameter-editor-field");
       control.descriptor = descriptor;
+      control.pendingTargetNote = doc.createElement("p");
+      control.pendingTargetNote.className = "config-field-pending-target";
+      control.pendingTargetNote.setAttribute("role", "status");
+      control.pendingTargetNote.hidden = true;
+      control.wrap.appendChild(control.pendingTargetNote);
       fields.appendChild(control.wrap);
       fieldControls.set(descriptor.path, control);
     }

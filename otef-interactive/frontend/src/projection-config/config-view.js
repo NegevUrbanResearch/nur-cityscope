@@ -154,6 +154,7 @@ export function createProjectionConfigView(root, {
   const nodeMap = new Map();
   const warpNodePreviews = new Map();
   const patternControls = new Map();
+  const inlinePendingTargetNotes = new Map();
   let parameterDialog = null;
   let activeParameterNode = null;
   let currentDraft = null;
@@ -299,7 +300,16 @@ export function createProjectionConfigView(root, {
       patternControls.set(output, pattern); card.appendChild(pattern);
     }
     const nodeFields = descriptors.filter((item) => item.node === id);
-    for (const descriptor of nodeFields) { const control = renderField(doc, descriptor, onField, onNudge, false, false, onFieldCancel); fields.set(`${id}:${descriptor.path}`, control); card.appendChild(control.wrap); }
+    for (const descriptor of nodeFields) {
+      const control = renderField(doc, descriptor, onField, onNudge, false, false, onFieldCancel);
+      fields.set(`${id}:${descriptor.path}`, control);
+      if (descriptor.wallOnly) {
+        const note = make(doc, "p", { className: "config-field-pending-target", hidden: true, role: "status" }, "Pending edit still targets the Regular wall profile. Cancel this field before returning to nodes.");
+        control.wrap.appendChild(note);
+        inlinePendingTargetNotes.set(`${id}:${descriptor.path}`, note);
+      }
+      card.appendChild(control.wrap);
+    }
     if (["pre", "left-crop", "right-crop", "left-fit", "right-fit"].includes(id)) {
       const adjust = button(doc, "Enlarge edit", "parameter-editor-open", "parameter-editor-open-button");
       adjust.addEventListener("click", (event) => {
@@ -574,6 +584,9 @@ export function createProjectionConfigView(root, {
       return `namesWall.profiles.${profile}.${field}`;
     },
     isFieldVisible: (descriptor, config) => !descriptor.wallOnly || config.namesWall?.activeMode === "wall",
+    pendingTargetLabel: (descriptor) => descriptor.wallOnly
+      ? "Pending edit still targets the Regular wall profile. Cancel this field before returning to nodes."
+      : "",
     contextForConfig: (nodeId, config) => nodeId === "names-wall"
       ? `${config.namesWall?.activeMode === "model" ? "Model-oriented" : "Regular wall"} profile`
       : "",
@@ -748,7 +761,11 @@ export function createProjectionConfigView(root, {
         : readPath(draft, descriptor.path);
       const control = fields.get(`${descriptor.node}:${descriptor.path}`);
       if (!control) continue;
-      control.wrap.hidden = Boolean(descriptor.wallOnly && draft.namesWall?.activeMode !== "wall");
+      const hiddenByProfile = Boolean(descriptor.wallOnly && draft.namesWall?.activeMode !== "wall");
+      const retainPending = hiddenByProfile && control.isPending();
+      control.wrap.hidden = hiddenByProfile && !retainPending;
+      const pendingTargetNote = inlinePendingTargetNotes.get(`${descriptor.node}:${descriptor.path}`);
+      if (pendingTargetNote) pendingTargetNote.hidden = !retainPending;
       const errorPath = namesWallProfileScoped(descriptor.path) && draft.namesWall?.activeMode
         ? `namesWall.profiles.${descriptor.wallOnly ? "wall" : draft.namesWall.activeMode}.${descriptor.path.slice("namesWall.".length)}`
         : descriptor.path;

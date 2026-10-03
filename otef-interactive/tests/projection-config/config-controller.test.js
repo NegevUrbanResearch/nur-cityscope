@@ -486,6 +486,56 @@ describe("projection config controller", () => {
     } finally { api.dispose(); }
   });
 
+  test('a foreign Model profile keeps pending Wall-only Cancel visible and Back works without writes', () => {
+    const doc = documentStub(); const root = element('main'); root.ownerDocument = doc; const client = fakeClient();
+    const api = mountProjectionConfig(root, { client });
+    const inputFor = (container, path) => find(container, node => node.dataset?.field === path && node.dataset.input === 'number');
+    const errorFor = path => find(root, node => node.dataset?.errorFor === path);
+    try {
+      client.setDraft.mockClear(); client.apply.mockClear(); client.save.mockClear(); client.setLive.mockClear();
+      find(root, node => node.dataset?.node === 'names-wall').dispatch('click');
+      find(root, node => node.className === 'config-enlarge-edit').dispatch('click');
+      const panel = find(root, node => node.className === 'parameter-editor-dialog');
+      const wallShift = inputFor(panel, 'namesWall.inwardShiftPercent');
+      wallShift.value = '-'; wallShift.dispatch('input'); wallShift.dispatch('blur');
+      const unrelatedPre = inputFor(root, 'pre.scale'); unrelatedPre.value = '1.'; unrelatedPre.dispatch('input');
+
+      const foreignModel = clone(client.getState().draft);
+      foreignModel.namesWall.activeMode = 'model';
+      foreignModel.namesWall.profiles.model.requestedFontPx = 12;
+      client.report({ draft: foreignModel, hasLocalDraft: false });
+
+      const wallShiftWrap = find(panel, node => node.dataset?.path === 'namesWall.inwardShiftPercent');
+      expect(find(panel, node => node.className === 'parameter-editor-title-context').textContent).toMatch(/Model/i);
+      expect(wallShiftWrap.hidden).toBe(false);
+      expect(find(wallShiftWrap, node => node.className === 'config-field-pending-target').textContent).toMatch(/Regular wall/i);
+      const modelFont = inputFor(panel, 'namesWall.requestedFontPx');
+      modelFont.value = '49'; modelFont.dispatch('input'); modelFont.dispatch('blur');
+      expect(errorFor('namesWall.requestedFontPx').textContent).toMatch(/between 1 and 48 px/i);
+
+      find(wallShiftWrap, node => node.dataset?.action === 'numeric-cancel-edit').dispatch('click');
+      expect(wallShift.value).toBe('0');
+      expect(errorFor('namesWall.inwardShiftPercent').textContent).toBe('');
+      expect(errorFor('namesWall.requestedFontPx').textContent).toMatch(/between 1 and 48 px/i);
+      expect(unrelatedPre.value).toBe('1.');
+      client.report({ pending: !client.getState().pending });
+      expect(find(panel, node => node.className === 'parameter-editor-title-context').textContent).toMatch(/Model/i);
+      expect(errorFor('namesWall.requestedFontPx').textContent).toMatch(/between 1 and 48 px/i);
+      expect(client.getState().draft.namesWall.activeMode).toBe('model');
+      expect(client.getState().draft.namesWall.profiles.model.requestedFontPx).toBe(12);
+
+      const modelFontWrap = find(panel, node => node.dataset?.path === 'namesWall.requestedFontPx');
+      find(modelFontWrap, node => node.dataset?.action === 'numeric-cancel-edit').dispatch('click');
+      find(panel, node => node.dataset?.action === 'parameter-editor-close').dispatch('click');
+      expect(panel.hidden).toBe(true);
+      expect(client.getState().draft.namesWall.activeMode).toBe('model');
+      expect(client.getState().draft.namesWall.profiles.model.requestedFontPx).toBe(12);
+      expect(client.getState().draft).toEqual(foreignModel);
+      expect(client.setDraft).not.toHaveBeenCalled(); expect(client.apply).not.toHaveBeenCalled();
+      expect(client.save).not.toHaveBeenCalled(); expect(client.setLive).not.toHaveBeenCalled();
+    } finally { api.dispose(); }
+  });
+
   test('header Escape retires rejected crop validation and its status refresh without writing state', () => {
     const doc = documentStub(); const root = element('main'); root.ownerDocument = doc; const client = fakeClient();
     const api = mountProjectionConfig(root, { client });
