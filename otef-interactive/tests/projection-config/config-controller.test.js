@@ -277,6 +277,95 @@ test("mounted controller reuses unchanged TD geometry publications and rebases a
   }
 });
 
+test("mounted public warp editors paint a ready target before Edit or Enlarge returns", async () => {
+  const previousDocument = globalThis.document;
+  const makeFrameDocument = () => {
+    const doc = documentStub();
+    const frames = new Map();
+    let nextFrameId = 0;
+    doc.defaultView.requestAnimationFrame = (callback) => { const id = ++nextFrameId; frames.set(id, callback); return id; };
+    doc.defaultView.cancelAnimationFrame = (id) => frames.delete(id);
+    const flushFrames = () => {
+      while (frames.size) {
+        const pending = [...frames.values()]; frames.clear();
+        pending.forEach((callback) => callback());
+      }
+    };
+    return { doc, frames, flushFrames };
+  };
+  const config = clone(DEFAULTS);
+  for (const output of ["left", "right"]) {
+    config.outputs[output].warp.baseline = { type: "tdMesh", assetId: `${output}-capture`, sha256: "a".repeat(64), width: 1920, height: 1080, origin: "top-left" };
+  }
+  const meshes = { left: createIdentityProjectionMesh({ side: "left" }), right: createIdentityProjectionMesh({ side: "right" }) };
+  const client = fakeClient();
+  client.report({ draft: clone(config), hasLocalDraft: true });
+  const updates = [];
+  const actualCreate = configView.createProjectionConfigView;
+  const viewSpy = vi.spyOn(configView, "createProjectionConfigView").mockImplementation((root, options) => {
+    const view = actualCreate(root, options);
+    const actualUpdate = view.update;
+    view.update = (state) => { updates.push(state.warpStates); actualUpdate(state); };
+    return view;
+  });
+  const baselineCatalogLoader = { prepare: async () => ({ snapshot: {}, loaded: { left: { mesh: meshes.left }, right: { mesh: meshes.right } } }), promote() {} };
+  const mount = (frameDoc) => {
+    globalThis.document = frameDoc.doc;
+    const root = element("main"); root.ownerDocument = frameDoc.doc;
+    const api = mountProjectionConfig(root, { client, baselineCatalogLoader, candidateValidator: { validate: () => ({ valid: true }), dispose() {} } });
+    return { root, api };
+  };
+  const handleCount = (root) => find(root, (node) => node.attributes?.class === "warp-edit-surface")?.children
+    .filter((node) => node.attributes?.class?.includes("warp-handle")).length || 0;
+  try {
+    const firstFrameDoc = makeFrameDocument();
+    const first = mount(firstFrameDoc);
+    await vi.waitFor(() => expect(updates.at(-1)?.left.baselineAvailable).toBe(true));
+    firstFrameDoc.flushFrames();
+    first.api.dispose();
+
+    const frameDoc = makeFrameDocument();
+    const remounted = mount(frameDoc);
+    const updateStart = updates.length;
+    await vi.waitFor(() => expect(updates.slice(updateStart).at(-1)?.left.baselineAvailable).toBe(true));
+    frameDoc.flushFrames();
+
+    const edit = (nodeId) => {
+      find(remounted.root, (node) => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === nodeId).dispatch("click");
+      const expected = nodeId.startsWith("right-") ? nodeId.endsWith("-grid") ? 56 : 4 : nodeId.endsWith("-grid") ? 49 : 4;
+      expect(handleCount(remounted.root)).toBe(expected);
+      expect(find(remounted.root, (node) => node.attributes?.class === "warp-edit-surface").attributes.viewBox).toMatch(/^-?\d/);
+      expect(frameDoc.frames.size).toBe(0);
+      find(remounted.root, (node) => node.dataset?.action === "warp-editor-close").dispatch("click");
+    };
+
+    // The first public target is the same left-grid target that failed on remount in the frozen run.
+    edit("left-grid");
+    for (const nodeId of ["left-keystone", "right-keystone", "right-grid", "left-grid"]) edit(nodeId);
+
+    // Enlarge uses the selected right-grid target and must expose its active handles synchronously too.
+    find(remounted.root, (node) => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "right-grid").dispatch("click");
+    const rightGridSurface = find(remounted.root, (node) => node.attributes?.class === "warp-edit-surface");
+    const originalHandleX = rightGridSurface.children.find((node) => node.attributes?.["data-index"] === "0").attributes.cx;
+    expect(find(remounted.root, (node) => node.className === "warp-selection-picker").children.length).toBeGreaterThan(0);
+    find(remounted.root, (node) => node.dataset?.action === "warp-editor-close").dispatch("click");
+    find(remounted.root, (node) => node.dataset?.action === "warp-nudge" && node.dataset?.direction === "right").dispatch("click");
+    expect(frameDoc.frames.size).toBe(1);
+    const supersededFrame = frameDoc.frames.values().next().value;
+    find(remounted.root, (node) => node.className === "config-enlarge-edit").dispatch("click");
+    expect(handleCount(remounted.root)).toBe(56);
+    expect(frameDoc.frames.size).toBe(0);
+    const updatedHandle = rightGridSurface.children.find((node) => node.attributes?.["data-index"] === "0");
+    expect(updatedHandle.attributes.cx).not.toBe(originalHandleX);
+    supersededFrame();
+    expect(updatedHandle.attributes.cx).not.toBe(originalHandleX);
+    remounted.api.dispose();
+  } finally {
+    viewSpy.mockRestore();
+    globalThis.document = previousDocument;
+  }
+});
+
 test("relative pad start disables presentation toggle and blocks consuming commands before movement", async () => {
   const { root, client, api, restore } = tracedWarpHarness();
   await api.handleAction("warp-nudge", { direction: "right", fine: true, output: "left" });

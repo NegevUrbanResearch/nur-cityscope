@@ -396,7 +396,7 @@ export function createProjectionConfigView(root, {
     }
     if (id.endsWith("-keystone") || id.endsWith("-grid")) {
       const openButton = button(doc, "Edit", "warp-editor-open", "warp-open-button");
-      openButton.addEventListener("click", (event) => { event.stopPropagation?.(); if (onNode(id) === false) return; dialog.open({ side: id.startsWith("right-") ? "right" : "left", mode: id.endsWith("-grid") ? "grid" : "keystone", opener: openButton }); });
+      openButton.addEventListener("click", (event) => { event.stopPropagation?.(); if (onNode(id) === false) return; dialog.open({ side: id.startsWith("right-") ? "right" : "left", mode: id.endsWith("-grid") ? "grid" : "keystone", opener: openButton }); flushPendingWarpPaint(); });
       card.appendChild(openButton);
     }
     if (id === "settlement-names") {
@@ -455,6 +455,7 @@ export function createProjectionConfigView(root, {
       parameterDialog?.update({ config: currentDraft, fieldErrors: currentFieldErrors, status: currentStatus });
     } else if (id.endsWith("-keystone") || id.endsWith("-grid")) {
       dialog.open({ side: id.startsWith("right-") ? "right" : "left", mode: id.endsWith("-grid") ? "grid" : "keystone", opener: enlargeEdit });
+      flushPendingWarpPaint();
     } else if (id === "clock-gis" || id === "clock-projection") onOpenClockEditor(id);
     else if (id === "nova-explainers") onOpenNovaExplainerEditor();
     else if (id === "settlement-names") onOpenSettlementEditor();
@@ -723,15 +724,33 @@ export function createProjectionConfigView(root, {
     canvas.setSelected(selected);
     for (const [id, card] of nodeMap) card.classList?.toggle("selected", id === selected);
   };
+  const warpSurfaceTopologyKeyFor = ({ output, mode, rows, columns, warp, warpState, handles }) => {
+    const grid = warp?.grid;
+    const candidate = warpState.gridLayoutPreview || warpState.gridPlacement?.preview;
+    const candidateGrid = candidate?.grid;
+    const candidateVisible = mode === "grid" && candidate?.ok && candidateGrid && candidate?.handles?.length === candidateGrid.rows * candidateGrid.columns;
+    return JSON.stringify([output, mode, WARP_OUTPUT_WIDTH, WARP_OUTPUT_HEIGHT, rows, columns,
+      grid?.columnPositions || null, grid?.rowPositions || null, warp?.baseline || null, handles.length,
+      candidateVisible ? [candidateGrid.rows, candidateGrid.columns] : null]);
+  };
+  const warpTopologyForUpdate = (warpStates, node) => {
+    if (!node.endsWith("-keystone") && !node.endsWith("-grid")) return null;
+    const output = node.startsWith("right-") ? "right" : "left";
+    const warpState = warpStates?.[output];
+    if (!warpState) return null;
+    const mode = node.endsWith("-grid") ? "grid" : "keystone";
+    const warp = warpState.config?.outputs?.[output]?.warp;
+    return warpSurfaceTopologyKeyFor({ output, mode, rows: warp?.grid?.rows || 7,
+      columns: warp?.grid?.columns || (output === "right" ? 8 : 7), warp, warpState,
+      handles: Array.isArray(warpState.handles) ? warpState.handles : [] });
+  };
   const paintWarpSurface = ({ output, mode, rows, columns, warp, warpState, handles, selectionKind, selectedIndex, selectedIndices, displayViewBox }) => {
     const grid = warp?.grid;
     const candidate = warpState.gridLayoutPreview || warpState.gridPlacement?.preview;
     const candidateGrid = candidate?.grid;
     const candidateHandles = candidate?.handles;
     const candidateVisible = mode === "grid" && candidate?.ok && candidateGrid && candidateHandles?.length === candidateGrid.rows * candidateGrid.columns;
-    const topologyKey = JSON.stringify([output, mode, WARP_OUTPUT_WIDTH, WARP_OUTPUT_HEIGHT, rows, columns,
-      grid?.columnPositions || null, grid?.rowPositions || null, warp?.baseline || null, handles.length,
-      candidateVisible ? [candidateGrid.rows, candidateGrid.columns] : null]);
+    const topologyKey = warpSurfaceTopologyKeyFor({ output, mode, rows, columns, warp, warpState, handles });
     const focusedHandleIndex = doc.activeElement?.classList?.contains?.("warp-handle") ? Number(doc.activeElement.getAttribute("data-index")) : null;
     if (!warpSurfaceRenderState || warpSurfaceRenderState.topologyKey !== topologyKey) {
       const rect = svgNode(doc, "rect", { class: "warp-output-rect", x: "0", y: "0", width: String(WARP_OUTPUT_WIDTH), height: String(WARP_OUTPUT_HEIGHT) });
@@ -920,9 +939,24 @@ export function createProjectionConfigView(root, {
     renderWarpPanel(latest.warpStates, latest.node);
     updateWarpNodePreviews(latest.warpStates);
   };
+  function flushPendingWarpPaint() {
+    const latest = latestWarpPaint;
+    if (!latest) return;
+    cancelPendingWarpPaint();
+    latestWarpPaint = latest;
+    paintLatestWarpUpdate();
+  }
   const scheduleWarpUpdate = (warpStates, node) => {
     syncWarpInteractionState(warpStates, node);
-    latestWarpPaint = { warpStates, node };
+    const latest = { warpStates, node };
+    const topologyKey = warpTopologyForUpdate(warpStates, node);
+    if (topologyKey !== (warpSurfaceRenderState?.topologyKey ?? null)) {
+      cancelPendingWarpPaint();
+      latestWarpPaint = latest;
+      paintLatestWarpUpdate();
+      return;
+    }
+    latestWarpPaint = latest;
     if (!requestFrame) { paintLatestWarpUpdate(); return; }
     if (pendingWarpFrame !== null) return;
     const generation = ++warpPaintGeneration;

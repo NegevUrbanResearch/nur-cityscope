@@ -667,16 +667,16 @@ test("view renders draggable node workspace and preserves an existing focused in
     expect(scheduledView.controls.warpEnableAction.hidden).toBe(false);
     expect(scheduledView.controls.warpEnableAction.disabled).toBe(false);
     expect([...scheduledView.controls.gridLayout.fields.values(), ...scheduledView.controls.gridLayout.actions.values()].every((control) => control.disabled)).toBe(true);
-    expect(frames.size).toBe(1);
-    frames.values().next().value(); frames.clear();
+    const sameTargetUpdate = output === "left" && mode === "keystone";
+    expect(frames.size).toBe(sameTargetUpdate ? 1 : 0);
+    if (sameTargetUpdate) { frames.values().next().value(); frames.clear(); }
     expect(scheduledView.controls.warpPositionX.disabled).toBe(true);
     expect(scheduledView.controls.warpReset.disabled).toBe(true);
     expect(scheduledView.controls.warpEnabled.disabled).toBe(true);
     expect([...scheduledView.controls.gridLayout.fields.values(), ...scheduledView.controls.gridLayout.actions.values()].every((control) => control.disabled)).toBe(true);
   }
-  scheduledView.update({ state: { draft }, selectedNode: "left-keystone", warpStates: { left: makeScheduledState(0.02, "latest visual state") } });
-  const freshBypassRestore = frames.values().next().value;
-  freshBypassRestore(); frames.clear();
+  scheduledView.update({ state: { draft }, selectedNode: "left-keystone", warpStates: { left: makeScheduledState(0.02, "restored target") } });
+  expect(frames.size).toBe(0);
   scheduledView.update({ state: { draft }, selectedNode: "left-keystone", warpStates: { left: makeScheduledState(0.03, "retired state") } });
   expect(frames.size).toBe(1);
   const stalePaint = frames.values().next().value;
