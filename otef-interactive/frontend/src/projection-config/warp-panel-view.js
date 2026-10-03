@@ -113,8 +113,8 @@ export function createWarpPanelView({ document: doc, onAction = () => {}, onPoin
     if (hold) stopHold(true);
     cancelPad();
   };
-  const onBlur = () => cancelPad();
-  const onVisibility = () => { if (doc.visibilityState === "hidden") cancelPad(); };
+  const onBlur = () => { stopHold(true); cancelPad(); };
+  const onVisibility = () => { if (doc.visibilityState === "hidden") { stopHold(true); cancelPad(); } };
   doc.addEventListener?.("keydown", cancelPadOnEscape, true);
   doc.addEventListener?.("visibilitychange", onVisibility);
   doc.defaultView?.addEventListener?.("blur", onBlur);

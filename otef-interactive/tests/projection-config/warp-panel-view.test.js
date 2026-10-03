@@ -119,6 +119,51 @@ test("a held arrow repeats at selected sensitivity and retires without a late ti
   panel.dispose();
 });
 
+test.each(["blur", "visibilitychange"]) ("held nudge %s cancels locally and keeps prior history", (terminal) => {
+  vi.useFakeTimers();
+  const changes = [];
+  const editor = createWarpEditor({ config: structuredClone(DEFAULT_PROJECTION_CONFIG), onChange: (config, meta) => changes.push({ config: structuredClone(config), meta }) });
+  editor.nudge("left");
+  expect(editor.getState().historyDepth).toBe(1);
+  const captured = editor.getConfig();
+  const panel = createWarpPanelView({ document,
+    onAction(action, value) {
+      if (action === "warp-nudge-start") return editor.beginNudgeGesture();
+      if (action === "warp-nudge") return editor.nudge(value.direction, value);
+      if (action === "warp-nudge-end") return editor.endNudgeGesture();
+      if (action === "warp-nudge-cancel") return editor.cancelNudgeGesture();
+      return false;
+    },
+  });
+  panel.update({ output: "left", nodeId: "left-keystone", editorState: { ...editor.getState(), config: editor.getConfig(), handles: editor.getControlPoints() } });
+  const arrow = panel.element.querySelector('[data-action="warp-nudge"][data-direction="right"]');
+  const down = new Event("pointerdown", { bubbles: true, cancelable: true }); Object.assign(down, { pointerId: 77, button: 0 }); arrow.dispatchEvent(down);
+  vi.advanceTimersByTime(375);
+  expect(editor.getState().adjusting).toBe(true);
+  expect(editor.getConfig()).not.toEqual(captured);
+  const changeCountAtTerminal = changes.length;
+
+  if (terminal === "blur") window.dispatchEvent(new Event("blur"));
+  else {
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+    document.dispatchEvent(new Event("visibilitychange"));
+  }
+
+  expect(editor.getState()).toMatchObject({ adjusting: false, historyDepth: 1 });
+  expect(editor.getConfig().outputs.left.warp).toEqual(captured.outputs.left.warp);
+  const changesAfterCancel = changes.length;
+  expect(changesAfterCancel).toBeGreaterThanOrEqual(changeCountAtTerminal);
+  vi.advanceTimersByTime(225);
+  const up = new Event("pointerup", { bubbles: true }); Object.assign(up, { pointerId: 77 }); arrow.dispatchEvent(up);
+  arrow.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
+  expect(changes).toHaveLength(changesAfterCancel);
+  expect(editor.getState()).toMatchObject({ adjusting: false, historyDepth: 1 });
+  expect(editor.getConfig().outputs.left.warp).toEqual(captured.outputs.left.warp);
+  expect(panel.element.querySelector('[data-action="warp-undo"]').disabled).toBe(false);
+  panel.dispose();
+  if (terminal === "visibilitychange") Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+});
+
 test("foreign replacement retires nudge timers and pad capture; own acknowledgment retains one undo", () => {
   vi.useFakeTimers();
   const changes = [];
