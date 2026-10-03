@@ -56,6 +56,18 @@ test("a hit on another column member preserves column mode and selects that colu
   f.binder.dispose();
 });
 
+test("screen-space hits between selected-row handles still start the row drag", () => {
+  const rows = 7; const columns = 7;
+  const handles = Array.from({ length: rows * columns }, (_, item) => ({ x: (item % columns) / (columns - 1), y: Math.floor(item / columns) / (rows - 1) }));
+  const indices = Array.from({ length: columns }, (_, column) => columns + column);
+  const f = fixture({ handles, rows, columns, selection: { mode: "grid", kind: "row", index: 1, indices }, rect: { left: 0, top: 0, width: 1920, height: 1080 } });
+  f.fire("pointerdown", { clientX: 160, clientY: 180 });
+  expect(f.calls.select).not.toHaveBeenCalled();
+  f.fire("pointermove", { clientX: 167, clientY: 180 });
+  expect(f.calls.start).toHaveBeenCalledOnce();
+  f.binder.dispose();
+});
+
 test.each([
   { kind: "row", columns: 8, rows: 7, selectedIndex: 0, hitIndex: 3, expectedKind: "row", expectedIndex: 0 },
   { kind: "column", columns: 8, rows: 7, selectedIndex: 2, hitIndex: 10, expectedKind: "column", expectedIndex: 2 },

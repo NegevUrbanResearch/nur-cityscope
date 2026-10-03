@@ -66,6 +66,12 @@ export function bindWarpPointerInput({ surface, readGeometry, onSelect, onStart,
   };
   const matches = (event) => active && event.pointerId === active.pointerId;
   const point = (event, gesture) => ({ ...warpPointFromClient(event, gesture.rect, gesture.viewBox), output: gesture.output });
+  const distanceToSegment = (point, from, to) => {
+    const dx = to.x - from.x, dy = to.y - from.y;
+    const length = dx * dx + dy * dy;
+    const t = length ? Math.max(0, Math.min(1, ((point.x - from.x) * dx + (point.y - from.y) * dy) / length)) : 0;
+    return Math.hypot(point.x - (from.x + t * dx), point.y - (from.y + t * dy));
+  };
   const beginDrag = (event, gesture) => {
     if (!gesture.canEdit || gesture.dragStarted || Math.hypot(event.clientX - gesture.clientX, event.clientY - gesture.clientY) < 6) return false;
     gesture.dragStarted = true;
@@ -146,12 +152,30 @@ export function bindWarpPointerInput({ surface, readGeometry, onSelect, onStart,
     const { x, y, width: boxWidth, height: boxHeight } = geometry.viewBox;
     const viewBox = { x, y, width: boxWidth, height: boxHeight };
     const fit = fitWarpViewport(viewBox, rect.width, rect.height);
+    const screenPoints = geometry.handles.map((handle) => {
+      if (!Number.isFinite(handle?.x) || !Number.isFinite(handle?.y)) return null;
+      return { x: rect.left + fit.insetX + (handle.x * 1920 - viewBox.x) * fit.scale, y: rect.top + fit.insetY + (handle.y * 1080 - viewBox.y) * fit.scale };
+    });
     let hit = null;
-    geometry.handles.forEach((handle, index) => {
+    const selection = geometry.selection;
+    const columns = Math.max(1, Math.floor(Number(geometry.columns) || 1));
+    const rows = Math.max(1, Math.floor(Number(geometry.rows) || Math.ceil(geometry.handles.length / columns)));
+    if (geometry.mode === "grid" && selection?.kind === "row") {
+      const row = Math.max(0, Math.min(rows - 1, Math.floor(Number(selection.index) || 0)));
+      const indices = Array.from({ length: columns }, (_, column) => row * columns + column).filter((index) => screenPoints[index]);
+      const closest = indices.reduce((best, index) => !best || Math.hypot(event.clientX - screenPoints[index].x, event.clientY - screenPoints[index].y) < best.distance ? { index, distance: Math.hypot(event.clientX - screenPoints[index].x, event.clientY - screenPoints[index].y) } : best, null);
+      const lineDistance = indices.slice(1).reduce((best, index, offset) => Math.min(best, distanceToSegment({ x: event.clientX, y: event.clientY }, screenPoints[indices[offset]], screenPoints[index])), Infinity);
+      if (closest && lineDistance <= HIT_RADIUS) hit = { ...closest, selection: { mode: "grid", kind: "row", index: row } };
+    } else if (geometry.mode === "grid" && selection?.kind === "column") {
+      const column = Math.max(0, Math.min(columns - 1, Math.floor(Number(selection.index) || 0)));
+      const indices = Array.from({ length: rows }, (_, row) => row * columns + column).filter((index) => screenPoints[index]);
+      const closest = indices.reduce((best, index) => !best || Math.hypot(event.clientX - screenPoints[index].x, event.clientY - screenPoints[index].y) < best.distance ? { index, distance: Math.hypot(event.clientX - screenPoints[index].x, event.clientY - screenPoints[index].y) } : best, null);
+      const lineDistance = indices.slice(1).reduce((best, index, offset) => Math.min(best, distanceToSegment({ x: event.clientX, y: event.clientY }, screenPoints[indices[offset]], screenPoints[index])), Infinity);
+      if (closest && lineDistance <= HIT_RADIUS) hit = { ...closest, selection: { mode: "grid", kind: "column", index: column } };
+    }
+    if (!hit) geometry.handles.forEach((handle, index) => {
       if (!Number.isFinite(handle?.x) || !Number.isFinite(handle?.y)) return;
-      const x = rect.left + fit.insetX + (handle.x * 1920 - viewBox.x) * fit.scale;
-      const y = rect.top + fit.insetY + (handle.y * 1080 - viewBox.y) * fit.scale;
-      const hitDistance = Math.hypot(event.clientX - x, event.clientY - y);
+      const hitDistance = Math.hypot(event.clientX - screenPoints[index].x, event.clientY - screenPoints[index].y);
       if (hitDistance <= HIT_RADIUS && (!hit || hitDistance < hit.distance || (hitDistance === hit.distance && index < hit.index))) hit = { index, distance: hitDistance };
     });
     if (!hit) return;
@@ -164,10 +188,10 @@ export function bindWarpPointerInput({ surface, readGeometry, onSelect, onStart,
     recordProjectionTrace(trace, 'selection', { surface: 'warp', output, mode, index: hit.index, accepted: selectionChanged });
     event.preventDefault?.();
     if (selectionChanged) {
-      const selection = mode === "grid"
+      const selected = hit.selection || (mode === "grid"
         ? gridSelectionForHandle(geometry.selection, hit.index, geometry.columns)
-        : { mode, kind: "corner", index: hit.index };
-      onSelect({ output, selection });
+        : { mode, kind: "corner", index: hit.index });
+      onSelect({ output, selection: selected });
     }
     try { surface.setPointerCapture?.(gesture.pointerId); recordProjectionTrace(trace, 'capture', { surface: 'warp', phase: 'request', pointerId: gesture.pointerId, accepted: true }); } catch { recordProjectionTrace(trace, 'capture', { surface: 'warp', phase: 'request', pointerId: gesture.pointerId, accepted: false, reason: 'capture_failed' }); active = null; return; }
     recordProjectionTrace(trace, 'gesture', { surface: 'warp', phase: 'intent', output, mode, pointerId: gesture.pointerId });

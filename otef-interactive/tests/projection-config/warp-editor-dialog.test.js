@@ -186,6 +186,38 @@ test("panel presentation stays nonmodal and exposes header actions while editing
   dialog.dispose();
 });
 
+test("focused viewport toggles in place, preserves field focus, and only defaults when opened", () => {
+  const oldWidth = window.innerWidth;
+  Object.defineProperty(window, "innerWidth", { configurable: true, value: 820 });
+  const { dialog, opener, panel, host } = setup({ presentation: "panel" });
+  const text = document.createElement("input"); text.value = "-3.5"; panel.append(text);
+  dialog.open({ side: "right", mode: "grid", opener });
+  expect(dialog.isFullViewport()).toBe(true);
+  expect(host.querySelector('[data-action="warp-full-viewport"]').getAttribute("aria-label")).toBe("Exit full-screen");
+  text.focus();
+  const toggle = host.querySelector('[data-action="warp-full-viewport"]');
+  const down = new PointerEvent("pointerdown", { bubbles: true, cancelable: true });
+  toggle.dispatchEvent(down);
+  toggle.click();
+  expect(down.defaultPrevented).toBe(true);
+  expect(dialog.isFullViewport()).toBe(false);
+  expect(document.activeElement).toBe(text);
+  expect(text.value).toBe("-3.5");
+  Object.defineProperty(window, "innerWidth", { configurable: true, value: 1400 });
+  window.dispatchEvent(new Event("resize"));
+  expect(dialog.isFullViewport()).toBe(false);
+  dialog.close();
+  expect(host.dataset.warpFullViewport).toBe("false");
+  dialog.open({ side: "left", mode: "keystone", opener });
+  expect(dialog.isFullViewport()).toBe(false);
+  dialog.close();
+  Object.defineProperty(window, "innerWidth", { configurable: true, value: 820 });
+  dialog.open({ side: "left", mode: "keystone", opener });
+  expect(dialog.isFullViewport()).toBe(true);
+  dialog.dispose();
+  Object.defineProperty(window, "innerWidth", { configurable: true, value: oldWidth });
+});
+
 test("only trusted ready sends the latest draft once and stale frames cannot reply", () => {
   const { dialog, opener } = setup();
   const first = structuredClone(DEFAULT_PROJECTION_CONFIG);
@@ -356,7 +388,7 @@ test("modal contains focus, restores page interaction on Escape, and forwards Ap
   dialog.open({ side: "left", mode: "keystone", opener });
   expect(background.inert).toBe(true);
   expect(document.body.style.overflow).toBe("hidden");
-  const first = document.querySelector('[data-action="warp-editor-close"]');
+  const first = document.querySelector('[data-action="warp-full-viewport"]');
   expect(document.querySelector('[data-action="projection-names-run"]')).toBeNull();
   const last = document.querySelector('.warp-editor-footer button:not([hidden])');
   first.focus(); document.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true }));
@@ -529,7 +561,7 @@ test('fresh actual controller opens Left Keystone with unavailable network basel
     const open = host.querySelector('[data-node="left-keystone"] .warp-open-button');
     expect(open.disabled).toBe(false); open.click();
     expect(host.querySelector('.warp-editor-dialog').hidden).toBe(false);
-    expect(host.querySelector('.warp-inspector').hidden).toBe(false);
+    expect(host.querySelector('.warp-precision-panel').hidden).toBe(false);
     expect(host.querySelector('[data-node="left-keystone"]').classList.contains('selected')).toBe(true);
     expect(client.setDraft).not.toHaveBeenCalled();
     await new Promise(resolve => setTimeout(resolve, 0));

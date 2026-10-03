@@ -31,10 +31,10 @@ test("warp handle outlines stay constant in CSS pixels while zooming", () => {
   expect(handleRule).toContain("vector-effect: non-scaling-stroke");
 });
 
-test("warp coordinate wrappers stack both axes and fit sign, magnitude and units", () => {
+test("warp coordinate wrappers pair both signed axes and fit sign, magnitude and units", () => {
   const css = readFileSync(resolve(import.meta.dirname, "../../frontend/src/projection-config/config.css"), "utf8");
   const container = css.match(/\.warp-numeric\s*\{([^}]*)\}/)?.[1] ?? "";
-  expect(container).toMatch(/grid-template-columns:\s*minmax\(0, 1fr\)/);
+  expect(container).toMatch(/grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);
   expect(css).toMatch(/\.warp-numeric \.config-field-row:has\(\.numeric-sign\)\s*\{[^}]*grid-template-columns:\s*48px minmax\(0, 1fr\) auto/s);
   expect(css).toMatch(/\.warp-numeric \.config-field-row input\[data-input=number\]\s*\{[^}]*min-width:\s*0[^}]*width:\s*100%/s);
 });
@@ -323,14 +323,13 @@ test("view renders draggable node workspace and preserves an existing focused in
   expect(view.controls.warpPanel.hidden).toBe(false);
   expect(view.controls.warpEnabled.attributes["aria-label"]).toBe("Enable browser warp");
   expect(view.controls.warpSurface.children.length).toBe(6);
-  expect(view.controls.warpStep.parentElement.className).toBe("warp-fine-primary");
-  expect(view.controls.warpArrows.parentElement.className).toBe("warp-fine-primary");
-  expect(view.controls.warpStatus.parentElement.className).toBe("warp-fine-primary");
-  expect(view.controls.warpSelectionControls.hidden).toBe(true);
+  expect(view.controls.warpStep.parentElement.className).toBe("warp-step-row");
+  expect(view.controls.warpArrows.parentElement.className).toBe("warp-adjustment-row");
+  expect(view.controls.warpStatus.parentElement.className).toBe("warp-selection-row");
+  expect(view.controls.warpSelectionControls.hidden).toBe(false);
   const undoButton = descendants(root).find((node) => node.dataset?.warpAction === "warp-undo");
-  expect(undoButton.parentElement.className).toBe("warp-history-command-group");
-  expect(undoButton.parentElement.role).toBe("group");
-  expect(undoButton.parentElement.attributes["aria-label"]).toBe("Undo and redo");
+  expect(undoButton.parentElement.className).toBe("warp-history-controls");
+  expect(undoButton.parentElement.attributes["aria-label"]).toBe("Warp history");
   view.update({ state: { draft }, selectedNode: "left-keystone", warpStates: { left: { ...warpEditor.getState(), config: warpEditor.getConfig(), handles: [{ x: -0.05, y: -0.1 }, { x: 1.05, y: -0.1 }, { x: -0.05, y: 1.1 }, { x: 1.05, y: 1.1 }] } } });
   const fittedViewBox = view.controls.warpSurface.attributes.viewBox.split(" ").map(Number);
   expect(fittedViewBox[0]).toBeLessThan(0);
@@ -359,9 +358,13 @@ test("view renders draggable node workspace and preserves an existing focused in
   expect(view.controls.warpActions.children.find((button) => button.dataset.warpAction === "warp-reset-selection").textContent).toBe("Reset point");
   rightIdentityWarpEditor.select(gridSelection("row", 1));
   view.update({ state: { draft }, selectedNode: "right-grid", warpStates: { right: { ...rightIdentityWarpEditor.getState(), config: rightIdentityWarpEditor.getConfig(), handles: rightIdentityWarpEditor.getControlPoints() } } });
+  const selectedMarker = view.controls.warpSurface.children.find((item) => item.attributes.class === "warp-handle selected");
+  const unselectedMarker = view.controls.warpSurface.children.find((item) => item.attributes.class === "warp-handle");
+  expect(selectedMarker.attributes.r).toBe("8");
+  expect(unselectedMarker.attributes.r).toBe("5");
   expect(root.querySelector?.(".warp-mode")).toBeUndefined();
   expect(view.controls.warpSelectionPicker).toBeDefined();
-  expect(view.controls.warpSelectionButtons.map((control) => control.textContent)).toEqual(["Point", "Row", "Column"]);
+  expect(view.controls.warpSelectionButtons.filter((control) => !control.hidden).map((control) => control.textContent)).toEqual(["Point", "Row", "Column", "Edge", "All"]);
   expect(view.controls.warpSelectionPicker.children.slice(0, 3).map((option) => option.textContent)).toEqual(["Row 1", "Row 2", "Row 3"]);
   expect(view.controls.warpStatus.textContent).toContain("Row 2");
   expect(view.controls.warpPositionLabels.map((label) => label.textContent)).toEqual(["Mean X px", "Mean Y px"]);
@@ -370,13 +373,13 @@ test("view renders draggable node workspace and preserves an existing focused in
   expect(view.controls.warpActions.children.find((button) => button.dataset.warpAction === "warp-reset-selection").textContent).toBe("Reset row");
   expect(view.controls.warpSurface.children.filter((item) => item.attributes.class === "warp-grid-line selected")).toHaveLength(1);
   expect(view.controls.warpSurface.children.filter((item) => item.attributes.class?.startsWith("warp-handle") && item.attributes.class.includes("selected"))).toHaveLength(8);
-  view.controls.warpSelectionButtons[2].dispatch("click", { detail: 1 });
+  view.controls.warpSelectionButtons.find((control) => control.dataset.warpSelectionKind === "column").dispatch("click", { detail: 1 });
   expect(onWarpAction).toHaveBeenLastCalledWith("warp-select", { output: "right", selection: { mode: "grid", kind: "column", index: 1 } });
   rightIdentityWarpEditor.select(gridSelection("column", 1));
   view.update({ state: { draft }, selectedNode: "right-grid", warpStates: { right: { ...rightIdentityWarpEditor.getState(), config: rightIdentityWarpEditor.getConfig(), handles: rightIdentityWarpEditor.getControlPoints() } } });
   expect(view.controls.warpStatus.textContent).toContain("Column 2");
   expect(view.controls.warpActions.children.find((button) => button.dataset.warpAction === "warp-reset-selection").textContent).toBe("Reset column");
-  expect(view.controls.warpSelectionButtons[2].attributes["aria-pressed"]).toBe("true");
+  expect(view.controls.warpSelectionButtons.find((control) => control.dataset.warpSelectionKind === "column").attributes["aria-pressed"]).toBe("true");
   expect(view.controls.warpSurface.children.filter((item) => item.attributes.class === "warp-grid-line selected")).toHaveLength(1);
   expect(view.controls.warpSurface.children.filter((item) => item.attributes.class?.startsWith("warp-handle") && item.attributes.class.includes("selected"))).toHaveLength(7);
   rightIdentityWarpEditor.select(gridSelection("row", 1));
@@ -457,7 +460,7 @@ test("view renders draggable node workspace and preserves an existing focused in
   view.controls.enlargeEdit.dispatch("click");
   onWarpAction.mockClear();
   root.ownerDocument.dispatch("keydown", { key: "ArrowRight", target: view.controls.warpSurface, shiftKey: true, preventDefault: vi.fn() });
-  expect(onWarpAction).toHaveBeenCalledWith("warp-nudge", { direction: "right", coarse: true, fine: false });
+  expect(onWarpAction).toHaveBeenCalledWith("warp-nudge", { direction: "right", coarse: false, fine: false });
   onWarpAction.mockClear();
   for (const [key, direction] of [["ArrowUp", "up"], ["ArrowDown", "down"], ["ArrowLeft", "left"], ["ArrowRight", "right"]]) {
     root.ownerDocument.dispatch("keydown", { key, target: view.controls.warpSurface, preventDefault: vi.fn() });
@@ -466,16 +469,16 @@ test("view renders draggable node workspace and preserves an existing focused in
   root.ownerDocument.dispatch("keydown", { key: "ArrowUp", target: view.controls.warpSurface, altKey: true, preventDefault: vi.fn() });
   expect(onWarpAction).toHaveBeenLastCalledWith("warp-nudge", { direction: "up", coarse: false, fine: true });
   root.ownerDocument.dispatch("keydown", { key: "ArrowDown", target: view.controls.warpSurface, shiftKey: true, altKey: true, preventDefault: vi.fn() });
-  expect(onWarpAction).toHaveBeenLastCalledWith("warp-nudge", { direction: "down", coarse: true, fine: true });
+  expect(onWarpAction).toHaveBeenLastCalledWith("warp-nudge", { direction: "down", coarse: true, fine: false });
   onWarpAction.mockClear();
   view.controls.warpSurface.focus = vi.fn();
   const rightArrow = descendants(root).find((node) => node.dataset?.action === "warp-nudge" && node.dataset?.direction === "right");
   rightArrow.dispatch("click", { detail: 1 });
   expect(onWarpAction).toHaveBeenCalledTimes(1);
-  expect(onWarpAction).toHaveBeenCalledWith("warp-nudge", { direction: "right" });
+  expect(onWarpAction).toHaveBeenCalledWith("warp-nudge", { direction: "right", output: "right" });
   expect(view.controls.warpSurface.focus).toHaveBeenCalledOnce();
   undoButton.dispatch("click");
-  expect(onWarpAction).toHaveBeenLastCalledWith("warp-undo", {});
+  expect(onWarpAction).toHaveBeenLastCalledWith("warp-undo", { output: "right" });
   onWarpAction.mockClear();
   root.ownerDocument.dispatch("keydown", { key: "ArrowLeft", target: view.controls.warpPositionX, preventDefault: vi.fn() });
   root.ownerDocument.dispatch("keydown", { key: "ArrowLeft", target: root, preventDefault: vi.fn() });
@@ -485,6 +488,9 @@ test("view renders draggable node workspace and preserves an existing focused in
   root.ownerDocument.dispatch("keydown", { key: "ArrowRight", target: view.controls.warpSurface, preventDefault: vi.fn() });
   expect(onWarpAction).not.toHaveBeenCalled();
   view.update({ state: { draft }, selectedNode: "right-grid", warpStates: { right: { ...rightIdentityWarpEditor.getState(), config: rightIdentityWarpEditor.getConfig(), handles: rightIdentityWarpEditor.getControlPoints() } } });
+  const warpBody = descendants(root).find((node) => node.className === "warp-editor-body");
+  expect(warpBody.children.at(-1)).toBe(view.controls.gridLayout.element);
+  expect(warpBody.children.filter((node) => node.className?.includes("warp-grid-layout-section"))).toHaveLength(1);
   expect(view.controls.enlargeEdit.parentElement).toBe(view.controls.editorRegion);
   view.controls.enlargeEdit.dispatch("click");
   expect(descendants(root).filter((node) => node.tagName === "IFRAME")).toHaveLength(1);
@@ -578,10 +584,10 @@ test("invalid warp coordinates preserve handles and show an accessible error", (
   }
   expect(onWarpAction).not.toHaveBeenCalled();
   view.controls.warpPositionX.value = "-12.5"; view.controls.warpPositionX.dispatch("input"); view.controls.warpPositionX.dispatch("change");
-  expect(onWarpAction).toHaveBeenCalledWith("warp-set-position", { axis: "x", pixels: -12.5 });
+  expect(onWarpAction).toHaveBeenCalledWith("warp-set-position", { axis: "x", pixels: -12.5, output: "left" });
   expect(view.controls.warpPositionX.attributes["aria-invalid"]).toBe("false");
   view.controls.warpPositionY.value = "-4.25"; view.controls.warpPositionY.dispatch("input"); view.controls.warpPositionY.dispatch("change");
-  expect(onWarpAction).toHaveBeenCalledWith("warp-set-position", { axis: "y", pixels: -4.25 });
+  expect(onWarpAction).toHaveBeenCalledWith("warp-set-position", { axis: "y", pixels: -4.25, output: "left" });
   expect(onWarpAction).toHaveBeenCalledTimes(2);
   for (const axis of ['x', 'y']) {
     const coordinate = view.controls.warpCoordinateFields.get(axis);
@@ -591,7 +597,7 @@ test("invalid warp coordinates preserve handles and show an accessible error", (
     const sign = coordinate.wrap.children[1].children.find(node => node.dataset?.action === 'numeric-sign');
     sign.dispatch('click');
     coordinate.number.value = '5'; coordinate.number.dispatch('input'); coordinate.number.dispatch('change');
-    expect(onWarpAction).toHaveBeenLastCalledWith('warp-set-position', { axis, pixels: -5 });
+    expect(onWarpAction).toHaveBeenLastCalledWith('warp-set-position', { axis, pixels: -5, output: 'left' });
     onWarpAction.mockReturnValueOnce(false);
     coordinate.number.value = '9'; coordinate.number.dispatch('input'); coordinate.number.dispatch('change');
     expect(coordinate.isPending()).toBe(true);

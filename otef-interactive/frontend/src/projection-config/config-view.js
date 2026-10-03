@@ -11,6 +11,7 @@ import { createWarpEditor } from "./warp-editor.js";
 import { createParameterEditorDialog, presentationError } from "./parameter-editor-dialog.js";
 import { createParameterEditorPreviews } from "./parameter-editor-previews.js";
 import { displayValue, renderField } from "./config-field-control.js";
+import { createWarpPanelView } from "./warp-panel-view.js";
 import { createProjectionTraceUi } from './projection-trace-ui.js';
 import { bindProjectionTraceInput, bindProjectionTracePage, recordProjectionTrace, projectionTraceTime } from './projection-trace-input.js';
 
@@ -397,19 +398,34 @@ export function createProjectionConfigView(root, {
     else if (id === "settlement-names") onOpenSettlementEditor();
   });
 
-  controls.warpPanel = make(doc, "section", { className: "warp-inspector", ariaLabel: "Warp editor" });
+  const warpPanelView = createWarpPanelView({ document: doc,
+    onAction: (action, value = {}) => {
+      const output = value.output || (selectedGraphNode.startsWith("right-") ? "right" : "left");
+      if (action === "warp-field-cancel") return onWarpFieldCancel(output);
+      if (action === "warp-reset-selection" && doc.defaultView?.confirm?.("Reset only the selected warp geometry? This does not change presets." ) !== true) return false;
+      if (action === "warp-reset-residuals" && doc.defaultView?.confirm?.("Reset all warp geometry for this output? This does not change presets." ) !== true) return false;
+      return onWarpAction(action, { output, ...value });
+    },
+    onPointer: (action, value) => { if (action === "start" && !finishCoordinates()) return false; return onWarpPointer(action, value); },
+    onNudgeFocus: () => controls.warpSurface.focus?.(),
+  });
+  Object.assign(controls, warpPanelView.controls);
+  controls.warpPanel = warpPanelView.element;
   controls.warpHeading = make(doc, "h3", {}, "Warp editor");
+  controls.warpPanel.prepend(controls.warpHeading);
   controls.warpEnabled = make(doc, "input", { type: "checkbox", ariaLabel: "Enable browser warp" });
   const warpEnabledLabel = make(doc, "label", { className: "warp-enabled-label" }, "Browser warp correction"); warpEnabledLabel.prepend(controls.warpEnabled);
+  controls.warpEnableAction = button(doc, "Enable correction to edit", "warp-enable-correction", "warp-enable-action");
+  controls.warpEnableAction.addEventListener("click", () => onWarpAction("warp-enabled", { enabled: true, output: selectedGraphNode.startsWith("right-") ? "right" : "left" }));
+  controls.warpActions.append(warpEnabledLabel, controls.warpEnableAction);
   let warpViewBox = { x: 0, y: 0, width: WARP_OUTPUT_WIDTH, height: WARP_OUTPUT_HEIGHT };
   let effectiveWarpViewBox = null;
   let warpViewTarget = "";
   let warpInteractionMode = "edit";
-  controls.warpSurface = svgNode(doc, "svg", { class: "warp-edit-surface", viewBox: warpViewBoxValue(warpViewBox), role: "img", "aria-label": "Warp editing handles" });
+  controls.warpSurface = svgNode(doc, "svg", { class: "warp-edit-surface", viewBox: warpViewBoxValue(warpViewBox), role: "img", "aria-label": "Warp editing handles", tabindex: "0" });
   const navigationControls = make(doc, "div", { className: "warp-view-controls", ariaLabel: "Warp preview navigation" });
   const viewCommandGroup = make(doc, "div", { className: "warp-view-command-group", role: "group", ariaLabel: "Move view, zoom, and fit" });
-  const historyCommandGroup = make(doc, "div", { className: "warp-history-command-group", role: "group", ariaLabel: "Undo and redo" });
-  navigationControls.append(viewCommandGroup, historyCommandGroup);
+  navigationControls.append(viewCommandGroup);
   const navButton = (label, className, action) => { const item = make(doc, "button", { type: "button", className }, label); item.addEventListener("click", action); viewCommandGroup.appendChild(item); return item; };
   const editModeButton = navButton("Edit", "warp-edit-toggle", () => setWarpInteractionMode("edit"));
   const panToggle = navButton("Move view", "warp-pan-toggle", () => setWarpInteractionMode("move"));
@@ -437,7 +453,7 @@ export function createProjectionConfigView(root, {
     if (!rect.width || !rect.height) return;
     const viewBox = effectiveWarpViewBox || warpViewBox;
     controls.warpSurface.querySelectorAll?.(".warp-handle").forEach((circle) => {
-      const radius = circle.classList?.contains("selected") ? 18 : 12;
+      const radius = circle.classList?.contains("selected") ? 8 : 5;
       circle.setAttribute("r", String(warpMarkerRadius(viewBox, rect.width, rect.height, radius)));
     });
   }
@@ -453,49 +469,6 @@ export function createProjectionConfigView(root, {
     const next = transformWarpViewBox(effectiveWarpViewBox, { left: rect.left, top: rect.top, width: rect.width, height: rect.height }, { from: { clientX: event.clientX, clientY: event.clientY }, factor });
     applyViewBox(next, { anchor: { clientX: event.clientX, clientY: event.clientY }, rect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height } });
   }, { passive: false });
-  controls.warpStatus = make(doc, "p", { className: "warp-selection-status", role: "status" });
-  controls.warpSelectionControls = make(doc, "div", { className: "warp-selection-controls", role: "group", ariaLabel: "Grid warp selection" });
-  controls.warpSelectionButtons = ["point", "row", "column"].map((kind) => {
-    const item = button(doc, kind[0].toUpperCase() + kind.slice(1), "warp-selection-kind", "warp-selection-button");
-    item.dataset.warpSelectionKind = kind;
-    controls.warpSelectionControls.appendChild(item);
-    return item;
-  });
-  controls.warpSelectionPicker = make(doc, "select", { className: "warp-selection-picker", ariaLabel: "Grid point, row, or column" });
-  controls.warpSelectionControls.appendChild(controls.warpSelectionPicker);
-  controls.warpNumeric = make(doc, "div", { className: "warp-numeric" });
-  controls.warpCoordinateFields = new Map();
-  let coordinateTarget = '';
-  for (const axis of ['x', 'y']) {
-    const control = renderField(doc, { path: `warp.position.${axis}`, label: `Selected warp ${axis.toUpperCase()} position`, unit: 'px', min: -Infinity, max: Infinity, range: false, nudges: false, decimals: 2, captureOnFocus: true },
-      (_path, raw, _kind, meta) => {
-        if (meta.resolvedPath !== coordinateTarget) return false;
-        return onWarpAction('warp-set-position', { axis, pixels: Number(raw) });
-      }, () => false, false, false, () => onWarpFieldCancel(selectedGraphNode.startsWith("right-") ? "right" : "left"));
-    controls.warpCoordinateFields.set(axis, control);
-    controls.warpNumeric.appendChild(control.wrap);
-  }
-  controls.warpPositionX = controls.warpCoordinateFields.get('x').number;
-  controls.warpPositionY = controls.warpCoordinateFields.get('y').number;
-  controls.warpPositionLabels = [...controls.warpCoordinateFields.values()].map(control => control.wrap.children[0]);
-  controls.warpActions = make(doc, "div", { className: "warp-actions" });
-  const warpActionButton = (label, action, value = {}) => { const item = button(doc, label, action, "warp-action"); item.dataset.warpAction = action; Object.assign(item.dataset, Object.fromEntries(Object.entries(value).map(([key, itemValue]) => [key, String(itemValue)]))); item.addEventListener("click", (event) => { onWarpAction(action, value); if (action === "warp-nudge" && event.detail > 0) controls.warpSurface.focus?.(); }); return item; };
-  controls.warpUndo = warpActionButton("Undo", "warp-undo");
-  controls.warpRedo = warpActionButton("Redo", "warp-redo");
-  controls.warpEnableAction = button(doc, "Enable correction to edit", "warp-enable-correction", "warp-enable-action");
-  controls.warpEnableAction.addEventListener("click", () => onWarpAction("warp-enabled", { enabled: true }));
-  historyCommandGroup.append(controls.warpUndo, controls.warpRedo);
-  controls.warpReset = warpActionButton("Reset point", "warp-reset-selection");
-  controls.warpActions.append(controls.warpReset);
-  controls.warpArrows = make(doc, "div", { className: "warp-arrows", ariaLabel: "Warp nudge controls" });
-  for (const [label, direction] of [["↑", "up"], ["↓", "down"], ["←", "left"], ["→", "right"]]) controls.warpArrows.append(warpActionButton(label, "warp-nudge", { direction }));
-  controls.warpStep = make(doc, "select", { className: "warp-step", ariaLabel: "Warp nudge step" });
-  controls.warpStep.append(make(doc, "option", { value: "fine" }, "Fine · 0.25 px"), make(doc, "option", { value: "coarse" }, "Coarse · 1 px"));
-  const warpStepLabel = make(doc, "label", { className: "warp-step-label", htmlFor: "warp-nudge-step" }, "Step");
-  controls.warpStep.id = "warp-nudge-step";
-  const finePrimary = make(doc, "div", { className: "warp-fine-primary" });
-  finePrimary.append(controls.warpStatus, controls.warpSelectionControls, controls.warpNumeric, warpStepLabel, controls.warpStep, controls.warpArrows);
-  const fineSecondary = make(doc, "div", { className: "warp-fine-secondary" });
   controls.gridLayout = createGridLayoutControls(doc, (name, value) => {
     if (pointerInput?.isActive() || !finishCoordinates()) return;
     const output = warpOutput();
@@ -511,43 +484,17 @@ export function createProjectionConfigView(root, {
     else if (name === "even") { operation = "even"; payload = {}; }
     if (operation) onWarpAction("warp-grid-layout", { output, operation, ...payload });
   });
-  fineSecondary.append(warpEnabledLabel, controls.warpEnableAction, controls.warpActions, controls.gridLayout.element);
-  controls.warpPanel.append(controls.warpHeading, finePrimary, fineSecondary, controls.warpSurface);
-  controls.warpEnabled.addEventListener("change", () => onWarpAction("warp-enabled", { enabled: controls.warpEnabled.checked }));
-  controls.warpStep.addEventListener("change", () => onWarpAction("warp-step", { mode: controls.warpStep.value }));
+  controls.gridLayout.element.className = `${controls.gridLayout.element.className} warp-editor-topology-controls`;
+  controls.warpEnabled.addEventListener("change", () => onWarpAction("warp-enabled", { output: selectedGraphNode.startsWith("right-") ? "right" : "left", enabled: controls.warpEnabled.checked }));
   let currentHandles = [];
   let currentSelection = null;
   let currentWarpGrid = null;
   let currentWarpEnabled = true;
+  let activeWarpAdjusting = false;
   let pointerInput;
   function cancelActiveDrag(options) { pointerInput?.cancel(options); controls.gridLayout?.cancel(); }
   const warpOutput = () => selectedGraphNode.startsWith("right-") ? "right" : "left";
   const finishCoordinates = () => [...controls.warpCoordinateFields.values()].filter(control => control.isPending()).every(control => ['commit', 'unchanged'].includes(control.finish().kind));
-  const chooseGridSelection = (selection) => {
-    if (pointerInput?.isActive() || !finishCoordinates()) return;
-    if (!selectedGraphNode.endsWith("-grid")) return;
-    cancelActiveDrag({ reason: "selection" });
-    onWarpAction("warp-select", { output: warpOutput(), selection: { mode: "grid", kind: selection.kind, index: selection.index } });
-  };
-  const selectionIndexForKind = (kind, columns) => {
-    const index = Number(currentSelection?.index || 0);
-    const selectedIndices = currentSelection?.indices;
-    const firstSelected = selectedIndices?.length ? selectedIndices[0] : index;
-    if (kind === "point") return Math.max(0, Math.min(currentHandles.length - 1, firstSelected));
-    if (currentSelection?.kind === "point") return kind === "row" ? Math.floor(index / columns) : index % columns;
-    const count = kind === "row" ? currentWarpGrid?.rows || 7 : columns;
-    return Math.max(0, Math.min(count - 1, index));
-  };
-  controls.warpSelectionButtons.forEach((control) => control.addEventListener("click", () => {
-    const kind = control.dataset.warpSelectionKind;
-    const columns = currentWarpGrid?.columns || (warpOutput() === "right" ? 8 : 7);
-    chooseGridSelection({ kind, index: selectionIndexForKind(kind, columns) });
-  }));
-  controls.warpSelectionPicker.addEventListener("change", () => {
-    if (!selectedGraphNode.endsWith("-grid")) return;
-    const kind = ["row", "column", "point"].includes(currentSelection?.kind) ? currentSelection.kind : "point";
-    chooseGridSelection({ kind, index: Number(controls.warpSelectionPicker.value) || 0 });
-  });
   const onKeyDown = (event) => {
     if (!dialog.isOpen() || !(selectedGraphNode.endsWith("-keystone") || selectedGraphNode.endsWith("-grid"))) return;
     if (event.target !== controls.warpSurface && !controls.warpSurface.contains?.(event.target)) return;
@@ -557,7 +504,7 @@ export function createProjectionConfigView(root, {
     const direction = { ArrowUp: "up", ArrowDown: "down", ArrowLeft: "left", ArrowRight: "right" }[event.key];
     if (!direction) return;
     event.preventDefault?.();
-    onWarpAction("warp-nudge", { direction, coarse: Boolean(event.shiftKey), fine: Boolean(event.altKey) });
+    onWarpAction("warp-nudge", { direction, coarse: Boolean(event.altKey && event.shiftKey), fine: Boolean(event.altKey && !event.shiftKey) });
   };
   doc.addEventListener?.("keydown", onKeyDown);
   const settlementControls = createSettlementNameControls(doc, {
@@ -575,8 +522,14 @@ export function createProjectionConfigView(root, {
   app.appendChild(controls.editorHome);
   app.appendChild(workspace);
   root.appendChild(app);
-  const dialog = createWarpEditorDialog({ document: doc, host: editorRegion, editorPanel: controls.warpPanel, overlay: controls.warpSurface, navigationControls, presentation: "panel", trace,
+  const dialog = createWarpEditorDialog({ document: doc, host: editorRegion, editorPanel: controls.warpPanel, overlay: controls.warpSurface, topologyControls: controls.gridLayout.element, navigationControls, presentation: "panel", trace,
     onVisibilityChange: (visible) => { workspace.dataset.editing = String(visible); },
+    onPresentationChange: (focused) => {
+      root.dataset.warpFullViewport = String(focused);
+      commandBar.element.inert = Boolean(focused);
+      graphColumn.inert = Boolean(focused);
+    },
+    onIsAdjusting: () => activeWarpAdjusting,
     onEscape: () => {
       const pending = [...controls.warpCoordinateFields.values()].filter((control) => control.isPending());
       if (!pending.length) return false;
@@ -647,8 +600,11 @@ export function createProjectionConfigView(root, {
     const warpState = warpStates?.[output];
     controls.warpPanel.hidden = !isWarpNode || !warpState;
     if (!warpState || !isWarpNode) return;
+    warpPanelView.update({ output, nodeId: node, editorState: warpState });
     const traceStarted = projectionTraceTime(trace);
     recordProjectionTrace(trace, 'redraw', { surface: 'warp', phase: 'start', output, dragging: Boolean(warpState.dragging) });
+    const adjusting = Boolean(warpState.adjusting ?? warpState.dragging);
+    activeWarpAdjusting = adjusting;
     const mode = node.endsWith("-grid") ? "grid" : "keystone";
     const target = `${output}:${mode}`;
     const targetChanged = target !== warpViewTarget;
@@ -662,7 +618,7 @@ export function createProjectionConfigView(root, {
     currentWarpEnabled = warp?.enabled !== false;
     const correctionEnabled = currentWarpEnabled;
     controls.warpEnableAction.hidden = correctionEnabled;
-    controls.warpEnableAction.disabled = Boolean(warpState.dragging);
+    controls.warpEnableAction.disabled = adjusting;
     const columns = warp?.grid?.columns || (output === "right" ? 8 : 7);
     const rows = warp?.grid?.rows || 7;
     currentWarpGrid = warp?.grid || null;
@@ -673,42 +629,33 @@ export function createProjectionConfigView(root, {
     const selectedIndices = new Set(warpState.selection?.indices || []);
     const chosen = [...selectedIndices].map((index) => allHandles[index]).filter(Boolean);
     const baselineStatus = warpState.baselineAvailable === false ? " · TD baseline unavailable; reload after repairing the asset" : "";
-    const validationStatus = warpState.dragging ? " · Finish or cancel the active adjustment first." : warpState.validationMessage ? ` · ${warpState.validationMessage}` : "";
+    const validationStatus = adjusting ? " · Finish or cancel the active adjustment first." : warpState.validationMessage ? ` · ${warpState.validationMessage}` : "";
     const selectedName = mode === "keystone"
       ? ["Top-left corner", "Top-right corner", "Bottom-left corner", "Bottom-right corner"][selectedIndex] || `Corner ${selectedIndex + 1}`
       : selectionKind === "row" ? `Row ${selectedIndex + 1} · ${selectedIndices.size} points`
         : selectionKind === "column" ? `Column ${selectedIndex + 1} · ${selectedIndices.size} points`
           : `Point ${selectedIndex + 1} · Row ${Math.floor(selectedIndex / columns) + 1}, Column ${selectedIndex % columns + 1}`;
     controls.warpStatus.textContent = `${selectedName} · ${warpState.stepMode === "coarse" ? "1 px" : "0.25 px"}${correctionEnabled ? "" : " · Correction bypassed; geometry editing disabled."}${baselineStatus}${validationStatus}`;
-    for (const input of controls.gridLayout.fields.values()) input.disabled = Boolean(warpState.dragging) || !correctionEnabled;
+    for (const input of controls.gridLayout.fields.values()) input.disabled = adjusting || !correctionEnabled;
     controls.gridLayout.update({ grid: warp?.grid, selection: warpState.selection, errorMessage: warpState.validationMessage || "", visible: mode === "grid" });
-    for (const input of [...controls.gridLayout.fields.values(), ...controls.gridLayout.actions.values()]) input.disabled ||= Boolean(warpState.dragging) || !correctionEnabled;
-    controls.warpSelectionControls.hidden = mode !== "grid";
+    for (const input of [...controls.gridLayout.fields.values(), ...controls.gridLayout.actions.values()]) input.disabled ||= adjusting || !correctionEnabled;
+    controls.warpSelectionControls.hidden = false;
     for (const control of controls.warpSelectionButtons) control.setAttribute("aria-pressed", String(control.dataset.warpSelectionKind === selectionKind));
-    const selectionCount = selectionKind === "row" ? rows : selectionKind === "column" ? columns : rows * columns;
-    const pickerOptions = Array.from({ length: selectionCount }, (_, index) => {
-      const label = selectionKind === "point"
-        ? `Point ${index + 1} · Row ${Math.floor(index / columns) + 1}, Column ${index % columns + 1}`
-        : `${selectionKind === "row" ? "Row" : "Column"} ${index + 1}`;
-      return make(doc, "option", { value: String(index) }, label);
-    });
-    controls.warpSelectionPicker.replaceChildren(...pickerOptions);
-    controls.warpSelectionPicker.value = String(Math.min(selectionCount - 1, Math.max(0, selectedIndex)));
     controls.warpPositionLabels[0].textContent = selectionKind === "point" || mode === "keystone" ? "X px" : "Mean X px";
     controls.warpPositionLabels[1].textContent = selectionKind === "point" || mode === "keystone" ? "Y px" : "Mean Y px";
     controls.warpReset.textContent = mode === "grid" ? `Reset ${selectionKind}` : "Reset point";
     const mean = (axis) => chosen.length ? chosen.reduce((sum, point) => sum + (axis === 0 ? point.x : point.y), 0) / chosen.length : 0;
-    coordinateTarget = JSON.stringify({ output, mode: warpState.selection?.mode || mode, kind: warpState.selection?.kind, index: warpState.selection?.index, indices: warpState.selection?.indices || [] });
+    const coordinateTarget = JSON.stringify({ output, mode: warpState.selection?.mode || mode, kind: warpState.selection?.kind, index: warpState.selection?.index, indices: warpState.selection?.indices || [] });
     for (const [axis, control] of controls.warpCoordinateFields) {
       control.update({ value: mean(axis === 'x' ? 0 : 1) * (axis === 'x' ? WARP_OUTPUT_WIDTH : WARP_OUTPUT_HEIGHT), resolvedPath: coordinateTarget, error: warpState.validationMessage });
-      control.number.disabled = Boolean(warpState.dragging) || !correctionEnabled;
-      control.wrap.querySelectorAll?.('button').forEach(button => { if (button.dataset.action === 'numeric-sign') button.disabled = Boolean(warpState.dragging) || !correctionEnabled; });
+      control.number.disabled = adjusting || !correctionEnabled;
+      control.wrap.querySelectorAll?.('button').forEach(button => { if (button.dataset.action === 'numeric-sign') button.disabled = adjusting || !correctionEnabled; });
     }
-    for (const item of [controls.warpEnabled, controls.warpStep, controls.warpReset, ...controls.warpArrows.children]) item.disabled = Boolean(warpState.dragging) || !correctionEnabled;
-    for (const item of [controls.warpSelectionPicker, ...controls.warpSelectionButtons]) item.disabled = Boolean(warpState.dragging);
+    for (const item of [controls.warpEnabled, controls.warpStep, controls.warpReset, controls.warpResetAll, ...controls.warpArrows.children]) item.disabled = adjusting || !correctionEnabled;
+    for (const item of [controls.warpSelectionPicker, ...controls.warpSelectionButtons]) item.disabled = adjusting;
     controls.warpSurface.setAttribute("data-correction-bypassed", String(!correctionEnabled));
-    controls.warpUndo.disabled ||= Boolean(warpState.dragging) || !correctionEnabled;
-    controls.warpRedo.disabled ||= Boolean(warpState.dragging) || !correctionEnabled;
+    controls.warpUndo.disabled ||= adjusting || !correctionEnabled;
+    controls.warpRedo.disabled ||= adjusting || !correctionEnabled;
     const viewPoints = allHandles;
     const nextFit = warpViewport(viewPoints);
     warpViewBox = nextFit;
@@ -728,7 +675,7 @@ export function createProjectionConfigView(root, {
     allHandles.forEach((point, index) => {
       const selected = selectedIndices.has(index);
       const label = mode === "keystone" ? ["top-left corner", "top-right corner", "bottom-left corner", "bottom-right corner"][index] || `corner ${index + 1}` : `point ${index + 1}, row ${Math.floor(index / columns) + 1}, column ${index % columns + 1}`;
-      const circle = svgNode(doc, "circle", { cx: point.x * WARP_OUTPUT_WIDTH, cy: point.y * WARP_OUTPUT_HEIGHT, r: selected ? "18" : "12", class: `warp-handle${selected ? " selected" : ""}`, "data-index": String(index), tabindex: "0", role: "button", "aria-label": `Select ${label}` });
+      const circle = svgNode(doc, "circle", { cx: point.x * WARP_OUTPUT_WIDTH, cy: point.y * WARP_OUTPUT_HEIGHT, r: selected ? "8" : "5", class: `warp-handle${selected ? " selected" : ""}`, "data-index": String(index), tabindex: "-1", role: "button", "aria-label": `Select ${label}` });
       circle.addEventListener("keydown", (event) => {
         if (event.key !== "Enter" && event.key !== " ") return;
         event.preventDefault?.();
@@ -829,6 +776,7 @@ export function createProjectionConfigView(root, {
       return nodeMap.get("settlement-names")?.querySelector?.('[data-action="settlement-editor-open"]') || null;
     },
     cancelWarpPointer: cancelActiveDrag,
+    retireWarpGestures: () => warpPanelView.retireGestures(),
     finishNumericEdits: () => [...fields.values()].map(control => control.finish()),
     finishPendingEdit: () => {
       const results = [...fields.values(), ...controls.warpCoordinateFields.values()].filter(control => control.isPending()).map(control => control.finish());
@@ -840,7 +788,7 @@ export function createProjectionConfigView(root, {
     cancelNumericEdits: options => { for (const control of [...fields.values(), ...controls.warpCoordinateFields.values()]) control.cancel(options); parameterDialog.cancel(options); },
     closeWarpEditor: dialog.close,
     sendRunNamesPreview: (config) => dialog.sendRunNamesPreview(config),
-    dispose() { for (const control of [...fields.values(), ...controls.warpCoordinateFields.values()]) control.dispose(); settlementControls.dispose(); disposePageTrace(); disposeWarpTrace(); disposeGraphTrace(); traceUi?.dispose(); commandBar.dispose(); doc.removeEventListener?.("keydown", onKeyDown); parameterDialog.dispose(); dialog.dispose(); pointerInput.dispose(); canvas.dispose(); },
+    dispose() { for (const control of fields.values()) control.dispose(); warpPanelView.dispose(); settlementControls.dispose(); disposePageTrace(); disposeWarpTrace(); disposeGraphTrace(); traceUi?.dispose(); commandBar.dispose(); doc.removeEventListener?.("keydown", onKeyDown); parameterDialog.dispose(); dialog.dispose(); pointerInput.dispose(); canvas.dispose(); },
   };
 }
 

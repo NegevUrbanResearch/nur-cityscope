@@ -252,6 +252,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
   }
   function syncWarpEditorsForConfig(config, rebase = false) {
     if (!config) return;
+    if (rebase) view.retireWarpGestures?.();
     const identity = baselineIdentityFor(config);
     if (editorBaselineIdentity && JSON.stringify(identity) === JSON.stringify(editorBaselineIdentity)) {
       if (JSON.stringify(identity) !== JSON.stringify(requestedEditorBaselineIdentity)) {
@@ -272,6 +273,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     editorBaselineAbort = null;
     editorBaselineReady = false;
     view.cancelWarpPointer({ notify: false });
+    view.retireWarpGestures?.();
     // Clear editor drag state while its rollback callback is suspended. The
     // pointer adapter has already dropped the gesture without publishing it.
     for (const output of ["left", "right"]) warpEditors[output].pointerCancel();
@@ -711,7 +713,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     refresh();
   }
   function activeWarpOutput() { return selectedNode.startsWith("right-") ? "right" : "left"; }
-  function hasHeldGesture() { return Object.values(warpEditors).some(editor => editor.getState().dragging) || view.hasHeldNumericEdit(); }
+  function hasHeldGesture() { return Object.values(warpEditors).some(editor => editor.getState().adjusting) || view.hasHeldNumericEdit(); }
   function finishPendingEdit() {
     if (hasHeldGesture()) { fieldErrors = { ...fieldErrors, action: "Finish or cancel the active gesture before continuing." }; refresh(); return false; }
     const finished = view.finishPendingEdit();
@@ -748,6 +750,9 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
       if (action === "warp-mode") accepted = editor.setMode(value.mode);
       if (action === "warp-step") accepted = editor.setStep(value.mode);
       if (action === "warp-nudge") accepted = editor.nudge(value.direction, value);
+      if (action === "warp-nudge-start") accepted = editor.beginNudgeGesture();
+      if (action === "warp-nudge-end") accepted = editor.endNudgeGesture();
+      if (action === "warp-nudge-cancel") accepted = editor.cancelNudgeGesture();
       if (action === "warp-set-position") accepted = editor.setPosition(value.axis, value.pixels);
       if (action === "warp-reset-selection") accepted = editor.resetSelection();
       if (action === "warp-reset-residuals") accepted = editor.resetResiduals();
@@ -765,11 +770,13 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
       const output = value?.output || activeWarpOutput();
       const editor = warpEditors[output];
       if (!editor) return;
-      if (action === "start") editor.pointerStart(value);
-      if (action === "move") editor.pointerMove(value);
-      if (action === "end") { editor.pointerMove(value); editor.pointerEnd(); }
-      if (action === "cancel") editor.pointerCancel();
+      let accepted = false;
+      if (action === "start") accepted = editor.pointerStart(value);
+      if (action === "move") accepted = editor.pointerMove(value);
+      if (action === "end") { editor.pointerMove(value); accepted = editor.pointerEnd(); }
+      if (action === "cancel") accepted = editor.pointerCancel();
       if (action !== "start") refresh();
+      return accepted;
     });
   }
   function readPath(config, path) { return path.split(".").reduce((target, key) => target?.[key], config); }
@@ -810,6 +817,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
       const accepted = normalizeState(client.getState?.() || state);
       if (!accepted.draft) return;
       view.cancelWarpPointer({ notify: false });
+      view.retireWarpGestures?.();
       for (const output of ["left", "right"]) warpEditors[output].setConfig(accepted.draft, { rebase: true });
       parameterHistory.clear(); nudgeAnchors.clear(); scalarGestures.clear();
     };

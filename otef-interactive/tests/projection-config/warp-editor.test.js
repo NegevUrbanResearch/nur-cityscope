@@ -473,6 +473,36 @@ test("an active pointer gesture rejects topology edits until the old gesture end
   }
 });
 
+test("a held nudge accumulates from its captured warp and records once on end", () => {
+  const changes = [];
+  const editor = createWarpEditor({ config: clone(DEFAULT_PROJECTION_CONFIG), onChange: (config, meta) => changes.push({ config, meta }) });
+  const start = editor.getConfig();
+  expect(editor.beginNudgeGesture()).toBe(true);
+  expect(editor.getState()).toMatchObject({ adjusting: true, dragging: false });
+  expect(editor.nudge("right")).toBe(true);
+  expect(editor.nudge("right")).toBe(true);
+  expect(editor.select(gridSelection("point", 3))).toBe(false);
+  expect(editor.getState().historyDepth).toBe(0);
+  expect(editor.endNudgeGesture()).toBe(true);
+  expect(editor.endNudgeGesture()).toBe(false);
+  expect(editor.getState()).toMatchObject({ adjusting: false, historyDepth: 1 });
+  expect(changes.map(({ meta }) => meta.reason)).toEqual(["nudge", "nudge", "nudge-end"]);
+  expect(editor.undo()).toBe(true);
+  expect(editor.getConfig().outputs.left.warp).toEqual(start.outputs.left.warp);
+});
+
+test("canceling a held nudge restores its capture without adding history", () => {
+  const changes = [];
+  const editor = createWarpEditor({ config: clone(DEFAULT_PROJECTION_CONFIG), onChange: (config, meta) => changes.push(meta) });
+  const start = editor.getConfig();
+  editor.beginNudgeGesture();
+  editor.nudge("down");
+  expect(editor.cancelNudgeGesture()).toBe(true);
+  expect(editor.getConfig().outputs.left.warp).toEqual(start.outputs.left.warp);
+  expect(editor.getState()).toMatchObject({ adjusting: false, historyDepth: 0 });
+  expect(changes.at(-1)).toMatchObject({ reason: "nudge-cancel", flush: true });
+});
+
 test("retiring a gesture before foreign rebase emits no rollback and rejects later movement", () => {
   const changed = vi.fn();
   const editor = createWarpEditor({ config: clone(DEFAULT_PROJECTION_CONFIG), onChange: changed });

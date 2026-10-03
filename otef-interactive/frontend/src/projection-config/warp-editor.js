@@ -73,12 +73,13 @@ export function createWarpEditor({
   let undoStack = [];
   let redoStack = [];
   let drag = null;
+  let nudgeGesture = null;
   let validationMessage = "";
   let validationReason = '';
   let evaluationCache = null;
 
   const allowCommand = () => {
-    if (!drag) return true;
+    if (!drag && !nudgeGesture) return true;
     validationReason = 'gesture_active';
     validationMessage = 'Finish or cancel the active adjustment first.';
     return false;
@@ -193,7 +194,47 @@ export function createWarpEditor({
     const vectors = { up: [0, -amount], down: [0, amount], left: [-amount, 0], right: [amount, 0] };
     const vector = vectors[direction];
     if (!vector) return false;
-    return moveByPixels(vector[0], vector[1], { reason: "nudge", flush: true });
+    if (!nudgeGesture) return moveByPixels(vector[0], vector[1], { reason: "nudge", flush: true });
+    const deltaX = nudgeGesture.dx + vector[0];
+    const deltaY = nudgeGesture.dy + vector[1];
+    const candidate = clone(current);
+    candidate.outputs[output].warp = clone(nudgeGesture.startWarp);
+    const points = pointsForSelection(candidate, output, nudgeGesture.startSelection);
+    for (const index of indicesFor(nudgeGesture.startSelection, configWarp(candidate, output))) {
+      points[index][0] += deltaX / OUTPUT_WIDTH;
+      points[index][1] += deltaY / OUTPUT_HEIGHT;
+    }
+    if (!valid(candidate, { report: true })) return false;
+    nudgeGesture.dx = deltaX;
+    nudgeGesture.dy = deltaY;
+    nudgeGesture.changed = deltaX !== 0 || deltaY !== 0;
+    emit(candidate, { reason: "nudge", flush: false });
+    return true;
+  }
+  function beginNudgeGesture() {
+    if (!allowGeometryCommand()) return false;
+    nudgeGesture = { startWarp: clone(configWarp(current, output)), startSelection: clone(selection), dx: 0, dy: 0, changed: false };
+    return true;
+  }
+  function endNudgeGesture() {
+    if (!nudgeGesture) return false;
+    const gesture = nudgeGesture;
+    nudgeGesture = null;
+    if (gesture.changed) {
+      undoStack.push({ warp: clone(gesture.startWarp), selection: clone(gesture.startSelection) });
+      if (undoStack.length > historyLimit) undoStack.splice(0, undoStack.length - historyLimit);
+      redoStack = [];
+      onChange(clone(current), { reason: "nudge-end", flush: true, selection: clone(selection) });
+    }
+    return true;
+  }
+  function cancelNudgeGesture() {
+    if (!nudgeGesture) { validationMessage = ""; return false; }
+    const gesture = nudgeGesture;
+    nudgeGesture = null;
+    validationMessage = "";
+    if (gesture.changed) restoreWarp(gesture.startWarp, "nudge-cancel", true);
+    return true;
   }
   function setPosition(axis, pixels) {
     if (!allowGeometryCommand()) return false;
@@ -273,7 +314,7 @@ export function createWarpEditor({
     current = clone(next);
     if (canReuseEvaluation) evaluationCache.config = current;
     validationMessage = "";
-    if (rebase) { undoStack = []; redoStack = []; drag = null; }
+    if (rebase) { undoStack = []; redoStack = []; drag = null; nudgeGesture = null; }
     return true;
   }
   function setBaselineMesh(next) { baselineMesh = next ? clone(next) : null; return true; }
@@ -329,7 +370,7 @@ export function createWarpEditor({
     emit(candidate, { reason: "grid-layout", flush: true });
     return true;
   }
-  function retireGesture() { drag = null; validationMessage = ""; }
+  function retireGesture() { drag = null; nudgeGesture = null; validationMessage = ""; }
   function clearValidation() { validationMessage = ""; validationReason = ""; }
   function getControlPoints() {
     const warp = configWarp(current, output);
@@ -363,10 +404,10 @@ export function createWarpEditor({
   };
   return {
     getConfig: () => clone(current),
-    getState: () => ({ output, selection: { ...clone(selection), indices: selectedIndices() }, stepMode, dragging: Boolean(drag), historyDepth: undoStack.length, redoDepth: redoStack.length, baselineAvailable: baselineAvailable(), validationMessage }),
+    getState: () => ({ output, selection: { ...clone(selection), indices: selectedIndices() }, stepMode, dragging: Boolean(drag), adjusting: Boolean(drag || nudgeGesture), historyDepth: undoStack.length, redoDepth: redoStack.length, baselineAvailable: baselineAvailable(), validationMessage }),
     getControlPoints,
     select, setMode, setStep, moveByPixels, nudge, setPosition, resetSelection, resetResiduals, setEnabled, undo, redo,
-    pointerStart, pointerMove, pointerEnd, pointerCancel, retireGesture, clearValidation, setConfig, setBaselineMesh, editGridLayout,
+    pointerStart, pointerMove, pointerEnd, pointerCancel, beginNudgeGesture, endNudgeGesture, cancelNudgeGesture, retireGesture, clearValidation, setConfig, setBaselineMesh, editGridLayout,
   };
 }
 
