@@ -437,7 +437,8 @@ test("failed initial settings hydration blocks edits and Retry obtains an author
   expect(rig.writeClockSlot).not.toHaveBeenCalled();
   rig.find((node) => node.className === "clock-layout-retry").dispatch("click");
   await vi.waitFor(() => expect(input.disabled).toBe(false));
-  expect(getSnapshot.mock.calls.at(-1)[0]).toEqual({ forceFresh: true });
+  const retryOptions = getSnapshot.mock.calls.at(-1)[0];
+  expect(retryOptions).toMatchObject({ forceFresh: true, signal: expect.any(AbortSignal) });
   expect(rig.find((node) => node.className === "clock-layout-status").textContent).toBe("Saved");
 });
 

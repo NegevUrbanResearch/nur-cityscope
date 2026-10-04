@@ -267,6 +267,24 @@ test("reconciliation retry rejection is shown through the controller action erro
   } finally { api.dispose(); globalThis.document = previousDocument; }
 });
 
+test("focused recovery Retry rejection is visible in the active editor recovery surface", async () => {
+  const previousDocument = globalThis.document; globalThis.document = documentStub();
+  const root = element("main"); const client = fakeClient();
+  client.report({ reconciliation: { status: "read-error", message: "Accepted settings check failed." } });
+  client.retryReconciliation.mockRejectedValueOnce(new Error("reconciliation retry unavailable"));
+  const api = mountProjectionConfig(root, { client });
+  try {
+    find(root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+    find(root, node => node.dataset?.action === "warp-full-viewport").dispatch("click");
+    await api.handleAction("reconciliation-retry");
+    const contextualError = find(root, node => node.className === "projection-optional-health-action-error");
+    expect(contextualError.hidden).toBe(false);
+    expect(contextualError.textContent).toContain("reconciliation retry unavailable");
+    expect(find(root, node => node.className === "action-error").textContent).toContain("reconciliation retry unavailable");
+    expect(find(root, node => node.dataset?.action === "reconciliation-retry").hidden).toBe(false);
+  } finally { api.dispose(); globalThis.document = previousDocument; }
+});
+
 test("Back cancels a relative-pad gesture before hiding its workspace", () => {
   const { root, client, restore } = tracedWarpHarness();
   const pad = find(root, (node) => node.className === "warp-relative-pad");

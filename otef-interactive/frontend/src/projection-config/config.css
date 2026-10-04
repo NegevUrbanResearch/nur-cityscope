@@ -205,6 +205,15 @@ h2, h3 { margin: 0 0 10px; }
 .warp-editor-header, .warp-editor-footer { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .warp-editor-header { min-width: 0; padding-bottom: 8px; border-bottom: 1px solid var(--config-divider); }
 .warp-editor-footer { padding-top: 8px; border-top: 1px solid var(--config-divider); }
+.projection-optional-health { flex: 1 1 100%; min-width: 0; padding: 8px; border: 1px solid var(--config-divider); border-radius: 8px; background: var(--config-canvas); }
+.projection-optional-health[hidden], .projection-optional-health-row[hidden] { display: none; }
+.projection-optional-health h3 { margin: 0 0 6px; font-size: 13px; line-height: 18px; }
+.projection-optional-health-list { display: grid; gap: 4px; }
+.projection-optional-health-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; }
+.projection-optional-health-message { min-width: 0; margin: 0; color: var(--config-muted); font-size: 13px; line-height: 18px; overflow-wrap: anywhere; }
+.projection-optional-health-action-error { min-width: 0; margin: 0; color: var(--config-error); font-size: 13px; line-height: 18px; overflow-wrap: anywhere; }
+.projection-optional-health-action-error[hidden] { display: none; }
+.projection-optional-health-row button { min-height: 44px; }
 .warp-editor-title { margin: 0; font-size: 17px; line-height: 24px; font-weight: 600; }
 .warp-view-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; max-width: 100%; min-width: 0; }
 .warp-view-command-group, .warp-history-command-group { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 4px; }
@@ -451,6 +460,8 @@ h2, h3 { margin: 0 0 10px; }
 .settlement-preview-retry { position: absolute; left: 8px; top: 8px; z-index: 3; }
 .settlement-shared-note { margin: 0; color: #d4e0e6; font-size: .8rem; }
 .settlement-name-controls { display: grid; gap: 6px; align-content: start; overflow: auto; }
+.settlement-catalog-status, .settlement-catalog-retry { grid-column: 1 / -1; }
+.settlement-catalog-status { margin: 0; color: #ffdf8d; font-size: .8rem; }
 .settlement-name-field { display: grid; gap: 4px; }
 .settlement-name-status-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 @media (orientation: portrait) {
@@ -460,7 +471,7 @@ h2, h3 { margin: 0 0 10px; }
   .settlement-name-dialog { gap: 6px; padding: max(6px, env(safe-area-inset-top)) max(6px, env(safe-area-inset-right)) max(6px, env(safe-area-inset-bottom)) max(6px, env(safe-area-inset-left)); }
   .settlement-name-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(190px, 42%); gap: 6px; }
   .settlement-name-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); align-content: start; }
-  .settlement-shared-note, .settlement-name-status-actions { grid-column: 1 / -1; }
+  .settlement-shared-note, .settlement-name-status-actions, .settlement-catalog-status, .settlement-catalog-retry { grid-column: 1 / -1; }
   .settlement-name-header { gap: 6px; }
 }
 
@@ -596,7 +607,12 @@ h2, h3 { margin: 0 0 10px; }
 .parameter-editor-dialog[data-presentation="panel"] .parameter-editor-header > [data-action="parameter-undo"] { grid-column: 2; grid-row: 2; }
 .parameter-editor-dialog[data-presentation="panel"] .parameter-editor-header > [data-action="parameter-redo"] { grid-column: 3; grid-row: 2; }
 .parameter-editor-dialog[data-presentation="panel"] .parameter-editor-header > [data-action="parameter-editor-close"] { grid-column: 4; grid-row: 2; }
+.parameter-editor-dialog[data-presentation="panel"] .parameter-editor-body > .projection-optional-health { flex: 0 0 auto; width: 100%; }
 .parameter-editor-dialog[data-presentation="panel"] .parameter-editor-header > button { width: 100%; max-width: 88px; min-height: 48px; padding: 4px; font-size: 11px; line-height: 13px; white-space: normal; }
+@container (max-width: 500px) {
+  .parameter-editor-dialog[data-presentation="panel"] .projection-optional-health-row { grid-template-columns: minmax(0, 1fr); align-items: start; }
+  .parameter-editor-dialog[data-presentation="panel"] .projection-optional-health-row button { justify-self: start; }
+}
 @container (max-width: 699px) {
   .warp-editor-dialog[data-presentation="panel"] .warp-editor-viewport { min-height: 120px; max-height: 140px; aspect-ratio: 2.2; }
   @media (orientation: landscape) and (max-height: 1000px) {

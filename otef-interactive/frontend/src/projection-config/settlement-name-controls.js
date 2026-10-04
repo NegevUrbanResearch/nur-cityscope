@@ -37,6 +37,7 @@ export function createSettlementNameControls(doc, {
   onPosition = () => {},
   onStyle = () => {},
   onRetry = () => {},
+  onRetryCatalog = () => {},
   onLoad = () => {},
 } = {}) {
   const element = make(doc, "div", { className: "settlement-name-controls" });
@@ -72,11 +73,13 @@ export function createSettlementNameControls(doc, {
     fieldLabels.push(label);
   }
   const status = make(doc, "p", { className: "settlement-name-status", role: "status" }, "Loading");
+  const catalogStatus = make(doc, "p", { className: "settlement-catalog-status", role: "status", hidden: true });
+  const catalogRetry = make(doc, "button", { type: "button", className: "settlement-catalog-retry", hidden: true }, "Retry settlement list");
   const retry = make(doc, "button", { type: "button", className: "settlement-name-retry" }, "Retry");
   const load = make(doc, "button", { type: "button", className: "settlement-name-load" }, "Load saved");
   const actions = make(doc, "div", { className: "settlement-name-status-actions" });
   actions.append(status, retry, load);
-  element.append(note, outputLabel, cityLabel, fontLabel, ...fieldLabels, actions);
+  element.append(note, catalogStatus, catalogRetry, outputLabel, cityLabel, fontLabel, ...fieldLabels, actions);
   let current = { position: null, style: null };
   const stop = (event) => event.stopPropagation?.();
   for (const node of [output, city, fontFamily, ...fields.values()]) node.addEventListener("click", stop);
@@ -84,14 +87,25 @@ export function createSettlementNameControls(doc, {
   city.addEventListener("change", () => onCitycode(city.value));
   fontFamily.addEventListener("change", () => onStyle({ ...current.style, fontFamily: fontFamily.value }));
   retry.addEventListener("click", (event) => { stop(event); onRetry(); });
+  catalogRetry.addEventListener("click", (event) => { stop(event); onRetryCatalog(); });
   load.addEventListener("click", (event) => { stop(event); onLoad(); });
   return {
     element,
+    output,
+    city,
     finish: () => [...sessions.values()].map(control=>control.finish()),
+    hasPending: () => [...sessions.values()].some(control => control.isPending()),
+    isHeld: () => [...sessions.values()].some(control => control.isHeld()),
     cancel: () => { for (const control of sessions.values()) control.cancel(); },
     dispose: () => { for (const control of sessions.values()) control.dispose(); },
     render(state = {}) {
       current = { position: state.position || null, style: state.style || null };
+      const catalogState = state.catalogStatus || { status: "ready" };
+      catalogStatus.textContent = catalogState.status === "error"
+        ? `Settlement list unavailable${catalogState.error ? `: ${catalogState.error}` : ""}`
+        : catalogState.status === "loading" ? "Loading settlement list…" : "";
+      catalogStatus.hidden = catalogState.status === "ready";
+      catalogRetry.hidden = catalogState.status !== "error";
       const entries = state.catalog?.entries || catalog.entries || [];
       if (city.options || city.replaceChildren) {
         const options = entries.map((entry) => make(doc, "option", { value: entry.citycode }, `${entry.citycode} ${entry.text}`));

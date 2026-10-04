@@ -95,8 +95,8 @@ export function openClockLayoutEditor({ nodeId, sceneId = "home", element = "clo
   elementSelect.append(make(doc, "option", { value: "clock" }, "Clock"), make(doc, "option", { value: "legend" }, "Legend"));
   elementLabel.appendChild(elementSelect);
   elementSelect.addEventListener("click", (event) => event.stopPropagation?.());
-  sceneSelect.addEventListener("change", () => { setSelection({ nodeId: "clock-gis", sceneId: sceneSelect.value, element: activeElement }); onSelection({ nodeId: activeNode, sceneId: activeScene, element: activeElement }); });
-  elementSelect.addEventListener("change", () => { setSelection({ nodeId: "clock-projection", sceneId: activeScene, element: elementSelect.value }); onSelection({ nodeId: activeNode, sceneId: activeScene, element: activeElement }); });
+  sceneSelect.addEventListener("change", () => { if (setSelection({ nodeId: "clock-gis", sceneId: sceneSelect.value, element: activeElement })) onSelection({ nodeId: activeNode, sceneId: activeScene, element: activeElement }); else renderControls(); });
+  elementSelect.addEventListener("change", () => { if (setSelection({ nodeId: "clock-projection", sceneId: activeScene, element: elementSelect.value })) onSelection({ nodeId: activeNode, sceneId: activeScene, element: activeElement }); else renderControls(); });
   const parameters = createClockLayoutParameters(doc, { onField: commitField });
   const { controls, advanced } = parameters;
   const pages = make(doc, "label", { className: "clock-layout-page-label" }, "Legend page");
@@ -220,12 +220,16 @@ export function openClockLayoutEditor({ nodeId, sceneId = "home", element = "clo
     currentLayout = structuredClone(next);
     markWatched(); renderControls(); updatePreview();
     Promise.resolve(layoutClient.commit(target.resource, target.slot, structuredClone(next), numeric ? { numeric: true } : {})).catch(() => {});
+    return true;
   }
   function commitField(key, raw) {
-    if (!editable()) return;
+    if (!editable()) return false;
+    const bounds = { leftPct: [0, 100], topPct: [0, 100], fontPx: [8, 64], rotateDeg: [-180, 180], widthPct: [2, 100], heightPct: [2, 100], dwellSeconds: [4, 30], columns: [0, 3] }[key];
+    const value = Number(raw);
+    if (!Number.isFinite(value) || (bounds && (value < bounds[0] || value > bounds[1]))) return false;
     const next = layoutFieldEdit(currentLayout, key, raw);
-    if (!next) { renderControls(); return; }
-    commitLayout(next, true);
+    if (!next) { renderControls(); return false; }
+    return commitLayout(next, true);
   }
   function reloadPreview() {
     if (gesture) cancelGesture();
@@ -326,6 +330,7 @@ export function openClockLayoutEditor({ nodeId, sceneId = "home", element = "clo
     renderControls(); fitPreview();
   }
   function setSelection(next = {}) {
+    if (!finishPendingEdit()) return false;
     if (gesture) cancelGesture();
     activeNode = next.nodeId === "clock-projection" ? "clock-projection" : "clock-gis";
     if (GIS_SLOT[next.sceneId]) activeScene = next.sceneId;
@@ -337,11 +342,12 @@ export function openClockLayoutEditor({ nodeId, sceneId = "home", element = "clo
     renderControls();
     if (!preview || (previewSurface !== selection.surface)) { previewSurface = selection.surface; createPreview(); }
     publishState(); drawOverlay();
+    return true;
   }
   let previewSurface = selection.surface;
   closeButton.addEventListener("click", close);
   dialog.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") { event.preventDefault?.(); close(); return; }
+    if (event.key === "Escape") { event.preventDefault?.(); if (parameters.hasPending()) parameters.cancel(); else close(); return; }
     if (event.key !== "Tab") return;
     const available = (node) => {
       if (node.disabled) return false;
@@ -357,8 +363,14 @@ export function openClockLayoutEditor({ nodeId, sceneId = "home", element = "clo
     if (event.shiftKey && (doc.activeElement === first || !focusables.includes(doc.activeElement))) { event.preventDefault?.(); last.focus?.(); }
     else if (!event.shiftKey && (doc.activeElement === last || !focusables.includes(doc.activeElement))) { event.preventDefault?.(); first.focus?.(); }
   });
-  function close() {
+  function finishPendingEdit() {
+    if (parameters.isHeld()) return false;
+    return parameters.finish().every(result => result.kind === "commit" || result.kind === "unchanged");
+  }
+  function close({ force = false } = {}) {
     if (!active) return;
+    if (!force && !finishPendingEdit()) return false;
+    parameters.cancel();
     parameters.dispose();
     if (gesture) cancelGesture();
     active = false; preview?.destroy(); preview = null;
@@ -369,6 +381,7 @@ export function openClockLayoutEditor({ nodeId, sceneId = "home", element = "clo
     unsubscribe?.();
     updateBeforeUnload();
     onClose();
+    return true;
   }
   const unsubscribe = layoutClient.subscribe?.(() => {
     if (!active) return;
@@ -386,7 +399,11 @@ export function openClockLayoutEditor({ nodeId, sceneId = "home", element = "clo
   return {
     close,
     setSelection,
+    finishPendingEdit,
+    hasPendingEdit: parameters.hasPending,
+    isHeld: parameters.isHeld,
+    cancelPendingEdit: parameters.cancel,
     calibrationChanged: reloadPreview,
-    dispose() { close(); resizeObserver?.disconnect(); pendingUnsubscribe(); win?.removeEventListener?.("resize", onResize); win?.removeEventListener?.("orientationchange", onResize); win?.removeEventListener?.("beforeunload", beforeUnload); beforeUnloadAttached = false; onPendingState(false); },
+    dispose() { close({ force: true }); resizeObserver?.disconnect(); pendingUnsubscribe(); win?.removeEventListener?.("resize", onResize); win?.removeEventListener?.("orientationchange", onResize); win?.removeEventListener?.("beforeunload", beforeUnload); beforeUnloadAttached = false; onPendingState(false); },
   };
 }

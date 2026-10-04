@@ -83,6 +83,7 @@ export function createProjectionConfigView(root, {
   onSettlementPosition = () => {},
   onSettlementStyle = () => {},
   onSettlementRecovery = () => {},
+  onRetrySettlementCatalog = () => {},
   onClockScene = () => {},
   onClockElement = () => {},
   onClockField = () => {},
@@ -554,16 +555,35 @@ export function createProjectionConfigView(root, {
     onStyle: onSettlementStyle,
     onRetry: () => onSettlementRecovery("retry"),
     onLoad: () => onSettlementRecovery("load"),
+    onRetryCatalog: onRetrySettlementCatalog,
   });
   nodeMap.get("settlement-names")?.appendChild(settlementControls.element);
+  const optionalHealthPanel = make(doc, "section", { className: "projection-optional-health", ariaLabel: "Optional tool status and recovery", hidden: true });
+  const optionalHealthHeading = make(doc, "h3", {}, "Optional tools");
+  const optionalHealthActionError = make(doc, "p", { className: "projection-optional-health-action-error", role: "alert", hidden: true });
+  const optionalHealthList = make(doc, "div", { className: "projection-optional-health-list" });
+  const optionalHealthRows = new Map();
+  for (const [id, label, action] of [
+    ["clock-settings", "Clock and legend settings", () => onClockRecovery("retry", "clock-gis")],
+    ["settlement-settings", "Settlement settings", () => onSettlementRecovery("retry")],
+    ["settlement-catalog", "Settlement list", onRetrySettlementCatalog],
+  ]) {
+    const row = make(doc, "div", { className: "projection-optional-health-row", dataset: { module: id } });
+    const message = make(doc, "p", { className: "projection-optional-health-message", role: "status" });
+    const retry = button(doc, `Retry ${label.toLowerCase()}`, `retry-${id}`);
+    retry.addEventListener("click", (event) => { event.stopPropagation?.(); action(); });
+    row.append(message, retry); optionalHealthList.appendChild(row); optionalHealthRows.set(id, { row, message, retry, label });
+  }
+  optionalHealthPanel.append(optionalHealthHeading, optionalHealthActionError, optionalHealthList);
+  editorRegion.appendChild(optionalHealthPanel);
   controls.editorHome = make(doc, "div", { className: "editor-home", hidden: true });
   controls.editorHome.appendChild(controls.warpPanel);
 
   app.appendChild(controls.editorHome);
   app.appendChild(workspace);
   root.appendChild(app);
-  const dialog = createWarpEditorDialog({ document: doc, host: editorRegion, editorPanel: controls.warpPanel, overlay: controls.warpSurface, topologyControls: controls.gridLayout.element, navigationControls, presentation: "panel", trace,
-    onVisibilityChange: (visible) => { workspace.dataset.editing = String(visible); onWarpEditorVisibility(visible); },
+  const dialog = createWarpEditorDialog({ document: doc, host: editorRegion, editorPanel: controls.warpPanel, overlay: controls.warpSurface, topologyControls: controls.gridLayout.element, navigationControls, optionalHealthElement: optionalHealthPanel, presentation: "panel", trace,
+    onVisibilityChange: (visible) => { workspace.dataset.editing = String(visible); if (!visible) editorRegion.appendChild(optionalHealthPanel); onWarpEditorVisibility(visible); },
     onPresentationChange: (focused) => {
       root.dataset.warpFullViewport = String(focused);
       commandBar.element.inert = Boolean(focused);
@@ -603,6 +623,8 @@ export function createProjectionConfigView(root, {
       : "",
     onVisibilityChange: (visible) => {
       workspace.dataset.editing = String(visible);
+      if (visible) parameterDialog.bodyElement?.prepend(optionalHealthPanel);
+      else editorRegion.appendChild(optionalHealthPanel);
       const showNamesTools = visible && activeParameterNode === "names-wall";
       namesEditorTools.hidden = !showNamesTools; namesEditorNotes.hidden = !showNamesTools;
     },
@@ -753,6 +775,29 @@ export function createProjectionConfigView(root, {
       recordProjectionTrace(trace, 'redraw', { surface: 'warp', phase: 'end', output, mode, columns, rows, baselineType: warp?.baseline?.type || 'unknown', durationMs: projectionTraceTime(trace) - traceStarted, rectX: rect.left ?? 0, rectY: rect.top ?? 0, rectWidth: rect.width, rectHeight: rect.height, viewX: displayViewBox.x, viewY: displayViewBox.y, viewWidth: displayViewBox.width, viewHeight: displayViewBox.height });
     }
   };
+  const renderOptionalHealth = (clockState = { status: "Loading" }, settlementState = null, actionError = "") => {
+    const modules = [
+      ["clock-settings", clockState, "Clock and legend settings"],
+      ["settlement-settings", settlementState?.hydration || { status: "Saved" }, "Settlement settings"],
+      ["settlement-catalog", settlementState?.catalogStatus || { status: "ready" }, "Settlement list"],
+    ];
+    let active = false;
+    for (const [id, module, label] of modules) {
+      const row = optionalHealthRows.get(id);
+      const status = String(module?.status || "ready").toLowerCase();
+      const failed = status === "failed" || status === "error";
+      const loading = status === "loading";
+      row.row.hidden = !failed && !loading;
+      row.message.textContent = failed
+        ? `${label} unavailable${module?.error ? `: ${module.error}` : ""}`
+        : loading ? `Loading ${label.toLowerCase()}…` : "";
+      row.retry.hidden = !failed;
+      active ||= failed || loading;
+    }
+    optionalHealthActionError.textContent = String(actionError || "");
+    optionalHealthActionError.hidden = !actionError;
+    optionalHealthPanel.hidden = !active && !actionError;
+  };
   const update = ({ state = {}, parameterHistory = { undo: 0, redo: 0 }, errors = {}, conflict = "", statusText = "", draftDiffersFromAccepted = false, savePending = false, selectedNode = "pre", loadedPresetId = null, loadedPresetLoadToken = 0, statusRows = [], appliedSummary = 'Pending', outputState = {}, warpStates = {}, activePattern = { pattern: "off" }, namesWallStatus = null, namesRunDisabledReason = "", clockScene = "home", clockElement = "clock", clockLayouts = {}, clockHydration = { status: "Loading" }, settlement = null } = {}) => {
     if (state.draft) currentDraft = state.draft;
     currentFieldErrors = errors.fields || errors.field || errors;
@@ -764,6 +809,7 @@ export function createProjectionConfigView(root, {
     controls.projectionElement.value = clockElement;
     for (const [id, status] of clockNodeStatuses) status.render(clockLayouts[id]?.record, clockHydration);
     settlementControls.render(settlement || { hydration: { status: "Loading" }, enabled: false });
+    renderOptionalHealth(clockHydration, settlement, workspace.dataset.editing === "true" ? errors.action : "");
     const wallConfig = draft.namesWall;
     for (const help of modelSpacingHelpControls) help.hidden = wallConfig?.activeMode !== "model";
     for (const select of namesModeControls) select.value = wallConfig?.activeMode || "wall";

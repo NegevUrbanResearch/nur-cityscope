@@ -63,6 +63,73 @@ test.each(["failure", "conflict"])("closed editor shows %s and recovery on the s
   } finally { layoutClient.destroy(); }
 });
 
+test("clock editor retains invalid numeric text across Close and scene selection, and finishes a valid edit on its old slot", async () => {
+  const layout = { leftPct: 8, topPct: 8, widthPct: 35, heightPct: 28, fontPx: 22, rotateDeg: 0 };
+  const layoutClient = { getSlot: () => ({ acknowledged: layout, draft: null, status: "Saved" }), subscribe: () => () => {}, commit: vi.fn() };
+  const { root } = mount({ layoutClient });
+  const node = root.querySelector('[data-node="clock-gis"]');
+  node.querySelector('[data-action="clock-editor-open"]').click();
+  const dialog = document.querySelector(".clock-layout-dialog");
+  const rotation = dialog.querySelector('[data-field="rotateDeg"]');
+  rotation.value = "-"; rotation.dispatchEvent(new Event("input")); rotation.dispatchEvent(new Event("change"));
+  dialog.querySelector(".clock-layout-close").click();
+  const scene = dialog.querySelector('[aria-label="GIS clock preview scene"]');
+  scene.value = "segev"; scene.dispatchEvent(new Event("change"));
+  root.querySelector('[data-node="left-grid"]').click();
+  expect(document.querySelector(".clock-layout-dialog")).toBe(dialog);
+  expect(scene.value).toBe("home");
+  expect(rotation.value).toBe("-");
+  expect(layoutClient.commit).not.toHaveBeenCalled();
+  rotation.closest(".config-field").querySelector('[data-action="numeric-cancel-edit"]').click();
+  rotation.value = "17"; rotation.dispatchEvent(new Event("input")); rotation.dispatchEvent(new Event("change"));
+  scene.value = "segev"; scene.dispatchEvent(new Event("change"));
+  expect(layoutClient.commit).toHaveBeenCalledTimes(1);
+  expect(layoutClient.commit).toHaveBeenCalledWith("gisClock", "start", expect.objectContaining({ rotateDeg: 17 }), { numeric: true });
+  expect(scene.value).toBe("segev");
+});
+
+test("clock numeric bounds reject raw out-of-range text before layout normalization", async () => {
+  const layout = { leftPct: 8, topPct: 8, widthPct: 35, heightPct: 28, fontPx: 22, rotateDeg: 0 };
+  const layoutClient = { getSlot: () => ({ acknowledged: layout, draft: null, status: "Saved" }), subscribe: () => () => {}, commit: vi.fn() };
+  const { root } = mount({ layoutClient });
+  root.querySelector('[data-node="clock-gis"] [data-action="clock-editor-open"]').click();
+  const input = document.querySelector('.clock-layout-dialog [data-field="rotateDeg"]');
+  input.value = "999"; input.dispatchEvent(new Event("input")); input.dispatchEvent(new Event("change"));
+  expect(input.value).toBe("999");
+  expect(input.getAttribute("aria-invalid")).toBe("true");
+  expect(input.closest(".config-field").querySelector(".config-field-error").textContent).toContain("-180");
+  expect(input.closest(".config-field").querySelector(".config-field-error").textContent).toContain("180");
+  expect(input.closest(".config-field").querySelector(".config-field-error").textContent).toContain("deg");
+  expect(input.closest(".config-field").querySelector(".config-field-error").textContent).not.toContain("Value was not accepted");
+  expect(layoutClient.commit).not.toHaveBeenCalled();
+  input.closest(".config-field").querySelector('[data-action="numeric-cancel-edit"]').click();
+  input.value = "90"; input.dispatchEvent(new Event("input")); input.dispatchEvent(new Event("change"));
+  expect(layoutClient.commit).toHaveBeenCalledTimes(1);
+  expect(layoutClient.commit).toHaveBeenCalledWith("gisClock", "start", expect.objectContaining({ rotateDeg: 90 }), { numeric: true });
+});
+
+test("clock box coordinate errors use declared 0–100% bounds and valid X normalizes against the complete box", async () => {
+  const layout = { leftPct: 8, topPct: 8, widthPct: 35, heightPct: 28, fontPx: 22, rotateDeg: 0 };
+  const layoutClient = { getSlot: () => ({ acknowledged: layout, draft: null, status: "Saved" }), subscribe: () => () => {}, commit: vi.fn() };
+  const { root } = mount({ layoutClient });
+  root.querySelector('[data-node="clock-gis"] [data-action="clock-editor-open"]').click();
+  const input = document.querySelector('.clock-layout-dialog [data-field="leftPct"]');
+  expect(input.max).toBe("65");
+  input.value = "999"; input.dispatchEvent(new Event("input")); input.dispatchEvent(new Event("change"));
+  const error = input.closest(".config-field").querySelector(".config-field-error");
+  expect(input.value).toBe("999");
+  expect(input.getAttribute("aria-invalid")).toBe("true");
+  expect(error.textContent).toContain("0");
+  expect(error.textContent).toContain("100");
+  expect(error.textContent).toContain("%");
+  expect(layoutClient.commit).not.toHaveBeenCalled();
+
+  input.closest(".config-field").querySelector('[data-action="numeric-cancel-edit"]').click();
+  input.value = "95"; input.dispatchEvent(new Event("input")); input.dispatchEvent(new Event("change"));
+  expect(layoutClient.commit).toHaveBeenCalledTimes(1);
+  expect(layoutClient.commit).toHaveBeenCalledWith("gisClock", "start", expect.objectContaining({ leftPct: 65 }), { numeric: true });
+});
+
 test.each(["saved", "load"])("clock drafts protect unload across slot switches until %s", async (completion) => {
   vi.useFakeTimers();
   const layout = { leftPct: 8, topPct: 8, widthPct: 35, heightPct: 28, fontPx: 22, rotateDeg: 0 };
@@ -151,7 +218,7 @@ test("editor close restores focus to the node opener after responsive resize", (
   }
 });
 
-test('signed clock rotation works from zero and stale scene edits cannot save', () => {
+test('signed clock rotation works from zero and a valid pending edit finishes against its captured scene', () => {
   const {root,layoutClient}=mount();
   root.querySelector('[data-node="clock-gis"] [data-action="clock-editor-open"]').click();
   const rotation=document.querySelector('.clock-layout-dialog [data-field="rotateDeg"]');
@@ -161,7 +228,9 @@ test('signed clock rotation works from zero and stale scene edits cannot save', 
   layoutClient.commit.mockClear();
   rotation.value='10'; rotation.dispatchEvent(new Event('input'));
   const scene=document.querySelector('.clock-layout-dialog select[aria-label="GIS clock preview scene"]');
-  scene.value='nova'; scene.dispatchEvent(new Event('change')); rotation.dispatchEvent(new Event('blur'));
-  expect(layoutClient.commit).not.toHaveBeenCalled();
-  expect(rotation.closest('.config-field').querySelector('[data-action="numeric-use-mine"]').disabled).toBe(true);
+  scene.value='nova'; scene.dispatchEvent(new Event('change'));
+  expect(layoutClient.commit).toHaveBeenCalledTimes(1);
+  expect(layoutClient.commit).toHaveBeenCalledWith('gisClock','start',expect.objectContaining({rotateDeg:-10}),{numeric:true});
+  rotation.dispatchEvent(new Event('blur'));
+  expect(layoutClient.commit).toHaveBeenCalledTimes(1);
 });

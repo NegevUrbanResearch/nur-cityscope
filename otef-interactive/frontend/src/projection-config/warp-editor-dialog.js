@@ -4,7 +4,7 @@ import { createProjectionTraceUi } from './projection-trace-ui.js';
 import { recordProjectionTrace } from './projection-trace-input.js';
 
 /** Owns one disposable projection frame. The config controller retains all draft and edit state. */
-export function createWarpEditorDialog({ document: doc, host, editorPanel, overlay, topologyControls, navigationControls, reconciliationControls = null, presentation = "dialog", onVisibilityChange = () => {}, onPresentationChange = () => {}, onIsAdjusting = () => false, onEscape = () => false, onBeforeClose = () => {}, onBeforeSwitch = () => {}, onBeforeResize = () => {}, onViewportChange = () => {}, onOrientationChange = () => {}, onApply = () => {}, onLive = () => {}, trace }) {
+export function createWarpEditorDialog({ document: doc, host, editorPanel, overlay, topologyControls, navigationControls, reconciliationControls = null, optionalHealthElement = null, presentation = "dialog", onVisibilityChange = () => {}, onPresentationChange = () => {}, onIsAdjusting = () => false, onEscape = () => false, onBeforeClose = () => {}, onBeforeSwitch = () => {}, onBeforeResize = () => {}, onViewportChange = () => {}, onOrientationChange = () => {}, onApply = () => {}, onLive = () => {}, trace }) {
   const win = doc.defaultView;
   const home = editorPanel.parentElement;
   const overlayHome = overlay.parentElement;
@@ -40,6 +40,7 @@ export function createWarpEditorDialog({ document: doc, host, editorPanel, overl
   const applyButton = doc.createElement("button"); applyButton.type = "button"; applyButton.textContent = "Apply once";
   const applied = doc.createElement("span"); applied.className = "warp-editor-applied";
   const retry = doc.createElement("button"); retry.type = "button"; retry.dataset.action = "warp-editor-retry"; retry.textContent = "Retry"; retry.hidden = true;
+  if (optionalHealthElement) footer.appendChild(optionalHealthElement);
   footer.append(liveLabel, applyButton, applied, retry);
   const traceUi = trace?.enabled ? createProjectionTraceUi({ document: doc, trace }) : null;
   if (traceUi) footer.appendChild(traceUi.element);
@@ -219,6 +220,7 @@ export function createWarpEditorDialog({ document: doc, host, editorPanel, overl
       focusEpoch += 1; closedFocus = null;
       opener = activatingElement || doc.activeElement;
       if (reconciliationControls) footer.appendChild(reconciliationControls);
+      if (optionalHealthElement) footer.appendChild(optionalHealthElement);
       if (!isPanel) {
         if (doc.body?.style) { oldOverflow = doc.body.style.overflow; doc.body.style.overflow = "hidden"; }
         inertSiblings = [...host.children].filter((child) => child !== modal).map((child) => [child, child.inert]);

@@ -1,8 +1,8 @@
 import { beforeEach, expect, test, vi } from "vitest";
 
-const harness = vi.hoisted(() => ({ mount: null, getState: null, writeClock: null, writeLegend: null, socketCtor: null, socketDisconnect: null, traceFactory: () => ({ enabled: false, dispose() {} }) }));
+const harness = vi.hoisted(() => ({ mount: null, writeClock: null, writeLegend: null, socketCtor: null, socketDisconnect: null, traceFactory: () => ({ enabled: false, dispose() {} }) }));
 vi.mock("../../frontend/src/shared/api-client.js", () => ({ OTEF_API: {
-  getState: (...args) => harness.getState(...args),
+  baseUrl: "/api",
   setNliClockLayout: (...args) => harness.writeClock(...args),
   setLegendSettings: (...args) => harness.writeLegend(...args),
 } }));
@@ -62,11 +62,11 @@ test("config boot passes an opted-in trace the page window and disposes it befor
   expect(events.slice(-2)).toEqual(["trace.dispose", "socket.disconnect"]);
 });
 
-test("config boot owns one layout client backed by OTEF_API and the existing socket", async () => {
+test("config boot owns one layout client that hydrates asynchronously from the OTEF endpoint and existing socket", async () => {
   const initial = { leftPct: 8, topPct: 8, widthPct: 35, heightPct: 28, fontPx: 22, rotateDeg: 0 };
   const snapshot = { nli_clock_layout: { gis: { start: initial }, projection: { left: initial } }, nli_clock_layout_revision: 2,
     legend_settings: { projection: { left: { ...initial, dwellSeconds: 8 } } }, legend_layout_revision: 3 };
-  harness.getState = vi.fn(async () => structuredClone(snapshot));
+  const fetchImpl = vi.fn(async () => ({ ok: true, json: async () => structuredClone(snapshot) }));
   harness.writeClock = vi.fn(async (_table, _surface, slot, layout) => ({ status: "ok", nliClockLayout: { gis: { [slot]: layout }, projection: { left: initial } }, nliClockLayoutRevision: 3 }));
   harness.writeLegend = vi.fn(async (_table, patch) => ({ changeKind: "layout", legendProjection: { left: patch.layout }, legendLayoutRevision: 4 }));
   harness.socketCtor = vi.fn();
@@ -75,10 +75,11 @@ test("config boot owns one layout client backed by OTEF_API and the existing soc
   const root = {};
   const doc = { getElementById: () => root };
   const socket = { on: vi.fn(), off: vi.fn() };
-  const dispose = await bootProjectionConfig({ document: doc, location: { href: "http://localhost/otef-interactive/projection-config.html", origin: "http://localhost" }, fetchImpl: vi.fn(), socket });
+  const dispose = await bootProjectionConfig({ document: doc, location: { href: "http://localhost/otef-interactive/projection-config.html", origin: "http://localhost" }, fetchImpl, socket });
   expect(harness.socketCtor).not.toHaveBeenCalled();
-  expect(harness.getState).toHaveBeenCalledWith("otef", { forceFresh: true });
   const layoutClient = mounted[0].layoutClient;
+  await vi.waitFor(() => expect(layoutClient.getSlot("gisClock", "start").acknowledged).toEqual(initial));
+  expect(fetchImpl).toHaveBeenCalledWith("/api/otef/", { signal: expect.any(AbortSignal) });
   expect(layoutClient.getSlot("gisClock", "start").acknowledged).toEqual(initial);
   const changed = { ...initial, leftPct: 13 };
   await layoutClient.commit("gisClock", "start", changed);
@@ -94,17 +95,25 @@ test("config boot owns one layout client backed by OTEF_API and the existing soc
 test("config boot exposes failed layout hydration, blocks writes, and recovers with a fresh read", async () => {
   const snapshot = { nli_clock_layout: { gis: {}, projection: {} }, nli_clock_layout_revision: 2,
     legend_settings: { projection: {} }, legend_layout_revision: 3 };
-  harness.getState = vi.fn().mockRejectedValueOnce(new Error("Offline")).mockResolvedValue(snapshot);
+  const fetchImpl = vi.fn()
+    .mockRejectedValueOnce(new Error("Offline"))
+    .mockImplementation(async () => ({ ok: true, json: async () => structuredClone(snapshot) }));
   harness.writeClock = vi.fn(); harness.writeLegend = vi.fn(); harness.socketCtor = vi.fn();
   let layoutClient;
   harness.mount = vi.fn((_root, options) => { layoutClient = options.layoutClient; return { dispose() {} }; });
   const dispose = await bootProjectionConfig({ document: { getElementById: () => ({}) },
-    location: { href: "http://localhost/otef-interactive/projection-config.html" }, fetchImpl: vi.fn(), socket: { on() {}, off() {} } });
+    location: { href: "http://localhost/otef-interactive/projection-config.html" }, fetchImpl, socket: { on() {}, off() {} } });
+  await vi.waitFor(() => expect(layoutClient.getHydrationState()).toMatchObject({ status: "Failed", error: "Offline" }));
+  const failedRequestSignal = fetchImpl.mock.calls[0][1].signal;
+  expect(failedRequestSignal).toBeInstanceOf(AbortSignal);
   expect(layoutClient.getHydrationState()).toMatchObject({ status: "Failed", error: "Offline" });
   await expect(layoutClient.commit("gisClock", "start", { leftPct: 12 })).rejects.toThrow("not loaded");
   expect(harness.writeClock).not.toHaveBeenCalled();
   await layoutClient.hydrate({ forceFresh: true });
   expect(layoutClient.getHydrationState().status).toBe("Saved");
-  expect(harness.getState.mock.calls.at(-1)).toEqual(["otef", { forceFresh: true }]);
+  expect(fetchImpl).toHaveBeenCalledTimes(3);
+  expect(fetchImpl.mock.calls.at(-1)[0]).toBe("/api/otef/");
+  expect(fetchImpl.mock.calls.at(-1)[1].signal).toBeInstanceOf(AbortSignal);
+  expect(fetchImpl.mock.calls.at(-1)[1].signal).not.toBe(failedRequestSignal);
   dispose();
 });

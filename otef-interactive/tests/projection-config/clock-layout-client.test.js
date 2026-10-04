@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { createClockLayoutClient } from "../../frontend/src/projection-config/clock-layout-client.js";
-
 const clockLayout = (leftPct) => ({
   leftPct, topPct: 80, widthPct: 20, heightPct: 8, fontPx: 22, rotateDeg: 0,
 });
@@ -334,7 +333,7 @@ describe("clock layout client", () => {
     socket.emit("disconnect");
     socket.emit("connect");
     await vi.waitFor(() => expect(getSnapshot).toHaveBeenCalledTimes(2));
-    expect(getSnapshot).toHaveBeenLastCalledWith({ forceFresh: true });
+    expect(getSnapshot).toHaveBeenLastCalledWith(expect.objectContaining({ forceFresh: true, signal: expect.any(AbortSignal) }));
     client.destroy();
   });
 
@@ -504,7 +503,8 @@ describe("clock layout client", () => {
     expect(client.getSlot("gisClock", "start")).toEqual(before);
     requestRead();
     await vi.waitFor(() => expect(getSnapshot).toHaveBeenCalledTimes(3));
-    expect(getSnapshot).toHaveBeenLastCalledWith({ forceFresh: true });
+    if (readKind === "reconnect") expect(getSnapshot).toHaveBeenLastCalledWith(expect.objectContaining({ forceFresh: true, signal: expect.any(AbortSignal) }));
+    else expect(getSnapshot).toHaveBeenLastCalledWith({ forceFresh: true });
     client.destroy();
   });
 
@@ -625,4 +625,40 @@ describe("clock layout client", () => {
     expect(client.getSlot("gisNovaExplainers", "novaExplainers")).toMatchObject({ acknowledged: draft, draft: null, status: "Saved" });
     client.destroy();
   });
+});
+
+test("an older hydration cannot replace a newer snapshot or a local layout draft", async () => {
+  let releaseOld;
+  const oldRead = new Promise((resolve) => { releaseOld = resolve; });
+  const signals = [];
+  let calls = 0;
+  const client = createClockLayoutClient({
+    getSnapshot: (options) => { signals.push(options.signal); return ++calls === 1 ? oldRead : Promise.resolve(snapshot()); },
+    writeClockSlot: vi.fn(), writeLegendSlot: vi.fn(),
+  });
+  const oldHydration = client.hydrate({ forceFresh: true });
+  await client.hydrate({ forceFresh: true });
+  expect(signals[0].aborted).toBe(true);
+  const draft = clockLayout(77);
+  client.getSlot("gisClock", "start");
+  await client.commit("gisClock", "start", draft).catch(() => {});
+  expect(client.getSlot("gisClock", "start").draft).toEqual(draft);
+  releaseOld(snapshot({ nli_clock_layout_revision: 99 }));
+  await oldHydration;
+  expect(client.getHydrationState().status).toBe("Saved");
+  expect(client.getSlot("gisClock", "start").draft).toEqual(draft);
+  expect(client.getSlot("gisClock", "start").acknowledged).toEqual(clockLayout(10));
+  client.destroy();
+  expect(signals[1].aborted).toBe(true);
+});
+
+test("destroyed clock hydration cannot publish a late snapshot", async () => {
+  let release;
+  const client = createClockLayoutClient({ getSnapshot: () => new Promise((resolve) => { release = resolve; }), writeClockSlot: vi.fn(), writeLegendSlot: vi.fn() });
+  const hydration = client.hydrate();
+  client.destroy();
+  release(snapshot({ nli_clock_layout_revision: 99 }));
+  await hydration;
+  expect(client.getHydrationState().status).toBe("Loading");
+  expect(client.getSlot("gisClock", "start").acknowledged).toBeNull();
 });

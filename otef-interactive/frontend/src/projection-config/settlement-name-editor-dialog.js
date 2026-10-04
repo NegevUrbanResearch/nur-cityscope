@@ -37,6 +37,8 @@ export function openSettlementNameEditor({
   citycode = "",
   settingsClient,
   catalog = { entries: [] },
+  catalogStatus = { status: "ready" },
+  onRetryCatalog = () => {},
   document = globalThis.document,
   onSelection = () => {},
   onClose = () => {},
@@ -79,16 +81,21 @@ export function openSettlementNameEditor({
   stage.append(mapping, retry);
   const controls = createSettlementNameControls(doc, {
     catalog,
-    onOutput: (next) => { setSelection({ output: next, citycode: activeCitycode }); onSelection({ output: activeOutput, citycode: activeCitycode }); },
-    onCitycode: (next) => { setSelection({ output: activeOutput, citycode: next }); onSelection({ output: activeOutput, citycode: activeCitycode }); },
+    onOutput: (next) => { if (setSelection({ output: next, citycode: activeCitycode })) onSelection({ output: activeOutput, citycode: activeCitycode }); else controls.output.value = activeOutput; },
+    onCitycode: (next) => { if (setSelection({ output: activeOutput, citycode: next })) onSelection({ output: activeOutput, citycode: activeCitycode }); else controls.city.value = activeCitycode; },
     onPosition: (position) => { void settingsClient.commit({ kind: "position", output: activeOutput, citycode: activeCitycode }, position, { numeric: true }).catch(() => {}); publish(); },
     onStyle: (style) => { void settingsClient.commit({ kind: "style" }, style, { numeric: true }).catch(() => {}); publish(); },
     onRetry: () => {
-      void Promise.all([
-        settingsClient.retry({ kind: "position", output: activeOutput, citycode: activeCitycode }),
-        settingsClient.retry({ kind: "style" }),
-      ]).catch(() => {});
+      if (settingsClient.getHydrationState?.().status === "Failed") {
+        void settingsClient.hydrate({ forceFresh: true }).catch(() => {});
+      } else if (activeCitycode) {
+        void Promise.all([
+          settingsClient.retry({ kind: "position", output: activeOutput, citycode: activeCitycode }),
+          settingsClient.retry({ kind: "style" }),
+        ]).catch(() => {});
+      }
     },
+    onRetryCatalog,
     onLoad: () => {
       settingsClient.loadSaved({ kind: "position", output: activeOutput, citycode: activeCitycode });
       settingsClient.loadSaved({ kind: "style" });
@@ -102,6 +109,12 @@ export function openSettlementNameEditor({
   closeButton.focus?.();
 
   function snapshot() { return settingsClient.getSnapshot()?.settings || null; }
+  function setCatalog(nextCatalog, nextCatalogStatus = catalogStatus) {
+    catalog = nextCatalog && Array.isArray(nextCatalog.entries) ? nextCatalog : { entries: [] };
+    catalogStatus = nextCatalogStatus || { status: "ready" };
+    if (!catalog.entries.some((entry) => entry?.citycode === activeCitycode)) activeCitycode = catalog.entries[0]?.citycode || "";
+    renderControls();
+  }
   function positionRecord() { return settingsClient.getTarget({ kind: "position", output: activeOutput, citycode: activeCitycode }); }
   function styleRecord() { return settingsClient.getTarget({ kind: "style" }); }
   function shownPosition() {
@@ -114,6 +127,7 @@ export function openSettlementNameEditor({
       output: activeOutput,
       citycode: activeCitycode,
       catalog,
+      catalogStatus,
       position: shownPosition(),
       style: styleRecord().draft || styleRecord().acknowledged || settings?.style,
       positionRecord: positionRecord(),
@@ -249,13 +263,14 @@ export function openSettlementNameEditor({
   win?.addEventListener?.("resize", onResize);
   retry.addEventListener("click", () => invalidate());
   closeButton.addEventListener("click", close);
-  dialog.addEventListener("keydown", (event) => { if (event.key === "Escape") { event.preventDefault?.(); close(); } });
+  dialog.addEventListener("keydown", (event) => { if (event.key === "Escape") { event.preventDefault?.(); if (controls.hasPending()) controls.cancel(); else close(); } });
   const beforeUnload = (event) => { if (settingsClient.hasUnsavedWork?.()) { event.preventDefault?.(); event.returnValue = ""; } };
   if (manageBeforeUnload) win?.addEventListener?.("beforeunload", beforeUnload);
   publish();
   fitPreview();
 
   function setSelection({ output: nextOutput, citycode: nextCitycode } = {}) {
+    if (!finishPendingEdit()) return false;
     const outputChanged = nextOutput && nextOutput !== activeOutput;
     if (nextOutput === "left" || nextOutput === "right") activeOutput = nextOutput;
     if (typeof nextCitycode === "string" && nextCitycode) activeCitycode = nextCitycode;
@@ -263,9 +278,16 @@ export function openSettlementNameEditor({
     renderControls();
     if (outputChanged) invalidate();
     else publish();
+    return true;
   }
-  function close() {
+  function finishPendingEdit() {
+    if (controls.isHeld()) return false;
+    return controls.finish().every(result => result.kind === "commit" || result.kind === "unchanged");
+  }
+  function close({ force = false } = {}) {
     if (!active) return;
+    if (!force && !finishPendingEdit()) return false;
+    controls.cancel();
     controls.dispose();
     active = false;
     if (gesture) cancelGesture({ pointerId: gesture.pointerId });
@@ -278,6 +300,8 @@ export function openSettlementNameEditor({
     if (restoreFocus) restoreFocus()?.focus?.();
     else opener?.focus?.();
     onClose();
+    return true;
   }
-  return { close, setSelection, calibrationChanged() { invalidate(); } };
+  return { close, setSelection, setCatalog, finishPendingEdit, hasPendingEdit: controls.hasPending, isHeld: controls.isHeld, cancelPendingEdit: controls.cancel,
+    dispose() { close({ force: true }); }, calibrationChanged() { invalidate(); } };
 }

@@ -151,6 +151,8 @@ export function createParameterEditorDialog({ document: doc, host, presentation 
   return {
     open,
     element: modal,
+    headerElement: header,
+    bodyElement: body,
     titleContext,
     fieldsElement: fields,
     presentation,
