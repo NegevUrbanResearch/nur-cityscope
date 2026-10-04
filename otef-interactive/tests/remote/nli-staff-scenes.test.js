@@ -122,8 +122,11 @@ describe("NLI staff run of show", () => {
     for (const id of branches) {
       expect(NARRATIVES.some((narrative) => narrative.id === id)).toBe(true);
     }
-    expect(SHOW.steps.at(-1).id).toBe("back-to-start");
-    expect(SHOW.steps.at(-1).cue).toBe(catalog.HOME_CUE);
+    expect(SHOW.steps.at(-1).id).toBe("credits");
+    expect(SHOW.steps.at(-1).title).toEqual({ he: "קרדיטים", en: "Credits" });
+    expect(SHOW.steps.at(-1).cue).toEqual(catalog.HOME_CUE);
+    expect(SHOW.steps.at(-1).cue).not.toBe(catalog.HOME_CUE);
+    expect(SHOW.steps.at(-1).presentation).toEqual({ segmentId: "credits", open: "auto", onClose: "stay" });
     expect(SHOW.title).toEqual({ he: "רצף ההקרנה המלא", en: "Full projection sequence" });
   });
 
@@ -210,12 +213,13 @@ describe("NLI staff run of show", () => {
   test("presentation segments use the approved GIS mapping including names_wall", () => {
     const expected = [
       ["names_wall", "auto", "stay", false],
+      ["credits", "auto", "stay", true],
       ["segev", "manual", "stay", true],
       ["nova_mor", "auto", "stay", true],
       ["nova_memorial", "auto", "stay", true],
       ["sderot", "manual", "stay", true],
       ["shura", "auto", "stay", true],
-      ["hostages", "manual", "stay", true],
+      ["hostages", "auto", "stay", true],
     ];
     const presentationSteps = allSteps().filter(({ step }) => step.presentation);
     expect(presentationSteps.map(({ step }) => [
@@ -285,7 +289,7 @@ describe("NLI staff run of show", () => {
     expect(hostages.steps.every((step) => !step.kit.includes("archive"))).toBe(true);
     expect(hostages.steps.every((step) => !("personQuery" in step))).toBe(true);
     expect(hostages.steps.map((step) => step.cue.clock)).toEqual(["idle", "idle", "idle", "idle"]);
-    expect(hostages.steps[1].presentation).toEqual({ segmentId: "hostages", open: "manual", onClose: "stay" });
+    expect(hostages.steps[1].presentation).toEqual({ segmentId: "hostages", open: "auto", onClose: "stay" });
     for (const step of hostages.steps) {
       expect(step.note?.he ?? "").not.toContain("צריך לראות");
       expect(step.note?.en ?? "").not.toContain("Determine which presentation");
@@ -321,9 +325,9 @@ describe("NLI staff run of show", () => {
       clock: "ended",
       escape: { settled: true },
     });
-    expect(memorial.kit).toEqual(["presentation"]);
+    expect(memorial.kit).toEqual(["escape", "presentation"]);
     expect(memorial.presentation).toEqual({ segmentId: "nova_memorial", open: "auto", onClose: "stay" });
-    expect(memorial).not.toHaveProperty("escapeKinds");
+    expect(memorial.escapeKinds).toEqual(["individual"]);
   });
 
   test.skipIf(!fs.existsSync(path.join(MANIFEST_ROOT, "nli/manifest.json")))(

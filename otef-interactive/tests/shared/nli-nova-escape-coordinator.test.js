@@ -170,6 +170,34 @@ describe("Nova escape overlay coordinator", () => {
     coordinator.dispose();
   });
 
+  test.each(["gis", "projection"])("%s keeps fleeing routes beneath victim markers after toggles and style reload", async (surface) => {
+    const { coordinator, map } = setupCoordinator({ profile: surface, surface });
+    const addMarkers = () => {
+      map.addLayer({ id: "victim-points", type: "circle", source: "nli.people" });
+      map.addLayer({ id: "victim-icons", type: "symbol", source: "nli.people" });
+    };
+    const expectMarkerOrder = () => {
+      const ids = map.getStyle().layers.map((layer) => layer.id);
+      const individual = ids.indexOf("nli-nova-escape-individual");
+      const overlap = ids.indexOf("nli-nova-escape-overlap");
+      expect(individual).toBeGreaterThanOrEqual(0);
+      expect(overlap).toBeGreaterThan(individual);
+      expect(ids.indexOf("victim-points")).toBeGreaterThan(overlap);
+      expect(ids.indexOf("victim-icons")).toBeGreaterThan(overlap);
+    };
+    addMarkers();
+    await coordinator.sync({ id: "nova" }, { individual: true, overlap: true });
+    expectMarkerOrder();
+    await coordinator.sync({ id: "nova" }, { individual: false, overlap: false, settled: true });
+    await coordinator.sync({ id: "nova" }, { individual: true, overlap: true });
+    expectMarkerOrder();
+    map.wipeStyle();
+    addMarkers();
+    await coordinator.onStyleLoad({ styleLoss: true });
+    expectMarkerOrder();
+    coordinator.dispose();
+  });
+
   test("projection surface remounts ribbons when individual turns on", async () => {
     const { coordinator, map } = await setupCoordinator({
       profile: "projection",

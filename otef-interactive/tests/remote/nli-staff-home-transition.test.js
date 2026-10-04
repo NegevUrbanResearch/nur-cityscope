@@ -360,7 +360,6 @@ describe("NLI staff Home transitions", () => {
       expect(el("stepTitle").textContent).toBe("Mor Levy");
       expect(el("cueStatus").dataset.status).toBe("ready");
     });
-    el("kitPresentation").querySelector('[data-presentation-action="open"]').click();
     await vi.waitFor(() => expect(h.commands.at(-1)?.presentationAction).toBe("open"));
     h.emit("narrativePresentationResult", {
       ...h.commands.at(-1),
@@ -405,7 +404,6 @@ describe("NLI staff Home transitions", () => {
       expect(el("stepTitle").textContent).toBe("Mor Levy");
       expect(el("cueStatus").dataset.status).toBe("ready");
     });
-    el("kitPresentation").querySelector('[data-presentation-action="open"]').click();
     await vi.waitFor(() => expect(h.commands.at(-1)?.presentationAction).toBe("open"));
     h.emit("narrativePresentationResult", {
       ...h.commands.at(-1),
@@ -434,7 +432,19 @@ describe("NLI staff Home transitions", () => {
     await bootRemote(session);
     await session.h.openCard('[data-open="nova"]');
     el("ticks").querySelector('[data-step="3"]').click();
+    await vi.waitFor(() => expect(session.h.commands.at(-1)?.presentationAction).toBe("open"));
+    session.h.emit("narrativePresentationResult", {
+      ...session.h.commands.at(-1), outcome: "opened", slide: 9, range: [9, 11],
+    });
     await vi.waitFor(() => expect(el("stepTitle").textContent).toBe("Mor Levy"));
+    const dispatch = session.dataContext.narrativePresentationCommand;
+    session.dataContext.narrativePresentationCommand = async (command) => {
+      const result = await dispatch(command);
+      if (command.presentationAction === "close") {
+        session.h.emit("narrativePresentationResult", { ...command, outcome: "closed" });
+      }
+      return result;
+    };
 
     let releaseClear;
     const clearGate = new Promise((resolve) => { releaseClear = resolve; });
@@ -576,7 +586,8 @@ describe("NLI staff Home transitions", () => {
     el("ticks").querySelector('[data-step="3"]').click();
     await vi.waitFor(() => expect(el("cueStatus").dataset.status).toBe("applying"));
     expect(el("kitEscape").querySelector("button").disabled).toBe(true);
-    expect(el("kitPresentation").querySelector('[data-presentation-action="open"]').disabled).toBe(true);
+    expect(el("kitPresentation").querySelector("button")).toBeNull();
+    expect(session.h.commands).toEqual([]);
     releaseNova();
     await vi.waitFor(() => expect(el("cueStatus").dataset.status).toBe("ready"));
   });
@@ -678,7 +689,6 @@ describe("NLI staff Home transitions", () => {
         expect(el("stepTitle").textContent).toBe("Mor Levy");
         expect(el("cueStatus").dataset.status).toBe("ready");
       });
-      el("kitPresentation").querySelector('[data-presentation-action="open"]').click();
       await vi.waitFor(() => expect(h.commands.at(-1)?.presentationAction).toBe("open"));
       h.emit("narrativePresentationResult", {
         ...h.commands.at(-1),

@@ -193,10 +193,11 @@ export const SHOW = {
       presentation: { segmentId: "names_wall", open: "auto", onClose: "stay", controls: false },
     },
     {
-      id: "back-to-start",
-      title: { he: "בחזרה להתחלה", en: "Back to the start" },
-      cue: HOME_CUE,
-      kit: [],
+      id: "credits",
+      title: { he: "קרדיטים", en: "Credits" },
+      cue: { ...HOME_CUE },
+      kit: ["presentation"],
+      presentation: { segmentId: "credits", open: "auto", onClose: "stay" },
     },
   ],
 };
@@ -287,7 +288,8 @@ export const NARRATIVES = [
       {
         title: { he: "הנצחה", en: "Memorial" },
         cue: { layers: [...FOCUS_LAYER_IDS, PEOPLE], clock: "ended", escape: { settled: true } },
-        kit: ["presentation"],
+        kit: ["escape", "presentation"],
+        escapeKinds: ["individual"],
         presentation: { segmentId: "nova_memorial", open: "auto", onClose: "stay" },
       },
     ],
@@ -338,7 +340,7 @@ export const NARRATIVES = [
         title: { he: "מצגת", en: "Presentation" },
         cue: { layers: FOCUS_LAYER_IDS, clock: "idle" },
         kit: ["presentation"],
-        presentation: { segmentId: "hostages", open: "manual", onClose: "stay" },
+        presentation: { segmentId: "hostages", open: "auto", onClose: "stay" },
       },
       {
         title: { he: "נרצחים וחטופים בניר עוז", en: "Nir Oz victims and hostages" },
