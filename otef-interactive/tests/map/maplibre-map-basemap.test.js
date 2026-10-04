@@ -65,6 +65,7 @@ describe("maplibre basemap switching", () => {
     );
 
     expect(BASEMAP_STYLES.satellite_bw.layers[0].paint).toEqual({
+      "raster-fade-duration": 500,
       "raster-saturation": -1,
     });
     expect(BASEMAP_STYLES.satellite_bw.sources.esri.tiles).toEqual(
