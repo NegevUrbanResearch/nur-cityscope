@@ -174,7 +174,7 @@ function fakeClient(initialSnapshot) {
   };
 }
 
-function tracedWarpHarness() {
+function tracedWarpHarness({ candidateValidator } = {}) {
   const previousDocument = globalThis.document;
   globalThis.document = documentStub();
   const root = element("main");
@@ -185,7 +185,7 @@ function tracedWarpHarness() {
     getStatus: () => ({ recording: false, connected: false, acknowledged: 0, queued: 0, pending: 0, dropped: 0 }),
     subscribe: () => () => {},
   };
-  const api = mountProjectionConfig(root, { client, trace });
+  const api = mountProjectionConfig(root, { client, trace, candidateValidator });
   client.setLive(false);
   find(root, (node) => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-keystone").dispatch("click");
   const surface = find(root, (node) => node.attributes?.class === "warp-edit-surface");
@@ -427,6 +427,572 @@ function replacementHarness() {
 }
 
 describe("projection config controller", () => {
+  test("a left grid candidate is retired when editing moves to the right grid", async () => {
+    const previousDocument = globalThis.document; globalThis.document = documentStub();
+    const root = element("main"); const client = fakeClient(); const checks = [];
+    const api = mountProjectionConfig(root, { client, candidateValidator: { validateCandidate: args => new Promise(resolve => checks.push({ ...args, resolve })), dispose() {} } });
+    try {
+      client.setLive(true);
+      find(root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+      client.setDraft.mockClear(); client.apply.mockClear();
+      const rows = find(root, node => node.dataset?.gridLayoutField === "rows");
+      rows.value = "8"; rows.dispatch("input"); rows.dispatch("change");
+      await vi.waitFor(() => expect(checks).toHaveLength(1));
+      find(root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "right-grid").dispatch("click");
+      checks[0].resolve({ identity: checks[0].identity, valid: true });
+      await new Promise(resolve => setTimeout(resolve, 0));
+      expect(client.getState().draft.outputs.left.warp.grid.rows).toBe(7);
+      expect(client.setDraft).not.toHaveBeenCalled(); expect(client.apply).not.toHaveBeenCalled();
+      expect(find(root, node => node.className === "warp-editor-title").textContent).toContain("Right · Grid Warp");
+      find(root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+      expect(find(root, node => node.dataset?.action === "warp-undo").disabled).toBe(true);
+    } finally { api.dispose(); globalThis.document = previousDocument; }
+  });
+
+  test("a deferred grid candidate cannot revive after accepted warp identity changes away and back", async () => {
+    const previousDocument = globalThis.document; globalThis.document = documentStub();
+    const root = element("main"); const client = fakeClient(); const checks = [];
+    const api = mountProjectionConfig(root, { client, candidateValidator: { validateCandidate: args => new Promise(resolve => checks.push({ ...args, resolve })), dispose() {} } });
+    try {
+      client.setLive(true);
+      find(root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+      client.setDraft.mockClear(); client.apply.mockClear();
+      const rows = find(root, node => node.dataset?.gridLayoutField === "rows");
+      rows.value = "8"; rows.dispatch("input"); rows.dispatch("change");
+      await vi.waitFor(() => expect(checks).toHaveLength(1));
+      const base = clone(client.getState().draft); const changed = clone(base);
+      changed.outputs.left.warp.keystone.corners[0][0] = 0.02;
+      client.report({ draft: changed, hasLocalDraft: true });
+      client.report({ draft: base, hasLocalDraft: true });
+      checks[0].resolve({ identity: checks[0].identity, valid: true });
+      await new Promise(resolve => setTimeout(resolve, 0));
+      expect(client.getState().draft.outputs.left.warp.grid.rows).toBe(7);
+      expect(client.setDraft).not.toHaveBeenCalled(); expect(client.apply).not.toHaveBeenCalled();
+      expect(find(root, node => node.className === "warp-grid-layout-preview-status").textContent).toContain("warp changed");
+    } finally { api.dispose(); globalThis.document = previousDocument; }
+  });
+
+  test("a deferred explicit grid confirmation is retired when editing moves to the right grid", async () => {
+    const previousDocument = globalThis.document; globalThis.document = documentStub();
+    const root = element("main"); const client = fakeClient(); const checks = [];
+    const api = mountProjectionConfig(root, { client, candidateValidator: { validateCandidate: args => new Promise(resolve => checks.push({ ...args, resolve })), dispose() {} } });
+    try {
+      client.setLive(true);
+      find(root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+      find(root, node => node.dataset?.warpSelectionKind === "row").dispatch("click");
+      const picker = find(root, node => node.className === "warp-selection-picker"); picker.value = "2"; picker.dispatch("change");
+      client.setDraft.mockClear(); client.apply.mockClear();
+      find(root, node => node.dataset?.gridLayoutAction === "remove-row").dispatch("click");
+      await vi.waitFor(() => expect(checks).toHaveLength(1));
+      checks[0].resolve({ identity: checks[0].identity, valid: true });
+      await vi.waitFor(() => expect(find(root, node => node.dataset?.action === "warp-grid-layout-confirm").disabled).toBe(false));
+      find(root, node => node.dataset?.action === "warp-grid-layout-confirm").dispatch("click");
+      await vi.waitFor(() => expect(checks).toHaveLength(2));
+      find(root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "right-grid").dispatch("click");
+      checks[1].resolve({ identity: checks[1].identity, valid: true });
+      await new Promise(resolve => setTimeout(resolve, 0));
+      expect(client.getState().draft.outputs.left.warp.grid.rows).toBe(7);
+      expect(client.setDraft).not.toHaveBeenCalled(); expect(client.apply).not.toHaveBeenCalled();
+      find(root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+      expect(find(root, node => node.dataset?.action === "warp-undo").disabled).toBe(true);
+    } finally { api.dispose(); globalThis.document = previousDocument; }
+  });
+
+  test("a deferred explicit confirmation cannot revive after accepted warp identity changes away and back", async () => {
+    const previousDocument = globalThis.document; globalThis.document = documentStub();
+    const root = element("main"); const client = fakeClient(); const checks = [];
+    const api = mountProjectionConfig(root, { client, candidateValidator: { validateCandidate: args => new Promise(resolve => checks.push({ ...args, resolve })), dispose() {} } });
+    try {
+      client.setLive(true);
+      find(root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+      find(root, node => node.dataset?.warpSelectionKind === "row").dispatch("click");
+      const picker = find(root, node => node.className === "warp-selection-picker"); picker.value = "2"; picker.dispatch("change");
+      client.setDraft.mockClear(); client.apply.mockClear();
+      find(root, node => node.dataset?.gridLayoutAction === "remove-row").dispatch("click");
+      await vi.waitFor(() => expect(checks).toHaveLength(1));
+      checks[0].resolve({ identity: checks[0].identity, valid: true });
+      await vi.waitFor(() => expect(find(root, node => node.dataset?.action === "warp-grid-layout-confirm").disabled).toBe(false));
+      find(root, node => node.dataset?.action === "warp-grid-layout-confirm").dispatch("click");
+      await vi.waitFor(() => expect(checks).toHaveLength(2));
+      const base = clone(client.getState().draft); const changed = clone(base);
+      changed.outputs.left.warp.keystone.corners[0][0] = 0.02;
+      client.report({ draft: changed, hasLocalDraft: true });
+      client.report({ draft: base, hasLocalDraft: true });
+      checks[1].resolve({ identity: checks[1].identity, valid: true });
+      await new Promise(resolve => setTimeout(resolve, 0));
+      expect(client.getState().draft.outputs.left.warp.grid.rows).toBe(7);
+      expect(client.setDraft).not.toHaveBeenCalled(); expect(client.apply).not.toHaveBeenCalled();
+      expect(find(root, node => node.className === "warp-grid-layout-preview-status").textContent).toContain("warp changed");
+    } finally { api.dispose(); globalThis.document = previousDocument; }
+  });
+
+test("Add placement immediately previews its visible default percentage without draft or history writes", () => {
+    const previousDocument = globalThis.document; globalThis.document = documentStub();
+    const root = element("main"); const client = fakeClient(); const api = mountProjectionConfig(root, { client });
+    try {
+      client.setLive(true);
+      find(root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+      client.setDraft.mockClear(); client.apply.mockClear();
+      find(root, node => node.dataset?.gridLayoutAction === "add-row").dispatch("click");
+      const position = find(root, node => node.dataset?.gridLayoutField === "addRowPosition").value;
+      const status = find(root, node => node.className === "warp-grid-layout-preview-status").textContent;
+      expect(status).toContain(`Add row at ${Number(position).toFixed(2)}% source Y`);
+      expect(find(root, node => node.attributes?.class === "warp-grid-preview-line candidate")).toBeTruthy();
+      expect(client.setDraft).not.toHaveBeenCalled(); expect(client.apply).not.toHaveBeenCalled();
+      expect(find(root, node => node.dataset?.action === "warp-undo").disabled).toBe(true);
+  } finally { api.dispose(); globalThis.document = previousDocument; }
+});
+
+test.each([["row", "add-row", "addRowPosition", "rowPositions"], ["column", "add-column", "addColumnPosition", "columnPositions"]])("semantic %s placement rejection keeps its source percentage pending until correction or Cancel", async (axis, addAction, fieldName, positionsKey) => {
+  const candidateValidator = { validateCandidate: vi.fn(async ({ identity }) => ({ identity, valid: true })), dispose() {} };
+  const h = tracedWarpHarness({ candidateValidator });
+  try {
+    find(h.root, node => node.dataset?.action === "warp-editor-close").dispatch("click");
+    const config = clone(h.client.getState().draft);
+    config.outputs.left.warp.grid[positionsKey] = [0, 0.14, 0.32, 0.5, 0.68, 0.84, 1];
+    h.client.report({ draft: config, hasLocalDraft: true });
+    find(h.root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+    find(h.root, node => node.dataset?.gridLayoutAction === addAction).dispatch("click");
+    const input = find(h.root, node => node.dataset?.gridLayoutField === fieldName);
+    globalThis.document.activeElement = input;
+    input.value = "50"; input.dispatch("input"); input.dispatch("change");
+    await vi.waitFor(() => expect(find(h.root, node => node.className === "warp-grid-layout-preview-status").textContent).toContain("distinct interior position"));
+    h.client.setDraft.mockClear(); h.client.apply.mockClear();
+
+    find(h.root, node => node.dataset?.action === "warp-editor-close").dispatch("click");
+    const title = find(h.root, node => node.className === "warp-editor-title");
+    const originalTitle = title.textContent;
+    find(h.root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "right-grid").dispatch("click");
+    find(h.root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-keystone").dispatch("click");
+    const picker = find(h.root, node => node.className === "warp-selection-picker");
+    const originalSelection = picker.value; picker.value = String(Number(originalSelection) + 1); picker.dispatch("change");
+    expect(title.textContent).toBe(originalTitle);
+    expect(picker.value).toBe(originalSelection);
+    expect(input.value).toBe("50");
+    await h.api.handleAction("apply");
+    h.client.setLive.mockClear(); h.client.save.mockClear();
+    await h.api.handleAction("save-new", "Rejected placement copy");
+    await h.api.handleAction("live", true);
+    expect(find(h.root, node => node.className === "warp-editor-dialog").hidden).toBe(false);
+    expect(input.value).toBe("50");
+    expect(h.client.apply).not.toHaveBeenCalled();
+    expect(h.client.save).not.toHaveBeenCalled();
+    expect(h.client.setLive).not.toHaveBeenCalled();
+    expect(h.client.setDraft).not.toHaveBeenCalled();
+
+    input.value = "25"; input.dispatch("input"); input.dispatch("change");
+    await vi.waitFor(() => expect(candidateValidator.validateCandidate).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(candidateValidator.validateCandidate.mock.results[0].value).resolves.toEqual(expect.objectContaining({ valid: true })));
+    const confirm = find(h.root, node => node.dataset?.action === "warp-grid-layout-confirm");
+    if (!confirm.disabled && !confirm.hidden) {
+      expect(input.value).toBe("25");
+      expect(h.client.setDraft).not.toHaveBeenCalled();
+      confirm.dispatch("click");
+    }
+    await vi.waitFor(() => expect(h.client.setDraft).toHaveBeenCalledTimes(1));
+  } finally { h.restore(); }
+});
+
+test("delayed rejected Add percentage validation stays pending until explicit placement Cancel", async () => {
+  const checks = [];
+  const candidateValidator = { validateCandidate: vi.fn(({ identity }) => new Promise(resolve => checks.push({ identity, resolve }))), dispose() {} };
+  const h = tracedWarpHarness({ candidateValidator });
+  try {
+    find(h.root, node => node.dataset?.action === "warp-editor-close").dispatch("click");
+    find(h.root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+    find(h.root, node => node.dataset?.gridLayoutAction === "add-row").dispatch("click");
+    const input = find(h.root, node => node.dataset?.gridLayoutField === "addRowPosition");
+    globalThis.document.activeElement = input;
+    input.value = "20"; input.dispatch("input"); input.dispatch("change");
+    await vi.waitFor(() => expect(checks).toHaveLength(1));
+    h.client.setDraft.mockClear(); h.client.apply.mockClear();
+    find(h.root, node => node.dataset?.action === "warp-editor-close").dispatch("click");
+    await h.api.handleAction("apply");
+    expect(find(h.root, node => node.className === "warp-editor-dialog").hidden).toBe(false);
+    expect(input.value).toBe("20");
+    expect(h.client.apply).not.toHaveBeenCalled();
+    expect(h.client.setDraft).not.toHaveBeenCalled();
+
+    checks[0].resolve({ identity: checks[0].identity, valid: false, reason: "Candidate geometry was rejected." });
+    await vi.waitFor(() => expect(find(h.root, node => node.className === "warp-grid-layout-preview-status").textContent).toContain("Candidate geometry was rejected."));
+    expect(input.value).toBe("20");
+    expect(h.client.setDraft).not.toHaveBeenCalled();
+
+    find(h.root, node => node.dataset?.action === "warp-grid-layout-cancel").dispatch("click");
+    expect(input.value).not.toBe("20");
+    find(h.root, node => node.dataset?.action === "warp-editor-close").dispatch("click");
+    expect(find(h.root, node => node.className === "warp-editor-dialog").hidden).toBe(true);
+    expect(h.client.apply).not.toHaveBeenCalled();
+    expect(h.client.setDraft).not.toHaveBeenCalled();
+  } finally { h.restore(); }
+});
+
+test("cancelling an in-flight Add percentage retires its late validator result", async () => {
+  const checks = [];
+  const candidateValidator = { validateCandidate: vi.fn(({ identity }) => new Promise(resolve => checks.push({ identity, resolve }))), dispose() {} };
+  const h = tracedWarpHarness({ candidateValidator });
+  try {
+    find(h.root, node => node.dataset?.action === "warp-editor-close").dispatch("click");
+    find(h.root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+    find(h.root, node => node.dataset?.gridLayoutAction === "add-row").dispatch("click");
+    const input = find(h.root, node => node.dataset?.gridLayoutField === "addRowPosition");
+    globalThis.document.activeElement = input;
+    input.value = "20"; input.dispatch("input"); input.dispatch("change");
+    await vi.waitFor(() => expect(checks).toHaveLength(1));
+    h.client.setDraft.mockClear(); h.client.apply.mockClear();
+
+    find(h.root, node => node.dataset?.action === "warp-grid-layout-cancel").dispatch("click");
+    checks[0].resolve({ identity: checks[0].identity, valid: true });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(input.value).not.toBe("20");
+    expect(h.client.setDraft).not.toHaveBeenCalled();
+    expect(h.client.apply).not.toHaveBeenCalled();
+    find(h.root, node => node.dataset?.action === "warp-editor-close").dispatch("click");
+    expect(find(h.root, node => node.className === "warp-editor-dialog").hidden).toBe(true);
+  } finally { h.restore(); }
+});
+
+test("rejected Add row source percentage stays visible until corrected or placement is cancelled", () => {
+  const h = tracedWarpHarness();
+  try {
+    const config = clone(h.client.getState().draft);
+    config.outputs.left.warp.grid.rowPositions = [0, 0.14, 0.32, 0.5, 0.68, 0.84, 1];
+    h.client.report({ draft: config, hasLocalDraft: true });
+    h.client.setLive(true);
+    find(h.root, node => node.dataset?.action === "warp-editor-close").dispatch("click");
+    find(h.root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+    h.client.setDraft.mockClear(); h.client.apply.mockClear();
+    const add = find(h.root, node => node.dataset?.gridLayoutAction === "add-row");
+    add.dispatch("click");
+    const position = find(h.root, node => node.dataset?.gridLayoutField === "addRowPosition");
+    position.value = "14"; position.dispatch("input"); position.dispatch("change"); position.dispatch("blur");
+    expect(position.value).toBe("14");
+    position.value = "101"; position.dispatch("input"); position.dispatch("change"); position.dispatch("blur");
+    expect(position.value).toBe("101");
+    expect(position.attributes["aria-invalid"]).toBe("true");
+    expect(h.client.setDraft).not.toHaveBeenCalled(); expect(h.client.apply).not.toHaveBeenCalled();
+    expect(find(h.root, node => node.dataset?.action === "warp-undo").disabled).toBe(true);
+    add.dispatch("click");
+    expect(position.value).not.toBe("101");
+    expect(h.client.setDraft).not.toHaveBeenCalled(); expect(h.client.apply).not.toHaveBeenCalled();
+  } finally { h.restore(); }
+});
+
+test.each(["Back", "right Grid", "another row", "Apply"])("rejected Add row percentage blocks %s without a write", async (action) => {
+  const h = tracedWarpHarness();
+  try {
+    h.client.setLive(true);
+    find(h.root, node => node.dataset?.action === "warp-editor-close").dispatch("click");
+    find(h.root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+    find(h.root, node => node.dataset?.gridLayoutAction === "add-row").dispatch("click");
+    const position = find(h.root, node => node.dataset?.gridLayoutField === "addRowPosition");
+    globalThis.document.activeElement = position;
+    position.value = "100"; position.dispatch("input"); position.dispatch("change"); position.dispatch("blur");
+    h.client.setDraft.mockClear(); h.client.apply.mockClear();
+
+    if (action === "Back") find(h.root, node => node.dataset?.action === "warp-editor-close").dispatch("click");
+    if (action === "right Grid") find(h.root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "right-grid").dispatch("click");
+    if (action === "another row") {
+      const picker = find(h.root, node => node.className === "warp-selection-picker");
+      const before = picker.value; picker.value = String(Number(before) + 1); picker.dispatch("change");
+      expect(picker.value).toBe(before);
+    }
+    if (action === "Apply") await h.api.handleAction("apply");
+
+    expect(position.value).toBe("100");
+    expect(position.attributes["aria-invalid"]).toBe("true");
+    expect(find(h.root, node => node.className === "warp-editor-dialog").hidden).toBe(false);
+    expect(h.client.getState().draft.outputs.left.warp.grid.rows).toBe(7);
+    expect(h.client.setDraft).not.toHaveBeenCalled();
+    expect(h.client.apply).not.toHaveBeenCalled();
+  } finally { h.restore(); }
+});
+
+test.each([["row", "addRowPosition", "add-row"], ["column", "addColumnPosition", "add-column"]])("rejected Add %s percentage remains pending until placement is explicitly cancelled", async (axis, fieldName, actionName) => {
+  const h = tracedWarpHarness();
+  try {
+    find(h.root, node => node.dataset?.action === "warp-editor-close").dispatch("click");
+    find(h.root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+    find(h.root, node => node.dataset?.gridLayoutAction === actionName).dispatch("click");
+    const input = find(h.root, node => node.dataset?.gridLayoutField === fieldName);
+    globalThis.document.activeElement = input;
+    input.value = "100"; input.dispatch("input"); input.dispatch("change"); input.dispatch("blur");
+    expect(input.value).toBe("100");
+    expect(input.attributes["aria-invalid"]).toBe("true");
+    expect(find(h.root, node => node.className === "warp-grid-layout-error").textContent).toContain(axis === "row" ? "Row position" : "Column position");
+    await h.api.handleAction("apply");
+    expect(h.client.apply).not.toHaveBeenCalled();
+    find(h.root, node => node.dataset?.gridLayoutAction === actionName).dispatch("click");
+    expect(input.value).not.toBe("100");
+    expect(input.attributes["aria-invalid"]).toBeUndefined();
+  } finally { h.restore(); }
+});
+
+test.each([["row", "addRowPosition", "add-row", "addColumnPosition"], ["column", "addColumnPosition", "add-column", "addRowPosition"]])("Add %s percentage is editable only during its active placement and Escape clears it", (axis, fieldName, actionName, otherFieldName) => {
+  const h = tracedWarpHarness();
+  try {
+    find(h.root, node => node.dataset?.action === "warp-editor-close").dispatch("click");
+    find(h.root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+    const input = find(h.root, node => node.dataset?.gridLayoutField === fieldName);
+    const other = find(h.root, node => node.dataset?.gridLayoutField === otherFieldName);
+    expect(input.disabled).toBe(true);
+    expect(other.disabled).toBe(true);
+
+    find(h.root, node => node.dataset?.gridLayoutAction === actionName).dispatch("click");
+    expect(input.disabled).toBe(false);
+    expect(other.disabled).toBe(true);
+    input.value = "35"; input.dispatch("input");
+    globalThis.document.dispatch("keydown", { key: "Escape", preventDefault() {} });
+    expect(input.value).not.toBe("35");
+    expect(input.attributes["aria-invalid"]).toBeUndefined();
+    expect(find(h.root, node => node.dataset?.gridLayoutAction === actionName).textContent).toBe(axis === "row" ? "Add row" : "Add column");
+    find(h.root, node => node.dataset?.action === "warp-editor-close").dispatch("click");
+    expect(find(h.root, node => node.className === "warp-editor-dialog").hidden).toBe(true);
+    expect(h.client.setDraft).not.toHaveBeenCalled();
+    expect(h.client.apply).not.toHaveBeenCalled();
+  } finally { h.restore(); }
+});
+
+test("Escape cancels rejected grid-placement text without closing the editor or writing", () => {
+  const h = tracedWarpHarness();
+  try {
+    find(h.root, node => node.dataset?.action === "warp-editor-close").dispatch("click");
+    find(h.root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+    find(h.root, node => node.dataset?.gridLayoutAction === "add-row").dispatch("click");
+    const input = find(h.root, node => node.dataset?.gridLayoutField === "addRowPosition");
+    input.value = "100"; input.dispatch("input"); input.dispatch("change"); input.dispatch("blur");
+    const dialog = find(h.root, node => node.className === "warp-editor-dialog");
+    globalThis.document.dispatch("keydown", { key: "Escape", preventDefault() {} });
+    expect(dialog.hidden).toBe(false);
+    expect(input.value).not.toBe("100");
+    expect(input.attributes["aria-invalid"]).toBeUndefined();
+    expect(find(h.root, node => node.dataset?.gridLayoutAction === "add-row").textContent).toBe("Add row");
+    expect(h.client.setDraft).not.toHaveBeenCalled(); expect(h.client.apply).not.toHaveBeenCalled();
+  } finally { h.restore(); }
+});
+
+test("a valid Scale entry is committed before the real slider captures its range baseline", () => {
+  const h = tracedWarpHarness();
+  try {
+    const number = find(h.root, node => node.dataset?.field === "pre.scale" && node.dataset?.input === "number");
+    const wrap = find(h.root, node => node.dataset?.path === "pre.scale");
+    const range = find(wrap, node => node.dataset?.input === "range");
+    find(wrap, node => node.dataset?.mode === "coarse").dispatch("click");
+    number.value = "2"; number.dispatch("input");
+    const pointer = type => range.dispatch(type, { pointerId: 17, preventDefault() {} });
+    pointer("pointerdown"); number.dispatch("blur");
+    range.value = "3"; range.dispatch("input"); pointer("pointerup");
+    expect(h.client.getState().draft.pre.scale).toBe(3);
+    expect(number.attributes["aria-invalid"]).toBe("false");
+    expect(h.client.setDraft).toHaveBeenCalled();
+  } finally { h.restore(); }
+});
+
+test("Bring pages together keeps pointer preview local, commits once on release, and cancellation adds no undo entry", () => {
+  const h = tracedWarpHarness();
+  try {
+    const node = find(h.root, item => item.dataset?.node === "names-wall");
+    node.dispatch("click");
+    const wrap = find(node, item => item.dataset?.path === "namesWall.inwardShiftPercent");
+    const range = find(wrap, item => item.dataset?.input === "range");
+    const pointer = type => range.dispatch(type, { pointerId: 18, preventDefault() {} });
+    h.client.setDraft.mockClear();
+    pointer("pointerdown");
+    expect(h.client.getState().draft.namesWall.profiles.wall.inwardShiftPercent).toBe(0);
+    range.value = "50"; range.dispatch("input"); range.dispatch("change");
+    expect(h.client.getState().draft.namesWall.profiles.wall.inwardShiftPercent).toBe(0);
+    expect(h.client.setDraft).not.toHaveBeenCalled();
+    pointer("pointerup");
+    expect(h.client.getState().draft.namesWall.profiles.wall.inwardShiftPercent).toBe(50);
+    expect(h.client.setDraft).toHaveBeenCalledTimes(1);
+
+    h.client.setDraft.mockClear();
+    pointer("pointerdown"); range.value = "75"; range.dispatch("input"); pointer("pointercancel");
+    expect(h.client.getState().draft.namesWall.profiles.wall.inwardShiftPercent).toBe(50);
+    expect(h.client.setDraft).not.toHaveBeenCalled();
+    find(h.root, item => item.dataset?.action === "parameter-undo").dispatch("click");
+    expect(h.client.getState().draft.namesWall.profiles.wall.inwardShiftPercent).toBe(0);
+  } finally { h.restore(); }
+});
+
+test("Bring pages together keeps its local pointer preview across a same-value controller refresh", () => {
+  const h = tracedWarpHarness();
+  try {
+    const node = find(h.root, item => item.dataset?.node === "names-wall"); node.dispatch("click");
+    const wrap = find(node, item => item.dataset?.path === "namesWall.inwardShiftPercent");
+    const range = find(wrap, item => item.dataset?.input === "range");
+    const number = find(wrap, item => item.dataset?.input === "number");
+    const output = find(wrap, item => item.className === "config-field-value");
+    const pointer = type => range.dispatch(type, { pointerId: 19, preventDefault() {} });
+    h.client.setDraft.mockClear();
+    pointer("pointerdown"); range.value = "50"; range.dispatch("input");
+    h.client.report({ pending: true });
+    expect(number.value).toBe("50"); expect(output.textContent).toContain("50"); expect(range.value).toBe("50");
+    expect(h.client.getState().draft.namesWall.profiles.wall.inwardShiftPercent).toBe(0);
+    expect(h.client.setDraft).not.toHaveBeenCalled();
+    pointer("pointerup");
+    expect(h.client.getState().draft.namesWall.profiles.wall.inwardShiftPercent).toBe(50);
+    expect(h.client.setDraft).toHaveBeenCalledTimes(1);
+  } finally { h.restore(); }
+});
+
+test("Bring pages together cancellation uses the newest accepted value and release rejects a stale baseline", () => {
+  const h = tracedWarpHarness();
+  try {
+    const node = find(h.root, item => item.dataset?.node === "names-wall"); node.dispatch("click");
+    const wrap = find(node, item => item.dataset?.path === "namesWall.inwardShiftPercent");
+    const range = find(wrap, item => item.dataset?.input === "range");
+    const number = find(wrap, item => item.dataset?.input === "number");
+    const output = find(wrap, item => item.className === "config-field-value");
+    const pointer = type => range.dispatch(type, { pointerId: 20, preventDefault() {} });
+    h.client.setDraft.mockClear();
+    pointer("pointerdown"); range.value = "50"; range.dispatch("input");
+    const firstAccepted = clone(h.client.getState().draft); firstAccepted.namesWall.profiles.wall.inwardShiftPercent = 12;
+    h.client.report({ draft: firstAccepted, hasLocalDraft: false });
+    expect(number.value).toBe("50"); expect(output.textContent).toContain("50"); expect(range.value).toBe("50");
+    pointer("pointercancel");
+    expect(h.client.getState().draft.namesWall.profiles.wall.inwardShiftPercent).toBe(12);
+    expect(number.value).toBe("12"); expect(output.textContent).toContain("12"); expect(range.value).toBe("12");
+    expect(h.client.setDraft).not.toHaveBeenCalled();
+
+    pointer("pointerdown"); range.value = "70"; range.dispatch("input");
+    const secondAccepted = clone(h.client.getState().draft); secondAccepted.namesWall.profiles.wall.inwardShiftPercent = 20;
+    h.client.report({ draft: secondAccepted, hasLocalDraft: false });
+    pointer("pointerup");
+    expect(h.client.getState().draft.namesWall.profiles.wall.inwardShiftPercent).toBe(20);
+    expect(h.client.setDraft).not.toHaveBeenCalled();
+    expect(find(wrap, item => item.className === "config-field-error").textContent).toMatch(/changed while editing/i);
+  } finally { h.restore(); }
+});
+
+test("grid placement accessible instructions name the actual row and column axes", () => {
+  const h = tracedWarpHarness();
+  try {
+    find(h.root, node => node.dataset?.action === "warp-editor-close").dispatch("click");
+    find(h.root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+    const row = find(h.root, node => node.dataset?.gridLayoutField === "addRowPosition");
+    const column = find(h.root, node => node.dataset?.gridLayoutField === "addColumnPosition");
+    expect(row.attributes["aria-label"]).toBe("Add row at Y (%); choose Add row to place a line");
+    expect(column.attributes["aria-label"]).toBe("Add column at X (%); choose Add column to place a line");
+  } finally { h.restore(); }
+});
+
+test.each(["invalid scalar", "held warp adjustment"])("%s blocks preset, clock, and settlement selectors without writes", async (pendingKind) => {
+  const previousDocument = globalThis.document; const doc = documentStub(); globalThis.document = doc;
+  const root = element("main"); root.ownerDocument = doc; const client = fakeClient();
+  client.getState().snapshot.presets.push({ id: "desk", name: "Desk", config: clone(DEFAULTS) });
+  const api = mountProjectionConfig(root, { client });
+  try {
+    client.setDraft.mockClear(); client.apply.mockClear(); client.save.mockClear(); client.setLive.mockClear();
+    let pad = null;
+    if (pendingKind === "invalid scalar") {
+      const scalar = find(root, node => node.dataset?.field === "pre.scale" && node.dataset?.input === "number");
+      scalar.value = "-"; scalar.dispatch("input");
+    } else {
+      find(root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+      pad = find(root, node => node.className === "warp-relative-pad");
+      pad.getBoundingClientRect = () => ({ left: 0, top: 0, width: 200, height: 200 });
+      pad.dispatch("pointerdown", { pointerId: 55, button: 0, clientX: 100, clientY: 100, preventDefault() {} });
+    }
+
+    const preset = find(root, node => node.attributes?.["aria-label"] === "Preset");
+    preset.value = "desk";
+    await api.handleAction("preset-select", "desk");
+    expect(preset.value).toBe("original");
+    const scene = find(root, node => node.dataset?.action === "clock-scene");
+    scene.value = "timeline"; scene.dispatch("change");
+    expect(scene.value).toBe("home");
+    const elementSelect = find(root, node => node.dataset?.action === "clock-element");
+    elementSelect.value = "legend"; elementSelect.dispatch("change");
+    expect(elementSelect.value).toBe("clock");
+    const settlementOutput = find(root, node => node.attributes?.["aria-label"] === "Settlement output");
+    settlementOutput.value = "right"; settlementOutput.dispatch("change");
+    expect(settlementOutput.value).toBe("left");
+    expect(client.setDraft).not.toHaveBeenCalled(); expect(client.apply).not.toHaveBeenCalled();
+    expect(client.save).not.toHaveBeenCalled(); expect(client.setLive).not.toHaveBeenCalled();
+    if (pad) pad.dispatch("lostpointercapture", { pointerId: 55 });
+  } finally { api.dispose(); globalThis.document = previousDocument; }
+});
+
+  test("an accepted warp replacement retires the initial Add preview but keeps its percentage", () => {
+    const previousDocument = globalThis.document; globalThis.document = documentStub();
+    const root = element("main"); const client = fakeClient(); const api = mountProjectionConfig(root, { client });
+    try {
+      client.setLive(true);
+      find(root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+      client.setDraft.mockClear(); client.apply.mockClear();
+      find(root, node => node.dataset?.gridLayoutAction === "add-row").dispatch("click");
+      const position = find(root, node => node.dataset?.gridLayoutField === "addRowPosition");
+      const percentageBefore = position.value;
+      expect(find(root, node => node.attributes?.class === "warp-grid-preview-line candidate")).toBeTruthy();
+
+      const accepted = clone(client.getState().draft);
+      accepted.outputs.left.warp.keystone.corners[0][0] = 0.02;
+      client.report({ draft: accepted, snapshot: { ...client.getState().snapshot, revision: 3, config: accepted }, hasLocalDraft: false });
+
+      expect(find(root, node => node.attributes?.class === "warp-grid-preview-line candidate")).toBeNull();
+      expect(find(root, node => node.dataset?.gridLayoutField === "addRowPosition").value).toBe(percentageBefore);
+      expect(find(root, node => node.className === "warp-grid-layout-preview-status").textContent).toContain("warp changed");
+      expect(client.setDraft).not.toHaveBeenCalled(); expect(client.apply).not.toHaveBeenCalled();
+      expect(find(root, node => node.dataset?.action === "warp-undo").disabled).toBe(true);
+    } finally { api.dispose(); globalThis.document = previousDocument; }
+  });
+
+  test("maximum-count Add placement keeps the source percentage and explains why no candidate line is available", () => {
+    const previousDocument = globalThis.document; globalThis.document = documentStub();
+    const root = element("main"); const client = fakeClient(); const api = mountProjectionConfig(root, { client });
+    try {
+      const maximum = clone(client.getState().draft);
+      const grid = maximum.outputs.left.warp.grid;
+      grid.rows = 16; grid.rowPositions = Array.from({ length: 16 }, (_, index) => index / 15);
+      grid.offsets = Array.from({ length: 16 * grid.columns }, () => [0, 0]);
+      client.report({ draft: maximum, snapshot: { ...client.getState().snapshot, config: maximum }, hasLocalDraft: true });
+      find(root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+      client.setDraft.mockClear(); client.apply.mockClear();
+      const add = find(root, node => node.dataset?.gridLayoutAction === "add-row");
+      expect(add.disabled).toBe(false);
+      add.dispatch("click");
+      const position = find(root, node => node.dataset?.gridLayoutField === "addRowPosition");
+      expect(position.disabled).toBe(false);
+      expect(find(root, node => node.className === "warp-grid-layout-preview-status").textContent).toContain("maximum count");
+      expect(find(root, node => node.className === "warp-grid-layout-preview-status").textContent).toContain(`${Number(position.value).toFixed(2)}% source Y`);
+      expect(client.setDraft).not.toHaveBeenCalled(); expect(client.apply).not.toHaveBeenCalled();
+    } finally { api.dispose(); globalThis.document = previousDocument; }
+  });
+
+  test("grid topology preview cancellation is write-free and confirmation validates and merges the latest draft once", async () => {
+    const previousDocument = globalThis.document; globalThis.document = documentStub();
+    const root = element("main"); root.ownerDocument = globalThis.document;
+    const client = fakeClient(); const checks = [];
+    const api = mountProjectionConfig(root, { client, candidateValidator: { validateCandidate: args => new Promise(resolve => checks.push({ ...args, resolve })), dispose() {} } });
+    try {
+      client.setLive(false);
+      find(root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+      find(root, node => node.dataset?.warpSelectionKind === "row").dispatch("click");
+      const picker = find(root, node => node.className === "warp-selection-picker"); picker.value = "2"; picker.dispatch("change");
+      const remove = find(root, node => node.dataset?.gridLayoutAction === "remove-row");
+      client.setDraft.mockClear(); client.apply.mockClear();
+      remove.dispatch("click"); await vi.waitFor(() => expect(checks).toHaveLength(1));
+      expect(client.setDraft).not.toHaveBeenCalled(); expect(client.apply).not.toHaveBeenCalled();
+      find(root, node => node.dataset?.action === "warp-grid-layout-cancel").dispatch("click");
+      checks[0].resolve({ identity: checks[0].identity, valid: true }); await Promise.resolve();
+      expect(client.setDraft).not.toHaveBeenCalled();
+
+      remove.dispatch("click"); await vi.waitFor(() => expect(checks).toHaveLength(2));
+      checks[1].resolve({ identity: checks[1].identity, valid: true });
+      await vi.waitFor(() => expect(find(root, node => node.dataset?.action === "warp-grid-layout-confirm").disabled).toBe(false));
+      const latest = clone(client.getState().draft); latest.pre.scale = 1.5; client.report({ draft: latest, hasLocalDraft: true });
+      find(root, node => node.dataset?.action === "warp-grid-layout-confirm").dispatch("click");
+      await vi.waitFor(() => expect(checks).toHaveLength(3));
+      expect(client.setDraft).not.toHaveBeenCalled();
+      checks[2].resolve({ identity: checks[2].identity, valid: true });
+      await vi.waitFor(() => expect(client.setDraft).toHaveBeenCalledTimes(1));
+      expect(client.getState().draft.pre.scale).toBe(1.5);
+      expect(client.getState().draft.outputs.left.warp.grid.rows).toBe(6);
+      expect(client.setDraft.mock.calls[0][0].outputs.left.warp.grid.rows).toBe(6);
+    } finally { api.dispose(); globalThis.document = previousDocument; }
+  });
+
   test('real-client Live Undo validates and publishes the exact restored scalar after its own acknowledgment', async () => {
     const root=element('main'); root.ownerDocument=documentStub(); const h=replacementHarness(); const checks=[];
     h.snapshot.config.pre.tx=.123456789123456;
@@ -692,7 +1258,7 @@ describe("projection config controller", () => {
     } finally { api.dispose(); }
   });
 
-  test('a foreign Model profile keeps pending Wall-only Cancel visible and Back works without writes', () => {
+test('a foreign Model profile keeps pending Wall-only Cancel visible and Back works without writes', () => {
     const doc = documentStub(); const root = element('main'); root.ownerDocument = doc; const client = fakeClient();
     const api = mountProjectionConfig(root, { client });
     const inputFor = (container, path) => find(container, node => node.dataset?.field === path && node.dataset.input === 'number');
@@ -739,8 +1305,30 @@ describe("projection config controller", () => {
       expect(client.getState().draft).toEqual(foreignModel);
       expect(client.setDraft).not.toHaveBeenCalled(); expect(client.apply).not.toHaveBeenCalled();
       expect(client.save).not.toHaveBeenCalled(); expect(client.setLive).not.toHaveBeenCalled();
-    } finally { api.dispose(); }
-  });
+  } finally { api.dispose(); }
+});
+
+test('Cancel immediately hides a retained Wall-only wrapper when no controller error exists', () => {
+  const doc = documentStub(); const root = element('main'); root.ownerDocument = doc; const client = fakeClient();
+  const api = mountProjectionConfig(root, { client });
+  try {
+    client.setDraft.mockClear(); client.apply.mockClear();
+    find(root, node => node.dataset?.node === 'names-wall').dispatch('click');
+    find(root, node => node.className === 'config-enlarge-edit').dispatch('click');
+    const panel = find(root, node => node.className === 'parameter-editor-dialog');
+    const wallShiftWrap = find(panel, node => node.dataset?.path === 'namesWall.inwardShiftPercent');
+    const wallShift = find(wallShiftWrap, node => node.dataset?.input === 'number');
+    wallShift.value = '4'; wallShift.dispatch('input');
+    const model = clone(client.getState().draft); model.namesWall.activeMode = 'model';
+    client.report({ draft: model, hasLocalDraft: false });
+    expect(wallShiftWrap.hidden).toBe(false);
+    expect(find(wallShiftWrap, node => node.className === 'config-field-pending-target').hidden).toBe(false);
+    find(wallShiftWrap, node => node.dataset?.action === 'numeric-cancel-edit').dispatch('click');
+    expect(wallShiftWrap.hidden).toBe(true);
+    expect(find(wallShiftWrap, node => node.className === 'config-field-pending-target').hidden).toBe(true);
+    expect(client.setDraft).not.toHaveBeenCalled(); expect(client.apply).not.toHaveBeenCalled();
+  } finally { api.dispose(); }
+});
 
   test('header Escape retires rejected crop validation and its status refresh without writing state', () => {
     const doc = documentStub(); const root = element('main'); root.ownerDocument = doc; const client = fakeClient();
@@ -1028,7 +1616,8 @@ describe("projection config controller", () => {
     const loader = createProjectionBaselineCatalogLoader({ base: f.base, initialSnapshot: f.snapshotA,
       fetchImpl: (url, options) => url.endsWith('framing.json') ? gate.promise : f.fetchImpl(url, options) });
     const client = fakeClient(); client.setLive(false);
-    const root = element('main'), api = mountProjectionConfig(root, { client, baselineCatalogLoader: loader });
+    const candidateValidator = { validateCandidate: async ({ identity }) => ({ identity, valid: true }), dispose() {} };
+    const root = element('main'), api = mountProjectionConfig(root, { client, baselineCatalogLoader: loader, candidateValidator });
     try {
       find(root, (node) => node.dataset?.action === 'warp-editor-open' && node.parentElement?.dataset?.node === 'left-grid').dispatch('click');
       const surface = find(root, (node) => node.attributes?.class === 'warp-edit-surface');
@@ -1044,7 +1633,10 @@ describe("projection config controller", () => {
       client.report({ draft: previous, hasLocalDraft: true });
       const columns = find(root, (node) => node.dataset?.gridLayoutField === 'columns');
       columns.value = '4'; columns.dispatch('input'); columns.dispatch('blur');
-      expect(client.getState().draft.outputs.left.warp.grid.columns).toBe(4);
+      const confirm = find(root, (node) => node.dataset?.action === 'warp-grid-layout-confirm');
+      await vi.waitFor(() => expect(confirm.disabled).toBe(false));
+      confirm.dispatch('click');
+      await vi.waitFor(() => expect(client.getState().draft.outputs.left.warp.grid.columns).toBe(4));
       expect(client.getState().draft.pre).toEqual(previous.pre);
       gate.resolve(response(f.payloads.get(`${f.base}framing.json`))); await new Promise((done) => setTimeout(done, 10));
       expect(client.getState().draft.outputs.left.warp.baseline.type).toBe('identity');
@@ -2458,29 +3050,30 @@ describe("projection config controller", () => {
     restore();
   });
 
-  test("Grid layout edit preserves selection through synchronous draft notification and flushes once in Live", async () => {
-    const { root, client, trace, redraws, restore } = tracedWarpHarness();
+  test("Grid axis resize preserves selection and flushes once in Live after candidate validation", async () => {
+    const { root, client, trace, redraws, restore } = tracedWarpHarness({ candidateValidator: { validateCandidate: async ({ identity }) => ({ identity, valid: true }), dispose() {} } });
     find(root, (node) => node.dataset?.action === "warp-editor-close").dispatch("click");
     client.setLive(true);
     find(root, (node) => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
-    const chooseRow = find(root, (node) => node.dataset?.warpSelectionKind === "row");
-    chooseRow.dispatch("click");
-    const rowPicker = find(root, (node) => node.className === "warp-selection-picker");
-    rowPicker.value = "2"; rowPicker.dispatch("change");
+    const chooseColumn = find(root, (node) => node.dataset?.warpSelectionKind === "column");
+    chooseColumn.dispatch("click");
+    const columnPicker = find(root, (node) => node.className === "warp-selection-picker");
+    columnPicker.value = "2"; columnPicker.dispatch("change");
     const before = clone(client.getState().draft.outputs.left.warp.grid);
     client.setDraft.mockClear(); client.apply.mockClear(); trace.record.mockClear();
     const rows = find(root, (node) => node.dataset?.gridLayoutField === "rows");
     rows.value = "3"; rows.dispatch("input"); rows.dispatch("change");
+    await vi.waitFor(() => expect(client.getState().draft.outputs.left.warp.grid.rows).toBe(3));
     expect(client.getState().draft.outputs.left.warp.grid.rows).toBe(3);
     expect(client.setDraft).toHaveBeenCalledTimes(1);
     expect(client.apply).toHaveBeenCalledTimes(1);
-    expect(redraws()).toBe(1);
-    expect(rowPicker.value).toBe("2");
+    expect(redraws()).toBeGreaterThan(0); // Preview, validation, and commit each refresh the shared panel.
+    expect(columnPicker.value).toBe("2");
     find(root, (node) => node.dataset?.action === "warp-undo").dispatch("click");
     expect(client.getState().draft.outputs.left.warp.grid).toEqual(before);
     expect(client.setDraft).toHaveBeenCalledTimes(2);
     expect(client.apply).toHaveBeenCalledTimes(2);
-    expect(rowPicker.value).toBe("2");
+    expect(columnPicker.value).toBe("2");
     restore();
   });
 
@@ -2600,7 +3193,7 @@ describe("projection config controller", () => {
     restore();
   });
 
-  test("invalid source-line geometry reports near Grid controls without draft, apply, or history writes", () => {
+  test("invalid source-line geometry reports in the preview status without draft, apply, or history writes", async () => {
     const { root, client, trace, restore } = tracedWarpHarness();
     find(root, (node) => node.dataset?.action === "warp-editor-close").dispatch("click");
     find(root, (node) => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
@@ -2614,8 +3207,36 @@ describe("projection config controller", () => {
     expect(client.setDraft).not.toHaveBeenCalled();
     expect(client.apply).not.toHaveBeenCalled();
     expect(find(root, (node) => node.dataset?.action === "warp-undo").disabled).toBe(true);
-    expect(find(root, (node) => node.className === "warp-grid-layout-error").textContent).toContain("between its neighbors");
+    await vi.waitFor(() => expect(find(root, (node) => node.className === "warp-grid-layout-preview-status").textContent).toContain("between its neighbors"));
     restore();
+  });
+
+  test("invalid or stale async grid candidates expose a reason without draft, history, or Live writes", async () => {
+    const checks = [];
+    const candidateValidator = { validateCandidate: vi.fn(({ identity }) => candidateValidator.validateCandidate.mock.calls.length === 1
+      ? Promise.resolve({ identity, valid: false, reason: "Candidate geometry was rejected." })
+      : new Promise(resolve => checks.push({ identity, resolve }))), dispose() {} };
+    const { root, client, api, restore } = tracedWarpHarness({ candidateValidator });
+    try {
+      find(root, node => node.dataset?.action === "warp-editor-close").dispatch("click");
+      find(root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+      find(root, node => node.dataset?.warpSelectionKind === "row").dispatch("click");
+      const picker = find(root, node => node.className === "warp-selection-picker"); picker.value = "2"; picker.dispatch("change");
+      const remove = find(root, node => node.dataset?.gridLayoutAction === "remove-row");
+      client.setDraft.mockClear(); client.apply.mockClear();
+      remove.dispatch("click"); await vi.waitFor(() => expect(candidateValidator.validateCandidate).toHaveBeenCalledTimes(1));
+      await vi.waitFor(() => expect(find(root, node => node.className === "warp-grid-layout-preview-status").textContent).toContain("Candidate geometry was rejected."));
+      expect(client.setDraft).not.toHaveBeenCalled(); expect(client.apply).not.toHaveBeenCalled();
+      find(root, node => node.dataset?.action === "warp-grid-layout-cancel").dispatch("click");
+
+      remove.dispatch("click"); await vi.waitFor(() => expect(checks).toHaveLength(1));
+      const replacement = clone(client.getState().draft); replacement.outputs.left.warp.keystone.corners[0][0] = .02;
+      client.report({ draft: replacement, hasLocalDraft: true });
+      checks[0].resolve({ identity: checks[0].identity, valid: true });
+      await vi.waitFor(() => expect(find(root, node => node.className === "warp-grid-layout-preview-status").textContent).toContain("warp changed"));
+      expect(client.setDraft).not.toHaveBeenCalled(); expect(client.apply).not.toHaveBeenCalled();
+      expect(find(root, node => node.dataset?.action === "warp-undo").disabled).toBe(true);
+    } finally { restore(); }
   });
 
   test("accepted replacement cancels a pending source input and syncs the new source axis", () => {

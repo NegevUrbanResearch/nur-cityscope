@@ -88,6 +88,7 @@ export function createProjectionConfigView(root, {
   onClockField = () => {},
   onClockRecovery = () => {},
   onWarpAction = () => {},
+  onWarpEditorVisibility = () => {},
   onWarpFieldCancel = () => {},
   onWarpPointer = () => {},
   trace,
@@ -475,25 +476,34 @@ export function createProjectionConfigView(root, {
     applyViewBox(next, { anchor: { clientX: event.clientX, clientY: event.clientY }, rect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height } });
   }, { passive: false });
   controls.gridLayout = createGridLayoutControls(doc, (name, value) => {
+    if (name === "placement-input") return onWarpAction("warp-grid-placement-edit", { output: warpOutput(), axis: value });
     if (pointerInput?.isActive() || !finishCoordinates()) return;
     const output = warpOutput();
     const grid = currentWarpGrid;
     const selection = currentSelection || { kind: "point", index: 0 };
     const { rowIndex, columnIndex } = deriveGridSelectionIndices(grid, selection);
     let operation, payload;
-    if (name === "rows" || name === "columns") { operation = "counts"; payload = { rows: name === "rows" ? value : grid?.rows, columns: name === "columns" ? value : grid?.columns }; }
+    if (name === "rows" || name === "columns") { operation = "resize"; payload = { axis: name === "rows" ? "row" : "column", count: value }; }
     else if (name === "source-y") { operation = "move"; payload = { axis: "row", index: rowIndex, position: value }; }
     else if (name === "source-x") { operation = "move"; payload = { axis: "column", index: columnIndex, position: value }; }
-    else if (name === "add-row" || name === "add-column") { operation = "add"; payload = { axis: name === "add-row" ? "row" : "column", position: value }; }
+    else if (name === "add-row" || name === "add-column") {
+      const axis = name === "add-row" ? "row" : "column";
+      onWarpAction("warp-grid-placement", { output, axis: currentGridPlacement?.axis === axis ? null : axis });
+      return;
+    }
+    else if (name === "place-row" || name === "place-column") { operation = "add"; payload = { axis: name === "place-row" ? "row" : "column", position: value }; }
     else if (name === "remove-row" || name === "remove-column") { operation = "remove"; payload = { axis: name === "remove-row" ? "row" : "column", index: name === "remove-row" ? rowIndex : columnIndex }; }
-    else if (name === "even") { operation = "even"; payload = {}; }
-    if (operation) onWarpAction("warp-grid-layout", { output, operation, ...payload });
+    else if (name === "even") { operation = "even"; payload = { axis: selection.kind === "column" ? "column" : "row" }; }
+    else if (name === "rebuild") { operation = "rebuild"; payload = { rows: grid?.rows, columns: grid?.columns }; }
+    if (operation) return onWarpAction("warp-grid-layout", { output, operation, ...payload });
   });
   controls.gridLayout.element.className = `${controls.gridLayout.element.className} warp-editor-topology-controls`;
   controls.warpEnabled.addEventListener("change", () => onWarpAction("warp-enabled", { output: selectedGraphNode.startsWith("right-") ? "right" : "left", enabled: controls.warpEnabled.checked }));
   let currentHandles = [];
   let currentSelection = null;
   let currentWarpGrid = null;
+  let currentEvaluatedMesh = null;
+  let currentGridPlacement = null;
   let currentWarpEnabled = true;
   let activeWarpAdjusting = false;
   let pointerInput;
@@ -553,7 +563,7 @@ export function createProjectionConfigView(root, {
   app.appendChild(workspace);
   root.appendChild(app);
   const dialog = createWarpEditorDialog({ document: doc, host: editorRegion, editorPanel: controls.warpPanel, overlay: controls.warpSurface, topologyControls: controls.gridLayout.element, navigationControls, presentation: "panel", trace,
-    onVisibilityChange: (visible) => { workspace.dataset.editing = String(visible); },
+    onVisibilityChange: (visible) => { workspace.dataset.editing = String(visible); onWarpEditorVisibility(visible); },
     onPresentationChange: (focused) => {
       root.dataset.warpFullViewport = String(focused);
       commandBar.element.inert = Boolean(focused);
@@ -562,13 +572,14 @@ export function createProjectionConfigView(root, {
     onIsAdjusting: () => activeWarpAdjusting,
     onEscape: () => {
       if (activeWarpAdjusting) { cancelActiveDrag({ reason: "escape" }); return true; }
+      if (currentGridPlacement) { onWarpAction("warp-grid-placement", { axis: null }); return true; }
       const pending = [...controls.warpCoordinateFields.values()].filter((control) => control.isPending());
       if (!pending.length) return false;
       for (const control of pending) control.cancel({ clearControllerError: true });
       return true;
     },
-    onBeforeClose: () => { if (activeWarpAdjusting || !finishCoordinates()) return false; cancelActiveDrag({ reason: 'close' }); },
-    onBeforeSwitch: () => { if (activeWarpAdjusting || !finishCoordinates()) return false; cancelActiveDrag({ reason: 'switch' }); },
+    onBeforeClose: () => { if (activeWarpAdjusting || !finishCoordinates() || !controls.gridLayout.finishPendingEdit()) return false; cancelActiveDrag({ reason: 'close' }); },
+    onBeforeSwitch: () => { if (activeWarpAdjusting || !finishCoordinates() || !controls.gridLayout.finishPendingEdit()) return false; cancelActiveDrag({ reason: 'switch' }); },
     onBeforeResize: () => cancelActiveDrag({ reason: 'resize' }),
     onViewportChange: updateWarpMarkerRadii,
     onOrientationChange: () => cancelActiveDrag({ reason: 'orientationchange' }),
@@ -598,13 +609,15 @@ export function createProjectionConfigView(root, {
   pointerInput = bindWarpPointerInput({
     trace,
     surface: controls.warpSurface,
-    readGeometry: () => dialog.isOpen() ? { rect: controls.warpSurface.getBoundingClientRect?.() || { left: 0, top: 0, width: 1920, height: 1080 }, viewBox: effectiveWarpViewBox || warpViewBox, baseViewBox: warpViewBox, panMode: warpInteractionMode === "move", editable: currentWarpEnabled, handles: currentHandles, selection: currentSelection, rows: currentWarpGrid?.rows || 7, columns: currentWarpGrid?.columns || (selectedGraphNode.startsWith("right-") ? 8 : 7), mode: selectedGraphNode.endsWith("-grid") ? "grid" : "keystone", side: selectedGraphNode.startsWith("right-") ? "right" : "left" } : null,
+    readGeometry: () => dialog.isOpen() ? { rect: controls.warpSurface.getBoundingClientRect?.() || { left: 0, top: 0, width: 1920, height: 1080 }, viewBox: effectiveWarpViewBox || warpViewBox, baseViewBox: warpViewBox, panMode: warpInteractionMode === "move", editable: currentWarpEnabled, handles: currentHandles, evaluatedMesh: currentEvaluatedMesh, selection: currentSelection, placementAxis: currentGridPlacement?.axis, rows: currentWarpGrid?.rows || 7, columns: currentWarpGrid?.columns || (selectedGraphNode.startsWith("right-") ? 8 : 7), mode: selectedGraphNode.endsWith("-grid") ? "grid" : "keystone", side: selectedGraphNode.startsWith("right-") ? "right" : "left" } : null,
     onNavigate: ({ viewBox }) => applyViewBox(viewBox),
     onSelect: ({ output, selection }) => finishCoordinates() && onWarpAction("warp-select", { output, selection }),
     onStart: (point) => finishCoordinates() && onWarpPointer("start", point),
     onMove: (point) => onWarpPointer("move", point),
     onEnd: (point) => onWarpPointer("end", point),
     onCancel: (point) => onWarpPointer("cancel", point),
+    onInsert: ({ output, axis, position }) => finishCoordinates() && onWarpAction("warp-grid-layout", { output, operation: "add", axis, position }),
+    onInsertFailure: ({ output, axis, reason }) => onWarpAction("warp-grid-placement-error", { output, axis, reason }),
   });
   const disposeWarpTrace = bindProjectionTraceInput({ surface: controls.warpSurface, surfaceName: 'warp', trace, readGeometry: () => ({ viewBox: effectiveWarpViewBox || warpViewBox, selection: currentSelection, mode: selectedGraphNode.endsWith('-grid') ? 'grid' : 'keystone', side: selectedGraphNode.startsWith('right-') ? 'right' : 'left' }) });
   const disposeGraphTrace = bindProjectionTraceInput({ surface: graphViewport, surfaceName: 'graph', trace });
@@ -654,6 +667,8 @@ export function createProjectionConfigView(root, {
     const rows = warp?.grid?.rows || 7;
     currentWarpGrid = warp?.grid || null;
     currentHandles = allHandles;
+    currentEvaluatedMesh = warpState.evaluatedMesh || null;
+    currentGridPlacement = warpState.gridPlacement || null;
     currentSelection = warpState.selection;
     const selectionKind = warpState.selection?.kind || (mode === "grid" ? "point" : "corner");
     const selectedIndex = Number(warpState.selection?.index ?? 0);
@@ -670,7 +685,7 @@ export function createProjectionConfigView(root, {
           : `Point ${selectedIndex + 1} · Row ${Math.floor(selectedIndex / columns) + 1}, Column ${selectedIndex % columns + 1}`;
     controls.warpStatus.textContent = `${selectedName} · ${warpState.stepMode === "coarse" ? "1 px" : "0.25 px"}${correctionEnabled ? "" : " · Correction bypassed; geometry editing disabled."}${baselineStatus}${validationStatus}`;
     for (const input of controls.gridLayout.fields.values()) input.disabled = adjusting || !correctionEnabled;
-    controls.gridLayout.update({ grid: warp?.grid, selection: warpState.selection, errorMessage: warpState.validationMessage || "", visible: mode === "grid" });
+    controls.gridLayout.update({ grid: warp?.grid, selection: warpState.selection, placement: currentGridPlacement, errorMessage: warpState.validationMessage || "", visible: mode === "grid" });
     for (const input of [...controls.gridLayout.fields.values(), ...controls.gridLayout.actions.values()]) input.disabled ||= adjusting || !correctionEnabled;
     controls.warpSelectionControls.hidden = false;
     for (const control of controls.warpSelectionButtons) control.setAttribute("aria-pressed", String(control.dataset.warpSelectionKind === selectionKind));
@@ -699,6 +714,19 @@ export function createProjectionConfigView(root, {
     if (mode === "grid" && allHandles.length >= columns * rows) {
       for (let row = 0; row < rows; row += 1) controls.warpSurface.appendChild(svgNode(doc, "path", { class: `warp-grid-line${selectionKind === "row" && selectedIndex === row ? " selected" : ""}`, d: pathFor(allHandles.slice(row * columns, (row + 1) * columns)) }));
       for (let column = 0; column < columns; column += 1) controls.warpSurface.appendChild(svgNode(doc, "path", { class: `warp-grid-line${selectionKind === "column" && selectedIndex === column ? " selected" : ""}`, d: pathFor(Array.from({ length: rows }, (_, row) => allHandles[row * columns + column])) }));
+      const candidate = warpState.gridLayoutPreview || warpState.gridPlacement?.preview;
+      const candidateGrid = candidate?.grid;
+      const candidateHandles = candidate?.handles;
+      if (candidate?.ok && candidateGrid && candidateHandles?.length === candidateGrid.rows * candidateGrid.columns) {
+        for (let row = 0; row < candidateGrid.rows; row += 1) {
+          const selectedCandidate = candidate.operation === "add" && candidate.values?.axis === "row" && candidate.selection?.index === row;
+          controls.warpSurface.appendChild(svgNode(doc, "path", { class: `warp-grid-preview-line${selectedCandidate ? " candidate" : ""}`, d: pathFor(candidateHandles.slice(row * candidateGrid.columns, (row + 1) * candidateGrid.columns)) }));
+        }
+        for (let column = 0; column < candidateGrid.columns; column += 1) {
+          const selectedCandidate = candidate.operation === "add" && candidate.values?.axis === "column" && candidate.selection?.index === column;
+          controls.warpSurface.appendChild(svgNode(doc, "path", { class: `warp-grid-preview-line${selectedCandidate ? " candidate" : ""}`, d: pathFor(Array.from({ length: candidateGrid.rows }, (_, row) => candidateHandles[row * candidateGrid.columns + column])) }));
+        }
+      }
     } else if (allHandles.length >= 4) {
       controls.warpSurface.appendChild(svgNode(doc, "path", { class: "warp-grid-line", d: `${pathFor([allHandles[0], allHandles[1], allHandles[3], allHandles[2]])} Z` }));
     }
@@ -806,16 +834,17 @@ export function createProjectionConfigView(root, {
       return nodeMap.get("settlement-names")?.querySelector?.('[data-action="settlement-editor-open"]') || null;
     },
     cancelWarpPointer: cancelActiveDrag,
+    isWarpEditorOpen: () => dialog.isOpen(),
     retireWarpGestures: () => warpPanelView.retireGestures(),
     finishNumericEdits: () => [...fields.values()].map(control => control.finish()),
     finishPendingEdit: () => {
       const results = [...fields.values(), ...controls.warpCoordinateFields.values()].filter(control => control.isPending()).map(control => control.finish());
       if (parameterDialog.isPending()) results.push(...parameterDialog.finish());
-      return results.every(result => result.kind === 'commit' || result.kind === 'unchanged');
+      return results.every(result => result.kind === 'commit' || result.kind === 'unchanged') && controls.gridLayout.finishPendingEdit();
     },
-    hasPendingEdit: () => [...fields.values(), ...controls.warpCoordinateFields.values()].some(control => control.isPending()) || parameterDialog.isPending(),
+    hasPendingEdit: () => [...fields.values(), ...controls.warpCoordinateFields.values()].some(control => control.isPending()) || parameterDialog.isPending() || controls.gridLayout.hasPendingEdit(),
     hasHeldNumericEdit: () => [...fields.values()].some(control => control.isHeld()) || parameterDialog.isHeld(),
-    cancelNumericEdits: options => { for (const control of [...fields.values(), ...controls.warpCoordinateFields.values()]) control.cancel(options); parameterDialog.cancel(options); },
+    cancelNumericEdits: options => { for (const control of [...fields.values(), ...controls.warpCoordinateFields.values()]) control.cancel(options); parameterDialog.cancel(options); controls.gridLayout.cancel(); },
     closeWarpEditor: dialog.close,
     sendRunNamesPreview: (config) => dialog.sendRunNamesPreview(config),
     dispose() { for (const control of fields.values()) control.dispose(); warpPanelView.dispose(); settlementControls.dispose(); disposePageTrace(); disposeWarpTrace(); disposeGraphTrace(); traceUi?.dispose(); commandBar.dispose(); doc.removeEventListener?.("keydown", onKeyDown); parameterDialog.dispose(); dialog.dispose(); pointerInput.dispose(); canvas.dispose(); },

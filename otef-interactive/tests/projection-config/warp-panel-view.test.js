@@ -14,7 +14,7 @@ test("Keystone and Grid expose the same shared adjustment rows and the picker se
   const update = (nodeId, selection) => panel.update({ output: "left", nodeId, editorState: { ...editor.getState(), selection, config: editor.getConfig(), handles: editor.getControlPoints() } });
   update("left-keystone", keystoneSelection("corner", 2));
   const rowNames = [...panel.element.children].map((row) => row.className);
-  expect(rowNames).toEqual(["warp-selection-row", "warp-position-row", "warp-step-row", "warp-adjustment-row", "warp-history-row"]);
+  expect(rowNames).toEqual(["warp-selection-row", "warp-position-row", "warp-step-row", "warp-adjustment-row", "warp-grid-layout-preview", "warp-history-row"]);
   expect(panel.element.querySelector('[aria-label="Selected warp X position"]')).toBeTruthy();
   expect(panel.element.querySelector('[aria-label="Selected warp Y position"]')).toBeTruthy();
   expect(panel.element.querySelector('[aria-label="Warp Undo"]')).toBeTruthy();
@@ -24,6 +24,34 @@ test("Keystone and Grid expose the same shared adjustment rows and the picker se
   panel.controls.warpSelectionPicker.value = "1";
   panel.controls.warpSelectionPicker.dispatchEvent(new Event("change", { bubbles: true }));
   expect(onAction).toHaveBeenCalledWith("warp-select", { output: "left", selection: { mode: "grid", kind: "point", index: 1 } });
+  panel.dispose();
+});
+
+test("grid preview confirmation is explicit and cancellation is routed without editing state", () => {
+  const onAction = vi.fn();
+  const panel = createWarpPanelView({ document, onAction });
+  const editor = createWarpEditor({ config: structuredClone(DEFAULT_PROJECTION_CONFIG) });
+  panel.update({ output: "left", nodeId: "left-grid", editorState: {
+    ...editor.getState(), selection: gridSelection("row", 2), config: editor.getConfig(), handles: editor.getControlPoints(),
+    gridLayoutPreview: { id: 4, ok: true, status: "ready", operation: "add", values: { axis: "row", position: 43.25 }, requiresConfirmation: true, warning: "Sampled layout difference: 0.02 output px.", grid: { rows: 8, columns: 7, rowPositions: [], columnPositions: [], offsets: [] } },
+  } });
+  expect(panel.element.querySelector(".warp-grid-layout-preview-status")?.textContent).toContain("Sampled layout difference");
+  expect(panel.element.querySelector(".warp-grid-layout-preview-status")?.textContent).toContain("43.25% source Y");
+  panel.element.querySelector('[data-action="warp-grid-layout-confirm"]').click();
+  expect(onAction).toHaveBeenCalledWith("warp-grid-layout-confirm", { output: "left" });
+  panel.element.querySelector('[data-action="warp-grid-layout-cancel"]').click();
+  expect(onAction).toHaveBeenLastCalledWith("warp-grid-layout-cancel", { output: "left" });
+  panel.dispose();
+});
+
+test("Add placement status remains visible and keeps percentage entry available after an inverse explanation", () => {
+  const panel = createWarpPanelView({ document, onAction: vi.fn() });
+  const editor = createWarpEditor({ config: structuredClone(DEFAULT_PROJECTION_CONFIG) });
+  panel.update({ output: "left", nodeId: "left-grid", editorState: { ...editor.getState(), config: editor.getConfig(), handles: editor.getControlPoints(), gridPlacement: { axis: "row", error: "This click is outside the evaluated mesh. Enter a source percentage instead." } } });
+  const status = panel.element.querySelector(".warp-grid-layout-preview-status");
+  expect(status.textContent).toContain("outside the evaluated mesh");
+  expect(panel.element.querySelector("[data-action='warp-grid-layout-cancel']").hidden).toBe(false);
+  expect(panel.element.querySelector("[data-action='warp-grid-layout-confirm']").hidden).toBe(true);
   panel.dispose();
 });
 

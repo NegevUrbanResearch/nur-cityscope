@@ -260,7 +260,7 @@ test("Grid layout controls derive from axes and commit numeric input once", () =
   field("rows").dispatchEvent(new Event("change", { bubbles: true }));
   field("rows").dispatchEvent(new Event("blur"));
   expect(onWarpAction).toHaveBeenCalledTimes(1);
-  expect(onWarpAction).toHaveBeenCalledWith("warp-grid-layout", { output: "left", operation: "counts", columns: 3, rows: 4 });
+  expect(onWarpAction).toHaveBeenCalledWith("warp-grid-layout", { output: "left", operation: "resize", axis: "row", count: 4 });
   onWarpAction.mockClear();
   field("source-y").value = "55";
   field("source-y").dispatchEvent(new Event("input", { bubbles: true }));
@@ -270,10 +270,10 @@ test("Grid layout controls derive from axes and commit numeric input once", () =
   expect(onWarpAction).toHaveBeenCalledWith("warp-grid-layout", { output: "left", operation: "move", axis: "row", index: 1, position: 55 });
   onWarpAction.mockClear();
   action("add-row").click();
-  expect(onWarpAction).toHaveBeenCalledWith("warp-grid-layout", { output: "left", operation: "add", axis: "row", position: 80 });
+  expect(onWarpAction).toHaveBeenCalledWith("warp-grid-placement", { output: "left", axis: "row" });
   onWarpAction.mockClear();
   action("even").click();
-  expect(onWarpAction).toHaveBeenCalledWith("warp-grid-layout", { output: "left", operation: "even" });
+  expect(onWarpAction).toHaveBeenCalledWith("warp-grid-layout", { output: "left", operation: "even", axis: "row" });
   view.dispose();
 });
 
@@ -360,11 +360,11 @@ test("empty and browser-sanitized bad grid inputs restore valid values and repor
   rows.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
   rows.dispatchEvent(new Event("change", { bubbles: true })); rows.dispatchEvent(new Event("blur"));
   expect(onWarpAction).toHaveBeenCalledTimes(1);
-  expect(onWarpAction).toHaveBeenCalledWith("warp-grid-layout", { output: "left", operation: "counts", rows: 4, columns: 3 });
+  expect(onWarpAction).toHaveBeenCalledWith("warp-grid-layout", { output: "left", operation: "resize", axis: "row", count: 4 });
   view.dispose();
 });
 
-test("add-position typing stays local until its Add action", () => {
+test("Add row starts placement before the source percentage previews a candidate", async () => {
   const { root, view, onWarpAction, update } = makeView();
   const config = structuredClone(DEFAULT_PROJECTION_CONFIG);
   const editor = createWarpEditor({ config, output: "left" }); editor.setMode("grid"); editor.select({ mode: "grid", kind: "row", index: 1 });
@@ -373,12 +373,18 @@ test("add-position typing stays local until its Add action", () => {
   root.querySelector(".config-node[data-node='left-grid'] .warp-open-button").click();
   const layout = root.querySelector(".warp-grid-layout-section");
   const position = layout.querySelector("[data-grid-layout-field='addRowPosition']");
-  position.value = "35"; position.dispatchEvent(new Event("input", { bubbles: true }));
-  position.dispatchEvent(new Event("change", { bubbles: true })); position.dispatchEvent(new Event("blur"));
-  expect(onWarpAction).not.toHaveBeenCalled();
+  expect(position.disabled).toBe(true);
   layout.querySelector("[data-grid-layout-action='add-row']").click();
   expect(onWarpAction).toHaveBeenCalledTimes(1);
+  expect(onWarpAction).toHaveBeenCalledWith("warp-grid-placement", { output: "left", axis: "row" });
+  onWarpAction.mockClear();
+  update({ state: { draft: config }, selectedNode: "left-grid", warpStates: { left: { ...state, gridPlacement: { axis: "row" } } } });
+  await vi.waitFor(() => expect(position.getAttribute("aria-label")).toContain("click the viewer"));
+  expect(position.disabled).toBe(false);
+  position.value = "35"; position.dispatchEvent(new Event("input", { bubbles: true }));
+  position.dispatchEvent(new Event("change", { bubbles: true }));
   expect(onWarpAction).toHaveBeenCalledWith("warp-grid-layout", { output: "left", operation: "add", axis: "row", position: 35 });
+  expect(position.value).toBe("35");
   view.dispose();
 });
 
@@ -413,7 +419,7 @@ test.each([false, true])("Grid layout dispatch waits for an active %s pointer be
   expect(onWarpAction).not.toHaveBeenCalledWith('warp-grid-layout', expect.anything());
   pointer('pointermove', handleX + 20); pointer('pointerup', handleX + 20);
   rows.value = '4'; rows.dispatchEvent(new Event('input', { bubbles: true })); rows.dispatchEvent(new Event('change', { bubbles: true }));
-  expect(onWarpAction).toHaveBeenCalledWith('warp-grid-layout', { output: 'left', operation: 'counts', columns: 7, rows: 4 });
+  expect(onWarpAction).toHaveBeenCalledWith('warp-grid-layout', { output: 'left', operation: 'resize', axis: 'row', count: 4 });
   view.dispose();
 });
 

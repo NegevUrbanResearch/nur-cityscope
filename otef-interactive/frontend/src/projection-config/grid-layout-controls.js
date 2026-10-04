@@ -15,11 +15,14 @@ export function createGridLayoutControls(doc, onAction = () => {}) {
   section.className = "warp-grid-layout-section";
   section.setAttribute("aria-label", "Grid layout");
   const heading = doc.createElement("h3"); heading.textContent = "Grid layout"; section.appendChild(heading);
-  const hint = doc.createElement("p"); hint.className = "warp-grid-layout-hint"; hint.textContent = "Counts: 2–16. Boundary lines stay at 0% and 100%; only interior lines can move or be removed."; section.appendChild(hint);
+  const hint = doc.createElement("p"); hint.className = "warp-grid-layout-hint"; hint.textContent = "Counts: 2–16. Boundary lines stay at 0% and 100%. Select a row or column, then click the viewer to place a line."; section.appendChild(hint);
   const fields = new Map();
   const actions = new Map();
   const committed = new WeakMap();
   const edited = new WeakSet();
+  const placementAttempts = new WeakMap();
+  const placementRuns = new WeakMap();
+  let placementSequence = 0;
   let localErrorInput = null;
   let localErrorMessage = "";
   let latestState = null;
@@ -34,6 +37,57 @@ export function createGridLayoutControls(doc, onAction = () => {}) {
     input.setAttribute("aria-invalid", "true"); input.setCustomValidity?.(message);
     error.textContent = message;
   };
+  const commitPlacement = (input) => {
+    if (!edited.has(input)) return true;
+    if (placementRuns.has(input)) return false;
+    const axis = input === addRowPosition ? "row" : "column";
+    if (latestState?.placement?.axis !== axis) return false;
+    if (placementAttempts.get(input) === input.value) return false;
+    const number = Number(input.value);
+    if (!input.value.trim() || !Number.isFinite(number) || number <= 0 || number >= 100) {
+      showInputError(input, `${axis === "row" ? "Row" : "Column"} position must be strictly between 0% and 100%.`);
+      return false;
+    }
+    clearInputError(input);
+    const attempt = input.value;
+    const token = ++placementSequence;
+    placementAttempts.set(input, attempt);
+    placementRuns.set(input, token);
+    // The placement callback runs the shared pending-edit guard itself. Temporarily
+    // remove this field from that guard, then restore ownership until validation
+    // either stages a candidate or rejects it.
+    edited.delete(input);
+    let result;
+    try { result = onAction(axis === "row" ? "place-row" : "place-column", number); }
+    catch (error) { edited.add(input); placementRuns.delete(input); throw error; }
+    if (result && typeof result.then === "function") {
+      edited.add(input);
+      Promise.resolve(result).then(accepted => {
+        if (placementRuns.get(input) !== token) return;
+        placementRuns.delete(input);
+        if (accepted) {
+          edited.delete(input);
+          placementAttempts.delete(input);
+          clearInputError(input);
+          if (latestState) update(latestState);
+        }
+      }, () => {
+        if (placementRuns.get(input) !== token) return;
+        placementRuns.delete(input);
+        edited.add(input);
+      });
+      return false;
+    }
+    placementRuns.delete(input);
+    if (result) {
+      placementAttempts.delete(input);
+      clearInputError(input);
+      if (latestState) update(latestState);
+      return true;
+    }
+    edited.add(input);
+    return false;
+  };
   const makeField = (name, label, { min, max, step = "1" } = {}) => {
     const wrapper = doc.createElement("label"); wrapper.className = "warp-grid-layout-field"; wrapper.append(doc.createTextNode(label));
     const input = doc.createElement("input"); input.type = "number"; input.dataset.gridLayoutField = name; input.setAttribute("aria-label", label); input.inputMode = "decimal"; input.step = step;
@@ -42,24 +96,35 @@ export function createGridLayoutControls(doc, onAction = () => {}) {
     wrapper.appendChild(input); section.appendChild(wrapper); fields.set(name, input);
     input.addEventListener("input", () => {
       edited.add(input);
+      const isPlacementField = name === "addRowPosition" || name === "addColumnPosition";
+      if (isPlacementField && placementAttempts.get(input) !== input.value) {
+        if (placementRuns.has(input)) {
+          placementRuns.delete(input);
+          onAction("placement-input", name === "addRowPosition" ? "row" : name === "addColumnPosition" ? "column" : null);
+        }
+        placementAttempts.delete(input);
+      }
       if (input.value.trim() && Number.isFinite(Number(input.value))) clearInputError(input);
     });
     const commit = () => {
-      if (!edited.has(input)) return;
-      if (name === "addRowPosition" || name === "addColumnPosition") return;
+      if (!edited.has(input)) return true;
+      if (name === "addRowPosition" || name === "addColumnPosition") {
+        return commitPlacement(input);
+      }
       edited.delete(input);
       const current = committed.get(input);
       const number = Number(input.value);
       if (!input.value.trim() || !Number.isFinite(number)) {
         showInputError(input, `${label} must be a finite number. Restored the last valid value.`);
         input.value = String(current ?? "");
-        return;
+        return true;
       }
       const signature = String(number);
-      if (current === signature) { clearInputError(input); return; }
+      if (current === signature) { clearInputError(input); return true; }
       clearInputError(input);
       committed.set(input, signature);
       onAction(name, number);
+      return true;
     };
     input.addEventListener("change", commit);
     input.addEventListener("blur", commit);
@@ -75,15 +140,6 @@ export function createGridLayoutControls(doc, onAction = () => {}) {
   const makeAction = (label, name) => {
     const button = doc.createElement("button"); button.type = "button"; button.textContent = label; button.dataset.gridLayoutAction = name;
     button.addEventListener("click", () => {
-      const field = name === "add-row" ? addRowPosition : name === "add-column" ? addColumnPosition : null;
-      if (field) {
-        const number = Number(field.value);
-        if (!field.value.trim() || !Number.isFinite(number)) { showInputError(field, `${name === "add-row" ? "Row" : "Column"} position must be a finite percentage.`); field.focus?.(); return; }
-        clearInputError(field);
-        edited.delete(field);
-        onAction(name, number);
-        return;
-      }
       onAction(name, undefined);
     });
     section.appendChild(button); actions.set(name, button); return button;
@@ -92,7 +148,8 @@ export function createGridLayoutControls(doc, onAction = () => {}) {
   makeAction("Add column", "add-column");
   makeAction("Remove row", "remove-row");
   makeAction("Remove column", "remove-column");
-  makeAction("Even spacing", "even");
+  makeAction("Evenly space selected axis", "even");
+  makeAction("Rebuild uniform grid", "rebuild");
   function sync(input, value, signature = value, force = false) {
     const text = String(value);
     committed.set(input, String(signature));
@@ -101,7 +158,7 @@ export function createGridLayoutControls(doc, onAction = () => {}) {
   function update(state = {}) {
     latestState = state;
     const force = forceSync; forceSync = false;
-    const { grid, selection, errorMessage = "", visible = true } = state;
+    const { grid, selection, placement = null, errorMessage = "", visible = true } = state;
     section.hidden = !visible || !grid;
     if (!grid) return;
     const columnsCount = grid.columns, rowsCount = grid.rows;
@@ -116,21 +173,29 @@ export function createGridLayoutControls(doc, onAction = () => {}) {
     sourceX.disabled = columnIndex === 0 || columnIndex === columnsCount - 1;
     const defaultRow = (rowAxis[clamp(rowIndex, 0, rowsCount - 2)] + rowAxis[clamp(rowIndex + 1, 1, rowsCount - 1)]) / 2;
     const defaultColumn = (columnAxis[clamp(columnIndex, 0, columnsCount - 2)] + columnAxis[clamp(columnIndex + 1, 1, columnsCount - 1)]) / 2;
-    sync(addRowPosition, percentText(defaultRow), percentText(defaultRow), force); sync(addColumnPosition, percentText(defaultColumn), percentText(defaultColumn), force);
+    if (force || (!edited.has(addRowPosition) && placement?.axis !== "row")) sync(addRowPosition, percentText(defaultRow), percentText(defaultRow), force);
+    if (force || (!edited.has(addColumnPosition) && placement?.axis !== "column")) sync(addColumnPosition, percentText(defaultColumn), percentText(defaultColumn), force);
+    addRowPosition.disabled = placement?.axis !== "row";
+    addColumnPosition.disabled = placement?.axis !== "column";
     for (const [name, button] of actions) {
       const axis = name.includes("column") ? columnAxis : rowAxis;
       const index = name.includes("column") ? columnIndex : rowIndex;
       const count = axis.length;
-      button.disabled = (name === "remove-row" || name === "remove-column") && (index === 0 || index === count - 1 || count <= 2) || (name === "add-row" && rowsCount >= 16) || (name === "add-column" && columnsCount >= 16) || ((name === "move-row" || name === "move-column") && (index === 0 || index === count - 1));
+      button.disabled = (name === "remove-row" || name === "remove-column") && (index === 0 || index === count - 1 || count <= 2) || ((name === "move-row" || name === "move-column") && (index === 0 || index === count - 1));
       if (button.disabled) button.title = name.startsWith("remove") ? "Boundary grid lines are fixed; at least two lines are required." : name.startsWith("add") ? "Maximum grid count is 16." : "Boundary source positions are fixed at 0% and 100%.";
     }
+    for (const [axis, input] of [["row", addRowPosition], ["column", addColumnPosition]]) input.setAttribute("aria-label", `Add ${axis} at ${axis === "row" ? "Y" : "X"} (%)${placement?.axis === axis ? "; enter a source percentage or click the viewer" : `; choose Add ${axis} to place a line`}`);
+    actions.get("add-row").textContent = placement?.axis === "row" ? "Cancel row placement" : "Add row";
+    actions.get("add-column").textContent = placement?.axis === "column" ? "Cancel column placement" : "Add column";
     error.textContent = errorMessage || (localErrorInput ? localErrorMessage : "");
   }
   const cancel = () => {
-    for (const input of fields.values()) edited.delete(input);
+    for (const input of fields.values()) { edited.delete(input); placementRuns.delete(input); placementAttempts.delete(input); }
     for (const input of fields.values()) clearInputError(input);
     if (latestState) { forceSync = true; update(latestState); }
     forceSync = true;
   };
-  return { element: section, fields, actions, update, cancel };
+  const pendingPlacementInputs = () => [addRowPosition, addColumnPosition].filter(input => edited.has(input));
+  const finishPendingEdit = () => pendingPlacementInputs().every(commitPlacement);
+  return { element: section, fields, actions, update, cancel, finishPendingEdit, hasPendingEdit: () => pendingPlacementInputs().length > 0 };
 }
