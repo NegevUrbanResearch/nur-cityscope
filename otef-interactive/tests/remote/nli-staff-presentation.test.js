@@ -28,7 +28,7 @@ function makeControllerHarness() {
   const openAndReply = async (segmentId) => {
     const pending = controller.run("open", segmentId);
     reply({ outcome: "opened", slide: segmentId === "hostages" ? 29 : 9,
-      range: segmentId === "hostages" ? [29, 34] : [9, 11] });
+      range: segmentId === "hostages" ? [29, 33] : [9, 11] });
     return pending;
   };
   return { controller, sent, reply, replyTo, openAndReply };

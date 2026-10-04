@@ -229,7 +229,9 @@ export function createNovaEscapeCoordinator({
     });
     const beforeId = options.beforeId && map.getLayer?.(options.beforeId)
       ? options.beforeId
-      : undefined;
+      : map.getStyle?.()?.layers?.find((candidate) => (
+        candidate.source === "nli.people" && ["circle", "symbol"].includes(candidate.type)
+      ))?.id;
     map.addLayer(layer, beforeId);
     map.triggerRepaint?.();
   };

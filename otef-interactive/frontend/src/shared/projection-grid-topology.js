@@ -32,6 +32,14 @@ export function uniformAxis(count) {
   return Array.from({ length: count }, (_, index) => index / (count - 1));
 }
 
+export function resizeGridAxis(grid, axis, count) {
+  if (axis !== 'row' && axis !== 'column') throw new Error('Choose row or column.');
+  const shape = validateGrid(grid);
+  const columns = axis === 'column' ? uniformAxis(count) : shape.columnPositions;
+  const rows = axis === 'row' ? uniformAxis(count) : shape.rowPositions;
+  return resampleGrid(grid, columns, rows);
+}
+
 export function gridInterval(axis, position) {
   validateAxis(axis);
   requireFinite(position, 'position');

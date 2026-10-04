@@ -3,7 +3,7 @@
 This document began as an English translation of the NLI-authored Hebrew run
 of show received on 2026-09-22. It now also incorporates the exhibit owner's
 2026-09-24 decisions about the revised 34-slide deck, presentation controls,
-and Shura, and the 2026-09-27 staff-remote sequence. The tables describe the
+and Shura, the 2026-09-27 staff-remote sequence, and the 2026-10-04 corrected deck and credits scene. The tables describe the
 current operating sequence. Hardware and browser acceptance stay in the
 [NLI exhibit verification guide](nli-exhibit-verification.md).
 
@@ -20,9 +20,9 @@ includes their presenter behavior alongside the broader exhibit sequence.
 
 [Presentation](https://nli-my.sharepoint.com/:p:/g/personal/uri_ayalon_nli_org_il/IQD47nUGojhWS7-q5GSJVUNBAXiA-LABDwC7s_zZgZ_A1ns?rtime=AdOhnb8Y30g)
 
-The revised deck has 34 slides, grouped into six independent presentation
+The revised deck has 34 slides, grouped into seven independent presentation
 segments: Segev 1–8, Mor Levy 9–11, Nova memorial 12–16, Sderot 17–21,
-Shura 22–28, and Hostages 29–34. Slide numbers below are one-based and
+Shura 22–28, Hostages 29–33, and Credits 34. Slide numbers below are one-based and
 inclusive. Presentation Previous/Next stays within the active segment.
 
 ## Projection sequence and screen content
@@ -41,7 +41,7 @@ eight steps and starts at the opening minutes.
 | See each narrative table. The narrative names are links. |  | Narratives (free choice): [Sderot](#sderot), [Shura Camp](#shura-camp), and [Hostages (Haim Peri of Nir Oz)](#hostages-haim-peri) | 5 |
 | Settlement names and outlines, Route 232, and people shown as points. After a name search, zoom in on the point and show a pop-up with the name above it. Do not show Gaza roads. A remote action opens that person's archive record. | Settlement names and outlines, Route 232, and people shown as points. After a name search, zoom in on the point and mark it with a square of light. Dim the other points or make the selected point more prominent. Do not show Gaza roads. | Identity database | 6 |
 | A black slide titled מאגר הזהויות covers the GIS map automatically; the remote shows no slide controls. The operator can search for a specific name or place. | All names appear on the model as a wall. All other layers are dimmed; no layer other than the names is visible. The operator can search for a specific name or place. Associated names stay bright and the others dim. | Wall of names | 7 |
-| The six Home layers return and the clock is idle. The remote stays on this step. | The six Home layers return and the clock is idle. The projection camera stays fixed. | Back to the start | 8 |
+| The Home state returns, then credits slide 34 opens automatically. Close stays here and offers Open again; Finish returns Home. | The six Home layers return and the clock is idle. The projection camera stays fixed; no credits slide appears on projection. | Credits (קרדיטים) | 8 |
 
 The home screen also opens **The timeline**, three steps that are not extra
 rows in the sequence above: the opening minutes, the rest of the day, and
@@ -72,7 +72,7 @@ on this step. A failed open or close can be retried without leaving the step.
 | The GIS map stays framed on the Nova site during the beats. | Remove the open-spaces layer. Play five authored beats in order, eight seconds each (40 seconds total). Show only the active beat's time, title, and presenter copy; animate its polygons as they appear. | Show the Nova polygons in chronological order. The five scrubber marks run from 0% to 100%. Play begins at beat 1; natural completion holds beat 5 at 100%. Back/forward and scrub selection clamp at the first and last beat. | 2 |
 | The first part describes what happened collectively. Now move to Mor Levy's individual story. | Show the escape routes taken by people from Nova. Settlements light up when the escape routes intersect them. The Nova timeline stays ended. | Show the escape routes taken by people from Nova. Settlements light up when the escape routes intersect them. | 3 |
 | Begin Mor's story. The guide describes her background and the route she took. Slides 9–11 open in GIS after the cue is ready; Close stays on this step. | Cover the GIS map with slides 9–11. | Show Mor's route on the model: Nova, one of the lemon groves, and then the Midburn staging site. | 4 |
-| Memorial slides open automatically after the scene is sent. Close stays on this step. Do not replay the escape routes. Settled intersections stay on the completed route crossings. A failed open or close can be retried on this step. | Cover the GIS map with slides 12–16: images from the Nova site archive with memorial points. | Dim the model except for the settlements and settlement names intersected by Nova escape routes. Show points for people murdered at Nova only, as well as people kidnapped and murdered or kidnapped and returned alive. Completed Nova compounds remain visible even though this step stores no playable timeline rows. | 5 |
+| Memorial slides open automatically after the scene is sent. Close stays on this step. The fleeing-routes animation is stopped on entry. Its button starts replay on demand; Stop restores settled intersections at the completed route crossings. A failed open or close can be retried on this step. | Cover the GIS map with slides 12–16: images from the Nova site archive with memorial points. | Dim the model except for the settlements and settlement names intersected by Nova escape routes. Show points for people murdered at Nova only, as well as people kidnapped and murdered or kidnapped and returned alive. Completed Nova compounds remain visible even though this step stores no playable timeline rows. | 5 |
 
 [Return to the sequence](#projection-sequence-and-screen-content)
 
@@ -93,7 +93,7 @@ step.
 | Notes | GIS screen | Projection / model | Order |
 | :--- | :--- | :--- | :---: |
 |  | Zoom in on Nir Oz in black-and-white aerial imagery. Place a point on the Peri family home and show the label “Peri family home.” | Dim the model and focus on Nir Oz. Dim the other settlements. Only Nir Oz remains prominent, with a square of light and a halo around it. | 1 |
-| Open the presentation from the staff remote. | Cover the GIS map with slides 29–34. | Keep the Nir Oz-focused model view from step 1; do not show slides on the projection. | 2 |
+| The presentation opens automatically after the scene is ready. Close stays on this step. | Cover the GIS map with slides 29–33. | Keep the Nir Oz-focused model view from step 1; do not show slides on the projection. | 2 |
 | Reach this step with Scene Next; closing the presentation stays on step 2. | Return to the Nir Oz map view. Show points for people murdered in Nir Oz, people kidnapped and murdered, and people kidnapped and returned alive. | Keep the Nir Oz-focused model view and show the same Nir Oz people. | 3 |
 |  | Remove the Nir Oz focus and show points for all hostages, including people kidnapped and murdered and people kidnapped and returned alive. | Stop dimming the model, remove the focus from Nir Oz, and show the same all-hostages view. | 4 |
 
@@ -112,9 +112,9 @@ step.
 - The presentation is a full-screen overlay on the GIS page; the GIS map stays
   open underneath. Opening and closing it must not visibly minimize or switch
   the GIS window. The presenter uses only the staff remote, never GIS directly.
-  Shura and the Nova memorial open automatically after their cue is sent.
-  Segev, Mor Levy, and Sderot open only when the presenter chooses
-  **Open presentation**. Hostages still opens manually. Presentation slides
+  Shura, Mor Levy, the Nova memorial, Hostages, and Credits open automatically after their cue is sent.
+  Segev and Sderot open only when the presenter chooses
+  **Open presentation**. Presentation slides
   and videos appear on GIS only; the projection continues showing its model
   content as specified in the table.
 - Remote slide Previous/Next and Close are distinct from scene Back/Next.

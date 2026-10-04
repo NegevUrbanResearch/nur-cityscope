@@ -372,6 +372,66 @@ describe("NLI staff scene integration", () => {
     setLocale("he", { force: true, persist: false });
   });
 
+  test("Names Wall to Credits applies Home to both displays and automatically opens GIS credits", async () => {
+    setLocale("en", { persist: false });
+    session = mount();
+    await boot(session);
+    await openCard('[data-show-step="names-wall"]');
+    await vi.waitFor(() => expect(session.h.commands.at(-1)).toMatchObject({
+      presentationAction: "open", segmentId: "names_wall",
+    }));
+    const open = session.dataContext.narrativePresentationCommand;
+    const homeAtOpen = [];
+    session.dataContext.narrativePresentationCommand = async (command) => {
+      if (command.presentationAction === "open" && command.segmentId === "credits") {
+        for (const view of views(session)) expectHome(view);
+        homeAtOpen.push(true);
+      }
+      return open(command);
+    };
+    await clickNextReady("Credits");
+    await vi.waitFor(() => expect(homeAtOpen).toEqual([true]));
+    expect(session.h.commands.slice(-2).map(({ presentationAction, segmentId }) =>
+      [presentationAction, segmentId])).toEqual([["close", "names_wall"], ["open", "credits"]]);
+    for (const view of views(session)) expectHome(view);
+
+    session.remote.render();
+    expect(homeAtOpen).toEqual([true]);
+    el("homeBtn").click();
+    await vi.waitFor(() => expect(document.querySelector(".screen.is-active")?.dataset.screen).toBe("home"));
+    expect(session.h.commands.at(-1)).toMatchObject({ presentationAction: "close", segmentId: "credits" });
+    for (const view of views(session)) expectHome(view);
+  });
+
+  test("failed Credits cue retries on Credits and opens only after the reset succeeds", async () => {
+    setLocale("en", { persist: false });
+    session = mount();
+    await boot(session);
+    await openCard('[data-show-step="names-wall"]');
+    session.h.failNull = true;
+    el("nextBtn").click();
+    await vi.waitFor(() => expect(el("cueStatus").dataset.status).toBe("failed"));
+    expect(el("stepTitle").textContent).toBe("Credits");
+    expect(session.h.commands.some((command) => command.segmentId === "credits")).toBe(false);
+    el("playerCueRetry").click();
+    await vi.waitFor(() => expect(session.h.commands.at(-1)).toMatchObject({
+      presentationAction: "open", segmentId: "credits",
+    }));
+    expect(document.querySelector(".screen.is-active")?.dataset.screen).toBe("player");
+    expect(el("stepTitle").textContent).toBe("Credits");
+    for (const view of views(session)) expectHome(view);
+
+    el("kitPresentation").querySelector('[data-presentation-action="close"]').click();
+    await vi.waitFor(() => expect(el("kitPresentation").querySelector('[data-presentation-action="open"]')).not.toBeNull());
+    expect(el("stepTitle").textContent).toBe("Credits");
+    el("kitPresentation").querySelector('[data-presentation-action="open"]').click();
+    await vi.waitFor(() => expect(session.h.commands.at(-1).presentationAction).toBe("open"));
+    el("prevBtn").click();
+    await vi.waitFor(() => expect(el("stepTitle").textContent).toBe("Wall of names"));
+    expect(session.h.commands.slice(-2).map(({ presentationAction, segmentId }) =>
+      [presentationAction, segmentId])).toEqual([["close", "credits"], ["open", "names_wall"]]);
+  });
+
   test("Home, first minutes, Segev, and the rest of the day settle on both followers", async () => {
     setLocale("en", { persist: false });
     session = mount();
@@ -648,6 +708,26 @@ describe("NLI staff scene integration", () => {
       ]);
     }
 
+    expect(el("kitEscape").hidden).toBe(false);
+    expect(el("kitEscape").querySelectorAll("[data-nli-nova-escape]")).toHaveLength(1);
+    const routeButton = () => el("kitEscape").querySelector('[data-nli-nova-escape="individual"]');
+    expect(routeButton().getAttribute("aria-pressed")).toBe("false");
+    routeButton().click();
+    await vi.waitFor(() => {
+      expect(routeButton().getAttribute("aria-pressed")).toBe("true");
+      for (const view of views(session)) {
+        expect(view.escape).toEqual({ individual: true, overlap: false, mor: false, settled: false });
+        sameMembers(view.layers, memorialLayers);
+      }
+    });
+    routeButton().click();
+    await vi.waitFor(() => {
+      expect(routeButton().getAttribute("aria-pressed")).toBe("false");
+      for (const view of views(session)) {
+        expect(view.escape).toEqual({ individual: false, overlap: false, mor: false, settled: true });
+      }
+    });
+
     el("prevBtn").click();
     await vi.waitFor(() => {
       expect(el("stepTitle").textContent).toBe("Mor Levy");
@@ -673,6 +753,35 @@ describe("NLI staff scene integration", () => {
       expect(el("cueStatus").dataset.status).toBe("ready");
       for (const view of views(session)) expectHome(view);
     });
+  });
+
+  test("Hostages presentation opens after its cue is ready, and Close stays on the scene", async () => {
+    setLocale("en", { persist: false });
+    session = mount();
+    await boot(session);
+    await openCard('[data-open="hostages"]');
+    expect(session.h.commands).toHaveLength(0);
+
+    let releaseCue;
+    const originalSetEscapeOverlay = session.dataContext.setEscapeOverlay;
+    session.dataContext.setEscapeOverlay = vi.fn(async (...args) => {
+      await new Promise((resolve) => { releaseCue = resolve; });
+      return originalSetEscapeOverlay(...args);
+    });
+    el("nextBtn").click();
+    await vi.waitFor(() => expect(releaseCue).toBeTypeOf("function"));
+    expect(el("stepTitle").textContent).toBe("Presentation");
+    expect(session.h.commands).toHaveLength(0);
+    releaseCue();
+    await vi.waitFor(() => {
+      expect(el("cueStatus").dataset.status).toBe("ready");
+      expect(session.h.commands).toEqual([expect.objectContaining({ segmentId: "hostages", presentationAction: "open" })]);
+    });
+    expect(views(session).every((view) => view.narrativeId === "hostages")).toBe(true);
+    el("kitPresentation").querySelector('[data-presentation-action="close"]').click();
+    await vi.waitFor(() => expect(el("kitPresentation").querySelector('[data-presentation-action="open"]')).not.toBeNull());
+    expect(el("stepTitle").textContent).toBe("Presentation");
+    expect(session.h.commands.at(-1)).toMatchObject({ segmentId: "hostages", presentationAction: "close" });
   });
 
   test("Mor opens its slides when the cue is ready, keeps its route active, and can reopen", async () => {

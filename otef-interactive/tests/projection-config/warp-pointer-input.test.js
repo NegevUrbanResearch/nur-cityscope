@@ -5,19 +5,36 @@ import { createWarpEditor, gridSelection } from "../../frontend/src/projection-c
 import { DEFAULT_PROJECTION_CONFIG } from "../../frontend/src/shared/projection-config-schema.js";
 import { createIdentityProjectionMesh } from "../../frontend/src/shared/projection-warp-geometry.js";
 
-function fixture({ handles = [{ x: 0.25, y: 0.25 }], selection = { mode: "grid", kind: "point", index: 0, indices: [0] }, rows = 7, columns = 7, rect = { left: 0, top: 0, width: 960, height: 540 }, viewBox = { x: 0, y: 0, width: 1920, height: 1080 } } = {}) {
+function fixture({ handles = [{ x: 0.25, y: 0.25 }], selection = { mode: "grid", kind: "point", index: 0, indices: [0] }, rows = 7, columns = 7, rect = { left: 0, top: 0, width: 960, height: 540 }, viewBox = { x: 0, y: 0, width: 1920, height: 1080 }, evaluatedMesh = null, placementAxis = null } = {}) {
   const listeners = new Map();
   const surface = {
     ownerDocument: { visibilityState: "visible", addEventListener(type, callback) { listeners.set(`doc:${type}`, callback); }, removeEventListener(type) { listeners.delete(`doc:${type}`); }, defaultView: { addEventListener(type, callback) { listeners.set(`win:${type}`, callback); }, removeEventListener(type) { listeners.delete(`win:${type}`); } } },
     addEventListener(type, callback) { listeners.set(type, callback); }, removeEventListener(type) { listeners.delete(type); },
     setPointerCapture: vi.fn(), releasePointerCapture: vi.fn(), focus: vi.fn(),
   };
-  const calls = { select: vi.fn(), start: vi.fn(), move: vi.fn(), end: vi.fn(), cancel: vi.fn(), navigate: vi.fn() };
-  const geometry = { rect, viewBox, handles, selection, rows, columns, side: "left", mode: selection.mode };
-  const binder = bindWarpPointerInput({ surface, readGeometry: () => geometry, onSelect: calls.select, onStart: calls.start, onMove: calls.move, onEnd: calls.end, onCancel: calls.cancel, onNavigate: calls.navigate });
+  const calls = { select: vi.fn(), start: vi.fn(), move: vi.fn(), end: vi.fn(), cancel: vi.fn(), navigate: vi.fn(), insert: vi.fn() };
+  const geometry = { rect, viewBox, handles, selection, rows, columns, side: "left", mode: selection.mode, evaluatedMesh, placementAxis };
+  const binder = bindWarpPointerInput({ surface, readGeometry: () => geometry, onSelect: calls.select, onStart: calls.start, onMove: calls.move, onEnd: calls.end, onCancel: calls.cancel, onNavigate: calls.navigate, onInsert: calls.insert });
   const fire = (type, event = {}) => listeners.get(type)?.({ type, pointerId: 1, isPrimary: true, button: 0, clientX: 240, clientY: 135, preventDefault: vi.fn(), ...event });
   return { surface, calls, geometry, binder, fire };
 }
+
+test("viewer insertion requires Add placement mode and uses the evaluated mesh inverse", () => {
+  const evaluatedMesh = { vertices: [
+    { s: 0, t: 0, x: .2, y: .1 }, { s: 1, t: 0, x: 1.2, y: .2 }, { s: 0, t: 1, x: .3, y: 1.6 },
+  ], triangles: [0, 1, 2] };
+  const f = fixture({ handles: [{ x: 0, y: 0 }], evaluatedMesh, selection: { mode: "grid", kind: "row", index: 1, indices: [7, 8, 9, 10, 11, 12, 13] }, rect: { left: 0, top: 0, width: 1920, height: 1080 } });
+  const x = .43 * 1920, y = .57 * 1080;
+  f.fire("pointerdown", { clientX: x, clientY: y });
+  expect(f.calls.insert).not.toHaveBeenCalled();
+  f.geometry.placementAxis = "row";
+  f.geometry.handles = [{ x: .43, y: .57 }]; // Placement clicks take priority even when they land on a handle.
+  f.fire("pointerdown", { clientX: x, clientY: y });
+  expect(f.calls.insert).toHaveBeenCalledWith({ output: "left", axis: "row", position: expect.closeTo(30) });
+  expect(f.calls.select).not.toHaveBeenCalled();
+  expect(f.calls.start).not.toHaveBeenCalled();
+  f.binder.dispose();
+});
 
 test.each([
   { side: "left", rows: 7, columns: 7, index: 17, expected: { mode: "grid", kind: "row", index: 2 } },
@@ -33,6 +50,7 @@ test.each([
   const point = handles[index];
   f.fire("pointerdown", { clientX: point.x * 1920, clientY: point.y * 1080 });
   expect(f.calls.select).toHaveBeenCalledWith({ output: side, selection: expected });
+  f.fire("pointermove", { clientX: point.x * 1920 + 7, clientY: point.y * 1080 });
   expect(order).toEqual(["select", "start"]);
   expect(f.calls.start).toHaveBeenCalledOnce();
   f.binder.dispose();
@@ -50,7 +68,33 @@ test("a hit on another column member preserves column mode and selects that colu
   const point = handles[hitIndex];
   f.fire("pointerdown", { clientX: point.x * 1920, clientY: point.y * 1080 });
   expect(f.calls.select).toHaveBeenCalledWith({ output: "left", selection: { mode: "grid", kind: "column", index: 5 } });
+  f.fire("pointermove", { clientX: point.x * 1920 + 7, clientY: point.y * 1080 });
   expect(order).toEqual(["select", "start"]);
+  f.binder.dispose();
+});
+
+test("screen-space hits between selected-row handles still start the row drag", () => {
+  const rows = 7; const columns = 7;
+  const handles = Array.from({ length: rows * columns }, (_, item) => ({ x: (item % columns) / (columns - 1), y: Math.floor(item / columns) / (rows - 1) }));
+  const indices = Array.from({ length: columns }, (_, column) => columns + column);
+  const f = fixture({ handles, rows, columns, selection: { mode: "grid", kind: "row", index: 1, indices }, rect: { left: 0, top: 0, width: 1920, height: 1080 } });
+  f.fire("pointerdown", { clientX: 160, clientY: 180 });
+  expect(f.calls.select).not.toHaveBeenCalled();
+  f.fire("pointermove", { clientX: 167, clientY: 180 });
+  expect(f.calls.start).toHaveBeenCalledOnce();
+  f.binder.dispose();
+});
+
+test.each([
+  { kind: "row", selected: 0, target: 1, x: 160, y: 180 },
+  { kind: "column", selected: 0, target: 1, x: 320, y: 270 },
+])("screen-space hit between handles selects a different $kind", ({ kind, selected, target, x, y }) => {
+  const rows = 7; const columns = 7;
+  const handles = Array.from({ length: rows * columns }, (_, item) => ({ x: (item % columns) / (columns - 1), y: Math.floor(item / columns) / (rows - 1) }));
+  const indices = kind === "row" ? Array.from({ length: columns }, (_, column) => selected * columns + column) : Array.from({ length: rows }, (_, row) => row * columns + selected);
+  const f = fixture({ handles, rows, columns, selection: { mode: "grid", kind, index: selected, indices }, rect: { left: 0, top: 0, width: 1920, height: 1080 } });
+  f.fire("pointerdown", { clientX: x, clientY: y });
+  expect(f.calls.select).toHaveBeenCalledWith({ output: "left", selection: { mode: "grid", kind, index: target } });
   f.binder.dispose();
 });
 
@@ -64,11 +108,12 @@ test.each([
   const point = handles[hitIndex];
   f.fire("pointerdown", { clientX: point.x * 1920, clientY: point.y * 1080 });
   expect(f.calls.select).not.toHaveBeenCalled();
+  f.fire("pointermove", { clientX: point.x * 1920 + 7, clientY: point.y * 1080 });
   expect(f.calls.start).toHaveBeenCalledOnce();
   f.binder.dispose();
 });
 
-test("second touch cannot cancel or take ownership from a geometry drag", () => {
+test("second touch rolls back a local drag and takes ownership for pinch navigation", () => {
   const config = structuredClone(DEFAULT_PROJECTION_CONFIG);
   config.outputs.left.warp.baseline = { type: "identity", width: 1920, height: 1080, origin: "top-left" };
   const editor = createWarpEditor({ config, output: "left" });
@@ -79,15 +124,14 @@ test("second touch cannot cancel or take ownership from a geometry drag", () => 
     onSelect: ({ selection }) => editor.select(selection), onStart: editor.pointerStart, onMove: editor.pointerMove, onEnd: editor.pointerEnd, onCancel: editor.pointerCancel, onNavigate: f.calls.navigate });
 
   f.fire("pointerdown", { pointerId: 1, pointerType: "touch", clientX: 0, clientY: 0 });
-  f.fire("pointerdown", { pointerId: 2, pointerType: "touch", isPrimary: false, clientX: 400, clientY: 270 });
   f.fire("pointermove", { pointerId: 1, pointerType: "touch", clientX: 10, clientY: 0 });
-  f.fire("pointerup", { pointerId: 1, pointerType: "touch", clientX: 10, clientY: 0 });
-
-  expect(editor.getConfig().outputs.left.warp.keystone.corners[0][0]).toBeCloseTo(20 / 1920);
-  expect(editor.getState().historyDepth).toBe(1);
-  expect(f.calls.cancel).not.toHaveBeenCalled();
-  expect(f.calls.navigate).not.toHaveBeenCalled();
-  expect(editor.undo()).toBe(true);
+  f.fire("pointerdown", { pointerId: 2, pointerType: "touch", isPrimary: false, clientX: 400, clientY: 270 });
+  expect(editor.getConfig().outputs.left.warp.keystone.corners[0][0]).toBe(0);
+  expect(editor.getState().historyDepth).toBe(0);
+  expect(editor.getState().dragging).toBe(false);
+  expect(binder.activeViewBox()).not.toBeNull();
+  f.fire("pointermove", { pointerId: 2, pointerType: "touch", isPrimary: false, clientX: 420, clientY: 270 });
+  expect(f.calls.navigate).toHaveBeenCalled();
   expect(editor.getConfig()).toEqual(startConfig);
   f.fire("pointerup", { pointerId: 2, pointerType: "touch", isPrimary: false });
   binder.dispose();
@@ -121,28 +165,31 @@ test("a surviving touch keeps its latest position before a replacement finger jo
   f.binder.dispose();
 });
 
-test("lost capture cancels the drag owner without promoting the second touch to navigation", () => {
+test("deliberate capture loss after a local rollback leaves the pinch navigation owner active", () => {
   const f = fixture({ selection: { mode: "grid", kind: "point", index: 3, indices: [3] } });
   f.fire("pointerdown", { pointerId: 1, pointerType: "touch", clientX: 240, clientY: 135 });
+  f.fire("pointermove", { pointerId: 1, pointerType: "touch", clientX: 247, clientY: 135 });
   f.fire("pointerdown", { pointerId: 2, pointerType: "touch", isPrimary: false, clientX: 400, clientY: 270 });
   f.fire("lostpointercapture", { pointerId: 1, pointerType: "touch" });
   f.calls.navigate.mockClear();
   f.fire("pointermove", { pointerId: 2, pointerType: "touch", isPrimary: false, clientX: 420, clientY: 270 });
   expect(f.calls.cancel).toHaveBeenCalledTimes(1);
-  expect(f.calls.navigate).not.toHaveBeenCalled();
-  expect(f.binder.activeViewBox()).toBeNull();
+  expect(f.calls.navigate).toHaveBeenCalledTimes(1);
+  expect(f.binder.activeViewBox()).not.toBeNull();
   f.binder.dispose();
 });
 
 test("reused pointer ID capture loss cancels a later geometry drag", () => {
   const f = fixture({ selection: { mode: "grid", kind: "point", index: 3, indices: [3] } });
   f.fire("pointerdown", { pointerId: 1, pointerType: "touch", clientX: 240, clientY: 135 });
+  f.fire("pointermove", { pointerId: 1, pointerType: "touch", clientX: 247, clientY: 135 });
   f.fire("pointerdown", { pointerId: 2, pointerType: "touch", isPrimary: false, clientX: 400, clientY: 270 });
   f.fire("pointerup", { pointerId: 1, pointerType: "touch" });
   f.fire("pointerup", { pointerId: 2, pointerType: "touch", isPrimary: false });
   f.calls.cancel.mockClear();
 
   f.fire("pointerdown", { pointerId: 1, clientX: 240, clientY: 135 });
+  f.fire("pointermove", { pointerId: 1, clientX: 247, clientY: 135 });
   f.fire("lostpointercapture", { pointerId: 1 });
   expect(f.calls.cancel).toHaveBeenCalledTimes(1);
   f.binder.dispose();
@@ -164,18 +211,19 @@ test("third touch cannot replace or end the two navigation owners", () => {
   expect(f.calls.navigate).toHaveBeenLastCalledWith({ viewBox: expectedStart });
 });
 
-test("the geometry owner finishes while the second touch stays ignored", () => {
+test("second touch restores an active local drag before navigation takes over", () => {
   const f = fixture();
   f.fire("pointerdown", { pointerId: 1, pointerType: "touch" });
+  f.fire("pointermove", { pointerId: 1, pointerType: "touch", clientX: 247, clientY: 135 });
   f.fire("pointerdown", { pointerId: 2, pointerType: "touch", isPrimary: false, clientX: 400 });
   f.fire("pointermove", { pointerId: 1, pointerType: "touch", clientX: 250 });
   f.fire("pointerup", { pointerId: 1, pointerType: "touch", clientX: 250 });
   f.fire("pointerup", { pointerId: 2, pointerType: "touch", isPrimary: false });
   expect(f.calls.start).toHaveBeenCalledTimes(1);
   expect(f.calls.move).toHaveBeenCalledTimes(1);
-  expect(f.calls.end).toHaveBeenCalledTimes(1);
-  expect(f.calls.cancel).not.toHaveBeenCalled();
-  expect(f.calls.navigate).not.toHaveBeenCalled();
+  expect(f.calls.end).not.toHaveBeenCalled();
+  expect(f.calls.cancel).toHaveBeenCalledTimes(1);
+  expect(f.calls.navigate).toHaveBeenCalled();
   f.binder.dispose();
 });
 
@@ -270,6 +318,7 @@ test("captures one primary pointer and freezes geometry and origin side", () => 
 test("nearest handle wins within 24 CSS pixels, with stable index tie break and group retention", () => {
   const f = fixture({ handles: [{ x: 0.24, y: 0.25 }, { x: 0.26, y: 0.25 }], selection: { mode: "grid", kind: "row", index: 0, indices: [0, 1] } });
   f.fire("pointerdown", { clientX: 263.5, clientY: 135 });
+  f.fire("pointermove", { clientX: 270.5, clientY: 135 });
   expect(f.calls.select).not.toHaveBeenCalled();
   f.fire("pointerup");
   f.geometry.selection = { mode: "grid", kind: "point", index: 1, indices: [1] };
@@ -277,7 +326,7 @@ test("nearest handle wins within 24 CSS pixels, with stable index tie break and 
   expect(f.calls.select).toHaveBeenCalledWith({ output: "left", selection: { mode: "grid", kind: "point", index: 0 } });
   f.fire("pointerup");
   f.fire("pointerdown", { clientX: 400, clientY: 300 });
-  expect(f.calls.start).toHaveBeenCalledTimes(2);
+  expect(f.calls.start).toHaveBeenCalledTimes(1);
   f.binder.dispose();
 });
 
@@ -293,6 +342,7 @@ test("released touch pan leaves no stale owner pointer before the next single fi
   f.calls.navigate.mockClear();
   f.geometry.panMode = false;
   f.fire("pointerdown", { pointerId: 2, pointerType: "touch", clientX: 240, clientY: 135 });
+  f.fire("pointermove", { pointerId: 2, pointerType: "touch", clientX: 247, clientY: 135 });
   expect(f.calls.start).toHaveBeenCalledTimes(1);
   expect(f.calls.navigate).not.toHaveBeenCalled();
   f.binder.dispose();
@@ -316,6 +366,68 @@ test("a second touch promotes Move view pan into pinch at the current viewport",
   f.binder.cancel();
   expect(f.geometry.viewBox).toEqual(afterPan);
   f.binder.dispose();
+});
+
+test("Edit selects on a five CSS pixel tap without starting or changing geometry", () => {
+  const f = fixture({ selection: { mode: "grid", kind: "point", index: 0, indices: [] } });
+  const before = { ...f.geometry.viewBox };
+  f.fire("pointerdown", { clientX: 240, clientY: 135 });
+  f.fire("pointermove", { clientX: 245, clientY: 135 });
+  f.fire("pointerup", { clientX: 245, clientY: 135 });
+  expect(f.calls.select).toHaveBeenCalledOnce();
+  expect(f.calls.select).toHaveBeenCalledWith({ output: "left", selection: { mode: "grid", kind: "point", index: 0 } });
+  expect(f.calls.start).not.toHaveBeenCalled();
+  expect(f.calls.move).not.toHaveBeenCalled();
+  expect(f.calls.end).not.toHaveBeenCalled();
+  expect(f.geometry.viewBox).toEqual(before);
+  f.binder.dispose();
+});
+
+test("Edit crosses the six CSS pixel threshold once and starts with CSS and output coordinates", () => {
+  const f = fixture({ rect: { left: 0, top: 0, width: 960, height: 540 } });
+  f.fire("pointerdown", { clientX: 240, clientY: 135 });
+  f.fire("pointermove", { clientX: 245, clientY: 135 });
+  expect(f.calls.start).not.toHaveBeenCalled();
+  f.fire("pointermove", { clientX: 246, clientY: 135 });
+  f.fire("pointermove", { clientX: 248, clientY: 135 });
+  expect(f.calls.start).toHaveBeenCalledOnce();
+  expect(f.calls.start).toHaveBeenCalledWith(expect.objectContaining({ clientX: 240, clientY: 135, x: 480, y: 270, outputPoint: { x: 480, y: 270 } }));
+  expect(f.calls.move).toHaveBeenCalledTimes(2);
+  f.fire("pointerup", { clientX: 248, clientY: 135 });
+  expect(f.calls.end).toHaveBeenCalledOnce();
+  f.binder.dispose();
+});
+
+test("a second touch cancels a tentative handle edit and transfers to pinch navigation", () => {
+  const f = fixture();
+  f.calls.navigate.mockImplementation(({ viewBox }) => { f.geometry.viewBox = viewBox; });
+  const startView = { ...f.geometry.viewBox };
+  f.fire("pointerdown", { pointerId: 1, pointerType: "touch", clientX: 240, clientY: 135 });
+  f.fire("pointermove", { pointerId: 1, pointerType: "touch", clientX: 245, clientY: 135 });
+  f.fire("pointerdown", { pointerId: 2, pointerType: "touch", isPrimary: false, clientX: 400, clientY: 270 });
+  expect(f.calls.start).not.toHaveBeenCalled();
+  expect(f.calls.cancel).not.toHaveBeenCalled();
+  expect(f.geometry.viewBox).toEqual(startView);
+  f.fire("pointermove", { pointerId: 2, pointerType: "touch", isPrimary: false, clientX: 420, clientY: 270 });
+  expect(f.calls.navigate).toHaveBeenCalled();
+  expect(f.binder.activeViewBox()).not.toBeNull();
+  f.binder.dispose();
+});
+
+test("Move pans from a handle with the same behavior as the background", () => {
+  const handle = fixture();
+  const background = fixture();
+  handle.binder.setInteractionMode("move");
+  background.binder.setInteractionMode("move");
+  handle.fire("pointerdown", { clientX: 240, clientY: 135 });
+  background.fire("pointerdown", { clientX: 300, clientY: 200 });
+  handle.fire("pointermove", { clientX: 260, clientY: 145 });
+  background.fire("pointermove", { clientX: 320, clientY: 210 });
+  expect(handle.calls.navigate).toHaveBeenCalledTimes(1);
+  expect(background.calls.navigate).toHaveBeenCalledTimes(1);
+  expect(handle.calls.start).not.toHaveBeenCalled();
+  expect(background.calls.start).not.toHaveBeenCalled();
+  handle.binder.dispose(); background.binder.dispose();
 });
 
 test.each(["cancel", "complete", "dispose", "cancel-with-synchronous-capture-loss"])("promoted pan capture is released on %s", (finish) => {
@@ -429,6 +541,7 @@ test.each(["pointercancel", "lostpointercapture"])("unexpected %s during promote
 test("the warp handle hit target reaches 24 CSS pixels from the marker center", () => {
   const f = fixture({ handles: [{ x: 0.25, y: 0.25 }] });
   f.fire("pointerdown", { clientX: 263.5, clientY: 135 });
+  f.fire("pointermove", { clientX: 270.5, clientY: 135 });
   expect(f.calls.start).toHaveBeenCalledTimes(1);
   f.binder.dispose();
 });
@@ -458,6 +571,7 @@ test.each([
     const dy = index < 2 ? 4 : -4;
     editor.select({ mode: "keystone", kind: "corner", index });
     f.fire("pointerdown", { clientX, clientY });
+    f.fire("pointermove", { clientX: clientX + 7, clientY });
     f.fire("pointermove", { clientX: clientX + dx * scale, clientY: clientY + dy * scale });
     f.fire("pointerup", { clientX: clientX + dx * scale, clientY: clientY + dy * scale });
     expect(editor.getConfig().outputs.left.warp.keystone.corners[index][0]).toBeCloseTo(before[0] + dx / 1920);
@@ -471,21 +585,21 @@ test("tap does not move, cancellation and capture loss run once, and blur or hid
   const f = fixture();
   f.fire("pointerdown"); f.fire("pointerup");
   expect(f.calls.move).not.toHaveBeenCalled();
-  f.fire("pointerdown"); f.fire("pointercancel", { pointerId: 2 });
+  f.fire("pointerdown"); f.fire("pointermove", { clientX: 247, clientY: 135 }); f.fire("pointercancel", { pointerId: 2 });
   expect(f.calls.cancel).not.toHaveBeenCalled();
   f.fire("lostpointercapture"); f.fire("pointercancel");
   expect(f.calls.cancel).toHaveBeenCalledTimes(1);
-  f.fire("pointerdown"); f.fire("win:blur");
-  f.fire("pointerdown"); f.surface.ownerDocument.visibilityState = "hidden"; f.fire("doc:visibilitychange");
+  f.fire("pointerdown"); f.fire("pointermove", { clientX: 247, clientY: 135 }); f.fire("win:blur");
+  f.fire("pointerdown"); f.fire("pointermove", { clientX: 247, clientY: 135 }); f.surface.ownerDocument.visibilityState = "hidden"; f.fire("doc:visibilitychange");
   expect(f.calls.cancel).toHaveBeenCalledTimes(3);
   f.binder.dispose();
 });
 
 test("explicit layout and authoritative cancellation do not notify twice", () => {
   const f = fixture();
-  f.fire("pointerdown"); f.binder.cancel(); f.fire("lostpointercapture");
+  f.fire("pointerdown"); f.fire("pointermove", { clientX: 247, clientY: 135 }); f.binder.cancel(); f.fire("lostpointercapture");
   expect(f.calls.cancel).toHaveBeenCalledTimes(1);
-  f.fire("pointerdown"); f.binder.cancel({ notify: false }); f.fire("lostpointercapture");
+  f.fire("pointerdown"); f.fire("pointermove", { clientX: 247, clientY: 135 }); f.binder.cancel({ notify: false }); f.fire("lostpointercapture");
   expect(f.calls.cancel).toHaveBeenCalledTimes(1);
   f.binder.dispose();
 });
@@ -509,6 +623,77 @@ test("dragging a selected row member moves the row and creates one undo entry", 
   expect(editor.undo()).toBe(true);
   expect(editor.getConfig().outputs.left.warp.grid.offsets.slice(0, 7).every(([x]) => x === 0)).toBe(true);
   binder.dispose();
+});
+
+test("pointer-up sends its final pixel sample once through onEnd before the model transaction ends", () => {
+  const config = structuredClone(DEFAULT_PROJECTION_CONFIG);
+  config.outputs.left.warp.baseline = { type: "identity", width: 1920, height: 1080, origin: "top-left" };
+  const editor = createWarpEditor({ config, output: "left" });
+  editor.select(gridSelection("point", 24));
+  const initial = editor.getConfig();
+  const handles = editor.getControlPoints();
+  const start = handles[24];
+  const f = fixture({ handles, selection: editor.getState().selection, rows: 7, columns: 7, rect: { left: 0, top: 0, width: 1920, height: 1080 }, viewBox: { x: 0, y: 0, width: 1920, height: 1080 } });
+  f.geometry.side = "left";
+  const endSamples = [];
+  f.binder.dispose();
+  const binder = bindWarpPointerInput({ surface: f.surface, readGeometry: () => f.geometry,
+    onStart: editor.pointerStart, onMove: editor.pointerMove,
+    onEnd(sample) { endSamples.push(sample); editor.pointerMove(sample); return editor.pointerEnd(); },
+    onCancel: editor.pointerCancel });
+  const clientX = start.x * 1920;
+  const clientY = start.y * 1080;
+  f.fire("pointerdown", { clientX, clientY });
+  f.fire("pointerup", { clientX: clientX + 10, clientY: clientY + 5 });
+  expect(f.calls.move).not.toHaveBeenCalled();
+  expect(endSamples).toHaveLength(1);
+  expect(endSamples[0]).toMatchObject({ x: start.x * 1920 + 10, y: start.y * 1080 + 5, output: "left" });
+  const final = editor.getConfig().outputs.left.warp.grid.offsets[24];
+  expect(final[0]).toBeCloseTo(initial.outputs.left.warp.grid.offsets[24][0] + 10 / 1920);
+  expect(final[1]).toBeCloseTo(initial.outputs.left.warp.grid.offsets[24][1] + 5 / 1080);
+  expect(editor.getState().historyDepth).toBe(1);
+  binder.dispose();
+});
+
+test("warp editor reuses derived control points until accepted geometry changes", () => {
+  const editor = createWarpEditor({ config: structuredClone(DEFAULT_PROJECTION_CONFIG), output: "left" });
+  editor.setMode("grid");
+  const initial = editor.getControlPoints();
+  expect(editor.getControlPoints()).toBe(initial);
+  editor.select(gridSelection("point", 8));
+  expect(editor.getControlPoints()).toBe(initial);
+  expect(Object.isFrozen(initial)).toBe(true);
+  expect(Object.isFrozen(initial[8])).toBe(true);
+  expect(editor.nudge("right", { fine: true })).toBe(true);
+  const moved = editor.getControlPoints();
+  expect(moved).not.toBe(initial);
+  expect(moved[8].x).not.toBe(initial[8].x);
+  const foreign = editor.getConfig();
+  foreign.outputs.left.warp.grid.offsets[8][0] += 0.02;
+  expect(editor.setConfig(foreign, { rebase: true })).toBe(true);
+  const replaced = editor.getControlPoints();
+  expect(replaced).not.toBe(moved);
+  expect(replaced[8].x).toBeCloseTo(moved[8].x + 0.02);
+  const customKnots = editor.getConfig();
+  customKnots.outputs.left.warp.grid.columnPositions = Array.from({ length: 7 }, (_, index) => index / 6);
+  customKnots.outputs.left.warp.grid.columnPositions[1] = 0.12;
+  expect(editor.setConfig(customKnots, { rebase: true })).toBe(true);
+  const reknotted = editor.getControlPoints();
+  expect(reknotted).not.toBe(replaced);
+  expect(reknotted[1].s).toBe(0.12);
+
+  const tdConfig = structuredClone(DEFAULT_PROJECTION_CONFIG);
+  tdConfig.outputs.right.warp.baseline = { type: "tdMesh", assetId: "captured", sha256: "b".repeat(64), width: 1920, height: 1080, origin: "top-left" };
+  const tdEditor = createWarpEditor({ config: tdConfig, output: "right" });
+  tdEditor.setMode("grid");
+  const unavailable = tdEditor.getControlPoints();
+  expect(unavailable).toEqual([]);
+  tdEditor.setBaselineMesh(createIdentityProjectionMesh({ side: "right" }));
+  const ready = tdEditor.getControlPoints();
+  expect(ready).not.toBe(unavailable);
+  expect(ready).toHaveLength(56);
+  tdEditor.setBaselineMesh(createIdentityProjectionMesh({ side: "right" }));
+  expect(tdEditor.getControlPoints()).not.toBe(ready);
 });
 
 test("grid drag uses the imported TD baseline geometry and creates one undo entry", () => {

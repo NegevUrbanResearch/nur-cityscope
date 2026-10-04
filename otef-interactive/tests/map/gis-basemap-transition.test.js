@@ -268,7 +268,7 @@ describe("transitionGisBasemap", () => {
   });
 
   test("publishes the fade and source-wait budgets", () => {
-    expect(GIS_BASEMAP_FADE_MS).toBe(600);
+    expect(GIS_BASEMAP_FADE_MS).toBe(400);
     expect(GIS_BASEMAP_SOURCE_WAIT_MS).toBe(2000);
   });
 

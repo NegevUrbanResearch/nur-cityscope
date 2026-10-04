@@ -46,6 +46,28 @@ test("calibrated preview draw waits for the matching MapLibre render event", asy
   expect(map.off).toHaveBeenCalledWith("render", expect.any(Function));
 });
 
+test("bounded preview draw times out without a render and removes all listeners", async () => {
+  vi.useFakeTimers();
+  const listeners = new Map();
+  const map = {
+    on: vi.fn((type, listener) => { listeners.set(type, listener); }),
+    off: vi.fn((type) => listeners.delete(type)),
+    triggerRepaint: vi.fn(),
+  };
+  const signal = new AbortController().signal;
+  const removeAbort = vi.spyOn(signal, "removeEventListener");
+  const completion = drawAfterMapRender(map, vi.fn(), { signal, timeoutMs: 15000 });
+  await Promise.resolve();
+  expect(listeners.size).toBe(2);
+  vi.advanceTimersByTime(15000);
+  await expect(completion).rejects.toMatchObject({ code: "projection_draw_timeout" });
+  expect(listeners.size).toBe(0);
+  expect(map.off).toHaveBeenCalledWith("render", expect.any(Function));
+  expect(map.off).toHaveBeenCalledWith("error", expect.any(Function));
+  expect(removeAbort).toHaveBeenCalledWith("abort", expect.any(Function));
+  vi.useRealTimers();
+});
+
 test("image readiness publishes a generation and requests repaint after decode", async () => {
   let resolveDecode;
   const listeners = new Map();

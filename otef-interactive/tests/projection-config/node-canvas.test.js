@@ -1,7 +1,7 @@
 import { expect, test, vi } from "vitest";
 import { createNodeCanvas, fitTransform, layoutNodePositions, zoomAt } from "../../frontend/src/projection-config/node-canvas.js";
 
-const ids = ["content", "names-wall", "settlement-names", "clock-gis", "clock-projection", "pre", "left-crop", "right-crop", "left-fit", "right-fit", "left-keystone", "right-keystone", "left-grid", "right-grid", "left-output", "right-output"];
+const ids = ["content", "names-wall", "settlement-names", "clock-gis", "nova-explainers", "clock-projection", "pre", "left-crop", "right-crop", "left-fit", "right-fit", "left-keystone", "right-keystone", "left-grid", "right-grid", "left-output", "right-output"];
 
 test("node layout separates every card and fit shows the complete graph", () => {
   const sizes = Object.fromEntries(ids.map((id) => [id, { width: 330, height: id.includes("crop") ? 430 : 300 }]));
@@ -19,6 +19,17 @@ test("node layout separates every card and fit shows the complete graph", () => 
   expect(fitted.y).toBeGreaterThanOrEqual(0);
   expect(fitted.x + bounds.width * fitted.scale).toBeLessThanOrEqual(900);
   expect(fitted.y + bounds.height * fitted.scale).toBeLessThanOrEqual(560);
+});
+
+test("compact fit stays positive for small but nonzero viewports", () => {
+  const { bounds } = layoutNodePositions(Object.fromEntries(ids.map((id) => [id, { width: 330, height: 300 }])));
+  const phone = fitTransform(bounds, { width: 375, height: 220 });
+  expect(phone.scale).toBeGreaterThan(0);
+  expect(phone.scale).toBeLessThanOrEqual(1);
+  const tiny = fitTransform(bounds, { width: 20, height: 30 });
+  expect(tiny.scale).toBeGreaterThan(0);
+  expect(Number.isFinite(tiny.x)).toBe(true);
+  expect(Number.isFinite(tiny.y)).toBe(true);
 });
 
 test("Names wall sits beside Content without joining the transform path", () => {

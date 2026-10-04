@@ -2,6 +2,8 @@ import { describe, expect, test, vi } from "vitest";
 import { DEFAULT_PROJECTION_CONFIG as DEFAULTS } from "../../frontend/src/shared/projection-config-schema.js";
 import { projectionPlacementInputIdentity } from "../../frontend/src/projection/projection-names-run.js";
 import { createProjectionConfigClient } from "../../frontend/src/shared/projection-config-client.js";
+import * as configView from "../../frontend/src/projection-config/config-view.js";
+import * as warpGeometry from "../../frontend/src/shared/projection-warp-geometry.js";
 import { createIdentityProjectionMesh } from "../../frontend/src/shared/projection-warp-geometry.js";
 import { sha256Hex } from "../../frontend/src/shared/sha256-hex.js";
 import { projectionCatalog, deferred, response } from '../fixtures/projection-catalog.js';
@@ -17,6 +19,33 @@ import {
 } from "../../frontend/src/projection-config/config-controller.js";
 
 const clone = (value) => JSON.parse(JSON.stringify(value));
+
+test('visible preset commands save the loaded preset while a different candidate is selected', async () => {
+  const previousDocument = globalThis.document;
+  globalThis.document = documentStub();
+  const root = element('main');
+  const client = fakeClient();
+  client.getState().snapshot.presets.push({ id: 'desk', name: 'Desk', config: clone(DEFAULTS) }, { id: 'candidate', name: 'Candidate', config: clone(DEFAULTS) });
+  client.getState().snapshot.selectedPresetId = 'desk';
+  const api = mountProjectionConfig(root, { client });
+  try {
+    const action = name => find(root, node => node.dataset?.action === name);
+    const menuOf = node => { for (; node && !node.dataset?.menu; node = node.parentElement); return node?.dataset.menu; };
+    const presets = find(root, node => node.attributes?.['aria-label'] === 'Preset');
+    presets.value = 'candidate'; presets.dispatch('change');
+    for (const action of ['load', 'save']) {
+      for (let node = find(root, node => node.dataset?.action === action); node; node = node.parentElement) expect(node.tagName).not.toBe('DETAILS');
+    }
+    for (const action of ['revert', 'save-new']) expect(menuOf(find(root, node => node.dataset?.action === action))).toBe('presets');
+    for (const action of ['output-assign', 'output-open-both', 'output-close-both']) expect(menuOf(find(root, node => node.dataset?.action === action))).toBe('displays');
+    action('save').dispatch('click');
+    await vi.waitFor(() => expect(client.save).toHaveBeenCalledWith(expect.objectContaining({ presetId: 'desk', name: 'Desk' })));
+    await api.handleAction('load', 'original');
+    expect(action('save').disabled).toBe(true);
+    action('save-new').dispatch('click');
+    expect(find(root, node => node.className === 'config-save-copy').hidden).toBe(false);
+  } finally { api.dispose(); globalThis.document = previousDocument; }
+});
 
 function element(tag = "div") {
   return {
@@ -34,13 +63,26 @@ function element(tag = "div") {
     dispatch(type, detail = {}) { for (const handler of this.listeners?.[type] || []) handler({ currentTarget: this, target: this, ...detail }); },
     querySelectorAll() { return []; },
     querySelector() { return null; },
-    classList: { toggle() {} },
+    classList: { toggle() {}, add() {} },
+    focus() {},
   };
 }
 
 function documentStub({ coarse = false, noHover = false } = {}) {
   return {
     activeElement: null,
+    listeners: {},
+    captureListeners: {},
+    addEventListener(type, handler, options) { const target = options === true || options?.capture ? this.captureListeners : this.listeners; (target[type] ||= []).push(handler); },
+    removeEventListener(type, handler) { this.listeners[type] = (this.listeners[type] || []).filter((item) => item !== handler); this.captureListeners[type] = (this.captureListeners[type] || []).filter((item) => item !== handler); },
+    dispatch(type, event = {}) { for (const handler of this.listeners[type] || []) handler(event); },
+    dispatchFromTarget(target, type, event) {
+      event.target ||= target; event.type = type;
+      for (const handler of this.captureListeners[type] || []) { handler(event); if (event.immediateStopped) return; }
+      for (const handler of target.listeners?.[type] || []) { handler(event); if (event.immediateStopped) return; }
+      if (event.propagationStopped) return;
+      for (const handler of this.listeners[type] || []) { handler(event); if (event.immediateStopped || event.propagationStopped) return; }
+    },
     defaultView: { matchMedia: (query) => ({ matches: query.includes("pointer: coarse") ? coarse : query.includes("hover: none") ? noHover : false, addEventListener() {}, removeEventListener() {} }) },
     createElement: element,
     createElementNS: (_namespace, tag) => element(tag),
@@ -53,11 +95,57 @@ function find(root, predicate) {
   return null;
 }
 
+// Save copy now requires an explicit name confirmation before the existing action.
+function clickCommand(root, action) {
+  find(root, node => node.dataset?.action === action).dispatch('click');
+  if (action === 'save-new') find(root, node => node.dataset?.action === 'save-copy-confirm').dispatch('click');
+}
+
+test('Back commits a valid pending scalar edit and closes the active panel once', () => {
+  const previousDocument = globalThis.document;
+  const doc = documentStub(); globalThis.document = doc;
+  const root = element('main'); root.ownerDocument = doc;
+  const client = fakeClient();
+  const api = mountProjectionConfig(root, { client });
+  try {
+    find(root, node => node.className === 'config-enlarge-edit').dispatch('click');
+    const editor = find(root, node => node.className === 'parameter-editor-dialog');
+    const scale = find(editor, node => node.attributes?.['aria-label'] === 'Scale' && node.tagName === 'INPUT');
+    scale.value = '1.3'; scale.dispatch('input');
+    find(root, node => node.dataset?.action === 'parameter-editor-close').dispatch('click');
+    expect(client.getState().draft.pre.scale).toBe(1.3);
+    expect(editor.hidden).toBe(true);
+    expect(find(root, node => node.className === 'config-workspace').dataset.editing).toBe('false');
+  } finally { api.dispose(); globalThis.document = previousDocument; }
+});
+
+test('Import keeps its explicit save name while subsequent copy edits stay separate', async () => {
+  const root = element('main'); root.ownerDocument = documentStub(); const client = fakeClient();
+  client.getState().snapshot.presets.push({ id: 'desk', name: 'Desk', config: clone(DEFAULTS) });
+  client.getState().snapshot.selectedPresetId = 'desk';
+  const imported = clone(DEFAULTS); imported.pre.tx = 0.012;
+  const api = mountProjectionConfig(root, { client, onImport: async () => ({ name: 'Imported desk', config: imported }) });
+  const action = name => find(root, node => node.dataset?.action === name);
+  try {
+    await api.handleAction('import', {});
+    const input = find(root, node => node.attributes?.['aria-label'] === 'Preset name');
+    expect(input.value).toBe('Imported desk');
+    action('save-new').dispatch('click'); input.value = ''; input.dispatch('input'); action('save-copy-cancel').dispatch('click');
+    action('save').dispatch('click');
+    await vi.waitFor(() => expect(client.save).toHaveBeenCalledWith({ presetId: 'desk', name: 'Imported desk' }));
+    expect(client.savedDrafts).toEqual([imported]);
+    action('save-new').dispatch('click'); input.value = 'Imported copy'; input.dispatch('input'); action('save-copy-confirm').dispatch('click');
+    await vi.waitFor(() => expect(client.save).toHaveBeenLastCalledWith({ presetId: null, name: 'Imported copy' }));
+    await api.handleAction('load', 'desk');
+    action('save').dispatch('click');
+    await vi.waitFor(() => expect(client.save).toHaveBeenLastCalledWith({ presetId: 'desk', name: 'Imported desk' }));
+  } finally { api.dispose(); }
+});
 function fakeClient(initialSnapshot) {
   let state = { snapshot: { revision: 2, config: clone(DEFAULTS), presets: [{ id: "original", name: "Original calibration", config: clone(DEFAULTS), readOnly: true }], selectedPresetId: "original" }, draft: clone(DEFAULTS), live: true, connected: true, pending: false, hasLocalDraft: false };
   const listeners = new Set();
   const savedDrafts = [];
-  const notify = () => listeners.forEach((listener) => listener({ ...state, snapshot: clone(state.snapshot), draft: clone(state.draft) }));
+  const notify = (receipt) => listeners.forEach((listener) => listener({ ...state, snapshot: clone(state.snapshot), draft: clone(state.draft) }, receipt));
   if (initialSnapshot === null) state = { ...state, snapshot: null, draft: null };
   let validateCandidate;
   return {
@@ -66,10 +154,12 @@ function fakeClient(initialSnapshot) {
     setValidateCandidate(handler) { validateCandidate = handler; },
     validateCandidate(args) { return validateCandidate(args); },
     hydrate(snapshot) { state = { ...state, snapshot: clone(snapshot), draft: clone(snapshot.config) }; notify(); },
-    report(changes) { state = { ...state, ...changes }; notify(); },
+    report(changes, receipt) { state = { ...state, ...changes }; notify(receipt); },
     subscribe(listener) { listeners.add(listener); listener(state); return () => listeners.delete(listener); },
     start: vi.fn(async () => state), stop: vi.fn(),
     retryHydration: vi.fn(async () => state),
+    retryReconciliation: vi.fn(async () => state),
+    resolveReconciliation: vi.fn((choice) => { state = { ...state, reconciliation: null, live: false, ...(choice === "use-accepted" ? { draft: clone(state.snapshot.config), hasLocalDraft: false } : {}) }; notify(); return state; }),
     setDraft: vi.fn((draft) => { state = { ...state, draft: clone(draft), hasLocalDraft: true }; notify(); }),
     setLive: vi.fn((live) => { state = { ...state, live: Boolean(live) }; notify(); }),
     apply: vi.fn(async () => state),
@@ -87,7 +177,7 @@ function fakeClient(initialSnapshot) {
   };
 }
 
-function tracedWarpHarness() {
+function tracedWarpHarness({ candidateValidator } = {}) {
   const previousDocument = globalThis.document;
   globalThis.document = documentStub();
   const root = element("main");
@@ -98,15 +188,450 @@ function tracedWarpHarness() {
     getStatus: () => ({ recording: false, connected: false, acknowledged: 0, queued: 0, pending: 0, dropped: 0 }),
     subscribe: () => () => {},
   };
-  const api = mountProjectionConfig(root, { client, trace });
+  const api = mountProjectionConfig(root, { client, trace, candidateValidator });
   client.setLive(false);
   find(root, (node) => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-keystone").dispatch("click");
   const surface = find(root, (node) => node.attributes?.class === "warp-edit-surface");
   surface.getBoundingClientRect = () => ({ left: 0, top: 0, width: 2064, height: 1224 });
   const redraws = () => trace.record.mock.calls.filter(([kind, detail]) => kind === "redraw" && detail.surface === "page" && detail.phase === "start").length;
   const restore = () => { api.dispose(); globalThis.document = previousDocument; };
-  return { root, client, trace, surface, redraws, restore };
+  return { root, client, trace, surface, redraws, api, restore };
 }
+
+test("mounted controller reuses unchanged TD geometry publications and rebases an identical foreign replacement", async () => {
+  const previousDocument = globalThis.document;
+  globalThis.document = documentStub();
+  const config = clone(DEFAULTS);
+  for (const output of ["left", "right"]) {
+    config.outputs[output].warp.baseline = { type: "tdMesh", assetId: `${output}-capture`, sha256: "a".repeat(64), width: 1920, height: 1080, origin: "top-left" };
+  }
+  const meshes = {
+    left: createIdentityProjectionMesh({ side: "left" }),
+    right: createIdentityProjectionMesh({ side: "right" }),
+  };
+  const replacementLoad = deferred();
+  const replacementMeshes = {
+    left: createIdentityProjectionMesh({ side: "left" }),
+    right: createIdentityProjectionMesh({ side: "right" }),
+  };
+  let prepareCount = 0;
+  const client = fakeClient();
+  client.report({ draft: clone(config), hasLocalDraft: true });
+  const updates = [];
+  const actualCreate = configView.createProjectionConfigView;
+  const viewSpy = vi.spyOn(configView, "createProjectionConfigView").mockImplementation((root, options) => {
+    const view = actualCreate(root, options);
+    const actualUpdate = view.update;
+    view.update = (state) => { updates.push(state.warpStates); actualUpdate(state); };
+    return view;
+  });
+  const evaluateSpy = vi.spyOn(warpGeometry, "evaluateWarpMesh");
+  const root = element("main"); root.ownerDocument = globalThis.document;
+  const api = mountProjectionConfig(root, {
+    client,
+    readNamesDataset: async () => null,
+    baselineCatalogLoader: { prepare: async () => {
+      prepareCount += 1;
+      if (prepareCount === 1) return { snapshot: {}, loaded: { left: { mesh: meshes.left }, right: { mesh: meshes.right } } };
+      return replacementLoad.promise;
+    }, promote() {} },
+    candidateValidator: { validate: () => ({ valid: true }), dispose() {} },
+  });
+  try {
+    await vi.waitFor(() => expect(updates.at(-1)?.left.baselineAvailable).toBe(true));
+    const before = updates.at(-1);
+    const callsBefore = evaluateSpy.mock.calls.length;
+    for (let index = 0; index < 100; index += 1) {
+      client.report({ draft: clone(config), snapshot: clone(client.getState().snapshot), hasLocalDraft: true });
+    }
+    const afterUnchanged = updates.at(-1);
+    expect(evaluateSpy).toHaveBeenCalledTimes(callsBefore);
+    expect(afterUnchanged.left.handles).toBe(before.left.handles);
+    expect(afterUnchanged.right.handles).toBe(before.right.handles);
+
+    const foreignSnapshot = clone(client.getState().snapshot);
+    foreignSnapshot.revision += 1;
+    foreignSnapshot.config = clone(config);
+    const callsBeforeForeign = evaluateSpy.mock.calls.length;
+    client.report({ draft: clone(config), snapshot: foreignSnapshot, hasLocalDraft: false }, { foreign: true });
+    const afterForeign = updates.at(-1);
+    expect(evaluateSpy.mock.calls.length).toBeGreaterThan(callsBeforeForeign);
+    expect(afterForeign.left.handles).not.toBe(afterUnchanged.left.handles);
+    expect(afterForeign.right.handles).not.toBe(afterUnchanged.right.handles);
+
+    const replacementConfig = clone(config);
+    replacementConfig.outputs.left.warp.baseline.assetId = "left-capture-replaced";
+    replacementConfig.outputs.left.warp.baseline.sha256 = "b".repeat(64);
+    client.report({ draft: replacementConfig, hasLocalDraft: true });
+    expect(prepareCount).toBe(2);
+    expect(updates.at(-1).left.baselineAvailable).toBe(false);
+    expect(updates.at(-1).left.baselineMesh).toBeNull();
+    const beforeReplacement = updates.at(-1).left.handles;
+    replacementLoad.resolve({ snapshot: {}, loaded: { left: { mesh: replacementMeshes.left }, right: { mesh: replacementMeshes.right } } });
+    await vi.waitFor(() => expect(updates.at(-1)?.left.baselineAvailable).toBe(true));
+    const afterReplacement = updates.at(-1).left;
+    expect(afterReplacement.baselineMesh).toBe(replacementMeshes.left);
+    expect(afterReplacement.handles).not.toBe(beforeReplacement);
+  } finally {
+    api.dispose();
+    evaluateSpy.mockRestore();
+    viewSpy.mockRestore();
+    globalThis.document = previousDocument;
+  }
+});
+
+test("mounted public warp editors paint a ready target before Edit or Enlarge returns", async () => {
+  const previousDocument = globalThis.document;
+  const makeFrameDocument = () => {
+    const doc = documentStub();
+    const frames = new Map();
+    let nextFrameId = 0;
+    doc.defaultView.requestAnimationFrame = (callback) => { const id = ++nextFrameId; frames.set(id, callback); return id; };
+    doc.defaultView.cancelAnimationFrame = (id) => frames.delete(id);
+    const flushFrames = () => {
+      while (frames.size) {
+        const pending = [...frames.values()]; frames.clear();
+        pending.forEach((callback) => callback());
+      }
+    };
+    return { doc, frames, flushFrames };
+  };
+  const config = clone(DEFAULTS);
+  for (const output of ["left", "right"]) {
+    config.outputs[output].warp.baseline = { type: "tdMesh", assetId: `${output}-capture`, sha256: "a".repeat(64), width: 1920, height: 1080, origin: "top-left" };
+  }
+  const meshes = { left: createIdentityProjectionMesh({ side: "left" }), right: createIdentityProjectionMesh({ side: "right" }) };
+  const client = fakeClient();
+  client.report({ draft: clone(config), hasLocalDraft: true });
+  const updates = [];
+  const actualCreate = configView.createProjectionConfigView;
+  const viewSpy = vi.spyOn(configView, "createProjectionConfigView").mockImplementation((root, options) => {
+    const view = actualCreate(root, options);
+    const actualUpdate = view.update;
+    view.update = (state) => { updates.push(state.warpStates); actualUpdate(state); };
+    return view;
+  });
+  const baselineCatalogLoader = { prepare: async () => ({ snapshot: {}, loaded: { left: { mesh: meshes.left }, right: { mesh: meshes.right } } }), promote() {} };
+  const mount = (frameDoc) => {
+    globalThis.document = frameDoc.doc;
+    const root = element("main"); root.ownerDocument = frameDoc.doc;
+    const api = mountProjectionConfig(root, { client, baselineCatalogLoader, candidateValidator: { validate: () => ({ valid: true }), dispose() {} } });
+    return { root, api };
+  };
+  const handleCount = (root) => find(root, (node) => node.attributes?.class === "warp-edit-surface")?.children
+    .filter((node) => node.attributes?.class?.includes("warp-handle")).length || 0;
+  try {
+    const firstFrameDoc = makeFrameDocument();
+    const first = mount(firstFrameDoc);
+    await vi.waitFor(() => expect(updates.at(-1)?.left.baselineAvailable).toBe(true));
+    firstFrameDoc.flushFrames();
+    first.api.dispose();
+
+    const frameDoc = makeFrameDocument();
+    const remounted = mount(frameDoc);
+    const updateStart = updates.length;
+    await vi.waitFor(() => expect(updates.slice(updateStart).at(-1)?.left.baselineAvailable).toBe(true));
+    frameDoc.flushFrames();
+
+    const edit = (nodeId) => {
+      find(remounted.root, (node) => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === nodeId).dispatch("click");
+      const expected = nodeId.startsWith("right-") ? nodeId.endsWith("-grid") ? 56 : 4 : nodeId.endsWith("-grid") ? 49 : 4;
+      expect(handleCount(remounted.root)).toBe(expected);
+      expect(find(remounted.root, (node) => node.attributes?.class === "warp-edit-surface").attributes.viewBox).toMatch(/^-?\d/);
+      expect(frameDoc.frames.size).toBe(0);
+      find(remounted.root, (node) => node.dataset?.action === "warp-editor-close").dispatch("click");
+    };
+
+    // The first public target is the same left-grid target that failed on remount in the frozen run.
+    edit("left-grid");
+    for (const nodeId of ["left-keystone", "right-keystone", "right-grid", "left-grid"]) edit(nodeId);
+
+    // Enlarge uses the selected right-grid target and must expose its active handles synchronously too.
+    find(remounted.root, (node) => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "right-grid").dispatch("click");
+    const rightGridSurface = find(remounted.root, (node) => node.attributes?.class === "warp-edit-surface");
+    const originalHandleX = rightGridSurface.children.find((node) => node.attributes?.["data-index"] === "0").attributes.cx;
+    expect(find(remounted.root, (node) => node.className === "warp-selection-picker").children.length).toBeGreaterThan(0);
+    find(remounted.root, (node) => node.dataset?.action === "warp-editor-close").dispatch("click");
+    find(remounted.root, (node) => node.dataset?.action === "warp-nudge" && node.dataset?.direction === "right").dispatch("click");
+    expect(frameDoc.frames.size).toBe(1);
+    const supersededFrame = frameDoc.frames.values().next().value;
+    find(remounted.root, (node) => node.className === "config-enlarge-edit").dispatch("click");
+    expect(handleCount(remounted.root)).toBe(56);
+    expect(frameDoc.frames.size).toBe(0);
+    const updatedHandle = rightGridSurface.children.find((node) => node.attributes?.["data-index"] === "0");
+    expect(updatedHandle.attributes.cx).not.toBe(originalHandleX);
+    supersededFrame();
+    expect(updatedHandle.attributes.cx).not.toBe(originalHandleX);
+    remounted.api.dispose();
+  } finally {
+    viewSpy.mockRestore();
+    globalThis.document = previousDocument;
+  }
+});
+
+test("relative pad start disables presentation toggle and blocks consuming commands before movement", async () => {
+  const { root, client, api, restore } = tracedWarpHarness();
+  await api.handleAction("warp-nudge", { direction: "right", fine: true, output: "left" });
+  const pad = find(root, (node) => node.className === "warp-relative-pad");
+  const toggle = find(root, (node) => node.dataset?.action === "warp-full-viewport");
+  pad.getBoundingClientRect = () => ({ left: 0, top: 0, width: 200, height: 200 });
+  pad.dispatch("pointerdown", { pointerId: 29, button: 0, clientX: 100, clientY: 100, preventDefault() {} });
+  expect(toggle.disabled).toBe(true);
+  expect(find(root, (node) => node.dataset?.action === "warp-undo").disabled).toBe(true);
+  expect(find(root, (node) => node.dataset?.action === "warp-redo").disabled).toBe(true);
+  expect(await api.handleAction("apply")).toBe(false);
+  expect(client.apply).not.toHaveBeenCalled();
+  const fullViewport = root.dataset?.warpFullViewport;
+  toggle.dispatch("click");
+  expect(root.dataset?.warpFullViewport).toBe(fullViewport);
+  expect(client.setDraft).not.toHaveBeenCalled();
+  restore();
+});
+
+test("uncertain-write recovery stays visible and reachable in the focused warp editor", async () => {
+  const previousDocument = globalThis.document;
+  globalThis.document = documentStub();
+  const root = element("main");
+  const client = fakeClient();
+  client.report({ live: false, reconciliation: { status: "needs-choice", message: "Choose which settings to keep." } });
+  const api = mountProjectionConfig(root, { client });
+  try {
+    const closedEditorRecovery = find(root, (node) => node.className === "warp-editor-reconciliation");
+    expect(closedEditorRecovery.hidden).toBe(false);
+    find(root, (node) => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-keystone").dispatch("click");
+    const panel = find(root, (node) => node.className === "warp-editor-reconciliation");
+    expect(panel).toBe(closedEditorRecovery);
+    expect(panel.hidden).toBe(false);
+    const message = find(panel, (node) => node.className === "warp-editor-reconciliation-message");
+    expect(message.textContent).toContain("Current revision: 2");
+    expect(message.textContent).toContain("Live is off");
+    const fullscreen = find(root, (node) => node.dataset?.action === "warp-full-viewport");
+    fullscreen.dispatch("click");
+    expect(root.dataset.warpFullViewport).toBe("true");
+    expect(find(root, (node) => node.className === "warp-editor-reconciliation")).toBe(panel);
+    expect(find(panel, (node) => node.dataset?.action === "reconciliation-keep-local").hidden).toBe(false);
+    find(panel, (node) => node.dataset?.action === "reconciliation-keep-local").dispatch("click");
+    await vi.waitFor(() => expect(client.resolveReconciliation).toHaveBeenCalledWith("keep-local"));
+    expect(find(root, (node) => node.attributes?.["aria-label"] === "Editor Live").checked).toBe(false);
+    find(root, (node) => node.dataset?.action === "warp-editor-close").dispatch("click");
+    client.report({ reconciliation: { status: "read-error", message: "Accepted settings check failed." } });
+    const closedRecovery = find(root, (node) => node.className === "warp-editor-reconciliation");
+    expect(closedRecovery.hidden).toBe(false);
+    const retry = find(closedRecovery, (node) => node.dataset?.action === "reconciliation-retry");
+    expect(retry.hidden).toBe(false);
+    retry.dispatch("click");
+    await vi.waitFor(() => expect(client.retryReconciliation).toHaveBeenCalledOnce());
+  } finally { api.dispose(); globalThis.document = previousDocument; }
+});
+
+test("reconciliation retry rejection is shown through the controller action error boundary", async () => {
+  const previousDocument = globalThis.document;
+  globalThis.document = documentStub();
+  const root = element("main");
+  const client = fakeClient();
+  client.report({ reconciliation: { status: "read-error", message: "Accepted settings check failed." } });
+  client.retryReconciliation.mockRejectedValueOnce(new Error("reconciliation retry unavailable"));
+  const api = mountProjectionConfig(root, { client });
+  try {
+    await expect(api.handleAction("reconciliation-retry")).resolves.toBeUndefined();
+    expect(find(root, (node) => node.className === "action-error").textContent).toContain("reconciliation retry unavailable");
+    expect(find(root, (node) => node.dataset?.action === "reconciliation-retry").hidden).toBe(false);
+  } finally { api.dispose(); globalThis.document = previousDocument; }
+});
+
+test("focused recovery Retry rejection is visible in the active editor recovery surface", async () => {
+  const previousDocument = globalThis.document; globalThis.document = documentStub();
+  const root = element("main"); const client = fakeClient();
+  client.report({ reconciliation: { status: "read-error", message: "Accepted settings check failed." } });
+  client.retryReconciliation.mockRejectedValueOnce(new Error("reconciliation retry unavailable"));
+  const api = mountProjectionConfig(root, { client });
+  try {
+    find(root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+    find(root, node => node.dataset?.action === "warp-full-viewport").dispatch("click");
+    await api.handleAction("reconciliation-retry");
+    const contextualError = find(root, node => node.className === "projection-optional-health-action-error");
+    expect(contextualError.hidden).toBe(false);
+    expect(contextualError.textContent).toContain("reconciliation retry unavailable");
+    expect(find(root, node => node.className === "action-error").textContent).toContain("reconciliation retry unavailable");
+    expect(find(root, node => node.dataset?.action === "reconciliation-retry").hidden).toBe(false);
+  } finally { api.dispose(); globalThis.document = previousDocument; }
+});
+
+test("Back cancels a relative-pad gesture before hiding its workspace", () => {
+  const { root, client, restore } = tracedWarpHarness();
+  const pad = find(root, (node) => node.className === "warp-relative-pad");
+  const back = find(root, (node) => node.dataset?.action === "warp-editor-close");
+  pad.getBoundingClientRect = () => ({ left: 0, top: 0, width: 200, height: 200 });
+  pad.dispatch("pointerdown", { pointerId: 30, button: 0, clientX: 100, clientY: 100, preventDefault() {} });
+  pad.dispatch("pointermove", { pointerId: 30, clientX: 110, clientY: 100 });
+  expect(client.getState().draft.outputs.left.warp.keystone.corners[0][0]).not.toBe(0);
+  back.dispatch("click");
+  expect(find(root, (node) => node.className === "warp-editor-dialog").hidden).toBe(false);
+  expect(client.getState().draft.outputs.left.warp.keystone.corners[0][0]).not.toBe(0);
+  pad.dispatch("lostpointercapture", { pointerId: 30 });
+  expect(client.getState().draft.outputs.left.warp.keystone.corners[0][0]).toBe(0);
+  back.dispatch("click");
+  expect(find(root, (node) => node.className === "warp-editor-dialog").hidden).toBe(true);
+  expect(find(root, (node) => node.className === "warp-editor-dialog").dataset.fullViewport).toBe("false");
+  expect(client.getState().draft.outputs.left.warp.keystone.corners[0][0]).toBe(0);
+  restore();
+});
+
+test("Escape cancels a relative-pad gesture first and a second Escape closes", () => {
+  const { root, client, restore } = tracedWarpHarness();
+  const pad = find(root, (node) => node.className === "warp-relative-pad");
+  const dialog = find(root, (node) => node.className === "warp-editor-dialog");
+  pad.getBoundingClientRect = () => ({ left: 0, top: 0, width: 200, height: 200 });
+  pad.dispatch("pointerdown", { pointerId: 32, button: 0, clientX: 100, clientY: 100, preventDefault() {} });
+  pad.dispatch("pointermove", { pointerId: 32, clientX: 110, clientY: 100 });
+  const dispatchEscape = () => {
+    const event = { key: "Escape", target: pad, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; }, stopImmediatePropagation() { this.immediateStopped = true; } };
+    for (const handler of globalThis.document.listeners.keydown || []) { handler(event); if (event.immediateStopped) break; }
+  };
+  dispatchEscape();
+  expect(dialog.hidden).toBe(false);
+  expect(client.getState().draft.outputs.left.warp.keystone.corners[0][0]).toBe(0);
+  dispatchEscape();
+  expect(dialog.hidden).toBe(true);
+  restore();
+});
+
+test("accepted foreign replacement retires a held nudge without rolling back to its capture", () => {
+  const previousDocument = globalThis.document;
+  globalThis.document = documentStub();
+  vi.useFakeTimers();
+  const root = element("main"); const client = fakeClient(); const api = mountProjectionConfig(root, { client });
+  try {
+    client.setLive(false);
+    find(root, (node) => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-keystone").dispatch("click");
+    const right = find(root, (node) => node.dataset?.action === "warp-nudge" && node.dataset?.direction === "right");
+    client.setDraft.mockClear();
+    right.dispatch("pointerdown", { pointerId: 41, button: 0, preventDefault() {} });
+    vi.advanceTimersByTime(375);
+    expect(client.setDraft).toHaveBeenCalledTimes(1);
+    const foreign = clone(client.getState().draft);
+    foreign.outputs.left.warp.keystone.corners[0] = [0.02, 0.03];
+    const writesAtAcceptance = client.setDraft.mock.calls.length;
+    client.report({ draft: foreign, hasLocalDraft: false });
+    expect(client.setDraft).toHaveBeenCalledTimes(writesAtAcceptance);
+    expect(client.getState().draft.outputs.left.warp.keystone.corners[0]).toEqual([0.02, 0.03]);
+    expect(client.getState().hasLocalDraft).toBe(false);
+    expect(Number(find(root, (node) => node.dataset?.field === "warp.position.x" && node.dataset?.input === "number").value)).toBeCloseTo(0.02 * 1920);
+    expect(find(root, (node) => node.className === "warp-relative-pad").disabled).toBe(false);
+    expect(find(root, (node) => node.dataset?.action === "warp-undo").disabled).toBe(true);
+    expect(client.apply).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(225);
+    right.dispatch("pointerup", { pointerId: 41 });
+    expect(client.setDraft).toHaveBeenCalledTimes(writesAtAcceptance);
+    expect(client.getState().draft.outputs.left.warp.keystone.corners[0]).toEqual([0.02, 0.03]);
+    expect(client.getState().hasLocalDraft).toBe(false);
+  } finally { api.dispose(); vi.useRealTimers(); globalThis.document = previousDocument; }
+});
+
+test("accepted foreign replacement retires a relative pad without restoring its captured geometry", () => {
+  const previousDocument = globalThis.document;
+  globalThis.document = documentStub();
+  const root = element("main"); const client = fakeClient(); const api = mountProjectionConfig(root, { client });
+  try {
+    client.setLive(false);
+    find(root, (node) => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-keystone").dispatch("click");
+    const pad = find(root, (node) => node.className === "warp-relative-pad");
+    pad.getBoundingClientRect = () => ({ left: 0, top: 0, width: 200, height: 200 });
+    client.setDraft.mockClear();
+    pad.dispatch("pointerdown", { pointerId: 42, button: 0, clientX: 100, clientY: 100, preventDefault() {} });
+    pad.dispatch("pointermove", { pointerId: 42, clientX: 110, clientY: 120 });
+    expect(client.setDraft).toHaveBeenCalledTimes(1);
+    const foreign = clone(client.getState().draft);
+    foreign.outputs.left.warp.keystone.corners[0] = [0.02, 0.03];
+    const writesAtAcceptance = client.setDraft.mock.calls.length;
+    client.report({ draft: foreign, hasLocalDraft: false });
+    expect(client.setDraft).toHaveBeenCalledTimes(writesAtAcceptance);
+    expect(client.getState().draft.outputs.left.warp.keystone.corners[0]).toEqual([0.02, 0.03]);
+    expect(client.getState().hasLocalDraft).toBe(false);
+    expect(Number(find(root, (node) => node.dataset?.field === "warp.position.x" && node.dataset?.input === "number").value)).toBeCloseTo(0.02 * 1920);
+    expect(find(root, (node) => node.className === "warp-relative-pad").disabled).toBe(false);
+    expect(find(root, (node) => node.dataset?.action === "warp-undo").disabled).toBe(true);
+    pad.dispatch("pointerup", { pointerId: 42, clientX: 110, clientY: 120 });
+    expect(client.setDraft).toHaveBeenCalledTimes(writesAtAcceptance);
+    expect(client.getState().draft.outputs.left.warp.keystone.corners[0]).toEqual([0.02, 0.03]);
+    expect(client.getState().hasLocalDraft).toBe(false);
+    expect(client.apply).not.toHaveBeenCalled();
+  } finally { api.dispose(); globalThis.document = previousDocument; }
+});
+
+test("own accepted pad state retains the active gesture and one undo entry", () => {
+  const previousDocument = globalThis.document;
+  globalThis.document = documentStub();
+  const root = element("main"); const client = fakeClient(); const api = mountProjectionConfig(root, { client });
+  try {
+    client.setLive(false);
+    find(root, (node) => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-keystone").dispatch("click");
+    const initial = clone(client.getState().draft.outputs.left.warp);
+    const pad = find(root, (node) => node.className === "warp-relative-pad");
+    pad.getBoundingClientRect = () => ({ left: 0, top: 0, width: 200, height: 200 });
+    pad.dispatch("pointerdown", { pointerId: 43, button: 0, clientX: 100, clientY: 100, preventDefault() {} });
+    pad.dispatch("pointermove", { pointerId: 43, clientX: 110, clientY: 120 });
+    const acceptedOwnState = clone(client.getState().draft);
+    expect(acceptedOwnState.outputs.left.warp).not.toEqual(initial);
+    client.report({ draft: acceptedOwnState, hasLocalDraft: false });
+    expect(find(root, (node) => node.dataset?.action === "warp-undo").disabled).toBe(true);
+    pad.dispatch("pointerup", { pointerId: 43, clientX: 110, clientY: 120 });
+    const moved = clone(client.getState().draft.outputs.left.warp);
+    expect(moved).not.toEqual(initial);
+    const undo = find(root, (node) => node.dataset?.action === "warp-undo");
+    expect(undo.disabled).toBe(false);
+    undo.dispatch("click");
+    expect(client.getState().draft.outputs.left.warp).toEqual(initial);
+    expect(find(root, (node) => node.dataset?.action === "warp-undo").disabled).toBe(true);
+  } finally { api.dispose(); globalThis.document = previousDocument; }
+});
+
+test("pad start immediately disables and re-enables signed warp controls", () => {
+  const previousDocument = globalThis.document;
+  globalThis.document = documentStub();
+  const root = element("main"); const client = fakeClient(); const api = mountProjectionConfig(root, { client });
+  try {
+    client.setLive(false);
+    find(root, (node) => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-keystone").dispatch("click");
+    const warpX = find(root, (node) => node.dataset?.field === "warp.position.x" && node.dataset?.input === "number");
+    const sign = find(warpX.parentElement, (node) => node.dataset?.action === "numeric-sign");
+    const pad = find(root, (node) => node.className === "warp-relative-pad");
+    pad.getBoundingClientRect = () => ({ left: 0, top: 0, width: 200, height: 200 });
+    warpX.dispatch("focus");
+    pad.dispatch("pointerdown", { pointerId: 44, button: 0, clientX: 100, clientY: 100, preventDefault() {} });
+    expect(warpX.disabled).toBe(true);
+    expect(sign.disabled).toBe(true);
+    pad.dispatch("lostpointercapture", { pointerId: 44 });
+    expect(warpX.disabled).toBe(false);
+    expect(sign.disabled).toBe(false);
+  } finally { api.dispose(); globalThis.document = previousDocument; }
+});
+
+test("first Escape during pad adjustment preserves unrelated pending text", () => {
+  const previousDocument = globalThis.document;
+  globalThis.document = documentStub();
+  const root = element("main"); const client = fakeClient(); const api = mountProjectionConfig(root, { client });
+  try {
+    client.setLive(false);
+    find(root, (node) => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-keystone").dispatch("click");
+    const warpX = find(root, (node) => node.dataset?.field === "warp.position.x" && node.dataset?.input === "number");
+    const pad = find(root, (node) => node.className === "warp-relative-pad");
+    pad.getBoundingClientRect = () => ({ left: 0, top: 0, width: 200, height: 200 });
+    const pending = find(root, (node) => node.dataset?.field === "pre.tx" && node.dataset?.input === "number");
+    pending.dispatch("focus"); pending.value = "1.5"; pending.dispatch("input");
+    client.setDraft.mockClear();
+    pad.dispatch("pointerdown", { pointerId: 45, button: 0, clientX: 100, clientY: 100, preventDefault() {} });
+    const escape = { key: "Escape", target: pending, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; }, stopPropagation() { this.propagationStopped = true; }, stopImmediatePropagation() { this.immediateStopped = true; } };
+    globalThis.document.dispatchFromTarget(pending, "keydown", escape);
+    expect(find(root, (node) => node.className === "warp-editor-dialog").hidden).toBe(false);
+    expect(pending.value).toBe("1.5");
+    pad.dispatch("pointermove", { pointerId: 45, clientX: 130, clientY: 130 });
+    expect(client.setDraft).not.toHaveBeenCalled();
+    expect(warpX.disabled).toBe(false);
+    pending.dispatch("keydown", { key: "Escape", preventDefault() {}, stopPropagation() {} });
+    expect(pending.value).not.toBe("1.5");
+  } finally { api.dispose(); globalThis.document = previousDocument; }
+});
 
 test('diagnostic config starts Live off and records receipts without calibration writes', () => {
   const root = element(); root.ownerDocument = documentStub();
@@ -145,6 +670,1099 @@ function replacementHarness() {
 }
 
 describe("projection config controller", () => {
+  test("a left grid candidate is retired when editing moves to the right grid", async () => {
+    const previousDocument = globalThis.document; globalThis.document = documentStub();
+    const root = element("main"); const client = fakeClient(); const checks = [];
+    const api = mountProjectionConfig(root, { client, candidateValidator: { validateCandidate: args => new Promise(resolve => checks.push({ ...args, resolve })), dispose() {} } });
+    try {
+      client.setLive(true);
+      find(root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+      client.setDraft.mockClear(); client.apply.mockClear();
+      const rows = find(root, node => node.dataset?.gridLayoutField === "rows");
+      rows.value = "8"; rows.dispatch("input"); rows.dispatch("change");
+      await vi.waitFor(() => expect(checks).toHaveLength(1));
+      find(root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "right-grid").dispatch("click");
+      checks[0].resolve({ identity: checks[0].identity, valid: true });
+      await new Promise(resolve => setTimeout(resolve, 0));
+      expect(client.getState().draft.outputs.left.warp.grid.rows).toBe(7);
+      expect(client.setDraft).not.toHaveBeenCalled(); expect(client.apply).not.toHaveBeenCalled();
+      expect(find(root, node => node.className === "warp-editor-title").textContent).toContain("Right · Grid Warp");
+      find(root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+      expect(find(root, node => node.dataset?.action === "warp-undo").disabled).toBe(true);
+    } finally { api.dispose(); globalThis.document = previousDocument; }
+  });
+
+  test("a deferred grid candidate cannot revive after accepted warp identity changes away and back", async () => {
+    const previousDocument = globalThis.document; globalThis.document = documentStub();
+    const root = element("main"); const client = fakeClient(); const checks = [];
+    const api = mountProjectionConfig(root, { client, candidateValidator: { validateCandidate: args => new Promise(resolve => checks.push({ ...args, resolve })), dispose() {} } });
+    try {
+      client.setLive(true);
+      find(root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+      client.setDraft.mockClear(); client.apply.mockClear();
+      const rows = find(root, node => node.dataset?.gridLayoutField === "rows");
+      rows.value = "8"; rows.dispatch("input"); rows.dispatch("change");
+      await vi.waitFor(() => expect(checks).toHaveLength(1));
+      const base = clone(client.getState().draft); const changed = clone(base);
+      changed.outputs.left.warp.keystone.corners[0][0] = 0.02;
+      client.report({ draft: changed, hasLocalDraft: true });
+      client.report({ draft: base, hasLocalDraft: true });
+      checks[0].resolve({ identity: checks[0].identity, valid: true });
+      await new Promise(resolve => setTimeout(resolve, 0));
+      expect(client.getState().draft.outputs.left.warp.grid.rows).toBe(7);
+      expect(client.setDraft).not.toHaveBeenCalled(); expect(client.apply).not.toHaveBeenCalled();
+      expect(find(root, node => node.className === "warp-grid-layout-preview-status").textContent).toContain("warp changed");
+    } finally { api.dispose(); globalThis.document = previousDocument; }
+  });
+
+  test("a deferred explicit grid confirmation is retired when editing moves to the right grid", async () => {
+    const previousDocument = globalThis.document; globalThis.document = documentStub();
+    const root = element("main"); const client = fakeClient(); const checks = [];
+    const api = mountProjectionConfig(root, { client, candidateValidator: { validateCandidate: args => new Promise(resolve => checks.push({ ...args, resolve })), dispose() {} } });
+    try {
+      client.setLive(true);
+      find(root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+      find(root, node => node.dataset?.warpSelectionKind === "row").dispatch("click");
+      const picker = find(root, node => node.className === "warp-selection-picker"); picker.value = "2"; picker.dispatch("change");
+      client.setDraft.mockClear(); client.apply.mockClear();
+      find(root, node => node.dataset?.gridLayoutAction === "remove-row").dispatch("click");
+      await vi.waitFor(() => expect(checks).toHaveLength(1));
+      checks[0].resolve({ identity: checks[0].identity, valid: true });
+      await vi.waitFor(() => expect(find(root, node => node.dataset?.action === "warp-grid-layout-confirm").disabled).toBe(false));
+      find(root, node => node.dataset?.action === "warp-grid-layout-confirm").dispatch("click");
+      await vi.waitFor(() => expect(checks).toHaveLength(2));
+      find(root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "right-grid").dispatch("click");
+      checks[1].resolve({ identity: checks[1].identity, valid: true });
+      await new Promise(resolve => setTimeout(resolve, 0));
+      expect(client.getState().draft.outputs.left.warp.grid.rows).toBe(7);
+      expect(client.setDraft).not.toHaveBeenCalled(); expect(client.apply).not.toHaveBeenCalled();
+      find(root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+      expect(find(root, node => node.dataset?.action === "warp-undo").disabled).toBe(true);
+    } finally { api.dispose(); globalThis.document = previousDocument; }
+  });
+
+  test("a deferred explicit confirmation cannot revive after accepted warp identity changes away and back", async () => {
+    const previousDocument = globalThis.document; globalThis.document = documentStub();
+    const root = element("main"); const client = fakeClient(); const checks = [];
+    const api = mountProjectionConfig(root, { client, candidateValidator: { validateCandidate: args => new Promise(resolve => checks.push({ ...args, resolve })), dispose() {} } });
+    try {
+      client.setLive(true);
+      find(root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+      find(root, node => node.dataset?.warpSelectionKind === "row").dispatch("click");
+      const picker = find(root, node => node.className === "warp-selection-picker"); picker.value = "2"; picker.dispatch("change");
+      client.setDraft.mockClear(); client.apply.mockClear();
+      find(root, node => node.dataset?.gridLayoutAction === "remove-row").dispatch("click");
+      await vi.waitFor(() => expect(checks).toHaveLength(1));
+      checks[0].resolve({ identity: checks[0].identity, valid: true });
+      await vi.waitFor(() => expect(find(root, node => node.dataset?.action === "warp-grid-layout-confirm").disabled).toBe(false));
+      find(root, node => node.dataset?.action === "warp-grid-layout-confirm").dispatch("click");
+      await vi.waitFor(() => expect(checks).toHaveLength(2));
+      const base = clone(client.getState().draft); const changed = clone(base);
+      changed.outputs.left.warp.keystone.corners[0][0] = 0.02;
+      client.report({ draft: changed, hasLocalDraft: true });
+      client.report({ draft: base, hasLocalDraft: true });
+      checks[1].resolve({ identity: checks[1].identity, valid: true });
+      await new Promise(resolve => setTimeout(resolve, 0));
+      expect(client.getState().draft.outputs.left.warp.grid.rows).toBe(7);
+      expect(client.setDraft).not.toHaveBeenCalled(); expect(client.apply).not.toHaveBeenCalled();
+      expect(find(root, node => node.className === "warp-grid-layout-preview-status").textContent).toContain("warp changed");
+    } finally { api.dispose(); globalThis.document = previousDocument; }
+  });
+
+test("Add placement immediately previews its visible default percentage without draft or history writes", () => {
+    const previousDocument = globalThis.document; globalThis.document = documentStub();
+    const root = element("main"); const client = fakeClient(); const api = mountProjectionConfig(root, { client });
+    try {
+      client.setLive(true);
+      find(root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+      client.setDraft.mockClear(); client.apply.mockClear();
+      find(root, node => node.dataset?.gridLayoutAction === "add-row").dispatch("click");
+      const position = find(root, node => node.dataset?.gridLayoutField === "addRowPosition").value;
+      const status = find(root, node => node.className === "warp-grid-layout-preview-status").textContent;
+      expect(status).toContain(`Add row at ${Number(position).toFixed(2)}% source Y`);
+      expect(find(root, node => node.attributes?.class === "warp-grid-preview-line candidate")).toBeTruthy();
+      expect(client.setDraft).not.toHaveBeenCalled(); expect(client.apply).not.toHaveBeenCalled();
+      expect(find(root, node => node.dataset?.action === "warp-undo").disabled).toBe(true);
+  } finally { api.dispose(); globalThis.document = previousDocument; }
+});
+
+test.each([["row", "add-row", "addRowPosition", "rowPositions"], ["column", "add-column", "addColumnPosition", "columnPositions"]])("semantic %s placement rejection keeps its source percentage pending until correction or Cancel", async (axis, addAction, fieldName, positionsKey) => {
+  const candidateValidator = { validateCandidate: vi.fn(async ({ identity }) => ({ identity, valid: true })), dispose() {} };
+  const h = tracedWarpHarness({ candidateValidator });
+  try {
+    find(h.root, node => node.dataset?.action === "warp-editor-close").dispatch("click");
+    const config = clone(h.client.getState().draft);
+    config.outputs.left.warp.grid[positionsKey] = [0, 0.14, 0.32, 0.5, 0.68, 0.84, 1];
+    h.client.report({ draft: config, hasLocalDraft: true });
+    find(h.root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+    find(h.root, node => node.dataset?.gridLayoutAction === addAction).dispatch("click");
+    const input = find(h.root, node => node.dataset?.gridLayoutField === fieldName);
+    globalThis.document.activeElement = input;
+    input.value = "50"; input.dispatch("input"); input.dispatch("change");
+    await vi.waitFor(() => expect(find(h.root, node => node.className === "warp-grid-layout-preview-status").textContent).toContain("distinct interior position"));
+    h.client.setDraft.mockClear(); h.client.apply.mockClear();
+
+    find(h.root, node => node.dataset?.action === "warp-editor-close").dispatch("click");
+    const title = find(h.root, node => node.className === "warp-editor-title");
+    const originalTitle = title.textContent;
+    find(h.root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "right-grid").dispatch("click");
+    find(h.root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-keystone").dispatch("click");
+    const picker = find(h.root, node => node.className === "warp-selection-picker");
+    const originalSelection = picker.value; picker.value = String(Number(originalSelection) + 1); picker.dispatch("change");
+    expect(title.textContent).toBe(originalTitle);
+    expect(picker.value).toBe(originalSelection);
+    expect(input.value).toBe("50");
+    await h.api.handleAction("apply");
+    h.client.setLive.mockClear(); h.client.save.mockClear();
+    await h.api.handleAction("save-new", "Rejected placement copy");
+    await h.api.handleAction("live", true);
+    expect(find(h.root, node => node.className === "warp-editor-dialog").hidden).toBe(false);
+    expect(input.value).toBe("50");
+    expect(h.client.apply).not.toHaveBeenCalled();
+    expect(h.client.save).not.toHaveBeenCalled();
+    expect(h.client.setLive).not.toHaveBeenCalled();
+    expect(h.client.setDraft).not.toHaveBeenCalled();
+
+    input.value = "25"; input.dispatch("input"); input.dispatch("change");
+    await vi.waitFor(() => expect(candidateValidator.validateCandidate).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(candidateValidator.validateCandidate.mock.results[0].value).resolves.toEqual(expect.objectContaining({ valid: true })));
+    const confirm = find(h.root, node => node.dataset?.action === "warp-grid-layout-confirm");
+    if (!confirm.disabled && !confirm.hidden) {
+      expect(input.value).toBe("25");
+      expect(h.client.setDraft).not.toHaveBeenCalled();
+      confirm.dispatch("click");
+    }
+    await vi.waitFor(() => expect(h.client.setDraft).toHaveBeenCalledTimes(1));
+  } finally { h.restore(); }
+});
+
+test("delayed rejected Add percentage validation stays pending until explicit placement Cancel", async () => {
+  const checks = [];
+  const candidateValidator = { validateCandidate: vi.fn(({ identity }) => new Promise(resolve => checks.push({ identity, resolve }))), dispose() {} };
+  const h = tracedWarpHarness({ candidateValidator });
+  try {
+    find(h.root, node => node.dataset?.action === "warp-editor-close").dispatch("click");
+    find(h.root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+    find(h.root, node => node.dataset?.gridLayoutAction === "add-row").dispatch("click");
+    const input = find(h.root, node => node.dataset?.gridLayoutField === "addRowPosition");
+    globalThis.document.activeElement = input;
+    input.value = "20"; input.dispatch("input"); input.dispatch("change");
+    await vi.waitFor(() => expect(checks).toHaveLength(1));
+    h.client.setDraft.mockClear(); h.client.apply.mockClear();
+    find(h.root, node => node.dataset?.action === "warp-editor-close").dispatch("click");
+    await h.api.handleAction("apply");
+    expect(find(h.root, node => node.className === "warp-editor-dialog").hidden).toBe(false);
+    expect(input.value).toBe("20");
+    expect(h.client.apply).not.toHaveBeenCalled();
+    expect(h.client.setDraft).not.toHaveBeenCalled();
+
+    checks[0].resolve({ identity: checks[0].identity, valid: false, reason: "Candidate geometry was rejected." });
+    await vi.waitFor(() => expect(find(h.root, node => node.className === "warp-grid-layout-preview-status").textContent).toContain("Candidate geometry was rejected."));
+    expect(input.value).toBe("20");
+    expect(h.client.setDraft).not.toHaveBeenCalled();
+
+    find(h.root, node => node.dataset?.action === "warp-grid-layout-cancel").dispatch("click");
+    expect(input.value).not.toBe("20");
+    find(h.root, node => node.dataset?.action === "warp-editor-close").dispatch("click");
+    expect(find(h.root, node => node.className === "warp-editor-dialog").hidden).toBe(true);
+    expect(h.client.apply).not.toHaveBeenCalled();
+    expect(h.client.setDraft).not.toHaveBeenCalled();
+  } finally { h.restore(); }
+});
+
+test("cancelling an in-flight Add percentage retires its late validator result", async () => {
+  const checks = [];
+  const candidateValidator = { validateCandidate: vi.fn(({ identity }) => new Promise(resolve => checks.push({ identity, resolve }))), dispose() {} };
+  const h = tracedWarpHarness({ candidateValidator });
+  try {
+    find(h.root, node => node.dataset?.action === "warp-editor-close").dispatch("click");
+    find(h.root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+    find(h.root, node => node.dataset?.gridLayoutAction === "add-row").dispatch("click");
+    const input = find(h.root, node => node.dataset?.gridLayoutField === "addRowPosition");
+    globalThis.document.activeElement = input;
+    input.value = "20"; input.dispatch("input"); input.dispatch("change");
+    await vi.waitFor(() => expect(checks).toHaveLength(1));
+    h.client.setDraft.mockClear(); h.client.apply.mockClear();
+
+    find(h.root, node => node.dataset?.action === "warp-grid-layout-cancel").dispatch("click");
+    checks[0].resolve({ identity: checks[0].identity, valid: true });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(input.value).not.toBe("20");
+    expect(h.client.setDraft).not.toHaveBeenCalled();
+    expect(h.client.apply).not.toHaveBeenCalled();
+    find(h.root, node => node.dataset?.action === "warp-editor-close").dispatch("click");
+    expect(find(h.root, node => node.className === "warp-editor-dialog").hidden).toBe(true);
+  } finally { h.restore(); }
+});
+
+test("rejected Add row source percentage stays visible until corrected or placement is cancelled", () => {
+  const h = tracedWarpHarness();
+  try {
+    const config = clone(h.client.getState().draft);
+    config.outputs.left.warp.grid.rowPositions = [0, 0.14, 0.32, 0.5, 0.68, 0.84, 1];
+    h.client.report({ draft: config, hasLocalDraft: true });
+    h.client.setLive(true);
+    find(h.root, node => node.dataset?.action === "warp-editor-close").dispatch("click");
+    find(h.root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+    h.client.setDraft.mockClear(); h.client.apply.mockClear();
+    const add = find(h.root, node => node.dataset?.gridLayoutAction === "add-row");
+    add.dispatch("click");
+    const position = find(h.root, node => node.dataset?.gridLayoutField === "addRowPosition");
+    position.value = "14"; position.dispatch("input"); position.dispatch("change"); position.dispatch("blur");
+    expect(position.value).toBe("14");
+    position.value = "101"; position.dispatch("input"); position.dispatch("change"); position.dispatch("blur");
+    expect(position.value).toBe("101");
+    expect(position.attributes["aria-invalid"]).toBe("true");
+    expect(h.client.setDraft).not.toHaveBeenCalled(); expect(h.client.apply).not.toHaveBeenCalled();
+    expect(find(h.root, node => node.dataset?.action === "warp-undo").disabled).toBe(true);
+    add.dispatch("click");
+    expect(position.value).not.toBe("101");
+    expect(h.client.setDraft).not.toHaveBeenCalled(); expect(h.client.apply).not.toHaveBeenCalled();
+  } finally { h.restore(); }
+});
+
+test.each(["Back", "right Grid", "another row", "Apply"])("rejected Add row percentage blocks %s without a write", async (action) => {
+  const h = tracedWarpHarness();
+  try {
+    h.client.setLive(true);
+    find(h.root, node => node.dataset?.action === "warp-editor-close").dispatch("click");
+    find(h.root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+    find(h.root, node => node.dataset?.gridLayoutAction === "add-row").dispatch("click");
+    const position = find(h.root, node => node.dataset?.gridLayoutField === "addRowPosition");
+    globalThis.document.activeElement = position;
+    position.value = "100"; position.dispatch("input"); position.dispatch("change"); position.dispatch("blur");
+    h.client.setDraft.mockClear(); h.client.apply.mockClear();
+
+    if (action === "Back") find(h.root, node => node.dataset?.action === "warp-editor-close").dispatch("click");
+    if (action === "right Grid") find(h.root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "right-grid").dispatch("click");
+    if (action === "another row") {
+      const picker = find(h.root, node => node.className === "warp-selection-picker");
+      const before = picker.value; picker.value = String(Number(before) + 1); picker.dispatch("change");
+      expect(picker.value).toBe(before);
+    }
+    if (action === "Apply") await h.api.handleAction("apply");
+
+    expect(position.value).toBe("100");
+    expect(position.attributes["aria-invalid"]).toBe("true");
+    expect(find(h.root, node => node.className === "warp-editor-dialog").hidden).toBe(false);
+    expect(h.client.getState().draft.outputs.left.warp.grid.rows).toBe(7);
+    expect(h.client.setDraft).not.toHaveBeenCalled();
+    expect(h.client.apply).not.toHaveBeenCalled();
+  } finally { h.restore(); }
+});
+
+test.each([["row", "addRowPosition", "add-row"], ["column", "addColumnPosition", "add-column"]])("rejected Add %s percentage remains pending until placement is explicitly cancelled", async (axis, fieldName, actionName) => {
+  const h = tracedWarpHarness();
+  try {
+    find(h.root, node => node.dataset?.action === "warp-editor-close").dispatch("click");
+    find(h.root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+    find(h.root, node => node.dataset?.gridLayoutAction === actionName).dispatch("click");
+    const input = find(h.root, node => node.dataset?.gridLayoutField === fieldName);
+    globalThis.document.activeElement = input;
+    input.value = "100"; input.dispatch("input"); input.dispatch("change"); input.dispatch("blur");
+    expect(input.value).toBe("100");
+    expect(input.attributes["aria-invalid"]).toBe("true");
+    expect(find(h.root, node => node.className === "warp-grid-layout-error").textContent).toContain(axis === "row" ? "Row position" : "Column position");
+    await h.api.handleAction("apply");
+    expect(h.client.apply).not.toHaveBeenCalled();
+    find(h.root, node => node.dataset?.gridLayoutAction === actionName).dispatch("click");
+    expect(input.value).not.toBe("100");
+    expect(input.attributes["aria-invalid"]).toBeUndefined();
+  } finally { h.restore(); }
+});
+
+test.each([["row", "addRowPosition", "add-row", "addColumnPosition"], ["column", "addColumnPosition", "add-column", "addRowPosition"]])("Add %s percentage is editable only during its active placement and Escape clears it", (axis, fieldName, actionName, otherFieldName) => {
+  const h = tracedWarpHarness();
+  try {
+    find(h.root, node => node.dataset?.action === "warp-editor-close").dispatch("click");
+    find(h.root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+    const input = find(h.root, node => node.dataset?.gridLayoutField === fieldName);
+    const other = find(h.root, node => node.dataset?.gridLayoutField === otherFieldName);
+    expect(input.disabled).toBe(true);
+    expect(other.disabled).toBe(true);
+
+    find(h.root, node => node.dataset?.gridLayoutAction === actionName).dispatch("click");
+    expect(input.disabled).toBe(false);
+    expect(other.disabled).toBe(true);
+    input.value = "35"; input.dispatch("input");
+    globalThis.document.dispatch("keydown", { key: "Escape", preventDefault() {} });
+    expect(input.value).not.toBe("35");
+    expect(input.attributes["aria-invalid"]).toBeUndefined();
+    expect(find(h.root, node => node.dataset?.gridLayoutAction === actionName).textContent).toBe(axis === "row" ? "Add row" : "Add column");
+    find(h.root, node => node.dataset?.action === "warp-editor-close").dispatch("click");
+    expect(find(h.root, node => node.className === "warp-editor-dialog").hidden).toBe(true);
+    expect(h.client.setDraft).not.toHaveBeenCalled();
+    expect(h.client.apply).not.toHaveBeenCalled();
+  } finally { h.restore(); }
+});
+
+test("Escape cancels rejected grid-placement text without closing the editor or writing", () => {
+  const h = tracedWarpHarness();
+  try {
+    find(h.root, node => node.dataset?.action === "warp-editor-close").dispatch("click");
+    find(h.root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+    find(h.root, node => node.dataset?.gridLayoutAction === "add-row").dispatch("click");
+    const input = find(h.root, node => node.dataset?.gridLayoutField === "addRowPosition");
+    input.value = "100"; input.dispatch("input"); input.dispatch("change"); input.dispatch("blur");
+    const dialog = find(h.root, node => node.className === "warp-editor-dialog");
+    globalThis.document.dispatch("keydown", { key: "Escape", preventDefault() {} });
+    expect(dialog.hidden).toBe(false);
+    expect(input.value).not.toBe("100");
+    expect(input.attributes["aria-invalid"]).toBeUndefined();
+    expect(find(h.root, node => node.dataset?.gridLayoutAction === "add-row").textContent).toBe("Add row");
+    expect(h.client.setDraft).not.toHaveBeenCalled(); expect(h.client.apply).not.toHaveBeenCalled();
+  } finally { h.restore(); }
+});
+
+test("a valid Scale entry is committed before the real slider captures its range baseline", () => {
+  const h = tracedWarpHarness();
+  try {
+    const number = find(h.root, node => node.dataset?.field === "pre.scale" && node.dataset?.input === "number");
+    const wrap = find(h.root, node => node.dataset?.path === "pre.scale");
+    const range = find(wrap, node => node.dataset?.input === "range");
+    find(wrap, node => node.dataset?.mode === "coarse").dispatch("click");
+    number.value = "2"; number.dispatch("input");
+    const pointer = type => range.dispatch(type, { pointerId: 17, preventDefault() {} });
+    pointer("pointerdown"); number.dispatch("blur");
+    range.value = "3"; range.dispatch("input"); pointer("pointerup");
+    expect(h.client.getState().draft.pre.scale).toBe(3);
+    expect(number.attributes["aria-invalid"]).toBe("false");
+    expect(h.client.setDraft).toHaveBeenCalled();
+  } finally { h.restore(); }
+});
+
+test("Bring pages together keeps pointer preview local, commits once on release, and cancellation adds no undo entry", () => {
+  const h = tracedWarpHarness();
+  try {
+    const node = find(h.root, item => item.dataset?.node === "names-wall");
+    node.dispatch("click");
+    const wrap = find(node, item => item.dataset?.path === "namesWall.inwardShiftPercent");
+    const range = find(wrap, item => item.dataset?.input === "range");
+    const pointer = type => range.dispatch(type, { pointerId: 18, preventDefault() {} });
+    h.client.setDraft.mockClear();
+    pointer("pointerdown");
+    expect(h.client.getState().draft.namesWall.profiles.wall.inwardShiftPercent).toBe(0);
+    range.value = "50"; range.dispatch("input"); range.dispatch("change");
+    expect(h.client.getState().draft.namesWall.profiles.wall.inwardShiftPercent).toBe(0);
+    expect(h.client.setDraft).not.toHaveBeenCalled();
+    pointer("pointerup");
+    expect(h.client.getState().draft.namesWall.profiles.wall.inwardShiftPercent).toBe(50);
+    expect(h.client.setDraft).toHaveBeenCalledTimes(1);
+
+    h.client.setDraft.mockClear();
+    pointer("pointerdown"); range.value = "75"; range.dispatch("input"); pointer("pointercancel");
+    expect(h.client.getState().draft.namesWall.profiles.wall.inwardShiftPercent).toBe(50);
+    expect(h.client.setDraft).not.toHaveBeenCalled();
+    find(h.root, item => item.dataset?.action === "parameter-undo").dispatch("click");
+    expect(h.client.getState().draft.namesWall.profiles.wall.inwardShiftPercent).toBe(0);
+  } finally { h.restore(); }
+});
+
+test("Bring pages together keeps its local pointer preview across a same-value controller refresh", () => {
+  const h = tracedWarpHarness();
+  try {
+    const node = find(h.root, item => item.dataset?.node === "names-wall"); node.dispatch("click");
+    const wrap = find(node, item => item.dataset?.path === "namesWall.inwardShiftPercent");
+    const range = find(wrap, item => item.dataset?.input === "range");
+    const number = find(wrap, item => item.dataset?.input === "number");
+    const output = find(wrap, item => item.className === "config-field-value");
+    const pointer = type => range.dispatch(type, { pointerId: 19, preventDefault() {} });
+    h.client.setDraft.mockClear();
+    pointer("pointerdown"); range.value = "50"; range.dispatch("input");
+    h.client.report({ pending: true });
+    expect(number.value).toBe("50"); expect(output.textContent).toContain("50"); expect(range.value).toBe("50");
+    expect(h.client.getState().draft.namesWall.profiles.wall.inwardShiftPercent).toBe(0);
+    expect(h.client.setDraft).not.toHaveBeenCalled();
+    pointer("pointerup");
+    expect(h.client.getState().draft.namesWall.profiles.wall.inwardShiftPercent).toBe(50);
+    expect(h.client.setDraft).toHaveBeenCalledTimes(1);
+  } finally { h.restore(); }
+});
+
+test("Bring pages together cancellation uses the newest accepted value and release rejects a stale baseline", () => {
+  const h = tracedWarpHarness();
+  try {
+    const node = find(h.root, item => item.dataset?.node === "names-wall"); node.dispatch("click");
+    const wrap = find(node, item => item.dataset?.path === "namesWall.inwardShiftPercent");
+    const range = find(wrap, item => item.dataset?.input === "range");
+    const number = find(wrap, item => item.dataset?.input === "number");
+    const output = find(wrap, item => item.className === "config-field-value");
+    const pointer = type => range.dispatch(type, { pointerId: 20, preventDefault() {} });
+    h.client.setDraft.mockClear();
+    pointer("pointerdown"); range.value = "50"; range.dispatch("input");
+    const firstAccepted = clone(h.client.getState().draft); firstAccepted.namesWall.profiles.wall.inwardShiftPercent = 12;
+    h.client.report({ draft: firstAccepted, hasLocalDraft: false });
+    expect(number.value).toBe("50"); expect(output.textContent).toContain("50"); expect(range.value).toBe("50");
+    pointer("pointercancel");
+    expect(h.client.getState().draft.namesWall.profiles.wall.inwardShiftPercent).toBe(12);
+    expect(number.value).toBe("12"); expect(output.textContent).toContain("12"); expect(range.value).toBe("12");
+    expect(h.client.setDraft).not.toHaveBeenCalled();
+
+    pointer("pointerdown"); range.value = "70"; range.dispatch("input");
+    const secondAccepted = clone(h.client.getState().draft); secondAccepted.namesWall.profiles.wall.inwardShiftPercent = 20;
+    h.client.report({ draft: secondAccepted, hasLocalDraft: false });
+    pointer("pointerup");
+    expect(h.client.getState().draft.namesWall.profiles.wall.inwardShiftPercent).toBe(20);
+    expect(h.client.setDraft).not.toHaveBeenCalled();
+    expect(find(wrap, item => item.className === "config-field-error").textContent).toMatch(/changed while editing/i);
+  } finally { h.restore(); }
+});
+
+test("grid placement accessible instructions name the actual row and column axes", () => {
+  const h = tracedWarpHarness();
+  try {
+    find(h.root, node => node.dataset?.action === "warp-editor-close").dispatch("click");
+    find(h.root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+    const row = find(h.root, node => node.dataset?.gridLayoutField === "addRowPosition");
+    const column = find(h.root, node => node.dataset?.gridLayoutField === "addColumnPosition");
+    expect(row.attributes["aria-label"]).toBe("Add row at Y (%); choose Add row to place a line");
+    expect(column.attributes["aria-label"]).toBe("Add column at X (%); choose Add column to place a line");
+  } finally { h.restore(); }
+});
+
+test.each(["invalid scalar", "held warp adjustment"])("%s blocks preset, clock, and settlement selectors without writes", async (pendingKind) => {
+  const previousDocument = globalThis.document; const doc = documentStub(); globalThis.document = doc;
+  const root = element("main"); root.ownerDocument = doc; const client = fakeClient();
+  client.getState().snapshot.presets.push({ id: "desk", name: "Desk", config: clone(DEFAULTS) });
+  const api = mountProjectionConfig(root, { client });
+  try {
+    client.setDraft.mockClear(); client.apply.mockClear(); client.save.mockClear(); client.setLive.mockClear();
+    let pad = null;
+    if (pendingKind === "invalid scalar") {
+      const scalar = find(root, node => node.dataset?.field === "pre.scale" && node.dataset?.input === "number");
+      scalar.value = "-"; scalar.dispatch("input");
+    } else {
+      find(root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+      pad = find(root, node => node.className === "warp-relative-pad");
+      pad.getBoundingClientRect = () => ({ left: 0, top: 0, width: 200, height: 200 });
+      pad.dispatch("pointerdown", { pointerId: 55, button: 0, clientX: 100, clientY: 100, preventDefault() {} });
+    }
+
+    const preset = find(root, node => node.attributes?.["aria-label"] === "Preset");
+    preset.value = "desk";
+    await api.handleAction("preset-select", "desk");
+    expect(preset.value).toBe("original");
+    const scene = find(root, node => node.dataset?.action === "clock-scene");
+    scene.value = "timeline"; scene.dispatch("change");
+    expect(scene.value).toBe("home");
+    const elementSelect = find(root, node => node.dataset?.action === "clock-element");
+    elementSelect.value = "legend"; elementSelect.dispatch("change");
+    expect(elementSelect.value).toBe("clock");
+    const settlementOutput = find(root, node => node.attributes?.["aria-label"] === "Settlement output");
+    settlementOutput.value = "right"; settlementOutput.dispatch("change");
+    expect(settlementOutput.value).toBe("left");
+    expect(client.setDraft).not.toHaveBeenCalled(); expect(client.apply).not.toHaveBeenCalled();
+    expect(client.save).not.toHaveBeenCalled(); expect(client.setLive).not.toHaveBeenCalled();
+    if (pad) pad.dispatch("lostpointercapture", { pointerId: 55 });
+  } finally { api.dispose(); globalThis.document = previousDocument; }
+});
+
+  test("an accepted warp replacement retires the initial Add preview but keeps its percentage", () => {
+    const previousDocument = globalThis.document; globalThis.document = documentStub();
+    const root = element("main"); const client = fakeClient(); const api = mountProjectionConfig(root, { client });
+    try {
+      client.setLive(true);
+      find(root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+      client.setDraft.mockClear(); client.apply.mockClear();
+      find(root, node => node.dataset?.gridLayoutAction === "add-row").dispatch("click");
+      const position = find(root, node => node.dataset?.gridLayoutField === "addRowPosition");
+      const percentageBefore = position.value;
+      expect(find(root, node => node.attributes?.class === "warp-grid-preview-line candidate")).toBeTruthy();
+
+      const accepted = clone(client.getState().draft);
+      accepted.outputs.left.warp.keystone.corners[0][0] = 0.02;
+      client.report({ draft: accepted, snapshot: { ...client.getState().snapshot, revision: 3, config: accepted }, hasLocalDraft: false });
+
+      expect(find(root, node => node.attributes?.class === "warp-grid-preview-line candidate")).toBeNull();
+      expect(find(root, node => node.dataset?.gridLayoutField === "addRowPosition").value).toBe(percentageBefore);
+      expect(find(root, node => node.className === "warp-grid-layout-preview-status").textContent).toContain("warp changed");
+      expect(client.setDraft).not.toHaveBeenCalled(); expect(client.apply).not.toHaveBeenCalled();
+      expect(find(root, node => node.dataset?.action === "warp-undo").disabled).toBe(true);
+    } finally { api.dispose(); globalThis.document = previousDocument; }
+  });
+
+  test("maximum-count Add placement keeps the source percentage and explains why no candidate line is available", () => {
+    const previousDocument = globalThis.document; globalThis.document = documentStub();
+    const root = element("main"); const client = fakeClient(); const api = mountProjectionConfig(root, { client });
+    try {
+      const maximum = clone(client.getState().draft);
+      const grid = maximum.outputs.left.warp.grid;
+      grid.rows = 16; grid.rowPositions = Array.from({ length: 16 }, (_, index) => index / 15);
+      grid.offsets = Array.from({ length: 16 * grid.columns }, () => [0, 0]);
+      client.report({ draft: maximum, snapshot: { ...client.getState().snapshot, config: maximum }, hasLocalDraft: true });
+      find(root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+      client.setDraft.mockClear(); client.apply.mockClear();
+      const add = find(root, node => node.dataset?.gridLayoutAction === "add-row");
+      expect(add.disabled).toBe(false);
+      add.dispatch("click");
+      const position = find(root, node => node.dataset?.gridLayoutField === "addRowPosition");
+      expect(position.disabled).toBe(false);
+      expect(find(root, node => node.className === "warp-grid-layout-preview-status").textContent).toContain("maximum count");
+      expect(find(root, node => node.className === "warp-grid-layout-preview-status").textContent).toContain(`${Number(position.value).toFixed(2)}% source Y`);
+      expect(client.setDraft).not.toHaveBeenCalled(); expect(client.apply).not.toHaveBeenCalled();
+    } finally { api.dispose(); globalThis.document = previousDocument; }
+  });
+
+  test("grid topology preview cancellation is write-free and confirmation validates and merges the latest draft once", async () => {
+    const previousDocument = globalThis.document; globalThis.document = documentStub();
+    const root = element("main"); root.ownerDocument = globalThis.document;
+    const client = fakeClient(); const checks = [];
+    const api = mountProjectionConfig(root, { client, candidateValidator: { validateCandidate: args => new Promise(resolve => checks.push({ ...args, resolve })), dispose() {} } });
+    try {
+      client.setLive(false);
+      find(root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+      find(root, node => node.dataset?.warpSelectionKind === "row").dispatch("click");
+      const picker = find(root, node => node.className === "warp-selection-picker"); picker.value = "2"; picker.dispatch("change");
+      const remove = find(root, node => node.dataset?.gridLayoutAction === "remove-row");
+      client.setDraft.mockClear(); client.apply.mockClear();
+      remove.dispatch("click"); await vi.waitFor(() => expect(checks).toHaveLength(1));
+      expect(client.setDraft).not.toHaveBeenCalled(); expect(client.apply).not.toHaveBeenCalled();
+      find(root, node => node.dataset?.action === "warp-grid-layout-cancel").dispatch("click");
+      checks[0].resolve({ identity: checks[0].identity, valid: true }); await Promise.resolve();
+      expect(client.setDraft).not.toHaveBeenCalled();
+
+      remove.dispatch("click"); await vi.waitFor(() => expect(checks).toHaveLength(2));
+      checks[1].resolve({ identity: checks[1].identity, valid: true });
+      await vi.waitFor(() => expect(find(root, node => node.dataset?.action === "warp-grid-layout-confirm").disabled).toBe(false));
+      const latest = clone(client.getState().draft); latest.pre.scale = 1.5; client.report({ draft: latest, hasLocalDraft: true });
+      find(root, node => node.dataset?.action === "warp-grid-layout-confirm").dispatch("click");
+      await vi.waitFor(() => expect(checks).toHaveLength(3));
+      expect(client.setDraft).not.toHaveBeenCalled();
+      checks[2].resolve({ identity: checks[2].identity, valid: true });
+      await vi.waitFor(() => expect(client.setDraft).toHaveBeenCalledTimes(1));
+      expect(client.getState().draft.pre.scale).toBe(1.5);
+      expect(client.getState().draft.outputs.left.warp.grid.rows).toBe(6);
+      expect(client.setDraft.mock.calls[0][0].outputs.left.warp.grid.rows).toBe(6);
+    } finally { api.dispose(); globalThis.document = previousDocument; }
+  });
+
+  test('real-client Live Undo validates and publishes the exact restored scalar after its own acknowledgment', async () => {
+    const root=element('main'); root.ownerDocument=documentStub(); const h=replacementHarness(); const checks=[];
+    h.snapshot.config.pre.tx=.123456789123456;
+    const api=mountProjectionConfig(root,{client:h.client,candidateValidator:{validateCandidate:args=>new Promise(resolve=>checks.push({...args,resolve})),dispose(){}}});
+    try {
+      h.respond(h.snapshot); await vi.waitFor(()=>expect(h.client.getState().hydrating).toBe(false));
+      expect(h.client.getState().live).toBe(true);
+      find(root,n=>n.dataset?.action==='fine-nudge' && n.dataset.path==='pre.tx' && n.dataset.direction==='1').dispatch('click');
+      await vi.waitFor(()=>expect(checks).toHaveLength(1)); expect(h.requests).toHaveLength(0);
+      expect(checks[0].config.pre.tx).toBe(h.snapshot.config.pre.tx+.0001);
+      checks[0].resolve({identity:checks[0].identity,valid:true}); await vi.waitFor(()=>expect(h.requests).toHaveLength(1));
+      const edited=clone(h.snapshot); edited.revision=1; edited.config=JSON.parse(h.requests[0].options.body).config;
+      expect(h.requests[0].options.method).toBe('POST'); expect(JSON.parse(h.requests[0].options.body).action).toBe('preview');
+      h.respond(edited); await vi.waitFor(()=>expect(h.client.getState().pending).toBe(false));
+      expect(await api.handleAction('parameter-undo')).toBe(true);
+      expect(h.client.getState().pending).toBe(true); await vi.waitFor(()=>expect(checks).toHaveLength(2));
+      expect(h.requests).toHaveLength(0); expect(checks[1].config).toEqual(h.snapshot.config);
+      checks[1].resolve({identity:checks[1].identity,valid:true}); await vi.waitFor(()=>expect(h.requests).toHaveLength(1));
+      expect(h.requests[0].options.method).toBe('POST');
+      expect(JSON.parse(h.requests[0].options.body)).toMatchObject({action:'preview',baseRevision:1,config:h.snapshot.config});
+      h.respond({...h.snapshot,revision:2}); await vi.waitFor(()=>expect(h.client.getState().pending).toBe(false));
+      expect(h.client.getState().snapshot.config).toEqual(h.snapshot.config); expect(h.client.getState().live).toBe(true);
+    } finally {api.dispose();}
+  });
+  test('held nudges produce one undo entry, own acknowledgments retain it and foreign same-field changes invalidate it', async () => {
+    const root=element('main'); root.ownerDocument=documentStub(); const client=fakeClient(); const factory=vi.spyOn(configView,'createProjectionConfigView'); const api=mountProjectionConfig(root,{client});
+    const {onNudge,onField}=factory.mock.calls.at(-1)[1];
+    try {
+      const base=client.getState().draft.pre.scale;
+      onNudge('pre.scale',1,{phase:'start',gestureId:'hold',count:1});
+      onNudge('pre.scale',1,{phase:'update',gestureId:'hold',count:5});
+      onNudge('pre.scale',1,{phase:'end',gestureId:'hold',count:5});
+      const acknowledged=clone(client.getState().draft); client.report({hasLocalDraft:false,snapshot:{...client.getState().snapshot,revision:3,config:acknowledged}});
+      expect(await api.handleAction('parameter-undo')).toBe(true); expect(client.getState().draft.pre.scale).toBe(base);
+      expect(await api.handleAction('parameter-undo')).toBe(false);
+      expect(await api.handleAction('parameter-redo')).toBe(true); expect(client.getState().draft.pre.scale).toBe(base+.005);
+      await api.handleAction('parameter-undo'); onField('pre.tx','2','number'); expect(await api.handleAction('parameter-redo')).toBe(false);
+      onField('pre.scale','2','number'); const foreign=clone(client.getState().draft); foreign.pre.scale=3; client.report({draft:foreign,hasLocalDraft:true});
+      await api.handleAction('parameter-undo'); expect(client.getState().draft.pre.scale).toBe(3); expect(client.getState().draft.pre.tx).toBe(DEFAULTS.pre.tx);
+    } finally {api.dispose();factory.mockRestore();}
+  });
+  test('invalid Undo leaves its stacks and latest draft unchanged with the validator reason', async () => {
+    const root=element('main'); root.ownerDocument=documentStub(); const client=fakeClient(); const factory=vi.spyOn(configView,'createProjectionConfigView'); const api=mountProjectionConfig(root,{client});
+    const {onField}=factory.mock.calls.at(-1)[1];
+    try {
+      const initial=clone(client.getState().draft); initial.outputs.left.crop.x0=.4; client.report({draft:initial});
+      onField('outputs.left.crop.x0','10','number');
+      const foreign=clone(client.getState().draft); foreign.outputs.left.crop.x1=.2; client.report({draft:foreign,hasLocalDraft:true});
+      expect(await api.handleAction('parameter-undo')).toBe(false); expect(client.getState().draft).toEqual(foreign);
+      expect(find(root,n=>n.dataset?.action==='parameter-undo').disabled).toBe(false);
+      expect(find(root,n=>n.dataset?.action==='parameter-redo').disabled).toBe(true);
+      expect(find(root,n=>n.dataset?.errorFor==='outputs.left.crop.x0').textContent).not.toBe('');
+    } finally {api.dispose();factory.mockRestore();}
+  });
+  test('real client reversing adjacent nudges returns exactly to imported base without a dirty draft', async () => {
+    const root = element('main'); root.ownerDocument = documentStub(); const h = replacementHarness();
+    h.snapshot.config.pre.scale = 1.23456789123456;
+    h.snapshot.config.pre.tx = .123456789123456;
+    const api = mountProjectionConfig(root, { client: h.client });
+    try {
+      h.respond(h.snapshot); await vi.waitFor(() => expect(h.client.getState().hydrating).toBe(false)); h.client.setLive(false);
+      const nudge = (path, direction) => find(root, n => n.dataset?.action === 'fine-nudge' && n.dataset.path === path && n.dataset.direction === direction).dispatch('click');
+      for (const path of ['pre.scale', 'pre.tx']) { nudge(path, '1'); nudge(path, '-1'); }
+      expect(h.client.getState().draft.pre.scale).toBe(h.snapshot.config.pre.scale);
+      expect(h.client.getState().draft.pre.tx).toBe(h.snapshot.config.pre.tx);
+      expect(h.client.getState().hasLocalDraft).toBe(false);
+    } finally { api.dispose(); }
+  });
+  test('canonical Fine gestures coalesce, cancel only their path and Undo preserves unrelated output', async () => {
+    const root = element('main'); root.ownerDocument = documentStub(); const client = fakeClient();
+    const factory = vi.spyOn(configView, 'createProjectionConfigView'); const api = mountProjectionConfig(root, { client });
+    const { onField } = factory.mock.calls.at(-1)[1];
+    try {
+      const base = .123456789123456; const draft = clone(client.getState().draft); draft.pre.tx = base; client.report({draft});
+      const send = (value, phase, id = 'slider') => onField('pre.tx', 'ignored', 'range', { canonicalValue: value, phase, gestureId: id });
+      expect(send(base + .0001, 'start')).toBe(true); expect(send(base + .0002, 'update')).toBe(true); send(base + .0002, 'end');
+      await api.handleAction('parameter-undo'); expect(client.getState().draft.pre.tx).toBe(base);
+      await api.handleAction('parameter-redo'); expect(client.getState().draft.pre.tx).toBe(base + .0002);
+      send(base + .0003, 'start', 'cancelled');
+      const unrelated = clone(client.getState().draft); unrelated.outputs.right.post.tx = .25; client.report({draft: unrelated, hasLocalDraft: true});
+      send(base + .0003, 'cancel', 'cancelled'); expect(client.getState().draft.pre.tx).toBe(base + .0002);
+      expect(client.getState().draft.outputs.right.post.tx).toBe(.25);
+      await api.handleAction('parameter-undo'); expect(client.getState().draft.pre.tx).toBe(base);
+      expect(client.getState().draft.outputs.right.post.tx).toBe(.25); expect(client.getState().live).toBe(true);
+    } finally { api.dispose(); factory.mockRestore(); }
+  });
+  test('invalid crop Fine commit keeps Apply blocked and issues no client request', async () => {
+    const root = element('main'); root.ownerDocument = documentStub(); const client = fakeClient(); const api = mountProjectionConfig(root, {client});
+    try {
+      const range = find(root, n => n.dataset?.field === 'outputs.left.crop.x0' && n.dataset.input === 'range');
+      find(find(root, n => n.dataset?.path === 'outputs.left.crop.x0'), n => n.dataset?.mode === 'coarse').dispatch('click');
+      range.dispatch('pointerdown', {pointerId: 2}); range.value = '99.9'; range.dispatch('input'); range.dispatch('pointerup', {pointerId: 2});
+      await api.handleAction('apply'); expect(client.apply).not.toHaveBeenCalled(); expect(client.setDraft).not.toHaveBeenCalled();
+      expect(find(root, n => n.dataset?.errorFor === 'outputs.left.crop.x0').textContent).toMatch(/extent|edge|below|accepted/i);
+    } finally {api.dispose();}
+  });
+  test('controller independently checks exact canonical baselines, resolved targets and override', () => {
+    const root = element('main'); root.ownerDocument = documentStub(); const client = fakeClient();
+    const factory = vi.spyOn(configView, 'createProjectionConfigView'); const api = mountProjectionConfig(root, { client });
+    const onField = factory.mock.calls.at(-1)[1].onField;
+    try {
+      const initial = clone(client.getState().draft); initial.pre.scale = 1.23456; client.report({ draft: initial });
+      const metadata = { baseValue: 1.23456, resolvedPath: 'pre.scale' };
+      const latest = clone(initial); latest.pre.scale = 2; client.report({ draft: latest });
+      expect(onField('pre.scale', '1.5', 'number', metadata)).toBe(false); expect(client.setDraft).not.toHaveBeenCalled(); expect(client.getState().draft).toEqual(latest);
+      expect(find(root, node => node.dataset?.errorFor === 'pre.scale').textContent).toMatch(/changed while editing/i);
+      expect(onField('pre.scale', '1.5', 'number', { ...metadata, override: true })).toBe(true); expect(client.getState().draft.pre.scale).toBe(1.5);
+      const target = clone(client.getState().draft); target.namesWall.activeMode = 'model'; client.report({ draft: target }); client.setDraft.mockClear();
+      expect(onField('namesWall.requestedFontPx', '20', 'number', { baseValue: target.namesWall.profiles.wall.requestedFontPx, resolvedPath: 'namesWall.profiles.wall.requestedFontPx', override: true })).toBe(false);
+      expect(client.getState().draft).toEqual(target); expect(client.setDraft).not.toHaveBeenCalled();
+      const current = clone(target); current.pre.tx = 0.2; client.report({ draft: current });
+      expect(onField('pre.scale', '1.6', 'number', { baseValue: 1.5, resolvedPath: 'pre.scale' })).toBe(true); expect(client.getState().draft.pre.tx).toBe(0.2);
+      client.setDraft.mockClear(); expect(onField('pre.scale', '1.6', 'number', { baseValue: 1.6, resolvedPath: 'pre.scale' })).toBe(true); expect(client.setDraft).not.toHaveBeenCalled();
+    } finally { api.dispose(); factory.mockRestore(); }
+  });
+  test.each([false, true])('real-client foreign replacement preserves scalar text safely (edited=%s)', async (edited) => {
+    const root = element('main'); root.ownerDocument = documentStub();
+    const h = replacementHarness(); h.snapshot.config.pre.scale = 1.23456;
+    const api = mountProjectionConfig(root, { client: h.client });
+    try {
+      h.respond(h.snapshot); await vi.waitFor(() => expect(h.client.getState().hydrating).toBe(false)); h.client.setLive(false);
+      const input = find(root, node => node.dataset?.field === 'pre.scale' && node.dataset.input === 'number');
+      input.dispatch('focus');
+      if (edited) { input.value = '1.5'; input.dispatch('input'); }
+      const next = clone(h.snapshot); next.revision = 1; next.config.pre.scale = 2; h.foreign(next);
+      input.dispatch('blur');
+      expect(h.client.getState().draft.pre.scale).toBe(2);
+      expect(h.client.getState().hasLocalDraft).toBe(false);
+      if (edited) {
+        expect(find(root, node => node.dataset?.errorFor === 'pre.scale').textContent).toMatch(/changed while editing/i);
+        find(root, node => node.dataset?.path === 'pre.scale').children.find(node => node.dataset?.action === 'numeric-use-mine').dispatch('click');
+        expect(h.client.getState().draft.pre.scale).toBe(1.5);
+      }
+      expect(h.requests).toHaveLength(0);
+    } finally { api.dispose(); }
+  });
+
+  test('edited field tolerates an unrelated replacement but cannot override a changed profile', () => {
+    const root = element('main'); root.ownerDocument = documentStub(); const client = fakeClient();
+    const api = mountProjectionConfig(root, { client });
+    try {
+      const scale = find(root, node => node.dataset?.field === 'pre.scale' && node.dataset.input === 'number');
+      scale.value = '1.5'; scale.dispatch('input');
+      const next = clone(client.getState().draft); next.pre.tx = 0.2; client.report({ draft: next }); scale.dispatch('blur');
+      expect(client.getState().draft.pre).toMatchObject({ scale: 1.5, tx: 0.2 });
+      const field = find(root, node => node.dataset?.field === 'namesWall.requestedFontPx' && node.dataset.input === 'number');
+      field.value = '20'; field.dispatch('input');
+      const profile = clone(client.getState().draft); profile.namesWall.activeMode = 'model'; client.report({ draft: profile });
+      field.dispatch('blur');
+      const wrap = find(root, node => node.dataset?.path === 'namesWall.requestedFontPx');
+      const mine = wrap.children.find(node => node.dataset?.action === 'numeric-use-mine');
+      expect(mine.disabled).toBe(true); mine.dispatch('click'); expect(client.getState().draft).toEqual(profile);
+    } finally { api.dispose(); }
+  });
+
+  test.each(['apply', 'save', 'save-new'])('%s finishes valid text before consuming the candidate', async action => {
+    const root = element('main'); root.ownerDocument = documentStub(); const client = fakeClient();
+    client.getState().snapshot.selectedPresetId = 'desk'; client.getState().snapshot.presets.push({ id: 'desk', name: 'Desk', config: clone(DEFAULTS) });
+    const api = mountProjectionConfig(root, { client });
+    try {
+      const input = find(root, node => node.dataset?.field === 'pre.scale' && node.dataset.input === 'number');
+      input.value = '1.5'; input.dispatch('input');
+      clickCommand(root, action);
+      expect(client.getState().draft.pre.scale).toBe(1.5);
+      expect(action === 'apply' ? client.apply : client.save).toHaveBeenCalledTimes(1);
+    } finally { api.dispose(); }
+  });
+
+  test.each(['apply', 'save', 'save-new', 'node', 'profile', 'editor'])('%s rejects invalid displayed text without relying on blur', action => {
+    const root = element('main'); root.ownerDocument = documentStub(); const client = fakeClient();
+    client.getState().snapshot.selectedPresetId = 'desk'; client.getState().snapshot.presets.push({ id: 'desk', name: 'Desk', config: clone(DEFAULTS) });
+    const editorFactory = vi.fn(); const api = mountProjectionConfig(root, { client, clockEditorFactory: editorFactory });
+    try {
+      const selected = vi.spyOn(find(root, node => node.dataset?.node === 'pre').classList, 'toggle');
+      const input = find(root, node => node.dataset?.field === 'pre.scale' && node.dataset.input === 'number');
+      input.value = '1.'; input.dispatch('input');
+      if (action === 'node') find(root, node => node.dataset?.node === 'left-fit').dispatch('click');
+      else if (action === 'profile') { const select = find(root, node => node.className === 'names-wall-mode'); select.value = 'model'; select.dispatch('change'); }
+      else if (action === 'editor') find(root, node => node.dataset?.action === 'clock-editor-open').dispatch('click');
+      else clickCommand(root, action);
+      expect(client.apply).not.toHaveBeenCalled(); expect(client.save).not.toHaveBeenCalled(); expect(editorFactory).not.toHaveBeenCalled();
+      expect(client.getState().draft).toEqual(DEFAULTS); expect(input.value).toBe('1.');
+      expect(selected.mock.calls.every(([name, value]) => name !== 'selected' || value === true)).toBe(true);
+      if (action === 'profile') expect(find(root, node => node.className === 'names-wall-mode').value).toBe('wall');
+    } finally { api.dispose(); }
+  });
+
+  test.each(['apply', 'save-new'])('%s rejects a finite scalar that fails whole-candidate crop validation', action => {
+    const root = element('main'); root.ownerDocument = documentStub(); const client = fakeClient(); const api = mountProjectionConfig(root, { client });
+    try {
+      const input = find(root, node => node.dataset?.field === 'outputs.left.crop.x0' && node.dataset.input === 'number');
+      input.value = '99.99'; input.dispatch('input');
+      clickCommand(root, action);
+      expect(client.setDraft).not.toHaveBeenCalled(); expect(client.apply).not.toHaveBeenCalled(); expect(client.save).not.toHaveBeenCalled();
+      expect(input.value).toBe('99.99'); expect(input.attributes['aria-invalid']).toBe('true');
+    } finally { api.dispose(); }
+  });
+
+  test.each(['save', 'save-new'])('correcting a rejected crop to its original value clears validation before %s without a draft write', async action => {
+    const root = element('main'); root.ownerDocument = documentStub(); const client = fakeClient();
+    client.getState().snapshot.selectedPresetId = 'desk'; client.getState().snapshot.presets.push({ id: 'desk', name: 'Desk', config: clone(DEFAULTS) });
+    const api = mountProjectionConfig(root, { client });
+    const inputFor = path => find(root, node => node.dataset?.field === path && node.dataset.input === 'number');
+    const errorFor = path => find(root, node => node.dataset?.errorFor === path);
+    try {
+      const path = 'outputs.left.crop.x0', input = inputFor(path);
+      input.value = '85'; input.dispatch('input'); await api.handleAction(action, 'Desk');
+      expect(client.save).not.toHaveBeenCalled(); expect(errorFor(path).textContent).toMatch(/extent/i);
+      input.value = '0'; input.dispatch('input'); await api.handleAction(action, 'Desk');
+      expect(client.save).toHaveBeenCalledTimes(1); expect(client.setDraft).not.toHaveBeenCalled(); expect(client.getState().draft).toEqual(DEFAULTS);
+      for (const edge of ['x0', 'x1', 'y0', 'y1']) {
+        const cropPath = `outputs.left.crop.${edge}`;
+        expect(errorFor(cropPath).textContent).toBe(''); expect(inputFor(cropPath).attributes['aria-invalid']).toBe('false');
+      }
+    } finally { api.dispose(); }
+  });
+
+  test('explicit Cancel retires only the rejected field group and survives a status refresh without writing the draft', async () => {
+    const root = element('main'); root.ownerDocument = documentStub(); const client = fakeClient(); const api = mountProjectionConfig(root, { client });
+    const inputFor = path => find(root, node => node.dataset?.field === path && node.dataset.input === 'number');
+    const errorFor = path => find(root, node => node.dataset?.errorFor === path);
+    try {
+      const draftBefore = clone(client.getState().draft);
+      client.setDraft.mockClear(); client.apply.mockClear(); client.save.mockClear();
+      const unrelated = inputFor('pre.scale'); unrelated.value = '1.'; unrelated.dispatch('input');
+      const rejected = inputFor('outputs.left.crop.x0'); rejected.value = '60'; rejected.dispatch('input'); rejected.dispatch('blur');
+      expect(errorFor('outputs.left.crop.x0').textContent).toMatch(/extent/i);
+      expect(unrelated.value).toBe('1.'); expect(unrelated.attributes['aria-invalid']).toBe('true');
+      find(find(root, node => node.dataset?.path === 'outputs.left.crop.x0'), node => node.dataset?.action === 'numeric-cancel-edit').dispatch('click');
+      expect(rejected.value).toBe('0.00');
+      for (const edge of ['x0', 'x1', 'y0', 'y1']) {
+        const path = `outputs.left.crop.${edge}`;
+        expect(errorFor(path).textContent).toBe(''); expect(inputFor(path).attributes['aria-invalid']).toBe('false');
+      }
+      expect(unrelated.value).toBe('1.'); expect(unrelated.attributes['aria-invalid']).toBe('true');
+      await api.handleAction('live', false);
+      expect(errorFor('outputs.left.crop.x0').textContent).toBe('');
+      expect(unrelated.value).toBe('1.'); expect(unrelated.attributes['aria-invalid']).toBe('true');
+      expect(client.getState().draft).toEqual(draftBefore);
+      expect(client.setDraft).not.toHaveBeenCalled(); expect(client.apply).not.toHaveBeenCalled(); expect(client.save).not.toHaveBeenCalled();
+    } finally { api.dispose(); }
+  });
+
+  test.each(['wall', 'model'])('profile-scoped Cancel retires the resolved %s error and preserves unrelated pending text', profile => {
+    const root = element('main'); root.ownerDocument = documentStub(); const client = fakeClient();
+    client.getState().draft.namesWall.activeMode = profile;
+    client.getState().snapshot.config.namesWall.activeMode = profile;
+    const api = mountProjectionConfig(root, { client });
+    const font = find(root, node => node.dataset?.field === 'namesWall.requestedFontPx' && node.dataset.input === 'number');
+    const pre = find(root, node => node.dataset?.field === 'pre.scale' && node.dataset.input === 'number');
+    const fontError = find(root, node => node.dataset?.errorFor === 'namesWall.requestedFontPx');
+    try {
+      client.setDraft.mockClear(); client.apply.mockClear(); client.save.mockClear(); client.setLive.mockClear();
+      pre.value = '1.'; pre.dispatch('input');
+      font.value = '49'; font.dispatch('input'); font.dispatch('blur');
+      expect(fontError.textContent).toMatch(/between 1 and 48 px/i);
+      find(find(root, node => node.dataset?.path === 'namesWall.requestedFontPx'), node => node.dataset?.action === 'numeric-cancel-edit').dispatch('click');
+      expect(fontError.textContent).toBe(''); expect(font.attributes['aria-invalid']).toBe('false');
+      expect(pre.value).toBe('1.'); expect(pre.attributes['aria-invalid']).toBe('true');
+      client.report({ pending: !client.getState().pending });
+      expect(fontError.textContent).toBe(''); expect(pre.value).toBe('1.'); expect(pre.attributes['aria-invalid']).toBe('true');
+      expect(client.setDraft).not.toHaveBeenCalled(); expect(client.apply).not.toHaveBeenCalled(); expect(client.save).not.toHaveBeenCalled(); expect(client.setLive).not.toHaveBeenCalled();
+    } finally { api.dispose(); }
+  });
+
+test('a foreign Model profile keeps pending Wall-only Cancel visible and Back works without writes', () => {
+    const doc = documentStub(); const root = element('main'); root.ownerDocument = doc; const client = fakeClient();
+    const api = mountProjectionConfig(root, { client });
+    const inputFor = (container, path) => find(container, node => node.dataset?.field === path && node.dataset.input === 'number');
+    const errorFor = path => find(root, node => node.dataset?.errorFor === path);
+    try {
+      client.setDraft.mockClear(); client.apply.mockClear(); client.save.mockClear(); client.setLive.mockClear();
+      find(root, node => node.dataset?.node === 'names-wall').dispatch('click');
+      find(root, node => node.className === 'config-enlarge-edit').dispatch('click');
+      const panel = find(root, node => node.className === 'parameter-editor-dialog');
+      const wallShift = inputFor(panel, 'namesWall.inwardShiftPercent');
+      wallShift.value = '-'; wallShift.dispatch('input'); wallShift.dispatch('blur');
+      const unrelatedPre = inputFor(root, 'pre.scale'); unrelatedPre.value = '1.'; unrelatedPre.dispatch('input');
+
+      const foreignModel = clone(client.getState().draft);
+      foreignModel.namesWall.activeMode = 'model';
+      foreignModel.namesWall.profiles.model.requestedFontPx = 12;
+      client.report({ draft: foreignModel, hasLocalDraft: false });
+
+      const wallShiftWrap = find(panel, node => node.dataset?.path === 'namesWall.inwardShiftPercent');
+      expect(find(panel, node => node.className === 'parameter-editor-title-context').textContent).toMatch(/Model/i);
+      expect(wallShiftWrap.hidden).toBe(false);
+      expect(find(wallShiftWrap, node => node.className === 'config-field-pending-target').textContent).toMatch(/Regular wall/i);
+      const modelFont = inputFor(panel, 'namesWall.requestedFontPx');
+      modelFont.value = '49'; modelFont.dispatch('input'); modelFont.dispatch('blur');
+      expect(errorFor('namesWall.requestedFontPx').textContent).toMatch(/between 1 and 48 px/i);
+
+      find(wallShiftWrap, node => node.dataset?.action === 'numeric-cancel-edit').dispatch('click');
+      expect(wallShift.value).toBe('0');
+      expect(errorFor('namesWall.inwardShiftPercent').textContent).toBe('');
+      expect(errorFor('namesWall.requestedFontPx').textContent).toMatch(/between 1 and 48 px/i);
+      expect(unrelatedPre.value).toBe('1.');
+      client.report({ pending: !client.getState().pending });
+      expect(find(panel, node => node.className === 'parameter-editor-title-context').textContent).toMatch(/Model/i);
+      expect(errorFor('namesWall.requestedFontPx').textContent).toMatch(/between 1 and 48 px/i);
+      expect(client.getState().draft.namesWall.activeMode).toBe('model');
+      expect(client.getState().draft.namesWall.profiles.model.requestedFontPx).toBe(12);
+
+      const modelFontWrap = find(panel, node => node.dataset?.path === 'namesWall.requestedFontPx');
+      find(modelFontWrap, node => node.dataset?.action === 'numeric-cancel-edit').dispatch('click');
+      find(panel, node => node.dataset?.action === 'parameter-editor-close').dispatch('click');
+      expect(panel.hidden).toBe(true);
+      expect(client.getState().draft.namesWall.activeMode).toBe('model');
+      expect(client.getState().draft.namesWall.profiles.model.requestedFontPx).toBe(12);
+      expect(client.getState().draft).toEqual(foreignModel);
+      expect(client.setDraft).not.toHaveBeenCalled(); expect(client.apply).not.toHaveBeenCalled();
+      expect(client.save).not.toHaveBeenCalled(); expect(client.setLive).not.toHaveBeenCalled();
+  } finally { api.dispose(); }
+});
+
+test('Cancel immediately hides a retained Wall-only wrapper when no controller error exists', () => {
+  const doc = documentStub(); const root = element('main'); root.ownerDocument = doc; const client = fakeClient();
+  const api = mountProjectionConfig(root, { client });
+  try {
+    client.setDraft.mockClear(); client.apply.mockClear();
+    find(root, node => node.dataset?.node === 'names-wall').dispatch('click');
+    find(root, node => node.className === 'config-enlarge-edit').dispatch('click');
+    const panel = find(root, node => node.className === 'parameter-editor-dialog');
+    const wallShiftWrap = find(panel, node => node.dataset?.path === 'namesWall.inwardShiftPercent');
+    const wallShift = find(wallShiftWrap, node => node.dataset?.input === 'number');
+    wallShift.value = '4'; wallShift.dispatch('input');
+    const model = clone(client.getState().draft); model.namesWall.activeMode = 'model';
+    client.report({ draft: model, hasLocalDraft: false });
+    expect(wallShiftWrap.hidden).toBe(false);
+    expect(find(wallShiftWrap, node => node.className === 'config-field-pending-target').hidden).toBe(false);
+    find(wallShiftWrap, node => node.dataset?.action === 'numeric-cancel-edit').dispatch('click');
+    expect(wallShiftWrap.hidden).toBe(true);
+    expect(find(wallShiftWrap, node => node.className === 'config-field-pending-target').hidden).toBe(true);
+    expect(client.setDraft).not.toHaveBeenCalled(); expect(client.apply).not.toHaveBeenCalled();
+  } finally { api.dispose(); }
+});
+
+  test('header Escape retires rejected crop validation and its status refresh without writing state', () => {
+    const doc = documentStub(); const root = element('main'); root.ownerDocument = doc; const client = fakeClient();
+    const api = mountProjectionConfig(root, { client });
+    const inputFor = (container, path) => find(container, node => node.dataset?.field === path && node.dataset.input === 'number');
+    const errorFor = path => find(root, node => node.dataset?.errorFor === path);
+    try {
+      client.setDraft.mockClear(); client.apply.mockClear(); client.save.mockClear(); client.setLive.mockClear();
+      find(root, node => node.dataset?.node === 'left-crop').dispatch('click');
+      find(root, node => node.className === 'config-enlarge-edit').dispatch('click');
+      const panel = find(root, node => node.className === 'parameter-editor-dialog');
+      const x0 = inputFor(panel, 'outputs.left.crop.x0'); x0.value = '60'; x0.dispatch('input'); x0.dispatch('blur');
+      expect(errorFor('outputs.left.crop.x0').textContent).toMatch(/extent/i);
+      const back = find(panel, node => node.dataset?.action === 'parameter-editor-close'); doc.activeElement = back;
+      doc.dispatch('keydown', { key: 'Escape', target: back, preventDefault() {} });
+      expect(panel.hidden).toBe(false);
+      for (const edge of ['x0', 'x1', 'y0', 'y1']) expect(errorFor(`outputs.left.crop.${edge}`).textContent).toBe('');
+      client.report({ pending: !client.getState().pending });
+      for (const edge of ['x0', 'x1', 'y0', 'y1']) expect(errorFor(`outputs.left.crop.${edge}`).textContent).toBe('');
+      expect(client.getState().draft).toEqual(DEFAULTS);
+      expect(client.setDraft).not.toHaveBeenCalled(); expect(client.apply).not.toHaveBeenCalled(); expect(client.save).not.toHaveBeenCalled(); expect(client.setLive).not.toHaveBeenCalled();
+    } finally { api.dispose(); }
+  });
+
+  test('nudge finishes valid text before stepping, blocks invalid text, and resets its anchor after manual commit', () => {
+    const root = element('main'); root.ownerDocument = documentStub(); const client = fakeClient(); const api = mountProjectionConfig(root, { client });
+    const input = find(root, node => node.dataset?.field === 'pre.scale' && node.dataset.input === 'number');
+    const plus = find(find(root, node => node.dataset?.path === 'pre.scale'), node => node.dataset?.direction === '1');
+    try {
+      input.value = '1.3'; input.dispatch('input'); plus.dispatch('click', { detail: 0 });
+      expect(client.getState().draft.pre.scale).toBe(1.301);
+      input.value = '1.5'; input.dispatch('input'); input.dispatch('blur');
+      expect(client.getState().draft.pre.scale).toBe(1.5);
+      plus.dispatch('click', { detail: 0 }); expect(client.getState().draft.pre.scale).toBe(1.501);
+      input.value = '-'; input.dispatch('input'); plus.dispatch('click', { detail: 0 });
+      expect(input.value).toBe('-'); expect(input.attributes['aria-invalid']).toBe('true'); expect(client.getState().draft.pre.scale).toBe(1.501);
+      find(find(root, node => node.dataset?.path === 'pre.scale'), node => node.dataset?.action === 'numeric-cancel-edit').dispatch('click');
+      expect(input.value).toBe('1.501'); expect(input.attributes['aria-invalid']).toBe('false');
+      plus.dispatch('click', { detail: 0 }); expect(client.getState().draft.pre.scale).toBe(1.502);
+    } finally { api.dispose(); }
+  });
+
+  test.each(['pre.scale', 'outputs.left.crop.x0'])('an unchanged crop correction retains another rejected pending edit at %s', async pendingPath => {
+    const root = element('main'); root.ownerDocument = documentStub(); const client = fakeClient(); const api = mountProjectionConfig(root, { client });
+    const inputFor = path => find(root, node => node.dataset?.field === path && node.dataset.input === 'number');
+    const errorFor = path => find(root, node => node.dataset?.errorFor === path);
+    try {
+      const corrected = inputFor('outputs.left.crop.x1'); corrected.value = '0.1'; corrected.dispatch('input'); corrected.dispatch('blur');
+      const pending = inputFor(pendingPath); pending.value = pendingPath === 'pre.scale' ? '9' : '85'; pending.dispatch('input'); pending.dispatch('blur');
+      expect(errorFor(pendingPath).textContent).not.toBe('');
+      corrected.value = '60'; corrected.dispatch('input'); corrected.dispatch('blur');
+      expect(errorFor(pendingPath).textContent).not.toBe(''); expect(pending.attributes['aria-invalid']).toBe('true');
+      await api.handleAction('save-new', 'Desk'); expect(client.save).not.toHaveBeenCalled(); expect(client.setDraft).not.toHaveBeenCalled();
+      expect(pending.value).toBe(pendingPath === 'pre.scale' ? '9' : '85'); expect(errorFor(pendingPath).textContent).not.toBe(''); expect(pending.attributes['aria-invalid']).toBe('true');
+    } finally { api.dispose(); }
+  });
+
+  test('unchanged crop correction leaves an actual deferred preflight alive without another draft notification or POST', async () => {
+    const root = element('main'); root.ownerDocument = documentStub(); const h = replacementHarness(); const checks = [];
+    const api = mountProjectionConfig(root, { client: h.client, candidateValidator: { validateCandidate: args => new Promise(resolve => checks.push({ ...args, resolve })), dispose() {} } });
+    try {
+      h.respond(h.snapshot); await vi.waitFor(() => expect(h.client.getState().hydrating).toBe(false)); h.client.setLive(false);
+      const applying = h.client.apply(); await vi.waitFor(() => expect(checks).toHaveLength(1));
+      const before = h.client.getState(); const listener = vi.fn(); const unsubscribe = h.client.subscribe(listener); listener.mockClear();
+      const input = find(root, node => node.dataset?.field === 'outputs.left.crop.x0' && node.dataset.input === 'number');
+      input.value = '85'; input.dispatch('input'); input.dispatch('blur'); input.value = '0'; input.dispatch('input'); input.dispatch('blur');
+      expect(find(root, node => node.dataset?.errorFor === 'outputs.left.crop.x0').textContent).toBe('');
+      expect(h.client.getState()).toEqual(before); expect(listener).not.toHaveBeenCalled(); expect(checks[0].signal.aborted).toBe(false); expect(h.requests).toHaveLength(0);
+      unsubscribe(); checks[0].resolve({ identity: checks[0].identity, valid: true }); await vi.waitFor(() => expect(h.requests).toHaveLength(1));
+      h.respond({ ...h.snapshot, revision: 1 }); await applying; expect(h.requests).toHaveLength(0); expect(checks).toHaveLength(1);
+    } finally { api.dispose(); }
+  });
+
+  test.each(['load', 'revert', 'import'])('%s confirms pending text once and keeps the draft until replacement succeeds', async action => {
+    const root = element('main'); root.ownerDocument = documentStub(); const confirm = vi.fn(() => false); root.ownerDocument.defaultView.confirm = confirm;
+    const client = fakeClient(); let resolve; const replacement = new Promise(done => { resolve = done; });
+    client.load.mockImplementation(() => replacement); client.revert.mockImplementation(() => replacement);
+    const imported = vi.fn(() => replacement); const api = mountProjectionConfig(root, { client, onImport: imported });
+    try {
+      const input = find(root, node => node.dataset?.field === 'pre.scale' && node.dataset.input === 'number'); input.value = '1.'; input.dispatch('input');
+      const trigger = () => action === 'import' ? api.handleAction('import', {}) : clickCommand(root, action);
+      trigger(); expect(confirm).toHaveBeenCalledTimes(1); expect(client.load).not.toHaveBeenCalled(); expect(client.revert).not.toHaveBeenCalled(); expect(imported).not.toHaveBeenCalled();
+      confirm.mockReturnValue(true); trigger(); expect(confirm).toHaveBeenCalledTimes(2); expect(client.getState().draft).toEqual(DEFAULTS); expect(client.setDraft).not.toHaveBeenCalled();
+      expect(action === 'import' ? imported : client[action]).toHaveBeenCalledTimes(1);
+      resolve(action === 'import' ? { config: clone(DEFAULTS) } : { draftReplaced: false }); await Promise.resolve();
+    } finally { api.dispose(); }
+  });
+
+  test.each(['apply', 'save', 'save-new', 'node', 'profile', 'editor'])('%s rejects while a scalar range pointer is held', action => {
+    const root = element('main'); root.ownerDocument = documentStub(); const client = fakeClient();
+    client.getState().snapshot.selectedPresetId = 'desk'; client.getState().snapshot.presets.push({ id: 'desk', name: 'Desk', config: clone(DEFAULTS) });
+    const api = mountProjectionConfig(root, { client });
+    try {
+      const range = find(root, node => node.dataset?.field === 'pre.scale' && node.dataset.input === 'range'); range.dispatch('pointerdown', { pointerId: 9 });
+      const selected = vi.spyOn(find(root, node => node.dataset?.node === 'pre').classList, 'toggle');
+      if (action === 'node') find(root, node => node.dataset?.node === 'left-fit').dispatch('click');
+      else if (action === 'profile') { const select = find(root, node => node.className === 'names-wall-mode'); select.value = 'model'; select.dispatch('change'); }
+      else if (action === 'editor') find(root, node => node.dataset?.action === 'parameter-editor-open').dispatch('click');
+      else clickCommand(root, action);
+      expect(client.apply).not.toHaveBeenCalled(); expect(client.save).not.toHaveBeenCalled(); expect(client.getState().draft).toEqual(DEFAULTS);
+      expect(selected).toHaveBeenLastCalledWith('selected', true);
+      expect(find(root, node => node.className === 'parameter-editor-dialog').hidden).toBe(true);
+      range.dispatch('pointerup', { pointerId: 9 });
+      api.handleAction('apply'); expect(client.apply).toHaveBeenCalledTimes(1);
+    } finally { api.dispose(); }
+  });
+
+  test.each(['apply', 'save-new', 'node'])('%s rejects a held warp pointer', action => {
+    const h = tracedWarpHarness();
+    try {
+      h.surface.dispatch('pointerdown', { pointerId: 4, isPrimary: true, button: 0, clientX: 72, clientY: 72, preventDefault() {} });
+      h.surface.dispatch('pointermove', { pointerId: 4, clientX: 80, clientY: 72 });
+      h.client.apply.mockClear(); h.client.save.mockClear();
+      if (action === 'node') find(h.root, node => node.dataset?.node === 'pre').dispatch('click');
+      else clickCommand(h.root, action);
+      expect(h.client.apply).not.toHaveBeenCalled(); expect(h.client.save).not.toHaveBeenCalled();
+      expect(find(h.root, node => node.className === 'action-error').textContent).toMatch(/active gesture/i);
+    } finally { h.restore(); }
+  });
+
+  test.each(['load', 'revert'])('confirmed %s retires a held scalar range and ignores its remaining native events', async action => {
+    const root = element('main'); root.ownerDocument = documentStub(); root.ownerDocument.defaultView.confirm = vi.fn(() => true);
+    const client = fakeClient(); let resolve; client[action].mockImplementation(() => new Promise(done => { resolve = done; }));
+    const api = mountProjectionConfig(root, { client });
+    try {
+      const range = find(root, node => node.dataset?.field === 'pre.scale' && node.dataset.input === 'range');
+      find(find(root, n => n.dataset?.path === 'pre.scale'), n => n.dataset?.mode === 'coarse').dispatch('click');
+      range.dispatch('pointerdown', { pointerId: 9 }); range.value = '1.5'; range.dispatch('input'); const draft = clone(client.getState().draft); client.setDraft.mockClear();
+      api.handleAction(action, 'original'); expect(root.ownerDocument.defaultView.confirm).toHaveBeenCalledTimes(1);
+      range.value = '2'; range.dispatch('input'); range.dispatch('change');
+      expect(client.getState().draft).toEqual(draft); expect(client.setDraft).not.toHaveBeenCalled();
+      range.dispatch('pointerup', { pointerId: 9 }); range.dispatch('change'); expect(client.setDraft).not.toHaveBeenCalled();
+      resolve({ draftReplaced: false }); await Promise.resolve();
+      range.dispatch('pointerdown', { pointerId: 10 }); range.value = '1.6'; range.dispatch('input'); range.dispatch('pointerup', { pointerId: 10 });
+      expect(client.getState().draft.pre.scale).toBe(1.6); expect(client.setDraft).toHaveBeenCalledTimes(1);
+    } finally { api.dispose(); }
+  });
+
+  test.each(['load', 'revert'])('confirmed %s retires a moved warp without publishing rollback before acknowledgement', async action => {
+    const h = tracedWarpHarness(); const confirm = vi.fn(() => false); globalThis.document.defaultView.confirm = confirm;
+    let resolve; h.client[action].mockImplementation(() => new Promise(done => { resolve = done; }));
+    try {
+      find(h.root, node => node.dataset?.action === 'warp-nudge' && node.dataset.direction === 'right').dispatch('click');
+      expect(find(h.root, node => node.dataset?.action === 'warp-undo').disabled).toBe(false);
+      h.surface.dispatch('pointerdown', { pointerId: 4, isPrimary: true, button: 0, clientX: 72, clientY: 72, preventDefault() {} });
+      h.surface.dispatch('pointermove', { pointerId: 4, clientX: 82, clientY: 72 });
+      const draft = clone(h.client.getState().draft); h.client.setDraft.mockClear(); h.client.apply.mockClear();
+      const button = find(h.root, node => node.dataset?.action === action); button.dispatch('click');
+      expect(confirm).toHaveBeenCalledTimes(1); expect(h.client[action]).not.toHaveBeenCalled();
+      confirm.mockReturnValue(true); button.dispatch('click'); expect(confirm).toHaveBeenCalledTimes(2); expect(h.client[action]).toHaveBeenCalledTimes(1);
+      h.surface.dispatch('pointerup', { pointerId: 4, clientX: 92, clientY: 72 });
+      expect(h.client.getState().draft).toEqual(draft); expect(h.client.setDraft).not.toHaveBeenCalled(); expect(h.client.apply).not.toHaveBeenCalled();
+      expect(find(h.root, node => node.dataset?.action === 'warp-undo').disabled).toBe(false);
+      resolve({ draftReplaced: false }); await Promise.resolve();
+      find(h.root, node => node.dataset?.action === 'apply').dispatch('click'); expect(h.client.apply).toHaveBeenCalledTimes(1);
+      find(h.root, node => node.dataset?.action === 'warp-nudge' && node.dataset.direction === 'up').dispatch('click');
+      expect(h.client.setDraft).toHaveBeenCalledTimes(1);
+    } finally { h.restore(); }
+  });
+
+  test('commands finish the parameter dialog owner and preserve rejected text', () => {
+    const root = element('main'); root.ownerDocument = documentStub(); const client = fakeClient(); const api = mountProjectionConfig(root, { client });
+    try {
+      find(root, node => node.dataset?.action === 'parameter-editor-open').dispatch('click');
+      const dialog = find(root, node => node.className === 'parameter-editor-dialog');
+      const input = find(dialog, node => node.dataset?.field === 'pre.scale' && node.dataset.input === 'number');
+      input.value = '1.'; input.dispatch('input'); api.handleAction('apply'); expect(client.apply).not.toHaveBeenCalled(); expect(input.value).toBe('1.');
+      input.value = '1.5'; input.dispatch('input'); api.handleAction('apply'); expect(client.apply).toHaveBeenCalledTimes(1); expect(client.getState().draft.pre.scale).toBe(1.5);
+    } finally { api.dispose(); }
+  });
+
+  test.each(['apply', 'save-new'])('%s rejects conflicted text until the operator chooses a conflict action', action => {
+    const root = element('main'); root.ownerDocument = documentStub(); const client = fakeClient(); const api = mountProjectionConfig(root, { client });
+    try {
+      const input = find(root, node => node.dataset?.field === 'pre.scale' && node.dataset.input === 'number'); input.value = '1.5'; input.dispatch('input');
+      const next = clone(DEFAULTS); next.pre.scale = 2; client.report({ draft: next });
+      api.handleAction(action, 'Desk'); expect(client.apply).not.toHaveBeenCalled(); expect(client.save).not.toHaveBeenCalled(); expect(client.getState().draft).toEqual(next);
+      const field = find(root, node => node.dataset?.path === 'pre.scale'); field.children.find(node => node.dataset?.action === 'numeric-use-latest').dispatch('click');
+      api.handleAction(action, 'Desk'); expect(action === 'apply' ? client.apply : client.save).toHaveBeenCalledTimes(1); expect(client.getState().draft).toEqual(next);
+    } finally { api.dispose(); }
+  });
+
+  test('controller bounds errors report percentage display units and retain text for correction', () => {
+    const root = element('main'); root.ownerDocument = documentStub(); const client = fakeClient(); const api = mountProjectionConfig(root, { client });
+    try {
+      const input = find(root, node => node.dataset?.field === 'pre.tx' && node.dataset.input === 'number'); input.value = '201'; input.dispatch('input');
+      api.handleAction('apply'); expect(client.apply).not.toHaveBeenCalled(); expect(client.setDraft).not.toHaveBeenCalled(); expect(input.value).toBe('201');
+      expect(find(root, node => node.dataset?.errorFor === 'pre.tx').textContent).toBe('must be between -200 and 200 %');
+      input.value = '150'; input.dispatch('input'); api.handleAction('apply'); expect(client.getState().draft.pre.tx).toBe(1.5); expect(client.apply).toHaveBeenCalledTimes(1);
+    } finally { api.dispose(); }
+  });
   test.each(['identity', 'disabled', 'identity peer'])('pending TD load suspends full-config editor writes from %s and preserves latest fields', async (kind) => {
     const previousDocument = globalThis.document, previousFetch = globalThis.fetch;
     globalThis.document = documentStub();
@@ -164,7 +1782,7 @@ describe("projection config controller", () => {
       pending.pre.tx = 0.12; pending.outputs.left.post.ty = -0.08;
       client.report({ draft: pending, hasLocalDraft: true });
       const input = find(root, (node) => node.dataset?.field === 'pre.tx' && node.dataset.input === 'number');
-      expect(input).not.toBeNull(); input.value = '15'; input.dispatch('input'); input.dispatch('blur');
+      expect(input).not.toBeNull(); input.value = '15'; input.dispatch('input'); input.dispatch('input'); input.dispatch('blur');
       const latest = clone(client.getState().draft);
       expect(latest.pre.tx).toBe(0.15);
       client.setDraft.mockClear(); client.apply.mockClear();
@@ -241,7 +1859,8 @@ describe("projection config controller", () => {
     const loader = createProjectionBaselineCatalogLoader({ base: f.base, initialSnapshot: f.snapshotA,
       fetchImpl: (url, options) => url.endsWith('framing.json') ? gate.promise : f.fetchImpl(url, options) });
     const client = fakeClient(); client.setLive(false);
-    const root = element('main'), api = mountProjectionConfig(root, { client, baselineCatalogLoader: loader });
+    const candidateValidator = { validateCandidate: async ({ identity }) => ({ identity, valid: true }), dispose() {} };
+    const root = element('main'), api = mountProjectionConfig(root, { client, baselineCatalogLoader: loader, candidateValidator });
     try {
       find(root, (node) => node.dataset?.action === 'warp-editor-open' && node.parentElement?.dataset?.node === 'left-grid').dispatch('click');
       const surface = find(root, (node) => node.attributes?.class === 'warp-edit-surface');
@@ -257,7 +1876,10 @@ describe("projection config controller", () => {
       client.report({ draft: previous, hasLocalDraft: true });
       const columns = find(root, (node) => node.dataset?.gridLayoutField === 'columns');
       columns.value = '4'; columns.dispatch('input'); columns.dispatch('blur');
-      expect(client.getState().draft.outputs.left.warp.grid.columns).toBe(4);
+      const confirm = find(root, (node) => node.dataset?.action === 'warp-grid-layout-confirm');
+      await vi.waitFor(() => expect(confirm.disabled).toBe(false));
+      confirm.dispatch('click');
+      await vi.waitFor(() => expect(client.getState().draft.outputs.left.warp.grid.columns).toBe(4));
       expect(client.getState().draft.pre).toEqual(previous.pre);
       gate.resolve(response(f.payloads.get(`${f.base}framing.json`))); await new Promise((done) => setTimeout(done, 10));
       expect(client.getState().draft.outputs.left.warp.baseline.type).toBe('identity');
@@ -416,7 +2038,7 @@ describe("projection config controller", () => {
       const action = (name) => find(root, (node) => node.dataset?.action === name);
       const nudge = () => find(root, (node) => node.dataset?.action === "warp-nudge" && node.dataset.direction === "right").dispatch("click");
       find(root, (node) => node.dataset?.node === "left-keystone").dispatch("click"); nudge();
-      action(operation).dispatch("click"); await vi.waitFor(() => expect(h.requests).toHaveLength(1));
+      clickCommand(root, operation); await vi.waitFor(() => expect(h.requests).toHaveLength(1));
       nudge(); const draft = h.client.getState().draft;
       h.foreign({ ...h.snapshot, revision: 2, selectedPresetId: foreignId });
       h.respond({ ...h.snapshot, revision: 1 }); await vi.waitFor(() => expect(h.client.getState().pending).toBe(false));
@@ -448,7 +2070,7 @@ describe("projection config controller", () => {
       h.respond(working); await vi.waitFor(() => expect(h.client.getState().pending).toBe(false));
       expect(h.client.getState().hasLocalDraft).toBe(false); expect(action("warp-undo").disabled).toBe(false);
       const id = operation === "save" ? h.presetId : "33333333-3333-4333-8333-333333333333";
-      action(operation === "save" ? "save" : "save-new").dispatch("click");
+      clickCommand(root, operation === "save" ? "save" : "save-new");
       await vi.waitFor(() => expect(h.requests).toHaveLength(1));
       const saved = { ...working, revision: 2, selectedPresetId: id, presets: [...working.presets.filter((p) => p.id !== id), { id, name: "Desk", config: accepted, readOnly: false }] };
       if (operation.endsWith("websocket")) { h.own(saved); expect(action("warp-undo").disabled).toBe(false); }
@@ -475,7 +2097,7 @@ describe("projection config controller", () => {
       const action = (name) => find(root, (node) => node.dataset?.action === name);
       const nudge = () => find(root, (node) => node.dataset?.action === "warp-nudge" && node.dataset.direction === "left").dispatch("click");
       find(root, (node) => node.dataset?.node === "right-keystone").dispatch("click"); nudge();
-      action(operation).dispatch("click"); await vi.waitFor(() => expect(h.requests).toHaveLength(1));
+      clickCommand(root, operation); await vi.waitFor(() => expect(h.requests).toHaveLength(1));
       const sent = JSON.parse(h.requests[0].options.body); nudge(); const draft = h.client.getState().draft;
       const id = operation === "save" ? h.presetId : "33333333-3333-4333-8333-333333333333";
       const saved = { ...h.snapshot, revision: 1, config: sent.config, selectedPresetId: id, presets: [...h.snapshot.presets.filter((p) => p.id !== id), { id, name: sent.name, config: sent.config, readOnly: false }] };
@@ -498,7 +2120,7 @@ describe("projection config controller", () => {
       const action = (name) => find(root, (node) => node.dataset?.action === name);
       find(root, (node) => node.dataset?.node === "left-keystone").dispatch("click");
       find(root, (node) => node.dataset?.action === "warp-nudge" && node.dataset.direction === "right").dispatch("click");
-      const draft = h.client.getState().draft; action("save-new").dispatch("click");
+      const draft = h.client.getState().draft; clickCommand(root, "save-new");
       await vi.waitFor(() => expect(h.requests).toHaveLength(1));
       const preset = find(root, (node) => node.attributes?.["aria-label"] === "Preset"); preset.value = h.presetId; preset.dispatch("change"); action("load").dispatch("click");
       const id = "33333333-3333-4333-8333-333333333333";
@@ -524,7 +2146,7 @@ describe("projection config controller", () => {
       const action = (name) => find(root, (node) => node.dataset?.action === name);
       find(root, (node) => node.dataset?.node === "left-keystone").dispatch("click");
       find(root, (node) => node.dataset?.action === "warp-nudge" && node.dataset.direction === "right").dispatch("click");
-      action("save-new").dispatch("click"); expect(action("warp-undo").disabled).toBe(false);
+      clickCommand(root, "save-new"); expect(action("warp-undo").disabled).toBe(false);
       const external = clone(DEFAULTS); external.outputs.left.warp.keystone.corners[0] = [0.05, 0.01];
       client.report({ snapshot: { ...client.getState().snapshot, revision: 3, config: external }, draft: external, hasLocalDraft: false });
       expect(action("warp-undo").disabled).toBe(true);
@@ -658,7 +2280,7 @@ describe("projection config controller", () => {
       table: "otef", output: "left", instanceId: "left-instance", revision: 2,
       success: false, error: "output renderer unavailable", route: "browser", baseline: { type: "identity" },
     });
-    const tools = find(root, (node) => node.className === "config-tools");
+    const tools = find(root, (node) => node.className?.includes("config-tools"));
     expect(tools.tagName).toBe("DETAILS");
     expect(tools.attributes?.open).toBeUndefined();
     expect(find(root, (node) => node.className === "applied-status").tagName).toBe("SECTION");
@@ -1314,7 +2936,10 @@ describe("projection config controller", () => {
     expect(client.getState().live).toBe(false);
     const name = find(root, (node) => node.attributes?.["aria-label"] === "Preset name");
     name.value = "Imported";
-    action("save-new").dispatch("click");
+    clickCommand(root, "save-new");
+    expect(client.save).not.toHaveBeenCalled();
+    offset.dispatch("keydown", { key: "Escape", preventDefault() {}, stopPropagation() {} });
+    clickCommand(root, "save-new");
     await vi.waitFor(() => expect(client.save).toHaveBeenCalledWith({ presetId: null, name: "Imported" }));
     expect(client.savedDrafts.at(-1).pre.tx).toBe(0.012);
     const preset = find(root, (node) => node.attributes?.["aria-label"] === "Preset");
@@ -1555,13 +3180,14 @@ describe("projection config controller", () => {
     await vi.waitFor(() => expect(outputController.identifyDisplays).toHaveBeenCalledTimes(1));
     const left = find(root, (node) => node.dataset?.action === "output-left-display");
     const right = find(root, (node) => node.dataset?.action === "output-right-display");
-    expect(left.children.map((option) => option.textContent)).toEqual(["Display 1", "Display 2"]);
-    expect(right.children.map((option) => option.textContent)).toEqual(["Display 1", "Display 2"]);
+    expect(left.children.map((option) => option.textContent)).toEqual(["Display 1 · Left screen", "Display 2 · Right screen"]);
+    expect(right.children.map((option) => option.textContent)).toEqual(["Display 1 · Left screen", "Display 2 · Right screen"]);
     left.value = "left-screen"; right.value = "right-screen"; left.dispatch("change"); right.dispatch("change");
     action("output-identify").dispatch("click");
     client.report({ previewError: "unrelated preview refresh" });
     expect(left.value).toBe("left-screen");
     expect(right.value).toBe("right-screen");
+    expect(outputController.assignDisplays).not.toHaveBeenCalled();
     action("output-assign").dispatch("click");
     expect(outputController.assignDisplays).toHaveBeenCalledWith({ left: "left-screen", right: "right-screen" });
     action("output-open-both").dispatch("click");
@@ -1667,33 +3293,150 @@ describe("projection config controller", () => {
     restore();
   });
 
-  test("Grid layout edit preserves selection through synchronous draft notification and flushes once in Live", async () => {
-    const { root, client, trace, redraws, restore } = tracedWarpHarness();
+  test("Grid axis resize preserves selection and flushes once in Live after candidate validation", async () => {
+    const { root, client, trace, redraws, restore } = tracedWarpHarness({ candidateValidator: { validateCandidate: async ({ identity }) => ({ identity, valid: true }), dispose() {} } });
     find(root, (node) => node.dataset?.action === "warp-editor-close").dispatch("click");
     client.setLive(true);
     find(root, (node) => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
-    const chooseRow = find(root, (node) => node.dataset?.warpSelectionKind === "row");
-    chooseRow.dispatch("click");
-    const rowPicker = find(root, (node) => node.className === "warp-selection-picker");
-    rowPicker.value = "2"; rowPicker.dispatch("change");
+    const chooseColumn = find(root, (node) => node.dataset?.warpSelectionKind === "column");
+    chooseColumn.dispatch("click");
+    const columnPicker = find(root, (node) => node.className === "warp-selection-picker");
+    columnPicker.value = "2"; columnPicker.dispatch("change");
     const before = clone(client.getState().draft.outputs.left.warp.grid);
     client.setDraft.mockClear(); client.apply.mockClear(); trace.record.mockClear();
     const rows = find(root, (node) => node.dataset?.gridLayoutField === "rows");
     rows.value = "3"; rows.dispatch("input"); rows.dispatch("change");
+    await vi.waitFor(() => expect(client.getState().draft.outputs.left.warp.grid.rows).toBe(3));
     expect(client.getState().draft.outputs.left.warp.grid.rows).toBe(3);
     expect(client.setDraft).toHaveBeenCalledTimes(1);
     expect(client.apply).toHaveBeenCalledTimes(1);
-    expect(redraws()).toBe(1);
-    expect(rowPicker.value).toBe("2");
+    expect(redraws()).toBeGreaterThan(0); // Preview, validation, and commit each refresh the shared panel.
+    expect(columnPicker.value).toBe("2");
     find(root, (node) => node.dataset?.action === "warp-undo").dispatch("click");
     expect(client.getState().draft.outputs.left.warp.grid).toEqual(before);
     expect(client.setDraft).toHaveBeenCalledTimes(2);
     expect(client.apply).toHaveBeenCalledTimes(2);
-    expect(rowPicker.value).toBe("2");
+    expect(columnPicker.value).toBe("2");
     restore();
   });
 
-  test("invalid source-line geometry reports near Grid controls without draft, apply, or history writes", () => {
+  test('rejected warp coordinates stay pending and block selection switches until cancelled', () => {
+    const { root, client, restore } = tracedWarpHarness();
+    const input = find(root, node => node.dataset?.field === 'warp.position.x');
+    const before = clone(client.getState().draft.outputs.left.warp);
+    input.value = '999999'; input.dispatch('input'); input.dispatch('change');
+    expect(client.getState().draft.outputs.left.warp).toEqual(before);
+    expect(input.attributes['aria-invalid']).toBe('true');
+    const gridOpen = find(root, node => node.dataset?.action === 'warp-editor-open' && node.parentElement?.dataset?.node === 'left-grid');
+    gridOpen.dispatch('click');
+    expect(find(root, node => node.className === 'warp-editor-dialog').dataset.mode).toBe('keystone');
+    expect(find(root, node => node.className === 'warp-precision-panel').hidden).toBe(false);
+    expect(client.getState().draft.outputs.left.warp).toEqual(before);
+    find(root, node => node.dataset?.action === 'warp-editor-close').dispatch('click');
+    expect(find(root, node => node.className === 'warp-editor-dialog').hidden).toBe(false);
+    input.dispatch('keydown', { key: 'Escape', preventDefault() {}, stopPropagation() {} });
+    find(root, node => node.dataset?.action === 'warp-editor-close').dispatch('click');
+    expect(find(root, node => node.className === 'warp-editor-dialog').hidden).toBe(true);
+    restore();
+  });
+
+  test("warp view exposes direct Edit and Move controls with clear pressed state", () => {
+    const h = tracedWarpHarness();
+    try {
+      const edit = find(h.root, node => node.className === "warp-edit-toggle");
+      const move = find(h.root, node => node.className === "warp-pan-toggle");
+      expect(edit.textContent).toBe("Edit");
+      expect(move.textContent).toBe("Move view");
+      expect(edit.attributes["aria-pressed"]).toBe("true");
+      expect(move.attributes["aria-pressed"]).toBe("false");
+      move.dispatch("click");
+      expect(edit.attributes["aria-pressed"]).toBe("false");
+      expect(move.attributes["aria-pressed"]).toBe("true");
+      edit.dispatch("click");
+      expect(edit.attributes["aria-pressed"]).toBe("true");
+      expect(move.attributes["aria-pressed"]).toBe("false");
+    } finally { h.restore(); }
+  });
+
+  test("an own Live draft acknowledgment during a warp drag retains the active gesture and one Undo", () => {
+    const h = tracedWarpHarness();
+    try {
+      h.client.setLive(true);
+      const initial = clone(h.client.getState().draft.outputs.left.warp);
+      h.surface.dispatch("pointerdown", { pointerId: 1, isPrimary: true, button: 0, clientX: 72, clientY: 72, preventDefault() {} });
+      h.surface.dispatch("pointermove", { pointerId: 1, clientX: 82, clientY: 72 });
+      const ownDraft = clone(h.client.getState().draft);
+      expect(ownDraft.outputs.left.warp.keystone.corners[0]).not.toEqual(initial.keystone.corners[0]);
+      h.client.setDraft.mockClear();
+      h.client.report({
+        snapshot: { ...h.client.getState().snapshot, revision: 3, config: clone(ownDraft) },
+        draft: clone(ownDraft),
+        hasLocalDraft: true,
+      });
+      h.surface.dispatch("pointermove", { pointerId: 1, clientX: 92, clientY: 72 });
+      h.surface.dispatch("pointerup", { pointerId: 1, clientX: 94, clientY: 72 });
+      expect(h.client.getState().draft.outputs.left.warp.keystone.corners[0]).not.toEqual(initial.keystone.corners[0]);
+      expect(h.client.setDraft).toHaveBeenCalledTimes(3);
+      expect(find(h.root, node => node.dataset?.action === "warp-undo").disabled).toBe(false);
+      find(h.root, node => node.dataset?.action === "warp-undo").dispatch("click");
+      expect(h.client.getState().draft.outputs.left.warp).toEqual(initial);
+    } finally { h.restore(); }
+  });
+
+  test.each(["left-keystone", "right-keystone", "left-grid", "right-grid"])("bypassed %s keeps selection and navigation available, disables geometry, and offers Enable correction", nodeId => {
+    const previousDocument = globalThis.document; globalThis.document = documentStub();
+    const root = element("main"); const client = fakeClient();
+    const config = clone(client.getState().draft);
+    const output = nodeId.startsWith("right-") ? "right" : "left";
+    config.outputs[output].warp.enabled = false;
+    config.outputs[output].warp.keystone.corners[0] = [0.03, 0.02];
+    client.report({ draft: config });
+    const api = mountProjectionConfig(root, { client });
+    try {
+      find(root, node => node.dataset?.node === nodeId).dispatch("click");
+      find(root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === nodeId).dispatch("click");
+      const status = find(root, node => node.className === "warp-selection-status");
+      const enable = find(root, node => node.dataset?.action === "warp-enable-correction");
+      const nudge = find(root, node => node.dataset?.action === "warp-nudge" && node.dataset?.direction === "right");
+      const surface = find(root, node => node.attributes?.class === "warp-edit-surface");
+      expect(status.textContent).toContain("Correction bypassed; geometry editing disabled");
+      expect(enable.textContent).toBe("Enable correction to edit");
+      expect(enable.hidden).toBe(false);
+      expect(nudge.disabled).toBe(true);
+      expect(find(root, node => node.dataset?.action === "warp-undo").disabled).toBe(true);
+      expect(find(root, node => node.dataset?.action === "warp-redo").disabled).toBe(true);
+      expect(find(root, node => node.attributes?.["aria-label"] === "Selected warp X position").disabled).toBe(true);
+      find(surface, node => node.attributes?.["data-index"] === "3").dispatch("keydown", { key: "Enter", preventDefault() {} });
+      expect(status.textContent).toContain(nodeId.endsWith("-grid") ? "Point 4" : "Bottom-right corner");
+      enable.dispatch("click");
+      expect(client.getState().draft.outputs[output].warp.enabled).toBe(true);
+      expect(enable.hidden).toBe(true);
+      expect(nudge.disabled).toBe(false);
+    } finally { api.dispose(); globalThis.document = previousDocument; }
+  });
+
+  test('warp panel Escape retires rejected coordinate validation without draft or history writes', () => {
+    const { root, client, restore } = tracedWarpHarness();
+    const doc = globalThis.document;
+    const input = find(root, node => node.dataset?.field === 'warp.position.x');
+    input.value = '999999'; input.dispatch('input'); input.dispatch('change');
+    expect(input.attributes['aria-invalid']).toBe('true');
+    const before = clone(client.getState().draft.outputs.left.warp);
+    client.setDraft.mockClear(); client.apply.mockClear();
+
+    doc.dispatch('keydown', { key: 'Escape', preventDefault() {} });
+    expect(find(root, node => node.className === 'warp-editor-dialog').hidden).toBe(false);
+    expect(input.attributes['aria-invalid']).toBe('false');
+    expect(find(root, node => node.className === 'warp-selection-status').textContent).not.toContain('Move rejected:');
+    expect(client.getState().draft.outputs.left.warp).toEqual(before);
+    expect(client.setDraft).not.toHaveBeenCalled(); expect(client.apply).not.toHaveBeenCalled();
+
+    doc.dispatch('keydown', { key: 'Escape', preventDefault() {} });
+    expect(find(root, node => node.className === 'warp-editor-dialog').hidden).toBe(true);
+    restore();
+  });
+
+  test("invalid source-line geometry reports in the preview status without draft, apply, or history writes", async () => {
     const { root, client, trace, restore } = tracedWarpHarness();
     find(root, (node) => node.dataset?.action === "warp-editor-close").dispatch("click");
     find(root, (node) => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
@@ -1707,8 +3450,36 @@ describe("projection config controller", () => {
     expect(client.setDraft).not.toHaveBeenCalled();
     expect(client.apply).not.toHaveBeenCalled();
     expect(find(root, (node) => node.dataset?.action === "warp-undo").disabled).toBe(true);
-    expect(find(root, (node) => node.className === "warp-grid-layout-error").textContent).toContain("between its neighbors");
+    await vi.waitFor(() => expect(find(root, (node) => node.className === "warp-grid-layout-preview-status").textContent).toContain("between its neighbors"));
     restore();
+  });
+
+  test("invalid or stale async grid candidates expose a reason without draft, history, or Live writes", async () => {
+    const checks = [];
+    const candidateValidator = { validateCandidate: vi.fn(({ identity }) => candidateValidator.validateCandidate.mock.calls.length === 1
+      ? Promise.resolve({ identity, valid: false, reason: "Candidate geometry was rejected." })
+      : new Promise(resolve => checks.push({ identity, resolve }))), dispose() {} };
+    const { root, client, api, restore } = tracedWarpHarness({ candidateValidator });
+    try {
+      find(root, node => node.dataset?.action === "warp-editor-close").dispatch("click");
+      find(root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+      find(root, node => node.dataset?.warpSelectionKind === "row").dispatch("click");
+      const picker = find(root, node => node.className === "warp-selection-picker"); picker.value = "2"; picker.dispatch("change");
+      const remove = find(root, node => node.dataset?.gridLayoutAction === "remove-row");
+      client.setDraft.mockClear(); client.apply.mockClear();
+      remove.dispatch("click"); await vi.waitFor(() => expect(candidateValidator.validateCandidate).toHaveBeenCalledTimes(1));
+      await vi.waitFor(() => expect(find(root, node => node.className === "warp-grid-layout-preview-status").textContent).toContain("Candidate geometry was rejected."));
+      expect(client.setDraft).not.toHaveBeenCalled(); expect(client.apply).not.toHaveBeenCalled();
+      find(root, node => node.dataset?.action === "warp-grid-layout-cancel").dispatch("click");
+
+      remove.dispatch("click"); await vi.waitFor(() => expect(checks).toHaveLength(1));
+      const replacement = clone(client.getState().draft); replacement.outputs.left.warp.keystone.corners[0][0] = .02;
+      client.report({ draft: replacement, hasLocalDraft: true });
+      checks[0].resolve({ identity: checks[0].identity, valid: true });
+      await vi.waitFor(() => expect(find(root, node => node.className === "warp-grid-layout-preview-status").textContent).toContain("warp changed"));
+      expect(client.setDraft).not.toHaveBeenCalled(); expect(client.apply).not.toHaveBeenCalled();
+      expect(find(root, node => node.dataset?.action === "warp-undo").disabled).toBe(true);
+    } finally { restore(); }
   });
 
   test("accepted replacement cancels a pending source input and syncs the new source axis", () => {
@@ -1810,7 +3581,7 @@ describe("projection config controller", () => {
       const node = find(root, item => item.dataset?.node === 'names-wall');
       const input = find(node, item => item.dataset?.field === 'namesWall.rotateDeg' && item.dataset.input === 'number');
       expect(input.value).toBe('35');
-      input.value = '70'; input.dispatch('blur');
+      input.value = '70'; input.dispatch('input'); input.dispatch('blur');
       expect(client.getState().draft.namesWall.rotateDeg).toBe(70);
       expect(client.getState().draft.namesWall.profiles.wall.rotateDeg).toBeUndefined();
       expect(client.getState().draft.namesWall.profiles.model.rotateDeg).toBeUndefined();
@@ -1837,10 +3608,10 @@ describe("projection config controller", () => {
       const node = find(root, (item) => item.dataset?.node === 'names-wall');
       const input = find(node, (item) => item.dataset?.field === 'namesWall.rotateDeg' && item.dataset.input === 'number');
       const error = find(node, (item) => item.dataset?.errorFor === 'namesWall.rotateDeg');
-      input.value = ''; input.dispatch('blur');
+      input.value = ''; input.dispatch('input'); input.dispatch('blur');
       expect(client.getState().draft.namesWall.rotateDeg).toBe(35);
-      expect(error.textContent).toMatch(/finite number/i);
-      input.value = '181'; input.dispatch('blur');
+      expect(error.textContent).toMatch(/complete number/i);
+      input.value = '181'; input.dispatch('input'); input.dispatch('blur');
       expect(client.getState().draft.namesWall.rotateDeg).toBe(35);
       expect(error.textContent).toMatch(/between -180 and 180/);
       expect(client.getState().snapshot.config.namesWall.rotateDeg).toBe(35);
@@ -1890,16 +3661,16 @@ describe("projection config controller", () => {
     expect(client.getState().draft.namesWall.activeMode).toBe("model");
     const inset = find(node, (item) => item.dataset?.field === "namesWall.innerEdgeInsetPx.left" && item.dataset.input === "number");
     inset.value = "60";
-    inset.dispatch("blur");
+    inset.dispatch("input"); inset.dispatch("blur");
     const font = find(node, (item) => item.dataset?.field === "namesWall.requestedFontPx" && item.dataset.input === "number");
     font.value = "6";
-    font.dispatch("blur");
+    font.dispatch("input"); font.dispatch("blur");
     expect(client.getState().draft.namesWall.profiles.model.requestedFontPx).toBe(6);
     expect(client.getState().draft.namesWall.profiles.wall.requestedFontPx).toBe(12);
     expect(client.getState().draft.namesWall.innerEdgeInsetPx.left).toBe(60);
     const spacing = find(node, (item) => item.dataset?.field === "namesWall.spacingPx" && item.dataset.input === "number");
     spacing.value = "1";
-    spacing.dispatch("blur");
+    spacing.dispatch("input"); spacing.dispatch("blur");
     expect(client.getState().draft.namesWall.profiles.model.spacingPx).toBe(1);
     expect(client.getState().draft.namesWall.profiles.wall.spacingPx).toBe(2);
     api.dispose(); globalThis.document = previousDocument;
@@ -1924,7 +3695,7 @@ describe("projection config controller", () => {
     const action = (name) => find(root, (item) => item.dataset?.action === name);
     const node = find(root, (item) => item.dataset?.node === "names-wall");
     const live = action("live"); live.checked = false; live.dispatch("change");
-    const setField = (path, value) => { const input = find(node, (item) => item.dataset?.field === path && item.dataset.input === "number"); input.value = String(value); input.dispatch("blur"); };
+    const setField = (path, value) => { const input = find(node, (item) => item.dataset?.field === path && item.dataset.input === "number"); input.value = String(value); input.dispatch("input"); input.dispatch("blur"); };
     setField("namesWall.inwardShiftPercent", 50);
     const mode = find(node, (item) => item.attributes?.["aria-label"] === "Names wall profile"); mode.value = "model"; mode.dispatch("change");
     setField("namesWall.innerEdgeInsetPx.left", 60); setField("namesWall.requestedFontPx", 6); setField("namesWall.spacingPx", 1);
@@ -1940,7 +3711,7 @@ describe("projection config controller", () => {
     action("apply").dispatch("click");
     await vi.waitFor(() => expect(client.apply).toHaveBeenCalledTimes(1));
     const name = find(root, (item) => item.attributes?.["aria-label"] === "Preset name"); name.value = "Wall profile";
-    action("save-new").dispatch("click");
+    clickCommand(root, "save-new");
     await vi.waitFor(() => expect(client.savedDrafts.at(-1).namesWall.profiles.model.requestedFontPx).toBe(6));
     expect(client.savedDrafts.at(-1).namesWall.profiles.wall.inwardShiftPercent).toBe(50);
     api.setConflict("Remote update");

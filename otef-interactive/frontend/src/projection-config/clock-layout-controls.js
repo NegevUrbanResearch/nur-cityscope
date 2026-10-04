@@ -2,6 +2,7 @@ import MapProjectionConfig from "../shared/map-projection-config.js";
 import { NLI_GIS_CLOCK_DEFAULT_LAYOUT } from "../projection/nli-explainer-overlay.js";
 import { LEGEND_LAYOUT_DEFAULT } from "../projection/legend-layout.js";
 import { normalizeEditableLayout } from "./clock-layout-geometry.js";
+import { renderField } from './config-field-control.js';
 
 export const GIS_SLOT = Object.freeze({ home: "start", timeline: "start", segev: "segev", nova: "nova", sderot: "sderot", hostages: "hostages", hostages_all: "hostages_all" });
 export const GIS_LABEL = Object.freeze({ home: "Home", timeline: "Timeline", segev: "Segev", nova: "Nova", sderot: "Sderot", hostages: "Peri Family", hostages_all: "All Hostages" });
@@ -64,6 +65,7 @@ export function createClockLayoutParameters(doc, { onField = () => {} } = {}) {
   const advanced = make(doc, "details", { className: "clock-layout-advanced" });
   advanced.appendChild(make(doc, "summary", {}, "Advanced"));
   const controls = new Map();
+  const sessions = new Map();
   let dwellLabel;
   let fontCaption;
   let fontInput;
@@ -73,13 +75,12 @@ export function createClockLayoutParameters(doc, { onField = () => {} } = {}) {
     ["widthPct", "Width", 2, 100, 0.1, "%", true], ["heightPct", "Height", 2, 100, 0.1, "%", true],
     ["dwellSeconds", "Legend dwell seconds", 4, 30, 1, "s", true],
   ]) {
-    const label = make(doc, "label", { className: "clock-layout-field" });
-    const caption = make(doc, "span", {}, name);
-    const input = make(doc, "input", { type: "number", min: String(min), max: String(max), step: String(step), inputMode: "decimal", dataset: { field: key }, ariaLabel: name });
-    label.append(caption, input, make(doc, "span", { className: "clock-layout-unit" }, unit));
+    const control = renderField(doc, {path:key,label:name,min,max,step,unit,range:false,nudges:false}, (path, raw) => onField(path, raw), () => {});
+    const label = control.wrap; label.className += ' clock-layout-field';
+    const caption = label.children[0]; const input = control.number;
+    sessions.set(key,control);
     (extra ? advanced : element).appendChild(label); controls.set(key, input);
     input.addEventListener("click", (event) => event.stopPropagation?.());
-    input.addEventListener("change", () => onField(key, input.value));
     if (key === "dwellSeconds") dwellLabel = label;
     if (key === "fontPx") fontCaption = caption;
     if (key === "fontPx") fontInput = input;
@@ -88,11 +89,25 @@ export function createClockLayoutParameters(doc, { onField = () => {} } = {}) {
   controls.set("columns", columnsSelect);
   element.appendChild(advanced);
   element.insertBefore(columnsLabel, advanced);
-  return { element, controls, advanced, render(layout, { enabled = true, legend = false } = {}) {
+  return { element, controls, advanced,
+    finish: () => [...sessions.values()].map(control=>control.finish()),
+    hasPending: () => [...sessions.values()].some(control => control.isPending()),
+    isHeld: () => [...sessions.values()].some(control => control.isHeld()),
+    cancel: () => { for (const control of sessions.values()) control.cancel(); },
+    dispose: () => { for (const control of sessions.values()) control.dispose(); },
+    render(layout, { enabled = true, legend = false, identity = 'clock' } = {}) {
     for (const [key, input] of controls) {
       input.disabled = !enabled;
       input.hidden = key === "dwellSeconds" || (key === "columns" && !legend);
-      if (doc.activeElement !== input) input.value = key === "columns" ? String(layout?.columns ?? 0) : layout?.[key] == null ? "" : String(layout[key]);
+      if (key === 'columns') input.value = String(layout?.columns ?? 0);
+      else {
+        const control = sessions.get(key);
+        control.update({ value: layout?.[key], resolvedPath: `${identity}:${key}` });
+        control.wrap.hidden = key === 'dwellSeconds';
+        for (const node of control.wrap.querySelectorAll?.('button') || []) {
+          node.disabled = !enabled || (node.dataset?.action === 'numeric-use-mine' && node.disabled);
+        }
+      }
     }
     fontCaption.textContent = legend ? "Font size (maximum)" : "Font size";
     fontInput.setAttribute("aria-label", legend ? "Font size (maximum)" : "Font size");

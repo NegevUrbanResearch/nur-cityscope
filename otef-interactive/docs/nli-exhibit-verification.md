@@ -16,14 +16,14 @@ cd C:\Users\owner\Desktop\city-scope\nur-cityscope\otef-interactive
 Quit every Chrome process, then relaunch GIS from its normal shortcut so the
 autoplay allowlist is loaded. Check that the status output shows
 `http://localhost:80` under both the popup allowlist and autoplay allowlist.
-Use the staff remote for all slide navigation. Confirm all six segments open
+Use the staff remote for all slide navigation. Confirm all seven slide segments open
 at their first slide and Previous/Next stop at the segment boundaries:
 Segev 1–8, Mor Levy 9–11, Nova memorial 12–16, Sderot 17–21, Shura 22–28,
-and Hostages 29–34.
+Hostages 29–33, and Credits 34.
 
 Check audible autoplay with the remote on video slides 2, 10, 18, 21, 23, and 24.
 Confirm audio stops and rewinds when leaving each video slide or closing the
-presentation. Confirm Shura opens after its cue. Confirm Close on Shura and
+presentation. Confirm Shura and the Hostages presentation step open after their cues. Confirm Close on Shura and
 Hostages (like every segment) stays on the current step and offers Open again;
 Scene Next on the Hostages presentation step continues to Nir Oz people.
 Scene Back, Scene Next, and Home must close the overlay before changing step. Confirm that
@@ -35,19 +35,24 @@ hardware/browser result below; automated tests do not count as exhibit checks.
 
 | Check | Date | Operator | Browser / display | pass/fail | Notes |
 |---|---|---|---|---|---|
-| Six segment starts and boundary clamping |  |  |  | pending |  |
+| Seven slide segment starts and boundary clamping |  |  |  | pending |  |
+| Names Wall → Credits resets to Home layers and automatically opens slide 34 on GIS only |  |  |  | pending |  |
+| Credits Close/reopen stays on credits; Back, Finish, and Home close before navigation |  |  |  | pending |  |
+| Credits cue failure retries on credits without opening early |  |  |  | pending |  |
 | Slides remain on GIS, not projection |  |  |  | pending |  |
 | Open/close causes no GIS reload or application switch |  |  |  | pending |  |
 | Slides 2, 10, 18, 21, 23, 24 autoplay audibly |  |  |  | pending |  |
 | Leaving a video slide or closing stops and rewinds audio |  |  |  | pending |  |
 | Shura and Hostages Close stays on step and offers Open again |  |  |  | pending |  |
+| Hostages presentation opens automatically after its scene is ready |  |  |  | pending |  |
+| Nova Memorial route control starts stopped; Start replays routes and Stop restores settled intersections |  |  |  | pending |  |
 | Scene Back/Next and Home close the overlay before changing step |  |  |  | pending |  |
 | External network disconnected; fresh Chrome launch |  |  |  | pending |  |
 
 After the exhibit and when the source terms require removal, delete
 `otef-interactive/public/local/presentations/nli/` and the retained downloaded
-source files `C:\Users\owner\Downloads\מצגת מודל נור (1).pdf` and
-`C:\Users\owner\Downloads\מצגת מודל נור (3).pptx`.
+source files `C:\Users\owner\Downloads\מצגת מודל נור (3).pdf` and
+`C:\Users\owner\Downloads\מצגת מודל נור (5).pptx`.
 
 Use this checklist on the normal exhibit browser and physical display. Unit
 tests cannot prove popup permission, window placement, foreground focus,

@@ -44,25 +44,25 @@ test("warp editor keeps Undo and Redo visible with point, step, nudge, and reset
   const editor = createWarpEditor({ config: DEFAULT_PROJECTION_CONFIG, output: "left" });
   update({ selectedNode: "left-keystone", warpStates: { left: { ...editor.getState(), historyDepth: 1, redoDepth: 1, config: editor.getConfig(), handles: editor.getControlPoints() } } });
   root.querySelector(".config-node[data-node='left-keystone'] .warp-open-button").click();
-  const primary = root.querySelector(".warp-editor-fine-panel .warp-fine-primary");
-  expect(primary.contains(root.querySelector(".warp-step"))).toBe(true);
-  expect(primary.contains(root.querySelector(".warp-arrows"))).toBe(true);
-  const undo = primary.querySelector('[data-warp-action="warp-undo"]');
-  expect(undo).toBeNull();
-  expect(view.controls.warpUndo.parentElement.className).toBe("warp-history-command-group");
+  const precision = root.querySelector(".warp-editor-fine-panel .warp-precision-panel");
+  expect(precision.contains(root.querySelector(".warp-step"))).toBe(true);
+  expect(precision.contains(root.querySelector(".warp-arrows"))).toBe(true);
+  const undo = precision.querySelector('[data-warp-action="warp-undo"]');
+  expect(undo).toBe(view.controls.warpUndo);
+  expect(view.controls.warpUndo.parentElement.className).toBe("warp-history-controls");
   expect(view.controls.warpRedo.parentElement).toBe(view.controls.warpUndo.parentElement);
-  const navigation = view.controls.warpUndo.parentElement.parentElement;
+  const navigation = root.querySelector(".warp-view-controls");
   expect(navigation.className).toBe("warp-view-controls");
   const viewGroup = navigation.querySelector(".warp-view-command-group");
   expect(viewGroup.role).toBe("group");
   expect(viewGroup.getAttribute("aria-label")).toBe("Move view, zoom, and fit");
-  expect(Array.from(viewGroup.children, (item) => item.textContent)).toEqual(["Move view", "−", "+", "Fit"]);
+  expect(Array.from(viewGroup.children, (item) => item.textContent)).toEqual(["Edit", "Move view", "−", "+", "Fit"]);
   expect(root.querySelectorAll('[data-warp-action="warp-undo"]')).toHaveLength(1);
   expect(root.querySelectorAll('[data-warp-action="warp-redo"]')).toHaveLength(1);
-  expect(root.querySelector('[data-warp-action="warp-reset-selection"]').textContent).toBe("Reset point");
+  expect(root.querySelector('[data-warp-action="warp-reset-selection"]').textContent).toBe("Reset corner");
   expect(root.querySelector(".warp-selection")).toBeNull();
   view.controls.warpUndo.click();
-  expect(onWarpAction).toHaveBeenCalledWith("warp-undo", {});
+  expect(onWarpAction).toHaveBeenCalledWith("warp-undo", { output: "left" });
 });
 
 test("warp preview navigation changes the one viewBox without dispatching edits", () => {
@@ -126,32 +126,34 @@ test("warp preview plus zooms in and minus zooms out around the current center",
   expect(zoomOutWidth).toBeGreaterThan(zoomInWidth);
 });
 
-test("rendered warp handles keep navigation and CSS radii through draft refresh, reopen, resize, and orientation", () => {
+test("rendered warp handles keep navigation and CSS radii through draft refresh, reopen, resize, and orientation", async () => {
   const { root, onAction, onWarpAction, onWarpPointer, update } = makeView({ coarse: false });
   const editor = createWarpEditor({ config: DEFAULT_PROJECTION_CONFIG, output: "left" });
   const handles = editor.getControlPoints();
   const selection = { mode: "keystone", kind: "corner", index: 0, indices: [0] };
   const warpStates = { left: { ...editor.getState(), config: editor.getConfig(), handles, selection } };
   update({ state: { draft: structuredClone(DEFAULT_PROJECTION_CONFIG) }, selectedNode: "left-keystone", warpStates });
+  root.querySelector(".config-node[data-node='left-keystone'] .warp-open-button").click();
   const surface = root.querySelector(".warp-edit-surface");
-  expect(Number(surface.querySelector(".warp-handle.selected").getAttribute("r"))).toBe(18);
+  expect(surface.querySelector(".warp-handle.selected")).not.toBeNull();
   surface.getBoundingClientRect = () => ({ left: 0, top: 0, width: 600, height: 400, right: 600, bottom: 400 });
   const viewport = root.querySelector(".warp-editor-viewport");
   Object.defineProperties(viewport, { clientWidth: { configurable: true, value: 600 }, clientHeight: { configurable: true, value: 400 } });
-  root.querySelector(".config-node[data-node='left-keystone'] .warp-open-button").click();
+  window.dispatchEvent(new Event("resize"));
   const selected = () => surface.querySelector(".warp-handle.selected");
   const screenRadius = () => {
     const [x, y, width, height] = surface.getAttribute("viewBox").split(" ").map(Number);
     const scale = fitWarpViewport({ x, y, width, height }, 600, 400).scale;
     return Number(selected().getAttribute("r")) * scale;
   };
-  expect(screenRadius()).toBeCloseTo(18);
+  expect(screenRadius()).toBeCloseTo(8);
   root.querySelector(".warp-view-zoom-in").click();
-  expect(screenRadius()).toBeCloseTo(18);
+  expect(screenRadius()).toBeCloseTo(8);
 
   const refreshedHandles = handles.map((point, index) => index === 0 ? { x: point.x + 0.01, y: point.y } : point);
   update({ state: { draft: structuredClone(DEFAULT_PROJECTION_CONFIG) }, selectedNode: "left-keystone", warpStates: { left: { ...warpStates.left, handles: refreshedHandles } } });
-  expect(screenRadius()).toBeCloseTo(18);
+  await vi.waitFor(() => expect(selected().getAttribute("cx")).toBe(String(refreshedHandles[0].x * 1920)));
+  expect(screenRadius()).toBeCloseTo(8);
   expect(selected().getAttribute("cx")).toBe(String(refreshedHandles[0].x * 1920));
   const zoomed = surface.getAttribute("viewBox");
   const pan = root.querySelector(".warp-pan-toggle"); pan.click();
@@ -166,10 +168,10 @@ test("rendered warp handles keep navigation and CSS radii through draft refresh,
   expect(surface.getAttribute("viewBox")).toBe(zoomed); expect(pan.getAttribute("aria-pressed")).toBe("true");
   expect(selected().dataset.index).toBe("0");
   expect(selected().getAttribute("cx")).toBe(String(refreshedHandles[0].x * 1920));
-  expect(screenRadius()).toBeCloseTo(18);
+  expect(screenRadius()).toBeCloseTo(8);
   root.querySelector(".warp-view-fit").click();
   expect(surface.getAttribute("viewBox")).toBe("-72 -72 2064 1224"); expect(pan.getAttribute("aria-pressed")).toBe("false");
-  expect(screenRadius()).toBeCloseTo(18);
+  expect(screenRadius()).toBeCloseTo(8);
   expect([onAction, onWarpAction, onWarpPointer].map((callback) => callback.mock.calls.length)).toEqual(noWrites);
 });
 
@@ -187,7 +189,8 @@ test("category shortcuts call actual graph node groups and leave every node moun
   expect(root.querySelectorAll(".config-node")).toHaveLength(17);
   expect(root.querySelector(".node-selector")).toBeNull();
   expect(root.querySelector('[data-action="warp-editor-open-mobile"]')).toBeNull();
-  expect(root.querySelectorAll(".config-action-row button")).toHaveLength(5);
+  expect(root.querySelectorAll("nav[aria-label='Workspace'] button")).toHaveLength(3);
+  expect(root.querySelectorAll(".output-command-actions button")).toHaveLength(3);
   expect(root.querySelector('[data-action="export"]')).toBeNull();
   expect(root.querySelector('[data-action="share"]')).toBeNull();
   expect(root.querySelector('[data-action="output-open-left"]')).toBeNull();
@@ -196,7 +199,7 @@ test("category shortcuts call actual graph node groups and leave every node moun
   expect(view.nodeMap.has("settlement-names")).toBe(true);
 });
 
-test("changing Grid Warp mode or picker cancels the active pointer edit before selecting", () => {
+test("changing Grid Warp mode or picker waits for an active pointer drag", () => {
   const { root, view, onWarpAction, onWarpPointer, update } = makeView({ coarse: false });
   const config = structuredClone(DEFAULT_PROJECTION_CONFIG);
   config.outputs.left.warp.baseline = { type: "identity", width: 1920, height: 1080, origin: "top-left" };
@@ -212,23 +215,18 @@ test("changing Grid Warp mode or picker cancels the active pointer edit before s
   const down = () => surface.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 1, pointerType: "mouse", button: 0, isPrimary: true, clientX: mapping.insetX + (handle.x * 1920 - viewX) * mapping.scale, clientY: mapping.insetY + (handle.y * 1080 - viewY) * mapping.scale, bubbles: true, cancelable: true }));
 
   down();
+  surface.dispatchEvent(new PointerEvent("pointermove", { pointerId: 1, pointerType: "mouse", clientX: mapping.insetX + (handle.x * 1920 - viewX) * mapping.scale + 10, clientY: mapping.insetY + (handle.y * 1080 - viewY) * mapping.scale, bubbles: true, cancelable: true }));
   expect(onWarpPointer).toHaveBeenCalledWith("start", expect.anything());
   onWarpPointer.mockClear(); onWarpAction.mockClear();
-  view.controls.warpSelectionButtons[1].click();
-  expect(onWarpPointer).toHaveBeenCalledWith("cancel", expect.anything());
-  expect(onWarpPointer.mock.invocationCallOrder[0]).toBeLessThan(onWarpAction.mock.invocationCallOrder[0]);
-  expect(onWarpAction).toHaveBeenLastCalledWith("warp-select", { output: "left", selection: { mode: "grid", kind: "row", index: 0 } });
-
-  onWarpPointer.mockClear(); onWarpAction.mockClear();
-  editor.select({ mode: "grid", kind: "row", index: 0 });
-  update({ selectedNode: "left-grid", warpStates: { left: { ...editor.getState(), config: editor.getConfig(), handles: editor.getControlPoints() } } });
-  down();
-  onWarpPointer.mockClear(); onWarpAction.mockClear();
-  view.controls.warpSelectionPicker.value = "2";
-  view.controls.warpSelectionPicker.dispatchEvent(new Event("change", { bubbles: true }));
-  expect(onWarpPointer).toHaveBeenCalledWith("cancel", expect.anything());
-  expect(onWarpPointer.mock.invocationCallOrder[0]).toBeLessThan(onWarpAction.mock.invocationCallOrder[0]);
-  expect(onWarpAction).toHaveBeenLastCalledWith("warp-select", { output: "left", selection: { mode: "grid", kind: "row", index: 2 } });
+  view.controls.warpSelectionButtons[2].click();
+  expect(onWarpPointer).not.toHaveBeenCalled();
+  expect(onWarpAction).not.toHaveBeenCalled();
+  view.controls.warpSelectionPicker.value = '2';
+  view.controls.warpSelectionPicker.dispatchEvent(new Event('change', { bubbles: true }));
+  expect(onWarpAction).not.toHaveBeenCalled();
+  surface.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, clientX: 0, clientY: 0 }));
+  view.controls.warpSelectionButtons[2].click();
+  expect(onWarpAction).toHaveBeenLastCalledWith('warp-select', { output: 'left', selection: { mode: 'grid', kind: 'row', index: 0 } });
   view.dispose();
 });
 
@@ -262,7 +260,7 @@ test("Grid layout controls derive from axes and commit numeric input once", () =
   field("rows").dispatchEvent(new Event("change", { bubbles: true }));
   field("rows").dispatchEvent(new Event("blur"));
   expect(onWarpAction).toHaveBeenCalledTimes(1);
-  expect(onWarpAction).toHaveBeenCalledWith("warp-grid-layout", { output: "left", operation: "counts", columns: 3, rows: 4 });
+  expect(onWarpAction).toHaveBeenCalledWith("warp-grid-layout", { output: "left", operation: "resize", axis: "row", count: 4 });
   onWarpAction.mockClear();
   field("source-y").value = "55";
   field("source-y").dispatchEvent(new Event("input", { bubbles: true }));
@@ -272,10 +270,10 @@ test("Grid layout controls derive from axes and commit numeric input once", () =
   expect(onWarpAction).toHaveBeenCalledWith("warp-grid-layout", { output: "left", operation: "move", axis: "row", index: 1, position: 55 });
   onWarpAction.mockClear();
   action("add-row").click();
-  expect(onWarpAction).toHaveBeenCalledWith("warp-grid-layout", { output: "left", operation: "add", axis: "row", position: 80 });
+  expect(onWarpAction).toHaveBeenCalledWith("warp-grid-placement", { output: "left", axis: "row" });
   onWarpAction.mockClear();
   action("even").click();
-  expect(onWarpAction).toHaveBeenCalledWith("warp-grid-layout", { output: "left", operation: "even" });
+  expect(onWarpAction).toHaveBeenCalledWith("warp-grid-layout", { output: "left", operation: "even", axis: "row" });
   view.dispose();
 });
 
@@ -362,11 +360,11 @@ test("empty and browser-sanitized bad grid inputs restore valid values and repor
   rows.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
   rows.dispatchEvent(new Event("change", { bubbles: true })); rows.dispatchEvent(new Event("blur"));
   expect(onWarpAction).toHaveBeenCalledTimes(1);
-  expect(onWarpAction).toHaveBeenCalledWith("warp-grid-layout", { output: "left", operation: "counts", rows: 4, columns: 3 });
+  expect(onWarpAction).toHaveBeenCalledWith("warp-grid-layout", { output: "left", operation: "resize", axis: "row", count: 4 });
   view.dispose();
 });
 
-test("add-position typing stays local until its Add action", () => {
+test("Add row starts placement before the source percentage previews a candidate", async () => {
   const { root, view, onWarpAction, update } = makeView();
   const config = structuredClone(DEFAULT_PROJECTION_CONFIG);
   const editor = createWarpEditor({ config, output: "left" }); editor.setMode("grid"); editor.select({ mode: "grid", kind: "row", index: 1 });
@@ -375,16 +373,22 @@ test("add-position typing stays local until its Add action", () => {
   root.querySelector(".config-node[data-node='left-grid'] .warp-open-button").click();
   const layout = root.querySelector(".warp-grid-layout-section");
   const position = layout.querySelector("[data-grid-layout-field='addRowPosition']");
-  position.value = "35"; position.dispatchEvent(new Event("input", { bubbles: true }));
-  position.dispatchEvent(new Event("change", { bubbles: true })); position.dispatchEvent(new Event("blur"));
-  expect(onWarpAction).not.toHaveBeenCalled();
+  expect(position.disabled).toBe(true);
   layout.querySelector("[data-grid-layout-action='add-row']").click();
   expect(onWarpAction).toHaveBeenCalledTimes(1);
+  expect(onWarpAction).toHaveBeenCalledWith("warp-grid-placement", { output: "left", axis: "row" });
+  onWarpAction.mockClear();
+  update({ state: { draft: config }, selectedNode: "left-grid", warpStates: { left: { ...state, gridPlacement: { axis: "row" } } } });
+  await vi.waitFor(() => expect(position.getAttribute("aria-label")).toContain("click the viewer"));
+  expect(position.disabled).toBe(false);
+  position.value = "35"; position.dispatchEvent(new Event("input", { bubbles: true }));
+  position.dispatchEvent(new Event("change", { bubbles: true }));
   expect(onWarpAction).toHaveBeenCalledWith("warp-grid-layout", { output: "left", operation: "add", axis: "row", position: 35 });
+  expect(position.value).toBe("35");
   view.dispose();
 });
 
-test.each([false, true])("Grid layout dispatch releases an active %s pointer before committing", (moved) => {
+test.each([false, true])("Grid layout dispatch waits for an active %s pointer before committing", (moved) => {
   const { root, view, onWarpAction, onWarpPointer, update } = makeView({ coarse: false });
   const editor = createWarpEditor({ config: DEFAULT_PROJECTION_CONFIG, output: "left" }); editor.setMode("grid"); editor.select({ mode: "grid", kind: "point", index: 0 });
   const state = { ...editor.getState(), config: editor.getConfig(), handles: editor.getControlPoints() };
@@ -410,12 +414,12 @@ test.each([false, true])("Grid layout dispatch releases an active %s pointer bef
   if (moved) pointer("pointermove", handleX + 10, handleY);
   const rows = root.querySelector(".warp-grid-layout-section [data-grid-layout-field='rows']");
   rows.value = "3"; rows.dispatchEvent(new Event("input", { bubbles: true })); rows.dispatchEvent(new Event("change", { bubbles: true }));
-  expect(surface.releasePointerCapture).toHaveBeenCalledWith(4);
-  expect(onWarpPointer.mock.calls.at(-1)?.[0]).toBe("cancel");
-  expect(onWarpAction).toHaveBeenCalledWith("warp-grid-layout", { output: "left", operation: "counts", columns: 7, rows: 3 });
-  const callbackCount = onWarpPointer.mock.calls.length;
-  pointer("pointermove", 92); pointer("pointerup", 92); pointer("pointercancel", 92);
-  expect(onWarpPointer).toHaveBeenCalledTimes(callbackCount);
+  expect(surface.releasePointerCapture).not.toHaveBeenCalled();
+  expect(onWarpPointer.mock.calls.at(-1)?.[0]).not.toBe('cancel');
+  expect(onWarpAction).not.toHaveBeenCalledWith('warp-grid-layout', expect.anything());
+  pointer('pointermove', handleX + 20); pointer('pointerup', handleX + 20);
+  rows.value = '4'; rows.dispatchEvent(new Event('input', { bubbles: true })); rows.dispatchEvent(new Event('change', { bubbles: true }));
+  expect(onWarpAction).toHaveBeenCalledWith('warp-grid-layout', { output: 'left', operation: 'resize', axis: 'row', count: 4 });
   view.dispose();
 });
 
@@ -430,7 +434,7 @@ test("Adjust opens the descriptor set for Shared transform and each Crop/Fit nod
   ]);
   for (const [nodeId, paths] of expected) {
     const adjust = view.nodeMap.get(nodeId).querySelector('[data-action="parameter-editor-open"]');
-    expect(adjust.textContent).toBe("Adjust");
+    expect(adjust.textContent).toBe("Enlarge edit");
     adjust.click();
     const dialog = root.querySelector(".parameter-editor-dialog");
     expect(dialog.dataset.node).toBe(nodeId);
@@ -483,8 +487,8 @@ test("keyboard activation selects and nudges a noninitial corner and grid point"
     update({ selectedNode: nodeId, warpStates: { [output]: { ...editor.getState(), config: editor.getConfig(), handles: editor.getControlPoints() } } });
     const focused = document.activeElement;
     expect(focused.getAttribute("data-index")).toBe(String(index));
-    focused.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true }));
-    expect(onWarpAction).toHaveBeenLastCalledWith("warp-nudge", { direction: "right", coarse: false, fine: false });
+    focused.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", altKey: true, bubbles: true, cancelable: true }));
+    expect(onWarpAction).toHaveBeenLastCalledWith("warp-nudge", { direction: "right", coarse: false, fine: true });
     root.querySelector("[data-action='warp-editor-close']").click();
   };
   exercise({ output: "left", nodeId: "left-keystone", mode: "keystone", index: 2, selection: { kind: "corner", index: 2 } });
@@ -508,7 +512,7 @@ test("preset selection remains pending until explicit Load", () => {
   expect(loaded.textContent).toContain("TD");
 });
 
-test("top overlays open singly and retain error access", () => {
+test("one flat Tools panel retains independent error access", () => {
   const { root, update } = makeView();
   update({ errors: { action: "Preset load failed" } });
   const panels = [...root.querySelectorAll("details.config-tools")];
@@ -522,7 +526,7 @@ test("top overlays open singly and retain error access", () => {
   expect(root.querySelector(".action-error").hidden).toBe(false);
 });
 
-test("overlay dismissal preserves drafts and the correct focus owner", () => {
+test("Tools dismissal preserves drafts and the correct focus owner", () => {
   const { root } = makeView({ coarse: false });
   const presetPanel = root.querySelector(".config-tools");
   const trigger = presetPanel.querySelector("summary");
@@ -557,6 +561,7 @@ test("closed utility disclosures do not block graph or warp pointerdown handlers
   let graphPointerdown = false;
   let warpPointerdown = false;
   const node = root.querySelector(".config-node");
+  root.querySelector(".config-node[data-node='left-keystone'] .warp-open-button").click();
   const surface = root.querySelector(".warp-edit-surface");
   node.addEventListener("pointerdown", () => { graphPointerdown = true; });
   surface.addEventListener("pointerdown", () => { warpPointerdown = true; });
@@ -636,27 +641,20 @@ test.each(["mouse", "coarse-pointer landscape", "portrait"])("%s workspace keeps
   expect(root.querySelector(".node-selector")).toBeNull();
 });
 
-test("preset and display setup failures stay visible from collapsed disclosures", () => {
+test("preset and display errors remain visible independently of Tools", () => {
   const { root, update, onAction } = makeView();
   update({ errors: { name: "Preset save failed" }, outputState: { error: "Display assignment failed" } });
-
   const tools = root.querySelector(".config-tools");
-  const indicator = tools.querySelector("summary .disclosure-error-indicator");
-  expect(indicator.className).toBe("disclosure-error-indicator");
-  expect(indicator.getAttribute("aria-label")).toBe("Tools contains an unresolved error");
-  expect(indicator.hidden).toBe(false);
-  expect(root.querySelector(".action-error").hidden).toBe(false);
-  expect(root.querySelector(".action-error").textContent).toContain("Preset save failed");
-
-  expect(root.querySelector(".config-command-bar").contains(tools)).toBe(true);
-  expect([...tools.querySelectorAll(".config-tools-section h2")].map((heading) => heading.textContent)).toContain("Apply and load");
+  const error = root.querySelector(".action-error");
+  expect(error.hidden).toBe(false);
+  expect(error.closest(".config-operation-status")).not.toBeNull();
+  expect(tools.contains(error)).toBe(false);
+  expect(error.textContent).toContain("Preset save failed");
+  expect(error.textContent).toContain("Display assignment failed");
   tools.querySelector("summary").click();
-  expect(tools.querySelector(".disclosure-error-details").hidden).toBe(false);
-  expect(tools.querySelector(".disclosure-error-details").textContent).toContain("Preset save failed");
-  expect(tools.querySelector(".disclosure-error-details").textContent).toContain("Display assignment failed");
+  expect(error.hidden).toBe(false);
   expect(onAction).not.toHaveBeenCalled();
 });
-
 test("preset creation remains available alongside preset selection and save", () => {
   const { root, view } = makeView();
   expect(root.contains(view.controls.save)).toBe(true);
@@ -702,27 +700,28 @@ test("supported browser hides the workstation-only output capability notice", ()
   expect(root.querySelector(".output-capability-notice").hidden).toBe(true);
 });
 
-test("Adjust slider commits its formatted local value before a synchronous refresh", () => {
+test("Adjust Fine slider commits its exact canonical local delta before a synchronous refresh", () => {
   let update;
   let control;
-  const onField = vi.fn((path, raw, source) => {
-    expect(control.value.textContent).toBe("125.00 %");
-    expect(control.number.value).toBe("125.00");
+  const onField = vi.fn((path, raw, source, meta) => {
+    expect(control.value.textContent).toBe("1.01 %");
+    expect(control.number.value).toBe("1.01");
     const draft = structuredClone(DEFAULT_PROJECTION_CONFIG);
-    draft.pre.tx = Number(raw) / 100;
+    draft.pre.tx = meta.canonicalValue;
     update({ state: { draft } });
   });
   const fixture = makeView({ coarse: false, onField });
   ({ update } = fixture);
   fixture.view.nodeMap.get("pre").querySelector('[data-action="parameter-editor-open"]').click();
   const wrap = fixture.root.querySelector('.parameter-editor-dialog [data-field="pre.tx"]').closest(".config-field");
-  control = { wrap, range: wrap.querySelector('input[type="range"]'), number: wrap.querySelector('input[type="number"]'), value: wrap.querySelector(".config-field-value") };
+  control = { wrap, range: wrap.querySelector('input[type="range"]'), number: wrap.querySelector('input[data-input="number"]'), value: wrap.querySelector(".config-field-value") };
   expect(control.wrap.classList.contains("parameter-field-layout")).toBe(true);
-  control.range.value = "125";
+  expect(control.range.value).toBe('0');
+  control.range.value = "1";
   control.range.dispatchEvent(new Event("input", { bubbles: true }));
-  expect(onField).toHaveBeenCalledWith("pre.tx", "125", "range");
-  expect(control.number.value).toBe("125.00");
-  expect(control.value.textContent).toBe("125.00 %");
+  expect(onField).toHaveBeenCalledWith("pre.tx", "1.01", "range", {baseValue:.01,resolvedPath:'pre.tx',canonicalValue:.01+.0001,phase:'start',gestureId:expect.any(String)});
+  expect(control.number.value).toBe("1.01");
+  expect(control.value.textContent).toBe("1.01 %");
 });
 
 test("release-commit slider previews locally and syncs its paired number on change", () => {
@@ -737,7 +736,7 @@ test("release-commit slider previews locally and syncs its paired number on chan
   control.range.dispatchEvent(new Event("change", { bubbles: true }));
   expect(control.number.value).toBe("50");
   expect(onField).toHaveBeenCalledTimes(1);
-  expect(onField).toHaveBeenCalledWith("namesWall.inwardShiftPercent", "50", "range");
+  expect(onField).toHaveBeenCalledWith("namesWall.inwardShiftPercent", "50", "range", expect.objectContaining({resolvedPath:'namesWall.profiles.wall.inwardShiftPercent',override:false}));
 });
 
 test("blank numeric values survive refresh without showing zero", () => {
@@ -760,29 +759,33 @@ test("fine nudge calls the existing callback once with the field and direction",
   expect(onNudge).toHaveBeenCalledWith("pre.tx", -1);
 });
 
-test("compact command header keeps all actions in two rows and one dismissible Tools panel", () => {
+test("compact command rows keep primary actions direct and group setup actions in disclosures", () => {
   const { root, view, onAction, onOutputAction, update } = makeView({ coarse: false });
   const header = root.querySelector(".config-command-bar");
   expect(header.children).toHaveLength(3);
-  expect(header.querySelectorAll("details")).toHaveLength(1);
+  expect(header.querySelectorAll("details")).toHaveLength(3);
   const tools = header.querySelector("details.config-tools");
+  const presets = header.querySelector("details.config-presets-menu");
+  const displays = header.querySelector("details.config-displays-menu");
   expect(tools.querySelector("summary").textContent).toContain("Tools");
-  expect(tools.contains(view.controls.apply)).toBe(true);
-  expect(tools.contains(view.controls.load)).toBe(true);
-  expect(tools.contains(view.controls.saveNew)).toBe(true);
-  expect(tools.contains(view.controls.outputRefresh)).toBe(true);
-  expect(header.querySelector(".config-action-row").contains(view.controls.outputOpenBoth)).toBe(true);
-  expect(header.querySelector(".config-action-row").contains(view.controls.outputCloseBoth)).toBe(true);
-  expect(view.controls.outputOpenBoth.textContent).toBe("Open both");
-  expect(view.controls.outputCloseBoth.textContent).toBe("Close both");
-  expect(view.controls.live.parentElement.parentElement.className).toBe("compact-live");
+  expect(tools.contains(view.controls.apply)).toBe(false);
+  expect(tools.contains(view.controls.load)).toBe(false);
+  expect(tools.contains(view.controls.saveNew)).toBe(false);
+  expect(tools.contains(view.controls.outputRefresh)).toBe(false);
+  expect(presets.contains(view.controls.revert)).toBe(true);
+  expect(presets.contains(view.controls.saveNew)).toBe(true);
+  expect(displays.contains(view.controls.outputOpenBoth)).toBe(true);
+  expect(displays.contains(view.controls.outputCloseBoth)).toBe(true);
+  expect(view.controls.outputOpenBoth.textContent).toBe("Open");
+  expect(view.controls.outputCloseBoth.textContent).toBe("Close");
+  expect(view.controls.live.parentElement.parentElement.className).toBe("calibration-commit-controls");
   expect(view.controls.live.getAttribute("aria-label")).toBe("Live");
   expect(view.controls.live.parentElement.textContent).toBe("Live");
   expect(view.controls.live.getAttribute("aria-describedby")).toBe("projection-apply-live-description");
   update({ state: { live: true } });
   expect(root.querySelector("#projection-apply-live-description").textContent).toBe("Live on. Changes update automatically.");
   update({ state: { live: false } });
-  expect(root.querySelector("#projection-apply-live-description").textContent).toBe("Live off. Use Apply once in Tools, or Apply & save.");
+  expect(root.querySelector("#projection-apply-live-description").textContent).toBe("Live off. Use Apply once, or Apply & save.");
   update({ statusText: "Saved" });
   expect(header.querySelector(".config-save-status").textContent).toContain("Saved");
 
@@ -798,7 +801,7 @@ test("compact command header keeps all actions in two rows and one dismissible T
   view.controls.outputOpenBoth.click();
   view.controls.outputCloseBoth.click();
   expect(onAction.mock.calls).toEqual([["preset-select", "td"], ["load", "td"], ["apply"], ["save", "TD"]]);
-  expect(onOutputAction.mock.calls).toEqual([["open", undefined], ["close", undefined]]);
+  expect(onOutputAction.mock.calls).toEqual([["open"], ["close"]]);
 
   const trigger = tools.querySelector("summary");
   trigger.click();
@@ -812,18 +815,15 @@ test("compact command header keeps all actions in two rows and one dismissible T
   view.dispose();
 });
 
-test("narrow output relocation keeps the native button instances visible and focused", () => {
+test("narrow width keeps display setup controls grouped in the Displays disclosure", () => {
   const { root, view, setSmallWidth } = makeView({ coarse: false });
   const open = view.controls.outputOpenBoth;
-  const tools = view.controls.tools;
-  open.focus();
+  const displays = view.controls.displaysDisclosure;
   setSmallWidth(true);
-  expect(tools.open).toBe(true);
-  expect(root.querySelector(".tools-output-commands").contains(open)).toBe(true);
-  expect(document.activeElement).toBe(open);
+  expect(displays.open).toBe(false);
+  expect(open.parentElement.parentElement.parentElement.parentElement).toBe(displays);
   setSmallWidth(false);
   expect(root.querySelector(".output-command-actions").contains(open)).toBe(true);
-  expect(document.activeElement).toBe(open);
   view.dispose();
 });
 
@@ -867,7 +867,7 @@ test("Save follows the acknowledged checkpoint and explicit pending state", () =
   update({ state: { draft: customDraft, snapshot, selectedPresetId: "original" }, loadedPresetId: "original", loadedPresetLoadToken: 3 });
   expect(view.controls.save.disabled).toBe(true);
   expect(view.controls.saveNew.disabled).toBe(false);
-  expect(view.controls.tools.querySelector(".original-checkpoint-guidance").textContent).toContain("Original is immutable");
+  expect(view.controls.originalCheckpointGuidance.textContent).toContain("Original is immutable");
 
   update({ state: { draft: customDraft, snapshot, selectedPresetId: "td" }, loadedPresetId: "td", loadedPresetLoadToken: 4, savePending: true });
   expect(view.controls.save.disabled).toBe(true);

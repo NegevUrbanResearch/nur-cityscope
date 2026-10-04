@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { createFullFrameProjectionMesh, createIdentityProjectionMesh, compareRenderedLayouts, evaluateWarpPoint, evaluateWarpMesh, interpolateGridOffset, validateWarpMesh } from '../../frontend/src/shared/projection-warp-geometry.js';
+import { createFullFrameProjectionMesh, createIdentityProjectionMesh, compareRenderedLayouts, evaluateWarpPoint, evaluateWarpMesh, invertRenderedMeshPoint, interpolateGridOffset, validateWarpMesh } from '../../frontend/src/shared/projection-warp-geometry.js';
 import { migrateProjectionConfigToV7 } from '../../frontend/src/shared/projection-config-schema.js';
 import { compileSourceProbeState, prepareGridWarpMesh } from '../../frontend/src/shared/projection-grid-mesh.js';
 import { createBaselineSampler } from '../../frontend/src/shared/projection-baseline-sampler.js';
@@ -306,6 +306,41 @@ test('rendered-layout comparison reports deterministic sampled pixel differences
   const changed=structuredClone(fixture.warp);changed.grid.offsets[4]=[.01,.005];
   const different=compareRenderedLayouts(fixture.mesh,fixture.warp,changed,{side:'left'});
   expect(different.maximumDifferencePx).toBeGreaterThan(0);expect(different.sampleCount).toBeGreaterThan(1000);
+});
+
+test('rendered mesh inverse interpolates source coordinates over affine-deformed triangles', () => {
+  const mesh = { width: 1920, height: 1080, vertices: [
+    { s: 0, t: 0, x: .2, y: .1, u: 0, v: 0 },
+    { s: 1, t: 0, x: 1.2, y: .2, u: 1, v: 0 },
+    { s: 0, t: 1, x: .3, y: 1.6, u: 0, v: 1 },
+  ], triangles: [0, 1, 2] };
+  const inverse = invertRenderedMeshPoint(mesh, { x: .43, y: .57 });
+  expect(inverse.ok).toBe(true);
+  expect(inverse.s).toBeCloseTo(.2, 12);
+  expect(inverse.t).toBeCloseTo(.3, 12);
+});
+
+test('rendered mesh inverse distinguishes outside points from conflicting overlaps', () => {
+  const vertices = [
+    { s: 0, t: 0, x: .2, y: .1, u: 0, v: 0 }, { s: 1, t: 0, x: 1.2, y: .2, u: 1, v: 0 }, { s: 0, t: 1, x: .3, y: 1.6, u: 0, v: 1 },
+    { s: .4, t: 0, x: .2, y: .1, u: .4, v: 0 }, { s: 1, t: .4, x: 1.2, y: .2, u: 1, v: .4 }, { s: .4, t: 1, x: .3, y: 1.6, u: .4, v: 1 },
+  ];
+  expect(invertRenderedMeshPoint({ width: 1920, height: 1080, vertices, triangles: [0, 1, 2, 3, 4, 5] }, { x: .43, y: .57 })).toEqual({ ok: false, reason: 'ambiguous' });
+  expect(invertRenderedMeshPoint({ width: 1920, height: 1080, vertices: vertices.slice(0, 3), triangles: [0, 1, 2] }, { x: 0, y: 0 })).toEqual({ ok: false, reason: 'outside' });
+});
+
+test('rendered mesh inverse reports degenerate triangles', () => {
+  const mesh = { width: 1920, height: 1080, vertices: [
+    { s: 0, t: 0, x: 0, y: 0 }, { s: .5, t: .5, x: .5, y: .5 }, { s: 1, t: 1, x: 1, y: 1 },
+  ], triangles: [0, 1, 2] };
+  expect(invertRenderedMeshPoint(mesh, { x: .5, y: .5 })).toEqual({ ok: false, reason: 'degenerate' });
+});
+
+test('rendered mesh inverse deduplicates equal source hits along a shared edge', () => {
+  const result = invertRenderedMeshPoint(createFullFrameProjectionMesh(), { x: .5, y: .5 });
+  expect(result.ok).toBe(true);
+  expect(result.s).toBeCloseTo(.5, 12);
+  expect(result.t).toBeCloseTo(.5, 12);
 });
 
 test('rectangular 3-by-5 grid keeps row-major cells and control sampling aligned',()=>{

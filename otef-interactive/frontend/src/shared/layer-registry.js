@@ -11,8 +11,9 @@
  * - Handle lazy-loading of GeoJSON/PMTiles data
  */
 
-class LayerRegistry {
-  constructor() {
+export class LayerRegistry {
+  constructor({ fetchImpl = globalThis.fetch?.bind(globalThis) } = {}) {
+    this._fetch = fetchImpl;
     this._manifest = null;
     this._packManifests = new Map(); // packId -> manifest
     this._packStyles = new Map(); // packId -> styles.json
@@ -41,7 +42,7 @@ class LayerRegistry {
       // Load root manifest
       const manifestPath =
         "/otef-interactive/public/processed/layers/layers-manifest.json";
-      const response = await fetch(manifestPath);
+      const response = await this._fetch(manifestPath);
 
       if (!response.ok) {
         console.warn(
@@ -80,14 +81,14 @@ class LayerRegistry {
       const basePath = `/otef-interactive/public/processed/layers/${packId}`;
 
       // Load manifest
-      const manifestResponse = await fetch(`${basePath}/manifest.json`);
+      const manifestResponse = await this._fetch(`${basePath}/manifest.json`);
       if (manifestResponse.ok) {
         const manifest = await manifestResponse.json();
         this._packManifests.set(packId, manifest);
       }
 
       // Load styles
-      const stylesResponse = await fetch(`${basePath}/styles.json`);
+      const stylesResponse = await this._fetch(`${basePath}/styles.json`);
       if (stylesResponse.ok) {
         const styles = await stylesResponse.json();
         this._packStyles.set(packId, styles);

@@ -587,7 +587,7 @@ describe("settlement name client", () => {
     socket.emit("disconnect");
     socket.emit("connect");
     await vi.waitFor(() => expect(getSnapshot).toHaveBeenCalledTimes(2));
-    expect(getSnapshot).toHaveBeenLastCalledWith({ forceFresh: true });
+    expect(getSnapshot).toHaveBeenLastCalledWith(expect.objectContaining({ forceFresh: true, signal: expect.any(AbortSignal) }));
     client.destroy();
   });
 
@@ -846,4 +846,40 @@ describe("settlement name client", () => {
     await expect(Promise.race([save, Promise.resolve("pending")])).resolves.toBe("pending");
     client.destroy();
   });
+});
+
+test("an older settlement hydration cannot replace a newer snapshot or local edit", async () => {
+  let releaseOld;
+  const oldRead = new Promise((resolve) => { releaseOld = resolve; });
+  const signals = [];
+  let calls = 0;
+  const client = createSettlementNameClient({
+    getSnapshot: (options) => { signals.push(options.signal); return ++calls === 1 ? oldRead : Promise.resolve(viewportFixture()); },
+    writeOperation: vi.fn(),
+  });
+  const oldHydration = client.hydrate({ forceFresh: true });
+  await client.hydrate({ forceFresh: true });
+  expect(signals[0].aborted).toBe(true);
+  const draft = { x: 123, y: 456 };
+  const pendingWrite = client.commit(leftTarget, draft);
+  expect(client.getTarget(leftTarget).draft).toEqual(draft);
+  releaseOld({ settlement_name_settings: settingsFixture(), settlement_name_revision: 99 });
+  await oldHydration;
+  expect(client.getHydrationState().status).toBe("Saved");
+  expect(client.getTarget(leftTarget).draft).toEqual(draft);
+  expect(client.getSnapshot().revision).toBe(0);
+  client.destroy();
+  expect(signals[1].aborted).toBe(true);
+  await pendingWrite.catch(() => {});
+});
+
+test("destroyed settlement hydration cannot publish a late snapshot", async () => {
+  let release;
+  const client = createSettlementNameClient({ getSnapshot: () => new Promise((resolve) => { release = resolve; }), writeOperation: vi.fn() });
+  const hydration = client.hydrate({ forceFresh: true });
+  client.destroy();
+  release({ settlement_name_settings: settingsFixture(), settlement_name_revision: 7 });
+  await hydration;
+  expect(client.getHydrationState().status).toBe("Loading");
+  expect(client.getSnapshot().settings).toBeNull();
 });

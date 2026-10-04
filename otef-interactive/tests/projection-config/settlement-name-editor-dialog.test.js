@@ -164,7 +164,7 @@ test("output switch keeps the other side draft and save identity", async () => {
   renderFrame();
   const input = document.querySelector(".settlement-name-dialog [data-field='x']");
   input.value = "640";
-  input.dispatchEvent(new Event("change"));
+  input.dispatchEvent(new Event("input")); input.dispatchEvent(new Event("change"));
   const select = document.querySelector(".settlement-name-dialog [data-field='output']");
   select.value = "right";
   select.dispatchEvent(new Event("change"));
@@ -180,9 +180,9 @@ test("closing while a numeric save is pending still flushes that commit and drop
   renderFrame();
   const input = document.querySelector(".settlement-name-dialog [data-field='x']");
   input.value = "";
-  input.dispatchEvent(new Event("change"));
+  input.dispatchEvent(new Event("input")); input.dispatchEvent(new Event("change"));
   input.value = "700";
-  input.dispatchEvent(new Event("change"));
+  input.dispatchEvent(new Event("input")); input.dispatchEvent(new Event("change"));
   pointer("pointerdown", 250, 170);
   pointer("pointermove", 400, 170);
   editor.close();

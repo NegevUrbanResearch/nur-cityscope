@@ -65,13 +65,159 @@ function harness({ revision = 0, config = DEFAULTS, validateCandidate, connectOn
     client, socket, requests, fetchImpl, stateFor, flushPromises, advance,
     setNow: (value) => { now = value; },
     resolveNext, resolveAt, rejectNext, pendingRequests: () => requests, lastRequest: () => requests[requests.length - 1],
+    captureHandlers: (event) => [...(events.get(event) || [])],
     disconnect: () => { connected = false; for (const callback of events.get('disconnect') || []) callback(); },
     reconnect: () => { connected = true; for (const callback of events.get('connect') || []) callback(); },
     connect: () => { connected = true; for (const callback of events.get('connect') || []) callback(); },
   };
 }
 
+test('uncertain POST times out once, ignores late receipt, and requires a fresh-revision explicit publish choice', async () => {
+  const h = harness();
+  const starting = h.client.start(); h.resolveNext(stateFor(0)); await starting;
+  const draft = clone(DEFAULTS); draft.pre.tx = 0.41;
+  h.client.setDraft(draft);
+  const applying = h.client.apply();
+  const applyError = applying.then(() => null, error => error);
+  const queuedSave = h.client.save({ name: 'queued checkpoint' });
+  const queuedError = queuedSave.then(() => null, error => error);
+  await h.flushPromises();
+  expect(h.pendingRequests()).toHaveLength(1);
+  const latePost = h.pendingRequests()[0];
+
+  await h.advance(15000);
+  expect(await applyError).toMatchObject({ code: 'uncertain_write', message: expect.stringMatching(/uncertain/i) });
+  expect(await queuedError).toMatchObject({ code: 'uncertain_write', message: expect.stringMatching(/uncertain/i) });
+  expect(h.client.getState()).toMatchObject({ live: true, draft, reconciliation: { status: 'reading' } });
+  expect(h.pendingRequests()).toHaveLength(2);
+  expect(h.pendingRequests()[1].options.method).toBe('GET');
+
+  h.resolveAt(1, stateFor(3));
+  await h.flushPromises();
+  expect(h.client.getState()).toMatchObject({
+    snapshot: { revision: 3 }, draft, hasLocalDraft: true, live: true,
+    reconciliation: { status: 'needs-choice' },
+  });
+  const duringRecoveryEdit = clone(draft); duringRecoveryEdit.pre.tx = 0.47;
+  h.client.setDraft(duringRecoveryEdit);
+  await h.advance(30000);
+  expect(h.pendingRequests()).toHaveLength(1);
+  h.resolveAt(0, stateFor(9));
+  expect(latePost.options.signal.aborted).toBe(true);
+  await h.flushPromises();
+  expect(h.client.getState().snapshot.revision).toBe(3);
+
+  h.client.resolveReconciliation('keep-local');
+  expect(h.client.getState().live).toBe(false);
+  const editedWhileLiveOff = clone(duringRecoveryEdit); editedWhileLiveOff.pre.tx = 0.52;
+  h.client.setDraft(editedWhileLiveOff);
+  await h.advance(30000);
+  expect(h.pendingRequests()).toHaveLength(0);
+  const nextApply = h.client.apply();
+  await h.flushPromises();
+  expect(h.pendingRequests()).toHaveLength(1);
+  expect(JSON.parse(h.pendingRequests()[0].options.body).baseRevision).toBe(3);
+  h.resolveNext(stateFor(4, editedWhileLiveOff));
+  await nextApply; await h.flushPromises();
+  expect(h.client.getState()).toMatchObject({ reconciliation: null, snapshot: { revision: 4 } });
+
+  const presetId = '22222222-2222-4222-8222-222222222222';
+  const saving = h.client.save({ name: 'Fresh revision' });
+  await h.advance(100);
+  expect(JSON.parse(h.pendingRequests()[0].options.body)).toMatchObject({ action: 'save', baseRevision: 4 });
+  const checkpoint = { ...stateFor(5, editedWhileLiveOff), selectedPresetId: presetId,
+    presets: [...stateFor(5).presets, { id: presetId, name: 'Fresh revision', config: editedWhileLiveOff, readOnly: false }] };
+  h.resolveNext(checkpoint); expect(await saving).toMatchObject({ savedPresetId: presetId }); await h.flushPromises();
+
+  await h.client.setLive(true);
+  const liveDraft = clone(editedWhileLiveOff); liveDraft.pre.tx = 0.61; h.client.setDraft(liveDraft);
+  await h.advance(100);
+  expect(JSON.parse(h.pendingRequests()[0].options.body)).toMatchObject({ action: 'preview', baseRevision: 5 });
+  h.resolveNext(stateFor(6, liveDraft));
+  await h.flushPromises();
+  h.client.stop();
+});
+
+test('failed uncertain-write read exposes retry and Use accepted replaces draft', async () => {
+  const h = harness();
+  const starting = h.client.start(); h.resolveNext(stateFor(0)); await starting;
+  const draft = clone(DEFAULTS); draft.pre.tx = 0.3; h.client.setDraft(draft);
+  const applying = h.client.apply(); const applyError = applying.then(() => null, error => error); await h.flushPromises();
+  await h.advance(15000);
+  expect(await applyError).toMatchObject({ code: 'uncertain_write' });
+  expect(h.client.getState().reconciliation.status).toBe('reading');
+  expect(h.pendingRequests()[1].options.method).toBe('GET');
+  h.resolveAt(1, {}, 503); await h.flushPromises();
+  expect(h.client.getState().reconciliation.status).toBe('read-error');
+  const retry = h.client.retryReconciliation();
+  expect(h.pendingRequests()[1].options.method).toBe('GET');
+  h.resolveAt(1, stateFor(2)); await retry;
+  expect(h.client.getState().reconciliation.status).toBe('needs-choice');
+  h.client.resolveReconciliation('use-accepted');
+  expect(h.client.getState()).toMatchObject({ draft: DEFAULTS, hasLocalDraft: false, live: false, reconciliation: null });
+  h.client.stop();
+});
+
+test('POST deadline includes a stalled response body and stop aborts an active request', async () => {
+  const h = harness();
+  const starting = h.client.start(); h.resolveNext(stateFor(0)); await starting;
+  const draft = clone(DEFAULTS); draft.pre.tx = 0.25; h.client.setDraft(draft);
+  const applying = h.client.apply(); const applyError = applying.then(() => null, error => error);
+  await h.flushPromises();
+  const post = h.pendingRequests()[0];
+  post.resolve({ status: 200, ok: true, json: () => new Promise(() => {}) });
+  await h.advance(15000);
+  expect(await applyError).toMatchObject({ code: 'uncertain_write' });
+  expect(h.client.getState().reconciliation.status).toBe('reading');
+
+  h.client.stop();
+  expect(h.pendingRequests()[0].options.signal.aborted).toBe(true);
+  expect(h.client.getState().reconciliation).toBe(null);
+
+  const h2 = harness();
+  const started = h2.client.start(); h2.resolveNext(stateFor(0)); await started;
+  const stopping = h2.client.apply(); const stoppedError = stopping.then(() => null, error => error);
+  const queued = h2.client.save({ name: 'stopped queued intent' }); const queuedError = queued.then(() => null, error => error);
+  await h2.flushPromises();
+  const inFlight = h2.pendingRequests()[0];
+  h2.client.stop();
+  expect(await stoppedError).toMatchObject({ message: expect.stringMatching(/stopped/i) });
+  expect(await queuedError).toMatchObject({ message: expect.stringMatching(/stopped/i) });
+  expect(inFlight.options.signal.aborted).toBe(true);
+  await h2.flushPromises();
+  expect(h2.client.getState().pending).toBe(false);
+});
+
 beforeEach(() => vi.restoreAllMocks());
+
+test('does not schedule Live or disturb preflight for an identical draft', async () => {
+  const h = harness();
+  const starting = h.client.start(); h.resolveNext(stateFor(0)); await starting;
+  const before = h.client.getState();
+  const listener = vi.fn(); const unsubscribe = h.client.subscribe(listener); listener.mockClear();
+  h.client.setDraft(structuredClone(before.draft));
+  expect(h.client.getState()).toEqual(before);
+  expect(listener).not.toHaveBeenCalled();
+  await h.advance(1000); expect(h.requests).toHaveLength(0);
+  unsubscribe(); h.client.stop();
+});
+
+test('identical draft leaves the actual deferred candidate preflight alive', async () => {
+  const checks = [];
+  const h = harness({ validateCandidate: args => new Promise(resolve => checks.push({ ...args, resolve })) });
+  const starting = h.client.start(); h.resolveNext(stateFor(0)); await starting; h.client.setLive(false);
+  const candidate = clone(DEFAULTS); candidate.pre.scale = 1.5; h.client.setDraft(candidate);
+  const applying = h.client.apply(); const result = applying.catch(error => error);
+  await h.flushPromises(); expect(checks).toHaveLength(1);
+  const before = h.client.getState();
+  h.client.setDraft(structuredClone(candidate));
+  expect(checks[0].signal?.aborted).toBe(false);
+  expect(h.client.getState()).toEqual(before);
+  checks[0].resolve({ identity: checks[0].identity, valid: true }); await h.flushPromises();
+  expect(h.requests).toHaveLength(1); expect(JSON.parse(h.requests[0].options.body).config).toEqual(candidate);
+  h.resolveNext(stateFor(1, candidate)); await expect(result).resolves.not.toBeInstanceOf(Error);
+  h.client.stop();
+});
 
 test.each(['http', 'own websocket'])('Save returns its accepted checkpoint identity after %s and keeps receipt context out of state', async (ack) => {
   const h = harness(); const starting = h.client.start(); h.resolveNext(stateFor(0)); await starting; h.client.setLive(false);
@@ -81,9 +227,87 @@ test.each(['http', 'own websocket'])('Save returns its accepted checkpoint ident
   const saving = h.client.save({ name: 'Desk' });
   if (ack === 'own websocket') h.socket.emit({ type: 'otef_projection_config_changed', table: 'otef', sourceId: '00000000-0000-4000-8000-00000000000a', state: saved });
   h.resolveNext(saved); expect(await saving).toMatchObject({ savedPresetId: id }); await h.flushPromises();
+  await h.advance(15000);
+  expect(h.client.getState().reconciliation).toBe(null);
   expect(receipts.filter(Boolean)).toEqual([{ origin: '00000000-0000-4000-8000-00000000000a', action: 'save' }]);
   expect(receipts.at(-1)).toBeUndefined(); expect(h.client.getState()).not.toHaveProperty('savedPresetId');
   expect(notifications.every((state) => !Object.hasOwn(state, 'savedPresetId') && !Object.hasOwn(state, 'receipt'))).toBe(true);
+  unsubscribe(); h.client.stop();
+});
+
+test('matching own Save acknowledgment settles a stalled HTTP request before its deadline', async () => {
+  const h = harness(); const starting = h.client.start(); h.resolveNext(stateFor(0)); await starting; h.client.setLive(false);
+  const id = '11111111-1111-4111-8111-111111111111';
+  const saved = { ...stateFor(1), selectedPresetId: id, presets: [...stateFor(1).presets, { id, name: 'Desk', config: clone(DEFAULTS), readOnly: false }] };
+  const receipts = []; const unsubscribe = h.client.subscribe((_state, receipt) => { if (receipt) receipts.push(receipt); });
+  const saving = h.client.save({ name: 'Desk' });
+  const applying = h.client.apply();
+  const applyError = applying.then(() => null, error => error);
+  await h.flushPromises();
+  expect(h.pendingRequests()).toHaveLength(1);
+  const stalledPost = h.pendingRequests()[0];
+  h.socket.emit({ type: 'otef_projection_config_changed', table: 'otef', sourceId: '00000000-0000-4000-8000-00000000000a', state: saved });
+  await expect(saving).resolves.toMatchObject({ savedPresetId: id, snapshot: { revision: 1 } });
+  await h.advance(100);
+  expect(h.pendingRequests()).toHaveLength(2);
+  expect(JSON.parse(h.pendingRequests()[1].options.body)).toMatchObject({ action: 'preview', baseRevision: 1 });
+  h.resolveAt(1, stateFor(2));
+  await expect(applyError).resolves.toBe(null);
+  await h.advance(15001);
+  expect(h.client.getState()).toMatchObject({ snapshot: { revision: 2 }, reconciliation: null, hasLocalDraft: false });
+  expect(h.pendingRequests()).toHaveLength(1);
+  expect(h.pendingRequests()[0]).toBe(stalledPost);
+  expect(receipts).toEqual([{ origin: '00000000-0000-4000-8000-00000000000a', action: 'save' }]);
+  h.resolveAt(0, saved);
+  await h.flushPromises();
+  expect(h.client.getState()).toMatchObject({ snapshot: { revision: 2 }, reconciliation: null, hasLocalDraft: false });
+  expect(h.pendingRequests()).toHaveLength(0);
+  unsubscribe(); h.client.stop();
+});
+
+test('matching own Save acknowledgment settles without replacing a newer local draft or its identity', async () => {
+  const h = harness(); const starting = h.client.start(); h.resolveNext(stateFor(0)); await starting; h.client.setLive(false);
+  const sentDraft = clone(DEFAULTS); sentDraft.pre.tx = 0.31; h.client.setDraft(sentDraft);
+  const saving = h.client.save({ name: 'Desk' });
+  await h.flushPromises();
+  const newerDraft = clone(sentDraft); newerDraft.pre.tx = 0.42; h.client.setDraft(newerDraft);
+  const id = '11111111-1111-4111-8111-111111111111';
+  const saved = { ...stateFor(1, sentDraft), selectedPresetId: id, presets: [...stateFor(1).presets, { id, name: 'Desk', config: sentDraft, readOnly: false }] };
+  h.socket.emit({ type: 'otef_projection_config_changed', table: 'otef', sourceId: '00000000-0000-4000-8000-00000000000a', state: saved });
+  await expect(saving).resolves.toMatchObject({ savedPresetId: null, draft: newerDraft, hasLocalDraft: true });
+  await h.advance(15001);
+  expect(h.client.getState()).toMatchObject({ snapshot: { revision: 1 }, draft: newerDraft, hasLocalDraft: true, reconciliation: null });
+  expect(h.pendingRequests()).toHaveLength(1);
+  h.client.stop();
+});
+
+test('socket callbacks captured before stop cannot mutate or resurrect work after stop or restart', async () => {
+  const h = harness(); const starting = h.client.start(); h.resolveNext(stateFor(0)); await starting;
+  const oldMessage = h.captureHandlers('otef_projection_config_changed')[0];
+  const oldConnect = h.captureHandlers('connect')[0];
+  const oldDisconnect = h.captureHandlers('disconnect')[0];
+  const revisions = [];
+  const unsubscribe = h.client.subscribe((state) => revisions.push(state.snapshot?.revision ?? null));
+  revisions.length = 0;
+  h.client.stop();
+  revisions.length = 0;
+  const revisionBefore = h.client.getState().snapshot.revision;
+  const requestCount = h.pendingRequests().length;
+  oldMessage({ type: 'otef_projection_config_changed', table: 'otef', sourceId: '00000000-0000-4000-8000-00000000000b', state: stateFor(99) });
+  oldConnect(); oldDisconnect();
+  expect(h.client.getState()).toMatchObject({ snapshot: { revision: revisionBefore }, hydrating: false });
+  expect(h.pendingRequests()).toHaveLength(requestCount);
+  expect(revisions).toEqual([]);
+
+  const restarted = h.client.start();
+  expect(h.pendingRequests()).toHaveLength(requestCount + 1);
+  h.resolveNext(stateFor(1)); await restarted;
+  revisions.length = 0;
+  oldMessage({ type: 'otef_projection_config_changed', table: 'otef', sourceId: '00000000-0000-4000-8000-00000000000b', state: stateFor(99) });
+  oldConnect(); oldDisconnect();
+  expect(h.client.getState()).toMatchObject({ snapshot: { revision: 1 }, hydrating: false, connected: true });
+  expect(h.pendingRequests()).toHaveLength(requestCount);
+  expect(revisions).toEqual([]);
   unsubscribe(); h.client.stop();
 });
 
@@ -198,7 +422,7 @@ test.each(['live', 'apply', 'save', 'load', 'revert'])(
     const checks = [];
     const h = harness({ validateCandidate: (candidate) => new Promise((resolve) => checks.push({ candidate, resolve })) });
     const started = h.client.start(); h.resolveNext(h.stateFor(0)); await started;
-    const a = clone(DEFAULTS); a.pre.tx = 0.01;
+    const a = clone(DEFAULTS); a.pre.tx = 0.011;
     const b = clone(DEFAULTS); b.pre.tx = 0.02;
     const c = clone(DEFAULTS); c.pre.tx = 0.03;
     if (action !== 'live') h.client.setLive(false);
@@ -275,7 +499,7 @@ test('an abandoned wall check cannot block a newer valid Live edit', async () =>
   const checks = [];
   const h = harness({ validateCandidate: (candidate) => new Promise((resolve) => checks.push({ candidate, resolve })) });
   const started = h.client.start(); h.resolveNext(h.stateFor(0)); await started;
-  const a = clone(DEFAULTS); a.pre.tx = 0.01;
+  const a = clone(DEFAULTS); a.pre.tx = 0.011;
   const b = clone(DEFAULTS); b.pre.tx = 0.02;
   h.client.setDraft(a); await h.advance(0); await h.flushPromises();
   expect(checks).toHaveLength(1);
@@ -401,6 +625,19 @@ test('queued drag is canceled and local draft preserved by a foreign update', as
   expect(h.pendingRequests()).toHaveLength(0);
   expect(h.client.getState().draft).toEqual(draft);
   expect(h.client.getState().live).toBe(false);
+});
+
+test('accepted foreign revisions carry private origin metadata while own revisions remain ordinary acknowledgments', async () => {
+  const h = harness();
+  const started = h.client.start(); h.resolveNext(h.stateFor(0)); await started;
+  const receipts = [];
+  const unsubscribe = h.client.subscribe((_state, receipt) => receipts.push(receipt));
+  h.socket.emit({ type: 'otef_projection_config_changed', table: 'otef', sourceId: '00000000-0000-4000-8000-00000000000b', state: h.stateFor(1) });
+  expect(receipts.at(-1)).toEqual({ origin: '00000000-0000-4000-8000-00000000000b', foreign: true });
+  h.socket.emit({ type: 'otef_projection_config_changed', table: 'otef', sourceId: '00000000-0000-4000-8000-00000000000a', state: h.stateFor(2) });
+  expect(receipts.at(-1)).toBeUndefined();
+  expect(h.client.getState()).not.toHaveProperty('receipt');
+  unsubscribe(); h.client.stop();
 });
 
 test('foreign update during an in-flight preview cancels trailing work and preserves the draft', async () => {
