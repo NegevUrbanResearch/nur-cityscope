@@ -364,7 +364,7 @@ test("empty and browser-sanitized bad grid inputs restore valid values and repor
   view.dispose();
 });
 
-test("Add row starts placement, then the retained source percentage previews a candidate", async () => {
+test("Add row starts placement before the source percentage previews a candidate", async () => {
   const { root, view, onWarpAction, update } = makeView();
   const config = structuredClone(DEFAULT_PROJECTION_CONFIG);
   const editor = createWarpEditor({ config, output: "left" }); editor.setMode("grid"); editor.select({ mode: "grid", kind: "row", index: 1 });
@@ -373,18 +373,18 @@ test("Add row starts placement, then the retained source percentage previews a c
   root.querySelector(".config-node[data-node='left-grid'] .warp-open-button").click();
   const layout = root.querySelector(".warp-grid-layout-section");
   const position = layout.querySelector("[data-grid-layout-field='addRowPosition']");
-  position.value = "35"; position.dispatchEvent(new Event("input", { bubbles: true }));
-  position.dispatchEvent(new Event("change", { bubbles: true })); position.dispatchEvent(new Event("blur"));
-  expect(onWarpAction).not.toHaveBeenCalled();
+  expect(position.disabled).toBe(true);
   layout.querySelector("[data-grid-layout-action='add-row']").click();
   expect(onWarpAction).toHaveBeenCalledTimes(1);
   expect(onWarpAction).toHaveBeenCalledWith("warp-grid-placement", { output: "left", axis: "row" });
   onWarpAction.mockClear();
   update({ state: { draft: config }, selectedNode: "left-grid", warpStates: { left: { ...state, gridPlacement: { axis: "row" } } } });
   await vi.waitFor(() => expect(position.getAttribute("aria-label")).toContain("click the viewer"));
-  expect(position.value).toBe("35");
+  expect(position.disabled).toBe(false);
+  position.value = "35"; position.dispatchEvent(new Event("input", { bubbles: true }));
   position.dispatchEvent(new Event("change", { bubbles: true }));
   expect(onWarpAction).toHaveBeenCalledWith("warp-grid-layout", { output: "left", operation: "add", axis: "row", position: 35 });
+  expect(position.value).toBe("35");
   view.dispose();
 });
 

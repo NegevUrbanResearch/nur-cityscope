@@ -175,6 +175,8 @@ export function createGridLayoutControls(doc, onAction = () => {}) {
     const defaultColumn = (columnAxis[clamp(columnIndex, 0, columnsCount - 2)] + columnAxis[clamp(columnIndex + 1, 1, columnsCount - 1)]) / 2;
     if (force || (!edited.has(addRowPosition) && placement?.axis !== "row")) sync(addRowPosition, percentText(defaultRow), percentText(defaultRow), force);
     if (force || (!edited.has(addColumnPosition) && placement?.axis !== "column")) sync(addColumnPosition, percentText(defaultColumn), percentText(defaultColumn), force);
+    addRowPosition.disabled = placement?.axis !== "row";
+    addColumnPosition.disabled = placement?.axis !== "column";
     for (const [name, button] of actions) {
       const axis = name.includes("column") ? columnAxis : rowAxis;
       const index = name.includes("column") ? columnIndex : rowIndex;

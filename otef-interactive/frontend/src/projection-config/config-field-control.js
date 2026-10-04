@@ -162,7 +162,12 @@ export function renderField(doc, descriptor, onField, onNudge, compact = false, 
   }
   function beginRange() {
     if (rangeGesture) return;
-    rangeGesture = { id: gestureId(), base: latest.value, last: latest.value, path: latest.resolvedPath };
+    rangeGesture = { id: gestureId(), base: latest.value, last: latest.value, path: latest.resolvedPath, releaseOnly: Boolean(descriptor.commitOnChange) };
+  }
+  function previewRange(candidate) {
+    rangeGesture.last = candidate;
+    const shown = toDisplay(candidate); displayOutput(shown);
+    if (number) number.value = formatInputValue(signed ? Math.abs(shown) : shown);
   }
   function sendRange(phase, candidate = rangeGesture?.last) {
     if (!rangeGesture) return true;
@@ -180,6 +185,21 @@ export function renderField(doc, descriptor, onField, onNudge, compact = false, 
   }
   function endRange(cancelled = false, notify = true) {
     if (!rangeGesture) return;
+    const active = rangeGesture;
+    if (active.releaseOnly) {
+      if (!cancelled && notify && !Object.is(active.last, active.base)) {
+        const shown = toDisplay(active.last);
+        const accepted = onField(descriptor.path, String(shown), 'range', { baseValue: active.base, resolvedPath: active.path });
+        if (accepted !== false) {
+          latest = { value: active.last, resolvedPath: active.path };
+          rangeRejected = false; rejectionError = ''; session.sync(latest);
+        } else {
+          rangeRejected = true; rejectionError = externalError || boundsError();
+        }
+      }
+      rangeGesture = null; session.sync(latest); refresh();
+      return;
+    }
     const rejected = rangeRejected; const message = rejectionError;
     if (notify) sendRange(cancelled ? 'cancel' : 'end');
     if (rejected && !cancelled) { rangeRejected = true; rejectionError = message; }
@@ -254,7 +274,14 @@ export function renderField(doc, descriptor, onField, onNudge, compact = false, 
     focusedTarget = null; if (heldPointer !== null) retiredPointer = heldPointer; heldPointer = null; endRange(true, notify); stopHold(true, notify); session.cancel(); targetChanged = false; externalError = ''; needsAcceptance = false; rangeRejected = false; rejectionError = ''; refresh(true);
     if (clearControllerError) onCancelEdit(descriptor.path, cancellationTarget || latest.resolvedPath);
   };
-  listen(range, 'pointerdown', event => { retiredPointer = null; heldPointer = event.pointerId; beginRange(); range.setPointerCapture?.(event.pointerId); sendRange('start'); });
+  listen(range, 'pointerdown', event => {
+    if (session.isDirty() || needsAcceptance) {
+      const result = finish();
+      if (!['commit', 'unchanged'].includes(result.kind)) { event.preventDefault?.(); return; }
+    }
+    retiredPointer = null; heldPointer = event.pointerId; beginRange(); range.setPointerCapture?.(event.pointerId);
+    if (!rangeGesture.releaseOnly) sendRange('start');
+  });
   listen(range, 'keydown', () => { retiredPointer = null; });
   for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) listen(range, type, event => {
     if (heldPointer === event.pointerId) { heldPointer = null; endRange(type !== 'pointerup'); range.releasePointerCapture?.(event.pointerId); }
@@ -282,6 +309,7 @@ export function renderField(doc, descriptor, onField, onNudge, compact = false, 
     if (fineMode || rangeGesture) {
       const starting = !rangeGesture; const ticks = Number(range.value); beginRange();
       const candidate = fineMode ? ticks === 0 ? rangeGesture.base : rangeGesture.base + ticks * descriptor.fine : fromDisplay(ticks);
+      if (rangeGesture.releaseOnly) { previewRange(candidate); return; }
       sendRange(starting ? 'start' : 'update', candidate); return;
     }
     markInput(range.value, 1); if (number && !descriptor.commitOnChange) number.value = signed ? String(Math.abs(Number(range.value))) : range.value;
@@ -337,7 +365,7 @@ export function renderField(doc, descriptor, onField, onNudge, compact = false, 
       if (session.isDirty() && session.candidate().resolvedPath !== resolvedPath) targetChanged = true;
       latest = { value: nextValue, resolvedPath }; externalError = String(nextError || ''); session.sync(latest);
       if (!rangeGesture) configureRange();
-      if (!session.isDirty()) refresh(resolvedChanged); else renderResult();
+      if (!session.isDirty() && !rangeGesture?.releaseOnly) refresh(resolvedChanged); else renderResult();
     },
     finish(inputKind, override) { if (rangeGesture && heldPointer === null) endRange(); return finish(inputKind, override); }, cancel, isPending: () => session.isDirty() || rangeGesture !== null || rangeRejected, isHeld: () => heldPointer !== null || hold !== null,
     dispose() { cancel(); retiredPointer = null; disposed = true; listeners.forEach(remove => remove()); },

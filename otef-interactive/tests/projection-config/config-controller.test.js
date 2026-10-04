@@ -968,6 +968,31 @@ test.each([["row", "addRowPosition", "add-row"], ["column", "addColumnPosition",
   } finally { h.restore(); }
 });
 
+test.each([["row", "addRowPosition", "add-row", "addColumnPosition"], ["column", "addColumnPosition", "add-column", "addRowPosition"]])("Add %s percentage is editable only during its active placement and Escape clears it", (axis, fieldName, actionName, otherFieldName) => {
+  const h = tracedWarpHarness();
+  try {
+    find(h.root, node => node.dataset?.action === "warp-editor-close").dispatch("click");
+    find(h.root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+    const input = find(h.root, node => node.dataset?.gridLayoutField === fieldName);
+    const other = find(h.root, node => node.dataset?.gridLayoutField === otherFieldName);
+    expect(input.disabled).toBe(true);
+    expect(other.disabled).toBe(true);
+
+    find(h.root, node => node.dataset?.gridLayoutAction === actionName).dispatch("click");
+    expect(input.disabled).toBe(false);
+    expect(other.disabled).toBe(true);
+    input.value = "35"; input.dispatch("input");
+    globalThis.document.dispatch("keydown", { key: "Escape", preventDefault() {} });
+    expect(input.value).not.toBe("35");
+    expect(input.attributes["aria-invalid"]).toBeUndefined();
+    expect(find(h.root, node => node.dataset?.gridLayoutAction === actionName).textContent).toBe(axis === "row" ? "Add row" : "Add column");
+    find(h.root, node => node.dataset?.action === "warp-editor-close").dispatch("click");
+    expect(find(h.root, node => node.className === "warp-editor-dialog").hidden).toBe(true);
+    expect(h.client.setDraft).not.toHaveBeenCalled();
+    expect(h.client.apply).not.toHaveBeenCalled();
+  } finally { h.restore(); }
+});
+
 test("Escape cancels rejected grid-placement text without closing the editor or writing", () => {
   const h = tracedWarpHarness();
   try {
@@ -983,6 +1008,100 @@ test("Escape cancels rejected grid-placement text without closing the editor or 
     expect(input.attributes["aria-invalid"]).toBeUndefined();
     expect(find(h.root, node => node.dataset?.gridLayoutAction === "add-row").textContent).toBe("Add row");
     expect(h.client.setDraft).not.toHaveBeenCalled(); expect(h.client.apply).not.toHaveBeenCalled();
+  } finally { h.restore(); }
+});
+
+test("a valid Scale entry is committed before the real slider captures its range baseline", () => {
+  const h = tracedWarpHarness();
+  try {
+    const number = find(h.root, node => node.dataset?.field === "pre.scale" && node.dataset?.input === "number");
+    const wrap = find(h.root, node => node.dataset?.path === "pre.scale");
+    const range = find(wrap, node => node.dataset?.input === "range");
+    find(wrap, node => node.dataset?.mode === "coarse").dispatch("click");
+    number.value = "2"; number.dispatch("input");
+    const pointer = type => range.dispatch(type, { pointerId: 17, preventDefault() {} });
+    pointer("pointerdown"); number.dispatch("blur");
+    range.value = "3"; range.dispatch("input"); pointer("pointerup");
+    expect(h.client.getState().draft.pre.scale).toBe(3);
+    expect(number.attributes["aria-invalid"]).toBe("false");
+    expect(h.client.setDraft).toHaveBeenCalled();
+  } finally { h.restore(); }
+});
+
+test("Bring pages together keeps pointer preview local, commits once on release, and cancellation adds no undo entry", () => {
+  const h = tracedWarpHarness();
+  try {
+    const node = find(h.root, item => item.dataset?.node === "names-wall");
+    node.dispatch("click");
+    const wrap = find(node, item => item.dataset?.path === "namesWall.inwardShiftPercent");
+    const range = find(wrap, item => item.dataset?.input === "range");
+    const pointer = type => range.dispatch(type, { pointerId: 18, preventDefault() {} });
+    h.client.setDraft.mockClear();
+    pointer("pointerdown");
+    expect(h.client.getState().draft.namesWall.profiles.wall.inwardShiftPercent).toBe(0);
+    range.value = "50"; range.dispatch("input"); range.dispatch("change");
+    expect(h.client.getState().draft.namesWall.profiles.wall.inwardShiftPercent).toBe(0);
+    expect(h.client.setDraft).not.toHaveBeenCalled();
+    pointer("pointerup");
+    expect(h.client.getState().draft.namesWall.profiles.wall.inwardShiftPercent).toBe(50);
+    expect(h.client.setDraft).toHaveBeenCalledTimes(1);
+
+    h.client.setDraft.mockClear();
+    pointer("pointerdown"); range.value = "75"; range.dispatch("input"); pointer("pointercancel");
+    expect(h.client.getState().draft.namesWall.profiles.wall.inwardShiftPercent).toBe(50);
+    expect(h.client.setDraft).not.toHaveBeenCalled();
+    find(h.root, item => item.dataset?.action === "parameter-undo").dispatch("click");
+    expect(h.client.getState().draft.namesWall.profiles.wall.inwardShiftPercent).toBe(0);
+  } finally { h.restore(); }
+});
+
+test("Bring pages together keeps its local pointer preview across a same-value controller refresh", () => {
+  const h = tracedWarpHarness();
+  try {
+    const node = find(h.root, item => item.dataset?.node === "names-wall"); node.dispatch("click");
+    const wrap = find(node, item => item.dataset?.path === "namesWall.inwardShiftPercent");
+    const range = find(wrap, item => item.dataset?.input === "range");
+    const number = find(wrap, item => item.dataset?.input === "number");
+    const output = find(wrap, item => item.className === "config-field-value");
+    const pointer = type => range.dispatch(type, { pointerId: 19, preventDefault() {} });
+    h.client.setDraft.mockClear();
+    pointer("pointerdown"); range.value = "50"; range.dispatch("input");
+    h.client.report({ pending: true });
+    expect(number.value).toBe("50"); expect(output.textContent).toContain("50"); expect(range.value).toBe("50");
+    expect(h.client.getState().draft.namesWall.profiles.wall.inwardShiftPercent).toBe(0);
+    expect(h.client.setDraft).not.toHaveBeenCalled();
+    pointer("pointerup");
+    expect(h.client.getState().draft.namesWall.profiles.wall.inwardShiftPercent).toBe(50);
+    expect(h.client.setDraft).toHaveBeenCalledTimes(1);
+  } finally { h.restore(); }
+});
+
+test("Bring pages together cancellation uses the newest accepted value and release rejects a stale baseline", () => {
+  const h = tracedWarpHarness();
+  try {
+    const node = find(h.root, item => item.dataset?.node === "names-wall"); node.dispatch("click");
+    const wrap = find(node, item => item.dataset?.path === "namesWall.inwardShiftPercent");
+    const range = find(wrap, item => item.dataset?.input === "range");
+    const number = find(wrap, item => item.dataset?.input === "number");
+    const output = find(wrap, item => item.className === "config-field-value");
+    const pointer = type => range.dispatch(type, { pointerId: 20, preventDefault() {} });
+    h.client.setDraft.mockClear();
+    pointer("pointerdown"); range.value = "50"; range.dispatch("input");
+    const firstAccepted = clone(h.client.getState().draft); firstAccepted.namesWall.profiles.wall.inwardShiftPercent = 12;
+    h.client.report({ draft: firstAccepted, hasLocalDraft: false });
+    expect(number.value).toBe("50"); expect(output.textContent).toContain("50"); expect(range.value).toBe("50");
+    pointer("pointercancel");
+    expect(h.client.getState().draft.namesWall.profiles.wall.inwardShiftPercent).toBe(12);
+    expect(number.value).toBe("12"); expect(output.textContent).toContain("12"); expect(range.value).toBe("12");
+    expect(h.client.setDraft).not.toHaveBeenCalled();
+
+    pointer("pointerdown"); range.value = "70"; range.dispatch("input");
+    const secondAccepted = clone(h.client.getState().draft); secondAccepted.namesWall.profiles.wall.inwardShiftPercent = 20;
+    h.client.report({ draft: secondAccepted, hasLocalDraft: false });
+    pointer("pointerup");
+    expect(h.client.getState().draft.namesWall.profiles.wall.inwardShiftPercent).toBe(20);
+    expect(h.client.setDraft).not.toHaveBeenCalled();
+    expect(find(wrap, item => item.className === "config-field-error").textContent).toMatch(/changed while editing/i);
   } finally { h.restore(); }
 });
 
