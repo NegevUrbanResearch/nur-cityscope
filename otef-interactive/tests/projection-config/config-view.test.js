@@ -14,23 +14,31 @@ test("clock layout dialog uses the available viewport width on narrow screens", 
   expect(dialogRule).not.toMatch(/width:\s*100vw/);
 });
 
-test("command bands wrap direct actions without fixed header rows", () => {
+test("compact command rows keep direct actions visible and setup controls disclosed", () => {
   const css = readFileSync(resolve(import.meta.dirname, "../../frontend/src/projection-config/config.css"), "utf8");
-  expect(css).toMatch(/\.config-command-groups\s*\{[^}]*grid-template-columns:\s*minmax\(0,1fr\) minmax\(0,1fr\)/s);
+  expect(css).toMatch(/\.config-command-row-primary\s*\{[^}]*min-height:\s*52px/s);
+  expect(css).toMatch(/\.config-command-row-primary > \.config-menu\s*\{[^}]*flex:\s*0 0 auto/s);
+  expect(css).toMatch(/\.config-menu-content\s*\{[^}]*box-shadow:/s);
   expect(css).toMatch(/\.config-workspace-band\s*\{[^}]*flex-wrap:\s*wrap/s);
-  expect(css).not.toMatch(/grid-template-rows:\s*64px 48px/);
   expect(css).toMatch(/\.config-command-bar button, \.config-command-bar select\s*\{[^}]*min-height:\s*44px/s);
-  expect(css).toMatch(/@media\s*\(max-width:\s*700px\)\s*\{[^}]*\.config-command-groups\s*\{[^}]*grid-template-columns:\s*1fr/s);
-  expect(css).not.toMatch(/\.config-tools-content\s*\{[^}]*position:\s*absolute/s);
+  expect(css).toMatch(/@media\s*\(max-width:\s*700px\)\s*\{[^}]*\.config-command-row-primary\s*\{[^}]*flex-wrap:\s*wrap/s);
+  expect(css).toMatch(/\.config-presets-menu > \.config-menu-content, \.config-displays-menu > \.config-menu-content, \.config-tools > \.config-menu-content\s*\{[^}]*position:\s*absolute/s);
   expect(css).toMatch(/\.config-command-bar \[data-action='apply'\][^{]*\{[^}]*background:\s*var\(--config-accent\)/s);
   expect(css).toMatch(/^body\s*\{[^}]*min-width:\s*0/m);
-  expect(css).toMatch(/\.preset-commands, \.display-commands\s*\{[^}]*grid-template-rows:\s*subgrid/s);
+});
+
+test("narrow disclosure panels anchor inside the viewport and retain touch targets", () => {
+  const css = readFileSync(resolve(import.meta.dirname, "../../frontend/src/projection-config/config.css"), "utf8");
+  expect(css).toContain(".config-menu-content { position: fixed; left: 12px; right: 12px; width: auto; min-width: 0; max-width: none; }");
+  expect(css).toMatch(/\.config-menu > summary\s*\{[^}]*min-height:\s*44px/s);
+  expect(css).toMatch(/\.config-command-bar button, \.config-command-bar select\s*\{[^}]*min-height:\s*44px/s);
 });
 
 test("narrow workspace reserves a visible graph stage and uses the existing shell scroll", () => {
   const css = readFileSync(resolve(import.meta.dirname, "../../frontend/src/projection-config/config.css"), "utf8");
   expect(css).toMatch(/\.config-shell\s*\{[^}]*overflow-y:\s*auto/s);
-  expect(css).toMatch(/@media\s*\(max-width:\s*700px\)\s*\{\s*\.config-workspace\s*\{[^}]*grid-template-rows:\s*minmax\(220px,\s*1fr\) auto/s);
+  expect(css).toMatch(/@media\s*\(max-width:\s*1100px\)\s*\{\s*\.config-workspace\s*\{[^}]*grid-template-rows:\s*minmax\(220px,\s*1fr\) auto/s);
+  expect(css).toMatch(/\.config-workspace\[data-editing="true"\] \.graph-column\s*\{[^}]*display:\s*none/s);
   expect(css).not.toMatch(/\.config-workspace\s*\{[^}]*overflow-y:\s*auto/s);
   expect(css).toMatch(/\.config-enlarge-edit, \.config-editor-region button\s*\{[^}]*min-height:\s*44px/s);
 });
@@ -78,6 +86,13 @@ test("tablet warp panel pairs the preview with one scrolling control region", ()
   const miniMeshStroke = css.match(/\.warp-node-line\s*\{([^}]*)\}/)?.[1] ?? "";
   expect(miniMeshStroke).not.toContain("vector-effect: non-scaling-stroke");
   expect(css).toMatch(/\.warp-node-handle\s*\{[^}]*fill:\s*#79c9b2/s);
+});
+
+test("full-viewport warp layout removes panel preview caps and provides a scrolling precision column", () => {
+  const css = readFileSync(resolve(import.meta.dirname, "../../frontend/src/projection-config/config.css"), "utf8");
+  expect(css).toMatch(/\.warp-editor-dialog\[data-presentation="panel"\]\[data-full-viewport="true"\] \.warp-editor-viewport\s*\{[^}]*max-height:\s*none[^}]*aspect-ratio:\s*auto/s);
+  expect(css).toMatch(/@container\s*\(min-width:\s*900px\)[^]*?\.warp-editor-dialog\[data-presentation="panel"\]\[data-full-viewport="true"\] \.warp-editor-body\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\) minmax\(280px,\s*320px\)/s);
+  expect(css).toMatch(/\.warp-editor-dialog\[data-presentation="panel"\]\[data-full-viewport="true"\] \.warp-editor-controls-column\s*\{[^}]*overflow-y:\s*auto/s);
 });
 
 
@@ -639,8 +654,9 @@ test("view renders draggable node workspace and preserves an existing focused in
   }
   view.update({ state: { draft }, selectedNode: "right-grid", warpStates: { right: { ...rightIdentityWarpEditor.getState(), config: rightIdentityWarpEditor.getConfig(), handles: rightIdentityWarpEditor.getControlPoints() } } });
   const warpBody = descendants(root).find((node) => node.className === "warp-editor-body");
-  expect(warpBody.children.at(-1)).toBe(view.controls.gridLayout.element);
-  expect(warpBody.children.filter((node) => node.className?.includes("warp-grid-layout-section"))).toHaveLength(1);
+  expect(warpBody.children.at(-1).className).toBe("warp-editor-controls-column");
+  expect(warpBody.children.at(-1).children.at(-1)).toBe(view.controls.gridLayout.element);
+  expect(descendants(warpBody).filter((node) => node.className?.includes("warp-grid-layout-section"))).toHaveLength(1);
   expect(view.controls.enlargeEdit.parentElement).toBe(view.controls.editorRegion);
   view.controls.enlargeEdit.dispatch("click");
   expect(descendants(root).filter((node) => node.tagName === "IFRAME")).toHaveLength(1);

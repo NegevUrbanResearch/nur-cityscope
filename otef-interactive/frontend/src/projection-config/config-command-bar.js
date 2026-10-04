@@ -10,23 +10,25 @@ function make(doc, tag, props = {}, text = '') {
 }
 
 export function createConfigCommandBar({ document: doc, onAction = () => {}, onOutputAction = () => {} }) {
+  const win = doc.defaultView;
   const controls = {};
   const listeners = [];
   const listen = (node, type, handler, options) => { node.addEventListener?.(type, handler, options); listeners.push(() => node.removeEventListener?.(type, handler, options)); };
   const button = (name, text, action = name) => (controls[name] = make(doc, 'button', { type: 'button', dataset: { action } }, text));
   const element = make(doc, 'header', { className: 'config-command-bar', ariaLabel: 'Projection calibration commands' });
-  const groups = make(doc, 'div', { className: 'config-command-groups' });
-  const presets = make(doc, 'section', { className: 'preset-commands', ariaLabel: 'Presets' });
-  const displays = make(doc, 'section', { className: 'display-commands', ariaLabel: 'Output displays' });
-  const presetHeading = make(doc, 'div', { className: 'config-command-heading' });
-  controls.loadedPresetIdentity = make(doc, 'span', { id: 'projection-loaded-preset-identity', className: 'loaded-preset-identity' }, 'Loaded: unknown');
-  presetHeading.append(make(doc, 'h2', {}, 'Presets'), controls.loadedPresetIdentity);
-  const presetActions = make(doc, 'div', { className: 'config-preset-actions' });
-  controls.presets = make(doc, 'select', { ariaLabel: 'Preset', title: 'Selection is pending until you choose Load' });
-  controls.presets.setAttribute('aria-describedby', 'projection-loaded-preset-identity');
+  const primaryRow = make(doc, 'div', { className: 'config-command-row config-command-row-primary' });
+  const pending = make(doc, 'div', { className: 'config-pending-preset' });
   const presetLabel = make(doc, 'label', { className: 'config-preset-select-label' });
+  controls.presets = make(doc, 'select', { ariaLabel: 'Preset', title: 'Selection is pending until you choose Load' });
   presetLabel.append(make(doc, 'span', { className: 'config-preset-field-label' }, 'Pending preset'), controls.presets);
-  presetActions.append(presetLabel, button('load', 'Load'), button('revert', 'Revert'), button('save', 'Save preset'), button('saveNew', 'Save copy', 'save-new'));
+  controls.presets.setAttribute('aria-describedby', 'projection-loaded-preset-identity');
+  pending.append(presetLabel, button('load', 'Load'), button('save', 'Save preset'));
+  controls.presetsDisclosure = make(doc, 'details', { className: 'config-menu config-presets-menu', dataset: { menu: 'presets' } });
+  controls.presetsSummary = make(doc, 'summary', {}, 'Presets');
+  const presets = make(doc, 'div', { className: 'config-menu-content', ariaLabel: 'Preset actions' });
+  controls.loadedPresetIdentity = make(doc, 'span', { id: 'projection-loaded-preset-identity', className: 'loaded-preset-identity' }, 'Loaded: unknown');
+  const presetActions = make(doc, 'div', { className: 'config-preset-actions' });
+  presetActions.append(button('revert', 'Revert'), button('saveNew', 'Save copy', 'save-new'));
   controls.toolsPresetContext = make(doc, 'p', { className: 'tools-preset-context' });
   controls.originalCheckpointGuidance = make(doc, 'p', { className: 'original-checkpoint-guidance', hidden: true });
   controls.saveCopyPanel = make(doc, 'div', { id: 'projection-save-copy', className: 'config-save-copy', role: 'dialog', ariaLabel: 'Save copy', hidden: true });
@@ -35,11 +37,13 @@ export function createConfigCommandBar({ document: doc, onAction = () => {}, onO
   controls.saveCopyPanel.append(nameLabel, controls.saveName, button('saveCopyConfirm', 'Save copy', 'save-copy-confirm'), button('saveCopyCancel', 'Cancel', 'save-copy-cancel'));
   controls.saveNew.setAttribute('aria-controls', controls.saveCopyPanel.id);
   controls.saveNew.setAttribute('aria-expanded', 'false');
-  const presetDetails = make(doc, 'div', { className: 'config-preset-details' });
-  presetDetails.append(controls.saveCopyPanel, controls.toolsPresetContext, controls.originalCheckpointGuidance);
-  presets.append(presetHeading, presetActions, presetDetails);
-  const displayHeading = make(doc, 'div', { className: 'config-command-heading' });
-  displayHeading.append(make(doc, 'h2', {}, 'Output displays'), button('outputRefresh', 'Refresh', 'output-refresh'), button('outputIdentify', 'Identify', 'output-identify'));
+  presets.append(controls.loadedPresetIdentity, presetActions, controls.saveCopyPanel, controls.toolsPresetContext, controls.originalCheckpointGuidance);
+  controls.presetsDisclosure.append(controls.presetsSummary, presets);
+  controls.displaysDisclosure = make(doc, 'details', { className: 'config-menu config-displays-menu', dataset: { menu: 'displays' } });
+  controls.displaysSummary = make(doc, 'summary', {}, 'Displays');
+  const displays = make(doc, 'div', { className: 'config-menu-content config-display-menu-content', ariaLabel: 'Output display setup' });
+  const displayHeading = make(doc, 'div', { className: 'config-display-menu-heading' });
+  displayHeading.append(make(doc, 'strong', {}, 'Display setup'), button('outputRefresh', 'Refresh', 'output-refresh'), button('outputIdentify', 'Identify', 'output-identify'));
   const displayActions = make(doc, 'div', { className: 'config-display-actions' });
   for (const [side, name] of [['Left', 'outputLeftDisplay'], ['Right', 'outputRightDisplay']]) {
     const label = make(doc, 'label', { className: 'output-display-label' }, side);
@@ -51,8 +55,21 @@ export function createConfigCommandBar({ document: doc, onAction = () => {}, onO
   controls.outputOpenBoth.setAttribute('aria-label', 'Open both outputs');
   controls.outputCloseBoth.setAttribute('aria-label', 'Close both outputs');
   displayActions.appendChild(displayButtons);
+  controls.outputStatus = make(doc, 'span', { className: 'output-launch-status' });
+  displayActions.appendChild(controls.outputStatus);
   displays.append(displayHeading, displayActions);
-  groups.append(presets, displays);
+  controls.displaysDisclosure.append(controls.displaysSummary, displays);
+  controls.tools = make(doc, 'details', { className: 'config-menu config-tools', dataset: { menu: 'tools' } });
+  controls.toolsSummary = make(doc, 'summary', {}, 'Tools');
+  controls.toolsContent = make(doc, 'div', { className: 'config-menu-content config-tools-content' });
+  controls.toolsAppliedSummary = make(doc, 'span', { className: 'tools-applied-summary' }, 'Outputs: pending');
+  controls.applied = make(doc, 'section', { className: 'applied-status' });
+  controls.appliedRows = make(doc, 'div', { className: 'applied-details' });
+  controls.applied.appendChild(controls.appliedRows);
+  controls.outputHandoff = make(doc, 'small', { className: 'output-launch-handoff' }, 'TD projectorWindows off → Open outputs; Close outputs → TD projectorWindows on. After reload, close old browser output windows before reopening.');
+  controls.toolsContent.append(controls.toolsAppliedSummary, controls.applied, controls.outputHandoff, make(doc, 'small', { className: 'preset-scope-help' }, 'Presets include geometry and people-wall settings. Clock and settlement layouts save independently.'));
+  controls.tools.append(controls.toolsSummary, controls.toolsContent);
+  primaryRow.append(pending, controls.presetsDisclosure, controls.displaysDisclosure, controls.tools);
   const band = make(doc, 'div', { className: 'config-workspace-band' });
   controls.workspaceNav = make(doc, 'nav', { className: 'config-category-actions', ariaLabel: 'Workspace' });
   const commits = make(doc, 'div', { className: 'calibration-commit-controls' });
@@ -62,23 +79,14 @@ export function createConfigCommandBar({ document: doc, onAction = () => {}, onO
   controls.applyLiveDescription = make(doc, 'span', { id: 'projection-apply-live-description', className: 'visually-hidden' });
   controls.live.setAttribute('aria-describedby', controls.applyLiveDescription.id);
   button('apply', 'Apply once'); controls.apply.setAttribute('aria-describedby', controls.applyLiveDescription.id);
-  commits.append(button('parameterUndo', 'Undo parameter', 'parameter-undo'), button('parameterRedo', 'Redo parameter', 'parameter-redo'), liveLabel, controls.apply, controls.applyLiveDescription);
-  controls.tools = make(doc, 'details', { className: 'config-tools' });
-  controls.toolsSummary = make(doc, 'summary', {}, 'Tools');
-  controls.toolsContent = make(doc, 'div', { className: 'config-tools-content' });
-  controls.toolsAppliedSummary = make(doc, 'span', { className: 'tools-applied-summary' }, 'Outputs: pending');
-  controls.applied = make(doc, 'section', { className: 'applied-status' });
-  controls.appliedRows = make(doc, 'div', { className: 'applied-details' });
-  controls.applied.appendChild(controls.appliedRows);
-  controls.outputHandoff = make(doc, 'small', { className: 'output-launch-handoff' }, 'TD projectorWindows off → Open outputs; Close outputs → TD projectorWindows on. After reload, close old browser output windows before reopening.');
-  controls.toolsContent.append(controls.toolsAppliedSummary, controls.applied, controls.outputHandoff, make(doc, 'small', { className: 'preset-scope-help' }, 'Presets include geometry and people-wall settings. Clock and settlement layouts save independently.'));
-  controls.tools.append(controls.toolsSummary, controls.toolsContent);
-  band.append(controls.workspaceNav, commits, controls.tools);
+  button('parameterUndo', 'Undo', 'parameter-undo').setAttribute('aria-label', 'Undo parameter');
+  button('parameterRedo', 'Redo', 'parameter-redo').setAttribute('aria-label', 'Redo parameter');
+  commits.append(controls.parameterUndo, controls.parameterRedo, liveLabel, controls.apply, controls.applyLiveDescription);
+  band.append(controls.workspaceNav, commits);
   controls.operationStatus = make(doc, 'div', { className: 'config-operation-status', role: 'status' });
   controls.status = make(doc, 'span', { className: 'draft-status' });
   controls.saveStatus = make(doc, 'span', { className: 'config-save-status', hidden: true });
   controls.appliedSummary = make(doc, 'span', { className: 'applied-summary' }, 'Outputs: pending');
-  controls.outputStatus = make(doc, 'span', { className: 'output-launch-status' });
   controls.alerts = make(doc, 'section', { className: 'config-alerts', ariaLabel: 'Calibration warnings and errors' });
   for (const [name, className, role] of [['liveWarning', 'live-draft-warning', 'alert'], ['conflict', 'conflict-banner', 'alert'], ['actionError', 'action-error', 'alert'], ['connectionStatus', 'connection-status', 'status'], ['outputCapabilityNotice', 'output-capability-notice', 'status'], ['appliedFailure', 'applied-failure', 'alert']]) {
     controls[name] = make(doc, 'p', { className, role, hidden: true }); controls.alerts.appendChild(controls[name]);
@@ -90,14 +98,40 @@ export function createConfigCommandBar({ document: doc, onAction = () => {}, onO
   controls.reconciliationKeepLocal = button('reconciliationKeepLocal', 'Keep local draft', 'reconciliation-keep-local');
   controls.reconciliationUseAccepted = button('reconciliationUseAccepted', 'Use accepted settings', 'reconciliation-use-accepted');
   controls.reconciliation.append(controls.reconciliationMessage, controls.reconciliationRetry, controls.reconciliationKeepLocal, controls.reconciliationUseAccepted);
-  controls.operationStatus.append(controls.status, controls.saveStatus, controls.appliedSummary, controls.outputStatus, controls.alerts, controls.reconciliation);
-  element.append(groups, band, controls.operationStatus);
+  controls.shortStatus = make(doc, 'div', { className: 'config-short-status', role: 'status', ariaLive: 'polite' });
+  controls.shortStatus.setAttribute('aria-live', 'polite');
+  controls.shortStatus.append(controls.saveStatus, controls.appliedSummary);
+  controls.operationStatus.append(controls.status, controls.alerts, controls.reconciliation);
+  band.append(controls.shortStatus);
+  element.append(primaryRow, band, controls.operationStatus);
   listen(doc, 'keydown', event => {
-    if (event.key !== 'Escape' || !controls.tools.open) return;
-    event.preventDefault(); controls.tools.open = false; controls.toolsSummary.focus?.();
+    if (event.key !== 'Escape') return;
+    const activeMenu = doc.activeElement?.closest?.('[data-menu]');
+    const openMenu = activeMenu?.open ? activeMenu : [controls.presetsDisclosure, controls.displaysDisclosure, controls.tools].find(menu => menu.open);
+    if (!openMenu) return;
+    event.preventDefault(); openMenu.open = false; openMenu.querySelector('summary')?.focus?.();
   });
+  const menus = [controls.presetsDisclosure, controls.displaysDisclosure, controls.tools];
+  const placeMenu = menu => {
+    const content = menu.querySelector('.config-menu-content');
+    if (!content) return;
+    if (!menu.open || winWidth() > 700) { content.style.position = ''; content.style.left = ''; content.style.right = ''; content.style.top = ''; content.style.width = ''; content.style.maxHeight = ''; content.style.overflowY = ''; return; }
+    const rect = menu.querySelector('summary')?.getBoundingClientRect?.();
+    const width = Math.max(0, Math.min(320, winWidth() - 24));
+    const left = Math.max(12, Math.min(rect?.left || 12, winWidth() - width - 12));
+    const top = Math.max(8, (rect?.bottom || 100) + 4);
+    Object.assign(content.style, { position: 'fixed', left: `${left}px`, right: 'auto', top: `${top}px`, width: `${width}px`, maxHeight: `calc(100dvh - ${top + 12}px)`, overflowY: 'auto' });
+  };
+  const winWidth = () => Number(win?.innerWidth || doc.documentElement?.clientWidth || 1024);
+  for (const menu of menus) listen(menu, 'toggle', () => {
+    if (menu.open) for (const other of menus) if (other !== menu) { other.open = false; placeMenu(other); }
+    placeMenu(menu);
+  });
+  listen(win, 'resize', () => menus.forEach(placeMenu));
   listen(doc, 'pointerdown', event => {
-    if (controls.tools.open && !controls.tools.contains?.(event.target)) controls.tools.open = false;
+    for (const menu of menus) {
+      if (menu.open && !menu.contains?.(event.target)) { menu.open = false; placeMenu(menu); }
+    }
   }, true);
   let overwriteName = '', copyNameEdited = false, lastLoadedPresetId = null, lastLoadedPresetLoadToken = null;
   let outputSelection = { left: '', right: '' }, outputScreensSignature = null, outputAssignmentsSignature = null;
@@ -129,7 +163,8 @@ export function createConfigCommandBar({ document: doc, onAction = () => {}, onO
     controls.save.textContent = draftDiffersFromAccepted ? 'Apply & save' : 'Save preset';
     controls.save.setAttribute('aria-label', draftDiffersFromAccepted ? 'Apply and save preset' : 'Save preset');
     controls.save.title = draftDiffersFromAccepted ? 'Apply & save preset' : 'Save preset';
-    controls.saveStatus.textContent = statusText || (dirtyLocalDraft ? 'Unsaved changes' : '');
+    controls.saveStatus.textContent = statusText || (dirtyLocalDraft ? 'Unsaved changes' : 'Saved');
+    controls.saveStatus.hidden = false;
     controls.liveWarning.textContent = dirtyLocalDraft && !state.live ? controls.status.textContent : '';
     controls.liveWarning.hidden = !(dirtyLocalDraft && !state.live);
     controls.conflict.textContent = conflict; controls.conflict.hidden = !conflict;
@@ -148,6 +183,7 @@ export function createConfigCommandBar({ document: doc, onAction = () => {}, onO
       : '';
     controls.reconciliationRetry.hidden = reconciliation?.status !== 'read-error';
     controls.reconciliationKeepLocal.hidden = controls.reconciliationUseAccepted.hidden = reconciliation?.status !== 'needs-choice';
+    controls.status.hidden = !(dirtyLocalDraft && !state.live || conflict || state.hydrationError || state.hydrating || state.connected === false || savePending);
     const screens = Array.isArray(outputState.screens) ? [...outputState.screens].sort((a, b) => a.displayNumber - b.displayNumber) : [];
     const assignments = outputState.assignments || {};
     const unsupported = outputState.supported === false;
@@ -190,6 +226,7 @@ export function createConfigCommandBar({ document: doc, onAction = () => {}, onO
     controls.appliedFailure.textContent = failures.join(' · '); controls.appliedFailure.hidden = failures.length === 0;
     controls.appliedRows.replaceChildren(...statusRows.map(row => make(doc, 'p', { className: row.success ? 'applied' : 'not-confirmed' }, row.text)));
     controls.alerts.hidden = !(controls.liveWarning.hidden === false || conflict || visibleErrors.size || !controls.connectionStatus.hidden || unsupported || failures.length);
+    controls.operationStatus.hidden = controls.status.hidden && controls.alerts.hidden && controls.reconciliation.hidden;
   };
   return { element, controls, update, setPresetName(value) { overwriteName = controls.saveName.value = String(value || ''); copyNameEdited = true; }, dispose() { listeners.forEach(remove => remove()); } };
 }

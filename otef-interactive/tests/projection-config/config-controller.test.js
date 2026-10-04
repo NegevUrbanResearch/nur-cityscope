@@ -30,11 +30,14 @@ test('visible preset commands save the loaded preset while a different candidate
   const api = mountProjectionConfig(root, { client });
   try {
     const action = name => find(root, node => node.dataset?.action === name);
+    const menuOf = node => { for (; node && !node.dataset?.menu; node = node.parentElement); return node?.dataset.menu; };
     const presets = find(root, node => node.attributes?.['aria-label'] === 'Preset');
     presets.value = 'candidate'; presets.dispatch('change');
-    for (const action of ['load', 'revert', 'save', 'save-new', 'output-assign', 'output-open-both', 'output-close-both']) {
+    for (const action of ['load', 'save']) {
       for (let node = find(root, node => node.dataset?.action === action); node; node = node.parentElement) expect(node.tagName).not.toBe('DETAILS');
     }
+    for (const action of ['revert', 'save-new']) expect(menuOf(find(root, node => node.dataset?.action === action))).toBe('presets');
+    for (const action of ['output-assign', 'output-open-both', 'output-close-both']) expect(menuOf(find(root, node => node.dataset?.action === action))).toBe('displays');
     action('save').dispatch('click');
     await vi.waitFor(() => expect(client.save).toHaveBeenCalledWith(expect.objectContaining({ presetId: 'desk', name: 'Desk' })));
     await api.handleAction('load', 'original');
@@ -2277,7 +2280,7 @@ test('Cancel immediately hides a retained Wall-only wrapper when no controller e
       table: "otef", output: "left", instanceId: "left-instance", revision: 2,
       success: false, error: "output renderer unavailable", route: "browser", baseline: { type: "identity" },
     });
-    const tools = find(root, (node) => node.className === "config-tools");
+    const tools = find(root, (node) => node.className?.includes("config-tools"));
     expect(tools.tagName).toBe("DETAILS");
     expect(tools.attributes?.open).toBeUndefined();
     expect(find(root, (node) => node.className === "applied-status").tagName).toBe("SECTION");

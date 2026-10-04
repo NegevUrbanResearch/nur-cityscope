@@ -5,30 +5,42 @@ body { margin: 0; min-width: 0; background: #0c1016; overflow-x: hidden; }
 .projection-config-app { height: 100vh; height: 100dvh; overflow: hidden; }
 .config-shell { position: relative; display: grid; grid-template-rows: minmax(0, auto) minmax(220px, 1fr); height: 100%; min-height: 0; overflow-y: auto; }
 .config-command-bar { position: relative; z-index: 30; min-width: 0; background: var(--config-surface); border-bottom: 1px solid var(--config-divider); }
-.config-command-groups { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); column-gap: 24px; row-gap: 0; padding: 18px 22px; }
-.preset-commands, .display-commands { display: grid; grid-template-rows: subgrid; grid-row: span 3; min-width: 0; }
-.display-commands { border-left: 1px solid var(--config-divider); padding-left: 24px; }
-.config-command-heading { display: flex; align-items: center; align-content: flex-start; gap: 6px; flex-wrap: wrap; min-height: 44px; margin-bottom: 7px; }
-.config-command-heading h2 { display: flex; align-items: center; min-height: 44px; margin: 0 auto 0 0; font-size: 14px; font-weight: 500; }
+.config-command-row { display: flex; align-items: center; min-width: 0; gap: 6px; padding: 4px 22px; }
+.config-command-row-primary { min-height: 52px; }
+.config-pending-preset { display: flex; align-items: center; flex: 1 1 380px; min-width: 0; gap: 4px; }
+.config-command-row-primary > .config-menu { flex: 0 0 auto; }
+.config-menu { position: relative; min-width: 0; }
+.config-menu > summary { display: flex; align-items: center; min-height: 44px; min-width: 72px; padding: 0 10px; cursor: pointer; list-style: none; color: var(--config-text); border: 1px solid var(--config-border); border-radius: 5px; }
+.config-menu > summary::-webkit-details-marker { display: none; }
+.config-menu > summary::after { content: '⌄'; margin-inline-start: auto; color: var(--config-muted); }
+.config-menu[open] > summary::after { content: '⌃'; }
+.config-menu-content { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: min(320px, calc(100vw - 24px)); padding: 10px; border: 1px solid var(--config-border); border-radius: 6px; background: var(--config-surface); box-shadow: 0 12px 32px #0009; }
+.config-presets-menu > .config-menu-content, .config-displays-menu > .config-menu-content, .config-tools > .config-menu-content { position: absolute; top: calc(100% + 4px); right: 0; z-index: 40; }
+.config-display-menu-content { min-width: min(620px, calc(100vw - 24px)); }
+.config-display-menu-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; width: 100%; }
+.config-display-menu-heading strong { margin-inline-end: auto; font-size: 13px; }
 .loaded-preset-identity { color: var(--config-muted); font-size: 12px; overflow-wrap: anywhere; }
 .config-preset-actions { display: flex; align-items: center; align-content: flex-start; flex-wrap: wrap; gap: 3px; }
-.config-preset-select-label { display: grid; gap: 4px; flex: 1 1 160px; min-width: 0; margin-right: 5px; }
+.config-preset-select-label { display: flex; align-items: center; flex: 1 1 180px; min-width: 0; gap: 6px; margin-right: 4px; }
 .config-preset-select-label select { width: 100%; }
-.config-preset-field-label { display: none; color: var(--config-muted); font-size: 12px; line-height: 18px; }
+.config-preset-field-label { flex: 0 0 auto; color: var(--config-muted); font-size: 12px; line-height: 18px; }
 .config-command-bar button, .config-command-bar select { min-height: 44px; min-width: 0; max-width: 100%; border-radius: 5px; }
 .config-command-bar button { background: transparent; border-color: transparent; white-space: nowrap; }
 .config-command-bar button:hover { background: var(--config-surface-raised); }
 .config-command-bar [data-action='apply'], .config-command-bar [data-action='save-copy-confirm'] { background: var(--config-accent); color: var(--config-accent-ink); }
 .config-command-bar [data-action='save'] { border-color: var(--config-border); }
-.config-display-actions { display: flex; align-items: end; align-content: flex-start; flex-wrap: wrap; gap: 3px; }
-.config-display-actions .output-display-label { display: flex; align-items: center; flex: 1 1 100px; gap: 4px; min-width: 0; color: var(--config-muted); font-size: 12px; line-height: 18px; }
+.config-display-actions { display: flex; align-items: end; align-content: flex-start; flex-wrap: wrap; gap: 3px; width: 100%; }
+.config-display-actions .output-display-label { display: flex; align-items: center; flex: 1 1 150px; gap: 4px; min-width: 0; color: var(--config-muted); font-size: 12px; line-height: 18px; }
 .config-display-actions select { width: 100%; max-width: 100%; }
 .output-command-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 3px; }
-.config-workspace-band { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .75rem; padding: 0 22px; border-top: 1px solid var(--config-divider); border-bottom: 1px solid var(--config-divider); }
+.config-workspace-band { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 12px; padding: 0 22px; border-top: 1px solid var(--config-divider); border-bottom: 1px solid var(--config-divider); }
 .config-category-actions, .calibration-commit-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-width: 0; }
 .config-category-actions { margin-right: auto; gap: 16px; }
 .config-command-bar .config-category-action { padding: 12px 0; border-radius: 0; color: var(--config-muted); border-bottom: 2px solid transparent; }
 .config-command-bar .live-toggle { min-height: 44px; padding: 0 4px; }
+.config-short-status { display: flex; align-items: center; flex: 0 1 auto; gap: 8px; min-width: 0; color: var(--config-muted); font-size: 12px; line-height: 18px; }
+.config-save-status { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.config-short-status .applied-summary { white-space: nowrap; }
 .config-operation-status { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 18px; padding: 8px 22px; color: var(--config-muted); font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
 .config-operation-status .draft-status { flex: 1 1 auto; }
 .config-operation-status .applied-summary { display: block; font-size: 12px; }
@@ -39,12 +51,7 @@ body { margin: 0; min-width: 0; background: #0c1016; overflow-x: hidden; }
 .warp-editor-reconciliation button { min-height: 40px; }
 .tools-preset-context, .original-checkpoint-guidance { margin: 7px 0 0; color: var(--config-muted); font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
 .config-tools { flex: 0 0 auto; }
-.config-tools > summary { min-height: 44px; min-width: 44px; padding-inline: 4px; display: flex; align-items: center; gap: 6px; cursor: pointer; list-style: none; color: var(--config-muted); }
-.config-tools > summary::-webkit-details-marker { display: none; }
-.config-tools > summary::after { content: '⌄'; }
-.config-tools[open] > summary::after { content: '⌃'; }
-.config-tools[open] { flex: 1 1 100%; padding-bottom: 12px; }
-.config-tools-content { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; min-width: 0; padding: 12px; border: 1px solid var(--config-divider); border-radius: 5px; }
+.config-tools-content { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; min-width: min(320px, calc(100vw - 24px)); }
 .config-tools-content > :is(.applied-status, small) { flex-basis: 100%; }
 .config-tools-content .applied-details p { margin: 4px 0; }
 .config-save-copy { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 8px; padding: 10px; background: var(--config-surface-raised); border: 1px solid var(--config-border); border-radius: 5px; }
@@ -52,21 +59,26 @@ body { margin: 0; min-width: 0; background: #0c1016; overflow-x: hidden; }
 .config-save-copy input { min-width: 0; flex: 1 1 140px; max-width: 100%; }
 .config-command-bar [hidden] { display: none !important; }
 @media (max-width: 1100px) {
-  .config-command-groups { column-gap: 16px; padding: 12px 16px; }
-  .display-commands { padding-left: 16px; }
-  .config-command-heading .loaded-preset-identity { flex-basis: 100%; }
-  .config-preset-select-label { flex-basis: 100%; margin-right: 0; }
-  .config-preset-field-label { display: block; }
-  .config-display-actions .output-display-label { display: grid; }
-  .config-display-actions .output-command-actions { flex-basis: 100%; }
-  .config-workspace-band, .config-operation-status { padding-left: 16px; padding-right: 16px; }
+  .config-command-row, .config-workspace-band, .config-operation-status { padding-left: 16px; padding-right: 16px; }
+  .config-pending-preset { flex-basis: 320px; }
+  .config-category-actions { gap: 6px; }
+  .calibration-commit-controls { gap: 4px; }
+  .config-command-bar .config-category-action { padding-inline: 3px; font-size: 13px; }
+  .config-command-bar .calibration-commit-controls > button { padding-inline: 6px; font-size: 13px; }
+  .config-short-status { gap: 5px; font-size: 11px; }
+  .config-save-status { max-width: 120px; }
 }
 @media (max-width: 700px) {
-  .config-command-groups { grid-template-columns: 1fr; gap: 12px; padding: 12px; }
-  .preset-commands, .display-commands { display: block; grid-row: auto; }
-  .display-commands { border-left: 0; border-top: 1px solid var(--config-divider); padding: 8px 0 0; }
-  .config-command-heading .loaded-preset-identity { flex-basis: auto; }
-  .config-workspace-band, .config-operation-status { padding-left: 12px; padding-right: 12px; }
+  .config-command-row-primary { flex-wrap: wrap; justify-content: flex-start; }
+  .config-pending-preset { flex: 1 1 100%; }
+  .config-preset-field-label { display: none; }
+  .config-workspace-band { justify-content: flex-start; }
+  .config-short-status { flex: 1 1 100%; justify-content: flex-start; }
+  .config-command-row, .config-workspace-band, .config-operation-status { padding-left: 12px; padding-right: 12px; }
+  .config-menu-content { position: fixed; left: 12px; right: 12px; width: auto; min-width: 0; max-width: none; }
+  .config-display-menu-content { min-width: min(320px, calc(100vw - 24px)); }
+  .config-display-actions .output-display-label { flex-basis: 100%; }
+  .config-display-actions .output-command-actions { flex-basis: 100%; }
   .calibration-commit-controls { gap: 4px; }
 }
 .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
@@ -127,7 +139,7 @@ button:hover { background: var(--config-surface-hover); }
 .names-wall-editor-notes > :first-child { margin-top: 0; }
 .config-workspace[data-editing="true"] .config-editor-region > :not(.parameter-editor-dialog):not(.warp-editor-dialog) { display: none; }
 @media (max-width: 1100px) {
-  .config-workspace { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; }
+  .config-workspace { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(220px, 1fr) auto; }
   .config-editor-region { grid-column: 1; grid-row: 2; }
   .config-workspace[data-editing="true"] { grid-template-rows: minmax(0, 1fr); }
   .config-workspace[data-editing="true"] .graph-column { display: none; }
@@ -506,9 +518,6 @@ h2, h3 { margin: 0 0 10px; }
   .warp-editor-header > .warp-view-controls { grid-column: 1 / -1; grid-row: 3; flex-wrap: wrap; }
   .warp-editor-header > [data-action="warp-editor-close"] { grid-column: 2; grid-row: 1 / span 2; }
 }
-@media (max-width: 700px) {
-  .config-workspace { grid-template-rows: minmax(220px, 1fr) auto; }
-}
 @media (pointer: coarse) {
   .config-node h3 { min-height: 48px; }
   .config-node :is(button, input, select), .graph-controls button { min-height: 48px; }
@@ -545,7 +554,7 @@ h2, h3 { margin: 0 0 10px; }
 @container (min-width: 700px) {
   .warp-editor-dialog[data-presentation="panel"] .warp-editor-body { display: grid; grid-template-columns: minmax(0, .85fr) minmax(0, 1.15fr); grid-template-rows: auto auto; align-content: start; overflow-y: auto; gap: 6px; }
   .warp-editor-dialog[data-presentation="panel"] .warp-editor-viewport { grid-column: 1; grid-row: 1; }
-  .warp-editor-dialog[data-presentation="panel"] .warp-editor-fine-panel { grid-column: 2; grid-row: 1; }
+  .warp-editor-dialog[data-presentation="panel"] .warp-editor-controls-column { grid-column: 2; grid-row: 1; }
   .warp-editor-dialog[data-presentation="panel"] .warp-editor-topology-controls { grid-column: 1; grid-row: 2; align-self: start; }
   .warp-editor-dialog[data-presentation="panel"] .warp-editor-viewport { align-self: start; min-height: 160px; max-height: none; aspect-ratio: 16 / 9; }
   .warp-editor-dialog[data-presentation="panel"] .warp-precision-panel { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-areas: "selection position" "selection step" "adjustment adjustment" "preview preview" "history history"; align-content: start; gap: 4px; }
@@ -667,4 +676,26 @@ h2, h3 { margin: 0 0 10px; }
   .warp-editor-dialog[data-presentation="panel"][data-full-viewport="false"] .warp-numeric .config-field-row input[data-input="number"] { min-width: 88px; }
   .warp-editor-dialog[data-presentation="panel"][data-full-viewport="false"] .warp-history-controls { grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 3px; }
   .warp-editor-dialog[data-presentation="panel"][data-full-viewport="false"] .warp-history-controls .warp-enabled-label { grid-column: auto; min-height: 48px; gap: 3px; font-size: 11px; line-height: 13px; }
+}
+
+.warp-editor-controls-column { grid-column: 2; grid-row: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; gap: 8px; }
+.warp-editor-dialog[data-presentation="panel"][data-full-viewport="true"]:not([hidden]) {
+  position: fixed; inset: 0; z-index: 1000; display: flex; flex-direction: column;
+  width: 100%; height: 100vh; height: 100dvh; min-height: 0;
+  container-type: inline-size; padding: max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+  gap: 8px; overflow: hidden; background: var(--config-surface);
+}
+.warp-editor-dialog[data-presentation="panel"][data-full-viewport="true"] .warp-editor-header { flex: 0 0 auto; flex-wrap: wrap; gap: 4px 8px; }
+.warp-editor-dialog[data-presentation="panel"][data-full-viewport="true"] .warp-editor-body { display: flex; flex: 1 1 0; flex-direction: column; min-height: 0; overflow-x: hidden; overflow-y: auto; gap: 8px; }
+.warp-editor-dialog[data-presentation="panel"][data-full-viewport="true"] .warp-editor-viewport { flex: 0 0 auto; align-self: stretch; width: 100%; height: min(62dvh, 680px); min-height: 240px; max-height: none; aspect-ratio: auto; }
+.warp-editor-dialog[data-presentation="panel"][data-full-viewport="true"] .warp-editor-controls-column { flex: 0 0 auto; align-self: stretch; width: 100%; min-height: 0; overflow: visible; }
+.warp-editor-dialog[data-presentation="panel"][data-full-viewport="true"] .warp-editor-fine-panel { flex: 0 0 auto; min-height: 0; overflow: visible; }
+.warp-editor-dialog[data-presentation="panel"][data-full-viewport="true"] .warp-editor-fine-panel > .warp-inspector { height: auto; overflow: visible; }
+.warp-editor-dialog[data-presentation="panel"][data-full-viewport="true"] .warp-editor-footer { flex: 0 0 auto; }
+.warp-editor-dialog[data-presentation="panel"][data-full-viewport="true"] .warp-editor-header > button,
+.warp-editor-dialog[data-presentation="panel"][data-full-viewport="true"] .warp-editor-footer button { min-width: 44px; min-height: 44px; }
+@container (min-width: 900px) {
+  .warp-editor-dialog[data-presentation="panel"][data-full-viewport="true"] .warp-editor-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 320px); grid-template-rows: minmax(0, 1fr); overflow: hidden; gap: 10px; }
+  .warp-editor-dialog[data-presentation="panel"][data-full-viewport="true"] .warp-editor-viewport { grid-column: 1; grid-row: 1; align-self: stretch; width: 100%; height: auto; min-height: 0; max-height: none; aspect-ratio: auto; }
+  .warp-editor-dialog[data-presentation="panel"][data-full-viewport="true"] .warp-editor-controls-column { grid-column: 2; grid-row: 1; overflow-x: hidden; overflow-y: auto; }
 }

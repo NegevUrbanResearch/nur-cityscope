@@ -759,19 +759,23 @@ test("fine nudge calls the existing callback once with the field and direction",
   expect(onNudge).toHaveBeenCalledWith("pre.tx", -1);
 });
 
-test("aligned command bands keep direct actions outside one dismissible flat Tools panel", () => {
+test("compact command rows keep primary actions direct and group setup actions in disclosures", () => {
   const { root, view, onAction, onOutputAction, update } = makeView({ coarse: false });
   const header = root.querySelector(".config-command-bar");
   expect(header.children).toHaveLength(3);
-  expect(header.querySelectorAll("details")).toHaveLength(1);
+  expect(header.querySelectorAll("details")).toHaveLength(3);
   const tools = header.querySelector("details.config-tools");
+  const presets = header.querySelector("details.config-presets-menu");
+  const displays = header.querySelector("details.config-displays-menu");
   expect(tools.querySelector("summary").textContent).toContain("Tools");
   expect(tools.contains(view.controls.apply)).toBe(false);
   expect(tools.contains(view.controls.load)).toBe(false);
   expect(tools.contains(view.controls.saveNew)).toBe(false);
   expect(tools.contains(view.controls.outputRefresh)).toBe(false);
-  expect(header.querySelector(".display-commands").contains(view.controls.outputOpenBoth)).toBe(true);
-  expect(header.querySelector(".display-commands").contains(view.controls.outputCloseBoth)).toBe(true);
+  expect(presets.contains(view.controls.revert)).toBe(true);
+  expect(presets.contains(view.controls.saveNew)).toBe(true);
+  expect(displays.contains(view.controls.outputOpenBoth)).toBe(true);
+  expect(displays.contains(view.controls.outputCloseBoth)).toBe(true);
   expect(view.controls.outputOpenBoth.textContent).toBe("Open");
   expect(view.controls.outputCloseBoth.textContent).toBe("Close");
   expect(view.controls.live.parentElement.parentElement.className).toBe("calibration-commit-controls");
@@ -811,19 +815,15 @@ test("aligned command bands keep direct actions outside one dismissible flat Too
   view.dispose();
 });
 
-test("narrow width keeps the native output buttons direct and focused", () => {
+test("narrow width keeps display setup controls grouped in the Displays disclosure", () => {
   const { root, view, setSmallWidth } = makeView({ coarse: false });
   const open = view.controls.outputOpenBoth;
-  const tools = view.controls.tools;
-  open.focus();
+  const displays = view.controls.displaysDisclosure;
   setSmallWidth(true);
-  expect(tools.open).toBe(false);
-  expect(open.closest("details")).toBeNull();
-  expect(root.querySelector(".display-commands").contains(open)).toBe(true);
-  expect(document.activeElement).toBe(open);
+  expect(displays.open).toBe(false);
+  expect(open.parentElement.parentElement.parentElement.parentElement).toBe(displays);
   setSmallWidth(false);
   expect(root.querySelector(".output-command-actions").contains(open)).toBe(true);
-  expect(document.activeElement).toBe(open);
   view.dispose();
 });
 
