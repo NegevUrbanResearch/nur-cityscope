@@ -107,6 +107,28 @@ beforeEach(() => {
 });
 
 describe("GIS Reveal presentation", () => {
+  test("credits opens only slide 34 on the overview and clamps navigation", async () => {
+    const h = makeHarness();
+    await h.send("open", { segmentId: "credits" });
+    expect(h.lastResult()).toMatchObject({ outcome: "opened", slide: 34, range: [34, 34] });
+    expect(h.reveal.slideNumbers()).toEqual([34]);
+    expect(root.querySelector("section.present img").getAttribute("src"))
+      .toBe(`/otef-interactive/public/local/presentations/nli/slides/slide-34.png?v=${manifest.deck.pdfSha256}`);
+    await h.send("previous");
+    await h.send("next");
+    expect(h.lastResult()).toMatchObject({ outcome: "ready", slide: 34 });
+    await h.send("close");
+    expect(root.querySelector(".nli-reveal-overlay")).toBeNull();
+  });
+
+  test("Hostages ends at slide 33 without showing the credits", async () => {
+    const h = makeHarness();
+    await h.send("open", { segmentId: "hostages" });
+    expect(h.reveal.slideNumbers()).toEqual([29, 30, 31, 32, 33]);
+    for (let index = 0; index < 5; index += 1) await h.send("next");
+    expect(h.lastResult()).toMatchObject({ outcome: "ready", slide: 33, range: [29, 33] });
+  });
+
   test("opens the requested range and clamps at both boundaries", async () => {
     const h = makeHarness();
     await h.send("open", { segmentId: "nova_mor" });

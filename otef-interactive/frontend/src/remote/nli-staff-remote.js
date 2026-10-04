@@ -254,8 +254,13 @@ export function initNliStaffRemote(dataContext, { presenterManifest = presenterC
   });
 
   const escapeHost = {
-    setEscapeOverlay: (patch) =>
-      dataContext?.setEscapeOverlay?.({ ...NO_ESCAPE, ...dataContext.getEscapeOverlay?.(), ...patch }),
+    setEscapeOverlay: (patch) => {
+      const overlay = { ...NO_ESCAPE, ...dataContext.getEscapeOverlay?.(), ...patch };
+      if (currentStep()?.cue?.escape?.settled === true && typeof patch.individual === "boolean") {
+        overlay.settled = !patch.individual;
+      }
+      return dataContext?.setEscapeOverlay?.(overlay);
+    },
   };
 
   const loc = (value) => (value ? value[getLocale()] || value.he || "" : "");

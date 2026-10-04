@@ -14,8 +14,8 @@ describe("NLI presentation manifest", () => {
       version: 1,
       deck: {
         slideCount: 34,
-        pdfSha256: "11407bdf1bda0de131609f247a985be2d2e2fc35bb98129b08892edc55ac826a",
-        pptxSha256: "ea82b69fe15c0dcab9166e1d0f736daa234db637532543b552648c9c490f12ba",
+        pdfSha256: "adaba7ccf6b094789c7bdad252c91f6dd4660780a1b3b07592f3d2f89be2a842",
+        pptxSha256: "9582cf0321c8d658dbe6c649ad59a24dc1f8caa40fab5d98fec4b752c7b5471e",
         slidePathPattern: "local/presentations/nli/slides/slide-{slide}.png",
       },
       videos: [
@@ -32,7 +32,8 @@ describe("NLI presentation manifest", () => {
         { id: "nova_memorial", requiredNarrative: "nova", range: [12, 16] },
         { id: "sderot", requiredNarrative: "sderot", range: [17, 21] },
         { id: "shura", requiredNarrative: null, range: [22, 28] },
-        { id: "hostages", requiredNarrative: "hostages", range: [29, 34] },
+        { id: "hostages", requiredNarrative: "hostages", range: [29, 33] },
+        { id: "credits", requiredNarrative: null, range: [34, 34] },
         { id: "names_wall", requiredNarrative: null, kind: "blackout", range: [0, 0] },
       ],
     });
@@ -66,11 +67,16 @@ describe("NLI presentation manifest", () => {
       kind: "blackout",
       range: [0, 0],
     });
-    expect(manifest.segments).toHaveLength(7);
+    expect(manifest.segments).toHaveLength(8);
   });
 
   it("loads and validates JSON fetched from the shared manifest URL", async () => {
-    const fetchImpl = async () => ({ ok: true, json: async () => approvedManifest });
+    const requests = [];
+    const fetchImpl = async (...args) => {
+      requests.push(args);
+      return { ok: true, json: async () => approvedManifest };
+    };
     await expect(loadNliPresentationManifest(fetchImpl)).resolves.toMatchObject({ version: 1 });
+    expect(requests).toEqual([["/otef-interactive/public/presentation/nli-presentation-manifest.json", { cache: "no-store" }]]);
   });
 });

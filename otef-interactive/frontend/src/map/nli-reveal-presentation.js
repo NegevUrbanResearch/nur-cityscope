@@ -25,7 +25,8 @@ function mediaUrl(path) {
 }
 
 function slideImagePath(manifest, slide) {
-  return manifest.deck.slidePathPattern.replace("{slide}", String(slide).padStart(2, "0"));
+  const path = manifest.deck.slidePathPattern.replace("{slide}", String(slide).padStart(2, "0"));
+  return manifest.deck.pdfSha256 ? `${path}?v=${encodeURIComponent(manifest.deck.pdfSha256)}` : path;
 }
 
 function stopVideo(video) {

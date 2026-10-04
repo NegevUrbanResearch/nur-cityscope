@@ -81,7 +81,7 @@ export function validateNliPresentationManifest(value) {
 
 export async function loadNliPresentationManifest(fetchImpl = globalThis.fetch) {
   if (typeof fetchImpl !== "function") throw new TypeError("fetch implementation is required");
-  const response = await fetchImpl(NLI_PRESENTATION_MANIFEST_URL);
+  const response = await fetchImpl(NLI_PRESENTATION_MANIFEST_URL, { cache: "no-store" });
   if (!response || !response.ok) throw new Error("failed to load NLI presentation manifest");
   return validateNliPresentationManifest(await response.json());
 }

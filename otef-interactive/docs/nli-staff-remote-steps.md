@@ -41,6 +41,10 @@ run-of-show step. Close always stays on the current step and offers Open for
 that segment again; no presentation Close changes the step. The Wall of names
 step is the exception to the controls: it opens a black GIS slide with no
 slide controls on the remote.
+Credits opens slide 34 automatically after its Home-state cue succeeds.
+The projection shows Home layers. Closing credits stays on this step and
+offers Open again; Finish or Home closes it and returns Home. A failed
+credits cue retries on the credits step. Hostages covers slides 29–33.
 Returning Home cancels any pending cue, closes a known presentation only after
 that close is acknowledged, clears search focus, and applies the Home cue:
 the six Home layers, overview narrative, idle clock, and no escape routes.
@@ -121,7 +125,7 @@ exits the current narrative.
 | 5 | Narratives | Unchanged until a story starts | Unchanged | Junction, not a slide | Sderot, Shura Camp, Hostages |
 | 6 | Identity database | Identity | Stopped (idle) | | Name search |
 | 7 | Wall of names | Wall | Stopped (idle) | A black GIS slide titled מאגר הזהויות opens automatically | Name or place search; no slide controls |
-| 8 | Back to the start | Home layers | Stopped (idle) | Same reset as Home, while the remote stays on this step | |
+| 8 | Credits (קרדיטים) | Home layers | Stopped (idle) | Reset to Home state, then automatically open slide 34 on GIS only | Slide Previous/Close; Finish returns Home |
 
 The narratives are not separate slides. On the slide before a narrative, the
 Next button is replaced by a button that starts it, so the show cannot skip
@@ -168,7 +172,7 @@ same step. Close stays on the step.
 | 2 | The compounds | Nova timeline | Five authored beats, 8 seconds each (40 seconds total); play starts beat 1 at 0% | All off | Five-mark scrubber and beat navigation |
 | 3 | Escape routes | Nova timeline | Ended; leaves a partial play unfinished | Individual routes on | Individual route control only |
 | 4 | Mor Levy | Nova timeline | Ended | Mor's route only | Mor route control; slides open automatically after the cue is ready. Close stays on this step. |
-| 5 | Memorial | Focus + people (Nova people only) | Ended Nova clock; compounds stay visible through Nova virtual membership even when the stored rows have no playable layers | Settled intersections; route ribbons off | Memorial slides open automatically after the cue is sent; Close stays on this step. No escape toggles and no route replay. |
+| 5 | Memorial | Focus + people (Nova people only) | Ended Nova clock; compounds stay visible through Nova virtual membership even when the stored rows have no playable layers | Settled intersections; route animation stopped on entry | Memorial slides open automatically after the cue is sent; Close stays on this step. The fleeing-routes button starts animation only when pressed; Stop restores settled intersections. |
 
 The Nova timeline uses five authored beats, not source-timestamp grouping:
 
@@ -192,7 +196,7 @@ The compounds step starts playback. Next leaves that playback before it
 finishes and ends the Nova clock on the escape-routes step. Routes expose only
 the individual-route control. Mor exposes only Mor's route; its slides open
 automatically after the cue is ready. Closing the slides stays on this step.
-Memorial does not replay routes.
+Memorial keeps route animation stopped on entry. Its fleeing-routes control starts replay on demand and Stop restores settled intersections.
 
 ## Sderot (`sderot`)
 
@@ -214,7 +218,7 @@ that same step. Close stays on the step.
 | # | Step | Narrative | Layers | Clock | Remote controls |
 | :---: | :--- | :--- | :--- | :--- | :--- |
 | 1 | Nir Oz | `hostages` | Focus | Idle after entry | |
-| 2 | Presentation | `hostages` | Focus | No change | Open the Hostages slides from the remote. Close stays on this step and offers Open again; Scene Next continues to Nir Oz victims and hostages. |
+| 2 | Presentation | `hostages` | Focus | No change | Hostages slides open automatically after the cue is ready. Close stays on this step and offers Open again; Scene Next continues to Nir Oz victims and hostages. |
 | 3 | Nir Oz victims and hostages | `hostages` | Focus + people (Nir Oz people) | No change | |
 | 4 | All hostages | `hostages_all` | Focus + people (all hostages) | Idle after entry | |
 
