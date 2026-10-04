@@ -192,7 +192,9 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     trace,
     descriptors: ALL_FIELD_DESCRIPTORS,
     onField: handleField,
+    onFieldCancel: handleFieldCancel,
     onNudge: handleNudge,
+    onWarpFieldCancel: (output) => { warpEditors[output].clearValidation(); refresh(); },
     onNamesMode: handleNamesMode,
     onNode: (node) => { if (!finishPendingEdit()) return false; view.cancelWarpPointer(); selectedNode = node; if (node === "clock-gis" || node === "clock-projection") { closeNovaExplainerEditor(); syncClockEditor(node); } else closeClockEditor(); if (node !== "nova-explainers") closeNovaExplainerEditor(); if (node === "settlement-names") syncSettlementEditor(); else closeSettlementEditor(); if (node.endsWith("-keystone") || node.endsWith("-grid")) warpEditors[node.startsWith("right-") ? "right" : "left"].setMode(node.endsWith("-grid") ? "grid" : "keystone"); refresh(); return true; },
     onOpenClockEditor: openClockEditor,
@@ -321,7 +323,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     const rows = [...statusRows.values()].map((row) => ({ ...row, text: rowText(row) }));
     const warpStates = Object.fromEntries(["left", "right"].map((output) => [output, { ...warpEditors[output].getState(),
       ...(!editorBaselineReady ? { baselineAvailable: false, historyDepth: 0, redoDepth: 0 } : {}),
-      config: warpEditors[output].getConfig(), handles: warpEditors[output].getControlPoints() }]));
+      config: warpEditors[output].getConfig(), baselineMesh: editorBaselineMeshes[output], handles: warpEditors[output].getControlPoints() }]));
     view.update({ state: { ...state, selectedPresetId }, errors: fieldErrors, parameterHistory: parameterHistory.state(),
       conflict: conflict || state.migrationWarnings?.join(' ') || '',
       statusText: pendingAction
@@ -666,6 +668,12 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     if (!descriptor) return false;
     if (!editMeta.phase || editMeta.phase === 'start') nudgeAnchors.delete(resolvedFieldPath(state.draft, path));
     return commitScalar({ path, ...editMeta, value: editMeta.canonicalValue !== undefined ? editMeta.canonicalValue : fieldValueFromInput(descriptor, raw) });
+  }
+  function handleFieldCancel(path, resolvedPath = path) {
+    const target = resolvedPath || path;
+    const next = Object.fromEntries(Object.entries(fieldErrors).filter(([key]) => key !== target && !key.startsWith(`${target}.`) && !target.startsWith(`${key}.`)));
+    if (Object.keys(next).length !== Object.keys(fieldErrors).length) fieldErrors = next;
+    refresh();
   }
   function handleNudge(path, direction, meta = {}) {
     const descriptor = descriptorFor(path); if (!descriptor || !state.draft) return false;

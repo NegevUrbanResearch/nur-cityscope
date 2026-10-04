@@ -70,6 +70,10 @@ function element(tag = "div") {
 function documentStub({ coarse = false, noHover = false } = {}) {
   return {
     activeElement: null,
+    listeners: {},
+    addEventListener(type, handler) { (this.listeners[type] ||= []).push(handler); },
+    removeEventListener(type, handler) { this.listeners[type] = (this.listeners[type] || []).filter((item) => item !== handler); },
+    dispatch(type, event = {}) { for (const handler of this.listeners[type] || []) handler(event); },
     defaultView: { matchMedia: (query) => ({ matches: query.includes("pointer: coarse") ? coarse : query.includes("hover: none") ? noHover : false, addEventListener() {}, removeEventListener() {} }) },
     createElement: element,
     createElementNS: (_namespace, tag) => element(tag),
@@ -87,6 +91,24 @@ function clickCommand(root, action) {
   find(root, node => node.dataset?.action === action).dispatch('click');
   if (action === 'save-new') find(root, node => node.dataset?.action === 'save-copy-confirm').dispatch('click');
 }
+
+test('Back commits a valid pending scalar edit and closes the active panel once', () => {
+  const previousDocument = globalThis.document;
+  const doc = documentStub(); globalThis.document = doc;
+  const root = element('main'); root.ownerDocument = doc;
+  const client = fakeClient();
+  const api = mountProjectionConfig(root, { client });
+  try {
+    find(root, node => node.className === 'config-enlarge-edit').dispatch('click');
+    const editor = find(root, node => node.className === 'parameter-editor-dialog');
+    const scale = find(editor, node => node.attributes?.['aria-label'] === 'Scale' && node.tagName === 'INPUT');
+    scale.value = '1.3'; scale.dispatch('input');
+    find(root, node => node.dataset?.action === 'parameter-editor-close').dispatch('click');
+    expect(client.getState().draft.pre.scale).toBe(1.3);
+    expect(editor.hidden).toBe(true);
+    expect(find(root, node => node.className === 'config-workspace').dataset.editing).toBe('false');
+  } finally { api.dispose(); globalThis.document = previousDocument; }
+});
 
 test('Import keeps its explicit save name while subsequent copy edits stay separate', async () => {
   const root = element('main'); root.ownerDocument = documentStub(); const client = fakeClient();
@@ -416,6 +438,145 @@ describe("projection config controller", () => {
         const cropPath = `outputs.left.crop.${edge}`;
         expect(errorFor(cropPath).textContent).toBe(''); expect(inputFor(cropPath).attributes['aria-invalid']).toBe('false');
       }
+    } finally { api.dispose(); }
+  });
+
+  test('explicit Cancel retires only the rejected field group and survives a status refresh without writing the draft', async () => {
+    const root = element('main'); root.ownerDocument = documentStub(); const client = fakeClient(); const api = mountProjectionConfig(root, { client });
+    const inputFor = path => find(root, node => node.dataset?.field === path && node.dataset.input === 'number');
+    const errorFor = path => find(root, node => node.dataset?.errorFor === path);
+    try {
+      const draftBefore = clone(client.getState().draft);
+      client.setDraft.mockClear(); client.apply.mockClear(); client.save.mockClear();
+      const unrelated = inputFor('pre.scale'); unrelated.value = '1.'; unrelated.dispatch('input');
+      const rejected = inputFor('outputs.left.crop.x0'); rejected.value = '60'; rejected.dispatch('input'); rejected.dispatch('blur');
+      expect(errorFor('outputs.left.crop.x0').textContent).toMatch(/extent/i);
+      expect(unrelated.value).toBe('1.'); expect(unrelated.attributes['aria-invalid']).toBe('true');
+      find(find(root, node => node.dataset?.path === 'outputs.left.crop.x0'), node => node.dataset?.action === 'numeric-cancel-edit').dispatch('click');
+      expect(rejected.value).toBe('0.00');
+      for (const edge of ['x0', 'x1', 'y0', 'y1']) {
+        const path = `outputs.left.crop.${edge}`;
+        expect(errorFor(path).textContent).toBe(''); expect(inputFor(path).attributes['aria-invalid']).toBe('false');
+      }
+      expect(unrelated.value).toBe('1.'); expect(unrelated.attributes['aria-invalid']).toBe('true');
+      await api.handleAction('live', false);
+      expect(errorFor('outputs.left.crop.x0').textContent).toBe('');
+      expect(unrelated.value).toBe('1.'); expect(unrelated.attributes['aria-invalid']).toBe('true');
+      expect(client.getState().draft).toEqual(draftBefore);
+      expect(client.setDraft).not.toHaveBeenCalled(); expect(client.apply).not.toHaveBeenCalled(); expect(client.save).not.toHaveBeenCalled();
+    } finally { api.dispose(); }
+  });
+
+  test.each(['wall', 'model'])('profile-scoped Cancel retires the resolved %s error and preserves unrelated pending text', profile => {
+    const root = element('main'); root.ownerDocument = documentStub(); const client = fakeClient();
+    client.getState().draft.namesWall.activeMode = profile;
+    client.getState().snapshot.config.namesWall.activeMode = profile;
+    const api = mountProjectionConfig(root, { client });
+    const font = find(root, node => node.dataset?.field === 'namesWall.requestedFontPx' && node.dataset.input === 'number');
+    const pre = find(root, node => node.dataset?.field === 'pre.scale' && node.dataset.input === 'number');
+    const fontError = find(root, node => node.dataset?.errorFor === 'namesWall.requestedFontPx');
+    try {
+      client.setDraft.mockClear(); client.apply.mockClear(); client.save.mockClear(); client.setLive.mockClear();
+      pre.value = '1.'; pre.dispatch('input');
+      font.value = '49'; font.dispatch('input'); font.dispatch('blur');
+      expect(fontError.textContent).toMatch(/between 1 and 48 px/i);
+      find(find(root, node => node.dataset?.path === 'namesWall.requestedFontPx'), node => node.dataset?.action === 'numeric-cancel-edit').dispatch('click');
+      expect(fontError.textContent).toBe(''); expect(font.attributes['aria-invalid']).toBe('false');
+      expect(pre.value).toBe('1.'); expect(pre.attributes['aria-invalid']).toBe('true');
+      client.report({ pending: !client.getState().pending });
+      expect(fontError.textContent).toBe(''); expect(pre.value).toBe('1.'); expect(pre.attributes['aria-invalid']).toBe('true');
+      expect(client.setDraft).not.toHaveBeenCalled(); expect(client.apply).not.toHaveBeenCalled(); expect(client.save).not.toHaveBeenCalled(); expect(client.setLive).not.toHaveBeenCalled();
+    } finally { api.dispose(); }
+  });
+
+  test('a foreign Model profile keeps pending Wall-only Cancel visible and Back works without writes', () => {
+    const doc = documentStub(); const root = element('main'); root.ownerDocument = doc; const client = fakeClient();
+    const api = mountProjectionConfig(root, { client });
+    const inputFor = (container, path) => find(container, node => node.dataset?.field === path && node.dataset.input === 'number');
+    const errorFor = path => find(root, node => node.dataset?.errorFor === path);
+    try {
+      client.setDraft.mockClear(); client.apply.mockClear(); client.save.mockClear(); client.setLive.mockClear();
+      find(root, node => node.dataset?.node === 'names-wall').dispatch('click');
+      find(root, node => node.className === 'config-enlarge-edit').dispatch('click');
+      const panel = find(root, node => node.className === 'parameter-editor-dialog');
+      const wallShift = inputFor(panel, 'namesWall.inwardShiftPercent');
+      wallShift.value = '-'; wallShift.dispatch('input'); wallShift.dispatch('blur');
+      const unrelatedPre = inputFor(root, 'pre.scale'); unrelatedPre.value = '1.'; unrelatedPre.dispatch('input');
+
+      const foreignModel = clone(client.getState().draft);
+      foreignModel.namesWall.activeMode = 'model';
+      foreignModel.namesWall.profiles.model.requestedFontPx = 12;
+      client.report({ draft: foreignModel, hasLocalDraft: false });
+
+      const wallShiftWrap = find(panel, node => node.dataset?.path === 'namesWall.inwardShiftPercent');
+      expect(find(panel, node => node.className === 'parameter-editor-title-context').textContent).toMatch(/Model/i);
+      expect(wallShiftWrap.hidden).toBe(false);
+      expect(find(wallShiftWrap, node => node.className === 'config-field-pending-target').textContent).toMatch(/Regular wall/i);
+      const modelFont = inputFor(panel, 'namesWall.requestedFontPx');
+      modelFont.value = '49'; modelFont.dispatch('input'); modelFont.dispatch('blur');
+      expect(errorFor('namesWall.requestedFontPx').textContent).toMatch(/between 1 and 48 px/i);
+
+      find(wallShiftWrap, node => node.dataset?.action === 'numeric-cancel-edit').dispatch('click');
+      expect(wallShift.value).toBe('0');
+      expect(errorFor('namesWall.inwardShiftPercent').textContent).toBe('');
+      expect(errorFor('namesWall.requestedFontPx').textContent).toMatch(/between 1 and 48 px/i);
+      expect(unrelatedPre.value).toBe('1.');
+      client.report({ pending: !client.getState().pending });
+      expect(find(panel, node => node.className === 'parameter-editor-title-context').textContent).toMatch(/Model/i);
+      expect(errorFor('namesWall.requestedFontPx').textContent).toMatch(/between 1 and 48 px/i);
+      expect(client.getState().draft.namesWall.activeMode).toBe('model');
+      expect(client.getState().draft.namesWall.profiles.model.requestedFontPx).toBe(12);
+
+      const modelFontWrap = find(panel, node => node.dataset?.path === 'namesWall.requestedFontPx');
+      find(modelFontWrap, node => node.dataset?.action === 'numeric-cancel-edit').dispatch('click');
+      find(panel, node => node.dataset?.action === 'parameter-editor-close').dispatch('click');
+      expect(panel.hidden).toBe(true);
+      expect(client.getState().draft.namesWall.activeMode).toBe('model');
+      expect(client.getState().draft.namesWall.profiles.model.requestedFontPx).toBe(12);
+      expect(client.getState().draft).toEqual(foreignModel);
+      expect(client.setDraft).not.toHaveBeenCalled(); expect(client.apply).not.toHaveBeenCalled();
+      expect(client.save).not.toHaveBeenCalled(); expect(client.setLive).not.toHaveBeenCalled();
+    } finally { api.dispose(); }
+  });
+
+  test('header Escape retires rejected crop validation and its status refresh without writing state', () => {
+    const doc = documentStub(); const root = element('main'); root.ownerDocument = doc; const client = fakeClient();
+    const api = mountProjectionConfig(root, { client });
+    const inputFor = (container, path) => find(container, node => node.dataset?.field === path && node.dataset.input === 'number');
+    const errorFor = path => find(root, node => node.dataset?.errorFor === path);
+    try {
+      client.setDraft.mockClear(); client.apply.mockClear(); client.save.mockClear(); client.setLive.mockClear();
+      find(root, node => node.dataset?.node === 'left-crop').dispatch('click');
+      find(root, node => node.className === 'config-enlarge-edit').dispatch('click');
+      const panel = find(root, node => node.className === 'parameter-editor-dialog');
+      const x0 = inputFor(panel, 'outputs.left.crop.x0'); x0.value = '60'; x0.dispatch('input'); x0.dispatch('blur');
+      expect(errorFor('outputs.left.crop.x0').textContent).toMatch(/extent/i);
+      const back = find(panel, node => node.dataset?.action === 'parameter-editor-close'); doc.activeElement = back;
+      doc.dispatch('keydown', { key: 'Escape', target: back, preventDefault() {} });
+      expect(panel.hidden).toBe(false);
+      for (const edge of ['x0', 'x1', 'y0', 'y1']) expect(errorFor(`outputs.left.crop.${edge}`).textContent).toBe('');
+      client.report({ pending: !client.getState().pending });
+      for (const edge of ['x0', 'x1', 'y0', 'y1']) expect(errorFor(`outputs.left.crop.${edge}`).textContent).toBe('');
+      expect(client.getState().draft).toEqual(DEFAULTS);
+      expect(client.setDraft).not.toHaveBeenCalled(); expect(client.apply).not.toHaveBeenCalled(); expect(client.save).not.toHaveBeenCalled(); expect(client.setLive).not.toHaveBeenCalled();
+    } finally { api.dispose(); }
+  });
+
+  test('nudge finishes valid text before stepping, blocks invalid text, and resets its anchor after manual commit', () => {
+    const root = element('main'); root.ownerDocument = documentStub(); const client = fakeClient(); const api = mountProjectionConfig(root, { client });
+    const input = find(root, node => node.dataset?.field === 'pre.scale' && node.dataset.input === 'number');
+    const plus = find(find(root, node => node.dataset?.path === 'pre.scale'), node => node.dataset?.direction === '1');
+    try {
+      input.value = '1.3'; input.dispatch('input'); plus.dispatch('click', { detail: 0 });
+      expect(client.getState().draft.pre.scale).toBe(1.301);
+      input.value = '1.5'; input.dispatch('input'); input.dispatch('blur');
+      expect(client.getState().draft.pre.scale).toBe(1.5);
+      plus.dispatch('click', { detail: 0 }); expect(client.getState().draft.pre.scale).toBe(1.501);
+      input.value = '-'; input.dispatch('input'); plus.dispatch('click', { detail: 0 });
+      expect(input.value).toBe('-'); expect(input.attributes['aria-invalid']).toBe('true'); expect(client.getState().draft.pre.scale).toBe(1.501);
+      find(find(root, node => node.dataset?.path === 'pre.scale'), node => node.dataset?.action === 'numeric-cancel-edit').dispatch('click');
+      expect(input.value).toBe('1.501'); expect(input.attributes['aria-invalid']).toBe('false');
+      plus.dispatch('click', { detail: 0 }); expect(client.getState().draft.pre.scale).toBe(1.502);
     } finally { api.dispose(); }
   });
 
@@ -2135,6 +2296,27 @@ describe("projection config controller", () => {
     expect(find(root, node => node.className === 'warp-editor-dialog').hidden).toBe(false);
     input.dispatch('keydown', { key: 'Escape', preventDefault() {}, stopPropagation() {} });
     find(root, node => node.dataset?.action === 'warp-editor-close').dispatch('click');
+    expect(find(root, node => node.className === 'warp-editor-dialog').hidden).toBe(true);
+    restore();
+  });
+
+  test('warp panel Escape retires rejected coordinate validation without draft or history writes', () => {
+    const { root, client, restore } = tracedWarpHarness();
+    const doc = globalThis.document;
+    const input = find(root, node => node.dataset?.field === 'warp.position.x');
+    input.value = '999999'; input.dispatch('input'); input.dispatch('change');
+    expect(input.attributes['aria-invalid']).toBe('true');
+    const before = clone(client.getState().draft.outputs.left.warp);
+    client.setDraft.mockClear(); client.apply.mockClear();
+
+    doc.dispatch('keydown', { key: 'Escape', preventDefault() {} });
+    expect(find(root, node => node.className === 'warp-editor-dialog').hidden).toBe(false);
+    expect(input.attributes['aria-invalid']).toBe('false');
+    expect(find(root, node => node.className === 'warp-selection-status').textContent).not.toContain('Move rejected:');
+    expect(client.getState().draft.outputs.left.warp).toEqual(before);
+    expect(client.setDraft).not.toHaveBeenCalled(); expect(client.apply).not.toHaveBeenCalled();
+
+    doc.dispatch('keydown', { key: 'Escape', preventDefault() {} });
     expect(find(root, node => node.className === 'warp-editor-dialog').hidden).toBe(true);
     restore();
   });

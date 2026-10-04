@@ -19,6 +19,7 @@ export function createParameterEditorPreviews({ document: doc, host, onStatus = 
   return {
     open(nodeId) {
       activeSides = nodeId === "pre" ? ["left", "right"] : [nodeId.startsWith("right-") ? "right" : "left"];
+      host.classList?.toggle("single-preview", activeSides.length === 1);
       for (const [side, slot] of slots) {
         const active = activeSides.includes(side); slot.hidden = !active;
         if (active) previews.get(side).mount(side);
@@ -28,6 +29,7 @@ export function createParameterEditorPreviews({ document: doc, host, onStatus = 
     update(config) { for (const side of activeSides) previews.get(side).update(config); },
     retry(side) { if (side) previews.get(side)?.retry(); else for (const output of activeSides) previews.get(output)?.retry(); },
     close() {
+      host.classList?.toggle("single-preview", false);
       for (const preview of previews.values()) preview.clear();
       for (const slot of slots.values()) slot.hidden = true;
       activeSides = [];

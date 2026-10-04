@@ -22,6 +22,10 @@ test("shared transform sends the current full draft to both guarded output previ
     notify(frame, { type: "otef_projection_preview_applied", output: side, requestId, success: true });
     expect(frame.style.visibility).toBe("visible");
   }
+  previews.open("left-crop");
+  expect(host.classList.contains("single-preview")).toBe(true);
+  expect(host.querySelectorAll("iframe")).toHaveLength(1);
+  expect(new URL(host.querySelector("iframe").src).searchParams.get("span")).toBe("left");
   previews.close();
   expect(host.querySelectorAll("iframe")).toHaveLength(0);
   previews.dispose();

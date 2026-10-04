@@ -425,7 +425,7 @@ test("Adjust opens the descriptor set for Shared transform and each Crop/Fit nod
   ]);
   for (const [nodeId, paths] of expected) {
     const adjust = view.nodeMap.get(nodeId).querySelector('[data-action="parameter-editor-open"]');
-    expect(adjust.textContent).toBe("Adjust");
+    expect(adjust.textContent).toBe("Enlarge edit");
     adjust.click();
     const dialog = root.querySelector(".parameter-editor-dialog");
     expect(dialog.dataset.node).toBe(nodeId);

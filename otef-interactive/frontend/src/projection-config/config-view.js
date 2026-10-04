@@ -7,7 +7,8 @@ import { clampWarpViewBox, transformWarpViewBox, warpMarkerRadius } from "./warp
 import { createClockLayoutStatus } from "./clock-layout-controls.js";
 import { createSettlementNameControls } from "./settlement-name-controls.js";
 import { createGridLayoutControls, deriveGridSelectionIndices } from "./grid-layout-controls.js";
-import { createParameterEditorDialog } from "./parameter-editor-dialog.js";
+import { createWarpEditor } from "./warp-editor.js";
+import { createParameterEditorDialog, presentationError } from "./parameter-editor-dialog.js";
 import { createParameterEditorPreviews } from "./parameter-editor-previews.js";
 import { displayValue, renderField } from "./config-field-control.js";
 import { createProjectionTraceUi } from './projection-trace-ui.js';
@@ -69,6 +70,7 @@ export function createProjectionConfigView(root, {
   onRunNames = () => {},
   onOutputAction = () => {},
   onField = () => {},
+  onFieldCancel = () => {},
   onNudge = () => {},
   onNamesMode = () => {},
   onNode = () => {},
@@ -85,6 +87,7 @@ export function createProjectionConfigView(root, {
   onClockField = () => {},
   onClockRecovery = () => {},
   onWarpAction = () => {},
+  onWarpFieldCancel = () => {},
   onWarpPointer = () => {},
   trace,
 } = {}) {
@@ -103,6 +106,14 @@ export function createProjectionConfigView(root, {
   const disposePageTrace = bindProjectionTracePage({ document: doc, trace });
   const workspace = make(doc, "div", { className: "config-workspace" });
   const graphColumn = make(doc, "section", { className: "graph-column" });
+  const editorRegion = make(doc, "aside", { className: "config-editor-region", ariaLabel: "Selected node editing" });
+  const editorRegionHeading = make(doc, "h2", {}, "Selected node");
+  const editorNodeHeading = make(doc, "h3", { className: "config-editor-node-heading" }, "Shared pre-transform");
+  const editorHelp = make(doc, "p", { className: "config-editor-help" }, "Current values stay available here and on the graph. Open the enlarged editor for focused adjustments.");
+  const selectedContext = make(doc, "div", { className: "config-selected-context", ariaLabel: "Current parameters for Shared pre-transform" });
+  const enlargeEdit = button(doc, "Enlarge edit", "parameter-editor-open", "config-enlarge-edit");
+  const parameterEditorNodes = new Set(["pre", "left-crop", "right-crop", "left-fit", "right-fit", "names-wall"]);
+  const editorEmptyState = make(doc, "p", { className: "config-editor-empty" }, "Choose a node with editable controls to open its editor.");
   const graphTitle = make(doc, "h2", {}, "Calibration path");
   const graphViewport = make(doc, "div", { className: "node-graph-viewport", ariaLabel: "Pannable calibration workspace" });
   const graph = make(doc, "div", { className: "node-graph", ariaLabel: "Projection calibration graph" });
@@ -141,8 +152,11 @@ export function createProjectionConfigView(root, {
   if (traceUi) controls.toolsContent.appendChild(traceUi.element);
   app.append(commandBar.element);
   const nodeMap = new Map();
+  const warpNodePreviews = new Map();
   const patternControls = new Map();
+  const inlinePendingTargetNotes = new Map();
   let parameterDialog = null;
+  let activeParameterNode = null;
   let currentDraft = null;
   let currentFieldErrors = {};
   let currentStatus = "";
@@ -153,6 +167,58 @@ export function createProjectionConfigView(root, {
   const pageSpacingResetControls = [];
   const namesWallUnitsHelp = "Font, spacing, and edge inset use reference-plane pixels. Inner-edge clearances reserve final-output pixels in both modes and repack names.";
   const namesWallRotationHelp = "Rotation applies to both wall and model profiles and follows Live, Apply, and Save.";
+  const updateWarpNodePreviews = (warpStates = {}) => {
+    for (const [id, preview] of warpNodePreviews) {
+      const state = warpStates[preview.output];
+      const warp = state?.config?.outputs?.[preview.output]?.warp;
+      const grid = warp?.grid;
+      const rows = grid?.rows || 7;
+      const columns = grid?.columns || (preview.output === "right" ? 8 : 7);
+      let handles = state?.selection?.mode === preview.mode && Array.isArray(state.handles) ? state.handles : [];
+      if (state && state.selection?.mode !== preview.mode && state.config?.outputs?.[preview.output]?.warp) {
+        const stage = createWarpEditor({ config: state.config, output: preview.output, baselineMesh: state.baselineMesh });
+        stage.setMode(preview.mode);
+        handles = stage.getControlPoints();
+      }
+      if (preview.mode === "grid" && handles.length === 0 && grid) {
+        const xPositions = grid.columnPositions || Array.from({ length: columns }, (_, column) => column / (columns - 1));
+        const yPositions = grid.rowPositions || Array.from({ length: rows }, (_, row) => row / (rows - 1));
+        handles = yPositions.flatMap((y, row) => xPositions.map((x, column) => {
+          const offset = grid.offsets?.[row * columns + column] || [0, 0];
+          return { x: x + (offset[0] || 0), y: y + (offset[1] || 0) };
+        }));
+      }
+      const selection = state?.selection?.mode === preview.mode ? state.selection : null;
+      const index = Math.max(0, Number(selection?.index) || 0);
+      const selected = new Set(selection ? selection.indices || [index] : []);
+      const target = !selection ? "No active selection" : preview.mode === "keystone"
+        ? ["Top-left corner", "Top-right corner", "Bottom-left corner", "Bottom-right corner"][index] || `Corner ${index + 1}`
+        : selection.kind === "row" ? `Row ${index + 1}`
+          : selection.kind === "column" ? `Column ${index + 1}`
+            : `Point ${index + 1} · Row ${Math.floor(index / columns) + 1}, Column ${index % columns + 1}`;
+      const enabled = Boolean(warp?.enabled);
+      const baselineText = state?.baselineAvailable === false ? " · TD baseline unavailable" : "";
+      const stateText = state ? `${WARP_OUTPUT_WIDTH} × ${WARP_OUTPUT_HEIGHT} px · ${enabled ? "Enabled" : "Disabled"} · ${target}${baselineText}` : `${WARP_OUTPUT_WIDTH} × ${WARP_OUTPUT_HEIGHT} px · Warp state loading`;
+      preview.summary.textContent = stateText;
+      preview.element.setAttribute("aria-label", `${id.replace("-", " ")} geometry, ${stateText}`);
+      const boundsPoints = [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 0, y: 1 }, { x: 1, y: 1 }, ...handles];
+      const minX = Math.min(...boundsPoints.map((point) => point.x * WARP_OUTPUT_WIDTH));
+      const maxX = Math.max(...boundsPoints.map((point) => point.x * WARP_OUTPUT_WIDTH));
+      const minY = Math.min(...boundsPoints.map((point) => point.y * WARP_OUTPUT_HEIGHT));
+      const maxY = Math.max(...boundsPoints.map((point) => point.y * WARP_OUTPUT_HEIGHT));
+      const paddingX = WARP_OUTPUT_WIDTH * 0.08;
+      const paddingY = WARP_OUTPUT_HEIGHT * 0.08;
+      preview.mesh.setAttribute("viewBox", `${minX - paddingX} ${minY - paddingY} ${Math.max(WARP_OUTPUT_WIDTH, maxX - minX) + paddingX * 2} ${Math.max(WARP_OUTPUT_HEIGHT, maxY - minY) + paddingY * 2}`);
+      const elements = [svgNode(doc, "rect", { class: "warp-node-frame", x: "0", y: "0", width: String(WARP_OUTPUT_WIDTH), height: String(WARP_OUTPUT_HEIGHT) })];
+      const pathFor = (points) => points.map((point, pointIndex) => `${pointIndex ? "L" : "M"}${point.x * WARP_OUTPUT_WIDTH} ${point.y * WARP_OUTPUT_HEIGHT}`).join(" ");
+      if (preview.mode === "grid" && handles.length >= rows * columns) {
+        for (let row = 0; row < rows; row += 1) elements.push(svgNode(doc, "path", { class: "warp-node-line", d: pathFor(handles.slice(row * columns, (row + 1) * columns)) }));
+        for (let column = 0; column < columns; column += 1) elements.push(svgNode(doc, "path", { class: "warp-node-line", d: pathFor(Array.from({ length: rows }, (_, row) => handles[row * columns + column])) }));
+      } else if (handles.length >= 4) elements.push(svgNode(doc, "path", { class: "warp-node-line", d: `${pathFor([handles[0], handles[1], handles[3], handles[2]])} Z` }));
+      handles.forEach((point, pointIndex) => elements.push(svgNode(doc, "circle", { class: selected.has(pointIndex) ? "warp-node-handle selected" : "warp-node-handle", cx: String(point.x * WARP_OUTPUT_WIDTH), cy: String(point.y * WARP_OUTPUT_HEIGHT), r: "36" })));
+      preview.mesh.replaceChildren(...elements);
+    }
+  };
   function pageSpacingReset() {
     const reset = button(doc, "Reset page spacing to 0%", "reset-page-spacing");
     reset.addEventListener("click", (event) => {
@@ -188,6 +254,12 @@ export function createProjectionConfigView(root, {
     modelSpacingHelpControls.push(help);
     return help;
   }
+  const namesEditorTools = make(doc, "div", { className: "names-wall-editor-tools", hidden: true });
+  namesEditorTools.append(namesModeControl(), pageSpacingReset(), namesRunControl(), namesStatus());
+  const namesEditorNotes = make(doc, "div", { className: "names-wall-editor-notes", hidden: true });
+  namesEditorNotes.append(make(doc, "p", { className: "names-wall-units" }, namesWallUnitsHelp),
+    make(doc, "p", { className: "names-wall-units names-wall-rotation" }, namesWallRotationHelp), modelSpacingHelp(),
+    make(doc, "p", { className: "names-wall-units" }, "0 keeps the current positions. Increase to move the pages inward where space allows."));
   const svg = svgNode(doc, "svg", { class: "graph-connectors", "aria-hidden": "true" });
   const wirePath = svgNode(doc, "path", { "vector-effect": "non-scaling-stroke" });
   svg.appendChild(wirePath);
@@ -228,18 +300,37 @@ export function createProjectionConfigView(root, {
       patternControls.set(output, pattern); card.appendChild(pattern);
     }
     const nodeFields = descriptors.filter((item) => item.node === id);
-    for (const descriptor of nodeFields) { const control = renderField(doc, descriptor, onField, onNudge, false); fields.set(`${id}:${descriptor.path}`, control); card.appendChild(control.wrap); }
+    for (const descriptor of nodeFields) {
+      const control = renderField(doc, descriptor, onField, onNudge, false, false, onFieldCancel);
+      fields.set(`${id}:${descriptor.path}`, control);
+      if (descriptor.wallOnly) {
+        const note = make(doc, "p", { className: "config-field-pending-target", hidden: true, role: "status" }, "Pending edit still targets the Regular wall profile. Cancel this field before returning to nodes.");
+        control.wrap.appendChild(note);
+        inlinePendingTargetNotes.set(`${id}:${descriptor.path}`, note);
+      }
+      card.appendChild(control.wrap);
+    }
     if (["pre", "left-crop", "right-crop", "left-fit", "right-fit"].includes(id)) {
-      const adjust = button(doc, "Adjust", "parameter-editor-open", "parameter-editor-open-button");
+      const adjust = button(doc, "Enlarge edit", "parameter-editor-open", "parameter-editor-open-button");
       adjust.addEventListener("click", (event) => {
         event.stopPropagation?.(); if (onNode(id) === false) return;
+        activeParameterNode = id;
         parameterDialog?.open({ nodeId: id, title: label, descriptors: nodeFields, opener: adjust });
+        if (id === "names-wall") { parameterDialog?.fieldsElement.prepend(namesEditorTools); parameterDialog?.fieldsElement.appendChild(namesEditorNotes); }
         parameterDialog?.update({ config: currentDraft, fieldErrors: currentFieldErrors, status: currentStatus });
       });
       card.appendChild(adjust);
     }
     if (id === "names-wall") card.append(modelSpacingHelp(), make(doc, "p", { className: "names-wall-units" }, "0 keeps the current positions. Increase to move the pages inward where space allows."), pageSpacingReset(), namesStatus());
-    if (id.endsWith("-keystone") || id.endsWith("-grid")) card.appendChild(make(doc, "p", { className: "warp-node-summary" }, "Select to edit corners, points, and residuals."));
+    if (id.endsWith("-keystone") || id.endsWith("-grid")) {
+      const output = id.startsWith("right-") ? "right" : "left";
+      const mode = id.endsWith("-grid") ? "grid" : "keystone";
+      const geometry = make(doc, "div", { className: "warp-node-geometry", ariaLabel: `${output} ${mode} geometry preview` });
+      const mesh = svgNode(doc, "svg", { class: "warp-node-mesh", viewBox: `0 0 ${WARP_OUTPUT_WIDTH} ${WARP_OUTPUT_HEIGHT}`, "aria-hidden": "true", focusable: "false" });
+      const summary = make(doc, "p", { className: "warp-node-summary" }, `${WARP_OUTPUT_WIDTH} × ${WARP_OUTPUT_HEIGHT} px · Warp state loading`);
+      geometry.append(mesh, summary); card.appendChild(geometry);
+      warpNodePreviews.set(id, { output, mode, element: geometry, mesh, summary });
+    }
     if (id.endsWith("-keystone") || id.endsWith("-grid")) {
       const openButton = button(doc, "Edit", "warp-editor-open", "warp-open-button");
       openButton.addEventListener("click", (event) => { event.stopPropagation?.(); if (onNode(id) === false) return; dialog.open({ side: id.startsWith("right-") ? "right" : "left", mode: id.endsWith("-grid") ? "grid" : "keystone", opener: openButton }); });
@@ -287,7 +378,24 @@ export function createProjectionConfigView(root, {
     nodeMap.set(id, card); graph.appendChild(card);
   }
   graphColumn.append(graphTitle, graphViewport, make(doc, "p", { className: "canvas-help" }, "Drag headers to move nodes · Drag background to pan · Scroll to zoom"));
-  workspace.appendChild(graphColumn);
+  editorRegion.append(editorRegionHeading, editorNodeHeading, editorHelp, selectedContext, enlargeEdit, editorEmptyState);
+  workspace.append(graphColumn, editorRegion);
+  enlargeEdit.addEventListener("click", (event) => {
+    event.stopPropagation?.();
+    const id = selectedGraphNode;
+    if (onNode(id) === false) return;
+    const selectedFields = descriptors.filter((item) => item.node === id);
+    if (parameterEditorNodes.has(id) && selectedFields.length) {
+      activeParameterNode = id;
+      parameterDialog?.open({ nodeId: id, title: graphNodes.find(([nodeId]) => nodeId === id)?.[1], descriptors: selectedFields, opener: enlargeEdit });
+      if (id === "names-wall") { parameterDialog?.fieldsElement.prepend(namesEditorTools); parameterDialog?.fieldsElement.appendChild(namesEditorNotes); }
+      parameterDialog?.update({ config: currentDraft, fieldErrors: currentFieldErrors, status: currentStatus });
+    } else if (id.endsWith("-keystone") || id.endsWith("-grid")) {
+      dialog.open({ side: id.startsWith("right-") ? "right" : "left", mode: id.endsWith("-grid") ? "grid" : "keystone", opener: enlargeEdit });
+    } else if (id === "clock-gis" || id === "clock-projection") onOpenClockEditor(id);
+    else if (id === "nova-explainers") onOpenNovaExplainerEditor();
+    else if (id === "settlement-names") onOpenSettlementEditor();
+  });
 
   controls.warpPanel = make(doc, "section", { className: "warp-inspector", ariaLabel: "Warp editor" });
   controls.warpHeading = make(doc, "h3", {}, "Warp editor");
@@ -352,7 +460,7 @@ export function createProjectionConfigView(root, {
       (_path, raw, _kind, meta) => {
         if (meta.resolvedPath !== coordinateTarget) return false;
         return onWarpAction('warp-set-position', { axis, pixels: Number(raw) });
-      }, () => false);
+      }, () => false, false, false, () => onWarpFieldCancel(selectedGraphNode.startsWith("right-") ? "right" : "left"));
     controls.warpCoordinateFields.set(axis, control);
     controls.warpNumeric.appendChild(control.wrap);
   }
@@ -452,14 +560,41 @@ export function createProjectionConfigView(root, {
   app.appendChild(controls.editorHome);
   app.appendChild(workspace);
   root.appendChild(app);
-  const dialog = createWarpEditorDialog({ document: doc, host: root, editorPanel: controls.warpPanel, overlay: controls.warpSurface, navigationControls, trace,
+  const dialog = createWarpEditorDialog({ document: doc, host: editorRegion, editorPanel: controls.warpPanel, overlay: controls.warpSurface, navigationControls, presentation: "panel", trace,
+    onVisibilityChange: (visible) => { workspace.dataset.editing = String(visible); },
+    onEscape: () => {
+      const pending = [...controls.warpCoordinateFields.values()].filter((control) => control.isPending());
+      if (!pending.length) return false;
+      for (const control of pending) control.cancel({ clearControllerError: true });
+      return true;
+    },
     onBeforeClose: () => { if (!finishCoordinates()) return false; cancelActiveDrag({ reason: 'close' }); },
     onBeforeSwitch: () => { if (!finishCoordinates()) return false; cancelActiveDrag({ reason: 'switch' }); },
     onBeforeResize: () => cancelActiveDrag({ reason: 'resize' }),
     onViewportChange: updateWarpMarkerRadii,
     onOrientationChange: () => cancelActiveDrag({ reason: 'orientationchange' }),
     onApply: () => onAction("apply"), onLive: (live) => onAction("live", live) });
-  parameterDialog = createParameterEditorDialog({ document: doc, host: root, onField, onNudge, onAction,
+  parameterDialog = createParameterEditorDialog({ document: doc, host: editorRegion, presentation: "panel", onField, onCancelField: onFieldCancel, onNudge, onAction,
+    resolveFieldPath: (descriptor, config) => {
+      const path = descriptor.path;
+      if (!path.startsWith("namesWall.")) return null;
+      const field = path.slice("namesWall.".length);
+      if (field === "rotateDeg" || field.startsWith("innerEdgeInsetPx.")) return path;
+      const profile = descriptor.wallOnly || field === "inwardShiftPercent" ? "wall" : config.namesWall?.activeMode || "wall";
+      return `namesWall.profiles.${profile}.${field}`;
+    },
+    isFieldVisible: (descriptor, config) => !descriptor.wallOnly || config.namesWall?.activeMode === "wall",
+    pendingTargetLabel: (descriptor) => descriptor.wallOnly
+      ? "Pending edit still targets the Regular wall profile. Cancel this field before returning to nodes."
+      : "",
+    contextForConfig: (nodeId, config) => nodeId === "names-wall"
+      ? `${config.namesWall?.activeMode === "model" ? "Model-oriented" : "Regular wall"} profile`
+      : "",
+    onVisibilityChange: (visible) => {
+      workspace.dataset.editing = String(visible);
+      const showNamesTools = visible && activeParameterNode === "names-wall";
+      namesEditorTools.hidden = !showNamesTools; namesEditorNotes.hidden = !showNamesTools;
+    },
     createPreview: (previewHost, onStatus) => createParameterEditorPreviews({ document: doc, host: previewHost, onStatus }) });
   pointerInput = bindWarpPointerInput({
     trace,
@@ -479,7 +614,15 @@ export function createProjectionConfigView(root, {
 
   const setNode = (node) => {
     const selected = node || "pre";
+    const previous = selectedGraphNode;
+    if (dialog.isOpen() && previous !== selected) dialog.close();
     selectedGraphNode = selected;
+    workspace.dataset.selectedNode = selected;
+    editorNodeHeading.textContent = graphNodes.find(([id]) => id === selected)?.[1] || "Selected node";
+    const editable = (parameterEditorNodes.has(selected) && descriptors.some((item) => item.node === selected)) || selected.endsWith("-keystone") || selected.endsWith("-grid") || ["clock-gis", "clock-projection", "nova-explainers", "settlement-names"].includes(selected);
+    enlargeEdit.disabled = !editable;
+    editorEmptyState.hidden = editable;
+    if (parameterDialog?.isOpen() && parameterDialog.element.dataset.node !== selected) parameterDialog.close();
     canvas.setSelected(selected);
     for (const [id, card] of nodeMap) card.classList?.toggle("selected", id === selected);
   };
@@ -608,6 +751,7 @@ export function createProjectionConfigView(root, {
     }
     for (const run of namesRunButtons) { run.disabled = Boolean(namesRunDisabledReason); run.title = namesRunDisabledReason || "Run names for the applied calibration."; }
     renderWarpPanel(warpStates, selectedNode);
+    updateWarpNodePreviews(warpStates);
     dialog.update(draft, { live: state.live, appliedSummary, namesRunStatus: wallMessage, namesRunDisabledReason });
     parameterDialog.update({ config: draft, fieldErrors: errors.fields || errors.field || errors, status: controls.status.textContent, parameterHistory });
     for (const [output, control] of patternControls) control.value = activePattern.branch === output ? activePattern.pattern : "off";
@@ -617,17 +761,40 @@ export function createProjectionConfigView(root, {
         : readPath(draft, descriptor.path);
       const control = fields.get(`${descriptor.node}:${descriptor.path}`);
       if (!control) continue;
-      control.wrap.hidden = Boolean(descriptor.wallOnly && draft.namesWall?.activeMode !== "wall");
+      const hiddenByProfile = Boolean(descriptor.wallOnly && draft.namesWall?.activeMode !== "wall");
+      const retainPending = hiddenByProfile && control.isPending();
+      control.wrap.hidden = hiddenByProfile && !retainPending;
+      const pendingTargetNote = inlinePendingTargetNotes.get(`${descriptor.node}:${descriptor.path}`);
+      if (pendingTargetNote) pendingTargetNote.hidden = !retainPending;
       const errorPath = namesWallProfileScoped(descriptor.path) && draft.namesWall?.activeMode
         ? `namesWall.profiles.${descriptor.wallOnly ? "wall" : draft.namesWall.activeMode}.${descriptor.path.slice("namesWall.".length)}`
         : descriptor.path;
       const fieldError = errors[errorPath] || Object.entries(errors).find(([key]) => errorPath.startsWith(`${key}.`))?.[1] || "";
-      control.update({value, resolvedPath: errorPath, error: fieldError});
+      control.update({value, resolvedPath: errorPath, error: presentationError(errorPath, fieldError)});
+    }
+    const selectedDescriptors = descriptors.filter((descriptor) => descriptor.node === selectedNode && !fields.get(`${descriptor.node}:${descriptor.path}`)?.wrap.hidden);
+    selectedContext.replaceChildren();
+    selectedContext.setAttribute("aria-label", `Current parameters for ${editorNodeHeading.textContent}`);
+    if (selectedDescriptors.length) {
+      const list = make(doc, "dl", { className: "config-selected-parameters" });
+      for (const descriptor of selectedDescriptors) {
+        const value = namesWallProfileScoped(descriptor.path)
+          ? draft.namesWall?.profiles?.[descriptor.wallOnly ? "wall" : draft.namesWall?.activeMode]?.[descriptor.path.slice("namesWall.".length)]
+          : readPath(draft, descriptor.path);
+        const term = make(doc, "dt", {}, descriptor.label);
+        const shown = displayValue(descriptor, value);
+        const definition = make(doc, "dd", {}, `${shown}${descriptor.unit ? ` ${descriptor.unit}` : ""}`);
+        list.append(term, definition);
+      }
+      selectedContext.appendChild(list);
+    } else if (selectedNode.endsWith("-keystone") || selectedNode.endsWith("-grid")) {
+      const preview = warpNodePreviews.get(selectedNode);
+      if (preview) selectedContext.appendChild(make(doc, "p", { className: "config-selected-geometry" }, preview.summary.textContent));
     }
   };
   setNode("pre");
   return {
-    update, controls, fields, nodeMap, parameterDialog, setPresetName, canManageDisplays: true,
+    update, controls: { ...controls, enlargeEdit, editorRegion, editorNodeHeading }, fields, nodeMap, parameterDialog, setPresetName, canManageDisplays: true,
     getClockEditorOpener(node) {
       return nodeMap.get(node)?.querySelector?.('[data-action="clock-editor-open"]') || null;
     },

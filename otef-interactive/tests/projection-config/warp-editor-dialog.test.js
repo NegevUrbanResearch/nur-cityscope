@@ -43,12 +43,14 @@ test("one disposable frame exists only for an explicitly open warp editor", () =
   dialog.open({ side: "left", mode: "keystone", opener });
   const leftFrame = document.querySelector("iframe");
   expect(leftFrame.src).toContain("span=left&preview=1&mapPixelRatio=1&outputMode=browser");
+  expect(document.querySelector(".warp-editor-dimensions").textContent).toBe("Left output · 1920 × 1080 px");
   expect(panel.parentElement).not.toBe(home);
   expect(overlay.parentElement).not.toBe(home);
   expect(document.querySelectorAll("iframe")).toHaveLength(1);
   dialog.open({ side: "left", mode: "grid", opener });
   expect(document.querySelector("iframe")).toBe(leftFrame);
   dialog.open({ side: "right", mode: "grid", opener });
+  expect(document.querySelector(".warp-editor-dimensions").textContent).toBe("Right output · 1920 × 1080 px");
   expect(document.querySelectorAll("iframe")).toHaveLength(1);
   expect(document.querySelector("iframe")).not.toBe(leftFrame);
   dialog.close();
@@ -155,6 +157,32 @@ test("navigation controls are appended to the private header without replacing d
   expect(document.querySelector("[data-action=warp-editor-close]")).not.toBeNull();
   expect(document.querySelector(".warp-editor-footer input[aria-label='Editor Live']")).not.toBeNull();
   expect(document.querySelector(".warp-editor-footer button").textContent).toBe("Apply once");
+  dialog.dispose();
+});
+
+test("panel presentation stays nonmodal and exposes header actions while editing", () => {
+  const onVisibilityChange = vi.fn();
+  const { dialog, opener, host } = setup({ presentation: "panel", onVisibilityChange });
+  const background = document.createElement("button"); host.append(background);
+  const modal = host.querySelector(".warp-editor-dialog");
+  dialog.open({ side: "left", mode: "keystone", opener });
+  expect(modal.getAttribute("role")).toBe("region");
+  expect(modal.hasAttribute("aria-modal")).toBe(false);
+  expect(host.children).toContain(background);
+  expect(background.inert).not.toBe(true);
+  expect(document.body.style.overflow).toBe("");
+  const back = modal.querySelector('[data-action="warp-editor-close"]');
+  expect(back.textContent).toBe("Back to nodes");
+  const pointerDown = new Event("pointerdown", { bubbles: true, cancelable: true });
+  back.dispatchEvent(pointerDown);
+  expect(pointerDown.defaultPrevented).toBe(true);
+  back.focus();
+  document.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true }));
+  expect(document.activeElement).toBe(modal.querySelector('[data-action="warp-editor-close"]'));
+  expect(onVisibilityChange).toHaveBeenNthCalledWith(1, true);
+  dialog.close();
+  expect(onVisibilityChange).toHaveBeenNthCalledWith(2, false);
+  expect(document.activeElement).toBe(opener);
   dialog.dispose();
 });
 
