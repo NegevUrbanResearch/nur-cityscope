@@ -1,7 +1,7 @@
 import { effectiveSettlementPosition } from "../shared/settlement-name-settings.js";
+import { renderField } from './config-field-control.js';
 
 const FONTS = ["Guttman Hatzvi", "Arial"];
-const LIMITS = { x: [-1920, 3840], y: [-1080, 2160], fontPx: [8, 64], rotateDeg: [-180, 180] };
 
 function make(doc, tag, props = {}, text = "") {
   const node = doc.createElement(tag);
@@ -30,13 +30,6 @@ function statusText(positionRecord, styleRecord, hydration) {
   return "Saved";
 }
 
-function finiteField(raw, min, max) {
-  if (typeof raw === "boolean" || String(raw).trim() === "" || !Number.isFinite(Number(raw))) return null;
-  const value = Number(raw);
-  if (value < min || value > max) return null;
-  return value;
-}
-
 export function createSettlementNameControls(doc, {
   catalog = { entries: [] },
   onOutput = () => {},
@@ -60,6 +53,7 @@ export function createSettlementNameControls(doc, {
   for (const family of FONTS) fontFamily.appendChild(make(doc, "option", { value: family }, family));
   fontLabel.appendChild(fontFamily);
   const fields = new Map();
+  const sessions = new Map();
   const fieldLabels = [];
   for (const [key, name, min, max, step, unit] of [
     ["fontPx", "Font size", 8, 64, 1, "px"],
@@ -67,9 +61,13 @@ export function createSettlementNameControls(doc, {
     ["x", "X", -1920, 3840, 1, "reference px"],
     ["y", "Y", -1080, 2160, 1, "reference px"],
   ]) {
-    const label = make(doc, "label", { className: "settlement-name-field" }, name);
-    const input = make(doc, "input", { type: "number", min: String(min), max: String(max), step: String(step), inputMode: "decimal", dataset: { field: key }, ariaLabel: name });
-    label.append(input, make(doc, "span", { className: "settlement-name-unit" }, unit));
+    const control = renderField(doc, {path:key,label:name,min,max,step,unit,range:false,nudges:false,validate:value=>value>=min && value<=max}, (path,raw) => {
+      const value=Number(raw);
+      if (path === 'x' || path === 'y') onPosition({x:path==='x'?value:current.position?.x,y:path==='y'?value:current.position?.y});
+      else onStyle({...current.style,[path]:value});
+    }, () => {});
+    const label=control.wrap; label.className += ' settlement-name-field'; const input=control.number;
+    sessions.set(key,control);
     fields.set(key, input);
     fieldLabels.push(label);
   }
@@ -85,20 +83,13 @@ export function createSettlementNameControls(doc, {
   output.addEventListener("change", () => onOutput(output.value));
   city.addEventListener("change", () => onCitycode(city.value));
   fontFamily.addEventListener("change", () => onStyle({ ...current.style, fontFamily: fontFamily.value }));
-  for (const [key, input] of fields) {
-    input.addEventListener("change", () => {
-      const limit = LIMITS[key];
-      const value = finiteField(input.value, limit[0], limit[1]);
-      if (value == null) { input.setAttribute?.("aria-invalid", "true"); return; }
-      input.removeAttribute?.("aria-invalid");
-      if (key === "x" || key === "y") onPosition({ x: key === "x" ? value : current.position?.x, y: key === "y" ? value : current.position?.y });
-      else onStyle({ ...current.style, [key]: value });
-    });
-  }
   retry.addEventListener("click", (event) => { stop(event); onRetry(); });
   load.addEventListener("click", (event) => { stop(event); onLoad(); });
   return {
     element,
+    finish: () => [...sessions.values()].map(control=>control.finish()),
+    cancel: () => { for (const control of sessions.values()) control.cancel(); },
+    dispose: () => { for (const control of sessions.values()) control.dispose(); },
     render(state = {}) {
       current = { position: state.position || null, style: state.style || null };
       const entries = state.catalog?.entries || catalog.entries || [];
@@ -111,12 +102,12 @@ export function createSettlementNameControls(doc, {
       if (doc.activeElement !== city && state.citycode) city.value = state.citycode;
       if (doc.activeElement !== fontFamily && state.style?.fontFamily) fontFamily.value = state.style.fontFamily;
       for (const [key, input] of fields) {
-        if (doc.activeElement === input) continue;
         const value = key === "x" || key === "y" ? state.position?.[key] : state.style?.[key];
-        input.value = value == null ? "" : String(value);
+        sessions.get(key).update({value,resolvedPath:`settlement-names:${state.output || 'left'}:${state.citycode || ''}:${key}`});
       }
       const enabled = state.enabled !== false && state.hydration?.status === "Saved";
       for (const node of [output, city, fontFamily, ...fields.values()]) node.disabled = !enabled;
+      for (const control of sessions.values()) for (const node of control.wrap.querySelectorAll?.('button') || []) node.disabled = !enabled || (node.dataset?.action === 'numeric-use-mine' && node.disabled);
       status.textContent = statusText(state.positionRecord, state.styleRecord, state.hydration);
       const failed = state.hydration?.status === "Failed" || state.positionRecord?.status === "Failed" || state.styleRecord?.status === "Failed";
       const conflict = state.positionRecord?.status === "Conflict" || state.styleRecord?.status === "Conflict";

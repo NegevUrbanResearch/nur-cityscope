@@ -196,7 +196,7 @@ test("category shortcuts call actual graph node groups and leave every node moun
   expect(view.nodeMap.has("settlement-names")).toBe(true);
 });
 
-test("changing Grid Warp mode or picker cancels the active pointer edit before selecting", () => {
+test("changing Grid Warp mode or picker waits for the active pointer edit", () => {
   const { root, view, onWarpAction, onWarpPointer, update } = makeView({ coarse: false });
   const config = structuredClone(DEFAULT_PROJECTION_CONFIG);
   config.outputs.left.warp.baseline = { type: "identity", width: 1920, height: 1080, origin: "top-left" };
@@ -215,20 +215,14 @@ test("changing Grid Warp mode or picker cancels the active pointer edit before s
   expect(onWarpPointer).toHaveBeenCalledWith("start", expect.anything());
   onWarpPointer.mockClear(); onWarpAction.mockClear();
   view.controls.warpSelectionButtons[1].click();
-  expect(onWarpPointer).toHaveBeenCalledWith("cancel", expect.anything());
-  expect(onWarpPointer.mock.invocationCallOrder[0]).toBeLessThan(onWarpAction.mock.invocationCallOrder[0]);
-  expect(onWarpAction).toHaveBeenLastCalledWith("warp-select", { output: "left", selection: { mode: "grid", kind: "row", index: 0 } });
-
-  onWarpPointer.mockClear(); onWarpAction.mockClear();
-  editor.select({ mode: "grid", kind: "row", index: 0 });
-  update({ selectedNode: "left-grid", warpStates: { left: { ...editor.getState(), config: editor.getConfig(), handles: editor.getControlPoints() } } });
-  down();
-  onWarpPointer.mockClear(); onWarpAction.mockClear();
-  view.controls.warpSelectionPicker.value = "2";
-  view.controls.warpSelectionPicker.dispatchEvent(new Event("change", { bubbles: true }));
-  expect(onWarpPointer).toHaveBeenCalledWith("cancel", expect.anything());
-  expect(onWarpPointer.mock.invocationCallOrder[0]).toBeLessThan(onWarpAction.mock.invocationCallOrder[0]);
-  expect(onWarpAction).toHaveBeenLastCalledWith("warp-select", { output: "left", selection: { mode: "grid", kind: "row", index: 2 } });
+  expect(onWarpPointer).not.toHaveBeenCalled();
+  expect(onWarpAction).not.toHaveBeenCalled();
+  view.controls.warpSelectionPicker.value = '2';
+  view.controls.warpSelectionPicker.dispatchEvent(new Event('change', { bubbles: true }));
+  expect(onWarpAction).not.toHaveBeenCalled();
+  surface.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, clientX: 0, clientY: 0 }));
+  view.controls.warpSelectionButtons[1].click();
+  expect(onWarpAction).toHaveBeenLastCalledWith('warp-select', { output: 'left', selection: { mode: 'grid', kind: 'row', index: 0 } });
   view.dispose();
 });
 
@@ -384,7 +378,7 @@ test("add-position typing stays local until its Add action", () => {
   view.dispose();
 });
 
-test.each([false, true])("Grid layout dispatch releases an active %s pointer before committing", (moved) => {
+test.each([false, true])("Grid layout dispatch waits for an active %s pointer before committing", (moved) => {
   const { root, view, onWarpAction, onWarpPointer, update } = makeView({ coarse: false });
   const editor = createWarpEditor({ config: DEFAULT_PROJECTION_CONFIG, output: "left" }); editor.setMode("grid"); editor.select({ mode: "grid", kind: "point", index: 0 });
   const state = { ...editor.getState(), config: editor.getConfig(), handles: editor.getControlPoints() };
@@ -410,12 +404,12 @@ test.each([false, true])("Grid layout dispatch releases an active %s pointer bef
   if (moved) pointer("pointermove", handleX + 10, handleY);
   const rows = root.querySelector(".warp-grid-layout-section [data-grid-layout-field='rows']");
   rows.value = "3"; rows.dispatchEvent(new Event("input", { bubbles: true })); rows.dispatchEvent(new Event("change", { bubbles: true }));
-  expect(surface.releasePointerCapture).toHaveBeenCalledWith(4);
-  expect(onWarpPointer.mock.calls.at(-1)?.[0]).toBe("cancel");
-  expect(onWarpAction).toHaveBeenCalledWith("warp-grid-layout", { output: "left", operation: "counts", columns: 7, rows: 3 });
-  const callbackCount = onWarpPointer.mock.calls.length;
-  pointer("pointermove", 92); pointer("pointerup", 92); pointer("pointercancel", 92);
-  expect(onWarpPointer).toHaveBeenCalledTimes(callbackCount);
+  expect(surface.releasePointerCapture).not.toHaveBeenCalled();
+  expect(onWarpPointer.mock.calls.at(-1)?.[0]).not.toBe('cancel');
+  expect(onWarpAction).not.toHaveBeenCalledWith('warp-grid-layout', expect.anything());
+  pointer('pointermove', handleX + 20); pointer('pointerup', handleX + 20);
+  rows.value = '4'; rows.dispatchEvent(new Event('input', { bubbles: true })); rows.dispatchEvent(new Event('change', { bubbles: true }));
+  expect(onWarpAction).toHaveBeenCalledWith('warp-grid-layout', { output: 'left', operation: 'counts', columns: 7, rows: 4 });
   view.dispose();
 });
 
@@ -702,27 +696,28 @@ test("supported browser hides the workstation-only output capability notice", ()
   expect(root.querySelector(".output-capability-notice").hidden).toBe(true);
 });
 
-test("Adjust slider commits its formatted local value before a synchronous refresh", () => {
+test("Adjust Fine slider commits its exact canonical local delta before a synchronous refresh", () => {
   let update;
   let control;
-  const onField = vi.fn((path, raw, source) => {
-    expect(control.value.textContent).toBe("125.00 %");
-    expect(control.number.value).toBe("125.00");
+  const onField = vi.fn((path, raw, source, meta) => {
+    expect(control.value.textContent).toBe("1.01 %");
+    expect(control.number.value).toBe("1.01");
     const draft = structuredClone(DEFAULT_PROJECTION_CONFIG);
-    draft.pre.tx = Number(raw) / 100;
+    draft.pre.tx = meta.canonicalValue;
     update({ state: { draft } });
   });
   const fixture = makeView({ coarse: false, onField });
   ({ update } = fixture);
   fixture.view.nodeMap.get("pre").querySelector('[data-action="parameter-editor-open"]').click();
   const wrap = fixture.root.querySelector('.parameter-editor-dialog [data-field="pre.tx"]').closest(".config-field");
-  control = { wrap, range: wrap.querySelector('input[type="range"]'), number: wrap.querySelector('input[type="number"]'), value: wrap.querySelector(".config-field-value") };
+  control = { wrap, range: wrap.querySelector('input[type="range"]'), number: wrap.querySelector('input[data-input="number"]'), value: wrap.querySelector(".config-field-value") };
   expect(control.wrap.classList.contains("parameter-field-layout")).toBe(true);
-  control.range.value = "125";
+  expect(control.range.value).toBe('0');
+  control.range.value = "1";
   control.range.dispatchEvent(new Event("input", { bubbles: true }));
-  expect(onField).toHaveBeenCalledWith("pre.tx", "125", "range");
-  expect(control.number.value).toBe("125.00");
-  expect(control.value.textContent).toBe("125.00 %");
+  expect(onField).toHaveBeenCalledWith("pre.tx", "1.01", "range", {baseValue:.01,resolvedPath:'pre.tx',canonicalValue:.01+.0001,phase:'start',gestureId:expect.any(String)});
+  expect(control.number.value).toBe("1.01");
+  expect(control.value.textContent).toBe("1.01 %");
 });
 
 test("release-commit slider previews locally and syncs its paired number on change", () => {
@@ -737,7 +732,7 @@ test("release-commit slider previews locally and syncs its paired number on chan
   control.range.dispatchEvent(new Event("change", { bubbles: true }));
   expect(control.number.value).toBe("50");
   expect(onField).toHaveBeenCalledTimes(1);
-  expect(onField).toHaveBeenCalledWith("namesWall.inwardShiftPercent", "50", "range");
+  expect(onField).toHaveBeenCalledWith("namesWall.inwardShiftPercent", "50", "range", expect.objectContaining({resolvedPath:'namesWall.profiles.wall.inwardShiftPercent',override:false}));
 });
 
 test("blank numeric values survive refresh without showing zero", () => {

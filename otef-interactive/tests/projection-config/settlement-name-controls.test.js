@@ -35,12 +35,15 @@ test("numeric clearing is rejected and a replacement commits the new finite cent
   controls.render({ output: "left", citycode: "0067", catalog, position: { x: 510, y: 350 }, style: { fontFamily: "Guttman Hatzvi", fontPx: 14, rotateDeg: 35 }, enabled: true, positionRecord: { status: "Saved" }, styleRecord: { status: "Saved" }, hydration: { status: "Saved" } });
   const x = find(controls.element, (node) => node.dataset?.field === "x");
   x.value = "";
+  x.dispatch('input');
   x.dispatch("change");
   expect(onPosition).not.toHaveBeenCalled();
   x.value = "true";
+  x.dispatch('input');
   x.dispatch("change");
   expect(onPosition).not.toHaveBeenCalled();
   x.value = "640";
+  x.dispatch('input');
   x.dispatch("change");
   expect(onPosition).toHaveBeenCalledWith({ x: 640, y: 350 });
 });
@@ -55,9 +58,11 @@ test("shared style controls explain both projectors and reject an out-of-range f
   expect(note.textContent).toMatch(/Live and Apply/i);
   const font = find(controls.element, (node) => node.dataset?.field === "fontPx");
   font.value = "7";
+  font.dispatch('input');
   font.dispatch("change");
   expect(onStyle).not.toHaveBeenCalled();
   font.value = "24";
+  font.dispatch('input');
   font.dispatch("change");
   expect(onStyle).toHaveBeenCalledWith(expect.objectContaining({ fontPx: 24, rotateDeg: 35 }));
   expect(find(controls.element, (node) => node.className === "settlement-name-status").textContent).toBe("Changed on another screen");
@@ -69,4 +74,17 @@ test("settlement controls keep responsive touch sizing", () => {
   expect(css).toMatch(/orientation:\s*portrait/);
   expect(css).toMatch(/@media \(max-width:\s*760px\)/);
   expect(css).toMatch(/aspect-ratio:\s*16\s*\/\s*9/);
+});
+
+test('settlement sign and dirty updates use exact sessions with associated errors', () => {
+  const onPosition=vi.fn(); const controls=createSettlementNameControls(documentHarness(),{catalog,onPosition});
+  const state={output:'left',citycode:'0067',position:{x:0,y:2.34567},style:{fontPx:14,rotateDeg:0},hydration:{status:'Saved'}};
+  controls.render(state);
+  const x=find(controls.element,node=>node.dataset?.field==='x');
+  const sign=find(x.parentElement.parentElement,node=>node.dataset?.action==='numeric-sign');
+  sign.dispatch('click'); x.value='2,5'; x.dispatch('input'); x.dispatch('change');
+  expect(onPosition).toHaveBeenCalledWith({x:-2.5,y:2.34567});
+  onPosition.mockClear(); x.value='10'; x.dispatch('input'); controls.render({...state,position:{x:30,y:2.34567}}); x.dispatch('blur');
+  expect(onPosition).not.toHaveBeenCalled();
+  expect(find(x.parentElement.parentElement,node=>node.className==='config-field-error').textContent).toMatch(/changed while editing/i);
 });

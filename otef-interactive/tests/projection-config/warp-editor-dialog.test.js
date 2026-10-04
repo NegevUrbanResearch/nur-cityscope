@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, expect, test, vi } from "vitest";
 import { createWarpEditorDialog } from "../../frontend/src/projection-config/warp-editor-dialog.js";
+import { mountProjectionConfig } from "../../frontend/src/projection-config/config-controller.js";
 import { DEFAULT_PROJECTION_CONFIG } from "../../frontend/src/shared/projection-config-schema.js";
 
 afterEach(() => { document.body.replaceChildren(); vi.useRealTimers(); });
@@ -468,4 +469,41 @@ test("close detaches the active bridge listener and reopening installs one liste
   dialog.open({ side: "right", mode: "grid", opener });
   expect(add.mock.calls.filter(([type]) => type === "message")).toHaveLength(2);
   dialog.dispose(); add.mockRestore(); remove.mockRestore();
+});
+
+
+test('pending coordinate veto keeps the frame and target until resolved', () => {
+  let pending = true;
+  const { dialog, opener } = setup({ onBeforeClose: () => !pending, onBeforeSwitch: () => !pending });
+  dialog.open({ side: 'left', mode: 'keystone', opener });
+  const frame = document.querySelector('iframe');
+  dialog.open({ side: 'right', mode: 'grid' });
+  expect(document.querySelector('iframe')).toBe(frame);
+  expect(document.querySelector('.warp-editor-dialog').dataset.mode).toBe('keystone');
+  dialog.open({ side: 'left', mode: 'grid' });
+  expect(document.querySelector('.warp-editor-dialog').dataset.mode).toBe('keystone');
+  dialog.close(); expect(dialog.isOpen()).toBe(true);
+  pending = false; dialog.close(); expect(dialog.isOpen()).toBe(false);
+  dialog.dispose();
+});
+
+
+test('fresh actual controller opens Left Keystone with unavailable network baseline', async () => {
+  const host = document.createElement('main'); document.body.append(host);
+  const config = structuredClone(DEFAULT_PROJECTION_CONFIG); config.pre.scale = 1.23456;
+  const state = { snapshot: { revision: 0, config, presets: [{ id: 'original', name: 'Original calibration', config, readOnly: true }], selectedPresetId: 'original' }, draft: config, live: false, connected: true, pending: false, hasLocalDraft: false };
+  const client = { subscribe(fn) { fn(structuredClone(state)); return () => {}; }, getState: () => structuredClone(state), start: async () => state, stop() {}, setValidateCandidate() {}, setDraft: vi.fn(), setLive() {}, apply: vi.fn() };
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = vi.fn(async () => { throw new Error('Network unavailable'); });
+  let mounted;
+  try {
+    mounted = mountProjectionConfig(host, { client, readNamesDataset: async () => null });
+    const open = host.querySelector('[data-node="left-keystone"] .warp-open-button');
+    expect(open.disabled).toBe(false); open.click();
+    expect(host.querySelector('.warp-editor-dialog').hidden).toBe(false);
+    expect(host.querySelector('.warp-inspector').hidden).toBe(false);
+    expect(host.querySelector('[data-node="left-keystone"]').classList.contains('selected')).toBe(true);
+    expect(client.setDraft).not.toHaveBeenCalled();
+    await new Promise(resolve => setTimeout(resolve, 0));
+  } finally { mounted?.dispose(); globalThis.fetch = originalFetch; }
 });

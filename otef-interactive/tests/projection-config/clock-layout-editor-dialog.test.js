@@ -88,7 +88,7 @@ test.each([
     writeClockSlot: async ({ surface, layout, baseRevision }) => { latest = normalize(layout); return { status: "ok", nliClockLayout: { gis: { start: initialLayout }, projection: { left: initialLayout }, [surface]: { [slot]: latest } }, nliClockLayoutRevision: baseRevision + 1 }; },
     writeLegendSlot: async ({ layout, baseRevision }) => { latest = normalize(layout); return { changeKind: "layout", legendProjection: { left: latest }, legendLayoutRevision: baseRevision + 1 }; },
   } }); rig.rendered();
-  const set = (key, value) => { const input = rig.find((node) => node.dataset?.field === key); input.value = String(value); input.dispatch("change"); };
+  const set = (key, value) => { const input = rig.find((node) => node.dataset?.field === key); input.value = String(value); input.dispatch("input"); input.dispatch("change"); };
   set("leftPct", 95); set("topPct", 97);
   expect(rig.client.getSlot(resource, slot).draft).toMatchObject({ leftPct: 65, topPct: 72 });
   set("widthPct", 80); set("heightPct", 90);
@@ -126,7 +126,7 @@ test("legacy legend opens as Auto without changing its acknowledged record and h
   expect(select.value).toBe("0");
   expect(select.hidden).toBe(false);
   expect(rig.find((node) => node.dataset?.field === "dwellSeconds").hidden).toBe(true);
-  const fontLabel = rig.find((node) => node.dataset?.field === "fontPx").parentElement;
+  const fontLabel = rig.find((node) => node.dataset?.field === "fontPx").parentElement.parentElement;
   expect(fontLabel.children[0].textContent).toBe("Font size (maximum)");
   expect(rig.client.getSlot("projectionLegend", "left").acknowledged).not.toHaveProperty("columns");
   expect(rig.client.getSlot("projectionLegend", "left").draft).toBeNull();
@@ -136,7 +136,7 @@ test("legacy legend opens as Auto without changing its acknowledged record and h
 test.each([["clock-projection", "clock"], ["clock-gis", "clock"]])("column select is hidden for %s/%s", async (nodeId, element) => {
   const rig = await editorFixture(nodeId, element); rig.rendered();
   expect(rig.find((node) => node.dataset?.field === "columns").hidden).toBe(true);
-  expect(rig.find((node) => node.dataset?.field === "fontPx").parentElement.children[0].textContent).toBe("Font size");
+  expect(rig.find((node) => node.dataset?.field === "fontPx").parentElement.parentElement.children[0].textContent).toBe("Font size");
 });
 
 test("clock editor identifies its output or selected GIS scene and explains autosave", async () => {
@@ -332,7 +332,7 @@ test("completed legend dwell edit survives closing before debounce and saves onl
   vi.useFakeTimers();
   const rig = await editorFixture("clock-projection", "legend");
   const dwell = rig.find((node) => node.dataset?.field === "dwellSeconds");
-  dwell.value = "19"; dwell.dispatch("change"); rig.editor.close();
+  dwell.value = "19"; dwell.dispatch("input"); dwell.dispatch("change"); rig.editor.close();
   await vi.advanceTimersByTimeAsync(150);
   expect(rig.writeLegendSlot).toHaveBeenCalledTimes(1);
   expect(rig.writeLegendSlot.mock.calls[0][0]).toMatchObject({ span: "left", layout: { dwellSeconds: 19 } });
@@ -342,7 +342,7 @@ test("completed legend dwell edit survives closing before debounce and saves onl
 test("frame failure cancels moved projection gestures and Retry recreates the frame retaining completed drafts", async () => {
   vi.useFakeTimers();
   const rig = await editorFixture(); rig.rendered();
-  const input = rig.find((node) => node.dataset?.field === "leftPct"); input.value = "17"; input.dispatch("change");
+  const input = rig.find((node) => node.dataset?.field === "leftPct"); input.value = "17"; input.dispatch("input"); input.dispatch("change");
   const oldFrame = rig.frame();
   rig.find((node) => node.attributes?.["data-gesture"] === "move").dispatch("pointerdown", { button: 0, pointerId: 4, clientX: 240, clientY: 160 });
   rig.doc.dispatch("pointermove", { pointerId: 4, clientX: 300, clientY: 190 });
@@ -420,7 +420,7 @@ test.each(["Failed", "Conflict"])("exhibit acknowledgement does not override Sav
     client: { writeClockSlot: vi.fn(async () => { throw Object.assign(new Error("Save failed"), finalStatus === "Conflict" ? { status: 409 } : {}); }) } });
   rig.find((node) => node.className === "clock-layout-show-exhibit").dispatch("click");
   await Promise.resolve();
-  const input = rig.find((node) => node.dataset?.field === "leftPct"); input.value = "16"; input.dispatch("change");
+  const input = rig.find((node) => node.dataset?.field === "leftPct"); input.value = "16"; input.dispatch("input"); input.dispatch("change");
   const status = rig.find((node) => node.className === "clock-layout-status");
   expect(status.textContent).toBe("Saving");
   await vi.waitFor(() => expect(status.textContent).toBe(finalStatus === "Failed" ? "Save failed" : "Changed on another screen"));
@@ -433,7 +433,7 @@ test("failed initial settings hydration blocks edits and Retry obtains an author
   const input = rig.find((node) => node.dataset?.field === "leftPct");
   expect(rig.find((node) => node.className === "clock-layout-status").textContent).toBe("Settings unavailable");
   expect(input.disabled).toBe(true);
-  input.value = "16"; input.dispatch("change");
+  input.value = "16"; input.dispatch("input"); input.dispatch("change");
   expect(rig.writeClockSlot).not.toHaveBeenCalled();
   rig.find((node) => node.className === "clock-layout-retry").dispatch("click");
   await vi.waitFor(() => expect(input.disabled).toBe(false));
@@ -454,7 +454,7 @@ test("closing after a completed numeric edit keeps its slot-bound debounced writ
   const input = descendants(doc.body).find((node) => node.dataset?.field === "leftPct");
   expect(input).toBeDefined();
   input.value = "17";
-  input.dispatch("change");
+  input.dispatch("input"); input.dispatch("change");
   editor.close();
   await vi.advanceTimersByTimeAsync(150);
   await vi.waitFor(() => expect(writeClockSlot).toHaveBeenCalledTimes(1));

@@ -3,7 +3,7 @@ import { renderField } from "./config-field-control.js";
 const pathValue = (config, path) => path.split(".").reduce((value, key) => value?.[key], config);
 
 /** Full-screen controls for one geometry node. Values remain owned by the view/controller. */
-export function createParameterEditorDialog({ document: doc, host, onField = () => {}, onNudge = () => {}, createPreview = null }) {
+export function createParameterEditorDialog({ document: doc, host, onField = () => {}, onNudge = () => {}, onAction = () => {}, createPreview = null }) {
   if (!doc?.createElement || !host) throw new Error("parameter editor host is required");
   const modal = doc.createElement("section");
   modal.className = "parameter-editor-dialog";
@@ -15,7 +15,10 @@ export function createParameterEditorDialog({ document: doc, host, onField = () 
   const title = doc.createElement("h2"); title.id = "parameter-editor-title";
   const status = doc.createElement("p"); status.className = "parameter-editor-status"; status.setAttribute("role", "status"); status.setAttribute("aria-live", "polite");
   const closeButton = doc.createElement("button"); closeButton.type = "button"; closeButton.dataset.action = "parameter-editor-close"; closeButton.textContent = "Close";
-  header.append(title, status, closeButton);
+  const undo = doc.createElement('button'); undo.type = 'button'; undo.textContent = 'Undo parameter'; undo.dataset.action = 'parameter-undo';
+  const redo = doc.createElement('button'); redo.type = 'button'; redo.textContent = 'Redo parameter'; redo.dataset.action = 'parameter-redo';
+  undo.addEventListener('click', () => onAction('parameter-undo')); redo.addEventListener('click', () => onAction('parameter-redo'));
+  header.append(title, status, undo, redo, closeButton);
   const body = doc.createElement("div"); body.className = "parameter-editor-body";
   const fields = doc.createElement("div"); fields.className = "parameter-editor-fields";
   const previewColumn = doc.createElement("section"); previewColumn.className = "parameter-editor-preview-column";
@@ -31,6 +34,7 @@ export function createParameterEditorDialog({ document: doc, host, onField = () 
   let oldOverflow = null;
   let disposed = false;
   let latestConfig = null;
+  let latestHistory = { undo: 0, redo: 0 };
 
   const focusables = () => [...modal.querySelectorAll("button:not([hidden]), input:not([hidden]), select:not([hidden]), [tabindex]:not([tabindex='-1'])")]
     .filter((item) => !item.disabled && !item.closest("[hidden]"));
@@ -44,20 +48,17 @@ export function createParameterEditorDialog({ document: doc, host, onField = () 
     if (event.shiftKey && doc.activeElement === first) { event.preventDefault(); last.focus(); }
     else if (!event.shiftKey && doc.activeElement === last) { event.preventDefault(); first.focus(); }
   };
-  const renderValues = ({ config, fieldErrors = {}, status: nextStatus } = {}) => {
+  const renderValues = ({ config, fieldErrors = {}, status: nextStatus, parameterHistory } = {}) => {
+    if (parameterHistory) latestHistory = parameterHistory;
+    undo.disabled = !latestHistory.undo; redo.disabled = !latestHistory.redo;
     if (nextStatus !== undefined) status.textContent = String(nextStatus || "");
     if (!config) return;
     latestConfig = config;
     preview?.update?.(config);
     for (const [path, control] of fieldControls) {
-      const descriptor = control.descriptor;
       const value = pathValue(config, path);
-      const display = value == null ? "" : descriptor.display === "percentage" ? (Number(value) * 100).toFixed(descriptor.decimals ?? 0) : descriptor.decimals === undefined ? String(value) : Number(value).toFixed(descriptor.decimals);
-      for (const input of [control.range, control.number]) if (input && doc.activeElement !== input) input.value = display;
-      if (doc.activeElement !== control.number) control.value.textContent = `${display}${descriptor.unit ? ` ${descriptor.unit}` : ""}`;
       const error = fieldErrors[path] || Object.entries(fieldErrors).find(([key]) => path.startsWith(`${key}.`))?.[1] || "";
-      control.error.textContent = String(error || "");
-      control.wrap.classList?.toggle("has-error", Boolean(error));
+      control.update({ value, resolvedPath: path, error });
     }
   };
   const open = ({ nodeId, title: heading, descriptors = [], opener: activatingElement } = {}) => {
@@ -72,6 +73,7 @@ export function createParameterEditorDialog({ document: doc, host, onField = () 
     }
     modal.dataset.node = nodeId || "";
     title.textContent = heading || "Adjust parameters";
+    for (const control of fieldControls.values()) control.dispose();
     fields.replaceChildren(); fieldControls = new Map();
     for (const descriptor of descriptors) {
       const control = renderField(doc, descriptor, onField, onNudge, false, true);
@@ -82,10 +84,12 @@ export function createParameterEditorDialog({ document: doc, host, onField = () 
     }
     preview?.open?.(nodeId);
     preview?.update?.(latestConfig);
+    renderValues({ config: latestConfig });
     closeButton.focus();
   };
   const close = () => {
     if (modal.hidden) return;
+    for (const control of fieldControls.values()) control.cancel();
     modal.hidden = true;
     preview?.close?.();
     doc.removeEventListener?.("keydown", onKeyDown);
@@ -100,7 +104,11 @@ export function createParameterEditorDialog({ document: doc, host, onField = () 
     open,
     update: renderValues,
     close,
+    finish() { return [...fieldControls.values()].map(control => control.finish()); },
+    isPending: () => [...fieldControls.values()].some(control => control.isPending()),
+    isHeld: () => [...fieldControls.values()].some(control => control.isHeld()),
+    cancel(options) { for (const control of fieldControls.values()) control.cancel(options); },
     isOpen: () => !modal.hidden,
-    dispose() { if (disposed) return; close(); disposed = true; preview?.dispose?.(); doc.removeEventListener?.("keydown", onKeyDown); modal.remove(); fieldControls.clear(); },
+    dispose() { if (disposed) return; close(); disposed = true; for (const control of fieldControls.values()) control.dispose(); preview?.dispose?.(); doc.removeEventListener?.("keydown", onKeyDown); modal.remove(); fieldControls.clear(); },
   };
 }

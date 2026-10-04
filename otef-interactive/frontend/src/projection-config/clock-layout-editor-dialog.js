@@ -157,7 +157,7 @@ export function openClockLayoutEditor({ nodeId, sceneId = "home", element = "clo
   function renderControls(record = activeRecord()) {
     const hydration = hydrationState();
     statusControls.render(record, hydration);
-    parameters.render(currentLayout, { enabled: editable(), legend: isLegend() });
+    parameters.render(currentLayout, { enabled: editable(), legend: isLegend(), identity: `${activeNode}:${selection.resource}:${selection.slot}` });
     sceneLabel.hidden = activeNode !== "clock-gis";
     elementLabel.hidden = activeNode !== "clock-projection";
     sceneSelect.value = activeScene;
@@ -359,6 +359,7 @@ export function openClockLayoutEditor({ nodeId, sceneId = "home", element = "clo
   });
   function close() {
     if (!active) return;
+    parameters.dispose();
     if (gesture) cancelGesture();
     active = false; preview?.destroy(); preview = null;
     dialog.remove?.();

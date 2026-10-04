@@ -47,6 +47,14 @@ test("warp handle outlines stay constant in CSS pixels while zooming", () => {
   expect(handleRule).toContain("vector-effect: non-scaling-stroke");
 });
 
+test("warp coordinate wrappers stack both axes and fit sign, magnitude and units", () => {
+  const css = readFileSync(resolve(import.meta.dirname, "../../frontend/src/projection-config/config.css"), "utf8");
+  const container = css.match(/\.warp-numeric\s*\{([^}]*)\}/)?.[1] ?? "";
+  expect(container).toMatch(/grid-template-columns:\s*minmax\(0, 1fr\)/);
+  expect(css).toMatch(/\.warp-numeric \.config-field-row:has\(\.numeric-sign\)\s*\{[^}]*grid-template-columns:\s*48px minmax\(0, 1fr\) auto/s);
+  expect(css).toMatch(/\.warp-numeric \.config-field-row input\[data-input=number\]\s*\{[^}]*min-width:\s*0[^}]*width:\s*100%/s);
+});
+
 test("Grid layout inputs have at least 44 CSS pixel touch targets", () => {
   const css = readFileSync(resolve(import.meta.dirname, "../../frontend/src/projection-config/config.css"), "utf8");
   const fieldRule = css.match(/\.warp-grid-layout-field input\s*\{([^}]*)\}/)?.[1] ?? "";
@@ -149,16 +157,18 @@ test("view renders draggable node workspace and preserves an existing focused in
   const outline = view.fields.get("names-wall:namesWall.strokeWidthPx");
   expect(outline.number.value).toBe("3");
   outline.number.value = "4";
+  outline.number.dispatch('input');
   outline.number.dispatch("blur");
-  expect(onField).toHaveBeenCalledWith("namesWall.strokeWidthPx", "4", "number");
+  expect(onField).toHaveBeenCalledWith("namesWall.strokeWidthPx", "4", "number", {baseValue:3,resolvedPath:'namesWall.profiles.wall.strokeWidthPx',override:false});
   namesDraft.namesWall.profiles.wall.strokeWidthPx = 4;
   namesDraft.namesWall.activeMode = "model";
   view.update({ state: { draft: namesDraft }, selectedNode: "names-wall", namesWallStatus: { state: "auto-reduced", requestedFontPx: 12, effectiveFontPx: 9, minimumFontPx: 8, expected: 1228, placed: 1228 } });
   expect(outline.number.value).toBe("2");
   onField.mockClear();
   outline.number.value = "1";
+  outline.number.dispatch('input');
   outline.number.dispatch("blur");
-  expect(onField).toHaveBeenCalledWith("namesWall.strokeWidthPx", "1", "number");
+  expect(onField).toHaveBeenCalledWith("namesWall.strokeWidthPx", "1", "number", {baseValue:2,resolvedPath:'namesWall.profiles.model.strokeWidthPx',override:false});
   namesDraft.namesWall.profiles.model.strokeWidthPx = 1;
   namesDraft.namesWall.activeMode = "wall";
   view.update({ state: { draft: namesDraft }, selectedNode: "names-wall" });
@@ -171,7 +181,7 @@ test("view renders draggable node workspace and preserves an existing focused in
   expect(closeness.value.textContent).toBe("50");
   expect(onField).not.toHaveBeenCalledWith("namesWall.inwardShiftPercent", "50", "range");
   closeness.range.dispatch("change");
-  expect(onField).toHaveBeenCalledWith("namesWall.inwardShiftPercent", "50", "range");
+  expect(onField).toHaveBeenCalledWith("namesWall.inwardShiftPercent", "50", "range", expect.objectContaining({resolvedPath:'namesWall.profiles.wall.inwardShiftPercent',override:false}));
   onField.mockClear();
   const resetPages = view.nodeMap.get("names-wall").children.find((node) => node.dataset?.action === "reset-page-spacing");
   expect(resetPages.hidden).toBe(false);
@@ -268,22 +278,27 @@ test("view renders draggable node workspace and preserves an existing focused in
   const inlineFocused = view.fields.get("pre:pre.tx").number;
   root.ownerDocument.activeElement = inlineFocused;
   inlineFocused.value = "1.";
+  inlineFocused.dispatch('input');
   draft.pre.tx = 0.02;
   view.update({ state: { draft } });
   expect(inlineFocused.value).toBe("1.");
   inlineFocused.value = "-";
+  inlineFocused.dispatch('input');
   view.update({ state: { draft } });
   expect(inlineFocused.value).toBe("-");
-  expect(view.fields.get("pre:pre.tx").range.value).toBe("2.00");
+  expect(view.fields.get("pre:pre.tx").range.value).toBe("0");
   const inline = view.fields.get("pre:pre.tx").number;
   const inlineRow = view.fields.get("pre:pre.tx").wrap.children.find((node) => node.className === "config-field-row");
   expect(inlineRow.children.at(-1).attributes["aria-label"]).toContain("Increase Base-view X offset");
   expect(inlineRow.children.at(-1).title).toContain("0.01%");
   inline.blur = () => inline.dispatch("blur", {});
   inline.value = "0.";
+  inline.dispatch('input');
   inline.dispatch("keydown", { key: "Enter", preventDefault: vi.fn() });
-  expect(onField).toHaveBeenCalledTimes(1);
-  expect(onField).toHaveBeenCalledWith("pre.tx", "0.", "number");
+  expect(onField).not.toHaveBeenCalled();
+  view.fields.get('pre:pre.tx').cancel();
+  inline.value='3'; inline.dispatch('input'); inline.dispatch('blur');
+  expect(onField).toHaveBeenCalledWith('pre.tx','3','number',{baseValue:.02,resolvedPath:'pre.tx',override:false});
   const fitCard = view.nodeMap.get("right-fit");
   const preventDefault = vi.fn();
   fitCard.dispatch("keydown", { key: "Enter", preventDefault });
@@ -407,38 +422,61 @@ test("invalid warp coordinates preserve handles and show an accessible error", (
   const draft = structuredClone(DEFAULT_PROJECTION_CONFIG); const editor = createWarpEditor({ config: draft, output: "left" });
   const handles = editor.getControlPoints();
   view.update({ state: { draft }, selectedNode: "left-keystone", warpStates: { left: { ...editor.getState(), config: editor.getConfig(), handles } } });
+  expect(view.controls.warpCoordinateFields.get('x').wrap.children[1].children.find(node => node.dataset?.action === 'numeric-sign')).toBeTruthy();
   for (const [input, axis] of [[view.controls.warpPositionX, "x"], [view.controls.warpPositionY, "y"]]) {
-    input.value = ""; input.dispatch("change");
+    input.value = ""; input.dispatch("input"); input.dispatch("change");
     expect(input.attributes["aria-invalid"]).toBe("true");
-    expect(view.controls.warpNumeric.children.find((node) => node.id === `warp-position-${axis}-error`).textContent).toContain("Enter a finite coordinate");
-    input.value = "-"; input.dispatch("change");
+    expect(view.controls.warpCoordinateFields.get(axis).error.textContent).toContain("Enter");
+    input.value = "-"; input.dispatch("input"); input.dispatch("change");
     expect(input.attributes["aria-invalid"]).toBe("true");
     expect(handles).toEqual(editor.getControlPoints());
   }
   expect(onWarpAction).not.toHaveBeenCalled();
-  view.controls.warpPositionX.value = "-12.5"; view.controls.warpPositionX.dispatch("change");
+  view.controls.warpPositionX.value = "-12.5"; view.controls.warpPositionX.dispatch("input"); view.controls.warpPositionX.dispatch("change");
   expect(onWarpAction).toHaveBeenCalledWith("warp-set-position", { axis: "x", pixels: -12.5 });
-  expect(view.controls.warpPositionX.attributes["aria-invalid"]).toBeUndefined();
-  view.controls.warpPositionY.value = "-4.25"; view.controls.warpPositionY.dispatch("change");
+  expect(view.controls.warpPositionX.attributes["aria-invalid"]).toBe("false");
+  view.controls.warpPositionY.value = "-4.25"; view.controls.warpPositionY.dispatch("input"); view.controls.warpPositionY.dispatch("change");
   expect(onWarpAction).toHaveBeenCalledWith("warp-set-position", { axis: "y", pixels: -4.25 });
   expect(onWarpAction).toHaveBeenCalledTimes(2);
-  expect(view.controls.warpPositionY.attributes["aria-invalid"]).toBeUndefined();
+  for (const axis of ['x', 'y']) {
+    const coordinate = view.controls.warpCoordinateFields.get(axis);
+    coordinate.cancel();
+    view.update({ state: { draft }, selectedNode: 'left-keystone', warpStates: { left: { ...editor.getState(), config: editor.getConfig(), handles } } });
+    coordinate.cancel();
+    const sign = coordinate.wrap.children[1].children.find(node => node.dataset?.action === 'numeric-sign');
+    sign.dispatch('click');
+    coordinate.number.value = '5'; coordinate.number.dispatch('input'); coordinate.number.dispatch('change');
+    expect(onWarpAction).toHaveBeenLastCalledWith('warp-set-position', { axis, pixels: -5 });
+    onWarpAction.mockReturnValueOnce(false);
+    coordinate.number.value = '9'; coordinate.number.dispatch('input'); coordinate.number.dispatch('change');
+    expect(coordinate.isPending()).toBe(true);
+    expect(coordinate.number.attributes['aria-invalid']).toBe('true');
+    coordinate.cancel();
+  }
+
+  expect(view.controls.warpPositionY.attributes["aria-invalid"]).toBe("false");
   view.dispose();
 });
 
-test("selection refresh clears a stale warp error when it replaces the unfocused coordinate", () => {
+test("selection refresh keeps pending coordinates conflicted until restart", () => {
   const make = (tag = "div") => ({ tagName: tag.toUpperCase(), children: [], dataset: {}, style: {}, attributes: {}, classList: { toggle() {} }, appendChild(child) { this.children.push(child); child.parentElement = this; return child; }, append(...children) { children.forEach((child) => this.appendChild(child)); }, prepend(...children) { this.children.unshift(...children); }, remove() {}, setAttribute(key, value) { this.attributes[key] = value; }, removeAttribute(key) { delete this.attributes[key]; }, addEventListener(type, handler) { this.listeners ||= {}; (this.listeners[type] ||= []).push(handler); }, removeEventListener() {}, dispatch(type, event) { for (const handler of this.listeners?.[type] || []) handler({ currentTarget: this, target: this, ...event }); }, replaceChildren(...children) { this.children = children; } });
   const root = make("main"); const doc = { activeElement: null, createElement: make, createElementNS: (_ns, tag) => make(tag), createTextNode: (text) => ({ nodeType: 3, textContent: String(text), parentElement: null }), defaultView: { matchMedia: () => ({ matches: false }) } }; root.ownerDocument = doc;
   const onWarpAction = vi.fn(); const view = createProjectionConfigView(root, { descriptors: FIELD_DESCRIPTORS, onWarpAction });
   const draft = structuredClone(DEFAULT_PROJECTION_CONFIG); const editor = createWarpEditor({ config: draft, output: "left" });
   const warpStates = { left: { ...editor.getState(), config: editor.getConfig(), handles: editor.getControlPoints() } };
   view.update({ state: { draft }, selectedNode: "left-keystone", warpStates });
-  view.controls.warpPositionX.value = ""; view.controls.warpPositionX.dispatch("change");
-  expect(view.controls.warpPositionX.attributes["aria-invalid"]).toBe("true");
-  editor.select({ kind: "corner", index: 1 });
+  view.controls.warpPositionX.dispatch("focus");
+  expect(view.controls.warpCoordinateFields.get('x').isPending()).toBe(false);
+  editor.select({ mode: "keystone", kind: "corner", index: 1 });
   view.update({ state: { draft }, selectedNode: "left-keystone", warpStates: { left: { ...editor.getState(), config: editor.getConfig(), handles: editor.getControlPoints() } } });
-  expect(view.controls.warpPositionX.attributes["aria-invalid"]).toBeUndefined();
-  expect(view.controls.warpNumeric.children.find((node) => node.id === "warp-position-x-error").textContent).toBe("");
+  expect(view.controls.warpPositionX.attributes["aria-invalid"]).toBe("true");
+  const coordinate = view.controls.warpCoordinateFields.get('x');
+  coordinate.number.value = '5'; coordinate.number.dispatch('input'); coordinate.number.dispatch('change');
+  expect(coordinate.isPending()).toBe(true);
+  expect(coordinate.wrap.children.find(node => node.dataset?.action === 'numeric-use-mine').disabled).toBe(true);
+  coordinate.cancel();
+  expect(coordinate.isPending()).toBe(false);
+  expect(coordinate.error.textContent).toBe('');
   expect(onWarpAction).not.toHaveBeenCalled();
   view.dispose();
 });

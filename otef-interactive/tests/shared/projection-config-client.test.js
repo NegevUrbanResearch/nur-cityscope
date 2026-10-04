@@ -73,6 +73,35 @@ function harness({ revision = 0, config = DEFAULTS, validateCandidate, connectOn
 
 beforeEach(() => vi.restoreAllMocks());
 
+test('does not schedule Live or disturb preflight for an identical draft', async () => {
+  const h = harness();
+  const starting = h.client.start(); h.resolveNext(stateFor(0)); await starting;
+  const before = h.client.getState();
+  const listener = vi.fn(); const unsubscribe = h.client.subscribe(listener); listener.mockClear();
+  h.client.setDraft(structuredClone(before.draft));
+  expect(h.client.getState()).toEqual(before);
+  expect(listener).not.toHaveBeenCalled();
+  await h.advance(1000); expect(h.requests).toHaveLength(0);
+  unsubscribe(); h.client.stop();
+});
+
+test('identical draft leaves the actual deferred candidate preflight alive', async () => {
+  const checks = [];
+  const h = harness({ validateCandidate: args => new Promise(resolve => checks.push({ ...args, resolve })) });
+  const starting = h.client.start(); h.resolveNext(stateFor(0)); await starting; h.client.setLive(false);
+  const candidate = clone(DEFAULTS); candidate.pre.scale = 1.5; h.client.setDraft(candidate);
+  const applying = h.client.apply(); const result = applying.catch(error => error);
+  await h.flushPromises(); expect(checks).toHaveLength(1);
+  const before = h.client.getState();
+  h.client.setDraft(structuredClone(candidate));
+  expect(checks[0].signal?.aborted).toBe(false);
+  expect(h.client.getState()).toEqual(before);
+  checks[0].resolve({ identity: checks[0].identity, valid: true }); await h.flushPromises();
+  expect(h.requests).toHaveLength(1); expect(JSON.parse(h.requests[0].options.body).config).toEqual(candidate);
+  h.resolveNext(stateFor(1, candidate)); await expect(result).resolves.not.toBeInstanceOf(Error);
+  h.client.stop();
+});
+
 test.each(['http', 'own websocket'])('Save returns its accepted checkpoint identity after %s and keeps receipt context out of state', async (ack) => {
   const h = harness(); const starting = h.client.start(); h.resolveNext(stateFor(0)); await starting; h.client.setLive(false);
   const notifications = []; const receipts = []; const unsubscribe = h.client.subscribe((state, receipt) => { notifications.push(state); receipts.push(receipt); });
@@ -198,7 +227,7 @@ test.each(['live', 'apply', 'save', 'load', 'revert'])(
     const checks = [];
     const h = harness({ validateCandidate: (candidate) => new Promise((resolve) => checks.push({ candidate, resolve })) });
     const started = h.client.start(); h.resolveNext(h.stateFor(0)); await started;
-    const a = clone(DEFAULTS); a.pre.tx = 0.01;
+    const a = clone(DEFAULTS); a.pre.tx = 0.011;
     const b = clone(DEFAULTS); b.pre.tx = 0.02;
     const c = clone(DEFAULTS); c.pre.tx = 0.03;
     if (action !== 'live') h.client.setLive(false);
@@ -275,7 +304,7 @@ test('an abandoned wall check cannot block a newer valid Live edit', async () =>
   const checks = [];
   const h = harness({ validateCandidate: (candidate) => new Promise((resolve) => checks.push({ candidate, resolve })) });
   const started = h.client.start(); h.resolveNext(h.stateFor(0)); await started;
-  const a = clone(DEFAULTS); a.pre.tx = 0.01;
+  const a = clone(DEFAULTS); a.pre.tx = 0.011;
   const b = clone(DEFAULTS); b.pre.tx = 0.02;
   h.client.setDraft(a); await h.advance(0); await h.flushPromises();
   expect(checks).toHaveLength(1);

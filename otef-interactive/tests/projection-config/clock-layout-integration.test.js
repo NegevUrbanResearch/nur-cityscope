@@ -41,7 +41,7 @@ test.each(["failure", "conflict"])("closed editor shows %s and recovery on the s
     expect(node.querySelector('[data-action="clock-scene"]')).not.toBeNull();
     expect(document.querySelectorAll("iframe")).toHaveLength(0);
     node.querySelector('[data-action="clock-editor-open"]').click();
-    const modalX = document.querySelector('.clock-layout-dialog [data-field="leftPct"]'); modalX.value = "17"; modalX.dispatchEvent(new Event("change"));
+    const modalX = document.querySelector('.clock-layout-dialog [data-field="leftPct"]'); modalX.value = "17"; modalX.dispatchEvent(new Event('input')); modalX.dispatchEvent(new Event("change"));
     document.querySelector(".clock-layout-close").click();
     await vi.advanceTimersByTimeAsync(150);
     const text = kind === "failure" ? "Save failed" : "Changed on another screen";
@@ -75,7 +75,7 @@ test.each(["saved", "load"])("clock drafts protect unload across slot switches u
     const { root } = mount({ layoutClient });
     const node = root.querySelector('[data-node="clock-gis"]');
     node.querySelector('[data-action="clock-editor-open"]').click();
-    const input = document.querySelector('.clock-layout-dialog [data-field="leftPct"]'); input.value = "17"; input.dispatchEvent(new Event("change"));
+    const input = document.querySelector('.clock-layout-dialog [data-field="leftPct"]'); input.value = "17"; input.dispatchEvent(new Event('input')); input.dispatchEvent(new Event("change"));
     document.querySelector(".clock-layout-close").click();
     const scene = node.querySelector('select[aria-label="GIS clock preview scene"]'); scene.value = "nova"; scene.dispatchEvent(new Event("change"));
     const unload = () => { const event = new Event("beforeunload", { cancelable: true }); window.dispatchEvent(event); return event.defaultPrevented; };
@@ -149,4 +149,19 @@ test("editor close restores focus to the node opener after responsive resize", (
   } finally {
     window.matchMedia = originalMatchMedia;
   }
+});
+
+test('signed clock rotation works from zero and stale scene edits cannot save', () => {
+  const {root,layoutClient}=mount();
+  root.querySelector('[data-node="clock-gis"] [data-action="clock-editor-open"]').click();
+  const rotation=document.querySelector('.clock-layout-dialog [data-field="rotateDeg"]');
+  rotation.closest('.config-field').querySelector('[data-action="numeric-sign"]').click();
+  rotation.value='2,5'; rotation.dispatchEvent(new Event('input')); rotation.dispatchEvent(new Event('change'));
+  expect(layoutClient.commit).toHaveBeenCalledWith('gisClock','start',expect.objectContaining({rotateDeg:-2.5}),expect.anything());
+  layoutClient.commit.mockClear();
+  rotation.value='10'; rotation.dispatchEvent(new Event('input'));
+  const scene=document.querySelector('.clock-layout-dialog select[aria-label="GIS clock preview scene"]');
+  scene.value='nova'; scene.dispatchEvent(new Event('change')); rotation.dispatchEvent(new Event('blur'));
+  expect(layoutClient.commit).not.toHaveBeenCalled();
+  expect(rotation.closest('.config-field').querySelector('[data-action="numeric-use-mine"]').disabled).toBe(true);
 });

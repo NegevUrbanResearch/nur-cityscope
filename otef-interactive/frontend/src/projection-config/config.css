@@ -92,15 +92,15 @@ h2, h3 { margin: 0 0 10px; }
 .parameter-field-layout .config-field-range-row { display: block; }
 .parameter-field-layout .config-field-range-row input[type=range] { display: block; width: 100%; min-height: 48px; }
 .parameter-field-layout .config-field-controls-row { grid-template-columns: minmax(52px, 1fr) minmax(80px, 104px) auto 48px 48px; gap: 8px; }
-.parameter-field-layout .config-field-controls-row input[type=number] { width: 100%; min-height: 48px; padding: 6px 8px; }
+.parameter-field-layout .config-field-controls-row input[data-input=number] { width: 100%; min-height: 48px; padding: 6px 8px; }
 .parameter-field-layout .config-field-controls-row .config-field-value { text-align: left; }
-.config-field-row input[type=number] { width: 70px; min-height: 44px; padding: 4px; }
+.config-field-row input[data-input=number] { width: 70px; min-height: 44px; padding: 4px; }
 .config-node .config-field { margin-top: 5px; }
 .config-node .config-field-label { font-size: .75rem; margin-bottom: 2px; }
 .config-node .config-field-row { grid-template-columns: minmax(0, 1fr) 78px 13px 30px 30px; gap: 3px; }
-.config-node .config-field-row input[type=number] { width: 78px; min-height: 32px; padding: 2px; appearance: textfield; }
-.config-node .config-field-row input[type=number]::-webkit-inner-spin-button,
-.config-node .config-field-row input[type=number]::-webkit-outer-spin-button { appearance: none; margin: 0; }
+.config-node .config-field-row input[data-input=number] { width: 78px; min-height: 32px; padding: 2px; appearance: textfield; }
+.config-node .config-field-row input[data-input=number]::-webkit-inner-spin-button,
+.config-node .config-field-row input[data-input=number]::-webkit-outer-spin-button { appearance: none; margin: 0; }
 .config-node .config-field-row input[type=range] { width: 100%; min-height: 32px; }
 .config-node .nudge { width: 30px; min-height: 32px; padding: 1px; }
 .names-wall-mode-label { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 8px; color: #ccd6e2; font-size: .8rem; }
@@ -166,13 +166,37 @@ h2, h3 { margin: 0 0 10px; }
 @container (max-width: 280px) {
   .parameter-field-layout .config-field-controls-row { grid-template-columns: minmax(80px, 1fr) auto 48px 48px; grid-template-rows: auto 48px; gap: 4px; }
   .parameter-field-layout .config-field-controls-row > .config-field-value { grid-column: 1 / -1; grid-row: 1; }
-  .parameter-field-layout .config-field-controls-row > input[type=number] { grid-column: 1; grid-row: 2; }
+  .parameter-field-layout .config-field-controls-row > input[data-input=number] { grid-column: 1; grid-row: 2; }
   .parameter-field-layout .config-field-controls-row > .config-field-unit { grid-column: 2; grid-row: 2; }
   .parameter-field-layout .config-field-controls-row > button:first-of-type { grid-column: 3; grid-row: 2; }
   .parameter-field-layout .config-field-controls-row > button:last-of-type { grid-column: 4; grid-row: 2; }
 }
 .config-field-value { min-width: 44px; text-align: right; color: var(--config-accent); font-variant-numeric: tabular-nums; }
 .config-field-unit { color: var(--config-muted); font-size: .8rem; }
+.config-field-row:has(.numeric-sign) { grid-template-columns: minmax(60px, 1fr) 44px 76px 20px 44px 44px; }
+.config-node .config-field-row:has(.numeric-sign) { grid-template-columns: minmax(0, 1fr) 30px 78px 13px 30px 30px; }
+.numeric-sign { min-width: 44px; min-height: 44px; padding: 4px; font-variant-numeric: tabular-nums; }
+.numeric-sign[aria-pressed=true] { border-width: 2px; font-weight: 700; }
+.config-field :is(button, input):disabled { opacity: .48; cursor: not-allowed; }
+.config-node .numeric-sign { min-width: 30px; min-height: 32px; }
+.parameter-field-layout .config-field-controls-row:has(.numeric-sign) { grid-template-columns: minmax(52px, 1fr) 48px minmax(80px, 104px) auto 48px 48px; }
+.clock-layout-field.config-field { display: block; }
+:is(.clock-layout-field, .settlement-name-field).config-field .config-field-row { grid-template-columns: minmax(80px, 1fr) auto; }
+:is(.clock-layout-field, .settlement-name-field).config-field .config-field-row:has(.numeric-sign) { grid-template-columns: 48px minmax(80px, 1fr) auto; }
+:is(.clock-layout-field, .settlement-name-field).config-field input { width: 100%; min-height: 44px; }
+.config-field > [data-action^=numeric-use] { min-height: 44px; margin: 4px 4px 0 0; }
+@container (max-width: 280px) {
+  .parameter-field-layout .config-field-controls-row:has(.numeric-sign) { grid-template-columns: 48px minmax(60px, 1fr) auto 44px 44px; }
+  .parameter-field-layout .config-field-controls-row:has(.numeric-sign) > .numeric-sign { grid-column: 1; grid-row: 2; }
+  .parameter-field-layout .config-field-controls-row:has(.numeric-sign) > input { grid-column: 2; grid-row: 2; }
+  .parameter-field-layout .config-field-controls-row:has(.numeric-sign) > .config-field-unit { grid-column: 3; grid-row: 2; }
+  .parameter-field-layout .config-field-controls-row:has(.numeric-sign) > [data-direction='-1'] { grid-column: 4; grid-row: 2; }
+  .parameter-field-layout .config-field-controls-row:has(.numeric-sign) > [data-direction='1'] { grid-column: 5; grid-row: 2; }
+}
+@media (pointer: coarse) {
+  .config-node .config-field-row:has(.numeric-sign) { grid-template-columns: minmax(0, 1fr) 44px 70px 18px 44px 44px; }
+  .config-node .numeric-sign { min-width: 44px; min-height: 48px; }
+}
 .nudge { width: 44px; min-height: 44px; padding: 2px; }
 .config-field-error { display: block; min-height: 1em; color: var(--config-error); }
 .warp-inspector { margin: 12px 0; padding: 16px; border: 1px solid var(--config-divider); border-radius: 12px; background: var(--config-surface-raised); }
@@ -197,7 +221,13 @@ h2, h3 { margin: 0 0 10px; }
 .warp-handle.selected { fill: #ffd166; stroke: #fff3c4; }
 .warp-handle:focus-visible { outline: 3px solid #fff3c4; outline-offset: 4px; }
 .warp-selection-status { height: 36px; min-height: 36px; margin: 8px 0; overflow: auto; color: var(--config-muted); font-size: 13px; line-height: 18px; overflow-wrap: anywhere; }
-.warp-numeric { display: grid; grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 8px; margin-top: 6px; color: var(--config-muted); font-size: 14px; }
+.warp-numeric { display: grid; grid-template-columns: minmax(0, 1fr); align-items: center; gap: 8px; margin-top: 6px; color: var(--config-muted); font-size: 14px; }
+.warp-numeric .config-field { min-width: 0; margin-top: 0; }
+.warp-numeric .config-field-label, .warp-numeric .config-field-error { overflow-wrap: anywhere; }
+.warp-numeric .config-field-row:has(.numeric-sign) { grid-template-columns: 48px minmax(0, 1fr) auto; }
+.warp-numeric .config-field-row input[data-input=number] { min-width: 0; width: 100%; min-height: 48px; }
+.warp-numeric .numeric-sign { min-height: 48px; }
+.warp-numeric .config-field > button { max-width: 100%; white-space: normal; }
 .warp-numeric input { min-height: 48px; width: 100%; padding: 5px; font-variant-numeric: tabular-nums; }
 .warp-position-error { grid-column: 1 / -1; min-width: 0; overflow-wrap: anywhere; }
 .warp-arrows { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 8px; }
@@ -412,9 +442,21 @@ h2, h3 { margin: 0 0 10px; }
   .config-node h3 { min-height: 48px; }
   .config-node :is(button, input, select), .graph-controls button { min-height: 48px; }
   .config-node .config-field-row { grid-template-columns: minmax(0, 1fr) 70px 18px 48px 48px; gap: 3px; }
-  .config-node .config-field-row input[type="number"] { width: 70px; min-height: 48px; }
+  .config-node .config-field-row input[data-input="number"] { width: 70px; min-height: 48px; }
   .config-node .nudge { width: 48px; min-height: 48px; }
 }
 @container (max-width: 599px) {
   .parameter-editor-previews:has(.parameter-preview-slot:not([hidden]) ~ .parameter-preview-slot:not([hidden])) { grid-template-columns: 1fr; }
 }
+
+.numeric-sensitivity { min-height: 44px; margin-block: 4px; }
+.numeric-sensitivity[aria-pressed='true'] { border-width: 2px; font-weight: 700; }
+.config-field .nudge { touch-action: none; }
+.numeric-step { display: inline-block; margin-inline-start: 8px; font-size: 12px; }
+.parameter-field-layout .config-field-controls-row,
+.parameter-field-layout .config-field-controls-row:has(.numeric-sign) { display: flex; flex-wrap: wrap; min-width: 0; }
+.parameter-field-layout .config-field-controls-row > .config-field-value { flex: 1 0 100%; }
+.parameter-field-layout .config-field-controls-row > input[data-input=number] { flex: 1 1 80px; min-width: 60px; width: 80px; }
+.parameter-field-layout .config-field-controls-row > button { flex: 0 0 48px; min-height: 48px; }
+.parameter-editor-header > [data-action='parameter-undo'],
+.parameter-editor-header > [data-action='parameter-redo'] { grid-column: auto; grid-row: auto; min-height: 44px; }

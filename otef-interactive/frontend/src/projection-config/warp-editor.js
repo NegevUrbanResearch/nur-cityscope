@@ -77,6 +77,13 @@ export function createWarpEditor({
   let validationReason = '';
   let evaluationCache = null;
 
+  const allowCommand = () => {
+    if (!drag) return true;
+    validationReason = 'gesture_active';
+    validationMessage = 'Finish or cancel the active adjustment first.';
+    return false;
+  };
+
   const step = () => stepMode === "coarse" ? 1 : 0.25;
   const selectedIndices = () => indicesFor(selection, configWarp(current, output));
   const emit = (candidate, meta) => { current = candidate; onChange(clone(candidate), { ...meta, selection: clone(selection) }); };
@@ -162,14 +169,16 @@ export function createWarpEditor({
   };
 
   function select(next) {
+    if (!allowCommand()) return false;
     if (!next || !["keystone", "grid"].includes(next.mode)) return false;
     selection = clone(next);
     recordProjectionTrace(trace, 'selection', { output, mode: selection.mode, role: selection.kind, index: selection.index, indices: selectedIndices() });
     return true;
   }
-  function setMode(mode) { if (selection.mode === mode) return true; return select(mode === "grid" ? gridSelection() : keystoneSelection()); }
-  function setStep(mode) { if (!["fine", "coarse"].includes(mode)) return false; stepMode = mode; return true; }
+  function setMode(mode) { if (!allowCommand()) return false; if (selection.mode === mode) return true; return select(mode === "grid" ? gridSelection() : keystoneSelection()); }
+  function setStep(mode) { if (!allowCommand()) return false; if (!["fine", "coarse"].includes(mode)) return false; stepMode = mode; return true; }
   function moveByPixels(dx, dy, meta = {}) {
+    if (!allowCommand()) return false;
     return moveNormalized(Number(dx) / OUTPUT_WIDTH, Number(dy) / OUTPUT_HEIGHT, { reason: meta.reason || "nudge", flush: meta.flush ?? true }, { record: meta.record !== false });
   }
   function nudge(direction, options = {}) {
@@ -180,15 +189,16 @@ export function createWarpEditor({
     return moveByPixels(vector[0], vector[1], { reason: "nudge", flush: true });
   }
   function setPosition(axis, pixels) {
+    if (!allowCommand()) return false;
     if (!["x", "y"].includes(axis) || !Number.isFinite(Number(pixels))) return false;
     const target = Number(pixels) / (axis === "x" ? OUTPUT_WIDTH : OUTPUT_HEIGHT);
     const anchor = selectedMean(axis);
     if (!Number.isFinite(anchor)) return false;
     return moveNormalized(axis === "x" ? target - anchor : 0, axis === "y" ? target - anchor : 0, { reason: "numeric", flush: true });
   }
-  function resetSelection() { return apply(resetToIdentity(true), { reason: "reset-selection", flush: true }); }
-  function resetResiduals() { return apply(resetToIdentity(false), { reason: "reset-residuals", flush: true }); }
-  function setEnabled(enabled) { const candidate = clone(current); candidate.outputs[output].warp.enabled = Boolean(enabled); return apply(candidate, { reason: "warp-enabled", flush: true }); }
+  function resetSelection() { if (!allowCommand()) return false; return apply(resetToIdentity(true), { reason: "reset-selection", flush: true }); }
+  function resetResiduals() { if (!allowCommand()) return false; return apply(resetToIdentity(false), { reason: "reset-residuals", flush: true }); }
+  function setEnabled(enabled) { if (!allowCommand()) return false; const candidate = clone(current); candidate.outputs[output].warp.enabled = Boolean(enabled); return apply(candidate, { reason: "warp-enabled", flush: true }); }
   function restoreHistory(entry, reason) {
     const candidate = clone(current);
     candidate.outputs[output].warp = clone(entry.warp);
@@ -199,11 +209,13 @@ export function createWarpEditor({
     return true;
   }
   function undo() {
+    if (!allowCommand()) return false;
     if (!undoStack.length) return false;
     redoStack.push({ warp: clone(configWarp(current, output)), selection: clone(selection) });
     return restoreHistory(undoStack.pop(), "undo");
   }
   function redo() {
+    if (!allowCommand()) return false;
     if (!redoStack.length) return false;
     undoStack.push({ warp: clone(configWarp(current, output)), selection: clone(selection) });
     return restoreHistory(redoStack.pop(), "redo");
@@ -282,11 +294,7 @@ export function createWarpEditor({
     return gridSelection("point", rowIndex * columns + columnIndex);
   };
   function editGridLayout(operation, values = {}) {
-    if (drag) {
-      validationReason = "gesture_active";
-      validationMessage = "Finish or cancel the active pointer gesture before changing the grid layout.";
-      return false;
-    }
+    if (!allowCommand()) return false;
     const candidate = clone(current);
     const grid = configWarp(candidate, output)?.grid;
     if (!grid) return false;
@@ -313,6 +321,7 @@ export function createWarpEditor({
     emit(candidate, { reason: "grid-layout", flush: true });
     return true;
   }
+  function retireGesture() { drag = null; validationMessage = ""; }
   function getControlPoints() {
     const warp = configWarp(current, output);
     const grid = warp?.grid || {};
@@ -348,7 +357,7 @@ export function createWarpEditor({
     getState: () => ({ output, selection: { ...clone(selection), indices: selectedIndices() }, stepMode, dragging: Boolean(drag), historyDepth: undoStack.length, redoDepth: redoStack.length, baselineAvailable: baselineAvailable(), validationMessage }),
     getControlPoints,
     select, setMode, setStep, moveByPixels, nudge, setPosition, resetSelection, resetResiduals, setEnabled, undo, redo,
-    pointerStart, pointerMove, pointerEnd, pointerCancel, setConfig, setBaselineMesh, editGridLayout,
+    pointerStart, pointerMove, pointerEnd, pointerCancel, retireGesture, setConfig, setBaselineMesh, editGridLayout,
   };
 }
 
