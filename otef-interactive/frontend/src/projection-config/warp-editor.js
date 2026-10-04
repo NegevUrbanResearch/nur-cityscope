@@ -73,14 +73,22 @@ export function createWarpEditor({
   let undoStack = [];
   let redoStack = [];
   let drag = null;
+  let nudgeGesture = null;
   let validationMessage = "";
   let validationReason = '';
   let evaluationCache = null;
 
   const allowCommand = () => {
-    if (!drag) return true;
+    if (!drag && !nudgeGesture) return true;
     validationReason = 'gesture_active';
     validationMessage = 'Finish or cancel the active adjustment first.';
+    return false;
+  };
+  const allowGeometryCommand = () => {
+    if (!allowCommand()) return false;
+    if (configWarp(current, output)?.enabled !== false) return true;
+    validationReason = "warp_bypassed";
+    validationMessage = "Correction is bypassed. Enable correction to edit geometry.";
     return false;
   };
 
@@ -178,7 +186,7 @@ export function createWarpEditor({
   function setMode(mode) { if (!allowCommand()) return false; if (selection.mode === mode) return true; return select(mode === "grid" ? gridSelection() : keystoneSelection()); }
   function setStep(mode) { if (!allowCommand()) return false; if (!["fine", "coarse"].includes(mode)) return false; stepMode = mode; return true; }
   function moveByPixels(dx, dy, meta = {}) {
-    if (!allowCommand()) return false;
+    if (!allowGeometryCommand()) return false;
     return moveNormalized(Number(dx) / OUTPUT_WIDTH, Number(dy) / OUTPUT_HEIGHT, { reason: meta.reason || "nudge", flush: meta.flush ?? true }, { record: meta.record !== false });
   }
   function nudge(direction, options = {}) {
@@ -186,18 +194,58 @@ export function createWarpEditor({
     const vectors = { up: [0, -amount], down: [0, amount], left: [-amount, 0], right: [amount, 0] };
     const vector = vectors[direction];
     if (!vector) return false;
-    return moveByPixels(vector[0], vector[1], { reason: "nudge", flush: true });
+    if (!nudgeGesture) return moveByPixels(vector[0], vector[1], { reason: "nudge", flush: true });
+    const deltaX = nudgeGesture.dx + vector[0];
+    const deltaY = nudgeGesture.dy + vector[1];
+    const candidate = clone(current);
+    candidate.outputs[output].warp = clone(nudgeGesture.startWarp);
+    const points = pointsForSelection(candidate, output, nudgeGesture.startSelection);
+    for (const index of indicesFor(nudgeGesture.startSelection, configWarp(candidate, output))) {
+      points[index][0] += deltaX / OUTPUT_WIDTH;
+      points[index][1] += deltaY / OUTPUT_HEIGHT;
+    }
+    if (!valid(candidate, { report: true })) return false;
+    nudgeGesture.dx = deltaX;
+    nudgeGesture.dy = deltaY;
+    nudgeGesture.changed = deltaX !== 0 || deltaY !== 0;
+    emit(candidate, { reason: "nudge", flush: false });
+    return true;
+  }
+  function beginNudgeGesture() {
+    if (!allowGeometryCommand()) return false;
+    nudgeGesture = { startWarp: clone(configWarp(current, output)), startSelection: clone(selection), dx: 0, dy: 0, changed: false };
+    return true;
+  }
+  function endNudgeGesture() {
+    if (!nudgeGesture) return false;
+    const gesture = nudgeGesture;
+    nudgeGesture = null;
+    if (gesture.changed) {
+      undoStack.push({ warp: clone(gesture.startWarp), selection: clone(gesture.startSelection) });
+      if (undoStack.length > historyLimit) undoStack.splice(0, undoStack.length - historyLimit);
+      redoStack = [];
+      onChange(clone(current), { reason: "nudge-end", flush: true, selection: clone(selection) });
+    }
+    return true;
+  }
+  function cancelNudgeGesture() {
+    if (!nudgeGesture) { validationMessage = ""; return false; }
+    const gesture = nudgeGesture;
+    nudgeGesture = null;
+    validationMessage = "";
+    if (gesture.changed) restoreWarp(gesture.startWarp, "nudge-cancel", true);
+    return true;
   }
   function setPosition(axis, pixels) {
-    if (!allowCommand()) return false;
+    if (!allowGeometryCommand()) return false;
     if (!["x", "y"].includes(axis) || !Number.isFinite(Number(pixels))) return false;
     const target = Number(pixels) / (axis === "x" ? OUTPUT_WIDTH : OUTPUT_HEIGHT);
     const anchor = selectedMean(axis);
     if (!Number.isFinite(anchor)) return false;
     return moveNormalized(axis === "x" ? target - anchor : 0, axis === "y" ? target - anchor : 0, { reason: "numeric", flush: true });
   }
-  function resetSelection() { if (!allowCommand()) return false; return apply(resetToIdentity(true), { reason: "reset-selection", flush: true }); }
-  function resetResiduals() { if (!allowCommand()) return false; return apply(resetToIdentity(false), { reason: "reset-residuals", flush: true }); }
+  function resetSelection() { if (!allowGeometryCommand()) return false; return apply(resetToIdentity(true), { reason: "reset-selection", flush: true }); }
+  function resetResiduals() { if (!allowGeometryCommand()) return false; return apply(resetToIdentity(false), { reason: "reset-residuals", flush: true }); }
   function setEnabled(enabled) { if (!allowCommand()) return false; const candidate = clone(current); candidate.outputs[output].warp.enabled = Boolean(enabled); return apply(candidate, { reason: "warp-enabled", flush: true }); }
   function restoreHistory(entry, reason) {
     const candidate = clone(current);
@@ -209,18 +257,19 @@ export function createWarpEditor({
     return true;
   }
   function undo() {
-    if (!allowCommand()) return false;
+    if (!allowGeometryCommand()) return false;
     if (!undoStack.length) return false;
     redoStack.push({ warp: clone(configWarp(current, output)), selection: clone(selection) });
     return restoreHistory(undoStack.pop(), "undo");
   }
   function redo() {
-    if (!allowCommand()) return false;
+    if (!allowGeometryCommand()) return false;
     if (!redoStack.length) return false;
     undoStack.push({ warp: clone(configWarp(current, output)), selection: clone(selection) });
     return restoreHistory(redoStack.pop(), "redo");
   }
   function pointerStart(point) {
+    if (!allowGeometryCommand()) return false;
     if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return false;
     drag = { startWarp: clone(configWarp(current, output)), startSelection: clone(selection), x: point.x, y: point.y, lastX: point.x, lastY: point.y, moved: false };
     return true;
@@ -265,7 +314,7 @@ export function createWarpEditor({
     current = clone(next);
     if (canReuseEvaluation) evaluationCache.config = current;
     validationMessage = "";
-    if (rebase) { undoStack = []; redoStack = []; drag = null; }
+    if (rebase) { undoStack = []; redoStack = []; drag = null; nudgeGesture = null; }
     return true;
   }
   function setBaselineMesh(next) { baselineMesh = next ? clone(next) : null; return true; }
@@ -294,7 +343,7 @@ export function createWarpEditor({
     return gridSelection("point", rowIndex * columns + columnIndex);
   };
   function editGridLayout(operation, values = {}) {
-    if (!allowCommand()) return false;
+    if (!allowGeometryCommand()) return false;
     const candidate = clone(current);
     const grid = configWarp(candidate, output)?.grid;
     if (!grid) return false;
@@ -321,7 +370,7 @@ export function createWarpEditor({
     emit(candidate, { reason: "grid-layout", flush: true });
     return true;
   }
-  function retireGesture() { drag = null; validationMessage = ""; }
+  function retireGesture() { drag = null; nudgeGesture = null; validationMessage = ""; }
   function clearValidation() { validationMessage = ""; validationReason = ""; }
   function getControlPoints() {
     const warp = configWarp(current, output);
@@ -355,10 +404,10 @@ export function createWarpEditor({
   };
   return {
     getConfig: () => clone(current),
-    getState: () => ({ output, selection: { ...clone(selection), indices: selectedIndices() }, stepMode, dragging: Boolean(drag), historyDepth: undoStack.length, redoDepth: redoStack.length, baselineAvailable: baselineAvailable(), validationMessage }),
+    getState: () => ({ output, selection: { ...clone(selection), indices: selectedIndices() }, stepMode, dragging: Boolean(drag), adjusting: Boolean(drag || nudgeGesture), historyDepth: undoStack.length, redoDepth: redoStack.length, baselineAvailable: baselineAvailable(), validationMessage }),
     getControlPoints,
     select, setMode, setStep, moveByPixels, nudge, setPosition, resetSelection, resetResiduals, setEnabled, undo, redo,
-    pointerStart, pointerMove, pointerEnd, pointerCancel, retireGesture, clearValidation, setConfig, setBaselineMesh, editGridLayout,
+    pointerStart, pointerMove, pointerEnd, pointerCancel, beginNudgeGesture, endNudgeGesture, cancelNudgeGesture, retireGesture, clearValidation, setConfig, setBaselineMesh, editGridLayout,
   };
 }
 

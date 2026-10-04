@@ -71,9 +71,17 @@ function documentStub({ coarse = false, noHover = false } = {}) {
   return {
     activeElement: null,
     listeners: {},
-    addEventListener(type, handler) { (this.listeners[type] ||= []).push(handler); },
-    removeEventListener(type, handler) { this.listeners[type] = (this.listeners[type] || []).filter((item) => item !== handler); },
+    captureListeners: {},
+    addEventListener(type, handler, options) { const target = options === true || options?.capture ? this.captureListeners : this.listeners; (target[type] ||= []).push(handler); },
+    removeEventListener(type, handler) { this.listeners[type] = (this.listeners[type] || []).filter((item) => item !== handler); this.captureListeners[type] = (this.captureListeners[type] || []).filter((item) => item !== handler); },
     dispatch(type, event = {}) { for (const handler of this.listeners[type] || []) handler(event); },
+    dispatchFromTarget(target, type, event) {
+      event.target ||= target; event.type = type;
+      for (const handler of this.captureListeners[type] || []) { handler(event); if (event.immediateStopped) return; }
+      for (const handler of target.listeners?.[type] || []) { handler(event); if (event.immediateStopped) return; }
+      if (event.propagationStopped) return;
+      for (const handler of this.listeners[type] || []) { handler(event); if (event.immediateStopped || event.propagationStopped) return; }
+    },
     defaultView: { matchMedia: (query) => ({ matches: query.includes("pointer: coarse") ? coarse : query.includes("hover: none") ? noHover : false, addEventListener() {}, removeEventListener() {} }) },
     createElement: element,
     createElementNS: (_namespace, tag) => element(tag),
@@ -184,8 +192,203 @@ function tracedWarpHarness() {
   surface.getBoundingClientRect = () => ({ left: 0, top: 0, width: 2064, height: 1224 });
   const redraws = () => trace.record.mock.calls.filter(([kind, detail]) => kind === "redraw" && detail.surface === "page" && detail.phase === "start").length;
   const restore = () => { api.dispose(); globalThis.document = previousDocument; };
-  return { root, client, trace, surface, redraws, restore };
+  return { root, client, trace, surface, redraws, api, restore };
 }
+
+test("relative pad start disables presentation toggle and blocks consuming commands before movement", async () => {
+  const { root, client, api, restore } = tracedWarpHarness();
+  await api.handleAction("warp-nudge", { direction: "right", fine: true, output: "left" });
+  const pad = find(root, (node) => node.className === "warp-relative-pad");
+  const toggle = find(root, (node) => node.dataset?.action === "warp-full-viewport");
+  pad.getBoundingClientRect = () => ({ left: 0, top: 0, width: 200, height: 200 });
+  pad.dispatch("pointerdown", { pointerId: 29, button: 0, clientX: 100, clientY: 100, preventDefault() {} });
+  expect(toggle.disabled).toBe(true);
+  expect(find(root, (node) => node.dataset?.action === "warp-undo").disabled).toBe(true);
+  expect(find(root, (node) => node.dataset?.action === "warp-redo").disabled).toBe(true);
+  expect(await api.handleAction("apply")).toBe(false);
+  expect(client.apply).not.toHaveBeenCalled();
+  const fullViewport = root.dataset?.warpFullViewport;
+  toggle.dispatch("click");
+  expect(root.dataset?.warpFullViewport).toBe(fullViewport);
+  expect(client.setDraft).not.toHaveBeenCalled();
+  restore();
+});
+
+test("Back cancels a relative-pad gesture before hiding its workspace", () => {
+  const { root, client, restore } = tracedWarpHarness();
+  const pad = find(root, (node) => node.className === "warp-relative-pad");
+  const back = find(root, (node) => node.dataset?.action === "warp-editor-close");
+  pad.getBoundingClientRect = () => ({ left: 0, top: 0, width: 200, height: 200 });
+  pad.dispatch("pointerdown", { pointerId: 30, button: 0, clientX: 100, clientY: 100, preventDefault() {} });
+  pad.dispatch("pointermove", { pointerId: 30, clientX: 110, clientY: 100 });
+  expect(client.getState().draft.outputs.left.warp.keystone.corners[0][0]).not.toBe(0);
+  back.dispatch("click");
+  expect(find(root, (node) => node.className === "warp-editor-dialog").hidden).toBe(false);
+  expect(client.getState().draft.outputs.left.warp.keystone.corners[0][0]).not.toBe(0);
+  pad.dispatch("lostpointercapture", { pointerId: 30 });
+  expect(client.getState().draft.outputs.left.warp.keystone.corners[0][0]).toBe(0);
+  back.dispatch("click");
+  expect(find(root, (node) => node.className === "warp-editor-dialog").hidden).toBe(true);
+  expect(find(root, (node) => node.className === "warp-editor-dialog").dataset.fullViewport).toBe("false");
+  expect(client.getState().draft.outputs.left.warp.keystone.corners[0][0]).toBe(0);
+  restore();
+});
+
+test("Escape cancels a relative-pad gesture first and a second Escape closes", () => {
+  const { root, client, restore } = tracedWarpHarness();
+  const pad = find(root, (node) => node.className === "warp-relative-pad");
+  const dialog = find(root, (node) => node.className === "warp-editor-dialog");
+  pad.getBoundingClientRect = () => ({ left: 0, top: 0, width: 200, height: 200 });
+  pad.dispatch("pointerdown", { pointerId: 32, button: 0, clientX: 100, clientY: 100, preventDefault() {} });
+  pad.dispatch("pointermove", { pointerId: 32, clientX: 110, clientY: 100 });
+  const dispatchEscape = () => {
+    const event = { key: "Escape", target: pad, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; }, stopImmediatePropagation() { this.immediateStopped = true; } };
+    for (const handler of globalThis.document.listeners.keydown || []) { handler(event); if (event.immediateStopped) break; }
+  };
+  dispatchEscape();
+  expect(dialog.hidden).toBe(false);
+  expect(client.getState().draft.outputs.left.warp.keystone.corners[0][0]).toBe(0);
+  dispatchEscape();
+  expect(dialog.hidden).toBe(true);
+  restore();
+});
+
+test("accepted foreign replacement retires a held nudge without rolling back to its capture", () => {
+  const previousDocument = globalThis.document;
+  globalThis.document = documentStub();
+  vi.useFakeTimers();
+  const root = element("main"); const client = fakeClient(); const api = mountProjectionConfig(root, { client });
+  try {
+    client.setLive(false);
+    find(root, (node) => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-keystone").dispatch("click");
+    const right = find(root, (node) => node.dataset?.action === "warp-nudge" && node.dataset?.direction === "right");
+    client.setDraft.mockClear();
+    right.dispatch("pointerdown", { pointerId: 41, button: 0, preventDefault() {} });
+    vi.advanceTimersByTime(375);
+    expect(client.setDraft).toHaveBeenCalledTimes(1);
+    const foreign = clone(client.getState().draft);
+    foreign.outputs.left.warp.keystone.corners[0] = [0.02, 0.03];
+    const writesAtAcceptance = client.setDraft.mock.calls.length;
+    client.report({ draft: foreign, hasLocalDraft: false });
+    expect(client.setDraft).toHaveBeenCalledTimes(writesAtAcceptance);
+    expect(client.getState().draft.outputs.left.warp.keystone.corners[0]).toEqual([0.02, 0.03]);
+    expect(client.getState().hasLocalDraft).toBe(false);
+    expect(Number(find(root, (node) => node.dataset?.field === "warp.position.x" && node.dataset?.input === "number").value)).toBeCloseTo(0.02 * 1920);
+    expect(find(root, (node) => node.className === "warp-relative-pad").disabled).toBe(false);
+    expect(find(root, (node) => node.dataset?.action === "warp-undo").disabled).toBe(true);
+    expect(client.apply).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(225);
+    right.dispatch("pointerup", { pointerId: 41 });
+    expect(client.setDraft).toHaveBeenCalledTimes(writesAtAcceptance);
+    expect(client.getState().draft.outputs.left.warp.keystone.corners[0]).toEqual([0.02, 0.03]);
+    expect(client.getState().hasLocalDraft).toBe(false);
+  } finally { api.dispose(); vi.useRealTimers(); globalThis.document = previousDocument; }
+});
+
+test("accepted foreign replacement retires a relative pad without restoring its captured geometry", () => {
+  const previousDocument = globalThis.document;
+  globalThis.document = documentStub();
+  const root = element("main"); const client = fakeClient(); const api = mountProjectionConfig(root, { client });
+  try {
+    client.setLive(false);
+    find(root, (node) => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-keystone").dispatch("click");
+    const pad = find(root, (node) => node.className === "warp-relative-pad");
+    pad.getBoundingClientRect = () => ({ left: 0, top: 0, width: 200, height: 200 });
+    client.setDraft.mockClear();
+    pad.dispatch("pointerdown", { pointerId: 42, button: 0, clientX: 100, clientY: 100, preventDefault() {} });
+    pad.dispatch("pointermove", { pointerId: 42, clientX: 110, clientY: 120 });
+    expect(client.setDraft).toHaveBeenCalledTimes(1);
+    const foreign = clone(client.getState().draft);
+    foreign.outputs.left.warp.keystone.corners[0] = [0.02, 0.03];
+    const writesAtAcceptance = client.setDraft.mock.calls.length;
+    client.report({ draft: foreign, hasLocalDraft: false });
+    expect(client.setDraft).toHaveBeenCalledTimes(writesAtAcceptance);
+    expect(client.getState().draft.outputs.left.warp.keystone.corners[0]).toEqual([0.02, 0.03]);
+    expect(client.getState().hasLocalDraft).toBe(false);
+    expect(Number(find(root, (node) => node.dataset?.field === "warp.position.x" && node.dataset?.input === "number").value)).toBeCloseTo(0.02 * 1920);
+    expect(find(root, (node) => node.className === "warp-relative-pad").disabled).toBe(false);
+    expect(find(root, (node) => node.dataset?.action === "warp-undo").disabled).toBe(true);
+    pad.dispatch("pointerup", { pointerId: 42, clientX: 110, clientY: 120 });
+    expect(client.setDraft).toHaveBeenCalledTimes(writesAtAcceptance);
+    expect(client.getState().draft.outputs.left.warp.keystone.corners[0]).toEqual([0.02, 0.03]);
+    expect(client.getState().hasLocalDraft).toBe(false);
+    expect(client.apply).not.toHaveBeenCalled();
+  } finally { api.dispose(); globalThis.document = previousDocument; }
+});
+
+test("own accepted pad state retains the active gesture and one undo entry", () => {
+  const previousDocument = globalThis.document;
+  globalThis.document = documentStub();
+  const root = element("main"); const client = fakeClient(); const api = mountProjectionConfig(root, { client });
+  try {
+    client.setLive(false);
+    find(root, (node) => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-keystone").dispatch("click");
+    const initial = clone(client.getState().draft.outputs.left.warp);
+    const pad = find(root, (node) => node.className === "warp-relative-pad");
+    pad.getBoundingClientRect = () => ({ left: 0, top: 0, width: 200, height: 200 });
+    pad.dispatch("pointerdown", { pointerId: 43, button: 0, clientX: 100, clientY: 100, preventDefault() {} });
+    pad.dispatch("pointermove", { pointerId: 43, clientX: 110, clientY: 120 });
+    const acceptedOwnState = clone(client.getState().draft);
+    expect(acceptedOwnState.outputs.left.warp).not.toEqual(initial);
+    client.report({ draft: acceptedOwnState, hasLocalDraft: false });
+    expect(find(root, (node) => node.dataset?.action === "warp-undo").disabled).toBe(true);
+    pad.dispatch("pointerup", { pointerId: 43, clientX: 110, clientY: 120 });
+    const moved = clone(client.getState().draft.outputs.left.warp);
+    expect(moved).not.toEqual(initial);
+    const undo = find(root, (node) => node.dataset?.action === "warp-undo");
+    expect(undo.disabled).toBe(false);
+    undo.dispatch("click");
+    expect(client.getState().draft.outputs.left.warp).toEqual(initial);
+    expect(find(root, (node) => node.dataset?.action === "warp-undo").disabled).toBe(true);
+  } finally { api.dispose(); globalThis.document = previousDocument; }
+});
+
+test("pad start immediately disables and re-enables signed warp controls", () => {
+  const previousDocument = globalThis.document;
+  globalThis.document = documentStub();
+  const root = element("main"); const client = fakeClient(); const api = mountProjectionConfig(root, { client });
+  try {
+    client.setLive(false);
+    find(root, (node) => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-keystone").dispatch("click");
+    const warpX = find(root, (node) => node.dataset?.field === "warp.position.x" && node.dataset?.input === "number");
+    const sign = find(warpX.parentElement, (node) => node.dataset?.action === "numeric-sign");
+    const pad = find(root, (node) => node.className === "warp-relative-pad");
+    pad.getBoundingClientRect = () => ({ left: 0, top: 0, width: 200, height: 200 });
+    warpX.dispatch("focus");
+    pad.dispatch("pointerdown", { pointerId: 44, button: 0, clientX: 100, clientY: 100, preventDefault() {} });
+    expect(warpX.disabled).toBe(true);
+    expect(sign.disabled).toBe(true);
+    pad.dispatch("lostpointercapture", { pointerId: 44 });
+    expect(warpX.disabled).toBe(false);
+    expect(sign.disabled).toBe(false);
+  } finally { api.dispose(); globalThis.document = previousDocument; }
+});
+
+test("first Escape during pad adjustment preserves unrelated pending text", () => {
+  const previousDocument = globalThis.document;
+  globalThis.document = documentStub();
+  const root = element("main"); const client = fakeClient(); const api = mountProjectionConfig(root, { client });
+  try {
+    client.setLive(false);
+    find(root, (node) => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-keystone").dispatch("click");
+    const warpX = find(root, (node) => node.dataset?.field === "warp.position.x" && node.dataset?.input === "number");
+    const pad = find(root, (node) => node.className === "warp-relative-pad");
+    pad.getBoundingClientRect = () => ({ left: 0, top: 0, width: 200, height: 200 });
+    const pending = find(root, (node) => node.dataset?.field === "pre.tx" && node.dataset?.input === "number");
+    pending.dispatch("focus"); pending.value = "1.5"; pending.dispatch("input");
+    client.setDraft.mockClear();
+    pad.dispatch("pointerdown", { pointerId: 45, button: 0, clientX: 100, clientY: 100, preventDefault() {} });
+    const escape = { key: "Escape", target: pending, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; }, stopPropagation() { this.propagationStopped = true; }, stopImmediatePropagation() { this.immediateStopped = true; } };
+    globalThis.document.dispatchFromTarget(pending, "keydown", escape);
+    expect(find(root, (node) => node.className === "warp-editor-dialog").hidden).toBe(false);
+    expect(pending.value).toBe("1.5");
+    pad.dispatch("pointermove", { pointerId: 45, clientX: 130, clientY: 130 });
+    expect(client.setDraft).not.toHaveBeenCalled();
+    expect(warpX.disabled).toBe(false);
+    pending.dispatch("keydown", { key: "Escape", preventDefault() {}, stopPropagation() {} });
+    expect(pending.value).not.toBe("1.5");
+  } finally { api.dispose(); globalThis.document = previousDocument; }
+});
 
 test('diagnostic config starts Live off and records receipts without calibration writes', () => {
   const root = element(); root.ownerDocument = documentStub();
@@ -649,6 +852,7 @@ describe("projection config controller", () => {
     const h = tracedWarpHarness();
     try {
       h.surface.dispatch('pointerdown', { pointerId: 4, isPrimary: true, button: 0, clientX: 72, clientY: 72, preventDefault() {} });
+      h.surface.dispatch('pointermove', { pointerId: 4, clientX: 80, clientY: 72 });
       h.client.apply.mockClear(); h.client.save.mockClear();
       if (action === 'node') find(h.root, node => node.dataset?.node === 'pre').dispatch('click');
       else clickCommand(h.root, action);
@@ -2290,7 +2494,7 @@ describe("projection config controller", () => {
     const gridOpen = find(root, node => node.dataset?.action === 'warp-editor-open' && node.parentElement?.dataset?.node === 'left-grid');
     gridOpen.dispatch('click');
     expect(find(root, node => node.className === 'warp-editor-dialog').dataset.mode).toBe('keystone');
-    expect(find(root, node => node.className === 'warp-inspector').hidden).toBe(false);
+    expect(find(root, node => node.className === 'warp-precision-panel').hidden).toBe(false);
     expect(client.getState().draft.outputs.left.warp).toEqual(before);
     find(root, node => node.dataset?.action === 'warp-editor-close').dispatch('click');
     expect(find(root, node => node.className === 'warp-editor-dialog').hidden).toBe(false);
@@ -2298,6 +2502,81 @@ describe("projection config controller", () => {
     find(root, node => node.dataset?.action === 'warp-editor-close').dispatch('click');
     expect(find(root, node => node.className === 'warp-editor-dialog').hidden).toBe(true);
     restore();
+  });
+
+  test("warp view exposes direct Edit and Move controls with clear pressed state", () => {
+    const h = tracedWarpHarness();
+    try {
+      const edit = find(h.root, node => node.className === "warp-edit-toggle");
+      const move = find(h.root, node => node.className === "warp-pan-toggle");
+      expect(edit.textContent).toBe("Edit");
+      expect(move.textContent).toBe("Move view");
+      expect(edit.attributes["aria-pressed"]).toBe("true");
+      expect(move.attributes["aria-pressed"]).toBe("false");
+      move.dispatch("click");
+      expect(edit.attributes["aria-pressed"]).toBe("false");
+      expect(move.attributes["aria-pressed"]).toBe("true");
+      edit.dispatch("click");
+      expect(edit.attributes["aria-pressed"]).toBe("true");
+      expect(move.attributes["aria-pressed"]).toBe("false");
+    } finally { h.restore(); }
+  });
+
+  test("an own Live draft acknowledgment during a warp drag retains the active gesture and one Undo", () => {
+    const h = tracedWarpHarness();
+    try {
+      h.client.setLive(true);
+      const initial = clone(h.client.getState().draft.outputs.left.warp);
+      h.surface.dispatch("pointerdown", { pointerId: 1, isPrimary: true, button: 0, clientX: 72, clientY: 72, preventDefault() {} });
+      h.surface.dispatch("pointermove", { pointerId: 1, clientX: 82, clientY: 72 });
+      const ownDraft = clone(h.client.getState().draft);
+      expect(ownDraft.outputs.left.warp.keystone.corners[0]).not.toEqual(initial.keystone.corners[0]);
+      h.client.setDraft.mockClear();
+      h.client.report({
+        snapshot: { ...h.client.getState().snapshot, revision: 3, config: clone(ownDraft) },
+        draft: clone(ownDraft),
+        hasLocalDraft: true,
+      });
+      h.surface.dispatch("pointermove", { pointerId: 1, clientX: 92, clientY: 72 });
+      h.surface.dispatch("pointerup", { pointerId: 1, clientX: 94, clientY: 72 });
+      expect(h.client.getState().draft.outputs.left.warp.keystone.corners[0]).not.toEqual(initial.keystone.corners[0]);
+      expect(h.client.setDraft).toHaveBeenCalledTimes(3);
+      expect(find(h.root, node => node.dataset?.action === "warp-undo").disabled).toBe(false);
+      find(h.root, node => node.dataset?.action === "warp-undo").dispatch("click");
+      expect(h.client.getState().draft.outputs.left.warp).toEqual(initial);
+    } finally { h.restore(); }
+  });
+
+  test.each(["left-keystone", "right-keystone", "left-grid", "right-grid"])("bypassed %s keeps selection and navigation available, disables geometry, and offers Enable correction", nodeId => {
+    const previousDocument = globalThis.document; globalThis.document = documentStub();
+    const root = element("main"); const client = fakeClient();
+    const config = clone(client.getState().draft);
+    const output = nodeId.startsWith("right-") ? "right" : "left";
+    config.outputs[output].warp.enabled = false;
+    config.outputs[output].warp.keystone.corners[0] = [0.03, 0.02];
+    client.report({ draft: config });
+    const api = mountProjectionConfig(root, { client });
+    try {
+      find(root, node => node.dataset?.node === nodeId).dispatch("click");
+      find(root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === nodeId).dispatch("click");
+      const status = find(root, node => node.className === "warp-selection-status");
+      const enable = find(root, node => node.dataset?.action === "warp-enable-correction");
+      const nudge = find(root, node => node.dataset?.action === "warp-nudge" && node.dataset?.direction === "right");
+      const surface = find(root, node => node.attributes?.class === "warp-edit-surface");
+      expect(status.textContent).toContain("Correction bypassed; geometry editing disabled");
+      expect(enable.textContent).toBe("Enable correction to edit");
+      expect(enable.hidden).toBe(false);
+      expect(nudge.disabled).toBe(true);
+      expect(find(root, node => node.dataset?.action === "warp-undo").disabled).toBe(true);
+      expect(find(root, node => node.dataset?.action === "warp-redo").disabled).toBe(true);
+      expect(find(root, node => node.attributes?.["aria-label"] === "Selected warp X position").disabled).toBe(true);
+      find(surface, node => node.attributes?.["data-index"] === "3").dispatch("keydown", { key: "Enter", preventDefault() {} });
+      expect(status.textContent).toContain(nodeId.endsWith("-grid") ? "Point 4" : "Bottom-right corner");
+      enable.dispatch("click");
+      expect(client.getState().draft.outputs[output].warp.enabled).toBe(true);
+      expect(enable.hidden).toBe(true);
+      expect(nudge.disabled).toBe(false);
+    } finally { api.dispose(); globalThis.document = previousDocument; }
   });
 
   test('warp panel Escape retires rejected coordinate validation without draft or history writes', () => {

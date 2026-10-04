@@ -161,6 +161,8 @@ test("navigation controls are appended to the private header without replacing d
 });
 
 test("panel presentation stays nonmodal and exposes header actions while editing", () => {
+  const oldWidth = window.innerWidth;
+  Object.defineProperty(window, "innerWidth", { configurable: true, value: 1400 });
   const onVisibilityChange = vi.fn();
   const { dialog, opener, host } = setup({ presentation: "panel", onVisibilityChange });
   const background = document.createElement("button"); host.append(background);
@@ -183,6 +185,141 @@ test("panel presentation stays nonmodal and exposes header actions while editing
   dialog.close();
   expect(onVisibilityChange).toHaveBeenNthCalledWith(2, false);
   expect(document.activeElement).toBe(opener);
+  dialog.dispose();
+  Object.defineProperty(window, "innerWidth", { configurable: true, value: oldWidth });
+});
+
+test("focused viewport toggles in place, preserves field focus, and only defaults when opened", () => {
+  const oldWidth = window.innerWidth;
+  Object.defineProperty(window, "innerWidth", { configurable: true, value: 820 });
+  const { dialog, opener, panel, host } = setup({ presentation: "panel" });
+  const text = document.createElement("input"); text.value = "-3.5"; panel.append(text);
+  dialog.open({ side: "right", mode: "grid", opener });
+  expect(dialog.isFullViewport()).toBe(true);
+  expect(host.querySelector('[data-action="warp-full-viewport"]').getAttribute("aria-label")).toBe("Exit full-screen");
+  text.focus();
+  const toggle = host.querySelector('[data-action="warp-full-viewport"]');
+  const down = new PointerEvent("pointerdown", { bubbles: true, cancelable: true });
+  toggle.dispatchEvent(down);
+  toggle.click();
+  expect(down.defaultPrevented).toBe(true);
+  expect(dialog.isFullViewport()).toBe(false);
+  expect(document.activeElement).toBe(text);
+  expect(text.value).toBe("-3.5");
+  Object.defineProperty(window, "innerWidth", { configurable: true, value: 1400 });
+  window.dispatchEvent(new Event("resize"));
+  expect(dialog.isFullViewport()).toBe(false);
+  dialog.close();
+  expect(host.dataset.warpFullViewport).toBe("false");
+  dialog.open({ side: "left", mode: "keystone", opener });
+  expect(dialog.isFullViewport()).toBe(false);
+  dialog.close();
+  Object.defineProperty(window, "innerWidth", { configurable: true, value: 820 });
+  dialog.open({ side: "left", mode: "keystone", opener });
+  expect(dialog.isFullViewport()).toBe(true);
+  dialog.dispose();
+  Object.defineProperty(window, "innerWidth", { configurable: true, value: oldWidth });
+});
+
+test("panel full-screen toggle requests native fullscreen and keeps the layout after browser denial", async () => {
+  const oldWidth = window.innerWidth;
+  Object.defineProperty(window, "innerWidth", { configurable: true, value: 1180 });
+  const { dialog, opener, host } = setup({ presentation: "panel" });
+  const modal = host.querySelector(".warp-editor-dialog");
+  const request = vi.fn(() => Promise.reject(new Error("denied")));
+  modal.requestFullscreen = request;
+  dialog.open({ side: "left", mode: "grid", opener });
+  expect(dialog.isFullViewport()).toBe(false);
+  host.querySelector('[data-action="warp-full-viewport"]').click();
+  await Promise.resolve(); await Promise.resolve();
+  expect(request).toHaveBeenCalledOnce();
+  expect(dialog.isFullViewport()).toBe(true);
+  expect(modal.dataset.fullViewport).toBe("true");
+  expect(document.querySelectorAll("iframe")).toHaveLength(1);
+  dialog.dispose();
+  Object.defineProperty(window, "innerWidth", { configurable: true, value: oldWidth });
+});
+
+test("late panel fullscreen success exits if the user already left the full-viewport layout", async () => {
+  const oldWidth = window.innerWidth;
+  Object.defineProperty(window, "innerWidth", { configurable: true, value: 1180 });
+  const { dialog, opener, host } = setup({ presentation: "panel" });
+  const modal = host.querySelector(".warp-editor-dialog");
+  let finishRequest;
+  modal.requestFullscreen = vi.fn(() => new Promise(resolve => { finishRequest = resolve; }));
+  const exit = vi.fn(() => Promise.resolve()); document.exitFullscreen = exit;
+  dialog.open({ side: "left", mode: "grid", opener });
+  host.querySelector('[data-action="warp-full-viewport"]').click();
+  host.querySelector('[data-action="warp-full-viewport"]').click();
+  expect(dialog.isFullViewport()).toBe(false);
+  Object.defineProperty(document, "fullscreenElement", { configurable: true, value: modal });
+  finishRequest(); await Promise.resolve(); await Promise.resolve();
+  expect(exit).toHaveBeenCalledOnce();
+  expect(dialog.isFullViewport()).toBe(false);
+  dialog.dispose();
+  delete document.fullscreenElement;
+  Object.defineProperty(window, "innerWidth", { configurable: true, value: oldWidth });
+});
+
+test("closing a panel during native fullscreen entry exits its late success", async () => {
+  const oldWidth = window.innerWidth;
+  Object.defineProperty(window, "innerWidth", { configurable: true, value: 1180 });
+  const { dialog, opener, host } = setup({ presentation: "panel" });
+  const modal = host.querySelector(".warp-editor-dialog");
+  let finishRequest;
+  modal.requestFullscreen = vi.fn(() => new Promise(resolve => { finishRequest = resolve; }));
+  const exit = vi.fn(() => Promise.resolve()); document.exitFullscreen = exit;
+  dialog.open({ side: "right", mode: "keystone", opener });
+  host.querySelector('[data-action="warp-full-viewport"]').click();
+  dialog.close();
+  Object.defineProperty(document, "fullscreenElement", { configurable: true, value: modal });
+  finishRequest(); await Promise.resolve(); await Promise.resolve();
+  expect(exit).toHaveBeenCalledOnce();
+  expect(modal.hidden).toBe(true);
+  dialog.dispose();
+  delete document.fullscreenElement;
+  Object.defineProperty(window, "innerWidth", { configurable: true, value: oldWidth });
+});
+
+test("active adjustment guard blocks entering full viewport and native fullscreen", () => {
+  const { dialog, opener, host } = setup({ presentation: "panel", onIsAdjusting: () => true });
+  const modal = host.querySelector(".warp-editor-dialog");
+  modal.requestFullscreen = vi.fn(() => Promise.resolve());
+  dialog.open({ side: "left", mode: "grid", opener });
+  dialog.updateAdjustmentGuard();
+  host.querySelector('[data-action="warp-full-viewport"]').click();
+  expect(dialog.isFullViewport()).toBe(false);
+  expect(modal.requestFullscreen).not.toHaveBeenCalled();
+  dialog.dispose();
+});
+
+test("coarse landscape tablets over 1100px start with the panel editor in full viewport", () => {
+  const oldWidth = window.innerWidth;
+  const oldMatchMedia = window.matchMedia;
+  Object.defineProperty(window, "innerWidth", { configurable: true, value: 1180 });
+  window.matchMedia = vi.fn(query => ({ matches: query.includes("pointer: coarse"), media: query, addEventListener() {}, removeEventListener() {} }));
+  const { dialog, opener, host } = setup({ presentation: "panel" });
+  dialog.open({ side: "right", mode: "keystone", opener });
+  expect(dialog.isFullViewport()).toBe(true);
+  expect(host.dataset.warpFullViewport).toBe("true");
+  dialog.dispose();
+  Object.defineProperty(window, "innerWidth", { configurable: true, value: oldWidth });
+  window.matchMedia = oldMatchMedia;
+});
+
+test("forced teardown clears full-viewport ownership even while adjustment state is active", () => {
+  const onPresentationChange = vi.fn();
+  let adjusting = false;
+  const { dialog, opener, host } = setup({ presentation: "panel", onIsAdjusting: () => adjusting, onPresentationChange });
+  dialog.open({ side: "left", mode: "grid", opener });
+  dialog.setFullViewport(true);
+  adjusting = true;
+  expect(dialog.isFullViewport()).toBe(true);
+  dialog.close(true);
+  expect(dialog.isOpen()).toBe(false);
+  expect(dialog.isFullViewport()).toBe(false);
+  expect(host.dataset.warpFullViewport).toBe("false");
+  expect(onPresentationChange).toHaveBeenLastCalledWith(false);
   dialog.dispose();
 });
 
@@ -356,7 +493,7 @@ test("modal contains focus, restores page interaction on Escape, and forwards Ap
   dialog.open({ side: "left", mode: "keystone", opener });
   expect(background.inert).toBe(true);
   expect(document.body.style.overflow).toBe("hidden");
-  const first = document.querySelector('[data-action="warp-editor-close"]');
+  const first = document.querySelector('[data-action="warp-full-viewport"]');
   expect(document.querySelector('[data-action="projection-names-run"]')).toBeNull();
   const last = document.querySelector('.warp-editor-footer button:not([hidden])');
   first.focus(); document.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true }));
@@ -529,7 +666,7 @@ test('fresh actual controller opens Left Keystone with unavailable network basel
     const open = host.querySelector('[data-node="left-keystone"] .warp-open-button');
     expect(open.disabled).toBe(false); open.click();
     expect(host.querySelector('.warp-editor-dialog').hidden).toBe(false);
-    expect(host.querySelector('.warp-inspector').hidden).toBe(false);
+    expect(host.querySelector('.warp-precision-panel').hidden).toBe(false);
     expect(host.querySelector('[data-node="left-keystone"]').classList.contains('selected')).toBe(true);
     expect(client.setDraft).not.toHaveBeenCalled();
     await new Promise(resolve => setTimeout(resolve, 0));

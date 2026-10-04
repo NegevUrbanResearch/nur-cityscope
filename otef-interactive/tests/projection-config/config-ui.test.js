@@ -44,25 +44,25 @@ test("warp editor keeps Undo and Redo visible with point, step, nudge, and reset
   const editor = createWarpEditor({ config: DEFAULT_PROJECTION_CONFIG, output: "left" });
   update({ selectedNode: "left-keystone", warpStates: { left: { ...editor.getState(), historyDepth: 1, redoDepth: 1, config: editor.getConfig(), handles: editor.getControlPoints() } } });
   root.querySelector(".config-node[data-node='left-keystone'] .warp-open-button").click();
-  const primary = root.querySelector(".warp-editor-fine-panel .warp-fine-primary");
-  expect(primary.contains(root.querySelector(".warp-step"))).toBe(true);
-  expect(primary.contains(root.querySelector(".warp-arrows"))).toBe(true);
-  const undo = primary.querySelector('[data-warp-action="warp-undo"]');
-  expect(undo).toBeNull();
-  expect(view.controls.warpUndo.parentElement.className).toBe("warp-history-command-group");
+  const precision = root.querySelector(".warp-editor-fine-panel .warp-precision-panel");
+  expect(precision.contains(root.querySelector(".warp-step"))).toBe(true);
+  expect(precision.contains(root.querySelector(".warp-arrows"))).toBe(true);
+  const undo = precision.querySelector('[data-warp-action="warp-undo"]');
+  expect(undo).toBe(view.controls.warpUndo);
+  expect(view.controls.warpUndo.parentElement.className).toBe("warp-history-controls");
   expect(view.controls.warpRedo.parentElement).toBe(view.controls.warpUndo.parentElement);
-  const navigation = view.controls.warpUndo.parentElement.parentElement;
+  const navigation = root.querySelector(".warp-view-controls");
   expect(navigation.className).toBe("warp-view-controls");
   const viewGroup = navigation.querySelector(".warp-view-command-group");
   expect(viewGroup.role).toBe("group");
   expect(viewGroup.getAttribute("aria-label")).toBe("Move view, zoom, and fit");
-  expect(Array.from(viewGroup.children, (item) => item.textContent)).toEqual(["Move view", "−", "+", "Fit"]);
+  expect(Array.from(viewGroup.children, (item) => item.textContent)).toEqual(["Edit", "Move view", "−", "+", "Fit"]);
   expect(root.querySelectorAll('[data-warp-action="warp-undo"]')).toHaveLength(1);
   expect(root.querySelectorAll('[data-warp-action="warp-redo"]')).toHaveLength(1);
-  expect(root.querySelector('[data-warp-action="warp-reset-selection"]').textContent).toBe("Reset point");
+  expect(root.querySelector('[data-warp-action="warp-reset-selection"]').textContent).toBe("Reset corner");
   expect(root.querySelector(".warp-selection")).toBeNull();
   view.controls.warpUndo.click();
-  expect(onWarpAction).toHaveBeenCalledWith("warp-undo", {});
+  expect(onWarpAction).toHaveBeenCalledWith("warp-undo", { output: "left" });
 });
 
 test("warp preview navigation changes the one viewBox without dispatching edits", () => {
@@ -126,32 +126,34 @@ test("warp preview plus zooms in and minus zooms out around the current center",
   expect(zoomOutWidth).toBeGreaterThan(zoomInWidth);
 });
 
-test("rendered warp handles keep navigation and CSS radii through draft refresh, reopen, resize, and orientation", () => {
+test("rendered warp handles keep navigation and CSS radii through draft refresh, reopen, resize, and orientation", async () => {
   const { root, onAction, onWarpAction, onWarpPointer, update } = makeView({ coarse: false });
   const editor = createWarpEditor({ config: DEFAULT_PROJECTION_CONFIG, output: "left" });
   const handles = editor.getControlPoints();
   const selection = { mode: "keystone", kind: "corner", index: 0, indices: [0] };
   const warpStates = { left: { ...editor.getState(), config: editor.getConfig(), handles, selection } };
   update({ state: { draft: structuredClone(DEFAULT_PROJECTION_CONFIG) }, selectedNode: "left-keystone", warpStates });
+  root.querySelector(".config-node[data-node='left-keystone'] .warp-open-button").click();
   const surface = root.querySelector(".warp-edit-surface");
-  expect(Number(surface.querySelector(".warp-handle.selected").getAttribute("r"))).toBe(18);
+  expect(surface.querySelector(".warp-handle.selected")).not.toBeNull();
   surface.getBoundingClientRect = () => ({ left: 0, top: 0, width: 600, height: 400, right: 600, bottom: 400 });
   const viewport = root.querySelector(".warp-editor-viewport");
   Object.defineProperties(viewport, { clientWidth: { configurable: true, value: 600 }, clientHeight: { configurable: true, value: 400 } });
-  root.querySelector(".config-node[data-node='left-keystone'] .warp-open-button").click();
+  window.dispatchEvent(new Event("resize"));
   const selected = () => surface.querySelector(".warp-handle.selected");
   const screenRadius = () => {
     const [x, y, width, height] = surface.getAttribute("viewBox").split(" ").map(Number);
     const scale = fitWarpViewport({ x, y, width, height }, 600, 400).scale;
     return Number(selected().getAttribute("r")) * scale;
   };
-  expect(screenRadius()).toBeCloseTo(18);
+  expect(screenRadius()).toBeCloseTo(8);
   root.querySelector(".warp-view-zoom-in").click();
-  expect(screenRadius()).toBeCloseTo(18);
+  expect(screenRadius()).toBeCloseTo(8);
 
   const refreshedHandles = handles.map((point, index) => index === 0 ? { x: point.x + 0.01, y: point.y } : point);
   update({ state: { draft: structuredClone(DEFAULT_PROJECTION_CONFIG) }, selectedNode: "left-keystone", warpStates: { left: { ...warpStates.left, handles: refreshedHandles } } });
-  expect(screenRadius()).toBeCloseTo(18);
+  await vi.waitFor(() => expect(selected().getAttribute("cx")).toBe(String(refreshedHandles[0].x * 1920)));
+  expect(screenRadius()).toBeCloseTo(8);
   expect(selected().getAttribute("cx")).toBe(String(refreshedHandles[0].x * 1920));
   const zoomed = surface.getAttribute("viewBox");
   const pan = root.querySelector(".warp-pan-toggle"); pan.click();
@@ -166,10 +168,10 @@ test("rendered warp handles keep navigation and CSS radii through draft refresh,
   expect(surface.getAttribute("viewBox")).toBe(zoomed); expect(pan.getAttribute("aria-pressed")).toBe("true");
   expect(selected().dataset.index).toBe("0");
   expect(selected().getAttribute("cx")).toBe(String(refreshedHandles[0].x * 1920));
-  expect(screenRadius()).toBeCloseTo(18);
+  expect(screenRadius()).toBeCloseTo(8);
   root.querySelector(".warp-view-fit").click();
   expect(surface.getAttribute("viewBox")).toBe("-72 -72 2064 1224"); expect(pan.getAttribute("aria-pressed")).toBe("false");
-  expect(screenRadius()).toBeCloseTo(18);
+  expect(screenRadius()).toBeCloseTo(8);
   expect([onAction, onWarpAction, onWarpPointer].map((callback) => callback.mock.calls.length)).toEqual(noWrites);
 });
 
@@ -197,7 +199,7 @@ test("category shortcuts call actual graph node groups and leave every node moun
   expect(view.nodeMap.has("settlement-names")).toBe(true);
 });
 
-test("changing Grid Warp mode or picker waits for the active pointer edit", () => {
+test("changing Grid Warp mode or picker waits for an active pointer drag", () => {
   const { root, view, onWarpAction, onWarpPointer, update } = makeView({ coarse: false });
   const config = structuredClone(DEFAULT_PROJECTION_CONFIG);
   config.outputs.left.warp.baseline = { type: "identity", width: 1920, height: 1080, origin: "top-left" };
@@ -213,16 +215,17 @@ test("changing Grid Warp mode or picker waits for the active pointer edit", () =
   const down = () => surface.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 1, pointerType: "mouse", button: 0, isPrimary: true, clientX: mapping.insetX + (handle.x * 1920 - viewX) * mapping.scale, clientY: mapping.insetY + (handle.y * 1080 - viewY) * mapping.scale, bubbles: true, cancelable: true }));
 
   down();
+  surface.dispatchEvent(new PointerEvent("pointermove", { pointerId: 1, pointerType: "mouse", clientX: mapping.insetX + (handle.x * 1920 - viewX) * mapping.scale + 10, clientY: mapping.insetY + (handle.y * 1080 - viewY) * mapping.scale, bubbles: true, cancelable: true }));
   expect(onWarpPointer).toHaveBeenCalledWith("start", expect.anything());
   onWarpPointer.mockClear(); onWarpAction.mockClear();
-  view.controls.warpSelectionButtons[1].click();
+  view.controls.warpSelectionButtons[2].click();
   expect(onWarpPointer).not.toHaveBeenCalled();
   expect(onWarpAction).not.toHaveBeenCalled();
   view.controls.warpSelectionPicker.value = '2';
   view.controls.warpSelectionPicker.dispatchEvent(new Event('change', { bubbles: true }));
   expect(onWarpAction).not.toHaveBeenCalled();
   surface.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, clientX: 0, clientY: 0 }));
-  view.controls.warpSelectionButtons[1].click();
+  view.controls.warpSelectionButtons[2].click();
   expect(onWarpAction).toHaveBeenLastCalledWith('warp-select', { output: 'left', selection: { mode: 'grid', kind: 'row', index: 0 } });
   view.dispose();
 });
@@ -478,8 +481,8 @@ test("keyboard activation selects and nudges a noninitial corner and grid point"
     update({ selectedNode: nodeId, warpStates: { [output]: { ...editor.getState(), config: editor.getConfig(), handles: editor.getControlPoints() } } });
     const focused = document.activeElement;
     expect(focused.getAttribute("data-index")).toBe(String(index));
-    focused.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true }));
-    expect(onWarpAction).toHaveBeenLastCalledWith("warp-nudge", { direction: "right", coarse: false, fine: false });
+    focused.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", altKey: true, bubbles: true, cancelable: true }));
+    expect(onWarpAction).toHaveBeenLastCalledWith("warp-nudge", { direction: "right", coarse: false, fine: true });
     root.querySelector("[data-action='warp-editor-close']").click();
   };
   exercise({ output: "left", nodeId: "left-keystone", mode: "keystone", index: 2, selection: { kind: "corner", index: 2 } });
@@ -552,6 +555,7 @@ test("closed utility disclosures do not block graph or warp pointerdown handlers
   let graphPointerdown = false;
   let warpPointerdown = false;
   const node = root.querySelector(".config-node");
+  root.querySelector(".config-node[data-node='left-keystone'] .warp-open-button").click();
   const surface = root.querySelector(".warp-edit-surface");
   node.addEventListener("pointerdown", () => { graphPointerdown = true; });
   surface.addEventListener("pointerdown", () => { warpPointerdown = true; });
