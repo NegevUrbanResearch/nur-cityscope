@@ -170,6 +170,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
   let editorBaselineAbort = null;
   let editorBaselineIdentity = null;
   let editorBaselineMeshes = { left: null, right: null };
+  let installedEditorBaselineMeshes = { left: null, right: null };
   let requestedEditorBaselineIdentity = null;
   const gridPreviews = { left: null, right: null };
   const gridPlacements = { left: null, right: null };
@@ -278,7 +279,12 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
         editorBaselineAbort = null;
         requestedEditorBaselineIdentity = identity;
       }
-      for (const output of ["left", "right"]) warpEditors[output].setBaselineMesh(editorBaselineMeshes[output]);
+      for (const output of ["left", "right"]) {
+        if (installedEditorBaselineMeshes[output] !== editorBaselineMeshes[output]) {
+          warpEditors[output].setBaselineMesh(editorBaselineMeshes[output]);
+          installedEditorBaselineMeshes[output] = editorBaselineMeshes[output];
+        }
+      }
       for (const output of ["left", "right"]) warpEditors[output].setConfig(config, { rebase });
       editorBaselineReady = true;
       return;
@@ -295,11 +301,13 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     // pointer adapter has already dropped the gesture without publishing it.
     for (const output of ["left", "right"]) warpEditors[output].pointerCancel();
     for (const output of ["left", "right"]) warpEditors[output].setBaselineMesh(null);
+    installedEditorBaselineMeshes = { left: null, right: null };
     for (const output of ["left", "right"]) warpEditors[output].setConfig(config, { rebase: false });
     if (!Object.values(identity).some(Boolean)) {
       for (const output of ["left", "right"]) warpEditors[output].setConfig(config, { rebase: true });
       editorBaselineIdentity = identity;
       editorBaselineMeshes = { left: null, right: null };
+      installedEditorBaselineMeshes = { left: null, right: null };
       editorBaselineReady = true;
       refresh();
       return;
@@ -310,8 +318,11 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
       if (disposed || controller.signal.aborted || token !== editorBaselineSequence ||
         JSON.stringify(baselineIdentityFor(state.draft)) !== JSON.stringify(identity)) return;
       const currentConfig = state.draft;
-      for (const output of ["left", "right"]) warpEditors[output].setBaselineMesh(loaded[output]?.mesh || null);
       editorBaselineMeshes = { left: loaded.left?.mesh || null, right: loaded.right?.mesh || null };
+      for (const output of ["left", "right"]) {
+        warpEditors[output].setBaselineMesh(editorBaselineMeshes[output]);
+        installedEditorBaselineMeshes[output] = editorBaselineMeshes[output];
+      }
       for (const output of ["left", "right"]) warpEditors[output].setConfig(currentConfig, { rebase: true });
       editorBaselineIdentity = identity;
       requestedEditorBaselineIdentity = identity;
@@ -354,7 +365,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
       }
       return [output, { ...editor.getState(), gridLayoutPreview: gridPreviews[output], gridPlacement: gridPlacements[output],
       ...(!editorBaselineReady ? { baselineAvailable: false, historyDepth: 0, redoDepth: 0 } : {}),
-      config: editor.getConfig(), baselineMesh: editorBaselineMeshes[output], evaluatedMesh, handles: editor.getControlPoints() }];
+      config: editor.getConfig(), baselineMesh: editorBaselineReady ? editorBaselineMeshes[output] : null, evaluatedMesh, handles: editor.getControlPoints() }];
     }));
     view.update({ state: { ...state, selectedPresetId }, errors: fieldErrors, parameterHistory: parameterHistory.state(),
       conflict: conflict || state.migrationWarnings?.join(' ') || '',
@@ -606,7 +617,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     const draftChanged = !equalProjectionConfig(previousDraft, nextState.draft);
     const nextSelected = nextState.snapshot?.selectedPresetId;
     const selectionChanged = nextSelected && nextSelected !== previousSelected;
-    const acceptedReplacement = !localDraftNotification && receipt?.action !== "save" && (firstHydration || (!nextState.hasLocalDraft && (draftChanged || selectionChanged)));
+    const acceptedReplacement = !localDraftNotification && receipt?.action !== "save" && (firstHydration || (!nextState.hasLocalDraft && (receipt?.foreign === true || draftChanged || selectionChanged)));
     if (!localDraftNotification && draftChanged) {
       const changed = ALL_FIELD_DESCRIPTORS.flatMap(descriptor => {
         const paths = new Set([resolvedFieldPath(previousDraft, descriptor.path), resolvedFieldPath(nextState.draft, descriptor.path)]);

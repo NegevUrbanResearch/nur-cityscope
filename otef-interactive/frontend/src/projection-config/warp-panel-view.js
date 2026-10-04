@@ -142,6 +142,7 @@ export function createWarpPanelView({ document: doc, onAction = () => {}, onPoin
   historyRow.appendChild(history);
   const controls = { warpPanel: element, warpStatus: selectionStatus, warpSelectionControls: selectionControls, warpSelectionButtons: selectionButtons, warpSelectionPicker: selectionPicker, warpNumeric: position, warpCoordinateFields: coordinateFields, warpPositionX: coordinateFields.get("x").number, warpPositionY: coordinateFields.get("y").number, warpPositionLabels: [...coordinateFields.values()].map((control) => control.wrap.children[0]), warpStep, warpArrows: nudgePad, warpUndo, warpRedo, warpReset, warpResetAll, warpActions: history, relativePad, warpHistoryRow: historyRow };
   let state = null;
+  let pickerTopologyKey = null;
   selectionPicker.addEventListener("change", () => {
     if (!state || !canChangeSelection()) return;
     const selection = state.selection || {};
@@ -163,8 +164,13 @@ export function createWarpPanelView({ document: doc, onAction = () => {}, onPoin
   return {
     element,
     controls,
+    setState({ output, nodeId, editorState } = {}) {
+      element.dataset.output = output || "left";
+      element.dataset.nodeId = nodeId || "";
+      state = editorState || null;
+    },
     update({ output, nodeId, editorState } = {}) {
-      element.dataset.output = output || "left"; element.dataset.nodeId = nodeId || ""; state = editorState || null;
+      this.setState({ output, nodeId, editorState });
       if (!state) return;
       const mode = nodeId?.endsWith("-grid") ? "grid" : "keystone";
       const selection = state.selection || { mode, kind: mode === "grid" ? "point" : "corner", index: 0 };
@@ -174,8 +180,13 @@ export function createWarpPanelView({ document: doc, onAction = () => {}, onPoin
       const pointCount = rows * columns;
       const pickerCount = selection.kind === "all" ? 0 : selection.kind === "edge" ? 4 : mode === "grid" ? selection.kind === "row" ? rows : selection.kind === "column" ? columns : pointCount : 4;
       const edgeNames = ["Top edge", "Right edge", "Bottom edge", "Left edge"];
-      const options = Array.from({ length: pickerCount }, (_, index) => { const option = doc.createElement("option"); option.value = String(index); option.textContent = selection.kind === "edge" ? edgeNames[index] : mode === "grid" ? selection.kind === "row" ? `Row ${index + 1}` : selection.kind === "column" ? `Column ${index + 1}` : `Point ${index + 1} · Row ${Math.floor(index / columns) + 1}, Column ${index % columns + 1}` : `Corner ${index + 1}`; return option; });
-      selectionPicker.replaceChildren(...options); selectionPicker.hidden = selection.kind === "all"; if (pickerCount) selectionPicker.value = String(Math.min(pickerCount - 1, selection.index || 0));
+      const nextPickerTopology = JSON.stringify([output, mode, selection.kind, pickerCount, rows, columns]);
+      if (pickerTopologyKey !== nextPickerTopology) {
+        const options = Array.from({ length: pickerCount }, (_, index) => { const option = doc.createElement("option"); option.value = String(index); option.textContent = selection.kind === "edge" ? edgeNames[index] : mode === "grid" ? selection.kind === "row" ? `Row ${index + 1}` : selection.kind === "column" ? `Column ${index + 1}` : `Point ${index + 1} · Row ${Math.floor(index / columns) + 1}, Column ${index % columns + 1}` : `Corner ${index + 1}`; return option; });
+        selectionPicker.replaceChildren(...options);
+        pickerTopologyKey = nextPickerTopology;
+      }
+      selectionPicker.hidden = selection.kind === "all"; if (pickerCount) selectionPicker.value = String(Math.min(pickerCount - 1, selection.index || 0));
       selectionControls.hidden = false;
       selectionButtons.forEach((button) => { const kind = button.dataset.warpSelectionKind; button.hidden = mode === "grid" ? !["point", "row", "column", "edge", "all"].includes(kind) : !["corner", "edge", "all"].includes(kind); button.setAttribute("aria-pressed", String(kind === selection.kind)); });
       const points = state.handles || [];
@@ -229,14 +240,17 @@ export function createWarpPanelView({ document: doc, onAction = () => {}, onPoin
     cancelGestures() { stopHold(true); return cancelPad(); },
     setAdjusting(adjusting) {
       const blocked = Boolean(adjusting);
-      [...selectionButtons, selectionPicker, warpStep, ...nudgePad.children, relativePad, warpReset, warpResetAll].forEach((item) => { if (item?.disabled !== undefined) item.disabled = blocked; });
+      const correctionEnabled = state?.config?.outputs?.[element.dataset.output]?.warp?.enabled !== false;
+      const editBlocked = blocked || !correctionEnabled;
+      [...selectionButtons, selectionPicker].forEach((item) => { if (item?.disabled !== undefined) item.disabled = blocked; });
+      [warpStep, ...nudgePad.children, relativePad, warpReset, warpResetAll].forEach((item) => { if (item?.disabled !== undefined) item.disabled = editBlocked; });
       for (const control of coordinateFields.values()) {
-        if (control.number) control.number.disabled = blocked;
-        if (control.range) control.range.disabled = blocked;
-        if (control.signButton) control.signButton.disabled = blocked;
+        if (control.number) control.number.disabled = editBlocked;
+        if (control.range) control.range.disabled = editBlocked;
+        if (control.signButton) control.signButton.disabled = editBlocked;
       }
-      warpUndo.disabled = blocked || !(state?.historyDepth > 0);
-      warpRedo.disabled = blocked || !(state?.redoDepth > 0);
+      warpUndo.disabled = editBlocked || !(state?.historyDepth > 0);
+      warpRedo.disabled = editBlocked || !(state?.redoDepth > 0);
     },
     dispose() { stopHold(true); this.cancelGestures(); doc.removeEventListener?.("keydown", cancelPadOnEscape, true); doc.removeEventListener?.("visibilitychange", onVisibility); doc.defaultView?.removeEventListener?.("blur", onBlur); for (const control of coordinateFields.values()) control.dispose(); },
   };

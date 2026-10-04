@@ -250,7 +250,7 @@ export function createProjectionConfigClient({
     // Receipt context lasts only for this adoption. An own checkpoint Save
     // changes preset selection without replacing the editing session.
     const acknowledgedSave = origin === sourceId && matchesSaveAcknowledgement(inFlight, next) ? inFlight : null;
-    notify(acknowledgedSave ? { origin, action: 'save' } : undefined);
+    notify(acknowledgedSave ? { origin, action: 'save' } : foreign ? { origin, foreign: true } : undefined);
     if (acknowledgedSave) settleSaveAcknowledgement(acknowledgedSave, next);
     return true;
   }

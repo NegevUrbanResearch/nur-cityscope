@@ -625,6 +625,77 @@ test("dragging a selected row member moves the row and creates one undo entry", 
   binder.dispose();
 });
 
+test("pointer-up sends its final pixel sample once through onEnd before the model transaction ends", () => {
+  const config = structuredClone(DEFAULT_PROJECTION_CONFIG);
+  config.outputs.left.warp.baseline = { type: "identity", width: 1920, height: 1080, origin: "top-left" };
+  const editor = createWarpEditor({ config, output: "left" });
+  editor.select(gridSelection("point", 24));
+  const initial = editor.getConfig();
+  const handles = editor.getControlPoints();
+  const start = handles[24];
+  const f = fixture({ handles, selection: editor.getState().selection, rows: 7, columns: 7, rect: { left: 0, top: 0, width: 1920, height: 1080 }, viewBox: { x: 0, y: 0, width: 1920, height: 1080 } });
+  f.geometry.side = "left";
+  const endSamples = [];
+  f.binder.dispose();
+  const binder = bindWarpPointerInput({ surface: f.surface, readGeometry: () => f.geometry,
+    onStart: editor.pointerStart, onMove: editor.pointerMove,
+    onEnd(sample) { endSamples.push(sample); editor.pointerMove(sample); return editor.pointerEnd(); },
+    onCancel: editor.pointerCancel });
+  const clientX = start.x * 1920;
+  const clientY = start.y * 1080;
+  f.fire("pointerdown", { clientX, clientY });
+  f.fire("pointerup", { clientX: clientX + 10, clientY: clientY + 5 });
+  expect(f.calls.move).not.toHaveBeenCalled();
+  expect(endSamples).toHaveLength(1);
+  expect(endSamples[0]).toMatchObject({ x: start.x * 1920 + 10, y: start.y * 1080 + 5, output: "left" });
+  const final = editor.getConfig().outputs.left.warp.grid.offsets[24];
+  expect(final[0]).toBeCloseTo(initial.outputs.left.warp.grid.offsets[24][0] + 10 / 1920);
+  expect(final[1]).toBeCloseTo(initial.outputs.left.warp.grid.offsets[24][1] + 5 / 1080);
+  expect(editor.getState().historyDepth).toBe(1);
+  binder.dispose();
+});
+
+test("warp editor reuses derived control points until accepted geometry changes", () => {
+  const editor = createWarpEditor({ config: structuredClone(DEFAULT_PROJECTION_CONFIG), output: "left" });
+  editor.setMode("grid");
+  const initial = editor.getControlPoints();
+  expect(editor.getControlPoints()).toBe(initial);
+  editor.select(gridSelection("point", 8));
+  expect(editor.getControlPoints()).toBe(initial);
+  expect(Object.isFrozen(initial)).toBe(true);
+  expect(Object.isFrozen(initial[8])).toBe(true);
+  expect(editor.nudge("right", { fine: true })).toBe(true);
+  const moved = editor.getControlPoints();
+  expect(moved).not.toBe(initial);
+  expect(moved[8].x).not.toBe(initial[8].x);
+  const foreign = editor.getConfig();
+  foreign.outputs.left.warp.grid.offsets[8][0] += 0.02;
+  expect(editor.setConfig(foreign, { rebase: true })).toBe(true);
+  const replaced = editor.getControlPoints();
+  expect(replaced).not.toBe(moved);
+  expect(replaced[8].x).toBeCloseTo(moved[8].x + 0.02);
+  const customKnots = editor.getConfig();
+  customKnots.outputs.left.warp.grid.columnPositions = Array.from({ length: 7 }, (_, index) => index / 6);
+  customKnots.outputs.left.warp.grid.columnPositions[1] = 0.12;
+  expect(editor.setConfig(customKnots, { rebase: true })).toBe(true);
+  const reknotted = editor.getControlPoints();
+  expect(reknotted).not.toBe(replaced);
+  expect(reknotted[1].s).toBe(0.12);
+
+  const tdConfig = structuredClone(DEFAULT_PROJECTION_CONFIG);
+  tdConfig.outputs.right.warp.baseline = { type: "tdMesh", assetId: "captured", sha256: "b".repeat(64), width: 1920, height: 1080, origin: "top-left" };
+  const tdEditor = createWarpEditor({ config: tdConfig, output: "right" });
+  tdEditor.setMode("grid");
+  const unavailable = tdEditor.getControlPoints();
+  expect(unavailable).toEqual([]);
+  tdEditor.setBaselineMesh(createIdentityProjectionMesh({ side: "right" }));
+  const ready = tdEditor.getControlPoints();
+  expect(ready).not.toBe(unavailable);
+  expect(ready).toHaveLength(56);
+  tdEditor.setBaselineMesh(createIdentityProjectionMesh({ side: "right" }));
+  expect(tdEditor.getControlPoints()).not.toBe(ready);
+});
+
 test("grid drag uses the imported TD baseline geometry and creates one undo entry", () => {
   const config = structuredClone(DEFAULT_PROJECTION_CONFIG);
   config.outputs.right.warp.baseline = { type: "tdMesh", assetId: "mesh", sha256: "a".repeat(64), width: 1920, height: 1080, origin: "top-left" };
