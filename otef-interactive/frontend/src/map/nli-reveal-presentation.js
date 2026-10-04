@@ -25,7 +25,9 @@ function mediaUrl(path) {
 }
 
 function slideImagePath(manifest, slide) {
-  return manifest.deck.slidePathPattern.replace("{slide}", String(slide).padStart(2, "0"));
+  const path = manifest.deck.slidePaths?.[slide - 1] ??
+    manifest.deck.slidePathPattern.replace("{slide}", String(slide).padStart(2, "0"));
+  return manifest.deck.pdfSha256 ? `${path}?v=${encodeURIComponent(manifest.deck.pdfSha256)}` : path;
 }
 
 function stopVideo(video) {
@@ -359,11 +361,19 @@ export function createNliRevealPresentation(container, {
       frame.append(image);
       const videoSpec = manifest.videos.find((video) => video.slide === number);
       if (videoSpec) {
+        if (videoSpec.title) {
+          const title = element("h2", "nli-presentation-title");
+          title.lang = "he";
+          title.dir = "rtl";
+          title.textContent = videoSpec.title;
+          frame.append(title);
+        }
         const video = element("video");
         video.src = mediaUrl(videoSpec.path);
         video.controls = false;
         video.playsInline = true;
         video.preload = "auto";
+        if (videoSpec.fit === "contain") video.style.objectFit = "contain";
         const [x, y, width, height] = videoSpec.rect;
         video.style.left = `${x * 100}%`;
         video.style.top = `${y * 100}%`;

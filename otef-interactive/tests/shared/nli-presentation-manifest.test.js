@@ -10,36 +10,71 @@ describe("NLI presentation manifest", () => {
   it("validates the approved local manifest and exposes exact segment lookup", () => {
     const manifest = validateNliPresentationManifest(approvedManifest);
 
-    expect(manifest).toEqual({
-      version: 1,
-      deck: {
-        slideCount: 34,
-        pdfSha256: "11407bdf1bda0de131609f247a985be2d2e2fc35bb98129b08892edc55ac826a",
-        pptxSha256: "ea82b69fe15c0dcab9166e1d0f736daa234db637532543b552648c9c490f12ba",
-        slidePathPattern: "local/presentations/nli/slides/slide-{slide}.png",
-      },
-      videos: [
-        { slide: 2, path: "local/presentations/nli/videos/slide-02.mp4", rect: [0.159896, 0.288272, 0.67934, 0.682716] },
-        { slide: 10, path: "local/presentations/nli/videos/slide-10.mp4", rect: [0.1625, 0.283642, 0.674132, 0.682716] },
-        { slide: 18, path: "local/presentations/nli/videos/slide-18.mp4", rect: [0.128646, 0.285185, 0.719271, 0.682716] },
-        { slide: 21, path: "local/presentations/nli/videos/slide-21.mp4", rect: [0.148611, 0.269278, 0.702244, 0.700285] },
-        { slide: 23, path: "local/presentations/nli/videos/slide-23.mp4", rect: [0.155556, 0.282099, 0.688889, 0.682716] },
-        { slide: 24, path: "local/presentations/nli/videos/slide-24.mp4", rect: [0.1625, 0.283642, 0.675, 0.682716] },
-      ],
-      segments: [
-        { id: "segev", requiredNarrative: "segev", range: [1, 8] },
-        { id: "nova_mor", requiredNarrative: "nova", range: [9, 11] },
-        { id: "nova_memorial", requiredNarrative: "nova", range: [12, 16] },
-        { id: "sderot", requiredNarrative: "sderot", range: [17, 21] },
-        { id: "shura", requiredNarrative: null, range: [22, 28] },
-        { id: "hostages", requiredNarrative: "hostages", range: [29, 34] },
-        { id: "names_wall", requiredNarrative: null, kind: "blackout", range: [0, 0] },
-      ],
+    expect(manifest.deck).toMatchObject({
+      slideCount: 37,
+      pdfSha256: "adaba7ccf6b094789c7bdad252c91f6dd4660780a1b3b07592f3d2f89be2a842",
+      pptxSha256: "9582cf0321c8d658dbe6c649ad59a24dc1f8caa40fab5d98fec4b752c7b5471e",
+      slidePathPattern: "local/presentations/nli/slides/slide-{slide}.png",
     });
+    expect(manifest.videos).toEqual([
+      { slide: 2, path: "local/presentations/nli/videos/slide-02.mp4", rect: [0.159896, 0.288272, 0.67934, 0.682716] },
+      { slide: 9, path: "local/presentations/nli/supplements/gelem-first-9s-fade.mp4", rect: [0.16, 0.285, 0.68, 0.68], fit: "contain", title: "תיעוד תלת־ממדי של בארי" },
+      { slide: 11, path: "local/presentations/nli/videos/slide-10.mp4", rect: [0.1625, 0.283642, 0.674132, 0.682716] },
+      { slide: 13, path: "local/presentations/nli/supplements/nova-first-12s-fade.mp4", rect: [0.16, 0.28, 0.68, 0.685], fit: "contain", title: "תיעוד תלת־ממדי של הנובה, 10 באוקטובר 2023" },
+      { slide: 20, path: "local/presentations/nli/videos/slide-18.mp4", rect: [0.128646, 0.285185, 0.719271, 0.682716] },
+      { slide: 23, path: "local/presentations/nli/videos/slide-21.mp4", rect: [0.148611, 0.269278, 0.702244, 0.700285] },
+      { slide: 25, path: "local/presentations/nli/videos/slide-23.mp4", rect: [0.155556, 0.282099, 0.688889, 0.682716] },
+      { slide: 26, path: "local/presentations/nli/videos/slide-24.mp4", rect: [0.1625, 0.283642, 0.675, 0.682716] },
+      { slide: 31, path: "local/presentations/nli/supplements/reim-first-10s-fade.mp4", rect: [0.16, 0.285, 0.68, 0.68], fit: "contain", title: "המיגונית ברעים" },
+    ]);
+    expect(manifest.segments).toEqual([
+      { id: "segev", requiredNarrative: "segev", range: [1, 9] },
+      { id: "nova_mor", requiredNarrative: "nova", range: [10, 12] },
+      { id: "nova_memorial", requiredNarrative: "nova", range: [13, 18] },
+      { id: "sderot", requiredNarrative: "sderot", range: [19, 23] },
+      { id: "shura", requiredNarrative: null, range: [24, 31] },
+      { id: "hostages", requiredNarrative: "hostages", range: [32, 36] },
+      { id: "credits", requiredNarrative: null, range: [37, 37] },
+      { id: "names_wall", requiredNarrative: null, kind: "blackout", range: [0, 0] },
+    ]);
     expect(Object.isFrozen(manifest)).toBe(true);
     expect(Object.isFrozen(manifest.segments[0].range)).toBe(true);
     expect(getNliPresentationSegment(manifest, "nova_mor")).toEqual(manifest.segments[1]);
     expect(getNliPresentationSegment(manifest, "missing")).toBeNull();
+  });
+
+  it("preserves all 34 original images in order and adds only the three requested video slides", () => {
+    const { deck, segments } = validateNliPresentationManifest(approvedManifest);
+    const background = "local/presentations/nli/supplements/slide-background.png";
+    const originals = Array.from({ length: 34 }, (_, index) =>
+      `local/presentations/nli/slides/slide-${String(index + 1).padStart(2, "0")}.png`);
+    expect(deck.slidePaths).toHaveLength(37);
+    expect(deck.slidePaths.filter((path) => path !== background)).toEqual(originals);
+    expect(deck.slidePaths[8]).toBe(background);
+    expect(deck.slidePaths[12]).toBe(background);
+    expect(deck.slidePaths[13]).toBe(originals[11]);
+    expect(deck.slidePaths[30]).toBe(background);
+    expect(segments.filter((segment) => segment.kind !== "blackout").flatMap(({ range: [start, end] }) =>
+      Array.from({ length: end - start + 1 }, (_, index) => start + index)))
+      .toEqual(Array.from({ length: 37 }, (_, index) => index + 1));
+    expect(Object.isFrozen(deck.slidePaths)).toBe(true);
+  });
+
+  it.each([
+    ["wrong length", (paths) => paths.slice(1)],
+    ["absolute path", (paths) => paths.with(0, "/external/slide.png")],
+    ["traversal", (paths) => paths.with(0, "local/../slide.png")],
+  ])("rejects ordered slide paths with %s", (_label, mutate) => {
+    const value = structuredClone(approvedManifest);
+    const paths = Array.from({ length: value.deck.slideCount }, () => "local/slide.png");
+    value.deck.slidePaths = mutate(paths);
+    expect(() => validateNliPresentationManifest(value)).toThrow(/slide paths/);
+  });
+
+  it("still accepts a legacy deck using only its image path pattern", () => {
+    const value = structuredClone(approvedManifest);
+    delete value.deck.slidePaths;
+    expect(validateNliPresentationManifest(value).deck.slidePaths).toBeUndefined();
   });
 
   it.each([
@@ -66,11 +101,16 @@ describe("NLI presentation manifest", () => {
       kind: "blackout",
       range: [0, 0],
     });
-    expect(manifest.segments).toHaveLength(7);
+    expect(manifest.segments).toHaveLength(8);
   });
 
   it("loads and validates JSON fetched from the shared manifest URL", async () => {
-    const fetchImpl = async () => ({ ok: true, json: async () => approvedManifest });
+    const requests = [];
+    const fetchImpl = async (...args) => {
+      requests.push(args);
+      return { ok: true, json: async () => approvedManifest };
+    };
     await expect(loadNliPresentationManifest(fetchImpl)).resolves.toMatchObject({ version: 1 });
+    expect(requests).toEqual([["/otef-interactive/public/presentation/nli-presentation-manifest.json", { cache: "no-store" }]]);
   });
 });

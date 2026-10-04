@@ -107,19 +107,83 @@ beforeEach(() => {
 });
 
 describe("GIS Reveal presentation", () => {
+  test.each([
+    ["segev", 8, "gelem-first-9s-fade.mp4", "תיעוד תלת־ממדי של בארי"],
+    ["nova_memorial", 0, "nova-first-12s-fade.mp4", "תיעוד תלת־ממדי של הנובה, 10 באוקטובר 2023"],
+    ["shura", 7, "reim-first-10s-fade.mp4", "המיגונית ברעים"],
+  ])("%s includes its added video at the requested position with NLI styling and active autoplay", async (segmentId, index, filename, title) => {
+    const h = makeHarness();
+    await h.send("open", { segmentId });
+    for (let step = 0; step < index; step += 1) await h.send("next");
+    const section = root.querySelector("section.present");
+    const video = section.querySelector("video");
+    expect(video?.getAttribute("src")).toBe(`/otef-interactive/public/local/presentations/nli/supplements/${filename}`);
+    expect(section.querySelector("img").getAttribute("src"))
+      .toBe(`/otef-interactive/public/local/presentations/nli/supplements/slide-background.png?v=${manifest.deck.pdfSha256}`);
+    expect(section.querySelector(".nli-presentation-title")?.textContent).toBe(title);
+    expect(video.muted).toBe(false);
+    expect(video.controls).toBe(false);
+    expect(video.playsInline).toBe(true);
+    expect(video.style.objectFit).toBe("contain");
+    expect(video.style.width).toBe("68%");
+    expect(video.style.height).toBe(segmentId === "nova_memorial" ? "68.5%" : "68%");
+    expect(HTMLMediaElement.prototype.play.mock.contexts.at(-1)).toBe(video);
+    video.currentTime = 5;
+    await h.send("close");
+    expect(video.currentTime).toBe(0);
+    expect(HTMLMediaElement.prototype.pause.mock.contexts).toContain(video);
+  });
+
+  test("memorial starts with Nova and retains the previous first slide as its second slide", async () => {
+    const h = makeHarness();
+    await h.send("open", { segmentId: "nova_memorial" });
+    const nova = root.querySelector("section.present video");
+    expect(nova).not.toBeNull();
+    await h.send("next");
+    expect(root.querySelector("section.present img").getAttribute("src"))
+      .toBe(`/otef-interactive/public/local/presentations/nli/slides/slide-12.png?v=${manifest.deck.pdfSha256}`);
+    expect(root.querySelector("section.present video")).toBeNull();
+    expect(nova.currentTime).toBe(0);
+    await h.send("previous");
+    expect(root.querySelector("section.present video")).toBe(nova);
+    expect(HTMLMediaElement.prototype.play.mock.contexts.filter((video) => video === nova)).toHaveLength(2);
+  });
+
+  test("credits opens only the final source slide on the overview and clamps navigation", async () => {
+    const h = makeHarness();
+    await h.send("open", { segmentId: "credits" });
+    expect(h.lastResult()).toMatchObject({ outcome: "opened", slide: 37, range: [37, 37] });
+    expect(h.reveal.slideNumbers()).toEqual([37]);
+    expect(root.querySelector("section.present img").getAttribute("src"))
+      .toBe(`/otef-interactive/public/local/presentations/nli/slides/slide-34.png?v=${manifest.deck.pdfSha256}`);
+    await h.send("previous");
+    await h.send("next");
+    expect(h.lastResult()).toMatchObject({ outcome: "ready", slide: 37 });
+    await h.send("close");
+    expect(root.querySelector(".nli-reveal-overlay")).toBeNull();
+  });
+
+  test("Hostages keeps its five original slides without showing the credits", async () => {
+    const h = makeHarness();
+    await h.send("open", { segmentId: "hostages" });
+    expect(h.reveal.slideNumbers()).toEqual([32, 33, 34, 35, 36]);
+    for (let index = 0; index < 5; index += 1) await h.send("next");
+    expect(h.lastResult()).toMatchObject({ outcome: "ready", slide: 36, range: [32, 36] });
+  });
+
   test("opens the requested range and clamps at both boundaries", async () => {
     const h = makeHarness();
     await h.send("open", { segmentId: "nova_mor" });
-    expect(h.reveal.slideNumbers()).toEqual([9, 10, 11]);
+    expect(h.reveal.slideNumbers()).toEqual([10, 11, 12]);
     const slide = vi.spyOn(h.reveal, "slide");
     await h.send("previous");
     expect(slide).not.toHaveBeenCalled();
-    expect(h.lastResult()).toMatchObject({ outcome: "ready", slide: 9, range: [9, 11] });
+    expect(h.lastResult()).toMatchObject({ outcome: "ready", slide: 10, range: [10, 12] });
     await h.send("next");
     await h.send("next");
     const reveal = h.reveal;
     await h.send("next");
-    expect(h.lastResult().slide).toBe(11);
+    expect(h.lastResult().slide).toBe(12);
     expect(reveal.index).toBe(2);
     expect(slide).toHaveBeenCalledTimes(2);
   });
@@ -130,7 +194,7 @@ describe("GIS Reveal presentation", () => {
     await h.send("open", {
       segmentId: "segev", presentationGeneration: 19, presentationSessionId: "delayed",
     });
-    expect(h.reveal.slideNumbers()).toEqual([9, 10, 11]);
+    expect(h.reveal.slideNumbers()).toEqual([10, 11, 12]);
     expect(h.lastResult().outcome).toBe("ignored");
   });
 
@@ -179,7 +243,7 @@ describe("GIS Reveal presentation", () => {
     const h = makeHarness();
     await h.send("open", { segmentId: "shura" });
     const videos = [...root.querySelectorAll(".nli-reveal-overlay video")];
-    expect(videos).toHaveLength(2);
+    expect(videos).toHaveLength(3);
     expect(videos.every((video) => !video.autoplay && !video.hasAttribute("autoplay"))).toBe(true);
     const firstPlayCall = HTMLMediaElement.prototype.play.mock.contexts.length;
     await h.send("next");
@@ -197,7 +261,7 @@ describe("GIS Reveal presentation", () => {
     await h.send("next");
     const video = root.querySelector("section.present video");
     await h.send("close");
-    expect(video.pause).toHaveBeenCalledOnce();
+    expect(video.pause.mock.contexts.filter((media) => media === video)).toHaveLength(1);
     expect(video.currentTime).toBe(0);
     expect(root.querySelector(".nli-reveal-overlay")).toBeNull();
   });
@@ -254,7 +318,7 @@ describe("GIS Reveal presentation", () => {
     await firstOpen;
 
     expect(root.querySelectorAll(".nli-reveal-overlay section")).toHaveLength(3);
-    expect(root.querySelector(".nli-reveal-overlay section")?.dataset.slide).toBe("9");
+    expect(root.querySelector(".nli-reveal-overlay section")?.dataset.slide).toBe("10");
     expect(results.map(({ outcome }) => outcome)).toEqual(["opened"]);
     viewer.dispose();
   });
@@ -267,7 +331,7 @@ describe("GIS Reveal presentation", () => {
     await h.send("next");
     const video = root.querySelector("section.present video");
     h.viewer.dispose();
-    expect(video.pause).toHaveBeenCalledOnce();
+    expect(video.pause.mock.contexts.filter((media) => media === video)).toHaveLength(1);
     expect(video.currentTime).toBe(0);
     expect(root.querySelector(".nli-reveal-overlay")).toBeNull();
   });
@@ -751,7 +815,7 @@ describe("presentation open and close lifecycle", () => {
     await newer;
 
     expect(overlay()).not.toBeNull();
-    expect(h.reveal.slideNumbers()).toEqual([12, 13, 14, 15, 16]);
+    expect(h.reveal.slideNumbers()).toEqual([13, 14, 15, 16, 17, 18]);
     expect(h.results.map((result) => result.outcome)).toEqual(["opened", "opened"]);
   });
 
@@ -782,7 +846,7 @@ describe("presentation open and close lifecycle", () => {
     endOpacityFade();
     await vi.advanceTimersByTimeAsync(600);
     await second;
-    expect(h.reveal.slideNumbers()).toEqual([9, 10, 11]);
+    expect(h.reveal.slideNumbers()).toEqual([10, 11, 12]);
     expect(h.results.map((result) => result.outcome)).toEqual(["opened", "closed", "opened"]);
   });
 
@@ -810,7 +874,7 @@ describe("presentation open and close lifecycle", () => {
     await replacement;
     await moving;
     expect(h.results.map((result) => result.outcome)).toEqual(["opened", "opened"]);
-    expect(h.reveal.slideNumbers()).toEqual([9, 10, 11]);
+    expect(h.reveal.slideNumbers()).toEqual([10, 11, 12]);
   });
 
   test("a late video rejection after replacement emits nothing and leaves the new viewer", async () => {
@@ -887,7 +951,7 @@ describe("presentation open and close lifecycle", () => {
     }));
     expect(h.lastResult()).toMatchObject({ outcome: "closed", presentationSessionId: "older" });
     expect(overlay()).toBe(current);
-    expect(h.reveal.slideNumbers()).toEqual([9, 10, 11]);
+    expect(h.reveal.slideNumbers()).toEqual([10, 11, 12]);
     await h.viewer.handleCommand(command("close", {
       segmentId: "nova_mor", presentationGeneration: 20, presentationSessionId: "newer", sequence: 1,
     }));

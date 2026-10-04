@@ -33,6 +33,13 @@ export function validateNliPresentationManifest(value) {
   if (!isLocalRelativePath(deck.slidePathPattern)) {
     throw new TypeError("invalid presentation slide path pattern");
   }
+  if (deck.slidePaths !== undefined && (
+    !Array.isArray(deck.slidePaths) ||
+    deck.slidePaths.length !== deck.slideCount ||
+    !deck.slidePaths.every(isLocalRelativePath)
+  )) {
+    throw new TypeError("presentation slide paths must contain one local path per slide");
+  }
   if (!Array.isArray(value.videos)) throw new TypeError("presentation videos must be an array");
   const videos = value.videos.map((video) => {
     if (!video || typeof video !== "object" || Array.isArray(video)) {
@@ -76,12 +83,17 @@ export function validateNliPresentationManifest(value) {
     return { ...segment, range: [...segment.range] };
   });
 
-  return freeze({ version: 1, deck: { ...deck }, videos, segments });
+  return freeze({
+    version: 1,
+    deck: { ...deck, ...(deck.slidePaths ? { slidePaths: [...deck.slidePaths] } : {}) },
+    videos,
+    segments,
+  });
 }
 
 export async function loadNliPresentationManifest(fetchImpl = globalThis.fetch) {
   if (typeof fetchImpl !== "function") throw new TypeError("fetch implementation is required");
-  const response = await fetchImpl(NLI_PRESENTATION_MANIFEST_URL);
+  const response = await fetchImpl(NLI_PRESENTATION_MANIFEST_URL, { cache: "no-store" });
   if (!response || !response.ok) throw new Error("failed to load NLI presentation manifest");
   return validateNliPresentationManifest(await response.json());
 }

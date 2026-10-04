@@ -695,7 +695,7 @@ body {
   height: 540px;
   aspect-ratio: 16 / 9;
   overflow: hidden;
-  background: #000;
+  background: #fffbf8;
 }
 .nli-presentation-frame > img {
   display: block;
@@ -705,6 +705,22 @@ body {
 .nli-presentation-frame > video {
   position: absolute;
   object-fit: cover;
+}
+.nli-reveal-overlay .nli-presentation-title {
+  position: absolute;
+  inset: 12.5% 2.8% auto;
+  height: 12.5%;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  margin: 0;
+  color: #000;
+  font-family: "Hadassah Friedlaender", serif;
+  font-size: 32px;
+  font-weight: 400;
+  line-height: 1.15;
+  text-align: right;
+  text-transform: none;
 }
 
 #nliNovaExplainerHost,
