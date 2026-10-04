@@ -157,6 +157,8 @@ function fakeClient(initialSnapshot) {
     subscribe(listener) { listeners.add(listener); listener(state); return () => listeners.delete(listener); },
     start: vi.fn(async () => state), stop: vi.fn(),
     retryHydration: vi.fn(async () => state),
+    retryReconciliation: vi.fn(async () => state),
+    resolveReconciliation: vi.fn((choice) => { state = { ...state, reconciliation: null, live: false, ...(choice === "use-accepted" ? { draft: clone(state.snapshot.config), hasLocalDraft: false } : {}) }; notify(); return state; }),
     setDraft: vi.fn((draft) => { state = { ...state, draft: clone(draft), hasLocalDraft: true }; notify(); }),
     setLive: vi.fn((live) => { state = { ...state, live: Boolean(live) }; notify(); }),
     apply: vi.fn(async () => state),
@@ -212,6 +214,57 @@ test("relative pad start disables presentation toggle and blocks consuming comma
   expect(root.dataset?.warpFullViewport).toBe(fullViewport);
   expect(client.setDraft).not.toHaveBeenCalled();
   restore();
+});
+
+test("uncertain-write recovery stays visible and reachable in the focused warp editor", async () => {
+  const previousDocument = globalThis.document;
+  globalThis.document = documentStub();
+  const root = element("main");
+  const client = fakeClient();
+  client.report({ live: false, reconciliation: { status: "needs-choice", message: "Choose which settings to keep." } });
+  const api = mountProjectionConfig(root, { client });
+  try {
+    const closedEditorRecovery = find(root, (node) => node.className === "warp-editor-reconciliation");
+    expect(closedEditorRecovery.hidden).toBe(false);
+    find(root, (node) => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-keystone").dispatch("click");
+    const panel = find(root, (node) => node.className === "warp-editor-reconciliation");
+    expect(panel).toBe(closedEditorRecovery);
+    expect(panel.hidden).toBe(false);
+    const message = find(panel, (node) => node.className === "warp-editor-reconciliation-message");
+    expect(message.textContent).toContain("Current revision: 2");
+    expect(message.textContent).toContain("Live is off");
+    const fullscreen = find(root, (node) => node.dataset?.action === "warp-full-viewport");
+    fullscreen.dispatch("click");
+    expect(root.dataset.warpFullViewport).toBe("true");
+    expect(find(root, (node) => node.className === "warp-editor-reconciliation")).toBe(panel);
+    expect(find(panel, (node) => node.dataset?.action === "reconciliation-keep-local").hidden).toBe(false);
+    find(panel, (node) => node.dataset?.action === "reconciliation-keep-local").dispatch("click");
+    await vi.waitFor(() => expect(client.resolveReconciliation).toHaveBeenCalledWith("keep-local"));
+    expect(find(root, (node) => node.attributes?.["aria-label"] === "Editor Live").checked).toBe(false);
+    find(root, (node) => node.dataset?.action === "warp-editor-close").dispatch("click");
+    client.report({ reconciliation: { status: "read-error", message: "Accepted settings check failed." } });
+    const closedRecovery = find(root, (node) => node.className === "warp-editor-reconciliation");
+    expect(closedRecovery.hidden).toBe(false);
+    const retry = find(closedRecovery, (node) => node.dataset?.action === "reconciliation-retry");
+    expect(retry.hidden).toBe(false);
+    retry.dispatch("click");
+    await vi.waitFor(() => expect(client.retryReconciliation).toHaveBeenCalledOnce());
+  } finally { api.dispose(); globalThis.document = previousDocument; }
+});
+
+test("reconciliation retry rejection is shown through the controller action error boundary", async () => {
+  const previousDocument = globalThis.document;
+  globalThis.document = documentStub();
+  const root = element("main");
+  const client = fakeClient();
+  client.report({ reconciliation: { status: "read-error", message: "Accepted settings check failed." } });
+  client.retryReconciliation.mockRejectedValueOnce(new Error("reconciliation retry unavailable"));
+  const api = mountProjectionConfig(root, { client });
+  try {
+    await expect(api.handleAction("reconciliation-retry")).resolves.toBeUndefined();
+    expect(find(root, (node) => node.className === "action-error").textContent).toContain("reconciliation retry unavailable");
+    expect(find(root, (node) => node.dataset?.action === "reconciliation-retry").hidden).toBe(false);
+  } finally { api.dispose(); globalThis.document = previousDocument; }
 });
 
 test("Back cancels a relative-pad gesture before hiding its workspace", () => {

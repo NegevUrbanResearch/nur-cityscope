@@ -583,6 +583,7 @@ export function createProjectionConfigView(root, {
     onBeforeResize: () => cancelActiveDrag({ reason: 'resize' }),
     onViewportChange: updateWarpMarkerRadii,
     onOrientationChange: () => cancelActiveDrag({ reason: 'orientationchange' }),
+    reconciliationControls: controls.reconciliation,
     onApply: () => onAction("apply"), onLive: (live) => onAction("live", live) });
   parameterDialog = createParameterEditorDialog({ document: doc, host: editorRegion, presentation: "panel", onField, onCancelField: onFieldCancel, onNudge, onAction,
     resolveFieldPath: (descriptor, config) => {
@@ -778,7 +779,8 @@ export function createProjectionConfigView(root, {
     for (const run of namesRunButtons) { run.disabled = Boolean(namesRunDisabledReason); run.title = namesRunDisabledReason || "Run names for the applied calibration."; }
     renderWarpPanel(warpStates, selectedNode);
     updateWarpNodePreviews(warpStates);
-    dialog.update(draft, { live: state.live, appliedSummary, namesRunStatus: wallMessage, namesRunDisabledReason });
+    dialog.update(draft, { live: state.live, appliedSummary, namesRunStatus: wallMessage, namesRunDisabledReason,
+      reconciliation: state.reconciliation });
     parameterDialog.update({ config: draft, fieldErrors: errors.fields || errors.field || errors, status: controls.status.textContent, parameterHistory });
     for (const [output, control] of patternControls) control.value = activePattern.branch === output ? activePattern.pattern : "off";
     for (const descriptor of descriptors) {
