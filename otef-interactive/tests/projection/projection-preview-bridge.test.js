@@ -2,12 +2,73 @@ import { expect, test, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { DEFAULT_PROJECTION_CONFIG } from "../../frontend/src/shared/projection-config-schema.js";
 import { installProjectionPreviewBridge } from "../../frontend/src/projection/projection-preview-bridge.js";
+import { drawAfterMapRender } from "../../frontend/src/projection/projection-span-view.js";
+import { rollbackProjectionPreviewApply } from "../../frontend/src/projection/projection-preview-task.js";
 import * as previewBridge from "../../frontend/src/projection/projection-preview-bridge.js";
 
 const clockLayout = { leftPct: 12, topPct: 22, widthPct: 30, heightPct: 10, fontPx: 24, rotateDeg: 30 };
 const clockRequest = (requestId, patch = {}) => ({ type: "otef_clock_preview_state", sessionId: "clock-1", requestId,
   surface: "projection", sceneId: "home", output: "left", element: "clock", clockLayout,
   legendLayout: { ...clockLayout, dwellSeconds: 8 }, pageIndex: 0, ...patch });
+
+const flushMicrotasks = async () => { for (let index = 0; index < 30; index++) await Promise.resolve(); };
+
+function createActualPreviewApplyHarness({ preparePair } = {}) {
+  const source = readFileSync(new URL("../../frontend/src/entries/projection-main.js", import.meta.url), "utf8").replace(/\r\n/g, "\n");
+  const start = source.indexOf("applyPreviewProjectionConfig = async");
+  const end = source.indexOf("\n    }\n\n    if (previewMode) registerDisposer", start);
+  if (start < 0 || end <= start) throw new Error("Could not locate actual projection preview apply route");
+  const previous = structuredClone(DEFAULT_PROJECTION_CONFIG);
+  let activePair = previous, cameraConfig = previous, namesConfig = previous;
+  let rollbackCount = 0;
+  const mapListeners = new Map();
+  const drawSnapshots = [];
+  const map = {
+    on(type, listener) { if (!mapListeners.has(type)) mapListeners.set(type, new Set()); mapListeners.get(type).add(listener); },
+    off(type, listener) { mapListeners.get(type)?.delete(listener); if (!mapListeners.get(type)?.size) mapListeners.delete(type); },
+    triggerRepaint() {},
+    emit(type, event = {}) { for (const listener of [...(mapListeners.get(type) || [])]) listener(event); },
+    setEffectiveProjectionConfig(config) { cameraConfig = config; return true; },
+  };
+  const browserSurface = {
+    getConfig: () => activePair,
+    preparePair: (config, signal) => preparePair ? preparePair(config, signal) : Promise.resolve({ config }),
+    commitPair(pair) { pair.previous = activePair; activePair = pair.config; },
+    rollbackPair(pair) { rollbackCount++; activePair = pair.previous; },
+    draw() { drawSnapshots.push({ pair: activePair, camera: cameraConfig, names: namesConfig }); return true; },
+    finalizePair() {},
+  };
+  const nameFieldController = { applyProjectionConfigGeometry(config) { namesConfig = config; return true; } };
+  const dependencies = {
+    browserSurface, map, nameFieldController, rollbackProjectionPreviewApply, drawAfterMapRender,
+    cancelPreviewNames: async () => {}, startPreviewNames: async () => {},
+    browserStartupGate: { ready() {} }, isRuntimeAlive: () => true,
+    throwIfPreviewAborted(signal, generation, latest) {
+      if (signal?.aborted || generation !== latest()) throw Object.assign(new Error("Preview superseded"), { name: "AbortError" });
+    },
+  };
+  const apply = new Function("deps", `
+    const { browserSurface, map, nameFieldController, rollbackProjectionPreviewApply, drawAfterMapRender,
+      cancelPreviewNames, startPreviewNames, browserStartupGate, isRuntimeAlive, throwIfPreviewAborted } = deps;
+    let previewGeometryAccepted = true, previewNamesInitializationStarted = true;
+    let previewApplySequence = 0, projectionMapAlive = true, applyPreviewProjectionConfig;
+    ${source.slice(start, end)}
+    return applyPreviewProjectionConfig;
+  `)(dependencies);
+  const messages = [];
+  const listeners = new Map();
+  const parent = { postMessage: (message) => messages.push(message) };
+  const win = { parent, location: { origin: "http://preview.test" },
+    addEventListener: (type, listener) => listeners.set(type, listener), removeEventListener: (type) => listeners.delete(type) };
+  const dispose = installProjectionPreviewBridge({ win, output: "left", map, nameFieldController,
+    syncContextInvestigation() {}, applyProjectionConfig: apply });
+  const send = (requestId, config) => listeners.get("message")({ source: parent, origin: win.location.origin, data: {
+    type: "otef_projection_preview_config", output: "left", requestId, config,
+  } });
+  return { previous, map, mapListeners, browserSurface, nameFieldController, messages, drawSnapshots,
+    get activePair() { return activePair; }, get cameraConfig() { return cameraConfig; }, get namesConfig() { return namesConfig; },
+    get rollbackCount() { return rollbackCount; }, send, dispose };
+}
 
 test("clock bridge validates parent, session, increasing requests and finite local layouts", async () => {
   expect(previewBridge.installProjectionClockPreviewBridge).toBeTypeOf("function");
@@ -95,6 +156,25 @@ test("preview accepts only its same-origin parent and applies a validated draft 
   expect(listeners.has("message")).toBe(false);
 });
 
+test("preview ignores a reordered request ID after accepting a newer config", () => {
+  const listeners = new Map(); const parent = { postMessage: vi.fn() };
+  const win = { parent, location: { origin: "http://localhost" },
+    addEventListener: (type, callback) => listeners.set(type, callback), removeEventListener() {} };
+  const config = structuredClone(DEFAULT_PROJECTION_CONFIG);
+  const applyProjectionConfig = vi.fn(() => ({ committed: true }));
+  const dispose = installProjectionPreviewBridge({ win, output: "left", map: {}, nameFieldController: {},
+    syncContextInvestigation() {}, applyProjectionConfig });
+  const send = (requestId) => listeners.get("message")({ source: parent, origin: "http://localhost", data: {
+    type: "otef_projection_preview_config", output: "left", requestId, config,
+  } });
+  send(4); send(3);
+  expect(applyProjectionConfig).toHaveBeenCalledOnce();
+  expect(parent.postMessage).toHaveBeenLastCalledWith({
+    type: "otef_projection_preview_applied", output: "left", requestId: 4, success: true,
+  }, "http://localhost");
+  dispose();
+});
+
 test("preview exposes the candidate apply hook before local camera consumers", () => {
   const listeners = new Map();
   const parent = { postMessage: vi.fn() };
@@ -138,6 +218,161 @@ test('an asynchronous paired preview apply uses the prepared wall and ignores a 
   expect(names.setProjectionConfig).not.toHaveBeenCalled();
 });
 
+test('the whole geometry apply is bounded and its operation signal aborts on timeout', async () => {
+  vi.useFakeTimers();
+  const listeners = new Map(); const parent = { postMessage: vi.fn() };
+  const win = { parent, location: { origin: 'http://localhost' },
+    addEventListener: (type, callback) => listeners.set(type, callback), removeEventListener() {} };
+  let operationSignal, requestSignal;
+  const applyProjectionConfig = vi.fn((_config, context) => {
+    operationSignal = context.signal;
+    requestSignal = context.requestSignal;
+    return new Promise(() => {});
+  });
+  const dispose = installProjectionPreviewBridge({ win, output: 'left', map: {}, nameFieldController: {},
+    syncContextInvestigation: vi.fn(), applyProjectionConfig });
+  listeners.get('message')({ source: parent, origin: 'http://localhost', data: {
+    type: 'otef_projection_preview_config', output: 'left', requestId: 1, config: structuredClone(DEFAULT_PROJECTION_CONFIG),
+  } });
+  expect(operationSignal.aborted).toBe(false);
+  await vi.advanceTimersByTimeAsync(30000);
+  expect(operationSignal.aborted).toBe(true);
+  expect(requestSignal.aborted).toBe(false);
+  expect(parent.postMessage).toHaveBeenLastCalledWith(expect.objectContaining({
+    type: 'otef_projection_preview_applied', output: 'left', requestId: 1, success: false,
+  }), 'http://localhost');
+  dispose(); vi.useRealTimers();
+});
+
+test('the whole names operation is bounded and its operation signal aborts on timeout', async () => {
+  vi.useFakeTimers();
+  const listeners = new Map(); const parent = { postMessage: vi.fn() };
+  const win = { parent, location: { origin: 'http://localhost' },
+    addEventListener: (type, callback) => listeners.set(type, callback), removeEventListener() {} };
+  let operationSignal, requestSignal;
+  const applyProjectionConfig = vi.fn((_config, context) => {
+    operationSignal = context.signal;
+    requestSignal = context.requestSignal;
+    return new Promise(() => {});
+  });
+  const dispose = installProjectionPreviewBridge({ win, output: 'right', map: {}, nameFieldController: {},
+    syncContextInvestigation: vi.fn(), applyProjectionConfig });
+  listeners.get('message')({ source: parent, origin: 'http://localhost', data: {
+    type: 'otef_projection_preview_config', output: 'right', requestId: 2, runNames: true,
+    config: structuredClone(DEFAULT_PROJECTION_CONFIG),
+  } });
+  await vi.advanceTimersByTimeAsync(30000);
+  expect(operationSignal.aborted).toBe(true);
+  expect(requestSignal.aborted).toBe(false);
+  expect(parent.postMessage).toHaveBeenLastCalledWith(expect.objectContaining({
+    type: 'otef_projection_preview_applied', output: 'right', requestId: 2, success: false,
+  }), 'http://localhost');
+  dispose(); vi.useRealTimers();
+});
+
+test('whole-operation timeout restores the current geometry candidate before its bounded rollback ends', async () => {
+  vi.useFakeTimers();
+  let resolvePreparation;
+  const preparation = new Promise((resolve) => { resolvePreparation = resolve; });
+  const route = createActualPreviewApplyHarness({ preparePair: () => preparation });
+  const candidate = structuredClone(DEFAULT_PROJECTION_CONFIG); candidate.pre.scale += 0.01;
+  route.send(1, candidate);
+  await flushMicrotasks();
+  await vi.advanceTimersByTimeAsync(29000);
+  resolvePreparation({ config: candidate });
+  await flushMicrotasks();
+  expect(route.activePair).toBe(candidate);
+  expect(route.mapListeners.size).toBe(2);
+
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(route.rollbackCount).toBe(1);
+  expect(route.activePair).toBe(route.previous);
+  expect(route.cameraConfig).toBe(route.previous);
+  expect(route.namesConfig).toBe(route.previous);
+  expect(route.messages.filter((message) => message.type === 'otef_projection_preview_applied')).toContainEqual(
+    expect.objectContaining({ requestId: 1, success: false }),
+  );
+  expect(route.mapListeners.size).toBe(2);
+  await vi.advanceTimersByTimeAsync(5000);
+  expect(route.mapListeners.size).toBe(0);
+  expect(route.drawSnapshots).toHaveLength(0);
+  route.dispose(); vi.useRealTimers();
+});
+
+test('a newer draft retires an actual stalled rollback without drawing or replying for the old request', async () => {
+  vi.useFakeTimers();
+  const route = createActualPreviewApplyHarness();
+  const first = structuredClone(DEFAULT_PROJECTION_CONFIG); first.pre.scale += 0.01;
+  const second = structuredClone(DEFAULT_PROJECTION_CONFIG); second.pre.scale += 0.02;
+  route.send(1, first);
+  await flushMicrotasks();
+  route.map.emit('error', { error: new Error('preview render failed') });
+  await flushMicrotasks();
+  expect(route.rollbackCount).toBe(1);
+  expect(route.activePair).toBe(route.previous);
+  expect(route.mapListeners.size).toBe(2);
+
+  const repliesBeforeSupersession = route.messages.filter((message) => message.type === 'otef_projection_preview_applied' && message.requestId === 1).length;
+  route.send(2, second);
+  await flushMicrotasks();
+  route.map.emit('render');
+  await flushMicrotasks();
+  expect(route.activePair).toBe(second);
+  expect(route.cameraConfig).toBe(second);
+  expect(route.namesConfig).toBe(second);
+  expect(route.drawSnapshots).toEqual([{ pair: second, camera: second, names: second }]);
+  expect(route.messages.filter((message) => message.type === 'otef_projection_preview_applied' && message.requestId === 1 && message.success)).toHaveLength(0);
+  expect(route.messages.filter((message) => message.type === 'otef_projection_preview_applied' && message.requestId === 1)).toHaveLength(repliesBeforeSupersession);
+  expect(route.messages).toContainEqual(expect.objectContaining({ type: 'otef_projection_preview_applied', requestId: 2, success: true }));
+  expect(route.mapListeners.size).toBe(0);
+  route.dispose(); vi.useRealTimers();
+});
+
+test('disposing during an actual stalled rollback removes listeners and prevents a late draw or success reply', async () => {
+  vi.useFakeTimers();
+  const route = createActualPreviewApplyHarness();
+  const candidate = structuredClone(DEFAULT_PROJECTION_CONFIG); candidate.pre.scale += 0.01;
+  route.send(1, candidate);
+  await flushMicrotasks();
+  route.map.emit('error', { error: new Error('preview render failed') });
+  await flushMicrotasks();
+  expect(route.rollbackCount).toBe(1);
+  expect(route.activePair).toBe(route.previous);
+  expect(route.mapListeners.size).toBe(2);
+
+  const repliesBeforeDispose = route.messages.filter((message) => message.type === 'otef_projection_preview_applied' && message.requestId === 1).length;
+  route.dispose();
+  await flushMicrotasks();
+  expect(route.mapListeners.size).toBe(0);
+  await vi.advanceTimersByTimeAsync(5000);
+  expect(route.activePair).toBe(route.previous);
+  expect(route.drawSnapshots).toHaveLength(0);
+  expect(route.messages.filter((message) => message.type === 'otef_projection_preview_applied' && message.requestId === 1 && message.success)).toHaveLength(0);
+  expect(route.messages.filter((message) => message.type === 'otef_projection_preview_applied' && message.requestId === 1)).toHaveLength(repliesBeforeDispose);
+  vi.useRealTimers();
+});
+
+test('disposing while actual pair preparation is pending prevents commit, rollback, draw and Applied reply', async () => {
+  vi.useFakeTimers();
+  let resolvePreparation;
+  const preparation = new Promise((resolve) => { resolvePreparation = resolve; });
+  const route = createActualPreviewApplyHarness({ preparePair: () => preparation });
+  const candidate = structuredClone(DEFAULT_PROJECTION_CONFIG); candidate.pre.scale += 0.01;
+  route.send(1, candidate);
+  await flushMicrotasks();
+  route.dispose();
+  resolvePreparation({ config: candidate });
+  await flushMicrotasks();
+  expect(route.activePair).toBe(route.previous);
+  expect(route.cameraConfig).toBe(route.previous);
+  expect(route.namesConfig).toBe(route.previous);
+  expect(route.rollbackCount).toBe(0);
+  expect(route.drawSnapshots).toHaveLength(0);
+  expect(route.messages.filter((message) => message.type === 'otef_projection_preview_applied')).toHaveLength(0);
+  expect(route.mapListeners.size).toBe(0);
+  vi.useRealTimers();
+});
+
 test('explicit Run names is passed through the unchanged preview applied handshake', async () => {
   const listeners = new Map(); const parent = { postMessage: vi.fn() };
   const win = { parent, location: { origin: 'http://localhost' },
@@ -172,18 +407,6 @@ test('new geometry cancels an independent names run before starting its apply', 
   expect(namesSignal.aborted).toBe(true);
   expect(calls[1]).toMatchObject({ runNames: false });
   expect(calls[1].signal.aborted).toBe(false);
-});
-
-test('preview geometry remaps installed names and draws without preparing a wall per draft', () => {
-  const source = readFileSync(new URL('../../frontend/src/entries/projection-main.js', import.meta.url), 'utf8');
-  const start = source.indexOf('applyPreviewProjectionConfig = async');
-  const end = source.indexOf('if (previewMode) registerDisposer(installProjectionPreviewBridge', start);
-  const geometry = source.slice(start, end);
-  expect(geometry).toContain('nameFieldController.applyProjectionConfigGeometry(config, generation)');
-  expect(geometry).toContain('drawAfterMapRender(map, () => browserSurface.draw()');
-  expect(geometry).toContain('if (!drawn) throw new Error(\'Projection preview draw failed\')');
-  expect(geometry).not.toContain('prepareProjectionNameWall');
-  expect(geometry).not.toContain('prepareProjectionCandidate');
 });
 
 test('preview validation replies with exact identity and complete wall without applying the renderer', async () => {

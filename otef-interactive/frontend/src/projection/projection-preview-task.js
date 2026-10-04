@@ -26,6 +26,22 @@ export function settleProjectionPreviewTaskOnAbort(task, signal) {
   });
 }
 
+export async function rollbackProjectionPreviewApply({ isCurrent, signal, rollback, redraw }) {
+  if (typeof isCurrent !== "function" || !isCurrent() || signal?.aborted) return false;
+  const controller = new AbortController();
+  const abortRollback = () => controller.abort();
+  signal?.addEventListener?.("abort", abortRollback, { once: true });
+  try {
+    if (!isCurrent() || signal?.aborted) return false;
+    rollback?.({ isCurrent, signal: controller.signal });
+    if (!isCurrent() || signal?.aborted || controller.signal.aborted) return false;
+    await redraw?.(controller.signal);
+    return isCurrent() && !signal?.aborted && !controller.signal.aborted;
+  } finally {
+    signal?.removeEventListener?.("abort", abortRollback);
+  }
+}
+
 export async function commitProjectionPreviewNamesCandidate({ prepare, isCurrent, commit, draw, finalize, rollback }) {
   try {
     await prepare();
@@ -35,8 +51,10 @@ export async function commitProjectionPreviewNamesCandidate({ prepare, isCurrent
     finalize();
     return { committed: true };
   } catch (error) {
-    rollback();
-    draw();
+    if (isCurrent()) {
+      rollback();
+      if (isCurrent()) draw();
+    }
     throw error;
   }
 }

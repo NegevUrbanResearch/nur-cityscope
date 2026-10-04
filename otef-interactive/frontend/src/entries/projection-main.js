@@ -106,7 +106,7 @@ import { getInvestigationTimelineRenderSnapshot } from "../shared/maplibre-inves
 import { loadCapturedProjectionFraming } from "../projection/projection-captured-baseline.js";
 import { visibleProjectionBrowserError } from "../projection/projection-browser-error.js";
 import { waitForProjectionConfigStartup } from "../projection/projection-config-startup.js";
-import { cancelProjectionPreviewNames, commitProjectionPreviewNamesCandidate, settleProjectionPreviewTaskOnAbort } from "../projection/projection-preview-task.js";
+import { cancelProjectionPreviewNames, commitProjectionPreviewNamesCandidate, rollbackProjectionPreviewApply, settleProjectionPreviewTaskOnAbort } from "../projection/projection-preview-task.js";
 import { projectionCandidateResult } from '../projection/projection-candidate-validation.js';
 import { createProjectionLifecycle } from "../projection/projection-lifecycle.js";
 import {
@@ -1034,7 +1034,7 @@ async function bootstrapProjectionRuntime() {
 
     if (previewMode && browserMode) {
       const throwIfPreviewAborted = (signal, generation, latest) => {
-        if (signal?.aborted || generation !== latest())
+        if (signal?.aborted || generation !== latest() || !projectionMapAlive || !isRuntimeAlive())
           throw Object.assign(new Error('Preview superseded'), { name: 'AbortError' });
       };
       const rebuildPreviewNames = async (config, signal, generation) => {
@@ -1084,7 +1084,7 @@ async function bootstrapProjectionRuntime() {
         });
       };
       registerDisposer(() => { void cancelPreviewNames(); });
-      applyPreviewProjectionConfig = async (config, { signal, runNames = false }) => {
+      applyPreviewProjectionConfig = async (config, { signal, requestSignal = signal, runNames = false } = {}) => {
         if (runNames) {
           if (!previewGeometryAccepted) throw new Error('Preview calibration is not ready');
           return startPreviewNames(config, signal);
@@ -1092,13 +1092,14 @@ async function bootstrapProjectionRuntime() {
         await cancelPreviewNames();
         const generation = ++previewApplySequence;
         const checkCurrent = () => throwIfPreviewAborted(signal, generation, () => previewApplySequence);
+        const checkRequestCurrent = () => throwIfPreviewAborted(requestSignal, generation, () => previewApplySequence);
         checkCurrent();
         const previous = browserSurface.getConfig();
         const pair = await browserSurface.preparePair(config, signal);
         checkCurrent();
-        browserSurface.commitPair(pair);
         try {
-          const drawn = await drawAfterMapRender(map, () => browserSurface.draw(), { signal, beforeRender: () => {
+          browserSurface.commitPair(pair);
+          const drawn = await drawAfterMapRender(map, () => browserSurface.draw(), { signal, timeoutMs: 15000, beforeRender: () => {
             checkCurrent();
             if (map.setEffectiveProjectionConfig(config) === false) throw new Error('Projection camera rejected draft');
             if (!nameFieldController.applyProjectionConfigGeometry(config, generation)) throw new Error('Projection labels rejected draft');
@@ -1109,10 +1110,25 @@ async function bootstrapProjectionRuntime() {
           previewGeometryAccepted = true;
           browserStartupGate?.ready();
         } catch (error) {
-          browserSurface.rollbackPair(pair);
-          map.setEffectiveProjectionConfig(previous);
-          nameFieldController.applyProjectionConfigGeometry(previous, generation);
-          try { await drawAfterMapRender(map, () => browserSurface.draw()); } catch { /* Keep the calibrated startup gate visible on rollback failure. */ }
+          if (requestSignal?.aborted || generation !== previewApplySequence || !projectionMapAlive || !isRuntimeAlive()) throw error;
+          try {
+            await rollbackProjectionPreviewApply({
+              isCurrent: () => !requestSignal?.aborted && generation === previewApplySequence && projectionMapAlive && isRuntimeAlive(),
+              signal: requestSignal,
+              rollback: () => {
+                checkRequestCurrent();
+                browserSurface.rollbackPair(pair);
+                checkRequestCurrent();
+                map.setEffectiveProjectionConfig(previous);
+                checkRequestCurrent();
+                nameFieldController.applyProjectionConfigGeometry(previous, generation);
+              },
+              redraw: (rollbackSignal) => drawAfterMapRender(map, () => {
+                checkRequestCurrent();
+                return browserSurface.draw();
+              }, { signal: rollbackSignal, timeoutMs: 5000 }),
+            });
+          } catch { /* Keep the original apply error if bounded rollback cannot finish. */ }
           throw error;
         }
         if (!previewNamesInitializationStarted) {
