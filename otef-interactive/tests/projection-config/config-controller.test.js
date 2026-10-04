@@ -19,6 +19,33 @@ import {
 
 const clone = (value) => JSON.parse(JSON.stringify(value));
 
+test('visible preset commands save the loaded preset while a different candidate is selected', async () => {
+  const previousDocument = globalThis.document;
+  globalThis.document = documentStub();
+  const root = element('main');
+  const client = fakeClient();
+  client.getState().snapshot.presets.push({ id: 'desk', name: 'Desk', config: clone(DEFAULTS) }, { id: 'candidate', name: 'Candidate', config: clone(DEFAULTS) });
+  client.getState().snapshot.selectedPresetId = 'desk';
+  const api = mountProjectionConfig(root, { client });
+  try {
+    const action = name => find(root, node => node.dataset?.action === name);
+    const menuOf = node => { for (; node && !node.dataset?.menu; node = node.parentElement); return node?.dataset.menu; };
+    const presets = find(root, node => node.attributes?.['aria-label'] === 'Preset');
+    presets.value = 'candidate'; presets.dispatch('change');
+    for (const action of ['load', 'save']) {
+      for (let node = find(root, node => node.dataset?.action === action); node; node = node.parentElement) expect(node.tagName).not.toBe('DETAILS');
+    }
+    for (const action of ['revert', 'save-new']) expect(menuOf(find(root, node => node.dataset?.action === action))).toBe('presets');
+    for (const action of ['output-assign', 'output-open-both', 'output-close-both']) expect(menuOf(find(root, node => node.dataset?.action === action))).toBe('displays');
+    action('save').dispatch('click');
+    await vi.waitFor(() => expect(client.save).toHaveBeenCalledWith(expect.objectContaining({ presetId: 'desk', name: 'Desk' })));
+    await api.handleAction('load', 'original');
+    expect(action('save').disabled).toBe(true);
+    action('save-new').dispatch('click');
+    expect(find(root, node => node.className === 'config-save-copy').hidden).toBe(false);
+  } finally { api.dispose(); globalThis.document = previousDocument; }
+});
+
 function element(tag = "div") {
   return {
     tagName: tag.toUpperCase(), children: [], attributes: {}, dataset: {}, style: {},
@@ -55,6 +82,34 @@ function find(root, predicate) {
   return null;
 }
 
+// Save copy now requires an explicit name confirmation before the existing action.
+function clickCommand(root, action) {
+  find(root, node => node.dataset?.action === action).dispatch('click');
+  if (action === 'save-new') find(root, node => node.dataset?.action === 'save-copy-confirm').dispatch('click');
+}
+
+test('Import keeps its explicit save name while subsequent copy edits stay separate', async () => {
+  const root = element('main'); root.ownerDocument = documentStub(); const client = fakeClient();
+  client.getState().snapshot.presets.push({ id: 'desk', name: 'Desk', config: clone(DEFAULTS) });
+  client.getState().snapshot.selectedPresetId = 'desk';
+  const imported = clone(DEFAULTS); imported.pre.tx = 0.012;
+  const api = mountProjectionConfig(root, { client, onImport: async () => ({ name: 'Imported desk', config: imported }) });
+  const action = name => find(root, node => node.dataset?.action === name);
+  try {
+    await api.handleAction('import', {});
+    const input = find(root, node => node.attributes?.['aria-label'] === 'Preset name');
+    expect(input.value).toBe('Imported desk');
+    action('save-new').dispatch('click'); input.value = ''; input.dispatch('input'); action('save-copy-cancel').dispatch('click');
+    action('save').dispatch('click');
+    await vi.waitFor(() => expect(client.save).toHaveBeenCalledWith({ presetId: 'desk', name: 'Imported desk' }));
+    expect(client.savedDrafts).toEqual([imported]);
+    action('save-new').dispatch('click'); input.value = 'Imported copy'; input.dispatch('input'); action('save-copy-confirm').dispatch('click');
+    await vi.waitFor(() => expect(client.save).toHaveBeenLastCalledWith({ presetId: null, name: 'Imported copy' }));
+    await api.handleAction('load', 'desk');
+    action('save').dispatch('click');
+    await vi.waitFor(() => expect(client.save).toHaveBeenLastCalledWith({ presetId: 'desk', name: 'Imported desk' }));
+  } finally { api.dispose(); }
+});
 function fakeClient(initialSnapshot) {
   let state = { snapshot: { revision: 2, config: clone(DEFAULTS), presets: [{ id: "original", name: "Original calibration", config: clone(DEFAULTS), readOnly: true }], selectedPresetId: "original" }, draft: clone(DEFAULTS), live: true, connected: true, pending: false, hasLocalDraft: false };
   const listeners = new Set();
@@ -309,7 +364,7 @@ describe("projection config controller", () => {
     try {
       const input = find(root, node => node.dataset?.field === 'pre.scale' && node.dataset.input === 'number');
       input.value = '1.5'; input.dispatch('input');
-      find(root, node => node.dataset?.action === action).dispatch('click');
+      clickCommand(root, action);
       expect(client.getState().draft.pre.scale).toBe(1.5);
       expect(action === 'apply' ? client.apply : client.save).toHaveBeenCalledTimes(1);
     } finally { api.dispose(); }
@@ -326,7 +381,7 @@ describe("projection config controller", () => {
       if (action === 'node') find(root, node => node.dataset?.node === 'left-fit').dispatch('click');
       else if (action === 'profile') { const select = find(root, node => node.className === 'names-wall-mode'); select.value = 'model'; select.dispatch('change'); }
       else if (action === 'editor') find(root, node => node.dataset?.action === 'clock-editor-open').dispatch('click');
-      else find(root, node => node.dataset?.action === action).dispatch('click');
+      else clickCommand(root, action);
       expect(client.apply).not.toHaveBeenCalled(); expect(client.save).not.toHaveBeenCalled(); expect(editorFactory).not.toHaveBeenCalled();
       expect(client.getState().draft).toEqual(DEFAULTS); expect(input.value).toBe('1.');
       expect(selected.mock.calls.every(([name, value]) => name !== 'selected' || value === true)).toBe(true);
@@ -339,7 +394,7 @@ describe("projection config controller", () => {
     try {
       const input = find(root, node => node.dataset?.field === 'outputs.left.crop.x0' && node.dataset.input === 'number');
       input.value = '99.99'; input.dispatch('input');
-      find(root, node => node.dataset?.action === action).dispatch('click');
+      clickCommand(root, action);
       expect(client.setDraft).not.toHaveBeenCalled(); expect(client.apply).not.toHaveBeenCalled(); expect(client.save).not.toHaveBeenCalled();
       expect(input.value).toBe('99.99'); expect(input.attributes['aria-invalid']).toBe('true');
     } finally { api.dispose(); }
@@ -402,7 +457,7 @@ describe("projection config controller", () => {
     const imported = vi.fn(() => replacement); const api = mountProjectionConfig(root, { client, onImport: imported });
     try {
       const input = find(root, node => node.dataset?.field === 'pre.scale' && node.dataset.input === 'number'); input.value = '1.'; input.dispatch('input');
-      const trigger = () => action === 'import' ? api.handleAction('import', {}) : find(root, node => node.dataset?.action === action).dispatch('click');
+      const trigger = () => action === 'import' ? api.handleAction('import', {}) : clickCommand(root, action);
       trigger(); expect(confirm).toHaveBeenCalledTimes(1); expect(client.load).not.toHaveBeenCalled(); expect(client.revert).not.toHaveBeenCalled(); expect(imported).not.toHaveBeenCalled();
       confirm.mockReturnValue(true); trigger(); expect(confirm).toHaveBeenCalledTimes(2); expect(client.getState().draft).toEqual(DEFAULTS); expect(client.setDraft).not.toHaveBeenCalled();
       expect(action === 'import' ? imported : client[action]).toHaveBeenCalledTimes(1);
@@ -420,7 +475,7 @@ describe("projection config controller", () => {
       if (action === 'node') find(root, node => node.dataset?.node === 'left-fit').dispatch('click');
       else if (action === 'profile') { const select = find(root, node => node.className === 'names-wall-mode'); select.value = 'model'; select.dispatch('change'); }
       else if (action === 'editor') find(root, node => node.dataset?.action === 'parameter-editor-open').dispatch('click');
-      else find(root, node => node.dataset?.action === action).dispatch('click');
+      else clickCommand(root, action);
       expect(client.apply).not.toHaveBeenCalled(); expect(client.save).not.toHaveBeenCalled(); expect(client.getState().draft).toEqual(DEFAULTS);
       expect(selected).toHaveBeenLastCalledWith('selected', true);
       expect(find(root, node => node.className === 'parameter-editor-dialog').hidden).toBe(true);
@@ -435,7 +490,7 @@ describe("projection config controller", () => {
       h.surface.dispatch('pointerdown', { pointerId: 4, isPrimary: true, button: 0, clientX: 72, clientY: 72, preventDefault() {} });
       h.client.apply.mockClear(); h.client.save.mockClear();
       if (action === 'node') find(h.root, node => node.dataset?.node === 'pre').dispatch('click');
-      else find(h.root, node => node.dataset?.action === action).dispatch('click');
+      else clickCommand(h.root, action);
       expect(h.client.apply).not.toHaveBeenCalled(); expect(h.client.save).not.toHaveBeenCalled();
       expect(find(h.root, node => node.className === 'action-error').textContent).toMatch(/active gesture/i);
     } finally { h.restore(); }
@@ -783,7 +838,7 @@ describe("projection config controller", () => {
       const action = (name) => find(root, (node) => node.dataset?.action === name);
       const nudge = () => find(root, (node) => node.dataset?.action === "warp-nudge" && node.dataset.direction === "right").dispatch("click");
       find(root, (node) => node.dataset?.node === "left-keystone").dispatch("click"); nudge();
-      action(operation).dispatch("click"); await vi.waitFor(() => expect(h.requests).toHaveLength(1));
+      clickCommand(root, operation); await vi.waitFor(() => expect(h.requests).toHaveLength(1));
       nudge(); const draft = h.client.getState().draft;
       h.foreign({ ...h.snapshot, revision: 2, selectedPresetId: foreignId });
       h.respond({ ...h.snapshot, revision: 1 }); await vi.waitFor(() => expect(h.client.getState().pending).toBe(false));
@@ -815,7 +870,7 @@ describe("projection config controller", () => {
       h.respond(working); await vi.waitFor(() => expect(h.client.getState().pending).toBe(false));
       expect(h.client.getState().hasLocalDraft).toBe(false); expect(action("warp-undo").disabled).toBe(false);
       const id = operation === "save" ? h.presetId : "33333333-3333-4333-8333-333333333333";
-      action(operation === "save" ? "save" : "save-new").dispatch("click");
+      clickCommand(root, operation === "save" ? "save" : "save-new");
       await vi.waitFor(() => expect(h.requests).toHaveLength(1));
       const saved = { ...working, revision: 2, selectedPresetId: id, presets: [...working.presets.filter((p) => p.id !== id), { id, name: "Desk", config: accepted, readOnly: false }] };
       if (operation.endsWith("websocket")) { h.own(saved); expect(action("warp-undo").disabled).toBe(false); }
@@ -842,7 +897,7 @@ describe("projection config controller", () => {
       const action = (name) => find(root, (node) => node.dataset?.action === name);
       const nudge = () => find(root, (node) => node.dataset?.action === "warp-nudge" && node.dataset.direction === "left").dispatch("click");
       find(root, (node) => node.dataset?.node === "right-keystone").dispatch("click"); nudge();
-      action(operation).dispatch("click"); await vi.waitFor(() => expect(h.requests).toHaveLength(1));
+      clickCommand(root, operation); await vi.waitFor(() => expect(h.requests).toHaveLength(1));
       const sent = JSON.parse(h.requests[0].options.body); nudge(); const draft = h.client.getState().draft;
       const id = operation === "save" ? h.presetId : "33333333-3333-4333-8333-333333333333";
       const saved = { ...h.snapshot, revision: 1, config: sent.config, selectedPresetId: id, presets: [...h.snapshot.presets.filter((p) => p.id !== id), { id, name: sent.name, config: sent.config, readOnly: false }] };
@@ -865,7 +920,7 @@ describe("projection config controller", () => {
       const action = (name) => find(root, (node) => node.dataset?.action === name);
       find(root, (node) => node.dataset?.node === "left-keystone").dispatch("click");
       find(root, (node) => node.dataset?.action === "warp-nudge" && node.dataset.direction === "right").dispatch("click");
-      const draft = h.client.getState().draft; action("save-new").dispatch("click");
+      const draft = h.client.getState().draft; clickCommand(root, "save-new");
       await vi.waitFor(() => expect(h.requests).toHaveLength(1));
       const preset = find(root, (node) => node.attributes?.["aria-label"] === "Preset"); preset.value = h.presetId; preset.dispatch("change"); action("load").dispatch("click");
       const id = "33333333-3333-4333-8333-333333333333";
@@ -891,7 +946,7 @@ describe("projection config controller", () => {
       const action = (name) => find(root, (node) => node.dataset?.action === name);
       find(root, (node) => node.dataset?.node === "left-keystone").dispatch("click");
       find(root, (node) => node.dataset?.action === "warp-nudge" && node.dataset.direction === "right").dispatch("click");
-      action("save-new").dispatch("click"); expect(action("warp-undo").disabled).toBe(false);
+      clickCommand(root, "save-new"); expect(action("warp-undo").disabled).toBe(false);
       const external = clone(DEFAULTS); external.outputs.left.warp.keystone.corners[0] = [0.05, 0.01];
       client.report({ snapshot: { ...client.getState().snapshot, revision: 3, config: external }, draft: external, hasLocalDraft: false });
       expect(action("warp-undo").disabled).toBe(true);
@@ -1025,7 +1080,7 @@ describe("projection config controller", () => {
       table: "otef", output: "left", instanceId: "left-instance", revision: 2,
       success: false, error: "output renderer unavailable", route: "browser", baseline: { type: "identity" },
     });
-    const tools = find(root, (node) => node.className === "config-tools");
+    const tools = find(root, (node) => node.className?.includes("config-tools"));
     expect(tools.tagName).toBe("DETAILS");
     expect(tools.attributes?.open).toBeUndefined();
     expect(find(root, (node) => node.className === "applied-status").tagName).toBe("SECTION");
@@ -1681,10 +1736,10 @@ describe("projection config controller", () => {
     expect(client.getState().live).toBe(false);
     const name = find(root, (node) => node.attributes?.["aria-label"] === "Preset name");
     name.value = "Imported";
-    action("save-new").dispatch("click");
+    clickCommand(root, "save-new");
     expect(client.save).not.toHaveBeenCalled();
     offset.dispatch("keydown", { key: "Escape", preventDefault() {}, stopPropagation() {} });
-    action("save-new").dispatch("click");
+    clickCommand(root, "save-new");
     await vi.waitFor(() => expect(client.save).toHaveBeenCalledWith({ presetId: null, name: "Imported" }));
     expect(client.savedDrafts.at(-1).pre.tx).toBe(0.012);
     const preset = find(root, (node) => node.attributes?.["aria-label"] === "Preset");
@@ -1925,13 +1980,14 @@ describe("projection config controller", () => {
     await vi.waitFor(() => expect(outputController.identifyDisplays).toHaveBeenCalledTimes(1));
     const left = find(root, (node) => node.dataset?.action === "output-left-display");
     const right = find(root, (node) => node.dataset?.action === "output-right-display");
-    expect(left.children.map((option) => option.textContent)).toEqual(["Display 1", "Display 2"]);
-    expect(right.children.map((option) => option.textContent)).toEqual(["Display 1", "Display 2"]);
+    expect(left.children.map((option) => option.textContent)).toEqual(["Display 1 · Left screen", "Display 2 · Right screen"]);
+    expect(right.children.map((option) => option.textContent)).toEqual(["Display 1 · Left screen", "Display 2 · Right screen"]);
     left.value = "left-screen"; right.value = "right-screen"; left.dispatch("change"); right.dispatch("change");
     action("output-identify").dispatch("click");
     client.report({ previewError: "unrelated preview refresh" });
     expect(left.value).toBe("left-screen");
     expect(right.value).toBe("right-screen");
+    expect(outputController.assignDisplays).not.toHaveBeenCalled();
     action("output-assign").dispatch("click");
     expect(outputController.assignDisplays).toHaveBeenCalledWith({ left: "left-screen", right: "right-screen" });
     action("output-open-both").dispatch("click");
@@ -2330,7 +2386,7 @@ describe("projection config controller", () => {
     action("apply").dispatch("click");
     await vi.waitFor(() => expect(client.apply).toHaveBeenCalledTimes(1));
     const name = find(root, (item) => item.attributes?.["aria-label"] === "Preset name"); name.value = "Wall profile";
-    action("save-new").dispatch("click");
+    clickCommand(root, "save-new");
     await vi.waitFor(() => expect(client.savedDrafts.at(-1).namesWall.profiles.model.requestedFontPx).toBe(6));
     expect(client.savedDrafts.at(-1).namesWall.profiles.wall.inwardShiftPercent).toBe(50);
     api.setConflict("Remote update");
