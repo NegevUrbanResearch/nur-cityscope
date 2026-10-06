@@ -10,7 +10,11 @@ describe("frontend favicon contract", () => {
     const entryNames = [...viteConfig.matchAll(/path\.resolve\(rootDir, "frontend\/([^\"]+\.html)"\)/g)]
       .map((match) => match[1]);
 
-    expect(entryNames).toHaveLength(9);
+    expect(entryNames.sort()).toEqual([
+      "curation.html", "display-identify.html", "index.html", "launcher.html",
+      "nli-staff-remote.html", "projection-config.html", "projection-reversed.html",
+      "projection.html", "qr.html", "remote-controller.html",
+    ]);
 
     for (const entryName of entryNames) {
       const htmlPath = path.join(frontendDirectory, entryName);

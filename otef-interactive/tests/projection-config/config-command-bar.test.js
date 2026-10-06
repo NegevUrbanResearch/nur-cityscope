@@ -7,6 +7,25 @@ import { DEFAULT_PROJECTION_CONFIG } from '../../frontend/src/shared/projection-
 import * as module from '../../frontend/src/projection-config/config-command-bar.js';
 const snapshot = { presets: [{ id: 'original', name: 'Original', readOnly: true }, { id: 'desk', name: 'Desk' }, { id: 'other', name: 'Other' }], selectedPresetId: 'other' };
 
+test('Displays contains persisted reversal control with an explicit next-Open scope', () => {
+  const { window: dom } = new JSDOM('<main></main>', { url: 'http://localhost' });
+  const onOutputAction = vi.fn();
+  const bar = module.createConfigCommandBar({ document: dom.document, onOutputAction });
+  dom.document.querySelector('main').append(bar.element);
+  const reverse = bar.element.querySelector('input[aria-label="Reverse model 180°"]');
+  expect(reverse).not.toBeNull();
+  expect(reverse.closest('[data-menu="displays"]')).toBeTruthy();
+  bar.update({ outputState: { supported: true, reverseModel: true } });
+  expect(reverse.checked).toBe(true);
+  expect(bar.element.textContent).toMatch(/swap.*halves/i);
+  expect(bar.element.textContent).toMatch(/next.*Open/i);
+  reverse.checked = false; reverse.dispatchEvent(new dom.Event('change'));
+  expect(onOutputAction).toHaveBeenCalledWith('reverse-model', false);
+  bar.update({ outputState: { supported: false } });
+  expect(reverse.disabled).toBe(true);
+  bar.dispose(); dom.close();
+});
+
 test('jsdom view keeps direct commands visible while controller saves loaded ID rather than selected candidate', async () => {
   const { window: dom } = new JSDOM('<main></main>', { url: 'http://localhost' });
   const config = structuredClone(DEFAULT_PROJECTION_CONFIG);

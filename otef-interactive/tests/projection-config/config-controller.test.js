@@ -3223,6 +3223,7 @@ test('Cancel immediately hides a retained Wall-only wrapper when no controller e
       identifyDisplays: vi.fn(() => { outputListeners.forEach((listener) => listener(outputState)); return screens; }),
       dispose: vi.fn(),
       assignDisplays: vi.fn((selection) => { outputState = { ...outputState, assignments: selection, message: "Assignment saved" }; outputListeners.forEach((listener) => listener(outputState)); return outputState; }),
+      setReverseModel: vi.fn(value => { outputState = { ...outputState, reverseModel: value }; outputListeners.forEach(listener => listener(outputState)); return outputState; }),
       openBoth: vi.fn(async () => { outputState = { ...outputState, ownedSpans: ["left", "right"], message: "Browser outputs opened" }; outputListeners.forEach((listener) => listener(outputState)); return outputState.ownedSpans; }),
       closeBoth: vi.fn(() => { outputState = { ...outputState, ownedSpans: [], message: "Browser outputs closed" }; outputListeners.forEach((listener) => listener(outputState)); return outputState; }),
       getState: () => outputState,
@@ -3247,6 +3248,11 @@ test('Cancel immediately hides a retained Wall-only wrapper when no controller e
     expect(outputController.assignDisplays).not.toHaveBeenCalled();
     action("output-assign").dispatch("click");
     expect(outputController.assignDisplays).toHaveBeenCalledWith({ left: "left-screen", right: "right-screen" });
+    action("output-reverse-model").checked = true;
+    action("output-reverse-model").dispatch("change");
+    expect(outputController.setReverseModel).toHaveBeenCalledWith(true);
+    expect(action("output-reverse-model").checked).toBe(true);
+    expect(outputController.openBoth).not.toHaveBeenCalled();
     action("output-open-both").dispatch("click");
     await vi.waitFor(() => expect(outputController.openBoth).toHaveBeenCalledTimes(1));
     action("output-close-both").dispatch("click");

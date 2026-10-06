@@ -27,6 +27,11 @@ Interactive mapping module for the OTEF physical model with synchronized project
 - **NLI staff remote**: http://localhost/otef-interactive/nli-staff-remote.html (installable web app via `nli-staff.webmanifest`)
 - **Printable QR**: http://localhost/otef-interactive/qr.html (guest and staff remote QR codes)
 
+In projection configuration, **Displays → Reverse model 180°** swaps the two
+projector halves and rotates both complete images, including calibration and
+overlays. The option saves on this workstation and applies the next time you
+choose **Open**. Clear it and reopen outputs to return to the normal orientation.
+
 ## Phone remotes and QR
 
 GIS and workstation Open links stay on `http://localhost`. Phone remotes and the QR use **Local** (`http://{hostname}.local`) or **Tailnet** (`http://{tailscale-ipv4}`).

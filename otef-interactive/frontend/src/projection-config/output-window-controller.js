@@ -1,11 +1,13 @@
 import { createDisplayIdentifier, numberDisplays } from "./display-identification.js";
 
 const ASSIGNMENTS_STORAGE_KEY = "otef.projection.display-assignments.v1";
+const REVERSE_MODEL_STORAGE_KEY = "otef.projection.reverse-model.v1";
 const OUTPUTS = ["left", "right"];
 const FULLSCREEN_TIMEOUT_MS = 10000;
 
-function browserUrl(base, span) {
+function browserUrl(base, span, reverseModel = false) {
   const url = new URL(base, typeof window !== "undefined" ? window.location.href : "http://localhost/");
+  if (reverseModel) url.pathname = url.pathname.replace(/[^/]*$/, "projection-reversed.html");
   url.searchParams.set("span", span);
   url.searchParams.set("outputMode", "browser");
   return url.href;
@@ -40,6 +42,9 @@ function parseAssignments(storage) {
 function saveAssignments(storage, assignments) {
   if (!storage?.setItem) return false;
   try { storage.setItem(ASSIGNMENTS_STORAGE_KEY, JSON.stringify(assignments)); return true; } catch { return false; }
+}
+function readReverseModel(storage) {
+  try { return storage?.getItem?.(REVERSE_MODEL_STORAGE_KEY) === "true"; } catch { return false; }
 }
 function makeSessionId(value) {
   if (String(value || "").trim()) return String(value).replace(/[^a-z0-9_-]+/gi, "-");
@@ -78,8 +83,15 @@ export function createOutputWindowController({
   screenApi?.addEventListener?.("pagehide", onPageHide);
   let generation = 0; let operationToken = 0; let openingPromise = null;
   const supported = typeof screenApi?.getScreenDetails === "function";
-  let state = { screens: [], assignments, supported, error: "", message: supported ? "Detecting connected displays…" : "Display management unavailable in this browser.", ownedSpans: [] };
+  let state = { screens: [], assignments, supported, reverseModel: readReverseModel(storage), error: "", message: supported ? "Detecting connected displays…" : "Display management unavailable in this browser.", ownedSpans: [] };
   function setState(patch) { state = { ...state, ...patch, ownedSpans: [...owned.keys()] }; subscriptions.forEach((listener) => listener(state)); return state; }
+  function setReverseModel(value) {
+    if (openingPromise) throw new Error("Wait for output opening to finish before changing model orientation.");
+    const reverseModel = value === true;
+    let persisted = false;
+    try { if (storage?.setItem) { storage.setItem(REVERSE_MODEL_STORAGE_KEY, String(reverseModel)); persisted = true; } } catch { /* keep the session setting */ }
+    return setState({ reverseModel, error: "", message: `Model orientation ${persisted ? 'saved' : 'is session-only'}. Use Open to apply it to outputs.` });
+  }
   function pruneOwned() {
     for (const [span, win] of owned) {
       if (!win?.closed) continue;
@@ -276,7 +288,7 @@ export function createOutputWindowController({
   }
   function openOne(span, screen, assignment, currentGeneration, token) {
     if (typeof open !== "function") throw new Error("browser popup API unavailable");
-    const url = browserUrl(location, span); const name = `otef-projector-${span}-${id}-${currentGeneration}`; const win = open(url, name, buildWindowFeatures(features, screen));
+    const url = browserUrl(location, span, state.reverseModel); const name = `otef-projector-${span}-${id}-${currentGeneration}`; const win = open(url, name, buildWindowFeatures(features, screen));
     if (!win) throw new Error(`${span} projector popup was blocked; allow popups for this workstation`);
     owned.set(span, win);
     const tracker = fullscreenTracker(span, win, assignment, token, currentGeneration);
@@ -393,7 +405,7 @@ export function createOutputWindowController({
     }
   }
   return {
-    refreshDisplays, identifyDisplays, assignDisplays, openBoth, openSide, closeBoth,
+    refreshDisplays, identifyDisplays, assignDisplays, setReverseModel, openBoth, openSide, closeBoth,
     dispose() {
       disposed = true;
       identifier.close();
@@ -408,4 +420,4 @@ export function createOutputWindowController({
   };
 }
 
-export { ASSIGNMENTS_STORAGE_KEY, FULLSCREEN_TIMEOUT_MS, browserUrl, normalizeDisplay };
+export { ASSIGNMENTS_STORAGE_KEY, REVERSE_MODEL_STORAGE_KEY, FULLSCREEN_TIMEOUT_MS, browserUrl, normalizeDisplay };

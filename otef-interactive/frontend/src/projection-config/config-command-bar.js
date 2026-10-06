@@ -57,7 +57,10 @@ export function createConfigCommandBar({ document: doc, onAction = () => {}, onO
   displayActions.appendChild(displayButtons);
   controls.outputStatus = make(doc, 'span', { className: 'output-launch-status' });
   displayActions.appendChild(controls.outputStatus);
-  displays.append(displayHeading, displayActions);
+  const orientationLabel = make(doc, 'label', { className: 'output-reverse-toggle' });
+  controls.outputReverseModel = make(doc, 'input', { type: 'checkbox', ariaLabel: 'Reverse model 180°', dataset: { action: 'output-reverse-model' } });
+  orientationLabel.append(controls.outputReverseModel, make(doc, 'span', {}, 'Reverse model 180°'));
+  displays.append(displayHeading, displayActions, orientationLabel, make(doc, 'small', { className: 'output-orientation-help' }, 'Swap the halves and rotate both complete images 180°. Saved on this workstation; applies on the next Open.'));
   controls.displaysDisclosure.append(controls.displaysSummary, displays);
   controls.tools = make(doc, 'details', { className: 'config-menu config-tools', dataset: { menu: 'tools' } });
   controls.toolsSummary = make(doc, 'summary', {}, 'Tools');
@@ -151,6 +154,7 @@ export function createConfigCommandBar({ document: doc, onAction = () => {}, onO
   listen(controls.presets, 'change', () => onAction('preset-select', controls.presets.value));
   for (const [name, action] of [['outputRefresh', 'refresh'], ['outputIdentify', 'identify'], ['outputOpenBoth', 'open'], ['outputCloseBoth', 'close']]) listen(controls[name], 'click', () => onOutputAction(action));
   listen(controls.outputAssign, 'click', () => onOutputAction('assign', { left: controls.outputLeftDisplay.value, right: controls.outputRightDisplay.value }));
+  listen(controls.outputReverseModel, 'change', () => onOutputAction('reverse-model', controls.outputReverseModel.checked));
   for (const [side, name] of [['left', 'outputLeftDisplay'], ['right', 'outputRightDisplay']]) listen(controls[name], 'change', () => { outputSelection[side] = controls[name].value; });
   const update = ({ state = {}, parameterHistory = { undo: 0, redo: 0 }, errors = {}, conflict = '', statusText = '', draftDiffersFromAccepted = false, savePending = false, loadedPresetId = null, loadedPresetLoadToken = 0, statusRows = [], appliedSummary = 'Pending', outputState = {} } = {}) => {
     controls.live.checked = Boolean(state.live);
@@ -187,6 +191,8 @@ export function createConfigCommandBar({ document: doc, onAction = () => {}, onO
     const screens = Array.isArray(outputState.screens) ? [...outputState.screens].sort((a, b) => a.displayNumber - b.displayNumber) : [];
     const assignments = outputState.assignments || {};
     const unsupported = outputState.supported === false;
+    controls.outputReverseModel.checked = Boolean(outputState.reverseModel);
+    controls.outputReverseModel.disabled = unsupported;
     controls.outputIdentify.disabled = unsupported || screens.length === 0;
     for (const name of ['outputRefresh', 'outputAssign', 'outputLeftDisplay', 'outputRightDisplay', 'outputOpenBoth', 'outputCloseBoth']) controls[name].disabled = unsupported;
     const selectedKey = assignment => screens.find(screen => assignment?.key === screen.key || (assignment?.label === screen.label && ['left', 'top', 'width', 'height'].every(key => Number(assignment?.bounds?.[key]) === Number(screen[key]))))?.key || '';
