@@ -951,7 +951,7 @@ async function cancelNavigationFocus(ctx) {
   });
 }
 
-async function setNarrative(ctx, id) {
+async function setNarrative(ctx, id, options = {}) {
   if (!ctx._tableName) return { ok: false, reason: "missing_table" };
   if (id !== null && !getNliNarrative(id)) return { ok: false, reason: "unsupported_narrative" };
   const coupledBaseline = ctx._captureNarrativeSceneBaseline();
@@ -960,7 +960,10 @@ async function setNarrative(ctx, id) {
       ctx._tableName,
       id,
       ctx.getNarrativeState().revision,
-      { sourceId: ctx._clientId, timestamp: Date.now() },
+      {
+        sourceId: ctx._clientId, timestamp: Date.now(),
+        ...(Array.isArray(options.hiddenDisplays) ? { hiddenDisplays: options.hiddenDisplays } : {}),
+      },
     );
     if (response?.scene) ctx._applyNarrativeScene(response.scene, { coupledBaseline });
     return response;

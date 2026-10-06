@@ -765,10 +765,10 @@ class OTEFDataContextClass {
       : Promise.resolve({ ok: false, reason: "missing_action" });
   }
 
-  setNarrative(id) {
+  setNarrative(id, options) {
     const helper = OTEFDataContextInternals.actions?.setNarrative;
     return typeof helper === "function"
-      ? helper(this, id)
+      ? helper(this, id, options)
       : Promise.resolve({ ok: false, reason: "missing_action" });
   }
 

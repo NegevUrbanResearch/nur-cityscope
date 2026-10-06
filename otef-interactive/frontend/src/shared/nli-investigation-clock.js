@@ -34,6 +34,7 @@ const SEEK_KINDS = ["none", "jump"];
  * @property {"none"|"jump"} seekKind
  * @property {number} revision
  * @property {number|null} serverNowMs
+ * @property {('gis'|'projection')[]|undefined} hiddenDisplays Displays that hide the scene clock.
  */
 
 function asGroupsArray(layerGroups) {
@@ -77,6 +78,9 @@ function responseMetadata(src) {
   return {
     revision: Number.isFinite(Number(src?.revision)) ? Number(src.revision) : 0,
     serverNowMs: finiteTimestamp(src?.serverNowMs),
+    ...(Array.isArray(src?.hiddenDisplays) ? {
+      hiddenDisplays: ["gis", "projection"].filter((display) => src.hiddenDisplays.includes(display)),
+    } : {}),
   };
 }
 

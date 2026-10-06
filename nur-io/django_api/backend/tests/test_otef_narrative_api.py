@@ -215,6 +215,26 @@ class OTEFNarrativeApiTests(TestCase):
             **payload,
         )
 
+    @patch("channels.layers.get_channel_layer")
+    def test_narrative_reset_broadcasts_hidden_clock_atomically(self, get_layer):
+        get_layer.return_value.group_send = AsyncMock()
+        response = self.activate(hiddenDisplays=["gis", "projection"])
+        self.assertEqual(response.status_code, 200)
+        clock = response.json()["scene"]["investigationClock"]
+        self.assertEqual(clock["hiddenDisplays"], ["gis", "projection"])
+        self.assertEqual(clock["phase"], "idle")
+        self.state.refresh_from_db()
+        self.assertEqual(self.state.investigation_clock, clock)
+        message = get_layer.return_value.group_send.call_args.args[1]["message"]
+        self.assertEqual(message["scene"]["investigationClock"]["hiddenDisplays"], ["gis", "projection"])
+
+    def test_narrative_rejects_invalid_clock_visibility_before_mutation(self):
+        for hidden in ("projection", ["remote"], ["gis", "gis"]):
+            response = self.activate(hiddenDisplays=hidden)
+            self.assertEqual(response.status_code, 400)
+        self.state.refresh_from_db()
+        self.assertEqual(self.state.narrative_state["revision"], 3)
+
     def test_locked_transition_helper_owns_coupled_state_and_returns_scene(self):
         with transaction.atomic():
             locked = OTEFViewportState.objects.select_for_update().get(pk=self.state.pk)

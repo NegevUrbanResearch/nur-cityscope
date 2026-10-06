@@ -151,6 +151,21 @@ describe("narrative state transport", () => {
     expect(context.getNarrativeState()).toEqual({ id: null, transition: "initial", revision: 0 });
   });
 
+  test("sends clock visibility with the narrative and adopts it in the same scene", async () => {
+    const { default: context } = await import("../../frontend/src/shared/OTEFDataContext.js");
+    context._tableName = "otef";
+    global.fetch.mockImplementation(async (_url, request) => ({
+      ok: true, status: 200,
+      json: async () => ({ status: "ok", scene: {
+        ...ACTIVE_SCENE,
+        investigationClock: { ...ACTIVE_SCENE.investigationClock, hiddenDisplays: JSON.parse(request.body).hiddenDisplays },
+      } }),
+    }));
+    await context.setNarrative("segev", { hiddenDisplays: ["gis", "projection"] });
+    expect(JSON.parse(global.fetch.mock.calls[0][1].body).hiddenDisplays).toEqual(["gis", "projection"]);
+    expect(context.getInvestigationClock().hiddenDisplays).toEqual(["gis", "projection"]);
+  });
+
   test("the initiating command response atomically hydrates every coupled getter", async () => {
     const api = await import("../../frontend/src/shared/api-client.js");
     const { default: context } = await import("../../frontend/src/shared/OTEFDataContext.js");

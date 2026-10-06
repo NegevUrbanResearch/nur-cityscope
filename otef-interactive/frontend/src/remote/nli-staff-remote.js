@@ -312,7 +312,7 @@ export function initNliStaffRemote(dataContext, { presenterManifest = presenterC
       isCurrent,
     }),
     endClock: async (isCurrent) => {
-      const result = await dataContext.patchInvestigationClock(buildNovaEndedClock(), { isCurrent });
+      const result = await dataContext.patchInvestigationClock(buildNovaEndedClock(dataContext.getInvestigationClock()), { isCurrent });
       if (typeof isCurrent === "function" && !isCurrent()) return;
       if (!result?.ok || result.stale) {
         throw result?.error || new Error("Clock update was not acknowledged");

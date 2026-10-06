@@ -66,6 +66,29 @@ class OTEFInvestigationClockApiTests(TestCase):
         self.assertNotIn("serverNowMs", state.investigation_clock)
         self.assertIsInstance(response.json()["investigation_clock"]["serverNowMs"], int)
 
+    def test_scene_visibility_survives_idle_and_ended_clock_round_trips(self):
+        for phase in ("idle", "ended"):
+            payload = self.canonical_clock(
+                phase=phase, anchorMs=None, hiddenDisplays=["gis", "projection"]
+            )
+            response = self.client.patch(
+                "/api/otef_viewport/by-table/otef/",
+                data=json.dumps({"investigation_clock": payload}),
+                content_type="application/json",
+            )
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()["investigation_clock"]["hiddenDisplays"], ["gis", "projection"])
+            self.assertEqual(OTEFViewportState.objects.get(table=self.table).investigation_clock["hiddenDisplays"], ["gis", "projection"])
+
+    def test_scene_visibility_rejects_unknown_displays(self):
+        for hidden in ("projection", ["remote"], [True], ["gis", "gis"]):
+            response = self.client.patch(
+                "/api/otef_viewport/by-table/otef/",
+                data=json.dumps({"investigation_clock": self.canonical_clock(hiddenDisplays=hidden)}),
+                content_type="application/json",
+            )
+            self.assertEqual(response.status_code, 400)
+
     def test_patch_rejects_partial_and_expanded_non_idle_clocks(self):
         for clock in (
             {"phase": "playing", "membership": ["nli.lines"], "beats": [400]},

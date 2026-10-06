@@ -393,12 +393,12 @@ function applyCaptionDeps(state, map, deps = {}) {
   setCaptionDirRtl(state.captionEl);
 }
 
-function publishClockOnlyCaptionRelevance(state, visibleIds, localOverride = false, activeTimeline = false) {
+function publishClockOnlyCaptionRelevance(state, visibleIds, localOverride = false, activeTimeline = false, hidden = false) {
   if (state.nliCaptionMode !== NLI_CAPTION_MODE_CLOCK_ONLY) return;
   const visible = visibleIds instanceof Set ? visibleIds : new Set(visibleIds || []);
   const recognizedNarrative = !!getNliNarrative(state.narrativeFocus?.id);
-  state.clockOnlyCaptionRelevant = localOverride === true || recognizedNarrative || activeTimeline ||
-    isIdleOverviewCueLayerSet(visible, state.narrativeFocus?.id);
+  state.clockOnlyCaptionRelevant = !hidden && (localOverride === true || recognizedNarrative || activeTimeline ||
+    isIdleOverviewCueLayerSet(visible, state.narrativeFocus?.id));
   if (!state.clockOnlyCaptionRelevant) {
     state.lastCaption = null;
     clearCaption(state.captionEl);
@@ -1211,7 +1211,8 @@ export async function syncInvestigationTimelineToMap(map, clockInput, layerGroup
     INVESTIGATION_LINES_FULL_ID,
     INVESTIGATION_POLYGONS_FULL_ID,
   ].some((id) => nextMembership.visible.has(id));
-  publishClockOnlyCaptionRelevance(state, enabledSceneIds, deps.clockOnlyCaptionRelevantOverride, activeTimeline);
+  const clockHidden = clock.hiddenDisplays?.includes(isProjectionDisplayProfile(deps) ? "projection" : "gis") === true;
+  publishClockOnlyCaptionRelevance(state, enabledSceneIds, deps.clockOnlyCaptionRelevantOverride, activeTimeline, clockHidden);
 
   // A setStyle call can fire style.load before the host has re-synced its base
   // layers. The style listener marks the coordinator ready; this branch keeps

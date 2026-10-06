@@ -240,7 +240,7 @@ describe("NLI staff run of show", () => {
     expect(sderot.steps[0].cue).toEqual({ layers: FOCUS_LAYER_IDS, clock: "idle" });
     expect(sderot.steps[0].kit).toEqual(["presentation"]);
     expect(shura.steps).toHaveLength(1);
-    expect(shuraPresentation.cue).toEqual({ layers: TIMELINE_LAYER_IDS, clock: "idle" });
+    expect(shuraPresentation.cue).toEqual({ layers: TIMELINE_LAYER_IDS, clock: "idle", hiddenDisplays: ["projection"] });
     expect(shuraPresentation.presentation).toEqual({ segmentId: "shura", open: "auto", onClose: "stay" });
   });
 
@@ -306,11 +306,11 @@ describe("NLI staff run of show", () => {
     expect(site.kit).toEqual([]);
     expect(compounds.cue).toEqual({ layers: novaLayers, clock: {}, escape: {} });
     expect(compounds.kit).toEqual(["timeline"]);
-    expect(routes.cue).toEqual({ layers: novaLayers, clock: "ended", escape: { individual: true } });
+    expect(routes.cue).toEqual({ layers: novaLayers, clock: "ended", hiddenDisplays: ["gis", "projection"], escape: { individual: true } });
     expect(routes.kit).toEqual(["escape"]);
     expect(routes.escapeKinds).toEqual(["individual"]);
     expect(routes.note.en).toContain("Mor Levy");
-    expect(mor.cue).toEqual({ layers: novaLayers, clock: "ended", escape: { mor: true } });
+    expect(mor.cue).toEqual({ layers: novaLayers, clock: "ended", hiddenDisplays: ["gis", "projection"], escape: { mor: true } });
     expect(mor.kit).toEqual(["escape", "presentation"]);
     expect(mor.escapeKinds).toEqual(["mor"]);
     expect(mor.presentation).toEqual({ segmentId: "nova_mor", open: "auto", onClose: "stay" });
@@ -320,6 +320,7 @@ describe("NLI staff run of show", () => {
     expect(memorial.cue).toEqual({
       layers: [...FOCUS_LAYER_IDS, "nli.people"],
       clock: "ended",
+      hiddenDisplays: ["gis", "projection"],
       escape: { settled: true },
     });
     expect(memorial.kit).toEqual(["escape", "presentation"]);
