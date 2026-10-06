@@ -347,7 +347,7 @@ async function bootstrapMapRuntime() {
       container: mapContainer,
       getLayout: () => OTEFDataContext.getNliClockLayout?.()?.gisOverlays?.novaExplainers,
       getNarrativeId: () => OTEFDataContext.getNarrativeState?.()?.id ?? null,
-      getEscapeMor: () => OTEFDataContext.getEscapeOverlay?.()?.mor === true,
+      getEscapeOverlay: () => OTEFDataContext.getEscapeOverlay?.(),
       motionMode: resolveMotionMode(),
     });
     registerDisposer(() => novaExplainerOverlay.dispose());

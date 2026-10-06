@@ -356,7 +356,7 @@ export async function bootClockPreview({ window: frameWindow, document: frameDoc
     container: mapContainer,
     getLayout: () => currentExplainerLayout,
     getNarrativeId: () => currentScene.narrative?.id ?? null,
-    getEscapeMor: () => escape.get()?.mor === true,
+    getEscapeOverlay: () => escape.get(),
     motionMode: resolveMotionMode(),
     cameraOverride: () => currentExplainerCamera,
   });

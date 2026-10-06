@@ -766,6 +766,15 @@ body {
   z-index: 2;
   overflow: hidden;
   pointer-events: none;
+  opacity: 1;
+  visibility: visible;
+  transition: opacity 600ms ease, visibility 0s;
+}
+
+#nliNovaExplainerHost.nli-nova-explainers--hidden {
+  opacity: 0;
+  visibility: hidden;
+  transition-delay: 0s, 600ms;
 }
 
 #nliNovaExplainerHost .nli-nova-explainer-card {
@@ -812,6 +821,10 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  #nliNovaExplainerHost {
+    transition: none;
+  }
+
   #nliNovaExplainerHost .nli-nova-explainer-card--in {
     animation: none;
   }
