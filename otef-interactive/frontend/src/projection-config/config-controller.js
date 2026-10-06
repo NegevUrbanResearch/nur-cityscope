@@ -220,6 +220,9 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     onSettlementCitycode: (citycode) => { if (!finishPendingEdit()) return; settlementCitycode = citycode; activeSettlementEditor?.setSelection({ output: settlementOutput, citycode }); refresh(); },
     onSettlementPosition: (position) => { if (!settlementClient || !settlementCitycode) return; void settlementClient.commit({ kind: "position", output: settlementOutput, citycode: settlementCitycode }, position, { numeric: true }).catch(() => {}); },
     onSettlementStyle: (style) => { if (!settlementClient) return; void settlementClient.commit({ kind: "style" }, style, { numeric: true }).catch(() => {}); },
+    onSettlementLineBreak: (afterWord) => { if (!settlementClient || !settlementCitycode) return; void settlementClient.commit({ kind: 'line_break', citycode: settlementCitycode }, afterWord).catch(() => {}); },
+    onSettlementLeaderStyle: (style) => { if (!settlementClient) return; void settlementClient.commit({ kind: 'leader_style' }, style, { numeric: true }).catch(() => {}); },
+    onSettlementResetOrigin: () => { if (!settlementClient || !settlementCitycode) return; void settlementClient.commit({ kind: 'leader_origin', citycode: settlementCitycode }, null, { operation: 'reset_leader_origin' }).catch(() => {}); },
     onSettlementRecovery: (action) => {
       if (!settlementClient) return;
       const hydrationFailed = settlementClient.getHydrationState?.().status === "Failed";
@@ -231,11 +234,17 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
       if (!settlementCitycode) return;
       const position = { kind: "position", output: settlementOutput, citycode: settlementCitycode };
       const style = { kind: "style" };
+      const lineBreak = { kind: 'line_break', citycode: settlementCitycode };
+      const leaderStyle = { kind: 'leader_style' };
+      const leaderOrigin = { kind: 'leader_origin', citycode: settlementCitycode };
       if (action === "load") {
         settlementClient.loadSaved(position);
         settlementClient.loadSaved(style);
+        settlementClient.loadSaved(lineBreak);
+        settlementClient.loadSaved(leaderStyle);
+        settlementClient.loadSaved(leaderOrigin);
       } else {
-        void Promise.all([settlementClient.retry(position), settlementClient.retry(style)]).catch(() => {});
+        void Promise.all([position, style, lineBreak, leaderStyle, leaderOrigin].map(target => settlementClient.retry(target))).catch(() => {});
       }
       refresh();
     },
@@ -473,6 +482,12 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
       style: styleRecord?.draft || styleRecord?.acknowledged || settings?.style || null,
       positionRecord,
       styleRecord,
+      afterWord: settings?.lineBreaks?.[settlementCitycode] || 0,
+      leaderStyle: settings?.leaderStyle,
+      lineBreakRecord: settlementCitycode ? settlementClient.getTarget({ kind: 'line_break', citycode: settlementCitycode }) : null,
+      leaderStyleRecord: settlementClient.getTarget({ kind: 'leader_style' }),
+      leaderOrigin: settings?.leaderOrigins?.[settlementCitycode] || null,
+      leaderOriginRecord: settlementCitycode ? settlementClient.getTarget({ kind: 'leader_origin', citycode: settlementCitycode }) : null,
       hydration: settlementClient.getHydrationState?.() || { status: "Loading" },
     };
   }

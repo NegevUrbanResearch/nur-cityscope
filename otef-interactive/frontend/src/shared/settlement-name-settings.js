@@ -75,6 +75,17 @@ export function validateSettlementNameSettings(value) {
   if (!FONTS.includes(style?.fontFamily)) errors.push("style.fontFamily");
   if (!finiteNumber(style?.fontPx) || style.fontPx < 8 || style.fontPx > 64) errors.push("style.fontPx");
   if (!finiteNumber(style?.rotateDeg) || style.rotateDeg < -180 || style.rotateDeg > 180) errors.push("style.rotateDeg");
+  if (settings?.leaderStyle != null) errors.push(...settlementLeaderStyleErrors(settings.leaderStyle));
+  if (settings?.lineBreaks != null) {
+    if (typeof settings.lineBreaks !== 'object' || Array.isArray(settings.lineBreaks)) errors.push('lineBreaks');
+    else for (const [code, afterWord] of Object.entries(settings.lineBreaks)) {
+      if (!code || !Number.isInteger(afterWord) || afterWord < 1 || afterWord > 16) errors.push(`lineBreaks.${code}`);
+    }
+  }
+  if (settings?.leaderOrigins != null) {
+    if (typeof settings.leaderOrigins !== 'object' || Array.isArray(settings.leaderOrigins)) errors.push('leaderOrigins');
+    else for (const [code, origin] of Object.entries(settings.leaderOrigins)) if (!code || !validSettlementLeaderOrigin(origin)) errors.push(`leaderOrigins.${code}`);
+  }
   return { errors, warnings, value: errors.length ? null : clone(settings) };
 }
 
@@ -83,17 +94,57 @@ function knownCitycode(settings, output, citycode) {
     || Object.hasOwn(settings?.outputs?.[output] || {}, citycode);
 }
 
+export function settlementLeaderStyleErrors(style) {
+  const errors = [];
+  for (const [key, min, max] of [['widthPx', 0.25, 8], ['outlineWidthPx', 0, 4], ['opacity', 0, 1]]) {
+    if (!finiteNumber(style?.[key]) || style[key] < min || style[key] > max) errors.push(`leaderStyle.${key}`);
+  }
+  for (const key of ['color', 'outlineColor']) if (typeof style?.[key] !== 'string' || !/^#[0-9a-f]{6}$/i.test(style[key])) errors.push(`leaderStyle.${key}`);
+  return errors;
+}
+
+export function validSettlementLeaderOrigin(origin) {
+  return origin && typeof origin === 'object' && Object.keys(origin).length === 2
+    && finiteNumber(origin.lng) && origin.lng >= -180 && origin.lng <= 180
+    && finiteNumber(origin.lat) && origin.lat >= -85 && origin.lat <= 85;
+}
+
 export function validateSettlementNameOperation(value, settings) {
   const errors = [];
   const warnings = [];
   const operation = value && typeof value === "object" ? value : null;
   if (operation?.action !== "set_settlement_names") errors.push("action");
   const kind = operation?.operation;
-  if (!["position", "reset_position", "style", "append_baseline"].includes(kind)) errors.push("operation");
+  if (!["position", "reset_position", "style", "line_break", "leader_style", "leader_origin", "reset_leader_origin", "append_baseline"].includes(kind)) errors.push("operation");
   if (!Number.isSafeInteger(operation?.baseRevision) || operation.baseRevision < 0) errors.push("baseRevision");
   if (typeof operation?.sourceId !== "string" || !UUID.test(operation.sourceId)) errors.push("sourceId");
   if (typeof operation?.timestamp !== "string" || !operation.timestamp) errors.push("timestamp");
   const next = settings ? clone(settings) : null;
+  if (kind === 'leader_origin' || kind === 'reset_leader_origin') {
+    if (typeof operation.citycode !== 'string' || !operation.citycode || (settings && !OUTPUTS.some(output => knownCitycode(settings, output, operation.citycode)))) errors.push('citycode');
+    if (kind === 'leader_origin' && !validSettlementLeaderOrigin(operation.origin)) errors.push('origin');
+    if (['output', 'position', 'style', 'leaderStyle'].some(key => Object.hasOwn(operation, key))) errors.push('operation');
+    if (!errors.length && next) {
+      next.leaderOrigins ||= {};
+      if (kind === 'reset_leader_origin') delete next.leaderOrigins[operation.citycode];
+      else next.leaderOrigins[operation.citycode] = clone(operation.origin);
+    }
+  }
+  if (kind === 'line_break') {
+    if (typeof operation.citycode !== 'string' || !operation.citycode || (settings && !OUTPUTS.some(output => knownCitycode(settings, output, operation.citycode)))) errors.push('citycode');
+    if (!Number.isInteger(operation.afterWord) || operation.afterWord < 0 || operation.afterWord > 16) errors.push('afterWord');
+    if (['output', 'position', 'style', 'leaderStyle'].some(key => Object.hasOwn(operation, key))) errors.push('operation');
+    if (!errors.length && next) {
+      next.lineBreaks ||= {};
+      if (operation.afterWord === 0) delete next.lineBreaks[operation.citycode];
+      else next.lineBreaks[operation.citycode] = operation.afterWord;
+    }
+  }
+  if (kind === 'leader_style') {
+    if (['output', 'position', 'style', 'citycode'].some(key => Object.hasOwn(operation, key))) errors.push('operation');
+    errors.push(...settlementLeaderStyleErrors(operation.leaderStyle));
+    if (!errors.length && next) next.leaderStyle = clone(operation.leaderStyle);
+  }
   if (kind === "position" || kind === "reset_position") {
     if (Object.hasOwn(operation, "style") || Object.hasOwn(operation, "positions") || Object.hasOwn(operation, "catalogJson")) errors.push("operation");
     if (!OUTPUTS.includes(operation.output)) errors.push("output");

@@ -1,6 +1,8 @@
 import { effectiveSettlementPosition, SETTLEMENT_FONT_STACK, validateSettlementNameSettings } from "../shared/settlement-name-settings.js";
 import { evaluateOpacityExpression } from "../shared/layer-opacity-expression.js";
 import { mapSettlementPosition } from './settlement-name-framing.js';
+import { DEFAULT_SETTLEMENT_LEADER_STYLE, EXCLUDED_SETTLEMENT_CODES, settlementTextLines } from '../shared/settlement-label-presentation.js';
+import { settlementConnector, paintSettlementConnector } from './settlement-name-connectors.js';
 
 const WIDTH = 1920;
 const HEIGHT = 1080;
@@ -88,21 +90,33 @@ export function createProjectionSettlementNameAdapter({ document = globalThis.do
     context.strokeStyle = "#ffffff";
     context.lineWidth = HALO_PX * 2;
     context.lineJoin = "round";
+    const leaderStyle = { ...DEFAULT_SETTLEMENT_LEADER_STYLE, ...framingContext?.settings?.leaderStyle };
     const painted = labels.map((label) => {
-      const extents = glyphExtents(context, label.text);
-      const biasX = (extents.right - extents.left) / 2;
-      const biasY = (extents.descent - extents.ascent) / 2;
-      const inkBox = measureInk(context, label.text, label.x, label.y);
+      const lines = label.lines || [label.text];
+      const lineHeight = style.fontPx * 1.2;
+      const measured = lines.map((text, i) => {
+        const dy = (i - (lines.length - 1) / 2) * lineHeight;
+        return { text, dy, extents: glyphExtents(context, text), box: measureInk(context, text, label.x, label.y + dy) };
+      });
+      const inkBox = { left: Math.min(...measured.map(m => m.box.left)), right: Math.max(...measured.map(m => m.box.right)),
+        top: Math.min(...measured.map(m => m.box.top)), bottom: Math.max(...measured.map(m => m.box.bottom)) };
       if (!inkFitsCrop(label, inkBox, framing?.clip)) return { ...label, inkBox, cropped: true };
       const alpha = clampOpacity(evaluateOpacityExpression(scaledOpacity, { cityname: label.text }));
+      const connector = settlementConnector(label, framing?.outlines?.[label.citycode], inkBox, framing?.origins?.[label.citycode]);
+      paintSettlementConnector(context, connector, leaderStyle, alpha);
+      context.fillStyle = '#ffffff'; context.strokeStyle = '#ffffff'; context.lineWidth = HALO_PX * 2;
       context.save();
       context.globalAlpha = alpha;
       context.translate(label.x, label.y);
       context.rotate(label.rotateDeg * Math.PI / 180);
-      context.strokeText(label.text, -biasX, -biasY);
-      context.fillText(label.text, -biasX, -biasY);
+      for (const { text, dy, extents } of measured) {
+        const biasX = (extents.right - extents.left) / 2;
+        const biasY = (extents.descent - extents.ascent) / 2;
+        context.strokeText(text, -biasX, dy - biasY);
+        context.fillText(text, -biasX, dy - biasY);
+      }
       context.restore();
-      return { ...label, inkBox, cropped: false };
+      return { ...label, inkBox, connector, cropped: false };
     });
     return {
       canvas,
@@ -141,9 +155,10 @@ export function createProjectionSettlementNameAdapter({ document = globalThis.do
       if (token !== generation || signal?.aborted) return { stale: true };
       const labels = [];
       for (const entry of catalog?.entries || []) {
+        if (EXCLUDED_SETTLEMENT_CODES.has(entry.citycode)) continue;
         const position = effectiveSettlementPosition(checked.value, output, entry.citycode);
         if (!position) continue;
-        labels.push({ citycode: entry.citycode, text: entry.text, x: position.x, y: position.y, rotateDeg: style.rotateDeg });
+        labels.push({ citycode: entry.citycode, text: entry.text, lines: settlementTextLines(entry.text, checked.value.lineBreaks?.[entry.citycode]), x: position.x, y: position.y, rotateDeg: style.rotateDeg });
       }
       pending = paint(style, labels, {catalog,settings:checked.value});
       pending.token = token;
@@ -163,13 +178,7 @@ export function createProjectionSettlementNameAdapter({ document = globalThis.do
       scaledOpacity = value;
       if (!active?.style) return;
       const visibility = active.descriptor.opacity;
-      const labels = active.referenceLabels.map((label) => ({
-        citycode: label.citycode,
-        text: label.text,
-        x: label.x,
-        y: label.y,
-        rotateDeg: label.rotateDeg,
-      }));
+      const labels = active.referenceLabels.map(label => ({ ...label }));
       active = paint(active.style, labels, active.context);
       active.descriptor.opacity = visibility;
     },

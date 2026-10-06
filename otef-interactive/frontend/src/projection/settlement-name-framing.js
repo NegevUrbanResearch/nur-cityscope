@@ -87,6 +87,12 @@ export function createSettlementNameFraming({ map, output, getConfig } = {}) {
     const matrix=[(across.x-origin.x)/WIDTH,(across.y-origin.y)/WIDTH,(down.x-origin.x)/HEIGHT,(down.y-origin.y)/HEIGHT,origin.x,origin.y].map(value=>Math.round(value*1e9)/1e9);
     if (!matrix.every(Number.isFinite) || !mapSettlementPosition(origin,matrix,true)) throw referenceError();
     const clip=getProjectionSpanClipRect(getConfig?.(),output);
-    return {matrix,clip:clip ? [clip.x0,clip.y0,clip.x1,clip.y1] : [0,0,0,0]};
+    const outlines = Object.fromEntries([...(catalog?.outlines || [])].map(([code, rings]) => [code, rings.map(ring => ring.map(coordinates => {
+      const p = map.project(coordinates); return [p.x * WIDTH / width, p.y * HEIGHT / height];
+    }))]));
+    const origins = Object.fromEntries(Object.entries(settings.leaderOrigins || {}).map(([code, origin]) => {
+      const p = map.project([origin.lng, origin.lat]); return [code, { x: p.x * WIDTH / width, y: p.y * HEIGHT / height }];
+    }));
+    return {matrix,clip:clip ? [clip.x0,clip.y0,clip.x1,clip.y1] : [0,0,0,0],outlines,origins};
   };
 }

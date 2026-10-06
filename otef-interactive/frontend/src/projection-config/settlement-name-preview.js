@@ -2,6 +2,7 @@ import { createUuid } from "../shared/uuid.js";
 import { copyProjectionMesh } from "./clock-layout-geometry.js";
 import { validateSettlementNameSettings } from "../shared/settlement-name-settings.js";
 import { mapSettlementPosition } from '../projection/settlement-name-framing.js';
+import { validSettlementOriginGeometry } from './settlement-origin-geometry.js';
 
 const PREVIEW_TIMEOUT_MS = 30000;
 const MAX_LABELS = 512;
@@ -22,6 +23,7 @@ function validRendered(message, output) {
   if (message.positionMatrix != null && (!Array.isArray(message.positionMatrix) || !mapSettlementPosition({x:0,y:0},message.positionMatrix,true))) return false;
   if (!Array.isArray(message.labels) || message.labels.length > MAX_LABELS || !message.labels.every(finiteLabel)) return false;
   if (message.warnings != null && !validSettlementPreviewWarnings(message.warnings)) return false;
+  if (!validSettlementOriginGeometry(message.originGeometry)) return false;
   return true;
 }
 

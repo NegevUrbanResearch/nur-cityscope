@@ -21,6 +21,7 @@ import {
   RIBBON_YELLOW,
 } from "./captivity-bleed-marker.js";
 import { buildMarkerLineSquareImageSpec } from "./markerline-square-image.js";
+import { EXCLUDED_SETTLEMENT_OUTLINE_IDS } from './settlement-label-presentation.js';
 
 function getNestedProp(obj, propPath) {
   if (!obj || !propPath) return undefined;
@@ -1496,6 +1497,8 @@ function shouldRenderMapLabelsFromStyle(styleOptions, fullLayerId) {
  *   only when `applyProjectionHatchPresentation` is true (projection); GIS default does not emit.
  */
 export function irToMapLibreLayers(fullLayerId, sourceLayerId, layerConfig, styleOptions = {}) {
+  // Projection connectors are painted dynamically with the moved settlement labels.
+  if (fullLayerId === 'projector_base.Locations_Lines') return [];
   void sourceLayerId;
 
   const style = layerConfig?.style || {};
@@ -1538,7 +1541,10 @@ export function irToMapLibreLayers(fullLayerId, sourceLayerId, layerConfig, styl
   const labelLayers = passMapLabels
     ? buildLabelSymbolLayer(idBase, style, layerConfig?.geometryType, fullLayerId)
     : [];
-  return [...baseLayers, ...leaderLineLayers, ...labelLayers];
+  const layers = [...baseLayers, ...leaderLineLayers, ...labelLayers];
+  if (fullLayerId !== 'projector_base.ישובים') return layers;
+  const keepOutline = ['!', ['in', ['to-string', ['get', 'OBJECTID']], ['literal', [...EXCLUDED_SETTLEMENT_OUTLINE_IDS]]]];
+  return layers.map(layer => ({ ...layer, filter: layer.filter ? ['all', layer.filter, keepOutline] : keepOutline }));
 }
 
 export {

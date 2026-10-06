@@ -1545,9 +1545,7 @@ async function bootstrapProjectionRuntime() {
     registerDisposer(
       OTEFDataContext.subscribe("layerGroups", () => {
         if (calibrationActive()) { calibrationView?.normalSceneChanged(); return; }
-        // Raw `groups` from the event omit LayerStateHelper merge rules (e.g. שמות_יישובים
-        // + Locations_Lines → one row with fullLayerIds). Sync must use the same effective
-        // groups as loadProjectionCuratedLayers or Locations_Lines never loads on toggle.
+        // Use the same effective groups as initial loading, including retired-layer filtering.
         const groups = getEffectiveProjectionLayerGroups();
         void applyProjectionRefresh({
           groupsOverride: groups,

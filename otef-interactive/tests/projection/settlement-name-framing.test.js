@@ -30,6 +30,15 @@ test('recovers original label framing with source offsets and follows current ca
   expect(reloaded({catalog:f.catalog,settings:structuredClone(f.settings)}).matrix).toEqual(frame.matrix);
 });
 
+test('projects actual settlement boundaries into the same logical pixels as names', () => {
+  const f = fixture();
+  f.catalog.outlines = new Map([['0', [[[34,31],[34.01,31],[34,31.01],[34,31]]]]]);
+  const read = createSettlementNameFraming({ map: f.map, output: 'left', getConfig: f.getConfig });
+  const frame = read(f);
+  const actual = f.map.project([34,31]);
+  expect(frame.outlines['0'][0][0]).toEqual([actual.x / 2, actual.y / 2]);
+});
+
 test('added label placements never become original camera calibration references', () => {
   const f = fixture();
   const original = createSettlementNameFraming({ map: f.map, output: 'left', getConfig: f.getConfig })(f);

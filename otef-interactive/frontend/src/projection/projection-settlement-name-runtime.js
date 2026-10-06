@@ -29,7 +29,8 @@ export function bindProjectionSettlementNames({ dataContext, adapter, catalog, h
     catalogIdentity: null, settingsIdentity: null, pending: true, failed: false };
   const identity = value => sha256Hex(new TextEncoder().encode(JSON.stringify(normalizeProjectionMatchValue(value))));
   const catalogIdentity = identity({ entries: [...(catalog?.entries || [])].sort((a, b) => a.citycode.localeCompare(b.citycode)),
-    referenceOffsets: [...(catalog?.referenceOffsets || [])].sort(([a], [b]) => a.localeCompare(b)) });
+    referenceOffsets: [...(catalog?.referenceOffsets || [])].sort(([a], [b]) => a.localeCompare(b)),
+    outlines: [...(catalog?.outlines || [])].sort(([a], [b]) => a.localeCompare(b)) });
   const report = next => { readiness = { ...readiness, ...next }; onReadinessChange({ ...readiness }); onReadiness({ ...readiness }); };
   const clearSetupError = () => {
     setupAlert?.remove?.();

@@ -15,6 +15,26 @@ import {
 } from "../../frontend/src/map/dark-basemap-labels.js";
 import { createFakeMapLibreMap } from "../helpers/fake-maplibre-map.js";
 import openFreeMapDarkStyle from "../../frontend/src/map/basemaps/openfreemap-dark.js";
+import * as labelsPolicy from '../../frontend/src/map/dark-basemap-labels.js';
+
+it('installs every canonical settlement independently of basemap tiles and zoom', () => {
+  const map = createFakeMapLibreMap();
+  labelsPolicy.ensureGisSettlementPlaceLabels(map);
+  const source = map.getSource('gis-settlement-place-labels');
+  const data = source._data || source.data;
+  const names = data.features.map(f => f.properties.cityname);
+  expect(names).toContain('עין הבשור');
+  expect(names).toContain('ניר עוז');
+  expect(names).not.toContain('מועצה אזורית אשכול');
+  expect(names).not.toContain('מכללת ספיר');
+  expect(names).not.toContain('איבים');
+  expect(names).not.toContain('שדי אברהם');
+  expect(names).not.toContain('פרי גן');
+  expect(names).not.toContain('נתיבות');
+  const layer = map.getLayer('gis-settlement-place-labels');
+  expect(layer.minzoom ?? 0).toBe(0);
+  expect(layer.layout['text-allow-overlap']).toBe(true);
+});
 
 const BILINGUAL_NAME_FIELD = [
   "case",
@@ -137,9 +157,9 @@ describe("applyDarkBasemapLabelPolicy", () => {
       10 * DARK_BASEMAP_UNKNOWN_PLACE_SIZE_SCALE,
     ]);
     expect(next.layers[0].paint["text-opacity"]).toEqual([
-      "case",
-      knownMatch,
-      1,
+        "case",
+        knownMatch,
+        0,
       DARK_BASEMAP_UNKNOWN_PLACE_TEXT_OPACITY,
     ]);
     expect(DARK_BASEMAP_UNKNOWN_PLACE_TEXT_OPACITY).toBeGreaterThan(0.6);
@@ -215,19 +235,10 @@ describe("applyDarkBasemapLabelPolicy", () => {
     expect(names).not.toContain("צומת");
   });
 
-  it("treats Netivot, Ofakim, and Ashkelon as known GIS place names without a קיבוץ prefix", () => {
+  it("does not emphasize nearby cities absent from the projection settlement catalog", () => {
     const names = collectKnownBasemapPlaceNames({ entries: [] });
 
-    expect(names).toEqual(
-      expect.arrayContaining([
-        "נתיבות",
-        "Netivot",
-        "אופקים",
-        "Ofakim",
-        "אשקלון",
-        "Ashkelon",
-      ]),
-    );
+    expect(names).toEqual([]);
     expect(names).not.toContain("קיבוץ נתיבות");
     expect(names).not.toContain("קיבוץ אופקים");
     expect(names).not.toContain("קיבוץ אשקלון");
@@ -343,6 +354,7 @@ describe("raiseDarkBasemapPlaceLabels", () => {
       "projector_base__ישובים__0",
       "place_village",
       "place_city",
+      "gis-settlement-place-labels",
       GIS_NOVA_PLACE_LABEL_LAYER_ID,
       "nli__people_names__labels",
       "otef-person-selection-halo",
@@ -373,6 +385,7 @@ describe("raiseDarkBasemapPlaceLabels", () => {
       "osm-tiles",
       "investigation-fill",
       "custom-memorial-place",
+      "gis-settlement-place-labels",
       GIS_NOVA_PLACE_LABEL_LAYER_ID,
       "nli__people_names__labels",
       "otef-person-selection-halo",

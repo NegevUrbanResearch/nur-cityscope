@@ -22,6 +22,7 @@ import { installProjectionSettlementPreviewBridge } from "./projection-preview-b
 import { copyProjectionMesh } from "../projection-config/clock-layout-geometry.js";
 import { OUTPUT_WIDTH, OUTPUT_HEIGHT } from "./projection-overlay-placement.js";
 import { createSettlementNameFraming } from './settlement-name-framing.js';
+import { nearestSettlementBoundaryPoint } from './settlement-name-connectors.js';
 import { visibleProjectionBrowserError } from "./projection-browser-error.js";
 
 function abortError() {
@@ -262,7 +263,14 @@ export async function bootProjectionSettlementNamePreview({ window: win, documen
       if (!browserSurface.draw()) throw new Error("Settlement preview draw failed");
       const mesh = copyProjectionMesh(browserSurface.getMesh());
       if (!mesh) throw new Error("Settlement preview mesh is unavailable");
-      return { calibrationRevision: calibration.revision, meshIdentity: `${sessionId}:${calibration.revision}`, mesh, labels: adapter.getLabels(), positionMatrix:adapter.getFraming()?.matrix || null, warnings: measureSettlementPreviewWarnings(adapter.getLabels(), selectedCitycode) };
+      const labels = adapter.getLabels(), framing = adapter.getFraming();
+      const selected = labels.find(label => label.citycode === selectedCitycode);
+      const projectedRings = framing?.outlines?.[selectedCitycode] || [];
+      const worldRings = catalog.outlines?.get(selectedCitycode) || [];
+      const originGeometry = selected && worldRings.length ? { citycode: selectedCitycode, worldRings, projectedRings,
+        point: selected.connector?.start || nearestSettlementBoundaryPoint(projectedRings, framing?.origins?.[selectedCitycode] || selected) } : null;
+      return { calibrationRevision: calibration.revision, meshIdentity: `${sessionId}:${calibration.revision}`, mesh, labels,
+        positionMatrix: framing?.matrix || null, originGeometry, warnings: measureSettlementPreviewWarnings(labels, selectedCitycode) };
     };
     await paint(checked.value, assets.signal);
     removeBridge = installProjectionSettlementPreviewBridge({ win, sessionId, output, renderState: (state, context) => paint(state.settings, context.signal, state.selectedCitycode) });

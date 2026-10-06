@@ -457,6 +457,9 @@ h2, h3 { margin: 0 0 10px; }
 .settlement-name-overlay { z-index: 2; overflow: visible; touch-action: none; }
 .settlement-outline { fill: none; stroke: #ffe08a; stroke-width: 4; vector-effect: non-scaling-stroke; pointer-events: none; }
 .settlement-body-hit { fill: transparent; pointer-events: all; }
+.settlement-origin-handle { fill: #8bddff; stroke: #10171d; stroke-width: 2; vector-effect: non-scaling-stroke; pointer-events: none; }
+.settlement-origin-hit { fill: transparent; cursor: grab; pointer-events: all; }
+.settlement-origin-hit:active { cursor: grabbing; }
 .settlement-name-mapping, .settlement-name-warning { margin: 0; color: #ffdf8d; font-size: .8rem; }
 .settlement-name-mapping { position: absolute; left: 8px; right: 8px; bottom: 8px; z-index: 3; padding: 6px; background: #10171d; }
 .settlement-preview-retry { position: absolute; left: 8px; top: 8px; z-index: 3; }

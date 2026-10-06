@@ -110,6 +110,47 @@ class SettlementNameFixtureMixin:
 
 
 class SettlementNameApiTests(SettlementNameFixtureMixin, TestCase):
+    def test_manual_origin_is_shared_and_can_reset_without_changing_placement(self):
+        self.initialize_from_fixture()
+        before = deepcopy(self.state.settlement_name_settings)
+        origin = {"lng": 34.5, "lat": 31.4}
+        response = self.command(operation="leader_origin", citycode="0067", origin=origin, baseRevision=1)
+        self.assertEqual(response.status_code, 200)
+        self.state.refresh_from_db()
+        self.assertEqual(self.state.settlement_name_settings["leaderOrigins"], {"0067": origin})
+        self.assertEqual(self.state.settlement_name_settings["outputs"], before["outputs"])
+        self.assertEqual(self.state.settlement_name_settings["baseline"], before["baseline"])
+        response = self.command(operation="reset_leader_origin", citycode="0067", baseRevision=2)
+        self.assertEqual(response.status_code, 200)
+        self.state.refresh_from_db()
+        self.assertEqual(self.state.settlement_name_settings["leaderOrigins"], {})
+
+    def test_line_break_preserves_canonical_catalog_and_calibration(self):
+        self.initialize_from_fixture()
+        before = deepcopy(self.state.settlement_name_settings)
+        response = self.command(operation="line_break", citycode="0067", afterWord=1, baseRevision=1)
+        self.assertEqual(response.status_code, 200)
+        self.state.refresh_from_db()
+        self.assertEqual(self.state.settlement_name_settings["lineBreaks"], {"0067": 1})
+        self.assertEqual(self.state.settlement_name_settings["baseline"], before["baseline"])
+        self.assertEqual(self.state.settlement_name_revision, 2)
+        response = self.command(operation="line_break", citycode="0067", afterWord=0, baseRevision=2)
+        self.assertEqual(response.status_code, 200)
+        self.state.refresh_from_db()
+        self.assertEqual(self.state.settlement_name_settings["lineBreaks"], {})
+
+    def test_leader_style_preserves_font_and_rejects_invalid_fields(self):
+        self.initialize_from_fixture()
+        style = {"widthPx": 2, "outlineWidthPx": 0.5, "color": "#ffffff", "outlineColor": "#bfbf99", "opacity": 0.8}
+        response = self.command(operation="leader_style", leaderStyle=style, baseRevision=1)
+        self.assertEqual(response.status_code, 200)
+        self.state.refresh_from_db()
+        self.assertEqual(self.state.settlement_name_settings["leaderStyle"], style)
+        self.assertEqual(self.state.settlement_name_settings["style"], STYLE)
+        for field, invalid in (("widthPx", True), ("widthPx", 0), ("color", "bad"), ("opacity", 2), ("outlineWidthPx", -1)):
+            response = self.command(operation="leader_style", leaderStyle={**style, field: invalid}, baseRevision=2)
+            self.assertEqual(response.status_code, 400)
+
     def test_position_write_preserves_baseline_other_output_and_metadata(self):
         self.initialize_from_fixture()
         self.state.settlement_name_settings["retained"] = {"keep": True}

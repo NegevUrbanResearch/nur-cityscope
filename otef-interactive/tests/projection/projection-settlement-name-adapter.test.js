@@ -1,6 +1,57 @@
 import { expect, test } from "vitest";
 import { createProjectionSettlementNameAdapter } from "../../frontend/src/projection/projection-settlement-name-adapter.js";
 
+test('draws a chosen two-line projection name centered as one rotated label', async () => {
+  const document = fakeCanvasDocument();
+  const adapter = createProjectionSettlementNameAdapter({ document, output: 'left' });
+  const settings = initializedSettingsFixture();
+  settings.lineBreaks = { '0067': 1 };
+  const catalog = { entries: [{ citycode: '0067', text: 'שדי אברהם', lng: 34.4, lat: 31.3 }] };
+  await adapter.prepare({ catalog, settings }); adapter.commit();
+  expect(document.paints.filter(p => p.op === 'fill').map(p => p.text)).toEqual(['שדי', 'אברהם']);
+  const label = adapter.getLabels()[0];
+  expect(label).toMatchObject({ x: 500, y: 340, rotateDeg: 35 });
+  expect(label.inkBox.bottom - label.inkBox.top).toBeGreaterThan(28);
+  expect(catalog.entries[0].text).toBe('שדי אברהם');
+});
+
+test('connects the outline boundary to the moved label edge using both line strokes', async () => {
+  const document = fakeCanvasDocument();
+  const adapter = createProjectionSettlementNameAdapter({ document, output: 'left' });
+  const settings = initializedSettingsFixture(); settings.style.rotateDeg = 0;
+  const catalog = { entries: [catalogFixture().entries[0]] };
+  adapter.setFramingProvider(() => ({ matrix: [1,0,0,1,0,0], clip: [0,0,1,1], outlines: { '0067': [[[100,300],[200,300],[200,380],[100,380],[100,300]]] } }));
+  await adapter.prepare({ catalog, settings }); adapter.commit();
+  const first = adapter.getLabels()[0];
+  expect(first.connector.start).toEqual({ x: 200, y: 340 });
+  expect(first.connector.end.x).toBeCloseTo(first.inkBox.left - 2);
+  expect(document.lines).toHaveLength(2);
+  settings.outputs.left['0067'] = { x: 600, y: 340 };
+  await adapter.prepare({ catalog, settings }); adapter.commit();
+  expect(adapter.getLabels()[0].connector.end.x).toBeCloseTo(first.connector.end.x + 100);
+});
+
+test('applies saved connector width and opacity without changing the text halo', async () => {
+  const document = fakeCanvasDocument();
+  const adapter = createProjectionSettlementNameAdapter({ document, output: 'left' });
+  const settings = initializedSettingsFixture(); settings.style.rotateDeg = 0;
+  settings.leaderStyle = { widthPx: 3, outlineWidthPx: 1, color: '#ffffff', outlineColor: '#bfbf99', opacity: 0.4 };
+  adapter.setFramingProvider(() => ({ matrix: [1,0,0,1,0,0], clip: [0,0,1,1], outlines: { '0067': [[[100,300],[200,300],[200,380],[100,380]]] } }));
+  await adapter.prepare({ catalog: { entries: [catalogFixture().entries[0]] }, settings }); adapter.commit();
+  expect(document.lines.map(line => line.width)).toEqual([5, 3]);
+  expect(document.lines.every(line => line.opacity === 0.4)).toBe(true);
+  expect(document.paints.every(paint => paint.lineWidth === 0.7)).toBe(true);
+});
+
+test.each([['240P', 'מועצה אזורית אשכול'], ['724P', 'מכללת ספיר'], ['0338', 'איבים'], ['1223', 'שדי אברהם'], ['1231', 'פרי גן']])('never paints excluded settlement %s even if its historical position remains in the baseline', async (citycode, text) => {
+  const document = fakeCanvasDocument();
+  const settings = initializedSettingsFixture(); settings.baseline.outputs.left[citycode] = { x: 800, y: 500 };
+  const adapter = createProjectionSettlementNameAdapter({ document, output: 'left' });
+  await adapter.prepare({ catalog: { entries: [{ citycode, text, lng: 34.4, lat: 31.3 }] }, settings }); adapter.commit();
+  expect(document.paints).toHaveLength(0);
+  expect(adapter.getLabels()).toHaveLength(0);
+});
+
 test.each([1,2])('keeps Reim whole on the left and suppresses its cropped right copy at raster scale %s', async rasterScale => {
   const catalog={entries:[{citycode:'0713',text:'רעים',lng:34.46,lat:31.38}]};
   const settings=initializedSettingsFixture(); settings.style.rotateDeg=82;
@@ -116,6 +167,7 @@ function initializedSettingsFixture() {
 function fakeCanvasDocument() {
   const loads = [];
   const paints = [];
+  const lines = [];
   const document = {
     fonts: {
       load: async (spec) => {
@@ -144,6 +196,10 @@ function fakeCanvasDocument() {
             clearRect() {},
             translate() {},
             rotate(radians) { context.lastRotate = radians; },
+            beginPath() { context.path = []; },
+            moveTo(x, y) { context.path.push({x,y}); },
+            lineTo(x, y) { context.path.push({x,y}); },
+            stroke() { lines.push({ points: context.path, width: context.lineWidth, color: context.strokeStyle, opacity: context.globalAlpha }); },
             fillText(text, x, y) {
               paints.push({ op: "fill", text, x, y, lineWidth: context.lineWidth, canvasWidth: canvas.width, globalAlpha: context.globalAlpha, rotate: context.lastRotate });
             },
@@ -170,6 +226,7 @@ function fakeCanvasDocument() {
   };
   document.loads = loads;
   document.paints = paints;
+  document.lines = lines;
   return document;
 }
 

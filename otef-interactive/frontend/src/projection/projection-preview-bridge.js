@@ -1,5 +1,6 @@
 import { validateProjectionConfig } from "../shared/projection-config-schema.js";
 import { withRequestDeadline } from "../shared/request-deadline.js";
+import { validSettlementOriginGeometry } from '../projection-config/settlement-origin-geometry.js';
 
 function runBoundedPreviewOperation(operation, parentSignal) {
   let completedSynchronously = false;
@@ -100,8 +101,9 @@ export function installProjectionSettlementPreviewBridge({ win, sessionId, outpu
         fail(new Error("Settlement preview labels are invalid"));
         return;
       }
+      if (!validSettlementOriginGeometry(result.originGeometry)) { fail(new Error('Settlement origin geometry is invalid')); return; }
       reply({ type: "otef_settlement_preview_rendered", requestId: state.requestId, calibrationRevision: result.calibrationRevision,
-        meshIdentity: result.meshIdentity, mesh: result.mesh, labels: result.labels, warnings: result.warnings,
+        meshIdentity: result.meshIdentity, mesh: result.mesh, labels: result.labels, warnings: result.warnings, originGeometry: result.originGeometry || null,
         ...(result.positionMatrix == null ? {} : {positionMatrix:result.positionMatrix}) });
     }).catch(fail);
   };
