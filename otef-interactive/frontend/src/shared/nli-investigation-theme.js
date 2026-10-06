@@ -13,6 +13,12 @@ const radiusStops = Object.freeze([
   Object.freeze([77, 19]),
 ]);
 
+export const NOVA_RIBBON_COLORS = Object.freeze({
+  fromColor: "#f5f500",
+  toColor: "#f50000",
+  gradientSize: 0.75,
+});
+
 export const NLI_VISUAL_TOKENS = Object.freeze({
   polygonOrange: "#f79009",
   routeFuture: "#c31f4f",

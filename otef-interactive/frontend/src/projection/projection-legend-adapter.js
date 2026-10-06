@@ -107,6 +107,11 @@ function drawSymbol(context, part, x, y, font, geometry, scale) {
     context.strokeStyle = stroke || fill;
     context.globalAlpha = strokeOpacity;
     context.lineWidth = Math.max(2, Number(part.strokeWidth) || 1);
+    if (part.strokeGradient?.length) {
+      const gradient = context.createLinearGradient(x, y - context.lineWidth / 2, x, y + context.lineWidth / 2);
+      for (const { offset, color } of part.strokeGradient) gradient.addColorStop(offset, color);
+      context.strokeStyle = gradient;
+    }
     context.setLineDash?.(dashArray);
     if (part.halo && part.halo !== "transparent") { context.shadowColor = part.halo; context.shadowBlur = scale; }
     context.stroke();

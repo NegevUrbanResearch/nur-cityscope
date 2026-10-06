@@ -109,9 +109,9 @@ export const LEGEND_CATEGORY_COPY = Object.freeze({
     "שער הנגב": Object.freeze({ he: "שער הנגב", en: "Sha'ar HaNegev" }),
   }),
   "nli.people": Object.freeze({
-    "Murdered": Object.freeze({ he: "נרצחו", en: "Murdered" }),
+    "Murdered": Object.freeze({ he: "אזרחים שנרצחו", en: "Murdered" }),
     "Killed on duty": Object.freeze({ he: "נפלו בעת מילוי תפקידם", en: "Killed on duty" }),
-    "Kidnap survivor": Object.freeze({ he: "חטופים ששבו", en: "Surviving hostages" }),
+    "Kidnap survivor": Object.freeze({ he: "חטופים שחזרו", en: "Surviving hostages" }),
     "Murdered in captivity": Object.freeze({ he: "חטופים שנרצחו", en: "Murdered hostages" }),
   }),
   "nli.investigation_polygons": Object.freeze({

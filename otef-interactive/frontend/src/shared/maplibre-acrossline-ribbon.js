@@ -3,11 +3,11 @@
  * Color mixes across width (v); taper and reveal run along path (u).
  */
 
-import { NLI_DISPLAY_PROFILES } from "./nli-investigation-theme.js";
+import { NLI_DISPLAY_PROFILES, NOVA_RIBBON_COLORS } from "./nli-investigation-theme.js";
 
-const FROM_COLOR = "#f5f500";
-const TO_COLOR = "#f50000";
-const GRADIENT_SIZE = 0.75;
+const FROM_COLOR = NOVA_RIBBON_COLORS.fromColor;
+const TO_COLOR = NOVA_RIBBON_COLORS.toColor;
+const GRADIENT_SIZE = NOVA_RIBBON_COLORS.gradientSize;
 const PT_TO_PX = 96 / 72;
 const STAGGER_STEP_MS = 300;
 const STAGGER_MOD = 8;

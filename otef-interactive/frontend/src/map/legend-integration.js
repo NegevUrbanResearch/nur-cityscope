@@ -3,6 +3,7 @@ import { mountMapLegend } from "./map-legend.js";
 const LEGEND_REFRESH_TOPICS = Object.freeze([
   "layerGroups",
   "narrativeState",
+  "escapeOverlay",
   "legendSettings",
 ]);
 
