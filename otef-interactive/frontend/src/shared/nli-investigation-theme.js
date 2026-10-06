@@ -58,6 +58,7 @@ export const NLI_VISUAL_TOKENS = Object.freeze({
   personGlowPulseMs: 2400,
   settlementGlowAuraOpacity: 0.16,
   settlementGlowCoreOpacity: 0.12,
+  novaSettlementGlowOpacityMultiplier: 1.5,
   settlementGlowAuraBlur: 1.65,
   settlementGlowCoreBlur: 1.15,
   settlementGlowAuraPad: 2.5,
@@ -76,7 +77,7 @@ export const NLI_DISPLAY_PROFILES = Object.freeze({
     narrativeFocus: Object.freeze({
       haloRadius: 9,
       haloStrokeWidth: 2,
-      textSize: 16,
+      textSize: 24,
       textHaloWidth: 1.5,
     }),
   }),

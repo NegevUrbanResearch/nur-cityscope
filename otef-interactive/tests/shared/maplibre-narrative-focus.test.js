@@ -71,7 +71,7 @@ function renderedFocus(map) {
 
 describe("MapLibre narrative focus renderer", () => {
   it.each([
-    ["gis", 16, 1.5],
+    ["gis", 24, 1.5],
     ["projection", 11, 1.1],
   ])("renders the Segev label with %s display tokens and no marker", (profile, textSize, textHaloWidth) => {
     const map = createFakeMapLibreMap();
@@ -91,6 +91,7 @@ describe("MapLibre narrative focus renderer", () => {
     });
     expect(map.getLayer(NARRATIVE_FOCUS_RENDERER_IDS.halo)).toBeFalsy();
     expect(map.getLayer(NARRATIVE_FOCUS_RENDERER_IDS.label).layout["text-size"]).toBe(textSize);
+    expect(map.getLayer(NARRATIVE_FOCUS_RENDERER_IDS.label).layout["text-font"]).toEqual(["Guttman Hatzvi", "Arial"]);
     expect(map.getLayer(NARRATIVE_FOCUS_RENDERER_IDS.label).layout["text-anchor"]).toBe("bottom");
     expect(map.getLayer(NARRATIVE_FOCUS_RENDERER_IDS.label).paint["text-halo-color"]).toBe("#c31f4f");
     expect(map.getLayer(NARRATIVE_FOCUS_RENDERER_IDS.label).paint["text-halo-width"]).toBe(textHaloWidth);
@@ -126,9 +127,10 @@ describe("MapLibre narrative focus renderer", () => {
     expect(renderedFocus(map)?.geometry?.coordinates).toEqual([34.5921, 31.5229]);
   });
 
-  it("keeps Nova at the site when no house polygon matches", () => {
+  it("keeps Nova at the site and uses a black halo across scene changes and style reloads", () => {
     const map = withHouses([segevHouse, periHouse, sderotHouse]);
     const renderer = createNarrativeFocusRenderer(map, { profile: "gis" });
+    renderer.show(segev);
 
     renderer.show({
       id: "nova",
@@ -138,6 +140,12 @@ describe("MapLibre narrative focus renderer", () => {
 
     expect(renderedFocus(map)?.geometry?.coordinates).toEqual([34.46975, 31.39851]);
     expect(map.getLayer(NARRATIVE_FOCUS_RENDERER_IDS.halo)).toBeFalsy();
+    expect(map.getPaintProperty(NARRATIVE_FOCUS_RENDERER_IDS.label, "text-halo-color")).toBe("#000000");
+    map.wipeStyle();
+    renderer.onStyleLoad();
+    expect(map.getPaintProperty(NARRATIVE_FOCUS_RENDERER_IDS.label, "text-halo-color")).toBe("#000000");
+    renderer.show(segev);
+    expect(map.getPaintProperty(NARRATIVE_FOCUS_RENDERER_IDS.label, "text-halo-color")).toBe("#c31f4f");
   });
 
   it("repositions onto the house polygon once the overlay source loads", () => {

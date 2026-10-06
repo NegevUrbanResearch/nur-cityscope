@@ -214,6 +214,54 @@ describe("createProjectionSettlementGlow", () => {
     glow.dispose();
   });
 
+  it.each(["absent", "above", "below"])("keeps Nova narrative glow above open spaces with person halo %s", async (personHaloPosition) => {
+    const { createFakeMapLibreMap } = await import("../helpers/fake-maplibre-map.js");
+    const map = createFakeMapLibreMap();
+    const glow = createProjectionSettlementGlow({ map, loadSettlements: async () => settlements, motionMode: "reduced" });
+    await syncProjectionSettlementGlow(glow, { exhibitMode: true, narrativeId: "nova" });
+    const addContext = () => {
+      map.addSource("people", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+      if (personHaloPosition === "below") map.addLayer({ id: PEOPLE_HALO_LAYER_ID, type: "circle", source: "people" });
+      map.addSource("land_use.שטחים_פתוחים", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+      map.addLayer({ id: "land_use__שטחים_פתוחים__fill", type: "fill", source: "land_use.שטחים_פתוחים" });
+      map.addLayer({ id: "people", type: "circle", source: "people" });
+      if (personHaloPosition === "above") map.addLayer({ id: PEOPLE_HALO_LAYER_ID, type: "circle", source: "people" });
+    };
+    const expectOrder = () => {
+      const ids = map.getStyle().layers.map((layer) => layer.id);
+      const openIndex = ids.indexOf("land_use__שטחים_פתוחים__fill");
+      expect(ids.indexOf(PROJECTION_SETTLEMENT_GLOW_AURA_LAYER_ID)).toBe(openIndex + 1);
+      expect(ids.indexOf(PROJECTION_SETTLEMENT_GLOW_CORE_LAYER_ID)).toBe(openIndex + 2);
+      expect(ids.indexOf("people")).toBeGreaterThan(ids.indexOf(PROJECTION_SETTLEMENT_GLOW_CORE_LAYER_ID));
+      if (personHaloPosition !== "absent") expect(ids.indexOf(PEOPLE_HALO_LAYER_ID)).toBeGreaterThan(ids.indexOf(PROJECTION_SETTLEMENT_GLOW_CORE_LAYER_ID));
+    };
+    addContext();
+    glow.raise(map);
+    expectOrder();
+    map.moveLayer("land_use__שטחים_פתוחים__fill", "people");
+    await syncProjectionSettlementGlow(glow, { exhibitMode: true, narrativeId: "nova" });
+    expectOrder();
+    map.wipeStyle();
+    addContext();
+    await syncProjectionSettlementGlow(glow, { exhibitMode: true, narrativeId: "nova" });
+    expectOrder();
+    glow.dispose();
+  });
+
+  it("preserves other narratives' glow order above the base layers", async () => {
+    const { createFakeMapLibreMap } = await import("../helpers/fake-maplibre-map.js");
+    const map = createFakeMapLibreMap();
+    const glow = createProjectionSettlementGlow({ map, loadSettlements: async () => settlements, motionMode: "reduced" });
+    await syncProjectionSettlementGlow(glow, { exhibitMode: true, narrativeId: "nova" });
+    map.addLayer({ id: "open-spaces", type: "fill", source: "land_use.שטחים_פתוחים" });
+    map.addLayer({ id: PEOPLE_HALO_LAYER_ID, type: "circle", source: "people" });
+    await syncProjectionSettlementGlow(glow, { exhibitMode: true, narrativeId: "segev" });
+    glow.raise(map);
+    const ids = map.getStyle().layers.map((layer) => layer.id);
+    expect(ids.slice(-3)).toEqual([PROJECTION_SETTLEMENT_GLOW_AURA_LAYER_ID, PROJECTION_SETTLEMENT_GLOW_CORE_LAYER_ID, PEOPLE_HALO_LAYER_ID]);
+    glow.dispose();
+  });
+
   it("snaps opacity to 0 then swaps geometry before fading in on outline change", async () => {
     const { createFakeMapLibreMap } = await import("../helpers/fake-maplibre-map.js");
     const map = createFakeMapLibreMap();
@@ -258,6 +306,28 @@ describe("createProjectionSettlementGlow", () => {
     const setDataCount = map.calls.filter((call) => call.method === "setData").length;
     await glow.setFocus({ outlineObjectId: 19 });
     expect(map.calls.filter((call) => call.method === "setData")).toHaveLength(setDataCount);
+    glow.dispose();
+  });
+
+  it("boosts only Nova narrative brightness and restores normal strength for the same place", async () => {
+    const { createFakeMapLibreMap } = await import("../helpers/fake-maplibre-map.js");
+    const map = createFakeMapLibreMap();
+    const glow = createProjectionSettlementGlow({ map, loadSettlements: async () => settlements, motionMode: "reduced" });
+    await glow.setFocus({ outlineObjectId: 43 });
+    const auraRadius = map.getPaintProperty(PROJECTION_SETTLEMENT_GLOW_AURA_LAYER_ID, "circle-radius");
+    await syncProjectionSettlementGlow(glow, { exhibitMode: true, narrativeId: "nova" });
+    expect(map.getPaintProperty(PROJECTION_SETTLEMENT_GLOW_AURA_LAYER_ID, "circle-opacity")).toBeCloseTo(0.24);
+    expect(map.getPaintProperty(PROJECTION_SETTLEMENT_GLOW_CORE_LAYER_ID, "circle-opacity")).toBeCloseTo(0.18);
+    expect(map.getPaintProperty(PROJECTION_SETTLEMENT_GLOW_AURA_LAYER_ID, "circle-radius")).toEqual(auraRadius);
+    expect(map.getPaintProperty(PROJECTION_SETTLEMENT_GLOW_AURA_LAYER_ID, "circle-blur")).toBe(NLI_VISUAL_TOKENS.settlementGlowAuraBlur);
+    map.wipeStyle();
+    await syncProjectionSettlementGlow(glow, { exhibitMode: true, narrativeId: "nova" });
+    expect(map.getPaintProperty(PROJECTION_SETTLEMENT_GLOW_CORE_LAYER_ID, "circle-opacity")).toBeCloseTo(0.18);
+    await glow.setFocus({ outlineObjectId: 43 });
+    expect(map.getPaintProperty(PROJECTION_SETTLEMENT_GLOW_AURA_LAYER_ID, "circle-opacity")).toBe(NLI_VISUAL_TOKENS.settlementGlowAuraOpacity);
+    expect(map.getPaintProperty(PROJECTION_SETTLEMENT_GLOW_CORE_LAYER_ID, "circle-opacity")).toBe(NLI_VISUAL_TOKENS.settlementGlowCoreOpacity);
+    await syncProjectionSettlementGlow(glow, { exhibitMode: true, narrativeId: "segev" });
+    expect(map.getPaintProperty(PROJECTION_SETTLEMENT_GLOW_AURA_LAYER_ID, "circle-opacity")).toBe(NLI_VISUAL_TOKENS.settlementGlowAuraOpacity);
     glow.dispose();
   });
 
@@ -378,7 +448,7 @@ test("glow sync prefers narrative outline, then person, and suppresses off-exhib
   await syncProjectionSettlementGlow(glow, {
     exhibitMode: true, narrativeId: "nova", personLocation: null, placeName: null, wallEnabled: false,
   });
-  expect(calls.at(-1)).toEqual({ outlineObjectId: 43 });
+  expect(calls.at(-1)).toEqual({ outlineObjectId: 43, narrativeId: "nova" });
 });
 
 test("projection glow seeds lastPlaceId from the name-field pending place", () => {
@@ -413,6 +483,28 @@ describe("settlementGlowBreathScale", () => {
 });
 
 describe("settlement glow breath", () => {
+  it("keeps Nova's brighter glow throughout the breathing animation and fades it out on clear", async () => {
+    vi.useFakeTimers();
+    const { createFakeMapLibreMap } = await import("../helpers/fake-maplibre-map.js");
+    const map = createFakeMapLibreMap();
+    const glow = createProjectionSettlementGlow({ map, loadSettlements: async () => settlements, motionMode: "full" });
+    try {
+      await syncProjectionSettlementGlow(glow, { exhibitMode: true, narrativeId: "nova" });
+      expect(map.getPaintProperty(PROJECTION_SETTLEMENT_GLOW_AURA_LAYER_ID, "circle-opacity")).toBeCloseTo(0.24);
+      await vi.advanceTimersByTimeAsync(NLI_VISUAL_TOKENS.highlightOpacityTransitionMs);
+      map.driveAnimationFrame(0);
+      map.driveAnimationFrame(NLI_VISUAL_TOKENS.settlementGlowBreathMs / 4);
+      expect(map.getPaintProperty(PROJECTION_SETTLEMENT_GLOW_AURA_LAYER_ID, "circle-opacity")).toBeCloseTo(0.24 * NLI_VISUAL_TOKENS.settlementGlowBreathMax);
+      expect(map.getPaintProperty(PROJECTION_SETTLEMENT_GLOW_CORE_LAYER_ID, "circle-opacity")).toBeCloseTo(0.18 * NLI_VISUAL_TOKENS.settlementGlowBreathMax);
+      await glow.setFocus({});
+      expect(map.getPaintProperty(PROJECTION_SETTLEMENT_GLOW_AURA_LAYER_ID, "circle-opacity")).toBe(0);
+      expect(map.pendingAnimationFrameCount()).toBe(0);
+    } finally {
+      glow.dispose();
+      vi.useRealTimers();
+    }
+  });
+
   it("fades in on show and starts breathing only after the intro", async () => {
     vi.useFakeTimers();
     const { createFakeMapLibreMap } = await import("../helpers/fake-maplibre-map.js");
