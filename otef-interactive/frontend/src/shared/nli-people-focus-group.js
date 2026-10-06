@@ -157,7 +157,11 @@ function createGroup(map) {
         if (map.getLayer(entry.copyId)) map.removeLayer(entry.copyId);
         entries.delete(id);
       }
-      if (!entries.size) dispose();
+      // Layer retirement does not clear the selected person. Keep listening for
+      // replacement markers, including when selection precedes their first load.
+      if (!entries.size) {
+        for (const layer of [compositor.end, compositor.begin]) if (map.getLayer(layer.id)) map.removeLayer(layer.id);
+      }
     },
     dispose,
   };

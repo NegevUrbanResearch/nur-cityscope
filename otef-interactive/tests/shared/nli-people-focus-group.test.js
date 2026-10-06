@@ -132,6 +132,49 @@ describe("people focus group transparency", () => {
     clearPeopleFocusDim(map);
   });
 
+  it("keeps a pending selection when an unrelated scene layer is retired before people mount", () => {
+    const map = createMap();
+    const people = map.getLayer("people");
+    const icons = map.getLayer("icons");
+    map.removeLayer("people"); map.removeLayer("icons");
+    applyPeopleFocusDim(map, "11");
+    forgetPeopleFocusLayers(map, ["labels"]);
+    map.removeLayer("labels");
+    map.addLayer(people); map.addLayer(icons);
+    map.emit("styledata");
+    expect(map.getPaintProperty("people", "circle-opacity")).toEqual(background(captivity));
+    expect(map.getStyle().layers.filter((layer) => layer.type === "custom")).toHaveLength(2);
+    clearPeopleFocusDim(map);
+  });
+
+  it("reapplies selection after the people source owner replaces all marker layers", () => {
+    const map = createMap();
+    const native = structuredClone([map.getLayer("people"), map.getLayer("icons")]);
+    applyPeopleFocusDim(map, "11");
+    forgetPeopleFocusLayers(map, ["people", "icons"]);
+    map.removeLayer("people"); map.removeLayer("icons");
+    map.emit("styledata");
+    for (const layer of native) map.addLayer(layer);
+    map.emit("styledata");
+    expect(map.getPaintProperty("people", "circle-opacity")).toEqual(background(captivity));
+    expect(map.getPaintProperty("nli-people-focus-copy-people", "circle-opacity")).toEqual(foreground(captivity));
+    clearPeopleFocusDim(map);
+  });
+
+  it("cancels a pending selection when it is explicitly cleared before markers mount", () => {
+    const map = createMap();
+    const people = map.getLayer("people");
+    const icons = map.getLayer("icons");
+    map.removeLayer("people"); map.removeLayer("icons");
+    applyPeopleFocusDim(map, "11");
+    forgetPeopleFocusLayers(map, ["labels"]);
+    clearPeopleFocusDim(map);
+    map.addLayer(people); map.addLayer(icons);
+    map.emit("styledata");
+    expect(map.getPaintProperty("people", "circle-opacity")).toEqual(captivity);
+    expect(map.getStyle().layers.filter((layer) => layer.type === "custom")).toHaveLength(0);
+  });
+
   it("preserves authored opacity when serialized focused paint is restored into new native instances", () => {
     const map = createMap();
     applyPeopleFocusDim(map, "11");
