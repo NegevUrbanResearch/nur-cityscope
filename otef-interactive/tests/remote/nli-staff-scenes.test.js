@@ -112,8 +112,8 @@ test("Home shortcuts target the canonical final show steps", () => {
 });
 
 describe("NLI staff run of show", () => {
-  test("follows the eight-stage sequence, starts at the opening minutes, and returns Home", () => {
-    expect(SHOW.steps).toHaveLength(8);
+  test("follows the seven-stage sequence, starts at the opening minutes, and ends at the wall of names", () => {
+    expect(SHOW.steps).toHaveLength(7);
     expect(SHOW.steps[0].id).toBe("opening-minutes");
     expect(SHOW.steps.map((step) => step.id)).not.toContain("opening");
     expect(SHOW.steps.map((step) => step.id)).not.toContain("timeline-complete");
@@ -122,11 +122,9 @@ describe("NLI staff run of show", () => {
     for (const id of branches) {
       expect(NARRATIVES.some((narrative) => narrative.id === id)).toBe(true);
     }
-    expect(SHOW.steps.at(-1).id).toBe("credits");
-    expect(SHOW.steps.at(-1).title).toEqual({ he: "קרדיטים", en: "Credits" });
-    expect(SHOW.steps.at(-1).cue).toEqual(catalog.HOME_CUE);
-    expect(SHOW.steps.at(-1).cue).not.toBe(catalog.HOME_CUE);
-    expect(SHOW.steps.at(-1).presentation).toEqual({ segmentId: "credits", open: "auto", onClose: "stay" });
+    expect(SHOW.steps.at(-1).id).toBe("names-wall");
+    expect(SHOW.steps.at(-1).title).toEqual({ he: "קיר השמות", en: "Wall of names" });
+    expect(SHOW.steps.at(-1).presentation).toEqual({ segmentId: "names_wall", open: "auto", onClose: "stay", controls: false });
     expect(SHOW.title).toEqual({ he: "רצף ההקרנה המלא", en: "Full projection sequence" });
   });
 
@@ -213,7 +211,6 @@ describe("NLI staff run of show", () => {
   test("presentation segments use the approved GIS mapping including names_wall", () => {
     const expected = [
       ["names_wall", "auto", "stay", false],
-      ["credits", "auto", "stay", true],
       ["segev", "manual", "stay", true],
       ["nova_mor", "auto", "stay", true],
       ["nova_memorial", "auto", "stay", true],
@@ -243,7 +240,7 @@ describe("NLI staff run of show", () => {
     expect(sderot.steps[0].cue).toEqual({ layers: FOCUS_LAYER_IDS, clock: "idle" });
     expect(sderot.steps[0].kit).toEqual(["presentation"]);
     expect(shura.steps).toHaveLength(1);
-    expect(shuraPresentation.cue).toEqual({ layers: TIMELINE_LAYER_IDS, clock: "idle" });
+    expect(shuraPresentation.cue).toEqual({ layers: TIMELINE_LAYER_IDS, clock: "idle", hiddenDisplays: ["projection"] });
     expect(shuraPresentation.presentation).toEqual({ segmentId: "shura", open: "auto", onClose: "stay" });
   });
 
@@ -309,11 +306,11 @@ describe("NLI staff run of show", () => {
     expect(site.kit).toEqual([]);
     expect(compounds.cue).toEqual({ layers: novaLayers, clock: {}, escape: {} });
     expect(compounds.kit).toEqual(["timeline"]);
-    expect(routes.cue).toEqual({ layers: novaLayers, clock: "ended", escape: { individual: true } });
+    expect(routes.cue).toEqual({ layers: novaLayers, clock: "ended", hiddenDisplays: ["gis", "projection"], escape: { individual: true } });
     expect(routes.kit).toEqual(["escape"]);
     expect(routes.escapeKinds).toEqual(["individual"]);
     expect(routes.note.en).toContain("Mor Levy");
-    expect(mor.cue).toEqual({ layers: novaLayers, clock: "ended", escape: { mor: true } });
+    expect(mor.cue).toEqual({ layers: novaLayers, clock: "ended", hiddenDisplays: ["gis", "projection"], escape: { mor: true } });
     expect(mor.kit).toEqual(["escape", "presentation"]);
     expect(mor.escapeKinds).toEqual(["mor"]);
     expect(mor.presentation).toEqual({ segmentId: "nova_mor", open: "auto", onClose: "stay" });
@@ -323,6 +320,7 @@ describe("NLI staff run of show", () => {
     expect(memorial.cue).toEqual({
       layers: [...FOCUS_LAYER_IDS, "nli.people"],
       clock: "ended",
+      hiddenDisplays: ["gis", "projection"],
       escape: { settled: true },
     });
     expect(memorial.kit).toEqual(["escape", "presentation"]);

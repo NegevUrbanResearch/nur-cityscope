@@ -9,6 +9,13 @@ import {
 } from "../../frontend/src/shared/layer-lifecycle-fade.js";
 import { mixOpacityExpression, evaluateOpacityExpression, scaleOpacityExpression } from "../../frontend/src/shared/layer-opacity-expression.js";
 
+it('render readiness remains pending until the accepted fade is fully drawn and reports failed desired layers',()=>{
+  const hooks=createHooks(),map={};const runtime=getLayerLifecycleRuntime(map,hooks);
+  runtime.setDesiredIds(['landmark']);runtime.stageMapLayer('landmark',{id:'line',type:'line',paint:{'line-opacity':1}});runtime.markMemberReady('landmark');runtime.commitBatch();
+  expect(runtime.getRenderedReadiness().ready).toBe(false);hooks.setTime(1000);hooks.flushFrame();expect(runtime.getRenderedReadiness().ready).toBe(true);
+  runtime.markMemberFailed('landmark');expect(runtime.getRenderedReadiness()).toMatchObject({ready:false,failedIds:['landmark']});runtime.dispose();
+});
+
 function createHooks() {
   let time = 0;
   let frame = null;

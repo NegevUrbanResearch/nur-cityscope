@@ -246,7 +246,24 @@ export function createWarpEditor({
     return moveNormalized(axis === "x" ? target - anchor : 0, axis === "y" ? target - anchor : 0, { reason: "numeric", flush: true });
   }
   function resetSelection() { if (!allowGeometryCommand()) return false; return apply(resetToIdentity(true), { reason: "reset-selection", flush: true }); }
+  function acceptKeystoneFit({ corners, expectedWarpIdentity } = {}) {
+    if (!allowGeometryCommand() || JSON.stringify(configWarp(current, output)) !== expectedWarpIdentity) return false;
+    if (!Array.isArray(corners) || corners.length !== 4 || !corners.every(point =>
+      Array.isArray(point) && point.length === 2 && point.every(Number.isFinite))) return false;
+    const candidate = clone(current);
+    candidate.outputs[output].warp.keystone.corners = clone(corners);
+    return apply(candidate, { reason: 'point-fit', flush: false });
+  }
   function resetResiduals() { if (!allowGeometryCommand()) return false; return apply(resetToIdentity(false), { reason: "reset-residuals", flush: true }); }
+  function startFresh() {
+    if (!allowCommand()) return false;
+    const candidate = resetToIdentity(false);
+    const warp = configWarp(candidate, output);
+    warp.enabled = true;
+    warp.baseline = { type: "identity", width: OUTPUT_WIDTH, height: OUTPUT_HEIGHT, origin: "top-left" };
+    if (candidate.schemaVersion === 7) warp.grid = uniformGrid(warp.grid);
+    return apply(candidate, { reason: "start-fresh", flush: true });
+  }
   function setEnabled(enabled) { if (!allowCommand()) return false; const candidate = clone(current); candidate.outputs[output].warp.enabled = Boolean(enabled); return apply(candidate, { reason: "warp-enabled", flush: true }); }
   function restoreHistory(entry, reason) {
     const candidate = clone(current);
@@ -264,11 +281,11 @@ export function createWarpEditor({
     return restoreHistory(undoStack.pop(), "undo");
   }
   function redo() {
-    if (!allowGeometryCommand()) return false;
-    if (!redoStack.length) return false;
+    if (!allowCommand() || !canRedo()) return false;
     undoStack.push({ warp: clone(configWarp(current, output)), selection: clone(selection) });
     return restoreHistory(redoStack.pop(), "redo");
   }
+  function canRedo() { return redoStack.length > 0 && (configWarp(current, output)?.enabled !== false || redoStack.at(-1).warp.enabled === true); }
   function pointerStart(point) {
     if (!allowGeometryCommand()) return false;
     if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return false;
@@ -485,10 +502,10 @@ export function createWarpEditor({
   };
   return {
     getConfig: () => clone(current),
-    getState: () => ({ output, selection: { ...clone(selection), indices: selectedIndices() }, stepMode, dragging: Boolean(drag), adjusting: Boolean(drag || nudgeGesture), historyDepth: undoStack.length, redoDepth: redoStack.length, baselineAvailable: baselineAvailable(), validationMessage }),
+    getState: () => ({ output, selection: { ...clone(selection), indices: selectedIndices() }, stepMode, dragging: Boolean(drag), adjusting: Boolean(drag || nudgeGesture), historyDepth: undoStack.length, redoDepth: redoStack.length, canRedo: canRedo(), baselineAvailable: baselineAvailable(), validationMessage }),
     getEvaluatedMesh: () => evaluate(current),
     getControlPoints,
-    select, setMode, setStep, moveByPixels, nudge, setPosition, resetSelection, resetResiduals, setEnabled, undo, redo,
+    select, setMode, setStep, moveByPixels, nudge, setPosition, resetSelection, resetResiduals, startFresh, setEnabled, undo, redo, acceptKeystoneFit,
     pointerStart, pointerMove, pointerEnd, pointerCancel, beginNudgeGesture, endNudgeGesture, cancelNudgeGesture, retireGesture, clearValidation, setConfig, setBaselineMesh, editGridLayout, previewGridLayout, commitGridLayoutPreview,
   };
 }

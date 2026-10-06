@@ -3,6 +3,25 @@ import { afterEach, expect, test, vi } from "vitest";
 import { createWarpEditorDialog } from "../../frontend/src/projection-config/warp-editor-dialog.js";
 import { mountProjectionConfig } from "../../frontend/src/projection-config/config-controller.js";
 import { DEFAULT_PROJECTION_CONFIG } from "../../frontend/src/shared/projection-config-schema.js";
+import {createProjectionPreviewFrame} from '../../frontend/src/projection-config/projection-preview-frame.js';
+
+test('preview calibration binds current frame and request, survives geometry update, and sends no blackout',()=>{
+  vi.useFakeTimers(); const host=document.createElement('div');document.body.append(host);
+  const preview=createProjectionPreviewFrame({document,host});preview.setCalibrationView(true);const frame=preview.mount('left');const post=vi.spyOn(frame.contentWindow,'postMessage');
+  window.dispatchEvent(new MessageEvent('message',{origin:window.location.origin,source:frame.contentWindow,data:{type:'otef_projection_preview_ready',output:'left'}}));
+  const command=post.mock.calls.at(-1)[0];expect(command).toMatchObject({type:'otef_projection_preview_calibration',enabled:true});expect(command.blackout).toBeUndefined();
+  const receipt={type:'otef_projection_preview_calibration_rendered',output:'left',requestId:command.requestId,ready:true,sceneIdentity:'drawn',missingIds:[],error:null};
+  window.dispatchEvent(new MessageEvent('message',{origin:window.location.origin,source:window,data:receipt}));expect(preview.getCalibrationState().ready).toBe(false);
+  window.dispatchEvent(new MessageEvent('message',{origin:window.location.origin,source:frame.contentWindow,data:receipt}));expect(preview.getCalibrationState().ready).toBe(true);
+  preview.update(DEFAULT_PROJECTION_CONFIG);expect(preview.getCalibrationState().sceneIdentity).toBe('drawn');preview.dispose();
+});
+test('preview calibration loses readiness after missing receipt progress and outgoing renewals cannot extend deadline',()=>{
+  vi.useFakeTimers();const host=document.createElement('div');document.body.append(host);const preview=createProjectionPreviewFrame({document,host});preview.setCalibrationView(true);
+  const frame=preview.mount('left');const post=vi.spyOn(frame.contentWindow,'postMessage');window.dispatchEvent(new MessageEvent('message',{origin:location.origin,source:frame.contentWindow,data:{type:'otef_projection_preview_ready',output:'left'}}));
+  const command=post.mock.calls.at(-1)[0];window.dispatchEvent(new MessageEvent('message',{origin:location.origin,source:frame.contentWindow,data:{type:'otef_projection_preview_calibration_rendered',output:'left',requestId:command.requestId,ready:true,sceneIdentity:'drawn',missingIds:[],error:null}}));
+  expect(preview.getCalibrationState().ready).toBe(true);vi.advanceTimersByTime(4001);expect(preview.getCalibrationState()).toMatchObject({ready:false,error:expect.stringMatching(/acknowledgement|receipt/i)});
+  const latest=post.mock.calls.at(-1)[0];window.dispatchEvent(new MessageEvent('message',{origin:location.origin,source:frame.contentWindow,data:{type:'otef_projection_preview_calibration_rendered',output:'left',requestId:latest.requestId,ready:true,sceneIdentity:'late',missingIds:[],error:null}}));expect(preview.getCalibrationState().ready).toBe(false);preview.dispose();
+});
 
 afterEach(() => { document.body.replaceChildren(); vi.useRealTimers(); });
 let resizeObserverDescriptor;
@@ -12,6 +31,169 @@ afterEach(() => {
     else Object.defineProperty(window, "ResizeObserver", resizeObserverDescriptor);
     resizeObserverDescriptor = undefined;
   }
+});
+
+const configCalls = spy => spy.mock.calls.filter(([message]) => message.type === 'otef_projection_preview_config');
+const replacePreviewDocument = frame => Object.defineProperty(frame, 'contentDocument', {
+  configurable: true, value: document.implementation.createHTMLDocument('replacement projection preview'),
+});
+
+test('preview notifies matching on pending geometry, source readiness and render failure without polling',()=>{
+  const states=[],host=document.createElement('div');document.body.append(host);
+  const preview=createProjectionPreviewFrame({document,host,onStateChange:state=>states.push(state)});preview.update(DEFAULT_PROJECTION_CONFIG);
+  const frame=preview.mount('left'),post=vi.spyOn(frame.contentWindow,'postMessage');
+  const receive=data=>window.dispatchEvent(new MessageEvent('message',{origin:location.origin,source:frame.contentWindow,data:{output:'left',...data}}));
+  receive({type:'otef_projection_preview_ready'});const requestId=configCalls(post)[0][0].requestId;
+  expect(states.at(-1).pending).toBe(true);
+  receive({type:'otef_projection_preview_applied',requestId,success:true});receive({type:'otef_projection_preview_source_state',requestId,sourceFrameIdentity:'source',stable:true,error:null});
+  expect(states.at(-1).stable).toBe(true);
+  receive({type:'otef_projection_preview_source_state',requestId,sourceFrameIdentity:'source',stable:false,error:'Reloaded'});
+  expect(states.at(-1)).toMatchObject({stable:false,error:'Reloaded'});preview.dispose();
+});
+
+test.each([
+  ['load-first','load-first'],['load-first','ready-first'],['ready-first','load-first'],['ready-first','ready-first'],
+])('preview initial %s and subsequent document reload %s preserve only the current handshake', (initialOrder,reloadOrder) => {
+  const onInvalidate=vi.fn(),host=document.createElement('div');document.body.append(host);
+  const preview=createProjectionPreviewFrame({document,host,onInvalidate});preview.update(DEFAULT_PROJECTION_CONFIG);
+  const frame=preview.mount('left'),post=vi.spyOn(frame.contentWindow,'postMessage');
+  const receive=data=>window.dispatchEvent(new MessageEvent('message',{origin:location.origin,source:frame.contentWindow,data:{output:'left',...data}}));
+  const ready=()=>receive({type:'otef_projection_preview_ready'}),load=()=>frame.dispatchEvent(new Event('load'));
+  if(initialOrder==='load-first')load();ready();if(initialOrder==='ready-first')load();
+  const first=configCalls(post)[0][0].requestId;
+  expect(preview.getAppliedState()).toMatchObject({ready:true,pending:true,stable:false});expect(onInvalidate).not.toHaveBeenCalled();
+  receive({type:'otef_projection_preview_applied',requestId:first,success:true});
+  receive({type:'otef_projection_preview_source_state',requestId:first,sourceFrameIdentity:'initial',stable:true,error:null});
+  expect(preview.getAppliedState().stable).toBe(true);
+  replacePreviewDocument(frame);
+  if(reloadOrder==='load-first')load();ready();if(reloadOrder==='ready-first')load();
+  expect(onInvalidate).toHaveBeenCalledTimes(1);expect(configCalls(post)).toHaveLength(2);
+  const second=configCalls(post)[1][0].requestId;expect(second).toBeGreaterThan(first);
+  expect(preview.getAppliedState()).toMatchObject({ready:true,pending:true,stable:false,configIdentity:null,sourceFrameIdentity:null});
+  receive({type:'otef_projection_preview_applied',requestId:first,success:true});
+  receive({type:'otef_projection_preview_source_state',requestId:first,sourceFrameIdentity:'stale',stable:true,error:null});
+  expect(preview.getAppliedState()).toMatchObject({pending:true,stable:false,configIdentity:null,sourceFrameIdentity:null});
+  receive({type:'otef_projection_preview_applied',requestId:second,success:true});
+  receive({type:'otef_projection_preview_source_state',requestId:second,sourceFrameIdentity:'replacement',stable:true,error:null});
+  expect(preview.getAppliedState()).toMatchObject({ready:true,pending:false,stable:true,sourceFrameIdentity:'replacement'});preview.dispose();
+});
+
+test('a replaced iframe document cannot keep old applied state before its ready or load event', () => {
+  const onInvalidate=vi.fn(),host=document.createElement('div');document.body.append(host);
+  const preview=createProjectionPreviewFrame({document,host,onInvalidate});preview.update(DEFAULT_PROJECTION_CONFIG);
+  const frame=preview.mount('left'),post=vi.spyOn(frame.contentWindow,'postMessage');
+  const receive=data=>window.dispatchEvent(new MessageEvent('message',{origin:location.origin,source:frame.contentWindow,data:{output:'left',...data}}));
+  receive({type:'otef_projection_preview_ready'});const requestId=configCalls(post)[0][0].requestId;
+  receive({type:'otef_projection_preview_applied',requestId,success:true});
+  receive({type:'otef_projection_preview_source_state',requestId,sourceFrameIdentity:'drawn',stable:true,error:null});
+  expect(preview.getAppliedState().stable).toBe(true);replacePreviewDocument(frame);
+  expect(preview.getAppliedState()).toMatchObject({ready:false,stable:false,configIdentity:null,sourceFrameIdentity:null});
+  expect(onInvalidate).toHaveBeenCalledTimes(1);
+  receive({type:'otef_projection_preview_applied',requestId,success:true});
+  expect(preview.getAppliedState().stable).toBe(false);preview.dispose();
+});
+
+test('observing the initial blank document does not report initial navigation as a capture reload', () => {
+  const onInvalidate=vi.fn(),host=document.createElement('div');document.body.append(host);
+  const preview=createProjectionPreviewFrame({document,host,onInvalidate});preview.update(DEFAULT_PROJECTION_CONFIG);
+  const frame=preview.mount('left');expect(preview.getAppliedState().ready).toBe(false);replacePreviewDocument(frame);
+  window.dispatchEvent(new MessageEvent('message',{origin:location.origin,source:frame.contentWindow,data:{type:'otef_projection_preview_ready',output:'left'}}));
+  frame.dispatchEvent(new Event('load'));expect(preview.getAppliedState()).toMatchObject({ready:true,pending:true});
+  expect(onInvalidate).not.toHaveBeenCalled();preview.dispose();
+});
+
+test('load completion of an already applied same document keeps its valid source and handshake', () => {
+  const onInvalidate=vi.fn(),host=document.createElement('div');document.body.append(host);
+  const preview=createProjectionPreviewFrame({document,host,onInvalidate});preview.update(DEFAULT_PROJECTION_CONFIG);
+  const frame=preview.mount('left'),post=vi.spyOn(frame.contentWindow,'postMessage');
+  const receive=data=>window.dispatchEvent(new MessageEvent('message',{origin:location.origin,source:frame.contentWindow,data:{output:'left',...data}}));
+  receive({type:'otef_projection_preview_ready'});const requestId=configCalls(post)[0][0].requestId;
+  receive({type:'otef_projection_preview_applied',requestId,success:true});
+  receive({type:'otef_projection_preview_source_state',requestId,sourceFrameIdentity:'current',stable:true,error:null});
+  frame.dispatchEvent(new Event('load'));frame.dispatchEvent(new Event('load'));
+  expect(preview.getAppliedState()).toMatchObject({ready:true,pending:false,stable:true,sourceFrameIdentity:'current',requestId});
+  expect(configCalls(post)).toHaveLength(1);expect(onInvalidate).not.toHaveBeenCalled();preview.dispose();
+});
+
+test('iframe reload invalidates applied/source state, notifies matching, and requires fresh guarded acknowledgements', () => {
+  const onInvalidate=vi.fn(),host=document.createElement('div');document.body.append(host);
+  const preview=createProjectionPreviewFrame({document,host,onInvalidate});preview.setCalibrationView(true);preview.update(DEFAULT_PROJECTION_CONFIG);
+  const frame=preview.mount('left'),post=vi.spyOn(frame.contentWindow,'postMessage');
+  const receive=data=>window.dispatchEvent(new MessageEvent('message',{origin:location.origin,source:frame.contentWindow,data:{output:'left',...data}}));
+  frame.dispatchEvent(new Event('load'));receive({type:'otef_projection_preview_ready'});
+  const first=configCalls(post)[0][0].requestId;
+  receive({type:'otef_projection_preview_applied',requestId:first,success:true});
+  receive({type:'otef_projection_preview_source_state',requestId:first,sourceFrameIdentity:'source',stable:true,error:null});
+  expect(preview.getAppliedState().stable).toBe(true);
+  const firstCalibration=post.mock.calls.filter(([m])=>m.type==='otef_projection_preview_calibration').at(-1)[0].requestId;
+  replacePreviewDocument(frame);frame.dispatchEvent(new Event('load'));
+  expect(preview.getAppliedState()).toMatchObject({ready:false,stable:false,pending:false,configIdentity:null,sourceFrameIdentity:null});
+  expect(onInvalidate).toHaveBeenCalledTimes(1);expect(onInvalidate).toHaveBeenCalledWith('Preview reloaded; restart point capture.');
+  receive({type:'otef_projection_preview_applied',requestId:first,success:true});
+  receive({type:'otef_projection_preview_source_state',requestId:first,sourceFrameIdentity:'old',stable:true,error:null});
+  expect(preview.getAppliedState().configIdentity).toBeNull();
+  receive({type:'otef_projection_preview_ready'});
+  const second=configCalls(post)[1][0].requestId;expect(second).toBeGreaterThan(first);
+  expect(preview.getAppliedState()).toMatchObject({ready:true,pending:true,stable:false});
+  receive({type:'otef_projection_preview_calibration_rendered',requestId:firstCalibration,ready:true,sceneIdentity:'old',missingIds:[],error:null});
+  expect(preview.getCalibrationState().ready).toBe(false);
+  receive({type:'otef_projection_preview_applied',requestId:first,success:true});
+  receive({type:'otef_projection_preview_source_state',requestId:first,sourceFrameIdentity:'old',stable:true,error:null});
+  expect(preview.getAppliedState()).toMatchObject({pending:true,stable:false,configIdentity:null,sourceFrameIdentity:null});
+  receive({type:'otef_projection_preview_applied',requestId:second,success:true});
+  expect(preview.getAppliedState().stable).toBe(false);
+  receive({type:'otef_projection_preview_source_state',requestId:second,sourceFrameIdentity:'fresh',stable:true,error:null});
+  expect(preview.getAppliedState()).toMatchObject({pending:false,stable:true,sourceFrameIdentity:'fresh'});preview.dispose();
+});
+
+test('reload while geometry is pending retires its deadline and old requests', () => {
+  vi.useFakeTimers();const host=document.createElement('div');document.body.append(host);
+  const preview=createProjectionPreviewFrame({document,host,timeoutMs:10000,appliedTimeoutMs:100});preview.update(DEFAULT_PROJECTION_CONFIG);
+  const frame=preview.mount('left'),post=vi.spyOn(frame.contentWindow,'postMessage');
+  const ready=()=>window.dispatchEvent(new MessageEvent('message',{origin:location.origin,source:frame.contentWindow,data:{type:'otef_projection_preview_ready',output:'left'}}));
+  ready();const first=configCalls(post)[0][0].requestId;vi.advanceTimersByTime(50);replacePreviewDocument(frame);frame.dispatchEvent(new Event('load'));ready();
+  expect(configCalls(post)).toHaveLength(2);expect(configCalls(post)[1][0].requestId).toBeGreaterThan(first);
+  vi.advanceTimersByTime(51);expect(preview.getAppliedState()).toMatchObject({failed:false,pending:true,stable:false});
+  vi.advanceTimersByTime(49);expect(preview.getAppliedState()).toMatchObject({failed:true,stable:false,configIdentity:null});preview.dispose();
+});
+
+test('dialog forwards preview reload invalidation to the future matching controller', () => {
+  const onPreviewInvalidated=vi.fn(),{dialog,opener}=setup({onPreviewInvalidated});
+  dialog.update(DEFAULT_PROJECTION_CONFIG);dialog.open({side:'left',mode:'keystone',opener});const frame=document.querySelector('iframe');
+  window.dispatchEvent(new MessageEvent('message',{origin:location.origin,source:frame.contentWindow,data:{type:'otef_projection_preview_ready',output:'left'}}));
+  replacePreviewDocument(frame);frame.dispatchEvent(new Event('load'));expect(onPreviewInvalidated).toHaveBeenCalledWith('Preview reloaded; restart point capture.');
+  expect(dialog.getWarpPreviewAppliedState().stable).toBe(false);dialog.dispose();
+});
+
+test('applied preview state requires completed geometry and guarded source state, and preserves last drawn identity', () => {
+  const { dialog, opener } = setup(); dialog.update(DEFAULT_PROJECTION_CONFIG); dialog.open({ side: 'left', mode: 'keystone', opener });
+  const frame = document.querySelector('iframe'), send = vi.spyOn(frame.contentWindow, 'postMessage');
+  const receive = (data, source = frame.contentWindow) => window.dispatchEvent(new MessageEvent('message', { origin: location.origin, source, data: { output: 'left', ...data } }));
+  receive({ type: 'otef_projection_preview_ready' });
+  const requestId = configCalls(send)[0][0].requestId;
+  expect(dialog.getWarpPreviewAppliedState()).toMatchObject({ ready: true, pending: true, stable: false, configIdentity: null });
+  const sourceState = { type: 'otef_projection_preview_source_state', requestId, sourceFrameIdentity: 'source-1', stable: true, error: null };
+  receive(sourceState, window); expect(dialog.getWarpPreviewAppliedState().sourceFrameIdentity).toBeNull();
+  receive(sourceState); expect(dialog.getWarpPreviewAppliedState().stable).toBe(false);
+  receive({ type: 'otef_projection_preview_applied', requestId, success: true });
+  expect(dialog.getWarpPreviewAppliedState()).toMatchObject({ pending: false, stable: true, configIdentity: JSON.stringify(DEFAULT_PROJECTION_CONFIG), sourceFrameIdentity: 'source-1' });
+  const next = structuredClone(DEFAULT_PROJECTION_CONFIG); next.pre.tx += 0.01; dialog.update(next);
+  const latest = configCalls(send)[1][0].requestId;
+  receive({ ...sourceState, sourceFrameIdentity: 'stale-source' });
+  expect(dialog.getWarpPreviewAppliedState()).toMatchObject({ pending: true, stable: false, sourceFrameIdentity: 'source-1', configIdentity: JSON.stringify(DEFAULT_PROJECTION_CONFIG) });
+  receive({ type: 'otef_projection_preview_applied', requestId: latest, success: false, error: 'draw failed' });
+  expect(dialog.getWarpPreviewAppliedState()).toMatchObject({ pending: false, failed: true, stable: false, configIdentity: JSON.stringify(DEFAULT_PROJECTION_CONFIG) });
+  dialog.close(); expect(dialog.getWarpPreviewAppliedState()).toMatchObject({ ready: false, stable: false, configIdentity: null }); dialog.dispose();
+});
+
+test('expired preview responses cannot restore capture readiness', () => {
+  vi.useFakeTimers(); const { dialog, opener } = setup(); dialog.update(DEFAULT_PROJECTION_CONFIG); dialog.open({side:'left',mode:'keystone',opener});
+  const frame = document.querySelector('iframe'); const send = vi.spyOn(frame.contentWindow, 'postMessage');
+  const receive = data => window.dispatchEvent(new MessageEvent('message',{origin:location.origin,source:frame.contentWindow,data:{output:'left',...data}}));
+  receive({type:'otef_projection_preview_ready'}); const requestId = configCalls(send)[0][0].requestId;
+  vi.advanceTimersByTime(30000); receive({type:'otef_projection_preview_source_state',requestId,sourceFrameIdentity:'late',stable:true,error:null});
+  receive({type:'otef_projection_preview_applied',requestId,success:true});
+  expect(dialog.getWarpPreviewAppliedState()).toMatchObject({failed:true,stable:false,configIdentity:null}); dialog.dispose();
 });
 
 function setup(options = {}) {
@@ -24,6 +206,31 @@ function setup(options = {}) {
   const dialog = createWarpEditorDialog({ document, host, editorPanel: panel, overlay, ...options });
   return { host, home, panel, overlay, opener, dialog };
 }
+
+test.each(['matching-first', 'recovery-first'])('footer recovery guard survives %s callbacks and matching close', order => {
+  const { dialog, host } = setup();
+  const matching = () => dialog.updatePointMatch({ active: true, canApply: true });
+  const recovery = () => dialog.update(DEFAULT_PROJECTION_CONFIG, { reconciliation: { status: 'needs-choice' } });
+  if (order === 'matching-first') { matching(); recovery(); } else { recovery(); matching(); }
+  const live = host.querySelector('[aria-label="Editor Live"]');
+  const apply = [...host.querySelectorAll('button')].find(button => button.textContent === 'Apply once');
+  expect(live.disabled).toBe(true); expect(apply.disabled).toBe(true);
+  dialog.updatePointMatch({ active: false });
+  expect(live.disabled).toBe(true); expect(apply.disabled).toBe(true);
+  dialog.update(DEFAULT_PROJECTION_CONFIG, { reconciliation: null });
+  expect(live.disabled).toBe(false); expect(apply.disabled).toBe(false);
+  dialog.dispose();
+});
+
+test('editor-wide calibration survives mode changes and rejected close; switches side after confirmation',()=>{
+  const controller={enter:vi.fn(),switchOutput:vi.fn(),setBlackout:vi.fn(),close:vi.fn(),dispose:vi.fn()};
+  let allow=false;const {dialog}=setup({calibrationControllerFactory:()=>controller,onBeforeClose:()=>allow});
+  dialog.open({side:'left',mode:'keystone'}); expect(controller.enter).toHaveBeenCalledWith({output:'left'});
+  const checkbox=document.querySelector('[aria-label="Black out other projector"]');checkbox.checked=true;checkbox.dispatchEvent(new Event('change'));
+  expect(controller.setBlackout).toHaveBeenCalledWith(true);dialog.open({side:'left',mode:'grid'});expect(controller.enter).toHaveBeenCalledTimes(1);
+  dialog.close();expect(controller.close).not.toHaveBeenCalled();dialog.open({side:'right',mode:'grid'});expect(controller.switchOutput).toHaveBeenCalledWith('right');
+  allow=true;dialog.close();expect(controller.close).toHaveBeenCalledTimes(1);dialog.dispose();
+});
 
 function setViewportRect(viewport, rect) {
   viewport.getBoundingClientRect = () => ({
@@ -335,13 +542,13 @@ test("only trusted ready sends the latest draft once and stale frames cannot rep
   window.dispatchEvent(new MessageEvent("message", { origin: "https://wrong.example", source: old.contentWindow, data: ready }));
   expect(oldSend).not.toHaveBeenCalled();
   window.dispatchEvent(new MessageEvent("message", { origin: location.origin, source: old.contentWindow, data: ready }));
-  expect(oldSend).toHaveBeenCalledTimes(1);
-  expect(oldSend.mock.calls[0][0]).toMatchObject({ type: "otef_projection_preview_config", config: latest });
+  expect(configCalls(oldSend)).toHaveLength(1);
+  expect(configCalls(oldSend)[0][0]).toMatchObject({ type: "otef_projection_preview_config", config: latest });
   dialog.update(latest);
-  expect(oldSend).toHaveBeenCalledTimes(1);
+  expect(configCalls(oldSend)).toHaveLength(1);
   dialog.close(); dialog.open({ side: "left", mode: "grid", opener });
   window.dispatchEvent(new MessageEvent("message", { origin: location.origin, source: old.contentWindow, data: ready }));
-  expect(oldSend).toHaveBeenCalledTimes(1);
+  expect(configCalls(oldSend)).toHaveLength(1);
   dialog.dispose();
 });
 
@@ -356,10 +563,10 @@ test("bridge ignores wrong source, side, and outdated applied request", () => {
   window.dispatchEvent(new MessageEvent("message", { origin: location.origin, source: frame.contentWindow, data: { ...ready, output: "left" } }));
   expect(send).not.toHaveBeenCalled();
   window.dispatchEvent(new MessageEvent("message", { origin: location.origin, source: frame.contentWindow, data: ready }));
-  const previousRequest = send.mock.calls[0][0].requestId;
+  const previousRequest = configCalls(send)[0][0].requestId;
   const changed = structuredClone(DEFAULT_PROJECTION_CONFIG); changed.pre.tx += 0.01;
   dialog.update(changed);
-  const currentRequest = send.mock.calls[1][0].requestId;
+  const currentRequest = configCalls(send)[1][0].requestId;
   window.dispatchEvent(new MessageEvent("message", { origin: location.origin, source: frame.contentWindow, data: { type: "otef_projection_preview_applied", output: "right", requestId: previousRequest, success: false, error: "stale" } }));
   expect(document.querySelector(".warp-editor-message").textContent).not.toContain("stale");
   window.dispatchEvent(new MessageEvent("message", { origin: location.origin, source: frame.contentWindow, data: { type: "otef_projection_preview_applied", output: "right", requestId: currentRequest, success: true } }));
@@ -424,7 +631,7 @@ test("failed preview application offers retry for the selected frame", () => {
   const frame = document.querySelector("iframe");
   const send = vi.spyOn(frame.contentWindow, "postMessage");
   window.dispatchEvent(new MessageEvent("message", { origin: location.origin, source: frame.contentWindow, data: { type: "otef_projection_preview_ready", output: "left" } }));
-  const requestId = send.mock.calls[0][0].requestId;
+  const requestId = configCalls(send)[0][0].requestId;
   window.dispatchEvent(new MessageEvent("message", { origin: location.origin, source: frame.contentWindow, data: { type: "otef_projection_preview_applied", output: "left", requestId, success: false, error: "mesh unavailable" } }));
   expect(document.querySelector(".warp-editor-message").textContent).toContain("mesh unavailable");
   expect(document.querySelector('[data-action="warp-editor-retry"]').hidden).toBe(false);
@@ -440,9 +647,9 @@ test("Run names cannot replace the first pending geometry acknowledgement", () =
   const send = vi.spyOn(frame.contentWindow, "postMessage");
   window.dispatchEvent(new MessageEvent("message", { origin: location.origin, source: frame.contentWindow,
     data: { type: "otef_projection_preview_ready", output: "left" } }));
-  const geometryRequest = send.mock.calls[0][0];
+  const geometryRequest = configCalls(send)[0][0];
   expect(dialog.sendRunNamesPreview(config)).toBe(false);
-  expect(send).toHaveBeenCalledOnce();
+  expect(configCalls(send)).toHaveLength(1);
   window.dispatchEvent(new MessageEvent("message", { origin: location.origin, source: frame.contentWindow,
     data: { type: "otef_projection_preview_applied", output: "left", requestId: geometryRequest.requestId, success: true } }));
   expect(frame.style.visibility).toBe("visible");
@@ -460,13 +667,13 @@ test("Run names for older applied geometry cannot replace a newer pending draft 
   const send = vi.spyOn(frame.contentWindow, "postMessage");
   window.dispatchEvent(new MessageEvent("message", { origin: location.origin, source: frame.contentWindow,
     data: { type: "otef_projection_preview_ready", output: "right" } }));
-  const firstRequest = send.mock.calls[0][0];
+  const firstRequest = configCalls(send)[0][0];
   window.dispatchEvent(new MessageEvent("message", { origin: location.origin, source: frame.contentWindow,
     data: { type: "otef_projection_preview_applied", output: "right", requestId: firstRequest.requestId, success: true } }));
   dialog.update(pendingConfig);
-  const latestRequest = send.mock.calls[1][0];
+  const latestRequest = configCalls(send)[1][0];
   expect(dialog.sendRunNamesPreview(appliedConfig)).toBe(false);
-  expect(send).toHaveBeenCalledTimes(2);
+  expect(configCalls(send)).toHaveLength(2);
   window.dispatchEvent(new MessageEvent("message", { origin: location.origin, source: frame.contentWindow,
     data: { type: "otef_projection_preview_applied", output: "right", requestId: latestRequest.requestId, success: true } }));
   expect(frame.style.visibility).toBe("visible");
@@ -484,11 +691,11 @@ test("Run names Applied wait times out and exposes Retry", () => {
   const send = vi.spyOn(frame.contentWindow, "postMessage");
   window.dispatchEvent(new MessageEvent("message", { origin: location.origin, source: frame.contentWindow,
     data: { type: "otef_projection_preview_ready", output: "left" } }));
-  const geometry = send.mock.calls[0][0];
+  const geometry = configCalls(send)[0][0];
   window.dispatchEvent(new MessageEvent("message", { origin: location.origin, source: frame.contentWindow,
     data: { type: "otef_projection_preview_applied", output: "left", requestId: geometry.requestId, success: true } }));
   expect(dialog.sendRunNamesPreview(config)).toBe(true);
-  const names = send.mock.calls[1][0];
+  const names = configCalls(send)[1][0];
   expect(names.runNames).toBe(true);
   vi.advanceTimersByTime(30000);
   expect(document.querySelector(".warp-editor-message").textContent).toMatch(/did not finish/i);

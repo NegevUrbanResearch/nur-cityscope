@@ -14,6 +14,7 @@ import {
 import { shouldShowLayerOnGisMap } from "../shared/gis-layer-filter.js";
 import { isolateLayersWhileVictimNamesShown } from "../shared/nli-victim-name-layer-isolation.js";
 import { resolvedColorsToLegendFill } from "../shared/nli-investigation-legend.js";
+import { novaEscapeLegendLayer } from "../shared/nli-nova-escape-legend.js";
 import { projectionHatchRasterParams } from "../shared/hatch-projection-presentation.js";
 import {
   scaleLineOpacityPaintForGis,
@@ -984,6 +985,16 @@ async function buildLegendModel(options = {}) {
       name: String(packName || group.id).trim() || group.id,
       layers: packLayers,
     });
+  }
+
+  const fleeingRoutes = novaEscapeLegendLayer(ctx, localeFor(options));
+  if (fleeingRoutes) {
+    let nliPack = packs.find((pack) => pack.id === "nli");
+    if (!nliPack) {
+      nliPack = { id: "nli", name: legendPackDisplayLabel("nli", localeFor(options)), layers: [] };
+      packs.push(nliPack);
+    }
+    nliPack.layers = sortLegendLayersByGeometry([...nliPack.layers, fleeingRoutes]);
   }
 
   const nliIndex = packs.findIndex((pack) => pack.id === "nli");

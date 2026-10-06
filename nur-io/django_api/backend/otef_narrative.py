@@ -147,7 +147,7 @@ def transition_narrative_state(locked, narrative_id, expected_revision):
     return snapshot
 
 
-def transition_narrative_scene(locked, narrative_id, expected_revision):
+def transition_narrative_scene(locked, narrative_id, expected_revision, hidden_displays=None):
     """Mutate narrative-owned fields on a locked row and capture the final scene."""
     narrative = transition_narrative_state(
         locked, narrative_id, expected_revision
@@ -169,6 +169,8 @@ def transition_narrative_scene(locked, narrative_id, expected_revision):
             revision=previous_revision + 1,
             loop=previous_clock.get("loop") is True,
         )
+        if hidden_displays is not None:
+            locked.investigation_clock["hiddenDisplays"] = list(hidden_displays)
         selection, _changed, _error, _reason = transition_person_selection(
             locked,
             {"personId": None, "datasetVersion": None},

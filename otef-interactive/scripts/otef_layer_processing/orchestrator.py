@@ -192,10 +192,15 @@ def _geo_style_cache_fingerprint(geo_file: Path, styles_dir: Path) -> Tuple[str,
         else ""
     )
     override_hash = ""
+    if geo_file.stem == 'ישובים':
+        from .settlement_label_additions import OUTLINE_ADDITIONS_PATH
+        override_hash = compute_file_hash(OUTLINE_ADDITIONS_PATH)
     if geo_file.stem == SHEMOT_LAYER_STEM:
+        from .settlement_label_additions import ADDITIONS_PATH
+        override_hash = compute_file_hash(ADDITIONS_PATH)
         op = shemot_label_overrides_path(styles_dir)
         if op.is_file():
-            override_hash = compute_file_hash(op)
+            override_hash += ":" + compute_file_hash(op)
     combined = f"{geo_hash}:{lyrx_hash}:{override_hash}"
     return combined, geo_hash, lyrx_hash
 
@@ -769,8 +774,13 @@ class ProcessingOrchestrator:
 
                     if layer_id == "שמות_יישובים":
                         from .shemot_label_overrides import merge_shemot_label_overrides_into_geojson
+                        from .settlement_label_additions import add_settlement_labels
 
+                        add_settlement_labels(wgs84_file)
                         merge_shemot_label_overrides_into_geojson(wgs84_file, styles_dir)
+                    if layer_id == 'ישובים':
+                        from .settlement_label_additions import add_settlement_outlines
+                        add_settlement_outlines(wgs84_file)
 
                     if geom_type == "unknown":
                         geom_type = get_geometry_type(wgs84_file)

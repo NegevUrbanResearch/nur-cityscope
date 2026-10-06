@@ -138,6 +138,82 @@ test('uncertain POST times out once, ignores late receipt, and requires a fresh-
   h.client.stop();
 });
 
+test('explicit owned fit receipts carry their token only for the exact successor and candidate', async () => {
+  const h = harness({ revision: 12 }); const receipts = [];
+  h.client.subscribe((state, receipt) => { if (receipt) receipts.push(receipt); });
+  const starting = h.client.start(); h.resolveNext(stateFor(12)); await starting;
+  await h.client.setLive(false);
+  const config = clone(DEFAULTS); config.outputs.left.warp.keystone.corners[0] = [.01,.01]; h.client.setDraft(config);
+  const applying = h.client.apply({ publicationToken: 'fit-token', expectedRevision: 13, expectedConfigIdentity: JSON.stringify(config) });
+  h.resolveNext(stateFor(13, config)); await applying;
+  expect(receipts).toContainEqual(expect.objectContaining({ action: 'apply', publicationToken: 'fit-token' }));
+  const count = receipts.filter(receipt => receipt.publicationToken).length;
+  h.socket.emit({ type: 'otef_projection_config_changed', table: 'otef', sourceId: '00000000-0000-4000-8000-00000000000b', state: stateFor(14, config) });
+  expect(receipts.at(-1)).toMatchObject({ foreign: true });
+  expect(receipts.filter(receipt => receipt.publicationToken)).toHaveLength(count);
+  h.client.stop();
+});
+
+test('rename sends only metadata and preserves an unsaved draft and checkpoint', async () => {
+  const h = harness({ validateCandidate: vi.fn(() => { throw new Error('rename must not validate geometry'); }) });
+  const initial = stateFor(0);
+  const id = '00000000-0000-4000-8000-00000000000b';
+  initial.presets.push({ id, name: 'Desk', config: clone(DEFAULTS), readOnly: false });
+  initial.selectedPresetId = id;
+  const starting = h.client.start(); h.resolveNext(initial); await starting;
+  await h.client.setLive(false);
+  const draft = clone(DEFAULTS); draft.pre.tx = 0.2; h.client.setDraft(draft);
+  const renaming = h.client.rename({ presetId: id, name: 'NLI setup' });
+  await h.flushPromises();
+  expect(JSON.parse(h.lastRequest().options.body)).toEqual({ table: 'otef', baseRevision: 0, sourceId: '00000000-0000-4000-8000-00000000000a', action: 'rename', presetId: id, name: 'NLI setup' });
+  const renamed = clone(initial); renamed.revision = 1; renamed.presets[1].name = 'NLI setup';
+  h.resolveNext(renamed); await renaming;
+  expect(h.client.getState()).toMatchObject({ draft, hasLocalDraft: true, snapshot: renamed });
+  h.client.stop();
+});
+
+test('rename retains a queued Live preview and publishes it with the renamed revision', async () => {
+  const validateCandidate = vi.fn(async ({ identity }) => ({ identity, valid: true }));
+  const h = harness({ validateCandidate }); const initial = stateFor(0);
+  const id = '00000000-0000-4000-8000-00000000000b';
+  initial.presets.push({ id, name: 'Desk', config: clone(DEFAULTS), readOnly: false }); initial.selectedPresetId = id;
+  const starting = h.client.start(); h.resolveNext(initial); await starting;
+  const draft = clone(DEFAULTS); draft.pre.tx = 0.22; h.client.setDraft(draft);
+  const renaming = h.client.rename({ presetId: id, name: 'NLI setup' });
+  const latestDraft = clone(draft); latestDraft.pre.tx = 0.27; h.client.setDraft(latestDraft);
+  await h.advance(0); await h.flushPromises();
+  expect(JSON.parse(h.lastRequest().options.body).action).toBe('rename');
+  expect(validateCandidate).not.toHaveBeenCalled();
+  const renamed = clone(initial); renamed.revision = 1; renamed.presets[1].name = 'NLI setup';
+  h.resolveNext(renamed); await renaming; await h.flushPromises(); await h.advance(100);
+  expect(JSON.parse(h.lastRequest().options.body)).toMatchObject({ action: 'preview', baseRevision: 1, config: latestDraft });
+  expect(h.client.getState().draft).toEqual(latestDraft);
+  const applied = clone(renamed); applied.revision = 2; applied.config = latestDraft; h.resolveNext(applied); await h.flushPromises();
+  expect(h.client.getState().snapshot.presets[1].config).toEqual(DEFAULTS);
+  h.client.stop();
+});
+
+test('rename during Live preflight keeps the draft scheduled for publication', async () => {
+  let finishValidation;
+  const validateCandidate = vi.fn(({ identity }) => new Promise(resolve => { finishValidation = () => resolve({ identity, valid: true }); }));
+  const h = harness({ validateCandidate }); const initial = stateFor(0);
+  const id = '00000000-0000-4000-8000-00000000000b';
+  initial.presets.push({ id, name: 'Desk', config: clone(DEFAULTS), readOnly: false }); initial.selectedPresetId = id;
+  const starting = h.client.start(); h.resolveNext(initial); await starting;
+  const draft = clone(DEFAULTS); draft.pre.tx = 0.22; h.client.setDraft(draft);
+  await h.advance(0); expect(validateCandidate).toHaveBeenCalledTimes(1);
+  const renaming = h.client.rename({ presetId: id, name: 'NLI setup' });
+  finishValidation(); await h.flushPromises();
+  expect(JSON.parse(h.lastRequest().options.body).action).toBe('rename');
+  const renamed = clone(initial); renamed.revision = 1; renamed.presets[1].name = 'NLI setup';
+  h.resolveNext(renamed); await renaming; await h.flushPromises(); await h.advance(100);
+  expect(validateCandidate).toHaveBeenCalledTimes(2);
+  finishValidation(); await h.flushPromises();
+  expect(JSON.parse(h.lastRequest().options.body)).toMatchObject({ action: 'preview', baseRevision: 1, config: draft });
+  const applied = clone(renamed); applied.revision = 2; applied.config = draft; h.resolveNext(applied); await h.flushPromises();
+  h.client.stop();
+});
+
 test('failed uncertain-write read exposes retry and Use accepted replaces draft', async () => {
   const h = harness();
   const starting = h.client.start(); h.resolveNext(stateFor(0)); await starting;

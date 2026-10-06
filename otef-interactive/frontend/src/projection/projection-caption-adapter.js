@@ -16,7 +16,7 @@ function localSize(layout) {
   };
 }
 
-function drawClock(context, text, fontPx, width, height) {
+function drawClock(context, text, fontPx, width, height, rasterScale) {
   context.save?.();
   context.beginPath?.();
   context.rect?.(0, 0, width, height);
@@ -30,8 +30,8 @@ function drawClock(context, text, fontPx, width, height) {
   context.lineHeight = fontPx * 1.35;
   context.shadowColor = "rgba(0, 0, 0, 0.85)";
   context.shadowOffsetX = 0;
-  context.shadowOffsetY = 2;
-  context.shadowBlur = 8;
+  context.shadowOffsetY = 2 * rasterScale;
+  context.shadowBlur = 8 * rasterScale;
   const metrics = context.measureText?.(text) || {};
   const actualAscent = Number(metrics.actualBoundingBoxAscent) || fontPx * 0.8;
   const fontAscent = Number(metrics.fontBoundingBoxAscent) || actualAscent;
@@ -41,7 +41,7 @@ function drawClock(context, text, fontPx, width, height) {
   context.restore?.();
 }
 
-export function createProjectionCaptionAdapter({ canvasFactory } = {}) {
+export function createProjectionCaptionAdapter({ canvasFactory, rasterScale = 1 } = {}) {
   const canvas = makeCanvas(canvasFactory); const context = canvas.getContext?.("2d");
   if (!context) throw new Error("projection caption adapter requires a 2d canvas");
   let snapshot = null; let layout = {}; let signature = null; let dirty = true; let disposed = false; let contentVersion = 0;
@@ -55,9 +55,9 @@ export function createProjectionCaptionAdapter({ canvasFactory } = {}) {
     layout = nextLayout;
     if (nextSignature === signature) return;
     signature = nextSignature;
-    if (canvas.width !== size.width || canvas.height !== size.height) {
-      canvas.width = size.width;
-      canvas.height = size.height;
+    if (canvas.width !== size.width * rasterScale || canvas.height !== size.height * rasterScale) {
+      canvas.width = size.width * rasterScale;
+      canvas.height = size.height * rasterScale;
     }
     dirty = true;
   };
@@ -65,7 +65,10 @@ export function createProjectionCaptionAdapter({ canvasFactory } = {}) {
     if (disposed || !snapshot?.visible || !snapshot.model) return null;
     if (dirty) {
       context.clearRect(0, 0, canvas.width, canvas.height);
-      drawClock(context, snapshot.model.clockLabel || "", Number(layout.fontPx) || 22, canvas.width, canvas.height);
+      context.save();
+      context.scale(rasterScale, rasterScale);
+      drawClock(context, snapshot.model.clockLabel || "", Number(layout.fontPx) || 22, canvas.width / rasterScale, canvas.height / rasterScale, rasterScale);
+      context.restore();
       dirty = false;
       contentVersion += 1;
     }

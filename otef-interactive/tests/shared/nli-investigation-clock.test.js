@@ -32,6 +32,16 @@ const polygons = INVESTIGATION_POLYGONS_FULL_ID;
 const alarms = INVESTIGATION_ALARMS_FULL_ID;
 const beats = [400, 420, 440];
 
+describe("scene clock visibility", () => {
+  it("preserves hidden displays through normalization and playback controls", () => {
+    const clock = normalizeNliClock({ ...idleNliClock(), hiddenDisplays: ["gis", "projection"] });
+    expect(clock.hiddenDisplays).toEqual(["gis", "projection"]);
+    const playing = playNliClock(clock, [polygons], beats, 0);
+    expect(normalizeNliClock(playing).hiddenDisplays).toEqual(["gis", "projection"]);
+    expect(stopNliClock(playing).hiddenDisplays).toEqual(["gis", "projection"]);
+  });
+});
+
 describe("NLI playable layer membership", () => {
   it("collects direct playable ids across duplicate nli groups and ignores aliases", () => {
     expect(nliPlayableIdsFromGroups([

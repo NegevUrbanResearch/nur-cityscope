@@ -208,6 +208,7 @@ def _normalize_investigation_clock_patch(raw):
         "seekKind",
         "alarmOnsetOriginMs",
         "leadInMinutes",
+        "hiddenDisplays",
         "revision",
         "serverNowMs",
     }
@@ -219,8 +220,20 @@ def _normalize_investigation_clock_patch(raw):
 
     if not isinstance(raw.get("loop"), bool):
         return None, _clock_patch_error("investigation_clock.loop must be a boolean")
+    visibility = {}
+    if "hiddenDisplays" in raw:
+        hidden = raw["hiddenDisplays"]
+        if (
+            not isinstance(hidden, list)
+            or any(not isinstance(item, str) or item not in ("gis", "projection") for item in hidden)
+            or len(set(hidden)) != len(hidden)
+        ):
+            return None, _clock_patch_error(
+                "investigation_clock.hiddenDisplays must contain unique GIS/projection display ids"
+            )
+        visibility["hiddenDisplays"] = [item for item in ("gis", "projection") if item in hidden]
     if phase == "idle":
-        return idle_investigation_clock(loop=raw["loop"]), None
+        return idle_investigation_clock(loop=raw["loop"]) | visibility, None
 
     required = {
         "membership",
@@ -336,7 +349,7 @@ def _normalize_investigation_clock_patch(raw):
             )
         if phase != "idle":
             normalized["leadInMinutes"] = lead
-    return normalized, None
+    return normalized | visibility, None
 
 def _finite_number(value):
     try:
@@ -693,6 +706,14 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
 
     def _set_narrative_command(self, table, request):
         payload = request.data if isinstance(request.data, dict) else {}
+        hidden_displays = None
+        if "hiddenDisplays" in payload:
+            visibility_clock, error = _normalize_investigation_clock_patch({
+                "phase": "idle", "loop": False, "hiddenDisplays": payload["hiddenDisplays"],
+            })
+            if error:
+                return error
+            hidden_displays = visibility_clock["hiddenDisplays"]
         if "narrativeId" not in payload:
             return Response(
                 {"error": "narrativeId is required"},
@@ -742,7 +763,7 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
 
             try:
                 scene = transition_narrative_scene(
-                    locked, narrative_id, expected_revision
+                    locked, narrative_id, expected_revision, hidden_displays=hidden_displays
                 )
             except StaleNarrativeRevision as exc:
                 return Response(

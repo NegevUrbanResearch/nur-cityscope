@@ -41,10 +41,10 @@ run-of-show step. Close always stays on the current step and offers Open for
 that segment again; no presentation Close changes the step. The Wall of names
 step is the exception to the controls: it opens a black GIS slide with no
 slide controls on the remote.
-Credits opens slide 37 automatically after its Home-state cue succeeds.
-The projection shows Home layers. Closing credits stays on this step and
-offers Open again; Finish or Home closes it and returns Home. A failed
-credits cue retries on the credits step. Hostages covers slides 32–36.
+Wall of names is the final scene. Its **סיום** (Finish) button closes the
+black GIS slide, clears search focus, and returns both displays to Home.
+There is no credits scene in the staff remote. A failed Home reset stays on
+Wall of names; press Finish again to retry. Hostages covers slides 32–36.
 
 The runtime presentation has 37 slides and retains all 34 original slides in
 their original order. Gelem's first 9 seconds is the last Segev slide (9),
@@ -124,7 +124,7 @@ the visitor remote.
 
 ## Main show
 
-The full projection sequence has eight steps and no separate opening slide.
+The full projection sequence has seven steps and no separate opening slide.
 Home is that opening state. The show has no narrative, so any step with a cue
 exits the current narrative.
 
@@ -136,8 +136,7 @@ exits the current narrative.
 | 4 | Nova and Mor Levy | Unchanged until the story starts | Unchanged | Junction, not a slide | One choice: Nova |
 | 5 | Narratives | Unchanged until a story starts | Unchanged | Junction, not a slide | Sderot, Shura Camp, Hostages |
 | 6 | Identity database | Identity | Stopped (idle) | | Name search |
-| 7 | Wall of names | Wall | Stopped (idle) | A black GIS slide titled מאגר הזהויות opens automatically | Name or place search; no slide controls |
-| 8 | Credits (קרדיטים) | Home layers | Stopped (idle) | Reset to Home state, then automatically open slide 37 on GIS only | Slide Previous/Close; Finish returns Home |
+| 7 | Wall of names | Wall | Stopped (idle) | A black GIS slide titled מאגר הזהויות opens automatically | Name or place search; no slide controls; **סיום** (Finish) returns Home |
 
 The narratives are not separate slides. On the slide before a narrative, the
 Next button is replaced by a button that starts it, so the show cannot skip
@@ -151,7 +150,7 @@ A narrative opened from the home screen ends with **Finish**.
 ## The timeline
 
 The home screen opens a direct three-step timeline. It is not part of the
-eight-step sequence. The first two steps are the same opening-minutes and
+seven-step sequence. The first two steps are the same opening-minutes and
 rest-of-day cues. The third step, **The full timeline**, shows the complete
 idle story immediately: timeline layers, overview narrative, idle clock, and
 no escape routes. It does not keep playing and it does not use the Nova ended

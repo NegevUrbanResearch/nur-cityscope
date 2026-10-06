@@ -2,8 +2,121 @@ import { expect, test, vi } from "vitest";
 import { createProjectionSettlementNameAdapter } from "../../frontend/src/projection/projection-settlement-name-adapter.js";
 import { bindProjectionSettlementNames } from "../../frontend/src/projection/projection-settlement-name-runtime.js";
 import { resolveProjectionSceneLayers } from "../../frontend/src/projection/projection-surface-compositor.js";
+import { getLayerLifecycleRuntime } from '../../frontend/src/shared/layer-lifecycle-fade.js';
 
 const catalog = { entries: [{ citycode: "0067", text: "נירים", lng: 34.4, lat: 31.3 }, { citycode: "0424", text: "מחוץ", lng: 34.2, lat: 31.2 }] };
+
+test.each(['groups','paint','missing'])('async %s redraw failures are consumed and invalidate painted readiness', async kind => {
+  const data=contextFor(settingsFixture()),adapter=createProjectionSettlementNameAdapter({document:fakeCanvasDocument(),output:'left'});
+  const onError=vi.fn();let rejectDraw;
+  const onDraw=vi.fn(()=>rejectDraw ? rejectDraw.promise : Promise.resolve());
+  const map=kind==='paint'?{getLayer:()=>true,getPaintProperty:()=>1,setPaintProperty(){}}:undefined;
+  const runtime=bindProjectionSettlementNames({dataContext:data,adapter,catalog,map,getGroups:()=>data.state.groups,onDraw,onError});
+  await runtime.whenReady();expect(runtime.getReadiness().ready).toBe(true);
+  let reject;rejectDraw={promise:new Promise((resolve,fail)=>{reject=fail;})};
+  if(kind==='groups') data.emit('layerGroups');
+  if(kind==='paint') getLayerLifecycleRuntime(map).stageMapLayer('projector_base.שמות_יישובים',{id:'projector_base__שמות_יישובים__labels',type:'symbol',paint:{'text-opacity':1}});
+  if(kind==='missing'){data.state.settings=null;data.state.revision=0;data.state.error='Initialization required';data.emit('settlementNames');}
+  const waiting=runtime.whenReady().catch(error=>error);
+  reject(new Error('Settlement compositor draw failed'));
+  await vi.waitFor(()=>expect(onError).toHaveBeenCalledWith(expect.objectContaining({message:'Settlement compositor draw failed'})));
+  expect(runtime.getReadiness()).toMatchObject({ready:false,pending:false,failed:true,error:'Settlement compositor draw failed'});
+  expect(await waiting).toBeInstanceOf(Error);runtime();if(map)getLayerLifecycleRuntime(map).dispose();
+});
+
+test('a pending group redraw cannot acknowledge or fail newly committed labels', async () => {
+  const data=contextFor(settingsFixture()),adapter=createProjectionSettlementNameAdapter({document:fakeCanvasDocument(),output:'left'});
+  const draws=[],onError=vi.fn();let asynchronous=false;
+  const runtime=bindProjectionSettlementNames({dataContext:data,adapter,catalog,getGroups:()=>data.state.groups,onError,
+    onDraw:()=>asynchronous?new Promise((resolve,reject)=>draws.push({resolve,reject})):Promise.resolve()});
+  await runtime.whenReady();asynchronous=true;data.emit('layerGroups');
+  expect(runtime.getReadiness()).toMatchObject({ready:false,pending:true});
+  data.state.revision++;data.emit('settlementNames');
+  await vi.waitFor(()=>expect(draws).toHaveLength(2));
+  draws[0].reject(new Error('obsolete draw failed'));draws[1].resolve();await runtime.whenReady();
+  expect(onError).not.toHaveBeenCalled();expect(runtime.getReadiness()).toMatchObject({ready:true,pending:false,failed:false,committedRevision:4});runtime();
+});
+
+test('latest redraw paint establishes readiness without awaiting an obsolete stalled paint', async () => {
+  const data=contextFor(settingsFixture()),adapter=createProjectionSettlementNameAdapter({document:fakeCanvasDocument(),output:'left'});
+  const draws=[];let asynchronous=false;
+  const runtime=bindProjectionSettlementNames({dataContext:data,adapter,catalog,getGroups:()=>data.state.groups,
+    onDraw:()=>asynchronous?new Promise((resolve,reject)=>draws.push({resolve,reject})):Promise.resolve()});
+  await runtime.whenReady();asynchronous=true;data.emit('layerGroups');data.emit('layerGroups');
+  const ready=vi.fn();const waiting=runtime.whenReady().then(ready);draws[1].resolve();
+  await vi.waitFor(()=>expect(ready).toHaveBeenCalled());expect(runtime.getReadiness()).toMatchObject({ready:true,pending:false});
+  draws[0].reject(new Error('obsolete stalled paint'));await waiting;
+  expect(runtime.getReadiness()).toMatchObject({ready:true,failed:false});runtime();
+});
+
+test('successful visibility repaint cannot clear missing initialization readiness errors', async () => {
+  const data=contextFor(settingsFixture()),adapter=createProjectionSettlementNameAdapter({document:fakeCanvasDocument(),output:'left'});
+  const runtime=bindProjectionSettlementNames({dataContext:data,adapter,catalog,getGroups:()=>data.state.groups,onDraw:async()=>{}});
+  await runtime.whenReady();data.state.settings=null;data.state.revision=0;data.state.error='Initialization required';data.emit('settlementNames');
+  await expect(runtime.whenReady()).rejects.toThrow('Initialization required');data.emit('layerGroups');
+  await expect(runtime.whenReady()).rejects.toThrow('Initialization required');
+  expect(runtime.getReadiness()).toMatchObject({ready:false,pending:false,failed:true});runtime();
+});
+
+test('underlying group and paint switches stay irrelevant to an active landmark override', async () => {
+  const data=contextFor(settingsFixture()),adapter=createProjectionSettlementNameAdapter({document:fakeCanvasDocument(),output:'left'}),onDraw=vi.fn(async()=>{});
+  const map={getLayer:()=>true,getPaintProperty:()=>0,setPaintProperty(){}};
+  const runtime=bindProjectionSettlementNames({dataContext:data,adapter,catalog,map,getCalibrationActive:()=>true,getGroups:()=>data.state.groups,onDraw});
+  await runtime.whenReady();const count=onDraw.mock.calls.length;data.state.groups[0].enabled=false;data.emit('layerGroups');
+  getLayerLifecycleRuntime(map).stageMapLayer('projector_base.שמות_יישובים',{id:'projector_base__שמות_יישובים__labels',type:'symbol',paint:{'text-opacity':0}});
+  expect(onDraw).toHaveBeenCalledTimes(count);expect(runtime.getReadiness()).toMatchObject({ready:true,pending:false});runtime();getLayerLifecycleRuntime(map).dispose();
+});
+
+test('readiness identifies desired and committed placement/style/catalog and waits for compositor paint', async () => {
+  const data = contextFor(settingsFixture()), callbacks = [], draws = [];
+  const adapter = { prepare: vi.fn(async () => ({})), commit: vi.fn(), setVisible() {}, applyScaledOpacity() {}, descriptor: () => null };
+  const runtime = bindProjectionSettlementNames({dataContext:data,adapter,catalog,onReadiness:state=>callbacks.push(state),
+    onDraw:() => new Promise(resolve => draws.push(resolve))});
+  await vi.waitFor(() => expect(adapter.commit).toHaveBeenCalledTimes(1));
+  expect(runtime.getReadiness()).toMatchObject({desiredRevision:3,committedRevision:3,pending:true,ready:false,failed:false});
+  draws.shift()(); await runtime.whenReady();
+  const first = runtime.getReadiness(); expect(first).toMatchObject({pending:false,ready:true,catalogIdentity:expect.any(String),settingsIdentity:expect.any(String)});
+  data.state.settings.outputs.left['0067']={x:42,y:70}; data.state.revision++; data.emit('settlementNames');
+  expect(runtime.getReadiness()).toMatchObject({desiredRevision:4,committedRevision:3,pending:true,ready:false});
+  await vi.waitFor(()=>expect(adapter.commit).toHaveBeenCalledTimes(2)); draws.shift()(); await runtime.whenReady();
+  expect(runtime.getReadiness().settingsIdentity).not.toBe(first.settingsIdentity);
+  expect(callbacks.at(-1)).toMatchObject({desiredRevision:4,committedRevision:4,pending:false,failed:false}); runtime();
+});
+
+test('stale settlement prepare and paint cannot acknowledge a newer generation', async () => {
+  const data = contextFor(settingsFixture()), preparations = [], paints = [];
+  const adapter = { prepare:() => new Promise(resolve=>preparations.push(resolve)), commit:vi.fn(),setVisible(){},applyScaledOpacity(){},descriptor:()=>null };
+  const runtime=bindProjectionSettlementNames({dataContext:data,adapter,catalog,onDraw:()=>new Promise(resolve=>paints.push(resolve))});
+  await vi.waitFor(()=>expect(preparations).toHaveLength(1)); preparations.shift()({});
+  await vi.waitFor(()=>expect(adapter.commit).toHaveBeenCalledTimes(1));
+  data.state.revision++; data.emit('settlementNames'); paints.shift()();
+  await vi.waitFor(()=>expect(preparations).toHaveLength(1));
+  expect(runtime.getReadiness()).toMatchObject({desiredRevision:4,committedRevision:3,ready:false,pending:true});
+  preparations.shift()({}); await vi.waitFor(()=>expect(adapter.commit).toHaveBeenCalledTimes(2)); paints.shift()(); await runtime.whenReady();
+  expect(runtime.getReadiness()).toMatchObject({desiredRevision:4,committedRevision:4,pending:false,ready:true});runtime();
+});
+
+test('local calibration waits for prepared labels and overrides opacity without changing settings', async () => {
+  const doc=fakeCanvasDocument();const adapter=createProjectionSettlementNameAdapter({document:doc,output:'left'});
+  const data=contextFor(settingsFixture()); const before=structuredClone(data.state.settings); let active=true;
+  const map={getLayer:()=>true,getPaintProperty:()=>0};
+  const runtime=bindProjectionSettlementNames({dataContext:data,adapter,catalog,map,getCalibrationActive:()=>active,getGroups:()=>data.state.groups});
+  await runtime.whenReady(); expect(runtime.getReadiness().ready).toBe(true); expect(adapter.descriptor().opacity).toBe(1);
+  active=false;runtime.refreshVisibility();expect(doc.paints.at(-1).globalAlpha).toBe(0);expect(data.state.settings).toEqual(before);runtime();
+});
+
+test('startup does not query opacity before the settlement map layer exists', async () => {
+  const adapter = createProjectionSettlementNameAdapter({ document: fakeCanvasDocument(), output: 'right' });
+  const data = contextFor(settingsFixture());
+  const map = { getLayer: vi.fn(() => undefined), getPaintProperty: vi.fn(() => { throw new Error('layer is not installed'); }) };
+  const onError = vi.fn(), onDraw = vi.fn();
+  const dispose = bindProjectionSettlementNames({ dataContext: data, adapter, catalog, map, onError, onDraw });
+  await vi.waitFor(() => expect(adapter.getLabels()).toHaveLength(1));
+  expect(onError).not.toHaveBeenCalled();
+  expect(map.getPaintProperty).not.toHaveBeenCalled();
+  expect(onDraw).toHaveBeenCalled();
+  dispose();
+});
 
 function settingsFixture() {
   return {

@@ -28,7 +28,7 @@ export function createConfigCommandBar({ document: doc, onAction = () => {}, onO
   const presets = make(doc, 'div', { className: 'config-menu-content', ariaLabel: 'Preset actions' });
   controls.loadedPresetIdentity = make(doc, 'span', { id: 'projection-loaded-preset-identity', className: 'loaded-preset-identity' }, 'Loaded: unknown');
   const presetActions = make(doc, 'div', { className: 'config-preset-actions' });
-  presetActions.append(button('revert', 'Revert'), button('saveNew', 'Save copy', 'save-new'));
+  presetActions.append(button('revert', 'Revert'), button('saveNew', 'Save copy', 'save-new'), button('rename', 'Rename'));
   controls.toolsPresetContext = make(doc, 'p', { className: 'tools-preset-context' });
   controls.originalCheckpointGuidance = make(doc, 'p', { className: 'original-checkpoint-guidance', hidden: true });
   controls.saveCopyPanel = make(doc, 'div', { id: 'projection-save-copy', className: 'config-save-copy', role: 'dialog', ariaLabel: 'Save copy', hidden: true });
@@ -37,7 +37,12 @@ export function createConfigCommandBar({ document: doc, onAction = () => {}, onO
   controls.saveCopyPanel.append(nameLabel, controls.saveName, button('saveCopyConfirm', 'Save copy', 'save-copy-confirm'), button('saveCopyCancel', 'Cancel', 'save-copy-cancel'));
   controls.saveNew.setAttribute('aria-controls', controls.saveCopyPanel.id);
   controls.saveNew.setAttribute('aria-expanded', 'false');
-  presets.append(controls.loadedPresetIdentity, presetActions, controls.saveCopyPanel, controls.toolsPresetContext, controls.originalCheckpointGuidance);
+  controls.renamePanel = make(doc, 'div', { id: 'projection-rename-preset', className: 'config-save-copy', role: 'dialog', ariaLabel: 'Rename loaded preset', hidden: true });
+  controls.renameName = make(doc, 'input', { type: 'text', value: '', id: 'projection-rename-name', maxLength: 80, ariaLabel: 'New preset name' });
+  controls.renamePanel.append(make(doc, 'label', { htmlFor: controls.renameName.id }, 'New name'), controls.renameName, button('renameConfirm', 'Rename preset', 'rename-confirm'), button('renameCancel', 'Cancel', 'rename-cancel'));
+  controls.rename.setAttribute('aria-controls', controls.renamePanel.id);
+  controls.rename.setAttribute('aria-expanded', 'false');
+  presets.append(controls.loadedPresetIdentity, presetActions, controls.saveCopyPanel, controls.renamePanel, controls.toolsPresetContext, controls.originalCheckpointGuidance);
   controls.presetsDisclosure.append(controls.presetsSummary, presets);
   controls.displaysDisclosure = make(doc, 'details', { className: 'config-menu config-displays-menu', dataset: { menu: 'displays' } });
   controls.displaysSummary = make(doc, 'summary', {}, 'Displays');
@@ -57,7 +62,19 @@ export function createConfigCommandBar({ document: doc, onAction = () => {}, onO
   displayActions.appendChild(displayButtons);
   controls.outputStatus = make(doc, 'span', { className: 'output-launch-status' });
   displayActions.appendChild(controls.outputStatus);
-  displays.append(displayHeading, displayActions);
+  const orientationLabel = make(doc, 'label', { className: 'output-reverse-toggle' });
+  const resolutions = make(doc, 'div', { className: 'config-display-actions' });
+  for (const side of ['left', 'right']) {
+    const title = side === 'left' ? 'Left' : 'Right';
+    const select = controls[`output${title}Resolution`] = make(doc, 'select', { ariaLabel: `${title} output resolution` });
+    select.append(make(doc, 'option', { value: '1080p' }, '1080p · 1920 × 1080'), make(doc, 'option', { value: '4k' }, '4K · 3840 × 2160'));
+    const label = make(doc, 'label', { className: 'output-display-label' }, `${title} resolution`);
+    label.append(select); resolutions.append(label);
+    listen(select, 'change', () => onOutputAction('resolution', { side, resolution: select.value }));
+  }
+  controls.outputReverseModel = make(doc, 'input', { type: 'checkbox', ariaLabel: 'Reverse model 180°', dataset: { action: 'output-reverse-model' } });
+  orientationLabel.append(controls.outputReverseModel, make(doc, 'span', {}, 'Reverse model 180°'));
+  displays.append(displayHeading, displayActions, resolutions, make(doc, 'small', {}, 'Resolution is saved on this workstation and applies on the next Open. Calibration stays the same.'), orientationLabel, make(doc, 'small', { className: 'output-orientation-help' }, 'Swap the halves and rotate both complete images 180°. Saved on this workstation; applies on the next Open.'));
   controls.displaysDisclosure.append(controls.displaysSummary, displays);
   controls.tools = make(doc, 'details', { className: 'config-menu config-tools', dataset: { menu: 'tools' } });
   controls.toolsSummary = make(doc, 'summary', {}, 'Tools');
@@ -133,11 +150,21 @@ export function createConfigCommandBar({ document: doc, onAction = () => {}, onO
       if (menu.open && !menu.contains?.(event.target)) { menu.open = false; placeMenu(menu); }
     }
   }, true);
-  let overwriteName = '', copyNameEdited = false, lastLoadedPresetId = null, lastLoadedPresetLoadToken = null;
+  let overwriteName = '', copyNameEdited = false, lastLoadedPresetId = null, lastLoadedPresetLoadToken = null, lastLoadedPresetName = null, renameBlocked = true;
   let outputSelection = { left: '', right: '' }, outputScreensSignature = null, outputAssignmentsSignature = null;
   const showCopy = (show) => { controls.saveCopyPanel.hidden = !show; controls.saveNew.setAttribute('aria-expanded', String(show)); if (show) controls.saveName.focus?.(); else controls.saveNew.focus?.(); };
+  const showRename = (show) => { controls.renamePanel.hidden = !show; controls.rename.setAttribute('aria-expanded', String(show)); if (show) { showCopy(false); controls.renameName.value = lastLoadedPresetName || ''; checkRename(); controls.renameName.focus?.(); controls.renameName.select?.(); } else controls.rename.focus?.(); };
+  const checkRename = () => { const name = controls.renameName.value.trim(); controls.renameConfirm.disabled = renameBlocked || !name || name.length > 80 || name === lastLoadedPresetName; };
+  listen(controls.rename, 'click', () => showRename(true));
+  listen(controls.renameCancel, 'click', () => showRename(false));
+  listen(controls.renameName, 'input', checkRename);
+  listen(controls.renameConfirm, 'click', () => onAction('rename', controls.renameName.value.trim()));
+  listen(controls.renamePanel, 'keydown', event => {
+    if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); showRename(false); }
+    if (event.key === 'Enter' && event.target === controls.renameName && !controls.renameConfirm.disabled) { event.preventDefault(); controls.renameConfirm.click?.(); }
+  });
   listen(controls.saveName, 'input', () => { copyNameEdited = true; });
-  listen(controls.saveNew, 'click', () => showCopy(true));
+  listen(controls.saveNew, 'click', () => { showRename(false); showCopy(true); });
   listen(controls.saveCopyCancel, 'click', () => showCopy(false));
   listen(controls.saveCopyPanel, 'keydown', event => {
     if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); showCopy(false); }
@@ -151,6 +178,7 @@ export function createConfigCommandBar({ document: doc, onAction = () => {}, onO
   listen(controls.presets, 'change', () => onAction('preset-select', controls.presets.value));
   for (const [name, action] of [['outputRefresh', 'refresh'], ['outputIdentify', 'identify'], ['outputOpenBoth', 'open'], ['outputCloseBoth', 'close']]) listen(controls[name], 'click', () => onOutputAction(action));
   listen(controls.outputAssign, 'click', () => onOutputAction('assign', { left: controls.outputLeftDisplay.value, right: controls.outputRightDisplay.value }));
+  listen(controls.outputReverseModel, 'change', () => onOutputAction('reverse-model', controls.outputReverseModel.checked));
   for (const [side, name] of [['left', 'outputLeftDisplay'], ['right', 'outputRightDisplay']]) listen(controls[name], 'change', () => { outputSelection[side] = controls[name].value; });
   const update = ({ state = {}, parameterHistory = { undo: 0, redo: 0 }, errors = {}, conflict = '', statusText = '', draftDiffersFromAccepted = false, savePending = false, loadedPresetId = null, loadedPresetLoadToken = 0, statusRows = [], appliedSummary = 'Pending', outputState = {} } = {}) => {
     controls.live.checked = Boolean(state.live);
@@ -187,6 +215,12 @@ export function createConfigCommandBar({ document: doc, onAction = () => {}, onO
     const screens = Array.isArray(outputState.screens) ? [...outputState.screens].sort((a, b) => a.displayNumber - b.displayNumber) : [];
     const assignments = outputState.assignments || {};
     const unsupported = outputState.supported === false;
+    for (const side of ['left', 'right']) {
+      const select = controls[`output${side === 'left' ? 'Left' : 'Right'}Resolution`];
+      select.value = outputState.resolutions?.[side] || '1080p'; select.disabled = unsupported;
+    }
+    controls.outputReverseModel.checked = Boolean(outputState.reverseModel);
+    controls.outputReverseModel.disabled = unsupported;
     controls.outputIdentify.disabled = unsupported || screens.length === 0;
     for (const name of ['outputRefresh', 'outputAssign', 'outputLeftDisplay', 'outputRightDisplay', 'outputOpenBoth', 'outputCloseBoth']) controls[name].disabled = unsupported;
     const selectedKey = assignment => screens.find(screen => assignment?.key === screen.key || (assignment?.label === screen.label && ['left', 'top', 'width', 'height'].every(key => Number(assignment?.bounds?.[key]) === Number(screen[key]))))?.key || '';
@@ -209,16 +243,20 @@ export function createConfigCommandBar({ document: doc, onAction = () => {}, onO
     controls.toolsPresetContext.textContent = loadedPresetId !== selectedPreset ? `Selected: ${selectedPresetName}. Choose Load to apply.` : '';
     controls.toolsPresetContext.hidden = !controls.toolsPresetContext.textContent;
     controls.save.disabled = Boolean(reconciliation || savePending || !loadedPreset || loadedPreset.readOnly);
+    renameBlocked = controls.rename.disabled = controls.save.disabled;
+    controls.renameName.disabled = Boolean(reconciliation || savePending); checkRename();
     controls.saveNew.disabled = Boolean(reconciliation || savePending); controls.saveCopyConfirm.disabled = Boolean(reconciliation || savePending);
     controls.load.disabled = controls.revert.disabled = Boolean(reconciliation || savePending);
     controls.originalCheckpointGuidance.hidden = !loadedPreset?.readOnly;
     controls.originalCheckpointGuidance.textContent = loadedPreset?.readOnly ? `${loadedPreset.name || 'Loaded preset'} is immutable. Use Save copy.` : '';
-    if (loadedPreset && (loadedPresetId !== lastLoadedPresetId || loadedPresetLoadToken !== lastLoadedPresetLoadToken)) {
+    if (loadedPreset && (loadedPresetId !== lastLoadedPresetId || loadedPresetLoadToken !== lastLoadedPresetLoadToken || loadedPreset.name !== lastLoadedPresetName)) {
       const explicitLoad = lastLoadedPresetLoadToken !== null && loadedPresetLoadToken !== lastLoadedPresetLoadToken;
       overwriteName = loadedPreset.name || '';
       if (!copyNameEdited || explicitLoad) controls.saveName.value = overwriteName;
       if (explicitLoad) copyNameEdited = false;
+      if (!controls.renamePanel.hidden) showRename(false);
       lastLoadedPresetId = loadedPresetId; lastLoadedPresetLoadToken = loadedPresetLoadToken;
+      lastLoadedPresetName = loadedPreset.name; checkRename();
     }
     const outputAcknowledgement = `Outputs: ${({ Applied: 'applied', Pending: 'pending', Failed: 'failed', Unconfirmed: 'unconfirmed' }[appliedSummary] || String(appliedSummary).toLowerCase())}`;
     controls.appliedSummary.textContent = outputAcknowledgement; controls.toolsAppliedSummary.textContent = outputAcknowledgement;

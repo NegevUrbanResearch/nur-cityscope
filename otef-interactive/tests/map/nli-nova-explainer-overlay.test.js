@@ -61,14 +61,14 @@ function mount(options = {}) {
     },
   };
   let narrativeId = options.narrativeId ?? "nova";
-  let mor = options.mor === true;
+  let escape = options.escape || { mor: options.mor === true };
   let layout = options.layout || { close: {}, wide: {} };
   const overlay = createNovaExplainerOverlay({
     map,
     container,
     getLayout: () => layout,
     getNarrativeId: () => narrativeId,
-    getEscapeMor: () => mor,
+    getEscapeOverlay: () => escape,
     motionMode: options.motionMode || "full",
     cameraOverride: options.cameraOverride,
   });
@@ -78,7 +78,7 @@ function mount(options = {}) {
     container,
     handlers,
     setNarrative(id) { narrativeId = id; },
-    setMor(value) { mor = value; },
+    setEscape(value) { escape = value; },
     setLayout(next) { layout = next; },
     setSize(nextWidth, nextHeight) { width = nextWidth; height = nextHeight; },
     host: () => container.querySelector("#nliNovaExplainerHost"),
@@ -212,7 +212,7 @@ describe("createNovaExplainerOverlay", () => {
     expect(ui.card(97)).toBeNull();
   });
 
-  it("hides every card on narrative or Mor refresh without another sync", () => {
+  it("removes every card on narrative refresh without another sync", () => {
     const ui = mount();
     ui.overlay.sync(visual());
     expect(ui.card(97)).not.toBeNull();
@@ -222,9 +222,35 @@ describe("createNovaExplainerOverlay", () => {
     ui.setNarrative("nova");
     ui.overlay.refresh();
     expect(ui.card(97).textContent).toBe("כביש 232 ומתחם הנובה");
-    ui.setMor(true);
+  });
+
+  it.each(["individual", "overlap", "mor", "settled"])("fades cards and leaders together for %s escape state and restores them on return", (flag) => {
+    const ui = mount();
+    ui.overlay.sync(visual({ phase: "ended", novaBeatIndex: -1 }));
+    const card = ui.card(97);
+    const leader = ui.leader(97);
+    ui.setEscape({ [flag]: true });
     ui.overlay.refresh();
-    expect(ui.card(97)).toBeNull();
+    expect(ui.host().classList.contains("nli-nova-explainers--hidden")).toBe(true);
+    expect(ui.host().getAttribute("aria-hidden")).toBe("true");
+    expect(ui.card(97)).toBe(card);
+    expect(ui.leader(97)).toBe(leader);
+    ui.overlay.sync(visual({ phase: "ended", novaBeatIndex: -1 }));
+    ui.handlers.move[0]();
+    expect(ui.host().classList.contains("nli-nova-explainers--hidden")).toBe(true);
+    ui.setEscape({});
+    ui.overlay.refresh();
+    expect(ui.host().classList.contains("nli-nova-explainers--hidden")).toBe(true);
+    ui.overlay.sync(visual());
+    expect(ui.host().classList.contains("nli-nova-explainers--hidden")).toBe(false);
+    expect(ui.host().getAttribute("aria-hidden")).toBe("false");
+    expect(ui.card(97)).toBe(card);
+  });
+
+  it("starts hidden when the fleeing routes scene is already active", () => {
+    const ui = mount({ escape: { individual: true } });
+    ui.overlay.sync(visual({ phase: "ended" }));
+    expect(ui.host().classList.contains("nli-nova-explainers--hidden")).toBe(true);
   });
 
   it("shows all 14 eligible ended names and uses the wide saved position", () => {
@@ -335,6 +361,7 @@ describe("createNovaExplainerOverlay", () => {
     const reduced = mount({ motionMode: "reduced" });
     reduced.overlay.sync(visual());
     expect(reduced.card(97).classList.contains("nli-nova-explainer-card--in")).toBe(false);
+    expect(reduced.host().style.transition).toBe("none");
 
     setReducedMotion(true);
     const preferred = mount();

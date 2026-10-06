@@ -5,6 +5,7 @@ import { validateNliPresentationManifest } from "../../frontend/src/shared/nli-p
 import { createNliRevealPresentation } from "../../frontend/src/map/nli-reveal-presentation.js";
 
 const manifest = validateNliPresentationManifest(rawManifest);
+const assetVersion = manifest.deck.assetVersion ?? manifest.deck.pdfSha256;
 const videoFirstManifest = {
   ...manifest,
   segments: [
@@ -59,7 +60,7 @@ function command(presentationAction, overrides = {}) {
   };
 }
 
-function makeHarness() {
+function makeHarness(overrideManifest = manifest) {
   const results = [];
   const correlation = {
     segmentId: "segev",
@@ -67,7 +68,7 @@ function makeHarness() {
     presentationGeneration: 10,
   };
   const viewer = createNliRevealPresentation(root, {
-    manifest,
+    manifest: overrideManifest,
     RevealClass: FakeReveal,
     emitResult: (value) => results.push(value),
   });
@@ -100,6 +101,7 @@ beforeEach(() => {
   vi.restoreAllMocks();
   vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue();
   vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
+  vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(function () { this.currentTime = 0; });
   sequence = 0;
   FakeReveal.lastInstance = null;
   document.body.innerHTML = '<div id="map"></div>';
@@ -107,11 +109,35 @@ beforeEach(() => {
 });
 
 describe("GIS Reveal presentation", () => {
+  test("uses the rendered asset version so a 4K upgrade bypasses cached slides", async () => {
+    const h = makeHarness({ ...manifest, deck: { ...manifest.deck, assetVersion: "4k-photo-release" } });
+    await h.send("open");
+    expect(root.querySelector("section.present img").getAttribute("src"))
+      .toBe("/otef-interactive/public/local/presentations/nli/slides/slide-01.png?v=4k-photo-release");
+  });
+
+  test("legacy manifests still version slide images by their approved PDF", async () => {
+    const deck = { ...manifest.deck };
+    delete deck.assetVersion;
+    const h = makeHarness({ ...manifest, deck });
+    await h.send("open");
+    expect(root.querySelector("section.present img").getAttribute("src"))
+      .toBe(`/otef-interactive/public/local/presentations/nli/slides/slide-01.png?v=${deck.pdfSha256}`);
+  });
+
+  test("names wall uses the same versioned high-resolution background as added slides", async () => {
+    const h = makeHarness({ ...manifest, deck: { ...manifest.deck, assetVersion: "4k-photo-release" } });
+    await h.send("open", { segmentId: "names_wall" });
+    expect(root.querySelector(".nli-reveal-overlay--blackout").style.backgroundImage)
+      .toContain("/otef-interactive/public/local/presentations/nli/supplements/slide-background.png?v=4k-photo-release");
+    expect(root.textContent).toContain("מאגר הזהויות");
+  });
+
   test.each([
-    ["segev", 8, "gelem-first-9s-fade.mp4", "תיעוד תלת־ממדי של בארי"],
-    ["nova_memorial", 0, "nova-first-12s-fade.mp4", "תיעוד תלת־ממדי של הנובה, 10 באוקטובר 2023"],
-    ["shura", 7, "reim-first-10s-fade.mp4", "המיגונית ברעים"],
-  ])("%s includes its added video at the requested position with NLI styling and active autoplay", async (segmentId, index, filename, title) => {
+    ["segev", 8, "gelem-first-9s-fade.mp4", "תיעוד תלת־ממדי של בארי, 17 באוקטובר 2023", "צילם ברק ברינקר"],
+    ["nova_memorial", 0, "nova-first-12s-fade.mp4", "תיעוד תלת־ממדי של הנובה, 10 באוקטובר 2023", null],
+    ["shura", 7, "reim-first-10s-fade.mp4", "המיגונית ברעים, 1 בפברואר 2024", "צילם יוסי סודרי"],
+  ])("%s includes its credited added video at the requested position with NLI styling and active autoplay", async (segmentId, index, filename, title, photographer) => {
     const h = makeHarness();
     await h.send("open", { segmentId });
     for (let step = 0; step < index; step += 1) await h.send("next");
@@ -119,8 +145,13 @@ describe("GIS Reveal presentation", () => {
     const video = section.querySelector("video");
     expect(video?.getAttribute("src")).toBe(`/otef-interactive/public/local/presentations/nli/supplements/${filename}`);
     expect(section.querySelector("img").getAttribute("src"))
-      .toBe(`/otef-interactive/public/local/presentations/nli/supplements/slide-background.png?v=${manifest.deck.pdfSha256}`);
+      .toBe(`/otef-interactive/public/local/presentations/nli/supplements/slide-background.png?v=${assetVersion}`);
     expect(section.querySelector(".nli-presentation-title")?.textContent).toBe(title);
+    const credit = section.querySelector(".nli-presentation-credit");
+    expect(credit?.getAttribute("lang")).toBe("he");
+    expect(credit?.getAttribute("dir")).toBe("rtl");
+    expect(credit?.querySelector("strong")?.textContent).toBe("רשות העתיקות");
+    expect(credit?.querySelector("span")?.textContent ?? null).toBe(photographer);
     expect(video.muted).toBe(false);
     expect(video.controls).toBe(false);
     expect(video.playsInline).toBe(true);
@@ -141,8 +172,9 @@ describe("GIS Reveal presentation", () => {
     expect(nova).not.toBeNull();
     await h.send("next");
     expect(root.querySelector("section.present img").getAttribute("src"))
-      .toBe(`/otef-interactive/public/local/presentations/nli/slides/slide-12.png?v=${manifest.deck.pdfSha256}`);
+      .toBe(`/otef-interactive/public/local/presentations/nli/slides/slide-12.png?v=${assetVersion}`);
     expect(root.querySelector("section.present video")).toBeNull();
+    expect(root.querySelector("section.present .nli-presentation-credit")).toBeNull();
     expect(nova.currentTime).toBe(0);
     await h.send("previous");
     expect(root.querySelector("section.present video")).toBe(nova);
@@ -155,7 +187,7 @@ describe("GIS Reveal presentation", () => {
     expect(h.lastResult()).toMatchObject({ outcome: "opened", slide: 37, range: [37, 37] });
     expect(h.reveal.slideNumbers()).toEqual([37]);
     expect(root.querySelector("section.present img").getAttribute("src"))
-      .toBe(`/otef-interactive/public/local/presentations/nli/slides/slide-34.png?v=${manifest.deck.pdfSha256}`);
+      .toBe(`/otef-interactive/public/local/presentations/nli/slides/slide-34.png?v=${assetVersion}`);
     await h.send("previous");
     await h.send("next");
     expect(h.lastResult()).toMatchObject({ outcome: "ready", slide: 37 });
@@ -198,10 +230,11 @@ describe("GIS Reveal presentation", () => {
     expect(h.lastResult().outcome).toBe("ignored");
   });
 
-  test("disables Reveal navigation and presentation transitions", async () => {
+  test("supports full 4K scaling and disables Reveal navigation and presentation transitions", async () => {
     const h = makeHarness();
     await h.send("open", { segmentId: "segev" });
     expect(h.reveal.options).toMatchObject({
+      maxScale: 4,
       embedded: true, controls: false, progress: false, keyboard: false,
       touch: false, hash: false, transition: "none", backgroundTransition: "none",
       width: 960, height: 540, margin: 0,
@@ -251,6 +284,28 @@ describe("GIS Reveal presentation", () => {
     expect(activatedVideos).toContain(videos[0]);
     expect(activatedVideos).not.toContain(videos[1]);
     expect(videos[1].autoplay).toBe(false);
+  });
+
+  test("Shura loads only the selected video and releases both decoders before the first photo", async () => {
+    const h = makeHarness();
+    await h.send("open", { segmentId: "shura" });
+    const videos = [...root.querySelectorAll("video")];
+    expect(videos.every((video) => !video.hasAttribute("src"))).toBe(true);
+    await h.send("next");
+    expect(videos[0].getAttribute("src")).toContain("/normalized-audio/slide-23.mp4");
+    expect(videos[1].hasAttribute("src")).toBe(false);
+    expect(videos[2].hasAttribute("src")).toBe(false);
+    await h.send("next");
+    expect(videos[0].hasAttribute("src")).toBe(false);
+    expect(videos[1].getAttribute("src")).toContain("/normalized-audio/slide-24.mp4");
+    await h.send("next");
+    expect(h.lastResult()).toMatchObject({ outcome: "ready", slide: 27 });
+    expect(videos.every((video) => !video.hasAttribute("src"))).toBe(true);
+    expect(HTMLMediaElement.prototype.load.mock.contexts).toContain(videos[0]);
+    expect(HTMLMediaElement.prototype.load.mock.contexts).toContain(videos[1]);
+    await h.send("previous");
+    expect(videos[1].getAttribute("src")).toContain("/normalized-audio/slide-24.mp4");
+    expect(HTMLMediaElement.prototype.play.mock.contexts.at(-1)).toBe(videos[1]);
   });
 
   test("close pauses and rewinds the active video", async () => {
@@ -446,7 +501,7 @@ describe("presentation open and close lifecycle", () => {
     expect(h.lastResult().outcome).toBe("opened");
   });
 
-  test("starts a first-slide video only after the fade and within 1500ms", async () => {
+  test("starts a first-slide video only after the fade", async () => {
     vi.useFakeTimers();
     let resolvePlay;
     vi.spyOn(HTMLMediaElement.prototype, "play").mockImplementation(() => new Promise((resolve) => {
@@ -473,6 +528,25 @@ describe("presentation open and close lifecycle", () => {
     expect(HTMLMediaElement.prototype.play).toHaveBeenCalledOnce();
     expect(results).toEqual([]);
     await vi.advanceTimersByTimeAsync(1499);
+    expect(results).toEqual([]);
+    resolvePlay();
+    await opening;
+    expect(results.map((result) => result.outcome)).toEqual(["opened"]);
+  });
+
+  test("cold video startup can use the remaining 4500ms operation budget", async () => {
+    vi.useFakeTimers();
+    let resolvePlay;
+    vi.spyOn(HTMLMediaElement.prototype, "play").mockImplementation(() => new Promise((resolve) => { resolvePlay = resolve; }));
+    const gates = deferDecode();
+    const results = [];
+    const viewer = createNliRevealPresentation(root, { manifest: videoFirstManifest, RevealClass: FakeReveal, emitResult: (result) => results.push(result) });
+    const opening = viewer.handleCommand(command("open", { segmentId: "clip" }));
+    await vi.advanceTimersByTimeAsync(0);
+    gates[0].resolve();
+    await vi.advanceTimersByTimeAsync(16);
+    endOpacityFade();
+    await vi.advanceTimersByTimeAsync(2000);
     expect(results).toEqual([]);
     resolvePlay();
     await opening;
@@ -510,6 +584,7 @@ describe("presentation open and close lifecycle", () => {
 
     vi.spyOn(HTMLMediaElement.prototype, "play").mockImplementation(() => new Promise(() => {}));
     const slowGates = deferDecode();
+    const slowStartedAt = Date.now();
     const slow = viewer.handleCommand(command("open", {
       segmentId: "clip", presentationGeneration: 13, presentationSessionId: "clip-session-2",
     }));
@@ -517,13 +592,36 @@ describe("presentation open and close lifecycle", () => {
     slowGates.at(-1).resolve();
     await vi.advanceTimersByTimeAsync(16);
     endOpacityFade();
-    await vi.advanceTimersByTimeAsync(1499);
+    await vi.advanceTimersByTimeAsync(4499 - (Date.now() - slowStartedAt));
     expect(results).toHaveLength(1);
     await vi.advanceTimersByTimeAsync(1);
     await slow;
     expect(results.at(-1).outcome).toBe("unavailable");
     expect(results.filter((result) => result.outcome === "opened")).toHaveLength(0);
     expect(playback).toEqual([true, false, true, false]);
+  });
+
+  test("navigation gets a fresh total deadline after a long time on the previous slide", async () => {
+    vi.useFakeTimers();
+    const gates = deferDecode();
+    const h = makeHarness();
+    const opening = h.start("open", { segmentId: "shura" });
+    await vi.advanceTimersByTimeAsync(0);
+    gates[0].resolve();
+    await vi.advanceTimersByTimeAsync(16);
+    endOpacityFade();
+    await opening;
+    await vi.advanceTimersByTimeAsync(10000);
+    vi.spyOn(HTMLMediaElement.prototype, "play").mockImplementation(() => new Promise(() => {}));
+    const changing = h.start("next");
+    await vi.advanceTimersByTimeAsync(0);
+    gates.at(-1).resolve();
+    await vi.advanceTimersByTimeAsync(4499);
+    expect(h.results.map((result) => result.outcome)).toEqual(["opened"]);
+    await vi.advanceTimersByTimeAsync(1);
+    await changing;
+    expect(h.lastResult()).toMatchObject({ outcome: "unavailable", slide: 25 });
+    expect(overlay()).toBeNull();
   });
 
   test("bounds the entire local open, including Reveal initialization, to 4500ms", async () => {

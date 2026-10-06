@@ -6,6 +6,37 @@ import { drawAfterMapRender } from "../../frontend/src/projection/projection-spa
 import { rollbackProjectionPreviewApply } from "../../frontend/src/projection/projection-preview-task.js";
 import * as previewBridge from "../../frontend/src/projection/projection-preview-bridge.js";
 
+test('calibration preview commands are parent-origin and request guarded and never request physical blackout',async()=>{
+  const listeners=new Map(),parent={postMessage:vi.fn()};const win={parent,location:{origin:'http://localhost'},addEventListener:(t,fn)=>listeners.set(t,fn),removeEventListener(){}};
+  const setCalibrationView=vi.fn(async enabled=>({ready:enabled,sceneIdentity:enabled?'landmarks':null,missingIds:[]}));
+  const dispose=installProjectionPreviewBridge({win,output:'left',map:{},nameFieldController:{},syncContextInvestigation(){},setCalibrationView});
+  const send=(requestId,source=parent,origin='http://localhost')=>listeners.get('message')({source,origin,data:{type:'otef_projection_preview_calibration',output:'left',requestId,enabled:true}});
+  send(1,{});send(1,parent,'http://bad');expect(setCalibrationView).not.toHaveBeenCalled();send(1);send(0);await flushMicrotasks();
+  expect(setCalibrationView).toHaveBeenCalledTimes(1);expect(parent.postMessage).toHaveBeenLastCalledWith(expect.objectContaining({type:'otef_projection_preview_calibration_rendered',requestId:1,sceneIdentity:'landmarks',ready:true}),'http://localhost');dispose();
+});
+
+test('settlement bridge forwards the camera matrix needed for editor dragging', async () => {
+  const listeners=new Map(), parent={postMessage:vi.fn()};
+  const win={parent,location:{origin:'http://localhost'},addEventListener:(type,fn)=>listeners.set(type,fn),removeEventListener:type=>listeners.delete(type)};
+  const positionMatrix=[2,0,0,1,-300,0];
+  const dispose=previewBridge.installProjectionSettlementPreviewBridge({win,sessionId:'settlement-1',output:'left',renderState:async()=>({calibrationRevision:8,meshIdentity:'mesh',mesh:{},labels:[],positionMatrix})});
+  listeners.get('message')({source:parent,origin:'http://localhost',data:{type:'otef_settlement_preview_state',sessionId:'settlement-1',output:'left',requestId:1}});
+  await vi.waitFor(()=>expect(parent.postMessage).toHaveBeenLastCalledWith(expect.objectContaining({type:'otef_settlement_preview_rendered',positionMatrix}),'http://localhost'));
+  dispose();
+});
+
+test('settlement child forwards real outline geometry so its parent can draw the origin handle', async () => {
+  const listeners = new Map(), parent = { postMessage: vi.fn() };
+  const win = { parent, location: { origin: 'http://localhost' }, addEventListener: (type, fn) => listeners.set(type, fn), removeEventListener: type => listeners.delete(type) };
+  const originGeometry = { citycode: '0067', point: { x: 200, y: 150 },
+    worldRings: [[[34,31],[35,31],[35,32],[34,32]]], projectedRings: [[[100,100],[200,100],[200,200],[100,200]]] };
+  const dispose = previewBridge.installProjectionSettlementPreviewBridge({ win, sessionId: 's', output: 'left',
+    renderState: async () => ({ calibrationRevision: 8, meshIdentity: 'mesh', mesh: {}, labels: [], originGeometry }) });
+  listeners.get('message')({ source: parent, origin: 'http://localhost', data: { type: 'otef_settlement_preview_state', sessionId: 's', output: 'left', requestId: 1 } });
+  await vi.waitFor(() => expect(parent.postMessage).toHaveBeenLastCalledWith(expect.objectContaining({ type: 'otef_settlement_preview_rendered', originGeometry }), 'http://localhost'));
+  dispose();
+});
+
 const clockLayout = { leftPct: 12, topPct: 22, widthPct: 30, heightPct: 10, fontPx: 24, rotateDeg: 30 };
 const clockRequest = (requestId, patch = {}) => ({ type: "otef_clock_preview_state", sessionId: "clock-1", requestId,
   surface: "projection", sceneId: "home", output: "left", element: "clock", clockLayout,
@@ -13,10 +44,29 @@ const clockRequest = (requestId, patch = {}) => ({ type: "otef_clock_preview_sta
 
 const flushMicrotasks = async () => { for (let index = 0; index < 30; index++) await Promise.resolve(); };
 
+test('source notifications bind semantic changes to the current guarded render request', async () => {
+  const listeners = new Map(), parent = {postMessage:vi.fn()}, win = {parent,location:{origin:'http://localhost'},
+    addEventListener:(type,fn)=>listeners.set(type,fn),removeEventListener:(type)=>listeners.delete(type)};
+  let notify, finish, source = {sourceFrameIdentity:'source-a',stable:true,error:null};
+  const unsub = vi.fn(); const map = {setEffectiveProjectionConfig:()=>true}, nameFieldController = {setProjectionConfig:()=>true};
+  const dispose=installProjectionPreviewBridge({win,output:'left',map,nameFieldController,syncContextInvestigation(){},
+    readSourceState:()=>source,subscribeSourceState:fn=>{notify=fn;return unsub;},applyProjectionConfig:()=>new Promise(resolve=>{finish=resolve;})});
+  const data={type:'otef_projection_preview_config',output:'left',requestId:1,config:DEFAULT_PROJECTION_CONFIG};
+  listeners.get('message')({source:win,origin:win.location.origin,data}); expect(parent.postMessage.mock.calls.some(([m])=>m.type==='otef_projection_preview_source_state')).toBe(false);
+  listeners.get('message')({source:parent,origin:win.location.origin,data});
+  expect(parent.postMessage).toHaveBeenLastCalledWith(expect.objectContaining({type:'otef_projection_preview_source_state',requestId:1,stable:false}),win.location.origin);
+  finish({committed:true}); await flushMicrotasks();
+  expect(parent.postMessage.mock.calls.map(([m])=>m)).toContainEqual(expect.objectContaining({type:'otef_projection_preview_source_state',requestId:1,sourceFrameIdentity:'source-a',stable:true}));
+  source={sourceFrameIdentity:'source-b',stable:false,error:'labels pending'}; notify();
+  expect(parent.postMessage).toHaveBeenLastCalledWith(expect.objectContaining({requestId:1,sourceFrameIdentity:'source-b',stable:false,error:'labels pending'}),win.location.origin);
+  const count=parent.postMessage.mock.calls.length;notify();expect(parent.postMessage).toHaveBeenCalledTimes(count);
+  dispose(); expect(unsub).toHaveBeenCalled(); notify();expect(parent.postMessage).toHaveBeenCalledTimes(count);
+});
+
 function createActualPreviewApplyHarness({ preparePair } = {}) {
   const source = readFileSync(new URL("../../frontend/src/entries/projection-main.js", import.meta.url), "utf8").replace(/\r\n/g, "\n");
   const start = source.indexOf("applyPreviewProjectionConfig = async");
-  const end = source.indexOf("\n    }\n\n    if (previewMode) registerDisposer", start);
+  const end = source.indexOf("\n    }\n\n    if (previewMode) { previewBridge", start);
   if (start < 0 || end <= start) throw new Error("Could not locate actual projection preview apply route");
   const previous = structuredClone(DEFAULT_PROJECTION_CONFIG);
   let activePair = previous, cameraConfig = previous, namesConfig = previous;

@@ -611,6 +611,10 @@
         gap: clamp(16px, 2.5vw, 32px);
       }
       .presentation-slide-actions .btn { min-height: clamp(112px, 16dvh, 168px); }
+      .presentation-slide-actions .btn[data-presentation-action="next"] {
+        --accent: #ffab40;
+        --accent-hover: #ffbd66;
+      }
       .presentation-close { width: 100%; min-height: 56px; margin-top: 24px; border-top: 1px solid var(--line-strong); }
       .presentation-unavailable { margin: 0; color: var(--danger); font-size: var(--text-meta); }
       .mi {

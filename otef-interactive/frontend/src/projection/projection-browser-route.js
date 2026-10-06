@@ -15,6 +15,7 @@ import { visibleProjectionBrowserError } from "./projection-browser-error.js";
 import { prepareProjectionPairMeshes, prepareProjectionSideMesh } from "./projection-candidate-validation.js";
 import { createProjectionDrawScheduler } from "./projection-draw-scheduler.js";
 import { copyProjectionMesh } from "../projection-config/clock-layout-geometry.js";
+import { resolveProjectionResolution } from './output-resolution.js';
 
 export function resolveProjectionOutputMode(search = "") {
   const params = new URLSearchParams(String(search).replace(/^\?/, ""));
@@ -145,6 +146,7 @@ export async function createProjectionBrowserSurface({
   mapCanvas,
   scene = {},
   getScene,
+  filterScene = scene => scene,
   hideTargets = [],
   fetchImpl,
   signal,
@@ -198,8 +200,9 @@ export async function createProjectionBrowserSurface({
     const doc = host?.ownerDocument || globalThis.document;
     canvas = doc?.createElement?.("canvas");
     if (!canvas) throw new Error("browser projection canvas is unavailable");
-    canvas.width = 1920;
-    canvas.height = 1080;
+    const resolution = resolveProjectionResolution(search);
+    canvas.width = resolution.width;
+    canvas.height = resolution.height;
     canvas.className = "projection-browser-surface";
     canvas.setAttribute?.("aria-label", `${spanId} browser projection output`);
     Object.assign(canvas.style || {}, { position: "absolute", inset: "0", width: "100%", height: "100%", zIndex: "2000", pointerEvents: "none" });
@@ -207,10 +210,11 @@ export async function createProjectionBrowserSurface({
     const baseScene = {};
     if (image && !getScene) baseScene.image = { source: image };
     if (mapCanvas && !getScene) baseScene.map = { source: mapCanvas };
-    const readScene = () => ({ ...baseScene, ...(typeof getScene === "function" ? getScene() : scene),
+    const readScene = () => ({ image: null, map: null, names: null, settlements: null, caption: null, pattern: null, legend: null,
+      ...filterScene({ ...baseScene, ...(typeof getScene === "function" ? getScene() : scene),
       ...(nameAdapter?.descriptor() ? { names: nameAdapter.descriptor() } : {}),
       ...(settlementAdapter?.descriptor() ? { settlements: settlementAdapter.descriptor() } : {}),
-      });
+      }) });
     const initialMesh = startupConfig?.outputs?.[spanId]?.warp
       ? prepareProjectionSideMesh(startupConfig, spanId, baseline).mesh
       : evaluateWarpMesh(null, migrateProjectionConfigToV2(baseline.framing).outputs[spanId].warp, { side: spanId });
@@ -224,8 +228,8 @@ export async function createProjectionBrowserSurface({
       const meshes = await prepareProjectionPairMeshes({ config: candidate, signal: requestSignal, loadBaseline: async (side) => sources.loaded[side] || null });
       return { config: browserProjectionConfig(candidate), mesh: meshes[spanId], meshes, snapshot: sources.snapshot, loaded: sources.loaded };
     };
-    nameAdapter = createProjectionNameCanvasAdapter({ document: doc, output: spanId });
-    settlementAdapter = createProjectionSettlementNameAdapter({ document: doc, output: spanId });
+    nameAdapter = createProjectionNameCanvasAdapter({ document: doc, output: spanId, rasterScale: resolution.scale });
+    settlementAdapter = createProjectionSettlementNameAdapter({ document: doc, output: spanId, rasterScale: resolution.scale });
     const applyConfig = (candidate) => {
       const prepared = prepareConfig(candidate);
       renderer.setMesh(prepared.mesh);

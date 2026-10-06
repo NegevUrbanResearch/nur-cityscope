@@ -1,4 +1,5 @@
 import TableSwitcher from "../shared/table-switcher.js";
+import { mountGisDisplayResolution } from '../map/gis-display-resolution.js';
 import TableSwitcherPopup from "../shared/table-switcher-popup.js";
 import { createGISMap, setGISBasemap, maplibregl } from "../map/maplibre-map.js";
 import { setupViewportSync } from "../map/maplibre-viewport-sync.js";
@@ -179,11 +180,14 @@ async function bootstrapMapRuntime() {
     typeof OTEFDataContext.getBasemap === "function" ? OTEFDataContext.getBasemap() : "osm",
   );
 
+  const displayResolution = mountGisDisplayResolution();
   const map = createGISMap("map", {
     center,
     zoom: 11,
     basemap: currentBasemap,
+    pixelRatio: displayResolution.pixelRatio(),
   });
+  displayResolution.bindMap(map);
   attachSettlementOrientationRuntime(map);
 
   if (typeof window !== "undefined") {
@@ -194,6 +198,7 @@ async function bootstrapMapRuntime() {
   const registerDisposer = (fn) => {
     if (typeof fn === "function") disposers.push(fn);
   };
+  registerDisposer(() => displayResolution.dispose());
 
   const runDisposers = () => {
     while (disposers.length > 0) {
@@ -215,6 +220,7 @@ async function bootstrapMapRuntime() {
     let presentationViewer = null;
     const videoPlaybackPublisher = createNliVideoPlaybackPublisher({
       table: OTEFDataContext._tableName || "otef",
+      socket: OTEFDataContext._wsClient,
     });
     let presentationManifest = null;
     let activePresentationSegmentId = null;
@@ -341,7 +347,7 @@ async function bootstrapMapRuntime() {
       container: mapContainer,
       getLayout: () => OTEFDataContext.getNliClockLayout?.()?.gisOverlays?.novaExplainers,
       getNarrativeId: () => OTEFDataContext.getNarrativeState?.()?.id ?? null,
-      getEscapeMor: () => OTEFDataContext.getEscapeOverlay?.()?.mor === true,
+      getEscapeOverlay: () => OTEFDataContext.getEscapeOverlay?.(),
       motionMode: resolveMotionMode(),
     });
     registerDisposer(() => novaExplainerOverlay.dispose());

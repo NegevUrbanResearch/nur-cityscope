@@ -192,13 +192,6 @@ export const SHOW = {
       kit: ["search", "presentation"],
       presentation: { segmentId: "names_wall", open: "auto", onClose: "stay", controls: false },
     },
-    {
-      id: "credits",
-      title: { he: "קרדיטים", en: "Credits" },
-      cue: { ...HOME_CUE },
-      kit: ["presentation"],
-      presentation: { segmentId: "credits", open: "auto", onClose: "stay" },
-    },
   ],
 };
 
@@ -270,7 +263,7 @@ export const NARRATIVES = [
           he: "החלק הראשון תיאר מה קרה באופן קולקטיבי; עכשיו צוללים לסיפור האישי של מור לוי.",
           en: "The first part was the collective story; now move to Mor Levy's personal story.",
         },
-        cue: { layers: NOVA_TIMELINE_LAYER_IDS, clock: "ended", escape: { individual: true } },
+        cue: { layers: NOVA_TIMELINE_LAYER_IDS, clock: "ended", hiddenDisplays: ["gis", "projection"], escape: { individual: true } },
         kit: ["escape"],
         escapeKinds: ["individual"],
       },
@@ -280,14 +273,14 @@ export const NARRATIVES = [
           he: "מתחילים בסיפור של מור. המדריך מספר את הרקע והמסלול שעשתה.",
           en: "Begin Mor's story. The guide tells her background and the route she took.",
         },
-        cue: { layers: NOVA_TIMELINE_LAYER_IDS, clock: "ended", escape: { mor: true } },
+        cue: { layers: NOVA_TIMELINE_LAYER_IDS, clock: "ended", hiddenDisplays: ["gis", "projection"], escape: { mor: true } },
         kit: ["escape", "presentation"],
         escapeKinds: ["mor"],
         presentation: { segmentId: "nova_mor", open: "auto", onClose: "stay" },
       },
       {
         title: { he: "הנצחה", en: "Memorial" },
-        cue: { layers: [...FOCUS_LAYER_IDS, PEOPLE], clock: "ended", escape: { settled: true } },
+        cue: { layers: [...FOCUS_LAYER_IDS, PEOPLE], clock: "ended", hiddenDisplays: ["gis", "projection"], escape: { settled: true } },
         kit: ["escape", "presentation"],
         escapeKinds: ["individual"],
         presentation: { segmentId: "nova_memorial", open: "auto", onClose: "stay" },
@@ -318,7 +311,7 @@ export const NARRATIVES = [
     steps: [
       {
         title: { he: "מחנה שורה", en: "Shura Camp" },
-        cue: { layers: TIMELINE_LAYER_IDS, clock: "idle" },
+        cue: { layers: TIMELINE_LAYER_IDS, clock: "idle", hiddenDisplays: ["projection"] },
         kit: ["presentation"],
         presentation: { segmentId: "shura", open: "auto", onClose: "stay" },
       },
@@ -338,18 +331,18 @@ export const NARRATIVES = [
       },
       {
         title: { he: "מצגת", en: "Presentation" },
-        cue: { layers: FOCUS_LAYER_IDS, clock: "idle" },
+        cue: { layers: FOCUS_LAYER_IDS, clock: "idle", hiddenDisplays: ["gis", "projection"] },
         kit: ["presentation"],
         presentation: { segmentId: "hostages", open: "auto", onClose: "stay" },
       },
       {
         title: { he: "נרצחים וחטופים בניר עוז", en: "Nir Oz victims and hostages" },
-        cue: { layers: [...FOCUS_LAYER_IDS, PEOPLE], clock: "idle" },
+        cue: { layers: [...FOCUS_LAYER_IDS, PEOPLE], clock: "idle", hiddenDisplays: ["gis", "projection"] },
         kit: [],
       },
       {
         title: { he: "כל החטופים", en: "All hostages" },
-        cue: { narrative: "hostages_all", layers: [...FOCUS_LAYER_IDS, PEOPLE], clock: "idle" },
+        cue: { narrative: "hostages_all", layers: [...FOCUS_LAYER_IDS, PEOPLE], clock: "idle", hiddenDisplays: ["gis", "projection"] },
         kit: [],
       },
     ],

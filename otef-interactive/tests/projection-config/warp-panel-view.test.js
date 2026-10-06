@@ -6,6 +6,29 @@ import { DEFAULT_PROJECTION_CONFIG } from "../../frontend/src/shared/projection-
 
 afterEach(() => { document.body.replaceChildren(); vi.useRealTimers(); });
 
+test("Start fresh targets the displayed output and stays available while correction is bypassed", () => {
+  const onAction = vi.fn();
+  const config = structuredClone(DEFAULT_PROJECTION_CONFIG); config.outputs.right.warp.enabled = false;
+  const editor = createWarpEditor({ config, output: "right" });
+  const panel = createWarpPanelView({ document, onAction });
+  panel.update({ output: "right", nodeId: "right-grid", editorState: { ...editor.getState(), config: editor.getConfig(), handles: editor.getControlPoints() } });
+  panel.setAdjusting(false);
+  const fresh = panel.element.querySelector('[data-action="warp-start-fresh"]');
+  expect(fresh?.textContent).toBe("Start fresh");
+  expect(fresh.disabled).toBe(false);
+  fresh.click();
+  expect(onAction).toHaveBeenLastCalledWith("warp-start-fresh", { output: "right" });
+  expect(panel.controls.warpResetAll.textContent).toBe("Clear corrections");
+  editor.startFresh(); editor.undo();
+  panel.update({ output: "right", nodeId: "right-grid", editorState: { ...editor.getState(), config: editor.getConfig(), handles: editor.getControlPoints() } });
+  panel.setAdjusting(false);
+  expect(panel.controls.warpRedo.disabled).toBe(false);
+  panel.setAdjusting(true);
+  expect(fresh.disabled).toBe(true);
+  expect(panel.controls.warpRedo.disabled).toBe(true);
+  panel.dispose();
+});
+
 test("Keystone and Grid expose the same shared adjustment rows and the picker selects the exact target", () => {
   const onAction = vi.fn();
   const panel = createWarpPanelView({ document, onAction });

@@ -50,6 +50,7 @@ export default defineConfig({
       input: {
         map: path.resolve(rootDir, "frontend/index.html"),
         projection: path.resolve(rootDir, "frontend/projection.html"),
+        projectionReversed: path.resolve(rootDir, "frontend/projection-reversed.html"),
         projectionConfig: path.resolve(rootDir, "frontend/projection-config.html"),
         displayIdentify: path.resolve(rootDir, "frontend/display-identify.html"),
         launcher: path.resolve(rootDir, "frontend/launcher.html"),

@@ -2,6 +2,9 @@ import { createUuid } from "../shared/uuid.js";
 import { hitTestSettlementLabels, settlementOutline, settlementPointerToReference } from "./settlement-name-geometry.js";
 import { mountSettlementNamePreview } from "./settlement-name-preview.js";
 import { createSettlementNameControls, shownSettlementPosition } from "./settlement-name-controls.js";
+import { mapSettlementPosition } from '../projection/settlement-name-framing.js';
+import { mapSourceUvToOutput } from './clock-layout-geometry.js';
+import { snapSettlementOrigin } from './settlement-origin-geometry.js';
 
 function make(doc, tag, props = {}, text = "") {
   const node = doc.createElement(tag);
@@ -54,6 +57,8 @@ export function openSettlementNameEditor({
   let handlesEnabled = false;
   let labels = [];
   let mesh = null;
+  let positionMatrix = null;
+  let originGeometry = null;
   let gesture = null;
   let preview = null;
   let scheduledFrame = null;
@@ -85,6 +90,9 @@ export function openSettlementNameEditor({
     onCitycode: (next) => { if (setSelection({ output: activeOutput, citycode: next })) onSelection({ output: activeOutput, citycode: activeCitycode }); else controls.city.value = activeCitycode; },
     onPosition: (position) => { void settingsClient.commit({ kind: "position", output: activeOutput, citycode: activeCitycode }, position, { numeric: true }).catch(() => {}); publish(); },
     onStyle: (style) => { void settingsClient.commit({ kind: "style" }, style, { numeric: true }).catch(() => {}); publish(); },
+    onLineBreak: (afterWord) => { void settingsClient.commit({ kind: 'line_break', citycode: activeCitycode }, afterWord).catch(() => {}); publish(); },
+    onLeaderStyle: (style) => { void settingsClient.commit({ kind: 'leader_style' }, style, { numeric: true }).catch(() => {}); publish(); },
+    onResetOrigin: () => { void settingsClient.commit({ kind: 'leader_origin', citycode: activeCitycode }, null, { operation: 'reset_leader_origin' }).catch(() => {}); publish(); },
     onRetry: () => {
       if (settingsClient.getHydrationState?.().status === "Failed") {
         void settingsClient.hydrate({ forceFresh: true }).catch(() => {});
@@ -92,6 +100,9 @@ export function openSettlementNameEditor({
         void Promise.all([
           settingsClient.retry({ kind: "position", output: activeOutput, citycode: activeCitycode }),
           settingsClient.retry({ kind: "style" }),
+          settingsClient.retry({ kind: 'line_break', citycode: activeCitycode }),
+          settingsClient.retry({ kind: 'leader_style' }),
+          settingsClient.retry({ kind: 'leader_origin', citycode: activeCitycode }),
         ]).catch(() => {});
       }
     },
@@ -99,6 +110,9 @@ export function openSettlementNameEditor({
     onLoad: () => {
       settingsClient.loadSaved({ kind: "position", output: activeOutput, citycode: activeCitycode });
       settingsClient.loadSaved({ kind: "style" });
+      settingsClient.loadSaved({ kind: 'line_break', citycode: activeCitycode });
+      settingsClient.loadSaved({ kind: 'leader_style' });
+      settingsClient.loadSaved({ kind: 'leader_origin', citycode: activeCitycode });
       publish();
     },
   });
@@ -118,7 +132,7 @@ export function openSettlementNameEditor({
   function positionRecord() { return settingsClient.getTarget({ kind: "position", output: activeOutput, citycode: activeCitycode }); }
   function styleRecord() { return settingsClient.getTarget({ kind: "style" }); }
   function shownPosition() {
-    if (gesture?.latest) return gesture.latest;
+    if (gesture?.latest && gesture.kind !== 'origin') return gesture.latest;
     return shownSettlementPosition(snapshot(), positionRecord(), activeOutput, activeCitycode);
   }
   function renderControls() {
@@ -132,6 +146,12 @@ export function openSettlementNameEditor({
       style: styleRecord().draft || styleRecord().acknowledged || settings?.style,
       positionRecord: positionRecord(),
       styleRecord: styleRecord(),
+      afterWord: settings?.lineBreaks?.[activeCitycode] || 0,
+      leaderStyle: settings?.leaderStyle,
+      lineBreakRecord: settingsClient.getTarget({ kind: 'line_break', citycode: activeCitycode }),
+      leaderStyleRecord: settingsClient.getTarget({ kind: 'leader_style' }),
+      leaderOrigin: settings?.leaderOrigins?.[activeCitycode] || null,
+      leaderOriginRecord: settingsClient.getTarget({ kind: 'leader_origin', citycode: activeCitycode }),
       hydration: settingsClient.getHydrationState?.() || { status: "Saved" },
       enabled: settingsClient.getHydrationState?.().status !== "Failed",
     });
@@ -158,12 +178,24 @@ export function openSettlementNameEditor({
       const path = svg("path", { d: `M${edge.start.x * 1920} ${edge.start.y * 1080} L${edge.end.x * 1920} ${edge.end.y * 1080}`, class: "settlement-outline" });
       overlay.appendChild(path);
     }
+    if (originGeometry?.point && originGeometry.citycode === activeCitycode) {
+      const point = mapSourceUvToOutput(mesh, { u: originGeometry.point.x / 1920, v: originGeometry.point.y / 1080 });
+      if (!point) return;
+      const rect = stage.getBoundingClientRect(), scale = Math.min(rect.width / 1920, rect.height / 1080) || 1;
+      const cx = point.x * 1920, cy = point.y * 1080;
+      const visible = svg('circle', { cx, cy, r: 7 / scale, class: 'settlement-origin-handle' });
+      const hitOrigin = svg('circle', { cx, cy, r: 24 / scale, class: 'settlement-origin-hit', 'aria-label': 'Drag line origin on the settlement outline' });
+      hitOrigin.addEventListener('pointerdown', beginOriginGesture);
+      overlay.append(visible, hitOrigin);
+    }
   }
   function publish() {
     const settings = snapshot();
     if (!settings || !preview) return;
     const next = structuredClone(settings);
-    if (gesture?.latest) next.outputs[activeOutput][activeCitycode] = { ...gesture.latest };
+    if (gesture?.latest && gesture.kind === 'origin') {
+      next.leaderOrigins ||= {}; next.leaderOrigins[activeCitycode] = { ...gesture.latest };
+    } else if (gesture?.latest) next.outputs[activeOutput][activeCitycode] = { ...gesture.latest };
     preview.setState({ settings: next, selectedCitycode: activeCitycode });
     renderControls();
   }
@@ -191,14 +223,36 @@ export function openSettlementNameEditor({
     if (hit !== activeCitycode && hit == null) return;
     const position = shownSettlementPosition(snapshot(), positionRecord(), activeOutput, activeCitycode);
     if (!position) return;
-    gesture = { pointerId: event.pointerId, rect, mesh, start: reference, origin: { ...position }, latest: { ...position } };
+    const storedReference=mapSettlementPosition(reference,positionMatrix,true);
+    if (!storedReference) { showMapping("Mapping unavailable"); return; }
+    gesture = { pointerId: event.pointerId, rect, mesh, positionMatrix:positionMatrix ? [...positionMatrix] : null, start: storedReference, origin: { ...position }, latest: { ...position } };
     doc.addEventListener?.("pointermove", moveGesture);
     doc.addEventListener?.("pointerup", endGesture);
     doc.addEventListener?.("pointercancel", cancelGesture);
   }
+  function beginOriginGesture(event) {
+    if (!handlesEnabled || gesture || event.button !== 0 || originGeometry?.citycode !== activeCitycode) return;
+    event.preventDefault?.(); event.stopPropagation?.();
+    const rect = stage.getBoundingClientRect(), geometry = structuredClone(originGeometry);
+    const reference = referenceFor(event, rect, mesh);
+    const snapped = reference && snapSettlementOrigin(reference, geometry.worldRings, geometry.projectedRings);
+    if (!snapped) return;
+    const record = settingsClient.getTarget({ kind: 'leader_origin', citycode: activeCitycode });
+    gesture = { kind: 'origin', pointerId: event.pointerId, rect, mesh, geometry, latest: snapped.origin,
+      baseline: { value: record.acknowledged, revision: settingsClient.getSnapshot().revision } };
+    doc.addEventListener?.('pointermove', moveGesture); doc.addEventListener?.('pointerup', endGesture); doc.addEventListener?.('pointercancel', cancelGesture);
+  }
   function moveGesture(event) {
     if (!gesture || event.pointerId !== gesture.pointerId) return;
-    const reference = referenceFor(event, gesture.rect, gesture.mesh);
+    const outputReference = referenceFor(event, gesture.rect, gesture.mesh);
+    if (gesture.kind === 'origin') {
+      const snapped = outputReference && snapSettlementOrigin(outputReference, gesture.geometry.worldRings, gesture.geometry.projectedRings);
+      if (!snapped) { cancelGesture(event); return; }
+      gesture.latest = snapped.origin;
+      publish();
+      return;
+    }
+    const reference = outputReference && mapSettlementPosition(outputReference,gesture.positionMatrix,true);
     if (!reference) { showMapping("Mapping unavailable"); cancelGesture(event); return; }
     gesture.latest = { x: gesture.origin.x + (reference.x - gesture.start.x), y: gesture.origin.y + (reference.y - gesture.start.y) };
     if (scheduledFrame != null) return;
@@ -220,7 +274,8 @@ export function openSettlementNameEditor({
     gesture = null;
     release();
     if (!completed?.latest) return;
-    void settingsClient.commit({ kind: "position", output: activeOutput, citycode: activeCitycode }, { x: completed.latest.x, y: completed.latest.y }).catch(() => {});
+    if (completed.kind === 'origin') void settingsClient.commit({ kind: 'leader_origin', citycode: activeCitycode }, completed.latest, { baseline: completed.baseline }).catch(() => {});
+    else void settingsClient.commit({ kind: "position", output: activeOutput, citycode: activeCitycode }, { x: completed.latest.x, y: completed.latest.y }).catch(() => {});
     publish();
   }
   function cancelGesture(event) {
@@ -234,6 +289,8 @@ export function openSettlementNameEditor({
     if (gesture) cancelGesture({ pointerId: gesture.pointerId });
     handlesEnabled = false;
     mesh = null;
+    positionMatrix = null;
+    originGeometry = null;
     labels = [];
     drawOverlay();
     preview?.reload({ output: activeOutput });
@@ -242,6 +299,8 @@ export function openSettlementNameEditor({
   function onRendered(result) {
     if (!active) return;
     mesh = result.mesh;
+    positionMatrix = result.positionMatrix || null;
+    originGeometry = result.originGeometry?.citycode === activeCitycode ? result.originGeometry : null;
     labels = result.labels || [];
     handlesEnabled = true;
     retry.hidden = true;
@@ -272,9 +331,11 @@ export function openSettlementNameEditor({
   function setSelection({ output: nextOutput, citycode: nextCitycode } = {}) {
     if (!finishPendingEdit()) return false;
     const outputChanged = nextOutput && nextOutput !== activeOutput;
+    const cityChanged = nextCitycode && nextCitycode !== activeCitycode;
     if (nextOutput === "left" || nextOutput === "right") activeOutput = nextOutput;
     if (typeof nextCitycode === "string" && nextCitycode) activeCitycode = nextCitycode;
     if (gesture) cancelGesture({ pointerId: gesture.pointerId });
+    if (cityChanged) { originGeometry = null; drawOverlay(); }
     renderControls();
     if (outputChanged) invalidate();
     else publish();

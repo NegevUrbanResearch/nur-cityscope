@@ -656,7 +656,15 @@ body {
   justify-content: center;
   background: #fffbf8 url("../img/nli-slide-background.png") center / 100% 100% no-repeat;
 }
+.nli-reveal-overlay--blackout::before {
+  content: "";
+  position: absolute;
+  inset: 12.5% 0 0;
+  background: #fffbf8;
+  pointer-events: none;
+}
 .nli-blackout-copy {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -722,6 +730,26 @@ body {
   text-align: right;
   text-transform: none;
 }
+.nli-reveal-overlay .nli-presentation-credit {
+  position: absolute;
+  right: 2.8%;
+  bottom: 3.5%;
+  width: 12.8%;
+  margin: 0;
+  color: #000;
+  font-family: "Narkiss Block", sans-serif;
+  font-size: 28px;
+  font-weight: 400;
+  line-height: 1.12;
+  text-align: right;
+}
+.nli-presentation-credit > strong,
+.nli-presentation-credit > span {
+  display: block;
+}
+.nli-presentation-credit > strong {
+  font-weight: 700;
+}
 
 #nliNovaExplainerHost,
 .gis-person-bubble-popup {
@@ -738,6 +766,15 @@ body {
   z-index: 2;
   overflow: hidden;
   pointer-events: none;
+  opacity: 1;
+  visibility: visible;
+  transition: opacity 600ms ease, visibility 0s;
+}
+
+#nliNovaExplainerHost.nli-nova-explainers--hidden {
+  opacity: 0;
+  visibility: hidden;
+  transition-delay: 0s, 600ms;
 }
 
 #nliNovaExplainerHost .nli-nova-explainer-card {
@@ -784,6 +821,10 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  #nliNovaExplainerHost {
+    transition: none;
+  }
+
   #nliNovaExplainerHost .nli-nova-explainer-card--in {
     animation: none;
   }

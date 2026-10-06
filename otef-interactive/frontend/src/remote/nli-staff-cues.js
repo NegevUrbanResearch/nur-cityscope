@@ -4,9 +4,9 @@ import { NLI_NOVA_STORY } from "../shared/nli-nova-story.js";
 
 const NO_ESCAPE = Object.freeze({ individual: false, overlap: false, mor: false, settled: false });
 
-export function buildNovaEndedClock() {
+export function buildNovaEndedClock(previous) {
   return endNliClock({
-    ...idleNliClock(),
+    ...idleNliClock(previous),
     membership: [...NLI_PLAYABLE_IDS],
     beats: [...NLI_NOVA_STORY.representativeMinutes],
     loop: false,
@@ -66,10 +66,24 @@ export function createCueRunner({
   let queue = Promise.resolve();
   let token = 0;
 
+  async function applyClockVisibility(hiddenDisplays, live) {
+    const clock = dataContext?.getInvestigationClock?.();
+    if (!clock || JSON.stringify(clock.hiddenDisplays ?? []) === JSON.stringify(hiddenDisplays)) return;
+    assertAcknowledged(
+      await dataContext.patchInvestigationClock({ ...clock, hiddenDisplays }, { isCurrent: live }),
+      "Clock visibility update was not acknowledged",
+    );
+    if (!live()) throw cancelled();
+  }
+
   async function applyNarrative(target, live, { force = false } = {}) {
     const currentId = dataContext?.getNarrativeState?.()?.id ?? null;
     if (force || currentId !== target) {
-      assertAcknowledged(await dataContext?.setNarrative?.(target), "Narrative update was not acknowledged");
+      const hiddenDisplays = dataContext?.getInvestigationClock?.()?.hiddenDisplays;
+      assertAcknowledged(
+        await dataContext?.setNarrative?.(target, Array.isArray(hiddenDisplays) ? { hiddenDisplays } : undefined),
+        "Narrative update was not acknowledged",
+      );
     } else if (dataContext?.getPersonSelection?.()?.personId) {
       assertAcknowledged(await dataContext.clearPerson?.(), "Person clear was not acknowledged");
     }
@@ -149,8 +163,16 @@ export function createCueRunner({
       const run = async () => {
         if (!live()) return { status: "cancelled" };
         try {
+          // Hide before any scene mutation; only restore visibility after the
+          // destination is ready. Retain both scenes' hidden displays in between.
+          if (cue.hiddenDisplays?.length) {
+            const previous = dataContext?.getInvestigationClock?.()?.hiddenDisplays ?? [];
+            await applyClockVisibility(["gis", "projection"].filter((display) =>
+              previous.includes(display) || cue.hiddenDisplays.includes(display)), live);
+          }
           await applySteps(cue, narrativeId, live);
           if (!live()) return { status: "cancelled" };
+          await applyClockVisibility(cue.hiddenDisplays ?? [], live);
           onStatus("ready");
           return { status: "ready" };
         } catch (error) {

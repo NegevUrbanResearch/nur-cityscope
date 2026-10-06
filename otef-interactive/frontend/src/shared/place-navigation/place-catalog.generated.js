@@ -151,36 +151,33 @@ const catalog = {
       },
       "cameraHint": {
         "center": {
-          "lng": 34.356028,
-          "lat": 31.288509
+          "lng": 34.412808,
+          "lat": 31.247968
         },
         "centerItm": {
-          "x": 138665.519012,
-          "y": 577730.534922
+          "x": 144039.884507,
+          "y": 573195.073448
         },
         "zoom": 15
       }
     },
     {
-      "id": "yeshuv-0338",
+      "id": "yeshuv-0342",
       "type": "yeshuv",
-      "citycode": "0338",
+      "citycode": "0342",
       "source": {
         "kind": "geojson",
         "file": "projector_base/שמות_יישובים.geojson",
-        "featureId": "0338"
+        "featureId": "0342"
       },
       "name": {
-        "he": "איבים",
-        "en": "Ivim"
+        "he": "גברעם"
       },
       "aliases": {
         "he": [
-          "איבים"
+          "גברעם"
         ],
-        "en": [
-          "Ivim"
-        ]
+        "en": []
       },
       "priority": 10,
       "selectable": true,
@@ -190,12 +187,12 @@ const catalog = {
       },
       "cameraHint": {
         "center": {
-          "lng": 34.59744,
-          "lat": 31.529518
+          "lng": 34.611882,
+          "lat": 31.592032
         },
         "centerItm": {
-          "x": 161800.34657,
-          "y": 604302.056937
+          "x": 163209.453154,
+          "y": 611226.204603
         },
         "zoom": 15
       }
@@ -355,6 +352,42 @@ const catalog = {
         "centerItm": {
           "x": 138779.792156,
           "y": 572022.736822
+        },
+        "zoom": 15
+      }
+    },
+    {
+      "id": "yeshuv-0415",
+      "type": "yeshuv",
+      "citycode": "0415",
+      "source": {
+        "kind": "geojson",
+        "file": "projector_base/שמות_יישובים.geojson",
+        "featureId": "0415"
+      },
+      "name": {
+        "he": "שוקדה"
+      },
+      "aliases": {
+        "he": [
+          "שוקדה"
+        ],
+        "en": []
+      },
+      "priority": 10,
+      "selectable": true,
+      "boundsPolicy": {
+        "mode": "requireWithinOtefBounds",
+        "reasonKey": "placeOutOfBounds"
+      },
+      "cameraHint": {
+        "center": {
+          "lng": 34.524039,
+          "lat": 31.421853
+        },
+        "centerItm": {
+          "x": 154754.980127,
+          "y": 592404.831288
         },
         "zoom": 15
       }
@@ -1145,6 +1178,42 @@ const catalog = {
       }
     },
     {
+      "id": "yeshuv-1095",
+      "type": "yeshuv",
+      "citycode": "1095",
+      "source": {
+        "kind": "geojson",
+        "file": "projector_base/שמות_יישובים.geojson",
+        "featureId": "1095"
+      },
+      "name": {
+        "he": "כפר מימון"
+      },
+      "aliases": {
+        "he": [
+          "כפר מימון"
+        ],
+        "en": []
+      },
+      "priority": 10,
+      "selectable": true,
+      "boundsPolicy": {
+        "mode": "requireWithinOtefBounds",
+        "reasonKey": "placeOutOfBounds"
+      },
+      "cameraHint": {
+        "center": {
+          "lng": 34.537193,
+          "lat": 31.432596
+        },
+        "centerItm": {
+          "x": 156012.936089,
+          "y": 593588.334157
+        },
+        "zoom": 15
+      }
+    },
+    {
       "id": "yeshuv-1146",
       "type": "yeshuv",
       "citycode": "1146",
@@ -1179,46 +1248,6 @@ const catalog = {
         "centerItm": {
           "x": 153746.787659,
           "y": 595734.950277
-        },
-        "zoom": 15
-      }
-    },
-    {
-      "id": "yeshuv-1223",
-      "type": "yeshuv",
-      "citycode": "1223",
-      "source": {
-        "kind": "geojson",
-        "file": "projector_base/שמות_יישובים.geojson",
-        "featureId": "1223"
-      },
-      "name": {
-        "he": "שדי אברהם",
-        "en": "Sdei Avraham"
-      },
-      "aliases": {
-        "he": [
-          "שדי אברהם"
-        ],
-        "en": [
-          "Sdei Avraham",
-          "Sde Avraham"
-        ]
-      },
-      "priority": 10,
-      "selectable": true,
-      "boundsPolicy": {
-        "mode": "requireWithinOtefBounds",
-        "reasonKey": "placeOutOfBounds"
-      },
-      "cameraHint": {
-        "center": {
-          "lng": 34.361933,
-          "lat": 31.198776
-        },
-        "centerItm": {
-          "x": 139151.881457,
-          "y": 567776.506021
         },
         "zoom": 15
       }
@@ -1263,45 +1292,6 @@ const catalog = {
       }
     },
     {
-      "id": "yeshuv-1231",
-      "type": "yeshuv",
-      "citycode": "1231",
-      "source": {
-        "kind": "geojson",
-        "file": "projector_base/שמות_יישובים.geojson",
-        "featureId": "1231"
-      },
-      "name": {
-        "he": "פרי גן",
-        "en": "Pri Gan"
-      },
-      "aliases": {
-        "he": [
-          "פרי גן"
-        ],
-        "en": [
-          "Pri Gan"
-        ]
-      },
-      "priority": 10,
-      "selectable": true,
-      "boundsPolicy": {
-        "mode": "requireWithinOtefBounds",
-        "reasonKey": "placeOutOfBounds"
-      },
-      "cameraHint": {
-        "center": {
-          "lng": 34.361933,
-          "lat": 31.198776
-        },
-        "centerItm": {
-          "x": 139151.881457,
-          "y": 567776.506021
-        },
-        "zoom": 15
-      }
-    },
-    {
       "id": "yeshuv-1232",
       "type": "yeshuv",
       "citycode": "1232",
@@ -1336,6 +1326,42 @@ const catalog = {
         "centerItm": {
           "x": 134980.256918,
           "y": 566716.30928
+        },
+        "zoom": 15
+      }
+    },
+    {
+      "id": "yeshuv-1237",
+      "type": "yeshuv",
+      "citycode": "1237",
+      "source": {
+        "kind": "geojson",
+        "file": "projector_base/שמות_יישובים.geojson",
+        "featureId": "1237"
+      },
+      "name": {
+        "he": "תלמי יוסף"
+      },
+      "aliases": {
+        "he": [
+          "תלמי יוסף"
+        ],
+        "en": []
+      },
+      "priority": 10,
+      "selectable": true,
+      "boundsPolicy": {
+        "mode": "requireWithinOtefBounds",
+        "reasonKey": "placeOutOfBounds"
+      },
+      "cameraHint": {
+        "center": {
+          "lng": 34.361933,
+          "lat": 31.198776
+        },
+        "centerItm": {
+          "x": 139151.881457,
+          "y": 567776.506021
         },
         "zoom": 15
       }
@@ -1414,6 +1440,42 @@ const catalog = {
         "centerItm": {
           "x": 135737.073239,
           "y": 571294.061538
+        },
+        "zoom": 15
+      }
+    },
+    {
+      "id": "yeshuv-1240",
+      "type": "yeshuv",
+      "citycode": "1240",
+      "source": {
+        "kind": "geojson",
+        "file": "projector_base/שמות_יישובים.geojson",
+        "featureId": "1240"
+      },
+      "name": {
+        "he": "עין הבשור"
+      },
+      "aliases": {
+        "he": [
+          "עין הבשור"
+        ],
+        "en": []
+      },
+      "priority": 10,
+      "selectable": true,
+      "boundsPolicy": {
+        "mode": "requireWithinOtefBounds",
+        "reasonKey": "placeOutOfBounds"
+      },
+      "cameraHint": {
+        "center": {
+          "lng": 34.442924,
+          "lat": 31.281244
+        },
+        "centerItm": {
+          "x": 146934.199661,
+          "y": 576864.538872
         },
         "zoom": 15
       }
@@ -1571,87 +1633,6 @@ const catalog = {
         "centerItm": {
           "x": 133714.446014,
           "y": 564503.264629
-        },
-        "zoom": 15
-      }
-    },
-    {
-      "id": "yeshuv-240P",
-      "type": "yeshuv",
-      "citycode": "240P",
-      "source": {
-        "kind": "geojson",
-        "file": "projector_base/שמות_יישובים.geojson",
-        "featureId": "240P"
-      },
-      "name": {
-        "he": "מועצה אזורית אשכול",
-        "en": "Eshkol Regional Council"
-      },
-      "aliases": {
-        "he": [
-          "מועצה אזורית אשכול"
-        ],
-        "en": [
-          "Eshkol Regional Council",
-          "Eshkol Council"
-        ]
-      },
-      "priority": 10,
-      "selectable": true,
-      "boundsPolicy": {
-        "mode": "requireWithinOtefBounds",
-        "reasonKey": "placeOutOfBounds"
-      },
-      "cameraHint": {
-        "center": {
-          "lng": 34.364088,
-          "lat": 31.348437
-        },
-        "centerItm": {
-          "x": 139483.594739,
-          "y": 584369.511855
-        },
-        "zoom": 15
-      }
-    },
-    {
-      "id": "yeshuv-724P",
-      "type": "yeshuv",
-      "citycode": "724P",
-      "source": {
-        "kind": "geojson",
-        "file": "projector_base/שמות_יישובים.geojson",
-        "featureId": "724P"
-      },
-      "name": {
-        "he": "מכללת ספיר",
-        "en": "Sapir College"
-      },
-      "aliases": {
-        "he": [
-          "מכללת ספיר",
-          "מכללת ספיר (הנגב)"
-        ],
-        "en": [
-          "Sapir College",
-          "Sapir"
-        ]
-      },
-      "priority": 10,
-      "selectable": true,
-      "boundsPolicy": {
-        "mode": "requireWithinOtefBounds",
-        "reasonKey": "placeOutOfBounds"
-      },
-      "cameraHint": {
-        "center": {
-          "lng": 34.597105,
-          "lat": 31.507066
-        },
-        "centerItm": {
-          "x": 161754.720024,
-          "y": 601812.647215
         },
         "zoom": 15
       }

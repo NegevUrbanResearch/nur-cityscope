@@ -28,6 +28,28 @@ function settingsFixture() {
 }
 
 describe("settlement name settings", () => {
+  test('saves a projection-only break without altering names, positions, or font style', () => {
+    const settings = settingsFixture();
+    const operation = { action: 'set_settlement_names', operation: 'line_break', citycode: '0067', afterWord: 1,
+      baseRevision: 1, sourceId: '11111111-1111-4111-8111-111111111111', timestamp: '2026-10-06T00:00:00Z' };
+    const result = validateSettlementNameOperation(operation, settings);
+    expect(result.errors).toEqual([]);
+    expect(result.settings.lineBreaks).toEqual({ '0067': 1 });
+    expect(result.settings.baseline).toEqual(settings.baseline);
+    expect(result.settings.style).toEqual(settings.style);
+    expect(validateSettlementNameOperation({ ...operation, afterWord: -1 }, settings).errors).toContain('afterWord');
+  });
+  test('validates connector width and color while preserving font and placement', () => {
+    const settings = settingsFixture();
+    const leaderStyle = { widthPx: 2, outlineWidthPx: 0.5, color: '#ffffff', outlineColor: '#bfbf99', opacity: 0.8 };
+    const operation = { action: 'set_settlement_names', operation: 'leader_style', leaderStyle,
+      baseRevision: 1, sourceId: '11111111-1111-4111-8111-111111111111', timestamp: '2026-10-06T00:00:00Z' };
+    const result = validateSettlementNameOperation(operation, settings);
+    expect(result.errors).toEqual([]);
+    expect(result.settings.leaderStyle).toEqual(leaderStyle);
+    expect(result.settings.style).toEqual(settings.style);
+    expect(validateSettlementNameOperation({ ...operation, leaderStyle: { ...leaderStyle, widthPx: true } }, settings).errors).toContain('leaderStyle.widthPx');
+  });
   test("resolves a sparse override, then the baseline, and null when neither exists", () => {
     const settings = settingsFixture();
     settings.outputs.left["0067"] = { x: 12, y: 18 };

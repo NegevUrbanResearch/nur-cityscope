@@ -7,6 +7,99 @@ import { DEFAULT_PROJECTION_CONFIG } from '../../frontend/src/shared/projection-
 import * as module from '../../frontend/src/projection-config/config-command-bar.js';
 const snapshot = { presets: [{ id: 'original', name: 'Original', readOnly: true }, { id: 'desk', name: 'Desk' }, { id: 'other', name: 'Other' }], selectedPresetId: 'other' };
 
+test('rename targets the loaded preset and refreshes Save without replacing a typed copy name', () => {
+  const { window: dom } = new JSDOM('<main></main>', { url: 'http://localhost' });
+  const onAction = vi.fn();
+  const bar = module.createConfigCommandBar({ document: dom.document, onAction });
+  dom.document.querySelector('main').append(bar.element);
+  bar.update({ state: { snapshot }, loadedPresetId: 'desk' });
+  bar.controls.rename.click();
+  expect(bar.controls.renameName.value).toBe('Desk');
+  bar.controls.renameName.value = '   '; bar.controls.renameName.dispatchEvent(new dom.Event('input'));
+  expect(bar.controls.renameConfirm.disabled).toBe(true);
+  bar.controls.renameName.value = 'NLI setup'; bar.controls.renameName.dispatchEvent(new dom.Event('input'));
+  bar.controls.renameConfirm.click();
+  expect(onAction).toHaveBeenCalledWith('rename', 'NLI setup');
+  bar.controls.saveName.value = 'My copy'; bar.controls.saveName.dispatchEvent(new dom.Event('input'));
+  const renamed = structuredClone(snapshot); renamed.presets[1].name = 'NLI setup';
+  bar.update({ state: { snapshot: renamed }, loadedPresetId: 'desk' });
+  expect(bar.controls.renamePanel.hidden).toBe(true);
+  expect(bar.controls.saveName.value).toBe('My copy');
+  bar.controls.save.click();
+  expect(onAction).toHaveBeenLastCalledWith('save', 'NLI setup');
+  bar.update({ state: { snapshot }, loadedPresetId: 'original' });
+  expect(bar.controls.rename.disabled).toBe(true);
+  bar.dispose(); dom.close();
+});
+
+test('controller rename uses loaded identity while another preset selection is pending', async () => {
+  const { window: dom } = new JSDOM('<main></main>', { url: 'http://localhost' });
+  const config = structuredClone(DEFAULT_PROJECTION_CONFIG);
+  const state = { live: false, connected: true, draft: config, snapshot: { revision: 1, config, ...snapshot, selectedPresetId: 'desk' } };
+  const client = { getState: () => state, subscribe(fn) { fn(state); return () => {}; }, start: vi.fn(), stop: vi.fn(), rename: vi.fn(async () => state), save: vi.fn(), setValidateCandidate() {} };
+  const root = dom.document.querySelector('main'); const api = mountProjectionConfig(root, { client });
+  try {
+    const select = root.querySelector('select[aria-label="Preset"]'); select.value = 'other'; select.dispatchEvent(new dom.Event('change'));
+    root.querySelector('[data-action="rename"]').click();
+    const input = root.querySelector('input[aria-label="New preset name"]'); input.value = 'NLI setup'; input.dispatchEvent(new dom.Event('input'));
+    root.querySelector('[data-action="rename-confirm"]').click();
+    await vi.waitFor(() => expect(client.rename).toHaveBeenCalledWith({ presetId: 'desk', name: 'NLI setup' }));
+    expect(client.save).not.toHaveBeenCalled();
+  } finally { api.dispose(); dom.close(); }
+});
+
+test('Rename uses the saved preset name after import and supports Escape and Enter', () => {
+  const { window: dom } = new JSDOM('<main></main>', { url: 'http://localhost' });
+  const onAction = vi.fn(); const bar = module.createConfigCommandBar({ document: dom.document, onAction });
+  dom.document.querySelector('main').append(bar.element);
+  bar.update({ state: { snapshot }, loadedPresetId: 'desk' });
+  bar.setPresetName('Imported desk');
+  bar.controls.rename.click();
+  expect(bar.controls.renameName.value).toBe('Desk');
+  bar.controls.renameName.value = 'Discard this';
+  bar.controls.renameName.dispatchEvent(new dom.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  expect(bar.controls.renamePanel.hidden).toBe(true); expect(onAction).not.toHaveBeenCalled();
+  bar.controls.save.click(); expect(onAction).toHaveBeenLastCalledWith('save', 'Imported desk');
+  bar.controls.rename.click(); bar.controls.renameName.value = 'NLI setup'; bar.controls.renameName.dispatchEvent(new dom.Event('input'));
+  bar.controls.renameName.dispatchEvent(new dom.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  expect(onAction).toHaveBeenLastCalledWith('rename', 'NLI setup');
+  bar.dispose(); dom.close();
+});
+
+test('Displays offers independent lab and exhibit resolution choices', () => {
+  const { window: dom } = new JSDOM('<main></main>', { url: 'http://localhost' });
+  const onOutputAction = vi.fn();
+  const bar = module.createConfigCommandBar({ document: dom.document, onOutputAction });
+  bar.update({ outputState: { supported: true, resolutions: { left: '4k', right: '1080p' } } });
+  const left = bar.element.querySelector('select[aria-label="Left output resolution"]');
+  const right = bar.element.querySelector('select[aria-label="Right output resolution"]');
+  expect(left?.value).toBe('4k'); expect(right?.value).toBe('1080p');
+  expect(Array.from(left.options).map(option => option.textContent)).toEqual(['1080p · 1920 × 1080', '4K · 3840 × 2160']);
+  left.value = '1080p'; left.dispatchEvent(new dom.Event('change'));
+  expect(onOutputAction).toHaveBeenCalledWith('resolution', { side: 'left', resolution: '1080p' });
+  expect(left.closest('[data-menu="displays"]')).toBeTruthy();
+  bar.dispose();
+});
+
+test('Displays contains persisted reversal control with an explicit next-Open scope', () => {
+  const { window: dom } = new JSDOM('<main></main>', { url: 'http://localhost' });
+  const onOutputAction = vi.fn();
+  const bar = module.createConfigCommandBar({ document: dom.document, onOutputAction });
+  dom.document.querySelector('main').append(bar.element);
+  const reverse = bar.element.querySelector('input[aria-label="Reverse model 180°"]');
+  expect(reverse).not.toBeNull();
+  expect(reverse.closest('[data-menu="displays"]')).toBeTruthy();
+  bar.update({ outputState: { supported: true, reverseModel: true } });
+  expect(reverse.checked).toBe(true);
+  expect(bar.element.textContent).toMatch(/swap.*halves/i);
+  expect(bar.element.textContent).toMatch(/next.*Open/i);
+  reverse.checked = false; reverse.dispatchEvent(new dom.Event('change'));
+  expect(onOutputAction).toHaveBeenCalledWith('reverse-model', false);
+  bar.update({ outputState: { supported: false } });
+  expect(reverse.disabled).toBe(true);
+  bar.dispose(); dom.close();
+});
+
 test('jsdom view keeps direct commands visible while controller saves loaded ID rather than selected candidate', async () => {
   const { window: dom } = new JSDOM('<main></main>', { url: 'http://localhost' });
   const config = structuredClone(DEFAULT_PROJECTION_CONFIG);

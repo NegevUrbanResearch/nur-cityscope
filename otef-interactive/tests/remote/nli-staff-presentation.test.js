@@ -3,7 +3,10 @@ import {
   createNliStaffPresentationController,
   presentationControlsHtml,
   shouldAutoOpenNliPresentation,
+  createNliStaffPresentationButtonHandler,
 } from "../../frontend/src/remote/nli-staff-presentation.js";
+import { NARRATIVES } from "../../frontend/src/remote/nli-staff-script.js";
+import { nextAction } from "../../frontend/src/remote/nli-staff-flow.js";
 
 const step = { presentation: { segmentId: "nova_mor", open: "manual", onClose: "stay" } };
 const shuraStep = { presentation: { segmentId: "shura", open: "auto", onClose: "stay" } };
@@ -37,6 +40,32 @@ function makeControllerHarness() {
 afterEach(() => vi.useRealTimers());
 
 describe("NLI staff presentation controller", () => {
+  test("Hostages opens after its cue, explicit Close stays, and Scene Next reaches Nir Oz", async () => {
+    const item = NARRATIVES.find(narrative => narrative.id === "hostages");
+    const index = item.steps.findIndex(candidate => candidate.presentation);
+    const currentStep = item.steps[index];
+    const h = makeControllerHarness();
+    const autoOpen = cueStatus => shouldAutoOpenNliPresentation({ item, index, currentScript: item, currentStep, cueStatus });
+    expect(autoOpen("pending")).toBe(false);
+    expect(autoOpen("failed")).toBe(false);
+    expect(autoOpen("ready")).toBe(true);
+    await h.openAndReply(currentStep.presentation.segmentId);
+    const next = vi.fn();
+    const resume = vi.fn();
+    const handle = createNliStaffPresentationButtonHandler({
+      getCurrentStep: () => currentStep, getNavigationGeneration: () => 1,
+      run: h.controller.run, nextFromExplicitClose: next, resumeFromExplicitClose: resume,
+    });
+    const closing = handle("close");
+    h.reply({ outcome: "closed" });
+    await expect(closing).resolves.toBe(true);
+    expect(next).not.toHaveBeenCalled();
+    expect(resume).not.toHaveBeenCalled();
+    expect(presentationControlsHtml(currentStep, h.controller.getState(), "en")).toContain('data-presentation-action="open"');
+    expect(nextAction({ scriptId: "hostages", step: index, returnTo: null })).toEqual({ kind: "step", scriptId: "hostages", step: index + 1 });
+    expect(item.steps[index + 1].title.en).toBe("Nir Oz victims and hostages");
+    h.controller.destroy();
+  });
   test("open state renders Previous, Next, Close, and the confirmed relative counter", async () => {
     const h = makeControllerHarness();
     const opening = h.controller.run("open", "nova_mor");
@@ -449,5 +478,67 @@ describe("NLI staff presentation controller", () => {
     expect(h.sent.at(-1)).toMatchObject({ presentationAction: "close", presentationSessionId: sessionId });
     h.reply({ outcome: "closed" });
     await expect(retry).resolves.toBe(true);
+  });
+});
+
+
+describe("failed presentation recovery", () => {
+  test("replacement GIS can open a new session without accepting its unrelated Close", async () => {
+    vi.useFakeTimers();
+    const h = makeControllerHarness();
+    const opened = h.controller.run("open", "nova_mor");
+    h.reply({ outcome: "opened", sourceId: "A" });
+    await opened;
+    const old = h.sent[0];
+    const close = h.controller.run("close", "nova_mor");
+    h.reply({ outcome: "closed", sourceId: "B" });
+    await vi.advanceTimersByTimeAsync(6000);
+    expect(await close).toBe(false);
+    expect(presentationControlsHtml(step, h.controller.getState(), "en")).toContain('data-presentation-action="recover-open"');
+    const retry = h.controller.recoverOpen("nova_mor");
+    expect(h.sent.at(-1).presentationGeneration).toBeGreaterThan(old.presentationGeneration);
+    h.replyTo(old, { outcome: "opened", sourceId: "A" });
+    h.reply({ outcome: "opened", sourceId: "B" });
+    expect(await retry).toBe(true);
+    const replacementClose = h.controller.run("close", "nova_mor");
+    h.reply({ outcome: "closed", sourceId: "B" });
+    expect(await replacementClose).toBe(true);
+  });
+
+  test("failure-only Home recovery releases correlation without claiming confirmed closure", async () => {
+    vi.useFakeTimers();
+    const h = makeControllerHarness();
+    expect(h.controller.releaseFailedSession()).toBe(false);
+    const opening = h.controller.run("open", "nova_mor");
+    expect(h.controller.releaseFailedSession()).toBe(false);
+    await vi.advanceTimersByTimeAsync(6000);
+    await opening;
+    expect(presentationControlsHtml(step, h.controller.getState(), "en")).toContain('data-presentation-action="recover-home"');
+    expect(h.controller.releaseFailedSession()).toBe(true);
+    expect(h.controller.getState()).toMatchObject({ phase: "released", sessionId: null });
+    h.replyTo(h.sent[0], { outcome: "opened", sourceId: "A" });
+    expect(await h.controller.closeForStepChange()).toBe(true);
+  });
+
+  test("command deadline and destroy abort outstanding transport", async () => {
+    vi.useFakeTimers();
+    const signals = [];
+    const h = createNliStaffPresentationController({ dataContext: {
+      subscribe: () => () => {},
+      narrativePresentationCommand: (_command, options) => {
+        signals.push(options.signal);
+        return new Promise(() => {});
+      },
+    } });
+    const opening = h.run("open", "nova_mor");
+    expect(signals[0].aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(6000);
+    expect(await opening).toBe(false);
+    expect(signals[0].aborted).toBe(true);
+    const retry = h.recoverOpen("nova_mor");
+    expect(signals.filter(signal => !signal.aborted)).toHaveLength(1);
+    h.destroy();
+    expect(await retry).toBe(false);
+    expect(signals.every(signal => signal.aborted)).toBe(true);
   });
 });

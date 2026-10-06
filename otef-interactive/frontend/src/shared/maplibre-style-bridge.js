@@ -11,6 +11,7 @@ import {
   PROJECTION_NLI_PEOPLE_POINT_RADIUS_SCALE,
   PROJECTION_MAPLIBRE_POINT_RADIUS_SCALE,
   PROJECTION_MAPLIBRE_STROKE_WIDTH_SCALE,
+  PROJECTION_SEA_FILL_COLOR,
 } from "./hatch-projection-presentation.js";
 import {
   BIBAS_BALLOON_ORANGE,
@@ -21,6 +22,7 @@ import {
   RIBBON_YELLOW,
 } from "./captivity-bleed-marker.js";
 import { buildMarkerLineSquareImageSpec } from "./markerline-square-image.js";
+import { EXCLUDED_SETTLEMENT_OUTLINE_IDS } from './settlement-label-presentation.js';
 
 function getNestedProp(obj, propPath) {
   if (!obj || !propPath) return undefined;
@@ -1496,6 +1498,8 @@ function shouldRenderMapLabelsFromStyle(styleOptions, fullLayerId) {
  *   only when `applyProjectionHatchPresentation` is true (projection); GIS default does not emit.
  */
 export function irToMapLibreLayers(fullLayerId, sourceLayerId, layerConfig, styleOptions = {}) {
+  // Projection connectors are painted dynamically with the moved settlement labels.
+  if (fullLayerId === 'projector_base.Locations_Lines') return [];
   void sourceLayerId;
 
   const style = layerConfig?.style || {};
@@ -1538,7 +1542,15 @@ export function irToMapLibreLayers(fullLayerId, sourceLayerId, layerConfig, styl
   const labelLayers = passMapLabels
     ? buildLabelSymbolLayer(idBase, style, layerConfig?.geometryType, fullLayerId)
     : [];
-  return [...baseLayers, ...leaderLineLayers, ...labelLayers];
+  const layers = [...baseLayers, ...leaderLineLayers, ...labelLayers];
+  if (fullLayerId === "projector_base.SEA" && hatchPresentation.applyProjectionHatchPresentation) {
+    return layers.map(layer => layer.type === "fill"
+      ? { ...layer, paint: { ...layer.paint, "fill-color": PROJECTION_SEA_FILL_COLOR } }
+      : layer);
+  }
+  if (fullLayerId !== 'projector_base.ישובים') return layers;
+  const keepOutline = ['!', ['in', ['to-string', ['get', 'OBJECTID']], ['literal', [...EXCLUDED_SETTLEMENT_OUTLINE_IDS]]]];
+  return layers.map(layer => ({ ...layer, filter: layer.filter ? ['all', layer.filter, keepOutline] : keepOutline }));
 }
 
 export {

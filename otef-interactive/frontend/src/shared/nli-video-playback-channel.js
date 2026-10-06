@@ -1,4 +1,5 @@
 import { createUuid } from "./uuid.js";
+import { openNliVideoPlaybackWebSocket } from "./nli-video-playback-websocket.js";
 
 const CHANNEL_NAME = "otef-nli-video-playback-v1";
 const HEARTBEAT_MS = 1000;
@@ -10,7 +11,7 @@ function usableTable(table) {
 
 function openChannel(BroadcastChannelImpl, warn) {
   if (typeof BroadcastChannelImpl !== "function") {
-    warn?.("NLI video playback sync is unavailable; browser projection cadence will remain unrestricted");
+    warn?.("NLI video playback BroadcastChannel is unavailable; using the backend transport when available");
     return null;
   }
   try {
@@ -30,9 +31,12 @@ export function createNliVideoPlaybackPublisher({
   windowRef = globalThis.window,
   warn = (...args) => console.warn(...args),
   sourceId = createUuid(),
+  websocketClientFactory,
+  socket = null,
 } = {}) {
   if (!usableTable(table)) throw new TypeError("table must be a nonempty string");
   const channel = openChannel(BroadcastChannelImpl, warn);
+  let websocket = null;
   let active = false;
   let sequence = 0;
   let disposed = false;
@@ -40,18 +44,19 @@ export function createNliVideoPlaybackPublisher({
   let pageHidden = false;
 
   const send = (nextActive = active) => {
-    if (!channel || disposed) return false;
+    if ((!channel && !websocket) || disposed) return false;
     sequence += 1;
+    const message = { type: "state", table, sourceId, sequence, active: nextActive && !pageHidden };
+    let sent = false;
     try {
-      channel.postMessage({ type: "state", table, sourceId, sequence, active: nextActive && !pageHidden });
-      return true;
+      if (channel) { channel.postMessage(message); sent = true; }
     } catch (error) {
       warn?.("NLI video playback state could not be published", error);
-      return false;
     }
+    return websocket?.postMessage(message) || sent;
   };
   const startHeartbeat = () => {
-    if (heartbeat !== null || !channel || disposed || pageHidden) return;
+    if (heartbeat !== null || (!channel && !websocket) || disposed || pageHidden) return;
     heartbeat = setIntervalImpl(() => send(true), HEARTBEAT_MS);
   };
   const stopHeartbeat = () => {
@@ -89,6 +94,10 @@ export function createNliVideoPlaybackPublisher({
   documentRef?.addEventListener?.("visibilitychange", onVisible);
   windowRef?.addEventListener?.("pagehide", onPageHide);
   windowRef?.addEventListener?.("pageshow", onPageShow);
+  websocket = openNliVideoPlaybackWebSocket({
+    table, onMessage, onConnect: () => send(active), warn, clientFactory: websocketClientFactory, socket,
+  });
+  websocket?.connect();
 
   return {
     setActive,
@@ -106,6 +115,7 @@ export function createNliVideoPlaybackPublisher({
       windowRef?.removeEventListener?.("pagehide", onPageHide);
       windowRef?.removeEventListener?.("pageshow", onPageShow);
       channel?.close?.();
+      websocket?.close();
     },
   };
 }
@@ -119,11 +129,13 @@ export function subscribeNliVideoPlayback({
   now = () => globalThis.performance?.now?.() ?? Date.now(),
   warn = (...args) => console.warn(...args),
   requesterId = createUuid(),
+  websocketClientFactory,
+  socket = null,
 } = {}) {
   if (!usableTable(table)) throw new TypeError("table must be a nonempty string");
   if (typeof onChange !== "function") throw new TypeError("onChange must be a function");
   const channel = openChannel(BroadcastChannelImpl, warn);
-  if (!channel) return () => {};
+  let websocket = null;
 
   const sources = new Map();
   let disposed = false;
@@ -180,16 +192,23 @@ export function subscribeNliVideoPlayback({
     }
   };
 
-  if (typeof channel.addEventListener === "function") channel.addEventListener("message", onMessage);
-  else channel.onmessage = onMessage;
-  channel.postMessage({ type: "query", table, requesterId });
+  if (typeof channel?.addEventListener === "function") channel.addEventListener("message", onMessage);
+  else if (channel) channel.onmessage = onMessage;
+  const query = { type: "query", table, requesterId };
+  websocket = openNliVideoPlaybackWebSocket({
+    table, onMessage, onConnect: () => websocket?.postMessage(query), warn, clientFactory: websocketClientFactory, socket,
+  });
+  try { channel?.postMessage(query); }
+  catch (error) { warn?.("NLI video playback query could not be published", error); }
+  websocket?.connect();
   return () => {
     if (disposed) return;
     disposed = true;
     if (expiryTimer !== null) clearTimeoutImpl(expiryTimer);
-    if (typeof channel.removeEventListener === "function") channel.removeEventListener("message", onMessage);
-    else channel.onmessage = null;
-    channel.close?.();
+    if (typeof channel?.removeEventListener === "function") channel.removeEventListener("message", onMessage);
+    else if (channel) channel.onmessage = null;
+    channel?.close?.();
+    websocket?.close();
     sources.clear();
   };
 }

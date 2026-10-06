@@ -17,6 +17,19 @@ function feature(citycode, text, lng, lat) {
 }
 
 describe("settlement name catalog", () => {
+  test('joins names to outline geometry by reviewed citycode mapping', () => {
+    const outline = { type: 'Feature', properties: { OBJECTID: 12 }, geometry: { type: 'Polygon', coordinates: [[[1,2],[2,2],[2,3],[1,2]]] } };
+    const catalog = buildSettlementNameCatalog(collection([feature('1240', 'עין הבשור', 1.5, 2.5)]),
+      { outlines: collection([outline]), outlineMap: { matches: [{ citycode: '1240', outlineObjectId: 12 }] } });
+    expect(catalog.outlines.get('1240')).toEqual(outline.geometry.coordinates);
+  });
+  test('retains original text offsets separately from serialized catalog entries', () => {
+    const source=feature('0067','label',34.4,31.3);
+    source.properties.otef_map_text_offset_em=[-0.5,1.25];
+    const catalog=buildSettlementNameCatalog(collection([source]));
+    expect(catalog.referenceOffsets.get('0067')).toEqual([-0.5,1.25]);
+    expect(Object.keys(catalog.entries[0])).toEqual(['citycode','text','lng','lat']);
+  });
   test("keeps feature order, leading zeroes, and point coordinates", () => {
     const catalog = buildSettlementNameCatalog(collection([
       feature("0067", "נירים", 34.4, 31.3),
@@ -62,6 +75,7 @@ describe("settlement name catalog", () => {
     const fetchImpl = async (url, options) => {
       calls.push(url);
       expect(options.signal.aborted).toBe(false);
+      expect(options.cache).toBe('no-cache');
       return { ok: true, json: async () => collection([feature("0916", "עין", 34.5, 31.4)]) };
     };
     const catalog = await loadSettlementNameCatalog({ registry, fetchImpl, signal: new AbortController().signal });

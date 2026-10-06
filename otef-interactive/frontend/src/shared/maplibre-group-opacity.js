@@ -46,12 +46,19 @@ export function createMapLibreGroupOpacity(id, opacity) {
       gl.deleteProgram(program);
       throw new Error(`Marker group program: ${error}`);
     }
+    const vertexArrayExtension = gl.createVertexArray ? null : gl.getExtension("OES_vertex_array_object");
+    const bindVertexArray = (array) => vertexArrayExtension
+      ? vertexArrayExtension.bindVertexArrayOES(array) : gl.bindVertexArray(array);
     const buffer = gl.createBuffer();
-    gl.bindVertexArray?.(null);
+    bindVertexArray(null);
     gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
     resources = {
       program, buffer, width: 0, height: 0,
+      vertexArray: vertexArrayExtension ? vertexArrayExtension.createVertexArrayOES() : gl.createVertexArray(),
+      bindVertexArray,
+      deleteVertexArray: (array) => vertexArrayExtension
+        ? vertexArrayExtension.deleteVertexArrayOES(array) : gl.deleteVertexArray(array),
       textures: [gl.createTexture(), gl.createTexture()],
       position: gl.getAttribLocation(program, "a_position"),
       background: gl.getUniformLocation(program, "u_background"),
@@ -104,7 +111,8 @@ export function createMapLibreGroupOpacity(id, opacity) {
       gl.disable(gl.STENCIL_TEST);
       gl.colorMask(true, true, true, true);
       gl.depthMask(false);
-      gl.bindVertexArray?.(null);
+      // The default VAO can retain enabled attributes whose buffers MapLibre deleted.
+      resources.bindVertexArray(resources.vertexArray);
       gl.useProgram(resources.program);
       gl.bindBuffer(gl.ARRAY_BUFFER, resources.buffer);
       gl.enableVertexAttribArray(resources.position);
@@ -117,10 +125,12 @@ export function createMapLibreGroupOpacity(id, opacity) {
       gl.uniform1i(resources.group, 1);
       gl.uniform1f(resources.opacity, typeof opacity === "function" ? opacity() : opacity);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
+      resources.bindVertexArray(null);
     },
     onRemove(_map, gl) {
       if (!resources) return;
       for (const texture of resources.textures) gl.deleteTexture(texture);
+      resources.deleteVertexArray(resources.vertexArray);
       gl.deleteBuffer(resources.buffer);
       gl.deleteProgram(resources.program);
       resources = null;

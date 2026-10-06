@@ -4,6 +4,20 @@ import { createSettlementNameControls } from "../../frontend/src/projection-conf
 
 const catalog = { entries: [{ citycode: "0067", text: "נירים", lng: 34.4, lat: 31.3 }, { citycode: "0424", text: "מחוץ", lng: 34.2, lat: 31.2 }] };
 
+test('offers a manual word break and independently edits connector width', () => {
+  const onLineBreak = vi.fn(), onLeaderStyle = vi.fn();
+  const controls = createSettlementNameControls(documentHarness(), { onLineBreak, onLeaderStyle });
+  controls.render({ catalog: { entries: [{ citycode: '1223', text: 'שדי אברהם' }] }, citycode: '1223',
+    style: { fontPx: 14, rotateDeg: 0 }, hydration: { status: 'Saved' }, afterWord: 0 });
+  const lineBreak = find(controls.element, n => n.dataset?.field === 'lineBreak');
+  expect(lineBreak).toBeDefined();
+  lineBreak.value = '1'; lineBreak.dispatch('change');
+  expect(onLineBreak).toHaveBeenCalledWith(1);
+  const width = find(controls.element, n => n.dataset?.field === 'widthPx');
+  width.value = '2'; width.dispatch('input'); width.dispatch('change');
+  expect(onLeaderStyle).toHaveBeenCalledWith(expect.objectContaining({ widthPx: 2, color: '#fdfdfd' }));
+});
+
 function documentHarness() {
   const doc = {
     activeElement: null,

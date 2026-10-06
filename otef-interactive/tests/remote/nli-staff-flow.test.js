@@ -197,7 +197,7 @@ describe("NLI staff show flow", () => {
     const hostages = NARRATIVES.find((item) => item.id === "hostages");
     const presentationIndex = hostages.steps.findIndex((step) => step.presentation);
     const presentation = hostages.steps[presentationIndex];
-    expect(presentation.presentation).toEqual({ segmentId: "hostages", open: "manual", onClose: "stay" });
+    expect(presentation.presentation).toEqual({ segmentId: "hostages", open: "auto", onClose: "stay" });
     expect(hostages.steps[presentationIndex + 1].title.en).toBe("Nir Oz victims and hostages");
     expect(hostages.steps[presentationIndex + 1].cue.layers).toContain("nli.people");
     expect(hostages.steps[presentationIndex + 2].title.en).toBe("All hostages");

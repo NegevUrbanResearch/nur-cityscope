@@ -41,7 +41,7 @@ test("launcher exposes remote open/copy/QR controls and required mobile copy", (
   expect(html).toContain('id="shareQrNli"');
   expect(html).not.toContain('id="shareQrWifi"');
   expect(html).not.toContain('id="wifiPassword"');
-  expect(html).toContain("Connect on the same Wi-Fi, or use Tailnet off-LAN.");
+  expect(html).toContain("Connect your tablet to the same router network. The PC can use Ethernet or Wi-Fi.");
   expect(html).toContain("min-height: 44px");
   expect(html).toContain('button[aria-pressed="true"]');
   expect(html).not.toMatch(/button\[aria-pressed="true"\][^}]*background:\s*#d5e5ff/);
@@ -162,50 +162,48 @@ test("share.json local origin keeps GIS on the page and remotes/QR on labpc", as
   dispose();
 });
 
-test("missing hotspot address defaults to Tailnet but keeps the unavailable local option", async () => {
+test("missing LAN address defaults to Tailnet but keeps the unavailable local option", async () => {
   const document = makeDocument();
   const dispose = initLauncher({
     document,
     location: new URL("http://localhost/otef-interactive/launcher.html"),
-    fetchImpl: fetchShare({ localOrigin: null, tailnetOrigin: "http://100.64.252.114", localKind: "hotspot", fromShareFile: true }),
+    fetchImpl: fetchShare({ localOrigin: null, tailnetOrigin: "http://100.64.252.114", localKind: "lan", fromShareFile: true }),
     storage: makeStorage(),
   });
   await flush();
   expect(document.getElementById("remoteOpen").href).toBe("http://100.64.252.114/otef-interactive/remote-controller.html");
   expect(document.getElementById("staffRemoteOpen").href).toBe("http://100.64.252.114/otef-interactive/nli-staff-remote.html");
   expect(document.getElementById("shareModeTailnet").attributes["aria-pressed"]).toBe("true");
-  expect(document.getElementById("localShareHint").textContent).toContain("PC hotspot address unavailable");
+  expect(document.getElementById("localShareHint").textContent).toContain("LAN address unavailable");
   expect(document.getElementById("localShareHint").textContent).toContain("reload this launcher");
-  expect(document.getElementById("shareModeLocal").textContent).toBe("PC Hotspot");
+  expect(document.getElementById("shareModeLocal").textContent).toBe("Local");
   expect(document.getElementById("shareModeTailnet").hidden).toBe(false);
   await document.getElementById("shareModeLocal").dispatch("click");
   expect(document.getElementById("remoteOpen").attributes["aria-disabled"]).toBe("true");
   expect(document.getElementById("remoteOpen").dataset.url).toBe("");
-  expect(document.getElementById("shareStatus").textContent).toContain("Turn on the PC hotspot");
+  expect(document.getElementById("shareStatus").textContent).toContain("LAN address unavailable");
   dispose();
 });
 
-test("active hotspot selects its local address on every load despite a saved Tailnet choice", async () => {
+test("active LAN selects its current IP on every load despite a saved Tailnet choice", async () => {
   const document = makeDocument();
   const storage = makeStorage({ [SHARE_MODE_KEY]: "tailnet" });
   const dispose = initLauncher({
     document,
     location: new URL("http://localhost/otef-interactive/launcher.html"),
-    fetchImpl: fetchShare({ ...shareHosts(), localKind: "hotspot" }),
+    fetchImpl: fetchShare({ localOrigin: "http://192.168.13.35", tailnetOrigin: "http://100.64.252.114", localKind: "lan" }),
     storage,
   });
   await flush();
-  expect(document.getElementById("shareModeLocal").textContent).toBe("PC Hotspot");
+  expect(document.getElementById("shareModeLocal").textContent).toBe("Local");
   expect(document.getElementById("shareModeLocal").attributes["aria-pressed"]).toBe("true");
-  expect(document.getElementById("remoteOpen").href).toBe("http://labpc.local/otef-interactive/remote-controller.html");
-  expect(document.getElementById("remoteUrl").textContent).toBe("http://labpc.local/otef-interactive/remote-controller.html");
-  expect(document.getElementById("localShareHint").textContent).toContain("assumed and unverified");
-  expect(document.getElementById("localShareHint").textContent).toContain("Turn on the PC hotspot before scanning");
-  expect(document.getElementById("localShareHint").textContent).toContain("choose Tailnet");
-  expect(document.getElementById("localShareHint").textContent).toContain("If its IP changes after a PC restart");
-  expect(document.getElementById("localShareHint").textContent).toContain("update the saved hotspot IP");
-  expect(document.getElementById("localShareHint").textContent).toContain("restart the OTEF helper");
-  expect(document.getElementById("shareStatus").textContent).toContain("Saved hotspot address is unverified");
+  expect(document.getElementById("remoteOpen").href).toBe("http://192.168.13.35/otef-interactive/remote-controller.html");
+  expect(document.getElementById("remoteUrl").textContent).toBe("http://192.168.13.35/otef-interactive/remote-controller.html");
+  expect(document.getElementById("localShareHint").textContent).toContain("same router network");
+  expect(document.getElementById("localShareHint").textContent).toContain("Ethernet or Wi-Fi");
+  expect(document.getElementById("localShareHint").textContent).toContain("run start-otef again");
+  expect(document.getElementById("localShareHint").textContent).not.toContain("hotspot");
+  expect(document.getElementById("shareStatus").textContent).toContain("same router network");
   expect(storage.getItem(SHARE_MODE_KEY)).toBe("local");
   await document.getElementById("shareModeTailnet").dispatch("click");
   expect(document.getElementById("remoteOpen").href).toBe("http://100.64.252.114/otef-interactive/remote-controller.html");
@@ -290,13 +288,13 @@ test("missing tailnetOrigin hides Tailnet and clamps stored tailnet to local", a
   dispose();
 });
 
-test("hotspot guidance omits Tailnet when no fallback is available", async () => {
-  for (const localOrigin of ["http://192.168.137.2", null]) {
+test("LAN guidance omits Tailnet when no fallback is available", async () => {
+  for (const localOrigin of ["http://192.168.13.35", null]) {
     const document = makeDocument();
     const dispose = initLauncher({
       document,
       location: new URL("http://localhost/otef-interactive/launcher.html"),
-      fetchImpl: fetchShare({ localOrigin, tailnetOrigin: null, localKind: "hotspot" }),
+      fetchImpl: fetchShare({ localOrigin, tailnetOrigin: null, localKind: "lan" }),
       storage: makeStorage(),
     });
     await flush();

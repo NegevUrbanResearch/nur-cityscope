@@ -593,7 +593,7 @@ describe("legend content model", () => {
         expect(getLegendCategoryCopy(fullId, value, "en"), `${fullId}:${value}:en`).toBeTruthy();
       }
     }
-    expect(getLegendCategoryCopy("nli.people", "Kidnap survivor", "he")).toBe("חטופים ששבו");
+    expect(getLegendCategoryCopy("nli.people", "Kidnap survivor", "he")).toBe("חטופים שחזרו");
     expect(getLegendCategoryCopy("nli.people", "Murdered in captivity", "he")).toBe("חטופים שנרצחו");
     expect(getLegendCategoryCopy("nli.people", "Kidnap survivor", "en")).toBe("Surviving hostages");
     expect(getLegendCategoryCopy("nli.people", "Murdered in captivity", "en")).toBe("Murdered hostages");

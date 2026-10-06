@@ -38,7 +38,9 @@ function symbolMarkup(part = {}, geometry = null, fontPx = 22) {
   if (shape === "line") {
     const dash = part.dash && (Array.isArray(part.dash) ? part.dash : part.dash.array);
     const dashColor = part.stroke || fill || "#808080";
-    if (part.carrier) {
+    if (part.strokeGradient?.length) {
+      background = `linear-gradient(180deg, ${part.strokeGradient.map(({ offset, color }) => `${color} ${offset * 100}%`).join(", ")})`;
+    } else if (part.carrier) {
       const on = Math.max(2, Math.round((dash?.[0] || 4) * 0.5));
       const off = Math.max(2, Math.round((dash?.[1] != null ? dash[1] : dash?.[0] || 4) * 0.5));
       background = `repeating-linear-gradient(90deg, ${dashColor} 0px, ${dashColor} ${on}px, transparent ${on}px, transparent ${on + off}px), linear-gradient(${part.carrier}, ${part.carrier})`;
@@ -167,7 +169,9 @@ function mountMapLegend({ element, surface = "gis", projectionSpan = "full", dat
   const panelHeight = () => Math.max(1, element.clientHeight || (mode === "projection" ? 400 : 130));
   const panelWidth = () => {
     if (mode === "gis" && typeof window !== "undefined" && Number.isFinite(window.innerWidth)) {
-      return Math.max(1, window.innerWidth - (window.innerWidth <= 720 ? 18 : 36));
+      const scale = Number(window.document?.body?.dataset.gisDisplayScale) || 1;
+      const width = window.innerWidth / scale;
+      return Math.max(1, width - (width <= 720 ? 18 : 36));
     }
     return Math.max(1, element.clientWidth || 500);
   };

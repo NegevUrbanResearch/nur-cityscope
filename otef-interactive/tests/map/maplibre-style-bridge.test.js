@@ -20,6 +20,17 @@ function assertPaintHasNoNullish(paint) {
 }
 
 describe("irToMapLibreLayers", () => {
+  it.each([false, true])('excludes the unnamed Mavkiim outline on projection=%s without hiding adjacent settlements', projection => {
+    const config = { geometryType: 'polygon', style: { renderer: 'simple', defaultSymbol: { symbolLayers: [{ type: 'stroke', width: 2, color: '#ffffff' }] } } };
+    const layers = irToMapLibreLayers('projector_base.ישובים', '', config, { applyProjectionHatchPresentation: projection });
+    expect(layers.length).toBeGreaterThan(0);
+    for (const layer of layers) expect(layer.filter).toEqual(['!', ['in', ['to-string', ['get', 'OBJECTID']], ['literal', ['41']]]]);
+  });
+  it('suppresses every legacy settlement connector on GIS and projection', () => {
+    const config = { geometryType: 'line', style: { renderer: 'simple', defaultSymbol: { symbolLayers: [{ type: 'stroke', width: 2, color: '#ffffff' }] } } };
+    expect(irToMapLibreLayers('projector_base.Locations_Lines', '', config)).toEqual([]);
+    expect(irToMapLibreLayers('projector_base.Locations_Lines', '', config, { applyProjectionHatchPresentation: true })).toEqual([]);
+  });
   it("converts a simple solid-fill polygon layer", () => {
     const layerConfig = {
       geometryType: "polygon",

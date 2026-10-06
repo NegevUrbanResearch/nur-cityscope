@@ -1,5 +1,5 @@
 import { copyUrl } from "../shared/copy-url.js";
-import { loadShareHosts, originForMode } from "../shared/share-origin.js";
+import { initialShareMode, loadShareHosts, originForMode } from "../shared/share-origin.js";
 import { renderQr } from "../shared/qr-code.js";
 
 const SHARE_MODE_KEY = "otef.share.mode";
@@ -155,11 +155,11 @@ export function initLauncher({
 
   const applyShare = () => {
     if (tailnetButton) tailnetButton.hidden = !hosts.tailnetOrigin;
-    if (localButton) localButton.textContent = hosts.localKind === "hotspot" ? "PC Hotspot" : "Local";
-    if (localShareHint) localShareHint.textContent = hosts.localKind === "hotspot"
+    if (localButton) localButton.textContent = "Local";
+    if (localShareHint) localShareHint.textContent = hosts.localKind === "lan"
       ? hosts.localOrigin
-        ? `This saved PC hotspot address is assumed and unverified. Turn on the PC hotspot before scanning.${hosts.tailnetOrigin ? " If the local connection fails, choose Tailnet." : ""} If its IP changes after a PC restart, update the saved hotspot IP, restart the OTEF helper, then reload this launcher.`
-        : `PC hotspot address unavailable. Turn on the hotspot, restart the OTEF helper, then reload this launcher.${hosts.tailnetOrigin ? " Tailnet is available as a fallback." : ""}`
+        ? `Connect your tablet to the same router network as the PC (${hosts.localOrigin}). The PC can use Ethernet or Wi-Fi.${hosts.tailnetOrigin ? " If the local connection fails, choose Tailnet." : ""} If the PC changes networks or its IP changes, run start-otef again, then reload this launcher.`
+        : `LAN address unavailable. Connect the PC to the router by Ethernet or Wi-Fi, run start-otef again, then reload this launcher.${hosts.tailnetOrigin ? " Tailnet is available as a fallback." : ""}`
       : "Local link uses the exhibit computer's active address.";
     mode = resolveShareMode(mode, hosts);
     qrTarget = resolveQrTarget(qrTarget);
@@ -175,11 +175,11 @@ export function initLauncher({
     if (shareUrl) shareUrl.textContent = qrHref || "—";
     qrHost?.setAttribute?.("aria-label", `QR code for ${qrTarget === "nli" ? "NLI staff remote" : "regular remote"}`);
     if (shareStatus) {
-      shareStatus.textContent = qrHref && mode === "local" && hosts.localKind === "hotspot"
-        ? `Saved hotspot address is unverified. Turn on the PC hotspot before scanning.${hosts.tailnetOrigin ? " Choose Tailnet if the local connection fails." : ""}`
+      shareStatus.textContent = qrHref && mode === "local" && hosts.localKind === "lan"
+        ? "LAN address detected. Connect the tablet to the same router network before scanning."
         : qrHref ? "Ready to connect."
-        : mode === "local" && !hosts.localOrigin && hosts.localKind === "hotspot"
-          ? `Local address unavailable. Turn on the PC hotspot, restart the OTEF helper, then reload this launcher${hosts.tailnetOrigin ? ", or use Tailnet." : "."}`
+        : mode === "local" && !hosts.localOrigin && hosts.localKind === "lan"
+          ? `LAN address unavailable. Run start-otef again, then reload this launcher${hosts.tailnetOrigin ? ", or use Tailnet." : "."}`
           : "Run start-otef to publish a share address.";
     }
     if (!qrHost) return;
@@ -241,7 +241,7 @@ export function initLauncher({
   void loadShareHosts({ location, fetchImpl }).then((loaded) => {
     if (disposed) return;
     hosts = loaded;
-    if (hosts.localKind === "hotspot") mode = hosts.localOrigin ? "local" : (hosts.tailnetOrigin ? "tailnet" : "local");
+    mode = initialShareMode(mode, hosts);
     applyShare();
   });
 

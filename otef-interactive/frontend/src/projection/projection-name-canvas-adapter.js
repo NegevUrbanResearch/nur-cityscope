@@ -5,7 +5,7 @@ const WIDTH = 1920;
 const HEIGHT = 1080;
 
 /** A candidate becomes visible only after commit; visibility never repaints its glyphs. */
-export function createProjectionNameCanvasAdapter({ document = globalThis.document, output } = {}) {
+export function createProjectionNameCanvasAdapter({ document = globalThis.document, output, rasterScale = 1 } = {}) {
   if (!['left', 'right'].includes(output)) throw new Error('name adapter output must be left or right');
   let pending = null, active = null, previous = null, hasRollback = false, disposed = false;
   let opacity = 0, revealSeconds = 0, selectedPid = null;
@@ -45,7 +45,7 @@ export function createProjectionNameCanvasAdapter({ document = globalThis.docume
           !Number.isFinite(logicalPlane?.planeScale)) throw new Error('incomplete name canvas candidate');
       const canvas = document?.createElement?.('canvas');
       if (!canvas) throw new Error('name canvas is unavailable');
-      canvas.width = WIDTH; canvas.height = HEIGHT;
+      canvas.width = WIDTH * rasterScale; canvas.height = HEIGHT * rasterScale;
       const ctx = canvas.getContext?.('2d');
       if (!ctx) throw new Error('name canvas 2D context is unavailable');
       const origin = planeToOutputUv([0, 0], config, output, logicalPlane);
@@ -53,7 +53,7 @@ export function createProjectionNameCanvasAdapter({ document = globalThis.docume
       const yUnit = planeToOutputUv([0, 1], config, output, logicalPlane);
       const matrix = [(xUnit.u - origin.u) * WIDTH, (xUnit.v - origin.v) * HEIGHT,
         (yUnit.u - origin.u) * WIDTH, (yUnit.v - origin.v) * HEIGHT,
-        origin.u * WIDTH, origin.v * HEIGHT];
+        origin.u * WIDTH, origin.v * HEIGHT].map(value => value * rasterScale);
       const own = placements.filter((item) => item.output === output);
       if (own.some((item) => !item.id || !item.name || ![item.x, item.y, item.width, item.height].every(Number.isFinite) ||
           ['textOffsetX', 'textOffsetY'].some((key) => Object.hasOwn(item, key) && !Number.isFinite(item[key]))))

@@ -1,5 +1,6 @@
 import { validateProjectionConfig } from "../shared/projection-config-schema.js";
 import { withRequestDeadline } from "../shared/request-deadline.js";
+import { validSettlementOriginGeometry } from '../projection-config/settlement-origin-geometry.js';
 
 function runBoundedPreviewOperation(operation, parentSignal) {
   let completedSynchronously = false;
@@ -100,8 +101,10 @@ export function installProjectionSettlementPreviewBridge({ win, sessionId, outpu
         fail(new Error("Settlement preview labels are invalid"));
         return;
       }
+      if (!validSettlementOriginGeometry(result.originGeometry)) { fail(new Error('Settlement origin geometry is invalid')); return; }
       reply({ type: "otef_settlement_preview_rendered", requestId: state.requestId, calibrationRevision: result.calibrationRevision,
-        meshIdentity: result.meshIdentity, mesh: result.mesh, labels: result.labels, warnings: result.warnings });
+        meshIdentity: result.meshIdentity, mesh: result.mesh, labels: result.labels, warnings: result.warnings, originGeometry: result.originGeometry || null,
+        ...(result.positionMatrix == null ? {} : {positionMatrix:result.positionMatrix}) });
     }).catch(fail);
   };
   win.addEventListener("message", onMessage);
@@ -123,7 +126,7 @@ function boundedWallDiagnostics(value) {
     ...(typeof value.reason === "string" ? { reason: value.reason.slice(0, 240) } : {}) };
 }
 
-export function installProjectionPreviewBridge({ win, output, map, nameFieldController, syncContextInvestigation, applyProjectionConfig, validateWall }) {
+export function installProjectionPreviewBridge({ win, output, map, nameFieldController, syncContextInvestigation, applyProjectionConfig, validateWall, setCalibrationView, readSourceState, subscribeSourceState, onGeometryState = () => {} }) {
   if (!win?.parent || win.parent === win || !["left", "right"].includes(output)) return () => {};
   const origin = win.location.origin;
   const reply = (message) => win.parent.postMessage({ ...message, output }, origin);
@@ -134,9 +137,38 @@ export function installProjectionPreviewBridge({ win, output, map, nameFieldCont
   let namesGeneration = 0;
   let namesAbort = null;
   let lastConfigRequestId = 0;
+  let calibrationRequestId = 0, calibrationAbort = null, disposed = false;
+  let geometryPending = false, geometryFailed = false, sourceMessageIdentity = null, appliedConfigIdentity = null;
+  let appliedRevision = -1;
+  const getAppliedGeometryState = () => ({ revision: appliedRevision, configIdentity: appliedConfigIdentity,
+    pending: geometryPending, failed: geometryFailed, suspended: disposed, stopped: disposed });
+  const notifySourceState = () => {
+    if (disposed || !lastConfigRequestId || typeof readSourceState !== 'function') return;
+    const state = readSourceState();
+    const sourceFrameIdentity = typeof state?.sourceFrameIdentity === 'string' && state.sourceFrameIdentity.length <= 4096 ? state.sourceFrameIdentity : null;
+    const message = { type: 'otef_projection_preview_source_state', requestId: lastConfigRequestId, sourceFrameIdentity,
+      stable: Boolean(sourceFrameIdentity && state?.stable && !geometryPending && !geometryFailed),
+      error: geometryPending ? 'Preview geometry is pending' : geometryFailed ? 'Preview geometry failed; retry before point capture.' : state?.error ? String(state.error).slice(0, 240) : null };
+    const identity = JSON.stringify(message);
+    if (identity === sourceMessageIdentity) return;
+    sourceMessageIdentity = identity; reply(message);
+  };
+  const offSource = subscribeSourceState?.(notifySourceState);
   const onMessage = (event) => {
     const message = event.data;
-    if (event.source !== win.parent || event.origin !== origin || !['otef_projection_preview_config', 'otef_projection_preview_validate'].includes(message?.type) || message.output !== output || !Number.isSafeInteger(message.requestId)) return;
+    if (disposed || event.source !== win.parent || event.origin !== origin || !['otef_projection_preview_config', 'otef_projection_preview_validate', 'otef_projection_preview_calibration'].includes(message?.type) || message.output !== output || !Number.isSafeInteger(message.requestId)) return;
+    if (message.type === 'otef_projection_preview_calibration') {
+      if (message.requestId <= calibrationRequestId || typeof message.enabled !== 'boolean' || Object.keys(message).length !== 4 || typeof setCalibrationView !== 'function') return;
+      calibrationRequestId = message.requestId; calibrationAbort?.abort(); calibrationAbort = new AbortController();
+      const signal = calibrationAbort.signal, requestId = message.requestId;
+      const current = () => !disposed && !signal.aborted && requestId === calibrationRequestId;
+      Promise.resolve().then(() => setCalibrationView(message.enabled, {signal})).then(result => {
+        if (!current()) return;
+        reply({type:'otef_projection_preview_calibration_rendered',requestId,sceneIdentity:result.sceneIdentity ?? null,
+          ready:result.ready === true,missingIds:result.missingIds || [],error:result.error || null});
+      }).catch(error => { if (current()) reply({type:'otef_projection_preview_calibration_rendered',requestId,sceneIdentity:null,ready:false,missingIds:[],error:String(error.message || error).slice(0,240)}); });
+      return;
+    }
     if (message.type === 'otef_projection_preview_validate') {
       const identity = message.identity;
       const requestId = message.requestId;
@@ -175,6 +207,8 @@ export function installProjectionPreviewBridge({ win, output, map, nameFieldCont
     }
     if (message.requestId <= lastConfigRequestId) return;
     lastConfigRequestId = message.requestId;
+    geometryPending = true; geometryFailed = false; notifySourceState();
+    onGeometryState(getAppliedGeometryState());
     const runNames = message.runNames === true;
     if (runNames) {
       namesAbort?.abort();
@@ -186,10 +220,15 @@ export function installProjectionPreviewBridge({ win, output, map, nameFieldCont
         if (prepared === false) throw new Error("Projection names rejected applied calibration");
         syncContextInvestigation();
         reply({ type: "otef_projection_preview_applied", requestId: message.requestId, success: true });
+        geometryPending = false; notifySourceState();
+        onGeometryState(getAppliedGeometryState());
       };
       const failNames = (error) => {
-        if (generation === namesGeneration && !signal.aborted)
+        if (generation === namesGeneration && !signal.aborted) {
           reply({ type: "otef_projection_preview_applied", requestId: message.requestId, success: false, error: error.message || "Names preview failed" });
+          geometryPending = false; geometryFailed = true; notifySourceState();
+          onGeometryState(getAppliedGeometryState());
+        }
       };
       try {
         const bounded = runBoundedPreviewOperation((operationContext) => applyProjectionConfig?.(message.config, { generation, ...operationContext, runNames: true }), signal);
@@ -213,9 +252,14 @@ export function installProjectionPreviewBridge({ win, output, map, nameFieldCont
       }
       syncContextInvestigation();
       reply({ type: "otef_projection_preview_applied", requestId: message.requestId, success: true });
+      appliedConfigIdentity = JSON.stringify(message.config); appliedRevision = message.requestId;
+      geometryPending = false; onGeometryState(getAppliedGeometryState()); notifySourceState();
     };
-    const fail = (error) => { if (generation === applyGeneration && !applyAbort.signal.aborted)
-      reply({ type: "otef_projection_preview_applied", requestId: message.requestId, success: false, error: error.message || "Preview failed" }); };
+    const fail = (error) => { if (generation === applyGeneration && !applyAbort.signal.aborted) {
+      reply({ type: "otef_projection_preview_applied", requestId: message.requestId, success: false, error: error.message || "Preview failed" });
+      geometryPending = false; geometryFailed = true; notifySourceState();
+      onGeometryState(getAppliedGeometryState());
+    } };
     try {
       const bounded = runBoundedPreviewOperation((operationContext) => applyProjectionConfig?.(message.config, { generation, ...operationContext, runNames: false }), applyAbort.signal);
       if (bounded.synchronous) finish(bounded.value);
@@ -224,5 +268,7 @@ export function installProjectionPreviewBridge({ win, output, map, nameFieldCont
   };
   win.addEventListener("message", onMessage);
   reply({ type: "otef_projection_preview_ready" });
-  return () => { validationGeneration++; validationAbort?.abort(); applyGeneration++; applyAbort?.abort(); namesGeneration++; namesAbort?.abort(); win.removeEventListener("message", onMessage); };
+  const dispose = () => { disposed = true; offSource?.(); calibrationAbort?.abort(); validationGeneration++; validationAbort?.abort(); applyGeneration++; applyAbort?.abort(); namesGeneration++; namesAbort?.abort(); win.removeEventListener("message", onMessage); };
+  dispose.getAppliedGeometryState = getAppliedGeometryState;
+  return dispose;
 }

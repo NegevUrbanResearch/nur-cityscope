@@ -196,6 +196,9 @@ export function createNarrativeFocusRenderer(map, { profile } = {}) {
       source?.setData?.(data);
     }
     removeLayer(map, NARRATIVE_FOCUS_RENDERER_IDS.halo);
+    const haloColor = definition.id === "nova"
+      ? NLI_VISUAL_TOKENS.annotationHalo
+      : NLI_VISUAL_TOKENS.incidentRed;
     if (!layerPresent(map, NARRATIVE_FOCUS_RENDERER_IDS.label)) {
       map.addLayer?.({
         id: NARRATIVE_FOCUS_RENDERER_IDS.label,
@@ -203,6 +206,7 @@ export function createNarrativeFocusRenderer(map, { profile } = {}) {
         source: NARRATIVE_FOCUS_RENDERER_IDS.source,
         layout: {
           "text-field": ["get", "label"],
+          "text-font": ["Guttman Hatzvi", "Arial"],
           "text-size": displayProfile.narrativeFocus.textSize,
           "text-allow-overlap": true,
           "text-anchor": "bottom",
@@ -210,10 +214,12 @@ export function createNarrativeFocusRenderer(map, { profile } = {}) {
         },
         paint: {
           "text-color": NLI_VISUAL_TOKENS.annotationInk,
-          "text-halo-color": NLI_VISUAL_TOKENS.incidentRed,
+          "text-halo-color": haloColor,
           "text-halo-width": displayProfile.narrativeFocus.textHaloWidth,
         },
       });
+    } else {
+      map.setPaintProperty?.(NARRATIVE_FOCUS_RENDERER_IDS.label, "text-halo-color", haloColor);
     }
     bringToFront(map, NARRATIVE_FOCUS_RENDERER_IDS.label);
   }

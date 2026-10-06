@@ -293,13 +293,18 @@ class EscapeOverlaySceneTests(TestCase):
         ]
         self.assertEqual(overlay_messages[-1]["escapeOverlay"], settled)
 
-    def test_presentation_open_for_nova_is_400(self):
+    @patch("channels.layers.get_channel_layer")
+    def test_legacy_presentation_open_without_segment_id_is_rejected(self, get_layer):
+        get_layer.return_value.group_send = AsyncMock()
         enter = self.command(
             "set_narrative",
             narrativeId="nova",
             expectedRevision=3,
         )
         self.assertEqual(enter.status_code, 200)
+        self.state.refresh_from_db()
+        original_narrative = self.state.narrative_state
+        get_layer.return_value.group_send.reset_mock()
 
         response = self.command(
             "narrative_presentation",
@@ -310,6 +315,7 @@ class EscapeOverlaySceneTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.json()["error"], "narrative has no presentation")
+        self.assertEqual(response.json()["error"], "unsupported segmentId")
+        get_layer.return_value.group_send.assert_not_called()
         self.state.refresh_from_db()
-        self.assertEqual(self.state.narrative_state["id"], "nova")
+        self.assertEqual(self.state.narrative_state, original_narrative)

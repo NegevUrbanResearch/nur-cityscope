@@ -149,7 +149,7 @@ function Invoke-ProjectionStartup {
 
     node --experimental-detect-module (Join-Path $PSScriptRoot 'write-share-hosts.mjs') --repository-root $RepositoryRoot --port $port
     if ($LASTEXITCODE -ne 0) {
-        Write-Error 'Failed to write hostname share file.'
+        Write-Error 'Failed to write LAN/Tailscale share file.'
         return $false
     }
     $pagerPath = Join-Path $PSScriptRoot 'nli-archive-pager.mjs'

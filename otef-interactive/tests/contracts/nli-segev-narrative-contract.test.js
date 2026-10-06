@@ -7,6 +7,8 @@ import {
   NLI_NARRATIVE_EXIT_SCENE,
 } from "../../frontend/src/shared/nli-narratives.js";
 import { GIS_BASEMAP_IDS } from "../../frontend/src/shared/gis-basemap.js";
+import { createGisNarrativeController } from "../../frontend/src/map/nli-narrative-controller.js";
+import { createFakeMapLibreMap } from "../helpers/fake-maplibre-map.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const frontendRoot = path.resolve(here, "../../frontend/src");
@@ -91,8 +93,20 @@ describe("NLI Segev narrative cross-surface contract", () => {
       zoom: 10,
       basemap: "dark",
     });
-    expect(stripComments(gisNarrativeController)).toMatch(/flyTo\?\.\(\{ center: definition\.center, zoom: definition\.zoom/);
-    expect(stripComments(gisNarrativeController)).toMatch(/flyTo\?\.\(\{ center: exitCenter\(\), zoom: 10/);
+    const map = createFakeMapLibreMap();
+    const travels = [];
+    map.flyTo = options => travels.push(options);
+    const controller = createGisNarrativeController({
+      map, storage: null,
+      dataContext: { getBounds: () => ({ west: 34, east: 35, south: 31, north: 32 }) },
+    });
+    controller.apply({ id: "segev", transition: "enter", revision: 1 });
+    controller.apply({ id: null, transition: "exit", revision: 2 });
+    expect(travels).toEqual([
+      { center: segev.center, zoom: 18, essential: true, duration: 1600 },
+      { center: [34.5, 31.5], zoom: 10, essential: true, duration: 1600 },
+    ]);
+    controller.dispose();
     expect(stripComments(gisNarrativeController)).not.toMatch(/zoom:\s*19\b/);
   });
 

@@ -312,7 +312,7 @@ export function initNliStaffRemote(dataContext, { presenterManifest = presenterC
       isCurrent,
     }),
     endClock: async (isCurrent) => {
-      const result = await dataContext.patchInvestigationClock(buildNovaEndedClock(), { isCurrent });
+      const result = await dataContext.patchInvestigationClock(buildNovaEndedClock(dataContext.getInvestigationClock()), { isCurrent });
       if (typeof isCurrent === "function" && !isCurrent()) return;
       if (!result?.ok || result.stale) {
         throw result?.error || new Error("Clock update was not acknowledged");
@@ -529,7 +529,7 @@ export function initNliStaffRemote(dataContext, { presenterManifest = presenterC
     const next = nextAction(state);
     const choices = next.kind === "choose";
     $("prevBtn").setAttribute("aria-label", getLocale() === "he" ? "הסצנה הקודמת" : "Previous scene");
-    $("nextBtn").setAttribute("aria-label", getLocale() === "he" ? "הסצנה הבאה" : "Next scene");
+    $("nextBtn").setAttribute("aria-label", next.kind === "finish" ? txt("done") : getLocale() === "he" ? "הסצנה הבאה" : "Next scene");
     $("prevBtn").disabled = !canReplaceNavigation() || !prevAction(state);
     $("nextBtn").hidden = choices;
     $("nextBtn").textContent = txt({ step: "next", resume: "backToShow", finish: "done" }[next.kind] || "next");
@@ -1127,7 +1127,13 @@ export function initNliStaffRemote(dataContext, { presenterManifest = presenterC
   $("kitPresentation").addEventListener("click", (event) => {
     if (!manualMutationsOpen()) return;
     const button = event.target.closest("[data-presentation-action]");
-    if (button) void handlePresentationButton(button.dataset.presentationAction);
+    if (!button) return;
+    const action = button.dataset.presentationAction;
+    if (action === "recover-open") {
+      void presentation.recoverOpen(currentStep()?.presentation?.segmentId);
+    } else if (action === "recover-home") {
+      if (presentation.releaseFailedSession()) void exitToHome();
+    } else void handlePresentationButton(action);
   });
 
   $("kitEscape").addEventListener("click", (event) => {

@@ -1116,6 +1116,16 @@ function createLayerLifecycleRuntime(map, hooks) {
   return {
     beginBatch,
     getPendingBatch: () => pending,
+    getRenderedReadiness: () => {
+      const failedIds = [...desired].filter(id => members.get(id)?.failed);
+      const pendingIds = [...desired].filter(id => { const member = members.get(id); return !member?.ready || member.invalidated || member.factor !== 1; });
+      const desiredReady = [...desired].every(id => {
+        const member = members.get(id);
+        return member?.ready && !member.failed && !member.invalidated && member.factor === 1;
+      });
+      const moving = [...members.values()].some(member => member.trajectory || member.channels.some(channel => channel.effectiveTween));
+      return { ready: !disposed && !pending && desiredReady && !moving, failedIds, pendingIds, moving };
+    },
     commitBatch,
     setDesiredIds,
     settleHiddenIds,

@@ -8,6 +8,9 @@ import { createIdentityProjectionMesh } from "../../frontend/src/shared/projecti
 import { sha256Hex } from "../../frontend/src/shared/sha256-hex.js";
 import { projectionCatalog, deferred, response } from '../fixtures/projection-catalog.js';
 import { createProjectionBaselineCatalogLoader } from '../../frontend/src/projection/projection-captured-baseline.js';
+import { variableTdBaseline } from '../fixtures/td-variable-grid.js';
+import { prepareProjectionSideMesh } from '../../frontend/src/projection/projection-candidate-validation.js';
+import { measureProjectionLandmarks, pickProjectionLandmark } from '../../frontend/src/shared/projection-point-fit.js';
 import {
   FIELD_DESCRIPTORS,
   NAMES_WALL_DESCRIPTORS,
@@ -19,6 +22,405 @@ import {
 } from "../../frontend/src/projection-config/config-controller.js";
 
 const clone = (value) => JSON.parse(JSON.stringify(value));
+
+// Real mounted editor and publication client; only HTTP/socket and iframe draw receipts are simulated.
+async function pointApplyHarness({ config = clone(DEFAULTS), baselineCatalogLoader, beforeMatch } = {}) {
+  vi.useFakeTimers();
+  const previousDocument = globalThis.document;
+  globalThis.document = documentStub();
+  let snapshot = { revision: 12, config, selectedPresetId: 'original',
+    presets: [{ id: 'original', name: 'Original calibration', config: clone(DEFAULTS), readOnly: true }] };
+  const instanceId = '11111111-1111-4111-8111-111111111111';
+  const clientSource = '22222222-2222-4222-8222-222222222222';
+  const events = new Map(), sent = [], requests = [];
+  const emit = (type, message) => [...(events.get(type) || [])].forEach(fn => fn(message));
+  const row = (revision = 12, extra = {}) => ({ type: 'otef_projection_applied', table: 'otef', output: 'left', instanceId,
+    revision, success: true, route: 'browser', baseline: (client.getState().snapshot?.config || config).outputs.left.warp.baseline, displaySide: 'left', reversed: false, ...extra });
+  const socket = { getConnected: () => true, on(type, fn) { if (!events.has(type)) events.set(type, new Set()); events.get(type).add(fn); },
+    off: (type, fn) => events.get(type)?.delete(fn), send(message) { sent.push(message); if (message.type === 'otef_projection_status_request') emit('otef_projection_applied', row(client.getState().snapshot?.revision ?? 12)); } };
+  const client = createProjectionConfigClient({ sourceId: clientSource, socket,
+    fetchImpl: (_url, options = {}) => new Promise(resolve => requests.push({ options, resolve })) });
+  const root = element('main'); root.ownerDocument = globalThis.document;
+  let previewIdentity = JSON.stringify(config), previewStatus = {}, rendered = null, view, warpAction;
+  const factory = configView.createProjectionConfigView;
+  const spy = vi.spyOn(configView, 'createProjectionConfigView').mockImplementation((...args) => {
+    warpAction = args[1].onWarpAction;
+    view = factory(...args);
+    view.getWarpPreviewAppliedState = () => ({ stable: true, pending: false, failed: false, sourceFrameIdentity: 'source', configIdentity: previewIdentity, ...previewStatus });
+    view.getCalibrationState = () => ({ phase: 'active' });
+    view.getPreviewCalibrationState = () => ({ ready: true });
+    // The lightweight document fixture cannot render point controls; controller state remains real.
+    view.updatePointMatch = () => {};
+    view.setPointMatchPreview = candidate => { previewIdentity = JSON.stringify(candidate || client.getState().draft); };
+    const update = view.update;
+    view.update = next => { rendered = next; update(next); };
+    return view;
+  });
+  const api = mountProjectionConfig(root, { client, socket, baselineCatalogLoader,
+    candidateValidator: { validateCandidate: async ({ identity }) => ({ identity, valid: true }), dispose() {} } });
+  spy.mockRestore();
+  const respond = async (body, status = 200) => {
+    requests.shift().resolve({ ok: status < 400, status, json: async () => clone(body) });
+    await vi.advanceTimersByTimeAsync(0);
+  };
+  await respond(snapshot);
+  if (beforeMatch) {
+    await beforeMatch({ api, client, respond, emit, row, warpAction, warpState: () => rendered.warpStates.left,
+      setPreviewConfig: next => { previewIdentity = JSON.stringify(next); } });
+    snapshot = clone(client.getState().snapshot);
+  }
+  const ack = (extra = {}) => {
+    const command = sent.filter(message => message.type === 'otef_projection_match_cursor').at(-1);
+    emit('otef_projection_match_ack', { type: 'otef_projection_match_ack', table: 'otef',
+      ...Object.fromEntries(['output','instanceId','sourceId','sessionId','sequence','revision','sourceFrameIdentity'].map(key => [key,command[key]])),
+      displaySide: 'left', reversed: false, success: true, error: null, ...extra });
+  };
+  const start = api.pointMatch.start('left'); await vi.advanceTimersByTimeAsync(1000); await start; ack(); api.pointMatch.handleAction('identify');
+  for (const [id, point] of [[1,[200,200]],[2,[1600,200]],[3,[200,800]],[4,[1600,800]]]) {
+    api.pointMatch.handleAction('replace', id); api.pointMatch.handleAction('preview-start', point);
+    api.pointMatch.handleAction('preview-move', [point[0]+10,point[1]+5]);
+    api.pointMatch.handleAction('record'); ack(); api.pointMatch.handleAction('record');
+  }
+  const fitting = api.pointMatch.handleAction('fit'); await vi.advanceTimersByTimeAsync(100); await fitting; api.pointMatch.contextChanged();
+  expect(api.pointMatch.getState().phase).toBe('candidate-preview');
+  const apply = async () => { const promise = api.handleAction('apply'); await vi.advanceTimersByTimeAsync(60); return { promise }; };
+  return { api, client, root, requests, sent, snapshot, row, emit, ack, respond, apply,
+    warpAction, warpState: () => rendered.warpStates.left,
+    setPreviewState: next => { previewStatus = next; },
+    own: next => emit('otef_projection_config_changed', { type: 'otef_projection_config_changed', table: 'otef', sourceId: clientSource, state: next }),
+    foreign: next => emit('otef_projection_config_changed', { type: 'otef_projection_config_changed', table: 'otef', sourceId: instanceId, state: next }),
+    history: () => rendered.warpStates.left.historyDepth,
+    dispose() { api.dispose(); globalThis.document = previousDocument; vi.useRealTimers(); } };
+}
+
+test.each(['Start fresh', 'tdMesh'])('mounted imported %s fit follows renderer geometry through applied markers, checkpoints and Undo', async baseline => {
+  const retained = variableTdBaseline('left'), config = clone(DEFAULTS);
+  config.outputs.left.warp.baseline = retained.baseline;
+  const loader = { prepare: vi.fn(async () => ({ snapshot: {}, loaded: { left: retained } })), promote() {} };
+  const h = await pointApplyHarness({ config, baselineCatalogLoader: loader, beforeMatch: baseline === 'Start fresh' ? async context => {
+    const { api, client, respond, emit, row, warpAction, warpState, setPreviewConfig } = context;
+    expect(warpAction('warp-start-fresh', { output: 'left' })).toBe(true);
+    expect(client.getState().draft.outputs.left.warp.baseline.type).toBe('identity');
+    expect(warpState().baselineMesh).toEqual(retained.mesh);
+    expect(warpAction('warp-undo', { output: 'left' })).toBe(true);
+    expect(client.getState().draft.outputs.left.warp.baseline).toEqual(retained.baseline);
+    expect(warpState().evaluatedMesh).toEqual(prepareProjectionSideMesh(client.getState().draft, 'left', retained).mesh);
+    expect(warpAction('warp-redo', { output: 'left' })).toBe(true);
+    const fresh = clone(client.getState().draft); setPreviewConfig(fresh);
+    const applying = api.handleAction('apply'); await vi.advanceTimersByTimeAsync(60);
+    await respond({ ...client.getState().snapshot, revision: 13, config: fresh }); await applying;
+    expect(client.getState().snapshot).toMatchObject({ revision: 13, config: fresh });
+    emit('otef_projection_applied', row(13));
+  } : undefined });
+  try {
+    const beforeFitHistory = h.history(), applying = await h.apply(), draft = h.client.getState().draft;
+    expect(h.history()).toBe(beforeFitHistory + 1);
+    const revision = h.snapshot.revision + 1, accepted = { ...h.snapshot, revision, config: draft };
+    await h.respond(accepted); expect(await applying.promise).toBe(true);
+    h.emit('otef_projection_applied', h.row(revision));
+    expect(h.api.pointMatch.getState().phase).toBe('publishing');
+    expect(h.sent.at(-1)).toMatchObject({ mode: 'probe', revision });
+    h.ack();
+    const state = h.api.pointMatch.getState(), renderedMesh = prepareProjectionSideMesh(draft, 'left', retained).mesh;
+    expect(state.phase).toBe('checking');
+    expect(state.context.baselineMesh).toEqual(retained.mesh);
+    const sourceErrors = measureProjectionLandmarks({ preparedMesh: state.context.evaluatedMesh, anchors: state.anchors });
+    expect(Math.max(...sourceErrors.map(point => point.errorPx))).toBeLessThanOrEqual(.5);
+    expect(state.context.evaluatedMesh).toEqual(renderedMesh);
+    expect(sourceErrors[0].renderedPx[0]).toBeCloseTo(210, 5);
+    expect(sourceErrors[0].renderedPx[1]).toBeCloseTo(205, 5);
+    const checkpointPx = [810, 545], picked = pickProjectionLandmark({ evaluatedMesh: renderedMesh, outputPointPx: checkpointPx });
+    expect(h.api.pointMatch.handleAction('preview-start', checkpointPx)).toBe(true);
+    const checkpoint = h.api.pointMatch.getState().anchors.find(point => point.id === 5);
+    expect(checkpoint.s).toBeCloseTo(picked.s, 10); expect(checkpoint.t).toBeCloseTo(picked.t, 10);
+    h.api.pointMatch.handleAction('preview-move', [812, 546]);
+    h.api.pointMatch.handleAction('record'); h.ack(); h.api.pointMatch.handleAction('record');
+    const checking = h.api.pointMatch.getState();
+    expect(h.sent.at(-1).sourcePx[0]).toBeCloseTo(810, 5); expect(h.sent.at(-1).sourcePx[1]).toBeCloseTo(545, 5);
+    expect(checking.checkpointErrors[0].errorPx).toBeCloseTo(Math.sqrt(5), 5);
+    expect(checking.checkpointErrors).toEqual(measureProjectionLandmarks({ preparedMesh: renderedMesh, anchors: checking.anchors.filter(point => point.id > 4 && point.recorded) }));
+    expect(h.client.getState().draft).toEqual(draft); expect(h.history()).toBe(beforeFitHistory + 1);
+    h.api.pointMatch.close();
+    expect(h.warpAction('warp-undo', { output: 'left' })).toBe(true);
+    expect(h.client.getState().draft).toEqual(h.snapshot.config);
+    if (baseline === 'Start fresh') expect(h.warpAction('warp-undo', { output: 'left' })).toBe(true);
+    expect(h.client.getState().draft.outputs.left.warp.baseline).toEqual(retained.baseline);
+    expect(h.warpState().evaluatedMesh).toEqual(prepareProjectionSideMesh(h.client.getState().draft, 'left', retained).mesh);
+    expect(loader.prepare).toHaveBeenCalledTimes(1);
+  } finally { h.dispose(); }
+});
+
+test('mounted fit stays local, installs once, retries definitive failure, then checks only a fresh physical probe', async () => {
+  const h = await pointApplyHarness();
+  try {
+    expect(h.requests).toHaveLength(0); expect(h.history()).toBe(0); expect(h.client.getState().live).toBe(false);
+    const anchors = h.api.pointMatch.getState().anchors;
+    h.api.pointMatch.handleAction('preview-marker-size', 'small'); h.api.pointMatch.handleAction('projected-marker-size', 'large');
+    const first = await h.apply();
+    expect(h.requests).toHaveLength(1); expect(h.history()).toBe(1);
+    const draft = h.client.getState().draft;
+    expect(draft.outputs.left.warp.keystone.corners[0][0]).toBeCloseTo(10/1920, 5);
+    expect(draft.outputs.right).toEqual(h.snapshot.config.outputs.right); expect(draft.pre).toEqual(h.snapshot.config.pre);
+    await h.respond({ error: 'rejected' }, 400); expect(await first.promise).toBe(false);
+    expect(h.api.pointMatch.getState()).toMatchObject({ phase: 'candidate-installed', installedCandidateIdentity: JSON.stringify(draft), canApply: true });
+    const retry = await h.apply(); expect(h.requests).toHaveLength(1); expect(h.history()).toBe(1);
+    const accepted = { ...h.snapshot, revision: 13, config: draft };
+    h.own(accepted); expect(h.history()).toBe(1);
+    h.emit('otef_projection_applied', h.row(13));
+    await h.respond(accepted); expect(await retry.promise).toBe(true);
+    expect(h.api.pointMatch.getState().phase).toBe('publishing');
+    expect(h.sent.at(-1)).toMatchObject({ mode: 'probe', revision: 13 });
+    h.ack(); expect(h.api.pointMatch.getState()).toMatchObject({ phase: 'checking', displayPrefs: { previewMarkerSize: 'small', projectedMarkerSize: 'large' } });
+    expect(h.api.pointMatch.getState().anchors).toEqual(anchors); expect(h.history()).toBe(1);
+    h.api.pointMatch.close(); expect(h.client.getState().draft).toEqual(draft);
+  } finally { h.dispose(); }
+});
+
+test.each(['undo', 'edit', 'direct draft'])('ordinary %s after failed fit retires the candidate and cannot retry stale corners', async action => {
+  const h = await pointApplyHarness();
+  try {
+    const applying = await h.apply(); await h.respond({ error: 'rejected' }, 400); await applying.promise;
+    const installed = h.client.getState().draft;
+    if (action === 'direct draft') { const changed = clone(installed); changed.pre.tx = .12; h.client.setDraft(changed); }
+    else find(h.root, node => node.dataset?.action === (action === 'undo' ? 'warp-undo' : 'warp-nudge') &&
+      (action === 'undo' || node.dataset.direction === 'right')).dispatch('click');
+    expect(h.api.pointMatch.getState().phase).toBe('closed');
+    expect(h.client.getState().draft).not.toEqual(installed);
+    expect(await h.api.pointMatch.handleAction('apply')).toBe(false); expect(h.requests).toHaveLength(0);
+    expect(h.history()).toBe(action === 'undo' ? 0 : action === 'edit' ? 2 : 1);
+  } finally { h.dispose(); }
+});
+
+test.each(['missing draw', 'failed draw', 'missing probe', 'failed probe'])('%s preserves the accepted fit and gives output recovery guidance', async failure => {
+  const h = await pointApplyHarness();
+  try {
+    const applying = await h.apply(), draft = h.client.getState().draft;
+    const accepted = { ...h.snapshot, revision: 13, config: draft };
+    await h.respond(accepted); await applying.promise;
+    expect(h.api.pointMatch.getState().phase).toBe('publishing');
+    if (failure !== 'missing draw') h.emit('otef_projection_applied', h.row(13, failure === 'failed draw' ? { success: false, error: 'Draw failed' } : {}));
+    if (failure === 'failed probe') h.ack({ success: false, error: 'Reopen the selected output' });
+    if (failure.startsWith('missing')) await vi.advanceTimersByTimeAsync(3000);
+    expect(h.api.pointMatch.getState()).toMatchObject({ phase: 'invalid', error: expect.stringMatching(/reopen/i) });
+    expect(h.client.getState().snapshot.config).toEqual(draft); expect(h.client.getState().draft).toEqual(draft); expect(h.history()).toBe(1);
+    h.api.pointMatch.close(); expect(h.client.getState().draft).toEqual(draft);
+  } finally { h.dispose(); }
+});
+
+test.each([
+  ['failed draw', 'http'], ['failed draw', 'websocket'],
+  ['output invalidation', 'http'], ['output invalidation', 'websocket'],
+])('%s before own %s acceptance retains the installed fit Undo without reviving matching', async (failure, receipt) => {
+  const h = await pointApplyHarness();
+  try {
+    const applying = await h.apply(), draft = h.client.getState().draft;
+    expect(h.history()).toBe(1);
+    if (failure === 'failed draw') h.emit('otef_projection_applied', h.row(13, { success: false, error: 'Draw failed' }));
+    else h.api.pointMatch.invalidatePreview('Projection output disconnected; reconnect and retry Match points.');
+    expect(h.api.pointMatch.getState().phase).toBe('invalid'); expect(h.history()).toBe(1);
+    const accepted = { ...h.snapshot, revision: 13, config: draft };
+    if (receipt === 'websocket') { h.own(accepted); expect(h.history()).toBe(1); }
+    await h.respond(accepted); await applying.promise;
+    expect(h.history()).toBe(1);
+    expect(h.client.getState().draft).toEqual(draft); expect(h.client.getState().snapshot.config).toEqual(draft);
+    expect(h.api.pointMatch.getState().phase).toBe('invalid');
+    h.api.pointMatch.close();
+    find(h.root, node => node.dataset?.action === 'warp-undo').dispatch('click');
+    expect(h.client.getState().draft.outputs.left.warp).toEqual(h.snapshot.config.outputs.left.warp);
+  } finally { h.dispose(); }
+});
+
+test('foreign acceptance after an early failed draw still rebases the installed fit history', async () => {
+  const h = await pointApplyHarness();
+  try {
+    const applying = await h.apply(), draft = h.client.getState().draft;
+    h.emit('otef_projection_applied', h.row(13, { success: false, error: 'Draw failed' }));
+    const accepted = { ...h.snapshot, revision: 13, config: draft };
+    h.foreign(accepted); expect(h.history()).toBe(0);
+    await h.respond(accepted); await applying.promise;
+    expect(h.history()).toBe(0); expect(h.client.getState().draft).toEqual(draft);
+    expect(h.api.pointMatch.getState().phase).toBe('invalid');
+  } finally { h.dispose(); }
+});
+
+test('shared disconnect retires the client request while retaining the ordinary fitted draft and Undo', async () => {
+  const h = await pointApplyHarness();
+  try {
+    const applying = await h.apply(), draft = h.client.getState().draft;
+    h.emit('disconnect'); expect(await applying.promise).toBe(false);
+    expect(h.client.getState().pending).toBe(false); expect(h.history()).toBe(1);
+    const accepted = { ...h.snapshot, revision: 13, config: draft };
+    await h.respond(accepted); // The retired HTTP response cannot certify acceptance.
+    expect(h.client.getState().snapshot.revision).toBe(12); expect(h.client.getState().draft).toEqual(draft);
+    expect(h.history()).toBe(1);
+    h.own(accepted); // A later adoption has no active request ownership and must rebase.
+    expect(h.history()).toBe(0); expect(h.client.getState().snapshot.config).toEqual(draft);
+    expect(h.api.pointMatch.getState().phase).toBe('invalid');
+  } finally { h.dispose(); }
+});
+
+test('reconciliation after an early failed draw does not inherit expired publication ownership', async () => {
+  const h = await pointApplyHarness();
+  try {
+    const applying = await h.apply(), draft = h.client.getState().draft;
+    h.emit('otef_projection_applied', h.row(13, { success: false, error: 'Draw failed' }));
+    await vi.advanceTimersByTimeAsync(15000); await applying.promise;
+    expect(h.client.getState().reconciliation.status).toBe('reading'); expect(h.history()).toBe(1);
+    h.requests.shift(); await h.respond({ ...h.snapshot, revision: 13, config: draft });
+    expect(h.history()).toBe(0);
+    h.client.resolveReconciliation('use-accepted');
+    expect(h.client.getState().draft).toEqual(draft); expect(h.history()).toBe(0);
+    expect(h.api.pointMatch.getState().phase).toBe('invalid');
+  } finally { h.dispose(); }
+});
+
+test.each(['keep-local', 'use-accepted'])('uncertain fit uses existing reconciliation and %s retains or rebases its history', async choice => {
+  const h = await pointApplyHarness();
+  try {
+    const applying = await h.apply(), draft = h.client.getState().draft;
+    await vi.advanceTimersByTimeAsync(15000); expect(await applying.promise).toBe(false);
+    expect(h.client.getState().reconciliation.status).toBe('reading');
+    expect(h.api.pointMatch.getState().canApply).toBe(false);
+    expect(await h.api.pointMatch.handleAction('apply')).toBe(false);
+    // Discard the unresolved simulated POST and answer the authoritative GET.
+    h.requests.shift(); await h.respond(h.snapshot);
+    expect(h.client.getState().reconciliation.status).toBe('needs-choice');
+    h.client.resolveReconciliation(choice);
+    expect(h.client.getState().draft).toEqual(choice === 'keep-local' ? draft : h.snapshot.config);
+    expect(h.history()).toBe(choice === 'keep-local' ? 1 : 0);
+    if (choice === 'keep-local') {
+      expect(h.api.pointMatch.getState()).toMatchObject({ phase: 'candidate-installed', canApply: true });
+      const retry = await h.apply(); expect(h.history()).toBe(1);
+      await h.respond({ ...h.snapshot, revision: 13, config: draft }); await retry.promise;
+    } else expect(h.api.pointMatch.getState().phase).toBe('invalid');
+  } finally { h.dispose(); }
+});
+
+test('checking measures checkpoints on the installed mesh and Save as new plus reload retains its geometry', async () => {
+  const h = await pointApplyHarness();
+  try {
+    const applying = await h.apply(), draft = h.client.getState().draft;
+    const accepted = { ...h.snapshot, revision: 13, config: draft };
+    await h.respond(accepted); await applying.promise;
+    h.emit('otef_projection_applied', h.row(13)); h.ack();
+    expect(h.api.pointMatch.getState().phase).toBe('checking');
+    expect(h.api.pointMatch.handleAction('replace', 1)).toBe(false);
+    expect(await h.api.pointMatch.handleAction('fit')).toBe(false);
+    h.api.pointMatch.handleAction('preview-start', [810,545]);
+    h.api.pointMatch.handleAction('preview-move', [812,546]); h.api.pointMatch.handleAction('record'); h.ack(); h.api.pointMatch.handleAction('record');
+    expect(h.sent.filter(message => message.mode === 'cursor').at(-1).sourcePx[0]).toBeCloseTo(810, 4);
+    expect(h.api.pointMatch.getState().checkpointErrors[0].errorPx).toBeCloseTo(Math.sqrt(5), 4);
+    expect(h.client.getState().draft).toEqual(draft); expect(h.history()).toBe(1);
+    h.api.pointMatch.close();
+    const saving = h.api.handleAction('save-new', 'Fit copy'); await vi.advanceTimersByTimeAsync(100);
+    const id = '33333333-3333-4333-8333-333333333333';
+    const saved = { ...accepted, revision: 14, selectedPresetId: id, presets: [...accepted.presets, { id, name: 'Fit copy', config: draft, readOnly: false }] };
+    await h.respond(saved); await saving; expect(h.history()).toBe(1);
+    find(h.root, node => node.dataset?.action === 'warp-nudge' && node.dataset.direction === 'right').dispatch('click');
+    const loading = h.api.handleAction('load', id); await vi.advanceTimersByTimeAsync(100);
+    await h.respond({ ...saved, revision: 15 }); await loading;
+    expect(h.client.getState().draft).toEqual(draft); expect(h.history()).toBe(0);
+  } finally { h.dispose(); }
+});
+
+test.each(['candidate-preview', 'candidate-installed', 'publishing', 'checking'])('closing %s retains only the appropriate ordinary draft', async phase => {
+  const h = await pointApplyHarness();
+  try {
+    let applying, draft = h.snapshot.config;
+    if (phase !== 'candidate-preview') {
+      applying = await h.apply(); draft = h.client.getState().draft;
+      if (phase === 'candidate-installed') { await h.respond({ error: 'rejected' }, 400); await applying.promise; }
+      if (phase === 'checking') { await h.respond({ ...h.snapshot, revision: 13, config: draft }); await applying.promise; h.emit('otef_projection_applied', h.row(13)); h.ack(); }
+    }
+    expect(h.api.pointMatch.getState().phase).toBe(phase);
+    h.api.pointMatch.close({ discard: true }); expect(h.client.getState().draft).toEqual(draft); expect(h.history()).toBe(phase === 'candidate-preview' ? 0 : 1);
+    expect(h.api.pointMatch.getState().installedCandidateIdentity).toBe(null);
+    if (phase === 'publishing') { await h.respond({ ...h.snapshot, revision: 13, config: draft }); await applying.promise; expect(h.client.getState().snapshot.config).toEqual(draft); }
+    expect(h.api.pointMatch.getState().phase).toBe('closed');
+  } finally { h.dispose(); }
+});
+
+test.each(['foreign same geometry', 'own wrong revision', 'wrong probe orientation'])('%s cannot claim an owned fit transition', async replacement => {
+  const h = await pointApplyHarness();
+  try {
+    const applying = await h.apply(), draft = h.client.getState().draft;
+    const accepted = { ...h.snapshot, revision: 13, config: draft };
+    if (replacement === 'wrong probe orientation') {
+      await h.respond(accepted); await applying.promise; h.emit('otef_projection_applied', h.row(13)); h.ack({ displaySide: 'right' });
+    } else {
+      if (replacement === 'foreign same geometry') h.foreign(accepted);
+      else h.own({ ...accepted, revision: 14 });
+      await h.respond(accepted); await applying.promise;
+    }
+    expect(h.api.pointMatch.getState().phase).toBe('invalid');
+    expect(h.client.getState().draft).toEqual(draft);
+    if (replacement === 'foreign same geometry') expect(h.history()).toBe(0);
+  } finally { h.dispose(); }
+});
+
+test('fresh probe can finish before the HTTP response without losing the confirmed Apply outcome', async () => {
+  const h = await pointApplyHarness();
+  try {
+    const applying = await h.apply(), draft = h.client.getState().draft;
+    const accepted = { ...h.snapshot, revision: 13, config: draft };
+    h.own(accepted); h.emit('otef_projection_applied', h.row(13)); h.ack();
+    expect(h.api.pointMatch.getState().phase).toBe('checking');
+    await h.respond(accepted); expect(await applying.promise).toBe(true); expect(h.history()).toBe(1);
+    await vi.advanceTimersByTimeAsync(3000); h.ack();
+    expect(h.api.pointMatch.getState().phase).toBe('checking');
+  } finally { h.dispose(); }
+});
+
+test('physical draw waits for the preview to acknowledge the exact installed candidate', async () => {
+  const h = await pointApplyHarness();
+  try {
+    const applying = await h.apply(), draft = h.client.getState().draft;
+    await h.respond({ ...h.snapshot, revision: 13, config: draft }); await applying.promise;
+    h.setPreviewState({ configIdentity: JSON.stringify(h.snapshot.config) });
+    h.emit('otef_projection_applied', h.row(13));
+    expect(h.sent.at(-1).mode).toBe('off'); expect(h.api.pointMatch.getState().phase).toBe('publishing');
+    h.setPreviewState({}); h.api.pointMatch.contextChanged();
+    expect(h.sent.at(-1)).toMatchObject({ mode: 'probe', revision: 13 }); h.ack();
+    expect(h.api.pointMatch.getState().phase).toBe('checking');
+  } finally { h.dispose(); }
+});
+
+test('unrelated fresh-session acknowledgements cannot retire or confirm an installed fit', async () => {
+  const h = await pointApplyHarness();
+  try {
+    const applying = await h.apply(), draft = h.client.getState().draft;
+    await h.respond({ ...h.snapshot, revision: 13, config: draft }); await applying.promise;
+    h.emit('otef_projection_applied', h.row(13));
+    for (const extra of [{ sourceId: '44444444-4444-4444-8444-444444444444' }, { output: 'right' },
+      { revision: 12 }, { sourceFrameIdentity: 'old-source' }]) {
+      h.ack({ ...extra, displaySide: 'right' }); expect(h.api.pointMatch.getState().phase).toBe('publishing');
+    }
+    h.ack(); expect(h.api.pointMatch.getState().phase).toBe('checking');
+  } finally { h.dispose(); }
+});
+
+test('a later matching session starts from the applied fit without old target constraints', async () => {
+  const h = await pointApplyHarness();
+  try {
+    const applying = await h.apply(), draft = h.client.getState().draft;
+    await h.respond({ ...h.snapshot, revision: 13, config: draft }); await applying.promise;
+    h.emit('otef_projection_applied', h.row(13)); h.ack(); h.api.pointMatch.close();
+    const starting = h.api.pointMatch.start('left'); await vi.advanceTimersByTimeAsync(1000); await starting; h.ack();
+    expect(h.api.pointMatch.getState()).toMatchObject({ phase: 'capture', anchors: [], canFit: false, installedCandidateIdentity: null });
+    expect(h.api.pointMatch.getState().context.config).toEqual(draft);
+    expect(h.api.pointMatch.getState().context.revision).toBe(13); expect(h.history()).toBe(1);
+  } finally { h.dispose(); }
+});
+
+test('mounted point matching prevents Live re-enable and footer Apply cannot publish an unrelated draft',async()=>{
+  const root=element('main');root.ownerDocument=documentStub();const client=fakeClient();const api=mountProjectionConfig(root,{client});
+  try {
+    expect(api.pointMatch).toBeDefined();
+    const matching=vi.spyOn(api.pointMatch,'isActive').mockReturnValue(true);
+    await api.handleAction('live',true);expect(client.setLive).not.toHaveBeenCalledWith(true);
+    await api.handleAction('apply');expect(client.apply).not.toHaveBeenCalled();matching.mockRestore();
+  } finally { api.dispose(); }
+});
 
 test('visible preset commands save the loaded preset while a different candidate is selected', async () => {
   const previousDocument = globalThis.document;
@@ -197,6 +599,63 @@ function tracedWarpHarness({ candidateValidator } = {}) {
   const restore = () => { api.dispose(); globalThis.document = previousDocument; };
   return { root, client, trace, surface, redraws, api, restore };
 }
+
+test("mounted Start fresh preserves TD Undo/Redo and framing without reloading assets", async () => {
+  const previousDocument = globalThis.document;
+  const doc = documentStub(); doc.defaultView.confirm = vi.fn(() => true); globalThis.document = doc;
+  const root = element("main"); root.ownerDocument = doc;
+  const client = fakeClient(); client.setLive(false);
+  const config = clone(DEFAULTS);
+  for (const output of ["left", "right"]) {
+    config.outputs[output].warp.baseline = { type: "tdMesh", assetId: `${output}-capture`, sha256: "a".repeat(64), width: 1920, height: 1080, origin: "top-left" };
+    config.outputs[output].warp.keystone.corners[0] = [0.02, 0.03];
+  }
+  client.report({ draft: clone(config), hasLocalDraft: true });
+  const loader = { prepare: vi.fn(async () => ({ snapshot: {}, loaded: Object.fromEntries(["left", "right"].map(side => [side, { mesh: createIdentityProjectionMesh({ side }) }])) })), promote: vi.fn() };
+  let warpAction;
+  const actualCreate = configView.createProjectionConfigView;
+  const viewSpy = vi.spyOn(configView, "createProjectionConfigView").mockImplementation((root, options) => { warpAction = options.onWarpAction; return actualCreate(root, options); });
+  const api = mountProjectionConfig(root, { client, baselineCatalogLoader: loader });
+  try {
+    const button = find(root, node => node.dataset?.action === "warp-start-fresh");
+    await vi.waitFor(() => expect(warpAction("warp-nudge", { output: "left", direction: "right" })).toBe(true));
+    const before = clone(client.getState().draft);
+    expect(button).toBeTruthy();
+    doc.defaultView.confirm.mockReturnValueOnce(false);
+    button.dispatch("click");
+    expect(client.getState().draft).toEqual(before);
+    button.dispatch("click");
+    expect(doc.defaultView.confirm).toHaveBeenLastCalledWith(expect.stringContaining("left projector"));
+    const fresh = clone(client.getState().draft);
+    expect(fresh.outputs.left.warp.baseline.type).toBe("identity");
+    expect(fresh.pre).toEqual(before.pre);
+    expect(fresh.outputs.left.crop).toEqual(before.outputs.left.crop);
+    expect(fresh.outputs.left.post).toEqual(before.outputs.left.post);
+    expect(fresh.outputs.right).toEqual(before.outputs.right);
+    expect(client.apply).not.toHaveBeenCalled();
+    expect(warpAction("warp-undo", { output: "left" })).toBe(true);
+    expect(client.getState().draft).toEqual(before);
+    expect(warpAction("warp-redo", { output: "left" })).toBe(true);
+    expect(client.getState().draft).toEqual(fresh);
+    expect(loader.prepare).toHaveBeenCalledTimes(1);
+    client.setLive(true);
+    expect(warpAction("warp-start-fresh", { output: "right" })).toBe(true);
+    expect(client.getState().draft.outputs.right.warp.baseline.type).toBe("identity");
+    expect(client.apply).toHaveBeenCalled();
+    expect(warpAction("warp-undo", { output: "right" })).toBe(true);
+    expect(client.getState().draft.outputs.right).toEqual(before.outputs.right);
+    client.setLive(false);
+    find(root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+    expect(warpAction("warp-enabled", { output: "left", enabled: false })).toBe(true);
+    const bypassed = clone(client.getState().draft);
+    expect(warpAction("warp-start-fresh", { output: "left" })).toBe(true);
+    expect(warpAction("warp-undo", { output: "left" })).toBe(true);
+    expect(client.getState().draft).toEqual(bypassed);
+    expect(find(root, node => node.dataset?.action === "warp-redo").disabled).toBe(false);
+    expect(warpAction("warp-redo", { output: "left" })).toBe(true);
+    expect(client.getState().draft.outputs.left.warp.enabled).toBe(true);
+  } finally { api.dispose(); viewSpy.mockRestore(); globalThis.document = previousDocument; }
+});
 
 test("mounted controller reuses unchanged TD geometry publications and rebases an identical foreign replacement", async () => {
   const previousDocument = globalThis.document;
@@ -3166,6 +3625,7 @@ test('Cancel immediately hides a retained Wall-only wrapper when no controller e
       identifyDisplays: vi.fn(() => { outputListeners.forEach((listener) => listener(outputState)); return screens; }),
       dispose: vi.fn(),
       assignDisplays: vi.fn((selection) => { outputState = { ...outputState, assignments: selection, message: "Assignment saved" }; outputListeners.forEach((listener) => listener(outputState)); return outputState; }),
+      setReverseModel: vi.fn(value => { outputState = { ...outputState, reverseModel: value }; outputListeners.forEach(listener => listener(outputState)); return outputState; }),
       openBoth: vi.fn(async () => { outputState = { ...outputState, ownedSpans: ["left", "right"], message: "Browser outputs opened" }; outputListeners.forEach((listener) => listener(outputState)); return outputState.ownedSpans; }),
       closeBoth: vi.fn(() => { outputState = { ...outputState, ownedSpans: [], message: "Browser outputs closed" }; outputListeners.forEach((listener) => listener(outputState)); return outputState; }),
       getState: () => outputState,
@@ -3190,6 +3650,11 @@ test('Cancel immediately hides a retained Wall-only wrapper when no controller e
     expect(outputController.assignDisplays).not.toHaveBeenCalled();
     action("output-assign").dispatch("click");
     expect(outputController.assignDisplays).toHaveBeenCalledWith({ left: "left-screen", right: "right-screen" });
+    action("output-reverse-model").checked = true;
+    action("output-reverse-model").dispatch("change");
+    expect(outputController.setReverseModel).toHaveBeenCalledWith(true);
+    expect(action("output-reverse-model").checked).toBe(true);
+    expect(outputController.openBoth).not.toHaveBeenCalled();
     action("output-open-both").dispatch("click");
     await vi.waitFor(() => expect(outputController.openBoth).toHaveBeenCalledTimes(1));
     action("output-close-both").dispatch("click");

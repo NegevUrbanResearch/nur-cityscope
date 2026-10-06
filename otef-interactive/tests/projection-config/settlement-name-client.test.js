@@ -3,6 +3,66 @@ import { createSettlementNameClient } from "../../frontend/src/projection-config
 
 const EVENT = "otef_settlement_names_changed";
 
+test('resetting an origin conflicts when another screen changes that same origin', async () => {
+  const socket = socketFixture(), write = deferred();
+  const initial = settingsFixture(); initial.leaderOrigins = { '0067': { lng: 34.5, lat: 31.4 } };
+  const client = createSettlementNameClient({ socket, getSnapshot: async () => ({ settlement_name_settings: initial, settlement_name_revision: 1 }),
+    writeOperation: () => write.promise });
+  await client.hydrate();
+  const target = { kind: 'leader_origin', citycode: '0067' };
+  const pending = client.commit(target, null, { operation: 'reset_leader_origin' }); pending.catch(() => {});
+  await new Promise(resolve => setTimeout(resolve, 0));
+  const remote = structuredClone(initial); remote.leaderOrigins['0067'] = { lng: 34.6, lat: 31.5 };
+  socket.emit(EVENT, changed(remote, 2));
+  expect(client.getTarget(target).status).toBe('Conflict');
+  await expect(pending).rejects.toMatchObject({ code: 'conflict' });
+  expect(client.getTarget(target).acknowledged).toEqual({ lng: 34.6, lat: 31.5 });
+  client.loadSaved(target);
+  expect(client.getSnapshot().settings.leaderOrigins['0067']).toEqual({ lng: 34.6, lat: 31.5 });
+  client.destroy();
+});
+
+test('saves and resets a shared geographic connector origin independently of positions', async () => {
+  let current = settingsFixture(), revision = 1;
+  const client = createSettlementNameClient({
+    getSnapshot: async () => ({ settlement_name_settings: current, settlement_name_revision: revision }),
+    writeOperation: async body => {
+      current = structuredClone(current); current.leaderOrigins ||= {};
+      if (body.operation === 'leader_origin') current.leaderOrigins[body.citycode] = body.origin;
+      else delete current.leaderOrigins[body.citycode];
+      return { status: 'ok', settlementNameSettings: current, settlementNameRevision: ++revision };
+    },
+  });
+  await client.hydrate();
+  await client.commit({ kind: 'leader_origin', citycode: '0067' }, { lng: 34.5, lat: 31.4 });
+  expect(client.getSnapshot().settings.leaderOrigins['0067']).toEqual({ lng: 34.5, lat: 31.4 });
+  await client.commit({ kind: 'leader_origin', citycode: '0067' }, null, { operation: 'reset_leader_origin' });
+  expect(client.getSnapshot().settings.leaderOrigins).toEqual({});
+  expect(client.getSnapshot().settings.outputs).toEqual({ left: {}, right: {} });
+  expect(client.hasUnsavedWork()).toBe(false);
+  client.destroy();
+});
+
+test('saves line breaks and leader style as independent revision-controlled targets', async () => {
+  let current = settingsFixture(), revision = 10;
+  const client = createSettlementNameClient({
+    getSnapshot: async () => ({ settlement_name_settings: current, settlement_name_revision: revision }),
+    writeOperation: async operation => {
+      if (operation.operation === 'line_break') current = { ...current, lineBreaks: { [operation.citycode]: operation.afterWord } };
+      if (operation.operation === 'leader_style') current = { ...current, leaderStyle: operation.leaderStyle };
+      return { status: 'ok', settlementNameSettings: current, settlementNameRevision: ++revision };
+    },
+  });
+  await client.hydrate();
+  await client.commit({ kind: 'line_break', citycode: '0067' }, 1);
+  await client.commit({ kind: 'leader_style' }, { widthPx: 2, outlineWidthPx: 1, color: '#ffffff', outlineColor: '#bfbf99', opacity: 1 });
+  expect(client.getSnapshot().settings.lineBreaks).toEqual({ '0067': 1 });
+  expect(client.getSnapshot().settings.leaderStyle.widthPx).toBe(2);
+  expect(client.getSnapshot().settings.style).toEqual(settingsFixture().style);
+  expect(client.hasUnsavedWork()).toBe(false);
+  client.destroy();
+});
+
 function settingsFixture() {
   return {
     baseline: {

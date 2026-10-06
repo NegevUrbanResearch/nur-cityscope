@@ -18,6 +18,7 @@ import {
 import { getLayerLifecycleRuntime, resolveLayerFadeMs } from "../shared/layer-lifecycle-fade.js";
 import { opacityChannelsForLayerType } from "../shared/layer-opacity-expression.js";
 import { forgetPeopleFocusLayers } from "../shared/nli-people-focus-presentation.js";
+import { SETTLEMENT_OUTLINE_DATA_REVISION } from '../shared/settlement-label-presentation.js';
 
 const TIMELINE_RENDERER_FULL_IDS = new Set([
   INVESTIGATION_POLYGONS_FULL_ID,
@@ -461,8 +462,7 @@ function raiseLoadedFullId(map, fullId, state) {
 // group.enabled is not applied here (unlike resolveLayerState / UI gating) so MapLibre
 // sync stays aligned with registry layers that may still be toggled individually.
 //
-// When a row carries `fullLayerIds` (e.g. projector_base שמות_יישובים merged with
-// Locations_Lines, or coalesced curated rows), all listed full ids are enabled together.
+// When a coalesced curated row carries `fullLayerIds`, all listed full ids are enabled together.
 export function getEnabledMapFullLayerIds(layerGroups) {
   const enabled = new Set();
   if (!layerGroups) {
@@ -1141,7 +1141,10 @@ function addLayerToMap(map, fullId, state, layerStyleOptions, stagedMeta) {
       return;
     }
     try {
-      map.addSource(sourceId, { type: "geojson", data: dataUrl });
+      const isSettlementOutline = fullId === 'projector_base.ישובים';
+      const sourceUrl = isSettlementOutline ? `${dataUrl}${dataUrl.includes('?') ? '&' : '?'}otefOutlineRevision=${SETTLEMENT_OUTLINE_DATA_REVISION}` : dataUrl;
+      map.addSource(sourceId, { type: "geojson", data: sourceUrl,
+        ...(isSettlementOutline ? { attribution: '© OpenStreetMap contributors' } : {}) });
       hasSource = true;
     } catch (error) {
       console.warn(

@@ -29,7 +29,7 @@ import {
   setEscapeImpactOrientationIds,
 } from "../../frontend/src/shared/maplibre-investigation-timeline.js";
 import { PEOPLE_HALO_LAYER_ID } from "../../frontend/src/map/maplibre-person-selection.js";
-import { HOME_CUE, TIMELINE } from "../../frontend/src/remote/nli-staff-script.js";
+import { HOME_CUE, TIMELINE, NARRATIVES } from "../../frontend/src/remote/nli-staff-script.js";
 import {
   formatMinutesAsLocalClock,
   timelineBeatDurationMs,
@@ -1785,6 +1785,38 @@ describe("syncInvestigationTimelineToMap", () => {
     expect(injected.hidden).toBe(false);
     expect(injected.innerHTML).toContain("06:41");
     expect(injected.innerHTML).not.toContain("nli-tl-row");
+    disposeInvestigationTimelineForMap(map);
+  });
+
+  it.each(["gis", "projection"])("applies narrative scene clock visibility on %s and restores earlier scenes", async (displayProfile) => {
+    const map = makeMap();
+    const caption = { hidden: true, innerHTML: "", setAttribute() {} };
+    for (const [id, expected] of [
+      ["nova", [true, true, false, false, false]],
+      ["hostages", [true, false, false, false]],
+      ["shura", [displayProfile === "gis"]],
+    ]) {
+      const script = NARRATIVES.find((item) => item.id === id);
+      for (const index of [...script.steps.keys(), 0]) {
+        const cue = script.steps[index].cue;
+        const clock = cue.clock === "ended"
+          ? endNliClock(playNliClock(idleNliClock(), [INVESTIGATION_LINES_FULL_ID], [400], 0))
+          : idleNliClock();
+        clock.hiddenDisplays = cue.hiddenDisplays ?? [];
+        const groups = [...new Set(cue.layers.map((fullId) => fullId.split(".")[0]))].map((groupId) => ({
+          id: groupId,
+          layers: cue.layers.filter((fullId) => fullId.startsWith(`${groupId}.`))
+            .map((fullId) => ({ id: fullId.slice(groupId.length + 1), enabled: true })),
+        }));
+        await syncInvestigationTimelineToMap(map, clock, groups, {
+          displayProfile, captionEl: caption, allowMapCaption: false, nliCaptionMode: "clock-only",
+          narrativeFocus: NLI_NARRATIVES[cue.narrative ?? script.narrative] ?? null,
+          featuresById: {}, getLayerDataUrl: () => null, now: () => 0,
+        });
+        expect(caption.hidden, `${id} step ${index}`).toBe(!expected[index]);
+        if (!expected[index]) expect(caption.innerHTML).toBe("");
+      }
+    }
     disposeInvestigationTimelineForMap(map);
   });
 

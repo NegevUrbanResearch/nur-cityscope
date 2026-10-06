@@ -1,4 +1,8 @@
 import TableSwitcher from "../shared/table-switcher.js";
+import { filterProjectionCalibrationScene } from '../shared/projection-calibration-scene.js';
+import { createProjectionMatchFrameCache } from '../shared/projection-match-frame.js';
+import { createProjectionCalibrationView, createProjectionCalibrationCover } from '../projection/projection-calibration-view.js';
+import { createProjectionCalibrationRenderer, createProjectionCalibrationMapMask, waitForProjectionCalibrationMap } from '../projection/projection-calibration-renderer.js';
 import TableSwitcherPopup from "../shared/table-switcher-popup.js";
 import {
   createProjectionMap,
@@ -33,7 +37,7 @@ import { idleNliClock } from "../shared/nli-investigation-clock.js";
 import { subscribeNliVideoPlayback } from "../shared/nli-video-playback-channel.js";
 import { resolveMotionMode } from "../shared/reduced-motion.js";
 import { getLayerLifecycleRuntime } from "../shared/layer-lifecycle-fade.js";
-import { projectionModelSubscribeReady, releaseProjectionModelImage, syncProjectionModelImage } from "../projection/projection-model-image.js";
+import { projectionModelEnabled, projectionModelSubscribeReady, releaseProjectionModelImage, syncProjectionModelImage } from "../projection/projection-model-image.js";
 import { loadPeopleRuntime } from "../map/maplibre-person-selection.js";
 import { bindProjectionPersonHalo } from "../projection/projection-person-halo.js";
 import {
@@ -51,6 +55,7 @@ import { installProjectionPreviewBridge } from "../projection/projection-preview
 import { bindProjectionHeadingStorage } from "../projection/projection-heading-storage.js";
 import { createProjectionConfigClient } from "../shared/projection-config-client.js";
 import { createProjectionConfigRuntime } from "../projection/projection-config-runtime.js";
+import { bindProjectionMatchCursor, readProjectionMatchLaunch } from '../projection/projection-match-cursor.js';
 import { readProjectionCandidateInputs } from "../projection/projection-candidate-validation.js";
 import { createUuid } from "../shared/uuid.js";
 import { createProjectionNarrativeController } from "../projection/projection-narrative-controller.js";
@@ -102,6 +107,7 @@ import { createProjectionPattern } from "../projection/projection-pattern.js";
 import { createProjectionCaptionAdapter, drawProjectionCaptionForSpan } from "../projection/projection-caption-adapter.js";
 import { createProjectionLegendAdapter } from "../projection/projection-legend-adapter.js";
 import { createProjectionPatternAdapter } from "../projection/projection-pattern-adapter.js";
+import { resolveProjectionResolution, projectionMapPixelRatio, bindProjectionMapResolution } from '../projection/output-resolution.js';
 import { getInvestigationTimelineRenderSnapshot } from "../shared/maplibre-investigation-timeline.js";
 import { loadCapturedProjectionFraming } from "../projection/projection-captured-baseline.js";
 import { visibleProjectionBrowserError } from "../projection/projection-browser-error.js";
@@ -132,7 +138,7 @@ export function bindProjectionClockLayout({ dataContext, host, span, onLayout, g
   return () => { unsubscribe?.(); win.removeEventListener("resize", onChange); };
 }
 
-function getEffectiveProjectionLayerGroups() {
+function getRawEffectiveProjectionLayerGroups() {
   const groups = (
     typeof window !== "undefined" &&
     window.LayerStateHelper &&
@@ -140,8 +146,9 @@ function getEffectiveProjectionLayerGroups() {
   )
     ? window.LayerStateHelper.getEffectiveLayerGroups()
     : OTEFDataContext.getLayerGroups();
-  return isolateLayersWhileVictimNamesShown(groups);
+  return groups;
 }
+const getNormalProjectionLayerGroups = () => isolateLayersWhileVictimNamesShown(getRawEffectiveProjectionLayerGroups());
 
 function applyStoredNliLabelHeading(map) {
   applyNliSharedTextHeading(
@@ -261,6 +268,12 @@ function toggleProjectionFullscreen() {
 
 async function bootstrapProjectionRuntime() {
   const previewMode = new URLSearchParams(window.location.search).get("preview") === "1";
+  let calibrationGroups = null, calibrationView = null, calibrationEpoch = 0, settlementNameRuntime = null;
+  let matchFrameCache = null, previewBridge = null;
+  const sourceStateListeners = new Set();
+  const refreshMatchSourceFrame = () => matchFrameCache?.refresh();
+  const calibrationActive = () => calibrationGroups !== null;
+  const getEffectiveProjectionLayerGroups = () => calibrationGroups ?? getNormalProjectionLayerGroups();
   if (previewMode) document.body.classList.add("projection-preview");
   const startupSearch = typeof window !== "undefined" ? window.location.search : "";
   const projectionSpanId = parseProjectionSpanId(startupSearch);
@@ -268,6 +281,8 @@ async function bootstrapProjectionRuntime() {
     ? "browser"
     : "td";
   const browserMode = !!(projectionSpanId && projectionOutputMode === "browser");
+  const matchLaunch = readProjectionMatchLaunch({ spanId: projectionSpanId, search: startupSearch });
+  if (browserMode && !previewMode && !matchLaunch) throw new Error('Invalid projection match display route');
   const projectionLifecycle = createProjectionLifecycle();
   let runtimeDisposed = false;
   const disposers = [];
@@ -436,12 +451,15 @@ async function bootstrapProjectionRuntime() {
   }
   if (!isRuntimeAlive()) return;
   const urlOrConfigPixelRatio = resolveProjectionMapPixelRatio();
+  const outputResolution = resolveProjectionResolution(window.location.search);
   const map = createProjectionMap("projectionMap", modelBounds, {
-    ...(urlOrConfigPixelRatio !== undefined ? { pixelRatio: urlOrConfigPixelRatio } : {}),
+    ...(urlOrConfigPixelRatio !== undefined ? { pixelRatio: urlOrConfigPixelRatio }
+      : browserMode ? { pixelRatio: projectionMapPixelRatio(outputResolution, displayContainerEl) } : {}),
     ...(projectionSpanId && projectionOutputMode === "browser"
       ? { canvasContextAttributes: { preserveDrawingBuffer: true } }
       : {}),
   });
+  if (browserMode && urlOrConfigPixelRatio === undefined) registerDisposer(bindProjectionMapResolution({ map, container: displayContainerEl, resolution: outputResolution }));
   attachSettlementOrientationRuntime(map);
   let browserSurface = null;
   if (modelImgEl) {
@@ -453,11 +471,13 @@ async function bootstrapProjectionRuntime() {
     onReady: () => {
       map.triggerRepaint?.();
       getLayerLifecycleRuntime(map)?.markMemberReady("projector_base.model_base");
+      refreshMatchSourceFrame();
     },
-    onInvalidate: () => map.triggerRepaint?.(),
+    onInvalidate: () => { matchFrameCache?.sourceReloaded('image'); refreshMatchSourceFrame(); map.triggerRepaint?.(); },
     onError: (error) => {
       visibleProjectionBrowserError(displayContainerEl, error);
       getLayerLifecycleRuntime(map)?.markMemberFailed("projector_base.model_base");
+      refreshMatchSourceFrame();
     },
   }) : null;
   if (imageReadiness) registerDisposer(() => imageReadiness.dispose());
@@ -511,7 +531,7 @@ async function bootstrapProjectionRuntime() {
   const syncProjectionHighlight = (viewport) => {
     const exhibitMode = OTEFDataContext.getExhibitMode?.() === true;
     const slideshowActive = slideshowRuntime?.shouldSuppressProjectionHighlight?.() === true;
-    const show = shouldShowProjectionViewportHighlight({ slideshowActive, exhibitMode });
+    const show = !calibrationActive() && shouldShowProjectionViewportHighlight({ slideshowActive, exhibitMode });
     setProjectionHighlightVisibility(map, show);
     if (viewport) {
       updateHighlightFromViewport(map, viewport, modelBounds, null);
@@ -603,9 +623,9 @@ async function bootstrapProjectionRuntime() {
     if (!isRuntimeAlive()) return;
     if (projectionMapBooted) return;
     projectionMapBooted = true;
-    const captionAdapter = browserMode ? createProjectionCaptionAdapter({}) : null;
-    const legendAdapter = browserMode ? createProjectionLegendAdapter({}) : null;
-    const patternAdapter = browserMode ? createProjectionPatternAdapter({ spanId: projectionSpanId }) : null;
+    const captionAdapter = browserMode ? createProjectionCaptionAdapter({ rasterScale: outputResolution.scale }) : null;
+    const legendAdapter = browserMode ? createProjectionLegendAdapter({ rasterScale: outputResolution.scale }) : null;
+    const patternAdapter = browserMode ? createProjectionPatternAdapter({ spanId: projectionSpanId, rasterScale: outputResolution.scale }) : null;
     if (captionAdapter) registerDisposer(() => captionAdapter.dispose());
     if (legendAdapter) registerDisposer(() => legendAdapter.dispose());
     if (patternAdapter) registerDisposer(() => patternAdapter.dispose());
@@ -626,40 +646,40 @@ async function bootstrapProjectionRuntime() {
       acceptedDatasetVersion = datasetVersion;
       acceptedDatasetIdentityError = null;
       projectionRuntime?.datasetChanged?.();
+      refreshMatchSourceFrame();
     }).catch((error) => {
       acceptedDatasetIdentityError = `${error?.message || "Accepted name dataset identity unavailable"}. Refresh the output before retrying Run.`;
       projectionRuntime?.datasetIdentityFailed?.(acceptedDatasetIdentityError);
+      refreshMatchSourceFrame();
     });
     let lastPlaceId = null;
     const raiseProjectionHighlightAndGlow = (targetMap = map) => {
       raiseProjectionHighlightLayers(targetMap);
       settlementGlow.raise(targetMap);
     };
-    const syncSettlementGlow = () => {
+    const syncSettlementGlow = ({ isCurrent = () => true } = {}) => {
+      const epoch = calibrationEpoch;
+      const current = () => isRuntimeAlive() && epoch === calibrationEpoch && isCurrent();
+      if (calibrationActive()) return settlementGlow.setFocus({ suppressed: true, isCurrent: current });
       if (lastPlaceId == null) {
         lastPlaceId = nameFieldController.getPendingPlaceId?.() ?? null;
       }
-      const exhibitMode = OTEFDataContext.getExhibitMode?.() === true;
-      const narrativeId = OTEFDataContext.getNarrativeState?.()?.id ?? null;
-      const selection = OTEFDataContext.getPersonSelection?.();
-      const wallEnabled = victimNamesAreShown(OTEFDataContext.getLayerGroups());
-      const placeName = nameFieldController.placeNameForPlace?.(lastPlaceId) ?? null;
-      return peopleRuntimePromise.then((runtime) => {
-        const personLocation = runtime?.resolve?.(selection?.personId, selection?.datasetVersion)?.location ?? null;
-        return syncProjectionSettlementGlow(settlementGlow, {
-          exhibitMode,
-          narrativeId,
+      const apply = (personLocation) => {
+        if (!current() || calibrationActive()) return;
+        return syncProjectionSettlementGlow({ setFocus: options => settlementGlow.setFocus({ ...options,
+          isCurrent: () => current() && !calibrationActive() }) }, {
+          exhibitMode: OTEFDataContext.getExhibitMode?.() === true,
+          narrativeId: OTEFDataContext.getNarrativeState?.()?.id ?? null,
           personLocation,
-          placeName,
-          wallEnabled,
+          placeName: nameFieldController.placeNameForPlace?.(lastPlaceId) ?? null,
+          wallEnabled: victimNamesAreShown(OTEFDataContext.getLayerGroups()),
         });
-      }).catch(() => syncProjectionSettlementGlow(settlementGlow, {
-        exhibitMode,
-        narrativeId,
-        personLocation: null,
-        placeName,
-        wallEnabled,
-      }));
+      };
+      return peopleRuntimePromise.then((runtime) => {
+        const selection = OTEFDataContext.getPersonSelection?.();
+        const personLocation = runtime?.resolve?.(selection?.personId, selection?.datasetVersion)?.location ?? null;
+        return apply(personLocation);
+      }).catch(() => apply(null));
     };
     if (projectionSpanId) nameFieldController.setProjectionConfig(effectiveProjectionConfig);
     else nameFieldController.setProjectionConfig(DEFAULT_PROJECTION_CONFIG);
@@ -731,6 +751,7 @@ async function bootstrapProjectionRuntime() {
       return { currentGroups, overlayGroups, presentationActive };
     };
     const syncContextRouteProgress = () => {
+      if (calibrationActive()) { disposeRouteProgressOverlaysForMap(map); return; }
       const { currentGroups, overlayGroups, presentationActive } = projectionOverlayContext();
       const anim =
         typeof OTEFDataContext.getAnimations === "function" ? OTEFDataContext.getAnimations() : {};
@@ -744,6 +765,7 @@ async function bootstrapProjectionRuntime() {
     let morRouteCoordinator = null;
     let parallelImpactIds = new Set();
     const syncContextInvestigation = () => {
+      if (calibrationActive()) { disposeInvestigationTimelineForMap(map); return; }
       const { currentGroups, overlayGroups, presentationActive } = projectionOverlayContext();
       const clock =
         typeof OTEFDataContext.getInvestigationClock === "function"
@@ -819,6 +841,7 @@ async function bootstrapProjectionRuntime() {
       map,
       syncTimeline: syncContextInvestigation,
       onStyleLoadOverlay: () => {
+        if (calibrationActive()) return;
         novaEscapeCoordinator?.onStyleLoad?.();
         morRouteCoordinator?.onStyleLoad?.();
       },
@@ -827,6 +850,9 @@ async function bootstrapProjectionRuntime() {
     registerDisposer(
       OTEFDataContext.subscribe("narrativeState", (state) => {
         projectionNarrativeController?.apply(state);
+        if (calibrationActive()) {
+          applyNarrativePeopleFilter(map, null); applyNarrativeHouseOutlineFilter(map, null); clearPeopleFocusDim(map);
+        }
         void syncSettlementGlow();
       }),
     );
@@ -896,11 +922,11 @@ async function bootstrapProjectionRuntime() {
     }
 
     const shouldSkipLiveProjectionRefresh = () =>
-      !!(
+      !calibrationActive() && !!(
         slideshowRuntime?.isActive() &&
         MapProjectionConfig.PROJECTION_SLIDESHOW?.ignoreLiveLayerUpdatesWhileActive
       );
-    const { applyProjectionRefresh } = createProjectionCuratedRefresh({
+    const { applyProjectionRefresh: refreshOrdinaryScene } = createProjectionCuratedRefresh({
       map,
       displayGate: projectionDisplay,
       isRuntimeAlive,
@@ -921,19 +947,26 @@ async function bootstrapProjectionRuntime() {
       applyLabelHeading: (targetMap) => { if (!browserMode) applyStoredNliLabelHeading(targetMap); },
       nameFieldController,
       syncFlowAnimations: syncContextFlowAnimations,
-      getNarrativeController: () => projectionNarrativeController,
+      getNarrativeController: () => calibrationActive() ? null : projectionNarrativeController,
       refreshLegend: refreshLegendAfterStyleLoad,
       raiseHighlight: raiseProjectionHighlightAndGlow,
       resolveMaplibregl,
       syncPinkLine: syncPinkLineAxisCompanionForMapLibre,
       shouldSkipLiveRefresh: shouldSkipLiveProjectionRefresh,
     });
+    const applyProjectionRefresh = (options = {}) => {
+      const token = calibrationEpoch, providedCurrent = options.isCurrent;
+      return refreshOrdinaryScene({ ...options, groupsOverride: calibrationGroups ?? options.groupsOverride ?? getEffectiveProjectionLayerGroups(),
+        isCurrent: (...args) => token === calibrationEpoch && (!providedCurrent || providedCurrent(...args)) });
+    };
     let projectionCuratedRefreshChain = Promise.resolve();
     const refreshProjectionCuratedLayers = (options = {}) => {
+      const token = calibrationEpoch, providedCurrent = options.isCurrent;
       const groups = options.groupsOverride ?? getEffectiveProjectionLayerGroups();
       projectionCuratedRefreshChain = projectionCuratedRefreshChain
         .catch(() => {})
-        .then(() => applyProjectionRefresh({ ...options, groupsOverride: groups }));
+        .then(() => applyProjectionRefresh({ ...options, groupsOverride: groups,
+          isCurrent: (...args) => token === calibrationEpoch && (!providedCurrent || providedCurrent(...args)) }));
       return projectionCuratedRefreshChain;
     };
 
@@ -986,6 +1019,7 @@ async function bootstrapProjectionRuntime() {
           image: modelImgEl,
           mapCanvas: map.getCanvas?.(),
           getScene: renderBrowserScene,
+          filterScene: scene => calibrationActive() ? filterProjectionCalibrationScene(scene) : scene,
           hideTargets: hiddenSources,
           signal: projectionLifecycle.signal,
           initialConfig: effectiveProjectionConfig,
@@ -1000,22 +1034,33 @@ async function bootstrapProjectionRuntime() {
         nameFieldController.installProjectionCanvas(browserSurface.getNameAdapter());
         try {
           const settlementCatalog = await loadSettlementNameCatalog({ registry: layerRegistry, fetchImpl: window.fetch.bind(window), signal: projectionLifecycle.signal });
-          if (isRuntimeAlive()) registerDisposer(bindProjectionSettlementNames({
+          if (isRuntimeAlive()) {
+            settlementNameRuntime = bindProjectionSettlementNames({
             dataContext: OTEFDataContext,
             adapter: browserSurface.getSettlementAdapter(),
+            output: projectionSpanId,
+            getConfig: () => effectiveProjectionConfig,
             catalog: settlementCatalog,
             map,
-            getGroups: () => OTEFDataContext.getLayerGroups(),
-            onDraw: () => { browserSurface?.draw?.(); },
+            getGroups: getEffectiveProjectionLayerGroups,
+            getCalibrationActive: calibrationActive,
+            onReadinessChange: () => { calibrationView?.normalSceneChanged(); refreshMatchSourceFrame(); },
+            onDraw: async () => {
+              if (browserSurface?.draw?.() !== true) throw new Error('Settlement compositor draw failed');
+              await new Promise(resolve => window.requestAnimationFrame(() => window.requestAnimationFrame(resolve)));
+            },
             onError: (error) => visibleProjectionBrowserError(displayContainer, error),
             host: displayContainer,
-          }));
+            });
+            registerDisposer(settlementNameRuntime);
+          }
         } catch (error) {
           if (error?.name !== "AbortError") console.warn("Settlement names unavailable:", error?.message || error);
         }
         registerDisposer(disposeProjectionNameWallPreparation);
         const unsubscribeVideoPlayback = subscribeNliVideoPlayback({
           table: OTEFDataContext._tableName || "otef",
+          socket: OTEFDataContext._wsClient,
           onChange: (active) => browserSurface?.setVideoPlaybackActive?.(active),
         });
         registerDisposer(unsubscribeVideoPlayback);
@@ -1030,6 +1075,142 @@ async function bootstrapProjectionRuntime() {
         }
         return;
       }
+    }
+
+    let previewCalibrationSequence = 0;
+    const previewCalibrationSourceId = createUuid(), previewCalibrationSessionId = createUuid();
+    if (browserMode && browserSurface) {
+      const instanceId = projectionConfigSourceId || createUuid();
+      const cover = createProjectionCalibrationCover({ document, host: displayContainer });
+      const mapMask = createProjectionCalibrationMapMask({ map });
+      map.on('styledata', mapMask.refresh);
+      const applyScene = createProjectionCalibrationRenderer({
+        setOverride: groups => { calibrationGroups = groups; calibrationEpoch += 1; if (groups) mapMask.apply(groups); else mapMask.clear(); refreshMatchSourceFrame(); },
+        refreshScene: applyProjectionRefresh,
+        readNormalGroups: getNormalProjectionLayerGroups,
+        getLabels: () => settlementNameRuntime,
+        draw: () => isRuntimeAlive() && browserSurface.draw(),
+        waitForMap: options => waitForProjectionCalibrationMap({ map, clock: window,
+          onDiagnostic: diagnostic => { browserSurface.canvas.dataset.calibrationMapDiagnostics = JSON.stringify(diagnostic); },
+          getRenderedReadiness: () => getLayerLifecycleRuntime(map).getRenderedReadiness(), ...options }),
+        suppressOverlays: () => {
+          disposeRouteProgressOverlaysForMap(map); disposeInvestigationTimelineForMap(map);
+          void syncSettlementGlow(); syncProjectionHighlight(lastViewport);
+        },
+        restoreOverlays: async ({ isCurrent }) => {
+          await syncSettlementGlow({ isCurrent });
+          if (isCurrent()) syncProjectionHighlight(lastViewport);
+        },
+      });
+      calibrationView = createProjectionCalibrationView({ output: projectionSpanId, instanceId, clock: window,
+        onState: state => { Object.assign(browserSurface.canvas.dataset, {
+          calibrationScene: state.active ? 'landmarks' : 'normal', calibrationReady: String(state.ready),
+          calibrationSceneIdentity: state.ready ? state.sceneIdentity || '' : '', calibrationError: state.error || '',
+        }); refreshMatchSourceFrame(); },
+        readRoute: () => matchLaunch || { displaySide: projectionSpanId, reversed: false },
+        isVisible: () => document.visibilityState !== 'hidden' && isRuntimeAlive(),
+        requestFrame: window.requestAnimationFrame.bind(window), setBlackout: cover.setBlackout, applyScene,
+        readNormalScene: () => ({ groups: getRawEffectiveProjectionLayerGroups(),
+          settlementSettings: OTEFDataContext.getSettlementNameSettings?.(),
+          settlementRevision: OTEFDataContext.getSettlementNameRevision?.() }),
+        sendAck: message => { if (!previewMode) OTEFDataContext._wsClient?.send?.(message); },
+      });
+      // Read-only effective scene and matching prepare/commit readiness.
+      map._otefProjectionCalibrationState = () => calibrationView.getState();
+      map._otefProjectionEffectiveSceneGroups = getEffectiveProjectionLayerGroups;
+      map._otefProjectionSettlementLabelReadiness = () => settlementNameRuntime?.getReadiness() || { ready: false };
+      const socket = OTEFDataContext._wsClient;
+      if (!previewMode && socket) {
+        socket.on('otef_projection_calibration_view', calibrationView.receive);
+        socket.on('disconnect', calibrationView.clear);
+        registerDisposer(() => { socket.off('otef_projection_calibration_view', calibrationView.receive); socket.off('disconnect', calibrationView.clear); });
+      }
+      registerDisposer(() => { calibrationView.dispose(); cover.dispose();
+        map.off('styledata', mapMask.refresh); mapMask.clear();
+        delete map._otefProjectionCalibrationState; delete map._otefProjectionEffectiveSceneGroups; delete map._otefProjectionSettlementLabelReadiness; });
+      // Local preview uses the same resolver/effect, with no physical blackout.
+      map._otefSetPreviewCalibrationView = (enabled) => {
+        calibrationView.receive({ type: 'otef_projection_calibration_view', table: 'otef', output: projectionSpanId, instanceId,
+          sourceId: previewCalibrationSourceId, sessionId: previewCalibrationSessionId, sequence: ++previewCalibrationSequence,
+          mode: enabled ? 'landmarks' : 'off', blackout: false });
+        if (!enabled) return { ready: true, sceneIdentity: null, missingIds: [], error: null };
+        return calibrationView.getState();
+      };
+      registerDisposer(() => { delete map._otefSetPreviewCalibrationView; });
+    }
+
+    if (browserMode && browserSurface) {
+      const geometryState = () => previewMode ? previewBridge?.getAppliedGeometryState?.() : projectionRuntime?.getAppliedGeometryState?.();
+      let previousMatchState = null;
+      matchFrameCache = createProjectionMatchFrameCache({
+        readInputs: () => {
+          const groups = getEffectiveProjectionLayerGroups(), labels = settlementNameRuntime?.getReadiness();
+          const imageParticipates = !calibrationActive() && projectionModelEnabled(groups);
+          const lifecycle = getLayerLifecycleRuntime(map).getRenderedReadiness();
+          const names = browserSurface.getNameAdapter?.()?.descriptor?.();
+          return { output: projectionSpanId, sceneId: OTEFDataContext.getNarrativeState?.()?.id || 'home',
+            camera: { bounds: map.getBounds().toArray(), bearing: map.getBearing(), pitch: map.getPitch() },
+            groups: asLayerGroupsArray(groups).map(group => ({ ...group, layers: (group.layers || []).map(layer => ({ ...layer,
+              style: layer.fullLayerIds ? [...layer.fullLayerIds].sort().map(id => layerRegistry.getLayerConfig(id)?.style)
+                : layerRegistry.getLayerConfig(layer.fullId || `${group.id}.${layer.id}`)?.style ?? layer.style })) })),
+            imageIdentity: imageParticipates ? { assetPathAndQuery: modelImgEl.currentSrc || modelImgEl.src,
+              declaredVersion: modelBoundsData.assetVersion ?? modelBoundsData.releaseVersion ?? modelImgEl.dataset?.version ?? null,
+              naturalWidth: modelImgEl.naturalWidth, naturalHeight: modelImgEl.naturalHeight } : null,
+            imageParticipates, imageReady: imageReadiness?.contentVersion() != null,
+            settlementNameIdentity: labels ? { revision: labels.committedRevision, desiredRevision: labels.desiredRevision,
+              settingsIdentity: labels.settingsIdentity, catalogIdentity: labels.catalogIdentity } : null,
+            labels, datasetVersion: acceptedDatasetVersion, cameraMoving: map.isMoving(), connected: OTEFDataContext._wsClient?.isConnected === true,
+            sourcesReady: map.loaded() === true && lifecycle.ready && (!calibrationActive() || calibrationView?.getState()?.ready === true),
+            narrativeIdle: OTEFDataContext.getInvestigationClock?.()?.phase === 'idle', slideshowActive: Boolean(slideshowRuntime?.isActive()),
+            namesDrawn: !calibrationActive() && Boolean(names && names.opacity !== 0 && victimNamesAreShown(groups)), geometry: geometryState() };
+        },
+        onChange: state => {
+          if (previousMatchState?.stable && (!state.stable || previousMatchState.sourceFrameIdentity !== state.sourceFrameIdentity))
+            map._otefProjectionMatchCursor?.invalidateSource(state.error || 'Effective source frame changed; restart point capture.');
+          previousMatchState = state;
+          map._otefProjectionMatchCursor?.contextChanged();
+          Object.assign(browserSurface.canvas.dataset, { matchSourceReady: String(state.stable), matchSourceError: state.error || '' });
+          for (const listener of sourceStateListeners) listener(state);
+        },
+        onInvalidate: error => {
+          map._otefProjectionMatchCursor?.invalidateSource(error);
+        },
+      });
+      map._otefProjectionMatchSourceContext = () => matchFrameCache.getState();
+      const sourceEvents = ['move', 'moveend', 'sourcedata', 'styledata', 'idle'];
+      for (const event of sourceEvents) map.on(event, refreshMatchSourceFrame);
+      const sourceLoading = event => {
+        if (typeof event.sourceId !== 'string') return;
+        const ids = asLayerGroupsArray(getEffectiveProjectionLayerGroups()).filter(group => group.enabled !== false)
+          .flatMap(group => (group.layers || []).filter(layer => layer.enabled).flatMap(layer => layer.fullLayerIds || [layer.fullId || `${group.id}.${layer.id}`]));
+        if (ids.some(id => event.sourceId === id || event.sourceId.startsWith(`${id}__`) || event.sourceId.startsWith(`${id.replace('.', '__')}__`)))
+          matchFrameCache.sourceReloaded('map');
+      };
+      map.on('sourcedataloading', sourceLoading);
+      const offTopics = ['layerGroups', 'narrativeState', 'investigationClock', 'personSelection', 'viewport', 'settlementNames', 'projectionSlideshow']
+        .map(topic => OTEFDataContext.subscribe(topic, refreshMatchSourceFrame));
+      // Geometry completion and lifecycle fade progress are checked cheaply on render. Hash only on readiness changes.
+      let lastReadiness = null;
+      const refreshReadiness = () => {
+        const geometry = geometryState(), labels = settlementNameRuntime?.getReadiness();
+        const key = [geometry?.revision, geometry?.pending, geometry?.failed, geometry?.suspended, geometry?.stopped,
+          getLayerLifecycleRuntime(map).getRenderedReadiness().ready, map.loaded(), labels?.ready,
+          calibrationView?.getState()?.ready, projectionModelEnabled(getEffectiveProjectionLayerGroups()) ? imageReadiness?.contentVersion() : null].join('|');
+        if (key !== lastReadiness) { lastReadiness = key; refreshMatchSourceFrame(); }
+      };
+      map.on('render', refreshReadiness);
+      const disconnectSource = () => { map._otefProjectionMatchCursor?.invalidateSource('Output disconnected; restart point capture.'); refreshMatchSourceFrame(); };
+      OTEFDataContext._wsClient?.on?.('disconnect', disconnectSource);
+      OTEFDataContext._wsClient?.on?.('connect', refreshMatchSourceFrame);
+      registerDisposer(() => {
+        for (const event of sourceEvents) map.off(event, refreshMatchSourceFrame);
+        map.off('sourcedataloading', sourceLoading);
+        map.off('render', refreshReadiness); for (const off of offTopics) off?.();
+        OTEFDataContext._wsClient?.off?.('disconnect', disconnectSource);
+        OTEFDataContext._wsClient?.off?.('connect', refreshMatchSourceFrame);
+        delete map._otefProjectionMatchSourceContext; matchFrameCache = null; sourceStateListeners.clear();
+      });
+      refreshMatchSourceFrame();
     }
 
     if (previewMode && browserMode) {
@@ -1141,13 +1322,17 @@ async function bootstrapProjectionRuntime() {
       };
     }
 
-    if (previewMode) registerDisposer(installProjectionPreviewBridge({
+    if (previewMode) { previewBridge = installProjectionPreviewBridge({
       win: window,
       output: projectionSpanId,
       map,
       nameFieldController,
       syncContextInvestigation,
       applyProjectionConfig: applyPreviewProjectionConfig,
+      readSourceState: () => matchFrameCache?.getState(),
+      subscribeSourceState: listener => { sourceStateListeners.add(listener); return () => sourceStateListeners.delete(listener); },
+      onGeometryState: refreshMatchSourceFrame,
+      setCalibrationView: (enabled, options) => map._otefSetPreviewCalibrationView?.(enabled, options),
       validateWall: browserMode ? async (config, { revision, signal }) => {
         const prepared = await browserSurface.preparePair(config);
         if (signal?.aborted) throw new Error('Wall preview superseded');
@@ -1159,7 +1344,7 @@ async function bootstrapProjectionRuntime() {
         if (!result.valid) return { reason: result.reason, diagnostics: result.diagnostics };
         return { ...result.wall, heading: field.heading, diagnostics: result.diagnostics };
       } : null,
-    }));
+    }); registerDisposer(previewBridge); }
 
     if (browserMode && !previewMode && projectionConfigClient && OTEFDataContext._wsClient) {
       const sourceId = projectionConfigSourceId;
@@ -1230,10 +1415,20 @@ async function bootstrapProjectionRuntime() {
         getDatasetVersion: () => acceptedDatasetVersion,
         getDatasetIdentityError: () => acceptedDatasetIdentityError,
         route: "browser",
+        ...matchLaunch,
         baseline: (config) => browserSurface?.getBaselineIdentity?.(config) || null,
       });
       registerDisposer(() => { projectionRuntime?.stop?.(); projectionRuntime = null; });
       await projectionRuntime.start();
+      const matchCursor = bindProjectionMatchCursor({ document, host: displayContainer, output: projectionSpanId,
+        instanceId: sourceId, socket: OTEFDataContext._wsClient, runtime: projectionRuntime, launch: matchLaunch,
+        // Task 2 installs the evaluated source-frame reader; never infer readiness from a server snapshot.
+        readSourceContext: () => map._otefProjectionMatchSourceContext?.() ?? null,
+        requestFrame: window.requestAnimationFrame.bind(window), cancelFrame: window.cancelAnimationFrame.bind(window), clock: window });
+      map._otefProjectionMatchCursor = matchCursor;
+      const onMatchRender = () => matchCursor.contextChanged();
+      map.on('render', onMatchRender);
+      registerDisposer(() => { map.off('render', onMatchRender); matchCursor.dispose(); delete map._otefProjectionMatchCursor; });
       if (acceptedDatasetIdentityError) projectionRuntime.datasetIdentityFailed(acceptedDatasetIdentityError);
       registerDisposer(OTEFDataContext.subscribe('personSelection', () => projectionRuntime?.datasetChanged?.()));
     }
@@ -1258,12 +1453,13 @@ async function bootstrapProjectionRuntime() {
     }
 
     function syncProjectionLayersWithNarrative(targetMap, groups, options) {
+      if (calibrationActive()) groups = calibrationGroups;
       syncProjectionLayers(targetMap, groups, { ...options, suppressCanvasNameSymbols: Boolean(browserSurface?.getNameAdapter()), suppressSettlementSymbols: Boolean(browserSurface?.getSettlementAdapter()) });
-      applyNarrativePeopleFilter(targetMap, OTEFDataContext.getNarrativeState?.()?.id ?? null);
-      const selectedPid = OTEFDataContext.getPersonSelection?.()?.personId;
+      applyNarrativePeopleFilter(targetMap, calibrationActive() ? null : OTEFDataContext.getNarrativeState?.()?.id ?? null);
+      const selectedPid = calibrationActive() ? null : OTEFDataContext.getPersonSelection?.()?.personId;
       if (selectedPid) applyPeopleFocusDim(targetMap, selectedPid);
       else clearPeopleFocusDim(targetMap);
-      applyNarrativeHouseOutlineFilter(targetMap, OTEFDataContext.getNarrativeState?.()?.id ?? null);
+      applyNarrativeHouseOutlineFilter(targetMap, calibrationActive() ? null : OTEFDataContext.getNarrativeState?.()?.id ?? null);
     }
 
     const syncProjectionLayersAndRaiseHighlight = (projectionMap, groups, options) => {
@@ -1272,7 +1468,7 @@ async function bootstrapProjectionRuntime() {
       void syncSettlementGlow();
       if (!browserMode) applyStoredNliLabelHeading(projectionMap);
       syncContextFlowAnimations();
-      projectionNarrativeController?.onStyleLoad();
+      if (!calibrationActive()) projectionNarrativeController?.onStyleLoad();
       refreshLegendAfterStyleLoad();
       raiseProjectionHighlightAndGlow(projectionMap);
     };
@@ -1293,6 +1489,7 @@ async function bootstrapProjectionRuntime() {
     });
 
     const syncAfterStart = () => {
+      refreshMatchSourceFrame();
       syncPresentationFlag();
       syncSlideshowPresentationPoll(slideshowRuntime, {
         start: startPresentationPoll,
@@ -1304,6 +1501,7 @@ async function bootstrapProjectionRuntime() {
 
     const syncAfterStop = syncAfterStart;
     const syncAfterStopFailure = () => {
+      refreshMatchSourceFrame();
       syncPresentationFlag();
       syncSlideshowPresentationPoll(slideshowRuntime, {
         start: startPresentationPoll,
@@ -1346,9 +1544,8 @@ async function bootstrapProjectionRuntime() {
 
     registerDisposer(
       OTEFDataContext.subscribe("layerGroups", () => {
-        // Raw `groups` from the event omit LayerStateHelper merge rules (e.g. שמות_יישובים
-        // + Locations_Lines → one row with fullLayerIds). Sync must use the same effective
-        // groups as loadProjectionCuratedLayers or Locations_Lines never loads on toggle.
+        if (calibrationActive()) { calibrationView?.normalSceneChanged(); return; }
+        // Use the same effective groups as initial loading, including retired-layer filtering.
         const groups = getEffectiveProjectionLayerGroups();
         void applyProjectionRefresh({
           groupsOverride: groups,
@@ -1364,6 +1561,7 @@ async function bootstrapProjectionRuntime() {
       if (!isRuntimeAlive()) return;
       releaseProjectionModelImage(map);
       projectionDisplay.invalidateStyle();
+      if (calibrationActive()) { calibrationView?.normalSceneChanged({force:true}); return; }
       const groups = getEffectiveProjectionLayerGroups();
       void applyProjectionRefresh({
         groupsOverride: groups,
@@ -1415,7 +1613,7 @@ async function bootstrapProjectionRuntime() {
               nameFieldController.sync(Array.isArray(groups) ? groups : Object.values(groups || {}));
               void syncSettlementGlow();
               syncContextFlowAnimations();
-              projectionNarrativeController?.onStyleLoad();
+              if (!calibrationActive()) projectionNarrativeController?.onStyleLoad();
               refreshLegendAfterStyleLoad();
               raiseProjectionHighlightAndGlow(map);
             },

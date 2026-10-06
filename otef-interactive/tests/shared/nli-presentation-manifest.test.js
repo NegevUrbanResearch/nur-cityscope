@@ -12,20 +12,20 @@ describe("NLI presentation manifest", () => {
 
     expect(manifest.deck).toMatchObject({
       slideCount: 37,
-      pdfSha256: "adaba7ccf6b094789c7bdad252c91f6dd4660780a1b3b07592f3d2f89be2a842",
-      pptxSha256: "9582cf0321c8d658dbe6c649ad59a24dc1f8caa40fab5d98fec4b752c7b5471e",
+      pdfSha256: "cadc48656462a3d968a0ded6616dd5c380be6588399c68b9f3dbf637dc7b5114",
+      pptxSha256: "edf994532d8e190ea45f5c7f5f7c26ebe27d2ef87cb574b65cb1ac1a0a31847c",
       slidePathPattern: "local/presentations/nli/slides/slide-{slide}.png",
     });
     expect(manifest.videos).toEqual([
-      { slide: 2, path: "local/presentations/nli/videos/slide-02.mp4", rect: [0.159896, 0.288272, 0.67934, 0.682716] },
-      { slide: 9, path: "local/presentations/nli/supplements/gelem-first-9s-fade.mp4", rect: [0.16, 0.285, 0.68, 0.68], fit: "contain", title: "תיעוד תלת־ממדי של בארי" },
-      { slide: 11, path: "local/presentations/nli/videos/slide-10.mp4", rect: [0.1625, 0.283642, 0.674132, 0.682716] },
-      { slide: 13, path: "local/presentations/nli/supplements/nova-first-12s-fade.mp4", rect: [0.16, 0.28, 0.68, 0.685], fit: "contain", title: "תיעוד תלת־ממדי של הנובה, 10 באוקטובר 2023" },
-      { slide: 20, path: "local/presentations/nli/videos/slide-18.mp4", rect: [0.128646, 0.285185, 0.719271, 0.682716] },
-      { slide: 23, path: "local/presentations/nli/videos/slide-21.mp4", rect: [0.148611, 0.269278, 0.702244, 0.700285] },
-      { slide: 25, path: "local/presentations/nli/videos/slide-23.mp4", rect: [0.155556, 0.282099, 0.688889, 0.682716] },
-      { slide: 26, path: "local/presentations/nli/videos/slide-24.mp4", rect: [0.1625, 0.283642, 0.675, 0.682716] },
-      { slide: 31, path: "local/presentations/nli/supplements/reim-first-10s-fade.mp4", rect: [0.16, 0.285, 0.68, 0.68], fit: "contain", title: "המיגונית ברעים" },
+      { slide: 2, path: "local/presentations/nli/normalized-audio/slide-02.mp4", rect: [0.159896, 0.288272, 0.67934, 0.682716] },
+      { slide: 9, path: "local/presentations/nli/supplements/gelem-first-9s-fade.mp4", rect: [0.16, 0.285, 0.68, 0.68], fit: "contain", title: "תיעוד תלת־ממדי של בארי, 17 באוקטובר 2023", credit: "רשות העתיקות", photographer: "ברק ברינקר" },
+      { slide: 11, path: "local/presentations/nli/normalized-audio/slide-10.mp4", rect: [0.1625, 0.286529, 0.674132, 0.682716] },
+      { slide: 13, path: "local/presentations/nli/supplements/nova-first-12s-fade.mp4", rect: [0.16, 0.28, 0.68, 0.685], fit: "contain", title: "תיעוד תלת־ממדי של הנובה, 10 באוקטובר 2023", credit: "רשות העתיקות" },
+      { slide: 20, path: "local/presentations/nli/normalized-audio/slide-18.mp4", rect: [0.128646, 0.285185, 0.719271, 0.682716] },
+      { slide: 23, path: "local/presentations/nli/normalized-audio/slide-21.mp4", rect: [0.148611, 0.269278, 0.702244, 0.700285] },
+      { slide: 25, path: "local/presentations/nli/normalized-audio/slide-23.mp4", rect: [0.155556, 0.282099, 0.688889, 0.682716] },
+      { slide: 26, path: "local/presentations/nli/normalized-audio/slide-24.mp4", rect: [0.1625, 0.283642, 0.675, 0.682716] },
+      { slide: 31, path: "local/presentations/nli/supplements/reim-first-10s-fade.mp4", rect: [0.16, 0.285, 0.68, 0.68], fit: "contain", title: "המיגונית ברעים, 1 בפברואר 2024", credit: "רשות העתיקות", photographer: "יוסי סודרי" },
     ]);
     expect(manifest.segments).toEqual([
       { id: "segev", requiredNarrative: "segev", range: [1, 9] },
@@ -82,6 +82,8 @@ describe("NLI presentation manifest", () => {
     ["absolute slide path", (value) => { value.deck.slidePathPattern = "/local/slides/{slide}.png"; }],
     ["absolute video path", (value) => { value.videos[0].path = "/video.mp4"; }],
     ["invalid video rectangle", (value) => { value.videos[0].rect = [1, 2, 3]; }],
+    ["invalid video credit", (value) => { value.videos[1].credit = {}; }],
+    ["empty photographer", (value) => { value.videos[1].photographer = " "; }],
     ["invalid segment ID", (value) => { value.segments[0].id = ""; }],
     ["invalid segment range", (value) => { value.segments[0].range = [1, "8"]; }],
   ])("rejects %s", (_label, mutate) => {

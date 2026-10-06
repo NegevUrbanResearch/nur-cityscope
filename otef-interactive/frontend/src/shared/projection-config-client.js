@@ -250,7 +250,10 @@ export function createProjectionConfigClient({
     // Receipt context lasts only for this adoption. An own checkpoint Save
     // changes preset selection without replacing the editing session.
     const acknowledgedSave = origin === sourceId && matchesSaveAcknowledgement(inFlight, next) ? inFlight : null;
-    notify(acknowledgedSave ? { origin, action: 'save' } : foreign ? { origin, foreign: true } : undefined);
+    const ownedApply = origin === sourceId && matchesApplyAcknowledgement(inFlight, next) ? inFlight : null;
+    notify(acknowledgedSave ? { origin, action: 'save' } : ownedApply
+      ? { origin, action: 'apply', publicationToken: ownedApply.publicationToken }
+      : foreign ? { origin, foreign: true } : undefined);
     if (acknowledgedSave) settleSaveAcknowledgement(acknowledgedSave, next);
     return true;
   }
@@ -261,6 +264,13 @@ export function createProjectionConfigClient({
     return Boolean(checkpoint && !checkpoint.readOnly && checkpoint.name === String(request.body.name ?? '').trim() &&
       (!request.body.presetId || checkpoint.id === request.body.presetId) &&
       equalProjectionConfig(next.config, request.body.config) && equalProjectionConfig(checkpoint.config, request.body.config));
+  }
+
+  function matchesApplyAcknowledgement(request, next) {
+    return Boolean(request?.explicitApply && request.publicationToken && !request.retired &&
+      next.revision === request.sentRevision + 1 && next.revision === request.expectedRevision &&
+      JSON.stringify(normalizeSnapshot(next).config) === request.expectedConfigIdentity &&
+      equalProjectionConfig(next.config, request.body.config));
   }
 
   function settleSaveAcknowledgement(request, next) {
@@ -322,7 +332,7 @@ export function createProjectionConfigClient({
   }
 
   function schedulePreview() {
-    if (!started || stopped || !connected || hydrating || reconciliation || !live || !draft || !snapshot || intent || setupRequired()) return;
+    if (!started || stopped || !connected || hydrating || reconciliation || !live || !draft || !snapshot || (intent && intent.action !== 'rename') || setupRequired()) return;
     queuedPreview = { config: clone(draft), version: draftVersion };
     scheduleDrain();
   }
@@ -352,7 +362,8 @@ export function createProjectionConfigClient({
       body.presetId = operation.presetId ?? null;
       body.name = operation.name;
     }
-    if (operation.action === 'load') body.presetId = operation.presetId;
+    if (operation.action === 'load' || operation.action === 'rename') body.presetId = operation.presetId;
+    if (operation.action === 'rename') body.name = operation.name;
     const controller = typeof AbortController === 'function' ? new AbortController() : null;
     const request = { ...operation, sentRevision, sentVersion, body, conflictGeneration, controller };
     inFlight = request;
@@ -506,7 +517,7 @@ export function createProjectionConfigClient({
       hasLocalDraft = Boolean(draft && snapshot && !equal(draft, snapshot.config));
     }
     reconciliation = null;
-    notify();
+    notify(choice === 'use-accepted' ? { action: 'reconcile', foreign: true } : { action: 'reconcile-local' });
     return getState();
   }
 
@@ -529,7 +540,7 @@ export function createProjectionConfigClient({
     if (intent) {
       const next = intent;
       intent = null;
-      if (typeof validateCandidate === 'function') preflightMutation(next);
+      if (next.action !== 'rename' && typeof validateCandidate === 'function') preflightMutation(next);
       else postMutation(next);
     } else if (queuedPreview && live) {
       const queued = queuedPreview;
@@ -619,11 +630,12 @@ export function createProjectionConfigClient({
     notify();
   }
 
-  function apply() {
+  function apply({ publicationToken, expectedRevision, expectedConfigIdentity } = {}) {
     if (reconciliation) return Promise.reject(new Error('resolve uncertain projection config write first'));
     if (setupRequired()) return Promise.reject(new Error('initialization required'));
     if (!draft || !snapshot || !connected || stopped || hydrating) return Promise.reject(new Error(hydrating ? 'projection config is hydrating' : 'projection config is disconnected'));
-    return new Promise((resolve, reject) => waitForMutation({ action: 'preview', dynamicDraft: true, explicitApply: true, version: draftVersion, resolve, reject }));
+    return new Promise((resolve, reject) => waitForMutation({ action: 'preview', dynamicDraft: true, explicitApply: true,
+      publicationToken, expectedRevision, expectedConfigIdentity, version: draftVersion, resolve, reject }));
   }
 
   function save({ presetId = null, name } = {}) {
@@ -652,6 +664,17 @@ export function createProjectionConfigClient({
     setConnected(true);
     if (hasLocalDraft) live = false;
     hydrationPromise = hydrate().finally(() => { hydrationPromise = null; });
+  }
+
+  function rename({ presetId, name } = {}) {
+    if (reconciliation) return Promise.reject(new Error('resolve uncertain projection config write first'));
+    if (!snapshot || !connected || stopped || hydrating) return Promise.reject(new Error(hydrating ? 'projection config is hydrating' : 'projection config is disconnected'));
+    // Keep pending live edits: renaming neither saves nor applies calibration.
+    return new Promise((resolve, reject) => {
+      if (intent) intent.reject(new Error('projection config operation superseded'));
+      intent = { action: 'rename', presetId, name, version: draftVersion, resolve, reject };
+      scheduleDrain(); notify();
+    });
   }
   function onDisconnect(generation = lifecycleGeneration) {
     if (!started || stopped || generation !== lifecycleGeneration) return;
@@ -730,7 +753,7 @@ export function createProjectionConfigClient({
     validateCandidate = callback;
   }
 
-  return { start, stop, retryHydration, retryReconciliation, resolveReconciliation, setDraft, setLive, apply, save, load, revert, getState, subscribe, setValidateCandidate };
+  return { start, stop, retryHydration, retryReconciliation, resolveReconciliation, setDraft, setLive, apply, save, rename, load, revert, getState, subscribe, setValidateCandidate };
 }
 
 export { TD_MIGRATION_PRESET_ID, TD_MIGRATION_PRESET_NAME, validSnapshot as validateProjectionConfigSnapshot };

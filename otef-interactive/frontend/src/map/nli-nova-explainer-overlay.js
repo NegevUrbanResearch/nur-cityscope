@@ -110,7 +110,7 @@ export function createNovaExplainerOverlay({
   container,
   getLayout,
   getNarrativeId,
-  getEscapeMor,
+  getEscapeOverlay,
   motionMode,
   cameraOverride,
 } = {}) {
@@ -118,6 +118,7 @@ export function createNovaExplainerOverlay({
   const leaderGroups = new Map();
   const measured = new Map();
   let lastFrame = null;
+  let escapeScene = false;
   let disposed = false;
   const reducedMotion = motionMode === "reduced";
 
@@ -127,6 +128,7 @@ export function createNovaExplainerOverlay({
   host.style.inset = "0";
   host.style.overflow = "hidden";
   host.style.pointerEvents = "none";
+  if (reducedMotion) host.style.transition = "none";
 
   const svg = document.createElementNS(SVG_NS, "svg");
   svg.style.position = "absolute";
@@ -165,7 +167,6 @@ export function createNovaExplainerOverlay({
 
   function visibleModels(frame) {
     if (typeof getNarrativeId === "function" && getNarrativeId() !== "nova") return [];
-    if (typeof getEscapeMor === "function" && getEscapeMor() === true) return [];
     if (!frame || frame.phase === "idle") return [];
     const achieved = Array.isArray(frame.achievedPolygonObjectIds) ? frame.achievedPolygonObjectIds : [];
     if (achieved.length === 0) return [];
@@ -301,6 +302,14 @@ export function createNovaExplainerOverlay({
 
   function paint() {
     if (disposed) return;
+    const escape = typeof getEscapeOverlay === "function" ? getEscapeOverlay() : null;
+    if (["individual", "overlap", "mor", "settled"].some((flag) => escape?.[flag] === true)) {
+      escapeScene = true;
+    } else if (lastFrame?.phase !== "ended" || getNarrativeId?.() !== "nova") {
+      escapeScene = false;
+    }
+    host.classList.toggle("nli-nova-explainers--hidden", escapeScene);
+    setAttr(host, "aria-hidden", String(escapeScene));
     const models = visibleModels(lastFrame);
     const nextIds = new Set(models.map((model) => model.id));
     for (const [id, card] of cards) {

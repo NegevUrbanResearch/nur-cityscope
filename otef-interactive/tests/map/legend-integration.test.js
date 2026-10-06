@@ -50,6 +50,7 @@ describe("installMapLegendLifecycle", () => {
     expect([...callbacks.keys()]).toEqual([
       "layerGroups",
       "narrativeState",
+      "escapeOverlay",
       "legendSettings",
     ]);
     expect(callbacks.has("investigationClock")).toBe(false);
@@ -58,9 +59,11 @@ describe("installMapLegendLifecycle", () => {
     await flushMicrotasks();
     callbacks.get("narrativeState")();
     await flushMicrotasks();
+    callbacks.get("escapeOverlay")();
+    await flushMicrotasks();
     callbacks.get("legendSettings")();
     await flushMicrotasks();
-    expect(mounted.refresh).toHaveBeenCalledTimes(4);
+    expect(mounted.refresh).toHaveBeenCalledTimes(5);
 
     lifecycle.dispose();
     expect(mounted.dispose).toHaveBeenCalledTimes(1);

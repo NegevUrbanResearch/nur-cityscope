@@ -481,11 +481,15 @@ function updateViewportFromUI(ctx, viewport, source = "gis", options = {}) {
       options.sharedUpdate === "immediate" &&
       typeof OTEF_API.updateViewportImmediate === "function"
     ) {
-      OTEF_API.updateViewportImmediate(ctx._tableName, payload);
+      void OTEF_API.updateViewportImmediate(ctx._tableName, payload).catch((err) => {
+        getLogger().error("[OTEFDataContext] Failed to send viewport update:", err);
+      });
     } else if (typeof OTEF_API.updateViewportDebounced === "function") {
       OTEF_API.updateViewportDebounced(ctx._tableName, payload);
     } else {
-      OTEF_API.updateViewport(ctx._tableName, payload);
+      void OTEF_API.updateViewport(ctx._tableName, payload).catch((err) => {
+        getLogger().error("[OTEFDataContext] Failed to send viewport update:", err);
+      });
     }
     return { accepted: true };
   } catch (err) {
@@ -951,7 +955,7 @@ async function cancelNavigationFocus(ctx) {
   });
 }
 
-async function setNarrative(ctx, id) {
+async function setNarrative(ctx, id, options = {}) {
   if (!ctx._tableName) return { ok: false, reason: "missing_table" };
   if (id !== null && !getNliNarrative(id)) return { ok: false, reason: "unsupported_narrative" };
   const coupledBaseline = ctx._captureNarrativeSceneBaseline();
@@ -960,7 +964,10 @@ async function setNarrative(ctx, id) {
       ctx._tableName,
       id,
       ctx.getNarrativeState().revision,
-      { sourceId: ctx._clientId, timestamp: Date.now() },
+      {
+        sourceId: ctx._clientId, timestamp: Date.now(),
+        ...(Array.isArray(options.hiddenDisplays) ? { hiddenDisplays: options.hiddenDisplays } : {}),
+      },
     );
     if (response?.scene) ctx._applyNarrativeScene(response.scene, { coupledBaseline });
     return response;
@@ -1073,7 +1080,7 @@ function normalizePresentationCorrelation(value) {
   return { segmentId, presentationSessionId, presentationGeneration, sequence, requestId };
 }
 
-async function narrativePresentationCommand(ctx, command) {
+async function narrativePresentationCommand(ctx, command, options) {
   if (!ctx._tableName) return { ok: false, reason: "missing_table" };
   const correlation = normalizePresentationCorrelation(command);
   if (!correlation || !["open", "next", "previous", "close"].includes(command.presentationAction)) {
@@ -1084,7 +1091,7 @@ async function narrativePresentationCommand(ctx, command) {
     presentationAction: command.presentationAction,
     sourceId: ctx._clientId,
     timestamp: Date.now(),
-  });
+  }, options);
 }
 
 async function narrativePresentationResult(ctx, result) {

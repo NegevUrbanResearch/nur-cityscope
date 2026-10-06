@@ -14,9 +14,11 @@ vi.mock("../../frontend/src/map/legend-model-builder.js", () => ({ buildLegendMo
 vi.mock("../../frontend/src/shared/maplibre-investigation-timeline.js", () => ({ syncInvestigationTimelineToMap: rig.timeline, getInvestigationTimelineRenderSnapshot: rig.snapshot, disposeInvestigationTimelineForMap: vi.fn() }));
 vi.mock("../../frontend/src/projection/projection-browser-route.js", () => ({ createProjectionBrowserSurface: rig.createSurface }));
 vi.mock("../../frontend/src/shared/OTEFDataContext.js", () => ({ default: new Proxy({}, { get: () => rig.live }) }));
+vi.mock('../../frontend/src/projection/settlement-name-framing.js', async importOriginal => ({ ...await importOriginal(), createSettlementNameFraming:vi.fn(()=>()=>({matrix:[1,0,0,1,0,0],clip:[0,0,1,1]})) }));
 
 import { createProjectionSettlementNameAdapter } from "../../frontend/src/projection/projection-settlement-name-adapter.js";
 import { bootProjectionSettlementNamePreview, measureSettlementPreviewWarnings } from "../../frontend/src/projection/projection-settlement-name-preview.js";
+import { createSettlementNameFraming } from '../../frontend/src/projection/settlement-name-framing.js';
 
 const mesh = { width: 1920, height: 1080, vertices: [
   { u: 0, v: 0, x: 0, y: 0 }, { u: 1, v: 0, x: 1, y: 0 }, { u: 1, v: 1, x: 1, y: 1 }, { u: 0, v: 1, x: 0, y: 1 },
@@ -98,6 +100,8 @@ test.each(["left", "right"])("read-only %s preview draws that output's labels an
   expect(reply.labels.find((item) => item.citycode === "0067")).toMatchObject({ x: output === "left" ? 510 : 1200, text: "נירים" });
   expect(reply.mesh).toEqual(mesh);
   expect(reply.output).toBe(output);
+  expect(createSettlementNameFraming).toHaveBeenCalledWith(expect.objectContaining({map:rig.map,output,getConfig:expect.any(Function)}));
+  expect(reply.positionMatrix).toEqual([1,0,0,1,0,0]);
   expect(rig.createSurface.mock.calls[0][0].spanId).toBe(output);
   expect(document.getElementById("displayedImage").getAttribute("src") || document.getElementById("displayedImage").src || "").not.toMatch(/model\.png/);
   const synced = rig.syncLayers.mock.calls[0][1];

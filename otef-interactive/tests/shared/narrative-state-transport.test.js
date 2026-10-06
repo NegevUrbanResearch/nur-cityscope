@@ -151,6 +151,21 @@ describe("narrative state transport", () => {
     expect(context.getNarrativeState()).toEqual({ id: null, transition: "initial", revision: 0 });
   });
 
+  test("sends clock visibility with the narrative and adopts it in the same scene", async () => {
+    const { default: context } = await import("../../frontend/src/shared/OTEFDataContext.js");
+    context._tableName = "otef";
+    global.fetch.mockImplementation(async (_url, request) => ({
+      ok: true, status: 200,
+      json: async () => ({ status: "ok", scene: {
+        ...ACTIVE_SCENE,
+        investigationClock: { ...ACTIVE_SCENE.investigationClock, hiddenDisplays: JSON.parse(request.body).hiddenDisplays },
+      } }),
+    }));
+    await context.setNarrative("segev", { hiddenDisplays: ["gis", "projection"] });
+    expect(JSON.parse(global.fetch.mock.calls[0][1].body).hiddenDisplays).toEqual(["gis", "projection"]);
+    expect(context.getInvestigationClock().hiddenDisplays).toEqual(["gis", "projection"]);
+  });
+
   test("the initiating command response atomically hydrates every coupled getter", async () => {
     const api = await import("../../frontend/src/shared/api-client.js");
     const { default: context } = await import("../../frontend/src/shared/OTEFDataContext.js");
@@ -1072,7 +1087,7 @@ describe("narrative state transport", () => {
       requestId: "request-b",
       sourceId: context._clientId,
       timestamp: expect.any(Number),
-    });
+    }, undefined);
     expect(api.OTEF_API.narrativePresentationResult).toHaveBeenCalledWith("otef", {
       outcome: "ready",
       segmentId: "segev",
@@ -1086,5 +1101,24 @@ describe("narrative state transport", () => {
       range: null,
       message: null,
     });
+  });
+
+  test("context forwards presentation cancellation options without changing correlated metadata", async () => {
+    const api = await import("../../frontend/src/shared/api-client.js");
+    const { default: context } = await import("../../frontend/src/shared/OTEFDataContext.js");
+    context._tableName = "otef";
+    const command = vi.spyOn(api.OTEF_API, "narrativePresentationCommand").mockResolvedValue({ status: "ok" });
+    const options = { signal: new AbortController().signal };
+    await context.narrativePresentationCommand({
+      presentationAction: "next", segmentId: "segev", presentationSessionId: "session-a",
+      presentationGeneration: 1727190000000, sequence: 2, requestId: "request-b",
+    }, options);
+    expect(command).toHaveBeenCalledWith("otef", {
+      presentationAction: "next", segmentId: "segev", presentationSessionId: "session-a",
+      presentationGeneration: 1727190000000, sequence: 2, requestId: "request-b",
+      sourceId: context._clientId, timestamp: expect.any(Number),
+    }, options);
+    expect(command.mock.calls[0][1]).not.toHaveProperty("signal");
+    expect(command.mock.calls[0][2]).toBe(options);
   });
 });

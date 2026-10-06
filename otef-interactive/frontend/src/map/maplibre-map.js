@@ -136,6 +136,7 @@ export function createGISMap(containerId, options = {}) {
     minZoom = 10,
     maxZoom = 19,
     basemap = "osm",
+    pixelRatio,
   } = options;
 
   const map = new maplibregl.Map({
@@ -145,6 +146,7 @@ export function createGISMap(containerId, options = {}) {
     zoom,
     minZoom,
     maxZoom,
+    ...(Number.isFinite(pixelRatio) && pixelRatio > 0 ? { pixelRatio } : {}),
     // Integer-step zoom: align with remote/OTEF (zoomSnap:1; Map ctor has no roundZoom—see style “roundZoom” on sources).
     zoomSnap: 1,
     attributionControl: false,

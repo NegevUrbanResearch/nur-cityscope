@@ -19,6 +19,41 @@ from backend.projection_warp_schema import migrate_projection_config_to_v2, migr
 
 
 class ProjectionConfigApiTests(TestCase):
+    def test_rename_preserves_working_config_and_saved_checkpoint(self):
+        initial = self.state()
+        saved = self.post_action('save', initial['revision'], config=initial['config'], presetId=None, name='Desk').json()
+        working = copy.deepcopy(saved['config'])
+        working['pre']['tx'] = 0.17
+        before = self.post_action('preview', saved['revision'], config=working).json()
+        response = self.post_action('rename', before['revision'], presetId=saved['selectedPresetId'], name='  NLI setup  ')
+        self.assertEqual(response.status_code, 200, response.content)
+        after = response.json()
+        expected = copy.deepcopy(before)
+        expected['revision'] += 1
+        expected['presets'][-1]['name'] = 'NLI setup'
+        self.assertEqual(after, expected)
+        repeated = self.post_action('rename', after['revision'], presetId=saved['selectedPresetId'], name='NLI setup')
+        self.assertEqual(repeated.json(), after)
+
+    def test_rename_rejects_invalid_names_readonly_missing_and_stale_presets(self):
+        initial = self.state()
+        saved = self.post_action('save', initial['revision'], config=initial['config'], presetId=None, name='Desk').json()
+        for name in ['', '   ', 'x' * 81, None, 12]:
+            with self.subTest(name=name):
+                response = self.post_action('rename', saved['revision'], presetId=saved['selectedPresetId'], name=name)
+                self.assertEqual(response.status_code, 400)
+                self.assertIn('name', response.json()['fields'])
+                self.assertEqual(self.state(), saved)
+        for preset_id in ['original', str(uuid.uuid4()), 'invalid-id']:
+            with self.subTest(preset_id=preset_id):
+                response = self.post_action('rename', saved['revision'], presetId=preset_id, name='NLI setup')
+                self.assertEqual(response.status_code, 400)
+                self.assertIn('presetId', response.json()['fields'])
+                self.assertEqual(self.state(), saved)
+        response = self.post_action('rename', initial['revision'], presetId=saved['selectedPresetId'], name='NLI setup')
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(self.state(), saved)
+
     @patch('backend.projection_config_service.load_trusted_projection_asset', side_effect=AssertionError('disabled warp must not load an asset'))
     def test_disabled_td_warp_skips_asset_trust_lookup(self, _loader):
         initial = self.state()

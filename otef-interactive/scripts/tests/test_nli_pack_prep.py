@@ -1189,7 +1189,7 @@ class NarrativePolygonOverlayTests(unittest.TestCase):
             if layer.get("type") == "fill"
         ]
         self.assertEqual(strokes[0]["color"], "#c31f4f")
-        self.assertAlmostEqual(strokes[0]["width"], 1.5 * (96 / 72))
+        self.assertAlmostEqual(strokes[0]["width"], 6.0)
         self.assertTrue(not fills or fills[0].get("opacity") == 0)
 
     def test_prepare_installs_narrative_polygon_overlay(self):

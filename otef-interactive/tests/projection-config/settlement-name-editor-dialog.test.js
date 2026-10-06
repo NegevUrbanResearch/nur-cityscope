@@ -45,6 +45,8 @@ async function rig(options = {}) {
   const writeOperation = vi.fn(async (body) => {
     if (body.operation === "position") current.outputs[body.output][body.citycode] = { ...body.position };
     if (body.operation === "style") current.style = { ...body.style };
+    if (body.operation === 'leader_origin') { current.leaderOrigins ||= {}; current.leaderOrigins[body.citycode] = { ...body.origin }; }
+    if (body.operation === 'reset_leader_origin') delete current.leaderOrigins[body.citycode];
     revision += 1;
     return { status: "ok", settlementNameSettings: structuredClone(current), settlementNameRevision: revision };
   });
@@ -68,13 +70,13 @@ function armFrame() {
   frame().contentWindow.postMessage = (message, origin) => sent.push({ message, origin });
   return sent;
 }
-function renderFrame(mesh = identityMesh, labels = [label(), label({ citycode: "0424", text: "מחוץ", x: 800, y: 400, inkBox: { left: 760, top: 380, right: 840, bottom: 420 } })], warnings = { clipped: false, overlap: false, outOfView: false, mapping: "complete" }) {
+function renderFrame(mesh = identityMesh, labels = [label(), label({ citycode: "0424", text: "מחוץ", x: 800, y: 400, inkBox: { left: 760, top: 380, right: 840, bottom: 420 } })], warnings = { clipped: false, overlap: false, outOfView: false, mapping: "complete" }, positionMatrix = null, originGeometry = null) {
   const sent = armFrame();
   const output = new URL(frame().src).searchParams.get("span");
   const sessionId = new URL(frame().src).searchParams.get("previewSession");
   send({ type: "otef_settlement_preview_ready", sessionId, output });
   const requestId = sent.at(-1).message.requestId;
-  send({ type: "otef_settlement_preview_rendered", sessionId, requestId, output, calibrationRevision: 8, meshIdentity: `mesh-${sessionId}`, mesh, labels, warnings });
+  send({ type: "otef_settlement_preview_rendered", sessionId, requestId, output, calibrationRevision: 8, meshIdentity: `mesh-${sessionId}`, mesh, labels, warnings, positionMatrix, originGeometry });
   return { sent, output, sessionId, requestId };
 }
 
@@ -84,6 +86,35 @@ function pointer(type, x, y, pointerId = 1) {
   Object.assign(event, { button: 0, pointerId, clientX: x, clientY: y, preventDefault() {}, stopPropagation() {} });
   (type === "pointerdown" ? hit : document).dispatchEvent(event);
 }
+
+test('dragging the origin handle snaps to the outline and saves one shared geographic point', async () => {
+  const { writeOperation, current } = await rig();
+  renderFrame(identityMesh, [label()], undefined, null, { citycode: '0067', point: { x: 200, y: 150 },
+    worldRings: [[[34,31],[35,31],[35,32],[34,32]]], projectedRings: [[[100,100],[200,100],[200,200],[100,200]]] });
+  const handle = document.querySelector('.settlement-origin-hit');
+  expect(handle).not.toBeNull();
+  handle.dispatchEvent(Object.assign(new Event('pointerdown', { bubbles: true }), { button: 0, pointerId: 8, clientX: 100, clientY: 75 }));
+  pointer('pointermove', 75, 45, 8);
+  pointer('pointerup', 75, 45, 8);
+  await vi.waitFor(() => expect(writeOperation).toHaveBeenCalledTimes(1));
+  expect(writeOperation.mock.calls[0][0]).toMatchObject({ operation: 'leader_origin', citycode: '0067', origin: { lng: 34.5, lat: 31 } });
+  expect(current().outputs).toEqual({ left: {}, right: {} });
+  document.querySelector('[data-action="reset-leader-origin"]').click();
+  await vi.waitFor(() => expect(writeOperation).toHaveBeenCalledTimes(2));
+  expect(current().leaderOrigins).toEqual({});
+});
+
+test('switching settlements retires the old origin handle before the next preview reply', async () => {
+  const { writeOperation } = await rig();
+  renderFrame(identityMesh, [label(), label({ citycode: '0424' })], undefined, null, { citycode: '0067', point: { x: 200, y: 150 },
+    worldRings: [[[34,31],[35,31],[35,32],[34,32]]], projectedRings: [[[100,100],[200,100],[200,200],[100,200]]] });
+  const oldHandle = document.querySelector('.settlement-origin-hit');
+  editor.setSelection({ citycode: '0424' });
+  expect(document.querySelector('.settlement-origin-hit')).toBeNull();
+  oldHandle.dispatchEvent(Object.assign(new Event('pointerdown'), { button: 0, pointerId: 8, clientX: 100, clientY: 75 }));
+  pointer('pointermove', 75, 45, 8); pointer('pointerup', 75, 45, 8);
+  expect(writeOperation).not.toHaveBeenCalled();
+});
 
 test("completed drag commits once and cancel restores the draft with zero commits", async () => {
   const { writeOperation, settingsClient } = await rig();
@@ -111,6 +142,16 @@ test("reversed orientation maps a rightward drag back toward the source", async 
   pointer("pointerup", 290, 170);
   await vi.waitFor(() => expect(writeOperation).toHaveBeenCalledTimes(1));
   expect(writeOperation.mock.calls[0][0].position.x).toBeLessThan(1420);
+});
+
+test('editor dragging converts current map coordinates back to stored positions', async () => {
+  const {writeOperation}=await rig();
+  renderFrame(identityMesh,[label({x:700,y:340,inkBox:{left:670,top:320,right:730,bottom:360}})],undefined,[2,0,0,1,-300,0]);
+  pointer('pointerdown',350,170);
+  pointer('pointermove',390,170);
+  pointer('pointerup',390,170);
+  await vi.waitFor(()=>expect(writeOperation).toHaveBeenCalledTimes(1));
+  expect(writeOperation.mock.calls[0][0].position).toEqual({x:540,y:340});
 });
 
 test("rotated outline splits where it crosses mesh triangles", async () => {

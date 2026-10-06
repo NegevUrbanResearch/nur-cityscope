@@ -1,5 +1,6 @@
 import copy
 import math
+import re
 import uuid
 
 from django.db import transaction
@@ -81,6 +82,16 @@ def _style(value):
     )
 
 
+def _leader_style(value):
+    if not _exact(value, ("widthPx", "outlineWidthPx", "color", "outlineColor", "opacity")):
+        return False
+    return (
+        all(_finite(value[key]) and low <= value[key] <= high for key, low, high in
+            (("widthPx", 0.25, 8), ("outlineWidthPx", 0, 4), ("opacity", 0, 1)))
+        and all(isinstance(value[key], str) and re.fullmatch(r"#[0-9a-fA-F]{6}", value[key]) for key in ("color", "outlineColor"))
+    )
+
+
 def _initialized(settings):
     return isinstance(settings, dict) and isinstance(settings.get("baseline"), dict) and isinstance(settings.get("outputs"), dict)
 
@@ -134,6 +145,27 @@ def _validate_shape(payload):
             raise SettlementNameRejected("invalid operation")
         if not _style(payload.get("style")):
             raise SettlementNameRejected("invalid style")
+    elif kind in ("leader_origin", "reset_leader_origin"):
+        fields = ("action", "operation", "citycode", "baseRevision", "sourceId", "timestamp")
+        if kind == "leader_origin":
+            fields += ("origin",)
+        if not _exact(payload, fields) or not isinstance(payload["citycode"], str) or not payload["citycode"]:
+            raise SettlementNameRejected("invalid origin operation")
+        if kind == "leader_origin":
+            origin = payload["origin"]
+            if not _exact(origin, ("lng", "lat")) or not all(_finite(origin[key]) and low <= origin[key] <= high for key, low, high in
+                                                            (("lng", -180, 180), ("lat", -85, 85))):
+                raise SettlementNameRejected("invalid origin")
+    elif kind == "line_break":
+        if not _exact(payload, ("action", "operation", "citycode", "afterWord", "baseRevision", "sourceId", "timestamp")):
+            raise SettlementNameRejected("invalid operation")
+        if not isinstance(payload["citycode"], str) or not payload["citycode"]:
+            raise SettlementNameRejected("invalid target")
+        if isinstance(payload["afterWord"], bool) or not isinstance(payload["afterWord"], int) or not 0 <= payload["afterWord"] <= 16:
+            raise SettlementNameRejected("invalid line break")
+    elif kind == "leader_style":
+        if not _exact(payload, ("action", "operation", "leaderStyle", "baseRevision", "sourceId", "timestamp")) or not _leader_style(payload.get("leaderStyle")):
+            raise SettlementNameRejected("invalid leader style")
     elif kind == "append_baseline":
         if not _exact(payload, ("action", "operation", "catalogJson", "catalogDigest", "positions", "baseRevision", "sourceId", "timestamp")):
             raise SettlementNameRejected("invalid operation")
@@ -181,6 +213,29 @@ def _apply(settings, payload, catalog):
         return
     if kind == "style":
         settings["style"] = {"fontFamily": payload["style"]["fontFamily"], "fontPx": payload["style"]["fontPx"], "rotateDeg": payload["style"]["rotateDeg"]}
+        return
+    if kind in ("leader_origin", "reset_leader_origin"):
+        citycode = payload["citycode"]
+        if not any(_known(settings, output, citycode) for output in OUTPUTS):
+            raise SettlementNameRejected("unknown citycode")
+        origins = settings.setdefault("leaderOrigins", {})
+        if kind == "reset_leader_origin":
+            origins.pop(citycode, None)
+        else:
+            origins[citycode] = copy.deepcopy(payload["origin"])
+        return
+    if kind == "line_break":
+        citycode = payload["citycode"]
+        if not any(_known(settings, output, citycode) for output in OUTPUTS):
+            raise SettlementNameRejected("unknown citycode")
+        breaks = settings.setdefault("lineBreaks", {})
+        if payload["afterWord"] == 0:
+            breaks.pop(citycode, None)
+        else:
+            breaks[citycode] = payload["afterWord"]
+        return
+    if kind == "leader_style":
+        settings["leaderStyle"] = copy.deepcopy(payload["leaderStyle"])
         return
     _append(settings, payload, catalog)
 

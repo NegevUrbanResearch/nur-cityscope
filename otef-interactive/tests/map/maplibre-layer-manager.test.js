@@ -280,6 +280,15 @@ describe("maplibre-layer-manager", () => {
     registryMock.getLayerDataUrl.mockReturnValue("/data/layer.geojson");
   });
 
+  it('loads newly imported settlement outlines with a data revision instead of an hour-old cached URL', () => {
+    const map = createMapMock();
+    registryMock.getLayerDataUrl.mockReturnValue('/layers/settlements.geojson');
+    applyInstant(map, [{ id: 'projector_base', layers: [{ id: 'ישובים', enabled: true }] }]);
+    const sourceSpec = map.addSource.mock.calls[0][1];
+    expect(sourceSpec.data).toContain('/layers/settlements.geojson?');
+    expect(sourceSpec.attribution).toBe('© OpenStreetMap contributors');
+  });
+
   it("recovers a missing owned captivity image from its registered spec", () => {
     const map = createMapMock();
     const spec = { imageId: "otef_captivity_bleed_test", radius: 12 };

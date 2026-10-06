@@ -7,7 +7,7 @@ describe("getEffectiveLayerGroups: projector_base שמות + Locations_Lines row
     delete globalThis.layerRegistry;
   });
 
-  test("merges into one layer row with fullLayerIds and ANDed enabled", () => {
+  test("retains settlement names and omits the retired static connector row", () => {
     globalThis.layerRegistry = {
       _initialized: true,
       getGroups: () => [
@@ -48,14 +48,11 @@ describe("getEffectiveLayerGroups: projector_base שמות + Locations_Lines row
     expect(layerIds).toContain("שמות_יישובים");
     expect(layerIds).not.toContain("Locations_Lines");
     const shemot = pb.layers.find((l) => l.id === "שמות_יישובים");
-    expect(shemot.fullLayerIds).toEqual([
-      "projector_base.שמות_יישובים",
-      "projector_base.Locations_Lines",
-    ]);
+    expect(shemot.fullLayerIds).toBeUndefined();
     expect(shemot.enabled).toBe(true);
   });
 
-  test("settlement row is off when either merged layer is off", () => {
+  test("retired static connector state cannot turn off settlement names", () => {
     globalThis.layerRegistry = {
       _initialized: true,
       getGroups: () => [
@@ -86,7 +83,7 @@ describe("getEffectiveLayerGroups: projector_base שמות + Locations_Lines row
     const shemot = groups
       .find((g) => g.id === "projector_base")
       ?.layers.find((l) => l.id === "שמות_יישובים");
-    expect(shemot?.enabled).toBe(false);
+    expect(shemot?.enabled).toBe(true);
   });
 
   test("registry has only שמות_יישובים (no Locations_Lines) — separate row, no merged fullLayerIds", () => {
@@ -131,7 +128,7 @@ describe("getEffectiveLayerGroups: projector_base שמות + Locations_Lines row
     expect(shemot?.fullLayerIds).toBeUndefined();
   });
 
-  test("registry has only Locations_Lines (no שמות) — no merge, standalone Locations row", () => {
+  test("omits static connectors even when no settlement-name layer is registered", () => {
     globalThis.layerRegistry = {
       _initialized: true,
       getGroups: () => [
@@ -163,7 +160,7 @@ describe("getEffectiveLayerGroups: projector_base שמות + Locations_Lines row
     expect(pb).toBeDefined();
     const layerIds = pb.layers.map((l) => l.id);
     expect(layerIds).toContain("model_base");
-    expect(layerIds).toContain("Locations_Lines");
+    expect(layerIds).not.toContain("Locations_Lines");
     expect(layerIds).not.toContain("שמות_יישובים");
     const loc = pb.layers.find((l) => l.id === "Locations_Lines");
     expect(loc?.fullLayerIds).toBeUndefined();

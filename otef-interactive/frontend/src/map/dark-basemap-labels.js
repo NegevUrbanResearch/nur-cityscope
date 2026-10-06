@@ -1,5 +1,7 @@
 import placeCatalog from "../shared/place-navigation/place-catalog.generated.js";
 import openFreeMapDarkStyle from "./basemaps/openfreemap-dark.js";
+import { GIS_SETTLEMENT_LABEL_LAYER_ID, installGisSettlementLabels } from './gis-settlement-labels.js';
+import { EXCLUDED_SETTLEMENT_CODES } from '../shared/settlement-label-presentation.js';
 
 const DARK_BASEMAP_LAYER_IDS = new Set(
   (openFreeMapDarkStyle.layers || []).map((layer) => layer.id).filter(Boolean),
@@ -33,13 +35,6 @@ const ROAD_NAME_SOURCE_LAYER = "transportation_name";
 const KIBBUTZ_PREFIX = "קיבוץ ";
 const HEBREW_CHAR = /[\u0590-\u05FF]/;
 const KNOWN_PLACE_TYPES = new Set(["yeshuv", "custom"]);
-
-/** Nearby cities that are not in שמות_יישובים; GIS name styling only, no outlines. */
-const GIS_EXTRA_KNOWN_PLACES = Object.freeze([
-  { he: "נתיבות", en: ["Netivot"] },
-  { he: "אופקים", en: ["Ofakim", "Ofaqim"] },
-  { he: "אשקלון", en: ["Ashkelon", "Ashqelon"] },
-]);
 
 export const GIS_NOVA_PLACE_LABEL_LAYER_ID = "gis-nova-place-label";
 const GIS_NOVA_PLACE_SOURCE_ID = GIS_NOVA_PLACE_LABEL_LAYER_ID;
@@ -92,17 +87,10 @@ function labelsForCatalogPlace(place) {
 export function collectKnownBasemapPlaceNames(catalog = placeCatalog) {
   const names = new Set();
   for (const place of catalog?.entries || []) {
+    if (EXCLUDED_SETTLEMENT_CODES.has(place.citycode)) continue;
     if (!place?.selectable) continue;
     if (!KNOWN_PLACE_TYPES.has(place.type)) continue;
     for (const label of labelsForCatalogPlace(place)) addKnownPlaceName(names, label);
-  }
-  for (const place of GIS_EXTRA_KNOWN_PLACES) {
-    const text = String(place?.he ?? "").trim();
-    if (text) names.add(text);
-    for (const alias of place?.en || []) {
-      const english = String(alias ?? "").trim();
-      if (english) names.add(english);
-    }
   }
   return [...names].sort((a, b) => a.localeCompare(b, "he"));
 }
@@ -155,7 +143,7 @@ export function applyDarkBasemapLabelPolicy(style, options = {}) {
   delete next.glyphs;
   const knownPlaceNames = Array.isArray(options.knownPlaceNames)
     ? options.knownPlaceNames.map((name) => String(name)).filter(Boolean)
-    : collectKnownBasemapPlaceNames();
+    : collectKnownBasemapPlaceNames({ entries: placeCatalog.entries.filter(place => place.type === 'yeshuv').map(place => ({ ...place, selectable: true })) });
 
   next["font-faces"] = {
     ...(next["font-faces"] || {}),
@@ -182,7 +170,7 @@ export function applyDarkBasemapLabelPolicy(style, options = {}) {
         paint["text-opacity"] = [
           "case",
           knownMatch,
-          1,
+          0,
           DARK_BASEMAP_UNKNOWN_PLACE_TEXT_OPACITY,
         ];
       }
@@ -227,6 +215,7 @@ function darkBasemapPresent(layers) {
 }
 
 function isRaisedPlaceLabel(layer, suppressDarkPlaceLabels) {
+  if (layer?.id === GIS_SETTLEMENT_LABEL_LAYER_ID) return true;
   if (layer?.id === GIS_NOVA_PLACE_LABEL_LAYER_ID) return true;
   if (layer?.type !== "symbol" || layer["source-layer"] !== PLACE_SOURCE_LAYER) return false;
   if (suppressDarkPlaceLabels && DARK_BASEMAP_LAYER_IDS.has(layer.id)) return false;
@@ -323,8 +312,13 @@ function applyGisNovaPlaceLabelVisibility(map, hidden) {
  * During the nova narrative the red settlement-name label is already on, so hide
  * the white GIS-only Nova basemap label.
  */
+export function ensureGisSettlementPlaceLabels(map) {
+  installGisSettlementLabels(map, { font: [...DARK_BASEMAP_PLACE_TEXT_FONT], size: DARK_BASEMAP_KNOWN_PLACE_TEXT_SIZE, color: DARK_BASEMAP_TEXT_COLOR });
+}
+
 export function raiseDarkBasemapPlaceLabels(map, options = {}) {
   if (!map) return;
+  ensureGisSettlementPlaceLabels(map);
   ensureGisNovaPlaceLabel(map);
   const hidden = hideGisNovaBasemapLabel(options, map);
   novaBasemapLabelHidden.set(map, hidden);

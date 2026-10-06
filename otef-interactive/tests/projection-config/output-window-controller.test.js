@@ -1,5 +1,77 @@
 import { expect, test, vi } from "vitest";
-import { createOutputWindowController, FULLSCREEN_TIMEOUT_MS } from "../../frontend/src/projection-config/output-window-controller.js";
+import { createOutputWindowController, FULLSCREEN_TIMEOUT_MS, browserUrl } from "../../frontend/src/projection-config/output-window-controller.js";
+
+test('per-output resolution persists and reopening one output leaves the other running', async () => {
+  const values = new Map();
+  const storage = { getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value) };
+  const open = vi.fn(url => popupFor(url));
+  const controller = createOutputWindowController({ storage, open, screenApi: screenApi(), location: 'http://localhost/otef-interactive/projection.html' });
+  const screens = await controller.refreshDisplays();
+  controller.assignDisplays({ left: screens[0].key, right: screens[1].key });
+  await controller.openBoth();
+  const left = open.mock.results[0].value, right = open.mock.results[1].value;
+  controller.setResolution('left', '4k');
+  await controller.openSide('left');
+  expect(open).toHaveBeenCalledTimes(3);
+  expect(left.close).toHaveBeenCalled(); expect(right.close).not.toHaveBeenCalled();
+  expect(new URL(open.mock.calls[2][0]).searchParams.get('outputResolution')).toBe('4k');
+  expect(controller.getState().resolutions).toEqual({ left: '4k', right: '1080p' });
+  expect(() => controller.setResolution('right', '8k')).toThrow(/resolution/i);
+  controller.closeBoth(); controller.dispose();
+  const reloaded = createOutputWindowController({ storage });
+  expect(reloaded.getState().resolutions).toEqual({ left: '4k', right: '1080p' });
+  reloaded.dispose();
+});
+
+test('invalid saved resolution uses 1080p and blocked storage keeps changes session-only', () => {
+  const controller = createOutputWindowController({ storage: { getItem: () => '{"left":"8k","right":"4k"}', setItem() { throw Error('denied'); } } });
+  expect(controller.getState().resolutions).toEqual({ left: '1080p', right: '4k' });
+  controller.setResolution('left', '4k');
+  expect(controller.getState().message).toMatch(/session.only/i);
+  controller.dispose();
+});
+
+test('reversing persists without disturbing outputs and routes both next-open windows through reversal', async () => {
+  const saved = new Map();
+  const storage = { getItem: key => saved.get(key) ?? null, setItem: (key, value) => saved.set(key, value) };
+  const open = vi.fn(url => popupFor(url));
+  const controller = createOutputWindowController({ open, screenApi: screenApi(), storage, location: 'http://localhost/otef-interactive/projection.html' });
+  const screens = await controller.refreshDisplays();
+  controller.assignDisplays({ left: screens[0].key, right: screens[1].key });
+  const assignments = controller.getState().assignments;
+  controller.setReverseModel(true);
+  expect(open).not.toHaveBeenCalled();
+  expect(controller.getState().assignments).toEqual(assignments);
+  expect(controller.getState().reverseModel).toBe(true);
+  expect(controller.getState().message).toMatch(/Open/i);
+  await controller.openBoth();
+  expect(open.mock.calls.map(([url]) => new URL(url).pathname)).toEqual(['/otef-interactive/projection-reversed.html', '/otef-interactive/projection-reversed.html']);
+  expect(open.mock.calls.map(([url]) => new URL(url).searchParams.get('span'))).toEqual(['left', 'right']);
+  controller.closeBoth(); controller.dispose();
+  const reloaded = createOutputWindowController({ storage, screenApi: screenApi() });
+  expect(reloaded.getState().reverseModel).toBe(true);
+  reloaded.setReverseModel(false);
+  const normal = createOutputWindowController({ storage });
+  expect(normal.getState().reverseModel).toBe(false);
+  normal.dispose(); reloaded.dispose();
+});
+
+test('normal output URLs remain unchanged and reversal preserves other launch parameters', () => {
+  const base = 'http://localhost/otef-interactive/projection.html?test=keep';
+  expect(browserUrl(base, 'left', false)).toBe(`${base}&span=left&outputMode=browser`);
+  const reversed = new URL(browserUrl(base, 'right', true));
+  expect(reversed.pathname).toBe('/otef-interactive/projection-reversed.html');
+  expect(reversed.searchParams.get('test')).toBe('keep');
+  expect(reversed.searchParams.get('span')).toBe('right');
+});
+
+test('blocked storage keeps reversal session-only and reports it', () => {
+  const controller = createOutputWindowController({ storage: { getItem() { throw Error('denied'); }, setItem() { throw Error('denied'); } } });
+  controller.setReverseModel(true);
+  expect(controller.getState().reverseModel).toBe(true);
+  expect(controller.getState().message).toMatch(/session.only/i);
+  controller.dispose();
+});
 
 const displays = [
   { label: "Projector right", left: 900, top: -1080, width: 1920, height: 1080, availLeft: 900, availTop: -1080, availWidth: 1920, availHeight: 1040 },

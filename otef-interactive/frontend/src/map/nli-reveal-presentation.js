@@ -13,27 +13,34 @@ const REVEAL_OPTIONS = Object.freeze({
   width: 960,
   height: 540,
   margin: 0,
+  maxScale: 4,
 });
 
 const IMAGE_READY_MS = 1500;
 const FADE_MS = 600;
-const VIDEO_START_MS = 1500;
 const OPEN_DEADLINE_MS = 4500;
 
 function mediaUrl(path) {
   return `/otef-interactive/public/${path}`;
 }
 
+function imageAssetPath(manifest, path) {
+  const version = manifest.deck.assetVersion ?? manifest.deck.pdfSha256;
+  return version ? `${path}?v=${encodeURIComponent(version)}` : path;
+}
+
 function slideImagePath(manifest, slide) {
   const path = manifest.deck.slidePaths?.[slide - 1] ??
     manifest.deck.slidePathPattern.replace("{slide}", String(slide).padStart(2, "0"));
-  return manifest.deck.pdfSha256 ? `${path}?v=${encodeURIComponent(manifest.deck.pdfSha256)}` : path;
+  return imageAssetPath(manifest, path);
 }
 
 function stopVideo(video) {
-  if (!video) return;
+  if (!video?.hasAttribute("src")) return;
   try { video.pause(); } catch (_) { /* The media element may not have started. */ }
-  try { video.currentTime = 0; } catch (_) { /* Ignore media elements without a timeline. */ }
+  video.removeAttribute("src");
+  video.preload = "none";
+  try { video.load(); } catch (_) { /* Teardown must not block replacement. */ }
 }
 
 function element(tag, className) {
@@ -163,6 +170,20 @@ export function createNliRevealPresentation(container, {
     emitOnce(command, "unavailable", state, message);
   };
 
+  const boundOperation = (command, state, token, message) => {
+    clearTimeout(state.deadlineTimer);
+    state.deadlineAt = Date.now() + OPEN_DEADLINE_MS;
+    state.deadlineTimer = setTimeout(() => fail(command, state, token, message), OPEN_DEADLINE_MS);
+  };
+
+  const prepareVideo = (state, video) => {
+    if (!video || video.hasAttribute("src")) return;
+    state.currentVideo = video;
+    setPlaybackActive(state, true);
+    video.preload = "auto";
+    video.src = video.dataset.mediaSource;
+  };
+
   const nextFrame = (state, token) => new Promise((resolve) => {
     let settled = false;
     const finish = () => {
@@ -264,6 +285,7 @@ export function createNliRevealPresentation(container, {
 
   const startVideo = (state, token, video) => {
     if (state.currentVideo && state.currentVideo !== video) stopStateVideo(state, state.currentVideo);
+    prepareVideo(state, video);
     state.currentVideo = video;
     const activation = ++state.videoActivation;
     setPlaybackActive(state, true);
@@ -298,7 +320,7 @@ export function createNliRevealPresentation(container, {
         if (release && isCurrentVideo() && (!ok || video.paused || video.ended)) setPlaybackActive(state, false);
         resolve(Boolean(ok) && isCurrent(state, token));
       };
-      const timer = setTimeout(() => finish(false), VIDEO_START_MS);
+      const timer = setTimeout(() => finish(false), Math.max(0, state.deadlineAt - Date.now()));
       let drop = () => {};
       drop = listen(state, token, () => finish(false, { release: false }));
       settled.then((ok) => {
@@ -309,13 +331,14 @@ export function createNliRevealPresentation(container, {
   };
 
   const activateSlide = async (command, state, token, slide, outcome) => {
+    const video = state.sections.get(slide)?.querySelector("video");
+    prepareVideo(state, video);
     const loaded = await waitForImage(state, token, slide);
     if (!isCurrent(state, token)) return;
     if (!loaded) {
       fail(command, state, token, "Presentation slide image could not be loaded");
       return;
     }
-    const video = state.sections.get(slide)?.querySelector("video");
     if (video) {
       const started = await startVideo(state, token, video);
       if (!isCurrent(state, token)) return;
@@ -325,6 +348,7 @@ export function createNliRevealPresentation(container, {
       }
     }
     if (!isCurrent(state, token)) return;
+    clearTimeout(state.deadlineTimer);
     emitOnce(command, outcome, state);
   };
 
@@ -333,6 +357,7 @@ export function createNliRevealPresentation(container, {
     overlay.style.opacity = "0";
     if (segment.kind === "blackout") {
       overlay.classList.add("nli-reveal-overlay--blackout");
+      overlay.style.backgroundImage = `url("${mediaUrl(imageAssetPath(manifest, "local/presentations/nli/supplements/slide-background.png"))}")`;
       const copy = element("div", "nli-blackout-copy");
       const title = element("p", "nli-blackout-title");
       title.lang = "he";
@@ -368,11 +393,25 @@ export function createNliRevealPresentation(container, {
           title.textContent = videoSpec.title;
           frame.append(title);
         }
+        if (videoSpec.credit) {
+          const credit = element("p", "nli-presentation-credit");
+          credit.lang = "he";
+          credit.dir = "rtl";
+          const source = element("strong");
+          source.textContent = videoSpec.credit;
+          credit.append(source);
+          if (videoSpec.photographer) {
+            const photographer = element("span");
+            photographer.textContent = `צילם ${videoSpec.photographer}`;
+            credit.append(photographer);
+          }
+          frame.append(credit);
+        }
         const video = element("video");
-        video.src = mediaUrl(videoSpec.path);
+        video.dataset.mediaSource = mediaUrl(videoSpec.path);
         video.controls = false;
         video.playsInline = true;
-        video.preload = "auto";
+        video.preload = "none";
         if (videoSpec.fit === "contain") video.style.objectFit = "contain";
         const [x, y, width, height] = videoSpec.rect;
         video.style.left = `${x * 100}%`;
@@ -422,9 +461,7 @@ export function createNliRevealPresentation(container, {
     };
     active = state;
     const token = beginOperation(state);
-    state.deadlineTimer = setTimeout(() => {
-      fail(command, state, token, "Presentation open timed out");
-    }, OPEN_DEADLINE_MS);
+    boundOperation(command, state, token, "Presentation open timed out");
     try {
       if (segment.kind === "blackout") {
         const faded = await fadeOverlay(state, token, 1);
@@ -434,6 +471,7 @@ export function createNliRevealPresentation(container, {
         emit(command, "ready", state);
         return;
       }
+      prepareVideo(state, state.sections.get(state.slide)?.querySelector("video"));
       state.reveal = new RevealClass(state.revealRoot, { ...REVEAL_OPTIONS });
       let initError = null;
       let initPromise;
@@ -551,6 +589,7 @@ export function createNliRevealPresentation(container, {
       return;
     }
     const token = beginOperation(state);
+    boundOperation(command, state, token, "Presentation slide change timed out");
     stopStateVideo(state, state.sections.get(state.slide)?.querySelector("video"));
     state.slide = target;
     state.reveal.slide(target - state.segment.range[0]);

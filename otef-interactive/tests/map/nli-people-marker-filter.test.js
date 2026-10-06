@@ -215,7 +215,7 @@ describe("narrative house outline filter", () => {
     expect(map.setFilter).toHaveBeenCalledWith("house-fill", SDEROT_HOUSE);
   });
 
-  test("places the house filter beside all six people-filter calls", () => {
+  test("pairs every people/house filter and clears projection focus during calibration", () => {
     const root = path.resolve(import.meta.dirname, "../../frontend/src");
     const files = [
       "entries/map-main.js",
@@ -232,17 +232,21 @@ describe("narrative house outline filter", () => {
       expect(houses.map((match) => match[1]), file).toEqual(people.map((match) => match[1]));
       const isEntry = file.startsWith("entries/");
       for (const match of people) {
-        const after = source.slice(match.index, match.index + match[0].length + 280);
+        const after = source.slice(match.index, match.index + match[0].length + 350);
+        if (file === "entries/projection-main.js" && match[1] === "map, null") {
+          expect(after).toMatch(/applyNarrativePeopleFilter\(map, null\);\s*applyNarrativeHouseOutlineFilter\(map, null\);\s*clearPeopleFocusDim\(map\)/);
+          continue;
+        }
         expect(after, file).toMatch(
           isEntry
-            ? /applyNarrativePeopleFilter\([^;]*\);\s*const selectedPid = OTEFDataContext\.getPersonSelection\?\.\(\)\?\.personId;\s*if \(selectedPid\) applyPeopleFocusDim\([^,]+, selectedPid\);\s*else clearPeopleFocusDim\([^)]+\);\s*applyNarrativeHouseOutlineFilter\(/
+            ? /applyNarrativePeopleFilter\([^;]*\);\s*const selectedPid = (?:calibrationActive\(\) \? null : )?OTEFDataContext\.getPersonSelection\?\.\(\)\?\.personId;\s*if \(selectedPid\) applyPeopleFocusDim\([^,]+, selectedPid\);\s*else clearPeopleFocusDim\([^)]+\);\s*applyNarrativeHouseOutlineFilter\(/
             : /applyNarrativePeopleFilter\([^;]*\);\s*applyNarrativeHouseOutlineFilter\(/,
         );
       }
       peopleCalls.push(...people);
       houseCalls.push(...houses);
     }
-    expect(peopleCalls).toHaveLength(6);
-    expect(houseCalls).toHaveLength(6);
+    expect(peopleCalls).toHaveLength(7);
+    expect(houseCalls).toHaveLength(7);
   });
 });

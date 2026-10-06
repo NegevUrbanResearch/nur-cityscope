@@ -97,7 +97,7 @@ export const OTEF_API = {
     }
   },
 
-  async executeCommand(tableName = this.defaultTable, command) {
+  async executeCommand(tableName = this.defaultTable, command, options = {}) {
     const traceId = command && typeof command.traceId === "string" ? command.traceId : null;
     if (traceId) {
       recordTraceEvent(traceId, "api.command.start", {
@@ -110,6 +110,7 @@ export const OTEF_API = {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(command),
+        ...(options.signal ? { signal: options.signal } : {}),
       });
       if (!response.ok) {
         const error = new Error(`Failed to execute command: ${response.status}`);
@@ -135,7 +136,9 @@ export const OTEF_API = {
           message: error && error.message ? error.message : String(error),
         });
       }
-      getLogger().error("[OTEF API] Error executing command:", error);
+      if (!(error?.name === "AbortError" && options.signal?.aborted)) {
+        getLogger().error("[OTEF API] Error executing command:", error);
+      }
       throw error;
     }
   },
@@ -240,11 +243,11 @@ export const OTEF_API = {
     return this.executeCommand(tableName, body);
   },
 
-  async narrativePresentationCommand(tableName = this.defaultTable, command) {
+  async narrativePresentationCommand(tableName = this.defaultTable, command, options = {}) {
     return this.executeCommand(tableName, {
       action: "narrative_presentation",
       ...command,
-    });
+    }, options);
   },
 
   async narrativePresentationResult(tableName = this.defaultTable, result) {
@@ -359,7 +362,9 @@ export const OTEF_API = {
   updateViewportDebounced(tableName = this.defaultTable, viewport) {
     clearTimeout(this._viewportDebounce);
     this._viewportDebounce = setTimeout(() => {
-      this.updateViewportImmediate(tableName, viewport);
+      // updateState reports transport failures; this timer owns the rejection
+      // because there is no caller awaiting a debounced write.
+      this.updateViewportImmediate(tableName, viewport).catch(() => null);
     }, 120);
   },
 

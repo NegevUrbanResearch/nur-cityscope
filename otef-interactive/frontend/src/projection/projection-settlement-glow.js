@@ -192,12 +192,18 @@ function addGlowLayers(map) {
 
 export function createProjectionSettlementGlow({ map, loadSettlements, motionMode } = {}) {
   let currentId = null;
+  let currentNarrativeId = null;
   let lastFeature = null;
   let breathFrame = null;
   let breathOrigin = null;
   let breathDelay = null;
   const settlementsPromise = Promise.resolve().then(loadSettlements);
   const reduced = motionMode === "reduced";
+
+  function paintFocusGlow(opacityScale, options) {
+    const multiplier = currentNarrativeId === "nova" ? NLI_VISUAL_TOKENS.novaSettlementGlowOpacityMultiplier : 1;
+    paintGlow(map, opacityScale * multiplier, options);
+  }
 
   function scheduleFrame(callback) {
     if (typeof map?.requestAnimationFrame === "function") return map.requestAnimationFrame(callback);
@@ -231,7 +237,7 @@ export function createProjectionSettlementGlow({ map, loadSettlements, motionMod
       return;
     }
     if (breathOrigin == null) breathOrigin = now;
-    paintGlow(map, settlementGlowBreathScale(now - breathOrigin), { immediate: true });
+    paintFocusGlow(settlementGlowBreathScale(now - breathOrigin), { immediate: true });
     breathFrame = scheduleFrame(tickBreath);
   }
 
@@ -265,43 +271,60 @@ export function createProjectionSettlementGlow({ map, loadSettlements, motionMod
     if (missingLayer) {
       currentId = null;
       stopBreath();
-      raise(targetMap);
     }
+    if (missingLayer || currentNarrativeId === "nova") raise(targetMap);
   }
 
   function raise(targetMap = map) {
-    if (!targetMap?.getLayer?.(PEOPLE_HALO_LAYER_ID)) return;
+    let beforeId = PEOPLE_HALO_LAYER_ID;
+    if (currentNarrativeId === "nova") {
+      // Place the narrative glow above land cover, below people and annotations.
+      const layers = targetMap?.getStyle?.()?.layers || [];
+      const openSpacesIndex = layers.findLastIndex((layer) => layer.source === "land_use.שטחים_פתוחים");
+      if (openSpacesIndex >= 0) {
+        beforeId = layers.slice(openSpacesIndex + 1).find((layer) => !GLOW_LAYER_IDS.includes(layer.id))?.id;
+        const personHaloIndex = layers.findIndex((layer) => layer.id === PEOPLE_HALO_LAYER_ID);
+        if (personHaloIndex >= 0 && personHaloIndex < openSpacesIndex) {
+          targetMap.moveLayer(PEOPLE_HALO_LAYER_ID, beforeId);
+          beforeId = PEOPLE_HALO_LAYER_ID;
+        }
+      } else if (!targetMap?.getLayer?.(beforeId)) return;
+    } else if (!targetMap?.getLayer?.(beforeId)) return;
     for (const id of GLOW_LAYER_IDS) {
       if (!targetMap.getLayer(id)) continue;
-      targetMap.moveLayer(id, PEOPLE_HALO_LAYER_ID);
+      targetMap.moveLayer(id, beforeId);
     }
   }
 
-  async function setFocus({ outlineObjectId, locationName, suppressed } = {}) {
+  async function setFocus({ outlineObjectId, locationName, suppressed, narrativeId = null, isCurrent = () => true } = {}) {
+    if (!isCurrent()) return;
+    const narrativeChanged = currentNarrativeId !== narrativeId;
+    currentNarrativeId = narrativeId;
     ensureLayers(map);
     const settlements = await settlementsPromise;
+    if (!isCurrent()) return;
     const feature = suppressed
       ? null
       : resolveSettlementGlowFeature(settlements, { outlineObjectId, locationName });
     if (suppressed || !feature) {
       currentId = null;
       stopBreath();
-      paintGlow(map, 0, { immediate: reduced });
+      paintFocusGlow(0, { immediate: reduced });
       return;
     }
     const nextId = featureId(feature);
-    if (currentId != null && nextId != null && currentId === nextId) {
+    if (currentId != null && nextId != null && currentId === nextId && !narrativeChanged) {
       return;
     }
     stopBreath();
-    paintGlow(map, 0, { immediate: true });
+    paintFocusGlow(0, { immediate: true });
     lastFeature = settlementAuraPoint(feature);
     currentId = nextId;
     map.getSource(PROJECTION_SETTLEMENT_GLOW_SOURCE_ID)?.setData({
       type: "FeatureCollection",
       features: [lastFeature],
     });
-    paintGlow(map, 1, { immediate: reduced });
+    paintFocusGlow(1, { immediate: reduced });
     startBreath();
   }
 
@@ -313,6 +336,7 @@ export function createProjectionSettlementGlow({ map, loadSettlements, motionMod
       map.removeSource(PROJECTION_SETTLEMENT_GLOW_SOURCE_ID);
     }
     currentId = null;
+    currentNarrativeId = null;
     lastFeature = null;
   }
 
@@ -330,7 +354,7 @@ export async function syncProjectionSettlementGlow(glow, {
   if (exhibitMode !== true) return glow.setFocus({ suppressed: true });
   if (wallEnabled) return glow.setFocus({ suppressed: true });
   const outlineObjectId = getNliNarrative(narrativeId)?.focusSettlementOutlineId;
-  if (outlineObjectId != null) return glow.setFocus({ outlineObjectId });
+  if (outlineObjectId != null) return glow.setFocus({ outlineObjectId, ...(narrativeId === "nova" ? { narrativeId } : {}) });
   if (personLocation) return glow.setFocus({ locationName: personLocation });
   if (placeName) return glow.setFocus({ locationName: placeName });
   return glow.setFocus({});

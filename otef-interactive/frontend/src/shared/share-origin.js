@@ -66,12 +66,19 @@ export function httpOrigin(hostname, port) {
 
 export function parseShareHosts(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  if (value.localKind === "hotspot") return null;
+  const localKind = value.localKind === "lan" ? { localKind: "lan" } : {};
   const localOrigin = value.localOrigin === null ? null : allowedHttpOrigin(value.localOrigin);
   if (!localOrigin && value.localOrigin !== null) return null;
-  if (value.tailnetOrigin === null) return { localOrigin, tailnetOrigin: null, ...(value.localKind === "hotspot" ? { localKind: "hotspot" } : {}) };
+  if (value.tailnetOrigin === null) return { localOrigin, tailnetOrigin: null, ...localKind };
   const tailnetOrigin = allowedHttpOrigin(value.tailnetOrigin);
   if (!tailnetOrigin) return null;
-  return { localOrigin, tailnetOrigin, ...(value.localKind === "hotspot" ? { localKind: "hotspot" } : {}) };
+  return { localOrigin, tailnetOrigin, ...localKind };
+}
+
+export function initialShareMode(stored, hosts) {
+  if (hosts.localKind !== "lan") return stored;
+  return hosts.localOrigin ? "local" : hosts.tailnetOrigin ? "tailnet" : "local";
 }
 
 export async function loadShareHosts({ location, fetchImpl = globalThis.fetch } = {}) {

@@ -2,6 +2,7 @@ import { describe, expect, test, vi } from "vitest";
 import { buildNovaEndedClock, commitSceneLayers, createCueRunner } from "../../frontend/src/remote/nli-staff-cues.js";
 import { NLI_PLAYABLE_IDS } from "../../frontend/src/shared/nli-investigation-beats.js";
 import { NLI_NOVA_STORY } from "../../frontend/src/shared/nli-nova-story.js";
+import { idleNliClock, playNliClock } from "../../frontend/src/shared/nli-investigation-clock.js";
 
 const LINES = "nli.lines";
 const BASE = "projector_base.SEA";
@@ -35,6 +36,61 @@ function setup({ narrativeId = null, personId = null, layers, stop, start, end }
 }
 
 describe("NLI staff cue runner", () => {
+  test.each([false, true])("Nova scene mutations never publish a visible clock (already hidden: %s)", async (alreadyHidden) => {
+    let clock = alreadyHidden
+      ? { ...buildNovaEndedClock(), hiddenDisplays: ["gis", "projection"] }
+      : playNliClock(idleNliClock(), [...NLI_PLAYABLE_IDS], [...NLI_NOVA_STORY.representativeMinutes], 0);
+    const observed = [];
+    const note = () => observed.push([...(clock.hiddenDisplays ?? [])]);
+    const dataContext = {
+      getNarrativeState: () => ({ id: "nova" }),
+      getInvestigationClock: () => clock,
+      setEscapeOverlay: async () => { note(); return { ok: true }; },
+      patchInvestigationClock: async (next) => { clock = next; note(); return { ok: true }; },
+    };
+    const runner = createCueRunner({
+      dataContext, commitLayers: async () => note(),
+      endClock: async () => { clock = buildNovaEndedClock(clock); note(); },
+    });
+    expect(await runner.apply({ layers: [BASE, LINES], clock: "ended", hiddenDisplays: ["gis", "projection"] }, "nova"))
+      .toEqual({ status: "ready" });
+    expect(observed.length).toBeGreaterThan(0);
+    for (const snapshot of observed) expect(snapshot).toEqual(["gis", "projection"]);
+  });
+
+  test("hidden hostages-to-all-hostages transition carries visibility in the narrative reset", async () => {
+    let narrativeId = "hostages";
+    let clock = { ...idleNliClock(), hiddenDisplays: ["gis", "projection"] };
+    const observed = [];
+    const note = () => observed.push([...(clock.hiddenDisplays ?? [])]);
+    const dataContext = {
+      getNarrativeState: () => ({ id: narrativeId }), getInvestigationClock: () => clock,
+      setNarrative: async (id, options) => {
+        narrativeId = id;
+        clock = { ...idleNliClock(), ...(options?.hiddenDisplays ? { hiddenDisplays: options.hiddenDisplays } : {}) };
+        note(); return { ok: true };
+      },
+      setEscapeOverlay: async () => { note(); return { ok: true }; },
+      patchInvestigationClock: async (next) => { clock = next; note(); return { ok: true }; },
+    };
+    const runner = createCueRunner({ dataContext, commitLayers: async () => note(), stopClock: async () => note() });
+    expect(await runner.apply({ narrative: "hostages_all", layers: [BASE], clock: "idle", hiddenDisplays: ["gis", "projection"] }, "hostages"))
+      .toEqual({ status: "ready" });
+    for (const snapshot of observed) expect(snapshot).toEqual(["gis", "projection"]);
+  });
+  test("publishes scene visibility and clears it when returning to an earlier cue", async () => {
+    const { runner, dataContext } = setup({ narrativeId: "hostages" });
+    let clock = { phase: "idle" };
+    dataContext.getInvestigationClock = () => clock;
+    dataContext.patchInvestigationClock = async (next) => {
+      clock = next;
+      return { ok: true };
+    };
+    await runner.apply({ layers: [BASE], clock: "idle", hiddenDisplays: ["gis", "projection"] }, "hostages");
+    expect(clock.hiddenDisplays).toEqual(["gis", "projection"]);
+    await runner.apply({ layers: [BASE], clock: "idle" }, "hostages");
+    expect(clock.hiddenDisplays).toEqual([]);
+  });
   test("a play window starts without idling Home, then enables playables", async () => {
     const { runner, calls, statuses } = setup();
     const result = await runner.apply({

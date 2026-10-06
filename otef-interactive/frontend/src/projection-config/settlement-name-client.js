@@ -4,6 +4,7 @@ import {
   validateSettlementNameOperation,
   validateSettlementNameSettings,
 } from "../shared/settlement-name-settings.js";
+import { DEFAULT_SETTLEMENT_LEADER_STYLE } from '../shared/settlement-label-presentation.js';
 
 const SETTLEMENT_EVENT = "otef_settlement_names_changed";
 const NUMERIC_DEBOUNCE_MS = 150;
@@ -50,15 +51,18 @@ function uninitialized(settings, revision) {
 }
 
 function assertTarget(target) {
-  if (target?.kind === "style") return;
+  if (target?.kind === "style" || target?.kind === 'leader_style') return;
+  if (['line_break', 'leader_origin'].includes(target?.kind) && typeof target.citycode === 'string' && target.citycode) return;
   if (target?.kind === "position" && (target.output === "left" || target.output === "right") && typeof target.citycode === "string" && target.citycode) return;
   throw new Error("Unknown settlement target");
 }
 
 function operationName(target, options = {}) {
   if (options.operation === "reset_position") return "reset_position";
+  if (options.operation === 'reset_leader_origin') return 'reset_leader_origin';
   if (target.kind === "style") return "style";
   if (target.kind === "position") return "position";
+  if (['leader_style', 'line_break', 'leader_origin'].includes(target.kind)) return target.kind;
   throw new Error("Unknown settlement target");
 }
 
@@ -71,6 +75,14 @@ function probeOperation(target, value, operation, baseRevision) {
       return { ...meta, output: target.output, citycode: target.citycode };
     case "style":
       return { ...meta, style: value };
+    case 'line_break':
+      return { ...meta, citycode: target.citycode, afterWord: value };
+    case 'leader_style':
+      return { ...meta, leaderStyle: value };
+    case 'leader_origin':
+      return { ...meta, citycode: target.citycode, origin: value };
+    case 'reset_leader_origin':
+      return { ...meta, citycode: target.citycode };
     default: {
       const unknown = operation;
       throw new Error(`Unknown settlement operation: ${String(unknown)}`);
@@ -86,6 +98,14 @@ function intentBody(intent, baseRevision) {
       return { operation: "reset_position", output: intent.output, citycode: intent.citycode, baseRevision };
     case "style":
       return { operation: "style", style: clone(intent.value), baseRevision };
+    case 'line_break':
+      return { operation: 'line_break', citycode: intent.citycode, afterWord: intent.value, baseRevision };
+    case 'leader_style':
+      return { operation: 'leader_style', leaderStyle: clone(intent.value), baseRevision };
+    case 'leader_origin':
+      return { operation: 'leader_origin', citycode: intent.citycode, origin: clone(intent.value), baseRevision };
+    case 'reset_leader_origin':
+      return { operation: 'reset_leader_origin', citycode: intent.citycode, baseRevision };
     default: {
       const unknown = intent.operation;
       throw new Error(`Unknown settlement operation: ${String(unknown)}`);
@@ -96,6 +116,9 @@ function intentBody(intent, baseRevision) {
 function targetValue(settings, record) {
   if (!settings) return null;
   if (record.kind === "style") return clone(settings.style ?? null);
+  if (record.kind === 'leader_style') return clone(settings.leaderStyle ?? DEFAULT_SETTLEMENT_LEADER_STYLE);
+  if (record.kind === 'line_break') return settings.lineBreaks?.[record.citycode] ?? 0;
+  if (record.kind === 'leader_origin') return clone(settings.leaderOrigins?.[record.citycode] ?? null);
   return clone(settings.outputs?.[record.output]?.[record.citycode] ?? null);
 }
 
@@ -133,7 +156,8 @@ export function createSettlementNameClient({ getSnapshot, writeOperation, socket
   }
 
   function ensureRecord(target) {
-    const key = target.kind === "style" ? styleKey : positionKey(target.output, target.citycode);
+    const key = target.kind === "style" ? styleKey : target.kind === 'leader_style' ? 'leader_style'
+      : ['line_break', 'leader_origin'].includes(target.kind) ? `${target.kind}:${target.citycode}` : positionKey(target.output, target.citycode);
     if (!records.has(key)) {
       const record = {
         key,
@@ -196,7 +220,7 @@ export function createSettlementNameClient({ getSnapshot, writeOperation, socket
     for (const record of records.values()) {
       const incoming = targetValue(settings, record);
       const pending = matched.find((item) => item.key === record.key);
-      const inFlight = record.draft !== null || (record.operation === "reset_position" && record.status !== "Saved");
+      const inFlight = record.draft !== null || (["reset_position", 'reset_leader_origin'].includes(record.operation) && record.status !== "Saved");
       if (pending && record.status !== "Conflict" && pending.generation !== record.generation) {
         record.acknowledged = clone(incoming);
         record.baseline = { value: clone(incoming), revision };
@@ -610,6 +634,16 @@ export function createSettlementNameClient({ getSnapshot, writeOperation, socket
         } else if (record.draft != null) {
           settings.outputs[record.output][record.citycode] = clone(record.draft);
         }
+      } else if (record.kind === 'leader_origin') {
+        settings.leaderOrigins ||= {};
+        if (record.operation === 'reset_leader_origin' && record.status !== 'Saved') delete settings.leaderOrigins[record.citycode];
+        else if (record.draft != null) settings.leaderOrigins[record.citycode] = clone(record.draft);
+      } else if (record.kind === 'leader_style' && record.draft != null) {
+        settings.leaderStyle = clone(record.draft);
+      } else if (record.kind === 'line_break' && record.draft != null) {
+        settings.lineBreaks ||= {};
+        if (record.draft === 0) delete settings.lineBreaks[record.citycode];
+        else settings.lineBreaks[record.citycode] = record.draft;
       } else if (record.draft != null) {
         settings.style = clone(record.draft);
       }

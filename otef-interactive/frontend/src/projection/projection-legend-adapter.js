@@ -107,6 +107,11 @@ function drawSymbol(context, part, x, y, font, geometry, scale) {
     context.strokeStyle = stroke || fill;
     context.globalAlpha = strokeOpacity;
     context.lineWidth = Math.max(2, Number(part.strokeWidth) || 1);
+    if (part.strokeGradient?.length) {
+      const gradient = context.createLinearGradient(x, y - context.lineWidth / 2, x, y + context.lineWidth / 2);
+      for (const { offset, color } of part.strokeGradient) gradient.addColorStop(offset, color);
+      context.strokeStyle = gradient;
+    }
     context.setLineDash?.(dashArray);
     if (part.halo && part.halo !== "transparent") { context.shadowColor = part.halo; context.shadowBlur = scale; }
     context.stroke();
@@ -156,7 +161,7 @@ function drawPlacement(context, placement, font, scale) {
   }
 }
 
-export function createProjectionLegendAdapter({ canvasFactory } = {}) {
+export function createProjectionLegendAdapter({ canvasFactory, rasterScale = 1 } = {}) {
   const canvas = makeCanvas(canvasFactory);
   const context = canvas.getContext?.("2d");
   if (!context) throw new Error("projection legend adapter requires a 2d canvas");
@@ -192,9 +197,9 @@ export function createProjectionLegendAdapter({ canvasFactory } = {}) {
     signature = nextSignature;
     contentLayout = nextPlan;
     rasterSize = size;
-    if (canvas.width !== size.width || canvas.height !== size.height) {
-      canvas.width = size.width;
-      canvas.height = size.height;
+    if (canvas.width !== size.width * rasterScale || canvas.height !== size.height * rasterScale) {
+      canvas.width = size.width * rasterScale;
+      canvas.height = size.height * rasterScale;
     }
     dirty = true;
   };
@@ -206,8 +211,9 @@ export function createProjectionLegendAdapter({ canvasFactory } = {}) {
       const font = Number(layout.fontPx) || 22;
       const scale = Number(contentLayout?.scale) || 1;
       context.save?.();
+      context.scale?.(rasterScale, rasterScale);
       context.scale?.(scale, scale);
-      for (const placement of contentLayout?.placements || []) drawPlacement(context, placement, font, scale);
+      for (const placement of contentLayout?.placements || []) drawPlacement(context, placement, font, scale * rasterScale);
       context.restore?.();
       dirty = false;
       contentVersion += 1;
