@@ -481,11 +481,15 @@ function updateViewportFromUI(ctx, viewport, source = "gis", options = {}) {
       options.sharedUpdate === "immediate" &&
       typeof OTEF_API.updateViewportImmediate === "function"
     ) {
-      OTEF_API.updateViewportImmediate(ctx._tableName, payload);
+      void OTEF_API.updateViewportImmediate(ctx._tableName, payload).catch((err) => {
+        getLogger().error("[OTEFDataContext] Failed to send viewport update:", err);
+      });
     } else if (typeof OTEF_API.updateViewportDebounced === "function") {
       OTEF_API.updateViewportDebounced(ctx._tableName, payload);
     } else {
-      OTEF_API.updateViewport(ctx._tableName, payload);
+      void OTEF_API.updateViewport(ctx._tableName, payload).catch((err) => {
+        getLogger().error("[OTEFDataContext] Failed to send viewport update:", err);
+      });
     }
     return { accepted: true };
   } catch (err) {

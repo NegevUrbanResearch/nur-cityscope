@@ -1,6 +1,10 @@
-import { beforeEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 describe("OTEF_API viewport updates", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
   beforeEach(() => {
     vi.resetModules();
     global.fetch = vi.fn().mockResolvedValue({
@@ -57,6 +61,21 @@ describe("OTEF_API viewport updates", () => {
       { revision: 2 },
       { revision: 2 },
     ]);
+  });
+
+  test("owns a rejected debounced viewport write and recovers the immediate queue", async () => {
+    vi.useFakeTimers();
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    global.fetch.mockResolvedValueOnce({ ok: false, status: 500 });
+    const { OTEF_API } = await import("../../frontend/src/shared/api-client.js");
+    OTEF_API.updateViewportDebounced("otef", { bbox: [1, 2, 3, 4] });
+    await vi.advanceTimersByTimeAsync(120);
+    expect(errorLog).toHaveBeenCalledWith("[OTEF API] Error updating state:", expect.objectContaining({ message: "Failed to update state: 500" }));
+    expect(errorLog).toHaveBeenCalledTimes(1);
+    expect(OTEF_API._viewportDebounce).toBeNull();
+    expect(OTEF_API._viewportImmediateQueues.size).toBe(0);
+    await expect(OTEF_API.updateViewportImmediate("otef", { bbox: [2, 3, 4, 5] })).resolves.toEqual({});
+    expect(global.fetch).toHaveBeenCalledTimes(2);
   });
 });
 

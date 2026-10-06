@@ -362,7 +362,9 @@ export const OTEF_API = {
   updateViewportDebounced(tableName = this.defaultTable, viewport) {
     clearTimeout(this._viewportDebounce);
     this._viewportDebounce = setTimeout(() => {
-      this.updateViewportImmediate(tableName, viewport);
+      // updateState reports transport failures; this timer owns the rejection
+      // because there is no caller awaiting a debounced write.
+      this.updateViewportImmediate(tableName, viewport).catch(() => null);
     }, 120);
   },
 

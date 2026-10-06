@@ -9,6 +9,7 @@ let updateViewportFromUI;
 let computePanViewport;
 let computeZoomViewport;
 let setEnabledLayerIds;
+let viewportApi;
 
 beforeEach(async () => {
   vi.resetModules();
@@ -27,9 +28,14 @@ beforeEach(async () => {
   computePanViewport = mod.computePanViewport;
   computeZoomViewport = mod.computeZoomViewport;
   setEnabledLayerIds = mod.setEnabledLayerIds;
+  viewportApi = (await import('../../frontend/src/shared/api-client.js')).OTEF_API;
 });
 
 afterEach(() => {
+  // Cancel the timer on the instance imported by this test, before resetModules.
+  clearTimeout(viewportApi?._viewportDebounce);
+  vi.useRealTimers();
+  vi.restoreAllMocks();
   delete global.fetch;
 });
 
@@ -583,7 +589,8 @@ describe('OTEFDataContext actions', () => {
     nowSpy.mockRestore();
   });
 
-  test('updateViewportFromUI allows GIS handoff when velocity loop is stale/stopped', () => {
+  test('updateViewportFromUI allows GIS handoff when velocity loop is stale/stopped', async () => {
+    vi.useFakeTimers();
     const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(10_000);
     const setViewport = vi.fn((next) => next);
     const ctx = {
@@ -613,10 +620,15 @@ describe('OTEFDataContext actions', () => {
 
     expect(result).toEqual({ accepted: true });
     expect(setViewport).toHaveBeenCalled();
+    expect(global.fetch).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(120);
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(global.fetch.mock.calls[0][1].body).viewport.bbox).toEqual(viewport.bbox);
+    expect(viewportApi._viewportImmediateQueues.size).toBe(0);
     nowSpy.mockRestore();
   });
 
-  test('updateViewportFromUI keeps ordinary GIS viewport patches debounced', () => {
+  test('updateViewportFromUI keeps ordinary GIS viewport patches debounced', async () => {
     vi.useFakeTimers();
     const setViewport = vi.fn((next) => next);
     const ctx = {
@@ -646,13 +658,38 @@ describe('OTEFDataContext actions', () => {
     expect(result).toEqual({ accepted: true });
     expect(global.fetch).not.toHaveBeenCalled();
 
-    vi.advanceTimersByTime(119);
+    await vi.advanceTimersByTimeAsync(119);
     expect(global.fetch).not.toHaveBeenCalled();
 
-    vi.advanceTimersByTime(1);
+    await vi.advanceTimersByTimeAsync(1);
     expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(viewportApi._viewportImmediateQueues.size).toBe(0);
 
     vi.useRealTimers();
+  });
+
+  test.each(['immediate', 'fallback'])('owns rejected %s viewport publishing while preserving local acceptance', async (mode) => {
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {});
+    // Remove only this optional method to exercise the direct legacy fallback.
+    const debounced = viewportApi.updateViewportDebounced;
+    if (mode === 'fallback') viewportApi.updateViewportDebounced = undefined;
+    global.fetch.mockResolvedValueOnce({ ok: false, status: 500 });
+    const ctx = {
+      _tableName: 'otef', _clientId: 'test-client', _velocity: { vx: 0, vy: 0 },
+      _lastVelocityUpdate: 0, _currentInteractionSource: null,
+      _isViewportInsideBounds: () => true, _setViewport: vi.fn(next => next),
+    };
+    const viewport = { bbox: [100, 100, 200, 200], zoom: 14 };
+    try {
+      expect(updateViewportFromUI(ctx, viewport, 'gis', { sharedUpdate: mode })).toEqual({ accepted: true });
+      expect(ctx._setViewport).toHaveBeenCalledWith(expect.objectContaining(viewport));
+      await vi.waitFor(() => expect(errorLog).toHaveBeenCalledWith('[OTEFDataContext] Failed to send viewport update:', expect.objectContaining({ message: 'Failed to update state: 500' })));
+      expect(viewportApi._viewportImmediateQueues.size).toBe(0);
+      expect(updateViewportFromUI(ctx, viewport, 'gis', { sharedUpdate: 'immediate' })).toEqual({ accepted: true });
+      await vi.waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(2));
+    } finally {
+      viewportApi.updateViewportDebounced = debounced;
+    }
   });
 
   test('updateViewportFromUI can publish navigation GIS snapshots immediately', () => {
