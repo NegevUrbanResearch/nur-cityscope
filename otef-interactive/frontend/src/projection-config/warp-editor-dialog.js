@@ -67,6 +67,11 @@ export function createWarpEditorDialog({ document: doc, host, editorPanel, overl
   let closedFocus = null;
   let fullViewport = false;
   let pointMatchActive = false, pointMatchCanApply = false, localPreviewConfig = null, ordinaryConfig = null;
+  let recoveryActive = false;
+  function updatePublicationGuards() {
+    liveInput.disabled = recoveryActive || pointMatchActive;
+    applyButton.disabled = recoveryActive || (pointMatchActive && !pointMatchCanApply);
+  }
   const appRoot = host.closest?.(".projection-config-app") || host;
   const setFullViewport = (next) => {
     if (!session || Boolean(next) === fullViewport) return false;
@@ -282,15 +287,18 @@ export function createWarpEditorDialog({ document: doc, host, editorPanel, overl
     update(config, { live, appliedSummary, reconciliation = null } = {}) {
       if (live !== undefined) liveInput.checked = Boolean(live);
       if (appliedSummary !== undefined) applied.textContent = appliedSummary;
-      const recoveryActive = Boolean(reconciliation);
-      liveInput.disabled = recoveryActive || pointMatchActive;
-      applyButton.disabled = recoveryActive || (pointMatchActive && !pointMatchCanApply);
+      recoveryActive = Boolean(reconciliation);
+      updatePublicationGuards();
       fullViewportButton.disabled = Boolean(onIsAdjusting());
       ordinaryConfig = config;
       preview.update(localPreviewConfig || config);
     },
     setPointMatchPreview(config) { localPreviewConfig = config; return preview.update(config || ordinaryConfig); },
-    updatePointMatch({ active = false, canApply = false } = {}) { pointMatchActive=active;pointMatchCanApply=canApply;liveInput.disabled=active;applyButton.disabled=active && !canApply; },
+    updatePointMatch({ active = false, canApply = false } = {}) {
+      pointMatchActive = active;
+      pointMatchCanApply = canApply;
+      updatePublicationGuards();
+    },
     updateAdjustmentGuard() { fullViewportButton.disabled = Boolean(onIsAdjusting()); },
     sendRunNamesPreview(config) { return preview.sendRunNamesPreview(config); },
     getCalibrationState() { return calibration.getState?.(); },

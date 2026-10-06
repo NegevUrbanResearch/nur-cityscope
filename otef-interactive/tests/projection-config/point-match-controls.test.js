@@ -9,6 +9,31 @@ import { resolve } from 'node:path';
 import { warpMarkerRadius } from '../../frontend/src/projection-config/warp-viewport.js';
 
 afterEach(()=>{document.body.replaceChildren();vi.useRealTimers();});
+test('installed and checked fits use explicit finish labels and measured checkpoint feedback', () => {
+  const controls = createPointMatchControls({ document });
+  controls.update({ phase: 'candidate-installed', anchors: [], installedCandidateIdentity: 'installed' });
+  expect(controls.element.querySelector('[data-match-action="cancel"]').textContent).toBe('Close matching');
+  expect(controls.element.textContent).toMatch(/Undo.*ordinary|ordinary.*Undo/i);
+  controls.update({ phase: 'checking', selectedId: 5, anchors: [{ id: 5, recorded: true, targetPx: [810,545] }],
+    checkpointErrors: [{ id: 5, errorPx: 2.25 }] });
+  expect(controls.element.querySelector('[data-match-action="cancel"]').textContent).toBe('Finish matching');
+  expect(controls.element.querySelector('[data-match-slot="5"]').textContent).toMatch(/2.25.*px/);
+  expect(controls.element.querySelector('[data-match-slot="1"] button').disabled).toBe(true);
+  controls.dispose();
+});
+
+test.each(['matching-first', 'recovery-first'])('toolbar Live retains the recovery guard with %s callbacks', order => {
+  const root = document.createElement('main'); document.body.append(root);
+  const view = createProjectionConfigView(root);
+  const matching = () => view.updatePointMatch({ phase: 'candidate-installed', anchors: [], canApply: true });
+  const recovery = () => view.update({ state: { draft: DEFAULT_PROJECTION_CONFIG, reconciliation: { status: 'needs-choice' } } });
+  if (order === 'matching-first') { matching(); recovery(); } else { recovery(); matching(); }
+  view.updatePointMatch({ phase: 'closed', anchors: [] });
+  expect(view.controls.live.disabled).toBe(true);
+  view.update({ state: { draft: DEFAULT_PROJECTION_CONFIG, reconciliation: null } });
+  expect(view.controls.live.disabled).toBe(false);
+  view.dispose();
+});
 test('independent labeled marker selects reflect local preferences and have 44px touch targets', () => {
   const actions = []; const controls = createPointMatchControls({document, onAction: (action, value) => actions.push([action, value])});
   const style = document.createElement('style'); style.textContent = readFileSync(resolve(process.cwd(), 'frontend/src/projection-config/config.css'), 'utf8'); document.head.append(style);

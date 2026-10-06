@@ -138,6 +138,22 @@ test('uncertain POST times out once, ignores late receipt, and requires a fresh-
   h.client.stop();
 });
 
+test('explicit owned fit receipts carry their token only for the exact successor and candidate', async () => {
+  const h = harness({ revision: 12 }); const receipts = [];
+  h.client.subscribe((state, receipt) => { if (receipt) receipts.push(receipt); });
+  const starting = h.client.start(); h.resolveNext(stateFor(12)); await starting;
+  await h.client.setLive(false);
+  const config = clone(DEFAULTS); config.outputs.left.warp.keystone.corners[0] = [.01,.01]; h.client.setDraft(config);
+  const applying = h.client.apply({ publicationToken: 'fit-token', expectedRevision: 13, expectedConfigIdentity: JSON.stringify(config) });
+  h.resolveNext(stateFor(13, config)); await applying;
+  expect(receipts).toContainEqual(expect.objectContaining({ action: 'apply', publicationToken: 'fit-token' }));
+  const count = receipts.filter(receipt => receipt.publicationToken).length;
+  h.socket.emit({ type: 'otef_projection_config_changed', table: 'otef', sourceId: '00000000-0000-4000-8000-00000000000b', state: stateFor(14, config) });
+  expect(receipts.at(-1)).toMatchObject({ foreign: true });
+  expect(receipts.filter(receipt => receipt.publicationToken)).toHaveLength(count);
+  h.client.stop();
+});
+
 test('rename sends only metadata and preserves an unsaved draft and checkpoint', async () => {
   const h = harness({ validateCandidate: vi.fn(() => { throw new Error('rename must not validate geometry'); }) });
   const initial = stateFor(0);

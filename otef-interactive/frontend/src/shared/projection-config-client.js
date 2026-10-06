@@ -250,7 +250,10 @@ export function createProjectionConfigClient({
     // Receipt context lasts only for this adoption. An own checkpoint Save
     // changes preset selection without replacing the editing session.
     const acknowledgedSave = origin === sourceId && matchesSaveAcknowledgement(inFlight, next) ? inFlight : null;
-    notify(acknowledgedSave ? { origin, action: 'save' } : foreign ? { origin, foreign: true } : undefined);
+    const ownedApply = origin === sourceId && matchesApplyAcknowledgement(inFlight, next) ? inFlight : null;
+    notify(acknowledgedSave ? { origin, action: 'save' } : ownedApply
+      ? { origin, action: 'apply', publicationToken: ownedApply.publicationToken }
+      : foreign ? { origin, foreign: true } : undefined);
     if (acknowledgedSave) settleSaveAcknowledgement(acknowledgedSave, next);
     return true;
   }
@@ -261,6 +264,13 @@ export function createProjectionConfigClient({
     return Boolean(checkpoint && !checkpoint.readOnly && checkpoint.name === String(request.body.name ?? '').trim() &&
       (!request.body.presetId || checkpoint.id === request.body.presetId) &&
       equalProjectionConfig(next.config, request.body.config) && equalProjectionConfig(checkpoint.config, request.body.config));
+  }
+
+  function matchesApplyAcknowledgement(request, next) {
+    return Boolean(request?.explicitApply && request.publicationToken && !request.retired &&
+      next.revision === request.sentRevision + 1 && next.revision === request.expectedRevision &&
+      JSON.stringify(normalizeSnapshot(next).config) === request.expectedConfigIdentity &&
+      equalProjectionConfig(next.config, request.body.config));
   }
 
   function settleSaveAcknowledgement(request, next) {
@@ -507,7 +517,7 @@ export function createProjectionConfigClient({
       hasLocalDraft = Boolean(draft && snapshot && !equal(draft, snapshot.config));
     }
     reconciliation = null;
-    notify();
+    notify(choice === 'use-accepted' ? { action: 'reconcile', foreign: true } : { action: 'reconcile-local' });
     return getState();
   }
 
@@ -620,11 +630,12 @@ export function createProjectionConfigClient({
     notify();
   }
 
-  function apply() {
+  function apply({ publicationToken, expectedRevision, expectedConfigIdentity } = {}) {
     if (reconciliation) return Promise.reject(new Error('resolve uncertain projection config write first'));
     if (setupRequired()) return Promise.reject(new Error('initialization required'));
     if (!draft || !snapshot || !connected || stopped || hydrating) return Promise.reject(new Error(hydrating ? 'projection config is hydrating' : 'projection config is disconnected'));
-    return new Promise((resolve, reject) => waitForMutation({ action: 'preview', dynamicDraft: true, explicitApply: true, version: draftVersion, resolve, reject }));
+    return new Promise((resolve, reject) => waitForMutation({ action: 'preview', dynamicDraft: true, explicitApply: true,
+      publicationToken, expectedRevision, expectedConfigIdentity, version: draftVersion, resolve, reject }));
   }
 
   function save({ presetId = null, name } = {}) {

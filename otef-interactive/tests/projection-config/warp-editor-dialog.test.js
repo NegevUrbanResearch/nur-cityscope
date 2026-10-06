@@ -207,6 +207,21 @@ function setup(options = {}) {
   return { host, home, panel, overlay, opener, dialog };
 }
 
+test.each(['matching-first', 'recovery-first'])('footer recovery guard survives %s callbacks and matching close', order => {
+  const { dialog, host } = setup();
+  const matching = () => dialog.updatePointMatch({ active: true, canApply: true });
+  const recovery = () => dialog.update(DEFAULT_PROJECTION_CONFIG, { reconciliation: { status: 'needs-choice' } });
+  if (order === 'matching-first') { matching(); recovery(); } else { recovery(); matching(); }
+  const live = host.querySelector('[aria-label="Editor Live"]');
+  const apply = [...host.querySelectorAll('button')].find(button => button.textContent === 'Apply once');
+  expect(live.disabled).toBe(true); expect(apply.disabled).toBe(true);
+  dialog.updatePointMatch({ active: false });
+  expect(live.disabled).toBe(true); expect(apply.disabled).toBe(true);
+  dialog.update(DEFAULT_PROJECTION_CONFIG, { reconciliation: null });
+  expect(live.disabled).toBe(false); expect(apply.disabled).toBe(false);
+  dialog.dispose();
+});
+
 test('editor-wide calibration survives mode changes and rejected close; switches side after confirmation',()=>{
   const controller={enter:vi.fn(),switchOutput:vi.fn(),setBlackout:vi.fn(),close:vi.fn(),dispose:vi.fn()};
   let allow=false;const {dialog}=setup({calibrationControllerFactory:()=>controller,onBeforeClose:()=>allow});

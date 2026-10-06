@@ -3,7 +3,8 @@ export function createPointMatchControls({ document: doc, onAction = () => {} })
   const element = doc.createElement('section'); element.className = 'point-match-controls'; element.hidden = true;
   element.setAttribute('aria-label', 'Match points');
   const heading = doc.createElement('h3'); heading.textContent = 'Match points';
-  const note = doc.createElement('p'); note.textContent = 'Match points uses a local draft; Apply publishes the fit. Select a slot and click an image feature. Move its yellow target onto the physical counterpart, then Record target. Repeat for four well-spaced points.';
+  const captureNote = 'Match points uses a local draft; Apply publishes the fit. Select a slot and click an image feature. Move its yellow target onto the physical counterpart, then Record target. Repeat for four well-spaced points.';
+  const note = doc.createElement('p'); note.textContent = captureNote;
   const status = doc.createElement('p'); status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite');
   const slots = doc.createElement('div'); slots.className = 'point-match-slots';
   const buttons = new Map();
@@ -68,6 +69,11 @@ export function createPointMatchControls({ document: doc, onAction = () => {} })
       if (state && (state.selectedId !== next?.selectedId || state.phase !== next?.phase || Boolean(previousPoint)!==Boolean(nextPoint) || previousPoint?.s!==nextPoint?.s || previousPoint?.t!==nextPoint?.t)) {touches.clear();cancelMotion();} state=next;
       element.hidden=!next || next.phase==='closed';
       if (!next || next.phase==='closed') return;
+      const installed = Boolean(next.installedCandidateIdentity) || ['candidate-installed', 'publishing', 'checking'].includes(next.phase);
+      buttons.get('cancel').textContent = next.phase === 'checking' ? 'Finish matching' : installed ? 'Close matching' : 'Cancel';
+      note.textContent = next.phase === 'checking'
+        ? 'Measure checkpoints 5 and 6 to verify displacement on the applied fit. Finish matching returns to ordinary Keystone and Grid Warp editing, where Undo can restore the previous warp.'
+        : installed ? 'The fit remains in the ordinary editor draft. Close matching to edit it or use Undo. Apply retries publication.' : captureNote;
       for (const [kind, select] of sizeSelects) {
         select.value = next.displayPrefs?.[`${kind}MarkerSize`] || 'medium';
         select.disabled = ['discovering', 'invalid'].includes(next.phase);
@@ -77,9 +83,11 @@ export function createPointMatchControls({ document: doc, onAction = () => {} })
       const editing=['capture','checking'].includes(next.phase) && next.identified !== false;
       for (const row of slots.children) {
         const id=Number(row.dataset.matchSlot), anchor=next.anchors?.find(p=>p.id===id); row.hidden=id>4 && next.phase!=='checking';
-        row.querySelector('span').textContent=anchor ? `${anchor.recorded ? 'Recorded' : 'Unrecorded'} · ${anchor.targetPx.map(n=>n.toFixed(2)).join(', ')}` : 'Pick an image feature';
+        const measured = next.checkpointErrors?.find(point => point.id === id);
+        row.querySelector('span').textContent = (anchor ? `${anchor.recorded ? 'Recorded' : 'Unrecorded'} · ${anchor.targetPx.map(n=>n.toFixed(2)).join(', ')}` : 'Pick an image feature') +
+          (measured ? ` · ${measured.errorPx.toFixed(2)} px displacement` : '');
         row.querySelector('[data-match-action="select"]').setAttribute('aria-pressed',String(next.selectedId===id));
-        row.querySelectorAll('button').forEach(node=>node.disabled=!(editing || next.phase==='candidate-preview'));
+        row.querySelectorAll('button').forEach(node => node.disabled = next.phase === 'checking' && id <= 4 || !(editing || next.phase === 'candidate-preview'));
       }
       buttons.get('record').disabled=!next.canRecord || !editing; buttons.get('fit').disabled=!next.canFit || next.fitting;
       buttons.get('identify').hidden=next.identified!==false || !next.probed; buttons.get('retry').hidden=next.phase!=='invalid';

@@ -25,6 +25,7 @@ import { resourceFor, layoutFor, layoutFieldEdit } from "./clock-layout-controls
 import { projectionPlacementInputIdentity } from "../projection/projection-names-run.js";
 import { createProjectionNamesStatusTracker } from "../projection/projection-names-status.js";
 import { createPointMatchController } from './point-match-controller.js';
+import { evaluateWarpMesh } from '../shared/projection-warp-geometry.js';
 
 const FIELD_DESCRIPTORS = [
   { path: "pre.scale", node: "pre", label: "Scale", min: 0.1, max: 8, step: 0.01, fine: 0.001, unit: "×", decimals: 3 },
@@ -276,6 +277,35 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
         calibrationReady:view.getCalibrationState?.()?.phase==='active' && view.getPreviewCalibrationState?.()?.ready===true};
     },
     view:{...view,updatePointMatch:next=>{view.updatePointMatch?.(next);syncLayoutUnload();}},
+  });
+  pointMatch.setApplyAdapter({
+    nextRevision: () => client.getState().snapshot.revision + 1,
+    install({ output, corners, expectedWarpIdentity }) {
+      if (!editorBaselineReady || !warpEditors[output].acceptKeystoneFit({ corners, expectedWarpIdentity })) return null;
+      return client.getState().draft;
+    },
+    publish({ candidateIdentity, expectedRevision, publicationToken }) {
+      const current = client.getState();
+      if (JSON.stringify(current.draft) !== candidateIdentity || current.snapshot.revision + 1 !== expectedRevision) {
+        throw new Error('Calibration changed before publication; close matching and review the current draft.');
+      }
+      return client.apply({ publicationToken, expectedRevision, expectedConfigIdentity: candidateIdentity });
+    },
+    readAppliedContext({ output, configIdentity, revision }) {
+      const current = client.getState(), preview = view.getWarpPreviewAppliedState?.();
+      const config = current.snapshot?.config;
+      if (current.reconciliation || current.snapshot?.revision !== revision || JSON.stringify(config) !== configIdentity ||
+        JSON.stringify(current.draft) !== configIdentity || !editorBaselineReady || !preview?.stable ||
+        preview.configIdentity !== configIdentity || view.getCalibrationState?.()?.phase !== 'active' ||
+        view.getPreviewCalibrationState?.()?.ready !== true) return null;
+      const baselineMesh = editorBaselineMeshes[output];
+      const warp = config.outputs[output].warp;
+      return { output, config, sourceConfig: config, revision, configIdentity, baselineMesh,
+        baselineIdentity: JSON.stringify(config.outputs[output].warp.baseline),
+        evaluatedMesh: evaluateWarpMesh(warp.baseline.type === 'tdMesh' ? baselineMesh : null, warp, { side: output, schemaVersion: config.schemaVersion }),
+        sourceFrameIdentity: preview.sourceFrameIdentity, stable: true, preview,
+        calibrationReady: view.getCalibrationState?.()?.phase === 'active' && view.getPreviewCalibrationState?.()?.ready === true };
+    },
   });
   client.setValidateCandidate?.((args) => validator.validateCandidate(args));
   void syncWarpEditorsForConfig(state.draft || DEFAULT_PROJECTION_CONFIG, true);
@@ -640,7 +670,11 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     const draftChanged = !equalProjectionConfig(previousDraft, nextState.draft);
     const nextSelected = nextState.snapshot?.selectedPresetId;
     const selectionChanged = nextSelected && nextSelected !== previousSelected;
-    const acceptedReplacement = !localDraftNotification && receipt?.action !== "save" && (firstHydration || (!nextState.hasLocalDraft && (receipt?.foreign === true || draftChanged || selectionChanged)));
+    const ownFitReceipt = pointMatch?.ownsPublicationReceipt(nextState, receipt) === true;
+    const replacedInstalledFit = Boolean(pointMatch?.getState().installedCandidateIdentity && !ownFitReceipt &&
+      revision !== previousRevision && equalProjectionConfig(nextState.draft, nextState.snapshot?.config));
+    const acceptedReplacement = !localDraftNotification && !ownFitReceipt && receipt?.action !== "save" &&
+      (firstHydration || replacedInstalledFit || (!nextState.hasLocalDraft && (receipt?.foreign === true || draftChanged || selectionChanged)));
     if (!localDraftNotification && draftChanged) {
       const changed = ALL_FIELD_DESCRIPTORS.flatMap(descriptor => {
         const paths = new Set([resolvedFieldPath(previousDraft, descriptor.path), resolvedFieldPath(nextState.draft, descriptor.path)]);
@@ -651,7 +685,9 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     }
     if (acceptedReplacement) { parameterHistory.clear(); nudgeAnchors.clear(); scalarGestures.clear(); }
     if (acceptedReplacement) view.cancelWarpPointer({ notify: false });
-    state = nextState; pointMatch?.contextChanged();
+    state = nextState;
+    if (receipt?.action === 'reconcile' || receipt?.foreign === true) pointMatch?.invalidatePreview('Accepted settings changed. Close matching and restart from the accepted calibration.');
+    else pointMatch?.contextChanged({ ownReceipt: ownFitReceipt });
     const snapshotSelected = state.snapshot?.selectedPresetId;
     const snapshotSelectionChanged = snapshotSelected && snapshotSelected !== previousSelected;
     if (state.draft) syncWarpEditorsForConfig(state.draft, acceptedReplacement);
@@ -929,7 +965,9 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     refresh();
   }
   function handleWarpAction(action, value) {
-    if (pointMatch?.isActive()) return false;
+    if (pointMatch?.isActive()) {
+      if (!['candidate-installed', 'checking'].includes(pointMatch.getState().phase) || !pointMatch.close()) return false;
+    }
     if (disposed || (!editorBaselineReady && !["warp-select", "warp-mode", "warp-step", "warp-start-fresh"].includes(action))) return false;
     if (["warp-select", "warp-mode"].includes(action) && !finishPendingEdit()) return false;
     if (action === "warp-grid-layout") return startGridLayoutPreview(value?.output || activeWarpOutput(), value?.operation, value || {});

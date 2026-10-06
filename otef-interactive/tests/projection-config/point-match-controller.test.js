@@ -2,12 +2,15 @@ import { afterEach, expect, test, vi } from 'vitest';
 import { createPointMatchController } from '../../frontend/src/projection-config/point-match-controller.js';
 import { DEFAULT_PROJECTION_CONFIG } from '../../frontend/src/shared/projection-config-schema.js';
 import { createIdentityProjectionMesh } from '../../frontend/src/shared/projection-warp-geometry.js';
+import { prepareProjectionSideMesh } from '../../frontend/src/projection/projection-candidate-validation.js';
+import { measureProjectionLandmarks } from '../../frontend/src/shared/projection-point-fit.js';
+import { variableTdBaseline } from '../fixtures/td-variable-grid.js';
 
 const instanceId='11111111-1111-4111-8111-111111111111',sourceId='22222222-2222-4222-8222-222222222222';
-function setup({responders=1, fit}={}) {
-  const sent=[],handlers=new Map();const config=structuredClone(DEFAULT_PROJECTION_CONFIG);config.outputs.left.warp.enabled=true;
+function setup({responders=1, fit, config:initialConfig=DEFAULT_PROJECTION_CONFIG, baselineMesh=null, evaluatedMesh}={}) {
+  const sent=[],handlers=new Map();const config=structuredClone(initialConfig);config.outputs.left.warp.enabled=true;
   let live=true,context={output:'left',config,configIdentity:JSON.stringify(config),revision:12,baselineIdentity:JSON.stringify(config.outputs.left.warp.baseline),
-    baselineMesh:null,evaluatedMesh:createIdentityProjectionMesh({columns:7,rows:7}),sourceFrameIdentity:'source',stable:true,calibrationReady:true,
+    baselineMesh,evaluatedMesh:evaluatedMesh || createIdentityProjectionMesh({columns:7,rows:7}),sourceFrameIdentity:'source',stable:true,calibrationReady:true,
     preview:{output:'left',stable:true,pending:false,failed:false,sourceFrameIdentity:'source',configIdentity:JSON.stringify(config)}};
   const row=(id=instanceId)=>({type:'otef_projection_applied',table:'otef',output:'left',instanceId:id,revision:12,success:true,route:'browser',baseline:config.outputs.left.warp.baseline,displaySide:'right',reversed:true});
   const emit=(type,message)=>[...(handlers.get(type)||[])].forEach(fn=>fn(message));
@@ -27,6 +30,40 @@ async function captureFour(h) {
   for(const [id,p] of [[1,[200,200]],[2,[1600,200]],[3,[200,800]],[4,[1600,800]]]){h.controller.handleAction('replace',id);h.controller.handleAction('preview-start',p);h.controller.handleAction('record');h.ack();h.controller.handleAction('record');}
 }
 afterEach(()=>vi.useRealTimers());
+test.each(['uniform identity', 'nonuniform identity', 'tdMesh'])('real Fit source markers follow the renderer for %s with a retained TD mesh', async baseline => {
+  vi.useFakeTimers();
+  const retained = variableTdBaseline('left'), config = structuredClone(DEFAULT_PROJECTION_CONFIG);
+  config.outputs.left.warp.enabled = true;
+  if (baseline === 'tdMesh') config.outputs.left.warp.baseline = retained.baseline;
+  if (baseline === 'nonuniform identity') {
+    config.outputs.left.warp.grid.columnPositions[2] += .035;
+    config.outputs.left.warp.grid.rowPositions[3] -= .025;
+    config.outputs.left.warp.grid.offsets[16] = [.008, -.006];
+  }
+  const h = setup({ config, baselineMesh: retained.mesh, evaluatedMesh: prepareProjectionSideMesh(config, 'left', retained).mesh });
+  try {
+    await h.start(); h.ack(); h.controller.handleAction('identify');
+    for (const [id, point] of [[1,[200,200]],[2,[1600,200]],[3,[200,800]],[4,[1600,800]]]) {
+      h.controller.handleAction('replace', id); h.controller.handleAction('preview-start', point);
+      h.controller.handleAction('preview-move', [point[0]+10, point[1]+5]);
+      h.controller.handleAction('record'); h.ack(); h.controller.handleAction('record');
+    }
+    const fitting = h.controller.handleAction('fit'); await vi.advanceTimersByTimeAsync(100);
+    expect(await fitting).toBe(true);
+    const candidate = h.getPreview();
+    h.setContext({ preview: { stable: true, pending: false, failed: false, sourceFrameIdentity: 'source', configIdentity: JSON.stringify(candidate) } });
+    h.controller.contextChanged();
+    const state = h.getState(), renderedMesh = prepareProjectionSideMesh(candidate, 'left', retained).mesh;
+    expect(state).toMatchObject({ phase: 'candidate-preview', previewReady: true });
+    const actualErrors = measureProjectionLandmarks({ preparedMesh: renderedMesh, anchors: state.anchors });
+    expect(Math.max(...actualErrors.map(point => point.errorPx))).toBeLessThanOrEqual(.5);
+    const markerErrors = measureProjectionLandmarks({ preparedMesh: state.previewMesh, anchors: state.anchors });
+    expect(Math.max(...markerErrors.map(point => point.errorPx))).toBeLessThanOrEqual(.5);
+    expect(state.previewMesh).toEqual(renderedMesh);
+    expect(state.context.baselineMesh).toEqual(retained.mesh);
+  } finally { h.controller.dispose(); }
+});
+
 test('display preference actions preserve frozen capture, geometry and recorded anchors without Fit or Apply', async () => {
   vi.useFakeTimers(); const fit = vi.fn(); const h = setup({fit});
   await h.start(); h.ack(); h.controller.handleAction('identify');
@@ -116,6 +153,23 @@ test('no probe response times out and a late duplicate selected-output instance 
   const next=setup();await next.start();next.ack();next.emit('otef_projection_applied',next.row('33333333-3333-4333-8333-333333333333'));
   expect(next.getState().phase).toBe('invalid');expect(next.sent.at(-1).mode).toBe('off');next.controller.dispose();
 });
+
+test('a bound output changing its route invalidates capture immediately', async () => {
+  vi.useFakeTimers(); const h = setup(); await h.start(); h.ack();
+  h.emit('otef_projection_applied', { ...h.row(), route: 'td' });
+  expect(h.getState().phase).toBe('invalid'); expect(h.sent.at(-1).mode).toBe('off');
+  h.controller.dispose();
+});
+
+test('Apply rechecks the frozen accepted revision even when no context notification arrived', async () => {
+  vi.useFakeTimers(); const h = setup({ fit: async ({ config }) => ({ ok: true, config }) });
+  await captureFour(h); await h.controller.handleAction('fit'); h.controller.contextChanged();
+  h.controller.setApplyAdapter({ install: async () => h.config, publish: async () => {} });
+  h.setClientState({ snapshot: { revision: 13, config: h.config } });
+  expect(await h.controller.handleAction('apply')).toBe(false);
+  expect(h.getState().phase).toBe('closed');
+  h.controller.dispose();
+});
 test('source pending/error notifications and explicit document invalidation retire capture immediately',async()=>{
   vi.useFakeTimers();const h=setup();await h.start();h.ack();h.setContext({preview:{stable:false,pending:false,failed:false,sourceFrameIdentity:'source',configIdentity:JSON.stringify(h.config)}});
   h.controller.contextChanged();expect(h.getState().phase).toBe('invalid');h.controller.dispose();
@@ -175,6 +229,8 @@ test('publication pauses old overlays and checking requires fresh session probe 
   const publication=h.getState().publication;
   const applied={...h.getState().context,config:h.config,configIdentity:JSON.stringify(h.config),revision:13,stable:true,receipt:{...h.row(),revision:13},receiptToken:publication.token};
   expect(h.controller.confirmAppliedGeometry({...applied,revision:14})).toBe(false);
+  const wrongConfig = structuredClone(h.config); wrongConfig.pre.tx = .2;
+  expect(h.controller.confirmAppliedGeometry({ ...applied, config: wrongConfig })).toBe(false);
   expect(h.controller.confirmAppliedGeometry(applied)).toBe(true);expect(h.sent.at(-1)).toMatchObject({mode:'probe',revision:13});expect(h.sent.at(-1).sessionId).not.toBe(oldSession);
   expect(h.getState().phase).toBe('publishing');h.ack();expect(h.getState().phase).toBe('checking');expect(installs).toHaveLength(1);
   expect(h.getState().displayPrefs).toEqual({previewMarkerSize: 'small', projectedMarkerSize: 'large'});

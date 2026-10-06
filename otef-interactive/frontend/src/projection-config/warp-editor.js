@@ -246,6 +246,14 @@ export function createWarpEditor({
     return moveNormalized(axis === "x" ? target - anchor : 0, axis === "y" ? target - anchor : 0, { reason: "numeric", flush: true });
   }
   function resetSelection() { if (!allowGeometryCommand()) return false; return apply(resetToIdentity(true), { reason: "reset-selection", flush: true }); }
+  function acceptKeystoneFit({ corners, expectedWarpIdentity } = {}) {
+    if (!allowGeometryCommand() || JSON.stringify(configWarp(current, output)) !== expectedWarpIdentity) return false;
+    if (!Array.isArray(corners) || corners.length !== 4 || !corners.every(point =>
+      Array.isArray(point) && point.length === 2 && point.every(Number.isFinite))) return false;
+    const candidate = clone(current);
+    candidate.outputs[output].warp.keystone.corners = clone(corners);
+    return apply(candidate, { reason: 'point-fit', flush: false });
+  }
   function resetResiduals() { if (!allowGeometryCommand()) return false; return apply(resetToIdentity(false), { reason: "reset-residuals", flush: true }); }
   function startFresh() {
     if (!allowCommand()) return false;
@@ -497,7 +505,7 @@ export function createWarpEditor({
     getState: () => ({ output, selection: { ...clone(selection), indices: selectedIndices() }, stepMode, dragging: Boolean(drag), adjusting: Boolean(drag || nudgeGesture), historyDepth: undoStack.length, redoDepth: redoStack.length, canRedo: canRedo(), baselineAvailable: baselineAvailable(), validationMessage }),
     getEvaluatedMesh: () => evaluate(current),
     getControlPoints,
-    select, setMode, setStep, moveByPixels, nudge, setPosition, resetSelection, resetResiduals, startFresh, setEnabled, undo, redo,
+    select, setMode, setStep, moveByPixels, nudge, setPosition, resetSelection, resetResiduals, startFresh, setEnabled, undo, redo, acceptKeystoneFit,
     pointerStart, pointerMove, pointerEnd, pointerCancel, beginNudgeGesture, endNudgeGesture, cancelNudgeGesture, retireGesture, clearValidation, setConfig, setBaselineMesh, editGridLayout, previewGridLayout, commitGridLayoutPreview,
   };
 }

@@ -689,3 +689,38 @@ test("undo, redo, authoritative rebase, and drag cancellation clear stale reject
   expect(editor.pointerCancel()).toBe(true);
   expect(editor.getState().validationMessage).toBe("");
 });
+test.each(['identity', 'tdMesh'])('point fit with %s accepts only frozen valid corners and creates one undo while preserving other geometry', baseline => {
+  const config = clone(DEFAULT_PROJECTION_CONFIG);
+  config.pre.tx = .1;
+  config.outputs.left.warp.grid.offsets[8] = [.001, .002];
+  config.outputs.left.warp.grid.columnPositions[1] = .1;
+  if (baseline === 'tdMesh') config.outputs.left.warp.baseline = { type: 'tdMesh', assetId: 'fit-fixture', sha256: 'a'.repeat(64), width: 1920, height: 1080, origin: 'top-left' };
+  const changes = [];
+  const editor = createWarpEditor({ config, baselineMesh: baseline === 'tdMesh' ? createIdentityProjectionMesh({ side: 'left' }) : null,
+    onChange: (next, meta) => changes.push({ next, meta }) });
+  const corners = [[.01,.02],[.99,.01],[.02,.98],[.98,.99]];
+  const expectedWarpIdentity = JSON.stringify(config.outputs.left.warp);
+  expect(editor.acceptKeystoneFit({ corners, expectedWarpIdentity: 'stale' })).toBe(false);
+  expect(editor.acceptKeystoneFit({ corners: [[NaN,0]], expectedWarpIdentity })).toBe(false);
+  expect(editor.getState().historyDepth).toBe(0);
+  expect(editor.acceptKeystoneFit({ corners, expectedWarpIdentity })).toBe(true);
+  const fitted = editor.getConfig();
+  expect(fitted.outputs.left.warp.keystone.corners).toEqual(corners);
+  fitted.outputs.left.warp.keystone.corners = clone(config.outputs.left.warp.keystone.corners);
+  expect(fitted).toEqual(config);
+  expect(changes).toHaveLength(1);
+  expect(changes[0].meta).toMatchObject({ reason: 'point-fit', flush: false });
+  expect(editor.getState().historyDepth).toBe(1);
+  expect(editor.nudge('right')).toBe(true);
+  expect(editor.undo()).toBe(true);
+  expect(editor.getConfig().outputs.left.warp.keystone.corners).toEqual(corners);
+  expect(editor.undo()).toBe(true);
+  expect(editor.getConfig()).toEqual(config);
+});
+
+test.each([undefined, null, [], [[0,0]], () => {}, [[0,0],[1,0],[0,1],[Infinity,1]], [[0,0],[0,0],[0,0],[0,0]]])('invalid fit corners return false without changing history (%s)', corners => {
+  const editor = createWarpEditor({ config: clone(DEFAULT_PROJECTION_CONFIG) });
+  const before = editor.getConfig();
+  expect(editor.acceptKeystoneFit({ corners, expectedWarpIdentity: JSON.stringify(before.outputs.left.warp) })).toBe(false);
+  expect(editor.getConfig()).toEqual(before); expect(editor.getState().historyDepth).toBe(0);
+});

@@ -587,6 +587,8 @@ export function createProjectionConfigView(root, {
   let warpSurfaceRenderState = null;
   let activeWarpAdjusting = false;
   let pointMatchState = null, pointMatchActive = false;
+  let reconciliationActive = false;
+  const updateLiveGuard = () => { if (controls.live) controls.live.disabled = reconciliationActive || pointMatchActive; };
   const ordinaryMatchVisibility = new Map();
   function syncOrdinaryMatchVisibility() {
     for (const row of controls.warpPanel.children) {
@@ -629,7 +631,7 @@ export function createProjectionConfigView(root, {
     pointMatchStart.disabled=pointMatchActive;
     pointMatchStart.hidden=pointMatchActive || currentWarpMode!=='keystone';
     dialog.updatePointMatch({active:pointMatchActive,canApply:next?.canApply===true});
-    if (controls.live) controls.live.disabled=pointMatchActive;
+    updateLiveGuard();
     paintPointMatchMarkers();
   }
   let pointerInput;
@@ -1068,7 +1070,8 @@ export function createProjectionConfigView(root, {
     currentFieldErrors = errors.fields || errors.field || errors;
     currentStatus = statusText;
     commandBar.update({ state, parameterHistory, errors, conflict, statusText, draftDiffersFromAccepted, savePending, loadedPresetId, loadedPresetLoadToken, statusRows, appliedSummary, outputState });
-    if (controls.live) controls.live.disabled ||= pointMatchActive;
+    reconciliationActive = Boolean(state.reconciliation);
+    updateLiveGuard();
     const draft = state.draft || DEFAULT_PROJECTION_CONFIG;
     setNode(selectedNode);
     controls.gisClockScene.value = clockScene;
