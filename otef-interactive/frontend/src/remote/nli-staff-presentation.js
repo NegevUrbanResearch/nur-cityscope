@@ -81,6 +81,7 @@ export function createNliStaffPresentationController({ dataContext, onStateChang
     }
 
     pending = null;
+    request.transport.abort();
     if (request.command.presentationAction === "open") {
       rememberOpenedResponder(request, result);
       openObservation = request;
@@ -173,12 +174,14 @@ export function createNliStaffPresentationController({ dataContext, onStateChang
       promise,
       resolve: resolveRequest,
       timer: null,
+      transport: new AbortController(),
       closeResponders,
       closeRequiresKnownResponders: Boolean(closeResponders?.size),
     };
     pending = request;
     request.timer = setTimeout(() => {
       if (pending === request) {
+        request.transport.abort();
         if (request.lastFailure) {
           finishWithResult(request);
         } else {
@@ -192,7 +195,11 @@ export function createNliStaffPresentationController({ dataContext, onStateChang
       }
       if (openObservation === request) openObservation = null;
     }, COMMAND_TIMEOUT_MS);
-    Promise.resolve(dataContext.narrativePresentationCommand(command)).catch(() => {
+    function sendCommand() {
+      try { return dataContext.narrativePresentationCommand(command, { signal: request.transport.signal }); }
+      catch (error) { return Promise.reject(error); }
+    }
+    Promise.resolve(sendCommand()).catch(() => {
       if (pending !== request) return;
       pending = null;
       clearTimeout(request.timer);
@@ -244,8 +251,27 @@ export function createNliStaffPresentationController({ dataContext, onStateChang
     return forcedClosePromise;
   }
 
+  function releaseFailedSession() {
+    if (pending || state.phase !== "failed" || !session) return false;
+    if (openObservation) {
+      clearTimeout(openObservation.timer);
+      openObservation.transport.abort();
+    }
+    openObservation = null;
+    session = null;
+    publish({ phase: "released", segmentId: null, sessionId: null, slide: null, range: null });
+    return true;
+  }
+
+  function recoverOpen(segmentId) {
+    if (state.segmentId !== segmentId || !releaseFailedSession()) return Promise.resolve(false);
+    return dispatch("open", segmentId);
+  }
+
   return {
     run,
+    recoverOpen,
+    releaseFailedSession,
     closeForStepChange,
     getState: () => ({ ...state, range: state.range ? [...state.range] : null }),
     destroy() {
@@ -253,10 +279,14 @@ export function createNliStaffPresentationController({ dataContext, onStateChang
       unsubscribe?.();
       if (pending) {
         clearTimeout(pending.timer);
+        pending.transport.abort();
         pending.resolve(false);
         pending = null;
       }
-      if (openObservation) clearTimeout(openObservation.timer);
+      if (openObservation) {
+        clearTimeout(openObservation.timer);
+        openObservation.transport.abort();
+      }
       openObservation = null;
       session = null;
     },
@@ -294,6 +324,8 @@ export function presentationControlsHtml(step, state, locale, mutationBusy = fal
     next: messageForLocale(locale, "presentationNext"),
     close: messageForLocale(locale, "presentationClose"),
     unavailable: messageForLocale(locale, "presentationUnavailable"),
+    recoverOpen: messageForLocale(locale, "presentationRecoverOpen"),
+    recoverHome: messageForLocale(locale, "presentationRecoverHome"),
   };
   const sameSegment = state?.segmentId === presentation.segmentId;
   if (["opening", "applying", "closing"].includes(state?.phase) && sameSegment) {
@@ -307,7 +339,8 @@ export function presentationControlsHtml(step, state, locale, mutationBusy = fal
   if (state?.phase === "failed" && sameSegment) {
     const retryAction = state.sessionId ? "close" : "open";
     const retryLabel = retryAction === "close" ? labels.close : labels.open;
-    return `<p class="presentation-unavailable" role="status">${labels.unavailable}</p><div class="presentation-controls"><button type="button" class="btn" data-presentation-action="${retryAction}">${retryLabel}</button></div>`;
+    const recovery = state.sessionId ? `<button type="button" class="btn" data-presentation-action="recover-open"${mutationBusy ? " disabled" : ""}>${labels.recoverOpen}</button><button type="button" class="btn btn--outline" data-presentation-action="recover-home"${mutationBusy ? " disabled" : ""}>${labels.recoverHome}</button>` : "";
+    return `<p class="presentation-unavailable" role="status">${labels.unavailable}</p><div class="presentation-controls"><button type="button" class="btn" data-presentation-action="${retryAction}">${retryLabel}</button>${recovery}</div>`;
   }
   const active = state?.phase === "open" && sameSegment;
   if (!active) {

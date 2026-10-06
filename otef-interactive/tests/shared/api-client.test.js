@@ -59,3 +59,69 @@ describe("OTEF_API viewport updates", () => {
     ]);
   });
 });
+
+
+test("presentation transport forwards cancellation without serializing it", async () => {
+  global.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) });
+  const { OTEF_API } = await import("../../frontend/src/shared/api-client.js");
+  const controller = new AbortController();
+  await OTEF_API.narrativePresentationCommand("otef", { presentationAction: "close" }, { signal: controller.signal });
+  expect(global.fetch.mock.calls[0][1].signal).toBe(controller.signal);
+  expect(JSON.parse(global.fetch.mock.calls[0][1].body)).not.toHaveProperty("signal");
+});
+
+
+test("presentation retries abort stalled HTTP requests before dispatching replacements", async () => {
+  vi.useFakeTimers();
+  const signals = [];
+  const originalFetch = global.fetch;
+  global.fetch = vi.fn((_url, options) => {
+    signals.push(options.signal);
+    return new Promise(() => {});
+  });
+  const { OTEF_API } = await import("../../frontend/src/shared/api-client.js");
+  const { createNliStaffPresentationController } = await import("../../frontend/src/remote/nli-staff-presentation.js");
+  const controller = createNliStaffPresentationController({ dataContext: {
+    subscribe: () => () => {},
+    narrativePresentationCommand: (command, options) => OTEF_API.narrativePresentationCommand("otef", command, options),
+  } });
+  try {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const request = attempt === 0 ? controller.run("open", "nova_mor") : controller.recoverOpen("nova_mor");
+      expect(signals.filter(signal => !signal.aborted)).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(6000);
+      expect(await request).toBe(false);
+      expect(signals.every(signal => signal.aborted)).toBe(true);
+    }
+    const request = controller.recoverOpen("nova_mor");
+    controller.destroy();
+    expect(await request).toBe(false);
+    expect(signals.every(signal => signal.aborted)).toBe(true);
+  } finally {
+    controller.destroy();
+    global.fetch = originalFetch;
+    vi.useRealTimers();
+  }
+});
+
+
+test("intentional caller abort stays quiet while unexpected aborts and real failures are logged", async () => {
+  const logError = vi.spyOn(console, "error").mockImplementation(() => {});
+  const { OTEF_API } = await import("../../frontend/src/shared/api-client.js");
+  const controller = new AbortController();
+  controller.abort();
+  const abortError = Object.assign(new Error("cancelled"), { name: "AbortError" });
+  global.fetch = vi.fn().mockRejectedValue(abortError);
+  try {
+    await expect(OTEF_API.executeCommand("otef", { action: "narrative_presentation" }, { signal: controller.signal })).rejects.toBe(abortError);
+    expect(logError).not.toHaveBeenCalled();
+    await expect(OTEF_API.executeCommand("otef", {})).rejects.toBe(abortError);
+    expect(logError).toHaveBeenCalledTimes(1);
+    const failure = new Error("network failure");
+    global.fetch.mockRejectedValue(failure);
+    await expect(OTEF_API.executeCommand("otef", {}, { signal: controller.signal })).rejects.toBe(failure);
+    expect(logError).toHaveBeenCalledTimes(2);
+  } finally {
+    logError.mockRestore();
+  }
+});

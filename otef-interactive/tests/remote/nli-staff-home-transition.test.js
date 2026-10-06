@@ -390,6 +390,13 @@ describe("NLI staff Home transitions", () => {
     expect(el("stepTitle").textContent).toBe("Mor Levy");
     expect(activeScreen()).toBe("player");
     expect(el("nextBtn").disabled).toBe(false);
+    const commandsBeforeRecovery = h.commands.length;
+    el("kitPresentation").querySelector('[data-presentation-action="recover-home"]').click();
+    await vi.waitFor(() => expect(activeScreen()).toBe("home"));
+    expect(h.narratives.at(-1)).toBe(null);
+    expect(h.commands.slice(commandsBeforeRecovery).some(command => command.presentationAction === "close")).toBe(false);
+    h.emit("narrativePresentationResult", { ...h.commands[0], outcome: "opened", sourceId: "stale-GIS" });
+    expect(activeScreen()).toBe("home");
   });
 
   test("the newest Home intent is the only one applied after a shared close", async () => {

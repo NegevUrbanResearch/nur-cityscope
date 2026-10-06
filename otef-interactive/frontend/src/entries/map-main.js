@@ -220,6 +220,7 @@ async function bootstrapMapRuntime() {
     let presentationViewer = null;
     const videoPlaybackPublisher = createNliVideoPlaybackPublisher({
       table: OTEFDataContext._tableName || "otef",
+      socket: OTEFDataContext._wsClient,
     });
     let presentationManifest = null;
     let activePresentationSegmentId = null;

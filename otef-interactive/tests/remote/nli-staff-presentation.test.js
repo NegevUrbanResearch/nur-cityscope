@@ -451,3 +451,65 @@ describe("NLI staff presentation controller", () => {
     await expect(retry).resolves.toBe(true);
   });
 });
+
+
+describe("failed presentation recovery", () => {
+  test("replacement GIS can open a new session without accepting its unrelated Close", async () => {
+    vi.useFakeTimers();
+    const h = makeControllerHarness();
+    const opened = h.controller.run("open", "nova_mor");
+    h.reply({ outcome: "opened", sourceId: "A" });
+    await opened;
+    const old = h.sent[0];
+    const close = h.controller.run("close", "nova_mor");
+    h.reply({ outcome: "closed", sourceId: "B" });
+    await vi.advanceTimersByTimeAsync(6000);
+    expect(await close).toBe(false);
+    expect(presentationControlsHtml(step, h.controller.getState(), "en")).toContain('data-presentation-action="recover-open"');
+    const retry = h.controller.recoverOpen("nova_mor");
+    expect(h.sent.at(-1).presentationGeneration).toBeGreaterThan(old.presentationGeneration);
+    h.replyTo(old, { outcome: "opened", sourceId: "A" });
+    h.reply({ outcome: "opened", sourceId: "B" });
+    expect(await retry).toBe(true);
+    const replacementClose = h.controller.run("close", "nova_mor");
+    h.reply({ outcome: "closed", sourceId: "B" });
+    expect(await replacementClose).toBe(true);
+  });
+
+  test("failure-only Home recovery releases correlation without claiming confirmed closure", async () => {
+    vi.useFakeTimers();
+    const h = makeControllerHarness();
+    expect(h.controller.releaseFailedSession()).toBe(false);
+    const opening = h.controller.run("open", "nova_mor");
+    expect(h.controller.releaseFailedSession()).toBe(false);
+    await vi.advanceTimersByTimeAsync(6000);
+    await opening;
+    expect(presentationControlsHtml(step, h.controller.getState(), "en")).toContain('data-presentation-action="recover-home"');
+    expect(h.controller.releaseFailedSession()).toBe(true);
+    expect(h.controller.getState()).toMatchObject({ phase: "released", sessionId: null });
+    h.replyTo(h.sent[0], { outcome: "opened", sourceId: "A" });
+    expect(await h.controller.closeForStepChange()).toBe(true);
+  });
+
+  test("command deadline and destroy abort outstanding transport", async () => {
+    vi.useFakeTimers();
+    const signals = [];
+    const h = createNliStaffPresentationController({ dataContext: {
+      subscribe: () => () => {},
+      narrativePresentationCommand: (_command, options) => {
+        signals.push(options.signal);
+        return new Promise(() => {});
+      },
+    } });
+    const opening = h.run("open", "nova_mor");
+    expect(signals[0].aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(6000);
+    expect(await opening).toBe(false);
+    expect(signals[0].aborted).toBe(true);
+    const retry = h.recoverOpen("nova_mor");
+    expect(signals.filter(signal => !signal.aborted)).toHaveLength(1);
+    h.destroy();
+    expect(await retry).toBe(false);
+    expect(signals.every(signal => signal.aborted)).toBe(true);
+  });
+});

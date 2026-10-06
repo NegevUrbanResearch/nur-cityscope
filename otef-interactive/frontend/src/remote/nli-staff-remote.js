@@ -1127,7 +1127,13 @@ export function initNliStaffRemote(dataContext, { presenterManifest = presenterC
   $("kitPresentation").addEventListener("click", (event) => {
     if (!manualMutationsOpen()) return;
     const button = event.target.closest("[data-presentation-action]");
-    if (button) void handlePresentationButton(button.dataset.presentationAction);
+    if (!button) return;
+    const action = button.dataset.presentationAction;
+    if (action === "recover-open") {
+      void presentation.recoverOpen(currentStep()?.presentation?.segmentId);
+    } else if (action === "recover-home") {
+      if (presentation.releaseFailedSession()) void exitToHome();
+    } else void handlePresentationButton(action);
   });
 
   $("kitEscape").addEventListener("click", (event) => {

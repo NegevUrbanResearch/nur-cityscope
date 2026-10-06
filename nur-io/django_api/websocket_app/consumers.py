@@ -10,6 +10,7 @@ WebSocket is used for:
 from channels.generic.websocket import AsyncWebsocketConsumer
 from asgiref.sync import sync_to_async
 import json
+from .nli_video_playback import valid_nli_video_playback
 import re
 import uuid
 import math
@@ -320,6 +321,14 @@ class GeneralConsumer(AsyncWebsocketConsumer):
             # outside all state, calibration, and room-broadcast paths.
             from .projection_trace import handle_projection_trace
             await handle_projection_trace(self, data)
+
+        elif message_type in {'otef_nli_video_playback_state', 'otef_nli_video_playback_query'}:
+            payload = valid_nli_video_playback(data, self.channel_type)
+            if payload is not None:
+                await self.channel_layer.group_send(
+                    self.room_group_name,
+                    {'type': 'broadcast_message', 'message': payload},
+                )
 
         elif message_type == 'otef_viewport_control':
             # Pan/zoom command - either execute server-side or forward to GIS

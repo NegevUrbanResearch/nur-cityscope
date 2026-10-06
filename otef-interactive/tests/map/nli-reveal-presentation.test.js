@@ -101,6 +101,7 @@ beforeEach(() => {
   vi.restoreAllMocks();
   vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue();
   vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
+  vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(function () { this.currentTime = 0; });
   sequence = 0;
   FakeReveal.lastInstance = null;
   document.body.innerHTML = '<div id="map"></div>';
@@ -283,6 +284,28 @@ describe("GIS Reveal presentation", () => {
     expect(activatedVideos).toContain(videos[0]);
     expect(activatedVideos).not.toContain(videos[1]);
     expect(videos[1].autoplay).toBe(false);
+  });
+
+  test("Shura loads only the selected video and releases both decoders before the first photo", async () => {
+    const h = makeHarness();
+    await h.send("open", { segmentId: "shura" });
+    const videos = [...root.querySelectorAll("video")];
+    expect(videos.every((video) => !video.hasAttribute("src"))).toBe(true);
+    await h.send("next");
+    expect(videos[0].getAttribute("src")).toContain("/normalized-audio/slide-23.mp4");
+    expect(videos[1].hasAttribute("src")).toBe(false);
+    expect(videos[2].hasAttribute("src")).toBe(false);
+    await h.send("next");
+    expect(videos[0].hasAttribute("src")).toBe(false);
+    expect(videos[1].getAttribute("src")).toContain("/normalized-audio/slide-24.mp4");
+    await h.send("next");
+    expect(h.lastResult()).toMatchObject({ outcome: "ready", slide: 27 });
+    expect(videos.every((video) => !video.hasAttribute("src"))).toBe(true);
+    expect(HTMLMediaElement.prototype.load.mock.contexts).toContain(videos[0]);
+    expect(HTMLMediaElement.prototype.load.mock.contexts).toContain(videos[1]);
+    await h.send("previous");
+    expect(videos[1].getAttribute("src")).toContain("/normalized-audio/slide-24.mp4");
+    expect(HTMLMediaElement.prototype.play.mock.contexts.at(-1)).toBe(videos[1]);
   });
 
   test("close pauses and rewinds the active video", async () => {
@@ -478,7 +501,7 @@ describe("presentation open and close lifecycle", () => {
     expect(h.lastResult().outcome).toBe("opened");
   });
 
-  test("starts a first-slide video only after the fade and within 1500ms", async () => {
+  test("starts a first-slide video only after the fade", async () => {
     vi.useFakeTimers();
     let resolvePlay;
     vi.spyOn(HTMLMediaElement.prototype, "play").mockImplementation(() => new Promise((resolve) => {
@@ -505,6 +528,25 @@ describe("presentation open and close lifecycle", () => {
     expect(HTMLMediaElement.prototype.play).toHaveBeenCalledOnce();
     expect(results).toEqual([]);
     await vi.advanceTimersByTimeAsync(1499);
+    expect(results).toEqual([]);
+    resolvePlay();
+    await opening;
+    expect(results.map((result) => result.outcome)).toEqual(["opened"]);
+  });
+
+  test("cold video startup can use the remaining 4500ms operation budget", async () => {
+    vi.useFakeTimers();
+    let resolvePlay;
+    vi.spyOn(HTMLMediaElement.prototype, "play").mockImplementation(() => new Promise((resolve) => { resolvePlay = resolve; }));
+    const gates = deferDecode();
+    const results = [];
+    const viewer = createNliRevealPresentation(root, { manifest: videoFirstManifest, RevealClass: FakeReveal, emitResult: (result) => results.push(result) });
+    const opening = viewer.handleCommand(command("open", { segmentId: "clip" }));
+    await vi.advanceTimersByTimeAsync(0);
+    gates[0].resolve();
+    await vi.advanceTimersByTimeAsync(16);
+    endOpacityFade();
+    await vi.advanceTimersByTimeAsync(2000);
     expect(results).toEqual([]);
     resolvePlay();
     await opening;
@@ -542,6 +584,7 @@ describe("presentation open and close lifecycle", () => {
 
     vi.spyOn(HTMLMediaElement.prototype, "play").mockImplementation(() => new Promise(() => {}));
     const slowGates = deferDecode();
+    const slowStartedAt = Date.now();
     const slow = viewer.handleCommand(command("open", {
       segmentId: "clip", presentationGeneration: 13, presentationSessionId: "clip-session-2",
     }));
@@ -549,13 +592,36 @@ describe("presentation open and close lifecycle", () => {
     slowGates.at(-1).resolve();
     await vi.advanceTimersByTimeAsync(16);
     endOpacityFade();
-    await vi.advanceTimersByTimeAsync(1499);
+    await vi.advanceTimersByTimeAsync(4499 - (Date.now() - slowStartedAt));
     expect(results).toHaveLength(1);
     await vi.advanceTimersByTimeAsync(1);
     await slow;
     expect(results.at(-1).outcome).toBe("unavailable");
     expect(results.filter((result) => result.outcome === "opened")).toHaveLength(0);
     expect(playback).toEqual([true, false, true, false]);
+  });
+
+  test("navigation gets a fresh total deadline after a long time on the previous slide", async () => {
+    vi.useFakeTimers();
+    const gates = deferDecode();
+    const h = makeHarness();
+    const opening = h.start("open", { segmentId: "shura" });
+    await vi.advanceTimersByTimeAsync(0);
+    gates[0].resolve();
+    await vi.advanceTimersByTimeAsync(16);
+    endOpacityFade();
+    await opening;
+    await vi.advanceTimersByTimeAsync(10000);
+    vi.spyOn(HTMLMediaElement.prototype, "play").mockImplementation(() => new Promise(() => {}));
+    const changing = h.start("next");
+    await vi.advanceTimersByTimeAsync(0);
+    gates.at(-1).resolve();
+    await vi.advanceTimersByTimeAsync(4499);
+    expect(h.results.map((result) => result.outcome)).toEqual(["opened"]);
+    await vi.advanceTimersByTimeAsync(1);
+    await changing;
+    expect(h.lastResult()).toMatchObject({ outcome: "unavailable", slide: 25 });
+    expect(overlay()).toBeNull();
   });
 
   test("bounds the entire local open, including Reveal initialization, to 4500ms", async () => {

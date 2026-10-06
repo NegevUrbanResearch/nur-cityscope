@@ -1073,7 +1073,7 @@ function normalizePresentationCorrelation(value) {
   return { segmentId, presentationSessionId, presentationGeneration, sequence, requestId };
 }
 
-async function narrativePresentationCommand(ctx, command) {
+async function narrativePresentationCommand(ctx, command, options) {
   if (!ctx._tableName) return { ok: false, reason: "missing_table" };
   const correlation = normalizePresentationCorrelation(command);
   if (!correlation || !["open", "next", "previous", "close"].includes(command.presentationAction)) {
@@ -1084,7 +1084,7 @@ async function narrativePresentationCommand(ctx, command) {
     presentationAction: command.presentationAction,
     sourceId: ctx._clientId,
     timestamp: Date.now(),
-  });
+  }, options);
 }
 
 async function narrativePresentationResult(ctx, result) {

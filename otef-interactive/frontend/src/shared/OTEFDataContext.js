@@ -793,10 +793,10 @@ class OTEFDataContextClass {
       : Promise.resolve({ ok: false, reason: "missing_action" });
   }
 
-  narrativePresentationCommand(command) {
+  narrativePresentationCommand(command, options) {
     const helper = OTEFDataContextInternals.actions?.narrativePresentationCommand;
     return typeof helper === "function"
-      ? helper(this, command)
+      ? helper(this, command, options)
       : Promise.resolve({ ok: false, reason: "missing_action" });
   }
 
