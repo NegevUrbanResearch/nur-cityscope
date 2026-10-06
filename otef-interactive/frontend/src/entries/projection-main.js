@@ -51,6 +51,7 @@ import { installProjectionPreviewBridge } from "../projection/projection-preview
 import { bindProjectionHeadingStorage } from "../projection/projection-heading-storage.js";
 import { createProjectionConfigClient } from "../shared/projection-config-client.js";
 import { createProjectionConfigRuntime } from "../projection/projection-config-runtime.js";
+import { bindProjectionMatchCursor, readProjectionMatchLaunch } from '../projection/projection-match-cursor.js';
 import { readProjectionCandidateInputs } from "../projection/projection-candidate-validation.js";
 import { createUuid } from "../shared/uuid.js";
 import { createProjectionNarrativeController } from "../projection/projection-narrative-controller.js";
@@ -269,6 +270,8 @@ async function bootstrapProjectionRuntime() {
     ? "browser"
     : "td";
   const browserMode = !!(projectionSpanId && projectionOutputMode === "browser");
+  const matchLaunch = readProjectionMatchLaunch({ spanId: projectionSpanId, search: startupSearch });
+  if (browserMode && !previewMode && !matchLaunch) throw new Error('Invalid projection match display route');
   const projectionLifecycle = createProjectionLifecycle();
   let runtimeDisposed = false;
   const disposers = [];
@@ -1236,10 +1239,20 @@ async function bootstrapProjectionRuntime() {
         getDatasetVersion: () => acceptedDatasetVersion,
         getDatasetIdentityError: () => acceptedDatasetIdentityError,
         route: "browser",
+        ...matchLaunch,
         baseline: (config) => browserSurface?.getBaselineIdentity?.(config) || null,
       });
       registerDisposer(() => { projectionRuntime?.stop?.(); projectionRuntime = null; });
       await projectionRuntime.start();
+      const matchCursor = bindProjectionMatchCursor({ document, host: displayContainer, output: projectionSpanId,
+        instanceId: sourceId, socket: OTEFDataContext._wsClient, runtime: projectionRuntime, launch: matchLaunch,
+        // Task 2 installs the evaluated source-frame reader; never infer readiness from a server snapshot.
+        readSourceContext: () => map._otefProjectionMatchSourceContext?.() ?? null,
+        requestFrame: window.requestAnimationFrame.bind(window), cancelFrame: window.cancelAnimationFrame.bind(window), clock: window });
+      map._otefProjectionMatchCursor = matchCursor;
+      const onMatchRender = () => matchCursor.contextChanged();
+      map.on('render', onMatchRender);
+      registerDisposer(() => { map.off('render', onMatchRender); matchCursor.dispose(); delete map._otefProjectionMatchCursor; });
       if (acceptedDatasetIdentityError) projectionRuntime.datasetIdentityFailed(acceptedDatasetIdentityError);
       registerDisposer(OTEFDataContext.subscribe('personSelection', () => projectionRuntime?.datasetChanged?.()));
     }

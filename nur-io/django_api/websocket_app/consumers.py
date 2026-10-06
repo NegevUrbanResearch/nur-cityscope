@@ -12,6 +12,7 @@ from asgiref.sync import sync_to_async
 import json
 import re
 import uuid
+import math
 
 
 _PROJECTION_OUTPUTS = {"left", "right"}
@@ -111,10 +112,53 @@ def _valid_projection_names_status(data):
     return {key: data[key] for key in data}
 
 
+def _valid_projection_match(data):
+    common = {'type', 'table', 'output', 'instanceId', 'sourceId', 'sessionId', 'sequence', 'revision', 'sourceFrameIdentity'}
+    command = data['type'] == 'otef_projection_match_cursor'
+    extra = {'mode', 'pointId', 'targetPx', 'sourcePx'} if command else {'displaySide', 'reversed', 'success', 'error'}
+    if set(data) != common | extra:
+        return None
+    if not isinstance(data['output'], str) or data['output'] not in _PROJECTION_OUTPUTS:
+        return None
+    if not all(_valid_uuid(data[key]) for key in ('instanceId', 'sourceId', 'sessionId')):
+        return None
+    if not all(type(data[key]) is int and 0 <= data[key] <= 9007199254740991 for key in ('sequence', 'revision')):
+        return None
+    identity = data['sourceFrameIdentity']
+    if not isinstance(identity, str) or not 0 < len(identity) <= 4096:
+        return None
+    if command:
+        if data['mode'] in ('probe', 'off'):
+            if type(data['pointId']) is not int or data['pointId'] != 0 or data['targetPx'] is not None or data['sourcePx'] is not None:
+                return None
+        elif data['mode'] == 'cursor':
+            if type(data['pointId']) is not int or not 1 <= data['pointId'] <= 6:
+                return None
+            for key in ('targetPx', 'sourcePx'):
+                pair = data[key]
+                if not isinstance(pair, list) or len(pair) != 2:
+                    return None
+                if not all(type(n) in (int, float) and 0 <= n <= limit and math.isfinite(n) for n, limit in zip(pair, (1920, 1080))):
+                    return None
+        else:
+            return None
+    else:
+        if not isinstance(data['displaySide'], str) or data['displaySide'] not in _PROJECTION_OUTPUTS or type(data['reversed']) is not bool or type(data['success']) is not bool:
+            return None
+        if data['success']:
+            if data['error'] is not None:
+                return None
+        elif not isinstance(data['error'], str) or len(data['error']) > 240:
+            return None
+    return dict(data)
+
+
 def _valid_projection_transient(data):
     if not isinstance(data, dict) or data.get("table") != "otef":
         return None
     message_type = data.get("type")
+    if message_type in ('otef_projection_match_cursor', 'otef_projection_match_ack'):
+        return _valid_projection_match(data)
     if message_type == "otef_projection_pattern":
         if set(data) != {"type", "table", "output", "pattern", "sourceId"}:
             return None
@@ -134,7 +178,7 @@ def _valid_projection_transient(data):
     if message_type == "otef_projection_names_status":
         return _valid_projection_names_status(data)
     if message_type == "otef_projection_applied":
-        allowed = {"type", "table", "output", "revision", "instanceId", "success", "error", "route", "baseline", "wall"}
+        allowed = {"type", "table", "output", "revision", "instanceId", "success", "error", "route", "baseline", "wall", "displaySide", "reversed"}
         if set(data) - allowed or not {"type", "table", "output", "revision", "instanceId", "success"}.issubset(data):
             return None
         if not isinstance(data.get("output"), str) or data["output"] not in _PROJECTION_OUTPUTS:
@@ -152,6 +196,10 @@ def _valid_projection_transient(data):
             return None
         if "wall" in data and not _valid_projection_wall(data["wall"]):
             return None
+        if 'displaySide' in data and (not isinstance(data['displaySide'], str) or data['displaySide'] not in _PROJECTION_OUTPUTS):
+            return None
+        if 'reversed' in data and type(data['reversed']) is not bool:
+            return None
         payload = {key: data[key] for key in ("type", "table", "output", "revision", "instanceId", "success")}
         if "error" in data:
             payload["error"] = data["error"]
@@ -161,6 +209,9 @@ def _valid_projection_transient(data):
             payload["baseline"] = data["baseline"]
         if "wall" in data:
             payload["wall"] = data["wall"]
+        for key in ('displaySide', 'reversed'):
+            if key in data:
+                payload[key] = data[key]
         return payload
     return None
 
@@ -292,6 +343,8 @@ class GeneralConsumer(AsyncWebsocketConsumer):
             'otef_projection_applied',
             'otef_projection_names_run',
             'otef_projection_names_status',
+            'otef_projection_match_cursor',
+            'otef_projection_match_ack',
         }:
             # These are intentionally ephemeral. Validate at the socket boundary,
             # relay in memory, and never involve the calibration or viewport rows.

@@ -4,7 +4,64 @@ from unittest.mock import AsyncMock
 from .consumers import GeneralConsumer
 
 
+def cursor_fixture(**overrides):
+    return {'type': 'otef_projection_match_cursor', 'table': 'otef', 'output': 'left',
+            'instanceId': '11111111-1111-4111-8111-111111111111',
+            'sourceId': '22222222-2222-4222-8222-222222222222',
+            'sessionId': '33333333-3333-4333-8333-333333333333',
+            'sequence': 1, 'revision': 12, 'sourceFrameIdentity': 'frame',
+            'mode': 'cursor', 'pointId': 1, 'targetPx': [410, 295], 'sourcePx': [390, 310], **overrides}
+
+
+def ack_fixture(**overrides):
+    return {'type': 'otef_projection_match_ack', 'table': 'otef', 'output': 'left',
+            'instanceId': '11111111-1111-4111-8111-111111111111',
+            'sourceId': '22222222-2222-4222-8222-222222222222',
+            'sessionId': '33333333-3333-4333-8333-333333333333',
+            'sequence': 1, 'revision': 12, 'sourceFrameIdentity': 'frame',
+            'displaySide': 'left', 'reversed': False, 'success': True, 'error': None, **overrides}
+
+
 class ProjectionTransientRelayTests(IsolatedAsyncioTestCase):
+    async def test_match_cursor_and_ack_relay_without_persistence(self):
+        consumer = GeneralConsumer()
+        consumer.room_group_name = 'otef_channel'
+        consumer.channel_layer = type('Layer', (), {'group_send': AsyncMock()})()
+        messages = [cursor_fixture(), ack_fixture(), cursor_fixture(mode='probe', pointId=0, targetPx=None, sourcePx=None),
+                    cursor_fixture(mode='off', pointId=0, targetPx=None, sourcePx=None), ack_fixture(success=False, error='not ready')]
+        for message in messages:
+            await consumer.handle_otef_message(message)
+        self.assertEqual([call.args[1]['message'] for call in consumer.channel_layer.group_send.await_args_list], messages)
+
+    async def test_match_contract_rejects_malformed_and_extra_fields(self):
+        consumer = GeneralConsumer()
+        consumer.room_group_name = 'otef_channel'
+        consumer.channel_layer = type('Layer', (), {'group_send': AsyncMock()})()
+        changes = [{'extra': True}, {'sequence': True}, {'revision': False}, {'sequence': -1}, {'revision': 9007199254740992},
+                   {'sourceId': 'invalid'}, {'instanceId': []}, {'sessionId': None}, {'output': []},
+                   {'sourceFrameIdentity': 'x' * 4097}, {'sourceFrameIdentity': ''}]
+        invalid = [factory(**change) for factory in (cursor_fixture, ack_fixture) for change in changes]
+        invalid += [cursor_fixture(**change) for change in [
+            {'targetPx': [float('nan'), 1]}, {'targetPx': [1, float('inf')]}, {'sourcePx': [1921, 1]},
+            {'sourcePx': [-1, 1]}, {'targetPx': [1, 1081]}, {'targetPx': [True, 1]}, {'targetPx': [1, 2, 3]},
+            {'pointId': True}, {'pointId': 0}, {'mode': 'probe'}, {'mode': 'off', 'pointId': 0}]]
+        invalid += [ack_fixture(**change) for change in [{'displaySide': []}, {'reversed': 1}, {'success': 1},
+            {'error': 'bad'}, {'success': False, 'error': None}, {'success': False, 'error': 'x' * 241}]]
+        for message in invalid:
+            await consumer.handle_otef_message(message)
+        consumer.channel_layer.group_send.assert_not_awaited()
+
+    async def test_applied_relay_preserves_actual_display_launch_metadata(self):
+        consumer = GeneralConsumer()
+        consumer.room_group_name = 'otef_channel'
+        consumer.channel_layer = type('Layer', (), {'group_send': AsyncMock()})()
+        message = {'type': 'otef_projection_applied', 'table': 'otef', 'output': 'right', 'revision': 12,
+                   'instanceId': cursor_fixture()['instanceId'], 'success': True, 'displaySide': 'left', 'reversed': True}
+        await consumer.handle_otef_message(message)
+        self.assertEqual(consumer.channel_layer.group_send.await_args.args[1]['message'], message)
+        for change in [{'displaySide': []}, {'reversed': 1}]:
+            await consumer.handle_otef_message({**message, **change})
+        self.assertEqual(consumer.channel_layer.group_send.await_count, 1)
     async def test_names_run_and_status_relay_exact_ephemeral_payloads(self):
         consumer = GeneralConsumer()
         consumer.room_group_name = "otef_channel"

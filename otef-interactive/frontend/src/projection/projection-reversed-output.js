@@ -7,6 +7,8 @@ export function mountReversedProjection({ document: doc, window: win, location }
   source.search = url.search;
   source.searchParams.set('span', side === 'left' ? 'right' : 'left');
   source.searchParams.set('outputMode', 'browser');
+  source.searchParams.set('matchDisplaySide', side);
+  source.searchParams.set('matchReversed', '1');
   const iframe = doc.createElement('iframe');
   iframe.title = `${side} display: reversed ${side === 'left' ? 'right' : 'left'} output`;
   iframe.allow = "autoplay; fullscreen 'none'";

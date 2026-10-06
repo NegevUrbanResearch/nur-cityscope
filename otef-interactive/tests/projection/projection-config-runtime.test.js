@@ -38,6 +38,8 @@ function makeHarness(spanId = "left", instanceId = "11111111-1111-4111-8111-1111
       applyConfig: (config, revision, geometryPair) => { applied.push({ config, revision, geometryPair }); options.applyConfig?.(config, revision, { render: () => [...renderListeners].forEach((fn) => fn()) }); },
       drawCompletion: options.drawCompletion,
       route: options.route,
+      displaySide: options.displaySide,
+      reversed: options.reversed,
       baseline: options.baseline,
       prepareGeometry: options.prepareGeometry,
       rollbackGeometry: options.rollbackGeometry,
@@ -106,6 +108,36 @@ function realSpanAndNames() {
 }
 
 describe("projection config runtime", () => {
+  test('drawn-state accessor retains completed geometry through preparation, rollback, suspension and stop', async () => {
+    let resolvePreparation;
+    const h = makeHarness('left', undefined, { drawCompletion: () => true,
+      prepareGeometry: (_config, revision) => revision === 2 ? new Promise(resolve => { resolvePreparation = resolve; }) : Promise.resolve({ revision }),
+      rollbackGeometry: vi.fn(), displaySide: 'right', reversed: true });
+    expect(h.runtime.getAppliedGeometryState()).toMatchObject({ revision: -1, configIdentity: null, stopped: true });
+    await h.runtime.start(); h.state(1); h.frame();
+    expect(h.runtime.getAppliedGeometryState()).toMatchObject({ revision: -1, pending: true, stopped: false });
+    await vi.waitFor(() => expect(h.applied).toHaveLength(1)); h.render();
+    const completed = h.runtime.getAppliedGeometryState();
+    expect(completed).toMatchObject({ revision: 1, configIdentity: JSON.stringify(DEFAULT_PROJECTION_CONFIG), pending: false, failed: false, namesState: expect.any(String) });
+    expect(h.sent()).toContainEqual(expect.objectContaining({ type: 'otef_projection_applied', displaySide: 'right', reversed: true }));
+    const next = structuredClone(DEFAULT_PROJECTION_CONFIG); next.pre.scale += 0.1;
+    h.state(2, next); h.frame();
+    expect(h.runtime.getAppliedGeometryState()).toMatchObject({ revision: 1, configIdentity: completed.configIdentity, pending: true });
+    resolvePreparation({ revision: 2 }); await vi.waitFor(() => expect(h.applied).toHaveLength(2));
+    expect(h.runtime.getAppliedGeometryState()).toMatchObject({ revision: 1, pending: true });
+    h.error({ error: new Error('draw failed') });
+    expect(h.runtime.getAppliedGeometryState()).toMatchObject({ revision: 1, configIdentity: completed.configIdentity, failed: true, pending: true });
+    h.runtime.invalidate(); expect(h.runtime.getAppliedGeometryState()).toMatchObject({ suspended: true, pending: true });
+    h.runtime.resume(); expect(h.runtime.getAppliedGeometryState()).toMatchObject({ suspended: false, pending: true });
+    h.runtime.stop(); expect(h.runtime.getAppliedGeometryState()).toMatchObject({ stopped: true, revision: 1 });
+  });
+
+  test('normal launch reports its logical side even when saved reverse preferences differ', async () => {
+    const h = makeHarness('left', undefined, { route: 'browser' });
+    await h.runtime.start(); h.state(1, { ...DEFAULT_PROJECTION_CONFIG, reverse: true }); h.frame(); h.render();
+    expect(h.sent()).toContainEqual(expect.objectContaining({ type: 'otef_projection_applied', displaySide: 'left', reversed: false }));
+    h.runtime.stop();
+  });
   test('abandoned geometry restores consumers before a newer mesh preparation fails', async () => {
     let visibleConfig;
     const h = makeHarness('left', undefined, {

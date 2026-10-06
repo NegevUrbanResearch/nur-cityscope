@@ -23,6 +23,8 @@ export function createProjectionConfigRuntime({
   isDocumentVisible = () => globalThis.document?.visibilityState !== "hidden",
   drawCompletion = null,
   route = "maplibre",
+  displaySide = spanId,
+  reversed = false,
   baseline = null,
   prepareGeometry = null,
   rollbackGeometry = null,
@@ -111,7 +113,7 @@ export function createProjectionConfigRuntime({
   };
 
   const acknowledge = (revision, success, error, baselineOverride = undefined) => {
-    const message = { type: "otef_projection_applied", table, output: spanId, revision, instanceId, success, route };
+    const message = { type: "otef_projection_applied", table, output: spanId, revision, instanceId, success, route, displaySide, reversed };
     const baselineIdentity = baselineOverride !== undefined ? baselineOverride : (typeof baseline === "function" ? baseline() : baseline);
     if (baselineIdentity != null) message.baseline = clone(baselineIdentity);
     if (error) message.error = String(error).slice(0, 240);
@@ -673,5 +675,11 @@ export function createProjectionConfigRuntime({
     if (latest && appliedRevision === latestRevision) void setNamesTarget(latest.config, latestRevision);
   }
 
-  return { start, stop, requestStatus, invalidate, resume, reapply, datasetChanged, datasetIdentityFailed };
+  function getAppliedGeometryState() {
+    return { revision: appliedRevision, configIdentity: appliedConfig ? JSON.stringify(appliedConfig) : null,
+      pending: Boolean(preparing || renderWait || awaitingReapply || latestRevision !== appliedRevision),
+      failed: failedRevision >= 0, suspended, stopped, namesState };
+  }
+
+  return { start, stop, requestStatus, invalidate, resume, reapply, datasetChanged, datasetIdentityFailed, getAppliedGeometryState };
 }

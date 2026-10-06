@@ -8,6 +8,8 @@ test('reversed output forwards 4K rendering and map-density settings to the comp
   expect(source.searchParams.get('outputResolution')).toBe('4k');
   expect(source.searchParams.get('mpr')).toBe('1.5');
   expect(source.searchParams.get('span')).toBe('right');
+  expect(source.searchParams.get('matchDisplaySide')).toBe('left');
+  expect(source.searchParams.get('matchReversed')).toBe('1');
   mounted.dispose();
 });
 
@@ -18,6 +20,8 @@ test.each([['left', 'right'], ['right', 'left']])('physical %s displays the rota
   const frame = mounted.iframe;
   expect(new URL(frame.src).pathname).toBe('/otef-interactive/projection.html');
   expect(new URL(frame.src).searchParams.get('span')).toBe(logical);
+  expect(new URL(frame.src).searchParams.get('matchDisplaySide')).toBe(physical);
+  expect(new URL(frame.src).searchParams.get('matchReversed')).toBe('1');
   expect(new URL(frame.src).searchParams.get('outputMode')).toBe('browser');
   expect(new URL(frame.src).searchParams.has('preview')).toBe(false);
   expect(frame.style.transform).toBe('rotate(180deg)');
