@@ -372,10 +372,10 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     view.update({ state: { ...state, selectedPresetId }, errors: fieldErrors, parameterHistory: parameterHistory.state(),
       conflict: conflict || state.migrationWarnings?.join(' ') || '',
       statusText: pendingAction
-        ? ({ save: "Saving preset", apply: "Applying changes", load: "Loading preset", revert: "Reverting settings" }[pendingAction.kind])
+        ? ({ save: "Saving preset", rename: "Renaming preset", apply: "Applying changes", load: "Loading preset", revert: "Reverting settings" }[pendingAction.kind])
         : conflict ? "Conflict" : fieldErrors.action || state.previewError ? "Failed" : statusText(state, loadedPresetId),
       draftDiffersFromAccepted: Boolean(state.draft && state.snapshot?.config && !equalProjectionConfig(state.draft, state.snapshot.config)),
-      savePending: pendingAction?.kind === "save",
+      savePending: pendingAction?.kind === "save" || pendingAction?.kind === "rename",
       selectedNode, loadedPresetId, loadedPresetLoadToken, statusRows: rows,
       appliedSummary: projectionAppliedStatus(rows, expectedRevision), outputState, warpStates, activePattern,
       namesWallStatus: namesRunPending && !namesTracker.getState().pending
@@ -1052,6 +1052,12 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
       if (action === "apply") await runPending("apply", () => client.apply());
       if (action === "save-new") { if (!String(value || "").trim()) { fieldErrors = { name: "Enter a preset name" }; refresh(); return; } const result = await runPending("save", () => client.save({ presetId: null, name: String(value).trim() })); if (actionToken === actionSequence && result?.savedPresetId) selectedPresetId = loadedPresetId = result.savedPresetId; }
       if (action === "save") { const selected = state.snapshot?.presets?.find((preset) => preset.id === loadedPresetId); if (!selected || selected.readOnly || !String(value || "").trim()) { fieldErrors = { name: selected?.readOnly ? `${selected.name || "Selected preset"} is immutable` : "Enter a preset name" }; refresh(); return; } const result = await runPending("save", () => client.save({ presetId: loadedPresetId, name: String(value).trim() })); if (actionToken === actionSequence && result?.savedPresetId) selectedPresetId = loadedPresetId = result.savedPresetId; }
+      if (action === "rename") {
+        const loaded = state.snapshot?.presets?.find((preset) => preset.id === loadedPresetId);
+        const name = String(value || "").trim();
+        if (!loaded || loaded.readOnly || !name || name.length > 80) { fieldErrors = { name: loaded?.readOnly ? `${loaded.name} is immutable` : "Enter a preset name of 1–80 characters" }; refresh(); return; }
+        await runPending("rename", () => client.rename({ presetId: loadedPresetId, name }));
+      }
       if (action === "load") { const requested = value; const result = await runPending("load", () => client.load(requested)); if (result?.draftReplaced) { selectedPresetId = loadedPresetId = requested; loadedPresetLoadToken += 1; rebaseWarpHistory(); } }
       if (action === "preset-select") { selectedPresetId = value; }
       if (action === "revert") { const result = await runPending("revert", () => client.revert()); if (result?.draftReplaced) rebaseWarpHistory(); }

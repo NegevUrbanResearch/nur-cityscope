@@ -180,11 +180,12 @@ def mutate_projection_state(table_name, base_revision, action, source_id, **payl
     if isinstance(base_revision, bool) or not isinstance(base_revision, int) or not 0 <= base_revision <= 2 ** 53 - 1:
         errors["baseRevision"] = "must be a nonnegative safe integer"
     errors.update(_validate_uuid(source_id, "sourceId"))
-    if not isinstance(action, str) or action not in {"preview", "save", "load", "revert"}:
+    if not isinstance(action, str) or action not in {"preview", "save", "rename", "load", "revert"}:
         errors["action"] = "unknown action"
     allowed = {
         "preview": {"config"},
         "save": {"config", "presetId", "name"},
+        "rename": {"presetId", "name"},
         "load": {"presetId"},
         "revert": set(),
     }.get(action, set()) if isinstance(action, str) else set()
@@ -238,6 +239,21 @@ def mutate_projection_state(table_name, base_revision, action, source_id, **payl
                 row.working_config = copy.deepcopy(config)
                 row.selected_preset_id = preset_id
                 changed = True
+        elif action == "rename":
+            preset_id = payload.get("presetId")
+            name = payload.get("name")
+            if not isinstance(name, str) or not name.strip() or len(name.strip()) > 80:
+                raise ProjectionConfigError("invalid", {"name": "must be 1-80 characters"})
+            if preset_id == "original":
+                raise ProjectionConfigError("invalid", {"presetId": "Original is immutable"})
+            errors = _validate_uuid(preset_id, "presetId")
+            if errors:
+                raise ProjectionConfigError("invalid", errors)
+            target = next((p for p in presets if p["id"] == preset_id), None)
+            if target is None or target.get("readOnly"):
+                raise ProjectionConfigError("invalid", {"presetId": "preset is read-only" if target else "preset not found"})
+            changed = target["name"] != name.strip()
+            target["name"] = name.strip()
         elif action == "load":
             preset_id = payload.get("presetId")
             if preset_id != "original":
