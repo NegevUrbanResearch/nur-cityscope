@@ -19,7 +19,7 @@ function rotr(value, bits) {
   return (value >>> bits) | (value << (32 - bits));
 }
 
-function sha256HexFallback(bytes) {
+export function sha256HexSync(bytes) {
   const bitLen = bytes.length * 8;
   const paddedLen = ((bytes.length + 9 + 63) & ~63) || 64;
   const padded = new Uint8Array(paddedLen);
@@ -84,5 +84,5 @@ export async function sha256Hex(bytes) {
     const digest = await globalThis.crypto.subtle.digest("SHA-256", bytes);
     return hexFromBytes(new Uint8Array(digest));
   }
-  return sha256HexFallback(bytes);
+  return sha256HexSync(bytes);
 }

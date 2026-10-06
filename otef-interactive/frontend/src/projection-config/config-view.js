@@ -1097,6 +1097,7 @@ export function createProjectionConfigView(root, {
     sendRunNamesPreview: (config) => dialog.sendRunNamesPreview(config),
     getCalibrationState: () => dialog.getCalibrationState(),
     getPreviewCalibrationState: () => dialog.getPreviewCalibrationState(),
+    getWarpPreviewAppliedState: () => dialog.getWarpPreviewAppliedState(),
     dispose() { if (disposed) return; disposed = true; cancelPendingWarpPaint(); for (const control of fields.values()) control.dispose(); warpPanelView.dispose(); settlementControls.dispose(); disposePageTrace(); disposeWarpTrace(); disposeGraphTrace(); traceUi?.dispose(); commandBar.dispose(); doc.removeEventListener?.("keydown", onKeyDown); parameterDialog.dispose(); dialog.dispose(); pointerInput.dispose(); canvas.dispose(); },
   };
 }

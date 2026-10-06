@@ -15,6 +15,7 @@ export function createProjectionMatchCursor({ document: doc, host, output, insta
   requestFrame, cancelFrame, clock } = {}) {
   let disposed = false, active = null, overlay = null, timer = null, frame = null, generation = 0;
   const seenSequences = new Map();
+  const invalidSessions = new Map();
   const now = () => typeof clock.now === 'function' ? clock.now() : clock.Date?.now?.() ?? Date.now();
   const visible = () => doc.visibilityState !== 'hidden';
   const sameSession = (a, b) => a.sourceId === b.sourceId && a.sessionId === b.sessionId;
@@ -62,10 +63,19 @@ export function createProjectionMatchCursor({ document: doc, host, output, insta
   function contextChanged() {
     if (active && (!visible() || !matches(active.message, readContext()) || !sameContext(active.context, readContext()))) clear();
   }
+  function invalidateSource(error) {
+    if (active) {
+      const reason = String(error || 'Effective source changed; restart point capture.').slice(0, 240);
+      invalidSessions.set(`${active.message.sourceId}/${active.message.sessionId}`, reason);
+      acknowledge(active.message, active.context, reason);
+    }
+    clear();
+  }
   function receive(message) {
     if (disposed || !isProjectionMatchCommand(message) || message.output !== output || message.instanceId !== instanceId) return;
     if (active && now() >= active.expiresAt) clear();
     const sessionKey = `${message.sourceId}/${message.sessionId}`;
+    if (message.mode !== 'off' && invalidSessions.has(sessionKey)) { acknowledge(message, readContext(), invalidSessions.get(sessionKey)); return; }
     if (message.mode === 'off') {
       const knownSequence = seenSequences.get(sessionKey);
       if (knownSequence !== undefined && message.sequence >= knownSequence) seenSequences.set(sessionKey, message.sequence);
@@ -98,7 +108,7 @@ export function createProjectionMatchCursor({ document: doc, host, output, insta
     });
   }
   doc.addEventListener('visibilitychange', contextChanged);
-  return { receive, contextChanged, clear, dispose() { if (disposed) return; clear(); disposed = true; doc.removeEventListener('visibilitychange', contextChanged); } };
+  return { receive, contextChanged, invalidateSource, clear, dispose() { if (disposed) return; clear(); disposed = true; doc.removeEventListener('visibilitychange', contextChanged); } };
 }
 
 /** Source readiness is provided by the evaluated scene task. Missing source context is deliberately unready. */
@@ -116,7 +126,7 @@ export function bindProjectionMatchCursor({ socket, runtime, launch, readSourceC
   const acknowledge = message => { if (isProjectionMatchAck(message)) onAck(message); };
   const handlers = [['otef_projection_match_cursor', cursor.receive], ['otef_projection_match_ack', acknowledge], ['disconnect', cursor.clear]];
   for (const [name, listener] of handlers) socket.on(name, listener);
-  return { contextChanged: cursor.contextChanged, clear: cursor.clear, dispose() {
+  return { contextChanged: cursor.contextChanged, invalidateSource: cursor.invalidateSource, clear: cursor.clear, dispose() {
     for (const [name, listener] of handlers) socket.off(name, listener);
     cursor.dispose();
   } };

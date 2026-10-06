@@ -54,6 +54,14 @@ describe('strict match protocol', () => {
 });
 
 describe('final output cursor', () => {
+  test('a drawn source reload rejects that local session even when portable identity is unchanged', () => {
+    const h = harness(); h.cursor.receive(command()); h.paint();
+    h.cursor.invalidateSource('Drawn model image reloaded; restart point capture.');
+    expect(h.sent.at(-1)).toMatchObject({success:false,error:expect.stringMatching(/reloaded/)});
+    expect(h.host.querySelector('.projection-match-cursor')).toBeNull();
+    h.cursor.receive(command({sequence:2})); h.paint(); expect(h.sent.at(-1).success).toBe(false);
+    h.cursor.receive(command({sessionId:OTHER,sequence:1})); h.paint(); expect(h.sent.at(-1).success).toBe(true); h.cursor.dispose();
+  });
   test('updates on one frame and acknowledges only after the next paint opportunity', () => {
     const h = harness(); h.cursor.receive(command()); expect(h.sent).toEqual([]);
     h.frame(); expect(h.sent).toEqual([]);

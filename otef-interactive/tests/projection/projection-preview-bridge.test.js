@@ -32,10 +32,29 @@ const clockRequest = (requestId, patch = {}) => ({ type: "otef_clock_preview_sta
 
 const flushMicrotasks = async () => { for (let index = 0; index < 30; index++) await Promise.resolve(); };
 
+test('source notifications bind semantic changes to the current guarded render request', async () => {
+  const listeners = new Map(), parent = {postMessage:vi.fn()}, win = {parent,location:{origin:'http://localhost'},
+    addEventListener:(type,fn)=>listeners.set(type,fn),removeEventListener:(type)=>listeners.delete(type)};
+  let notify, finish, source = {sourceFrameIdentity:'source-a',stable:true,error:null};
+  const unsub = vi.fn(); const map = {setEffectiveProjectionConfig:()=>true}, nameFieldController = {setProjectionConfig:()=>true};
+  const dispose=installProjectionPreviewBridge({win,output:'left',map,nameFieldController,syncContextInvestigation(){},
+    readSourceState:()=>source,subscribeSourceState:fn=>{notify=fn;return unsub;},applyProjectionConfig:()=>new Promise(resolve=>{finish=resolve;})});
+  const data={type:'otef_projection_preview_config',output:'left',requestId:1,config:DEFAULT_PROJECTION_CONFIG};
+  listeners.get('message')({source:win,origin:win.location.origin,data}); expect(parent.postMessage.mock.calls.some(([m])=>m.type==='otef_projection_preview_source_state')).toBe(false);
+  listeners.get('message')({source:parent,origin:win.location.origin,data});
+  expect(parent.postMessage).toHaveBeenLastCalledWith(expect.objectContaining({type:'otef_projection_preview_source_state',requestId:1,stable:false}),win.location.origin);
+  finish({committed:true}); await flushMicrotasks();
+  expect(parent.postMessage.mock.calls.map(([m])=>m)).toContainEqual(expect.objectContaining({type:'otef_projection_preview_source_state',requestId:1,sourceFrameIdentity:'source-a',stable:true}));
+  source={sourceFrameIdentity:'source-b',stable:false,error:'labels pending'}; notify();
+  expect(parent.postMessage).toHaveBeenLastCalledWith(expect.objectContaining({requestId:1,sourceFrameIdentity:'source-b',stable:false,error:'labels pending'}),win.location.origin);
+  const count=parent.postMessage.mock.calls.length;notify();expect(parent.postMessage).toHaveBeenCalledTimes(count);
+  dispose(); expect(unsub).toHaveBeenCalled(); notify();expect(parent.postMessage).toHaveBeenCalledTimes(count);
+});
+
 function createActualPreviewApplyHarness({ preparePair } = {}) {
   const source = readFileSync(new URL("../../frontend/src/entries/projection-main.js", import.meta.url), "utf8").replace(/\r\n/g, "\n");
   const start = source.indexOf("applyPreviewProjectionConfig = async");
-  const end = source.indexOf("\n    }\n\n    if (previewMode) registerDisposer", start);
+  const end = source.indexOf("\n    }\n\n    if (previewMode) { previewBridge", start);
   if (start < 0 || end <= start) throw new Error("Could not locate actual projection preview apply route");
   const previous = structuredClone(DEFAULT_PROJECTION_CONFIG);
   let activePair = previous, cameraConfig = previous, namesConfig = previous;

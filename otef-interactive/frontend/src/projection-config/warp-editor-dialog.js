@@ -5,7 +5,7 @@ import { recordProjectionTrace } from './projection-trace-input.js';
 import { createCalibrationViewController } from './calibration-view-controller.js';
 
 /** Owns one disposable projection frame. The config controller retains all draft and edit state. */
-export function createWarpEditorDialog({ document: doc, host, editorPanel, overlay, topologyControls, navigationControls, reconciliationControls = null, optionalHealthElement = null, presentation = "dialog", onVisibilityChange = () => {}, onPresentationChange = () => {}, onIsAdjusting = () => false, onEscape = () => false, onBeforeClose = () => {}, onBeforeSwitch = () => {}, onBeforeResize = () => {}, onViewportChange = () => {}, onOrientationChange = () => {}, onApply = () => {}, onLive = () => {}, socket, calibrationControllerFactory = createCalibrationViewController, trace }) {
+export function createWarpEditorDialog({ document: doc, host, editorPanel, overlay, topologyControls, navigationControls, reconciliationControls = null, optionalHealthElement = null, presentation = "dialog", onVisibilityChange = () => {}, onPresentationChange = () => {}, onPreviewInvalidated = () => {}, onIsAdjusting = () => false, onEscape = () => false, onBeforeClose = () => {}, onBeforeSwitch = () => {}, onBeforeResize = () => {}, onViewportChange = () => {}, onOrientationChange = () => {}, onApply = () => {}, onLive = () => {}, socket, calibrationControllerFactory = createCalibrationViewController, trace }) {
   const win = doc.defaultView;
   const home = editorPanel.parentElement;
   const overlayHome = overlay.parentElement;
@@ -92,7 +92,7 @@ export function createWarpEditorDialog({ document: doc, host, editorPanel, overl
   };
   let viewBox = { x: -72, y: -72, width: 2064, height: 1224 };
   const setMessage = (message) => { status.textContent = message; };
-  const preview = createProjectionPreviewFrame({ document: doc, host: viewport, trace, onStatus: (message, canRetry) => { setMessage(message); retry.hidden = !canRetry; } });
+  const preview = createProjectionPreviewFrame({ document: doc, host: viewport, trace, onInvalidate: onPreviewInvalidated, onStatus: (message, canRetry) => { setMessage(message); retry.hidden = !canRetry; } });
   const calibration = calibrationControllerFactory({ socket, preview, onState: state => {
     const scene = state.phase === 'active' ? 'Landmarks ready' : state.phase === 'starting' ? 'Preparing landmarks…' : state.phase === 'closed' ? '' : 'Landmarks unavailable';
     const cover = state.blackout === 'active' ? 'Other projector blacked out' : state.blackout === 'pending' ? 'Blackout pending…' : state.blackout === 'failed' ? 'Blackout failed' : '';
@@ -290,6 +290,7 @@ export function createWarpEditorDialog({ document: doc, host, editorPanel, overl
     sendRunNamesPreview(config) { return preview.sendRunNamesPreview(config); },
     getCalibrationState() { return calibration.getState?.(); },
     getPreviewCalibrationState() { return preview.getCalibrationState(); },
+    getWarpPreviewAppliedState() { return preview.getAppliedState(); },
     setViewBox(next) { if (!next) return; viewBox = { ...next }; fit(); },
     close,
     dispose() {
