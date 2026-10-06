@@ -1,5 +1,6 @@
 import { readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { EXCLUDED_SETTLEMENT_CODES } from '../../frontend/src/shared/settlement-label-presentation.js';
 import { fileURLToPath, pathToFileURL } from "node:url";
 import proj4 from "proj4";
 import { validatePlaceCatalog } from "./place-catalog-validation.mjs";
@@ -588,6 +589,14 @@ async function buildPlaceCatalog() {
     readJson(settlementOutlineMapPath),
   ]);
   const labelFeatures = getYeshuvLabelFeatures(layerName, geojson);
+  const additions = await readJson(path.join(packageRoot, 'public', 'settlement-label-additions.json'));
+  for (const feature of outlineFeatures) {
+    const p = feature.properties;
+    if (p?.otef_supplemental_outline && !outlineMap.matches.some(match => match.citycode === p.citycode)) outlineMap.matches.push({ citycode: p.citycode, outlineObjectId: p.OBJECTID });
+  }
+  for (const addition of additions) if (!outlineMap.matches.some(match => match.citycode === addition.citycode)) {
+    outlineMap.matches.push({ citycode: addition.citycode, cityname: addition.cityname, outlineObjectId: addition.outlineObjectId });
+  }
   const outlineTargetByCitycode = buildReviewedOutlineTargetByCitycode(
     outlineMap,
     labelFeatures,
@@ -603,6 +612,7 @@ async function buildPlaceCatalog() {
 
   for (const feature of labelFeatures) {
     const props = feature.properties || {};
+    if (EXCLUDED_SETTLEMENT_CODES.has(props.citycode)) continue;
     const manualEntry = manualIndex.byCitycode.get(props.citycode);
     const navigationWgs84 =
       manualEntry?.center?.wgs84 ||

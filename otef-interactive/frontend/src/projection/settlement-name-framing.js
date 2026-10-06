@@ -32,6 +32,7 @@ function solve(matrix, values) {
 
 function recoverReference(catalog, baseline, output) {
   const samples = (catalog?.entries || []).flatMap(entry => {
+    if (catalog.supplementalCodes?.has(entry.citycode)) return [];
     const position=baseline?.outputs?.[output]?.[entry.citycode];
     if (!position) return [];
     const world=mercator(entry.lng,entry.lat), offset=catalog.referenceOffsets?.get(entry.citycode) || [0,0];
@@ -51,12 +52,22 @@ function recoverReference(catalog, baseline, output) {
   if (!Number.isFinite(error) || error > 0.25) throw referenceError();
   const [x,y]=coefficients;
   const camera=[x[1],y[1],x[2],y[2],x[0],y[0]];
-  return position=>{
+  const reference = position=>{
     const relative=mapSettlementPosition(position,camera,true);
     if (!relative) throw referenceError();
     const u=center[0]+relative.x/10000, v=center[1]+relative.y/10000;
     return [(u-0.5)*360,Math.atan(Math.sinh((0.5-v)*2*Math.PI))*180/Math.PI];
   };
+  reference.toReference = (lng, lat) => {
+    const world = mercator(lng, lat);
+    return mapSettlementPosition({ x: (world[0] - center[0]) * 10000, y: (world[1] - center[1]) * 10000 }, camera);
+  };
+  return reference;
+}
+
+/** Initialize a new name in the captured frame without changing existing anchors. */
+export function captureSettlementReferencePosition({ catalog, baseline, output, lng, lat }) {
+  return recoverReference(catalog, baseline, output).toReference(lng, lat);
 }
 
 /** Derive current map framing deterministically from the immutable captured label anchors. */

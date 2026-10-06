@@ -30,6 +30,15 @@ test('recovers original label framing with source offsets and follows current ca
   expect(reloaded({catalog:f.catalog,settings:structuredClone(f.settings)}).matrix).toEqual(frame.matrix);
 });
 
+test('added label placements never become original camera calibration references', () => {
+  const f = fixture();
+  const original = createSettlementNameFraming({ map: f.map, output: 'left', getConfig: f.getConfig })(f);
+  f.catalog.entries.push({ citycode: '1240', text: 'עין הבשור', lng: 34.44, lat: 31.28 });
+  f.catalog.supplementalCodes = new Set(['1240']);
+  f.settings.baseline.outputs.left['1240'] = { x: 1300, y: 800 };
+  expect(createSettlementNameFraming({ map: f.map, output: 'left', getConfig: f.getConfig })(f).matrix).toEqual(original.matrix);
+});
+
 test('uses the map crop clip and restores positions when the map camera rolls back', () => {
   const f=fixture(); const read=createSettlementNameFraming({map:f.map,output:'left',getConfig:f.getConfig});
   f.branch.crop.x1=0.25;
