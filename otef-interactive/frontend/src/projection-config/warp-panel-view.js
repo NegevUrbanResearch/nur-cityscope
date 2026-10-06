@@ -132,15 +132,16 @@ export function createWarpPanelView({ document: doc, onAction = () => {}, onPoin
   const warpRedo = make(doc, "button", "warp-action", "Redo"); warpRedo.type = "button"; warpRedo.dataset.action = "warp-redo"; warpRedo.dataset.warpAction = "warp-redo"; warpRedo.addEventListener("click", () => onAction("warp-redo", { output: element.dataset.output }));
   warpRedo.setAttribute("aria-label", "Warp Redo");
   const warpReset = make(doc, "button", "warp-action", "Reset selection"); warpReset.type = "button"; warpReset.dataset.action = "warp-reset-selection"; warpReset.dataset.warpAction = "warp-reset-selection"; warpReset.addEventListener("click", () => onAction("warp-reset-selection", { output: element.dataset.output }));
-  const warpResetAll = make(doc, "button", "warp-action", "Reset all geometry"); warpResetAll.type = "button"; warpResetAll.dataset.action = "warp-reset-residuals"; warpResetAll.dataset.warpAction = "warp-reset-residuals"; warpResetAll.addEventListener("click", () => onAction("warp-reset-residuals", { output: element.dataset.output }));
-  history.append(warpUndo, warpRedo, warpReset, warpResetAll);
+  const warpResetAll = make(doc, "button", "warp-action", "Clear corrections"); warpResetAll.type = "button"; warpResetAll.dataset.action = "warp-reset-residuals"; warpResetAll.dataset.warpAction = "warp-reset-residuals"; warpResetAll.addEventListener("click", () => onAction("warp-reset-residuals", { output: element.dataset.output }));
+  const warpStartFresh = make(doc, "button", "warp-action", "Start fresh"); warpStartFresh.type = "button"; warpStartFresh.dataset.action = "warp-start-fresh"; warpStartFresh.dataset.warpAction = "warp-start-fresh"; warpStartFresh.title = "Reset keystone and grid warp to a flat rectangle without the imported TD baseline."; warpStartFresh.addEventListener("click", () => onAction("warp-start-fresh", { output: element.dataset.output }));
+  history.append(warpUndo, warpRedo, warpReset, warpResetAll, warpStartFresh);
   selectionRow.append(selectionStatus, selectionControls, selectionPicker);
   positionRow.appendChild(position);
   stepRow.append(stepLabel, warpStep);
   adjustmentRow.append(nudgePad, relativePad);
   element.append(selectionRow, positionRow, stepRow, adjustmentRow, gridPreviewRow, historyRow);
   historyRow.appendChild(history);
-  const controls = { warpPanel: element, warpStatus: selectionStatus, warpSelectionControls: selectionControls, warpSelectionButtons: selectionButtons, warpSelectionPicker: selectionPicker, warpNumeric: position, warpCoordinateFields: coordinateFields, warpPositionX: coordinateFields.get("x").number, warpPositionY: coordinateFields.get("y").number, warpPositionLabels: [...coordinateFields.values()].map((control) => control.wrap.children[0]), warpStep, warpArrows: nudgePad, warpUndo, warpRedo, warpReset, warpResetAll, warpActions: history, relativePad, warpHistoryRow: historyRow };
+  const controls = { warpPanel: element, warpStatus: selectionStatus, warpSelectionControls: selectionControls, warpSelectionButtons: selectionButtons, warpSelectionPicker: selectionPicker, warpNumeric: position, warpCoordinateFields: coordinateFields, warpPositionX: coordinateFields.get("x").number, warpPositionY: coordinateFields.get("y").number, warpPositionLabels: [...coordinateFields.values()].map((control) => control.wrap.children[0]), warpStep, warpArrows: nudgePad, warpUndo, warpRedo, warpReset, warpResetAll, warpStartFresh, warpActions: history, relativePad, warpHistoryRow: historyRow };
   let state = null;
   let pickerTopologyKey = null;
   selectionPicker.addEventListener("change", () => {
@@ -231,7 +232,7 @@ export function createWarpPanelView({ document: doc, onAction = () => {}, onPoin
         gridPreviewConfirm.disabled = true;
         gridPreviewCancel.disabled = Boolean(state.adjusting);
       }
-      [...selectionButtons, selectionPicker, warpStep, ...nudgePad.children, relativePad, warpReset, ...coordinateFields.values()].forEach((item) => { if (item?.disabled !== undefined) item.disabled = Boolean(state.adjusting); });
+      [...selectionButtons, selectionPicker, warpStep, ...nudgePad.children, relativePad, warpReset, warpStartFresh, ...coordinateFields.values()].forEach((item) => { if (item?.disabled !== undefined) item.disabled = Boolean(state.adjusting); });
     },
     retireGestures() {
       if (hold) { clearTimeout(hold.delay); clearInterval(hold.repeat); hold = null; suppressClick = true; }
@@ -242,6 +243,7 @@ export function createWarpPanelView({ document: doc, onAction = () => {}, onPoin
       const blocked = Boolean(adjusting);
       const correctionEnabled = state?.config?.outputs?.[element.dataset.output]?.warp?.enabled !== false;
       const editBlocked = blocked || !correctionEnabled;
+      warpStartFresh.disabled = blocked;
       [...selectionButtons, selectionPicker].forEach((item) => { if (item?.disabled !== undefined) item.disabled = blocked; });
       [warpStep, ...nudgePad.children, relativePad, warpReset, warpResetAll].forEach((item) => { if (item?.disabled !== undefined) item.disabled = editBlocked; });
       for (const control of coordinateFields.values()) {
@@ -250,7 +252,7 @@ export function createWarpPanelView({ document: doc, onAction = () => {}, onPoin
         if (control.signButton) control.signButton.disabled = editBlocked;
       }
       warpUndo.disabled = editBlocked || !(state?.historyDepth > 0);
-      warpRedo.disabled = editBlocked || !(state?.redoDepth > 0);
+      warpRedo.disabled = blocked || !(state?.redoDepth > 0) || (!correctionEnabled && !state?.canRedo);
     },
     dispose() { stopHold(true); this.cancelGestures(); doc.removeEventListener?.("keydown", cancelPadOnEscape, true); doc.removeEventListener?.("visibilitychange", onVisibility); doc.defaultView?.removeEventListener?.("blur", onBlur); for (const control of coordinateFields.values()) control.dispose(); },
   };

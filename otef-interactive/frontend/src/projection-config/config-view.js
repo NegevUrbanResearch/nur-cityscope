@@ -466,7 +466,8 @@ export function createProjectionConfigView(root, {
       const output = value.output || (selectedGraphNode.startsWith("right-") ? "right" : "left");
       if (action === "warp-field-cancel") return onWarpFieldCancel(output);
       if (action === "warp-reset-selection" && doc.defaultView?.confirm?.("Reset only the selected warp geometry? This does not change presets." ) !== true) return false;
-      if (action === "warp-reset-residuals" && doc.defaultView?.confirm?.("Reset all warp geometry for this output? This does not change presets." ) !== true) return false;
+      if (action === "warp-reset-residuals" && doc.defaultView?.confirm?.("Clear keystone and grid corrections for this output? The baseline and grid layout are retained." ) !== true) return false;
+      if (action === "warp-start-fresh" && doc.defaultView?.confirm?.(`Start fresh for the ${output} projector? This removes its imported TD baseline, resets keystone and grid warp to a flat rectangle, and evenly spaces the current grid. Scale, rotation, crop, and translation stay unchanged. Undo can restore the previous warp while its baseline is available. With Live on, this applies immediately.`) !== true) return false;
       return onWarpAction(action, { output, ...value });
     },
     onPointer: (action, value) => {
@@ -880,10 +881,11 @@ export function createProjectionConfigView(root, {
       control.wrap.querySelectorAll?.('button').forEach(button => { if (button.dataset.action === 'numeric-sign') button.disabled = adjusting || !correctionEnabled; });
     }
     for (const item of [controls.warpEnabled, controls.warpStep, controls.warpReset, controls.warpResetAll, ...controls.warpArrows.children]) item.disabled = adjusting || !correctionEnabled;
+    controls.warpStartFresh.disabled = adjusting;
     for (const item of [controls.warpSelectionPicker, ...controls.warpSelectionButtons]) item.disabled = adjusting;
     controls.warpSurface.setAttribute("data-correction-bypassed", String(!correctionEnabled));
     controls.warpUndo.disabled ||= adjusting || !correctionEnabled;
-    controls.warpRedo.disabled ||= adjusting || !correctionEnabled;
+    controls.warpRedo.disabled ||= adjusting || (!correctionEnabled && !warpState.canRedo);
     const nextFit = warpViewport(allHandles);
     warpViewBox = nextFit;
     if (!effectiveWarpViewBox || targetChanged) { setWarpInteractionMode("edit"); effectiveWarpViewBox = nextFit; }

@@ -198,6 +198,63 @@ function tracedWarpHarness({ candidateValidator } = {}) {
   return { root, client, trace, surface, redraws, api, restore };
 }
 
+test("mounted Start fresh preserves TD Undo/Redo and framing without reloading assets", async () => {
+  const previousDocument = globalThis.document;
+  const doc = documentStub(); doc.defaultView.confirm = vi.fn(() => true); globalThis.document = doc;
+  const root = element("main"); root.ownerDocument = doc;
+  const client = fakeClient(); client.setLive(false);
+  const config = clone(DEFAULTS);
+  for (const output of ["left", "right"]) {
+    config.outputs[output].warp.baseline = { type: "tdMesh", assetId: `${output}-capture`, sha256: "a".repeat(64), width: 1920, height: 1080, origin: "top-left" };
+    config.outputs[output].warp.keystone.corners[0] = [0.02, 0.03];
+  }
+  client.report({ draft: clone(config), hasLocalDraft: true });
+  const loader = { prepare: vi.fn(async () => ({ snapshot: {}, loaded: Object.fromEntries(["left", "right"].map(side => [side, { mesh: createIdentityProjectionMesh({ side }) }])) })), promote: vi.fn() };
+  let warpAction;
+  const actualCreate = configView.createProjectionConfigView;
+  const viewSpy = vi.spyOn(configView, "createProjectionConfigView").mockImplementation((root, options) => { warpAction = options.onWarpAction; return actualCreate(root, options); });
+  const api = mountProjectionConfig(root, { client, baselineCatalogLoader: loader });
+  try {
+    const button = find(root, node => node.dataset?.action === "warp-start-fresh");
+    await vi.waitFor(() => expect(warpAction("warp-nudge", { output: "left", direction: "right" })).toBe(true));
+    const before = clone(client.getState().draft);
+    expect(button).toBeTruthy();
+    doc.defaultView.confirm.mockReturnValueOnce(false);
+    button.dispatch("click");
+    expect(client.getState().draft).toEqual(before);
+    button.dispatch("click");
+    expect(doc.defaultView.confirm).toHaveBeenLastCalledWith(expect.stringContaining("left projector"));
+    const fresh = clone(client.getState().draft);
+    expect(fresh.outputs.left.warp.baseline.type).toBe("identity");
+    expect(fresh.pre).toEqual(before.pre);
+    expect(fresh.outputs.left.crop).toEqual(before.outputs.left.crop);
+    expect(fresh.outputs.left.post).toEqual(before.outputs.left.post);
+    expect(fresh.outputs.right).toEqual(before.outputs.right);
+    expect(client.apply).not.toHaveBeenCalled();
+    expect(warpAction("warp-undo", { output: "left" })).toBe(true);
+    expect(client.getState().draft).toEqual(before);
+    expect(warpAction("warp-redo", { output: "left" })).toBe(true);
+    expect(client.getState().draft).toEqual(fresh);
+    expect(loader.prepare).toHaveBeenCalledTimes(1);
+    client.setLive(true);
+    expect(warpAction("warp-start-fresh", { output: "right" })).toBe(true);
+    expect(client.getState().draft.outputs.right.warp.baseline.type).toBe("identity");
+    expect(client.apply).toHaveBeenCalled();
+    expect(warpAction("warp-undo", { output: "right" })).toBe(true);
+    expect(client.getState().draft.outputs.right).toEqual(before.outputs.right);
+    client.setLive(false);
+    find(root, node => node.dataset?.action === "warp-editor-open" && node.parentElement?.dataset?.node === "left-grid").dispatch("click");
+    expect(warpAction("warp-enabled", { output: "left", enabled: false })).toBe(true);
+    const bypassed = clone(client.getState().draft);
+    expect(warpAction("warp-start-fresh", { output: "left" })).toBe(true);
+    expect(warpAction("warp-undo", { output: "left" })).toBe(true);
+    expect(client.getState().draft).toEqual(bypassed);
+    expect(find(root, node => node.dataset?.action === "warp-redo").disabled).toBe(false);
+    expect(warpAction("warp-redo", { output: "left" })).toBe(true);
+    expect(client.getState().draft.outputs.left.warp.enabled).toBe(true);
+  } finally { api.dispose(); viewSpy.mockRestore(); globalThis.document = previousDocument; }
+});
+
 test("mounted controller reuses unchanged TD geometry publications and rebases an identical foreign replacement", async () => {
   const previousDocument = globalThis.document;
   globalThis.document = documentStub();

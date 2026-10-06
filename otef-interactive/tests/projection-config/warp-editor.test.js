@@ -9,9 +9,55 @@ const clone = (value) => structuredClone(value);
 const parityMesh = JSON.parse(readFileSync(new URL("../../../nur-io/django_api/backend/tests/fixtures/projection-grid-parity.json", import.meta.url), "utf8")).mesh;
 const renderParity = JSON.parse(readFileSync(new URL("../../../nur-io/django_api/backend/tests/fixtures/projection-grid-render-parity.json", import.meta.url), "utf8"));
 
+test.each(["left", "right"])("start fresh detaches %s from TD and preserves everything outside its warp", (output) => {
+  const config = clone(DEFAULT_PROJECTION_CONFIG);
+  const warp = config.outputs[output].warp;
+  warp.baseline = { type: "tdMesh", assetId: "capture", sha256: "a".repeat(64), width: 1920, height: 1080, origin: "top-left" };
+  warp.keystone.corners[0] = [0.04, 0.03];
+  warp.grid.columnPositions[1] = 0.05;
+  warp.grid.offsets[0] = [0.01, 0.02];
+  const onChange = vi.fn();
+  const editor = createWarpEditor({ config, output, baselineMesh: createIdentityProjectionMesh({ side: output }), onChange });
+  expect(editor.startFresh()).toBe(true);
+  const fresh = editor.getConfig();
+  expect(fresh.outputs[output].warp.baseline).toEqual({ type: "identity", width: 1920, height: 1080, origin: "top-left" });
+  expect(fresh.outputs[output].warp.keystone.corners).toEqual([[0, 0], [1, 0], [0, 1], [1, 1]]);
+  expect(fresh.outputs[output].warp.grid.columnPositions).toEqual(Array.from({ length: warp.grid.columns }, (_, i) => i / (warp.grid.columns - 1)));
+  expect(fresh.outputs[output].warp.grid.rowPositions).toEqual(Array.from({ length: warp.grid.rows }, (_, i) => i / (warp.grid.rows - 1)));
+  expect(fresh.outputs[output].warp.grid.offsets.every(([x, y]) => x === 0 && y === 0)).toBe(true);
+  const outside = clone(fresh); outside.outputs[output].warp = clone(warp);
+  expect(outside).toEqual(config);
+  expect(editor.getEvaluatedMesh().vertices.every(p => p.x === p.s && p.y === p.t)).toBe(true);
+  expect(onChange).toHaveBeenLastCalledWith(fresh, expect.objectContaining({ reason: "start-fresh", flush: true }));
+  expect(editor.undo()).toBe(true);
+  expect(editor.getConfig()).toEqual(config);
+  expect(editor.redo()).toBe(true);
+  expect(editor.getConfig()).toEqual(fresh);
+  expect(editor.nudge("right")).toBe(true);
+});
+
+test.each([true, false])("start fresh works without the old TD asset when warp enabled is %s", (enabled) => {
+  const config = clone(DEFAULT_PROJECTION_CONFIG);
+  config.outputs.left.warp.baseline = { type: "tdMesh", assetId: "missing", sha256: "a".repeat(64), width: 1920, height: 1080, origin: "top-left" };
+  config.outputs.left.warp.enabled = enabled;
+  const editor = createWarpEditor({ config });
+  expect(editor.startFresh()).toBe(true);
+  expect(editor.getConfig().outputs.left.warp).toMatchObject({ enabled: true, baseline: { type: "identity" } });
+  expect(editor.getState().baselineAvailable).toBe(true);
+  if (!enabled) {
+    expect(editor.undo()).toBe(true);
+    expect(editor.getConfig()).toEqual(config);
+    expect(editor.getState().canRedo).toBe(true);
+    expect(editor.redo()).toBe(true);
+    expect(editor.getConfig().outputs.left.warp).toMatchObject({ enabled: true, baseline: { type: "identity" } });
+  }
+  expect(editor.nudge("right")).toBe(true);
+});
+
 test.each([
   ['nudge', e => e.nudge('down')], ['numeric', e => e.setPosition('x', 50)],
   ['reset', e => e.resetSelection()], ['reset all', e => e.resetResiduals()],
+  ['start fresh', e => e.startFresh()],
   ['undo', e => e.undo()], ['redo', e => e.redo()],
   ['enable', e => e.setEnabled(false)], ['selection', e => e.select(gridSelection())],
   ['mode', e => e.setMode('grid')], ['step', e => e.setStep('coarse')],

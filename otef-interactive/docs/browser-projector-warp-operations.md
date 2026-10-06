@@ -30,7 +30,7 @@ Keep the calibration page open while it owns the outputs. After reloading that p
 | Browser, warp enabled | Saved scale/crop/transform, imported baseline mesh, and browser keystone/grid corrections. |
 | Browser, warp disabled | Saved scale/crop/transform; imported mesh and browser corrections are bypassed. |
 
-Disabling browser warp retains its corrections for re-enabling. Resetting corrections retains the imported baseline mesh. Neither action switches TD on or off.
+Disabling browser warp retains its corrections for re-enabling. **Clear corrections** retains the imported baseline mesh and current grid layout. **Start fresh** replaces the selected output's baseline with a flat 1920×1080 rectangle, clears keystone and grid offsets, and evenly spaces the current grid rows and columns. It enables browser warp so you can calibrate from scratch. Scale, rotation, crop, translation, and the other output stay unchanged. These actions do not switch TD on or off.
 
 The read-only **TD migration baseline** contains the captured TD alignment. Load it as the browser starting point; **Save as new** creates an editable preset. Existing **Original calibration** and **Standard** presets remain available. Display assignments and TD/browser route selection are not stored in presets.
 
@@ -40,7 +40,7 @@ Select the left or right **Keystone** or **Grid Warp** node in the existing cali
 
 Select a corner, grid point, row, column or edge, then drag or use the arrows. **Fine** moves 0.25 output pixels per tap; **Coarse** moves 1 pixel. The X/Y fields show output pixels. Keystone corners control the output plane; grid points start at the imported TD mesh positions.
 
-With **Live** enabled, accepted edits reach the projectors. Turn Live off to try a local draft, then use **Apply once** when ready. **Undo/Redo** changes the selected output's warp. **Reset to imported TD baseline** clears browser corrections while retaining the imported mesh; **Revert** restores the loaded preset. Save a new preset to retain an adjustment without replacing the protected baseline.
+With **Live** enabled, accepted edits reach the projectors. Turn Live off to try a local draft, then use **Apply once** when ready. **Undo/Redo** changes the selected output's warp, including **Start fresh** while its prior baseline is available. **Clear corrections** clears browser corrections while retaining the current baseline; **Start fresh** removes the imported TD warp for the selected projector. Use it on each projector to recalibrate both for a new exhibit. Confirm the reset; with Live on it applies immediately. **Revert** restores the loaded preset. Save a new preset to retain an adjustment without replacing the protected baseline.
 
 ## Adjust the names wall
 

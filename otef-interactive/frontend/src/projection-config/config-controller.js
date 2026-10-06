@@ -272,7 +272,9 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     if (!config) return;
     if (rebase) view.retireWarpGestures?.();
     const identity = baselineIdentityFor(config);
-    if (editorBaselineIdentity && JSON.stringify(identity) === JSON.stringify(editorBaselineIdentity)) {
+    // Retain loaded TD sources during local flat/bypass transitions so Undo can
+    // restore them without fetching assets or rebasing either editor's history.
+    if (editorBaselineIdentity && ["left", "right"].every(output => !identity[output] || identity[output] === editorBaselineIdentity[output])) {
       if (JSON.stringify(identity) !== JSON.stringify(requestedEditorBaselineIdentity)) {
         editorBaselineSequence += 1;
         editorBaselineAbort?.abort();
@@ -304,7 +306,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     installedEditorBaselineMeshes = { left: null, right: null };
     for (const output of ["left", "right"]) warpEditors[output].setConfig(config, { rebase: false });
     if (!Object.values(identity).some(Boolean)) {
-      for (const output of ["left", "right"]) warpEditors[output].setConfig(config, { rebase: true });
+      for (const output of ["left", "right"]) warpEditors[output].setConfig(config, { rebase });
       editorBaselineIdentity = identity;
       editorBaselineMeshes = { left: null, right: null };
       installedEditorBaselineMeshes = { left: null, right: null };
@@ -897,7 +899,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     return true;
   }
   function handleWarpChange(output, candidate, meta = {}) {
-    if (disposed || !editorBaselineReady) return;
+    if (disposed || (!editorBaselineReady && meta.reason !== "start-fresh")) return;
     try {
       setClientDraft(candidate);
       fieldErrors = {};
@@ -906,7 +908,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     refresh();
   }
   function handleWarpAction(action, value) {
-    if (disposed || (!editorBaselineReady && !["warp-select", "warp-mode", "warp-step"].includes(action))) return false;
+    if (disposed || (!editorBaselineReady && !["warp-select", "warp-mode", "warp-step", "warp-start-fresh"].includes(action))) return false;
     if (["warp-select", "warp-mode"].includes(action) && !finishPendingEdit()) return false;
     if (action === "warp-grid-layout") return startGridLayoutPreview(value?.output || activeWarpOutput(), value?.operation, value || {});
     if (action === "warp-grid-placement-edit") {
@@ -974,6 +976,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
       if (action === "warp-set-position") accepted = editor.setPosition(value.axis, value.pixels);
       if (action === "warp-reset-selection") accepted = editor.resetSelection();
       if (action === "warp-reset-residuals") accepted = editor.resetResiduals();
+      if (action === "warp-start-fresh") accepted = editor.startFresh();
       if (action === "warp-undo") accepted = editor.undo();
       if (action === "warp-redo") accepted = editor.redo();
       if (action === "warp-enabled") accepted = editor.setEnabled(value.enabled);
