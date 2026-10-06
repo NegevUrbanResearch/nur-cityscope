@@ -1,6 +1,80 @@
 import { expect, test } from "vitest";
 import { createProjectionSettlementNameAdapter } from "../../frontend/src/projection/projection-settlement-name-adapter.js";
 
+test.each([1,2])('keeps Reim whole on the left and suppresses its cropped right copy at raster scale %s', async rasterScale => {
+  const catalog={entries:[{citycode:'0713',text:'רעים',lng:34.46,lat:31.38}]};
+  const settings=initializedSettingsFixture(); settings.style.rotateDeg=82;
+  settings.baseline.outputs.left['0713']={x:1730.141,y:679.05};
+  settings.baseline.outputs.right['0713']={x:194.141,y:679.05};
+  const original=structuredClone(settings);
+  const leftDoc=fakeCanvasDocument(),rightDoc=fakeCanvasDocument();
+  const left=createProjectionSettlementNameAdapter({document:leftDoc,output:'left',rasterScale});
+  const right=createProjectionSettlementNameAdapter({document:rightDoc,output:'right',rasterScale});
+  left.setFramingProvider(()=>({matrix:[1,0,0,1,-20,0],clip:[0,0,0.9,1]}));
+  right.setFramingProvider(()=>({matrix:[1,0,0,1,0,0],clip:[0.1,0,1,1]}));
+  for (const adapter of [left,right]) { await adapter.prepare({catalog,settings}); adapter.commit(); }
+  expect(leftDoc.paints.filter(paint=>paint.op==='fill').map(paint=>paint.text)).toEqual(['רעים']);
+  expect(rightDoc.paints).toHaveLength(0);
+  expect(right.getLabels()[0]).toMatchObject({citycode:'0713',cropped:true});
+  expect(settings).toEqual(original);
+});
+
+test.each([
+  ['left',0,196,540],['right',0,1724,540],['top',82,960,220],['bottom',82,960,860],
+])('suppresses an entire rotated label crossing the %s crop edge', async (_edge,rotateDeg,x,y) => {
+  const document=fakeCanvasDocument(),adapter=createProjectionSettlementNameAdapter({document,output:'left'});
+  const settings=initializedSettingsFixture(); settings.style.rotateDeg=rotateDeg; settings.outputs.left['0067']={x,y};
+  adapter.setFramingProvider(()=>({matrix:[1,0,0,1,0,0],clip:[0.1,0.2,0.9,0.8]}));
+  await adapter.prepare({catalog:{entries:[catalogFixture().entries[0]]},settings}); adapter.commit();
+  expect(document.paints).toHaveLength(0);
+  expect(adapter.getLabels()[0].cropped).toBe(true);
+});
+
+test('a crop-only change restores a previously hidden label without changing its saved coordinates', async () => {
+  const document=fakeCanvasDocument(),adapter=createProjectionSettlementNameAdapter({document,output:'left'});
+  let clip=[0.3,0,1,1];
+  adapter.setFramingProvider(()=>({matrix:[1,0,0,1,0,0],clip}));
+  await adapter.prepare({catalog:{entries:[catalogFixture().entries[0]]},settings:initializedSettingsFixture()}); adapter.commit();
+  expect(document.paints).toHaveLength(0);
+  clip=[0,0,1,1]; adapter.descriptor();
+  expect(document.paints.filter(paint=>paint.op==='fill')).toHaveLength(1);
+  expect(adapter.getLabels()[0]).toMatchObject({x:500,y:340,cropped:false});
+});
+
+test('camera changes move saved label adjustments and clip with the map, without opacity double transforms', async () => {
+  const adapter=createProjectionSettlementNameAdapter({document:fakeCanvasDocument(),output:'left',rasterScale:2});
+  let frame={matrix:[2,0,0,2,10,-15],clip:[0.2,0,0.8,1]};
+  adapter.setFramingProvider(()=>frame);
+  const settings=initializedSettingsFixture(); settings.outputs.left['0067']={x:537,y:321};
+  await adapter.prepare({catalog:catalogFixture(),settings}); adapter.commit();
+  expect(adapter.getLabels()[0]).toMatchObject({x:1084,y:627});
+  expect(adapter.descriptor().clip).toEqual(frame.clip);
+  adapter.setVisible(false); adapter.applyScaledOpacity(0.4);
+  expect(adapter.getLabels()[0]).toMatchObject({x:1084,y:627});
+  expect(adapter.descriptor().opacity).toBe(0);
+  frame={matrix:[1,0,0,1,-300,20],clip:[0,0,1,1]};
+  adapter.descriptor();
+  expect(adapter.getLabels()[0]).toMatchObject({x:237,y:341});
+  expect(adapter.descriptor().opacity).toBe(0);
+});
+
+test('a camera or opacity repaint cannot cancel a saved position waiting for fonts', async () => {
+  const document=fakeCanvasDocument(), adapter=createProjectionSettlementNameAdapter({document,output:'left'});
+  let frame={matrix:[1,0,0,1,0,0],clip:[0,0,1,1]};
+  adapter.setFramingProvider(()=>frame);
+  const settings=initializedSettingsFixture();
+  await adapter.prepare({catalog:catalogFixture(),settings}); adapter.commit();
+  let finishFont; document.fonts.load=()=>new Promise(resolve=>{finishFont=resolve;});
+  settings.outputs.left['0067']={x:600,y:340};
+  const pending=adapter.prepare({catalog:catalogFixture(),settings});
+  frame={matrix:[1,0,0,1,100,0],clip:[0,0,1,1]};
+  adapter.descriptor(); adapter.applyScaledOpacity(0.5);
+  finishFont();
+  expect(await pending).not.toMatchObject({stale:true});
+  adapter.commit();
+  expect(adapter.getLabels()[0]).toMatchObject({x:700,y:340});
+});
+
 test('4K settlement names retain logical ink bounds and placements', async () => {
   const labDoc = fakeCanvasDocument(), exhibitDoc = fakeCanvasDocument();
   const lab = createProjectionSettlementNameAdapter({ document: labDoc, output: 'left' });

@@ -101,7 +101,8 @@ export function installProjectionSettlementPreviewBridge({ win, sessionId, outpu
         return;
       }
       reply({ type: "otef_settlement_preview_rendered", requestId: state.requestId, calibrationRevision: result.calibrationRevision,
-        meshIdentity: result.meshIdentity, mesh: result.mesh, labels: result.labels, warnings: result.warnings });
+        meshIdentity: result.meshIdentity, mesh: result.mesh, labels: result.labels, warnings: result.warnings,
+        ...(result.positionMatrix == null ? {} : {positionMatrix:result.positionMatrix}) });
     }).catch(fail);
   };
   win.addEventListener("message", onMessage);

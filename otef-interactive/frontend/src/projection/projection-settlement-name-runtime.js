@@ -1,5 +1,6 @@
 import { visibleProjectionBrowserError } from "./projection-browser-error.js";
 import { addPaintWriteObserver } from "../shared/layer-lifecycle-fade.js";
+import { createSettlementNameFraming } from './settlement-name-framing.js';
 
 const SETTLEMENT_LAYER = "שמות_יישובים";
 
@@ -14,8 +15,9 @@ function settlementVisible(groups) {
   return true;
 }
 
-export function bindProjectionSettlementNames({ dataContext, adapter, catalog, host, map, getGroups, onDraw = () => {}, onError = () => {} } = {}) {
+export function bindProjectionSettlementNames({ dataContext, adapter, catalog, host, map, output, getConfig, getGroups, onDraw = () => {}, onError = () => {} } = {}) {
   if (!adapter || typeof adapter.prepare !== "function") throw new Error("Settlement runtime requires an adapter");
+  if (map?.project && output) adapter.setFramingProvider(createSettlementNameFraming({map,output,getConfig}));
   let disposed = false;
   let token = 0;
   let setupAlert = null;

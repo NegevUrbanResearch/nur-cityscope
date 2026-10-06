@@ -10,6 +10,7 @@ export function buildSettlementNameCatalog(featureCollection) {
   }
   const seen = new Set();
   const entries = [];
+  const referenceOffsets = new Map();
   for (const feature of featureCollection.features) {
     const citycode = feature?.properties?.citycode;
     if (typeof citycode !== "string" || !citycode) throw new TypeError("settlement catalog feature is missing a citycode");
@@ -21,8 +22,11 @@ export function buildSettlementNameCatalog(featureCollection) {
     }
     const text = feature.properties.cityname ?? feature.properties.citylabel ?? "";
     entries.push({ citycode, text: String(text), lng: coordinates[0], lat: coordinates[1] });
+    const stored=feature.properties.otef_map_text_offset_em;
+    const offset=Array.isArray(stored) && stored.length===2 && stored.every(finite) ? stored : [Number(feature.properties.otef_label_offset_em_x)||0,Number(feature.properties.otef_label_offset_em_y)||0].map(value=>value/14);
+    referenceOffsets.set(citycode,[...offset]);
   }
-  return { entries, byCode: new Map(entries.map((entry) => [entry.citycode, entry])) };
+  return { entries, byCode: new Map(entries.map((entry) => [entry.citycode, entry])), referenceOffsets };
 }
 
 export async function loadSettlementNameCatalog({ registry, fetchImpl, signal }) {

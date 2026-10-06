@@ -2,6 +2,7 @@ import { createUuid } from "../shared/uuid.js";
 import { hitTestSettlementLabels, settlementOutline, settlementPointerToReference } from "./settlement-name-geometry.js";
 import { mountSettlementNamePreview } from "./settlement-name-preview.js";
 import { createSettlementNameControls, shownSettlementPosition } from "./settlement-name-controls.js";
+import { mapSettlementPosition } from '../projection/settlement-name-framing.js';
 
 function make(doc, tag, props = {}, text = "") {
   const node = doc.createElement(tag);
@@ -54,6 +55,7 @@ export function openSettlementNameEditor({
   let handlesEnabled = false;
   let labels = [];
   let mesh = null;
+  let positionMatrix = null;
   let gesture = null;
   let preview = null;
   let scheduledFrame = null;
@@ -191,14 +193,17 @@ export function openSettlementNameEditor({
     if (hit !== activeCitycode && hit == null) return;
     const position = shownSettlementPosition(snapshot(), positionRecord(), activeOutput, activeCitycode);
     if (!position) return;
-    gesture = { pointerId: event.pointerId, rect, mesh, start: reference, origin: { ...position }, latest: { ...position } };
+    const storedReference=mapSettlementPosition(reference,positionMatrix,true);
+    if (!storedReference) { showMapping("Mapping unavailable"); return; }
+    gesture = { pointerId: event.pointerId, rect, mesh, positionMatrix:positionMatrix ? [...positionMatrix] : null, start: storedReference, origin: { ...position }, latest: { ...position } };
     doc.addEventListener?.("pointermove", moveGesture);
     doc.addEventListener?.("pointerup", endGesture);
     doc.addEventListener?.("pointercancel", cancelGesture);
   }
   function moveGesture(event) {
     if (!gesture || event.pointerId !== gesture.pointerId) return;
-    const reference = referenceFor(event, gesture.rect, gesture.mesh);
+    const outputReference = referenceFor(event, gesture.rect, gesture.mesh);
+    const reference = outputReference && mapSettlementPosition(outputReference,gesture.positionMatrix,true);
     if (!reference) { showMapping("Mapping unavailable"); cancelGesture(event); return; }
     gesture.latest = { x: gesture.origin.x + (reference.x - gesture.start.x), y: gesture.origin.y + (reference.y - gesture.start.y) };
     if (scheduledFrame != null) return;
@@ -234,6 +239,7 @@ export function openSettlementNameEditor({
     if (gesture) cancelGesture({ pointerId: gesture.pointerId });
     handlesEnabled = false;
     mesh = null;
+    positionMatrix = null;
     labels = [];
     drawOverlay();
     preview?.reload({ output: activeOutput });
@@ -242,6 +248,7 @@ export function openSettlementNameEditor({
   function onRendered(result) {
     if (!active) return;
     mesh = result.mesh;
+    positionMatrix = result.positionMatrix || null;
     labels = result.labels || [];
     handlesEnabled = true;
     retry.hidden = true;

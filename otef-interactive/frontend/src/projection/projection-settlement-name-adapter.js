@@ -1,5 +1,6 @@
 import { effectiveSettlementPosition, SETTLEMENT_FONT_STACK, validateSettlementNameSettings } from "../shared/settlement-name-settings.js";
 import { evaluateOpacityExpression } from "../shared/layer-opacity-expression.js";
+import { mapSettlementPosition } from './settlement-name-framing.js';
 
 const WIDTH = 1920;
 const HEIGHT = 1080;
@@ -36,6 +37,19 @@ function measureInk(context, text, x, y) {
   };
 }
 
+function inkFitsCrop(label, box, clip) {
+  if (!clip) return true;
+  const radians = label.rotateDeg * Math.PI / 180;
+  const cos = Math.cos(radians), sin = Math.sin(radians);
+  return [[box.left, box.top], [box.right, box.top], [box.right, box.bottom], [box.left, box.bottom]].every(([x, y]) => {
+    const dx = x - label.x, dy = y - label.y;
+    const rotatedX = label.x + dx * cos - dy * sin;
+    const rotatedY = label.y + dx * sin + dy * cos;
+    return rotatedX >= clip[0] * WIDTH - 1e-7 && rotatedX <= clip[2] * WIDTH + 1e-7
+      && rotatedY >= clip[1] * HEIGHT - 1e-7 && rotatedY <= clip[3] * HEIGHT + 1e-7;
+  });
+}
+
 function styleFallback(context) {
   return Number(String(context.font).match(/(\d+(?:\.\d+)?)px/)?.[1] || 14) * 0.7;
 }
@@ -49,12 +63,15 @@ function clampOpacity(value) {
 export function createProjectionSettlementNameAdapter({ document = globalThis.document, output, rasterScale = 1 } = {}) {
   if (!["left", "right"].includes(output)) throw new Error("settlement adapter output must be left or right");
   let generation = 0;
+  let paintGeneration = 0;
   let pending = null;
   let active = null;
   let disposed = false;
   let scaledOpacity = 1;
+  let framingProvider = null;
 
-  const paint = (style, labels) => {
+  const paint = (style, referenceLabels, framingContext = null, framing = framingProvider?.(framingContext) || null) => {
+    const labels=referenceLabels.map(label=>({...label,...mapSettlementPosition(label,framing?.matrix)}));
     const canvas = document?.createElement?.("canvas");
     if (!canvas) throw new Error("settlement canvas is unavailable");
     canvas.width = WIDTH * rasterScale;
@@ -75,6 +92,8 @@ export function createProjectionSettlementNameAdapter({ document = globalThis.do
       const extents = glyphExtents(context, label.text);
       const biasX = (extents.right - extents.left) / 2;
       const biasY = (extents.descent - extents.ascent) / 2;
+      const inkBox = measureInk(context, label.text, label.x, label.y);
+      if (!inkFitsCrop(label, inkBox, framing?.clip)) return { ...label, inkBox, cropped: true };
       const alpha = clampOpacity(evaluateOpacityExpression(scaledOpacity, { cityname: label.text }));
       context.save();
       context.globalAlpha = alpha;
@@ -83,17 +102,29 @@ export function createProjectionSettlementNameAdapter({ document = globalThis.do
       context.strokeText(label.text, -biasX, -biasY);
       context.fillText(label.text, -biasX, -biasY);
       context.restore();
-      return { ...label, inkBox: measureInk(context, label.text, label.x, label.y) };
+      return { ...label, inkBox, cropped: false };
     });
     return {
       canvas,
       style,
       labels: painted,
-      descriptor: { source: canvas, opacity: 1, contentVersion: generation, width: WIDTH, height: HEIGHT },
+      referenceLabels, context:framingContext, framing, framingSignature: JSON.stringify(framing),
+      descriptor: { source: canvas, opacity: 1, contentVersion: ++paintGeneration, width: WIDTH, height: HEIGHT, ...(framing ? {clip:framing.clip} : {}) },
     };
   };
 
+  const refreshFraming = () => {
+    if (!active || !framingProvider) return;
+    const framing=framingProvider(active.context);
+    if (JSON.stringify(framing)===active.framingSignature) return;
+    const visibility=active.descriptor.opacity;
+    active=paint(active.style,active.referenceLabels,active.context,framing);
+    active.descriptor.opacity=visibility;
+  };
+
   return {
+    setFramingProvider(provider) { framingProvider=provider; },
+    getFraming() { refreshFraming(); return active?.framing ? structuredClone(active.framing) : null; },
     async prepare({ catalog, settings, signal } = {}) {
       if (disposed) throw new Error("settlement adapter is disposed");
       const token = ++generation;
@@ -114,7 +145,7 @@ export function createProjectionSettlementNameAdapter({ document = globalThis.do
         if (!position) continue;
         labels.push({ citycode: entry.citycode, text: entry.text, x: position.x, y: position.y, rotateDeg: style.rotateDeg });
       }
-      pending = paint(style, labels);
+      pending = paint(style, labels, {catalog,settings:checked.value});
       pending.token = token;
       return { source: pending.canvas };
     },
@@ -132,21 +163,22 @@ export function createProjectionSettlementNameAdapter({ document = globalThis.do
       scaledOpacity = value;
       if (!active?.style) return;
       const visibility = active.descriptor.opacity;
-      generation += 1;
-      const labels = active.labels.map((label) => ({
+      const labels = active.referenceLabels.map((label) => ({
         citycode: label.citycode,
         text: label.text,
         x: label.x,
         y: label.y,
         rotateDeg: label.rotateDeg,
       }));
-      active = paint(active.style, labels);
+      active = paint(active.style, labels, active.context);
       active.descriptor.opacity = visibility;
     },
     descriptor() {
+      refreshFraming();
       return active ? active.descriptor : null;
     },
     getLabels() {
+      refreshFraming();
       return active ? active.labels.map((label) => ({ ...label, inkBox: { ...label.inkBox } })) : [];
     },
     dispose() {

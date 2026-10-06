@@ -68,13 +68,13 @@ function armFrame() {
   frame().contentWindow.postMessage = (message, origin) => sent.push({ message, origin });
   return sent;
 }
-function renderFrame(mesh = identityMesh, labels = [label(), label({ citycode: "0424", text: "מחוץ", x: 800, y: 400, inkBox: { left: 760, top: 380, right: 840, bottom: 420 } })], warnings = { clipped: false, overlap: false, outOfView: false, mapping: "complete" }) {
+function renderFrame(mesh = identityMesh, labels = [label(), label({ citycode: "0424", text: "מחוץ", x: 800, y: 400, inkBox: { left: 760, top: 380, right: 840, bottom: 420 } })], warnings = { clipped: false, overlap: false, outOfView: false, mapping: "complete" }, positionMatrix = null) {
   const sent = armFrame();
   const output = new URL(frame().src).searchParams.get("span");
   const sessionId = new URL(frame().src).searchParams.get("previewSession");
   send({ type: "otef_settlement_preview_ready", sessionId, output });
   const requestId = sent.at(-1).message.requestId;
-  send({ type: "otef_settlement_preview_rendered", sessionId, requestId, output, calibrationRevision: 8, meshIdentity: `mesh-${sessionId}`, mesh, labels, warnings });
+  send({ type: "otef_settlement_preview_rendered", sessionId, requestId, output, calibrationRevision: 8, meshIdentity: `mesh-${sessionId}`, mesh, labels, warnings, positionMatrix });
   return { sent, output, sessionId, requestId };
 }
 
@@ -111,6 +111,16 @@ test("reversed orientation maps a rightward drag back toward the source", async 
   pointer("pointerup", 290, 170);
   await vi.waitFor(() => expect(writeOperation).toHaveBeenCalledTimes(1));
   expect(writeOperation.mock.calls[0][0].position.x).toBeLessThan(1420);
+});
+
+test('editor dragging converts current map coordinates back to stored positions', async () => {
+  const {writeOperation}=await rig();
+  renderFrame(identityMesh,[label({x:700,y:340,inkBox:{left:670,top:320,right:730,bottom:360}})],undefined,[2,0,0,1,-300,0]);
+  pointer('pointerdown',350,170);
+  pointer('pointermove',390,170);
+  pointer('pointerup',390,170);
+  await vi.waitFor(()=>expect(writeOperation).toHaveBeenCalledTimes(1));
+  expect(writeOperation.mock.calls[0][0].position).toEqual({x:540,y:340});
 });
 
 test("rotated outline splits where it crosses mesh triangles", async () => {

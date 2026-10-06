@@ -1007,6 +1007,8 @@ async function bootstrapProjectionRuntime() {
           if (isRuntimeAlive()) registerDisposer(bindProjectionSettlementNames({
             dataContext: OTEFDataContext,
             adapter: browserSurface.getSettlementAdapter(),
+            output: projectionSpanId,
+            getConfig: () => effectiveProjectionConfig,
             catalog: settlementCatalog,
             map,
             getGroups: () => OTEFDataContext.getLayerGroups(),

@@ -6,6 +6,16 @@ import { drawAfterMapRender } from "../../frontend/src/projection/projection-spa
 import { rollbackProjectionPreviewApply } from "../../frontend/src/projection/projection-preview-task.js";
 import * as previewBridge from "../../frontend/src/projection/projection-preview-bridge.js";
 
+test('settlement bridge forwards the camera matrix needed for editor dragging', async () => {
+  const listeners=new Map(), parent={postMessage:vi.fn()};
+  const win={parent,location:{origin:'http://localhost'},addEventListener:(type,fn)=>listeners.set(type,fn),removeEventListener:type=>listeners.delete(type)};
+  const positionMatrix=[2,0,0,1,-300,0];
+  const dispose=previewBridge.installProjectionSettlementPreviewBridge({win,sessionId:'settlement-1',output:'left',renderState:async()=>({calibrationRevision:8,meshIdentity:'mesh',mesh:{},labels:[],positionMatrix})});
+  listeners.get('message')({source:parent,origin:'http://localhost',data:{type:'otef_settlement_preview_state',sessionId:'settlement-1',output:'left',requestId:1}});
+  await vi.waitFor(()=>expect(parent.postMessage).toHaveBeenLastCalledWith(expect.objectContaining({type:'otef_settlement_preview_rendered',positionMatrix}),'http://localhost'));
+  dispose();
+});
+
 const clockLayout = { leftPct: 12, topPct: 22, widthPct: 30, heightPct: 10, fontPx: 24, rotateDeg: 30 };
 const clockRequest = (requestId, patch = {}) => ({ type: "otef_clock_preview_state", sessionId: "clock-1", requestId,
   surface: "projection", sceneId: "home", output: "left", element: "clock", clockLayout,

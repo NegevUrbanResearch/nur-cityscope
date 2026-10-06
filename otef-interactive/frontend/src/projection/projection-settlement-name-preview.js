@@ -21,6 +21,7 @@ import { syncInvestigationTimelineToMap, getInvestigationTimelineRenderSnapshot,
 import { installProjectionSettlementPreviewBridge } from "./projection-preview-bridge.js";
 import { copyProjectionMesh } from "../projection-config/clock-layout-geometry.js";
 import { OUTPUT_WIDTH, OUTPUT_HEIGHT } from "./projection-overlay-placement.js";
+import { createSettlementNameFraming } from './settlement-name-framing.js';
 import { visibleProjectionBrowserError } from "./projection-browser-error.js";
 
 function abortError() {
@@ -128,7 +129,7 @@ export function measureSettlementPreviewWarnings(labels = [], selectedCitycode =
   const overlap = selectedCitycode
     ? selectedCorners.some((label) => otherCorners.some((other) => !projectionSeparated(label, other)))
     : selectedCorners.some((label, index) => selectedCorners.slice(index + 1).some((other) => !projectionSeparated(label, other)));
-  const clipped = selectedCorners.some((points) => points.some((point) => point.x < 0 || point.y < 0 || point.x > 1920 || point.y > 1080));
+  const clipped = selected.some(label => label.cropped === true) || selectedCorners.some((points) => points.some((point) => point.x < 0 || point.y < 0 || point.x > 1920 || point.y > 1080));
   return {
     clipped,
     overlap,
@@ -252,6 +253,7 @@ export async function bootProjectionSettlementNamePreview({ window: win, documen
     onMapRender = () => { if (!disposed) browserSurface.requestDraw(); };
     map.on("render", onMapRender);
     const adapter = browserSurface.getSettlementAdapter();
+    adapter.setFramingProvider(createSettlementNameFraming({map,output,getConfig:()=>config}));
     const paint = async (settings, signal, selectedCitycode = null) => {
       const prepared = await adapter.prepare({ catalog, settings, signal });
       if (signal?.aborted || prepared?.stale) return null;
@@ -260,7 +262,7 @@ export async function bootProjectionSettlementNamePreview({ window: win, documen
       if (!browserSurface.draw()) throw new Error("Settlement preview draw failed");
       const mesh = copyProjectionMesh(browserSurface.getMesh());
       if (!mesh) throw new Error("Settlement preview mesh is unavailable");
-      return { calibrationRevision: calibration.revision, meshIdentity: `${sessionId}:${calibration.revision}`, mesh, labels: adapter.getLabels(), warnings: measureSettlementPreviewWarnings(adapter.getLabels(), selectedCitycode) };
+      return { calibrationRevision: calibration.revision, meshIdentity: `${sessionId}:${calibration.revision}`, mesh, labels: adapter.getLabels(), positionMatrix:adapter.getFraming()?.matrix || null, warnings: measureSettlementPreviewWarnings(adapter.getLabels(), selectedCitycode) };
     };
     await paint(checked.value, assets.signal);
     removeBridge = installProjectionSettlementPreviewBridge({ win, sessionId, output, renderState: (state, context) => paint(state.settings, context.signal, state.selectedCitycode) });

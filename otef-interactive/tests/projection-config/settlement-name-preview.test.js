@@ -93,3 +93,14 @@ test("reload starts a new session and ignores the previous frame", () => {
   expect(active.contentWindow.postMessage).toHaveBeenCalledWith(expect.objectContaining({ output: "right", sessionId: session }), win.location.origin);
   preview.destroy();
 });
+
+test.each([[1,1,1,1,0,0],[NaN,0,0,1,0,0],[1,0,0]].map(matrix=>[matrix]))('rejects an unusable position matrix: %j', positionMatrix => {
+  const {win,container}=harness(); const onRendered=vi.fn(),onError=vi.fn();
+  const preview=mountSettlementNamePreview({container,output:'left',sessionId:'session-a',onRendered,onError});
+  preview.setState({settings:settings(),selectedCitycode:'0067'});
+  const frame=container.children[0]; frame.contentWindow={postMessage:vi.fn()};
+  ready(win,frame,'session-a','left');
+  win.dispatch('message',{origin:win.location.origin,source:frame.contentWindow,data:{type:'otef_settlement_preview_rendered',sessionId:'session-a',output:'left',requestId:1,calibrationRevision:4,meshIdentity:'mesh',mesh,labels:[],positionMatrix}});
+  expect(onRendered).not.toHaveBeenCalled();
+  preview.destroy();
+});

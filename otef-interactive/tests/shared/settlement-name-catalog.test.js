@@ -17,6 +17,13 @@ function feature(citycode, text, lng, lat) {
 }
 
 describe("settlement name catalog", () => {
+  test('retains original text offsets separately from serialized catalog entries', () => {
+    const source=feature('0067','label',34.4,31.3);
+    source.properties.otef_map_text_offset_em=[-0.5,1.25];
+    const catalog=buildSettlementNameCatalog(collection([source]));
+    expect(catalog.referenceOffsets.get('0067')).toEqual([-0.5,1.25]);
+    expect(Object.keys(catalog.entries[0])).toEqual(['citycode','text','lng','lat']);
+  });
   test("keeps feature order, leading zeroes, and point coordinates", () => {
     const catalog = buildSettlementNameCatalog(collection([
       feature("0067", "נירים", 34.4, 31.3),
