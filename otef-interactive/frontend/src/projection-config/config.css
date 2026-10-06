@@ -704,3 +704,27 @@ h2, h3 { margin: 0 0 10px; }
  .calibration-blackout-toggle { display: inline-flex; align-items: center; gap: 0.4rem; }
  .calibration-view-status { font-size: 0.85rem; overflow-wrap: anywhere; }
  .calibration-view-note { flex-basis: 100%; margin: 0; font-size: 0.8rem; color: var(--muted, #adb5c3); }
+.point-match-controls { display: grid; gap: 12px; min-width: 0; container-type: inline-size; }
+.warp-precision-panel > [data-action="point-match-start"], .warp-precision-panel > .point-match-controls { grid-column: 1 / -1; }
+.point-match-controls[hidden], .point-match-slots [hidden] { display: none; }
+.point-match-controls p { margin: 0; overflow-wrap: anywhere; }
+.point-match-controls button, .point-match-controls select { min-height: 44px; min-width: 44px; }
+.point-match-controls select { width: 100%; min-width: 0; max-width: 100%; }
+.point-match-sizes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.point-match-sizes label { display: grid; gap: 4px; min-width: 0; font-size: 12px; }
+.point-match-slots { display: grid; gap: 8px; }
+.point-match-slots > div { display: grid; grid-template-columns: 44px minmax(0, 1fr) auto auto; gap: 6px; align-items: center; }
+.point-match-slot-status { font-size: 12px; overflow-wrap: anywhere; }
+.point-match-arrows, .point-match-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.point-match-pad { min-height: 100px; border: 1px dashed var(--config-muted); border-radius: 8px; display: grid; place-items: center; touch-action: none; user-select: none; }
+.point-match-arrows button { touch-action: none; }
+.point-match-source { fill: none; stroke: #00cbd5; stroke-width: 1; vector-effect: non-scaling-stroke; }
+.point-match-target { fill: none; stroke: #ffd43b; stroke-width: 1; }
+.point-match-target path, .point-match-target circle { vector-effect: non-scaling-stroke; }
+.point-match-target text { fill: #ffd43b; stroke: #111; paint-order: stroke; font-family: sans-serif; }
+.warp-edit-surface[data-point-match-active="true"] .warp-handle,
+.warp-edit-surface[data-point-match-active="true"] .warp-grid-line { visibility: hidden; }
+@container (max-width: 380px) {
+  .point-match-slots > div { grid-template-columns: 44px minmax(0, 1fr); }
+  .point-match-slots > div button:nth-last-child(-n + 2) { grid-row: auto; }
+}

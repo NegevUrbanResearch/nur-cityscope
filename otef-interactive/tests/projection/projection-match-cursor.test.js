@@ -33,6 +33,19 @@ beforeEach(() => { vi.useFakeTimers(); Object.defineProperty(document, 'visibili
 afterEach(() => { vi.useRealTimers(); document.body.replaceChildren(); });
 
 describe('strict match protocol', () => {
+  test.each([4, 8, 15, 4.5])('accepts optional cursor radius %s without changing the ACK schema', radius => {
+    expect(isProjectionMatchCommand(command({ markerRadiusPx: radius }))).toBe(true);
+    expect(isProjectionMatchAck(ack({ markerRadiusPx: radius }))).toBe(false);
+  });
+  test.each([3.99, 15.01, true, false, NaN, Infinity, -Infinity, '8', null, undefined, [], {}])('rejects invalid optional radius %s', radius => {
+    expect(isProjectionMatchCommand(command({ markerRadiusPx: radius }))).toBe(false);
+  });
+  test.each(['probe', 'off'])('rejects a radius on %s', mode => {
+    expect(isProjectionMatchCommand(command({ mode, pointId: 0, targetPx: null, sourcePx: null, markerRadiusPx: 8 }))).toBe(false);
+  });
+  test('optional radius does not admit unrelated fields', () => {
+    expect(isProjectionMatchCommand(command({ markerRadiusPx: 8, extra: true }))).toBe(false);
+  });
   test('exports shared scheduling bounds and accepts the exact contracts', () => {
     expect([MAX_CURSOR_HZ, CURSOR_RENEW_MS, CURSOR_EXPIRY_MS]).toEqual([20, 1000, 3000]);
     expect(isProjectionMatchCommand(command())).toBe(true);
@@ -54,6 +67,28 @@ describe('strict match protocol', () => {
 });
 
 describe('final output cursor', () => {
+  test.each([undefined, 4, 8, 15])('draws received radius %s with an open precise centre in the final plane', radius => {
+    const h = harness({ displaySide: 'right', reversed: true });
+    h.host.style.width = '3840px'; h.host.style.height = '2160px';
+    h.cursor.receive(command(radius === undefined ? {} : { markerRadiusPx: radius })); h.paint();
+    const expected = radius ?? 15;
+    const target = h.host.querySelector('[data-match-target]');
+    expect(target.querySelector('circle').getAttribute('r')).toBe(String(expected));
+    expect(h.host.querySelector('[data-match-source]').getAttribute('r')).toBe(String(expected * .6));
+    expect(target.querySelector('path').getAttribute('d')).toBe(`M${-expected * 2} 0H-1.5M1.5 0H${expected * 2}M0 ${-expected * 2}V-1.5M0 1.5V${expected * 2}`);
+    expect(target.getAttribute('fill')).toBe('none');
+    expect(Number(target.getAttribute('stroke-width'))).toBeLessThanOrEqual(1.5);
+    expect(Number(target.querySelector('text').getAttribute('font-size'))).toBeGreaterThanOrEqual(12);
+    expect(target.getAttribute('transform')).toBe('translate(410 295)');
+    expect(h.sent).toEqual([ack({ displaySide: 'right', reversed: true })]); h.cursor.dispose();
+  });
+  test('a new size repaints the same target and acknowledges its exact new sequence', () => {
+    const h = harness(); h.cursor.receive(command({ markerRadiusPx: 15 })); h.paint();
+    h.cursor.receive(command({ sequence: 2, markerRadiusPx: 4 })); h.frame();
+    expect(h.host.querySelector('[data-match-target] circle').getAttribute('r')).toBe('4');
+    expect(h.sent.map(message => message.sequence)).toEqual([1]); h.frame();
+    expect(h.sent.map(message => message.sequence)).toEqual([1, 2]); h.cursor.dispose();
+  });
   test('a drawn source reload rejects that local session even when portable identity is unchanged', () => {
     const h = harness(); h.cursor.receive(command()); h.paint();
     h.cursor.invalidateSource('Drawn model image reloaded; restart point capture.');

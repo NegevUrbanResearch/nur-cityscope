@@ -3,7 +3,7 @@ import { recordProjectionTrace } from './projection-trace-input.js';
 const FRAME_URL = (side) => `/otef-interactive/projection.html?span=${side}&preview=1&mapPixelRatio=1&outputMode=browser`;
 
 /** Owns a projection preview iframe and its origin/source/request guarded message channel. */
-export function createProjectionPreviewFrame({ document: doc, host, onStatus = () => {}, onInvalidate = () => {}, timeoutMs = 30000, appliedTimeoutMs = 30000, frameClass = "warp-editor-frame", titleForSide = (side) => `${side} projection output`, trace }) {
+export function createProjectionPreviewFrame({ document: doc, host, onStatus = () => {}, onInvalidate = () => {}, onStateChange = () => {}, timeoutMs = 30000, appliedTimeoutMs = 30000, frameClass = "warp-editor-frame", titleForSide = (side) => `${side} projection output`, trace }) {
   const win = doc.defaultView;
   const origin = win?.location?.origin;
   let current = null;
@@ -22,13 +22,24 @@ export function createProjectionPreviewFrame({ document: doc, host, onStatus = (
       calibrationState = { ...calibrationState, ready: false, sceneIdentity: null, error: 'No rendered landmark acknowledgement for 3000 ms' };
       session.calibrationFailed = true;
       if (calibrationTimer !== null) clearInterval(calibrationTimer); calibrationTimer = null;
+      notify();
       return;
     }
     const requestId = ++session.calibrationRequestId;
     if (calibrationEnabled && session.calibrationOutstandingSince == null) session.calibrationOutstandingSince = Date.now();
     session.frame.contentWindow.postMessage({ type: 'otef_projection_preview_calibration', output: session.side, requestId, enabled: calibrationEnabled }, origin);
   };
-  const setStatus = (message, retry = false) => onStatus(message, retry);
+  const appliedState = () => {
+    const session=current;
+    const ready=Boolean(session?.ready && !session.timedOut && session.frame.isConnected !== false);
+    const pending=Boolean(session?.appliedTimer || session?.pendingGeometryRequestId != null);
+    const failed=Boolean(session?.failed || session?.timedOut);
+    return {output:session?.side ?? null,ready,pending,failed,configIdentity:session?.calibratedIdentity ?? null,sentIdentity:session?.sentIdentity ?? null,
+      sourceFrameIdentity:session?.sourceFrameIdentity ?? null,stable:Boolean(ready && !pending && !failed && session?.calibrated && session.sourceStable),
+      requestId:session?.requestId ?? null,error:session?.error || session?.sourceError || null};
+  };
+  const notify = () => onStateChange(appliedState());
+  const setStatus = (message, retry = false) => { onStatus(message, retry); notify(); };
   const clear = () => {
     if (calibrationTimer !== null) clearInterval(calibrationTimer); calibrationTimer = null;
     calibrationState = { active: calibrationEnabled, ready: false, sceneIdentity: null, missingIds: [], error: null };
@@ -93,6 +104,7 @@ export function createProjectionPreviewFrame({ document: doc, host, onStatus = (
       calibrationState = { active: calibrationEnabled, ready: calibrationEnabled && message.ready && !message.error && typeof message.sceneIdentity === 'string',
         sceneIdentity: message.sceneIdentity, missingIds: [...message.missingIds], error: message.error };
       session.calibrationOutstandingSince = null;
+      notify();
       return;
     }
     if (message.type === 'otef_projection_preview_source_state') {
@@ -103,6 +115,7 @@ export function createProjectionPreviewFrame({ document: doc, host, onStatus = (
       session.sourceFrameIdentity = message.sourceFrameIdentity;
       session.sourceStable = message.stable && typeof message.sourceFrameIdentity === 'string' && !message.error;
       session.sourceError = message.error;
+      notify();
       return;
     }
     if (message.type !== "otef_projection_preview_applied" || !session.ready || message.requestId !== session.requestId || message.requestId === session.expiredRequestId) return;
@@ -183,16 +196,8 @@ export function createProjectionPreviewFrame({ document: doc, host, onStatus = (
     },
     getCalibrationState() { if (current) syncDocument(current); return structuredClone(calibrationState); },
     getAppliedState() {
-      const session = current;
-      if (session) syncDocument(session);
-      const ready = Boolean(session?.ready && !session.timedOut && session.frame.isConnected !== false);
-      const pending = Boolean(session?.appliedTimer || session?.pendingGeometryRequestId != null);
-      const failed = Boolean(session?.failed || session?.timedOut);
-      return { output: session?.side ?? null, ready, pending, failed,
-        configIdentity: session?.calibratedIdentity ?? null, sentIdentity: session?.sentIdentity ?? null,
-        sourceFrameIdentity: session?.sourceFrameIdentity ?? null,
-        stable: Boolean(ready && !pending && !failed && session?.calibrated && session.sourceStable),
-        requestId: session?.requestId ?? null, error: session?.error || session?.sourceError || null };
+      if (current) syncDocument(current);
+      return appliedState();
     },
     frame: () => current?.frame || null,
     isReady() { if (current) syncDocument(current); return Boolean(current?.ready); },

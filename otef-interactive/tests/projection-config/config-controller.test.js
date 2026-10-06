@@ -20,6 +20,16 @@ import {
 
 const clone = (value) => JSON.parse(JSON.stringify(value));
 
+test('mounted point matching prevents Live re-enable and footer Apply cannot publish an unrelated draft',async()=>{
+  const root=element('main');root.ownerDocument=documentStub();const client=fakeClient();const api=mountProjectionConfig(root,{client});
+  try {
+    expect(api.pointMatch).toBeDefined();
+    const matching=vi.spyOn(api.pointMatch,'isActive').mockReturnValue(true);
+    await api.handleAction('live',true);expect(client.setLive).not.toHaveBeenCalledWith(true);
+    await api.handleAction('apply');expect(client.apply).not.toHaveBeenCalled();matching.mockRestore();
+  } finally { api.dispose(); }
+});
+
 test('visible preset commands save the loaded preset while a different candidate is selected', async () => {
   const previousDocument = globalThis.document;
   globalThis.document = documentStub();

@@ -2,8 +2,10 @@ import { createConfigCommandBar } from './config-command-bar.js';
 import { DEFAULT_PROJECTION_CONFIG } from "../shared/projection-config-schema.js";
 import { createNodeCanvas } from "./node-canvas.js";
 import { createWarpEditorDialog } from "./warp-editor-dialog.js";
+import { createPointMatchControls } from './point-match-controls.js';
+import { measureProjectionLandmarks } from '../shared/projection-point-fit.js';
 import { bindWarpPointerInput, gridSelectionForHandle } from "./warp-pointer-input.js";
-import { clampWarpViewBox, transformWarpViewBox, warpMarkerRadius } from "./warp-viewport.js";
+import { clampWarpViewBox, transformWarpViewBox, warpMarkerRadius, warpPointFromClient } from "./warp-viewport.js";
 import { createClockLayoutStatus } from "./clock-layout-controls.js";
 import { createSettlementNameControls } from "./settlement-name-controls.js";
 import { createGridLayoutControls, deriveGridSelectionIndices } from "./grid-layout-controls.js";
@@ -93,6 +95,11 @@ export function createProjectionConfigView(root, {
   onWarpEditorVisibility = () => {},
   onWarpFieldCancel = () => {},
   onWarpPointer = () => {},
+  onPointMatchAction = () => {},
+  onBeforeWarpClose = () => true,
+  onBeforeWarpSwitch = () => true,
+  onWarpPreviewInvalidated = () => {},
+  onWarpPreviewStateChange = () => {},
   warpEditorFactory = createWarpEditor,
   requestVisualFrame = null,
   cancelVisualFrame = null,
@@ -488,6 +495,10 @@ export function createProjectionConfigView(root, {
   controls.warpEnableAction = button(doc, "Enable correction to edit", "warp-enable-correction", "warp-enable-action");
   controls.warpEnableAction.addEventListener("click", () => onWarpAction("warp-enabled", { enabled: true, output: selectedGraphNode.startsWith("right-") ? "right" : "left" }));
   controls.warpActions.append(warpEnabledLabel, controls.warpEnableAction);
+  const pointMatchStart = button(doc, 'Match points', 'point-match-start');
+  pointMatchStart.addEventListener('click',()=>onPointMatchAction('start',warpOutput()));
+  const pointMatchControls = createPointMatchControls({document:doc,onAction:onPointMatchAction});
+  controls.warpPanel.append(pointMatchStart,pointMatchControls.element);
   let warpViewBox = { x: 0, y: 0, width: WARP_OUTPUT_WIDTH, height: WARP_OUTPUT_HEIGHT };
   let effectiveWarpViewBox = null;
   let warpViewTarget = "";
@@ -526,6 +537,7 @@ export function createProjectionConfigView(root, {
       const radius = circle.classList?.contains("selected") ? 8 : 5;
       circle.setAttribute("r", String(warpMarkerRadius(viewBox, rect.width, rect.height, radius)));
     });
+    paintPointMatchMarkers();
   }
   function resetWarpView() { setWarpInteractionMode("edit"); effectiveWarpViewBox = warpViewBox; applyViewBox(warpViewBox); }
   navButton("−", "warp-view-zoom-out", () => { if (pointerInput?.isActive() || !effectiveWarpViewBox) return; applyViewBox({ ...effectiveWarpViewBox, width: effectiveWarpViewBox.width * 1.25, height: effectiveWarpViewBox.height * 1.25, x: effectiveWarpViewBox.x - effectiveWarpViewBox.width * 0.125, y: effectiveWarpViewBox.y - effectiveWarpViewBox.height * 0.125 }); });
@@ -574,6 +586,52 @@ export function createProjectionConfigView(root, {
   let currentWarpState = null;
   let warpSurfaceRenderState = null;
   let activeWarpAdjusting = false;
+  let pointMatchState = null, pointMatchActive = false;
+  const ordinaryMatchVisibility = new Map();
+  function syncOrdinaryMatchVisibility() {
+    for (const row of controls.warpPanel.children) {
+      if (row===pointMatchControls.element || row===pointMatchStart) continue;
+      row.inert=pointMatchActive;
+      if (pointMatchActive) { if (!ordinaryMatchVisibility.has(row)) ordinaryMatchVisibility.set(row,row.hidden);row.hidden=true; }
+      else if (ordinaryMatchVisibility.has(row)) { row.hidden=ordinaryMatchVisibility.get(row);ordinaryMatchVisibility.delete(row); }
+    }
+  }
+  const pointMatchMarkers = svgNode(doc,'g',{class:'point-match-markers','pointer-events':'none'});
+  function paintPointMatchMarkers() {
+    pointMatchMarkers.replaceChildren();
+    if (!pointMatchActive || pointMatchState?.previewReady === false || !pointMatchState?.previewMesh) return;
+    const anchors = pointMatchState.anchors || [];
+    const measured = measureProjectionLandmarks({ preparedMesh: pointMatchState.previewMesh, anchors });
+    const rect = controls.warpSurface.getBoundingClientRect?.() || { width: 1920, height: 1080 };
+    const viewBox = effectiveWarpViewBox || warpViewBox;
+    const screenRadius = { small: 3, medium: 5, large: 8 }[pointMatchState.displayPrefs?.previewMarkerSize] ?? 5;
+    const toReference = size => warpMarkerRadius(viewBox, rect.width, rect.height, size);
+    const radius = toReference(screenRadius), arm = radius * 2, gap = toReference(1.5);
+    for (const [index, anchor] of anchors.entries()) {
+      const [x, y] = measured[index].renderedPx;
+      const circle = svgNode(doc, 'circle', { class: 'point-match-source', cx: String(x), cy: String(y), r: String(radius) });
+      const [tx, ty] = anchor.targetPx;
+      const target = svgNode(doc, 'g', { class: 'point-match-target', transform: `translate(${tx} ${ty})` });
+      target.append(svgNode(doc, 'path', { d: `M${-arm} 0H${-gap}M${gap} 0H${arm}M0 ${-arm}V${-gap}M0 ${gap}V${arm}` }), svgNode(doc, 'circle', { r: String(radius) }));
+      const label = svgNode(doc, 'text', { x: String(arm + toReference(3)), y: String(-arm - toReference(3)), 'font-size': String(toReference(12)), 'stroke-width': String(toReference(1)) });
+      label.textContent = String(anchor.id);
+      target.append(label);
+      pointMatchMarkers.append(circle, target);
+    }
+    controls.warpSurface.appendChild(pointMatchMarkers);
+  }
+  function updatePointMatch(next) {
+    const wasActive=pointMatchActive;pointMatchState=next;pointMatchActive=Boolean(next && !['closed','invalid'].includes(next.phase));
+    if (wasActive!==pointMatchActive) cancelActiveDrag({reason:'match-mode'});
+    pointMatchControls.update(next);
+    controls.warpSurface.dataset.pointMatchActive=String(pointMatchActive);
+    syncOrdinaryMatchVisibility();
+    pointMatchStart.disabled=pointMatchActive;
+    pointMatchStart.hidden=pointMatchActive || currentWarpMode!=='keystone';
+    dialog.updatePointMatch({active:pointMatchActive,canApply:next?.canApply===true});
+    if (controls.live) controls.live.disabled=pointMatchActive;
+    paintPointMatchMarkers();
+  }
   let pointerInput;
   function cancelActiveDrag(options) {
     if (options?.notify === false) cancelPendingWarpPaint();
@@ -593,6 +651,7 @@ export function createProjectionConfigView(root, {
     const direction = { ArrowUp: "up", ArrowDown: "down", ArrowLeft: "left", ArrowRight: "right" }[event.key];
     if (!direction) return;
     event.preventDefault?.();
+    if (pointMatchActive) { onPointMatchAction('nudge',direction);return; }
     if (event.altKey) {
       onWarpAction("warp-nudge", { direction, coarse: Boolean(event.shiftKey), fine: !event.shiftKey });
       return;
@@ -651,6 +710,7 @@ export function createProjectionConfigView(root, {
   app.appendChild(workspace);
   root.appendChild(app);
   const dialog = createWarpEditorDialog({ document: doc, host: editorRegion, editorPanel: controls.warpPanel, overlay: controls.warpSurface, topologyControls: controls.gridLayout.element, navigationControls, optionalHealthElement: optionalHealthPanel, presentation: "panel", trace, socket,
+    onPreviewInvalidated:onWarpPreviewInvalidated,onPreviewStateChange:onWarpPreviewStateChange,
     onVisibilityChange: (visible) => { workspace.dataset.editing = String(visible); if (!visible) editorRegion.appendChild(optionalHealthPanel); onWarpEditorVisibility(visible); },
     onPresentationChange: (focused) => {
       root.dataset.warpFullViewport = String(focused);
@@ -659,6 +719,7 @@ export function createProjectionConfigView(root, {
     },
     onIsAdjusting: () => activeWarpAdjusting,
     onEscape: () => {
+      if (pointMatchActive && pointerInput?.isActive()) { cancelActiveDrag({reason:'escape'});return true; }
       if (activeWarpAdjusting) { cancelActiveDrag({ reason: "escape" }); return true; }
       if (currentGridPlacement) { onWarpAction("warp-grid-placement", { axis: null }); return true; }
       const pending = [...controls.warpCoordinateFields.values()].filter((control) => control.isPending());
@@ -666,11 +727,11 @@ export function createProjectionConfigView(root, {
       for (const control of pending) control.cancel({ clearControllerError: true });
       return true;
     },
-    onBeforeClose: () => { if (activeWarpAdjusting || !finishCoordinates() || !controls.gridLayout.finishPendingEdit()) return false; cancelActiveDrag({ reason: 'close' }); },
-    onBeforeSwitch: () => { if (activeWarpAdjusting || !finishCoordinates() || !controls.gridLayout.finishPendingEdit()) return false; cancelActiveDrag({ reason: 'switch' }); },
+    onBeforeClose: () => { if (activeWarpAdjusting || !finishCoordinates() || !controls.gridLayout.finishPendingEdit() || onBeforeWarpClose()===false) return false; cancelActiveDrag({ reason: 'close' }); },
+    onBeforeSwitch: () => { if (activeWarpAdjusting || !finishCoordinates() || !controls.gridLayout.finishPendingEdit() || onBeforeWarpSwitch()===false) return false; cancelActiveDrag({ reason: 'switch' }); },
     onBeforeResize: () => cancelActiveDrag({ reason: 'resize' }),
     onViewportChange: updateWarpMarkerRadii,
-    onOrientationChange: () => cancelActiveDrag({ reason: 'orientationchange' }),
+    onOrientationChange: () => { cancelActiveDrag({ reason: 'orientationchange' });onWarpPreviewInvalidated('Orientation changed; restart Match points.'); },
     reconciliationControls: controls.reconciliation,
     onApply: () => onAction("apply"), onLive: (live) => onAction("live", live) });
   parameterDialog = createParameterEditorDialog({ document: doc, host: editorRegion, presentation: "panel", onField, onCancelField: onFieldCancel, onNudge, onAction,
@@ -700,7 +761,8 @@ export function createProjectionConfigView(root, {
   pointerInput = bindWarpPointerInput({
     trace,
     surface: controls.warpSurface,
-    readGeometry: () => dialog.isOpen() ? { rect: controls.warpSurface.getBoundingClientRect?.() || { left: 0, top: 0, width: 1920, height: 1080 }, viewBox: effectiveWarpViewBox || warpViewBox, baseViewBox: warpViewBox, panMode: warpInteractionMode === "move", editable: currentWarpEnabled, handles: currentHandles, evaluatedMesh: currentEvaluatedMesh, selection: currentSelection, placementAxis: currentGridPlacement?.axis, rows: currentWarpGrid?.rows || 7, columns: currentWarpGrid?.columns || (selectedGraphNode.startsWith("right-") ? 8 : 7), mode: selectedGraphNode.endsWith("-grid") ? "grid" : "keystone", side: selectedGraphNode.startsWith("right-") ? "right" : "left" } : null,
+    readGeometry: () => dialog.isOpen() ? { rect: controls.warpSurface.getBoundingClientRect?.() || { left: 0, top: 0, width: 1920, height: 1080 }, viewBox: effectiveWarpViewBox || warpViewBox, baseViewBox: warpViewBox, panMode: warpInteractionMode === "move", editable: currentWarpEnabled && !pointMatchActive, handles: currentHandles, evaluatedMesh: currentEvaluatedMesh, selection: currentSelection, placementAxis: pointMatchActive ? null : currentGridPlacement?.axis, rows: currentWarpGrid?.rows || 7, columns: currentWarpGrid?.columns || (selectedGraphNode.startsWith("right-") ? 8 : 7), mode: pointMatchActive ? 'match' : selectedGraphNode.endsWith("-grid") ? "grid" : "keystone", side: selectedGraphNode.startsWith("right-") ? "right" : "left",
+      match:pointMatchActive ? {start:p=>onPointMatchAction('preview-start',[p.x,p.y]),move:p=>onPointMatchAction('preview-move',[p.x,p.y]),end:p=>onPointMatchAction('preview-move',[p.x,p.y]),cancel:()=>onPointMatchAction('cancel-motion')} : null } : null,
     onNavigate: ({ viewBox }) => applyViewBox(viewBox),
     onSelect: ({ output, selection }) => finishCoordinates() && onWarpAction("warp-select", { output, selection }),
     onStart: (point) => finishCoordinates() && onWarpPointer("start", point),
@@ -829,6 +891,7 @@ export function createProjectionConfigView(root, {
     if (render.viewBoxKey !== viewBoxKey) { controls.warpSurface.setAttribute("viewBox", viewBoxKey); render.viewBoxKey = viewBoxKey; }
   };
   const renderWarpPanel = (warpStates, node) => {
+    pointMatchStart.hidden=pointMatchActive || !node.endsWith('-keystone');
     const output = node.startsWith("right-") ? "right" : "left";
     const isWarpNode = node.endsWith("-keystone") || node.endsWith("-grid");
     const warpState = warpStates?.[output];
@@ -899,6 +962,7 @@ export function createProjectionConfigView(root, {
     paintWarpSurface({ output, mode, rows, columns, warp, warpState, handles: allHandles, selectionKind, selectedIndex, selectedIndices, displayViewBox });
     dialog.setViewBox(displayViewBox);
     updateWarpMarkerRadii();
+    syncOrdinaryMatchVisibility();
     if (trace?.enabled) {
       const rect = latestWarpRect || { left: 0, top: 0, width: 0, height: 0 };
       recordProjectionTrace(trace, 'redraw', { surface: 'warp', phase: 'end', output, mode, columns, rows, baselineType: warp?.baseline?.type || 'unknown', durationMs: projectionTraceTime(trace) - traceStarted, rectX: rect.left ?? 0, rectY: rect.top ?? 0, rectWidth: rect.width, rectHeight: rect.height, viewX: displayViewBox.x, viewY: displayViewBox.y, viewWidth: displayViewBox.width, viewHeight: displayViewBox.height });
@@ -1004,6 +1068,7 @@ export function createProjectionConfigView(root, {
     currentFieldErrors = errors.fields || errors.field || errors;
     currentStatus = statusText;
     commandBar.update({ state, parameterHistory, errors, conflict, statusText, draftDiffersFromAccepted, savePending, loadedPresetId, loadedPresetLoadToken, statusRows, appliedSummary, outputState });
+    if (controls.live) controls.live.disabled ||= pointMatchActive;
     const draft = state.draft || DEFAULT_PROJECTION_CONFIG;
     setNode(selectedNode);
     controls.gisClockScene.value = clockScene;
@@ -1098,7 +1163,11 @@ export function createProjectionConfigView(root, {
     getCalibrationState: () => dialog.getCalibrationState(),
     getPreviewCalibrationState: () => dialog.getPreviewCalibrationState(),
     getWarpPreviewAppliedState: () => dialog.getWarpPreviewAppliedState(),
-    dispose() { if (disposed) return; disposed = true; cancelPendingWarpPaint(); for (const control of fields.values()) control.dispose(); warpPanelView.dispose(); settlementControls.dispose(); disposePageTrace(); disposeWarpTrace(); disposeGraphTrace(); traceUi?.dispose(); commandBar.dispose(); doc.removeEventListener?.("keydown", onKeyDown); parameterDialog.dispose(); dialog.dispose(); pointerInput.dispose(); canvas.dispose(); },
+    updatePointMatch,
+    setPointMatchPreview:config=>dialog.setPointMatchPreview(config),
+    confirmDiscard:message=>doc.defaultView?.confirm?.(message),
+    mapPointMatchPadDelta:delta=>{const rect=controls.warpSurface.getBoundingClientRect?.() || {width:1920,height:1080};const box=effectiveWarpViewBox || warpViewBox;const a=warpPointFromClient({clientX:0,clientY:0},{left:0,top:0,width:rect.width,height:rect.height},box);const b=warpPointFromClient({clientX:delta[0],clientY:delta[1]},{left:0,top:0,width:rect.width,height:rect.height},box);return [b.x-a.x,b.y-a.y];},
+    dispose() { if (disposed) return; disposed = true; cancelPendingWarpPaint(); pointMatchControls.dispose(); for (const control of fields.values()) control.dispose(); warpPanelView.dispose(); settlementControls.dispose(); disposePageTrace(); disposeWarpTrace(); disposeGraphTrace(); traceUi?.dispose(); commandBar.dispose(); doc.removeEventListener?.("keydown", onKeyDown); parameterDialog.dispose(); dialog.dispose(); pointerInput.dispose(); canvas.dispose(); },
   };
 }
 

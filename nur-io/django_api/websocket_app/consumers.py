@@ -116,6 +116,11 @@ def _valid_projection_match(data):
     common = {'type', 'table', 'output', 'instanceId', 'sourceId', 'sessionId', 'sequence', 'revision', 'sourceFrameIdentity'}
     command = data['type'] == 'otef_projection_match_cursor'
     extra = {'mode', 'pointId', 'targetPx', 'sourcePx'} if command else {'displaySide', 'reversed', 'success', 'error'}
+    if command and 'markerRadiusPx' in data:
+        radius = data['markerRadiusPx']
+        if data.get('mode') != 'cursor' or type(radius) not in (int, float) or not 4 <= radius <= 15 or not math.isfinite(radius):
+            return None
+        extra.add('markerRadiusPx')
     if set(data) != common | extra:
         return None
     if not isinstance(data['output'], str) or data['output'] not in _PROJECTION_OUTPUTS:

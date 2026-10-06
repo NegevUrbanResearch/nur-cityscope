@@ -16,8 +16,11 @@ const commonValid = value => value.table === 'otef' && ['left', 'right'].include
   value.sourceFrameIdentity.length > 0 && value.sourceFrameIdentity.length <= 4096;
 
 export function isProjectionMatchCommand(value) {
-  if (!exactKeys(value, [...COMMON, 'mode', 'pointId', 'targetPx', 'sourcePx']) ||
+  const hasRadius = Boolean(value && Object.hasOwn(value, 'markerRadiusPx'));
+  const keys = [...COMMON, 'mode', 'pointId', 'targetPx', 'sourcePx', ...(hasRadius ? ['markerRadiusPx'] : [])];
+  if (!exactKeys(value, keys) ||
     value.type !== 'otef_projection_match_cursor' || !commonValid(value)) return false;
+  if (hasRadius && (value.mode !== 'cursor' || !Number.isFinite(value.markerRadiusPx) || value.markerRadiusPx < 4 || value.markerRadiusPx > 15)) return false;
   if (value.mode === 'probe' || value.mode === 'off') return value.pointId === 0 && value.targetPx === null && value.sourcePx === null;
   return value.mode === 'cursor' && Number.isInteger(value.pointId) && value.pointId >= 1 && value.pointId <= 6 &&
     pixelPair(value.targetPx) && pixelPair(value.sourcePx);

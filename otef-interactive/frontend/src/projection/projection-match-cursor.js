@@ -49,16 +49,27 @@ export function createProjectionMatchCursor({ document: doc, host, output, insta
       overlay.setAttribute('aria-hidden', 'true');
       overlay.classList.add('projection-match-cursor');
       Object.assign(overlay.style, { position: 'absolute', inset: '0', width: '100%', height: '100%', pointerEvents: 'none', zIndex: '3000' });
-      // Hollow center preserves the landmark under the cursor; the number makes direction unambiguous.
-      overlay.innerHTML = '<circle data-match-source r="10" fill="none" stroke="#00ffff" stroke-width="2"/>' +
-        '<g data-match-target fill="none" stroke="#ffff00" stroke-width="3"><circle r="15"/>' +
-        '<path d="M-28 0H-18M18 0H28M0-28V-18M0 18V28"/><text x="22" y="-22" fill="#ffff00" stroke="#000" stroke-width="1" font-size="28" font-family="sans-serif" paint-order="stroke"></text></g>';
+      // The centre stays open so even a narrow road remains visible.
+      overlay.innerHTML = '<circle data-match-source fill="none" stroke="#00ffff" stroke-width="1"/>' +
+        '<g data-match-target fill="none" stroke="#ffff00" stroke-width="1"><circle/>' +
+        '<path/><text fill="#ffff00" stroke="#000" stroke-width="1" font-family="sans-serif" paint-order="stroke"></text></g>';
       host.appendChild(overlay);
     }
-    overlay.querySelector('[data-match-target]').setAttribute('transform', `translate(${message.targetPx.join(' ')})`);
+    const radius = message.markerRadiusPx ?? 15;
+    const arm = radius * 2;
+    const target = overlay.querySelector('[data-match-target]');
+    target.setAttribute('transform', `translate(${message.targetPx.join(' ')})`);
+    target.querySelector('circle').setAttribute('r', String(radius));
+    target.querySelector('path').setAttribute('d', `M${-arm} 0H-1.5M1.5 0H${arm}M0 ${-arm}V-1.5M0 1.5V${arm}`);
     const source = overlay.querySelector('[data-match-source]');
-    source.setAttribute('cx', message.sourcePx[0]); source.setAttribute('cy', message.sourcePx[1]);
-    overlay.querySelector('text').textContent = String(message.pointId);
+    source.setAttribute('r', String(radius * .6));
+    source.setAttribute('cx', message.sourcePx[0]);
+    source.setAttribute('cy', message.sourcePx[1]);
+    const label = target.querySelector('text');
+    label.setAttribute('x', String(arm + 3));
+    label.setAttribute('y', String(-arm - 3));
+    label.setAttribute('font-size', String(Math.max(12, radius * 1.5)));
+    label.textContent = String(message.pointId);
   }
   function contextChanged() {
     if (active && (!visible() || !matches(active.message, readContext()) || !sameContext(active.context, readContext()))) clear();

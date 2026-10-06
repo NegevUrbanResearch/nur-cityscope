@@ -5,7 +5,7 @@ import { recordProjectionTrace } from './projection-trace-input.js';
 import { createCalibrationViewController } from './calibration-view-controller.js';
 
 /** Owns one disposable projection frame. The config controller retains all draft and edit state. */
-export function createWarpEditorDialog({ document: doc, host, editorPanel, overlay, topologyControls, navigationControls, reconciliationControls = null, optionalHealthElement = null, presentation = "dialog", onVisibilityChange = () => {}, onPresentationChange = () => {}, onPreviewInvalidated = () => {}, onIsAdjusting = () => false, onEscape = () => false, onBeforeClose = () => {}, onBeforeSwitch = () => {}, onBeforeResize = () => {}, onViewportChange = () => {}, onOrientationChange = () => {}, onApply = () => {}, onLive = () => {}, socket, calibrationControllerFactory = createCalibrationViewController, trace }) {
+export function createWarpEditorDialog({ document: doc, host, editorPanel, overlay, topologyControls, navigationControls, reconciliationControls = null, optionalHealthElement = null, presentation = "dialog", onVisibilityChange = () => {}, onPresentationChange = () => {}, onPreviewInvalidated = () => {}, onPreviewStateChange = () => {}, onIsAdjusting = () => false, onEscape = () => false, onBeforeClose = () => {}, onBeforeSwitch = () => {}, onBeforeResize = () => {}, onViewportChange = () => {}, onOrientationChange = () => {}, onApply = () => {}, onLive = () => {}, socket, calibrationControllerFactory = createCalibrationViewController, trace }) {
   const win = doc.defaultView;
   const home = editorPanel.parentElement;
   const overlayHome = overlay.parentElement;
@@ -66,6 +66,7 @@ export function createWarpEditorDialog({ document: doc, host, editorPanel, overl
   let focusEpoch = 0;
   let closedFocus = null;
   let fullViewport = false;
+  let pointMatchActive = false, pointMatchCanApply = false, localPreviewConfig = null, ordinaryConfig = null;
   const appRoot = host.closest?.(".projection-config-app") || host;
   const setFullViewport = (next) => {
     if (!session || Boolean(next) === fullViewport) return false;
@@ -92,11 +93,12 @@ export function createWarpEditorDialog({ document: doc, host, editorPanel, overl
   };
   let viewBox = { x: -72, y: -72, width: 2064, height: 1224 };
   const setMessage = (message) => { status.textContent = message; };
-  const preview = createProjectionPreviewFrame({ document: doc, host: viewport, trace, onInvalidate: onPreviewInvalidated, onStatus: (message, canRetry) => { setMessage(message); retry.hidden = !canRetry; } });
+  const preview = createProjectionPreviewFrame({ document: doc, host: viewport, trace, onInvalidate: onPreviewInvalidated, onStateChange: onPreviewStateChange, onStatus: (message, canRetry) => { setMessage(message); retry.hidden = !canRetry; } });
   const calibration = calibrationControllerFactory({ socket, preview, onState: state => {
     const scene = state.phase === 'active' ? 'Landmarks ready' : state.phase === 'starting' ? 'Preparing landmarks…' : state.phase === 'closed' ? '' : 'Landmarks unavailable';
     const cover = state.blackout === 'active' ? 'Other projector blacked out' : state.blackout === 'pending' ? 'Blackout pending…' : state.blackout === 'failed' ? 'Blackout failed' : '';
     calibrationStatus.textContent = [scene, cover, state.missingIds?.length ? `Missing: ${state.missingIds.join(', ')}` : '', state.error].filter(Boolean).join(' · ');
+    onPreviewStateChange();
   } });
   blackoutInput.addEventListener('change', () => calibration.setBlackout(blackoutInput.checked));
   const fit = () => {
@@ -281,11 +283,14 @@ export function createWarpEditorDialog({ document: doc, host, editorPanel, overl
       if (live !== undefined) liveInput.checked = Boolean(live);
       if (appliedSummary !== undefined) applied.textContent = appliedSummary;
       const recoveryActive = Boolean(reconciliation);
-      liveInput.disabled = recoveryActive;
-      applyButton.disabled = recoveryActive;
+      liveInput.disabled = recoveryActive || pointMatchActive;
+      applyButton.disabled = recoveryActive || (pointMatchActive && !pointMatchCanApply);
       fullViewportButton.disabled = Boolean(onIsAdjusting());
-      preview.update(config);
+      ordinaryConfig = config;
+      preview.update(localPreviewConfig || config);
     },
+    setPointMatchPreview(config) { localPreviewConfig = config; return preview.update(config || ordinaryConfig); },
+    updatePointMatch({ active = false, canApply = false } = {}) { pointMatchActive=active;pointMatchCanApply=canApply;liveInput.disabled=active;applyButton.disabled=active && !canApply; },
     updateAdjustmentGuard() { fullViewportButton.disabled = Boolean(onIsAdjusting()); },
     sendRunNamesPreview(config) { return preview.sendRunNamesPreview(config); },
     getCalibrationState() { return calibration.getState?.(); },

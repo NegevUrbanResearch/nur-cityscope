@@ -38,6 +38,19 @@ const replacePreviewDocument = frame => Object.defineProperty(frame, 'contentDoc
   configurable: true, value: document.implementation.createHTMLDocument('replacement projection preview'),
 });
 
+test('preview notifies matching on pending geometry, source readiness and render failure without polling',()=>{
+  const states=[],host=document.createElement('div');document.body.append(host);
+  const preview=createProjectionPreviewFrame({document,host,onStateChange:state=>states.push(state)});preview.update(DEFAULT_PROJECTION_CONFIG);
+  const frame=preview.mount('left'),post=vi.spyOn(frame.contentWindow,'postMessage');
+  const receive=data=>window.dispatchEvent(new MessageEvent('message',{origin:location.origin,source:frame.contentWindow,data:{output:'left',...data}}));
+  receive({type:'otef_projection_preview_ready'});const requestId=configCalls(post)[0][0].requestId;
+  expect(states.at(-1).pending).toBe(true);
+  receive({type:'otef_projection_preview_applied',requestId,success:true});receive({type:'otef_projection_preview_source_state',requestId,sourceFrameIdentity:'source',stable:true,error:null});
+  expect(states.at(-1).stable).toBe(true);
+  receive({type:'otef_projection_preview_source_state',requestId,sourceFrameIdentity:'source',stable:false,error:'Reloaded'});
+  expect(states.at(-1)).toMatchObject({stable:false,error:'Reloaded'});preview.dispose();
+});
+
 test.each([
   ['load-first','load-first'],['load-first','ready-first'],['ready-first','load-first'],['ready-first','ready-first'],
 ])('preview initial %s and subsequent document reload %s preserve only the current handshake', (initialOrder,reloadOrder) => {

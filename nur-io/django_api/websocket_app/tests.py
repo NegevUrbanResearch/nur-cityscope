@@ -23,6 +23,22 @@ def ack_fixture(**overrides):
 
 
 class ProjectionTransientRelayTests(IsolatedAsyncioTestCase):
+    async def test_optional_cursor_radius_bounds_and_legacy_payloads(self):
+        consumer = GeneralConsumer()
+        consumer.room_group_name = 'otef_channel'
+        consumer.channel_layer = type('Layer', (), {'group_send': AsyncMock()})()
+        messages = [cursor_fixture(), *(cursor_fixture(markerRadiusPx=n) for n in (4, 8, 15, 4.5))]
+        for message in messages:
+            await consumer.handle_otef_message(message)
+        self.assertEqual([call.args[1]['message'] for call in consumer.channel_layer.group_send.await_args_list], messages)
+        consumer.channel_layer.group_send.reset_mock()
+        invalid = [cursor_fixture(markerRadiusPx=n) for n in (3.99, 15.01, True, False, float('nan'), float('inf'), -float('inf'), '8', None, [], {})]
+        invalid += [cursor_fixture(mode=mode, pointId=0, targetPx=None, sourcePx=None, markerRadiusPx=8) for mode in ('probe', 'off')]
+        invalid += [cursor_fixture(markerRadiusPx=8, extra=True), ack_fixture(markerRadiusPx=8)]
+        for message in invalid:
+            await consumer.handle_otef_message(message)
+        consumer.channel_layer.group_send.assert_not_awaited()
+
     async def test_calibration_exact_protocol_relay(self):
         consumer = GeneralConsumer()
         consumer.room_group_name = 'otef_channel'

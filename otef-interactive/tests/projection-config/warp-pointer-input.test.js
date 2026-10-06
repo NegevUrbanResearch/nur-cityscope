@@ -36,6 +36,17 @@ test("viewer insertion requires Add placement mode and uses the evaluated mesh i
   f.binder.dispose();
 });
 
+test('Match points dispatch picks and target motion without warp mutations; second touch cancels motion and keeps navigation',()=>{
+  const f=fixture(),points=[],cancelled=[];f.geometry.mode='match';
+  f.geometry.match={start:p=>points.push(['start',p]),move:p=>points.push(['move',p]),end:p=>points.push(['end',p]),cancel:()=>cancelled.push(true)};
+  f.fire('pointerdown',{pointerType:'touch',clientX:120,clientY:100});
+  expect(points[0]).toEqual(['start',{x:240,y:200,output:'left'}]);
+  f.fire('pointermove',{pointerType:'touch',clientX:140,clientY:110});expect(points.at(-1)[0]).toBe('move');
+  f.fire('pointerdown',{pointerType:'touch',pointerId:2,clientX:160,clientY:120});expect(cancelled).toHaveLength(1);
+  expect(f.calls.start).not.toHaveBeenCalled();expect(f.calls.move).not.toHaveBeenCalled();
+  f.fire('pointermove',{pointerType:'touch',pointerId:2,clientX:170,clientY:130});expect(f.calls.navigate).toHaveBeenCalled();f.binder.dispose();
+});
+
 test.each([
   { side: "left", rows: 7, columns: 7, index: 17, expected: { mode: "grid", kind: "row", index: 2 } },
   { side: "right", rows: 7, columns: 8, index: 19, expected: { mode: "grid", kind: "row", index: 2 } },
