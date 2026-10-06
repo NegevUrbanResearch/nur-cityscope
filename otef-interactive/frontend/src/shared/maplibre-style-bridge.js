@@ -11,6 +11,7 @@ import {
   PROJECTION_NLI_PEOPLE_POINT_RADIUS_SCALE,
   PROJECTION_MAPLIBRE_POINT_RADIUS_SCALE,
   PROJECTION_MAPLIBRE_STROKE_WIDTH_SCALE,
+  PROJECTION_SEA_FILL_COLOR,
 } from "./hatch-projection-presentation.js";
 import {
   BIBAS_BALLOON_ORANGE,
@@ -1542,6 +1543,11 @@ export function irToMapLibreLayers(fullLayerId, sourceLayerId, layerConfig, styl
     ? buildLabelSymbolLayer(idBase, style, layerConfig?.geometryType, fullLayerId)
     : [];
   const layers = [...baseLayers, ...leaderLineLayers, ...labelLayers];
+  if (fullLayerId === "projector_base.SEA" && hatchPresentation.applyProjectionHatchPresentation) {
+    return layers.map(layer => layer.type === "fill"
+      ? { ...layer, paint: { ...layer.paint, "fill-color": PROJECTION_SEA_FILL_COLOR } }
+      : layer);
+  }
   if (fullLayerId !== 'projector_base.ישובים') return layers;
   const keepOutline = ['!', ['in', ['to-string', ['get', 'OBJECTID']], ['literal', [...EXCLUDED_SETTLEMENT_OUTLINE_IDS]]]];
   return layers.map(layer => ({ ...layer, filter: layer.filter ? ['all', layer.filter, keepOutline] : keepOutline }));

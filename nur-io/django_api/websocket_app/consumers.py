@@ -10,10 +10,10 @@ WebSocket is used for:
 from channels.generic.websocket import AsyncWebsocketConsumer
 from asgiref.sync import sync_to_async
 import json
-from .nli_video_playback import valid_nli_video_playback
 import re
 import uuid
 import math
+from .nli_video_playback import valid_nli_video_playback
 
 
 _PROJECTION_OUTPUTS = {"left", "right"}

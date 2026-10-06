@@ -45,6 +45,9 @@ export const GIS_GAZA_ROADS_LINE_OPACITY_SCALE = 0.45;
  */
 export const OPEN_SPACES_FILL_OPACITY_SCALE = 0.4;
 
+/** Muted water context on the projection; keep a slight blue tint against the black land. */
+export const PROJECTION_SEA_FILL_COLOR = "#626c70";
+
 /**
  * Multiplies `projector_base.ישובים` `line-width` on the interactive GIS map only.
  * Opening / dark-basemap white outlines should read as context, not compete with
