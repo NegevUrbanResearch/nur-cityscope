@@ -12,8 +12,9 @@ function canvasFor(factory) {
   return canvas;
 }
 
-export function createProjectionPatternAdapter({ spanId, canvasFactory } = {}) {
+export function createProjectionPatternAdapter({ spanId, canvasFactory, rasterScale = 1 } = {}) {
   const canvas = canvasFor(canvasFactory);
+  canvas.width = WIDTH * rasterScale; canvas.height = HEIGHT * rasterScale;
   const context = canvas.getContext?.("2d");
   if (!context) throw new Error("projection pattern adapter requires a 2d canvas");
   let config = DEFAULT_PROJECTION_CONFIG;
@@ -23,7 +24,7 @@ export function createProjectionPatternAdapter({ spanId, canvasFactory } = {}) {
   let disposed = false;
   let signature = null;
   let contentVersion = 0;
-  const clear = () => { command = null; signature = null; dirty = true; context.clearRect(0, 0, WIDTH, HEIGHT); };
+  const clear = () => { command = null; signature = null; dirty = true; context.clearRect(0, 0, canvas.width, canvas.height); };
   const sync = (next = {}) => {
     if (disposed) return;
     if (next.config && Object.keys(validateProjectionConfig(next.config)).length === 0) config = next.config;
@@ -38,10 +39,10 @@ export function createProjectionPatternAdapter({ spanId, canvasFactory } = {}) {
   const draw = () => {
     if (disposed || !command) return null;
     if (dirty) {
-      context.clearRect(0, 0, WIDTH, HEIGHT);
+      context.clearRect(0, 0, canvas.width, canvas.height);
       const geometry = buildProjectionPatternGeometry(command, config, spanId);
       context.save?.();
-      context.scale?.(WIDTH, HEIGHT);
+      context.scale?.(canvas.width, canvas.height);
       context.strokeStyle = "#fff"; context.fillStyle = "#fff"; context.textAlign = "center";
       for (const line of geometry?.lines || []) {
         context.beginPath();

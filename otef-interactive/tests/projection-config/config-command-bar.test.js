@@ -66,6 +66,21 @@ test('Rename uses the saved preset name after import and supports Escape and Ent
   bar.dispose(); dom.close();
 });
 
+test('Displays offers independent lab and exhibit resolution choices', () => {
+  const { window: dom } = new JSDOM('<main></main>', { url: 'http://localhost' });
+  const onOutputAction = vi.fn();
+  const bar = module.createConfigCommandBar({ document: dom.document, onOutputAction });
+  bar.update({ outputState: { supported: true, resolutions: { left: '4k', right: '1080p' } } });
+  const left = bar.element.querySelector('select[aria-label="Left output resolution"]');
+  const right = bar.element.querySelector('select[aria-label="Right output resolution"]');
+  expect(left?.value).toBe('4k'); expect(right?.value).toBe('1080p');
+  expect(Array.from(left.options).map(option => option.textContent)).toEqual(['1080p · 1920 × 1080', '4K · 3840 × 2160']);
+  left.value = '1080p'; left.dispatchEvent(new dom.Event('change'));
+  expect(onOutputAction).toHaveBeenCalledWith('resolution', { side: 'left', resolution: '1080p' });
+  expect(left.closest('[data-menu="displays"]')).toBeTruthy();
+  bar.dispose();
+});
+
 test('Displays contains persisted reversal control with an explicit next-Open scope', () => {
   const { window: dom } = new JSDOM('<main></main>', { url: 'http://localhost' });
   const onOutputAction = vi.fn();

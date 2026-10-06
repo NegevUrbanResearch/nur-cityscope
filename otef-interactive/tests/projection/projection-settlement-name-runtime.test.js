@@ -5,6 +5,19 @@ import { resolveProjectionSceneLayers } from "../../frontend/src/projection/proj
 
 const catalog = { entries: [{ citycode: "0067", text: "נירים", lng: 34.4, lat: 31.3 }, { citycode: "0424", text: "מחוץ", lng: 34.2, lat: 31.2 }] };
 
+test('startup does not query opacity before the settlement map layer exists', async () => {
+  const adapter = createProjectionSettlementNameAdapter({ document: fakeCanvasDocument(), output: 'right' });
+  const data = contextFor(settingsFixture());
+  const map = { getLayer: vi.fn(() => undefined), getPaintProperty: vi.fn(() => { throw new Error('layer is not installed'); }) };
+  const onError = vi.fn(), onDraw = vi.fn();
+  const dispose = bindProjectionSettlementNames({ dataContext: data, adapter, catalog, map, onError, onDraw });
+  await vi.waitFor(() => expect(adapter.getLabels()).toHaveLength(1));
+  expect(onError).not.toHaveBeenCalled();
+  expect(map.getPaintProperty).not.toHaveBeenCalled();
+  expect(onDraw).toHaveBeenCalled();
+  dispose();
+});
+
 function settingsFixture() {
   return {
     baseline: {

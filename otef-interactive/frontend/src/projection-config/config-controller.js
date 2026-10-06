@@ -584,6 +584,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
       if (action === "refresh") await outputController.refreshDisplays();
       if (action === "assign") outputController.assignDisplays(value);
       if (action === "reverse-model") outputController.setReverseModel(value);
+      if (action === 'resolution') outputController.setResolution(value.side, value.resolution);
       if (action === "open") await outputController.openBoth();
       if (action === "open-left") await outputController.openSide("left");
       if (action === "open-right") await outputController.openSide("right");

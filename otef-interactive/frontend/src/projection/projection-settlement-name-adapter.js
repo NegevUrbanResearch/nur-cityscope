@@ -46,7 +46,7 @@ function clampOpacity(value) {
   return Math.min(1, Math.max(0, numeric));
 }
 
-export function createProjectionSettlementNameAdapter({ document = globalThis.document, output } = {}) {
+export function createProjectionSettlementNameAdapter({ document = globalThis.document, output, rasterScale = 1 } = {}) {
   if (!["left", "right"].includes(output)) throw new Error("settlement adapter output must be left or right");
   let generation = 0;
   let pending = null;
@@ -57,11 +57,12 @@ export function createProjectionSettlementNameAdapter({ document = globalThis.do
   const paint = (style, labels) => {
     const canvas = document?.createElement?.("canvas");
     if (!canvas) throw new Error("settlement canvas is unavailable");
-    canvas.width = WIDTH;
-    canvas.height = HEIGHT;
+    canvas.width = WIDTH * rasterScale;
+    canvas.height = HEIGHT * rasterScale;
     const context = canvas.getContext?.("2d");
     if (!context) throw new Error("settlement canvas 2D context is unavailable");
     context.clearRect(0, 0, WIDTH, HEIGHT);
+    if (rasterScale !== 1) context.setTransform(rasterScale, 0, 0, rasterScale, 0, 0);
     context.font = fontSpec(style);
     context.direction = "rtl";
     context.textAlign = "center";

@@ -1,6 +1,36 @@
 import { expect, test, vi } from "vitest";
 import { createOutputWindowController, FULLSCREEN_TIMEOUT_MS, browserUrl } from "../../frontend/src/projection-config/output-window-controller.js";
 
+test('per-output resolution persists and reopening one output leaves the other running', async () => {
+  const values = new Map();
+  const storage = { getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value) };
+  const open = vi.fn(url => popupFor(url));
+  const controller = createOutputWindowController({ storage, open, screenApi: screenApi(), location: 'http://localhost/otef-interactive/projection.html' });
+  const screens = await controller.refreshDisplays();
+  controller.assignDisplays({ left: screens[0].key, right: screens[1].key });
+  await controller.openBoth();
+  const left = open.mock.results[0].value, right = open.mock.results[1].value;
+  controller.setResolution('left', '4k');
+  await controller.openSide('left');
+  expect(open).toHaveBeenCalledTimes(3);
+  expect(left.close).toHaveBeenCalled(); expect(right.close).not.toHaveBeenCalled();
+  expect(new URL(open.mock.calls[2][0]).searchParams.get('outputResolution')).toBe('4k');
+  expect(controller.getState().resolutions).toEqual({ left: '4k', right: '1080p' });
+  expect(() => controller.setResolution('right', '8k')).toThrow(/resolution/i);
+  controller.closeBoth(); controller.dispose();
+  const reloaded = createOutputWindowController({ storage });
+  expect(reloaded.getState().resolutions).toEqual({ left: '4k', right: '1080p' });
+  reloaded.dispose();
+});
+
+test('invalid saved resolution uses 1080p and blocked storage keeps changes session-only', () => {
+  const controller = createOutputWindowController({ storage: { getItem: () => '{"left":"8k","right":"4k"}', setItem() { throw Error('denied'); } } });
+  expect(controller.getState().resolutions).toEqual({ left: '1080p', right: '4k' });
+  controller.setResolution('left', '4k');
+  expect(controller.getState().message).toMatch(/session.only/i);
+  controller.dispose();
+});
+
 test('reversing persists without disturbing outputs and routes both next-open windows through reversal', async () => {
   const saved = new Map();
   const storage = { getItem: key => saved.get(key) ?? null, setItem: (key, value) => saved.set(key, value) };

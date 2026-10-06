@@ -33,11 +33,11 @@ export function validateProjectionMesh(mesh) {
 }
 
 const COMPOSE_VERTEX = `attribute vec2 aSource; uniform mat3 uMatrix; varying vec2 vUv; void main(){ vec3 p=uMatrix*vec3(aSource,1.0); gl_Position=vec4(2.0*p.x-p.z,p.z-2.0*p.y,0.0,p.z); vUv=aSource; }`;
-const COMPOSE_FRAGMENT = `precision mediump float; varying vec2 vUv; uniform sampler2D uSource; uniform float uOpacity; uniform vec4 uClip; void main(){ vec2 outputUv=vec2((gl_FragCoord.x+0.5)/1920.0,1.0-(gl_FragCoord.y+0.5)/1080.0); if(outputUv.x<uClip.x||outputUv.y<uClip.y||outputUv.x>uClip.z||outputUv.y>uClip.w) discard; vec4 color=texture2D(uSource,vUv); gl_FragColor=vec4(color.rgb,color.a*uOpacity); }`;
+const COMPOSE_FRAGMENT = `precision highp float; varying vec2 vUv; uniform sampler2D uSource; uniform float uOpacity; uniform vec4 uClip; uniform vec2 uOutputSize; void main(){ vec2 outputUv=vec2((gl_FragCoord.x+0.5)/uOutputSize.x,1.0-(gl_FragCoord.y+0.5)/uOutputSize.y); if(outputUv.x<uClip.x||outputUv.y<uClip.y||outputUv.x>uClip.z||outputUv.y>uClip.w) discard; vec4 color=texture2D(uSource,vUv); gl_FragColor=vec4(color.rgb,color.a*uOpacity); }`;
 const NAMES_VERTEX = `attribute vec2 aSource; attribute float aDelay; attribute float aNameIndex; uniform mat3 uMatrix; uniform float uRevealSeconds; uniform float uSelectedIndex; varying vec2 vUv; varying float vReveal; void main(){ vec3 p=uMatrix*vec3(aSource,1.0); gl_Position=vec4(2.0*p.x-p.z,p.z-2.0*p.y,0.0,p.z); vUv=aSource; vReveal=abs(aNameIndex-uSelectedIndex)<0.5?1.0:clamp((uRevealSeconds-aDelay)/${(NAME_FIELD_MOTION.revealMs / 1000).toFixed(3)},0.0,1.0); }`;
-const NAMES_FRAGMENT = `precision mediump float; varying vec2 vUv; varying float vReveal; uniform sampler2D uSource; uniform float uOpacity; uniform vec4 uClip; void main(){ vec2 outputUv=vec2((gl_FragCoord.x+0.5)/1920.0,1.0-(gl_FragCoord.y+0.5)/1080.0); if(outputUv.x<uClip.x||outputUv.y<uClip.y||outputUv.x>uClip.z||outputUv.y>uClip.w) discard; vec4 color=texture2D(uSource,vUv); gl_FragColor=vec4(color.rgb,color.a*uOpacity*vReveal); }`;
+const NAMES_FRAGMENT = `precision highp float; varying vec2 vUv; varying float vReveal; uniform sampler2D uSource; uniform float uOpacity; uniform vec4 uClip; uniform vec2 uOutputSize; void main(){ vec2 outputUv=vec2((gl_FragCoord.x+0.5)/uOutputSize.x,1.0-(gl_FragCoord.y+0.5)/uOutputSize.y); if(outputUv.x<uClip.x||outputUv.y<uClip.y||outputUv.x>uClip.z||outputUv.y>uClip.w) discard; vec4 color=texture2D(uSource,vUv); gl_FragColor=vec4(color.rgb,color.a*uOpacity*vReveal); }`;
 const FINAL_VERTEX = `attribute vec2 aPosition; attribute vec2 aUv; varying vec2 vUv; void main(){vUv=vec2(aUv.x,1.0-aUv.y);gl_Position=vec4(aPosition,0.0,1.0);}`;
-const FINAL_FRAGMENT = `precision mediump float; varying vec2 vUv; uniform sampler2D uTexture; void main(){gl_FragColor=texture2D(uTexture,vUv);}`;
+const FINAL_FRAGMENT = `precision highp float; varying vec2 vUv; uniform sampler2D uTexture; void main(){gl_FragColor=texture2D(uTexture,vUv);}`;
 
 const OUTPUT_CONTEXT_ATTRIBUTES = Object.freeze({ alpha: true, premultipliedAlpha: true });
 
@@ -155,6 +155,8 @@ export function createProjectionWarpRenderer({ canvas, mesh, gl: suppliedGl } = 
   let currentMesh = validateProjectionMesh(mesh);
   let gl = suppliedGl || canvas?.getContext?.("webgl", OUTPUT_CONTEXT_ATTRIBUTES);
   if (!gl) throw new Error("browser projection requires WebGL");
+  const renderWidth = canvas?.width || WIDTH;
+  const renderHeight = canvas?.height || HEIGHT;
   let resources = null;
   let lost = false;
   let latest = [];
@@ -173,6 +175,12 @@ export function createProjectionWarpRenderer({ canvas, mesh, gl: suppliedGl } = 
 
   const createResources = () => {
     if (resources) return resources;
+    for (const parameter of [gl.MAX_TEXTURE_SIZE, gl.MAX_RENDERBUFFER_SIZE]) {
+      if (parameter === undefined || !gl.getParameter) continue;
+      const limit = gl.getParameter(parameter);
+      if (Number.isFinite(limit) && (renderWidth > limit || renderHeight > limit))
+        throw new Error(`Output resolution ${renderWidth}x${renderHeight} exceeds GPU limit ${limit}; select 1080p.`);
+    }
     const created = {};
     try {
       created.compose = createProgram(gl, COMPOSE_VERTEX, COMPOSE_FRAGMENT, { aSource: 0 });
@@ -185,6 +193,7 @@ export function createProjectionWarpRenderer({ canvas, mesh, gl: suppliedGl } = 
           uSource: gl.getUniformLocation?.(created.compose, 'uSource'),
           uMatrix: gl.getUniformLocation?.(created.compose, 'uMatrix'),
           uClip: gl.getUniformLocation?.(created.compose, 'uClip'),
+          uOutputSize: gl.getUniformLocation?.(created.compose, 'uOutputSize'),
           uOpacity: gl.getUniformLocation?.(created.compose, 'uOpacity'),
         },
         nameCompose: {
@@ -194,6 +203,7 @@ export function createProjectionWarpRenderer({ canvas, mesh, gl: suppliedGl } = 
           uSource: gl.getUniformLocation?.(created.nameCompose, 'uSource'),
           uMatrix: gl.getUniformLocation?.(created.nameCompose, 'uMatrix'),
           uClip: gl.getUniformLocation?.(created.nameCompose, 'uClip'),
+          uOutputSize: gl.getUniformLocation?.(created.nameCompose, 'uOutputSize'),
           uOpacity: gl.getUniformLocation?.(created.nameCompose, 'uOpacity'),
           uRevealSeconds: gl.getUniformLocation?.(created.nameCompose, 'uRevealSeconds'),
           uSelectedIndex: gl.getUniformLocation?.(created.nameCompose, 'uSelectedIndex'),
@@ -211,7 +221,7 @@ export function createProjectionWarpRenderer({ canvas, mesh, gl: suppliedGl } = 
       Object.assign(created, createMeshBuffers(gl, currentMesh));
       created.composed = gl.createTexture();
       configureTexture(gl, created.composed);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, WIDTH, HEIGHT, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, renderWidth, renderHeight, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
       created.framebuffer = gl.createFramebuffer();
       gl.bindFramebuffer(gl.FRAMEBUFFER, created.framebuffer);
       gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, created.composed, 0);
@@ -244,7 +254,7 @@ export function createProjectionWarpRenderer({ canvas, mesh, gl: suppliedGl } = 
     gl.blendFuncSeparate?.(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
     gl.pixelStorei?.(gl.UNPACK_FLIP_Y_WEBGL, false);
     gl.bindFramebuffer(gl.FRAMEBUFFER, r.framebuffer);
-    gl.viewport(0, 0, WIDTH, HEIGHT);
+    gl.viewport(0, 0, renderWidth, renderHeight);
     gl.clearColor(0, 0, 0, 0);
     gl.clear(gl.COLOR_BUFFER_BIT);
     for (const layer of valid) {
@@ -295,6 +305,7 @@ export function createProjectionWarpRenderer({ canvas, mesh, gl: suppliedGl } = 
       gl.uniform1i?.(locations.uSource, 0);
       gl.uniformMatrix3fv?.(locations.uMatrix, false, new Float32Array(layer.matrix));
       gl.uniform4fv?.(locations.uClip, new Float32Array(layer.clip));
+      gl.uniform2f?.(locations.uOutputSize, renderWidth, renderHeight);
       gl.uniform1f?.(locations.uOpacity, layer.opacity);
       gl.drawArrays(names ? gl.TRIANGLES : gl.TRIANGLE_STRIP, 0, names ? layer.revealVertices.length / 4 : 4);
     }

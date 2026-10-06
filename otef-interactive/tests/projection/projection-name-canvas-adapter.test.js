@@ -14,6 +14,18 @@ const placements = [
   { id: 'b', name: 'תמר', output: 'right', x: 10, y: 10, width: 20, height: 10 },
 ];
 
+test('4K people names keep logical positions, reveal quads and font size with double-density painting', () => {
+  const a = fakeCanvas(), b = fakeCanvas();
+  const lab = createProjectionNameCanvasAdapter({ document: { createElement: () => a.canvas }, output: 'left' });
+  const exhibit = createProjectionNameCanvasAdapter({ document: { createElement: () => b.canvas }, output: 'left', rasterScale: 2 });
+  for (const adapter of [lab, exhibit]) { adapter.prepare({ config: DEFAULT_PROJECTION_CONFIG, placements, fontPx: 6, logicalPlane: plane }); adapter.commit(); }
+  expect([b.canvas.width, b.canvas.height]).toEqual([3840, 2160]);
+  expect(b.ctx.setTransform.mock.calls.at(-1)).toEqual(a.ctx.setTransform.mock.calls.at(-1).map(value => value * 2));
+  expect(b.ctx.fillText.mock.calls).toEqual(a.ctx.fillText.mock.calls);
+  expect(b.ctx.font).toBe(a.ctx.font);
+  expect(exhibit.descriptor().revealVertices).toEqual(lab.descriptor().revealVertices);
+});
+
 test('a changed wall heading repacks the matrix and does not start reveal', () => {
   const created = [];
   const document = { createElement: () => { const next = fakeCanvas(); created.push(next); return next.canvas; } };

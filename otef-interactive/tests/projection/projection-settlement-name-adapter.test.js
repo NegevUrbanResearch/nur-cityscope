@@ -1,6 +1,16 @@
 import { expect, test } from "vitest";
 import { createProjectionSettlementNameAdapter } from "../../frontend/src/projection/projection-settlement-name-adapter.js";
 
+test('4K settlement names retain logical ink bounds and placements', async () => {
+  const labDoc = fakeCanvasDocument(), exhibitDoc = fakeCanvasDocument();
+  const lab = createProjectionSettlementNameAdapter({ document: labDoc, output: 'left' });
+  const exhibit = createProjectionSettlementNameAdapter({ document: exhibitDoc, output: 'left', rasterScale: 2 });
+  for (const adapter of [lab, exhibit]) { await adapter.prepare({ catalog: catalogFixture(), settings: initializedSettingsFixture() }); adapter.commit(); }
+  expect(exhibit.descriptor().source.width).toBe(3840);
+  expect(exhibit.descriptor().source.height).toBe(2160);
+  expect(exhibitDoc.paints.map(({ canvasWidth, ...paint }) => paint)).toEqual(labDoc.paints.map(({ canvasWidth, ...paint }) => paint));
+});
+
 function catalogFixture() {
   return {
     entries: [

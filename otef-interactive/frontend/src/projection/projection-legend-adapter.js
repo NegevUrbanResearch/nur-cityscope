@@ -156,7 +156,7 @@ function drawPlacement(context, placement, font, scale) {
   }
 }
 
-export function createProjectionLegendAdapter({ canvasFactory } = {}) {
+export function createProjectionLegendAdapter({ canvasFactory, rasterScale = 1 } = {}) {
   const canvas = makeCanvas(canvasFactory);
   const context = canvas.getContext?.("2d");
   if (!context) throw new Error("projection legend adapter requires a 2d canvas");
@@ -192,9 +192,9 @@ export function createProjectionLegendAdapter({ canvasFactory } = {}) {
     signature = nextSignature;
     contentLayout = nextPlan;
     rasterSize = size;
-    if (canvas.width !== size.width || canvas.height !== size.height) {
-      canvas.width = size.width;
-      canvas.height = size.height;
+    if (canvas.width !== size.width * rasterScale || canvas.height !== size.height * rasterScale) {
+      canvas.width = size.width * rasterScale;
+      canvas.height = size.height * rasterScale;
     }
     dirty = true;
   };
@@ -206,8 +206,9 @@ export function createProjectionLegendAdapter({ canvasFactory } = {}) {
       const font = Number(layout.fontPx) || 22;
       const scale = Number(contentLayout?.scale) || 1;
       context.save?.();
+      context.scale?.(rasterScale, rasterScale);
       context.scale?.(scale, scale);
-      for (const placement of contentLayout?.placements || []) drawPlacement(context, placement, font, scale);
+      for (const placement of contentLayout?.placements || []) drawPlacement(context, placement, font, scale * rasterScale);
       context.restore?.();
       dirty = false;
       contentVersion += 1;

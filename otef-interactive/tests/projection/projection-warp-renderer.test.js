@@ -38,6 +38,29 @@ function fakeGl() {
 function canvasFor(gl) { const listeners = {}; return { width: 1920, height: 1080, getContext: () => gl, addEventListener: (name, cb) => { listeners[name] = cb; }, removeEventListener: vi.fn(), listeners }; }
 
 describe("projection warp renderer", () => {
+  test('composes and warps at 4K while retaining canonical calibration through context recovery', () => {
+    const gl = fakeGl(); gl.uniform2f = vi.fn();
+    const canvas = canvasFor(gl); canvas.width = 3840; canvas.height = 2160;
+    const renderer = createProjectionWarpRenderer({ canvas, mesh });
+    renderer.draw({ layers: [{ source: { width: 3840, height: 2160 }, clip: [0.1, 0.2, 0.8, 0.9] }] });
+    expect(gl.texImage2D).toHaveBeenCalledWith(gl.TEXTURE_2D, 0, gl.RGBA, 3840, 2160, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    expect(gl.viewport.mock.calls).toEqual([[0, 0, 3840, 2160], [0, 0, 3840, 2160]]);
+    expect(gl.uniform2f).toHaveBeenCalledWith('uOutputSize', 3840, 2160);
+    expect(renderer.getMesh()).toBe(mesh);
+    canvas.listeners.webglcontextlost({ preventDefault() {} });
+    canvas.listeners.webglcontextrestored();
+    expect(gl.texImage2D.mock.calls.filter(args => args[3] === 3840 && args.at(-1) === null)).toHaveLength(2);
+    renderer.dispose();
+  });
+
+  test('reports unsupported 4K before allocating a composition texture', () => {
+    const gl = fakeGl(); gl.MAX_TEXTURE_SIZE = 100; gl.MAX_RENDERBUFFER_SIZE = 101;
+    gl.getParameter = vi.fn(() => 2048);
+    const canvas = canvasFor(gl); canvas.width = 3840; canvas.height = 2160;
+    const renderer = createProjectionWarpRenderer({ canvas, mesh });
+    expect(() => renderer.draw()).toThrow(/resolution.*GPU|GPU.*resolution/i);
+    expect(gl.texImage2D).not.toHaveBeenCalled();
+  });
   test('uploads exact buffers for source and each replacement mesh, including a differently sized prepared mesh', () => {
     const source = variableTdMesh('left');
     const preparedWarpA = structuredClone(DEFAULT_PROJECTION_CONFIG.outputs.left.warp);

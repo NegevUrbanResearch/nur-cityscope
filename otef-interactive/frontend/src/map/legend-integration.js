@@ -102,13 +102,19 @@ function positionGisLegend({
     : { width: 0, height: 0 },
 } = {}) {
   if (!element?.getBoundingClientRect) return;
+  const scale = Number(element.ownerDocument?.body?.dataset.gisDisplayScale) || 1;
+  const logicalViewport = { width: viewport.width / scale, height: viewport.height / scale };
+  const logicalRect = node => {
+    const rect = node?.getBoundingClientRect?.();
+    return rect ? Object.fromEntries(['left', 'top', 'right', 'bottom', 'width', 'height'].map(key => [key, rect[key] / scale])) : null;
+  };
   element.style.bottom = "20px";
-  element.style.maxWidth = `calc(100vw - ${viewport.width <= 720 ? 18 : 36}px)`;
+  element.style.maxWidth = `${Math.max(1, logicalViewport.width - (logicalViewport.width <= 720 ? 18 : 36))}px`;
   const placement = computeGisLegendPlacement({
-    legendRect: element.getBoundingClientRect(),
-    clockRect: clockElement?.getBoundingClientRect?.() || null,
-    viewport,
-    left: viewport.width <= 720 ? 9 : 18,
+    legendRect: logicalRect(element),
+    clockRect: logicalRect(clockElement),
+    viewport: logicalViewport,
+    left: logicalViewport.width <= 720 ? 9 : 18,
   });
   element.style.bottom = `${placement.bottom}px`;
   element.style.maxWidth = `${placement.maxWidth}px`;

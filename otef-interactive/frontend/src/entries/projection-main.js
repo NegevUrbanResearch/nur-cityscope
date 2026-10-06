@@ -102,6 +102,7 @@ import { createProjectionPattern } from "../projection/projection-pattern.js";
 import { createProjectionCaptionAdapter, drawProjectionCaptionForSpan } from "../projection/projection-caption-adapter.js";
 import { createProjectionLegendAdapter } from "../projection/projection-legend-adapter.js";
 import { createProjectionPatternAdapter } from "../projection/projection-pattern-adapter.js";
+import { resolveProjectionResolution, projectionMapPixelRatio, bindProjectionMapResolution } from '../projection/output-resolution.js';
 import { getInvestigationTimelineRenderSnapshot } from "../shared/maplibre-investigation-timeline.js";
 import { loadCapturedProjectionFraming } from "../projection/projection-captured-baseline.js";
 import { visibleProjectionBrowserError } from "../projection/projection-browser-error.js";
@@ -436,12 +437,15 @@ async function bootstrapProjectionRuntime() {
   }
   if (!isRuntimeAlive()) return;
   const urlOrConfigPixelRatio = resolveProjectionMapPixelRatio();
+  const outputResolution = resolveProjectionResolution(window.location.search);
   const map = createProjectionMap("projectionMap", modelBounds, {
-    ...(urlOrConfigPixelRatio !== undefined ? { pixelRatio: urlOrConfigPixelRatio } : {}),
+    ...(urlOrConfigPixelRatio !== undefined ? { pixelRatio: urlOrConfigPixelRatio }
+      : browserMode ? { pixelRatio: projectionMapPixelRatio(outputResolution, displayContainerEl) } : {}),
     ...(projectionSpanId && projectionOutputMode === "browser"
       ? { canvasContextAttributes: { preserveDrawingBuffer: true } }
       : {}),
   });
+  if (browserMode && urlOrConfigPixelRatio === undefined) registerDisposer(bindProjectionMapResolution({ map, container: displayContainerEl, resolution: outputResolution }));
   attachSettlementOrientationRuntime(map);
   let browserSurface = null;
   if (modelImgEl) {
@@ -603,9 +607,9 @@ async function bootstrapProjectionRuntime() {
     if (!isRuntimeAlive()) return;
     if (projectionMapBooted) return;
     projectionMapBooted = true;
-    const captionAdapter = browserMode ? createProjectionCaptionAdapter({}) : null;
-    const legendAdapter = browserMode ? createProjectionLegendAdapter({}) : null;
-    const patternAdapter = browserMode ? createProjectionPatternAdapter({ spanId: projectionSpanId }) : null;
+    const captionAdapter = browserMode ? createProjectionCaptionAdapter({ rasterScale: outputResolution.scale }) : null;
+    const legendAdapter = browserMode ? createProjectionLegendAdapter({ rasterScale: outputResolution.scale }) : null;
+    const patternAdapter = browserMode ? createProjectionPatternAdapter({ spanId: projectionSpanId, rasterScale: outputResolution.scale }) : null;
     if (captionAdapter) registerDisposer(() => captionAdapter.dispose());
     if (legendAdapter) registerDisposer(() => legendAdapter.dispose());
     if (patternAdapter) registerDisposer(() => patternAdapter.dispose());

@@ -167,7 +167,9 @@ function mountMapLegend({ element, surface = "gis", projectionSpan = "full", dat
   const panelHeight = () => Math.max(1, element.clientHeight || (mode === "projection" ? 400 : 130));
   const panelWidth = () => {
     if (mode === "gis" && typeof window !== "undefined" && Number.isFinite(window.innerWidth)) {
-      return Math.max(1, window.innerWidth - (window.innerWidth <= 720 ? 18 : 36));
+      const scale = Number(window.document?.body?.dataset.gisDisplayScale) || 1;
+      const width = window.innerWidth / scale;
+      return Math.max(1, width - (width <= 720 ? 18 : 36));
     }
     return Math.max(1, element.clientWidth || 500);
   };

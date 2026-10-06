@@ -4,6 +4,7 @@ export function mountReversedProjection({ document: doc, window: win, location }
   const side = url.searchParams.get('span');
   if (!['left', 'right'].includes(side) || ['preview', 'clockPreview', 'settlementPreview'].some(key => url.searchParams.get(key) === '1')) return null;
   const source = new URL('projection.html', url);
+  source.search = url.search;
   source.searchParams.set('span', side === 'left' ? 'right' : 'left');
   source.searchParams.set('outputMode', 'browser');
   const iframe = doc.createElement('iframe');

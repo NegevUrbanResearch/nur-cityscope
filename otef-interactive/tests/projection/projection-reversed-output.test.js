@@ -2,6 +2,15 @@
 import { expect, test, vi } from 'vitest';
 import { mountReversedProjection } from '../../frontend/src/projection/projection-reversed-output.js';
 
+test('reversed output forwards 4K rendering and map-density settings to the completed image', () => {
+  const mounted = mountReversedProjection({ document, window, location: { href: 'http://localhost/otef-interactive/projection-reversed.html?span=left&outputMode=browser&outputResolution=4k&mpr=1.5' } });
+  const source = new URL(mounted.iframe.src);
+  expect(source.searchParams.get('outputResolution')).toBe('4k');
+  expect(source.searchParams.get('mpr')).toBe('1.5');
+  expect(source.searchParams.get('span')).toBe('right');
+  mounted.dispose();
+});
+
 test.each([['left', 'right'], ['right', 'left']])('physical %s displays the rotated completed %s output', (physical, logical) => {
   const host = document.createElement('main');
   document.body.replaceChildren(host);

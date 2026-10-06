@@ -29,6 +29,7 @@ export function bindProjectionSettlementNames({ dataContext, adapter, catalog, h
   };
   const replayMapOpacity = () => {
     if (!map || typeof map.getPaintProperty !== "function") return;
+    if (typeof map.getLayer === 'function' && !map.getLayer('projector_base__שמות_יישובים__labels')) return;
     const value = map.getPaintProperty("projector_base__שמות_יישובים__labels", "text-opacity");
     if (value === undefined) return;
     adapter.applyScaledOpacity(value);

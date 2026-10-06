@@ -2,14 +2,17 @@ import { createDisplayIdentifier, numberDisplays } from "./display-identificatio
 
 const ASSIGNMENTS_STORAGE_KEY = "otef.projection.display-assignments.v1";
 const REVERSE_MODEL_STORAGE_KEY = "otef.projection.reverse-model.v1";
+const RESOLUTIONS_STORAGE_KEY = 'otef.projection.output-resolutions.v1';
 const OUTPUTS = ["left", "right"];
 const FULLSCREEN_TIMEOUT_MS = 10000;
 
-function browserUrl(base, span, reverseModel = false) {
+function browserUrl(base, span, reverseModel = false, resolution = '1080p') {
   const url = new URL(base, typeof window !== "undefined" ? window.location.href : "http://localhost/");
   if (reverseModel) url.pathname = url.pathname.replace(/[^/]*$/, "projection-reversed.html");
   url.searchParams.set("span", span);
   url.searchParams.set("outputMode", "browser");
+  if (resolution === '4k') url.searchParams.set('outputResolution', '4k');
+  else url.searchParams.delete('outputResolution');
   return url.href;
 }
 
@@ -46,6 +49,11 @@ function saveAssignments(storage, assignments) {
 function readReverseModel(storage) {
   try { return storage?.getItem?.(REVERSE_MODEL_STORAGE_KEY) === "true"; } catch { return false; }
 }
+function readResolutions(storage) {
+  let value;
+  try { value = JSON.parse(storage?.getItem?.(RESOLUTIONS_STORAGE_KEY) || 'null'); } catch { /* use lab defaults */ }
+  return Object.fromEntries(OUTPUTS.map(side => [side, value?.[side] === '4k' ? '4k' : '1080p']));
+}
 function makeSessionId(value) {
   if (String(value || "").trim()) return String(value).replace(/[^a-z0-9_-]+/gi, "-");
   try { return globalThis.crypto?.randomUUID?.() || `session-${Date.now()}`; } catch { return `session-${Date.now()}`; }
@@ -72,6 +80,7 @@ export function createOutputWindowController({
   storage = (() => { try { return globalThis.localStorage; } catch { return null; } })(), sessionId,
 } = {}) {
   const owned = new Map(); const trackers = new Map(); const subscriptions = new Set(); const assignments = parseAssignments(storage); const id = makeSessionId(sessionId);
+  const launchUrls = new Map();
   const identifier = createDisplayIdentifier({ open, location, sessionId: id });
   let screenDetails = null;
   let liveScreens = null;
@@ -83,7 +92,7 @@ export function createOutputWindowController({
   screenApi?.addEventListener?.("pagehide", onPageHide);
   let generation = 0; let operationToken = 0; let openingPromise = null;
   const supported = typeof screenApi?.getScreenDetails === "function";
-  let state = { screens: [], assignments, supported, reverseModel: readReverseModel(storage), error: "", message: supported ? "Detecting connected displays…" : "Display management unavailable in this browser.", ownedSpans: [] };
+  let state = { screens: [], assignments, supported, reverseModel: readReverseModel(storage), resolutions: readResolutions(storage), error: "", message: supported ? "Detecting connected displays…" : "Display management unavailable in this browser.", ownedSpans: [] };
   function setState(patch) { state = { ...state, ...patch, ownedSpans: [...owned.keys()] }; subscriptions.forEach((listener) => listener(state)); return state; }
   function setReverseModel(value) {
     if (openingPromise) throw new Error("Wait for output opening to finish before changing model orientation.");
@@ -91,6 +100,14 @@ export function createOutputWindowController({
     let persisted = false;
     try { if (storage?.setItem) { storage.setItem(REVERSE_MODEL_STORAGE_KEY, String(reverseModel)); persisted = true; } } catch { /* keep the session setting */ }
     return setState({ reverseModel, error: "", message: `Model orientation ${persisted ? 'saved' : 'is session-only'}. Use Open to apply it to outputs.` });
+  }
+  function setResolution(side, resolution) {
+    if (!OUTPUTS.includes(side) || !['1080p', '4k'].includes(resolution)) throw new Error('Invalid output resolution.');
+    if (openingPromise) throw new Error('Wait for output opening to finish before changing resolution.');
+    const resolutions = { ...state.resolutions, [side]: resolution };
+    let persisted = false;
+    try { if (storage?.setItem) { storage.setItem(RESOLUTIONS_STORAGE_KEY, JSON.stringify(resolutions)); persisted = true; } } catch { /* keep session setting */ }
+    return setState({ resolutions, error: '', message: `${side === 'left' ? 'Left' : 'Right'} ${resolution === '4k' ? '4K · 3840 × 2160' : '1080p · 1920 × 1080'} ${persisted ? 'saved on this workstation' : 'is session-only'}. Use Open to apply.` });
   }
   function pruneOwned() {
     for (const [span, win] of owned) {
@@ -288,9 +305,10 @@ export function createOutputWindowController({
   }
   function openOne(span, screen, assignment, currentGeneration, token) {
     if (typeof open !== "function") throw new Error("browser popup API unavailable");
-    const url = browserUrl(location, span, state.reverseModel); const name = `otef-projector-${span}-${id}-${currentGeneration}`; const win = open(url, name, buildWindowFeatures(features, screen));
+    const url = browserUrl(location, span, state.reverseModel, state.resolutions[span]); const name = `otef-projector-${span}-${id}-${currentGeneration}`; const win = open(url, name, buildWindowFeatures(features, screen));
     if (!win) throw new Error(`${span} projector popup was blocked; allow popups for this workstation`);
     owned.set(span, win);
+    launchUrls.set(span, url);
     const tracker = fullscreenTracker(span, win, assignment, token, currentGeneration);
     trackers.set(span, tracker);
     return { win, readiness: tracker.readiness };
@@ -356,6 +374,10 @@ export function createOutputWindowController({
   function openSide(span) {
     if (!OUTPUTS.includes(span)) return Promise.reject(new Error("unknown browser output side"));
     identifier.close();
+    if (owned.get(span) && launchUrls.get(span) !== browserUrl(location, span, state.reverseModel, state.resolutions[span])) {
+      try { assignedScreensFromCache(); } catch (error) { return Promise.reject(error); }
+      if (closeOwnedWindows(side => side === span).length) return Promise.reject(new Error('Existing browser output could not be closed; close it manually before reopening.'));
+    }
     const existing = owned.get(span);
     if (existing && !existing.closed) {
       pruneOwned();
@@ -405,7 +427,7 @@ export function createOutputWindowController({
     }
   }
   return {
-    refreshDisplays, identifyDisplays, assignDisplays, setReverseModel, openBoth, openSide, closeBoth,
+    refreshDisplays, identifyDisplays, assignDisplays, setReverseModel, setResolution, openBoth, openSide, closeBoth,
     dispose() {
       disposed = true;
       identifier.close();
@@ -414,7 +436,7 @@ export function createOutputWindowController({
       screenApi?.removeEventListener?.("pagehide", onPageHide);
       subscriptions.clear();
     },
-    getState: () => ({ ...state, screens: [...state.screens], assignments: { ...state.assignments }, ownedSpans: [...owned.keys()] }),
+    getState: () => ({ ...state, screens: [...state.screens], assignments: { ...state.assignments }, resolutions: { ...state.resolutions }, ownedSpans: [...owned.keys()] }),
     getOwnedWindows: () => { pruneOwned(); return new Map(owned); },
     subscribe(listener) { subscriptions.add(listener); listener(state); return () => subscriptions.delete(listener); },
   };

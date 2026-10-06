@@ -14,6 +14,33 @@ function canvasFactory() {
 const layout = { leftPct: 10, topPct: 20, widthPct: 30, heightPct: 10, fontPx: 24, rotateDeg: 12 };
 
 describe("projection overlay adapters", () => {
+  test('4K caption and pattern rasterization preserves their logical placement', () => {
+    const c = canvasFactory();
+    const caption = createProjectionCaptionAdapter({ canvasFactory: () => c, rasterScale: 2 });
+    caption.sync({ layout, snapshot: { visible: true, model: { clockLabel: '07:05' } } });
+    expect(caption.draw().matrix).toEqual(projectionOverlayMatrix(layout));
+    expect([c.width, c.height]).toEqual([1152, 216]);
+    expect(c.context.calls).toContainEqual(['scale', 2, 2]);
+    expect(c.context.font).toContain('24px');
+    expect(c.context.shadowBlur).toBe(16);
+    expect(c.context.shadowOffsetY).toBe(4);
+    const p = canvasFactory();
+    const pattern = createProjectionPatternAdapter({ spanId: 'left', canvasFactory: () => p, rasterScale: 2 });
+    pattern.sync({ pattern: 'grid', config: DEFAULT_PROJECTION_CONFIG }); pattern.draw();
+    expect([p.width, p.height]).toEqual([3840, 2160]);
+    expect(p.context.calls).toContainEqual(['scale', 3840, 2160]);
+  });
+
+  test('4K legend retains the 1080p layout and placement with twice the raster density', () => {
+    const snapshot = { layout: { ...layout, widthPct: 40, heightPct: 40 }, visible: true, spanId: 'left', blocks: [] };
+    const a = canvasFactory(), b = canvasFactory();
+    const lab = createProjectionLegendAdapter({ canvasFactory: () => a });
+    const exhibit = createProjectionLegendAdapter({ canvasFactory: () => b, rasterScale: 2 });
+    lab.sync(snapshot); exhibit.sync(snapshot);
+    expect(exhibit.draw().matrix).toEqual(lab.draw().matrix);
+    expect([b.width, b.height]).toEqual([a.width * 2, a.height * 2]);
+    expect(b.context.calls.some(call => call[0] === 'scale' && call[1] === 2 && call[2] === 2)).toBe(true);
+  });
   test("only left output emits a browser clock descriptor", () => {
     const descriptor = { source: {}, matrix: [] };
     const adapter = { draw: vi.fn(() => descriptor) };

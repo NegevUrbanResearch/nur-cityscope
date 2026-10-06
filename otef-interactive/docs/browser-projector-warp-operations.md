@@ -8,6 +8,12 @@ Use the workstation's `/otef-interactive/projection-config.html` page. Connected
 
 Display numbers follow desktop position and update when displays are connected or disconnected. Saved assignments retain their screen identity. If display access is denied, allow it in the browser's site settings and reload. If identification popups are blocked, allow popups for this site and press Identify displays again. The temporary number windows do not change calibration or switch TD/projector output on or off.
 
+In **Displays**, set **Left resolution** and **Right resolution** to **4K · 3840 × 2160** for NLI, or **1080p · 1920 × 1080** for the laboratory. New workstations default to 1080p. Each choice is saved in that browser profile on that workstation and takes effect on the next **Open**; changing it leaves running outputs alone. Windows must also send the intended resolution to each projector. Reversed outputs use the same selected rendering resolution.
+
+Calibration coordinates, saved warps, font sizes and editor previews remain in the existing 1920 × 1080 reference units at both resolutions. A 4K output paints maps, names and overlays at higher density without migrating presets. Source images and videos retain their original detail. If the GPU cannot allocate the selected resolution, the output reports an error; choose 1080p and reopen it.
+
+GIS automatically scales its logical layout on larger viewports and increases map raster density up to 2×. A fullscreen 1920 × 1080 lab display and 3840 × 2160 NLI display show the same scene framing and relative text size. At Windows 150% scaling, a 2560 × 1440 browser viewport also renders the GIS map at 3840 × 2160. Smaller windows keep their responsive layout. Different aspect ratios can show additional geography on one axis. No narrative zoom values change.
+
 For browser output:
 
 1. Turn off TD's existing `projectorWindows` control.

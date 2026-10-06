@@ -63,9 +63,18 @@ export function createConfigCommandBar({ document: doc, onAction = () => {}, onO
   controls.outputStatus = make(doc, 'span', { className: 'output-launch-status' });
   displayActions.appendChild(controls.outputStatus);
   const orientationLabel = make(doc, 'label', { className: 'output-reverse-toggle' });
+  const resolutions = make(doc, 'div', { className: 'config-display-actions' });
+  for (const side of ['left', 'right']) {
+    const title = side === 'left' ? 'Left' : 'Right';
+    const select = controls[`output${title}Resolution`] = make(doc, 'select', { ariaLabel: `${title} output resolution` });
+    select.append(make(doc, 'option', { value: '1080p' }, '1080p · 1920 × 1080'), make(doc, 'option', { value: '4k' }, '4K · 3840 × 2160'));
+    const label = make(doc, 'label', { className: 'output-display-label' }, `${title} resolution`);
+    label.append(select); resolutions.append(label);
+    listen(select, 'change', () => onOutputAction('resolution', { side, resolution: select.value }));
+  }
   controls.outputReverseModel = make(doc, 'input', { type: 'checkbox', ariaLabel: 'Reverse model 180°', dataset: { action: 'output-reverse-model' } });
   orientationLabel.append(controls.outputReverseModel, make(doc, 'span', {}, 'Reverse model 180°'));
-  displays.append(displayHeading, displayActions, orientationLabel, make(doc, 'small', { className: 'output-orientation-help' }, 'Swap the halves and rotate both complete images 180°. Saved on this workstation; applies on the next Open.'));
+  displays.append(displayHeading, displayActions, resolutions, make(doc, 'small', {}, 'Resolution is saved on this workstation and applies on the next Open. Calibration stays the same.'), orientationLabel, make(doc, 'small', { className: 'output-orientation-help' }, 'Swap the halves and rotate both complete images 180°. Saved on this workstation; applies on the next Open.'));
   controls.displaysDisclosure.append(controls.displaysSummary, displays);
   controls.tools = make(doc, 'details', { className: 'config-menu config-tools', dataset: { menu: 'tools' } });
   controls.toolsSummary = make(doc, 'summary', {}, 'Tools');
@@ -206,6 +215,10 @@ export function createConfigCommandBar({ document: doc, onAction = () => {}, onO
     const screens = Array.isArray(outputState.screens) ? [...outputState.screens].sort((a, b) => a.displayNumber - b.displayNumber) : [];
     const assignments = outputState.assignments || {};
     const unsupported = outputState.supported === false;
+    for (const side of ['left', 'right']) {
+      const select = controls[`output${side === 'left' ? 'Left' : 'Right'}Resolution`];
+      select.value = outputState.resolutions?.[side] || '1080p'; select.disabled = unsupported;
+    }
     controls.outputReverseModel.checked = Boolean(outputState.reverseModel);
     controls.outputReverseModel.disabled = unsupported;
     controls.outputIdentify.disabled = unsupported || screens.length === 0;

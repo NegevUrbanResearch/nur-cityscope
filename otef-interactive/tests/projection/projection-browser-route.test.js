@@ -41,6 +41,22 @@ test("selects browser mode only for the explicit outputMode query", () => {
   expect(resolveProjectionOutputMode("?span=left&outputMode=browser")).toBe("browser");
 });
 
+test('explicit 4K browser output uses a 4K canvas with the canonical identity mesh', async () => {
+  const doc = { createElement() { return { style: {}, dataset: {}, setAttribute() {}, addEventListener() {}, removeEventListener() {}, remove() {} }; } };
+  const rendererFactory = vi.fn(() => ({ draw() {}, isContextLost: () => false, dispose() {} }));
+  const surface = await createProjectionBrowserSurface({
+    host: { ownerDocument: doc, appendChild() {} }, spanId: 'left',
+    image: { complete: true, naturalWidth: 10, style: {} },
+    initialConfig: structuredClone(DEFAULT_PROJECTION_CONFIG),
+    fetchImpl: async () => ({ ok: false }), rendererFactory,
+    search: '?outputMode=browser&outputResolution=4k',
+  });
+  const options = rendererFactory.mock.calls[0][0];
+  expect([options.canvas.width, options.canvas.height]).toEqual([3840, 2160]);
+  expect([options.mesh.width, options.mesh.height]).toEqual([1920, 1080]);
+  surface.dispose();
+});
+
 test('production output ignores the seam-proof query', async () => {
   vi.stubEnv('DEV', false);
   const oldDocument = globalThis.document;

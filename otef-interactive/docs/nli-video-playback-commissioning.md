@@ -11,6 +11,8 @@ This check is for the technician after moving the exhibit PC or changing display
 5. Confirm the existing Chrome autoplay/popup policy status using the setup procedure in [NLI exhibit verification](nli-exhibit-verification.md). Moving this same PC does not itself require reinstalling those policies.
 6. After a technician reloads/restarts GIS, refresh the staff remote too before beginning a presentation. Its current in-memory presentation session can still refer to the previous GIS instance. Avoid restarting GIS during a presentation or Home transition.
 
+For NLI's 4K projectors, select **4K · 3840 × 2160** for both outputs in calibration's **Displays** menu before opening them. Use **1080p · 1920 × 1080** on laboratory workstations. Confirm Windows' active signal resolution, both fullscreen outputs, scene framing and text readability, and repeat all six video checks with GIS and both outputs running together. Retain 1080p as the fallback if 4K performance is insufficient. See [browser projector operation](browser-projector-warp-operations.md) for resolution selection and unchanged calibration units.
+
 The playback signal is local to the Chrome origin/profile. It does not depend on external internet, projector names, resolution, a particular GPU, or a particular left/right assignment. It cannot cross separate Chrome profiles or origins.
 
 ## What should happen
