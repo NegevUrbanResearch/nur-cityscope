@@ -53,6 +53,11 @@ export function validateNliPresentationManifest(value) {
     ) {
       throw new TypeError("presentation video rectangle must contain four numbers");
     }
+    for (const field of ["credit", "photographer"]) {
+      if (video[field] !== undefined && (typeof video[field] !== "string" || !video[field].trim())) {
+        throw new TypeError(`presentation video ${field} must be a nonempty string`);
+      }
+    }
     return { ...video, rect: [...video.rect] };
   });
   if (!Array.isArray(value.segments)) throw new TypeError("presentation segments must be an array");

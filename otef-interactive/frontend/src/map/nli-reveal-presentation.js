@@ -13,6 +13,7 @@ const REVEAL_OPTIONS = Object.freeze({
   width: 960,
   height: 540,
   margin: 0,
+  maxScale: 4,
 });
 
 const IMAGE_READY_MS = 1500;
@@ -24,10 +25,15 @@ function mediaUrl(path) {
   return `/otef-interactive/public/${path}`;
 }
 
+function imageAssetPath(manifest, path) {
+  const version = manifest.deck.assetVersion ?? manifest.deck.pdfSha256;
+  return version ? `${path}?v=${encodeURIComponent(version)}` : path;
+}
+
 function slideImagePath(manifest, slide) {
   const path = manifest.deck.slidePaths?.[slide - 1] ??
     manifest.deck.slidePathPattern.replace("{slide}", String(slide).padStart(2, "0"));
-  return manifest.deck.pdfSha256 ? `${path}?v=${encodeURIComponent(manifest.deck.pdfSha256)}` : path;
+  return imageAssetPath(manifest, path);
 }
 
 function stopVideo(video) {
@@ -333,6 +339,7 @@ export function createNliRevealPresentation(container, {
     overlay.style.opacity = "0";
     if (segment.kind === "blackout") {
       overlay.classList.add("nli-reveal-overlay--blackout");
+      overlay.style.backgroundImage = `url("${mediaUrl(imageAssetPath(manifest, "local/presentations/nli/supplements/slide-background.png"))}")`;
       const copy = element("div", "nli-blackout-copy");
       const title = element("p", "nli-blackout-title");
       title.lang = "he";
@@ -367,6 +374,20 @@ export function createNliRevealPresentation(container, {
           title.dir = "rtl";
           title.textContent = videoSpec.title;
           frame.append(title);
+        }
+        if (videoSpec.credit) {
+          const credit = element("p", "nli-presentation-credit");
+          credit.lang = "he";
+          credit.dir = "rtl";
+          const source = element("strong");
+          source.textContent = videoSpec.credit;
+          credit.append(source);
+          if (videoSpec.photographer) {
+            const photographer = element("span");
+            photographer.textContent = `צילם ${videoSpec.photographer}`;
+            credit.append(photographer);
+          }
+          frame.append(credit);
         }
         const video = element("video");
         video.src = mediaUrl(videoSpec.path);

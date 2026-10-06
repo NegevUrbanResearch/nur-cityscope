@@ -5,6 +5,7 @@ import { validateNliPresentationManifest } from "../../frontend/src/shared/nli-p
 import { createNliRevealPresentation } from "../../frontend/src/map/nli-reveal-presentation.js";
 
 const manifest = validateNliPresentationManifest(rawManifest);
+const assetVersion = manifest.deck.assetVersion ?? manifest.deck.pdfSha256;
 const videoFirstManifest = {
   ...manifest,
   segments: [
@@ -59,7 +60,7 @@ function command(presentationAction, overrides = {}) {
   };
 }
 
-function makeHarness() {
+function makeHarness(overrideManifest = manifest) {
   const results = [];
   const correlation = {
     segmentId: "segev",
@@ -67,7 +68,7 @@ function makeHarness() {
     presentationGeneration: 10,
   };
   const viewer = createNliRevealPresentation(root, {
-    manifest,
+    manifest: overrideManifest,
     RevealClass: FakeReveal,
     emitResult: (value) => results.push(value),
   });
@@ -107,11 +108,35 @@ beforeEach(() => {
 });
 
 describe("GIS Reveal presentation", () => {
+  test("uses the rendered asset version so a 4K upgrade bypasses cached slides", async () => {
+    const h = makeHarness({ ...manifest, deck: { ...manifest.deck, assetVersion: "4k-photo-release" } });
+    await h.send("open");
+    expect(root.querySelector("section.present img").getAttribute("src"))
+      .toBe("/otef-interactive/public/local/presentations/nli/slides/slide-01.png?v=4k-photo-release");
+  });
+
+  test("legacy manifests still version slide images by their approved PDF", async () => {
+    const deck = { ...manifest.deck };
+    delete deck.assetVersion;
+    const h = makeHarness({ ...manifest, deck });
+    await h.send("open");
+    expect(root.querySelector("section.present img").getAttribute("src"))
+      .toBe(`/otef-interactive/public/local/presentations/nli/slides/slide-01.png?v=${deck.pdfSha256}`);
+  });
+
+  test("names wall uses the same versioned high-resolution background as added slides", async () => {
+    const h = makeHarness({ ...manifest, deck: { ...manifest.deck, assetVersion: "4k-photo-release" } });
+    await h.send("open", { segmentId: "names_wall" });
+    expect(root.querySelector(".nli-reveal-overlay--blackout").style.backgroundImage)
+      .toContain("/otef-interactive/public/local/presentations/nli/supplements/slide-background.png?v=4k-photo-release");
+    expect(root.textContent).toContain("מאגר הזהויות");
+  });
+
   test.each([
-    ["segev", 8, "gelem-first-9s-fade.mp4", "תיעוד תלת־ממדי של בארי"],
-    ["nova_memorial", 0, "nova-first-12s-fade.mp4", "תיעוד תלת־ממדי של הנובה, 10 באוקטובר 2023"],
-    ["shura", 7, "reim-first-10s-fade.mp4", "המיגונית ברעים"],
-  ])("%s includes its added video at the requested position with NLI styling and active autoplay", async (segmentId, index, filename, title) => {
+    ["segev", 8, "gelem-first-9s-fade.mp4", "תיעוד תלת־ממדי של בארי, 17 באוקטובר 2023", "צילם ברק ברינקר"],
+    ["nova_memorial", 0, "nova-first-12s-fade.mp4", "תיעוד תלת־ממדי של הנובה, 10 באוקטובר 2023", null],
+    ["shura", 7, "reim-first-10s-fade.mp4", "המיגונית ברעים, 1 בפברואר 2024", "צילם יוסי סודרי"],
+  ])("%s includes its credited added video at the requested position with NLI styling and active autoplay", async (segmentId, index, filename, title, photographer) => {
     const h = makeHarness();
     await h.send("open", { segmentId });
     for (let step = 0; step < index; step += 1) await h.send("next");
@@ -119,8 +144,13 @@ describe("GIS Reveal presentation", () => {
     const video = section.querySelector("video");
     expect(video?.getAttribute("src")).toBe(`/otef-interactive/public/local/presentations/nli/supplements/${filename}`);
     expect(section.querySelector("img").getAttribute("src"))
-      .toBe(`/otef-interactive/public/local/presentations/nli/supplements/slide-background.png?v=${manifest.deck.pdfSha256}`);
+      .toBe(`/otef-interactive/public/local/presentations/nli/supplements/slide-background.png?v=${assetVersion}`);
     expect(section.querySelector(".nli-presentation-title")?.textContent).toBe(title);
+    const credit = section.querySelector(".nli-presentation-credit");
+    expect(credit?.getAttribute("lang")).toBe("he");
+    expect(credit?.getAttribute("dir")).toBe("rtl");
+    expect(credit?.querySelector("strong")?.textContent).toBe("רשות העתיקות");
+    expect(credit?.querySelector("span")?.textContent ?? null).toBe(photographer);
     expect(video.muted).toBe(false);
     expect(video.controls).toBe(false);
     expect(video.playsInline).toBe(true);
@@ -141,8 +171,9 @@ describe("GIS Reveal presentation", () => {
     expect(nova).not.toBeNull();
     await h.send("next");
     expect(root.querySelector("section.present img").getAttribute("src"))
-      .toBe(`/otef-interactive/public/local/presentations/nli/slides/slide-12.png?v=${manifest.deck.pdfSha256}`);
+      .toBe(`/otef-interactive/public/local/presentations/nli/slides/slide-12.png?v=${assetVersion}`);
     expect(root.querySelector("section.present video")).toBeNull();
+    expect(root.querySelector("section.present .nli-presentation-credit")).toBeNull();
     expect(nova.currentTime).toBe(0);
     await h.send("previous");
     expect(root.querySelector("section.present video")).toBe(nova);
@@ -155,7 +186,7 @@ describe("GIS Reveal presentation", () => {
     expect(h.lastResult()).toMatchObject({ outcome: "opened", slide: 37, range: [37, 37] });
     expect(h.reveal.slideNumbers()).toEqual([37]);
     expect(root.querySelector("section.present img").getAttribute("src"))
-      .toBe(`/otef-interactive/public/local/presentations/nli/slides/slide-34.png?v=${manifest.deck.pdfSha256}`);
+      .toBe(`/otef-interactive/public/local/presentations/nli/slides/slide-34.png?v=${assetVersion}`);
     await h.send("previous");
     await h.send("next");
     expect(h.lastResult()).toMatchObject({ outcome: "ready", slide: 37 });
@@ -198,10 +229,11 @@ describe("GIS Reveal presentation", () => {
     expect(h.lastResult().outcome).toBe("ignored");
   });
 
-  test("disables Reveal navigation and presentation transitions", async () => {
+  test("supports full 4K scaling and disables Reveal navigation and presentation transitions", async () => {
     const h = makeHarness();
     await h.send("open", { segmentId: "segev" });
     expect(h.reveal.options).toMatchObject({
+      maxScale: 4,
       embedded: true, controls: false, progress: false, keyboard: false,
       touch: false, hash: false, transition: "none", backgroundTransition: "none",
       width: 960, height: 540, margin: 0,
