@@ -296,11 +296,13 @@ export function createProjectionSettlementGlow({ map, loadSettlements, motionMod
     }
   }
 
-  async function setFocus({ outlineObjectId, locationName, suppressed, narrativeId = null } = {}) {
+  async function setFocus({ outlineObjectId, locationName, suppressed, narrativeId = null, isCurrent = () => true } = {}) {
+    if (!isCurrent()) return;
     const narrativeChanged = currentNarrativeId !== narrativeId;
     currentNarrativeId = narrativeId;
     ensureLayers(map);
     const settlements = await settlementsPromise;
+    if (!isCurrent()) return;
     const feature = suppressed
       ? null
       : resolveSettlementGlowFeature(settlements, { outlineObjectId, locationName });

@@ -2,9 +2,10 @@ import { fitWarpViewport } from "./warp-viewport.js";
 import { createProjectionPreviewFrame } from "./projection-preview-frame.js";
 import { createProjectionTraceUi } from './projection-trace-ui.js';
 import { recordProjectionTrace } from './projection-trace-input.js';
+import { createCalibrationViewController } from './calibration-view-controller.js';
 
 /** Owns one disposable projection frame. The config controller retains all draft and edit state. */
-export function createWarpEditorDialog({ document: doc, host, editorPanel, overlay, topologyControls, navigationControls, reconciliationControls = null, optionalHealthElement = null, presentation = "dialog", onVisibilityChange = () => {}, onPresentationChange = () => {}, onIsAdjusting = () => false, onEscape = () => false, onBeforeClose = () => {}, onBeforeSwitch = () => {}, onBeforeResize = () => {}, onViewportChange = () => {}, onOrientationChange = () => {}, onApply = () => {}, onLive = () => {}, trace }) {
+export function createWarpEditorDialog({ document: doc, host, editorPanel, overlay, topologyControls, navigationControls, reconciliationControls = null, optionalHealthElement = null, presentation = "dialog", onVisibilityChange = () => {}, onPresentationChange = () => {}, onIsAdjusting = () => false, onEscape = () => false, onBeforeClose = () => {}, onBeforeSwitch = () => {}, onBeforeResize = () => {}, onViewportChange = () => {}, onOrientationChange = () => {}, onApply = () => {}, onLive = () => {}, socket, calibrationControllerFactory = createCalibrationViewController, trace }) {
   const win = doc.defaultView;
   const home = editorPanel.parentElement;
   const overlayHome = overlay.parentElement;
@@ -42,6 +43,14 @@ export function createWarpEditorDialog({ document: doc, host, editorPanel, overl
   const retry = doc.createElement("button"); retry.type = "button"; retry.dataset.action = "warp-editor-retry"; retry.textContent = "Retry"; retry.hidden = true;
   if (optionalHealthElement) footer.appendChild(optionalHealthElement);
   footer.append(liveLabel, applyButton, applied, retry);
+  const blackoutLabel = doc.createElement('label'); blackoutLabel.className = 'calibration-blackout-toggle';
+  const blackoutInput = doc.createElement('input'); blackoutInput.type = 'checkbox'; blackoutInput.setAttribute('aria-label', 'Black out other projector');
+  blackoutLabel.append(blackoutInput, doc.createTextNode('Black out other projector'));
+  const calibrationStatus = doc.createElement('span'); calibrationStatus.className = 'calibration-view-status'; calibrationStatus.setAttribute('role', 'status');
+  const calibrationNote = doc.createElement('p'); calibrationNote.className = 'calibration-view-note';
+  calibrationNote.textContent = 'Temporary landmarks only. Assisted capture requires an idle narrative and a stopped slideshow; the names wall is hidden locally.';
+  const calibrationTools = doc.createElement('div'); calibrationTools.className = 'calibration-view-tools';
+  calibrationTools.append(blackoutLabel, calibrationStatus, calibrationNote); controlsColumn.prepend(calibrationTools);
   const traceUi = trace?.enabled ? createProjectionTraceUi({ document: doc, trace }) : null;
   if (traceUi) footer.appendChild(traceUi.element);
   modal.append(header, body, footer); host.appendChild(modal);
@@ -84,6 +93,12 @@ export function createWarpEditorDialog({ document: doc, host, editorPanel, overl
   let viewBox = { x: -72, y: -72, width: 2064, height: 1224 };
   const setMessage = (message) => { status.textContent = message; };
   const preview = createProjectionPreviewFrame({ document: doc, host: viewport, trace, onStatus: (message, canRetry) => { setMessage(message); retry.hidden = !canRetry; } });
+  const calibration = calibrationControllerFactory({ socket, preview, onState: state => {
+    const scene = state.phase === 'active' ? 'Landmarks ready' : state.phase === 'starting' ? 'Preparing landmarks…' : state.phase === 'closed' ? '' : 'Landmarks unavailable';
+    const cover = state.blackout === 'active' ? 'Other projector blacked out' : state.blackout === 'pending' ? 'Blackout pending…' : state.blackout === 'failed' ? 'Blackout failed' : '';
+    calibrationStatus.textContent = [scene, cover, state.missingIds?.length ? `Missing: ${state.missingIds.join(', ')}` : '', state.error].filter(Boolean).join(' · ');
+  } });
+  blackoutInput.addEventListener('change', () => calibration.setBlackout(blackoutInput.checked));
   const fit = () => {
     if (!session || !viewport.clientWidth || !viewport.clientHeight) return;
     const mapping = fitWarpViewport(viewBox, viewport.clientWidth, viewport.clientHeight);
@@ -191,6 +206,7 @@ export function createWarpEditorDialog({ document: doc, host, editorPanel, overl
       onPresentationChange(false);
       refreshViewportGeometry();
     }
+    calibration.close();
     detachListeners(); clearFrame();
     overlay.classList?.remove?.("warp-preview-overlay");
     overlay.removeAttribute?.("tabindex");
@@ -215,7 +231,7 @@ export function createWarpEditorDialog({ document: doc, host, editorPanel, overl
       modal.dataset.mode = mode; title.textContent = `${side === "left" ? "Left" : "Right"} · ${mode === "grid" ? "Grid Warp" : "Keystone"}`;
       return;
     }
-    if (!modal.hidden) { if (onBeforeSwitch() === false) return false; clearFrame(); }
+    if (!modal.hidden) { if (onBeforeSwitch() === false) return false; calibration.switchOutput(side); clearFrame(); }
     else {
       focusEpoch += 1; closedFocus = null;
       opener = activatingElement || doc.activeElement;
@@ -240,6 +256,8 @@ export function createWarpEditorDialog({ document: doc, host, editorPanel, overl
     overlay.setAttribute("tabindex", "0");
     makeFrame(side);
     if (openingNewSession) {
+      blackoutInput.checked = false;
+      void calibration.enter({ output: side });
       modal.dataset.fullViewport = "false";
       const coarsePointer = Boolean(win?.matchMedia?.("(pointer: coarse)")?.matches);
       setFullViewport(isPanel && (Number(win?.innerWidth) <= 1100 || coarsePointer));
@@ -270,6 +288,8 @@ export function createWarpEditorDialog({ document: doc, host, editorPanel, overl
     },
     updateAdjustmentGuard() { fullViewportButton.disabled = Boolean(onIsAdjusting()); },
     sendRunNamesPreview(config) { return preview.sendRunNamesPreview(config); },
+    getCalibrationState() { return calibration.getState?.(); },
+    getPreviewCalibrationState() { return preview.getCalibrationState(); },
     setViewBox(next) { if (!next) return; viewBox = { ...next }; fit(); },
     close,
     dispose() {
@@ -277,6 +297,7 @@ export function createWarpEditorDialog({ document: doc, host, editorPanel, overl
       close(true); disposed = true;
       detachListeners();
       preview.dispose();
+      calibration.dispose();
       traceUi?.dispose();
       modal.remove();
     },

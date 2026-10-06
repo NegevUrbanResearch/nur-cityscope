@@ -66,6 +66,7 @@ function warpViewport(points = []) {
 function warpViewBoxValue(viewBox) { return `${viewBox.x} ${viewBox.y} ${viewBox.width} ${viewBox.height}`; }
 
 export function createProjectionConfigView(root, {
+  socket,
   descriptors = [],
   onAction = () => {},
   onRunNames = () => {},
@@ -649,7 +650,7 @@ export function createProjectionConfigView(root, {
   app.appendChild(controls.editorHome);
   app.appendChild(workspace);
   root.appendChild(app);
-  const dialog = createWarpEditorDialog({ document: doc, host: editorRegion, editorPanel: controls.warpPanel, overlay: controls.warpSurface, topologyControls: controls.gridLayout.element, navigationControls, optionalHealthElement: optionalHealthPanel, presentation: "panel", trace,
+  const dialog = createWarpEditorDialog({ document: doc, host: editorRegion, editorPanel: controls.warpPanel, overlay: controls.warpSurface, topologyControls: controls.gridLayout.element, navigationControls, optionalHealthElement: optionalHealthPanel, presentation: "panel", trace, socket,
     onVisibilityChange: (visible) => { workspace.dataset.editing = String(visible); if (!visible) editorRegion.appendChild(optionalHealthPanel); onWarpEditorVisibility(visible); },
     onPresentationChange: (focused) => {
       root.dataset.warpFullViewport = String(focused);
@@ -717,7 +718,12 @@ export function createProjectionConfigView(root, {
   const setNode = (node) => {
     const selected = node || "pre";
     const previous = selectedGraphNode;
-    if (dialog.isOpen() && previous !== selected && dialog.close() === false) return false;
+    if (dialog.isOpen() && previous !== selected) {
+      const warpNode = selected.endsWith('-keystone') || selected.endsWith('-grid');
+      if (warpNode) {
+        if (dialog.open({ side: selected.startsWith('right-') ? 'right' : 'left', mode: selected.endsWith('-grid') ? 'grid' : 'keystone' }) === false) return false;
+      } else if (dialog.close() === false) return false;
+    }
     selectedGraphNode = selected;
     workspace.dataset.selectedNode = selected;
     editorNodeHeading.textContent = graphNodes.find(([id]) => id === selected)?.[1] || "Selected node";
@@ -1089,6 +1095,8 @@ export function createProjectionConfigView(root, {
     cancelNumericEdits: options => { for (const control of [...fields.values(), ...controls.warpCoordinateFields.values()]) control.cancel(options); parameterDialog.cancel(options); controls.gridLayout.cancel(); },
     closeWarpEditor: dialog.close,
     sendRunNamesPreview: (config) => dialog.sendRunNamesPreview(config),
+    getCalibrationState: () => dialog.getCalibrationState(),
+    getPreviewCalibrationState: () => dialog.getPreviewCalibrationState(),
     dispose() { if (disposed) return; disposed = true; cancelPendingWarpPaint(); for (const control of fields.values()) control.dispose(); warpPanelView.dispose(); settlementControls.dispose(); disposePageTrace(); disposeWarpTrace(); disposeGraphTrace(); traceUi?.dispose(); commandBar.dispose(); doc.removeEventListener?.("keydown", onKeyDown); parameterDialog.dispose(); dialog.dispose(); pointerInput.dispose(); canvas.dispose(); },
   };
 }

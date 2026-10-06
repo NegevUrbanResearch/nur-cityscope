@@ -29,6 +29,12 @@ const settlements = {
   type: "FeatureCollection",
   features: [poly(19, ["בארי", "Be'eri"]), poly(43, ["נובה", "Nova"])],
 };
+test('a superseded normal focus cannot repaint after delayed settlement preparation',async()=>{
+  const {createFakeMapLibreMap}=await import('../helpers/fake-maplibre-map.js');const map=createFakeMapLibreMap();let resolve,current=true;
+  const glow=createProjectionSettlementGlow({map,loadSettlements:()=>new Promise(done=>resolve=done),motionMode:'reduced'});
+  const operation=glow.setFocus({outlineObjectId:19,isCurrent:()=>current});await Promise.resolve();current=false;resolve(settlements);await operation;
+  expect(map.getPaintProperty(PROJECTION_SETTLEMENT_GLOW_AURA_LAYER_ID,'circle-opacity')).toBe(0);glow.dispose();
+});
 
 const GLOW_IDS = [
   PROJECTION_SETTLEMENT_GLOW_SOURCE_ID,

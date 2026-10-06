@@ -34,6 +34,12 @@ function defer() {
 }
 
 describe("projection live curated refresh", () => {
+  test('local scene ownership can reopen the async gate without discarding mounted source lifecycle bindings',async()=>{
+    const map=createFakeMapLibreMap();const runtime=getLayerLifecycleRuntime(map);
+    const refresh=createProjectionCuratedRefresh({map,displayGate:createCuratedDisplayGate(),nameFieldController:{sync(){}}});
+    await refresh.applyProjectionRefresh({groupsOverride:[],reopenGate:true,keepLiveRuntime:true});
+    expect(getLayerLifecycleRuntime(map)).toBe(runtime);expect(runtime.isDisposed()).toBe(false);runtime.dispose();
+  });
   test("guards the live layerGroups path without queueing registry application or moving the camera", () => {
     const source = readProjectionEntry();
     const subscriber = source.slice(

@@ -200,6 +200,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     right: createWarpEditor({ config: state.draft || DEFAULT_PROJECTION_CONFIG, output: "right", trace, onChange: (candidate, meta) => handleWarpChange("right", candidate, meta) }),
   };
   const view = createProjectionConfigView(root, {
+    socket,
     trace,
     descriptors: ALL_FIELD_DESCRIPTORS,
     onField: handleField,

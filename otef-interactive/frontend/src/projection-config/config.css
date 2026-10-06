@@ -701,3 +701,6 @@ h2, h3 { margin: 0 0 10px; }
   .warp-editor-dialog[data-presentation="panel"][data-full-viewport="true"] .warp-editor-viewport { grid-column: 1; grid-row: 1; align-self: stretch; width: 100%; height: auto; min-height: 0; max-height: none; aspect-ratio: auto; }
   .warp-editor-dialog[data-presentation="panel"][data-full-viewport="true"] .warp-editor-controls-column { grid-column: 2; grid-row: 1; overflow-x: hidden; overflow-y: auto; }
 }
+ .calibration-blackout-toggle { display: inline-flex; align-items: center; gap: 0.4rem; }
+ .calibration-view-status { font-size: 0.85rem; overflow-wrap: anywhere; }
+ .calibration-view-note { flex-basis: 100%; margin: 0; font-size: 0.8rem; color: var(--muted, #adb5c3); }

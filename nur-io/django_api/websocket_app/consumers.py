@@ -153,10 +153,43 @@ def _valid_projection_match(data):
     return dict(data)
 
 
+def _valid_projection_calibration(data):
+    common = {'type', 'table', 'output', 'instanceId', 'sourceId', 'sessionId', 'sequence'}
+    command = data['type'] == 'otef_projection_calibration_view'
+    extra = {'mode', 'blackout'} if command else {'displaySide', 'reversed', 'sceneIdentity', 'ready', 'missingIds', 'blackout', 'success', 'error'}
+    if set(data) != common | extra or not isinstance(data['output'], str) or data['output'] not in _PROJECTION_OUTPUTS:
+        return None
+    if not all(_valid_uuid(data[key]) for key in ('instanceId', 'sourceId', 'sessionId')) or type(data['sequence']) is not int or not 0 <= data['sequence'] <= 9007199254740991:
+        return None
+    if type(data['blackout']) is not bool:
+        return None
+    if command:
+        if data['mode'] not in ('landmarks', 'off') or (data['mode'] == 'off' and data['blackout']):
+            return None
+    else:
+        if not isinstance(data['displaySide'], str) or data['displaySide'] not in _PROJECTION_OUTPUTS or any(type(data[key]) is not bool for key in ('reversed', 'ready', 'success')):
+            return None
+        identity = data['sceneIdentity']
+        if identity is not None and (not isinstance(identity, str) or not 0 < len(identity) <= 4096):
+            return None
+        if not data['ready'] and identity is not None:
+            return None
+        missing = data['missingIds']
+        if not isinstance(missing, list) or len(missing) > 7 or any(not isinstance(value, str) or len(value) > 128 for value in missing):
+            return None
+        if data['ready'] and identity is None and (data['blackout'] or missing):
+            return None
+        if (data['success'] and data['error'] is not None) or (not data['success'] and (not isinstance(data['error'], str) or len(data['error']) > 240)):
+            return None
+    return dict(data)
+
+
 def _valid_projection_transient(data):
     if not isinstance(data, dict) or data.get("table") != "otef":
         return None
     message_type = data.get("type")
+    if message_type in ('otef_projection_calibration_view', 'otef_projection_calibration_view_ack'):
+        return _valid_projection_calibration(data)
     if message_type in ('otef_projection_match_cursor', 'otef_projection_match_ack'):
         return _valid_projection_match(data)
     if message_type == "otef_projection_pattern":
@@ -345,6 +378,8 @@ class GeneralConsumer(AsyncWebsocketConsumer):
             'otef_projection_names_status',
             'otef_projection_match_cursor',
             'otef_projection_match_ack',
+            'otef_projection_calibration_view',
+            'otef_projection_calibration_view_ack',
         }:
             # These are intentionally ephemeral. Validate at the socket boundary,
             # relay in memory, and never involve the calibration or viewport rows.

@@ -5,6 +5,15 @@ import { resolveProjectionSceneLayers } from "../../frontend/src/projection/proj
 
 const catalog = { entries: [{ citycode: "0067", text: "נירים", lng: 34.4, lat: 31.3 }, { citycode: "0424", text: "מחוץ", lng: 34.2, lat: 31.2 }] };
 
+test('local calibration waits for prepared labels and overrides opacity without changing settings', async () => {
+  const doc=fakeCanvasDocument();const adapter=createProjectionSettlementNameAdapter({document:doc,output:'left'});
+  const data=contextFor(settingsFixture()); const before=structuredClone(data.state.settings); let active=true;
+  const map={getLayer:()=>true,getPaintProperty:()=>0};
+  const runtime=bindProjectionSettlementNames({dataContext:data,adapter,catalog,map,getCalibrationActive:()=>active,getGroups:()=>data.state.groups});
+  await runtime.whenReady(); expect(runtime.getReadiness().ready).toBe(true); expect(adapter.descriptor().opacity).toBe(1);
+  active=false;runtime.refreshVisibility();expect(doc.paints.at(-1).globalAlpha).toBe(0);expect(data.state.settings).toEqual(before);runtime();
+});
+
 test('startup does not query opacity before the settlement map layer exists', async () => {
   const adapter = createProjectionSettlementNameAdapter({ document: fakeCanvasDocument(), output: 'right' });
   const data = contextFor(settingsFixture());

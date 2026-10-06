@@ -23,6 +23,26 @@ def ack_fixture(**overrides):
 
 
 class ProjectionTransientRelayTests(IsolatedAsyncioTestCase):
+    async def test_calibration_exact_protocol_relay(self):
+        consumer = GeneralConsumer()
+        consumer.room_group_name = 'otef_channel'
+        consumer.channel_layer = type('Layer', (), {'group_send': AsyncMock()})()
+        common = {key: cursor_fixture()[key] for key in ('table', 'output', 'instanceId', 'sourceId', 'sessionId', 'sequence')}
+        command = {**common, 'type': 'otef_projection_calibration_view', 'mode': 'landmarks', 'blackout': True}
+        ack = {**common, 'type': 'otef_projection_calibration_view_ack', 'displaySide': 'right', 'reversed': True,
+               'sceneIdentity': None, 'ready': False, 'missingIds': [], 'blackout': True, 'success': True, 'error': None}
+        for message in (command, ack, {**command, 'mode': 'off', 'blackout': False}):
+            await consumer.handle_otef_message(message)
+        self.assertEqual(consumer.channel_layer.group_send.await_count, 3)
+        consumer.channel_layer.group_send.reset_mock()
+        for base in (command, ack):
+            for changes in ({'extra': True}, {'sequence': True}, {'sequence': -1}, {'instanceId': 'invalid'}, {'blackout': 1}, {'output': []}):
+                await consumer.handle_otef_message({**base, **changes})
+        for changes in ({'sceneIdentity': 'x' * 4097}, {'sceneIdentity': 'premature'}, {'missingIds': ['x'] * 8}, {'missingIds': [True]}, {'ready': True}, {'error': 'bad'}):
+            await consumer.handle_otef_message({**ack, **changes})
+        await consumer.handle_otef_message({**command, 'mode': 'off'})
+        consumer.channel_layer.group_send.assert_not_awaited()
+
     async def test_match_cursor_and_ack_relay_without_persistence(self):
         consumer = GeneralConsumer()
         consumer.room_group_name = 'otef_channel'

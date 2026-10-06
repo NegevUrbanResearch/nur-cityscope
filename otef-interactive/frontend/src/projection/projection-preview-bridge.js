@@ -124,7 +124,7 @@ function boundedWallDiagnostics(value) {
     ...(typeof value.reason === "string" ? { reason: value.reason.slice(0, 240) } : {}) };
 }
 
-export function installProjectionPreviewBridge({ win, output, map, nameFieldController, syncContextInvestigation, applyProjectionConfig, validateWall }) {
+export function installProjectionPreviewBridge({ win, output, map, nameFieldController, syncContextInvestigation, applyProjectionConfig, validateWall, setCalibrationView }) {
   if (!win?.parent || win.parent === win || !["left", "right"].includes(output)) return () => {};
   const origin = win.location.origin;
   const reply = (message) => win.parent.postMessage({ ...message, output }, origin);
@@ -135,9 +135,22 @@ export function installProjectionPreviewBridge({ win, output, map, nameFieldCont
   let namesGeneration = 0;
   let namesAbort = null;
   let lastConfigRequestId = 0;
+  let calibrationRequestId = 0, calibrationAbort = null, disposed = false;
   const onMessage = (event) => {
     const message = event.data;
-    if (event.source !== win.parent || event.origin !== origin || !['otef_projection_preview_config', 'otef_projection_preview_validate'].includes(message?.type) || message.output !== output || !Number.isSafeInteger(message.requestId)) return;
+    if (disposed || event.source !== win.parent || event.origin !== origin || !['otef_projection_preview_config', 'otef_projection_preview_validate', 'otef_projection_preview_calibration'].includes(message?.type) || message.output !== output || !Number.isSafeInteger(message.requestId)) return;
+    if (message.type === 'otef_projection_preview_calibration') {
+      if (message.requestId <= calibrationRequestId || typeof message.enabled !== 'boolean' || Object.keys(message).length !== 4 || typeof setCalibrationView !== 'function') return;
+      calibrationRequestId = message.requestId; calibrationAbort?.abort(); calibrationAbort = new AbortController();
+      const signal = calibrationAbort.signal, requestId = message.requestId;
+      const current = () => !disposed && !signal.aborted && requestId === calibrationRequestId;
+      Promise.resolve().then(() => setCalibrationView(message.enabled, {signal})).then(result => {
+        if (!current()) return;
+        reply({type:'otef_projection_preview_calibration_rendered',requestId,sceneIdentity:result.sceneIdentity ?? null,
+          ready:result.ready === true,missingIds:result.missingIds || [],error:result.error || null});
+      }).catch(error => { if (current()) reply({type:'otef_projection_preview_calibration_rendered',requestId,sceneIdentity:null,ready:false,missingIds:[],error:String(error.message || error).slice(0,240)}); });
+      return;
+    }
     if (message.type === 'otef_projection_preview_validate') {
       const identity = message.identity;
       const requestId = message.requestId;
@@ -225,5 +238,5 @@ export function installProjectionPreviewBridge({ win, output, map, nameFieldCont
   };
   win.addEventListener("message", onMessage);
   reply({ type: "otef_projection_preview_ready" });
-  return () => { validationGeneration++; validationAbort?.abort(); applyGeneration++; applyAbort?.abort(); namesGeneration++; namesAbort?.abort(); win.removeEventListener("message", onMessage); };
+  return () => { disposed = true; calibrationAbort?.abort(); validationGeneration++; validationAbort?.abort(); applyGeneration++; applyAbort?.abort(); namesGeneration++; namesAbort?.abort(); win.removeEventListener("message", onMessage); };
 }

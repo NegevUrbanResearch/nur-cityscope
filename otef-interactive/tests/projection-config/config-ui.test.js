@@ -609,7 +609,7 @@ test("Run names force-sends the applied config only after calibration applies", 
   const frame = root.querySelector(".warp-editor-frame");
   const postMessage = vi.spyOn(frame.contentWindow, "postMessage");
   window.dispatchEvent(new MessageEvent("message", { data: { type: "otef_projection_preview_ready", output: "left" }, origin: window.location.origin, source: frame.contentWindow }));
-  expect(postMessage).toHaveBeenCalledTimes(1);
+  expect(postMessage.mock.calls.filter(([message]) => message.type === 'otef_projection_preview_config')).toHaveLength(1);
   expect(frame.style.visibility).toBe("hidden");
   expect(view.sendRunNamesPreview(DEFAULT_PROJECTION_CONFIG)).toBe(false);
   const geometryRequestId = postMessage.mock.calls[0][0].requestId;

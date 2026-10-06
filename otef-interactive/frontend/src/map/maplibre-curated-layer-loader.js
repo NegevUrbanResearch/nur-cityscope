@@ -1539,6 +1539,7 @@ export function createProjectionCuratedRefresh({
     layerStyleOptions,
     isCurrent: providedCurrent,
     reopenGate = false,
+    keepLiveRuntime = false,
   } = {}) => {
     if (!isRuntimeAlive()) return;
     const rawGroups = groupsOverride ?? getLayerGroups();
@@ -1550,6 +1551,7 @@ export function createProjectionCuratedRefresh({
       layerStyleOptions,
       isCurrent: providedCurrent,
       reopenGate,
+      keepLiveRuntime,
     });
     if (!isRuntimeAlive() || !plan.isCurrent()) return;
 
@@ -1610,6 +1612,7 @@ export function createProjectionCuratedRefresh({
     layerStyleOptions,
     isCurrent,
     reopenGate,
+    keepLiveRuntime,
   } = {}) => {
     if (!fromSlideshowTick && shouldSkipLiveRefresh()) {
       return Promise.resolve();
@@ -1621,6 +1624,7 @@ export function createProjectionCuratedRefresh({
       layerStyleOptions,
       isCurrent,
       reopenGate,
+      keepLiveRuntime,
     });
   };
 

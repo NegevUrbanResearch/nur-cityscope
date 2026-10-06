@@ -6,6 +6,15 @@ import { drawAfterMapRender } from "../../frontend/src/projection/projection-spa
 import { rollbackProjectionPreviewApply } from "../../frontend/src/projection/projection-preview-task.js";
 import * as previewBridge from "../../frontend/src/projection/projection-preview-bridge.js";
 
+test('calibration preview commands are parent-origin and request guarded and never request physical blackout',async()=>{
+  const listeners=new Map(),parent={postMessage:vi.fn()};const win={parent,location:{origin:'http://localhost'},addEventListener:(t,fn)=>listeners.set(t,fn),removeEventListener(){}};
+  const setCalibrationView=vi.fn(async enabled=>({ready:enabled,sceneIdentity:enabled?'landmarks':null,missingIds:[]}));
+  const dispose=installProjectionPreviewBridge({win,output:'left',map:{},nameFieldController:{},syncContextInvestigation(){},setCalibrationView});
+  const send=(requestId,source=parent,origin='http://localhost')=>listeners.get('message')({source,origin,data:{type:'otef_projection_preview_calibration',output:'left',requestId,enabled:true}});
+  send(1,{});send(1,parent,'http://bad');expect(setCalibrationView).not.toHaveBeenCalled();send(1);send(0);await flushMicrotasks();
+  expect(setCalibrationView).toHaveBeenCalledTimes(1);expect(parent.postMessage).toHaveBeenLastCalledWith(expect.objectContaining({type:'otef_projection_preview_calibration_rendered',requestId:1,sceneIdentity:'landmarks',ready:true}),'http://localhost');dispose();
+});
+
 test('settlement bridge forwards the camera matrix needed for editor dragging', async () => {
   const listeners=new Map(), parent={postMessage:vi.fn()};
   const win={parent,location:{origin:'http://localhost'},addEventListener:(type,fn)=>listeners.set(type,fn),removeEventListener:type=>listeners.delete(type)};

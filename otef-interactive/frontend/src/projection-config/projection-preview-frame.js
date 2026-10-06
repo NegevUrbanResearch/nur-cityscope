@@ -11,8 +11,26 @@ export function createProjectionPreviewFrame({ document: doc, host, onStatus = (
   let latest = null;
   let disposed = false;
   let listening = false;
+  let calibrationEnabled = false, calibrationTimer = null;
+  let calibrationState = { active: false, ready: false, sceneIdentity: null, missingIds: [], error: null };
+  const sendCalibration = () => {
+    const session = current;
+    if (!session?.ready || !origin || session.frame.isConnected === false || !session.frame.contentWindow) return;
+    if (calibrationEnabled && session.calibrationFailed) return;
+    if (calibrationEnabled && session.calibrationOutstandingSince != null && Date.now() - session.calibrationOutstandingSince >= 3000) {
+      calibrationState = { ...calibrationState, ready: false, sceneIdentity: null, error: 'No rendered landmark acknowledgement for 3000 ms' };
+      session.calibrationFailed = true;
+      if (calibrationTimer !== null) clearInterval(calibrationTimer); calibrationTimer = null;
+      return;
+    }
+    const requestId = ++session.calibrationRequestId;
+    if (calibrationEnabled && session.calibrationOutstandingSince == null) session.calibrationOutstandingSince = Date.now();
+    session.frame.contentWindow.postMessage({ type: 'otef_projection_preview_calibration', output: session.side, requestId, enabled: calibrationEnabled }, origin);
+  };
   const setStatus = (message, retry = false) => onStatus(message, retry);
   const clear = () => {
+    if (calibrationTimer !== null) clearInterval(calibrationTimer); calibrationTimer = null;
+    calibrationState = { active: calibrationEnabled, ready: false, sceneIdentity: null, missingIds: [], error: null };
     if (!current) return;
     clearTimeout(current.timer); clearTimeout(current.appliedTimer);
     current.frame.remove();
@@ -57,6 +75,17 @@ export function createProjectionPreviewFrame({ document: doc, host, onStatus = (
       session.ready = true; clearTimeout(session.timer); session.timer = null;
       recordProjectionTrace(trace, 'receipt', { receiptType: 'preview_ready', output: session.side });
       setStatus("Ready"); send();
+      if (calibrationEnabled) { sendCalibration(); calibrationTimer = setInterval(sendCalibration, 1000); }
+      return;
+    }
+    if (message.type === 'otef_projection_preview_calibration_rendered') {
+      if (!session.ready || session.calibrationFailed || message.requestId !== session.calibrationRequestId || typeof message.ready !== 'boolean' ||
+        !(message.sceneIdentity === null || (typeof message.sceneIdentity === 'string' && message.sceneIdentity.length > 0 && message.sceneIdentity.length <= 4096)) ||
+        !Array.isArray(message.missingIds) || message.missingIds.length > 7 || !message.missingIds.every(id => typeof id === 'string' && id.length <= 128) ||
+        !(message.error === null || (typeof message.error === 'string' && message.error.length <= 240))) return;
+      calibrationState = { active: calibrationEnabled, ready: calibrationEnabled && message.ready && !message.error && typeof message.sceneIdentity === 'string',
+        sceneIdentity: message.sceneIdentity, missingIds: [...message.missingIds], error: message.error };
+      session.calibrationOutstandingSince = null;
       return;
     }
     if (message.type !== "otef_projection_preview_applied" || !session.ready || message.requestId !== session.requestId || message.requestId === session.expiredRequestId) return;
@@ -82,7 +111,7 @@ export function createProjectionPreviewFrame({ document: doc, host, onStatus = (
     host.appendChild(frame);
     const session = { frame, side, generation: ++generation, ready: false, calibrated: false, calibratedIdentity: null,
       pendingGeometryRequestId: null, pendingGeometryIdentity: null, requestKind: null, timedOut: false, requestId: 0,
-      expiredRequestId: null, sentIdentity: null, timer: null, appliedTimer: null };
+      expiredRequestId: null, sentIdentity: null, timer: null, appliedTimer: null, calibrationRequestId: 0, calibrationOutstandingSince: null, calibrationFailed: false };
     current = session;
     setStatus("Loading projection output…", false);
     session.timer = setTimeout(() => {
@@ -96,6 +125,15 @@ export function createProjectionPreviewFrame({ document: doc, host, onStatus = (
     retry() { if (current) mount(current.side); },
     update(config) { latest = config; return send(); },
     sendRunNamesPreview(config) { return send({ config, force: true, runNames: true }); },
+    setCalibrationView(enabled) {
+      calibrationEnabled = enabled === true;
+      if (current) { current.calibrationOutstandingSince = null; current.calibrationFailed = false; }
+      calibrationState = { active: calibrationEnabled, ready: false, sceneIdentity: null, missingIds: [], error: null };
+      if (calibrationTimer !== null) clearInterval(calibrationTimer); calibrationTimer = null;
+      sendCalibration();
+      if (calibrationEnabled && current?.ready) calibrationTimer = setInterval(sendCalibration, 1000);
+    },
+    getCalibrationState: () => structuredClone(calibrationState),
     frame: () => current?.frame || null,
     isReady: () => Boolean(current?.ready),
     clear() { clear(); detach(); setStatus(""); },

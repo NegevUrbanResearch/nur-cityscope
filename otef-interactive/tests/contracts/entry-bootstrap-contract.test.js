@@ -57,11 +57,14 @@ test("projection entry wires MapLibre curated pipeline (manual Supabase sync via
   expect(src.includes("otef-curated-geojson-refresh")).toBe(true);
   expect(src.includes("projectionCuratedRefreshChain")).toBe(true);
   expect(refreshSrc.includes("layerStyleOptions")).toBe(true);
-  expect(refreshSrc.includes("syncProjectionLayersWithNarrative(map, currentGroups, layerStyleOptions)")).toBe(true);
+  expect(refreshSrc).toContain("syncProjectionLayersWithNarrative(map, currentGroups, plan.joined)");
+  expect(refreshSrc).toContain("joined: withJoinedBatch(layerStyleOptions, durationMs)");
+  expect(refreshSrc).toMatch(/function withJoinedBatch\(layerStyleOptions, durationMs\)[\s\S]{0,500}joinBatch: true/);
   expect(src).toMatch(/nameFieldController\.setProjectionConfig\(\s*DEFAULT_PROJECTION_CONFIG\s*\)/);
   expect(src).toMatch(/if \(map\.loaded\(\) \|\| map\._loaded\) map\.fire\("load"\)/);
   expect(refreshSrc.includes("removeCuratedLayersByPrefix(map, fullId, layerStyleOptions)")).toBe(true);
-  expect(refreshSrc.includes("hasMapLibreLayerWithPrefix(map, fullId)")).toBe(true);
+  expect(refreshSrc).toContain("hasMapLibreLayerWithPrefix(targetMap, fullId)");
+  expect(refreshSrc).toContain("!curatedContentMounted(map, id)");
   expect(refreshSrc.includes("fromSlideshowTick,")).toBe(true);
   expect(refreshSrc.includes("loadCuratedLayerToMapLibre(map, fullId,")).toBe(true);
   expect(src.includes("skipInitialVectorLayerSync")).toBe(false);

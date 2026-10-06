@@ -14,6 +14,22 @@ import { createProjectionImageDescriptor } from "../../frontend/src/projection/p
 import { prepareProjectionPairMeshes } from "../../frontend/src/projection/projection-candidate-validation.js";
 import { createBaselineSampler } from "../../frontend/src/shared/projection-baseline-sampler.js";
 import { variableTdMesh } from "../fixtures/td-variable-grid.js";
+import { filterProjectionCalibrationScene } from '../../frontend/src/shared/projection-calibration-scene.js';
+
+test('calibration filter runs after prepared adapters on every draw and restores scene', async () => {
+  const doc = { createElement() { return { style: {}, setAttribute() {}, addEventListener() {}, removeEventListener() {}, remove() {} }; } };
+  const draws = []; let active = false;
+  const surface = await createProjectionBrowserSurface({ host: {ownerDocument:doc,appendChild(){}},spanId:'left',
+    image:{complete:true,naturalWidth:10,style:{}},initialConfig:structuredClone(DEFAULT_PROJECTION_CONFIG),fetchImpl:async()=>({ok:false}),
+    getScene:()=>({map:{source:{}},image:{source:{}},caption:{source:{}},legend:{source:{}},pattern:{source:{}}}),
+    filterScene:scene=>active?filterProjectionCalibrationScene(scene):scene,
+    rendererFactory:()=>({draw:scene=>draws.push(scene),isContextLost:()=>false,dispose(){}}) });
+  vi.spyOn(surface.getNameAdapter(),'descriptor').mockReturnValue({source:{}});
+  vi.spyOn(surface.getSettlementAdapter(),'descriptor').mockReturnValue({source:{}});
+  surface.draw();expect(draws.at(-1).layers.map(layer=>layer.id)).toEqual(['image','map','settlements','names','caption','pattern','legend']);active=true;
+  surface.draw(); expect(draws.at(-1).layers.map(layer=>layer.id)).toEqual(['map','settlements']);
+  active=false; surface.draw(); expect(draws.at(-1).layers.map(layer=>layer.id)).toEqual(['image','map','settlements','names','caption','pattern','legend']);surface.dispose();
+});
 
 const framingConfig = {
   schemaVersion: 1,

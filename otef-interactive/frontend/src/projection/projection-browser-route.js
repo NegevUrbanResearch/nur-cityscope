@@ -146,6 +146,7 @@ export async function createProjectionBrowserSurface({
   mapCanvas,
   scene = {},
   getScene,
+  filterScene = scene => scene,
   hideTargets = [],
   fetchImpl,
   signal,
@@ -209,10 +210,11 @@ export async function createProjectionBrowserSurface({
     const baseScene = {};
     if (image && !getScene) baseScene.image = { source: image };
     if (mapCanvas && !getScene) baseScene.map = { source: mapCanvas };
-    const readScene = () => ({ ...baseScene, ...(typeof getScene === "function" ? getScene() : scene),
+    const readScene = () => ({ image: null, map: null, names: null, settlements: null, caption: null, pattern: null, legend: null,
+      ...filterScene({ ...baseScene, ...(typeof getScene === "function" ? getScene() : scene),
       ...(nameAdapter?.descriptor() ? { names: nameAdapter.descriptor() } : {}),
       ...(settlementAdapter?.descriptor() ? { settlements: settlementAdapter.descriptor() } : {}),
-      });
+      }) });
     const initialMesh = startupConfig?.outputs?.[spanId]?.warp
       ? prepareProjectionSideMesh(startupConfig, spanId, baseline).mesh
       : evaluateWarpMesh(null, migrateProjectionConfigToV2(baseline.framing).outputs[spanId].warp, { side: spanId });

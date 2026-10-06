@@ -8,28 +8,33 @@ function settlementVisible(groups) {
   for (const group of groups || []) {
     for (const layer of group.layers || []) {
       const id = layer.fullId || layer.id;
-      if (id !== SETTLEMENT_LAYER && id !== `projector_base.${SETTLEMENT_LAYER}`) continue;
+      if (id !== SETTLEMENT_LAYER && id !== `projector_base.${SETTLEMENT_LAYER}` && !layer.fullLayerIds?.includes(`projector_base.${SETTLEMENT_LAYER}`)) continue;
       return layer.enabled !== false && group.enabled !== false;
     }
   }
   return true;
 }
 
-export function bindProjectionSettlementNames({ dataContext, adapter, catalog, host, map, output, getConfig, getGroups, onDraw = () => {}, onError = () => {} } = {}) {
+export function bindProjectionSettlementNames({ dataContext, adapter, catalog, host, map, output, getConfig, getGroups, getCalibrationActive = () => false, onReadinessChange = () => {}, onDraw = () => {}, onError = () => {} } = {}) {
   if (!adapter || typeof adapter.prepare !== "function") throw new Error("Settlement runtime requires an adapter");
   if (map?.project && output) adapter.setFramingProvider(createSettlementNameFraming({map,output,getConfig}));
   let disposed = false;
   let token = 0;
   let setupAlert = null;
+  let pending = Promise.resolve();
+  let readiness = { ready: false, error: null, revision: null };
+  const report = next => { readiness = next; onReadinessChange({ ...readiness }); };
   const clearSetupError = () => {
     setupAlert?.remove?.();
     setupAlert = null;
   };
   const applyGroupVisibility = () => {
+    if (getCalibrationActive()) { adapter.setVisible(true); return; }
     if (map) return;
     adapter.setVisible(settlementVisible(getGroups?.()));
   };
   const replayMapOpacity = () => {
+    if (getCalibrationActive()) { adapter.applyScaledOpacity(1); adapter.setVisible(true); return; }
     if (!map || typeof map.getPaintProperty !== "function") return;
     if (typeof map.getLayer === 'function' && !map.getLayer('projector_base__שמות_יישובים__labels')) return;
     const value = map.getPaintProperty("projector_base__שמות_יישובים__labels", "text-opacity");
@@ -41,6 +46,7 @@ export function bindProjectionSettlementNames({ dataContext, adapter, catalog, h
     const settings = dataContext?.getSettlementNameSettings?.() || null;
     const revision = dataContext?.getSettlementNameRevision?.();
     const reported = dataContext?.getSettlementNameError?.();
+    report({ ready: false, error: null, revision });
     if (!settings) {
       if (reported || revision === 0) {
         adapter.setVisible(false);
@@ -48,6 +54,7 @@ export function bindProjectionSettlementNames({ dataContext, adapter, catalog, h
         const error = new Error(reported || "Initialization required");
         setupAlert = visibleProjectionBrowserError(host, error);
         onError(error);
+        report({ ready: false, error: error.message, revision });
       }
       return;
     }
@@ -58,13 +65,15 @@ export function bindProjectionSettlementNames({ dataContext, adapter, catalog, h
       clearSetupError();
       applyGroupVisibility();
       replayMapOpacity();
+      report({ ready: true, error: null, revision });
       onDraw();
     } catch (error) {
       if (disposed || current !== token) return;
       onError(error);
+      report({ ready: false, error: error.message, revision });
     }
   };
-  const onNames = () => { void run(); };
+  const onNames = () => { pending = run(); };
   const onGroups = () => {
     applyGroupVisibility();
     if (adapter.descriptor()) onDraw();
@@ -76,15 +85,20 @@ export function bindProjectionSettlementNames({ dataContext, adapter, catalog, h
     if (event.property !== "text-opacity") return;
     if (event.fullId !== SETTLEMENT_LAYER && event.fullId !== `projector_base.${SETTLEMENT_LAYER}`) return;
     if (typeof event.layerId !== "string" || !event.layerId.startsWith("projector_base__שמות_יישובים")) return;
-    adapter.applyScaledOpacity(event.value);
+    if (getCalibrationActive()) { adapter.applyScaledOpacity(1); adapter.setVisible(true); }
+    else adapter.applyScaledOpacity(event.value);
     if (adapter.descriptor()) onDraw();
   });
-  if (!dataContext?.subscribe) void run();
-  return () => {
+  if (!dataContext?.subscribe) pending = run();
+  const dispose = () => {
     disposed = true;
     token += 1;
     offNames();
     offGroups();
     offPaint();
   };
+  dispose.getReadiness = () => ({ ...readiness });
+  dispose.whenReady = async () => { await pending; if (!readiness.ready) throw new Error(readiness.error || 'Settlement labels are not prepared'); return { ...readiness }; };
+  dispose.refreshVisibility = () => { applyGroupVisibility(); replayMapOpacity(); };
+  return dispose;
 }
