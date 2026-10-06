@@ -73,6 +73,7 @@ test("qr.html includes Local/Tailnet at the top and Regular/NLI near the QR", ()
   expect(html).toContain('id="shareModeTailnet"');
   expect(html).toContain('id="shareQrRemote"');
   expect(html).toContain('id="shareQrNli"');
+  expect(html).toContain("Connect your tablet to the same router network. The PC can use Ethernet or Wi-Fi.");
   expect(html).toContain('button[aria-pressed="true"]');
   expect(html).not.toMatch(/aria-pressed="true"[^}]*background:\s*#d5e5ff/);
   expect(html.indexOf('id="shareModeLocal"')).toBeLessThan(html.indexOf('id="qrcode"'));
@@ -182,6 +183,30 @@ test("missing tailnetOrigin clamps stored tailnet to local", async () => {
   expect(document.nodes.get("shareModeTailnet").hidden).toBe(true);
   expect(storage.getItem(SHARE_MODE_KEY)).toBe("local");
   expect(document.nodes.get("targetUrl").textContent).toBe("http://labpc.local/otef-interactive/remote-controller.html");
+  expect(document.nodes.get("qrcode").children).toHaveLength(1);
+  dispose();
+});
+
+test("printable QR defaults to current LAN despite saved Tailnet, and keeps manual fallback", async () => {
+  const document = makeDocument();
+  const dispose = initPrintableQr({ document, location: new URL("http://localhost/otef-interactive/qr.html"),
+    fetchImpl: fetchShare({ localOrigin: "http://192.168.13.35", tailnetOrigin: "http://100.64.252.114", localKind: "lan" }),
+    storage: makeStorage({ [SHARE_MODE_KEY]: "tailnet", [SHARE_QR_KEY]: "nli" }),
+  });
+  await flush();
+  expect(document.nodes.get("targetUrl").textContent).toBe("http://192.168.13.35/otef-interactive/nli-staff-remote.html");
+  await document.nodes.get("shareModeTailnet").dispatch("click");
+  expect(document.nodes.get("targetUrl").textContent).toBe("http://100.64.252.114/otef-interactive/nli-staff-remote.html");
+  dispose();
+});
+
+test("printable QR falls back to Tailscale when LAN discovery is unavailable", async () => {
+  const document = makeDocument();
+  const dispose = initPrintableQr({ document, location: new URL("http://localhost/otef-interactive/qr.html"),
+    fetchImpl: fetchShare({ localOrigin: null, tailnetOrigin: "http://100.64.252.114", localKind: "lan" }), storage: makeStorage(),
+  });
+  await flush();
+  expect(document.nodes.get("targetUrl").textContent).toBe("http://100.64.252.114/otef-interactive/remote-controller.html");
   expect(document.nodes.get("qrcode").children).toHaveLength(1);
   dispose();
 });

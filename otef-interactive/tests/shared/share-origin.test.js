@@ -55,11 +55,16 @@ test("loadShareHosts flags whether share.json loaded", async () => {
   })).toEqual({ localOrigin: null, tailnetOrigin: null, localKind: null, fromShareFile: false });
 });
 
-test("loadShareHosts accepts an inactive hotspot without falling back to the page host", async () => {
+test("loadShareHosts accepts an unavailable LAN without falling back to the page host", async () => {
   expect(await loadShareHosts({
     location: new URL("http://localhost/otef-interactive/launcher.html"),
-    fetchImpl: async () => ({ ok: true, json: async () => ({ localOrigin: null, tailnetOrigin: "http://100.64.0.1", localKind: "hotspot" }) }),
-  })).toEqual({ localOrigin: null, tailnetOrigin: "http://100.64.0.1", localKind: "hotspot", fromShareFile: true });
+    fetchImpl: async () => ({ ok: true, json: async () => ({ localOrigin: null, tailnetOrigin: "http://100.64.0.1", localKind: "lan" }) }),
+  })).toEqual({ localOrigin: null, tailnetOrigin: "http://100.64.0.1", localKind: "lan", fromShareFile: true });
+});
+
+test("LAN metadata survives parsing; legacy hotspot shares cannot produce a stale QR", () => {
+  expect(parseShareHosts({ localOrigin: "http://192.168.13.35", tailnetOrigin: null, localKind: "lan" })).toEqual({ localOrigin: "http://192.168.13.35", tailnetOrigin: null, localKind: "lan" });
+  expect(parseShareHosts({ localOrigin: "http://192.168.137.2", tailnetOrigin: null, localKind: "hotspot" })).toBeNull();
 });
 
 test("originForMode uses local when tailnet is missing", () => {

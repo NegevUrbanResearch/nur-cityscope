@@ -34,9 +34,9 @@ choose **Open**. Clear it and reopen outputs to return to the normal orientation
 
 ## Phone remotes and QR
 
-GIS and workstation Open links stay on `http://localhost`. Phone remotes and the QR use **Local** (`http://{hostname}.local`) or **Tailnet** (`http://{tailscale-ipv4}`).
+GIS and workstation Open links stay on `http://localhost`. Tablet remotes and the QR use **Local** (`http://{current-lan-ipv4}`) or **Tailnet** (`http://{tailscale-ipv4}`), including nginx's published port when it is not 80. Local is selected on each launcher/QR load when a LAN address is available; otherwise Tailnet is selected when available.
 
-Those origins are written once, on the host, by:
+Those origins are detected and written once per helper run, on the host, by:
 
 ```powershell
 .\otef-interactive\scripts\start-otef.ps1
@@ -46,7 +46,19 @@ Those origins are written once, on the host, by:
 ./otef-interactive/scripts/start-otef.sh
 ```
 
-`setup.ps1` / `setup.sh` do this at the end of first-time setup. Container startup and `docker compose up` do not. If Tailscale is not installed, the Tailnet control is hidden and Local still works. The launcher status tells you to run `start-otef` when `share.json` is missing.
+The PC can connect by **Ethernet** (NLI) or **Wi-Fi** (lab), while the tablet connects by Wi-Fi to the same router network. Guest Wi-Fi or client isolation may prevent the tablet from reaching the wired PC; use the regular network or Tailnet instead. Tailscale must be connected on both devices to use that fallback.
+
+The helper selects an active physical adapter with a private IPv4 and a default gateway, preferring the lowest combined route/interface metric on Windows. Virtual, hotspot, VPN, disconnected, loopback and link-local interfaces are excluded. Windows, macOS and Linux discovery are supported. The old `scripts/hotspot-config.local.json` is ignored. If no usable LAN is detected, Local remains unavailable and Tailnet stays available when installed.
+
+For a PC with multiple physical networks or an isolated LAN without a default gateway, select an adapter explicitly (Windows adapter name, macOS device/Hardware Port, or Linux device):
+
+```powershell
+node otef-interactive/scripts/write-share-hosts.mjs --repository-root . --port 80 --lan-interface "Ethernet"
+```
+
+Use nginx's actual published port. Repeat the explicit command after ordinary startup if that installation requires an override; the override is not persisted.
+
+`setup.ps1` / `setup.sh` do this at the end of first-time setup. Container startup and `docker compose up` do not. After changing networks or receiving a new IP, run the helper again and reload the launcher. If Tailscale is not installed, the Tailnet control is hidden. The launcher status tells you to run `start-otef` when `share.json` is missing.
 
 ## Setup
 

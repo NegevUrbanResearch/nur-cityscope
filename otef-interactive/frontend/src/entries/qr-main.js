@@ -1,4 +1,4 @@
-import { loadShareHosts, originForMode } from "../shared/share-origin.js";
+import { initialShareMode, loadShareHosts, originForMode } from "../shared/share-origin.js";
 import { renderQr } from "../shared/qr-code.js";
 
 const SHARE_MODE_KEY = "otef.share.mode";
@@ -167,6 +167,7 @@ export function initPrintableQr({
   void loadShareHosts({ location, fetchImpl }).then((loaded) => {
     if (disposed) return;
     hosts = loaded;
+    mode = initialShareMode(mode, hosts);
     applyShare();
   });
 
