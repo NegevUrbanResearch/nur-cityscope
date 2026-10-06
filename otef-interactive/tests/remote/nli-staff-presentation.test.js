@@ -3,7 +3,10 @@ import {
   createNliStaffPresentationController,
   presentationControlsHtml,
   shouldAutoOpenNliPresentation,
+  createNliStaffPresentationButtonHandler,
 } from "../../frontend/src/remote/nli-staff-presentation.js";
+import { NARRATIVES } from "../../frontend/src/remote/nli-staff-script.js";
+import { nextAction } from "../../frontend/src/remote/nli-staff-flow.js";
 
 const step = { presentation: { segmentId: "nova_mor", open: "manual", onClose: "stay" } };
 const shuraStep = { presentation: { segmentId: "shura", open: "auto", onClose: "stay" } };
@@ -37,6 +40,32 @@ function makeControllerHarness() {
 afterEach(() => vi.useRealTimers());
 
 describe("NLI staff presentation controller", () => {
+  test("Hostages opens after its cue, explicit Close stays, and Scene Next reaches Nir Oz", async () => {
+    const item = NARRATIVES.find(narrative => narrative.id === "hostages");
+    const index = item.steps.findIndex(candidate => candidate.presentation);
+    const currentStep = item.steps[index];
+    const h = makeControllerHarness();
+    const autoOpen = cueStatus => shouldAutoOpenNliPresentation({ item, index, currentScript: item, currentStep, cueStatus });
+    expect(autoOpen("pending")).toBe(false);
+    expect(autoOpen("failed")).toBe(false);
+    expect(autoOpen("ready")).toBe(true);
+    await h.openAndReply(currentStep.presentation.segmentId);
+    const next = vi.fn();
+    const resume = vi.fn();
+    const handle = createNliStaffPresentationButtonHandler({
+      getCurrentStep: () => currentStep, getNavigationGeneration: () => 1,
+      run: h.controller.run, nextFromExplicitClose: next, resumeFromExplicitClose: resume,
+    });
+    const closing = handle("close");
+    h.reply({ outcome: "closed" });
+    await expect(closing).resolves.toBe(true);
+    expect(next).not.toHaveBeenCalled();
+    expect(resume).not.toHaveBeenCalled();
+    expect(presentationControlsHtml(currentStep, h.controller.getState(), "en")).toContain('data-presentation-action="open"');
+    expect(nextAction({ scriptId: "hostages", step: index, returnTo: null })).toEqual({ kind: "step", scriptId: "hostages", step: index + 1 });
+    expect(item.steps[index + 1].title.en).toBe("Nir Oz victims and hostages");
+    h.controller.destroy();
+  });
   test("open state renders Previous, Next, Close, and the confirmed relative counter", async () => {
     const h = makeControllerHarness();
     const opening = h.controller.run("open", "nova_mor");

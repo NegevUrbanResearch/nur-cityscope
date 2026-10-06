@@ -372,38 +372,29 @@ describe("NLI staff scene integration", () => {
     setLocale("he", { force: true, persist: false });
   });
 
-  test("Names Wall to Credits applies Home to both displays and automatically opens GIS credits", async () => {
-    setLocale("en", { persist: false });
+  test("Names Wall finishes directly to Home on both displays without opening credits", async () => {
+    setLocale("he", { persist: false });
     session = mount();
     await boot(session);
     await openCard('[data-show-step="names-wall"]');
     await vi.waitFor(() => expect(session.h.commands.at(-1)).toMatchObject({
       presentationAction: "open", segmentId: "names_wall",
     }));
-    const open = session.dataContext.narrativePresentationCommand;
-    const homeAtOpen = [];
-    session.dataContext.narrativePresentationCommand = async (command) => {
-      if (command.presentationAction === "open" && command.segmentId === "credits") {
-        for (const view of views(session)) expectHome(view);
-        homeAtOpen.push(true);
-      }
-      return open(command);
-    };
-    await clickNextReady("Credits");
-    await vi.waitFor(() => expect(homeAtOpen).toEqual([true]));
+    expect(el("nextBtn").textContent).toBe("סיום");
+    expect(el("nextBtn").getAttribute("aria-label")).toBe("סיום");
+    el("nextBtn").click();
+    await vi.waitFor(() => expect(document.querySelector(".screen.is-active")?.dataset.screen).toBe("home"));
     expect(session.h.commands.slice(-2).map(({ presentationAction, segmentId }) =>
-      [presentationAction, segmentId])).toEqual([["close", "names_wall"], ["open", "credits"]]);
+      [presentationAction, segmentId])).toEqual([["open", "names_wall"], ["close", "names_wall"]]);
+    expect(session.h.commands.some((command) => command.segmentId === "credits")).toBe(false);
     for (const view of views(session)) expectHome(view);
 
     session.remote.render();
-    expect(homeAtOpen).toEqual([true]);
-    el("homeBtn").click();
-    await vi.waitFor(() => expect(document.querySelector(".screen.is-active")?.dataset.screen).toBe("home"));
-    expect(session.h.commands.at(-1)).toMatchObject({ presentationAction: "close", segmentId: "credits" });
+    expect(document.querySelector(".screen.is-active")?.dataset.screen).toBe("home");
     for (const view of views(session)) expectHome(view);
   });
 
-  test("failed Credits cue retries on Credits and opens only after the reset succeeds", async () => {
+  test("failed Finish reset stays on Names Wall and can retry directly to Home", async () => {
     setLocale("en", { persist: false });
     session = mount();
     await boot(session);
@@ -411,25 +402,14 @@ describe("NLI staff scene integration", () => {
     session.h.failNull = true;
     el("nextBtn").click();
     await vi.waitFor(() => expect(el("cueStatus").dataset.status).toBe("failed"));
-    expect(el("stepTitle").textContent).toBe("Credits");
-    expect(session.h.commands.some((command) => command.segmentId === "credits")).toBe(false);
-    el("playerCueRetry").click();
-    await vi.waitFor(() => expect(session.h.commands.at(-1)).toMatchObject({
-      presentationAction: "open", segmentId: "credits",
-    }));
+    expect(el("stepTitle").textContent).toBe("Wall of names");
     expect(document.querySelector(".screen.is-active")?.dataset.screen).toBe("player");
-    expect(el("stepTitle").textContent).toBe("Credits");
+    expect(el("nextBtn").textContent).toBe("Finish");
+    expect(session.h.commands.some((command) => command.segmentId === "credits")).toBe(false);
+    el("nextBtn").click();
+    await vi.waitFor(() => expect(document.querySelector(".screen.is-active")?.dataset.screen).toBe("home"));
+    expect(session.h.commands.some((command) => command.segmentId === "credits")).toBe(false);
     for (const view of views(session)) expectHome(view);
-
-    el("kitPresentation").querySelector('[data-presentation-action="close"]').click();
-    await vi.waitFor(() => expect(el("kitPresentation").querySelector('[data-presentation-action="open"]')).not.toBeNull());
-    expect(el("stepTitle").textContent).toBe("Credits");
-    el("kitPresentation").querySelector('[data-presentation-action="open"]').click();
-    await vi.waitFor(() => expect(session.h.commands.at(-1).presentationAction).toBe("open"));
-    el("prevBtn").click();
-    await vi.waitFor(() => expect(el("stepTitle").textContent).toBe("Wall of names"));
-    expect(session.h.commands.slice(-2).map(({ presentationAction, segmentId }) =>
-      [presentationAction, segmentId])).toEqual([["close", "credits"], ["open", "names_wall"]]);
   });
 
   test("Home, first minutes, Segev, and the rest of the day settle on both followers", async () => {

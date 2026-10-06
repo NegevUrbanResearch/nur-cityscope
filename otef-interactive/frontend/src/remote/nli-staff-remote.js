@@ -529,7 +529,7 @@ export function initNliStaffRemote(dataContext, { presenterManifest = presenterC
     const next = nextAction(state);
     const choices = next.kind === "choose";
     $("prevBtn").setAttribute("aria-label", getLocale() === "he" ? "הסצנה הקודמת" : "Previous scene");
-    $("nextBtn").setAttribute("aria-label", getLocale() === "he" ? "הסצנה הבאה" : "Next scene");
+    $("nextBtn").setAttribute("aria-label", next.kind === "finish" ? txt("done") : getLocale() === "he" ? "הסצנה הבאה" : "Next scene");
     $("prevBtn").disabled = !canReplaceNavigation() || !prevAction(state);
     $("nextBtn").hidden = choices;
     $("nextBtn").textContent = txt({ step: "next", resume: "backToShow", finish: "done" }[next.kind] || "next");
