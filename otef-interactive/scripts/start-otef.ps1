@@ -127,6 +127,11 @@ function Invoke-ProjectionStartup {
         [scriptblock]$BrowserLauncher = $null
     )
     if ($null -eq $ComposeStart) { $ComposeStart = { param($root) Invoke-ProjectionComposeStart -ComposeRoot $root } }
+    node (Join-Path $PSScriptRoot 'write-frontend-version.mjs') --frontend-root (Join-Path $PSScriptRoot '..\frontend') | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error 'Failed to publish frontend version.'
+        return $false
+    }
     if (-not $AlreadyStarted) {
         $composeResult = @(& $ComposeStart $RepositoryRoot)
         $composeSucceeded = ($composeResult.Count -gt 0 -and [bool]$composeResult[$composeResult.Count - 1])

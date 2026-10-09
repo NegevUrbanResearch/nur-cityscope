@@ -2,6 +2,15 @@ import TableSwitcher from "../shared/table-switcher.js";
 import { initLocale } from "../remote/remote-locale.js";
 import { bindRemoteConnectionRecovery } from "../remote/remote-connection-recovery.js";
 import { initNliStaffRemote } from "../remote/nli-staff-remote.js";
+import { createStaffRemoteManagement } from "../remote/staff-remote-management.js";
+import { OTEF_API } from "../shared/api-client.js";
+import { FRONTEND_BUILD_ID } from "../../runtime/frontend-version.js";
+
+export { FRONTEND_BUILD_ID };
+
+if (typeof document !== "undefined") {
+  document.documentElement.dataset.frontendBuildId = FRONTEND_BUILD_ID;
+}
 
 async function bootstrapRemoteRuntime() {
   const modules = [
@@ -53,7 +62,24 @@ async function boot() {
   await layerRegistry.init();
   await OTEFDataContext.init("otef");
   bindRemoteConnectionRecovery(() => OTEFDataContext.reconnect());
-  initNliStaffRemote(OTEFDataContext);
+  let staffRemote = null;
+  let sessionStorage = null;
+  try { sessionStorage = window.sessionStorage; } catch { /* refresh will reject when storage is unavailable */ }
+  const management = createStaffRemoteManagement({
+    socket: OTEFDataContext.getManagementSocket(),
+    buildId: FRONTEND_BUILD_ID,
+    getRefreshState: () => staffRemote?.getRefreshState?.() || { ready: false, refreshBlockReason: "not_ready" },
+    readCanonicalState: async ({ signal }) => {
+      const response = await fetch(`${OTEF_API.baseUrl}/otef/`, { signal, cache: "no-store" });
+      if (!response.ok) throw new Error(`Failed to fetch canonical state: ${response.status}`);
+      return response.json();
+    },
+    storage: sessionStorage,
+    window,
+    document,
+    reload: () => window.location.reload(),
+  });
+  staffRemote = initNliStaffRemote(OTEFDataContext, { onHomeSuccess: () => management.noteHomeSuccess() });
 }
 
 boot().catch((error) => console.error("[nli-staff-remote] bootstrap failed", error));

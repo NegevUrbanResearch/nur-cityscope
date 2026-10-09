@@ -61,6 +61,7 @@ test("mounts core before optional reads resolve and publishes each hydration and
   expect(harness.getState).not.toHaveBeenCalled();
   expect(harness.fetches.every(({ options }) => options.signal instanceof AbortSignal)).toBe(true);
   harness.fetches[1].item.resolve(response(snapshot));
+  harness.fetches[2].item.resolve(response({ ...snapshot, gaza_border_visible: false }));
   await vi.waitFor(() => expect(harness.mounted[0].args[1].settlementClient.getHydrationState().status).toBe("Saved"));
   expect(harness.mounted[0].args[1].layoutClient.getHydrationState().status).toBe("Loading");
   harness.catalogs[0].item.resolve({ entries: [{ citycode: "0067", text: "Nirim" }] });
@@ -151,6 +152,24 @@ test("catalog Retry starts a fresh attempt on the mounted core", async () => {
   harness.catalogs[1].item.resolve({ entries: [{ citycode: "0067", text: "Nirim" }] });
   await vi.waitFor(() => expect(harness.mounted[0].catalogUpdates.at(-1).status.status).toBe("ready"));
   expect(harness.mounted).toHaveLength(1);
+});
+
+test("projection config reuses its supplied socket for the staff observer subscription", async () => {
+  const sent = [];
+  const listeners = new Map();
+  const socket = {
+    getConnected: () => true,
+    send: (message) => { sent.push(message); return true; },
+    on: (type, callback) => listeners.set(type, callback),
+    off: (type) => listeners.delete(type),
+  };
+  const dispose = await bootProjectionConfig({ document: { getElementById: () => ({}) }, location: { href: "http://localhost/config" },
+    fetchImpl: vi.fn(async () => response({ packs: [] })), socket });
+  expect(sent.filter(({ type }) => type?.startsWith("otef_staff_remote_")).map(({ type }) => type)).toEqual([
+    "otef_staff_remote_subscribe", "otef_staff_remote_status_query",
+  ]);
+  expect(harness.mounted[0].args[1].socket).toBe(socket);
+  dispose();
 });
 
 test("a stalled catalog styles fetch times out and Retry uses a fresh registry", async () => {

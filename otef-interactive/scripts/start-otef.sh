@@ -6,6 +6,7 @@ ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 TIMEOUT_SECONDS="${TIMEOUT_SECONDS:-120}"
 
 cd "$ROOT"
+node "$SCRIPT_DIR/write-frontend-version.mjs" --frontend-root "$SCRIPT_DIR/../frontend"
 docker compose up -d
 
 port_line="$(docker compose port nginx 80)"

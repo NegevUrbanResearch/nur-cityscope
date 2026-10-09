@@ -22,6 +22,7 @@ import { labelForPlace, placeIsWithinRemoteBounds } from "./remote-place-navigat
 import { applyServerLocale, bindLocaleButtons, getLocale, t, LOCALE_EVENT } from "./remote-locale.js";
 import { homeListHtml } from "./nli-staff-home.js";
 import { COPY, HOME_CUE, NARRATIVES, SCRIPTS, SHOW } from "./nli-staff-script.js";
+import { isCanonicalHome } from "./staff-remote-refresh-guard.js";
 import { nextAction, prevAction, showStepIndex, slideIndexes } from "./nli-staff-flow.js";
 import { searchPlaces } from "../shared/place-navigation/place-catalog.js";
 import {
@@ -189,7 +190,7 @@ export function initNliStaffLocaleControls(dataContext, { onFailure } = {}) {
   });
 }
 
-export function initNliStaffRemote(dataContext, { presenterManifest = presenterContent } = {}) {
+export function initNliStaffRemote(dataContext, { presenterManifest = presenterContent, onHomeSuccess } = {}) {
   dataContext.setExhibitMode(true);
   const releaseExhibitMode = () => {
     dataContext.setExhibitMode(false);
@@ -218,6 +219,7 @@ export function initNliStaffRemote(dataContext, { presenterManifest = presenterC
     navigationPending: false,
     presentationClosePending: false,
     homeFailure: false,
+    homeReady: false,
   };
 
   let lastPlaces = [];
@@ -862,6 +864,7 @@ export function initNliStaffRemote(dataContext, { presenterManifest = presenterC
   }
 
   async function performHomeExit() {
+    state.homeReady = false;
     let homeCueResult = null;
     navigationGeneration += 1;
     clearPresenterError();
@@ -924,6 +927,8 @@ export function initNliStaffRemote(dataContext, { presenterManifest = presenterC
         else renderHome();
         return false;
       }
+      state.homeReady = true;
+      try { onHomeSuccess?.(); } catch { /* completion notification must not change Home behavior */ }
       return true;
     } finally {
       if (searchTransition.isCurrent(token)) {
@@ -1293,7 +1298,42 @@ export function initNliStaffRemote(dataContext, { presenterManifest = presenterC
   state.connected = dataContext?.isConnected?.() !== false;
   render();
   void timelineHost._ensureNliFeatureCache?.();
-  return { render, dispose() {
+  function getRefreshState() {
+    const connected = state.connected && dataContext?.isConnected?.() === true;
+    const ready = state.homeReady && connected;
+    let canonicalHome = false;
+    try {
+      canonicalHome = isCanonicalHome({
+        narrativeState: dataContext?.getNarrativeState?.(),
+        investigationClock: dataContext?.getInvestigationClock?.(),
+        layerGroups: dataContext?.getLayerGroups?.(),
+        personSelection: dataContext?.getPersonSelection?.(),
+        escapeOverlay: dataContext?.getEscapeOverlay?.(),
+        nowMs: dataContext?.correctedNow?.() ?? Date.now(),
+      });
+    } catch {
+      canonicalHome = false;
+    }
+    let presentationOwned = false;
+    try {
+      const phase = presentation?.getState?.()?.phase;
+      presentationOwned = phase !== undefined && phase !== "closed" && phase !== "released";
+    } catch {
+      presentationOwned = true;
+    }
+    const archiveRestriction = peopleArchive?.getRefreshRestriction?.() || null;
+    const busy = state.navigationPending || state.searchPending || state.presentationClosePending ||
+      state.cueStatus === "applying" || presenterCommands?.isPending?.() === true ||
+      timelineHost._hasPendingNliTransport?.() === true || placeFocusOwnership.hasFocus() ||
+      archiveRestriction === "busy";
+    const refreshBlockReason = !ready ? "not_ready"
+      : presentationOwned || archiveRestriction === "owned_session" ? "owned_session"
+        : busy ? "busy"
+          : !canonicalHome ? "not_home" : null;
+    return { ready, refreshBlockReason };
+  }
+
+  return { render, getRefreshState, dispose() {
     if (disposed) return;
     disposed = true;
     archiveUiReady = false;

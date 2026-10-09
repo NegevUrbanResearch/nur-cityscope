@@ -925,6 +925,10 @@ class OTEFDataContextClass {
     return this._isConnected;
   }
 
+  getManagementSocket() {
+    return this._wsClient;
+  }
+
   async saveBounds(polygon, viewerAngleDeg) {
     const bounds = OTEFDataContextInternals.bounds;
     if (!bounds || typeof bounds.saveBounds !== "function") {

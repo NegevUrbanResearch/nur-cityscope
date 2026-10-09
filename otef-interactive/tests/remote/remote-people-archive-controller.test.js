@@ -9,6 +9,7 @@ function deferred() {
 
 async function createArchiveFixture({
   archiveWindowCommand = vi.fn().mockResolvedValue({ acknowledged: true }),
+  selectPersonCommand = vi.fn(),
   archiveResultTimeoutMs = 6000,
   isNarrativeActive = () => false,
 } = {}) {
@@ -25,6 +26,7 @@ async function createArchiveFixture({
     getInvestigationClock: () => ({ phase: "idle" }),
     subscribe: vi.fn((topic, handler) => { subscriptions[topic] = handler; return vi.fn(); }),
     archiveWindowCommand,
+    selectPerson: selectPersonCommand,
   };
   const root = document.getElementById("placeSearchGroup");
   const controller = createRemotePeopleArchiveController({
@@ -145,6 +147,85 @@ describe("remote People and archive controller", () => {
     controller.handlePersonSnapshot({ personId: "11", datasetVersion: "v1", revision: 4 });
     await Promise.resolve();
     await expect(controller.clearPersonSelection()).resolves.toBe(false);
+  });
+
+  test("refresh restriction tracks archive requests, ownership, and recoverable opens", async () => {
+    const fixture = await createArchiveFixture();
+    expect(fixture.controller.getRefreshRestriction()).toBeNull();
+    const opening = fixture.controller.openArchive();
+    expect(fixture.controller.getRefreshRestriction()).toBe("owned_session");
+    await opening;
+    const requestId = fixture.dataContext.archiveWindowCommand.mock.calls[0][3];
+    fixture.controller.handleArchiveResult({ requestId, personId: "11", datasetVersion: "v1", outcome: "unavailable" });
+    expect(fixture.controller.getArchivePhase()).toBe("closed");
+    expect(fixture.controller.getRefreshRestriction()).toBe("owned_session");
+    fixture.controller.destroy();
+  });
+
+  test("archive ownership takes precedence over a pending page request", async () => {
+    let finishPage;
+    const archiveWindowCommand = vi.fn((action) => action === "page_down"
+      ? new Promise((resolve) => { finishPage = resolve; })
+      : Promise.resolve({ acknowledged: true }));
+    const fixture = await createArchiveFixture({ archiveWindowCommand });
+    await openArchiveSession(fixture);
+    const paging = fixture.controller.pageArchive("down");
+    expect(fixture.controller.getRefreshRestriction()).toBe("owned_session");
+    finishPage({ acknowledged: true });
+    await paging;
+    fixture.controller.destroy();
+  });
+
+  test("recoverable archive ownership takes precedence over pending selection", async () => {
+    let finishSelection;
+    const fixture = await createArchiveFixture({
+      selectPersonCommand: vi.fn(() => new Promise((resolve) => { finishSelection = resolve; })),
+    });
+    const selecting = fixture.controller.selectPerson(fixture.people[1]);
+    const opening = fixture.controller.openArchive();
+    await opening;
+    const requestId = fixture.dataContext.archiveWindowCommand.mock.calls[0][3];
+    fixture.controller.handleArchiveResult({ requestId, personId: "11", datasetVersion: "v1", outcome: "unavailable" });
+    expect(fixture.controller.getArchivePhase()).toBe("closed");
+    expect(fixture.controller.getRefreshRestriction()).toBe("owned_session");
+    finishSelection({ person_selection: { personId: "12", datasetVersion: "v1", revision: 2 } });
+    await selecting;
+    fixture.controller.destroy();
+  });
+
+  test("refresh restriction covers person selection until its request settles", async () => {
+    let finishSelection;
+    const fixture = await createArchiveFixture({
+      selectPersonCommand: vi.fn(() => new Promise((resolve) => { finishSelection = resolve; })),
+    });
+    const selecting = fixture.controller.selectPerson(fixture.people[1]);
+    expect(fixture.controller.getRefreshRestriction()).toBe("busy");
+    finishSelection({ person_selection: { personId: "12", datasetVersion: "v1", revision: 2 } });
+    await selecting;
+    expect(fixture.controller.getRefreshRestriction()).toBeNull();
+    fixture.controller.destroy();
+  });
+
+  test("refresh stays busy until timeout cancellation settles", async () => {
+    vi.useFakeTimers();
+    try {
+      let finishCancellation;
+      const archiveWindowCommand = vi.fn((action) => action === "close"
+        ? new Promise((resolve) => { finishCancellation = resolve; })
+        : Promise.resolve({ acknowledged: true }));
+      const fixture = await createArchiveFixture({ archiveWindowCommand, archiveResultTimeoutMs: 10 });
+      await fixture.controller.openArchive();
+      await vi.advanceTimersByTimeAsync(11);
+      expect(fixture.controller.getArchivePhase()).toBe("closed");
+      expect(fixture.controller.getRefreshRestriction()).toBe("busy");
+      finishCancellation({ acknowledged: true });
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(fixture.controller.getRefreshRestriction()).toBeNull();
+      fixture.controller.destroy();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   test("acknowledged people selection keeps the name, closes suggestions, and does not reopen them from focus", async () => {

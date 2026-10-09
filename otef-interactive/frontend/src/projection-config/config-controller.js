@@ -127,7 +127,7 @@ export function projectionAppliedStatus(rows, revision) {
   return 'Applied';
 }
 
-export function mountProjectionConfig(root, { client, share, onExport, onImport, socket, outputController, candidateValidator, baselineCatalogLoader = createProjectionBaselineCatalogLoader(), readNamesDataset = null, layoutClient, settlementClient = null, visibilityClient = null, catalog = { entries: [] }, catalogStatus = { status: "ready" }, retrySettlementCatalog = () => {}, clockEditorFactory = openClockLayoutEditor, novaExplainerEditorFactory = openNovaExplainerEditor, settlementEditorFactory = openSettlementNameEditor, trace } = {}) {
+export function mountProjectionConfig(root, { client, share, onExport, onImport, socket, staffRemoteManager = null, outputController, candidateValidator, baselineCatalogLoader = createProjectionBaselineCatalogLoader(), readNamesDataset = null, layoutClient, settlementClient = null, visibilityClient = null, catalog = { entries: [] }, catalogStatus = { status: "ready" }, retrySettlementCatalog = () => {}, clockEditorFactory = openClockLayoutEditor, novaExplainerEditorFactory = openNovaExplainerEditor, settlementEditorFactory = openSettlementNameEditor, trace } = {}) {
   if (!client) throw new Error("projection config client is required");
   if (trace?.enabled) client.setLive(false);
   const sourceId = createUuid();
@@ -204,6 +204,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
   };
   const view = createProjectionConfigView(root, {
     socket,
+    staffRemoteManager,
     trace,
     descriptors: ALL_FIELD_DESCRIPTORS,
     onField: handleField,

@@ -100,6 +100,9 @@ export function createRemotePeopleArchiveController(options = {}) {
     },
   };
   let pendingSelectionTask = null;
+  let selectionOperations = 0;
+  let archiveOperations = 0;
+  const pendingCancellations = new Set();
 
   const archiveButton = options.archiveButton === undefined
     ? (() => {
@@ -193,6 +196,12 @@ export function createRemotePeopleArchiveController(options = {}) {
       const recoveryPending = state.archive.recoverableOpenRequestId === requestId;
       if (!isAlive(generation, "archive") || (!requestPending && !recoveryPending)) return;
       const cancel = dataContext?.archiveWindowCommand?.("close", person.pid, person.datasetVersion, requestId);
+      if (cancel && typeof cancel.then === "function") {
+        const cancellation = Promise.resolve(cancel).catch(() => undefined).finally(() => {
+          pendingCancellations.delete(cancellation);
+        });
+        pendingCancellations.add(cancellation);
+      }
       clearArchiveTimeout();
       transition("archive", {
         phase: "closed",
@@ -435,7 +444,8 @@ export function createRemotePeopleArchiveController(options = {}) {
   }
 
   function selectPerson(person) {
-    const task = performSelectPerson(person);
+    selectionOperations += 1;
+    const task = performSelectPerson(person).finally(() => { selectionOperations -= 1; });
     pendingSelectionTask = task;
     const clearPending = () => {
       if (pendingSelectionTask === task) pendingSelectionTask = null;
@@ -445,24 +455,29 @@ export function createRemotePeopleArchiveController(options = {}) {
   }
 
   async function clearPersonSelection() {
-    const pending = pendingSelectionTask;
-    if (pending) await pending.catch(() => false);
-    const baseline = snapshotFrom(dataContext?.getPersonSelection?.());
-    const baselineRevision = Math.max(revisionOf(baseline), state.person.revision);
-    if (!baseline?.personId && !state.person.acknowledged) {
-      cancelArchivePresentation();
-      return true;
-    }
+    selectionOperations += 1;
     try {
-      const result = await dataContext?.clearPerson?.();
-      const snapshot = [snapshotFrom(result), snapshotFrom(dataContext?.getPersonSelection?.())]
-        .filter((candidate) => revisionOf(candidate) >= 0)
-        .sort((a, b) => revisionOf(b) - revisionOf(a))[0];
-      if (!snapshot || snapshot.personId || revisionOf(snapshot) <= baselineRevision) return false;
-      await applySnapshot(snapshot);
-      return state.person.acknowledged === null;
-    } catch {
-      return false;
+      const pending = pendingSelectionTask;
+      if (pending) await pending.catch(() => false);
+      const baseline = snapshotFrom(dataContext?.getPersonSelection?.());
+      const baselineRevision = Math.max(revisionOf(baseline), state.person.revision);
+      if (!baseline?.personId && !state.person.acknowledged) {
+        cancelArchivePresentation();
+        return true;
+      }
+      try {
+        const result = await dataContext?.clearPerson?.();
+        const snapshot = [snapshotFrom(result), snapshotFrom(dataContext?.getPersonSelection?.())]
+          .filter((candidate) => revisionOf(candidate) >= 0)
+          .sort((a, b) => revisionOf(b) - revisionOf(a))[0];
+        if (!snapshot || snapshot.personId || revisionOf(snapshot) <= baselineRevision) return false;
+        await applySnapshot(snapshot);
+        return state.person.acknowledged === null;
+      } catch {
+        return false;
+      }
+    } finally {
+      selectionOperations -= 1;
     }
   }
 
@@ -602,6 +617,7 @@ export function createRemotePeopleArchiveController(options = {}) {
     const send = dataContext?.archiveWindowCommand;
     if (typeof send !== "function") return false;
     const requestId = globalThis.crypto?.randomUUID?.() || `archive-${Date.now()}`;
+    archiveOperations += 1;
     try {
       await send.call(dataContext,
         direction === "up" ? "page_up" : "page_down",
@@ -612,6 +628,8 @@ export function createRemotePeopleArchiveController(options = {}) {
       return true;
     } catch {
       return false;
+    } finally {
+      archiveOperations -= 1;
     }
   }
 
@@ -634,6 +652,11 @@ export function createRemotePeopleArchiveController(options = {}) {
     closeArchive,
     pageArchive,
     getArchivePhase: () => state.archive.phase,
+    getRefreshRestriction() {
+      if (state.archive.phase !== "closed" || state.archive.recoverableOpenRequestId) return "owned_session";
+      if (selectionOperations > 0 || state.person.pending || archiveOperations > 0 || pendingCancellations.size > 0) return "busy";
+      return null;
+    },
     getAcknowledgedPerson: () => state.person.acknowledged,
     switchMode,
     handlePersonSnapshot,

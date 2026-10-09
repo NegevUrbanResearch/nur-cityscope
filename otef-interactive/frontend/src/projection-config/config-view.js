@@ -17,6 +17,7 @@ import { displayValue, renderField } from "./config-field-control.js";
 import { createWarpPanelView } from "./warp-panel-view.js";
 import { createProjectionTraceUi } from './projection-trace-ui.js';
 import { bindProjectionTraceInput, bindProjectionTracePage, recordProjectionTrace, projectionTraceTime } from './projection-trace-input.js';
+import { createStaffRemotePanel } from "./staff-remote-panel.js";
 
 const docFor = (root) => root?.ownerDocument || globalThis.document;
 const WARP_OUTPUT_WIDTH = 1920;
@@ -70,6 +71,7 @@ function warpViewBoxValue(viewBox) { return `${viewBox.x} ${viewBox.y} ${viewBox
 
 export function createProjectionConfigView(root, {
   socket,
+  staffRemoteManager = null,
   descriptors = [],
   onAction = () => {},
   onRunNames = () => {},
@@ -133,7 +135,8 @@ export function createProjectionConfigView(root, {
   const clockNodeStatuses = new Map();
   let selectedGraphNode = "pre";
   const app = make(doc, "div", { className: "config-shell" });
-  const commandBar = createConfigCommandBar({ document: doc, onAction, onOutputAction });
+  const staffRemotePanel = staffRemoteManager ? createStaffRemotePanel({ document: doc, manager: staffRemoteManager }) : null;
+  const commandBar = createConfigCommandBar({ document: doc, onAction, onOutputAction, staffRemotePanel });
   const controls = commandBar.controls;
   const setPresetName = commandBar.setPresetName;
   const traceUi = trace?.enabled ? createProjectionTraceUi({ document: doc, trace }) : null;
@@ -1185,7 +1188,7 @@ export function createProjectionConfigView(root, {
     setPointMatchPreview:config=>dialog.setPointMatchPreview(config),
     confirmDiscard:message=>doc.defaultView?.confirm?.(message),
     mapPointMatchPadDelta:delta=>{const rect=controls.warpSurface.getBoundingClientRect?.() || {width:1920,height:1080};const box=effectiveWarpViewBox || warpViewBox;const a=warpPointFromClient({clientX:0,clientY:0},{left:0,top:0,width:rect.width,height:rect.height},box);const b=warpPointFromClient({clientX:delta[0],clientY:delta[1]},{left:0,top:0,width:rect.width,height:rect.height},box);return [b.x-a.x,b.y-a.y];},
-    dispose() { if (disposed) return; disposed = true; cancelPendingWarpPaint(); pointMatchControls.dispose(); for (const control of fields.values()) control.dispose(); warpPanelView.dispose(); settlementControls.dispose(); disposePageTrace(); disposeWarpTrace(); disposeGraphTrace(); traceUi?.dispose(); commandBar.dispose(); doc.removeEventListener?.("keydown", onKeyDown); parameterDialog.dispose(); dialog.dispose(); pointerInput.dispose(); canvas.dispose(); },
+    dispose() { if (disposed) return; disposed = true; cancelPendingWarpPaint(); pointMatchControls.dispose(); for (const control of fields.values()) control.dispose(); warpPanelView.dispose(); settlementControls.dispose(); disposePageTrace(); disposeWarpTrace(); disposeGraphTrace(); traceUi?.dispose(); staffRemotePanel?.dispose(); commandBar.dispose(); doc.removeEventListener?.("keydown", onKeyDown); parameterDialog.dispose(); dialog.dispose(); pointerInput.dispose(); canvas.dispose(); },
   };
 }
 

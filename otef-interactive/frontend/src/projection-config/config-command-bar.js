@@ -9,7 +9,7 @@ function make(doc, tag, props = {}, text = '') {
   return node;
 }
 
-export function createConfigCommandBar({ document: doc, onAction = () => {}, onOutputAction = () => {} }) {
+export function createConfigCommandBar({ document: doc, onAction = () => {}, onOutputAction = () => {}, staffRemotePanel = null }) {
   const win = doc.defaultView;
   const controls = {};
   const listeners = [];
@@ -85,8 +85,14 @@ export function createConfigCommandBar({ document: doc, onAction = () => {}, onO
   controls.applied.appendChild(controls.appliedRows);
   controls.outputHandoff = make(doc, 'small', { className: 'output-launch-handoff' }, 'TD projectorWindows off → Open outputs; Close outputs → TD projectorWindows on. After reload, close old browser output windows before reopening.');
   controls.toolsContent.append(controls.toolsAppliedSummary, controls.applied, controls.outputHandoff, make(doc, 'small', { className: 'preset-scope-help' }, 'Presets include geometry and people-wall settings. Clock and settlement layouts save independently.'));
+  if (staffRemotePanel) {
+    controls.staffRemoteSummary = staffRemotePanel.summary;
+    controls.toolsContent.appendChild(staffRemotePanel.element);
+  }
   controls.tools.append(controls.toolsSummary, controls.toolsContent);
-  primaryRow.append(pending, controls.presetsDisclosure, controls.displaysDisclosure, controls.tools);
+  primaryRow.append(pending, controls.presetsDisclosure, controls.displaysDisclosure);
+  if (staffRemotePanel) primaryRow.appendChild(staffRemotePanel.summary);
+  primaryRow.appendChild(controls.tools);
   const band = make(doc, 'div', { className: 'config-workspace-band' });
   controls.workspaceNav = make(doc, 'nav', { className: 'config-category-actions', ariaLabel: 'Workspace' });
   const commits = make(doc, 'div', { className: 'calibration-commit-controls' });

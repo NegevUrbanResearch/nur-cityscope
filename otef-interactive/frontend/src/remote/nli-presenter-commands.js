@@ -89,6 +89,7 @@ export function createPresenterCommands({ host, context, getSnapshot, onPending 
       return key == null ? Promise.resolve(failedStale()) : run("select", key);
     },
     toggle() { return run("toggle"); },
+    isPending: () => pending,
     invalidate() { generation += 1; },
     dispose() { disposed = true; generation += 1; },
   };

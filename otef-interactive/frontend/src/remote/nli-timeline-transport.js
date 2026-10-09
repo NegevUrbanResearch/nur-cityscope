@@ -760,8 +760,15 @@ export const nliTimelineHostMethods = {
     this._nliOptimisticClock = null;
     const epoch = this._nliTransportEpoch || 0;
     const callerCurrent = typeof isCurrent === "function" ? isCurrent : () => true;
-    return OTEFDataContext.patchInvestigationClock(next, {
+    return this._trackNliTransport(OTEFDataContext.patchInvestigationClock(next, {
       isCurrent: () => (this._nliTransportEpoch || 0) === epoch && callerCurrent(),
+    }));
+  },
+
+  _trackNliTransport(request) {
+    this._nliTransportPending = (this._nliTransportPending || 0) + 1;
+    return Promise.resolve(request).finally(() => {
+      this._nliTransportPending = Math.max(0, (this._nliTransportPending || 1) - 1);
     });
   },
 
@@ -843,6 +850,10 @@ export const nliTimelineHostMethods = {
   _storeNliCachedFeatures(id, features) {
     this._nliFeatureCache[id] = features;
     this._nliStaffCacheChanged?.(id, features);
+  },
+
+  _hasPendingNliTransport() {
+    return (this._nliTransportPending || 0) > 0;
   },
 
   async _ensureNliFeatureCache(ids, options = {}) {
@@ -1113,9 +1124,9 @@ export const nliTimelineHostMethods = {
       ) {
         const epoch = this._nliTransportEpoch || 0;
         const paused = this._nliOptimisticClock;
-        void OTEFDataContext.patchInvestigationClock(paused, {
+        void this._trackNliTransport(OTEFDataContext.patchInvestigationClock(paused, {
           isCurrent: () => (this._nliTransportEpoch || 0) === epoch,
-        });
+        }));
       }
     } else if (narrativeId === "nova" && clock.phase === "idle") {
       restoreClock = seekNliClock(clock, 0, nliNowMs(), arm, clockOptions);

@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "vitest";
@@ -11,6 +12,29 @@ function readScript(name) {
 }
 
 describe("NLI archive pager startup", () => {
+  test.skipIf(process.platform !== "win32")(
+    "keeps version generator output out of the startup result when readiness fails",
+    () => {
+      const startupPath = path.join(scriptsDirectory, "start-otef.ps1").replaceAll("'", "''");
+      const probe = [
+        `$ErrorActionPreference = 'SilentlyContinue'`,
+        `. '${startupPath}' -DotSource`,
+        `function node { $global:LASTEXITCODE = 0; Write-Output 'frontend-0123456789abcdef' }`,
+        `$startupResult = Invoke-ProjectionStartup -AlreadyStarted -RepositoryRoot '.' -PortProvider { return $null }`,
+        `if ($startupResult) { exit 43 }`,
+        `Write-Output 'startup-failed'`,
+      ].join("; ");
+      const result = spawnSync(
+        "powershell.exe",
+        ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", probe],
+        { encoding: "utf8" },
+      );
+
+      expect(result.status, result.stderr || result.error?.message).toBe(0);
+      expect(result.stdout.trim()).toBe("startup-failed");
+    },
+  );
+
   test("start-otef.ps1 starts the pager after share hosts and warns in degraded mode", () => {
     const source = readScript("start-otef.ps1");
     const shareAt = source.indexOf("write-share-hosts.mjs");
