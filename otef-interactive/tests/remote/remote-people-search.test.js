@@ -71,7 +71,8 @@ describe("remote people search", () => {
     expect(runtime.search("david", "en").map((row) => row.pid)).toEqual(["1", "2"]);
     expect(runtime.search("eri", "en")[0].pid).toBe("2");
     expect(runtime.resolve("1", "v1")).toMatchObject({ pid: "1", hasArchiveRecord: true });
-    expect(runtime.resolve("2", "v1")).toMatchObject({ pid: "2", name: "David Cohen", location: "Be'eri", hasArchiveRecord: false });
+    expect(runtime.resolve("2", "v1", 'en')).toMatchObject({ pid: "2", name: "David Cohen", location: "Be'eri", hasArchiveRecord: false });
+    expect(runtime.resolve("2", "v1", 'he').name).toBe('לא ידוע');
     expect(runtime.resolve("2", "v2")).toBeNull();
     expect(runtime.search("", "en")).toEqual([]);
   });

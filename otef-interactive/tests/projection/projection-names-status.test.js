@@ -11,6 +11,17 @@ function status(output, instanceId, changes = {}) {
 }
 
 describe('projection names status tracker', () => {
+  test('terminal cancellation retires Run correlation and accepts automatic language-refresh reports', () => {
+    const tracker = createProjectionNamesStatusTracker(); tracker.setTarget(target);
+    const requestId = '30000000-0000-4000-8000-000000000003';
+    tracker.beginRequest(requestId);
+    tracker.accept(status('left', leftId, { requestId, state: 'stale' }));
+    tracker.accept(status('right', rightId, { requestId, state: 'stale' }));
+    expect(tracker.accept(status('left', leftId))).toBe(true);
+    expect(tracker.accept(status('right', rightId))).toBe(true);
+    expect(tracker.getState().state).toBe('current');
+    expect(tracker.accept(status('left', leftId, { requestId }))).toBe(false);
+  });
   test('geometry acknowledgements never establish names current and two matching output reports are required', () => {
     const tracker = createProjectionNamesStatusTracker();
     tracker.setTarget(target);

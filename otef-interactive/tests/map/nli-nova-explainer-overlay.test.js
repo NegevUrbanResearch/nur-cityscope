@@ -63,6 +63,7 @@ function mount(options = {}) {
   let narrativeId = options.narrativeId ?? "nova";
   let escape = options.escape || { mor: options.mor === true };
   let layout = options.layout || { close: {}, wide: {} };
+  let language = options.language || 'he';
   const overlay = createNovaExplainerOverlay({
     map,
     container,
@@ -71,6 +72,7 @@ function mount(options = {}) {
     getEscapeOverlay: () => escape,
     motionMode: options.motionMode || "full",
     cameraOverride: options.cameraOverride,
+    getLanguage: () => language,
   });
   return {
     overlay,
@@ -80,6 +82,7 @@ function mount(options = {}) {
     setNarrative(id) { narrativeId = id; },
     setEscape(value) { escape = value; },
     setLayout(next) { layout = next; },
+    setLanguage(next) { language = next; },
     setSize(nextWidth, nextHeight) { width = nextWidth; height = nextHeight; },
     host: () => container.querySelector("#nliNovaExplainerHost"),
     card: (id) => container.querySelector(`.nli-nova-explainer-card[data-object-id="${id}"]`),
@@ -90,7 +93,8 @@ function mount(options = {}) {
 beforeEach(() => {
   measureReads = 0;
   setReducedMotion(false);
-  document.fonts = { ready: new Promise((resolve) => { resolveFonts = resolve; }) };
+  Object.defineProperty(document, 'fonts', { configurable: true, writable: true,
+    value: { ready: new Promise((resolve) => { resolveFonts = resolve; }) } });
   vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockImplementation(function () {
     if (this.classList?.contains("nli-nova-explainer-card")) measureReads += 1;
     return 100;
@@ -105,6 +109,62 @@ afterEach(() => {
 });
 
 describe("createNovaExplainerOverlay", () => {
+  it('uses the localized height to keep a long English caption inside the canvas without changing its saved position', () => {
+    const ui = mount({ width: 500, height: 300,
+      layout: { close: { 104: { leftPct: 80, topPct: 90 } }, wide: {} } });
+    vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockImplementation(function () {
+      if (this.getAttribute('lang') === 'en') {
+        expect(this.firstElementChild.style.fontFamily).toBe('Arial, sans-serif');
+        expect(this.getAttribute('dir')).toBe('ltr');
+        return 280;
+      }
+      return 100;
+    });
+    vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function () {
+      return this.getAttribute('lang') === 'en' ? 240 : 40;
+    });
+    ui.overlay.sync(visual({ achievedPolygonObjectIds: [104], polygonFeatures: [polygon(104, 'חטיפה')] }));
+    ui.setLanguage('en'); ui.overlay.refresh();
+    expect(ui.card(104).style.top).toBe('56px');
+    expect(ui.card(104).style.left).toBe('216px');
+    expect(ui.card(104).textContent).toContain('Maxim Herkin, and Yosef Ohana');
+    expect(ui.card(104).textContent).not.toMatch(/[\u0590-\u05ff]/);
+    ui.setLanguage('he'); ui.overlay.refresh();
+    expect(ui.card(104).style.top).toBe('256px');
+    expect(ui.card(104).style.left).toBe('396px');
+    ui.overlay.dispose();
+  });
+  it('switches existing cards to English and remeasures without restarting entry or changing saved positions', () => {
+    const ui = mount({ layout: { close: { 97: { leftPct: 10, topPct: 20 } }, wide: {} } });
+    const frame = visual(); ui.overlay.sync(frame);
+    const card = ui.card(97), leader = ui.leader(97);
+    card.classList.remove('nli-nova-explainer-card--in');
+    const reads = measureReads;
+    ui.setLanguage('en'); ui.overlay.refresh();
+    expect(card.textContent).toBe('Fighting — Highway 232');
+    expect(card.getAttribute('lang')).toBe('en');
+    expect(card.getAttribute('dir')).toBe('ltr');
+    expect(card.firstElementChild.style.fontFamily).toBe('Arial, sans-serif');
+    expect(measureReads).toBeGreaterThan(reads);
+    expect(ui.card(97)).toBe(card); expect(ui.leader(97)).toBe(leader);
+    expect(card.style.left).toBe('80px'); expect(card.style.top).toBe('120px');
+    expect(card.classList.contains('nli-nova-explainer-card--in')).toBe(false);
+    const englishReads = measureReads; ui.overlay.refresh(); expect(measureReads).toBe(englishReads);
+    ui.setLanguage('he'); ui.overlay.refresh();
+    expect(card.textContent).toBe(frame.polygonFeatures[0].properties.Name);
+    expect(card.firstElementChild.style.fontFamily).toBe('');
+    ui.overlay.dispose();
+  });
+  it('updates outgoing cards on a language switch while keeping their lifecycle owner until hidden', () => {
+    const ui = mount(); ui.overlay.sync(visual());
+    const card = ui.card(97); let hidden;
+    ui.overlay.applyScene({ narrativeState: { id: null } }, { runtime: {
+      getDesiredIds: () => [], onMemberHidden: (_id, fn) => { hidden = fn; return () => {}; },
+    } });
+    ui.setNarrative(null); ui.setLanguage('en'); ui.overlay.refresh();
+    expect(card.isConnected).toBe(true); expect(card.textContent).toBe('Fighting — Highway 232');
+    hidden(); expect(card.isConnected).toBe(false); ui.overlay.dispose();
+  });
   it("shows only achieved story ids, with the literal name and dir=auto", () => {
     const ui = mount();
     ui.overlay.sync(visual({

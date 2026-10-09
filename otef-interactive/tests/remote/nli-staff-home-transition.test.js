@@ -19,7 +19,7 @@ const FIXTURE = `
     <p id="fullscreenStatus" hidden></p>
     <button type="button" id="localeHe"></button>
     <button type="button" id="localeEn"></button>
-    <span id="staffConnection"></span>
+    <span id="staffConnection"><span id="staffConnectionLabel"></span></span>
     <section class="screen is-active" data-screen="home">
       <p id="homeCueStatus" hidden role="status"></p>
       <button id="homeRetry" hidden></button>
@@ -40,6 +40,7 @@ const FIXTURE = `
         <div id="kitSearch">
           <div id="searchKit">
             <input id="searchInput" />
+            <button type="button" id="searchReset" disabled></button>
             <ul id="searchResults"></ul>
             <p id="searchStatus" hidden></p>
             <div id="searchArchiveMount"></div>
@@ -95,7 +96,7 @@ function mount(options = {}) {
     escapes: [],
     patches: [],
     commands: [],
-    person: options.person || { personId: null, revision: 1 },
+    person: options.person || { personId: null, datasetVersion: null, revision: 1 },
     clock: options.clock || { phase: "idle", revision: 1 },
     narrative: options.narrative || { id: null, revision: 2, transition: "steady" },
     failNull: false,
@@ -132,7 +133,7 @@ function mount(options = {}) {
   };
 
   const dataContext = {
-    isConnected: () => false,
+    isConnected: () => options.connected === true,
     getNarrativeState: () => h.narrative,
     getPersonSelection: () => h.person,
     getInvestigationClock: () => h.clock,
@@ -182,9 +183,9 @@ function mount(options = {}) {
   return { h, dataContext, listeners };
 }
 
-async function bootRemote(session) {
+async function bootRemote(session, options = {}) {
   const { initNliStaffRemote } = await import("../../frontend/src/remote/nli-staff-remote.js");
-  session.remote = initNliStaffRemote(session.dataContext);
+  session.remote = initNliStaffRemote(session.dataContext, options);
 }
 
 describe("NLI staff Home transitions", () => {
@@ -208,6 +209,41 @@ describe("NLI staff Home transitions", () => {
     expect(COPY.he.cueReady).not.toMatch(/מוכנה|שני המסכים/);
     expect(COPY.en.connected).toBe("Connected");
     expect(COPY.en.disconnected).toBe("Map is disconnected");
+  });
+
+  test("refresh readiness waits for successful startup Home and a current connection", async () => {
+    setLocale("en", { persist: false });
+    session = mount({ connected: true });
+    await bootRemote(session);
+    expect(session.remote.getRefreshState()).toEqual({ ready: false, refreshBlockReason: "not_ready" });
+
+    session.h.emit("connection", true);
+    session.h.emit("narrativeState", session.h.narrative);
+    expect(session.remote.getRefreshState()).toEqual({ ready: false, refreshBlockReason: "not_ready" });
+    await vi.waitFor(() => expect(session.remote.getRefreshState().ready).toBe(true));
+    expect(session.remote.getRefreshState().refreshBlockReason).toBeNull();
+
+    session.h.narrative = { id: "nova", transition: "enter", revision: 8 };
+    expect(session.remote.getRefreshState()).toEqual({ ready: true, refreshBlockReason: "not_home" });
+    session.h.emit("connection", false);
+    expect(session.remote.getRefreshState()).toEqual({ ready: false, refreshBlockReason: "not_ready" });
+  });
+
+  test("a pending scene navigation blocks refresh while canonical Home is still cached", async () => {
+    setLocale("en", { persist: false });
+    session = mount({ connected: true });
+    await bootRemote(session);
+    session.h.emit("connection", true);
+    session.h.emit("narrativeState", session.h.narrative);
+    await vi.waitFor(() => expect(session.remote.getRefreshState().refreshBlockReason).toBeNull());
+    let finishLayers;
+    session.h.layerGate = new Promise((resolve) => { finishLayers = resolve; });
+    el("narrativeList").querySelector('[data-open="segev"]').click();
+    await vi.waitFor(() => expect(el("cueStatus").dataset.status).toBe("applying"));
+    expect(session.remote.getRefreshState()).toEqual({ ready: true, refreshBlockReason: "busy" });
+    finishLayers();
+    await vi.waitFor(() => expect(el("cueStatus").dataset.status).toBe("ready"));
+    expect(session.remote.getRefreshState().refreshBlockReason).toBe("not_home");
   });
 
   test("header Home, narrative finish, and a selected person apply the Home cue", async () => {
@@ -463,6 +499,55 @@ describe("NLI staff Home transitions", () => {
     expect(activeScreen()).toBe("player");
   });
 
+  test("search reset clears the query and selected person while blocking conflicting controls", async () => {
+    setLocale("en", { persist: false });
+    session = mount();
+    await bootRemote(session);
+    await session.h.openCard('[data-show-step="identity-database"]');
+    expect(el("searchReset").disabled).toBe(true);
+
+    session.h.person = { personId: "ada", revision: 2, datasetVersion: "v", name: "Ada" };
+    let releaseClear;
+    session.h.clearPerson = vi.fn(() => new Promise((resolve) => {
+      releaseClear = () => {
+        session.h.person = { personId: null, revision: 3, datasetVersion: "v" };
+        resolve(session.h.person);
+      };
+    }));
+    el("searchInput").value = "Ada";
+    el("searchInput").dispatchEvent(new Event("input", { bubbles: true }));
+    expect(el("searchReset").disabled).toBe(false);
+    el("searchReset").click();
+    await vi.waitFor(() => expect(releaseClear).toBeTypeOf("function"));
+    expect(el("searchReset").disabled).toBe(true);
+    expect(el("searchInput").disabled).toBe(true);
+    expect(el("nextBtn").disabled).toBe(true);
+    releaseClear();
+    await vi.waitFor(() => expect(el("searchInput").disabled).toBe(false));
+    expect(el("searchInput").value).toBe("");
+    expect(session.h.person.personId).toBeNull();
+    expect(el("searchReset").disabled).toBe(true);
+    expect(el("searchResults").children).toHaveLength(0);
+    expect(el("stepTitle").textContent).toBe("Identity database");
+  });
+
+  test("failed search reset keeps the selected person and restores a retryable query", async () => {
+    setLocale("en", { persist: false });
+    session = mount();
+    await bootRemote(session);
+    await session.h.openCard('[data-show-step="identity-database"]');
+    session.h.person = { personId: "ada", revision: 2, datasetVersion: "v", name: "Ada" };
+    session.h.clearPerson = vi.fn(async () => session.h.person);
+    session.h.emit("personSelection", session.h.person);
+    el("searchInput").value = "Ada";
+    el("searchInput").dispatchEvent(new Event("input", { bubbles: true }));
+    el("searchReset").click();
+    await vi.waitFor(() => expect(el("searchStatus").textContent).toBe(COPY.en.searchClearFailed));
+    expect(el("searchInput").value).toBe("Ada");
+    expect(session.h.person.personId).toBe("ada");
+    expect(el("searchReset").disabled).toBe(false);
+  });
+
   test("ordinary search cleanup continues to block Next and Back", async () => {
     setLocale("en", { persist: false });
     session = mount();
@@ -578,15 +663,19 @@ describe("NLI staff Home transitions", () => {
   });
   test("initial Home failure is visible and Retry applies the Home cue", async () => {
     setLocale("en", { persist: false });
-    session = mount();
-    await bootRemote(session);
+    session = mount({ connected: true });
+    const onHomeSuccess = vi.fn();
+    await bootRemote(session, { onHomeSuccess });
     session.h.failNull = true;
+    expect(onHomeSuccess).not.toHaveBeenCalled();
+    expect(session.remote.getRefreshState()).toEqual({ ready: false, refreshBlockReason: "not_ready" });
     session.h.emit("narrativeState", session.h.narrative);
     session.h.emit("connection", true);
     await vi.waitFor(() => expect(session.h.narratives).toContain(null));
     await vi.waitFor(() => expect(el("homeCueStatus")?.hidden).toBe(false));
     expect(el("homeCueStatus").textContent).toBe("Could not apply this scene");
     expect(el("homeRetry").hidden).toBe(false);
+    expect(onHomeSuccess).not.toHaveBeenCalled();
 
     const failedCalls = session.h.narratives.length;
     session.h.failNull = false;
@@ -594,18 +683,24 @@ describe("NLI staff Home transitions", () => {
     await vi.waitFor(() => expect(session.h.narratives.length).toBeGreaterThan(failedCalls));
     await vi.waitFor(() => expect(el("homeRetry").hidden).toBe(true));
     expect(session.h.layers.at(-1)).toEqual([...HOME_LAYER_IDS]);
+    await vi.waitFor(() => expect(session.remote.getRefreshState()).toEqual({ ready: true, refreshBlockReason: null }));
+    expect(onHomeSuccess).toHaveBeenCalledOnce();
   });
 
   test("cue busy state disables the rendered escape and presentation controls", async () => {
     setLocale("en", { persist: false });
-    session = mount();
+    session = mount({ connected: true });
     await bootRemote(session);
+    session.h.emit("connection", true);
+    session.h.emit("narrativeState", session.h.narrative);
+    await vi.waitFor(() => expect(session.remote.getRefreshState().ready).toBe(true));
     await session.h.openCard('[data-open="nova"]');
     let releaseNova;
     session.h.layerGate = new Promise((resolve) => { releaseNova = resolve; });
     el("ticks").querySelector('[data-step="3"]').click();
     await vi.waitFor(() => expect(el("cueStatus").dataset.status).toBe("applying"));
     await vi.waitFor(() => expect(el("stepTitle").textContent).toBe("Mor Levy"));
+    expect(session.remote.getRefreshState().refreshBlockReason).toBe("owned_session");
     expect(el("kitEscape").querySelector("button").disabled).toBe(true);
     expect([...el("kitPresentation").querySelectorAll("button")].every(button => button.disabled)).toBe(true);
     await vi.waitFor(() => expect(session.h.commands.at(-1)?.presentationAction).toBe("open"));
@@ -615,6 +710,34 @@ describe("NLI staff Home transitions", () => {
     await vi.waitFor(() => expect(session.h.clock.presentationPendingUntilMs || 0).toBe(0));
     session.h.emit("narrativePresentationResult", { ...opening, outcome: "opened" });
     await vi.waitFor(() => expect(el("cueStatus").dataset.status).toBe("ready"));
+  });
+
+  test("a failed presentation close remains refresh-blocking while its session is owned", async () => {
+    setLocale("en", { persist: false });
+    session = mount({ connected: true });
+    await bootRemote(session);
+    session.h.emit("connection", true);
+    session.h.emit("narrativeState", session.h.narrative);
+    await vi.waitFor(() => expect(session.remote.getRefreshState().ready).toBe(true));
+    await session.h.openCard('[data-open="segev"]');
+    vi.useFakeTimers();
+    try {
+      el("kitPresentation").querySelector('[data-presentation-action="open"]').click();
+      await vi.waitFor(() => expect(session.h.commands.at(-1)?.presentationAction).toBe("open"));
+      const open = session.h.commands.at(-1);
+      session.h.emit("narrativePresentationResult", { ...open, outcome: "opened", slide: 0, range: [0, 0] });
+      await vi.waitFor(() => expect(session.remote.getRefreshState().refreshBlockReason).toBe("owned_session"));
+
+      el("kitPresentation").querySelector('[data-presentation-action="close"]').click();
+      await vi.waitFor(() => expect(session.h.commands.at(-1)?.presentationAction).toBe("close"));
+      const close = session.h.commands.at(-1);
+      session.h.emit("narrativePresentationResult", { ...close, outcome: "failed" });
+      await vi.advanceTimersByTimeAsync(6001);
+      expect(el("kitPresentation").innerHTML).toContain('data-presentation-action="recover-home"');
+      expect(session.remote.getRefreshState().refreshBlockReason).toBe("owned_session");
+    } finally {
+      vi.useRealTimers();
+    }
   });
   test("sessionless hydrated Home exits once, including over a null narrative, and reconnect or locale does not reset", async () => {
     setLocale("en", { persist: false });
@@ -741,7 +864,7 @@ describe("NLI staff Home transitions", () => {
     }
   });
 
-  test("open archive kit paint includes page_down and keeps the player chrome", async () => {
+  test.each(["closed", "unavailable-then-closed"])("archive Back resets search only after a matching close confirmation: %s", async (closeOutcome) => {
     const peopleIndex = {
       datasetVersion: "v1",
       people: [{ pid: "11", nameForms: ["Ada"], hasArchiveRecord: true }],
@@ -769,7 +892,8 @@ describe("NLI staff Home transitions", () => {
       await bootRemote(session);
       session.h.emit("connection", true);
       await session.h.openCard('[data-show-step="identity-database"]');
-      session.h.emit("personSelection", { personId: "11", datasetVersion: "v1", revision: 2 });
+      session.h.person = { personId: "11", datasetVersion: "v1", revision: 2 };
+      session.h.emit("personSelection", session.h.person);
       await vi.waitFor(() => {
         expect(el("searchArchiveMount").querySelector("[data-archive-action='open']")).toBeTruthy();
       });
@@ -790,6 +914,29 @@ describe("NLI staff Home transitions", () => {
       expect(document.querySelector(".dock")).not.toBeNull();
       expect(document.getElementById("archiveBtn")).toBeNull();
       expect(document.getElementById("freeArchiveBtn")).toBeNull();
+      el("searchArchiveMount").querySelector("[data-archive-action='close']").click();
+      await vi.waitFor(() => expect(session.dataContext.archiveWindowCommand.mock.calls.at(-1)[0]).toBe("close"));
+      const closeRequestId = session.dataContext.archiveWindowCommand.mock.calls.at(-1)[3];
+      session.h.emit("archiveWindowResult", {
+        requestId: "stale-close", personId: "11", datasetVersion: "v1", outcome: "closed",
+      });
+      expect(el("searchInput").value).toBe("Ada");
+      expect(session.h.person.personId).toBe("11");
+      if (closeOutcome === "unavailable-then-closed") {
+        session.h.emit("archiveWindowResult", {
+          requestId: closeRequestId, personId: "11", datasetVersion: "v1", outcome: "unavailable",
+        });
+        expect(el("searchInput").value).toBe("Ada");
+        expect(session.h.person.personId).toBe("11");
+      }
+      session.h.emit("archiveWindowResult", {
+        requestId: closeRequestId, personId: "11", datasetVersion: "v1", outcome: "closed",
+      });
+      await vi.waitFor(() => expect(el("searchInput").value).toBe(""));
+      expect(session.h.person.personId).toBeNull();
+      expect(el("searchReset").disabled).toBe(true);
+      expect(el("searchArchiveMount").querySelector("[data-archive-action='open']")).toBeNull();
+      expect(el("stepTitle").textContent).toBe("Identity database");
     } finally {
       vi.unstubAllGlobals();
     }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createNarrativeFocusRenderer, NARRATIVE_FOCUS_RENDERER_IDS } from "../../frontend/src/shared/maplibre-narrative-focus.js";
 import { createFakeMapLibreMap } from "../helpers/fake-maplibre-map.js";
+import { NLI_NARRATIVES } from '../../frontend/src/shared/nli-narratives.js';
 
 const segev = Object.freeze({
   id: "segev",
@@ -70,6 +71,23 @@ function renderedFocus(map) {
 }
 
 describe("MapLibre narrative focus renderer", () => {
+  it.each(['segev', 'hostages', 'sderot', 'nova'])('localizes %s without changing polygon matching or layer identity', id => {
+    let language = 'he';
+    const map = withHouses([segevHouse, periHouse, sderotHouse]);
+    const renderer = createNarrativeFocusRenderer(map, { profile: 'gis', getLanguage: () => language });
+    renderer.show(NLI_NARRATIVES[id]);
+    const position = renderedFocus(map).geometry.coordinates;
+    const originalLayer = map.getLayer(NARRATIVE_FOCUS_RENDERER_IDS.label);
+    language = 'en'; renderer.show(NLI_NARRATIVES[id]);
+    expect(renderedFocus(map).properties.label).toBe({ segev: 'Segev family home', hostages: 'Peri family home', sderot: 'Sderot police station', nova: 'Nova' }[id]);
+    expect(renderedFocus(map).geometry.coordinates).toEqual(position);
+    expect(map.getLayer(NARRATIVE_FOCUS_RENDERER_IDS.label)).toBe(originalLayer);
+    expect(map.getLayoutProperty(NARRATIVE_FOCUS_RENDERER_IDS.label, 'text-font')).toEqual(['Arial']);
+    language = 'he'; renderer.refresh();
+    expect(renderedFocus(map).properties.label).toBe(NLI_NARRATIVES[id].label);
+    expect(map.getLayoutProperty(NARRATIVE_FOCUS_RENDERER_IDS.label, 'text-font')).toEqual(['Guttman Hatzvi', 'Arial']);
+    renderer.dispose();
+  });
   it.each([
     ["gis", 24, 1.5],
     ["projection", 11, 1.1],

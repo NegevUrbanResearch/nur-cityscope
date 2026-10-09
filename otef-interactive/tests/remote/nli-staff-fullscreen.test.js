@@ -11,7 +11,7 @@ describe("staff remote fullscreen control", () => {
   });
 
   test("requests and exits fullscreen only through its explicit button", async () => {
-    document.body.innerHTML = '<main id="app"></main><button id="toggle" aria-pressed="false"></button><p id="status"></p>';
+    document.body.innerHTML = '<main id="app"></main><button id="toggle" aria-pressed="false"><svg></svg><span data-fullscreen-label></span></button><p id="status"></p>';
     const root = document.getElementById("app");
     const button = document.getElementById("toggle");
     const status = document.getElementById("status");
@@ -26,14 +26,18 @@ describe("staff remote fullscreen control", () => {
     const control = createStaffFullscreenControl({ root, button, status, labels: { enter: "Enter", exit: "Exit", unavailable: "Unavailable" } });
 
     expect(root.requestFullscreen).not.toHaveBeenCalled();
+    expect(button.querySelector("[data-fullscreen-label]").textContent).toBe("Enter");
     button.click();
     await vi.waitFor(() => expect(button.getAttribute("aria-pressed")).toBe("true"));
     expect(root.requestFullscreen).toHaveBeenCalledOnce();
     expect(button.getAttribute("aria-label")).toBe("Exit");
+    expect(button.querySelector("[data-fullscreen-label]").textContent).toBe("Exit");
     button.click();
     await vi.waitFor(() => expect(button.getAttribute("aria-pressed")).toBe("false"));
     expect(document.exitFullscreen).toHaveBeenCalledOnce();
     expect(button.getAttribute("aria-label")).toBe("Enter");
+    expect(button.querySelector("[data-fullscreen-label]").textContent).toBe("Enter");
+    expect(button.querySelector("svg")).not.toBeNull();
     control.destroy();
   });
 

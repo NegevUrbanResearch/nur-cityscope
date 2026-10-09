@@ -19,6 +19,7 @@ import { measureClockPreviewWarnings } from "../projection/clock-preview-warning
 import { syncInvestigationTimelineToMap, disposeInvestigationTimelineForMap } from "../shared/maplibre-investigation-timeline.js";
 import { createNovaExplainerOverlay } from "./nli-nova-explainer-overlay.js";
 import { filterGazaBorderVisibility } from "../shared/gaza-border-style.js";
+import { novaExplainerName } from "../shared/nli-nova-explainer-copy.js";
 import {
   applyNliExplainerLayout,
   ensureNliExplainerHost,
@@ -165,7 +166,7 @@ function measuredExplainerBox(card, container) {
   return Object.values(box).every(Number.isFinite) ? box : null;
 }
 
-function measuredNovaExplainerCards(frame, container) {
+function measuredNovaExplainerCards(frame, container, language) {
   const achieved = Array.isArray(frame?.achievedPolygonObjectIds) ? frame.achievedPolygonObjectIds : [];
   const features = Array.isArray(frame?.polygonFeatures) ? frame.polygonFeatures : [];
   const byId = new Map();
@@ -180,7 +181,7 @@ function measuredNovaExplainerCards(frame, container) {
     const id = storyObjectId(rawId);
     if (id == null || seen.has(id)) continue;
     seen.add(id);
-    const name = featureName(byId.get(id));
+    const name = novaExplainerName(byId.get(id)?.properties, language);
     if (!name) continue;
     cards.push({
       objectId: id,
@@ -303,6 +304,7 @@ function previewStateFromEvent(event, sessionId, lastRequestId, origin) {
   }
   if (state.element === "novaExplainers") {
     if (state.sceneId !== "nova"
+      || (state.language !== undefined && state.language !== 'he' && state.language !== 'en')
       || (state.novaExplainerCamera !== "close" && state.novaExplainerCamera !== "wide")
       || !plainObject(state.novaExplainerLayout)) {
       throw new Error("Invalid GIS preview explainer request");
@@ -351,6 +353,7 @@ export async function bootClockPreview({ window: frameWindow, document: frameDoc
   let currentScene = composeGisClockPreviewScene("home", registryGroups);
   let currentExplainerLayout = null;
   let currentExplainerCamera = null;
+  let currentLanguage = 'he';
   let lastExplainerFrame = null;
   const novaExplainerOverlay = createNovaExplainerOverlay({
     map,
@@ -360,6 +363,7 @@ export async function bootClockPreview({ window: frameWindow, document: frameDoc
     getEscapeOverlay: () => escape.get(),
     motionMode: resolveMotionMode(),
     cameraOverride: () => currentExplainerCamera,
+    getLanguage: () => currentLanguage,
   });
   const basemapCoordinator = createGisBasemapStyleCoordinator({
     map,
@@ -406,6 +410,7 @@ export async function bootClockPreview({ window: frameWindow, document: frameDoc
     applyNarrativeHouseOutlineFilter(map, currentScene.narrative?.id ?? null);
   };
   const localContext = {
+    getLegendSettings: () => ({ language: currentLanguage }),
     getEscapeOverlay: escape.get,
     getInvestigationClock: () => currentScene.clock,
     correctedNow: () => currentScene.clock.serverNowMs ?? Date.now(),
@@ -433,6 +438,7 @@ export async function bootClockPreview({ window: frameWindow, document: frameDoc
     cancelDrawWaits();
     const generation = ++renderGeneration;
     const explainer = state.element === "novaExplainers";
+    currentLanguage = state.language === 'en' ? 'en' : 'he';
     currentExplainerCamera = explainer ? state.novaExplainerCamera : null;
     currentExplainerLayout = explainer ? state.novaExplainerLayout : null;
     lastExplainerFrame = null;
@@ -471,8 +477,9 @@ export async function bootClockPreview({ window: frameWindow, document: frameDoc
       pageCount: 1,
       warnings: measureClockPreviewWarnings({ layout: activeClockLayout, surface: "gis", element: clockHost, content: captionEl, clock: true }),
       ...(explainer ? {
+        language: currentLanguage,
         novaExplainerCamera: state.novaExplainerCamera,
-        novaExplainerCards: measuredNovaExplainerCards(lastExplainerFrame, mapContainer),
+        novaExplainerCards: measuredNovaExplainerCards(lastExplainerFrame, mapContainer, currentLanguage),
       } : {}),
     }, targetOrigin);
   };

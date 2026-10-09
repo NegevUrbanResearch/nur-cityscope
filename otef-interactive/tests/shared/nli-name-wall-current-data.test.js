@@ -7,15 +7,18 @@ import { evaluateNameWallCoverage, nameWallRowSpans, rectCoveredByPieces, ringCo
 import { createNameFieldGeometry } from '../../frontend/src/shared/nli-name-field-geometry.js';
 import { prepareMemorialNameRecords } from '../../frontend/src/shared/nli-name-field-data.js';
 import { buildNamesWallLayout } from '../../frontend/src/shared/nli-name-wall-layout.js';
-import { migrateNamesWallToV5 } from '../../frontend/src/shared/nli-name-wall-config.js';
+import { validateProjectionConfig } from '../../frontend/src/shared/projection-config-schema.js';
+import { validateProjectionBaselineMesh } from '../../frontend/src/shared/projection-warp-assets.js';
 import { sha256Hex } from '../../frontend/src/shared/sha256-hex.js';
 import { nameRevealSchedule } from '../../frontend/src/shared/nli-name-field-animation.js';
 import { createProjectionNameCanvasAdapter } from '../../frontend/src/projection/projection-name-canvas-adapter.js';
 import { planeToOutputUv } from '../../frontend/src/shared/projection-config-geometry.js';
 import { MODEL_NAME_ANTIALIAS_GUARD } from '../../frontend/src/shared/nli-name-wall-text-bounds.js';
+import { nameTextStyle } from '../../frontend/src/shared/nli-name-language.js';
 
 // Optional acceptance artifacts are supplied explicitly outside protected history directories.
-// Expected files: wall-snapshot.json, left-mesh.json, right-mesh.json, and the two wall-metrics JSON files.
+// Expected files: wall-snapshot.json, baseline-manifest.json, left-mesh.json,
+// right-mesh.json, name-metrics-he-rtl.json, and name-metrics-en-ltr.json.
 const acceptanceArtifactDir = process.env.OTEF_NAME_WALL_ACCEPTANCE_ARTIFACT_DIR
   ? resolve(process.env.OTEF_NAME_WALL_ACCEPTANCE_ARTIFACT_DIR)
   : null;
@@ -23,48 +26,72 @@ if (acceptanceArtifactDir && /(^|[\\/])(?:\.superpowers|docs[\\/]superpowers)(?:
   throw new Error('Name wall acceptance artifacts must use an allowed fixture directory.');
 }
 const acceptanceArtifact = (name) => resolve(acceptanceArtifactDir || '.', name);
-const metricsPaths = [
-  acceptanceArtifact('wall-metrics-center-middle-rtl.json'),
-  acceptanceArtifact('wall-metrics-4-8-center-middle-rtl.json'),
-];
+
 const sourcePath = 'public/processed/layers/nli/people_names.geojson';
 const metadataPath = 'public/processed/layers/nli/release-metadata.json';
 const read = (path) => JSON.parse(readFileSync(path, 'utf8'));
 
-test.skipIf(!acceptanceArtifactDir)('optional name wall artifacts keep every PID whole, safe, and stable in both modes', async () => {
+function assertCapturedFont(capture, language) {
+  const style = nameTextStyle(language);
+  expect(capture.textStyle).toEqual(style);
+  const identity = JSON.parse(capture.fontIdentity);
+  expect(identity).toHaveLength(4);
+  expect(identity.slice(0, 3)).toEqual([language, style.direction, style.canvasFontStack]);
+  expect(Array.isArray(identity[3])).toBe(true);
+  expect(identity[3].every(face => typeof face === 'string')).toBe(true);
+  if (language === 'he') expect(identity[3].some(face => face.startsWith('Guttman Hatzvi:') && face.endsWith(':loaded'))).toBe(true);
+}
+
+test('capture font validation rejects a mislabeled stack or unrelated identity', () => {
+  const textStyle = nameTextStyle('en');
+  const fontIdentity = JSON.stringify(['en', 'ltr', textStyle.canvasFontStack, []]);
+  expect(() => assertCapturedFont({ textStyle, fontIdentity }, 'en')).not.toThrow();
+  expect(() => assertCapturedFont({ textStyle: { ...textStyle, canvasFontStack: nameTextStyle('he').canvasFontStack }, fontIdentity }, 'en')).toThrow();
+  expect(() => assertCapturedFont({ textStyle, fontIdentity: '' }, 'en')).toThrow();
+  expect(() => assertCapturedFont({ textStyle, fontIdentity: JSON.stringify(['he', 'rtl', textStyle.canvasFontStack, []]) }, 'en')).toThrow();
+});
+
+test.skipIf(!acceptanceArtifactDir).each(['he', 'en'])('optional %s name wall artifacts keep every PID whole, safe, and stable in both modes', async language => {
   proj4.defs('EPSG:2039', '+proj=tmerc +lat_0=31.73439361111111 +lon_0=35.20451694444445 +k=1.0000067 +x_0=219529.584 +y_0=626907.39 +ellps=GRS80 +towgs84=-24.0024,-17.1032,-17.8444,0.33077,-1.85269,1.66969,5.4248 +units=m +no_defs');
   const saved = read(acceptanceArtifact('wall-snapshot.json'));
-  const config = migrateNamesWallToV5(saved.config || saved);
+  const config = structuredClone(saved.config || saved);
+  expect(validateProjectionConfig(config)).toEqual({});
+  const manifest = read(acceptanceArtifact('baseline-manifest.json'));
+  for (const side of ['left', 'right']) if (config.outputs[side].warp.enabled !== false && config.outputs[side].warp.baseline?.type === 'tdMesh')
+    expect(validateProjectionBaselineMesh(read(acceptanceArtifact(side + '-mesh.json')), { side, manifest, baseline: config.outputs[side].warp.baseline })).toEqual({});
   const meshes = Object.fromEntries(['left', 'right'].map((side) => [side, evaluateWarpMesh(
-    read(acceptanceArtifact(`${side}-mesh.json`)), config.outputs[side].warp,
+    read(acceptanceArtifact(`${side}-mesh.json`)), config.outputs[side].warp, { side, schemaVersion: config.schemaVersion },
   )]));
-  const logicalPlane = { heading: 35, planeScale: config.pre.scale * Math.min(config.outputs.left.post.scale, config.outputs.right.post.scale) };
+  const logicalPlane = { heading: config.namesWall.rotateDeg, planeScale: config.pre.scale * Math.min(config.outputs.left.post.scale, config.outputs.right.post.scale) };
   const coverageStart = performance.now();
   const coverage = evaluateNameWallCoverage({ config, meshes, logicalPlane });
   const coverageMs = Math.round(performance.now() - coverageStart);
   const model = read('frontend/data/model-bounds.json');
   const convert = (x, y) => proj4('EPSG:2039', 'EPSG:4326', [x, y]);
   const bounds = [convert(model.west, model.south), convert(model.east, model.north)];
-  const records = prepareMemorialNameRecords(read(sourcePath));
-  const captures = metricsPaths.map(read);
+  const records = prepareMemorialNameRecords(read(sourcePath), language);
+  const captures = [read(acceptanceArtifact('name-metrics-' + language + '-' + (language === 'en' ? 'ltr' : 'rtl') + '.json'))];
   for (const capture of captures) {
-    expect(capture.fontCheck).toBe(true);
-    expect(capture.count).toBe(records.length);
+    expect(capture.language).toBe(language);
+    expect(capture.datasetVersion).toBe(read(metadataPath).datasetVersion);
+    assertCapturedFont(capture, language);
   }
-  const sizes = { ...captures[0].sizes, ...captures[1].sizes };
+  const sizes = captures[0].sizes;
+  for (let size = 1; size <= Math.max(config.namesWall.profiles.wall.requestedFontPx, config.namesWall.profiles.model.requestedFontPx); size++)
+    expect(sizes[size], 'Missing captured size ' + size).toHaveLength(records.length);
   const metrics = Object.entries(sizes).map(([size, values]) => {
     const byPid = new Map(values.map((value) => [String(value.pid), value]));
     return [Number(size), records.map((record) => {
       const value = byPid.get(record.pid);
       expect(value).toBeDefined();
+      expect(value.name).toBe(record.name);
       return [record.name, { width: value.width, left: value.actualBoundingBoxLeft, right: value.actualBoundingBoxRight,
         ascent: value.actualBoundingBoxAscent, descent: value.actualBoundingBoxDescent }];
     })];
   });
-  const maxSize = Math.max(...metrics.map(([size]) => size));
   config.namesWall.activeMode = 'wall';
-  config.namesWall.profiles.wall.requestedFontPx = maxSize;
-  const input = { records, metrics, coverage, meshes, namesWall: config.namesWall, geometry: { bounds, projectionConfig: config },
+
+  const input = { records, metrics, coverage, meshes, language, textStyle: captures[0].textStyle, fontIdentity: captures[0].fontIdentity, namesWall: config.namesWall, geometry: { bounds, projectionConfig: config },
     logicalPlane, datasetVersion: read(metadataPath).datasetVersion };
   const layoutStart = performance.now();
   const first = await buildNamesWallLayout(input);
@@ -73,7 +100,7 @@ test.skipIf(!acceptanceArtifactDir)('optional name wall artifacts keep every PID
     reason: first.diagnostics.reason, fontPx: first.fontSize, placed: first.diagnostics.placed,
     left: first.diagnostics.left, right: first.diagnostics.right, digest: first.digest });
   const expectedIds = new Set(records.map((record) => record.pid));
-  const orderedIds = records.slice().sort((a, b) => a.orderKey.localeCompare(b.orderKey, 'he',
+  const orderedIds = records.slice().sort((a, b) => a.orderKey.localeCompare(b.orderKey, language,
     { sensitivity: 'base', numeric: true }) || a.pid.localeCompare(b.pid)).map((record) => record.pid);
   const assertComplete = (field, mode, fieldCoverage = coverage) => {
     expect(field.diagnostics.state).toBe('valid');
@@ -153,7 +180,7 @@ test.skipIf(!acceptanceArtifactDir)('optional name wall artifacts keep every PID
   expect(reordered.placements).toEqual(first.placements);
   const ringHash = await sha256Hex(new TextEncoder().encode(JSON.stringify(ring)));
   const modelWall = { ...config.namesWall, activeMode: 'model', profiles: {
-    ...config.namesWall.profiles, model: { ...config.namesWall.profiles.model, requestedFontPx: maxSize },
+    ...config.namesWall.profiles, model: { ...config.namesWall.profiles.model },
   } };
   const modelStart = performance.now();
   const modeled = await buildNamesWallLayout({ ...input, namesWall: modelWall, ring, ringHash });
@@ -174,7 +201,7 @@ test.skipIf(!acceptanceArtifactDir)('optional name wall artifacts keep every PID
     duplicate: modeled.diagnostics.duplicate, overlap: modeled.diagnostics.overlap,
     invalidCoverage: modeled.diagnostics.invalidCoverage, digest: modeled.digest });
   const zeroProfile = structuredClone(modelWall);
-  zeroProfile.profiles.model.requestedFontPx = 12;
+
   zeroProfile.profiles.model.spacingPx = 0;
   const zero = await buildNamesWallLayout({ ...input, namesWall: zeroProfile, ring, ringHash });
   assertComplete(zero, 'model');
@@ -240,6 +267,8 @@ test.skipIf(!acceptanceArtifactDir)('optional name wall artifacts keep every PID
     adapter.prepare({ config: renderConfig, placements: field.placements, outputMasks: field.outputMasks,
       fontPx: field.fontSize, textStyle: captures[0].textStyle, logicalPlane });
     adapter.commit();
+    expect(ctx.font).toBe(`${field.fontSize}px ${nameTextStyle(language).canvasFontStack}`);
+    expect(ctx.direction).toBe(nameTextStyle(language).direction);
     const descriptor = adapter.descriptor();
     const own = field.placements.filter((placement) => (placement.outputs || [placement.output]).includes(side));
     if (mode === 'wall') expect(own).toHaveLength(field.diagnostics[side]);
@@ -287,7 +316,7 @@ test.skipIf(!acceptanceArtifactDir)('optional name wall artifacts keep every PID
     const insetField = await buildNamesWallLayout({ ...input, coverage: insetCoverage,
       namesWall: insetConfig.namesWall, geometry: { bounds, projectionConfig: insetConfig } });
     expect(insetField.diagnostics).toMatchObject({ state: 'valid', placed: records.length,
-      left: 614, right: 614, missing: 0, duplicate: 0, invalidCoverage: 0 });
+      left: Math.ceil(records.length / 2), right: Math.floor(records.length / 2), missing: 0, duplicate: 0, invalidCoverage: 0 });
     expect(new Set(insetField.placements.map((p) => p.id))).toEqual(expectedIds);
     for (const placement of insetField.placements)
       expect(rectCoveredByPieces(placement, insetCoverage.pieces[placement.output])).toBe(true);
@@ -295,7 +324,7 @@ test.skipIf(!acceptanceArtifactDir)('optional name wall artifacts keep every PID
   for (const [side, pixels] of [['left', 16], ['right', 24]]) {
     const insetConfig = structuredClone(config);
     insetConfig.namesWall.activeMode = 'model';
-    insetConfig.namesWall.profiles.model.requestedFontPx = maxSize;
+
     insetConfig.namesWall.innerEdgeInsetPx[side] = pixels;
     const insetCoverage = evaluateNameWallCoverage({ config: insetConfig, meshes, logicalPlane });
     expect(insetCoverage.pieces[side]).not.toEqual(coverage.pieces[side]);

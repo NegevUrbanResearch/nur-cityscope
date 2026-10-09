@@ -22,6 +22,7 @@ function validLayout(layout) {
 
 function validNovaExplainerRequest(state) {
   return state.sceneId === "nova"
+    && (state.language === undefined || state.language === 'he' || state.language === 'en')
     && (state.novaExplainerCamera === "close" || state.novaExplainerCamera === "wide")
     && plainObject(state.novaExplainerLayout);
 }
@@ -151,6 +152,7 @@ export function mountClockLayoutPreview({ container, surface, sessionId = create
       if (message.mesh !== null || message.meshIdentity !== null || message.pageIndex !== 0 || message.pageCount !== 1) return;
       if (state.element === "novaExplainers" && (
         message.novaExplainerCamera !== state.novaExplainerCamera
+        || (message.language ?? 'he') !== (state.language ?? 'he')
         || !validNovaExplainerCards(message.novaExplainerCards)
       )) return;
     }

@@ -1,3 +1,5 @@
+import placeCatalog from './place-navigation/place-catalog.generated.js';
+const englishNames = new Map(placeCatalog.entries.map(place => [place.citycode, place.name?.en]));
 const SETTLEMENT_LAYER_ID = "projector_base.שמות_יישובים";
 
 function finite(value) {
@@ -23,7 +25,7 @@ export function buildSettlementNameCatalog(featureCollection, { outlines: outlin
       throw new TypeError(`settlement catalog geometry is invalid for ${citycode}`);
     }
     const text = feature.properties.cityname ?? feature.properties.citylabel ?? "";
-    entries.push({ citycode, text: String(text), lng: coordinates[0], lat: coordinates[1] });
+    entries.push({ citycode, text: String(text), names: { he: String(text), en: englishNames.get(citycode) }, lng: coordinates[0], lat: coordinates[1] });
     const stored=feature.properties.otef_map_text_offset_em;
     const offset=Array.isArray(stored) && stored.length===2 && stored.every(finite) ? stored : [Number(feature.properties.otef_label_offset_em_x)||0,Number(feature.properties.otef_label_offset_em_y)||0].map(value=>value/14);
     referenceOffsets.set(citycode,[...offset]);

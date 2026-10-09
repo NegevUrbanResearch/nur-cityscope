@@ -3,6 +3,7 @@ import { finiteClockMinutes, NLI_PLAYABLE_IDS } from "../shared/nli-investigatio
 import { NLI_NOVA_STORY } from "../shared/nli-nova-story.js";
 import { novaVirtualMembership } from "../shared/nli-nova-virtual-membership.js";
 import { getPresenterCopy, presenterCopyKey } from "./nli-presenter-content.js";
+import { presenterTiming } from "./nli-presenter-timing.js";
 
 function playableMembership(value, narrativeId, clock) {
   const ids = Array.isArray(value) ? value.filter((id) => NLI_PLAYABLE_IDS.includes(id)) : [];
@@ -63,6 +64,7 @@ export function buildPresenterSnapshot({
   return {
     sceneKey, sceneId, narrativeId: narrative?.id ?? null, narrativeRevision: narrative?.revision ?? null,
     arm, membership, from, to, phase, visual, beats, appliedKey, previewMinute,
+    timing: presenterTiming({ canonical, minutes, from, narrativeId: narrative?.id, phase, visual }),
     sceneBoundaryKey, boundaryKey, datasetIdentity: dataset?.identity ?? null,
     datasetGeneration: dataset?.generation ?? null,
     ready, status, error,

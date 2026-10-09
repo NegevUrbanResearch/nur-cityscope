@@ -97,5 +97,17 @@ class BuildPeopleSearchIndexTests(unittest.TestCase):
         self.assertEqual(idx["datasetVersion"], "v1")
 
 
+class CanonicalIndexContractTests(unittest.TestCase):
+    def test_hebrew_english_slot_cannot_promote_an_alias(self):
+        people = {"features": [_person(pid=1, hebrew_name="יוסף", name="יוסף")]}
+        with self.assertRaisesRegex(ValueError, "canonical"):
+            build_people_search_index(people, "v1", {"1": ["English Alias"]})
+
+    def test_missing_canonical_name_cannot_promote_an_alias(self):
+        people = {"features": [_person(pid=1, hebrew_name="יוסף", name="")]}
+        with self.assertRaisesRegex(ValueError, "canonical"):
+            build_people_search_index(people, "v1", {"1": ["English Alias"]})
+
+
 if __name__ == "__main__":
     unittest.main()

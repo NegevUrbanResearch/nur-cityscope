@@ -1,7 +1,7 @@
 /**
  * MapLibre-owned, non-interactive label used by active NLI narratives.
  * House outlines own the name when present; this renderer only places the
- * Hebrew label above the matching polygon (or the coded point as fallback).
+ * localized label above the matching polygon (or the coded point as fallback).
  */
 
 import { getLayerLifecycleRuntime } from "./layer-lifecycle-fade.js";
@@ -165,8 +165,8 @@ function fallbackCoordinates(definition) {
   return [...coordinates];
 }
 
-function featureFor(definition, map) {
-  const label = typeof definition?.label === "string" ? definition.label : "";
+function featureFor(definition, map, language = 'he') {
+  const label = (language === 'en' ? definition?.labelEn : definition?.label) || '';
   if (!label) return null;
   const house = matchingHouseFeature(definition, houseFeaturesFromMap(map));
   const coordinates = topCenterOfPolygon(house?.geometry) || fallbackCoordinates(definition);
@@ -178,8 +178,8 @@ function featureFor(definition, map) {
   };
 }
 
-function collectionFor(definition, map) {
-  const feature = featureFor(definition, map);
+function collectionFor(definition, map, language) {
+  const feature = featureFor(definition, map, language);
   return { type: "FeatureCollection", features: feature ? [feature] : [] };
 }
 
@@ -214,7 +214,8 @@ export function createNarrativeFocusRenderer(map, { profile, managedScene = fals
 
   function mount() {
     if (disposed || !definition || !map) return;
-    const data = collectionFor(definition, map);
+    const data = collectionFor(definition, map, readLanguage());
+    mountedLanguage = readLanguage();
     if (!sourcePresent(map, NARRATIVE_FOCUS_RENDERER_IDS.source)) {
       map.addSource?.(NARRATIVE_FOCUS_RENDERER_IDS.source, { type: "geojson", data });
     } else {
@@ -232,7 +233,7 @@ export function createNarrativeFocusRenderer(map, { profile, managedScene = fals
         source: NARRATIVE_FOCUS_RENDERER_IDS.source,
         layout: {
           "text-field": ["get", "label"],
-          "text-font": ["Guttman Hatzvi", "Arial"],
+          "text-font": font(),
           "text-size": displayProfile.narrativeFocus.textSize,
           "text-allow-overlap": true,
           "text-anchor": "bottom",
@@ -289,6 +290,7 @@ export function createNarrativeFocusRenderer(map, { profile, managedScene = fals
 
   return {
     show,
+    refresh,
     clear,
     holdForScene() {
       sceneHeld = true;

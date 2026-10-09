@@ -17,7 +17,7 @@ describe("compact presenter layout", () => {
   });
   it("reserves font-scaled tracks for the current time and wrapped localized transport labels", () => {
     const css = readFileSync(stylesheet, "utf8");
-    expect(css).toContain("grid-template-rows:minmax(2.35em,auto) minmax(0,1fr) minmax(4.25em,auto)");
+    expect(css).toContain("grid-template-rows:auto minmax(2.35em,auto) minmax(0,1fr) minmax(4.25em,auto)");
     expect(css).toMatch(/\.nli-presenter-text \{[^}]*overflow:auto/);
     expect(css).toMatch(/\.nli-presenter-controls \{[^}]*grid-template-columns:minmax\(0,1fr\) minmax\(0,1\.25fr\) minmax\(0,1fr\)/);
   });

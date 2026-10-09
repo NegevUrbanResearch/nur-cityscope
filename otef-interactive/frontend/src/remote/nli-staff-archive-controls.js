@@ -1,3 +1,5 @@
+import { scrollButtonContent } from "./nli-staff-icons.js";
+
 export const ARCHIVE_PAGE_HOLD_MS = 500;
 
 export function createArchivePageHold({
@@ -84,13 +86,10 @@ function escapeHtml(value) {
 }
 
 function openRecordControls(labels, personName, disabledAttr) {
-  const name = escapeHtml(personName);
-  const record = escapeHtml(labels.nliArchiveRecord);
   return `<section class="presentation-controls archive-controls" aria-label="${escapeHtml(personName || labels.nliArchiveRecord)}">
-    <div class="presentation-controls-heading"><span>${name}</span><span>${record}</span></div>
     <div class="presentation-slide-actions">
-      <button type="button" class="btn btn--outline" data-archive-action="page_up"${disabledAttr}>${escapeHtml(labels.nliArchiveScrollUp)}</button>
-      <button type="button" class="btn" data-archive-action="page_down"${disabledAttr}>${escapeHtml(labels.nliArchiveScrollDown)}</button>
+      <button type="button" class="btn btn--outline nav-button" data-archive-action="page_up"${disabledAttr}>${scrollButtonContent(labels.nliArchiveScrollUp, "up")}</button>
+      <button type="button" class="btn nav-button" data-archive-action="page_down"${disabledAttr}>${scrollButtonContent(labels.nliArchiveScrollDown, "down")}</button>
     </div>
     <button type="button" class="btn btn--outline presentation-close" data-archive-action="close"${disabledAttr}>${escapeHtml(labels.backToMap)}</button>
   </section>`;

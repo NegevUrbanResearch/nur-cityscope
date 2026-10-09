@@ -111,6 +111,23 @@ it("manual browser projection preparation suppresses the automatic legacy names 
 });
 
 describe("createNliNameFieldController", () => {
+  it('symbol language replacement preserves reveal elapsed time and ignores unchanged language', async () => {
+    vi.useFakeTimers(); vi.setSystemTime(0);
+    let language = 'he';
+    loadNliNameField.mockImplementation(async () => ({ ...field(), language }));
+    const d = setup({ motionMode: 'full' });
+    d.context.getLegendSettings = () => ({ language });
+    enable(d); await settle();
+    await vi.advanceTimersByTimeAsync(5000);
+    const before = d.map.getPaintProperty('nli-name-field-labels', 'text-opacity')[2][1];
+    expect(before).toBeGreaterThan(4900);
+    language = 'en'; d.controller.refreshNameLanguage(); await settle();
+    expect(d.map.getPaintProperty('nli-name-field-labels', 'text-opacity')[2][1]).toBeGreaterThanOrEqual(before);
+    const calls = loadNliNameField.mock.calls.length;
+    d.controller.refreshNameLanguage(); await settle();
+    expect(loadNliNameField).toHaveBeenCalledTimes(calls);
+    d.controller.dispose();
+  });
   const canvasField = () => ({ ...groupedField(),
     placements: [{ id: 'p-1', name: 'One', output: 'left', x: 0, y: 0, width: 20, height: 10 },
       { id: 'p-2', name: 'Two', output: 'right', x: 10, y: 0, width: 20, height: 10 }],

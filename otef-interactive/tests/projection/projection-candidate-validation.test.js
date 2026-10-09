@@ -24,6 +24,11 @@ function fixture(overrides = {}) {
 }
 
 describe('candidate result', () => {
+  test('rejects a complete candidate from a previous display language', () => {
+    const candidate = config(), value = { ...field(candidate), language: 'he' };
+    expect(projectionCandidateResult(candidate, value, JSON.stringify(candidate), inputs.datasetVersion, 'en'))
+      .toMatchObject({ valid: false, reason: expect.stringMatching(/language/i) });
+  });
   test('accepts one complete current wall and bounds diagnostics', () => {
     const candidate = config();
     expect(projectionCandidateResult(candidate, field(candidate), JSON.stringify(candidate))).toMatchObject({
@@ -46,21 +51,21 @@ describe('candidate result', () => {
   });
   test('rejects a complete result computed for another heading', () => {
     const candidate = config(); const value = field(candidate); value.heading = 36;
-    const result = projectionCandidateResult(candidate, value, JSON.stringify(candidate), inputs.datasetVersion, inputs.heading);
+    const result = projectionCandidateResult(candidate, value, JSON.stringify(candidate), inputs.datasetVersion, 'he');
     expect(result).toMatchObject({ valid: false, reason: expect.stringMatching(/heading/i) });
     expect(result.diagnostics).toBeUndefined();
   });
   test('treats contradictory valid counts as unavailable computation', () => {
     const candidate = config(); const value = field(candidate);
     value.diagnostics.left = 0; value.diagnostics.right = 0;
-    const result = projectionCandidateResult(candidate, value, JSON.stringify(candidate), inputs.datasetVersion, inputs.heading);
+    const result = projectionCandidateResult(candidate, value, JSON.stringify(candidate), inputs.datasetVersion, 'he');
     expect(result).toMatchObject({ valid: false, reason: expect.stringMatching(/inconsistent/i) });
     expect(result.diagnostics).toBeUndefined();
   });
   test('keeps worker-reported invalid geometry distinct from unavailable computation', () => {
     const candidate = config(); const value = field(candidate);
     value.diagnostics.state = 'invalid'; value.diagnostics.extra = 1;
-    expect(projectionCandidateResult(candidate, value, JSON.stringify(candidate), inputs.datasetVersion, inputs.heading)).toMatchObject({
+    expect(projectionCandidateResult(candidate, value, JSON.stringify(candidate), inputs.datasetVersion, 'he')).toMatchObject({
       valid: false, diagnostics: { state: 'invalid' },
     });
   });

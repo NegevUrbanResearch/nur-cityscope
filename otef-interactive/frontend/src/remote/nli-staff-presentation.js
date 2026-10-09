@@ -1,4 +1,5 @@
 import { messageForLocale } from "./remote-locale.js";
+import { navigationButtonContent } from "./nli-staff-icons.js";
 
 const COMMAND_TIMEOUT_MS = 6000;
 const ACTIONS = new Set(["open", "previous", "next", "close"]);
@@ -357,11 +358,11 @@ function slideControls(step, state, locale, labels, disabled, hideNext = false) 
     : "";
   const title = step.title?.[locale] || step.title?.he || "";
   const disabledAttr = disabled ? " disabled" : "";
-  const nextButton = hideNext ? "" : `<button type="button" class="btn" data-presentation-action="next"${disabledAttr}>${labels.next}</button>`;
+  const nextButton = hideNext ? "" : `<button type="button" class="btn nav-button" data-presentation-action="next"${disabledAttr}>${navigationButtonContent(labels.next, "next", locale)}</button>`;
   return `<section class="presentation-controls" aria-label="${title}">
-    <div class="presentation-controls-heading"><span>${title}</span><span class="presentation-counter">${relative}</span></div>
+    <div class="presentation-controls-heading"><span class="presentation-counter">${relative}</span></div>
     <div class="presentation-slide-actions">
-      <button type="button" class="btn btn--outline" data-presentation-action="previous"${disabledAttr}>${labels.previous}</button>
+      <button type="button" class="btn btn--outline btn--muted nav-button" data-presentation-action="previous"${disabledAttr}>${navigationButtonContent(labels.previous, "previous", locale)}</button>
       ${nextButton}
     </div>
     <button type="button" class="btn btn--outline presentation-close" data-presentation-action="close"${disabledAttr}>${labels.close}</button>

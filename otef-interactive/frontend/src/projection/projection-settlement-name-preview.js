@@ -5,7 +5,7 @@ import { HOME_CUE } from "../remote/nli-staff-script.js";
 import { idleNliClock } from "../shared/nli-investigation-clock.js";
 import { resolveMotionMode } from "../shared/reduced-motion.js";
 import { validateProjectionConfig } from "../shared/projection-config-schema.js";
-import { SETTLEMENT_FONT_STACK, validateSettlementNameSettings } from "../shared/settlement-name-settings.js";
+import { validateSettlementNameSettings } from "../shared/settlement-name-settings.js";
 import { loadSettlementNameCatalog } from "../shared/settlement-name-catalog.js";
 import { createProjectionMap } from "./maplibre-projection.js";
 import { syncProjectionLayers } from "./maplibre-projection-layers.js";
@@ -189,8 +189,6 @@ export async function bootProjectionSettlementNamePreview({ window: win, documen
     if (Object.keys(validateProjectionConfig(config)).length) throw new Error("Invalid acknowledged projection calibration");
     await layerRegistry.init();
     const catalog = await loadSettlementNameCatalog({ registry: layerRegistry, fetchImpl, signal: assets.signal });
-    const font = `${checked.value.style.fontPx}px ${SETTLEMENT_FONT_STACK[checked.value.style.fontFamily]}`;
-    if (doc.fonts?.load) await doc.fonts.load(font);
     const groups = homeGroups(layerRegistry.getGroups());
     const bounds = await readSnapshot(fetchImpl, "data/model-bounds.json", assets.signal);
     const geometry = modelGeometry(bounds, win.proj4);
@@ -255,8 +253,11 @@ export async function bootProjectionSettlementNamePreview({ window: win, documen
     map.on("render", onMapRender);
     const adapter = browserSurface.getSettlementAdapter();
     adapter.setFramingProvider(createSettlementNameFraming({map,output,getConfig:()=>config}));
-    const paint = async (settings, signal, selectedCitycode = null) => {
-      const prepared = await adapter.prepare({ catalog, settings, signal });
+    const paint = async (settings, signal, selectedCitycode = null, language = legendSettings.language || 'he') => {
+      if (signal?.aborted) return null;
+      if (legendSettings.language !== language) { legendSettings.language = language; await legend.refresh(); }
+      if (signal?.aborted) return null;
+      const prepared = await adapter.prepare({ catalog, settings, signal, language });
       if (signal?.aborted || prepared?.stale) return null;
       adapter.commit();
       adapter.setVisible(true);
@@ -273,7 +274,7 @@ export async function bootProjectionSettlementNamePreview({ window: win, documen
         positionMatrix: framing?.matrix || null, originGeometry, warnings: measureSettlementPreviewWarnings(labels, selectedCitycode) };
     };
     await paint(checked.value, assets.signal);
-    removeBridge = installProjectionSettlementPreviewBridge({ win, sessionId, output, renderState: (state, context) => paint(state.settings, context.signal, state.selectedCitycode) });
+    removeBridge = installProjectionSettlementPreviewBridge({ win, sessionId, output, renderState: (state, context) => paint(state.settings, context.signal, state.selectedCitycode, state.language || 'he') });
     return dispose;
   } catch (error) {
     await dispose();

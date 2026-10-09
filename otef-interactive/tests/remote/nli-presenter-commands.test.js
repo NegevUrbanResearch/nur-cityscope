@@ -195,6 +195,15 @@ describe("guarded presenter commands",()=>{
     expect(await pending).toMatchObject({ok:false,stale:true});
     expect(f.onError).not.toHaveBeenCalled();
   });
+  it("exposes a presenter command only while its request is unsettled",async()=>{
+    let resolvePatch;
+    const f=makeCommandFixture({patch:()=>new Promise(resolve=>{resolvePatch=resolve;})});
+    const pending=f.commands.select(f.snapshot.beats[0].key);
+    expect(f.commands.isPending()).toBe(true);
+    resolvePatch({ok:true,clock:f.clock});
+    await pending;
+    expect(f.commands.isPending()).toBe(false);
+  });
   it("replays from the scene lead-in after a mid-scene selection removed it",async()=>{
     const f=makeCommandFixture({from:402,appliedMinute:403,phase:"paused"});
     await f.commands.select(f.snapshot.beats[1].key);

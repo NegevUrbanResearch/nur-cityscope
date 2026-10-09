@@ -282,3 +282,21 @@ test('display selection stays local until Assign and unsupported status is outsi
   expect(bar.controls.outputAssign.disabled).toBe(true);
   bar.dispose(); window.close();
 });
+
+test('Tablet remote summary stays beside Tools while remote rows are inside Tools', () => {
+  const { window } = new JSDOM('<main></main>');
+  const staffRemotePanel = {
+    summary: window.document.createElement('section'),
+    element: window.document.createElement('section'),
+    dispose: vi.fn(),
+  };
+  staffRemotePanel.summary.textContent = 'Tablet remote: Connected';
+  staffRemotePanel.element.textContent = 'NLI staff remote';
+  const bar = module.createConfigCommandBar({ document: window.document, staffRemotePanel });
+  window.document.querySelector('main').append(bar.element);
+  expect(staffRemotePanel.summary.parentElement).toBe(bar.element.querySelector('.config-command-row-primary'));
+  expect(staffRemotePanel.summary.closest('details')).toBeNull();
+  expect(staffRemotePanel.element.parentElement).toBe(bar.controls.toolsContent);
+  expect(bar.controls.outputRefresh.closest('[data-menu="displays"]')).toBe(bar.controls.displaysDisclosure);
+  bar.dispose(); window.close();
+});

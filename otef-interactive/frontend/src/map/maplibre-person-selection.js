@@ -1,6 +1,7 @@
 import { getLayerLifecycleRuntime } from "../shared/layer-lifecycle-fade.js";
 import { NLI_VISUAL_TOKENS } from "../shared/nli-investigation-theme.js";
 import { applyPeopleFocusDim, clearPeopleFocusDim } from "../shared/nli-people-focus-presentation.js";
+import { canonicalPersonNames, resolvePersonName } from '../shared/nli-name-language.js';
 
 export const PEOPLE_SOURCE_ID = "otef-person-selection";
 export const PEOPLE_HALO_LAYER_ID = "otef-person-selection-halo";
@@ -18,11 +19,7 @@ function duplicate(map, key, kind) {
   if (map.has(key)) throw new Error(`Duplicate ${kind} PID: ${key}`);
 }
 
-function bestName(row, fallback) {
-  const names = [...(Array.isArray(row?.nameForms) ? row.nameForms : []), ...(fallback?.names || [])]
-    .map(clean).filter((value) => value && value !== "לא ידוע");
-  return names.find((value) => /[\u0590-\u05ff]/.test(value)) || names[0] || "";
-}
+const displayName = (names, language) => { try { return resolvePersonName(names, language); } catch { return ''; } };
 
 function acceptedMetadataVersion(metadata) {
   return clean(metadata?.datasetVersion) || clean(metadata?.release?.datasetVersion) || clean(metadata?.release?.version) || clean(metadata?.version);
@@ -81,7 +78,7 @@ export function normalizePeopleRuntime(geojson, index, metadata, { geometryVersi
     const recorded = [properties.source_lon, properties.source_lat];
     features.set(pid, {
       coordinates: recorded.every(Number.isFinite) ? recorded : feature.geometry.coordinates.slice(0, 2),
-      names: [clean(properties.hebrew_name), clean(properties.name)].filter(Boolean),
+      names: { hebrew_name: clean(properties.hebrew_name), name: clean(properties.name) },
       nliUrl: clean(properties.nli_url || properties.nliUrl || properties.archive_url),
       location: clean(properties.location), sublocation: clean(properties.sublocation),
     });
@@ -89,12 +86,13 @@ export function normalizePeopleRuntime(geojson, index, metadata, { geometryVersi
   if (rows.size !== features.size || [...rows.keys()].some((pid) => !features.has(pid))) {
     throw new Error("People index and geometry PIDs mismatch");
   }
-  const resolve = (personId, datasetVersion) => {
+  const resolve = (personId, datasetVersion, language = 'he') => {
     if (clean(datasetVersion) !== version) return null;
     const pid = pidOf(personId); const row = rows.get(pid); const feature = features.get(pid);
     if (!row || !feature) return null;
-    const fallback = feature;
-    return { pid, coordinates: fallback.coordinates.slice(), name: bestName(row, fallback), location: row.location || fallback.location || row.sublocation || fallback.sublocation, nliUrl: fallback.nliUrl };
+    const indexed = canonicalPersonNames(row);
+    const names = { hebrew_name: feature.names.hebrew_name || indexed.hebrew_name, name: feature.names.name || indexed.name };
+    return { pid, names, language, coordinates: feature.coordinates.slice(), name: displayName(names, language), location: row.location || feature.location || row.sublocation || feature.sublocation, nliUrl: feature.nliUrl };
   };
   return { datasetVersion: version, resolve };
 }
@@ -122,7 +120,7 @@ export function loadPeopleRuntime({ fetchJson: fetcher = fetchJson, hashBytes = 
 }
 
 const escapeHtml = (value) => clean(value).replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]));
-const popupMarkup = (person) => `<div class="gis-person-bubble" dir="auto">${person.name ? `<div class="gis-person-bubble__name" dir="auto">${escapeHtml(person.name)}</div>` : ""}</div>`;
+const popupMarkup = (person) => `<div class="gis-person-bubble" lang="${person.language === 'en' ? 'en' : 'he'}" dir="${person.language === 'en' ? 'ltr' : 'rtl'}">${person.name ? `<div class="gis-person-bubble__name"${person.language === 'en' ? ' style="font-family:Arial,sans-serif"' : ''}>${escapeHtml(person.name)}</div>` : ""}</div>`;
 const motionReduced = (value) => value === true || value === "reduced";
 
 function readCamera(map) {
@@ -168,7 +166,7 @@ export function syncPersonHaloPaint() {
 }
 
 /** Own one reusable MapLibre halo and bubble. */
-export function createGisPersonSelection({ map, maplibregl, fetchJson: fetcher, hashBytes, peopleUrl, indexUrl, metadataUrl, beginCameraTravel, onBubbleClick, managedScene = false } = {}) {
+export function createGisPersonSelection({ map, maplibregl, fetchJson: fetcher, hashBytes, peopleUrl, indexUrl, metadataUrl, beginCameraTravel, onBubbleClick, managedScene = false, language = 'he' } = {}) {
   let disposed = false; let current = null; let renderToken = 0; let cameraListener = null; let overviewCamera = null;
   const popup = typeof maplibregl?.Popup === "function" ? new maplibregl.Popup({ className: "gis-person-bubble-popup", closeButton: false, closeOnClick: false, maxWidth: "280px", offset: 14 }) : null;
   const runtimePromise = loadPeopleRuntime({ fetchJson: fetcher, hashBytes, peopleUrl, indexUrl, metadataUrl });
@@ -199,7 +197,8 @@ export function createGisPersonSelection({ map, maplibregl, fetchJson: fetcher, 
   const show = (person, { focus = false, reducedMotion = false } = {}) => {
     const coordinates = coordinatesOf(person);
     if (disposed || !coordinates) return null;
-    cancelCamera(); renderToken += 1; current = { ...person, coordinates }; removeVisual(); mount(current);
+    cancelCamera(); renderToken += 1; current = { ...person, coordinates, language,
+      name: person.names ? displayName(person.names, language) : person.name }; removeVisual(); mount(current);
     const token = renderToken;
     if (focus && typeof map?.flyTo === "function") {
       if (!overviewCamera) overviewCamera = readCamera(map);
@@ -224,7 +223,16 @@ export function createGisPersonSelection({ map, maplibregl, fetchJson: fetcher, 
   map?.on?.("style.load", onStyleLoad);
   return {
     load: () => runtimePromise,
-    resolve: (personId, datasetVersion) => { const token = renderToken; return runtimePromise.then((runtime) => disposed || token !== renderToken ? null : runtime.resolve(personId, datasetVersion)); },
+    resolve: (personId, datasetVersion, requestedLanguage) => { const token = renderToken; return runtimePromise.then((runtime) => disposed || token !== renderToken ? null : runtime.resolve(personId, datasetVersion, requestedLanguage || language)); },
+    setLanguage(next) {
+      if (disposed || !['he', 'en'].includes(next) || next === language) return;
+      language = next;
+      if (!current) return;
+      current.language = language;
+      if (current.names) current.name = displayName(current.names, language);
+      if (!current.name) popup?.remove();
+      else if (!cameraListener) showBubble(current, renderToken);
+    },
     bringToFront,
     show,
     hide: (options = {}) => {

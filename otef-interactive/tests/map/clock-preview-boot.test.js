@@ -673,12 +673,13 @@ describe("bootClockPreview frame behavior", () => {
     };
   }
 
-  async function renderExplainer(requestId, camera, layout) {
+  async function renderExplainer(requestId, camera, layout, language) {
     postState(parent, {
       ...frameState(requestId, "nova"),
       element: "novaExplainers",
       novaExplainerCamera: camera,
       novaExplainerLayout: layout,
+      ...(language ? { language } : {}),
     });
     await waitForListener(rig.map);
     rig.map.emit("idle");
@@ -752,6 +753,17 @@ describe("bootClockPreview frame behavior", () => {
     expect(urls.some((url) => url.includes("/command/") || url.includes("investigation_clock"))).toBe(false);
     expect(parent.postMessage.mock.calls.every(([message]) => String(message.type).startsWith("otef_clock_preview_"))).toBe(true);
     expect(storageWrites).not.toHaveBeenCalled();
+    const english = await renderExplainer(3, 'wide', layout, 'en');
+    expect(english.language).toBe('en');
+    expect(english.novaExplainerCards[0].name).toBe('Fighting — Highway 232');
+    expect(rig.map.getLayoutProperty('nli-narrative-focus-label', 'text-font')).toEqual(['Arial']);
+    const focusSource = rig.map.getSource('nli-narrative-focus');
+    expect((focusSource.setData.mock.calls.at(-1)?.[0] || focusSource.data).features[0].properties.label).toBe('Nova');
+    expect(english.novaExplainerCards.every(card => !/[\u0590-\u05ff]/.test(card.name))).toBe(true);
+    expect(wideCard.textContent).toBe('Fighting — Nova site');
+    expect(wideCard.getAttribute('dir')).toBe('ltr');
+    expect(wideCard.style.left).toBe('600px');
+    expect(wideCard.style.top).toBe('150px');
     restoreMetrics();
     storageWrites.mockRestore();
   });

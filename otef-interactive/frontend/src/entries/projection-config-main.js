@@ -16,6 +16,7 @@ import { createProjectionTrace } from "../projection-config/projection-trace.js"
 import { loadSettlementNameCatalog } from "../shared/settlement-name-catalog.js";
 import { LayerRegistry } from "../shared/layer-registry.js";
 import { createGazaBorderVisibilityClient } from "../projection-config/gaza-border-visibility-client.js";
+import { createStaffRemoteManager } from "../projection-config/staff-remote-manager.js";
 
 function downloadExport(content, name) {
   if (typeof document === "undefined" || typeof URL?.createObjectURL !== "function") return;
@@ -72,6 +73,7 @@ export async function bootProjectionConfig({ document = globalThis.document, loc
   let catalogGeneration = 0;
   let catalogAbort = null;
   let currentCatalog = { entries: [] };
+  const staffRemoteManager = createStaffRemoteManager({ socket: ws, sourceId: createUuid() });
 
   function linkedAbortSignal(...signals) {
     const controller = new AbortController();
@@ -161,7 +163,7 @@ export async function bootProjectionConfig({ document = globalThis.document, loc
       outputController = createOutputWindowController({ location: outputLocation, open: globalThis.open, screenApi: globalThis, navigatorApi: globalThis.navigator, storage: (() => { try { return globalThis.localStorage; } catch { return null; } })() });
       const baselineCatalogLoader = createProjectionBaselineCatalogLoader({ fetchImpl });
       candidateValidator = createProjectionGeometryValidator({ baselineCatalogLoader });
-      mounted = mountProjectionConfig(root, { client, socket: ws, layoutClient, settlementClient, visibilityClient, catalog: { entries: [] }, catalogStatus: { status: "loading" }, retrySettlementCatalog: () => { void startCatalog(); }, outputController, candidateValidator, baselineCatalogLoader,
+      mounted = mountProjectionConfig(root, { client, socket: ws, layoutClient, settlementClient, visibilityClient, staffRemoteManager, catalog: { entries: [] }, catalogStatus: { status: "loading" }, retrySettlementCatalog: () => { void startCatalog(); }, outputController, candidateValidator, baselineCatalogLoader,
         readNamesDataset: () => readProjectionCandidateInputs({ fetchImpl }), trace,
         share: () => shareConfigUrl({ location, fetchImpl, document, traceSessionId: trace.enabled ? traceSessionId : null }), onExport: downloadExport, onImport: readImportFile });
       void layoutClient.hydrate({ forceFresh: true }).catch(() => {});
@@ -192,6 +194,7 @@ export async function bootProjectionConfig({ document = globalThis.document, loc
     catalogGeneration += 1;
     catalogAbort?.abort();
     bootAbort.abort();
+    staffRemoteManager.dispose();
     try { mounted?.dispose?.(); } catch {}
     try { layoutClient?.destroy?.(); } catch {}
     try { settlementClient?.destroy?.(); } catch {}

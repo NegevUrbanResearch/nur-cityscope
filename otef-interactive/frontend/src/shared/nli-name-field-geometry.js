@@ -1,5 +1,6 @@
 import { placeNameField, nameRectangleFits } from './nli-name-field-layout.js';
 import { resolveNliLocation } from './nli-name-field-places.js';
+import { resolvePersonName, nameTextStyle } from './nli-name-language.js';
 import { NLI_NAME_FIELD_SOURCE_UV } from './nli-name-field-calibration.js';
 import { outputToT3, t3ToOutput } from './projection-config-geometry.js';
 import { DEFAULT_PROJECTION_CONFIG } from './projection-config-schema.js';
@@ -116,7 +117,7 @@ export function createNameFieldGeometry({ bounds, footprint, heading = 41, proje
   };
 }
 
-export function buildNliNameField(data, geometry, { measureText = (text, size) => text.length * size * 0.65, fontSizes = [12,10,8], datasetVersion = '' } = {}) {
+export function buildNliNameField(data, geometry, { measureText = (text, size) => text.length * size * 0.65, fontSizes = [12,10,8], datasetVersion = '', language = 'he' } = {}) {
   if (!Array.isArray(data?.features) || !data.features.length) throw new Error('Missing name field features');
   const ids = new Set();
   const included = data.features.filter(feature => MEMORIAL_STATUSES.has(feature.properties?.status));
@@ -126,18 +127,18 @@ export function buildNliNameField(data, geometry, { measureText = (text, size) =
     const id = String(p.pid ?? feature.id ?? '').trim();
     if (!id || ids.has(id)) throw new Error(`Missing or duplicate name field PID: ${id}`);
     ids.add(id);
-    const name = String(p.hebrew_name || p.name || '').trim();
+    const name = resolvePersonName(p, language);
     if (!name) throw new Error(`Missing name for PID ${id}`);
     // Hebrew name order is not derivable from Latin fields: the source mixes
     // given-first, surname-first, middle names, and compound surnames. Use an
     // explicit Hebrew sort key only when supplied; otherwise preserve the
     // displayed Hebrew string as the provisional alphabetical key.
-    const orderKey = String(p.sort_name_he || name).trim();
+    const orderKey = String(language === 'he' ? p.sort_name_he || name : name).trim();
     const recorded = [p.source_lon, p.source_lat];
     const sourceCoordinates = recorded.every(v => typeof v === 'number' && Number.isFinite(v)) ? recorded : feature.geometry?.coordinates?.slice(0,2);
     if (feature.geometry?.type !== 'Point' || sourceCoordinates?.length !== 2 || !sourceCoordinates.every(Number.isFinite)) throw new Error(`Invalid location for PID ${id}`);
     const [x,y] = geometry.project(sourceCoordinates);
-    return {id,name,orderKey,location:p.location || '',place:resolveNliLocation(p.location),x,y,sourceCoordinates};
+    return {id,name,orderKey,location:p.location || '',place:resolveNliLocation(p.location, language),x,y,sourceCoordinates};
   });
   const grouped=new Map();
   for(const row of rows){
@@ -155,7 +156,7 @@ export function buildNliNameField(data, geometry, { measureText = (text, size) =
     const items = rows.map(r => ({id:r.id,x:r.x,y:r.y,width:Math.ceil(measureText(r.name,fontSize)*1.12+6),height:fontSize*1.5+2}));
     result = placeNameField(rows.map((row, index) => ({
       ...items[index], orderKey: row.orderKey,
-    })), { polygons: geometry.polygons, gap: 2, step: 4, orderBy: 'orderKey', readingOrder: 'rtl',
+    })), { polygons: geometry.polygons, gap: 2, step: 4, orderBy: 'orderKey', readingOrder: nameTextStyle(language).direction, locale: language,
       verticalDistribution: 'full-height',
       candidateFits: rect => geometry.visibleSpansForRectangle(rect).length > 0,
     });
@@ -175,9 +176,9 @@ export function buildNliNameField(data, geometry, { measureText = (text, size) =
     return feature;
   })};
   const groupGeojson={type:'FeatureCollection',features:[...grouped.values()].map(group=>({
-    type:'Feature',properties:{group_id:group.id,name:group.label,place_ids:group.placeId?[group.placeId]:[],visible_spans:[]},
+    type:'Feature',properties:{group_id:group.id,name:group.label,source_name:group.sourceName,place_ids:group.placeId?[group.placeId]:[],visible_spans:[]},
     geometry:{type:'Point',coordinates:group.sourceCoordinates.slice()}
   }))};
-  return {geojson,groupGeojson,byPid,fontSize,heading:geometry.heading,referenceZoom:geometry.referenceZoom,overviewBounds:geometry.overviewBounds?.map((point) => point.slice()),datasetVersion,
+  return {geojson,groupGeojson,byPid,fontSize,language,textStyle:nameTextStyle(language),heading:geometry.heading,referenceZoom:geometry.referenceZoom,overviewBounds:geometry.overviewBounds?.map((point) => point.slice()),datasetVersion,
     diagnostics:{total:rows.length,sourceTotal:data.features.length,excluded:data.features.length-rows.length,placed:rows.length,groups:grouped.size,unplaced:result.unplaced,fontSize,referenceZoom:geometry.referenceZoom}};
 }

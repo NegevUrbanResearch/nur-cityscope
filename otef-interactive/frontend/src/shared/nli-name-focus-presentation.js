@@ -26,7 +26,7 @@ export function createNliNameFocusPresentation({ map, field } = {}) {
     update({ selectedPid, selectedGroup, opacity = 1 } = {}) {
       const groupId = getRelevantPlaceGroup(field, selectedPid, selectedGroup);
       const group = field?.groupGeojson?.features?.find(feature => feature.properties?.group_id === groupId);
-      const placeName = group?.properties?.name;
+      const placeName = group?.properties?.source_name ?? group?.properties?.name;
       setMemorialSettlementFocus(map, { active: true, placeName, strength: opacity });
       refreshMemorialSettlementFocus(map);
     },

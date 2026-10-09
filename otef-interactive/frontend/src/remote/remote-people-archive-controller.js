@@ -82,6 +82,7 @@ export function createRemotePeopleArchiveController(options = {}) {
     isNarrativeActive = () => false,
     isConnected = () => true,
     onStateChange,
+    onArchiveClosed,
   } = options;
 
   const state = {
@@ -93,6 +94,7 @@ export function createRemotePeopleArchiveController(options = {}) {
       requestId: null,
       requestAction: null,
       lastRequestId: null,
+      lastRequestAction: null,
       recoverableOpenRequestId: null,
       closedAppliedRequestId: null,
       generation: 0,
@@ -100,6 +102,9 @@ export function createRemotePeopleArchiveController(options = {}) {
     },
   };
   let pendingSelectionTask = null;
+  let selectionOperations = 0;
+  let archiveOperations = 0;
+  const pendingCancellations = new Set();
 
   const archiveButton = options.archiveButton === undefined
     ? (() => {
@@ -193,6 +198,12 @@ export function createRemotePeopleArchiveController(options = {}) {
       const recoveryPending = state.archive.recoverableOpenRequestId === requestId;
       if (!isAlive(generation, "archive") || (!requestPending && !recoveryPending)) return;
       const cancel = dataContext?.archiveWindowCommand?.("close", person.pid, person.datasetVersion, requestId);
+      if (cancel && typeof cancel.then === "function") {
+        const cancellation = Promise.resolve(cancel).catch(() => undefined).finally(() => {
+          pendingCancellations.delete(cancellation);
+        });
+        pendingCancellations.add(cancellation);
+      }
       clearArchiveTimeout();
       transition("archive", {
         phase: "closed",
@@ -219,6 +230,7 @@ export function createRemotePeopleArchiveController(options = {}) {
       requestId,
       requestAction: action,
       lastRequestId: requestId,
+      lastRequestAction: action,
       recoverableOpenRequestId: null,
       generation,
     });
@@ -266,7 +278,7 @@ export function createRemotePeopleArchiveController(options = {}) {
     const matchesRecoverableOpen = Boolean(
       archive.recoverableOpenRequestId && result.requestId === archive.recoverableOpenRequestId,
     );
-    if (result.outcome === "unavailable" && result.requestId === archive.closedAppliedRequestId) return;
+    if ((result.outcome === "unavailable" || result.outcome === "closed") && result.requestId === archive.closedAppliedRequestId) return;
     if (result.outcome === "closed" && (matchesCurrent || matchesLast)) {
       if (!samePerson(result, state.person.acknowledged)) return;
       clearArchiveTimeout();
@@ -282,6 +294,7 @@ export function createRemotePeopleArchiveController(options = {}) {
       navigationSection?.classList?.toggle?.("is-archive-open", false);
       setStatus("");
       syncArchiveButton();
+      if (archive.lastRequestAction === "close") onArchiveClosed?.(result);
       return;
     }
     if (!matchesCurrent) {
@@ -400,6 +413,12 @@ export function createRemotePeopleArchiveController(options = {}) {
           const snapshot = [resultSnapshot, currentSnapshot]
             .filter((candidate) => revisionOf(candidate) >= 0)
             .reduce((newest, candidate) => !newest || revisionOf(candidate) > revisionOf(newest) ? candidate : newest, null);
+          if (revisionOf(snapshot) === state.person.revision &&
+              samePerson(snapshot, person) && samePerson(snapshot, state.person.acknowledged)) {
+            restoreAcknowledgedQuery();
+            syncArchiveButton();
+            return true;
+          }
           if (!snapshot || revisionOf(snapshot) <= state.person.revision) throw new Error("selection not acknowledged");
           await applySnapshot(snapshot);
           return true;
@@ -435,7 +454,8 @@ export function createRemotePeopleArchiveController(options = {}) {
   }
 
   function selectPerson(person) {
-    const task = performSelectPerson(person);
+    selectionOperations += 1;
+    const task = performSelectPerson(person).finally(() => { selectionOperations -= 1; });
     pendingSelectionTask = task;
     const clearPending = () => {
       if (pendingSelectionTask === task) pendingSelectionTask = null;
@@ -445,24 +465,29 @@ export function createRemotePeopleArchiveController(options = {}) {
   }
 
   async function clearPersonSelection() {
-    const pending = pendingSelectionTask;
-    if (pending) await pending.catch(() => false);
-    const baseline = snapshotFrom(dataContext?.getPersonSelection?.());
-    const baselineRevision = Math.max(revisionOf(baseline), state.person.revision);
-    if (!baseline?.personId && !state.person.acknowledged) {
-      cancelArchivePresentation();
-      return true;
-    }
+    selectionOperations += 1;
     try {
-      const result = await dataContext?.clearPerson?.();
-      const snapshot = [snapshotFrom(result), snapshotFrom(dataContext?.getPersonSelection?.())]
-        .filter((candidate) => revisionOf(candidate) >= 0)
-        .sort((a, b) => revisionOf(b) - revisionOf(a))[0];
-      if (!snapshot || snapshot.personId || revisionOf(snapshot) <= baselineRevision) return false;
-      await applySnapshot(snapshot);
-      return state.person.acknowledged === null;
-    } catch {
-      return false;
+      const pending = pendingSelectionTask;
+      if (pending) await pending.catch(() => false);
+      const baseline = snapshotFrom(dataContext?.getPersonSelection?.());
+      const baselineRevision = Math.max(revisionOf(baseline), state.person.revision);
+      if (!baseline?.personId && !state.person.acknowledged) {
+        cancelArchivePresentation();
+        return true;
+      }
+      try {
+        const result = await dataContext?.clearPerson?.();
+        const snapshot = [snapshotFrom(result), snapshotFrom(dataContext?.getPersonSelection?.())]
+          .filter((candidate) => revisionOf(candidate) >= 0)
+          .sort((a, b) => revisionOf(b) - revisionOf(a))[0];
+        if (!snapshot || snapshot.personId || revisionOf(snapshot) <= baselineRevision) return false;
+        await applySnapshot(snapshot);
+        return state.person.acknowledged === null;
+      } catch {
+        return false;
+      }
+    } finally {
+      selectionOperations -= 1;
     }
   }
 
@@ -602,6 +627,7 @@ export function createRemotePeopleArchiveController(options = {}) {
     const send = dataContext?.archiveWindowCommand;
     if (typeof send !== "function") return false;
     const requestId = globalThis.crypto?.randomUUID?.() || `archive-${Date.now()}`;
+    archiveOperations += 1;
     try {
       await send.call(dataContext,
         direction === "up" ? "page_up" : "page_down",
@@ -612,6 +638,8 @@ export function createRemotePeopleArchiveController(options = {}) {
       return true;
     } catch {
       return false;
+    } finally {
+      archiveOperations -= 1;
     }
   }
 
@@ -634,6 +662,11 @@ export function createRemotePeopleArchiveController(options = {}) {
     closeArchive,
     pageArchive,
     getArchivePhase: () => state.archive.phase,
+    getRefreshRestriction() {
+      if (state.archive.phase !== "closed" || state.archive.recoverableOpenRequestId) return "owned_session";
+      if (selectionOperations > 0 || state.person.pending || archiveOperations > 0 || pendingCancellations.size > 0) return "busy";
+      return null;
+    },
     getAcknowledgedPerson: () => state.person.acknowledged,
     switchMode,
     handlePersonSnapshot,
@@ -645,6 +678,15 @@ export function createRemotePeopleArchiveController(options = {}) {
       return getMode() === "people" && !!person && String(input?.value || "").trim() === String(person.name || "").trim();
     },
     handleLocaleChange() {
+      const old = state.person.acknowledged;
+      if (old) {
+        const localized = peopleRuntime.resolve(old.pid, old.datasetVersion, getLocale());
+        if (localized && localized.pid === old.pid) {
+          transition('person', { acknowledged: localized });
+          if (input && input.value === old.name) { input.value = localized.name; syncInputDirection?.(input); }
+          if (state.archive.person?.pid === old.pid) transition('archive', { person: localized });
+        }
+      }
       missingMessage.textContent = t("nliRecordMissing");
       dialogClose.textContent = t("dialogClose");
       syncArchiveButton();

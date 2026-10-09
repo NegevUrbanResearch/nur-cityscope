@@ -263,3 +263,24 @@ GIS; the projection continues to show the narrative scene.
   `#stepNote`, and the scene dock visible. Do not use a workshop Navigation
   replica of nli.org.il. If the live NLI column does not move, stop — do not
   add banner clicking.
+
+## Tablet remote refresh
+
+Use Projection Config on the exhibit PC to check the NLI staff tablet's
+connection, loaded frontend version, and last contact. Status reports arrive
+when the tablet connects and every 10 seconds; they report status only. They
+do not detect releases or reload the tablet. Use the existing trusted exhibit
+LAN or Tailnet connection; these controls do not provide authentication for
+public access.
+
+Before refreshing, put GIS and projection on Home from the PC and wait for the
+Home cue to finish. In Projection Config, refresh the tablet's row once. Each
+row targets one tablet session. The tablet's current local screen can be an
+older step; its successful reload startup returns it to Home. The first
+physical tablet refresh is required after activation to load this feature.
+
+“Reload accepted” is an acknowledgment that the tablet accepted the request;
+it does not confirm completion. Wait for “Tablet reloaded to Home,” which is
+shown only after the new page completes Home startup. The loaded version may
+be unchanged and still be valid. A DOM fullscreen session may end on reload;
+tap the tablet's fullscreen control locally if needed.

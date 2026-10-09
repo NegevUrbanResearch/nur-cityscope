@@ -55,6 +55,20 @@ body { margin: 0; min-width: 0; background: #0c1016; overflow-x: hidden; }
 .config-tools { flex: 0 0 auto; }
 .config-tools-content { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; min-width: min(320px, calc(100vw - 24px)); }
 .config-tools-content > :is(.applied-status, small) { flex-basis: 100%; }
+.staff-remote-summary { display: grid; gap: 2px; min-width: 150px; padding: 5px 9px; border: 1px solid var(--config-border); border-radius: 5px; color: var(--config-text); font-size: 12px; }
+.staff-remote-summary-status { color: var(--config-muted); }
+.staff-remote-panel { display: grid; flex-basis: 100%; gap: 8px; min-width: 0; }
+.staff-remote-guidance, .staff-remote-row p { margin: 0; }
+.staff-remote-rows { display: grid; gap: 8px; width: 100%; }
+.staff-remote-row { display: grid; grid-template-columns: minmax(110px, 1fr) minmax(190px, 2fr) auto; gap: 4px 10px; align-items: center; padding: 8px; border: 1px solid var(--config-border); border-radius: 5px; }
+.staff-remote-row-heading { margin: 0; font-size: 13px; }
+.staff-remote-row-details { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 8px; margin: 0; font-size: 11px; }
+.staff-remote-row-details dt { color: var(--config-muted); }
+.staff-remote-row-details dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
+.staff-remote-row button { min-width: 44px; min-height: 44px; }
+.staff-remote-blocked-copy, .staff-remote-action-status, .staff-remote-settling-copy { grid-column: 1 / -1; font-size: 11px; color: var(--config-muted); }
+.staff-remote-live-status { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+.staff-remote-empty { margin: 0; color: var(--config-muted); }
 .config-tools-content .applied-details p { margin: 4px 0; }
 .config-save-copy { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 8px; padding: 10px; background: var(--config-surface-raised); border: 1px solid var(--config-border); border-radius: 5px; }
 .config-save-copy label { color: var(--config-muted); font-size: 12px; }
@@ -71,6 +85,8 @@ body { margin: 0; min-width: 0; background: #0c1016; overflow-x: hidden; }
   .config-save-status { max-width: 120px; }
 }
 @media (max-width: 700px) {
+  .staff-remote-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .staff-remote-row-heading, .staff-remote-row-details { grid-column: 1 / -1; }
   .config-command-row-primary { flex-wrap: wrap; justify-content: flex-start; }
   .config-pending-preset { flex: 1 1 100%; }
   .config-preset-field-label { display: none; }

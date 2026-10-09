@@ -2,12 +2,13 @@ import { readNliLabelHeading } from './nli-label-heading.js';
 import { runNameFieldWorker } from './nli-name-field-worker-client.js';
 import { DEFAULT_PROJECTION_CONFIG } from './projection-config-schema.js';
 import { sha256Hex } from './sha256-hex.js';
+import { resolvePersonName, nameTextStyle } from './nli-name-language.js';
+import { ensureNameFont } from './nli-name-font.js';
 
 const MODEL_URL = '/otef-interactive/data/model-bounds.json';
 const PEOPLE_URL = '/otef-interactive/public/processed/layers/nli/people_names.geojson';
 const METADATA_URL = '/otef-interactive/public/processed/layers/nli/release-metadata.json';
 const TKUMA_URL = '/otef-interactive/public/processed/layers/projector_base/Tkuma_Area_LIne.geojson';
-const FONT = 'Guttman Hatzvi';
 const MEMORIAL_STATUSES = new Set(['Murdered', 'Killed on duty', 'Murdered in captivity']);
 const inputPromises = new Map(), metricCache = new Map();
 let generation = 0, activeDatasetVersion = null;
@@ -22,7 +23,7 @@ async function json(url, options) {
 /** Dataset changes invalidate pending fetches and worker results, not just a finished layout. */
 export function invalidateNliNameFieldInputs() { generation++; inputPromises.clear(); disposeProjectionNameWallPreparation(); }
 
-export function prepareMemorialNameRecords(collection) {
+export function prepareMemorialNameRecords(collection, language = 'he') {
   if (!Array.isArray(collection?.features)) throw new Error('Missing name field features');
   const ids = new Set();
   return collection.features.filter((feature) => MEMORIAL_STATUSES.has(feature.properties?.status)).map((feature) => {
@@ -30,12 +31,12 @@ export function prepareMemorialNameRecords(collection) {
     const pid = String(p.pid ?? feature.id ?? '').trim();
     if (!pid || ids.has(pid)) throw new Error(`Missing or duplicate name field PID: ${pid}`);
     ids.add(pid);
-    const name = String(p.hebrew_name || p.name || '').trim();
+    const name = resolvePersonName(p, language);
     if (!name) throw new Error(`Missing name for PID ${pid}`);
     const recorded = [p.source_lon, p.source_lat];
     const sourceCoordinates = recorded.every((v) => typeof v === 'number' && Number.isFinite(v)) ? recorded : feature.geometry?.coordinates?.slice(0, 2);
     if (feature.geometry?.type !== 'Point' || sourceCoordinates?.length !== 2 || !sourceCoordinates.every(Number.isFinite)) throw new Error(`Invalid location for PID ${pid}`);
-    return { pid, name, orderKey: String(p.sort_name_he || name).trim(), sourceCoordinates, location: p.location || '' };
+    return { pid, name, orderKey: String(language === 'he' ? p.sort_name_he || name : name).trim(), sourceCoordinates, location: p.location || '' };
   });
 }
 
@@ -68,24 +69,15 @@ async function loadInputs(requestedVersion, expectedVersion = requestedVersion) 
     const convert = (x, y) => globalThis.proj4('EPSG:2039', 'EPSG:4326', [x, y]);
     const bounds = [convert(model.west, model.south), convert(model.east, model.north)];
     const footprint = (model.bounds_polygon || model.polygon)?.map((p) => convert(p.x, p.y));
-    return { collection: data, records: prepareMemorialNameRecords(data), bounds, footprint, datasetVersion };
+    return { collection: data, bounds, footprint, datasetVersion };
   })().catch((error) => { if (inputPromises.get(key) === promise) inputPromises.delete(key); throw error; });
   inputPromises.set(key, promise);
   return promise;
 }
 
-async function loadFont(size) {
-  const fontSet = document.fonts;
-  if (!fontSet?.load) throw new Error(`Projection name wall requires ${FONT}`);
-  const faces = await fontSet.load(`${size}px '${FONT}'`);
-  if (!Array.isArray(faces) || !faces.some((face) => face.family?.replaceAll('"', '').replaceAll("'", '').trim() === FONT && face.status === 'loaded')) {
-    throw new Error(`Projection name wall requires ${FONT}`);
-  }
-  return faces.map((f) => `${f.family}:${f.style || ''}:${f.weight || ''}:${f.status || ''}`).sort().join('|');
-}
-
 /** Recover ink bounds from actual painted pixels when measureText omits them. */
-function rasterInkBounds(name, size, advance) {
+function rasterInkBounds(name, size, advance, textStyle) {
+  const FONT = textStyle.fontFamily;
   const canvas = document.createElement('canvas');
   const width = Math.ceil(advance * 2 + size * 8 + 16);
   const height = Math.ceil(size * 8 + 16);
@@ -93,8 +85,8 @@ function rasterInkBounds(name, size, advance) {
   canvas.width = width; canvas.height = height;
   const ctx = canvas.getContext?.('2d', { willReadFrequently: true });
   if (!ctx?.fillText || !ctx?.getImageData) throw new Error(`Cannot establish ${FONT} ink bounds`);
-  ctx.font = `${size}px "${FONT}"`;
-  ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.direction = 'rtl';
+  ctx.font = `${size}px ${textStyle.canvasFontStack}`;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.direction = textStyle.direction;
   ctx.fillStyle = '#fff';
   const originX = Math.floor(width / 2), originY = Math.floor(height / 2);
   ctx.fillText(name, originX, originY);
@@ -111,17 +103,18 @@ function rasterInkBounds(name, size, advance) {
 }
 
 /** Match the projection adapter's text state; raster fallback fails closed if paint cannot be inspected. */
-export async function measureNamesWallMetrics(records, profile) {
-  const fontIdentity = await loadFont(profile.requestedFontPx);
+export async function measureNamesWallMetrics(records, profile, textStyle = nameTextStyle()) {
+  const FONT = textStyle.fontFamily;
+  const { fontIdentity } = await ensureNameFont(textStyle, profile.requestedFontPx);
   const ctx = document.createElement('canvas')?.getContext('2d');
   if (!ctx) throw new Error('Projection name wall requires Canvas text measurement');
   const names = [...new Set(records.map((r) => r.name))].sort();
   const result = [];
   for (let size = profile.requestedFontPx; size >= 1; size--) {
-    ctx.font = `${size}px "${FONT}"`;
+    ctx.font = `${size}px ${textStyle.canvasFontStack}`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.direction = 'rtl';
+    ctx.direction = textStyle.direction;
     const entries = [];
     for (const name of names) {
       const key = JSON.stringify([fontIdentity, name, size]);
@@ -130,7 +123,7 @@ export async function measureNamesWallMetrics(records, profile) {
         if (!Number.isFinite(measured.width) || measured.width <= 0) throw new Error(`Invalid ${FONT} width for ${name}`);
         const ink = ['actualBoundingBoxLeft', 'actualBoundingBoxRight', 'actualBoundingBoxAscent', 'actualBoundingBoxDescent'];
         const fallback = !ink.every((field) => Number.isFinite(measured[field])) || measured.actualBoundingBoxAscent < 0 || measured.actualBoundingBoxDescent < 0;
-        metricCache.set(key, fallback ? rasterInkBounds(name, size, measured.width) : {
+        metricCache.set(key, fallback ? rasterInkBounds(name, size, measured.width, textStyle) : {
           width: measured.width, left: measured.actualBoundingBoxLeft, right: measured.actualBoundingBoxRight,
           ascent: measured.actualBoundingBoxAscent, descent: measured.actualBoundingBoxDescent, fallback: false,
         });
@@ -178,7 +171,7 @@ export function disposeProjectionNameWallPreparation() {
 
 /** One document-local owner shares the evaluated geometry and two mode results. */
 export function prepareProjectionNameWall({ config, meshes, datasetVersion, signal,
-  compositorClips, cameraMappings } = {}) {
+  compositorClips, cameraMappings, language = 'he' } = {}) {
   rejectAbortedLayout(signal);
   const heading = config?.namesWall?.rotateDeg;
   if (!config?.namesWall || !meshes?.left || !meshes?.right || !Number.isFinite(heading))
@@ -195,7 +188,7 @@ export function prepareProjectionNameWall({ config, meshes, datasetVersion, sign
   const owner = projectionPreparation;
   const mode = config.namesWall.activeMode;
   const startMode = (selected) => {
-    const key = JSON.stringify({ profile: config.namesWall.profiles[selected], datasetVersion });
+    const key = JSON.stringify({ profile: config.namesWall.profiles[selected], datasetVersion, language });
     const previous = owner.modes.get(selected);
     if (previous?.key === key) return previous.promise;
     previous?.controller?.abort();
@@ -205,21 +198,22 @@ export function prepareProjectionNameWall({ config, meshes, datasetVersion, sign
     if (owner.controller.signal.aborted) controller.abort();
     const promise = (async () => {
       const input = await loadInputs(datasetVersion);
+      const records = prepareMemorialNameRecords(input.collection, language), textStyle = nameTextStyle(language);
       rejectAbortedLayout(controller.signal);
       const profile = config.namesWall.profiles[selected];
       const [{ fontIdentity, metrics }, tkuma] = await Promise.all([
-        measureNamesWallMetrics(input.records, profile), selected === 'model' ? loadTkuma() : Promise.resolve(null),
+        measureNamesWallMetrics(records, profile, textStyle), selected === 'model' ? loadTkuma() : Promise.resolve(null),
       ]);
       rejectAbortedLayout(controller.signal);
       const namesWall = { ...config.namesWall, activeMode: selected };
-      const field = await runNameFieldWorker({ profile: 'namesWall', records: input.records, metrics,
+      const field = await runNameFieldWorker({ profile: 'namesWall', records, metrics, language, textStyle,
         fontIdentity, namesWall, config, meshes, compositorClips, cameraMappings,
         ...(owner.coverage ? { coverage: owner.coverage } : {}),
         ...(tkuma ? { ring: tkuma.ring, ringHash: tkuma.ringHash } : {}),
         geometry: { bounds: input.bounds, heading, projectionConfig: config }, logicalPlane,
         datasetVersion: input.datasetVersion }, undefined, controller.signal);
       rejectAbortedLayout(controller.signal);
-      if (owner !== projectionPreparation) throw new Error('stale projection name wall preparation');
+      if (owner !== projectionPreparation || owner.modes.get(selected)?.promise !== promise) throw new Error('stale projection name wall preparation');
       if (field?.safeGeometry) { owner.coverage = field.safeGeometry; delete field.safeGeometry; }
       return field;
     })().catch((error) => {
@@ -233,9 +227,10 @@ export function prepareProjectionNameWall({ config, meshes, datasetVersion, sign
   };
   const active = startMode(mode);
   const inactive = mode === 'wall' ? 'model' : 'wall';
-  const inactiveKey = JSON.stringify({ profile: config.namesWall.profiles[inactive], datasetVersion });
+  const inactiveKey = JSON.stringify({ profile: config.namesWall.profiles[inactive], datasetVersion, language });
   const scheduled = owner.modes.get(inactive);
-  if (!scheduled || (!scheduled.controller && (scheduled.after !== active || scheduled.key !== inactiveKey))) {
+  if (!scheduled || scheduled.key !== inactiveKey || (!scheduled.controller && scheduled.after !== active)) {
+    scheduled?.controller?.abort();
     const deferred = { key: inactiveKey, promise: null, controller: null, after: active };
     const promise = active.then(() => {
       if (owner !== projectionPreparation || owner.controller.signal.aborted) return null;
@@ -250,11 +245,12 @@ export function prepareProjectionNameWall({ config, meshes, datasetVersion, sign
   return waitForPreparation(active, signal);
 }
 
-export async function loadNliNameField({ projectionConfig = DEFAULT_PROJECTION_CONFIG, datasetVersion, coverage, configRevision, coverageIdentity, signal } = {}) {
+export async function loadNliNameField({ projectionConfig = DEFAULT_PROJECTION_CONFIG, datasetVersion, coverage, configRevision, coverageIdentity, signal, language = 'he' } = {}) {
   rejectAbortedLayout(signal);
   if (datasetVersion && activeDatasetVersion && datasetVersion !== activeDatasetVersion) invalidateNliNameFieldInputs();
   if (datasetVersion) activeDatasetVersion = datasetVersion;
   const input = await loadInputs(datasetVersion);
+  const records = prepareMemorialNameRecords(input.collection, language), textStyle = nameTextStyle(language);
   rejectAbortedLayout(signal);
   if (!datasetVersion) activeDatasetVersion = input.datasetVersion;
   const current = generation;
@@ -263,7 +259,7 @@ export async function loadNliNameField({ projectionConfig = DEFAULT_PROJECTION_C
     const profile = namesWall?.profiles?.[namesWall.activeMode];
     if (!profile) throw new Error('Missing projection names wall profile');
     const [{ fontIdentity, metrics }, tkuma] = await Promise.all([
-      measureNamesWallMetrics(input.records, profile), namesWall.activeMode === 'model' ? loadTkuma() : Promise.resolve(null),
+      measureNamesWallMetrics(records, profile, textStyle), namesWall.activeMode === 'model' ? loadTkuma() : Promise.resolve(null),
     ]);
     rejectAbortedLayout(signal);
     if (current !== generation) throw new Error('Stale name field dataset preparation');
@@ -271,7 +267,7 @@ export async function loadNliNameField({ projectionConfig = DEFAULT_PROJECTION_C
     if (!Number.isFinite(heading)) throw new Error('invalid projection name wall rotation');
     const logicalPlane = { heading, planeScale: projectionConfig.pre.scale * Math.min(
       projectionConfig.outputs.left.post.scale, projectionConfig.outputs.right.post.scale) };
-    const field = await runNameFieldWorker({ profile: 'namesWall', records: input.records, metrics, fontIdentity,
+    const field = await runNameFieldWorker({ profile: 'namesWall', records, metrics, fontIdentity, language, textStyle,
       coverage, coverageIdentity, namesWall, logicalPlane, ...(tkuma ? { ring: tkuma.ring, ringHash: tkuma.ringHash } : {}),
       geometry: { bounds: input.bounds, heading, projectionConfig }, heading, datasetVersion: input.datasetVersion, configRevision }, undefined, signal);
     rejectAbortedLayout(signal);
@@ -279,12 +275,15 @@ export async function loadNliNameField({ projectionConfig = DEFAULT_PROJECTION_C
     return field;
   }
   // GIS and other non-browser callers keep the stored label heading until Task 7.
-  await document.fonts?.load("12px 'Guttman Hatzvi'");
+  await ensureNameFont(textStyle, 12);
+  rejectAbortedLayout(signal);
   const ctx = document.createElement('canvas').getContext('2d');
-  const texts = input.collection.features.map((feature) => String(feature.properties?.hebrew_name || feature.properties?.name || '').trim());
-  const widths = [12, 10, 8].map((size) => { ctx.font = `${size}px 'Guttman Hatzvi', sans-serif`; return [size, new Map(texts.map((name) => [name, ctx.measureText(name).width]))]; });
-  const field = await runNameFieldWorker({ collection: input.collection, geometry: { bounds: input.bounds, footprint: input.footprint,
-    heading: readNliLabelHeading(globalThis.localStorage), projectionConfig }, widths, datasetVersion: input.datasetVersion });
+  const texts = records.map(record => record.name);
+  ctx.direction = textStyle.direction; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  const widths = [12, 10, 8].map((size) => { ctx.font = `${size}px ${textStyle.canvasFontStack}`; return [size, new Map(texts.map((name) => [name, ctx.measureText(name).width]))]; });
+  const field = await runNameFieldWorker({ collection: input.collection, language, textStyle, geometry: { bounds: input.bounds, footprint: input.footprint,
+    heading: readNliLabelHeading(globalThis.localStorage), projectionConfig }, widths, datasetVersion: input.datasetVersion }, undefined, signal);
+  rejectAbortedLayout(signal);
   if (current !== generation) throw new Error('Stale name field worker result');
   return field;
 }

@@ -171,6 +171,19 @@ test("transport has loop icon not LOOP text", () => {
 });
 
 describe("nli timeline transport", () => {
+  test("reports pending clock transport only until its acknowledgement settles", async () => {
+    let finish;
+    vi.stubGlobal("OTEFDataContext", {
+      patchInvestigationClock: vi.fn(() => new Promise((resolve) => { finish = resolve; })),
+    });
+    const host = createNliStaffTimelineHost();
+    const pending = host._patchNliClock({ phase: "idle" });
+    expect(host._hasPendingNliTransport()).toBe(true);
+    finish({ ok: true });
+    await pending;
+    expect(host._hasPendingNliTransport()).toBe(false);
+    vi.unstubAllGlobals();
+  });
   beforeEach(() => {
     stubContext();
   });

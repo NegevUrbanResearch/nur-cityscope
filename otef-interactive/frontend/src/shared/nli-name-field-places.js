@@ -37,6 +37,7 @@ const SOURCE_LABELS = {
   Ofakim: 'אופקים',
   'Kfar Aviv': 'כפר אביב',
   'Talmei Eliyahu': 'תלמי אליהו',
+  'Pri Gan': 'פרי גן',
 };
 
 const catalogByEnglishName = new Map();
@@ -50,15 +51,21 @@ for (const place of placeCatalog.entries) {
 catalogByEnglishName.set('mivtahim', placeCatalog.entries.find(place => place.id === 'yeshuv-0829'));
 const sourceLabelsByKey = new Map(Object.entries(SOURCE_LABELS).map(([key, value]) => [key.toLocaleLowerCase('en'), value]));
 
-export function resolveNliLocation(rawLocation) {
+export function resolveNliLocation(rawLocation, language = 'he') {
   const location = String(rawLocation || '').trim();
   const groupId = location.toLocaleLowerCase('en');
   const place = catalogByEnglishName.get(groupId);
   const placeId = groupId === 'nova' ? 'custom-reim-parking' : place?.id || null;
   const center = catalogById.get(placeId)?.cameraHint?.center;
+  const label = language === 'en' ? (place?.name?.en || location || 'Unknown location')
+    : sourceLabelsByKey.get(groupId) || place?.name?.he || location || 'מיקום לא ידוע';
+  if (language === 'en' ? /[\u0590-\u05ff]/.test(label) : !/[\u0590-\u05ff]/.test(label)) {
+    throw new Error(`Missing ${language} location label for ${location}`);
+  }
   return {
     groupId,
-    label: sourceLabelsByKey.get(groupId) || place?.name?.he || location || 'מיקום לא ידוע',
+    label,
+    sourceName: sourceLabelsByKey.get(groupId) || place?.name?.he || location,
     placeId,
     anchorCoordinates: Number.isFinite(center?.lng) && Number.isFinite(center?.lat)
       ? [center.lng, center.lat] : null,

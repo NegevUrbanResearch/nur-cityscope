@@ -19,3 +19,23 @@ export function materialIcon(name, size = 24) {
     .replace(/height="48"/, `height="${size}"`)
     .replace(/width="48"/, `width="${size}"`);
 }
+
+function arrowButtonContent(label, path, iconFirst) {
+  const icon = `<svg class="mi" aria-hidden="true" focusable="false" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="${path}"/></svg>`;
+  const text = String(label).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+  const caption = `<span>${text}</span>`;
+  return iconFirst ? icon + caption : caption + icon;
+}
+
+export function navigationButtonContent(label, action, locale) {
+  const previous = action === "previous";
+  const pointsLeft = previous ? locale !== "he" : locale === "he";
+  const path = pointsLeft ? "M19 12H5m6-6-6 6 6 6" : "M5 12h14m-6-6 6 6-6 6";
+  return arrowButtonContent(label, path, previous);
+}
+
+export function scrollButtonContent(label, direction) {
+  const up = direction === "up";
+  const path = up ? "M12 19V5m-6 6 6-6 6 6" : "M12 5v14m-6-6 6 6 6-6";
+  return arrowButtonContent(label, path, up);
+}

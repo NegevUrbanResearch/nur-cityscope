@@ -81,6 +81,7 @@ export function createNliStaffTimelineHost({
       _nliScrubEl: null,
       _nliScrubPointerId: null,
       _nliTransportEpoch: 0,
+      _nliTransportPending: 0,
       _nliPlayheadTimer: null,
       _nliEndTimer: null,
       _nliStaffPaintPlayhead: paintPlayhead,

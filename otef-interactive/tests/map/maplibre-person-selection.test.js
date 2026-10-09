@@ -63,6 +63,7 @@ function setup(
     maplibregl: { Popup },
     fetchJson,
     hashBytes,
+    language: 'en',
     ...extra,
   });
   return { map, bubble, visual, fetchJson, hashBytes, Popup };
@@ -109,7 +110,7 @@ describe("GIS person selection visual", () => {
   });
 
   test("normalizes exact PIDs and versions, and rejects malformed or duplicate runtime data", () => {
-    expect(normalizePeopleRuntime(geojson(), index(), metadata()).resolve("11", "v1")).toMatchObject({
+    expect(normalizePeopleRuntime(geojson(), index(), metadata()).resolve("11", "v1", 'en')).toMatchObject({
       pid: "11", coordinates: [30, 20], name: "<Ada>", location: "Alumim",
     });
     expect(() => normalizePeopleRuntime({ type: "FeatureCollection", datasetVersion: "v1", features: [{}] }, index(), metadata())).toThrow(/geometry/i);
@@ -128,7 +129,7 @@ describe("GIS person selection visual", () => {
     source.features[0].properties.name = "Feature Name";
     const runtime = normalizePeopleRuntime(source, { ...index(), people: [{ pid: "11", nameForms: [] }] }, metadata());
     source.features[0].properties.name = "SECRET BIOGRAPHY";
-    expect(runtime.resolve("11", "v1").name).toBe("Feature Name");
+    expect(runtime.resolve("11", "v1", 'en').name).toBe("Feature Name");
     expect(JSON.stringify(runtime)).not.toContain("SECRET BIOGRAPHY");
   });
 
@@ -157,7 +158,7 @@ describe("GIS person selection visual", () => {
     expect(d.bubble.setHTML.mock.calls[0][0]).toContain('class="gis-person-bubble__name"');
     expect(d.bubble.setHTML.mock.calls[0][0]).not.toContain("Alumim");
     expect(d.bubble.setHTML.mock.calls[0][0]).not.toMatch(/gis-person-bubble__location/);
-    expect(d.bubble.setHTML.mock.calls[0][0].match(/dir="auto"/g)).toHaveLength(2);
+    expect(d.bubble.setHTML.mock.calls[0][0]).toContain('dir="ltr"');
     expect(d.bubble.setHTML.mock.calls[0][0]).not.toMatch(/nli_url|button|archive/i);
   });
 

@@ -26,6 +26,7 @@ function setup(options = {}) {
     getEscapeOverlay: () => options.overlay ?? { mor: false },
     getInvestigationClock: () => options.clock ?? { phase: "idle" },
     correctedNow: () => 0,
+    getLegendSettings: () => ({ language: options.getLanguage?.() || 'he' }),
     subscribe: (topic, listener) => {
       listeners.set(topic, listener);
       return () => listeners.delete(topic);
@@ -61,6 +62,19 @@ function novaStoryBoundsFit({ center, zoom, width = 1280, height = 720, margin =
 }
 
 describe("GIS Segev narrative scene", () => {
+  test('language metadata refreshes the polygon label without camera or narrative side effects', async () => {
+    let language = 'he';
+    const d = await setup({ getLanguage: () => language });
+    d.controller.apply({ id: 'segev', transition: 'enter', revision: 1 });
+    const moves = d.map.flyTo.mock.calls.length, syncs = d.syncTimeline.mock.calls.length;
+    language = 'en';
+    expect(d.listeners.get('legendSettings')).toBeTypeOf('function');
+    d.listeners.get('legendSettings')();
+    expect(d.map.getSource('nli-narrative-focus').data.features[0].properties.label).toBe('Segev family home');
+    expect(d.map.flyTo).toHaveBeenCalledTimes(moves);
+    expect(d.syncTimeline).toHaveBeenCalledTimes(syncs);
+    d.controller.dispose(); expect(d.listeners.has('legendSettings')).toBe(false);
+  });
   test("activates the registry-defined marker, settlement focus, and exact safe camera", async () => {
     const d = await setup();
     d.controller.apply({ id: "segev", transition: "enter", revision: 1 });

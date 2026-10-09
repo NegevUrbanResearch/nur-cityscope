@@ -303,11 +303,17 @@ def build_people_search_index(
         pid = str(props.get("pid") or "").strip()
         if not pid:
             continue
+        canonical_he = str(props.get("hebrew_name") or "").strip()
+        canonical_en = str(props.get("name") or "").strip()
+        if (not canonical_he or not canonical_en
+                or not any("\u0590" <= c <= "\u05ff" for c in canonical_he)
+                or any("\u0590" <= c <= "\u05ff" for c in canonical_en)):
+            raise ValueError(f"Missing canonical bilingual names for PID {pid}")
         name_forms: List[str] = []
         seen: Set[str] = set()
         for value in (
-            props.get("hebrew_name"),
-            props.get("name"),
+            canonical_he,
+            canonical_en,
             *(aliases_by_pid.get(pid) or []),
         ):
             trimmed = str(value or "").strip()

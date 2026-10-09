@@ -273,6 +273,8 @@ class GeneralConsumer(AsyncWebsocketConsumer):
         print(f"✓ WebSocket connected: {self.channel_type} ({self.channel_name[:8]}...)")
 
     async def disconnect(self, close_code):
+        from .staff_remote_management import disconnect_staff_remote_management
+        await disconnect_staff_remote_management(self)
         # Leave the channel group
         await self.channel_layer.group_discard(
             self.room_group_name,
@@ -315,6 +317,10 @@ class GeneralConsumer(AsyncWebsocketConsumer):
         """
         message_type = data.get('type')
         table_name = data.get('table', 'otef')
+
+        from .staff_remote_management import handle_staff_remote_management
+        if await handle_staff_remote_management(self, data):
+            return
 
         if message_type == 'otef_projection_trace':
             # Diagnostics are validated and ACKed to this socket only. Keep them
@@ -597,6 +603,10 @@ class GeneralConsumer(AsyncWebsocketConsumer):
         """Send message to WebSocket client"""
         message = event['message']
         await self.send(text_data=json.dumps(message))
+
+    async def staff_remote_management_event(self, event):
+        from .staff_remote_management import send_staff_remote_management
+        await send_staff_remote_management(self, event['message'])
 
     async def presentation_update(self, event):
         """Handle presentation state updates from backend"""

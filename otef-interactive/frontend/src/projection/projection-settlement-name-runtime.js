@@ -22,6 +22,7 @@ export function bindProjectionSettlementNames({ dataContext, adapter, catalog, h
   if (map?.project && output) adapter.setFramingProvider(createSettlementNameFraming({map,output,getConfig}));
   let disposed = false;
   let token = 0;
+  let nameLanguage = dataContext?.getLegendSettings?.()?.language || 'he', committedLanguage = null;
   let committedToken = null, paintToken = 0;
   let setupAlert = null;
   let pending = Promise.resolve();
@@ -37,11 +38,13 @@ export function bindProjectionSettlementNames({ dataContext, adapter, catalog, h
     setupAlert = null;
   };
   const applyGroupVisibility = () => {
+    if (readiness.failed && committedLanguage !== nameLanguage) { adapter.setVisible(false); return; }
     if (getCalibrationActive()) { adapter.setVisible(true); return; }
     if (map) return;
     adapter.setVisible(settlementVisible(getGroups?.()));
   };
   const replayMapOpacity = () => {
+    if (readiness.failed && committedLanguage !== nameLanguage) { adapter.setVisible(false); return; }
     if (getCalibrationActive()) { adapter.applyScaledOpacity(1); adapter.setVisible(true); return; }
     if (!map || typeof map.getPaintProperty !== "function") return;
     if (typeof map.getLayer === 'function' && !map.getLayer('projector_base__שמות_יישובים__labels')) return;
@@ -71,6 +74,7 @@ export function bindProjectionSettlementNames({ dataContext, adapter, catalog, h
   };
   const run = async () => {
     const current = ++token;
+    const language = nameLanguage;
     const settings = structuredClone(dataContext?.getSettlementNameSettings?.() || null);
     const revision = dataContext?.getSettlementNameRevision?.();
     const reported = dataContext?.getSettlementNameError?.();
@@ -90,9 +94,10 @@ export function bindProjectionSettlementNames({ dataContext, adapter, catalog, h
       const [catalogSignature, settingsSignature] = await Promise.all([catalogIdentity, identity(settings)]);
       if (disposed || current !== token) return;
       report({ catalogIdentity: catalogSignature, settingsIdentity: settingsSignature });
-      const prepared = await adapter.prepare({ catalog, settings });
+      const prepared = await adapter.prepare({ catalog, settings, language });
       if (disposed || current !== token || prepared?.stale) return;
       adapter.commit();
+      committedLanguage = language;
       committedToken = current;
       report({ committedRevision: revision });
       clearSetupError();
@@ -104,6 +109,10 @@ export function bindProjectionSettlementNames({ dataContext, adapter, catalog, h
       if (disposed || current !== token) return;
       onError(error);
       report({ ready: false, error: error.message, revision, pending: false, failed: true });
+      if (committedLanguage !== language) {
+        adapter.setVisible(false);
+        await drawAndAwaitPaint(current, { preserveError: true });
+      }
     }
   };
   const onNames = () => { pending = run(); };
@@ -114,6 +123,10 @@ export function bindProjectionSettlementNames({ dataContext, adapter, catalog, h
   };
   const offNames = dataContext?.subscribe?.("settlementNames", onNames) || (() => {});
   const offGroups = dataContext?.subscribe?.("layerGroups", onGroups) || (() => {});
+  const offLanguage = dataContext?.subscribe?.('legendSettings', settings => {
+    const next = settings?.language === 'en' ? 'en' : 'he';
+    if (next !== nameLanguage) { nameLanguage = next; onNames(); }
+  }) || (() => {});
   const offPaint = addPaintWriteObserver(map, (event) => {
     if (disposed) return;
     if (event.property !== "text-opacity") return;
@@ -129,6 +142,7 @@ export function bindProjectionSettlementNames({ dataContext, adapter, catalog, h
     token += 1;
     offNames();
     offGroups();
+    offLanguage();
     offPaint();
   };
   dispose.getReadiness = () => ({ ...readiness });

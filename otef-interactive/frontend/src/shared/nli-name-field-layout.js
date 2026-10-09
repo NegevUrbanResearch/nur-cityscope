@@ -79,10 +79,10 @@ export function nameRectangleFits(rect, polygons) {
   return insideAllowed(rect, polygons, polygonBounds);
 }
 
-function compareOrder(a, b, orderBy) {
+function compareOrder(a, b, orderBy, locale) {
   const left = String(orderBy ? a[orderBy] ?? a.id : a.id);
   const right = String(orderBy ? b[orderBy] ?? b.id : b.id);
-  return left.localeCompare(right, "he", { sensitivity: "base", numeric: true }) || a.id.localeCompare(b.id);
+  return left.localeCompare(right, locale || 'he', { sensitivity: "base", numeric: true }) || a.id.localeCompare(b.id);
 }
 
 function rowIntervals(polygons, y) {
@@ -100,7 +100,7 @@ function rowIntervals(polygons, y) {
 }
 
 /** Pack whole labels on stable reading rows inside individual projector domains. */
-function placeScanline(items, polygons, { gap, step, orderBy, readingOrder, candidateFits }) {
+function placeScanline(items, polygons, { gap, step, orderBy, readingOrder, candidateFits, locale }) {
   const rtl = readingOrder !== "ltr";
   if (!items.length || !polygons.length) {
     return {
@@ -138,7 +138,7 @@ function placeScanline(items, polygons, { gap, step, orderBy, readingOrder, cand
   }
   const placements = [], unplaced = [];
   let activeShelf = 0;
-  for (const item of items.slice().sort((a, b) => compareOrder(a, b, orderBy))) {
+  for (const item of items.slice().sort((a, b) => compareOrder(a, b, orderBy, locale))) {
     let found = null;
     for (; activeShelf < shelves.length && !found; activeShelf++) {
       const shelf = shelves[activeShelf];
@@ -225,7 +225,7 @@ export function placeNameField(items, options = {}) {
     throw new RangeError("verticalDistribution must be compact or full-height");
   }
   const baseline = placeScanline(items, polygons, {
-    gap, step, candidateFits, orderBy: options.orderBy, readingOrder: options.readingOrder,
+    gap, step, candidateFits, orderBy: options.orderBy, readingOrder: options.readingOrder, locale: options.locale,
   });
   if (verticalDistribution === "compact") {
     return { placements: baseline.placements, unplaced: baseline.unplaced };

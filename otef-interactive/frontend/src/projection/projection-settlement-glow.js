@@ -42,7 +42,9 @@ function featureForOutlineId(settlementFeaturesByOutlineId, outlineObjectId) {
 
 function outlineIdFromLocation(locationToOutlineObjectId, locationName) {
   if (locationName == null) return null;
-  const label = resolveNliLocation(locationName)?.label;
+  // A lookup may receive an unknown category; raw-name matching still applies.
+  let label;
+  try { label = resolveNliLocation(locationName)?.label; } catch { label = null; }
   if (label != null && locationToOutlineObjectId.has(String(label))) {
     return locationToOutlineObjectId.get(String(label));
   }

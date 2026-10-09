@@ -5,6 +5,21 @@ const clockLayout = (leftPct) => ({
 });
 const legendLayout = (leftPct) => ({ leftPct, topPct: 20, widthPct: 30, heightPct: 10, fontPx: 22, rotateDeg: 0, dwellSeconds: 8 });
 
+test('read-only language metadata survives older in-flight hydration without changing layout', async () => {
+  const socket = socketHarness(); let finish;
+  let response = Promise.resolve(snapshot());
+  const client = createClockLayoutClient({ socket, getSnapshot: () => response });
+  await client.hydrate();
+  expect(client.getLegendLanguage()).toBe('he');
+  response = new Promise(resolve => { finish = resolve; });
+  const hydration = client.hydrate({ forceFresh: true });
+  socket.emit('otef_legend_settings_changed', { table: 'otef', changeKind: 'metadata', legendSettingsPatch: { language: 'en' } });
+  finish(snapshot()); await hydration;
+  expect(client.getLegendLanguage()).toBe('en');
+  expect(client.getSlot('projectionLegend', 'left').acknowledged.leftPct).toBe(40);
+  client.destroy();
+});
+
 function snapshot(overrides = {}) {
   return {
     nli_clock_layout: { gis: { start: clockLayout(10), nova: clockLayout(20) }, projection: { left: clockLayout(30) } },

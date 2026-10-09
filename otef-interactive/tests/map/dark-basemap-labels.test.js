@@ -53,6 +53,31 @@ function layer(id, extras) {
 }
 
 describe("applyDarkBasemapLabelPolicy", () => {
+  it('uses only English or Latin names for all named basemap layers in English mode', () => {
+    const layers = ['place', 'transportation_name', 'water_name', 'poi'].map((sourceLayer, i) => layer(`label-${i}`, {
+      'source-layer': sourceLayer, layout: { 'text-field': BILINGUAL_NAME_FIELD },
+    }));
+    const result = applyDarkBasemapLabelPolicy({ version: 8, layers }, { language: 'en' });
+    for (const item of result.layers) {
+      expect(item.layout['text-field']).toEqual(['coalesce', ['get', 'name:en'], ['get', 'name_en'], ['get', 'name:latin'], '']);
+      expect(item.layout['text-font']).toEqual(['Arial']);
+    }
+  });
+  it('updates live basemap labels and restores Hebrew without changing shields or opacity', () => {
+    const baseline = applyDarkBasemapLabelPolicy(openFreeMapDarkStyle);
+    const map = createFakeMapLibreMap({ layers: baseline.layers });
+    const named = baseline.layers.filter(item => item.type === 'symbol' && item.layout?.['text-field'] != null && !JSON.stringify(item.layout['text-field']).includes('"ref"'));
+    raiseDarkBasemapPlaceLabels(map, { language: 'en' });
+    for (const item of named) expect(map.getLayoutProperty(item.id, 'text-field')).toEqual(['coalesce', ['get', 'name:en'], ['get', 'name_en'], ['get', 'name:latin'], '']);
+    raiseDarkBasemapPlaceLabels(map);
+    expect(map.getLayoutProperty(named[0].id, 'text-font')).toEqual(['Arial']);
+    raiseDarkBasemapPlaceLabels(map, { language: 'he' });
+    for (const item of named) {
+      expect(map.getLayoutProperty(item.id, 'text-field')).toEqual(item.layout['text-field']);
+      expect(map.getLayoutProperty(item.id, 'text-font')).toEqual(item.layout['text-font']);
+    }
+    expect(map.calls.filter(call => call.method === 'setPaintProperty')).toHaveLength(0);
+  });
   it("shows Hebrew then English then local names on place layers, in white, without uppercase", () => {
     const style = {
       version: 8,

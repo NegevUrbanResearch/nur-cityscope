@@ -1,0 +1,108 @@
+:root {
+  --large-action-height: clamp(64px, 9dvh, 104px);
+  --navigation-previous-border: rgba(255, 214, 0, 0.4);
+  --presentation-next-surface: #333338;
+  --presentation-next-border: rgba(255, 214, 0, 0.75);
+}
+
+#stepNote { display: none; }
+.player-top { display: none; }
+
+#kitPresentation .presentation-controls-heading {
+  justify-content: flex-end;
+}
+
+#kitEscape .nli-nova-escape-toggles {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+#kitEscape .nli-nova-escape-toggle {
+  width: 100%;
+  min-height: var(--large-action-height);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 14px 20px;
+  border-color: var(--navigation-previous-border);
+  font-size: var(--text-ui);
+  line-height: 1.4;
+}
+
+#kitEscape .nli-nova-escape-toggle.is-active {
+  border-color: var(--accent);
+}
+
+#kitEscape .nli-nova-escape-toggle__icon .mi {
+  width: 30px;
+  height: 30px;
+}
+
+#kitEscape .nli-nova-escape-toggle__icon {
+  flex: none;
+}
+
+.presentation-slide-actions .btn:is([data-presentation-action], [data-archive-action]) {
+  border-width: 2px;
+}
+
+.presentation-slide-actions .btn:is([data-presentation-action="previous"], [data-archive-action="page_up"]):not(:disabled) {
+  background: var(--surface);
+  border-color: var(--navigation-previous-border);
+  color: var(--text-2);
+}
+
+.presentation-slide-actions .btn:is([data-presentation-action="next"], [data-archive-action="page_down"]):not(:disabled) {
+  background: var(--presentation-next-surface);
+  border-color: var(--presentation-next-border);
+  color: var(--text);
+}
+
+.presentation-slide-actions .btn:is([data-presentation-action], [data-archive-action]):not(:disabled) .mi {
+  width: 28px;
+  height: 28px;
+  color: var(--accent);
+}
+
+:is(#kitPresentation, #kitArchive, #searchArchiveMount) .presentation-close {
+  min-height: var(--large-action-height);
+  flex-shrink: 0;
+  border-color: var(--line-strong);
+}
+
+.dock > .btn,
+.dock .branch-btn {
+  min-height: var(--large-action-height);
+}
+
+.dock > .btn--muted:not(:disabled) {
+  background: var(--surface);
+  border-color: var(--navigation-previous-border);
+  color: var(--text-2);
+}
+
+.dock .branch-btn {
+  text-align: center;
+  align-items: center;
+}
+
+@media (hover: hover) {
+  .presentation-slide-actions .btn:is([data-presentation-action="previous"], [data-archive-action="page_up"]):not(:disabled):hover,
+  .dock > .btn--muted:not(:disabled):hover {
+    background: var(--surface-2);
+    border-color: var(--accent-line);
+    color: var(--text);
+  }
+
+  .presentation-slide-actions .btn:is([data-presentation-action="next"], [data-archive-action="page_down"]):not(:disabled):hover {
+    background: color-mix(in srgb, var(--presentation-next-surface) 92%, var(--text));
+    border-color: var(--accent);
+  }
+}
+
+@media (orientation: landscape) and (max-height: 700px),
+       (max-height: 700px) and (max-width: 500px) {
+  #player.is-presenter-timeline {
+    --large-action-height: 48px;
+  }
+}

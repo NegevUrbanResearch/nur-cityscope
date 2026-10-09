@@ -138,8 +138,9 @@ function boundedDiagnostics(value, candidate, datasetVersion) {
     missing, extra, duplicate, overlap: value.overlap ?? 0, invalidCoverage: value.invalidCoverage ?? 0 };
 }
 
-export function projectionCandidateResult(config, field, identity, expectedDatasetVersion = field?.datasetVersion) {
+export function projectionCandidateResult(config, field, identity, expectedDatasetVersion = field?.datasetVersion, expectedLanguage = 'he') {
   const unavailable = (reason) => ({ identity, valid: false, reason });
+  if ((field?.language || 'he') !== expectedLanguage) return unavailable('Name wall language unavailable or changed');
   if (!field || typeof field.datasetVersion !== 'string' || !field.datasetVersion.trim() ||
     field.datasetVersion.length > 128 || field.datasetVersion !== expectedDatasetVersion) return unavailable('Name wall dataset unavailable or changed');
   const savedHeading = config?.namesWall?.rotateDeg;
@@ -159,7 +160,7 @@ export function projectionCandidateResult(config, field, identity, expectedDatas
     digest: field.digest, expected: diagnostics.expected, placed: diagnostics.placed }, diagnostics: bounded };
 }
 
-export function createProjectionCandidateValidator({ loadBaseline, prepareWall, readInputs, disposePreparation, timeoutMs = 75000 }) {
+export function createProjectionCandidateValidator({ loadBaseline, prepareWall, readInputs, disposePreparation, getNameLanguage = () => 'he', timeoutMs = 75000 }) {
   let active = null;
   let disposed = false;
   let sequence = 0;
@@ -180,6 +181,7 @@ export function createProjectionCandidateValidator({ loadBaseline, prepareWall, 
     if (Object.keys(validateProjectionConfig(config)).length) return { identity, valid: false, reason: 'Invalid projection calibration' };
     const candidate = clone(config);
     const controller = new AbortController();
+    const language = getNameLanguage();
     const request = { token: ++sequence, controller, startedPreparation: false, stopped: false, generation, revision, identity };
     active = request;
     const signal = controller.signal;
@@ -195,13 +197,14 @@ export function createProjectionCandidateValidator({ loadBaseline, prepareWall, 
         checkSignal(signal);
         request.startedPreparation = true;
         ownsPreparation = true;
-        const field = await prepareWall({ config: candidate, meshes, datasetVersion: before.datasetVersion, signal });
+        const field = await prepareWall({ config: candidate, meshes, datasetVersion: before.datasetVersion, signal, language });
         checkSignal(signal);
         const after = await readInputs(signal);
         checkSignal(signal);
         if (!sameInputs(before, after)) throw new Error('Name wall inputs changed during preparation');
         lastInputs = { datasetVersion: after.datasetVersion };
-        return projectionCandidateResult(candidate, field, identity, before.datasetVersion);
+        if (language !== getNameLanguage()) throw new Error('Name wall language changed during preparation');
+        return projectionCandidateResult(candidate, field, identity, before.datasetVersion, language);
       };
       const result = await Promise.race([compute(), aborted]);
       return active === request && !disposed && !signal.aborted ? result : { identity, valid: false, reason: 'Wall preparation superseded' };

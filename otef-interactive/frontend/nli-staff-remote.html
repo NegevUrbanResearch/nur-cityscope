@@ -40,6 +40,10 @@
         --accent-soft: rgba(255, 214, 0, 0.1);
         --accent-soft-2: rgba(255, 214, 0, 0.18);
         --accent-line: rgba(255, 214, 0, 0.42);
+        --reset-soft: rgba(255, 107, 107, 0.1);
+        --reset-hover: rgba(255, 107, 107, 0.18);
+        --reset-line: rgba(255, 139, 139, 0.55);
+        --reset-text: #f6b6b6;
         --success: #4ade80;
         --danger: #ff6b6b;
         --focus: #7cb8ff;
@@ -136,7 +140,9 @@
 
       /* Header */
       .header {
+        direction: rtl;
         display: flex;
+        flex-wrap: wrap;
         align-items: center;
         justify-content: space-between;
         gap: 12px;
@@ -153,18 +159,27 @@
         gap: 10px;
         min-width: var(--header-btn);
         min-height: var(--header-btn);
+        max-width: 100%;
       }
-      .header-side--end { justify-content: flex-end; }
+      .header-side--end {
+        justify-content: flex-end;
+        flex-wrap: wrap;
+        margin-inline-start: auto;
+      }
       .home-btn {
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        width: var(--header-btn);
-        height: var(--header-btn);
+        min-height: var(--header-btn);
+        padding: 8px 14px;
+        gap: 8px;
+        font-size: var(--text-meta);
+        font-weight: 500;
+        white-space: nowrap;
         border-radius: var(--radius-pill);
-        background: var(--surface-2);
-        border: 1px solid var(--line);
-        color: var(--text);
+        background: var(--accent-soft);
+        border: 1px solid var(--accent-line);
+        color: var(--accent);
       }
       .home-btn .icon {
         width: var(--header-icon);
@@ -172,10 +187,12 @@
       }
       .home-btn[hidden] { display: none; }
       .header-action {
-        width: var(--header-btn);
-        height: var(--header-btn);
+        padding: 8px 12px;
+        gap: 8px;
+        font-size: var(--text-meta);
+        white-space: nowrap;
         min-width: 44px;
-        min-height: 44px;
+        min-height: var(--header-btn);
         display: inline-flex;
         align-items: center;
         justify-content: center;
@@ -189,32 +206,44 @@
       .fullscreen-status { min-width: 0; font-size: var(--text-kicker); color: var(--text-muted); }
 
       .staff-connection {
+        position: relative;
         display: inline-flex;
         align-items: center;
-        gap: 8px;
-        height: 36px;
-        padding-inline: 14px;
+        justify-content: center;
+        width: 32px;
+        flex-shrink: 0;
+        min-height: 32px;
         border-radius: var(--radius-pill);
         background: var(--surface);
         border: 1px solid var(--line);
-        font-size: var(--text-meta);
-        font-weight: 500;
-        color: var(--text);
-        white-space: nowrap;
       }
       .staff-connection:empty { display: none; }
+      .staff-connection::after { content: ""; position: absolute; inset: -6px; }
       .staff-connection::before {
         content: "";
         width: 8px;
         height: 8px;
+        flex-shrink: 0;
         border-radius: 50%;
         background: var(--success);
-        box-shadow: 0 0 0 3px rgba(74, 222, 128, 0.18);
+        box-shadow: 0 0 0 2px rgba(74, 222, 128, 0.12);
       }
-      .staff-connection:not(.is-on) { color: var(--text-muted); }
       .staff-connection:not(.is-on)::before {
         background: var(--danger);
-        box-shadow: 0 0 0 3px rgba(255, 107, 107, 0.16);
+        box-shadow: 0 0 0 2px rgba(255, 107, 107, 0.12);
+      }
+      .staff-connection-details {
+        position: fixed;
+        inset: calc(var(--header-btn) + var(--header-pad) * 2 + 8px) auto auto;
+        right: max(var(--pad), calc((100vw - 1280px) / 2 + var(--pad)));
+        margin: 0;
+        padding: 10px 14px;
+        border: 1px solid var(--line-strong);
+        border-radius: var(--radius-sm);
+        background: var(--surface-2);
+        color: var(--text);
+        font-size: var(--text-meta);
+        box-shadow: var(--shadow-pop);
       }
 
       .locale {
@@ -387,43 +416,20 @@
         min-height: 0;
         display: flex;
         flex-direction: column;
-        overflow: hidden;
+        overflow-x: hidden;
+        overflow-y: auto;
+        overscroll-behavior-y: contain;
+        scroll-padding-block: 24px;
         padding: var(--space) var(--pad);
       }
       #player.screen { padding: 0; }
       .player-top {
         display: flex;
         align-items: center;
-        justify-content: space-between;
+        justify-content: flex-end;
         gap: 12px;
         flex-shrink: 0;
         margin-bottom: 10px;
-      }
-      .badge-live {
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-        min-width: 0;
-        padding: 5px 12px;
-        border-radius: var(--radius-pill);
-        background: var(--accent-soft);
-        border: 1px solid var(--accent-line);
-        color: var(--accent);
-        font-size: var(--text-kicker);
-        font-weight: 600;
-        letter-spacing: 0.04em;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-      }
-      .badge-live::before {
-        content: "";
-        width: 6px;
-        height: 6px;
-        flex-shrink: 0;
-        border-radius: 50%;
-        background: var(--accent);
-        animation: pulse 2s ease-in-out infinite;
       }
       .step-count {
         padding: 5px 12px;
@@ -499,7 +505,7 @@
         min-height: 0;
         display: flex;
         flex-direction: column;
-        justify-content: flex-end;
+        justify-content: flex-start;
         gap: 10px;
         margin-top: var(--space);
       }
@@ -584,9 +590,10 @@
         min-height: clamp(180px, 32dvh, 260px);
         max-height: 340px;
       }
-      #searchKit.is-archive-open .search,
+      #searchKit.is-archive-open .search-row,
       #searchKit.is-archive-open .results,
       #searchKit.is-archive-open .search-status { display: none; }
+      #searchArchiveMount:not(:empty) { margin-top: 24px; }
       .presentation-controls .btn { min-height: 72px; }
       .presentation-controls-heading {
         display: flex;
@@ -611,10 +618,6 @@
         gap: clamp(16px, 2.5vw, 32px);
       }
       .presentation-slide-actions .btn { min-height: clamp(112px, 16dvh, 168px); }
-      .presentation-slide-actions .btn[data-presentation-action="next"] {
-        --accent: #ffab40;
-        --accent-hover: #ffbd66;
-      }
       .presentation-close { width: 100%; min-height: 56px; margin-top: 24px; border-top: 1px solid var(--line-strong); }
       .presentation-unavailable { margin: 0; color: var(--danger); font-size: var(--text-meta); }
       .mi {
@@ -878,6 +881,15 @@
         border-color: var(--line);
         color: var(--text);
       }
+      .btn--muted:not(:disabled) {
+        background: var(--accent-soft);
+        border-color: var(--accent-line);
+        color: var(--accent);
+      }
+      .nav-button { display: inline-flex; align-items: center; justify-content: center; gap: 10px; }
+      .nav-button[hidden] { display: none; }
+      .nav-button .mi { flex: none; width: 24px; height: 24px; }
+      .nav-button > span { min-width: 0; }
       .btn:disabled {
         background: var(--surface);
         border-color: var(--line);
@@ -922,6 +934,19 @@
       .branch-btn:only-child .branch-btn-meta { color: var(--accent-ink-soft); }
 
       /* Search */
+      .search-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: var(--gap);
+      }
+      .search-row .search { flex: 1; min-width: 0; margin-bottom: 0; }
+      .search-reset { flex: none; width: auto; min-height: var(--tap); padding-inline: 16px; white-space: nowrap; }
+      .search-reset:not(:disabled) {
+        background: var(--reset-soft);
+        border-color: var(--reset-line);
+        color: var(--reset-text);
+      }
       .search {
         position: relative;
         flex-shrink: 0;
@@ -949,7 +974,8 @@
         appearance: none;
         transition: border-color 0.18s var(--ease), box-shadow 0.18s var(--ease);
       }
-      .search input::placeholder { color: var(--text-subtle); }
+      .search input::placeholder { color: var(--text-muted); opacity: 1; }
+      .search input::-webkit-search-cancel-button { display: none; }
       .search input:focus {
         outline: none;
         border-color: var(--accent-line);
@@ -985,11 +1011,7 @@
         font-size: var(--text-meta);
         color: var(--text-muted);
       }
-      #kitSearch .results {
-        top: auto;
-        bottom: calc(100% + 6px);
-      }
-      #kitSearch .search { margin-bottom: 0; }
+      #kitSearch .search-row { margin-bottom: 0; }
       #kitSearch .search-status { margin: var(--gap) 0 0; }
 
       .search-status {
@@ -1033,7 +1055,6 @@
         50% { opacity: 0.35; }
       }
       @media (hover: hover) {
-        .home-btn:hover,
         .header-action:not(:disabled):hover,
         .nli-tl-btn:not(:disabled):not(.nli-tl-btn--play):not(.nli-tl-loop--on):hover { background: var(--surface-3); }
         .locale button:not(.is-active):hover { color: var(--text); }
@@ -1049,6 +1070,9 @@
           border-color: var(--accent-hover);
         }
         .btn--outline:not(:disabled):hover { background: var(--surface-3); }
+        .btn--muted:not(:disabled):hover { background: var(--accent-soft-2); color: var(--accent-hover); }
+        .home-btn:hover { background: var(--accent-soft-2); }
+        .search-reset:not(:disabled):hover { background: var(--reset-hover); }
         .branch-btn:not(:only-child):hover { background: var(--accent-soft-2); }
         .nli-nova-escape-toggle:not(.is-active):hover { background: var(--surface-3); }
         .nli-tl-step:not(:disabled):hover {
@@ -1091,11 +1115,9 @@
           min-width: 52px;
           min-height: 46px;
         }
-        .staff-connection { height: 42px; padding-inline: 16px; }
         .nav-card { min-height: 170px; }
         .home-lead { grid-auto-rows: minmax(170px, auto); }
         .nav-cards { grid-auto-rows: minmax(170px, auto); }
-        .kit { justify-content: flex-start; }
         .presentation-controls { margin-bottom: 32px; }
         .presentation-slide-actions { gap: 32px; }
         .presentation-close {
@@ -1144,7 +1166,6 @@
           grid-area: kit;
           margin-top: 8px;
           min-height: 148px;
-          justify-content: flex-start;
         }
         .presentation-controls { margin-bottom: 24px; }
         .dock {
@@ -1162,15 +1183,9 @@
       }
 
       @media (orientation: landscape) and (max-height: 700px) {
-        .player-body {
-          overflow-y: auto;
-          overscroll-behavior-y: contain;
-          scroll-padding-block: 24px;
-        }
         .kit {
           flex: 0 0 auto;
           min-height: max-content;
-          justify-content: flex-start;
         }
         #kitPresentation:not([hidden]),
         #kitArchive:not([hidden]),
@@ -1180,6 +1195,7 @@
       }
 
     </style>
+    <link rel="stylesheet" href="./css/nli-staff-controls.css">
     <link rel="stylesheet" href="./css/nli-presenter.css">
 
   </head>
@@ -1187,19 +1203,22 @@
     <div class="app">
       <header class="header">
         <div class="header-side header-side--start">
+          <button type="button" class="staff-connection" id="staffConnection" popovertarget="staffConnectionDetails"><span class="visually-hidden" id="staffConnectionLabel"></span></button>
+          <div class="staff-connection-details" id="staffConnectionDetails" popover></div>
           <button
             type="button"
             class="home-btn"
             id="homeBtn"
             hidden
             data-i18n-aria="home"
-            aria-label="דף הבית"
+            aria-label="חזרה לבית"
           >
             <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M4 11 12 4l8 7" />
               <path d="M6 10.5V20h12v-9.5" />
               <path d="M10 20v-6h4v6" />
             </svg>
+            <bdi data-i18n="home">חזרה לבית</bdi>
           </button>
         </div>
         <div class="header-side header-side--end">
@@ -1208,8 +1227,8 @@
             <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M8 3H5a2 2 0 0 0-2 2v3m13-5h3a2 2 0 0 1 2 2v3M3 16v3a2 2 0 0 0 2 2h3m13-5v3a2 2 0 0 1-2 2h-3" />
             </svg>
+            <bdi data-fullscreen-label>מסך מלא</bdi>
           </button>
-          <span class="staff-connection" id="staffConnection"></span>
           <div class="locale" role="group" aria-label="Language">
             <button type="button" id="localeHe" data-locale="he" class="is-active" aria-pressed="true">עב</button>
             <button type="button" id="localeEn" data-locale="en" aria-pressed="false">EN</button>
@@ -1227,7 +1246,6 @@
         <section class="screen" id="player" data-screen="player" hidden>
           <div class="player-body">
             <div class="player-top">
-              <span class="badge-live" id="playerScript"></span>
               <span class="step-count" id="stepCount"></span>
             </div>
             <div class="ticks" id="ticks"></div>
@@ -1241,14 +1259,17 @@
             <div class="kit" id="playerKit">
               <div class="kit-block" id="kitSearch" hidden>
                 <div class="search-kit" id="searchKit">
-                  <div class="search">
-                    <svg class="search-icon icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
-                      <circle cx="11" cy="11" r="7"></circle>
-                      <path d="m20 20-3.5-3.5"></path>
-                    </svg>
-                    <label class="visually-hidden" for="searchInput" data-i18n="searchLabel">חיפוש שם או מקום</label>
-                    <input id="searchInput" type="search" autocomplete="off" data-i18n-placeholder="searchPlaceholder" placeholder="חיפוש שם או מקום" />
-                    <ul class="results" id="searchResults"></ul>
+                  <div class="search-row">
+                    <div class="search">
+                      <svg class="search-icon icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+                        <circle cx="11" cy="11" r="7"></circle>
+                        <path d="m20 20-3.5-3.5"></path>
+                      </svg>
+                      <label class="visually-hidden" for="searchInput" data-i18n="searchLabel">חיפוש שם או מקום</label>
+                      <input id="searchInput" type="search" autocomplete="off" data-i18n-placeholder="searchPlaceholder" placeholder="חיפוש שם או מקום" />
+                      <ul class="results" id="searchResults"></ul>
+                    </div>
+                    <button type="button" class="btn btn--outline search-reset" id="searchReset" data-i18n="searchReset" disabled>איפוס חיפוש</button>
                   </div>
                   <p class="search-status" id="searchStatus" role="status" hidden></p>
                   <div id="searchArchiveMount"></div>
@@ -1261,8 +1282,8 @@
             </div>
           </div>
           <div class="dock">
-            <button type="button" class="btn btn--outline" id="prevBtn" data-i18n="prev">הקודם</button>
-            <button type="button" class="btn" id="nextBtn" data-i18n="next">הבא</button>
+            <button type="button" class="btn btn--outline btn--muted nav-button" id="prevBtn" data-i18n="prev">הקודם</button>
+            <button type="button" class="btn nav-button" id="nextBtn" data-i18n="next">הבא</button>
             <div class="dock-choices" id="nextChoices" hidden></div>
           </div>
         </section>
