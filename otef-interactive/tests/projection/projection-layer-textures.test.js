@@ -15,7 +15,7 @@ function fakeGl() {
 const uploads = (gl, source) => gl.texImage2D.mock.calls.filter((args) => args.at(-1) === source).length;
 
 describe('projection layer textures', () => {
-  test.each(['image', 'map', 'settlements', 'caption', 'pattern', 'legend'])('retains a versioned %s texture', (id) => {
+  test.each(['image', 'map', 'settlements', 'roadSigns', 'caption', 'pattern', 'legend'])('retains a versioned %s texture', (id) => {
     const gl = fakeGl(); const cache = createProjectionLayerTextures(gl);
     const source = { width: 64, height: 32 };
     const layer = { id, source, contentVersion: 0 };

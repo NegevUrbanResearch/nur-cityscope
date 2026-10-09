@@ -1,4 +1,4 @@
-const SCENE_IDS = new Set(['image', 'map', 'settlements', 'caption', 'pattern', 'legend']);
+const SCENE_IDS = new Set(['image', 'map', 'settlements', 'roadSigns', 'caption', 'pattern', 'legend']);
 
 function dimensions(source) {
   if (source?.complete === false) return null;

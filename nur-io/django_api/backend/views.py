@@ -75,6 +75,12 @@ from .otef_settlement_names import (
     normalize_settlement_name_settings,
     write_settlement_name_settings,
 )
+from .otef_road_signs import (
+    RoadSignConflict,
+    RoadSignRejected,
+    normalize_road_sign_settings,
+    write_road_sign_settings,
+)
 from .projection_name_initialization import (
     InitializationConflict,
     InitializationRejected,
@@ -614,7 +620,10 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
 
     def update(self, request, *args, **kwargs):
         data = request.data if isinstance(request.data, dict) else {}
-        if {"settlement_name_settings", "settlement_name_revision"} & set(data):
+        if (
+            {"settlement_name_settings", "settlement_name_revision", "road_sign_settings", "road_sign_revision"}
+            & set(data)
+        ):
             serializer = self.get_serializer(self.get_object(), data=data, partial=kwargs.get("partial", False))
             serializer.is_valid(raise_exception=True)
         return Response(
@@ -1199,6 +1208,50 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
             "settlementNameRevision": revision,
         })
 
+    def _broadcast_road_signs(self, table_name, settings, revision, metadata):
+        channel_layer = get_channel_layer()
+        if not channel_layer:
+            return
+        meta = metadata or {}
+        async_to_sync(channel_layer.group_send)("otef_channel", {
+            "type": "broadcast_message",
+            "message": {
+                "type": "otef_road_signs_changed",
+                "table": table_name,
+                "roadSignSettings": settings,
+                "roadSignRevision": revision,
+                "sourceId": meta.get("sourceId"),
+                "timestamp": meta.get("timestamp"),
+            },
+        })
+
+    def _set_road_signs_command(self, table, request):
+        payload = request.data if isinstance(request.data, dict) else {}
+        if set(payload) - {"action", "settings", "baseRevision", "sourceId", "timestamp", "traceId"}:
+            return Response({"error": "unknown Road 232 command fields"}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            settings, revision = write_road_sign_settings(
+                table.name, payload.get("settings"), payload.get("baseRevision")
+            )
+        except RoadSignConflict as exc:
+            return Response({
+                "error": "conflict",
+                "roadSignSettings": exc.settings,
+                "roadSignRevision": exc.revision,
+            }, status=status.HTTP_409_CONFLICT)
+        except RoadSignRejected as exc:
+            return Response({"error": exc.error}, status=status.HTTP_400_BAD_REQUEST)
+        metadata = {"sourceId": payload.get("sourceId"), "timestamp": payload.get("timestamp")}
+        transaction.on_commit(
+            lambda: self._broadcast_road_signs(table.name, settings, revision, metadata)
+        )
+        return Response({
+            "status": "ok",
+            "action": "set_road_signs",
+            "roadSignSettings": settings,
+            "roadSignRevision": revision,
+        })
+
     def _initialize_projection_name_settings_command(self, table, request):
         if self._body_too_large(request):
             return Response({"error": "body too large"}, status=status.HTTP_400_BAD_REQUEST)
@@ -1701,6 +1754,7 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                 "nli_clock_layout", "nli_clock_layout_revision",
                 "legend_settings", "legend_layout_revision",
                 "settlement_name_settings", "settlement_name_revision",
+                "road_sign_settings", "road_sign_revision",
             }
             if protected_layout_fields.intersection(request.data.keys()):
                 return Response(
@@ -1957,6 +2011,8 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
             'legend_layout_revision': state.legend_layout_revision,
             'settlement_name_settings': normalize_settlement_name_settings(state.settlement_name_settings),
             'settlement_name_revision': state.settlement_name_revision,
+            'road_sign_settings': normalize_road_sign_settings(state.road_sign_settings),
+            'road_sign_revision': state.road_sign_revision,
             'updated_at': state.updated_at.isoformat() if state.updated_at else None,
         }
 
@@ -2601,6 +2657,9 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
 
         if action == "set_settlement_names":
             return self._set_settlement_names_command(table, request)
+
+        if action == "set_road_signs":
+            return self._set_road_signs_command(table, request)
 
         if action == "initialize_projection_name_settings":
             return self._initialize_projection_name_settings_command(table, request)

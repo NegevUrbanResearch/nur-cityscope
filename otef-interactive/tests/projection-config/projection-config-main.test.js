@@ -4,7 +4,7 @@ const harness = vi.hoisted(() => ({ fetches: [], catalogs: [], registries: [], m
 const deferred = () => { let resolve; let reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 
 vi.mock("../../frontend/src/shared/api-client.js", () => ({ OTEF_API: {
-  baseUrl: "/api", getState: (...args) => harness.getState(...args), setNliClockLayout: vi.fn(), setLegendSettings: vi.fn(), setSettlementNames: vi.fn(),
+  baseUrl: "/api", getState: (...args) => harness.getState(...args), setNliClockLayout: vi.fn(), setLegendSettings: vi.fn(), setSettlementNames: vi.fn(), setRoadSigns: vi.fn(),
 } }));
 vi.mock("../../frontend/src/shared/websocket-client.js", () => ({ OTEFWebSocketClient: class { on() {} off() {} disconnect() { harness.socket?.disconnect?.(); } } }));
 vi.mock("../../frontend/src/shared/layer-registry.js", () => ({ default: {}, LayerRegistry: class {
@@ -39,6 +39,7 @@ vi.mock("../../frontend/src/shared/nli-name-field-data.js", () => ({ disposeProj
 import { bootProjectionConfig } from "../../frontend/src/entries/projection-config-main.js";
 
 const snapshot = {
+  road_sign_settings: { version: 1, outputs: { left: [], right: [] } }, road_sign_revision: 0,
   nli_clock_layout: { gis: { start: { leftPct: 10, topPct: 20, widthPct: 30, heightPct: 15, fontPx: 20, rotateDeg: 0 } }, projection: { left: { leftPct: 12, topPct: 14, widthPct: 24, heightPct: 12, fontPx: 18, rotateDeg: 0 } } }, nli_clock_layout_revision: 1,
   legend_settings: { projection: { left: { leftPct: 20, topPct: 12, widthPct: 50, heightPct: 12, fontPx: 18, rotateDeg: 0, dwellSeconds: 8 } } }, legend_layout_revision: 1,
   settlement_name_settings: { baseline: { captureId: "fixture", captureDigest: "a".repeat(64), sourceDigest: "b".repeat(64), catalogDigest: "c".repeat(64), predecessor: { revision: 1, configDigest: "d".repeat(64) }, successor: { revision: 2, configDigest: "e".repeat(64) }, outputs: { left: { "0067": { x: 1, y: 2 } }, right: {} } }, style: { fontFamily: "Arial", fontPx: 12, rotateDeg: 0 }, outputs: { left: {}, right: {} } }, settlement_name_revision: 1,
@@ -55,13 +56,18 @@ test("mounts core before optional reads resolve and publishes each hydration and
   });
   const root = {};
   const dispose = await bootProjectionConfig({ document: { getElementById: () => root }, location: { href: "http://localhost/config" }, fetchImpl, socket: { on() {}, off() {} } });
-  await vi.waitFor(() => expect(harness.fetches).toHaveLength(3));
+  await vi.waitFor(() => expect(harness.fetches).toHaveLength(4));
   expect(harness.mounted).toHaveLength(1);
   expect(harness.mounted[0].args[1].catalog).toEqual({ entries: [] });
   expect(harness.getState).not.toHaveBeenCalled();
   expect(harness.fetches.every(({ options }) => options.signal instanceof AbortSignal)).toBe(true);
   harness.fetches[1].item.resolve(response(snapshot));
   harness.fetches[2].item.resolve(response({ ...snapshot, gaza_border_visible: false }));
+  harness.fetches[3].item.resolve(response(snapshot));
+  const roadSignClient = harness.mounted[0].args[1].roadSignClient;
+  expect(roadSignClient).toBeDefined();
+  const destroyRoadSigns = vi.spyOn(roadSignClient, "destroy");
+  await vi.waitFor(() => expect(roadSignClient.getState().status).toBe("Saved"));
   await vi.waitFor(() => expect(harness.mounted[0].args[1].settlementClient.getHydrationState().status).toBe("Saved"));
   expect(harness.mounted[0].args[1].layoutClient.getHydrationState().status).toBe("Loading");
   harness.catalogs[0].item.resolve({ entries: [{ citycode: "0067", text: "Nirim" }] });
@@ -70,6 +76,7 @@ test("mounts core before optional reads resolve and publishes each hydration and
   harness.fetches[0].item.resolve(response(snapshot));
   await vi.waitFor(() => expect(harness.mounted[0].args[1].layoutClient.getHydrationState().status).toBe("Saved"));
   dispose();
+  expect(destroyRoadSigns).toHaveBeenCalledOnce();
 });
 
 test("disposal aborts optional reads and blocks late catalog publication", async () => {
@@ -78,7 +85,7 @@ test("disposal aborts optional reads and blocks late catalog publication", async
     return Promise.resolve(response({ packs: [] }));
   });
   const dispose = await bootProjectionConfig({ document: { getElementById: () => ({}) }, location: { href: "http://localhost/config" }, fetchImpl, socket: { on() {}, off() {} } });
-  await vi.waitFor(() => expect(harness.fetches).toHaveLength(3));
+  await vi.waitFor(() => expect(harness.fetches).toHaveLength(4));
   await vi.waitFor(() => expect(harness.catalogs).toHaveLength(1));
   const mounted = harness.mounted[0];
   dispose();
@@ -101,16 +108,16 @@ test("timed-out optional reads cannot replace a successful Retry or its local ed
   });
   try {
     await bootProjectionConfig({ document: { getElementById: () => ({}) }, location: { href: "http://localhost/config" }, fetchImpl, socket: { on() {}, off() {} } });
-    await vi.waitFor(() => expect(harness.fetches).toHaveLength(3));
+    await vi.waitFor(() => expect(harness.fetches).toHaveLength(4));
     const { layoutClient, settlementClient } = harness.mounted[0].args[1];
     await vi.advanceTimersByTimeAsync(15000);
     expect(layoutClient.getHydrationState().status).toBe("Failed");
     expect(settlementClient.getHydrationState().status).toBe("Failed");
     const retryLayout = layoutClient.hydrate({ forceFresh: true });
     const retrySettlement = settlementClient.hydrate({ forceFresh: true });
-    await vi.waitFor(() => expect(harness.fetches).toHaveLength(5));
-    harness.fetches[3].item.resolve(response(snapshot));
+    await vi.waitFor(() => expect(harness.fetches).toHaveLength(6));
     harness.fetches[4].item.resolve(response(snapshot));
+    harness.fetches[5].item.resolve(response(snapshot));
     await Promise.all([retryLayout, retrySettlement]);
     const layoutDraft = { ...snapshot.nli_clock_layout.gis.start, leftPct: 77 };
     const pendingLayoutWrite = layoutClient.commit("gisClock", "start", layoutDraft);
@@ -121,7 +128,7 @@ test("timed-out optional reads cannot replace a successful Retry or its local ed
     expect(layoutClient.getHydrationState().status).toBe("Saved");
     expect(settlementClient.getHydrationState().status).toBe("Saved");
     expect(layoutClient.getSlot("gisClock", "start").draft).toEqual(layoutDraft);
-    layoutClient.destroy(); settlementClient.destroy();
+    layoutClient.destroy(); settlementClient.destroy(); harness.mounted[0].args[1].roadSignClient.destroy();
     await pendingLayoutWrite.catch(() => {});
   } finally { vi.useRealTimers(); }
 });

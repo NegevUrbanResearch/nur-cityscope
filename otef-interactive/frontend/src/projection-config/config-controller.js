@@ -18,6 +18,7 @@ import { normalizeProjectionBaselineHash } from '../shared/projection-baseline-m
 import { openClockLayoutEditor } from "./clock-layout-editor-dialog.js";
 import { openNovaExplainerEditor } from "./nova-explainer-editor-dialog.js";
 import { openSettlementNameEditor } from "./settlement-name-editor-dialog.js";
+import { openRoadSignEditor } from "./road-sign-editor-dialog.js";
 import { shownSettlementPosition } from "./settlement-name-controls.js";
 import { createClockExhibitCueAction } from "./clock-exhibit-cue.js";
 import { OTEF_API } from "../shared/api-client.js";
@@ -127,7 +128,7 @@ export function projectionAppliedStatus(rows, revision) {
   return 'Applied';
 }
 
-export function mountProjectionConfig(root, { client, share, onExport, onImport, socket, staffRemoteManager = null, outputController, candidateValidator, baselineCatalogLoader = createProjectionBaselineCatalogLoader(), readNamesDataset = null, layoutClient, settlementClient = null, visibilityClient = null, catalog = { entries: [] }, catalogStatus = { status: "ready" }, retrySettlementCatalog = () => {}, clockEditorFactory = openClockLayoutEditor, novaExplainerEditorFactory = openNovaExplainerEditor, settlementEditorFactory = openSettlementNameEditor, trace } = {}) {
+export function mountProjectionConfig(root, { client, share, onExport, onImport, socket, staffRemoteManager = null, outputController, candidateValidator, baselineCatalogLoader = createProjectionBaselineCatalogLoader(), readNamesDataset = null, layoutClient, settlementClient = null, roadSignClient = null, visibilityClient = null, catalog = { entries: [] }, catalogStatus = { status: "ready" }, retrySettlementCatalog = () => {}, clockEditorFactory = openClockLayoutEditor, novaExplainerEditorFactory = openNovaExplainerEditor, settlementEditorFactory = openSettlementNameEditor, roadSignEditorFactory = openRoadSignEditor, trace } = {}) {
   if (!client) throw new Error("projection config client is required");
   if (trace?.enabled) client.setLive(false);
   const sourceId = createUuid();
@@ -139,6 +140,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
   let pointMatch = null;
   let state = normalizeState(client.getState?.() || {});
   let lastCalibrationConfig = state.snapshot?.config ? structuredClone(state.snapshot.config) : null;
+  let lastCalibrationRevision = state.snapshot?.revision ?? null;
   let clockSceneId = "home";
   let clockElement = "clock";
   let activeClockEditor = null;
@@ -149,6 +151,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
   let settlementOutput = "left";
   let settlementCitycode = catalog.entries?.find((entry) => entry?.citycode)?.citycode || "";
   let activeSettlementEditor = null;
+  let activeRoadSignEditor = null;
   let localDraftNotification = false;
   const parameterHistory = createParameterHistory();
   const scalarGestures = new Map();
@@ -187,10 +190,10 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
   const win = root?.ownerDocument?.defaultView || globalThis.document?.defaultView;
   let layoutUnloadAttached = false;
   const layoutBeforeUnload = (event) => {
-    if (layoutClient?.hasUnsavedWork?.() || settlementClient?.hasUnsavedWork?.() || pointMatch?.hasUnsavedMeasurements()) { event.preventDefault?.(); event.returnValue = ""; }
+    if (layoutClient?.hasUnsavedWork?.() || settlementClient?.hasUnsavedWork?.() || roadSignClient?.hasUnsavedWork?.() || activeRoadSignEditor?.hasPendingEdit?.() || pointMatch?.hasUnsavedMeasurements()) { event.preventDefault?.(); event.returnValue = ""; }
   };
   function syncLayoutUnload() {
-    const pending = !disposed && (layoutClient?.hasUnsavedWork?.() === true || settlementClient?.hasUnsavedWork?.() === true || pointMatch?.hasUnsavedMeasurements() === true);
+    const pending = !disposed && (layoutClient?.hasUnsavedWork?.() === true || settlementClient?.hasUnsavedWork?.() === true || roadSignClient?.hasUnsavedWork?.() === true || activeRoadSignEditor?.hasPendingEdit?.() === true || pointMatch?.hasUnsavedMeasurements() === true);
     if (pending === layoutUnloadAttached) return;
     layoutUnloadAttached = pending;
     if (pending) win?.addEventListener?.("beforeunload", layoutBeforeUnload);
@@ -215,10 +218,11 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     onWarpFieldCancel: (output) => { warpEditors[output].clearValidation(); refresh(); },
     onWarpEditorVisibility: (visible) => setGridTopologyContext(Boolean(visible)),
     onNamesMode: handleNamesMode,
-    onNode: (node) => { if (!finishPendingEdit() || (node !== selectedNode && pointMatch && !pointMatch.close())) return false; view.cancelWarpPointer(); setGridTopologyContext(false); selectedNode = node; if (node === "clock-gis" || node === "clock-projection") { closeNovaExplainerEditor(); syncClockEditor(node); } else closeClockEditor(); if (node !== "nova-explainers") closeNovaExplainerEditor(); if (node === "settlement-names") syncSettlementEditor(); else closeSettlementEditor(); if (node.endsWith("-keystone") || node.endsWith("-grid")) warpEditors[node.startsWith("right-") ? "right" : "left"].setMode(node.endsWith("-grid") ? "grid" : "keystone"); if (view.isWarpEditorOpen?.()) setGridTopologyContext(true); refresh(); return true; },
+    onNode: (node) => { if (!finishPendingEdit() || (node !== selectedNode && pointMatch && !pointMatch.close())) return false; if (node !== selectedNode && !closeRoadSignEditor()) return false; if (node === "clock-gis" || node === "clock-projection") { if (!closeSettlementEditor()) return false; closeNovaExplainerEditor(); syncClockEditor(node); } else if (!closeClockEditor()) return false; if (node !== "nova-explainers") closeNovaExplainerEditor(); if (node === "settlement-names") syncSettlementEditor(); else if (!closeSettlementEditor()) return false; view.cancelWarpPointer(); setGridTopologyContext(false); selectedNode = node; if (node.endsWith("-keystone") || node.endsWith("-grid")) warpEditors[node.startsWith("right-") ? "right" : "left"].setMode(node.endsWith("-grid") ? "grid" : "keystone"); if (view.isWarpEditorOpen?.()) setGridTopologyContext(true); refresh(); return true; },
     onOpenClockEditor: openClockEditor,
     onOpenNovaExplainerEditor: openNovaEditor,
     onOpenSettlementEditor: openSettlementEditor,
+    onOpenRoadSignEditor: openRoadSignEditor,
     onSettlementOutput: (output) => { if (!finishPendingEdit()) return; settlementOutput = output === "right" ? "right" : "left"; activeSettlementEditor?.setSelection({ output: settlementOutput, citycode: settlementCitycode }); refresh(); },
     onSettlementCitycode: (citycode) => { if (!finishPendingEdit()) return; settlementCitycode = citycode; activeSettlementEditor?.setSelection({ output: settlementOutput, citycode }); refresh(); },
     onSettlementPosition: (position) => { if (!settlementClient || !settlementCitycode) return; void settlementClient.commit({ kind: "position", output: settlementOutput, citycode: settlementCitycode }, position, { numeric: true }).catch(() => {}); },
@@ -444,7 +448,8 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
         : namesTracker.getState(), namesRunDisabledReason: runNamesDisabledReason(), clockScene: clockSceneId, clockElement,
       clockLayouts: layoutClient ? Object.fromEntries(["clock-gis", "nova-explainers", "clock-projection"].map((node) => [node, layoutFor(layoutClient, resourceFor(node, clockSceneId, clockElement))])) : {},
       clockHydration: layoutClient?.getHydrationState?.() || { status: layoutClient ? "Saved" : "Loading" },
-      settlement: settlementViewState() });
+      settlement: settlementViewState(),
+      roadSigns: (() => { const roadState = roadSignClient?.getState?.(); const acknowledged = roadState?.acknowledged; return { status: roadState?.status || "Loading", counts: acknowledged ? { gis: acknowledged.outputs.gis?.length || 0, left: acknowledged.outputs.left.length, right: acknowledged.outputs.right.length } : null, visibility: "Unknown" }; })() });
     recordProjectionTrace(trace, 'redraw', { surface: 'page', phase: 'end', durationMs: projectionTraceTime(trace) - traceStarted });
   }
   function withWarpMutation(mutation) {
@@ -466,10 +471,12 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
   function closeClockEditor({ force = false } = {}) {
     for (const action of clockCueActions) action.cancel();
     clockCueActions.clear();
-    if (!activeClockEditor) return;
     const editor = activeClockEditor;
-    activeClockEditor = null; activeClockEditorNode = null;
-    if (force) editor.dispose?.(); else editor.close();
+    if (!editor) return true;
+    if (force) editor.dispose?.();
+    else if (editor.close?.() === false) return false;
+    if (activeClockEditor === editor) { activeClockEditor = null; activeClockEditorNode = null; }
+    return true;
   }
   function settlementViewState() {
     if (!settlementClient) return null;
@@ -498,23 +505,34 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     activeSettlementEditor?.setSelection({ output: settlementOutput, citycode: settlementCitycode });
   }
   function closeSettlementEditor({ force = false } = {}) {
-    if (!activeSettlementEditor) return;
     const editor = activeSettlementEditor;
-    activeSettlementEditor = null;
-    if (force) editor.dispose?.(); else editor.close();
+    if (!editor) return true;
+    if (force) editor.dispose?.();
+    else if (editor.close?.() === false) return false;
+    if (activeSettlementEditor === editor) activeSettlementEditor = null;
+    return true;
+  }
+  function closeRoadSignEditor({ force = false } = {}) {
+    const editor = activeRoadSignEditor;
+    if (!editor) return true;
+    if (force) editor.dispose?.();
+    else if (editor.close?.() === false) return false;
+    if (activeRoadSignEditor === editor) activeRoadSignEditor = null;
+    syncLayoutUnload();
+    return true;
   }
   function closeNovaExplainerEditor() {
-    if (!activeNovaEditor) return;
+    if (!activeNovaEditor) return true;
     const editor = activeNovaEditor;
     activeNovaEditor = null;
     editor.dispose();
+    return true;
   }
   function openNovaEditor() {
     if (!layoutClient) return;
     view.cancelWarpPointer();
-    view.closeWarpEditor();
-    closeClockEditor();
-    closeSettlementEditor();
+    if (view.closeWarpEditor?.() === false) return;
+    if (!closeRoadSignEditor() || !closeClockEditor() || !closeSettlementEditor()) return;
     selectedNode = "nova-explainers";
     if (activeNovaEditor) { refresh(); return; }
     const editor = novaExplainerEditorFactory({
@@ -530,9 +548,8 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
   function openSettlementEditor() {
     if (!settlementClient) return;
     view.cancelWarpPointer();
-    view.closeWarpEditor();
-    closeClockEditor();
-    closeNovaExplainerEditor();
+    if (view.closeWarpEditor?.() === false) return;
+    if (!closeRoadSignEditor() || !closeClockEditor() || !closeNovaExplainerEditor()) return;
     selectedNode = "settlement-names";
     if (activeSettlementEditor) { syncSettlementEditor(); refresh(); return; }
     const editor = settlementEditorFactory({
@@ -554,12 +571,34 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     activeSettlementEditor = editor;
     refresh();
   }
+  function openRoadSignEditor() {
+    if (!roadSignClient || view.closeWarpEditor?.() === false) return;
+    view.cancelWarpPointer();
+    if (!closeClockEditor() || !closeSettlementEditor() || !closeNovaExplainerEditor()) return;
+    selectedNode = "road-signs";
+    if (activeRoadSignEditor) { activeRoadSignEditor.sync?.(); refresh(); return; }
+    const editor = roadSignEditorFactory({
+      settingsClient: roadSignClient,
+      getAppliedCalibration: () => {
+        const snapshot = state.snapshot;
+        if (!snapshot?.config || !Number.isSafeInteger(snapshot.revision) || snapshot.revision < 0) return null;
+        return { config: structuredClone(snapshot.config), revision: snapshot.revision };
+      },
+      manageBeforeUnload: false,
+      document: root?.ownerDocument || globalThis.document,
+      restoreFocus: () => view.getRoadSignEditorOpener(),
+      onPendingState: syncLayoutUnload,
+      onClose: () => { if (activeRoadSignEditor === editor) activeRoadSignEditor = null; syncLayoutUnload(); refresh(); },
+    });
+    activeRoadSignEditor = editor;
+    syncLayoutUnload();
+    refresh();
+  }
   function openClockEditor(nodeId) {
     if (!layoutClient || !["clock-gis", "clock-projection"].includes(nodeId)) return;
     view.cancelWarpPointer();
-    view.closeWarpEditor();
-    closeSettlementEditor();
-    closeNovaExplainerEditor();
+    if (view.closeWarpEditor?.() === false) return;
+    if (!closeRoadSignEditor() || !closeSettlementEditor() || !closeNovaExplainerEditor()) return;
     selectedNode = nodeId;
     if (activeClockEditor) { syncClockEditor(nodeId); refresh(); return; }
     const editor = clockEditorFactory({ nodeId, sceneId: clockSceneId, element: clockElement, layoutClient,
@@ -675,12 +714,16 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
   }
   function handleState(nextState, receipt) {
     nextState = normalizeState(nextState);
+    let appliedCalibrationChanged = false;
+    let acceptedRoadSignSnapshotChanged = false;
     recordProjectionTrace(trace, 'receipt', { receiptType: localDraftNotification ? 'local_draft' : 'configuration_received', ...(Number.isSafeInteger(nextState.snapshot?.revision) ? { revision: nextState.snapshot.revision } : {}), live: Boolean(nextState.live) });
     const incomingCalibration = nextState.snapshot?.config;
-    if (incomingCalibration && JSON.stringify(incomingCalibration) !== JSON.stringify(lastCalibrationConfig)) {
+    if (incomingCalibration && (JSON.stringify(incomingCalibration) !== JSON.stringify(lastCalibrationConfig) || nextState.snapshot?.revision !== lastCalibrationRevision)) {
+      const configChanged = JSON.stringify(incomingCalibration) !== JSON.stringify(lastCalibrationConfig);
       lastCalibrationConfig = structuredClone(incomingCalibration);
-      if (activeClockEditor && activeClockEditorNode === "clock-projection") activeClockEditor.calibrationChanged();
-      activeSettlementEditor?.calibrationChanged();
+      lastCalibrationRevision = nextState.snapshot?.revision ?? null;
+      appliedCalibrationChanged = configChanged;
+      acceptedRoadSignSnapshotChanged = true;
     }
     const previousRevision = state.snapshot?.revision;
     const previousSelected = state.snapshot?.selectedPresetId;
@@ -706,6 +749,12 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     if (acceptedReplacement) { parameterHistory.clear(); nudgeAnchors.clear(); scalarGestures.clear(); }
     if (acceptedReplacement) view.cancelWarpPointer({ notify: false });
     state = nextState;
+    if (appliedCalibrationChanged) {
+      if (activeClockEditor && activeClockEditorNode === "clock-projection") activeClockEditor.calibrationChanged();
+      activeSettlementEditor?.calibrationChanged();
+
+    }
+    if (acceptedRoadSignSnapshotChanged) activeRoadSignEditor?.calibrationChanged();
     if (receipt?.action === 'reconcile' || receipt?.foreign === true) pointMatch?.invalidatePreview('Accepted settings changed. Close matching and restart from the accepted calibration.');
     else pointMatch?.contextChanged({ ownReceipt: ownFitReceipt });
     const snapshotSelected = state.snapshot?.selectedPresetId;
@@ -953,7 +1002,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
   function ownsGridTopologyContext(output, generation, node = `${output}-grid`) {
     return gridContextGeneration === generation && gridContextNode === node && selectedNode === node;
   }
-  function hasHeldGesture() { return Object.values(warpEditors).some(editor => editor.getState().adjusting) || view.hasHeldNumericEdit() || Boolean(activeClockEditor?.isHeld?.() || activeSettlementEditor?.isHeld?.()); }
+  function hasHeldGesture() { return Object.values(warpEditors).some(editor => editor.getState().adjusting) || view.hasHeldNumericEdit() || Boolean(activeClockEditor?.isHeld?.() || activeSettlementEditor?.isHeld?.() || activeRoadSignEditor?.isHeld?.()); }
   function finishPendingEdit() {
     if (hasHeldGesture()) { fieldErrors = { ...fieldErrors, action: "Finish or cancel the active gesture before continuing." }; refresh(); return false; }
     const finished = view.finishPendingEdit();
@@ -961,15 +1010,16 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     if (!finished) return false;
     const clockFinished = activeClockEditor?.finishPendingEdit?.() ?? true;
     const settlementFinished = activeSettlementEditor?.finishPendingEdit?.() ?? true;
-    if (!clockFinished || !settlementFinished) refresh();
-    return clockFinished && settlementFinished;
+    const roadSignsFinished = activeRoadSignEditor?.finishPendingEdit?.() ?? true;
+    if (!clockFinished || !settlementFinished || !roadSignsFinished) refresh();
+    return clockFinished && settlementFinished && roadSignsFinished;
   }
   function discardPendingEdit() {
-    const optionalPending = activeClockEditor?.hasPendingEdit?.() || activeSettlementEditor?.hasPendingEdit?.();
+    const optionalPending = activeClockEditor?.hasPendingEdit?.() || activeSettlementEditor?.hasPendingEdit?.() || activeRoadSignEditor?.hasPendingEdit?.();
     if (!hasHeldGesture() && !view.hasPendingEdit() && !optionalPending) return true;
     if (win?.confirm?.("Discard the pending edit or gesture and replace the calibration draft?") !== true) return false;
     view.cancelNumericEdits({ notify: false }); scalarGestures.clear(); nudgeAnchors.clear();
-    activeClockEditor?.cancelPendingEdit?.(); activeSettlementEditor?.cancelPendingEdit?.();
+    activeClockEditor?.cancelPendingEdit?.(); activeSettlementEditor?.cancelPendingEdit?.(); activeRoadSignEditor?.cancelPendingEdit?.();
     view.cancelWarpPointer({ notify: false });
     for (const editor of Object.values(warpEditors)) editor.retireGesture();
     fieldErrors = {}; refresh();
@@ -1203,6 +1253,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
   const unsubscribeLayout = layoutClient?.subscribe?.(refresh);
   const unsubscribeVisibility = visibilityClient?.subscribe?.(state => view.updateGazaBorderVisibility?.(state));
   const unsubscribeSettlement = settlementClient?.subscribe?.(() => { syncLayoutUnload(); refresh(); });
+  const unsubscribeRoadSigns = roadSignClient?.subscribe?.(() => { syncLayoutUnload(); refresh(); });
   const unsubscribeOutput = outputController?.subscribe?.((nextState) => { if (pointMatch?.isActive() && JSON.stringify([outputState.assignments,outputState.reverseModel]) !== JSON.stringify([nextState.assignments,nextState.reverseModel])) pointMatch.invalidatePreview("Output assignment or orientation changed; restart Match points."); outputState = nextState; refresh(); });
   if (view.canManageDisplays) outputController?.refreshDisplays?.().catch(() => {});
   socket?.on?.("otef_projection_applied", statusMessage);
@@ -1234,7 +1285,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
       activeSettlementEditor?.setSelection?.({ output: settlementOutput, citycode: settlementCitycode });
       refresh();
     },
-    dispose() { if (disposed) return; disposed = true; pointMatch?.dispose(); editorBaselineSequence += 1; editorBaselineAbort?.abort(); editorBaselineAbort = null; syncLayoutUnload(); closeSettlementEditor({ force: true }); closeClockEditor({ force: true }); closeNovaExplainerEditor(); for (const action of clockCueActions) action.cancel(); clockCueActions.clear(); namesTargetRequest += 1; for (const editor of clockEditors) editor.dispose(); clockEditors.clear(); activeClockEditor = null; activeClockEditorNode = null; activeSettlementEditor = null; if (confirmationTimer !== null) clearTimeout(confirmationTimer); if (patternTimer !== null) clearInterval(patternTimer); socket?.send?.({ type: "otef_projection_pattern", table: "otef", output: activePattern.branch, pattern: "off", sourceId }); socket?.off?.("otef_projection_applied", statusMessage); socket?.off?.("otef_projection_names_status", namesStatusMessage); socket?.off?.("connect", onConnect); socket?.off?.("disconnect", onDisconnect); socket?.off?.('otef_person_selection_changed', onDatasetEvent); socket?.off?.('otef_narrative_scene_changed', onDatasetEvent); unsubscribe?.(); unsubscribeLayout?.(); unsubscribeVisibility?.(); unsubscribeSettlement?.(); unsubscribeOutput?.(); outputController?.dispose?.(); validator.dispose?.(); view.dispose(); client.stop?.(); },
+    dispose() { if (disposed) return; disposed = true; pointMatch?.dispose(); editorBaselineSequence += 1; editorBaselineAbort?.abort(); editorBaselineAbort = null; syncLayoutUnload(); closeSettlementEditor({ force: true }); closeClockEditor({ force: true }); closeRoadSignEditor({ force: true }); closeNovaExplainerEditor(); for (const action of clockCueActions) action.cancel(); clockCueActions.clear(); namesTargetRequest += 1; for (const editor of clockEditors) editor.dispose(); clockEditors.clear(); activeClockEditor = null; activeClockEditorNode = null; activeSettlementEditor = null; activeRoadSignEditor = null; if (confirmationTimer !== null) clearTimeout(confirmationTimer); if (patternTimer !== null) clearInterval(patternTimer); socket?.send?.({ type: "otef_projection_pattern", table: "otef", output: activePattern.branch, pattern: "off", sourceId }); socket?.off?.("otef_projection_applied", statusMessage); socket?.off?.("otef_projection_names_status", namesStatusMessage); socket?.off?.("connect", onConnect); socket?.off?.("disconnect", onDisconnect); socket?.off?.('otef_person_selection_changed', onDatasetEvent); socket?.off?.('otef_narrative_scene_changed', onDatasetEvent); unsubscribe?.(); unsubscribeLayout?.(); unsubscribeVisibility?.(); unsubscribeSettlement?.(); unsubscribeRoadSigns?.(); unsubscribeOutput?.(); outputController?.dispose?.(); validator.dispose?.(); view.dispose(); client.stop?.(); },
   };
 }
 

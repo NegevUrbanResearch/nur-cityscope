@@ -234,6 +234,21 @@ export const OTEF_API = {
     });
   },
 
+  async setRoadSigns(tableName = this.defaultTable, settings, meta = {}) {
+    const requestMeta = meta && typeof meta === "object" && !Array.isArray(meta) ? meta : {};
+    const sourceId = typeof requestMeta.sourceId === "string" && requestMeta.sourceId
+      ? requestMeta.sourceId : createUuid();
+    const timestamp = typeof requestMeta.timestamp === "string" && requestMeta.timestamp
+      ? requestMeta.timestamp : new Date().toISOString();
+    return this.executeCommand(tableName, {
+      action: "set_road_signs",
+      settings,
+      ...(Number.isSafeInteger(requestMeta.baseRevision) ? { baseRevision: requestMeta.baseRevision } : {}),
+      sourceId,
+      timestamp,
+    });
+  },
+
   async initializeProjectionNameSettings(tableName = this.defaultTable, initializationBody) {
     const body = initializationBody && typeof initializationBody === "object" && !Array.isArray(initializationBody)
       ? { ...initializationBody }

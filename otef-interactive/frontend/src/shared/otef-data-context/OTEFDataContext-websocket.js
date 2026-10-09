@@ -178,6 +178,11 @@ function applyStateFromApi(ctx, state, options = {}) {
       ctx._applySettlementNamesVersioned(state.settlement_name_settings, state.settlement_name_revision);
     }
   }
+  if (Object.prototype.hasOwnProperty.call(state, "road_sign_settings") && typeof ctx._applyRoadSignsVersioned === "function") {
+    if (Number.isSafeInteger(state.road_sign_revision)) {
+      ctx._applyRoadSignsVersioned(state.road_sign_settings, state.road_sign_revision, { authoritative: options.authoritative === true });
+    }
+  }
   if (Object.prototype.hasOwnProperty.call(state, "legend_settings") && typeof ctx._applyLegendSettings === "function") {
     if (Number.isInteger(state.legend_layout_revision) && typeof ctx._applyLegendProjectionVersioned === "function") {
       ctx._applyLegendMetadataPatch({
@@ -513,6 +518,11 @@ function setupWebSocket(ctx) {
     if (Number.isInteger(msg.settlementNameRevision)) {
       ctx._applySettlementNamesVersioned(msg.settlementNameSettings, msg.settlementNameRevision);
     }
+  });
+  ctx._wsClient.on(OTEF_MESSAGE_TYPES.ROAD_SIGNS_CHANGED, (msg = {}) => {
+    if (msg.table !== ctx._tableName) return;
+    if (typeof ctx._applyRoadSignsVersioned !== "function") return;
+    ctx._applyRoadSignsVersioned(msg.roadSignSettings, msg.roadSignRevision, { table: msg.table });
   });
   ctx._wsClient.on(OTEF_MESSAGE_TYPES.LEGEND_SETTINGS_CHANGED, (msg = {}) => {
     if (msg.table && msg.table !== ctx._tableName) return;

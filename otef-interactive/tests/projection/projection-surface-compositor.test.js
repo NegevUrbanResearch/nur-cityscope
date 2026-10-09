@@ -5,8 +5,8 @@ import { getLayerLifecycleRuntime } from "../../frontend/src/shared/layer-lifecy
 import { syncProjectionModelImage } from "../../frontend/src/projection/projection-model-image.js";
 
 test('names render between map and upper caption/pattern/legend layers', () => {
-  expect(resolveProjectionSceneLayers({ legend: {}, names: {}, settlements: {}, image: {}, caption: {}, map: {}, pattern: {} }).map((layer) => layer.id))
-    .toEqual(['image', 'map', 'settlements', 'names', 'caption', 'pattern', 'legend']);
+  expect(resolveProjectionSceneLayers({ legend: {}, names: {}, roadSigns: {}, settlements: {}, image: {}, caption: {}, map: {}, pattern: {} }).map((layer) => layer.id))
+    .toEqual(['image', 'map', 'settlements', 'roadSigns', 'names', 'caption', 'pattern', 'legend']);
 });
 
 test("resolves scene order and passes explicit descriptors without readback", () => {

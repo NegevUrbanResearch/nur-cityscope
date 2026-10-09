@@ -1,6 +1,7 @@
 import { OTEF_API } from "./api-client.js";
 import { ensureGazaBorderStateRow } from "./gaza-border-style.js";
 import { acceptSettlementNameSnapshot, validateSettlementNameSettings } from "./settlement-name-settings.js";
+import { validateRoadSignSettings } from "./road-sign-settings.js";
 import { normalizeGisBasemap } from "./gis-basemap.js";
 import { normalizeEscapeOverlay } from "./nli-escape-overlay.js";
 import { emptyNliClockLayout, normalizeNliClockLayout } from "../projection/nli-explainer-overlay.js";
@@ -137,6 +138,7 @@ class OTEFDataContextClass {
       nliClockLayout: new Set(),
       legendSettings: new Set(),
       settlementNames: new Set(),
+      roadSigns: new Set(),
     };
 
     this._wsClient = null;
@@ -172,6 +174,10 @@ class OTEFDataContextClass {
     this._settlementNameRevision = -1;
     this._settlementNameError = null;
     this._settlementNameRefreshing = false;
+    this._roadSignSettings = null;
+    this._roadSignRevision = -1;
+    this._roadSignError = null;
+    this._roadSignRefreshing = false;
     this._layoutRevisionRefresh = new Set();
     this._clockOffsetMs = 0;
     this._clockPatchQueue = null;
@@ -545,6 +551,64 @@ class OTEFDataContextClass {
 
   getSettlementNameError() {
     return this._settlementNameError;
+  }
+
+  getRoadSigns() {
+    return {
+      settings: this._roadSignSettings,
+      revision: this._roadSignRevision,
+      error: this._roadSignError,
+    };
+  }
+
+  _notifyRoadSigns() {
+    this._notify("roadSigns", this.getRoadSigns());
+  }
+
+  _refreshRoadSigns() {
+    if (!this._tableName || this._roadSignRefreshing) return;
+    this._roadSignRefreshing = true;
+    OTEF_API.getState(this._tableName, { forceFresh: true }).then((state) => {
+      if (Number.isSafeInteger(state?.road_sign_revision)) {
+        this._applyRoadSignsVersioned(state.road_sign_settings, state.road_sign_revision, { authoritative: true });
+      }
+    }).catch((refreshError) => getLogger().warn("[OTEFDataContext] Failed to refresh Road 232 signs:", refreshError)).finally(() => {
+      this._roadSignRefreshing = false;
+    });
+  }
+
+  _applyRoadSignsVersioned(raw, revision, options = {}) {
+    if (options.table != null && options.table !== this._tableName) return false;
+    if (!Number.isSafeInteger(revision) || revision < 0) return false;
+    if (this._roadSignRevision >= 0 && revision < this._roadSignRevision) return false;
+    const checked = validateRoadSignSettings(raw);
+    if (!checked.valid) {
+      this._roadSignError = checked.error || "Invalid Road 232 sign settings";
+      this._notifyRoadSigns();
+      if (options.authoritative !== true) this._refreshRoadSigns();
+      return false;
+    }
+    if (revision === this._roadSignRevision) {
+      if (JSON.stringify(this._roadSignSettings) === JSON.stringify(checked.settings)) {
+        if (this._roadSignError !== null) {
+          this._roadSignError = null;
+          this._notifyRoadSigns();
+          return true;
+        }
+        return false;
+      }
+      if (options.authoritative !== true) {
+        this._roadSignError = "Road 232 sign revision returned different settings";
+        this._notifyRoadSigns();
+        this._refreshRoadSigns();
+        return false;
+      }
+    }
+    this._roadSignSettings = checked.settings;
+    this._roadSignRevision = revision;
+    this._roadSignError = null;
+    this._notifyRoadSigns();
+    return true;
   }
 
   _applyLegendSettings(raw) {
@@ -1168,6 +1232,9 @@ class OTEFDataContextClass {
           revision: this._settlementNameRevision,
           error: this._settlementNameError,
         };
+        break;
+      case "roadSigns":
+        current = this.getRoadSigns();
         break;
       case "navigationCommand":
         current = undefined;

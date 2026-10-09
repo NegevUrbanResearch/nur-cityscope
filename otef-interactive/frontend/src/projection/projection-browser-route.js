@@ -210,7 +210,7 @@ export async function createProjectionBrowserSurface({
     const baseScene = {};
     if (image && !getScene) baseScene.image = { source: image };
     if (mapCanvas && !getScene) baseScene.map = { source: mapCanvas };
-    const readScene = () => ({ image: null, map: null, names: null, settlements: null, caption: null, pattern: null, legend: null,
+    const readScene = () => ({ image: null, map: null, names: null, settlements: null, roadSigns: null, caption: null, pattern: null, legend: null,
       ...filterScene({ ...baseScene, ...(typeof getScene === "function" ? getScene() : scene),
       ...(nameAdapter?.descriptor() ? { names: nameAdapter.descriptor() } : {}),
       ...(settlementAdapter?.descriptor() ? { settlements: settlementAdapter.descriptor() } : {}),

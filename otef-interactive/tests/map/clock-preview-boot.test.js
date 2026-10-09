@@ -32,6 +32,8 @@ import { NLI_VISUAL_TOKENS } from "../../frontend/src/shared/nli-investigation-t
 import { getInvestigationTimelineRenderSnapshot } from "../../frontend/src/shared/maplibre-investigation-timeline.js";
 import { HOME_CUE, TIMELINE } from "../../frontend/src/remote/nli-staff-script.js";
 import { createGISMap, setGISBasemap } from "../../frontend/src/map/maplibre-map.js";
+import { DEFAULT_PROJECTION_CONFIG } from "../../frontend/src/shared/projection-config-schema.js";
+import { createRoadSign } from "../../frontend/src/shared/road-sign-settings.js";
 
 const PREVIEW_CUE_LAYER_IDS = [...new Set([
   ...HOME_CUE.layers,
@@ -215,6 +217,49 @@ describe("bootClockPreview frame behavior", () => {
     rig.map.emit("idle");
     await vi.waitFor(() => expect(messages(parent, "otef_clock_preview_rendered").some((message) => message.requestId === requestId)).toBe(true));
   }
+
+  it("Road 232 preview draws the GIS Home scene and reports an unwarped placement receipt", async () => {
+    window.history.replaceState({}, "", "/otef-interactive/index.html?roadSignsPreview=1&previewSession=session-1");
+    const calls = [];
+    const context = new Proxy({}, { get: (_, name) => (...args) => calls.push([name, ...args]) });
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(context);
+    vi.spyOn(HTMLImageElement.prototype, "naturalWidth", "get").mockReturnValue(524);
+    vi.spyOn(HTMLImageElement.prototype, "complete", "get").mockReturnValue(true);
+    vi.stubGlobal("proj4", vi.fn(() => [35, 31]));
+    const container = document.getElementById("map");
+    Object.defineProperty(container, "clientWidth", { value: 1920 });
+    Object.defineProperty(container, "clientHeight", { value: 1080 });
+    rig.map.project = vi.fn(([lng, lat]) => ({ x: 960 + (lng - 35) * 512 * 2 ** 10 / 360,
+      y: 540 - (Math.log(Math.tan(Math.PI / 4 + lat * Math.PI / 360)) - Math.log(Math.tan(Math.PI / 4 + 31 * Math.PI / 360))) * 512 * 2 ** 10 / (2 * Math.PI) }));
+    dispose = await bootClockPreview({ window, document, fetchImpl: async () => ({ ok: true, json: async () => ({ basemap: "dark", viewport: { zoom: 17 },
+      bounds_polygon: [{ x: 100, y: 200 }, { x: 300, y: 200 }, { x: 300, y: 400 }, { x: 100, y: 400 }] }) }) });
+    expect(createGISMap.mock.calls.at(-1)[1]).toMatchObject({ center: [35, 31], zoom: 10 });
+    rig.map.emit("load");
+    await vi.waitFor(() => expect(messages(parent, "otef_road_sign_preview_ready")).toHaveLength(1));
+    const settings = { version: 1, outputs: { left: [], right: [], gis: [createRoadSign({ id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", x: 800, y: 400 })] } };
+    const state = { type: "otef_road_sign_preview_state", sessionId: "session-1", requestId: 1,
+      output: "gis", sceneId: "home", settings, config: structuredClone(DEFAULT_PROJECTION_CONFIG), calibrationRevision: 7 };
+    postState(parent, state, { origin: "http://wrong.test" });
+    expect(calls).not.toContainEqual(["translate", 800, 400]);
+    postState(parent, state);
+    await waitForListener(rig.map);
+    rig.map.emit("idle");
+    await vi.waitFor(() => expect(messages(parent, "otef_road_sign_preview_rendered")).toHaveLength(1));
+    const receipt = messages(parent, "otef_road_sign_preview_rendered")[0];
+    expect(receipt).toMatchObject({ output: "gis", sceneId: "home", requestId: 1, calibrationRevision: 7,
+      mesh: { triangles: [0, 1, 2, 0, 2, 3], vertices: [
+        { u: 0, v: 0, x: 0, y: 0 }, { u: 1, v: 0, x: 1, y: 0 },
+        { u: 1, v: 1, x: 1, y: 1 }, { u: 0, v: 1, x: 0, y: 1 },
+      ] } });
+    expect(rig.map.getLayer("nli.ציר_232-line")).toBeDefined();
+    const translation = calls.find(call => call[0] === "translate");
+    expect(translation[1]).toBeCloseTo(800);
+    expect(translation[2]).toBeCloseTo(400);
+    expect(rig.map.jumpTo).toHaveBeenCalledWith({ center: [35, 31], zoom: 10 });
+    postState(parent, { ...state, requestId: 2, sceneId: "nova" });
+    await vi.waitFor(() => expect(messages(parent, "otef_road_sign_preview_error")).toHaveLength(1));
+    expect(messages(parent, "otef_road_sign_preview_rendered")).toHaveLength(1);
+  });
 
   it("boots with the persisted ITM viewport converted to a geographic map center", async () => {
     const proj4 = vi.fn(() => [34.5, 31.4]); vi.stubGlobal("proj4", proj4);

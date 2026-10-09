@@ -390,6 +390,10 @@ class GeneralConsumer(AsyncWebsocketConsumer):
             # Settlement settings are emitted by the transactional service only.
             return
 
+        elif message_type == 'otef_road_signs_changed':
+            # Road 232 settings are emitted by the transactional service only.
+            return
+
         elif message_type in {
             'otef_projection_pattern',
             'otef_projection_status_request',

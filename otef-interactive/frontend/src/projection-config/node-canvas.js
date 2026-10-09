@@ -1,7 +1,7 @@
 import { recordProjectionTrace } from './projection-trace-input.js';
 
 const COLUMNS = [
-  ["content", "names-wall", "settlement-names"], ["clock-gis", "nova-explainers", "clock-projection"], ["pre"], ["left-crop", "right-crop"],
+  ["content", "names-wall", "settlement-names", "road-signs"], ["clock-gis", "nova-explainers", "clock-projection"], ["pre"], ["left-crop", "right-crop"],
   ["left-fit", "right-fit"], ["left-keystone", "right-keystone"],
   ["left-grid", "right-grid"], ["left-output", "right-output"],
 ];
@@ -26,9 +26,9 @@ export function layoutNodePositions(sizes) {
   const topHeight = Math.max(...["left-crop", "left-fit", "left-keystone", "left-grid", "left-output"].map(heightOf));
   const bottomHeight = Math.max(...["right-crop", "right-fit", "right-keystone", "right-grid", "right-output"].map(heightOf));
   const pathHeight = topHeight + ROW_GAP + bottomHeight;
-  const contentColumnHeight = heightOf("content") + ROW_GAP + heightOf("names-wall") + ROW_GAP + heightOf("settlement-names");
+  const contentColumnHeight = heightOf("content") + ROW_GAP + heightOf("names-wall") + ROW_GAP + heightOf("settlement-names") + ROW_GAP + heightOf("road-signs");
   const clockColumnHeight = heightOf("clock-gis") + ROW_GAP + heightOf("nova-explainers") + ROW_GAP + heightOf("clock-projection");
-  const overlayStack = new Set(["content", "names-wall", "settlement-names", "clock-gis", "nova-explainers", "clock-projection"]);
+  const overlayStack = new Set(["content", "names-wall", "settlement-names", "road-signs", "clock-gis", "nova-explainers", "clock-projection"]);
   const height = PAD * 2 + Math.max(pathHeight, contentColumnHeight, clockColumnHeight);
   const positions = {};
   let x = PAD;

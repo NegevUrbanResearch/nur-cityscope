@@ -13,7 +13,7 @@ test('reversed output forwards 4K rendering and map-density settings to the comp
   mounted.dispose();
 });
 
-test.each([['left', 'right'], ['right', 'left']])('physical %s displays the rotated completed %s output', (physical, logical) => {
+test.each([['left', 'right'], ['right', 'left']])('physical %s displays source-owned Road 232 data from %s', (physical, logical) => {
   const host = document.createElement('main');
   document.body.replaceChildren(host);
   const mounted = mountReversedProjection({ document, window, location: { href: `http://localhost/otef-interactive/projection-reversed.html?span=${physical}&outputMode=browser` } });
