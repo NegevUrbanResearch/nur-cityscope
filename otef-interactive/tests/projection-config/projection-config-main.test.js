@@ -55,7 +55,7 @@ test("mounts core before optional reads resolve and publishes each hydration and
   });
   const root = {};
   const dispose = await bootProjectionConfig({ document: { getElementById: () => root }, location: { href: "http://localhost/config" }, fetchImpl, socket: { on() {}, off() {} } });
-  await vi.waitFor(() => expect(harness.fetches).toHaveLength(2));
+  await vi.waitFor(() => expect(harness.fetches).toHaveLength(3));
   expect(harness.mounted).toHaveLength(1);
   expect(harness.mounted[0].args[1].catalog).toEqual({ entries: [] });
   expect(harness.getState).not.toHaveBeenCalled();
@@ -77,7 +77,7 @@ test("disposal aborts optional reads and blocks late catalog publication", async
     return Promise.resolve(response({ packs: [] }));
   });
   const dispose = await bootProjectionConfig({ document: { getElementById: () => ({}) }, location: { href: "http://localhost/config" }, fetchImpl, socket: { on() {}, off() {} } });
-  await vi.waitFor(() => expect(harness.fetches).toHaveLength(2));
+  await vi.waitFor(() => expect(harness.fetches).toHaveLength(3));
   await vi.waitFor(() => expect(harness.catalogs).toHaveLength(1));
   const mounted = harness.mounted[0];
   dispose();
@@ -100,16 +100,16 @@ test("timed-out optional reads cannot replace a successful Retry or its local ed
   });
   try {
     await bootProjectionConfig({ document: { getElementById: () => ({}) }, location: { href: "http://localhost/config" }, fetchImpl, socket: { on() {}, off() {} } });
-    await vi.waitFor(() => expect(harness.fetches).toHaveLength(2));
+    await vi.waitFor(() => expect(harness.fetches).toHaveLength(3));
     const { layoutClient, settlementClient } = harness.mounted[0].args[1];
     await vi.advanceTimersByTimeAsync(15000);
     expect(layoutClient.getHydrationState().status).toBe("Failed");
     expect(settlementClient.getHydrationState().status).toBe("Failed");
     const retryLayout = layoutClient.hydrate({ forceFresh: true });
     const retrySettlement = settlementClient.hydrate({ forceFresh: true });
-    await vi.waitFor(() => expect(harness.fetches).toHaveLength(4));
-    harness.fetches[2].item.resolve(response(snapshot));
+    await vi.waitFor(() => expect(harness.fetches).toHaveLength(5));
     harness.fetches[3].item.resolve(response(snapshot));
+    harness.fetches[4].item.resolve(response(snapshot));
     await Promise.all([retryLayout, retrySettlement]);
     const layoutDraft = { ...snapshot.nli_clock_layout.gis.start, leftPct: 77 };
     const pendingLayoutWrite = layoutClient.commit("gisClock", "start", layoutDraft);

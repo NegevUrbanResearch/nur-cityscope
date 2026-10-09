@@ -287,6 +287,10 @@ const LAYER_DISPLAY_LABELS = {
     he: "שמות אנשים",
     en: "People names",
   },
+  "gaza.gaza_border": {
+    he: "גבול עזה",
+    en: "Gaza border",
+  },
   "nli.lines": {
     he: "צירי חדירה",
     en: "Infiltration routes",

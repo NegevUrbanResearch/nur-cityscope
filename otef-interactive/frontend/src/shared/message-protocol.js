@@ -23,6 +23,7 @@ export const OTEF_MESSAGE_TYPES = {
   LEGEND_SETTINGS_CHANGED: "otef_legend_settings_changed",
   SETTLEMENT_NAMES_CHANGED: "otef_settlement_names_changed",
   EXHIBIT_MODE_CHANGED: "otef_exhibit_mode_changed",
+  GAZA_BORDER_VISIBILITY_CHANGED: "otef_gaza_border_visibility_changed",
 };
 
 export const DEFAULT_LAYER_STATES = {

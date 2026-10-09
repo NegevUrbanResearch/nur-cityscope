@@ -22,6 +22,7 @@ import {
   RIBBON_YELLOW,
 } from "./captivity-bleed-marker.js";
 import { buildMarkerLineSquareImageSpec } from "./markerline-square-image.js";
+import { GAZA_BORDER_FULL_ID } from "./gaza-border-style.js";
 import { EXCLUDED_SETTLEMENT_OUTLINE_IDS } from './settlement-label-presentation.js';
 
 function getNestedProp(obj, propPath) {
@@ -334,7 +335,7 @@ function scaleNumericLineWidth(lineWidth, scale) {
  * @param {string} [fullLayerId]
  */
 function scaleLineWidthPaintForProjection(lineWidth, hatchPresentation, fullLayerId) {
-  if (String(fullLayerId) === "nli.ציר_232") return lineWidth;
+  if (["nli.ציר_232", GAZA_BORDER_FULL_ID].includes(String(fullLayerId))) return lineWidth;
   if (hatchPresentation?.applyProjectionHatchPresentation) {
     return scaleNumericLineWidth(lineWidth, Number(PROJECTION_MAPLIBRE_STROKE_WIDTH_SCALE));
   }

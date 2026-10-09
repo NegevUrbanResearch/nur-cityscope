@@ -52,6 +52,7 @@ describe("installMapLegendLifecycle", () => {
       "narrativeState",
       "escapeOverlay",
       "legendSettings",
+      "gazaBorderVisibility",
     ]);
     expect(callbacks.has("investigationClock")).toBe(false);
 
@@ -63,7 +64,9 @@ describe("installMapLegendLifecycle", () => {
     await flushMicrotasks();
     callbacks.get("legendSettings")();
     await flushMicrotasks();
-    expect(mounted.refresh).toHaveBeenCalledTimes(5);
+    callbacks.get("gazaBorderVisibility")();
+    await flushMicrotasks();
+    expect(mounted.refresh).toHaveBeenCalledTimes(6);
 
     lifecycle.dispose();
     expect(mounted.dispose).toHaveBeenCalledTimes(1);

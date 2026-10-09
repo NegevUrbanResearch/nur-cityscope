@@ -13,6 +13,7 @@ import {
 } from "../shared/layer-name-utils.js";
 import { shouldShowLayerOnGisMap } from "../shared/gis-layer-filter.js";
 import { isolateLayersWhileVictimNamesShown } from "../shared/nli-victim-name-layer-isolation.js";
+import { filterGazaBorderVisibility } from "../shared/gaza-border-style.js";
 import { resolvedColorsToLegendFill } from "../shared/nli-investigation-legend.js";
 import { novaEscapeLegendLayer } from "../shared/nli-nova-escape-legend.js";
 import { projectionHatchRasterParams } from "../shared/hatch-projection-presentation.js";
@@ -631,12 +632,10 @@ function shouldIncludeLayerInLegend(groupId, layerId, surface = "gis") {
   switch (surface) {
     case "projection":
       return groupId !== "projector_base"
-        && !(groupId === "gaza" && layerId === "Gaza_Roads")
         && !(groupId === "nli" && layerId === "narrative_polygon");
     case "gis":
       if (groupId === "nli" && layerId === "narrative_polygon") return false;
       if (groupId === "projector_base") return false;
-      if (groupId === "gaza" && layerId === "Gaza_Roads") return false;
       return typeof shouldShowLayerOnGisMap !== "function" || shouldShowLayerOnGisMap(groupId, layerId);
     default: {
       throw new Error(`unknown legend surface: ${surface}`);
@@ -893,7 +892,7 @@ async function buildLegendModel(options = {}) {
     throw new Error("legend registry is required");
   }
 
-  const layerGroups = isolateLayersWhileVictimNamesShown(ctx.getLayerGroups() || []);
+  const layerGroups = filterGazaBorderVisibility(isolateLayersWhileVictimNamesShown(ctx.getLayerGroups() || []), ctx.getGazaBorderVisible?.());
 
   if (registry && !registry._initialized) {
     await registry.init();

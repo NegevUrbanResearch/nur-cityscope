@@ -1613,6 +1613,16 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                         'traceId': trace_id,
                     },
                 }
+            elif field == 'gaza_border_visible':
+                message = {
+                    'type': 'broadcast_message',
+                    'message': {
+                        'type': 'otef_gaza_border_visibility_changed',
+                        'gazaBorderVisible': bool(state.gaza_border_visible) if state else False,
+                        'table': table_name, 'sourceId': source_id,
+                        'timestamp': int(timestamp), 'traceId': trace_id,
+                    },
+                }
             elif field == 'exhibit_mode':
                 message = {
                     'type': 'broadcast_message',
@@ -1821,6 +1831,13 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                 state.workshop_auto_publish = wap
                 changed_fields.append('workshop_auto_publish')
 
+            if 'gaza_border_visible' in request.data:
+                visible = request.data['gaza_border_visible']
+                if not isinstance(visible, bool):
+                    return Response({'error': 'gaza_border_visible must be a boolean'}, status=status.HTTP_400_BAD_REQUEST)
+                state.gaza_border_visible = visible
+                changed_fields.append('gaza_border_visible')
+
             if 'exhibit_mode' in request.data:
                 exhibit_mode = request.data['exhibit_mode']
                 if not isinstance(exhibit_mode, bool):
@@ -1935,6 +1952,7 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
             ),
             'nli_clock_layout': normalize_nli_clock_layout(state.nli_clock_layout),
             'nli_clock_layout_revision': state.nli_clock_layout_revision,
+            'gaza_border_visible': bool(state.gaza_border_visible),
             'legend_settings': normalize_legend_settings(state.legend_settings),
             'legend_layout_revision': state.legend_layout_revision,
             'settlement_name_settings': normalize_settlement_name_settings(state.settlement_name_settings),
@@ -2409,7 +2427,7 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
             if self._moreshet_parking_coherence_table(table, layer_groups=layer_groups):
                 layer_groups = self._get_layer_groups(table)
             if state and state.pk is not None:
-                state.save(update_fields=None)
+                state.save(update_fields=["updated_at"])
             return layer_groups, set(), []
 
         self._ensure_layer_groups_for_merge(table, merged)
@@ -2450,7 +2468,7 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
         self._recompute_group_enabled_from_states_bulk(table, affected_group_ids)
 
         if state and state.pk is not None:
-            state.save(update_fields=None)
+            state.save(update_fields=["updated_at"])
 
         affected_full = list(merged.keys())
         return layer_groups, affected_group_ids, affected_full
@@ -2774,7 +2792,7 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
             direction = request.data.get('direction', 'north')
             delta = float(request.data.get('delta', 0.15))
             state.viewport = state.apply_pan_command(direction, delta)
-            state.save()
+            state.save(update_fields=["viewport", "updated_at"])
             self._emit_trace_event(
                 trace_id,
                 "django.command.saved",
@@ -2795,7 +2813,7 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
             level = int(request.data.get('level', 15))
             level = max(10, min(19, level))  # Clamp to valid range
             state.viewport = state.apply_zoom_command(level)
-            state.save()
+            state.save(update_fields=["viewport", "updated_at"])
             self._emit_trace_event(
                 trace_id,
                 "django.command.saved",

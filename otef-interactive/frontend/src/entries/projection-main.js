@@ -1,4 +1,5 @@
 import TableSwitcher from "../shared/table-switcher.js";
+import { filterGazaBorderVisibility } from "../shared/gaza-border-style.js";
 import { filterProjectionCalibrationScene } from '../shared/projection-calibration-scene.js';
 import { createProjectionMatchFrameCache } from '../shared/projection-match-frame.js';
 import { createProjectionCalibrationView, createProjectionCalibrationCover } from '../projection/projection-calibration-view.js';
@@ -148,7 +149,7 @@ function getRawEffectiveProjectionLayerGroups() {
     : OTEFDataContext.getLayerGroups();
   return groups;
 }
-const getNormalProjectionLayerGroups = () => isolateLayersWhileVictimNamesShown(getRawEffectiveProjectionLayerGroups());
+const getNormalProjectionLayerGroups = () => filterGazaBorderVisibility(isolateLayersWhileVictimNamesShown(getRawEffectiveProjectionLayerGroups()), OTEFDataContext.getGazaBorderVisible());
 
 function applyStoredNliLabelHeading(map) {
   applyNliSharedTextHeading(
@@ -1558,6 +1559,10 @@ async function bootstrapProjectionRuntime() {
       releaseProjectionModelImage(map);
       getLayerLifecycleRuntime(map)?.dispose();
     });
+    registerDisposer(OTEFDataContext.subscribe("gazaBorderVisibility", () => {
+      if (calibrationActive()) { calibrationView?.normalSceneChanged(); return; }
+      void applyProjectionRefresh({ groupsOverride: getEffectiveProjectionLayerGroups() });
+    }));
     const refreshProjectionAfterStyleLoad = () => {
       if (!isRuntimeAlive()) return;
       releaseProjectionModelImage(map);

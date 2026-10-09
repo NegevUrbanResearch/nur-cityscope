@@ -178,8 +178,9 @@ test("rendered warp handles keep navigation and CSS radii through draft refresh,
 test("category shortcuts call actual graph node groups and leave every node mounted", () => {
   const { root, view, onNode } = makeView({ coarse: false });
   const categories = [...root.querySelectorAll(".config-category-actions button")];
-  expect(categories.map((item) => item.textContent)).toEqual(["Geometry", "Overlays", "Names"]);
+  expect(categories.map((item) => item.textContent)).toEqual(["Content", "Geometry", "Overlays", "Names"]);
   expect(categories.map((item) => item.dataset.focusNodes.split(" "))).toEqual([
+    ["content"],
     ["pre", "left-crop", "right-crop", "left-fit", "right-fit", "left-keystone", "right-keystone", "left-grid", "right-grid", "left-output", "right-output"],
     ["clock-gis", "nova-explainers", "clock-projection"],
     ["names-wall", "settlement-names"],
@@ -189,7 +190,7 @@ test("category shortcuts call actual graph node groups and leave every node moun
   expect(root.querySelectorAll(".config-node")).toHaveLength(17);
   expect(root.querySelector(".node-selector")).toBeNull();
   expect(root.querySelector('[data-action="warp-editor-open-mobile"]')).toBeNull();
-  expect(root.querySelectorAll("nav[aria-label='Workspace'] button")).toHaveLength(3);
+  expect(root.querySelectorAll("nav[aria-label='Workspace'] button")).toHaveLength(4);
   expect(root.querySelectorAll(".output-command-actions button")).toHaveLength(3);
   expect(root.querySelector('[data-action="export"]')).toBeNull();
   expect(root.querySelector('[data-action="share"]')).toBeNull();
@@ -386,6 +387,17 @@ test("Add row starts placement before the source percentage previews a candidate
   expect(onWarpAction).toHaveBeenCalledWith("warp-grid-layout", { output: "left", operation: "add", axis: "row", position: 35 });
   expect(position.value).toBe("35");
   view.dispose();
+});
+
+test("Content switch keeps the requested choice visible while saving and restores it after failure", () => {
+  const { root, view } = makeView({ coarse: false });
+  const input = root.querySelector('[data-node="content"] input[data-action="gaza-border-visibility"]');
+  view.updateGazaBorderVisibility({ visible: false, loading: false, pending: true, requestedVisible: true });
+  expect(input.checked).toBe(true);
+  expect(input.disabled).toBe(true);
+  view.updateGazaBorderVisibility({ visible: false, loading: false, pending: false, error: "Connection unavailable" });
+  expect(input.checked).toBe(false);
+  expect(input.disabled).toBe(false);
 });
 
 test.each([false, true])("Grid layout dispatch waits for an active %s pointer before committing", (moved) => {

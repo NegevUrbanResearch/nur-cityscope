@@ -5,6 +5,7 @@ const LEGEND_REFRESH_TOPICS = Object.freeze([
   "narrativeState",
   "escapeOverlay",
   "legendSettings",
+  "gazaBorderVisibility",
 ]);
 
 function createLegendStyleLoadRefresh(getLifecycle) {

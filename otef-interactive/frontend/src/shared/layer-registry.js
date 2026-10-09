@@ -11,6 +11,8 @@
  * - Handle lazy-loading of GeoJSON/PMTiles data
  */
 
+import { GAZA_BORDER_LAYER, GAZA_BORDER_STYLE } from "./gaza-border-style.js";
+
 export class LayerRegistry {
   constructor({ fetchImpl = globalThis.fetch?.bind(globalThis) } = {}) {
     this._fetch = fetchImpl;
@@ -92,6 +94,18 @@ export class LayerRegistry {
       if (stylesResponse.ok) {
         const styles = await stylesResponse.json();
         this._packStyles.set(packId, styles);
+      }
+      // This authored border ships with the frontend, independently of generated packs.
+      if (packId === "gaza" && this._packManifests.has(packId)) {
+        const manifest = this._packManifests.get(packId);
+        manifest.layers = [
+          ...(manifest.layers || []).filter((layer) => layer.id !== GAZA_BORDER_LAYER.id),
+          GAZA_BORDER_LAYER,
+        ];
+        this._packStyles.set(packId, {
+          ...this._packStyles.get(packId),
+          [GAZA_BORDER_LAYER.id]: GAZA_BORDER_STYLE,
+        });
       }
     } catch (error) {
       console.warn(`[LayerRegistry] Failed to load pack ${packId}:`, error);

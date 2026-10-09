@@ -1,4 +1,5 @@
 import { createConfigCommandBar } from './config-command-bar.js';
+import { createGazaBorderVisibilityControls } from './gaza-border-visibility-controls.js';
 import { DEFAULT_PROJECTION_CONFIG } from "../shared/projection-config-schema.js";
 import { createNodeCanvas } from "./node-canvas.js";
 import { createWarpEditorDialog } from "./warp-editor-dialog.js";
@@ -77,6 +78,8 @@ export function createProjectionConfigView(root, {
   onFieldCancel = () => {},
   onNudge = () => {},
   onNamesMode = () => {},
+  onGazaBorderVisibility = () => {},
+  onGazaBorderReload = () => {},
   onNode = () => {},
   onOpenClockEditor = () => {},
   onOpenNovaExplainerEditor = () => {},
@@ -169,6 +172,7 @@ export function createProjectionConfigView(root, {
     ["left-output", "Left Output", "Left projector"], ["right-output", "Right Output", "Right projector"],
   ];
   const categoryGroups = {
+    Content: ["content"],
     Geometry: ["pre", "left-crop", "right-crop", "left-fit", "right-fit", "left-keystone", "right-keystone", "left-grid", "right-grid", "left-output", "right-output"],
     Overlays: ["clock-gis", "nova-explainers", "clock-projection"],
     Names: ["names-wall", "settlement-names"],
@@ -183,6 +187,8 @@ export function createProjectionConfigView(root, {
   if (traceUi) controls.toolsContent.appendChild(traceUi.element);
   app.append(commandBar.element);
   const nodeMap = new Map();
+  const borderVisibility = createGazaBorderVisibilityControls(doc, { onChange: onGazaBorderVisibility, onReload: onGazaBorderReload });
+  const borderEditorVisibility = createGazaBorderVisibilityControls(doc, { onChange: onGazaBorderVisibility, onReload: onGazaBorderReload });
   const warpNodePreviews = new Map();
   const miniGeometryCache = new Map();
   const meshObjectIds = new WeakMap();
@@ -357,6 +363,7 @@ export function createProjectionConfigView(root, {
       controls.gisClockScene = sceneControl;
       card.appendChild(sceneControl);
     }
+    if (id === "content") card.appendChild(borderVisibility.element);
     if (id === "clock-projection") {
       elementControl = make(doc, "select", { className: "clock-element-selector", ariaLabel: "Projection overlay", dataset: { action: "clock-element" } });
       elementControl.append(make(doc, "option", { value: "clock" }, "Clock"), make(doc, "option", { value: "legend" }, "Legend"));
@@ -799,7 +806,7 @@ export function createProjectionConfigView(root, {
     editorNodeHeading.textContent = graphNodes.find(([id]) => id === selected)?.[1] || "Selected node";
     const editable = (parameterEditorNodes.has(selected) && descriptors.some((item) => item.node === selected)) || selected.endsWith("-keystone") || selected.endsWith("-grid") || ["clock-gis", "clock-projection", "nova-explainers", "settlement-names"].includes(selected);
     enlargeEdit.disabled = !editable;
-    editorEmptyState.hidden = editable;
+    editorEmptyState.hidden = editable || selected === "content";
     if (parameterDialog?.isOpen() && parameterDialog.element.dataset.node !== selected) parameterDialog.close();
     canvas.setSelected(selected);
     for (const [id, card] of nodeMap) card.classList?.toggle("selected", id === selected);
@@ -1123,7 +1130,8 @@ export function createProjectionConfigView(root, {
     const selectedDescriptors = descriptors.filter((descriptor) => descriptor.node === selectedNode && !fields.get(`${descriptor.node}:${descriptor.path}`)?.wrap.hidden);
     selectedContext.replaceChildren();
     selectedContext.setAttribute("aria-label", `Current parameters for ${editorNodeHeading.textContent}`);
-    if (selectedDescriptors.length) {
+    if (selectedNode === "content") selectedContext.appendChild(borderEditorVisibility.element);
+    else if (selectedDescriptors.length) {
       const list = make(doc, "dl", { className: "config-selected-parameters" });
       for (const descriptor of selectedDescriptors) {
         const value = namesWallProfileScoped(descriptor.path)
@@ -1143,6 +1151,7 @@ export function createProjectionConfigView(root, {
   setNode("pre");
   return {
     update, controls: { ...controls, enlargeEdit, editorRegion, editorNodeHeading }, fields, nodeMap, parameterDialog, setPresetName, canManageDisplays: true,
+    updateGazaBorderVisibility(state) { borderVisibility.render(state); borderEditorVisibility.render(state); },
     getClockEditorOpener(node) {
       return nodeMap.get(node)?.querySelector?.('[data-action="clock-editor-open"]') || null;
     },

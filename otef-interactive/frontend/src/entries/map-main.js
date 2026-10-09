@@ -30,6 +30,7 @@ import {
   positionGisLegend,
 } from "../map/legend-integration.js";
 import { filterGroupsForGisMap } from "../shared/gis-layer-filter.js";
+import { filterGazaBorderVisibility } from "../shared/gaza-border-style.js";
 import { isolateLayersWhileVictimNamesShown } from "../shared/nli-victim-name-layer-isolation.js";
 import { normalizeGisBasemap } from "../shared/gis-basemap.js";
 import OTEFDataContext from "../shared/OTEFDataContext.js";

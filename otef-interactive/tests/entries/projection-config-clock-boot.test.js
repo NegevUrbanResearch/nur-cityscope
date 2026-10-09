@@ -111,7 +111,7 @@ test("config boot exposes failed layout hydration, blocks writes, and recovers w
   expect(harness.writeClock).not.toHaveBeenCalled();
   await layoutClient.hydrate({ forceFresh: true });
   expect(layoutClient.getHydrationState().status).toBe("Saved");
-  expect(fetchImpl).toHaveBeenCalledTimes(3);
+  expect(fetchImpl).toHaveBeenCalledTimes(4);
   expect(fetchImpl.mock.calls.at(-1)[0]).toBe("/api/otef/");
   expect(fetchImpl.mock.calls.at(-1)[1].signal).toBeInstanceOf(AbortSignal);
   expect(fetchImpl.mock.calls.at(-1)[1].signal).not.toBe(failedRequestSignal);

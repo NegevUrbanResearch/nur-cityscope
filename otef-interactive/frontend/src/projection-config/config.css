@@ -725,6 +725,10 @@ h2, h3 { margin: 0 0 10px; }
 .point-match-target { fill: none; stroke: #ffd43b; stroke-width: 1; }
 .point-match-target path, .point-match-target circle { vector-effect: non-scaling-stroke; }
 .point-match-target text { fill: #ffd43b; stroke: #111; paint-order: stroke; font-family: sans-serif; }
+.content-visibility-controls { margin-top: 12px; }
+.content-visibility-label { display: flex; align-items: center; gap: 10px; min-height: 44px; }
+.content-visibility-label input { width: 18px; height: 18px; flex: none; }
+.content-visibility-status { font-size: 12px; }
 .warp-edit-surface[data-point-match-active="true"] .warp-handle,
 .warp-edit-surface[data-point-match-active="true"] .warp-grid-line { visibility: hidden; }
 @container (max-width: 380px) {
