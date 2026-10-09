@@ -269,7 +269,35 @@ def _restore_relative_name(name: str) -> str:
     return name.removeprefix("nli/")
 
 
-def restore_prepared_pack(zip_path: Path, destination: Path, expected_sha256: str) -> PreparedPackReport:
+def restore_prepared_pack(
+    zip_path: Path,
+    destination: Path,
+    expected_sha256: str,
+    *,
+    processed_layers_root: Path | None = None,
+    curation_recipe_path: Path | None = None,
+    curation_lock_path: Path | None = None,
+) -> PreparedPackReport:
+    """Restore a prepared source pack under the shared NLI mutation lock."""
+    from otef_layer_processing.nli_active_route_evidence import validate_active_route_source
+    from otef_layer_processing.nli_mutation_lock import nli_mutation_lock
+
+    root = (Path(processed_layers_root).resolve() if processed_layers_root is not None else
+            (Path(__file__).resolve().parents[1] / "public/processed/layers/nli").resolve())
+    scripts_dir = Path(__file__).resolve().parent
+    recipe = Path(curation_recipe_path).resolve() if curation_recipe_path else scripts_dir / "nli-border-route-curation.json"
+    lock = Path(curation_lock_path).resolve() if curation_lock_path else scripts_dir / "nli-border-route-curation.lock.json"
+    with nli_mutation_lock(root):
+        evidence = validate_active_route_source(
+            Path(destination) / "gis/lines.geojson", recipe, lock,
+            processed_layers_root=root,
+        )
+        if evidence is not None:
+            raise PreparedPackError("prepared source restore is blocked while route curation is active")
+        return _restore_prepared_pack_unlocked(zip_path, destination, expected_sha256)
+
+
+def _restore_prepared_pack_unlocked(zip_path: Path, destination: Path, expected_sha256: str) -> PreparedPackReport:
     """Validate a pack, restore it into a new guarded staging destination, and verify hashes."""
 
     target = _safe_destination(destination)
@@ -335,12 +363,16 @@ def main(argv: list[str] | None = None) -> int:
         subparser.add_argument("--expected-sha256", required=True)
         if command == "restore":
             subparser.add_argument("--destination", required=True, type=Path)
+            subparser.add_argument("--processed-layers-root", type=Path)
     args = parser.parse_args(argv)
     try:
         if args.command == "inspect":
             report = inspect_prepared_pack(args.artifact, args.expected_sha256)
         else:
-            report = restore_prepared_pack(args.artifact, args.destination, args.expected_sha256)
+            report = restore_prepared_pack(
+                args.artifact, args.destination, args.expected_sha256,
+                processed_layers_root=args.processed_layers_root,
+            )
     except PreparedPackError as exc:
         parser.error(str(exc))
     print(_report_json(report))

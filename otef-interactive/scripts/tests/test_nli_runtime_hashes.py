@@ -103,6 +103,36 @@ class NliRuntimeHashStampTests(unittest.TestCase):
             hashes = json.loads((output / "release-metadata.json").read_text(encoding="utf-8"))["runtimeArtifactHashes"]
             self.assertEqual(hashes["people-search-index.json"], _sha256_upper(output / "people-search-index.json"))
 
+    def test_stamp_joins_the_parent_nli_mutation_owner(self):
+        from otef_layer_processing.nli_mutation_lock import nli_mutation_lock
+        from otef_layer_processing.nli_runtime_hashes import stamp_nli_runtime_artifact_hash
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "processed/layers/nli"
+            output.mkdir(parents=True)
+            (output / "people.geojson").write_text("{}", encoding="utf-8")
+            (output / "release-metadata.json").write_text("{}", encoding="utf-8")
+            with nli_mutation_lock(output) as token:
+                self.assertTrue(stamp_nli_runtime_artifact_hash(
+                    output, mutation_token=token, processed_layers_root=output
+                ))
+            metadata = json.loads((output / "release-metadata.json").read_text(encoding="utf-8"))
+            self.assertEqual(metadata["runtimeArtifactHashes"]["people.geojson"], _sha256_upper(output / "people.geojson"))
+
+    def test_legacy_or_staged_line_stamp_without_active_lock_still_works(self):
+        from otef_layer_processing.nli_runtime_hashes import stamp_nli_runtime_artifact_hash
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "processed/layers/nli"
+            output.mkdir(parents=True)
+            (output / "lines.geojson").write_text('{"features":[]}\n', encoding="utf-8")
+            (output / "release-metadata.json").write_text("{}", encoding="utf-8")
+            self.assertTrue(stamp_nli_runtime_artifact_hash(
+                output, "lines.geojson", processed_layers_root=output,
+                curation_recipe_path=Path(directory) / "missing-recipe.json",
+                curation_lock_path=Path(directory) / "missing-lock.json",
+            ))
+            metadata = json.loads((output / "release-metadata.json").read_text(encoding="utf-8"))
+            self.assertEqual(metadata["runtimeArtifactHashes"]["lines.geojson"], _sha256_upper(output / "lines.geojson"))
+
 
 if __name__ == "__main__":
     unittest.main()

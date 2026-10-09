@@ -3,10 +3,13 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildLinePathMetrics } from "../../frontend/src/shared/maplibre-line-progress-primitives.js";
+import { collectTimelineBeats, timelineBeatDurationMs, timelineSpanMs } from "../../frontend/src/shared/nli-investigation-beats.js";
+import { orientInvestigationLineFeature } from "../../frontend/src/shared/maplibre-investigation-lines.js";
 import {
   UNCONFIRMED_CONFIDENCE,
   clipLineCoordinatesToProgress,
   composeRouteProgress,
+  clipFeatureToProgress,
   isUnconfirmedRoute,
   splitCompositeLineFrame,
 } from "../../frontend/src/shared/nli-unconfirmed-route-progress.js";
@@ -118,6 +121,74 @@ describe("splitCompositeLineFrame", () => {
     }]);
     expect(split.headPoints[0].coordinates).toEqual([5, 0]);
     expect(split.headPoints[0].properties.headKind).toBe("meteor");
+  });
+
+  it("keeps one synthetic child on its parent's beat and reveals the joined story in travel order", () => {
+    const parent = feature(23, [[8, 0], [10, 0]], { timeline_minutes: 400, flow_direction: "forward" });
+    const child = feature(1013, [[0, 0], [4, 0], [8, 0]], {
+      timeline_minutes: 400, route_confidence: UNCONFIRMED_CONFIDENCE, parent_objectid: 23, flow_direction: "forward",
+    });
+    const reverseParent = feature(4, [[10, 2], [8, 2]], { timeline_minutes: 410, flow_direction: "reverse" });
+    const forwardChild = feature(1014, [[0, 2], [8, 2]], {
+      timeline_minutes: 410, route_confidence: UNCONFIRMED_CONFIDENCE, parent_objectid: 4, flow_direction: "forward",
+    });
+    const adjustedParent = feature(29, [[8, 4], [10, 4]], { timeline_minutes: 420, flow_direction: "forward" });
+    const adjustedApproach = feature(1001, [[0, 4], [2, 4], [3, 3], [8, 4]], {
+      timeline_minutes: 420, route_confidence: UNCONFIRMED_CONFIDENCE, parent_objectid: 29,
+    });
+    const unrelated = feature(9000, [[30, 30], [31, 31]], { timeline_minutes: 435 });
+    const approaches = [child, forwardChild, adjustedApproach];
+
+    expect(approaches.map((route) => route.properties.parent_objectid)).toEqual([23, 4, 29]);
+    const parentAndUnrelatedBeats = collectTimelineBeats([parent, reverseParent, adjustedParent, unrelated]);
+    const allStoryBeats = collectTimelineBeats([
+      parent, child, reverseParent, forwardChild, adjustedParent, adjustedApproach, unrelated,
+    ]);
+    expect(parentAndUnrelatedBeats).toEqual([400, 410, 420, 435]);
+    expect(allStoryBeats).toEqual(parentAndUnrelatedBeats);
+    expect(timelineBeatDurationMs(400)).toBe(4000);
+    expect(timelineSpanMs(parentAndUnrelatedBeats.slice(0, 2))).toBe(6500);
+
+    const orientedParent = orientInvestigationLineFeature(reverseParent);
+    expect(orientedParent.geometry.coordinates).toEqual([[8, 2], [10, 2]]);
+    const reverseReveal = splitCompositeLineFrame({ activeFeatures: [orientedParent, forwardChild], activeProgress: 0.9 });
+    expect(reverseReveal.unconfirmedCompleted).toEqual([forwardChild]);
+    expect(reverseReveal.confirmedActive[0].progress).toBeCloseTo(0.5);
+    expect(reverseReveal.headPoints[0].coordinates).toEqual([9, 2]);
+    const reverseAtJoin = splitCompositeLineFrame({ activeFeatures: [orientedParent, forwardChild], activeProgress: 0.8 });
+    expect(reverseAtJoin.headPoints[0].coordinates).toEqual([8, 2]);
+    const beforeJoin = splitCompositeLineFrame({ activeFeatures: [parent, child], activeProgress: 0.4 });
+    expect(beforeJoin.unconfirmedActive.map((item) => item.feature.properties.OBJECTID)).toEqual([1013]);
+    expect(beforeJoin.confirmedActive).toEqual([]);
+    expect(beforeJoin.headPoints[0].coordinates).toEqual([4, 0]);
+    const afterJoin = splitCompositeLineFrame({ activeFeatures: [parent, child], activeProgress: 0.9 });
+    expect(afterJoin.unconfirmedCompleted.map((route) => route.properties.OBJECTID)).toEqual([1013]);
+    expect(afterJoin.confirmedActive[0].feature.properties.OBJECTID).toBe(23);
+    expect(afterJoin.headPoints[0].coordinates).toEqual([9, 0]);
+    const immediatelyBeforeJoin = splitCompositeLineFrame({ activeFeatures: [parent, child], activeProgress: 0.8 - 1e-6 });
+    const exactlyAtJoin = splitCompositeLineFrame({ activeFeatures: [parent, child], activeProgress: 0.8 });
+    const immediatelyAfterJoin = splitCompositeLineFrame({ activeFeatures: [parent, child], activeProgress: 0.8 + 1e-6 });
+    expect(immediatelyBeforeJoin.headPoints[0].coordinates[0]).toBeCloseTo(7.99999, 5);
+    expect(clipFeatureToProgress(
+      immediatelyBeforeJoin.unconfirmedActive[0].feature,
+      immediatelyBeforeJoin.unconfirmedActive[0].progress,
+    ).geometry.coordinates.at(-1)[0]).toBeCloseTo(7.99999, 5);
+    expect(exactlyAtJoin.headPoints[0].coordinates).toEqual([8, 0]);
+    expect(exactlyAtJoin.unconfirmedCompleted[0].geometry.coordinates.at(-1)).toEqual([8, 0]);
+    expect(immediatelyAfterJoin.headPoints[0].coordinates[0]).toBeCloseTo(8.00001, 5);
+    expect(clipFeatureToProgress(
+      immediatelyAfterJoin.confirmedActive[0].feature,
+      immediatelyAfterJoin.confirmedActive[0].progress,
+    ).geometry.coordinates[0]).toEqual([8, 0]);
+    const complete = splitCompositeLineFrame({ activeFeatures: [parent, child], activeProgress: 1 });
+    expect(complete.confirmedCompleted).toEqual([parent]);
+    expect(complete.unconfirmedCompleted).toEqual([child]);
+    const idle = splitCompositeLineFrame({ completedFeatures: [parent, child] });
+    expect(idle.confirmedCompleted).toEqual([parent]);
+    expect(idle.unconfirmedCompleted).toEqual([child]);
+    const adjustedReveal = splitCompositeLineFrame({ activeFeatures: [adjustedParent, adjustedApproach], activeProgress: 0.9 });
+    expect(adjustedReveal.unconfirmedCompleted).toEqual([adjustedApproach]);
+    expect(adjustedReveal.confirmedActive[0].feature).toBe(adjustedParent);
   });
 });
 

@@ -7,6 +7,8 @@ import { NLI_NOVA_STORY } from "../frontend/src/shared/nli-nova-story.js";
 import { novaVirtualMembership } from "../frontend/src/shared/nli-nova-virtual-membership.js";
 import { nliFeatureBagsFromCache } from "../frontend/src/remote/nli-timeline-transport.js";
 import { validatePresenterCoverage } from "../frontend/src/remote/nli-presenter-content.js";
+import { confirmedFeaturesSha256, isValidatedRouteCurationProof, ROUTE_CURATION_PINS, validateRouteBorderCuration } from "./nli-route-curation-digests.mjs";
+export { validateRouteBorderCuration };
 
 export const PINNED_EXPORT_SHA256 = "ec806708e478426efa1b0b793784dac3257ca78fd742f49ca382130475400fcf";
 const FIRE_ONLY_EXCLUSIONS = [572, 636, 724, 1197];
@@ -24,7 +26,7 @@ function sameValue(a, b) {
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
-export function validateAcceptedEvidence({ manifest, metadata, provenance, artifacts }) {
+export function validateAcceptedEvidence({ manifest, metadata, provenance, artifacts, curationProof = null }) {
   const errors = [];
   if (!metadata?.sourceSha256 || manifest?.acceptedSourceSha256?.toLowerCase() !== metadata.sourceSha256.toLowerCase()) {
     errors.push("Presenter manifest source identity does not match accepted release metadata");
@@ -33,6 +35,18 @@ export function validateAcceptedEvidence({ manifest, metadata, provenance, artif
     errors.push("Presenter manifest dataset version does not match accepted release metadata");
   }
   const evidence = manifest?.sourceEvidence;
+  if (evidence?.routeBorderCuration && !curationProof) errors.push("Derived route runtime evidence requires validated route curation proof");
+  if (curationProof) {
+    const routeEvidence = evidence?.routeBorderCuration;
+    const route = artifacts?.["nli.lines"];
+    if (!isValidatedRouteCurationProof(curationProof, route)) errors.push("Route curation proof was not produced for the current route artifact");
+    if (!routeEvidence || routeEvidence.runtimeByteSha256?.toLowerCase() !== route?.byteSha256?.toLowerCase()
+      || routeEvidence.runtimeFeatureSha256?.toLowerCase() !== route?.featureSha256?.toLowerCase()
+      || confirmedFeaturesSha256(route?.features || []) !== ROUTE_CURATION_PINS.confirmedFeaturesSha256
+      || curationProof.confirmedFeaturesSha256 !== ROUTE_CURATION_PINS.confirmedFeaturesSha256) {
+      errors.push("Derived route runtime pin does not match validated curation proof");
+    }
+  }
   if (!evidence || evidence.packageSha256 !== evidence.acceptedPackageSha256
     || evidence.acceptedSourceSha256?.toLowerCase() !== metadata?.sourceSha256?.toLowerCase()
     || evidence.datasetVersion?.toLowerCase() !== metadata?.datasetVersion?.toLowerCase()
@@ -136,13 +150,16 @@ export function validateOptionalSourceZip({ sourceZip, explicit = false, metadat
   return [];
 }
 
-export function validateSourceReferences(record, artifacts) {
+export function validateSourceReferences(record, artifacts, curationProof = null) {
   const errors = [];
   if (!Array.isArray(record?.sourceRefs) || record.sourceRefs.length === 0) return ["Source references are missing"];
   const stableIdFields = ["OBJECTID", "objectid", "objectId", "id", "ID", "record_id"];
   for (const ref of record.sourceRefs) {
     const artifact = artifacts?.[ref?.artifact];
-    if (!artifact || ref.artifactSha256?.toLowerCase() !== artifact.byteSha256?.toLowerCase()) {
+    const currentArtifactHashMatches = ref.artifactSha256?.toLowerCase() === artifact?.byteSha256?.toLowerCase();
+    const validatedBaselineRouteHashMatches = ref.artifact === "nli.lines" && isValidatedRouteCurationProof(curationProof, artifact)
+      && curationProof.baselineRouteSha256?.toLowerCase() === ref.artifactSha256?.toLowerCase();
+    if (!artifact || (!currentArtifactHashMatches && !validatedBaselineRouteHashMatches)) {
       errors.push("Source reference artifact hash mismatch");
       continue;
     }
@@ -192,7 +209,7 @@ export function validateSourceReferences(record, artifacts) {
   return errors;
 }
 
-export function validateSourceReferencesForMembership(record, artifacts, membership, { minute, narrativeId } = {}) {
+export function validateSourceReferencesForMembership(record, artifacts, membership, { minute, narrativeId, curationProof = null } = {}) {
   const errors = [];
   for (const ref of record?.sourceRefs || []) {
     if (!membership?.includes(ref.artifact)) errors.push("Source reference artifact is outside presenter membership");
@@ -205,7 +222,7 @@ export function validateSourceReferencesForMembership(record, artifacts, members
       if (feature && Number(feature.properties?.timeline_minutes) !== minute) errors.push("Source reference record is outside the presenter minute");
     }
   }
-  return [...errors, ...validateSourceReferences(record, artifacts)];
+  return [...errors, ...validateSourceReferences(record, artifacts, curationProof)];
 }
 
 export function buildNavigationFixture({ exportBytes, computedMinutes, expectedSha256 = PINNED_EXPORT_SHA256 }) {
@@ -287,22 +304,26 @@ export function resolveVerifierInputs({ args = [], here, repo }) {
   const fixturePath = path.join(repo, "otef-interactive/tests/fixtures/nli-presenter-navigation.json");
   const exportPath = args.includes("--export") ? path.resolve(arg("--export", "")) : null;
   const sourceZip = args.includes("--source-zip") ? path.resolve(arg("--source-zip", "")) : null;
-  return { dataRoot, manifestPath, provenancePath, fixturePath, exportPath, sourceZip };
+  const curationRecipePath = path.resolve(arg("--curation-recipe", path.join(here, "nli-border-route-curation.json")));
+  const curationLockPath = path.resolve(arg("--curation-lock", path.join(here, "nli-border-route-curation.lock.json")));
+  return { dataRoot, manifestPath, provenancePath, fixturePath, exportPath, sourceZip, curationRecipePath, curationLockPath };
 }
 
 export function runVerifier(args = process.argv.slice(2)) {
   const here = path.dirname(fileURLToPath(import.meta.url));
   const repo = path.resolve(here, "../..");
-  const { dataRoot, manifestPath, provenancePath, fixturePath, exportPath, sourceZip } = resolveVerifierInputs({ args, here, repo });
+  const { dataRoot, manifestPath, provenancePath, fixturePath, exportPath, sourceZip, curationRecipePath, curationLockPath } = resolveVerifierInputs({ args, here, repo });
   const errors = [];
+  const metadataPath = path.join(dataRoot, "release-metadata.json");
+  const metadata = fs.existsSync(metadataPath) ? JSON.parse(fs.readFileSync(metadataPath, "utf8")) : null;
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+  const curationLock = fs.existsSync(curationLockPath) ? JSON.parse(fs.readFileSync(curationLockPath, "utf8")) : null;
+  const hasRouteCuration = Boolean(curationLock?.curation || metadata?.routeBorderCuration || manifest?.sourceEvidence?.routeBorderCuration);
   const loaded = Object.fromEntries(names.map((name, index) => {
     const artifact = readArtifact(path.join(dataRoot, name));
     console.log(`${name}: bytes=${artifact.byteSha256} features=${artifact.featureSha256} count=${artifact.features.length}`);
-    if (artifact.byteSha256 !== pinnedByteHashes[name]) errors.push(`${name} byte hash differs from the pinned snapshot`);
     return [ids[index], artifact];
   }));
-  const metadataPath = path.join(dataRoot, "release-metadata.json");
-  const metadata = fs.existsSync(metadataPath) ? JSON.parse(fs.readFileSync(metadataPath, "utf8")) : null;
   const provenance = fs.existsSync(provenancePath) ? JSON.parse(fs.readFileSync(provenancePath, "utf8")) : null;
   if (!provenance) errors.push(`Accepted package provenance not found: ${provenancePath}`);
   errors.push(...validateOptionalSourceZip({ sourceZip, explicit: args.includes("--source-zip"), metadata }));
@@ -348,17 +369,30 @@ export function runVerifier(args = process.argv.slice(2)) {
   const novaMinutes = [...NLI_NOVA_STORY.representativeMinutes];
   requests.push({ narrativeId: "nova", membership: novaVirtualMembership([], "nova", { phase: "paused" }), minutes: novaMinutes });
   requests.push({ narrativeId: "nova", membership: novaVirtualMembership(["nli.alarms"], "nova", { phase: "paused" }), minutes: novaMinutes });
-  const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
   const missing = validatePresenterCoverage(manifest, requests);
   if (missing.length) errors.push(`Missing localized title/timeLabel coverage: ${missing.length} locale records`);
   if (!metadata) errors.push("release-metadata.json not found");
-  else errors.push(...validateAcceptedEvidence({ manifest, metadata, provenance, artifacts: loaded }));
+  let curationProof = null;
+  if (hasRouteCuration) {
+    try {
+      curationProof = validateRouteBorderCuration({ recipe: curationRecipePath, lock: curationLock, metadata, manifest, artifacts: loaded });
+    } catch (error) { errors.push(error.message); }
+  }
+  else if (args.includes("--curation-lock")) errors.push("Explicit route curation lock contains no curation evidence");
+  for (let index = 0; index < names.length; index += 1) {
+    const name = names[index];
+    if (loaded[ids[index]].byteSha256 !== pinnedByteHashes[name] && !(name === "lines.geojson" && curationProof)) {
+      errors.push(`${name} byte hash differs from the pinned snapshot`);
+    }
+  }
+  if (!metadata) errors.push("release-metadata.json not found");
+  else errors.push(...validateAcceptedEvidence({ manifest, metadata, provenance, artifacts: loaded, curationProof }));
   errors.push(...validateEditorialEvidence(manifest));
   errors.push(...validatePresenterEditorialCopy(manifest.records || {}));
   for (const [key, record] of Object.entries(manifest.records || {})) {
     let [narrativeId, membership, minute] = [];
     try { [narrativeId, membership, minute] = JSON.parse(key); } catch {}
-    for (const issue of validateSourceReferencesForMembership(record, loaded, membership, { minute, narrativeId })) {
+    for (const issue of validateSourceReferencesForMembership(record, loaded, membership, { minute, narrativeId, curationProof })) {
       errors.push(`${issue}: ${key}`);
     }
   }

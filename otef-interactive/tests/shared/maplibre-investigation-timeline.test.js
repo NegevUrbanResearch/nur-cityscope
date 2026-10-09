@@ -48,6 +48,12 @@ import {
 import { NLI_NOVA_STORY } from "../../frontend/src/shared/nli-nova-story.js";
 import { scaleOpacityExpression } from "../../frontend/src/shared/layer-opacity-expression.js";
 import { getLayerLifecycleRuntime } from "../../frontend/src/shared/layer-lifecycle-fade.js";
+import { deriveInvestigationFrame } from "../../frontend/src/shared/nli-investigation-visual-state.js";
+import {
+  buildInvestigationLineFeaturesForFrame,
+  createInvestigationTimelineData,
+  investigationRouteBeats,
+} from "../../frontend/src/shared/nli-investigation-timeline-data.js";
 
 const INVESTIGATION_FEATURES = [
   { properties: { OBJECTID: 1, Name: "מרחב כניסה לקיבוץ", timeline: "local 07:15", timeline_minutes: 435 } },
@@ -1197,6 +1203,183 @@ describe("syncInvestigationTimelineToMap", () => {
     expect(map.getSource("nli-investigation-line-completed-carrier").setData.mock.calls.at(-1)[0].features)
       .toHaveLength(1);
     disposeInvestigationTimelineForMap(map);
+  });
+
+  it("derives one shared beat partition for every synthetic parent and child through the timeline adapter", async () => {
+    const earlier = {
+      type: "Feature", properties: { OBJECTID: 8, timeline_minutes: 390 },
+      geometry: { type: "LineString", coordinates: [[20, 0], [21, 0]] },
+    };
+    const parent = {
+      type: "Feature", properties: { OBJECTID: 23, timeline_minutes: 400, flow_direction: "forward" },
+      geometry: { type: "LineString", coordinates: [[8, 0], [10, 0]] },
+    };
+    const child = {
+      type: "Feature", properties: { OBJECTID: 1013, timeline_minutes: 400, route_confidence: "unconfirmed", parent_objectid: 23 },
+      geometry: { type: "LineString", coordinates: [[0, 0], [8, 0]] },
+    };
+    const reverseParent = {
+      type: "Feature", properties: { OBJECTID: 4, timeline_minutes: 410, flow_direction: "reverse" },
+      geometry: { type: "LineString", coordinates: [[10, 2], [8, 2]] },
+    };
+    const reverseChild = {
+      type: "Feature", properties: { OBJECTID: 1014, timeline_minutes: 410, route_confidence: "unconfirmed", parent_objectid: 4 },
+      geometry: { type: "LineString", coordinates: [[0, 2], [8, 2]] },
+    };
+    const adjustedParent = {
+      type: "Feature", properties: { OBJECTID: 29, timeline_minutes: 420 },
+      geometry: { type: "LineString", coordinates: [[8, 4], [10, 4]] },
+    };
+    const adjustedChild = {
+      type: "Feature", properties: { OBJECTID: 1001, timeline_minutes: 420, route_confidence: "unconfirmed", parent_objectid: 29 },
+      geometry: { type: "LineString", coordinates: [[0, 4], [2, 4], [3, 3], [8, 4]] },
+    };
+    const unrelated = {
+      type: "Feature", properties: { OBJECTID: 9000, timeline_minutes: 435 },
+      geometry: { type: "LineString", coordinates: [[30, 30], [31, 31]] },
+    };
+    const features = [earlier, parent, child, reverseParent, reverseChild, adjustedParent, adjustedChild, unrelated];
+    const groups = [{ id: "nli", layers: [{ id: "lines", enabled: true }] }];
+    const data = createInvestigationTimelineData({
+      featuresById: { [INVESTIGATION_LINES_FULL_ID]: features },
+    });
+    const beats = investigationRouteBeats(data);
+    expect(beats).toEqual([390, 400, 410, 420, 435]);
+    expect(beats.map(timelineBeatDurationMs)).toEqual([4000, 4000, 2500, 2500, 2500]);
+    expect(timelineSpanMs(beats)).toBe(15500);
+    const clock = playClock([INVESTIGATION_LINES_FULL_ID], beats, 0);
+    const map = makeMap();
+    let now = 0;
+    const featureIds = (list) => list.map((feature) => feature.properties.OBJECTID);
+    const capture = (sourceId) => map.getSource(sourceId).setData.mock.calls.at(-1)[0].features;
+    const stages = [
+      { now: 3999, active: [8], completed: [], future: [23, 1013, 4, 1014, 29, 1001, 9000] },
+      { now: 6000, active: [23, 1013], completed: [8], future: [4, 1014, 29, 1001, 9000], head: [1013], adapter: {
+        completed: [8], unconfirmedActive: [1013], unconfirmedCompleted: [],
+        compositeActive: [], ordinaryActive: [],
+      } },
+      { now: 7999, active: [23, 1013], completed: [8], future: [4, 1014, 29, 1001, 9000] },
+      { now: 8000, active: [4, 1014], completed: [8, 23, 1013], future: [29, 1001, 9000], adapter: {
+        completed: [8, 23], unconfirmedActive: [], unconfirmedCompleted: [1013],
+        compositeActive: [], ordinaryActive: [],
+      } },
+      { now: 9250, active: [4, 1014], completed: [8, 23, 1013], future: [29, 1001, 9000], head: [1014], adapter: {
+        completed: [8, 23], unconfirmedActive: [1014], unconfirmedCompleted: [1013],
+        compositeActive: [], ordinaryActive: [],
+      } },
+      { now: 10499, active: [4, 1014], completed: [8, 23, 1013], future: [29, 1001, 9000] },
+      { now: 10500, active: [29, 1001], completed: [8, 23, 1013, 4, 1014], future: [9000] },
+      { now: 11750, active: [29, 1001], completed: [8, 23, 1013, 4, 1014], future: [9000], head: [1001] },
+      { now: 12999, active: [29, 1001], completed: [8, 23, 1013, 4, 1014], future: [9000] },
+      { now: 13000, active: [9000], completed: [8, 23, 1013, 4, 1014, 29, 1001], future: [], adapter: {
+        completed: [8, 23, 4, 29], unconfirmedActive: [], unconfirmedCompleted: [1013, 1014, 1001],
+        compositeActive: [], ordinaryActive: [9000],
+      } },
+      { now: 13750, active: [9000], completed: [8, 23, 1013, 4, 1014, 29, 1001], future: [] },
+      { now: 15500, active: [], completed: [8, 23, 1013, 4, 1014, 29, 1001, 9000], future: [] },
+    ];
+    for (const stage of stages) {
+      now = stage.now;
+      const frame = deriveInvestigationFrame(clock, now, [INVESTIGATION_LINES_FULL_ID], { routeBeats: beats });
+      const partition = buildInvestigationLineFeaturesForFrame(data, frame);
+      expect(featureIds(partition.activeFeatures), `active at ${now}`).toEqual(stage.active);
+      expect(featureIds(partition.completedFeatures), `completed at ${now}`).toEqual(stage.completed);
+      expect(featureIds(partition.futureFeatures), `future at ${now}`).toEqual(stage.future);
+      const allPartitionedIds = [
+        ...featureIds(partition.activeFeatures), ...featureIds(partition.completedFeatures), ...featureIds(partition.futureFeatures),
+      ];
+      expect(new Set(allPartitionedIds).size, `unique route partition at ${now}`).toBe(features.length);
+      await syncInvestigationTimelineToMap(map, clock, groups, {
+        featuresById: { [INVESTIGATION_LINES_FULL_ID]: features }, now: () => now,
+      });
+      if (stage.head) {
+        expect(featureIds(capture("nli-investigation-line-head")), `single head at ${now}`).toEqual(stage.head);
+        const activeIds = [
+          ...featureIds(capture("nli-investigation-line-active")),
+          ...featureIds(capture("nli-investigation-line-composite-active")),
+          ...featureIds(capture("nli-investigation-line-unconfirmed-active")),
+        ];
+        expect(activeIds.filter((id) => id === stage.head[0])).toHaveLength(1);
+      }
+      if (stage.adapter) {
+        const sources = {
+          completed: "nli-investigation-line-completed-carrier",
+          unconfirmedActive: "nli-investigation-line-unconfirmed-active",
+          unconfirmedCompleted: "nli-investigation-line-unconfirmed-completed",
+          compositeActive: "nli-investigation-line-composite-active",
+          ordinaryActive: "nli-investigation-line-active",
+        };
+        for (const [key, sourceId] of Object.entries(sources)) {
+          expect(featureIds(capture(sourceId)), `${key} adapter output at ${now}`).toEqual(stage.adapter[key]);
+        }
+      }
+    }
+    disposeInvestigationTimelineForMap(map);
+  });
+
+  it("keeps composite reveal frozen through ordinary pause RAF frames as completed flow advances", async () => {
+    const earlier = {
+      type: "Feature", properties: { OBJECTID: 8, timeline_minutes: 390 },
+      geometry: { type: "LineString", coordinates: [[20, 0], [21, 0]] },
+    };
+    const parent = {
+      type: "Feature", properties: { OBJECTID: 23, timeline_minutes: 400 },
+      geometry: { type: "LineString", coordinates: [[8, 0], [10, 0]] },
+    };
+    const child = {
+      type: "Feature", properties: { OBJECTID: 1013, timeline_minutes: 400, route_confidence: "unconfirmed", parent_objectid: 23 },
+      geometry: { type: "LineString", coordinates: [[0, 0], [8, 0]] },
+    };
+    const features = [earlier, parent, child];
+    const groups = [{ id: "nli", layers: [{ id: "lines", enabled: true }] }];
+    for (const pauseAt of [5000, 7600]) {
+      const map = makeMap();
+      let now = pauseAt;
+      const rafCallbacks = [];
+      vi.stubGlobal("requestAnimationFrame", (callback) => {
+        rafCallbacks.push(callback);
+        return rafCallbacks.length;
+      });
+      const playing = playClock([INVESTIGATION_LINES_FULL_ID], [390, 400], 0);
+      const paused = pauseNliClock(playing, pauseAt);
+      expect(paused.phase).toBe("paused");
+      await syncInvestigationTimelineToMap(map, paused, groups, {
+        featuresById: { [INVESTIGATION_LINES_FULL_ID]: features }, now: () => now,
+      });
+      const capture = (sourceId) => map.getSource(sourceId).setData.mock.calls.at(-1)[0].features;
+      const revealSources = [
+        "nli-investigation-line-unconfirmed-active",
+        "nli-investigation-line-unconfirmed-completed",
+        "nli-investigation-line-composite-active",
+        "nli-investigation-line-head",
+      ];
+      const geometryAtPause = Object.fromEntries(revealSources.map((id) => [
+        id, capture(id).map((feature) => ({ id: feature.properties.OBJECTID, coordinates: feature.geometry.coordinates })),
+      ]));
+      expect(capture("nli-investigation-line-completed-motion").map((feature) => feature.properties.OBJECTID)).toContain(8);
+      if (pauseAt < 7000) {
+        expect(capture("nli-investigation-line-unconfirmed-active").map((feature) => feature.properties.OBJECTID)).toEqual([1013]);
+      } else {
+        expect(capture("nli-investigation-line-unconfirmed-completed").map((feature) => feature.properties.OBJECTID)).toEqual([1013]);
+        expect(capture("nli-investigation-line-composite-active").map((feature) => feature.properties.OBJECTID)).toEqual([23]);
+      }
+      expect(capture("nli-investigation-line-head")).toHaveLength(1);
+      const flowAtPause = map.getPaintProperty("nli-investigation-line-completed-motion-line", "line-dasharray");
+      expect(rafCallbacks.length).toBeGreaterThan(0);
+
+      now += 500;
+      const raf = rafCallbacks.shift();
+      expect(raf).toBeTypeOf("function");
+      raf();
+      const geometryDuringPause = Object.fromEntries(revealSources.map((id) => [
+        id, capture(id).map((feature) => ({ id: feature.properties.OBJECTID, coordinates: feature.geometry.coordinates })),
+      ]));
+      const flowDuringPause = map.getPaintProperty("nli-investigation-line-completed-motion-line", "line-dasharray");
+      expect(geometryDuringPause).toEqual(geometryAtPause);
+      expect(flowDuringPause).not.toEqual(flowAtPause);
+      expect(capture("nli-investigation-line-completed-motion").map((feature) => feature.properties.OBJECTID)).toContain(8);
+      disposeInvestigationTimelineForMap(map);
+    }
   });
 
   it("disposal invalidates a deferred line fetch before it can hide base routes", async () => {

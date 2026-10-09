@@ -3,6 +3,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { presenterCopyKey } from "../frontend/src/remote/nli-presenter-content.js";
+import { fileDigests, refreshPresenterRouteEvidenceFromFiles } from "./nli-route-curation-digests.mjs";
+export { refreshPresenterRouteEvidence } from "./nli-route-curation-digests.mjs";
 
 const hash = (value) => createHash("sha256").update(value).digest("hex");
 const json = (value) => `${JSON.stringify(value, null, 2)}\n`;
@@ -111,6 +113,24 @@ export function assemblePresenterManifest({ inputDir, runtimeDir, provenance, ed
 function cli(args) {
   const arg = (name) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : null; };
   const here = path.dirname(fileURLToPath(import.meta.url));
+  if (args.includes("--refresh-route-evidence")) {
+    const required = ["--manifest", "--metadata", "--provenance", "--recipe", "--lock", "--runtime-dir", "--output"];
+    const missing = required.filter((name) => !arg(name));
+    if (missing.length) throw new Error(`Route evidence refresh requires ${missing.join(", ")}`);
+    const readJson = (file) => JSON.parse(fs.readFileSync(path.resolve(file), "utf8"));
+    const manifest = readJson(arg("--manifest"));
+    const metadata = readJson(arg("--metadata"));
+    const provenance = readJson(arg("--provenance"));
+    const recipe = path.resolve(arg("--recipe"));
+    const lock = readJson(arg("--lock"));
+    const routeFile = path.join(path.resolve(arg("--runtime-dir")), "lines.geojson");
+    const route = fileDigests(routeFile);
+    const refreshed = refreshPresenterRouteEvidenceFromFiles({ manifest, metadata, provenance,
+      artifacts: { "nli.lines": route }, recipe, lock });
+    fs.writeFileSync(path.resolve(arg("--output")), json(refreshed));
+    console.log(`Refreshed route evidence for ${Object.keys(refreshed.records || {}).length} existing presenter records.`);
+    return;
+  }
   const inputDirArg = arg("--input-dir");
   if (!inputDirArg) throw new Error("Pass --input-dir for the reviewed copy/source batch");
   const inputDir = path.resolve(inputDirArg);

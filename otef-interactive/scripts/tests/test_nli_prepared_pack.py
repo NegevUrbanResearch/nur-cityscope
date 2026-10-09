@@ -198,11 +198,13 @@ class PreparedPackSafetyTests(unittest.TestCase):
         existing = self.root / "existing"
         existing.mkdir()
         with self.assertRaises(PreparedPackError):
-            restore_prepared_pack(path, existing, self.expected_hash(path))
+            restore_prepared_pack(path, existing, self.expected_hash(path),
+                                  processed_layers_root=self.root / "processed/layers/nli")
 
         public = SCRIPTS_DIR.parent / "public" / "review-source"
         with self.assertRaises(PreparedPackError):
-            restore_prepared_pack(path, public, self.expected_hash(path))
+            restore_prepared_pack(path, public, self.expected_hash(path),
+                                  processed_layers_root=self.root / "processed/layers/nli")
 
     def test_restore_verifies_hashes_in_a_new_destination(self):
         entries = {
@@ -217,7 +219,8 @@ class PreparedPackSafetyTests(unittest.TestCase):
         path = self.archive(entries)
         destination = self.root / "review-source" / "nli"
         destination.parent.mkdir()
-        report = restore_prepared_pack(path, destination, self.expected_hash(path))
+        report = restore_prepared_pack(path, destination, self.expected_hash(path),
+                                       processed_layers_root=self.root / "processed/layers/nli")
         self.assertEqual(report.restored_destination, destination.resolve())
         for entry in report.entries:
             if entry.name.endswith("/"):
@@ -231,7 +234,8 @@ class PreparedPackSafetyTests(unittest.TestCase):
             archive.writestr("../escape.txt", b"not allowed")
         destination = self.root / "new-destination"
         with self.assertRaises(PreparedPackError):
-            restore_prepared_pack(path, destination, self.expected_hash(path))
+            restore_prepared_pack(path, destination, self.expected_hash(path),
+                                  processed_layers_root=self.root / "processed/layers/nli")
         self.assertFalse((self.root / "escape.txt").exists())
 
 
