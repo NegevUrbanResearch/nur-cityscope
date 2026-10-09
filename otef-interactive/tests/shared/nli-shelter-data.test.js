@@ -115,3 +115,14 @@ it("shares an immutable pending byte request but only a current caller adopts it
   expect(loader.features).toHaveLength(9);
   expect(fetchShelterBytes).toHaveBeenCalledTimes(1);
 });
+it("revalidates cached shelter bytes against the current manifest declaration", async () => {
+  const a = doc(), d = deps(resource(a)), loader = createShelterDataLoader();
+  const fetch = vi.fn(async () => ({ ok: true, arrayBuffer: async () => bytes(a).buffer }));
+  vi.stubGlobal("fetch", fetch);
+  try {
+    loader.configure(d, true);
+    await loader.load(d);
+    expect(loader.features).toHaveLength(9);
+    expect(fetch).toHaveBeenCalledWith(expect.any(String), { cache: "no-cache" });
+  } finally { vi.unstubAllGlobals(); }
+});

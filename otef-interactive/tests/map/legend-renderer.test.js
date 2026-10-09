@@ -994,6 +994,20 @@ describe("projection legend paint geometry", () => {
     });
     adapter.dispose(); legend.dispose();
   });
+  it("uses the GIS full-height segmented carrier on projection without a thicker carrier overlay", async () => {
+    const { legend, snapshot, dom } = await mount([{ id: "confirmed", label: "A", shape: "line", stroke: "#000000", carrier: "#c31f4f", halo: "#ffffff", strokeWidth: 0.6, dash: [10.8, 13.2], segmentedCarrier: true, gisLineSwatch: true }], { fontPx: 22 * 0.68 });
+    const item = dom.querySelector('[data-legend-item-id="confirmed"]');
+    const symbol = item.querySelector(".map-legend-symbol");
+    expect(number(symbol, "height")).toBe(2);
+    expect(number(symbol, "width")).toBeCloseTo(22 * 1.23);
+    expect(item.querySelector(".map-legend-projection-line-stroke")).toBeNull();
+    expect(symbol.style["--legend-fill"]).toContain("#000000 5px");
+    expect(symbol.style["--legend-fill"]).toContain("linear-gradient(#c31f4f, #c31f4f)");
+    expect(symbol.style["--legend-halo"]).toBe("#ffffff");
+    expect(snapshot.contentLayout.placements[0].symbolGeometry.components[0].extentY).toBeGreaterThanOrEqual(1);
+    legend.dispose();
+  });
+
   it.each([
     ["default", undefined, 3],
     ["fractional", 0.5, 2.5],

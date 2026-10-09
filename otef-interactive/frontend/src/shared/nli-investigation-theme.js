@@ -31,6 +31,7 @@ export const NLI_VISUAL_TOKENS = Object.freeze({
   annotationInk: "#fff7ed",
   annotationHalo: "#000000",
   revealDurationMs: 3200,
+  shelterColorTransitionMs: 300,
   alarmRippleDurationMs: 900,
   alarmChorusLoopMs: 2600,
   alarmChorusExpansionPx: 30,
@@ -92,7 +93,7 @@ export const NLI_DISPLAY_PROFILES = Object.freeze({
     }),
   }),
   projection: Object.freeze({
-    shelter: Object.freeze({ bodyWidth: 20 }),
+    shelter: Object.freeze({ bodyWidth: 12, rotationDeg: 85 }),
     lineWidthMultiplier: 1.2,
     radiusMultiplier: 1.15,
     routeScale: 1.15,

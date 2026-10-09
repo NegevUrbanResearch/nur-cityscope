@@ -10,6 +10,7 @@ import shutil
 import tempfile
 from pathlib import Path
 
+from .nli_shelter_routes import prepare_route_bindings
 from .nli_runtime_hashes import stamp_nli_runtime_artifact_hash
 
 DEFAULT_FIXTURE = Path(__file__).resolve().parents[1] / "fixtures/nli-shelters-232.json"
@@ -43,7 +44,12 @@ def _atomic_write(path, raw):
 
 
 def prepare_shelters_232(
-    fixture_path: Path, people_path: Path, output_dir: Path
+    fixture_path: Path,
+    people_path: Path,
+    output_dir: Path,
+    *,
+    route_fixture_path=None,
+    routes_path=None,
 ) -> dict:
     fixture = json.loads(Path(fixture_path).read_text(encoding="utf-8"))
     records = fixture.get("shelters", [])
@@ -81,7 +87,19 @@ def prepare_shelters_232(
     if len(members) != 84:
         raise ValueError("Expected 84 distinct direct shelter people")
     canonical.sort(key=lambda r: r["id"])
+    route_metadata = prepare_route_bindings(
+        (
+            Path(routes_path)
+            if routes_path is not None
+            else Path(people_path).parent / "fleeing_route.geojson"
+        ),
+        canonical,
+        people,
+        route_fixture_path,
+        required=Path(fixture_path).resolve() == DEFAULT_FIXTURE.resolve(),
+    )
     accepted = {
+        **route_metadata,
         **fixture,
         "shelters": canonical,
         "nearbyPersonPids": sorted(map(str, fixture.get("nearbyPersonPids", []))),
@@ -99,6 +117,7 @@ def prepare_shelters_232(
         for r in canonical
     ]
     wrapper = {
+        **route_metadata,
         "type": "FeatureCollection",
         "schemaVersion": 1,
         "shelterVersion": version,

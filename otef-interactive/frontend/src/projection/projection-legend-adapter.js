@@ -96,7 +96,30 @@ function drawSymbol(context, part, x, y, font, geometry, scale) {
   if (shape === "line") {
     const dash = part.dash && (Array.isArray(part.dash) ? part.dash : part.dash.array);
     const dashScale = part.carrier ? 0.5 : 1.5;
-    const dashArray = dash?.length ? dash.map((value) => Math.max(2, Math.round(Number(value) * dashScale))) : [];
+    const swatchScale = geometry.swatchScale || 1;
+    const dashArray = dash?.length ? dash.map((value) => Math.max(2, Math.round(Number(value) * dashScale)) * swatchScale) : [];
+    if (part.segmentedCarrier && part.carrier) {
+      // Match the GIS CSS swatch: equal-height alternating fills and a 1px rim.
+      const left = x - symbolWidth / 2;
+      const top = y - symbolHeight / 2;
+      if (part.halo && part.halo !== "transparent") {
+        context.strokeStyle = part.halo;
+        context.globalAlpha = strokeOpacity * 0.35;
+        context.lineWidth = swatchScale;
+        context.strokeRect(left - swatchScale / 2, top - swatchScale / 2, symbolWidth + swatchScale, symbolHeight + swatchScale);
+      }
+      context.globalAlpha = strokeOpacity;
+      context.fillStyle = part.carrier;
+      context.fillRect(left, top, symbolWidth, symbolHeight);
+      context.fillStyle = stroke;
+      const on = dashArray[0] || symbolWidth;
+      const period = on + (dashArray[1] || 0);
+      for (let offset = 0; offset < symbolWidth; offset += period) {
+        context.fillRect(left + offset, top, Math.min(on, symbolWidth - offset), symbolHeight);
+      }
+      context.restore?.();
+      return;
+    }
     context.beginPath();
     context.moveTo(x - symbolWidth / 2, y);
     context.lineTo(x + symbolWidth / 2, y);
@@ -112,7 +135,7 @@ function drawSymbol(context, part, x, y, font, geometry, scale) {
     }
     context.strokeStyle = stroke || fill;
     context.globalAlpha = strokeOpacity;
-    context.lineWidth = Math.max(2, Number(part.strokeWidth) || 1);
+    context.lineWidth = part.gisLineSwatch ? symbolHeight : Math.max(2, Number(part.strokeWidth) || 1);
     if (part.strokeGradient?.length) {
       const gradient = context.createLinearGradient(x, y - context.lineWidth / 2, x, y + context.lineWidth / 2);
       for (const { offset, color } of part.strokeGradient) gradient.addColorStop(offset, color);

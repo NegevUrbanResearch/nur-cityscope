@@ -76,6 +76,21 @@ test("selects browser mode only for the explicit outputMode query", () => {
   expect(resolveProjectionOutputMode("?span=left&outputMode=browser")).toBe("browser");
 });
 
+test("shelter geometry uses the map canvas even when the drawn scene omits its map descriptor", async () => {
+  const doc = { createElement() { return { style: {}, dataset: {}, setAttribute() {}, addEventListener() {}, removeEventListener() {}, remove() {} }; } };
+  const mapCanvas = { clientWidth: 960, clientHeight: 540, width: 1920, height: 1080, style: {} };
+  const surface = await createProjectionBrowserSurface({
+    host: { ownerDocument: doc, appendChild() {} }, spanId: "left", mapCanvas,
+    image: { complete: true, naturalWidth: 10, style: {} },
+    getScene: () => ({ map: null }), initialConfig: structuredClone(DEFAULT_PROJECTION_CONFIG),
+    fetchImpl: async () => ({ ok: false }),
+    rendererFactory: () => ({ draw() {}, isContextLost: () => false, dispose() {} }),
+  });
+  expect(surface.getShelterPresentation().sourceDimensions).toEqual({ width: 960, height: 540 });
+  expect(surface.getShelterPresentation().mesh).toBeTruthy();
+  surface.dispose();
+});
+
 test('explicit 4K browser output uses a 4K canvas with the canonical identity mesh', async () => {
   const doc = { createElement() { return { style: {}, dataset: {}, setAttribute() {}, addEventListener() {}, removeEventListener() {}, remove() {} }; } };
   const rendererFactory = vi.fn(() => ({ draw() {}, isContextLost: () => false, dispose() {} }));

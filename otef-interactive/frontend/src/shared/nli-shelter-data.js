@@ -63,7 +63,7 @@ async function fetchVerified(deps, identity) {
   if (deps.fetchShelterBytes)
     bytes = await deps.fetchShelterBytes(identity.resourceURL);
   else {
-    const response = await globalThis.fetch(identity.resourceURL);
+    const response = await globalThis.fetch(identity.resourceURL, { cache: "no-cache" });
     if (!response.ok)
       throw new Error(`Shelter request failed: ${response.status}`);
     bytes = await response.arrayBuffer();
@@ -149,6 +149,9 @@ export function createShelterDataLoader() {
     },
     get version() {
       return loaded?.shelterVersion || null;
+    },
+    get novaRoutesSHA256() {
+      return loaded?.novaRoutesSHA256 || null;
     },
     get status() {
       return status;

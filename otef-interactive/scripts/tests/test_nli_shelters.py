@@ -77,6 +77,86 @@ class ShelterPreparationTests(unittest.TestCase):
                 self.prepare()
             self.assertEqual(raw, path.read_bytes())
 
+    def test_route_bindings_share_sidecar_and_hash(self):
+        routes = {"features": [{"properties": {"OBJECTID": 7}}]}
+        route_path = self.root / "fleeing_route.geojson"
+        route_path.write_text(json.dumps(routes))
+        sid = self.fixture["shelters"][0]["id"]
+        pid = self.fixture["shelters"][0]["personPids"][0]
+        crosswalk = self.root / "routes.json"
+        crosswalk.write_text(json.dumps({
+            "schemaVersion": 1,
+            "novaRoutesSHA256": hashlib.sha256(route_path.read_bytes()).hexdigest(),
+            "bindings": [{"routeObjectId": 7, "personPid": pid, "shelterId": sid}],
+        }))
+        self.input.write_text(json.dumps(self.fixture))
+        resource = prepare_shelters_232(self.input, self.people, self.root,
+                                       route_fixture_path=crosswalk)
+        doc = json.loads((self.root / resource["file"]).read_bytes())
+        self.assertEqual(doc["novaRoutesSHA256"], hashlib.sha256(route_path.read_bytes()).hexdigest())
+        feature = next(f for f in doc["features"] if f["id"] == sid)
+        self.assertEqual(feature["properties"]["novaRouteObjectIds"], ["7"])
+        before = (self.root / resource["file"]).read_bytes()
+        route_path.write_text(json.dumps({"features": []}))
+        with self.assertRaisesRegex(ValueError, "hash"):
+            prepare_shelters_232(self.input, self.people, self.root,
+                                 route_fixture_path=crosswalk)
+        self.assertEqual(before, (self.root / resource["file"]).read_bytes())
+
+    def test_route_binding_rejects_unknown_id_wrong_member_and_duplicate(self):
+        route_path = self.root / "fleeing_route.geojson"
+        route_path.write_text(json.dumps({"features": [{"properties": {"OBJECTID": 7}}]}))
+        first, second = self.fixture["shelters"][:2]
+        good = {"routeObjectId": 7, "personPid": first["personPids"][0], "shelterId": first["id"]}
+        crosswalk = self.root / "routes.json"
+        self.input.write_text(json.dumps(self.fixture))
+        for bindings in [[{**good, "routeObjectId": 8}],
+                         [{**good, "personPid": second["personPids"][0]}],
+                         [good, good]]:
+            crosswalk.write_text(json.dumps({"schemaVersion": 1,
+                "novaRoutesSHA256": hashlib.sha256(route_path.read_bytes()).hexdigest(),
+                "bindings": bindings}))
+            with self.assertRaises(ValueError):
+                prepare_shelters_232(self.input, self.people, self.root,
+                                     route_fixture_path=crosswalk)
+
+    def test_route_binding_rejects_changed_provenance(self):
+        route_path = self.root / "fleeing_route.geojson"
+        route_path.write_text(json.dumps({"features": [{"properties": {"OBJECTID": 7}}]}))
+        group = self.fixture["shelters"][0]
+        crosswalk = self.root / "routes.json"
+        self.input.write_text(json.dumps(self.fixture))
+        for key, value in [("personName", "changed"), ("originalMarkerCoordinates", [34, 31]),
+                           ("routeLabel", "changed"), ("destinationCoordinates", [34, 31])]:
+            crosswalk.write_text(json.dumps({"schemaVersion": 1,
+                "novaRoutesSHA256": hashlib.sha256(route_path.read_bytes()).hexdigest(),
+                "bindings": [{"routeObjectId": 7, "personPid": group["personPids"][0],
+                              "shelterId": group["id"], key: value}]}))
+            with self.assertRaisesRegex(ValueError, "provenance"):
+                prepare_shelters_232(self.input, self.people, self.root,
+                                     route_fixture_path=crosswalk)
+
+    def test_explicit_processed_route_path_overrides_source_peer(self):
+        source_route = self.root / "fleeing_route.geojson"
+        source_route.write_text(json.dumps({"features": []}))
+        processed_route = self.root / "processed-route.geojson"
+        processed_route.write_text(json.dumps({"features": [{"properties": {"OBJECTID": 7}}]}))
+        group = self.fixture["shelters"][0]
+        crosswalk = self.root / "routes.json"
+        crosswalk.write_text(json.dumps({"schemaVersion": 1,
+            "novaRoutesSHA256": hashlib.sha256(processed_route.read_bytes()).hexdigest(),
+            "bindings": [{"routeObjectId": 7, "personPid": group["personPids"][0],
+                          "shelterId": group["id"]}]}))
+        self.input.write_text(json.dumps(self.fixture))
+        result = prepare_shelters_232(self.input, self.people, self.root,
+            route_fixture_path=crosswalk, routes_path=processed_route)
+        doc = json.loads((self.root / result["file"]).read_bytes())
+        self.assertEqual(doc["novaRoutesSHA256"], hashlib.sha256(processed_route.read_bytes()).hexdigest())
+
+    def test_default_accepted_fixture_requires_route_artifact(self):
+        with self.assertRaisesRegex(ValueError, "missing"):
+            prepare_shelters_232(DEFAULT_FIXTURE, self.people, self.root)
+
     def test_merge_refreshes_only_shelter_entry(self):
         self.prepare()
         result = merge_shelter_resource(

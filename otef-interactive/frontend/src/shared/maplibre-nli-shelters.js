@@ -1,6 +1,10 @@
 /** Owned decorative symbol layer; shared coordinator supplies visibility/state. */
 import { NLI_VISUAL_TOKENS } from "./nli-investigation-theme.js";
-import { shelterImageSpec, shelterSymbolImage } from "./nli-shelter-symbol.js";
+import { SHELTER_SCENE_ID } from "./nli-shelter-scene.js";
+import { peekLayerLifecycleRuntime } from "./layer-lifecycle-fade.js";
+import { addInvestigationOverlayLayer, completeInvestigationOverlayMount,
+  deferInvestigationOverlaySceneExit } from "./investigation-overlay-lifecycle.js";
+import { shelterImageSpec, shelterSymbolImage, REIM_WEST_SHELTER_ID } from "./nli-shelter-symbol.js";
 import {
   resolveShelterPresentation,
   layoutShelterOffsets,
@@ -12,6 +16,9 @@ const IMAGES = {
   neutral: "nli-shelter-concrete-neutral",
   red: "nli-shelter-concrete-red",
 };
+const MURAL_IMAGES = { neutral: "nli-shelter-mural-neutral", red: "nli-shelter-mural-red" };
+const variantFor = id => id === REIM_WEST_SHELTER_ID ? "mural" : "normal";
+const imagesFor = id => id === REIM_WEST_SHELTER_ID ? MURAL_IMAGES : IMAGES;
 const available = new WeakMap();
 export function sheltersVisibleOnMap(map) {
   return available.get(map) === true;
@@ -47,22 +54,99 @@ export function createShelterRenderer(map, options = {}) {
     layout = null,
     layoutKey = null,
     lastShelters = null,
-    lastMesh = null;
+    lastMesh = null,
+    focusKey = null;
   const ownedImages = new Set();
+  let hideGeneration = 0;
+  let sceneOwned = false;
+  const colors = new Map();
+  const requestFrame = options.requestAnimationFrame || globalThis.requestAnimationFrame?.bind(globalThis);
+  const cancelFrame = options.cancelAnimationFrame || globalThis.cancelAnimationFrame?.bind(globalThis);
+  const now = options.now || (() => globalThis.performance.now());
+  let animation = null;
+  const spritePairs = new Map();
+  function spritesFor(id) {
+    const variant = variantFor(id);
+    if (!spritePairs.has(variant)) spritePairs.set(variant,
+      Object.fromEntries(Object.keys(IMAGES).map(state => [state,
+        (options.imageFactory || shelterSymbolImage)(state === "red" ? NLI_VISUAL_TOKENS.incidentRed : NLI_VISUAL_TOKENS.annotationInk, variant),
+      ])));
+    return spritePairs.get(variant);
+  }
+  const imageId = (id) => `nli-shelter-concrete-${id}`;
+  function stopColors() {
+    if (animation !== null) cancelFrame?.(animation);
+    animation = null;
+    colors.clear();
+  }
+  function paintColor(id, value) {
+    const sprites = spritesFor(id);
+    const data = new Uint8Array(sprites.neutral.data.length);
+    for (let i = 0; i < data.length; i++)
+      data[i] = Math.round(sprites.neutral.data[i] + (sprites.red.data[i] - sprites.neutral.data[i]) * value);
+    map.updateImage(imageId(id), { width: sprites.neutral.width, height: sprites.neutral.height, data });
+  }
+  function tickColors(time) {
+    animation = null;
+    if (disposed || !map.getSource(SHELTER_SOURCE_ID)) { stopColors(); return; }
+    let pending = false;
+    for (const [id, state] of colors) {
+      if (!map.hasImage(imageId(id))) continue;
+      const progress = Math.min(1, Math.max(0, (time - state.start) / NLI_VISUAL_TOKENS.shelterColorTransitionMs));
+      state.value = state.from + (state.target - state.from) * progress;
+      paintColor(id, state.value);
+      pending ||= progress < 1;
+    }
+    options.onColorFrame?.([...colors].map(([id, state]) => ({ id, value: state.value, target: state.target })));
+    if (pending) animation = requestFrame(tickColors);
+  }
+  function updateColors(frame) {
+    if (!map.updateImage || !requestFrame) return false;
+    const time = now();
+    const presentIds = new Set(frame.shelters.map((shelter) => shelter.id));
+    for (const id of colors.keys()) if (!presentIds.has(id)) colors.delete(id);
+    const reduced = options.getMotionMode?.() === "reduced" || globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    let pending = false;
+    for (const shelter of frame.shelters) {
+      const sprites = spritesFor(shelter.id);
+      const target = frame.impactedIds?.has(shelter.id) ? 1 : 0;
+      const id = imageId(shelter.id);
+      let state = colors.get(shelter.id);
+      if (!state || !map.hasImage(id)) {
+        state = { value: target, from: target, target, start: time };
+        colors.set(shelter.id, state);
+        if (!map.hasImage(id)) {
+          map.addImage(id, target ? sprites.red : sprites.neutral, { pixelRatio: shelterImageSpec().pixelRatio, sdf: false });
+          ownedImages.add(id);
+        } else paintColor(shelter.id, target);
+      } else if (state.target !== target) {
+        const progress = Math.min(1, Math.max(0, (time - state.start) / NLI_VISUAL_TOKENS.shelterColorTransitionMs));
+        state.value = state.from + (state.target - state.from) * progress;
+        Object.assign(state, { from: state.value, target, start: time });
+      }
+      if (reduced) {
+        Object.assign(state, { value: target, from: target });
+        paintColor(shelter.id, target);
+      }
+      pending ||= state.value !== target;
+    }
+    if (pending && animation === null) animation = requestFrame(tickColors);
+    if (!pending && animation !== null) { cancelFrame?.(animation); animation = null; }
+    return true;
+  }
   function mount() {
     const spec = shelterImageSpec();
-    for (const [state, id] of Object.entries(IMAGES)) {
-      if (!map.hasImage?.(id)) {
-        map.addImage(
-          id,
-          (options.imageFactory || shelterSymbolImage)(
-            state === "red"
-              ? NLI_VISUAL_TOKENS.incidentRed
-              : NLI_VISUAL_TOKENS.annotationInk,
-          ),
-          { pixelRatio: spec.pixelRatio, sdf: false },
-        );
-        ownedImages.add(id);
+    for (const shelterId of [null, REIM_WEST_SHELTER_ID]) {
+      const sprites = spritesFor(shelterId);
+      for (const [state, id] of Object.entries(imagesFor(shelterId))) {
+        if (!map.hasImage?.(id)) {
+          map.addImage(
+            id,
+            sprites[state],
+            { pixelRatio: spec.pixelRatio, sdf: false },
+          );
+          ownedImages.add(id);
+        }
       }
     }
     if (!map.getSource(SHELTER_SOURCE_ID)) {
@@ -72,28 +156,29 @@ export function createShelterRenderer(map, options = {}) {
       });
       signature = null;
     }
-    if (!map.getLayer(SHELTER_LAYER_ID)) {
-      map.addLayer({
+    if (!map.getLayer(SHELTER_LAYER_ID) || options.getSceneManaged?.()) {
+      const layer = {
         id: SHELTER_LAYER_ID,
         type: "symbol",
         source: SHELTER_SOURCE_ID,
+        paint: { "icon-opacity": 1 },
         layout: {
-          "icon-image": [
-            "case",
-            ["get", "impacted"],
-            IMAGES.red,
-            IMAGES.neutral,
-          ],
+          "icon-image": ["get", "iconImage"],
           "icon-size": ["get", "iconSize"],
           "icon-offset": ["get", "iconOffset"],
+          "icon-rotate": ["get", "iconRotation"],
           "icon-anchor": "center",
           "icon-rotation-alignment": "viewport",
           "icon-pitch-alignment": "viewport",
           "icon-allow-overlap": true,
           "icon-ignore-placement": true,
           "icon-padding": 0,
+          "symbol-sort-key": ["get", "shelterPriority"],
+          "symbol-z-order": "source",
         },
-      });
+      };
+      if (options.getSceneManaged?.()) addInvestigationOverlayLayer(map, SHELTER_SCENE_ID, layer);
+      else map.addLayer(layer);
       ensureShelterLayerOrder(map);
     }
   }
@@ -103,8 +188,15 @@ export function createShelterRenderer(map, options = {}) {
     options.onAvailabilityChange?.(value);
     map.fire?.("nli-shelters-change", { visible: value });
   }
-  function reset() {
+  function reset({ sceneDeparture = false } = {}) {
+    const generation = ++hideGeneration;
+    lastFrame = null;
+    if (sceneDeparture && deferInvestigationOverlaySceneExit(map, SHELTER_SCENE_ID, () => {
+      if (generation === hideGeneration) reset();
+    })) return;
+    stopColors();
     signature = null;
+    focusKey = null;
     lastFrame = null;
     if (map.getLayer?.(SHELTER_LAYER_ID))
       map.setLayoutProperty(SHELTER_LAYER_ID, "visibility", "none");
@@ -112,8 +204,14 @@ export function createShelterRenderer(map, options = {}) {
   }
   function render(frame = {}) {
     if (disposed) return;
+    sceneOwned ||= options.getSceneManaged?.() === true;
+    // Camera events and old clock ticks can arrive between scene exit and entry.
+    // Keep departing pixels for the fade, but never reclaim an undesired member.
+    if (sceneOwned && !peekLayerLifecycleRuntime(map)?.getDesiredIds().includes(SHELTER_SCENE_ID)) return;
     lastFrame = frame;
+    hideGeneration++;
     if (!frame.visible || !frame.shelters?.length) {
+      stopColors();
       if (map.getLayer?.(SHELTER_LAYER_ID))
         map.setLayoutProperty(SHELTER_LAYER_ID, "visibility", "none");
       announce(false);
@@ -122,6 +220,17 @@ export function createShelterRenderer(map, options = {}) {
     const profile =
       options.getDisplayProfile?.() || options.displayProfile || "gis";
     const mapping = options.getProjectionPresentation?.();
+    if (profile === "projection" &&
+      (!(mapping?.inputCapture || mapping?.mesh) ||
+        !(mapping?.sourceDimensions?.width > 0) || !(mapping?.sourceDimensions?.height > 0) ||
+        !(mapping?.outputResolution?.width > 0) || !(mapping?.outputResolution?.height > 0))) {
+      // The map canvas/warp may not yet exist. Retain the frame for its resize or
+      // presentation event; the staged GeoJSON layer remains a valid scene member.
+      layoutKey = null;
+      if (map.getLayer?.(SHELTER_LAYER_ID)) map.setLayoutProperty(SHELTER_LAYER_ID, "visibility", "none");
+      announce(false);
+      return;
+    }
     const viewport = JSON.stringify([
       profile,
       mapping?.inputCapture,
@@ -160,14 +269,35 @@ export function createShelterRenderer(map, options = {}) {
         options.onPlacement?.(layout);
       }
       mount();
+      const personId = frame.focusPersonId == null ? "" : String(frame.focusPersonId).trim();
+      const matchingIds = personId ? frame.shelters.filter((shelter) =>
+        shelter.properties?.personPids?.some((pid) => String(pid) === personId)).map((shelter) => shelter.id) : [];
+      const nextFocusKey = JSON.stringify([personId !== "", matchingIds]);
+      if (nextFocusKey !== focusKey) {
+        const opacity = !personId ? 1 : matchingIds.length
+          ? ["case", ["in", ["get", "shelterId"], ["literal", matchingIds]], 1, 0] : 0;
+        const runtime = peekLayerLifecycleRuntime(map);
+        if (!runtime?.updateEffectivePaint(SHELTER_SCENE_ID, SHELTER_LAYER_ID, "icon-opacity", opacity,
+          { tweenMs: NLI_VISUAL_TOKENS.highlightOpacityTransitionMs })) {
+          map.setPaintProperty(SHELTER_LAYER_ID, "icon-opacity-transition",
+            { duration: NLI_VISUAL_TOKENS.highlightOpacityTransitionMs, delay: 0 });
+          map.setPaintProperty(SHELTER_LAYER_ID, "icon-opacity", opacity);
+        }
+        focusKey = nextFocusKey;
+      }
+      const animated = updateColors(frame);
       const features = frame.shelters.map((s) => ({
         type: "Feature",
         id: s.id,
         geometry: s.geometry,
         properties: {
+          shelterId: s.id,
+          iconImage: animated ? imageId(s.id) : imagesFor(s.id)[frame.impactedIds?.has(s.id) ? "red" : "neutral"],
+          shelterPriority: s.id === REIM_WEST_SHELTER_ID ? 1 : 0,
           impacted: frame.impactedIds?.has(s.id) === true,
           iconSize: layout.get(s.id)?.size || 0,
           iconOffset: layout.get(s.id)?.offset || [0, 0],
+          iconRotation: layout.get(s.id)?.rotationDeg || 0,
         },
       }));
       const next = JSON.stringify(features);
@@ -184,6 +314,7 @@ export function createShelterRenderer(map, options = {}) {
         ensureShelterLayerOrder(map);
       }
       announce(true);
+      if (options.getSceneManaged?.()) completeInvestigationOverlayMount(map, SHELTER_SCENE_ID);
     } catch (error) {
       reset();
       options.onDiagnostic?.(error);
@@ -199,6 +330,12 @@ export function createShelterRenderer(map, options = {}) {
   return {
     render,
     reset,
+    prepareScene() {
+      if (disposed || !peekLayerLifecycleRuntime(map)?.getDesiredIds().includes(SHELTER_SCENE_ID)) return;
+      sceneOwned = true;
+      mount();
+      completeInvestigationOverlayMount(map, SHELTER_SCENE_ID);
+    },
     ensureOrder: () => ensureShelterLayerOrder(map),
     dispose() {
       disposed = true;

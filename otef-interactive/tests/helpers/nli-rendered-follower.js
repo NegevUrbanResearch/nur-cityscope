@@ -9,6 +9,7 @@ import { isolateLayersWhileVictimNamesShown } from "../../frontend/src/shared/nl
 import { createNliRevealPresentation } from "../../frontend/src/map/nli-reveal-presentation.js";
 import { validateNliPresentationManifest } from "../../frontend/src/shared/nli-presentation-manifest.js";
 import rawManifest from "../../public/presentation/nli-presentation-manifest.json";
+import { SHELTER_SCENE_ID, shelterSceneIds } from "../../frontend/src/shared/nli-shelter-scene.js";
 
 // Only the external slide engine and decoded asset data are controlled here.
 // Scene orchestration, name rendering, filters, viewer and opacity remain real.
@@ -62,6 +63,18 @@ export async function createRenderedFollower(context, surface, emitResult) {
         if (!map.getLayer(renderedId)) map.addLayer(stagedLayerDef);
         runtime.markMemberReady(id);
       }
+    },
+    async syncTimeline(snapshot, { joinBatch } = {}) {
+      if (!joinBatch || !shelterSceneIds(snapshot.enabledIds, snapshot.narrativeState?.id ?? null).length) return;
+      const renderedId = SHELTER_SCENE_ID.replaceAll(".", "__");
+      const definition = { id: renderedId, source: SHELTER_SCENE_ID, type: "circle", paint: { "circle-opacity": .8 } };
+      const { stagedLayerDef } = runtime.stageMapLayer(SHELTER_SCENE_ID, definition, { sourceId: SHELTER_SCENE_ID, onTeardown() {
+        if (map.getLayer(renderedId)) map.removeLayer(renderedId);
+        if (map.getSource(SHELTER_SCENE_ID)) map.removeSource(SHELTER_SCENE_ID);
+      } });
+      if (!map.getSource(SHELTER_SCENE_ID)) map.addSource(SHELTER_SCENE_ID, { type: "geojson", data: collection() });
+      if (!map.getLayer(renderedId)) map.addLayer(stagedLayerDef);
+      runtime.markMemberReady(SHELTER_SCENE_ID);
     },
     async prepareDisplay(snapshot, options) {
       if (preparationGate) await preparationGate;

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildLegendModel,
+  getDashBackground,
   legendLayerFromConfig,
 } from "../../frontend/src/map/legend-model-builder.js";
 import {
@@ -31,7 +32,7 @@ function registryFor({ config, groups = [] }) {
 }
 
 describe("legend content model", () => {
-  it("uses the approved unconfirmed-route glossary label on both legend surfaces", async () => {
+  it("shows labeled unconfirmed routes with visible dash gaps on both legend surfaces", async () => {
     expect(getLayerDisplayLabel("nli.lines.unconfirmed", "he", "fallback")).toBe("צירי חדירה משוערים");
     expect(getLayerDisplayLabel("nli.lines.unconfirmed", "en", "fallback")).toBe("Unconfirmed approach");
 
@@ -62,6 +63,12 @@ describe("legend content model", () => {
         });
         const item = model.packs[0].layers[0].items.find((entry) => entry.id === "nli.lines:unconfirmed");
         expect(item?.label).toBe(language === "he" ? "צירי חדירה משוערים" : "Unconfirmed approach");
+        // A 20px swatch must show a gap and the start of a second dash.
+        const background = getDashBackground(item.dash.array, item.stroke);
+        const stops = [...background.matchAll(/(\d+)px/g)].map((match) => Number(match[1]));
+        expect(stops[1]).toBeGreaterThanOrEqual(2);
+        expect(stops[3] - stops[1]).toBeGreaterThanOrEqual(2);
+        expect(stops[3]).toBeLessThan(20);
       }
     }
   });
@@ -133,7 +140,6 @@ describe("legend content model", () => {
     ]);
     expect(he.packs[0].layers[2].items.map((item) => item.label)).toEqual([
       "מוקד קרב/טבח",
-      "מוקד שריפה",
       "מוקד חטיפה",
     ]);
     expect(en.packs[0].layers.map((layer) => layer.name)).toEqual([
@@ -215,7 +221,7 @@ describe("legend content model", () => {
     expect(layer.items[0].dash.array).toEqual([24 * 0.45, 24 * 0.55]);
     expect(layer.items[1].stroke).toBe("#c31f4f");
     expect(layer.items[1].carrier).toBeUndefined();
-    expect(layer.items[1].dash.array).toEqual([9, 12]);
+    expect(layer.items[1].dash.array).toEqual([4, 4]);
     expect(layer.items[1].strokeOpacity).toBe(0.95);
 
     const projection = legendLayerFromConfig({
@@ -229,7 +235,15 @@ describe("legend content model", () => {
         },
       },
     }, { id: "lines" }, { fullId: "nli.lines", language: "he", surface: "projection" });
+    expect(projection.items[0].stroke).toBe("#000000");
+    expect(projection.items[0].carrier).toBe("#c31f4f");
+    expect(projection.items[0].dash.array).toEqual(layer.items[0].dash.array);
     expect(projection.items[0].halo).toBe("#ffffff");
+    expect(projection.items[0].segmentedCarrier).toBe(true);
+    expect(projection.items[0].swatchBackground).toBeUndefined();
+    expect(projection.items[1]).toEqual({ ...layer.items[1], gisLineSwatch: true });
+    expect(layer.items[0].swatchBackground).toBeUndefined();
+    expect(layer.items[1].swatchBackground).toBeUndefined();
     expect(projection.items[1].strokeOpacity).toBe(0.95);
   });
 
@@ -306,13 +320,11 @@ describe("legend content model", () => {
     expect(getPackDisplayLabel("nli", "en")).toBe("National Library");
     expect(he.packs[0].layers[0].items.map((item) => item.id)).toEqual([
       "nli.investigation_polygons:מרחב לחימה - קרב",
-      "nli.investigation_polygons:שריפה",
       "nli.investigation_polygons:מוקד חטיפה",
     ]);
     expect(en.packs[0].layers[0].items.map((item) => item.id)).toEqual(he.packs[0].layers[0].items.map((item) => item.id));
     expect(en.packs[0].layers[0].items.map((item) => item.label)).toEqual([
       "Battle or massacre site",
-      "Fire site",
       "Kidnapping site",
     ]);
   });

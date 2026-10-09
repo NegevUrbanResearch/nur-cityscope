@@ -3,6 +3,7 @@ import { getLayerLifecycleRuntime } from "./layer-lifecycle-fade.js";
 import { getEnabledMapFullLayerIds } from "../map/maplibre-layer-manager.js";
 import { pauseNliClock } from "./nli-investigation-clock.js";
 import { reportNliSceneFailure } from "./nli-scene-diagnostics.js";
+import { shelterSceneIds } from "./nli-shelter-scene.js";
 
 // Copy configuration values; immutable dataset/geometry caches remain references.
 function capture(value, key = "") {
@@ -57,6 +58,7 @@ export async function createNliSceneDisplayBinding({ map, dataContext, filterGro
   let mountedBasemap = null, styleController = null, suspended = false, normalResume = null, waitingNormalHold = false, normalGateCoordinator = null, normalPreparingSnapshot = null;
   const withoutBasemap = snapshot => nliSceneStructuralKey({ ...snapshot, basemapId: null });
   const sceneIds = snapshot => [...new Set([...snapshot.enabledIds,
+    ...shelterSceneIds(snapshot.enabledIds, snapshot.narrativeState?.id ?? null),
     ...getTimelineSceneIds(snapshot), ...getDisplaySceneIds(snapshot),
     ...(narrativeController?.getSceneIds?.(snapshot) || []),
     ...(escapeCoordinator?.getSceneIds?.(snapshot) || []),

@@ -33,17 +33,19 @@ export function projectionLegendSymbolMetrics(parts, font) {
     const shape = part.shape || "polygon";
     const margin = shape === "point" || shape === "square" ? font * 0.32 : shape === "diamond" ? font * 0.36 : 0;
     const marginTop = shape === "point" || shape === "square" ? font * 0.09 : shape === "diamond" ? font * 0.14 : shape === "line" ? font * 0.27 : 0;
-    const width = glyphWidth(shape, font);
-    const height = glyphHeight(part, font);
+    // GIS labels are .68em at a 22px parent font; retain its swatch/text ratio.
+    const swatchScale = part.gisLineSwatch ? font / (22 * 0.68) : 1;
+    const width = part.gisLineSwatch ? 22 * 1.23 * swatchScale : glyphWidth(shape, font);
+    const height = glyphHeight(part, font) * swatchScale;
     // Diamond corners use the painter's default 90-degree miter join.
     const stroke = shape === "line"
-      ? Math.max(2, (Number(part.strokeWidth) || 1) + (part.carrier ? 2 : 0)) / 2
+      ? (part.segmentedCarrier ? height / 2 + swatchScale : Math.max(2, (Number(part.strokeWidth) || 1) + (part.carrier ? 2 : 0)) / 2)
       : part.captivityBleed ? Math.min(width, height) * 0.125 / 4 : Math.max(1, Number(part.strokeWidth) || 1) / (shape === "diamond" ? Math.SQRT2 : 2);
     const shockwaveRadius = part.alarmShockwave ? Math.max(width, height) / 2 + font * 0.28 + 0.8 : 0;
     const extentX = Math.max(stroke, shockwaveRadius - width / 2);
     const extentY = Math.max(stroke, shockwaveRadius - height / 2);
     const extent = Math.max(extentX, extentY);
-    return { part, width, height, margin, marginTop, extent, extentX, extentY };
+    return { part, width, height, swatchScale, margin, marginTop, extent, extentX, extentY };
   });
   const naturalWidth = children.reduce((sum, child) => sum + child.width + child.margin * 2, 0)
     + Math.max(0, children.length - 1) * gap;

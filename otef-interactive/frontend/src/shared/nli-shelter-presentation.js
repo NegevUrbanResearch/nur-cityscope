@@ -75,6 +75,13 @@ function bounds(points) {
     height: Math.max(...points.map((p) => p.y)) - y,
   };
 }
+function rotateVector(x, y, degrees) {
+  const angle = (degrees * Math.PI) / 180;
+  return [
+    x * Math.cos(angle) - y * Math.sin(angle),
+    x * Math.sin(angle) + y * Math.cos(angle),
+  ];
+}
 
 export function resolveShelterPresentation({
   displayProfile = "gis",
@@ -86,6 +93,9 @@ export function resolveShelterPresentation({
   zoom = 0,
 } = {}) {
   const projection = displayProfile === "projection";
+  const rotationDeg = projection
+    ? NLI_DISPLAY_PROFILES.projection.shelter.rotationDeg
+    : 0;
   let forward = (p) => p,
     inverse = (p) => p;
   const target = projection
@@ -141,7 +151,10 @@ export function resolveShelterPresentation({
         [hw, -hh],
         [hw, hh],
         [-hw, hh],
-      ].map(([x, y]) => forward({ x: anchor.x + x, y: anchor.y + y })),
+      ].map(([x, y]) => {
+        const [dx, dy] = rotateVector(x, y, rotationDeg);
+        return forward({ x: anchor.x + dx, y: anchor.y + dy });
+      }),
     );
   }
   function at(anchor) {
@@ -154,7 +167,13 @@ export function resolveShelterPresentation({
     }
     const b = bodyBounds(anchor, size);
     return b
-      ? { size, bodyWidth: b.width, bodyHeight: b.height, bounds: b }
+      ? {
+          size,
+          rotationDeg,
+          bodyWidth: b.width,
+          bodyHeight: b.height,
+          bounds: b,
+        }
       : null;
   }
   return {
@@ -162,6 +181,9 @@ export function resolveShelterPresentation({
     inverse,
     at,
     bodyBounds,
+    // MapLibre rotates icon-offset along with the glyph. Convert source-screen
+    // displacement back to the icon's local axes before dividing by icon-size.
+    offsetVector: (dx, dy) => rotateVector(dx, dy, -rotationDeg),
     allowNudges: !inputCapture,
     stage: inputCapture ? "input-capture" : "final-output",
   };
@@ -227,10 +249,9 @@ export function layoutShelterOffsets(anchors, presentation) {
         ...base,
         bounds: b,
         displacement: { x: actual.x - center.x, y: actual.y - center.y },
-        offset: [
-          (source.x - anchor.x) / base.size,
-          (source.y - anchor.y) / base.size,
-        ],
+        offset: presentation
+          .offsetVector(source.x - anchor.x, source.y - anchor.y)
+          .map((value) => value / base.size),
         unresolved: placed.some((other) => overlaps(b, other)),
       };
       if (!selected || !row.unresolved) selected = row;

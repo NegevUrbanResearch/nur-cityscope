@@ -1,5 +1,5 @@
 import { createShelterTimeline } from "./nli-shelter-timeline.js";
-import { SHELTER_PARENT_FULL_ID } from "./nli-shelter-data.js";
+import { shelterSceneIds } from "./nli-shelter-scene.js";
 import { peekLayerLifecycleRuntime } from "./layer-lifecycle-fade.js";
 import { publishInvestigationOverlayOpacity } from "./investigation-overlay-lifecycle.js";
 /**
@@ -130,7 +130,7 @@ export function getInvestigationSceneContentKey(snapshot, fullId) {
   const focus = getNliNarrative(snapshot.narrativeState?.id);
   if (["projector_base.ישובים", "projector_base.שמות_יישובים", "projector_base.Locations_Lines"].includes(fullId)) {
     const peopleScene = peopleMarkersAreShown(snapshot.layerGroups) && !focus;
-    return JSON.stringify([focus ? "narrative" : null,
+    return JSON.stringify([focus?.settlementOrientation ?? (focus ? "narrative" : null),
       focus?.focusSettlement ?? null, focus?.focusSettlementOutlineId ?? null, focus?.keepFocusLabelWithAchieved === true,
       peopleScene ? snapshot.personSelection?.personId ?? null : null,
       peopleScene ? snapshot.personSelection?.datasetVersion ?? null : null]);
@@ -669,7 +669,7 @@ function applyOrientationVisuals(map, state, outlineIds = []) {
     ),
     layers: state.orientationLayers,
     shemotSourceId: state.shemotSourceId,
-    mode: focus ? "narrative" : undefined,
+    mode: focus?.settlementOrientation ?? (focus ? "narrative" : undefined),
     focusCityname: focus?.focusSettlement,
     focusOutlineObjectId: focus?.focusSettlementOutlineId,
     keepFocusLabelWithAchieved: focus?.keepFocusLabelWithAchieved === true,
@@ -833,7 +833,9 @@ function applyPlayingVisuals(map, state, phase, frame = null, targetAlarmMode = 
     ? { ...buildInvestigationLineFeaturesForFrame(state.data, lineFrame), activeProgress: lineFrame.activeProgress }
     : {};
   state.shelters?.render({ frame: resolvedFrame, lineFrame: shelterLines, data: state.data,
-    polygonVisible: state.polygonOn || novaSiteOverlay, lineVisible: state.lineOn });
+    polygonVisible: state.polygonOn || novaSiteOverlay, lineVisible: state.lineOn,
+    narrativeId: state.narrativeFocus?.id ?? null, peopleVisible: state.peopleMarkersShown,
+    timelineVisible: state.timelineLayersVisible });
   // Keep the adapter's previous mode available until it applies the transition,
   // then publish the target mode for captions and subsequent animation ticks.
   state.alarmMode = targetAlarmMode;
@@ -1261,7 +1263,9 @@ export async function syncInvestigationTimelineToMap(map, clockInput, layerGroup
     enabledFullIds: nextMembership.visible,
   });
   const enabledSceneIds = getEnabledMapFullLayerIds(visibilityGroups);
-  state.shelters?.configure(deps, enabledSceneIds.has(SHELTER_PARENT_FULL_ID));
+  state.timelineLayersVisible = [INVESTIGATION_POLYGONS_FULL_ID, INVESTIGATION_LINES_FULL_ID]
+    .some(id => enabledSceneIds.has(id));
+  state.shelters?.configure(deps, shelterSceneIds([...enabledSceneIds], narrativeId).length > 0);
   const activeTimeline = clock.phase !== "idle" && [
     INVESTIGATION_ALARMS_FULL_ID,
     INVESTIGATION_LINES_FULL_ID,

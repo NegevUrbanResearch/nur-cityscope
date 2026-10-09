@@ -14,6 +14,31 @@ function canvasFactory() {
 const layout = { leftPct: 10, topPct: 20, widthPct: 30, heightPct: 10, fontPx: 24, rotateDeg: 12 };
 
 describe("projection overlay adapters", () => {
+  test("matches GIS confirmed-route swatches with full-height black segments and only a thin outline", () => {
+    const c = canvasFactory();
+    const fills = [], outlines = [];
+    c.context.fillRect = (...args) => fills.push({ color: c.context.fillStyle, alpha: c.context.globalAlpha, args });
+    c.context.strokeRect = (...args) => outlines.push({ color: c.context.strokeStyle, alpha: c.context.globalAlpha, width: c.context.lineWidth, args });
+    const adapter = createProjectionLegendAdapter({ canvasFactory: () => c });
+    adapter.sync({ layout: { ...layout, fontPx: 22 * 0.68 }, visible: true, language: "en", blocks: [{ id: "nli", layers: [{ items: [{
+      id: "nli.lines", label: "Confirmed", shape: "line", stroke: "#000000", carrier: "#c31f4f",
+      halo: "#ffffff", strokeWidth: 0.6, dash: { array: [10.8, 13.2] }, segmentedCarrier: true, gisLineSwatch: true,
+    }] }] }] });
+    adapter.draw();
+    const red = fills.find(({ color }) => color === "#c31f4f");
+    const black = fills.filter(({ color }) => color === "#000000");
+    expect(red).toBeDefined();
+    expect(black).toHaveLength(3);
+    expect(red.args[3]).toBe(2);
+    expect(red.args[2]).toBeCloseTo(22 * 1.23);
+    expect(black.every(({ args }) => args[1] === red.args[1] && args[3] === red.args[3])).toBe(true);
+    expect(black[1].args[0] - black[0].args[0]).toBeCloseTo(12);
+    expect(outlines).toHaveLength(1);
+    expect(outlines[0]).toMatchObject({ color: "#ffffff", alpha: 0.35, width: 1 });
+    expect(outlines[0].args[2]).toBe(red.args[2] + 1);
+    expect(outlines[0].args[3]).toBe(red.args[3] + 1);
+    adapter.dispose();
+  });
   test('4K caption and pattern rasterization preserves their logical placement', () => {
     const c = canvasFactory();
     const caption = createProjectionCaptionAdapter({ canvasFactory: () => c, rasterScale: 2 });

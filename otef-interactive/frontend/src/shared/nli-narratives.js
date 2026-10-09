@@ -64,6 +64,7 @@ const HOSTAGES_NARRATIVE = Object.freeze({
 
 const HOSTAGES_ALL_NARRATIVE = Object.freeze({
   id: "hostages_all",
+  settlementOrientation: "overview",
   center: Object.freeze([34.5, 31.4]),
   zoom: 10,
   basemap: "satellite_bw",

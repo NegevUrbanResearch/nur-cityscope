@@ -1989,6 +1989,15 @@ def _prepare_nli_pack_unlocked(
             expected_geojson_sha256=fleeing_geojson_sha256,
             expected_lyrx_sha256=fleeing_lyrx_sha256,
         )
+    if shelter_fixture_path is not None:
+        from otef_layer_processing.nli_shelters import prepare_shelters_232
+
+        summary["shelters232"] = prepare_shelters_232(
+            shelter_fixture_path,
+            gis_dir / "people.geojson",
+            sidecar_dir,
+            routes_path=sidecar_dir / f"{FLEEING_ROUTE_STEM}.geojson",
+        )
     if mor_route_zip is not None:
         if mor_route_sha256 != MOR_ROUTE_ZIP_SHA256:
             raise ValueError("Mor route zip must use the pinned SHA-256")

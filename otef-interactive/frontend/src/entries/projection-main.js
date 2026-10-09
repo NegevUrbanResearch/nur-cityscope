@@ -1095,6 +1095,8 @@ async function bootstrapProjectionRuntime() {
           return;
         }
         nameFieldController.installProjectionCanvas(browserSurface.getNameAdapter());
+        map.fire("nli-shelter-presentation-change");
+        syncContextInvestigation();
         try {
           const settlementCatalog = await loadSettlementNameCatalog({ registry: layerRegistry, fetchImpl: window.fetch.bind(window), signal: projectionLifecycle.signal });
           if (isRuntimeAlive()) {
