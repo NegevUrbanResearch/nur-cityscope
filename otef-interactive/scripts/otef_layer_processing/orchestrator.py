@@ -17,6 +17,17 @@ from .buffered_gradient import has_buffered_gradient, write_buffered_gradient_ge
 from .tiling import generate_pmtiles_smart
 from .pmtiles_lifecycle import resolve_pmtiles_lifecycle
 from .nli_runtime_hashes import stamp_nli_runtime_artifact_hash
+from .nli_processing_recovery import (
+    file_sha256,
+    record_owned_postimage,
+    restore_owned_outputs,
+    restore_transaction_owned_outputs,
+)
+from .nli_mutation_lock import nli_mutation_lock
+from .nli_border_route_release import (
+    validate_active_route_candidate,
+    validate_active_route_source,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -54,12 +65,14 @@ def _replace_transaction_file(source: Path, destination: Path) -> None:
     os.replace(source, destination)
 
 
-def _atomic_copy_file(source: Path, destination: Path) -> None:
+def _atomic_copy_file(source: Path, destination: Path, recovery_journal_path: Path | None = None) -> None:
     """Copy a file through a sibling temporary path before publishing it."""
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = destination.with_name(destination.name + ".tmp")
     try:
         shutil.copy2(source, temporary)
+        if recovery_journal_path is not None:
+            record_owned_postimage(recovery_journal_path, destination, file_sha256(temporary))
         os.replace(temporary, destination)
     finally:
         if temporary.exists():
@@ -75,6 +88,7 @@ def _commit_buffered_gradient_transaction(
     final_pmtiles: Path,
     *,
     remove_pmtiles: bool = False,
+    recovery_journal_path: Path | None = None,
 ) -> None:
     """Publish staged gradient outputs with rollback across every final file."""
     destinations = [final_data, final_sidecar, final_pmtiles]
@@ -88,32 +102,74 @@ def _commit_buffered_gradient_transaction(
                 shutil.copy2(destination, backup)
                 backups[destination] = backup
 
+        if recovery_journal_path is not None:
+            record_owned_postimage(recovery_journal_path, final_data, file_sha256(staged_data))
         _replace_transaction_file(staged_data, final_data)
         published.add(final_data)
+        if recovery_journal_path is not None:
+            record_owned_postimage(recovery_journal_path, final_sidecar, file_sha256(staged_sidecar))
         _replace_transaction_file(staged_sidecar, final_sidecar)
         published.add(final_sidecar)
         if staged_pmtiles.is_file():
+            if recovery_journal_path is not None:
+                record_owned_postimage(recovery_journal_path, final_pmtiles, file_sha256(staged_pmtiles))
             _replace_transaction_file(staged_pmtiles, final_pmtiles)
             published.add(final_pmtiles)
         elif remove_pmtiles and final_pmtiles.exists():
+            if recovery_journal_path is not None:
+                record_owned_postimage(recovery_journal_path, final_pmtiles, None)
             final_pmtiles.unlink()
             published.add(final_pmtiles)
-    except Exception:
-        for destination in reversed(destinations):
-            if destination not in published:
-                continue
-            backup = backups.get(destination)
-            try:
-                if backup is not None and backup.is_file():
-                    _replace_transaction_file(backup, destination)
-                elif destination.exists():
-                    destination.unlink()
-            except OSError:
-                logger.exception("Could not roll back buffered-gradient output %s", destination)
+    except Exception as error:
+        if recovery_journal_path is not None:
+            conflicts = restore_transaction_owned_outputs(
+                recovery_journal_path, backups, destinations
+            )
+            if conflicts:
+                raise RuntimeError("; ".join(conflicts)) from error
+        else:
+            for destination in reversed(destinations):
+                if destination not in published:
+                    continue
+                backup = backups.get(destination)
+                try:
+                    if backup is not None and backup.is_file():
+                        _replace_transaction_file(backup, destination)
+                    elif destination.exists():
+                        destination.unlink()
+                except OSError:
+                    logger.exception("Could not roll back buffered-gradient output %s", destination)
         raise
     finally:
         for backup in backups.values():
             backup.unlink(missing_ok=True)
+
+
+def _resolve_nli_pmtiles_lifecycle(
+    pack_id: str, layer_id: str, geometry_type: str, style_config: Optional[dict[str, Any]],
+    geojson_path: Path, pmtiles_path: Path, generate_pmtiles, *, recovery_journal_path: Path | None,
+    regenerate_existing: bool,
+):
+    if recovery_journal_path is None:
+        return resolve_pmtiles_lifecycle(pack_id, layer_id, geometry_type, style_config,
+            geojson_path, pmtiles_path, generate_pmtiles=generate_pmtiles,
+            regenerate_existing=regenerate_existing)
+    with tempfile.TemporaryDirectory(dir=pmtiles_path.parent, prefix=".nli-pmtiles-") as temp_dir:
+        staged = Path(temp_dir) / pmtiles_path.name
+        result = resolve_pmtiles_lifecycle(pack_id, layer_id, geometry_type, style_config,
+            geojson_path, staged, generate_pmtiles=generate_pmtiles,
+            regenerate_existing=regenerate_existing)
+        if staged.is_file():
+            record_owned_postimage(recovery_journal_path, pmtiles_path, file_sha256(staged))
+            os.replace(staged, pmtiles_path)
+            published_name = pmtiles_path.name
+        else:
+            if pmtiles_path.is_file():
+                record_owned_postimage(recovery_journal_path, pmtiles_path, None)
+                pmtiles_path.unlink()
+            published_name = None
+        return type(result)(stats=result.stats, decision=result.decision, metadata=result.metadata,
+                            pmtiles_file=published_name, tiling_preset=result.tiling_preset if published_name else None)
 
 
 class _ResourceLayerEntry(LayerEntry):
@@ -233,11 +289,16 @@ class ProcessingOrchestrator:
         output_dir: Path,
         no_cache: bool = False,
         max_workers: int = 4,
+        curation_recipe_path: Optional[Path] = None,
+        curation_lock_path: Optional[Path] = None,
     ):
         self.source_dir = source_dir
         self.output_dir = output_dir
         self.no_cache = no_cache
         self.max_workers = max_workers
+        scripts = Path(__file__).resolve().parents[1]
+        self.curation_recipe_path = Path(curation_recipe_path or scripts / "nli-border-route-curation.json").resolve()
+        self.curation_lock_path = Path(curation_lock_path or scripts / "nli-border-route-curation.lock.json").resolve()
         self.cache_path = output_dir / CACHE_FILE
         self.cache = {} if no_cache else self._load_cache()
         self.popup_config = self._load_popup_config()
@@ -277,6 +338,9 @@ class ProcessingOrchestrator:
         try:
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2, ensure_ascii=False)
+            journal = getattr(self, "_nli_recovery_journal", None)
+            if journal is not None and self._is_nli_recovery_target(path):
+                record_owned_postimage(journal, path, file_sha256(tmp))
             os.replace(tmp, path)
         finally:
             if tmp.exists():
@@ -292,25 +356,49 @@ class ProcessingOrchestrator:
         for pack_id in pack_ids:
             output_pack = self.output_dir / pack_id
             if output_pack.is_dir():
-                self._snapshot_tree(output_pack, packs_dir / pack_id)
+                self._snapshot_tree(output_pack, packs_dir / pack_id, immutable=pack_id == "nli")
                 existing_packs.append(pack_id)
         root_files = []
+        file_copies = {}
+        preimages = {}
+        nli_scoped = "nli" in pack_ids
+        if nli_scoped:
+            for pack_id in pack_ids:
+                output_pack = self.output_dir / pack_id
+                saved_pack = packs_dir / pack_id
+                if output_pack.is_dir():
+                    for saved in saved_pack.rglob("*"):
+                        if saved.is_file():
+                            target = output_pack / saved.relative_to(saved_pack)
+                            file_copies[str(target.resolve())] = str(saved)
+                            preimages[str(target.resolve())] = file_sha256(saved)
         for name in (CACHE_FILE, "layers-manifest.json"):
             path = self.output_dir / name
             if path.is_file():
                 shutil.copy2(path, snapshot_dir / name)
                 root_files.append(name)
-        return {
+                if nli_scoped:
+                    file_copies[str(path.resolve())] = str(snapshot_dir / name)
+                    preimages[str(path.resolve())] = file_sha256(snapshot_dir / name)
+        snapshot = {
             "dir": snapshot_dir,
             "pack_ids": list(pack_ids),
             "existing_packs": existing_packs,
             "root_files": root_files,
             "cache": copy.deepcopy(self.cache),
+            "nli_scoped": nli_scoped,
+            "file_copies": file_copies,
+            "output_root": str(self.output_dir.resolve()),
         }
+        if nli_scoped:
+            preimages_path = snapshot_dir / "preimages.json"
+            preimages_path.write_text(json.dumps(preimages, sort_keys=True), encoding="utf-8")
+            snapshot["recovery_journal"] = snapshot_dir / "owned-postimages.jsonl"
+        return snapshot
 
     @staticmethod
-    def _snapshot_tree(source: Path, destination: Path) -> None:
-        """Snapshot a tree with same-volume hardlinks, falling back to copies."""
+    def _snapshot_tree(source: Path, destination: Path, *, immutable: bool = False) -> None:
+        """Snapshot a tree, copying NLI preimages so later writes cannot mutate recovery bytes."""
         destination.mkdir(parents=True, exist_ok=True)
         for path in source.rglob("*"):
             relative = path.relative_to(source)
@@ -319,10 +407,15 @@ class ProcessingOrchestrator:
                 target.mkdir(parents=True, exist_ok=True)
                 continue
             target.parent.mkdir(parents=True, exist_ok=True)
-            try:
-                os.link(path, target)
-            except OSError:
+            if immutable:
+                # Hardlinks are not immutable snapshots: an in-place writer can
+                # change the saved preimage along with the live output.
                 shutil.copy2(path, target)
+            else:
+                try:
+                    os.link(path, target)
+                except OSError:
+                    shutil.copy2(path, target)
 
     def _restore_output_snapshot(self, snapshot, pack_ids: Optional[List[str]] = None) -> None:
         """Restore only the named output packs and run-level metadata."""
@@ -331,6 +424,8 @@ class ProcessingOrchestrator:
         target_ids = list(pack_ids if pack_ids is not None else snapshot["pack_ids"])
         packs_dir = snapshot["dir"] / "packs"
         for pack_id in target_ids:
+            if pack_id == "nli" and snapshot.get("nli_scoped"):
+                continue
             output_pack = self.output_dir / pack_id
             if output_pack.exists():
                 shutil.rmtree(output_pack)
@@ -347,17 +442,34 @@ class ProcessingOrchestrator:
                     self.cache[key] = copy.deepcopy(value)
         if pack_ids is None:
             self.cache = copy.deepcopy(snapshot["cache"])
-            for name in (CACHE_FILE, "layers-manifest.json"):
-                path = self.output_dir / name
-                saved = snapshot["dir"] / name
-                if saved.is_file():
-                    shutil.copy2(saved, path)
-                elif path.exists():
-                    path.unlink()
+            if snapshot.get("nli_scoped"):
+                conflicts = restore_owned_outputs(snapshot)
+                if conflicts:
+                    raise RuntimeError("; ".join(conflicts))
+            else:
+                for name in (CACHE_FILE, "layers-manifest.json"):
+                    path = self.output_dir / name
+                    saved = snapshot["dir"] / name
+                    if saved.is_file():
+                        shutil.copy2(saved, path)
+                    elif path.exists():
+                        path.unlink()
+        elif snapshot.get("nli_scoped") and "nli" in target_ids:
+            conflicts = restore_owned_outputs(snapshot, pack_ids=target_ids)
+            if conflicts:
+                raise RuntimeError("; ".join(conflicts))
 
     def _finish_output_snapshot(self, snapshot) -> None:
-        if snapshot:
+        if snapshot and not snapshot.get("recovery_required"):
             shutil.rmtree(snapshot["dir"], ignore_errors=True)
+
+    def _is_nli_recovery_target(self, path: Path) -> bool:
+        try:
+            resolved = path.resolve()
+            resolved.relative_to((self.output_dir / "nli").resolve())
+            return True
+        except ValueError:
+            return resolved in {self.cache_path.resolve(), (self.output_dir / "layers-manifest.json").resolve()}
 
     def _load_popup_config(self) -> Dict:
         # source_dir is typically ".../public/source/layers" or just ".../public/source"
@@ -408,17 +520,76 @@ class ProcessingOrchestrator:
 
     def process_all(self, stuck_timeout: Optional[int] = None):
         packs = self.scan_packs()
-        snapshot = self._begin_output_snapshot([pack.name for pack in packs])
+        pack_ids = [pack.name for pack in packs]
+        if "nli" not in pack_ids:
+            return self._process_all_with_snapshot(packs, stuck_timeout)
+        root = (self.output_dir / "nli").resolve()
+        with nli_mutation_lock(root) as token:
+            evidence = self._validate_active_nli_source()
+            metadata_identity = self._active_metadata_identity(evidence)
+            snapshot = self._begin_output_snapshot(pack_ids)
+            self._nli_recovery_journal = snapshot.get("recovery_journal")
+            try:
+                self._process_all_impl(stuck_timeout=stuck_timeout, _snapshot=snapshot,
+                                       _nli_token=token, _nli_evidence=evidence,
+                                       _nli_metadata_identity=metadata_identity,
+                                       _packs=packs)
+            except Exception:
+                self._restore_output_snapshot(snapshot)
+                raise
+            finally:
+                self._finish_output_snapshot(snapshot)
+                self._nli_recovery_journal = None
+
+    def _process_all_with_snapshot(self, packs, stuck_timeout):
+        pack_ids = [pack.name for pack in packs]
+        snapshot = self._begin_output_snapshot(pack_ids)
         try:
-            self._process_all_impl(stuck_timeout=stuck_timeout, _snapshot=snapshot)
+            return self._process_all_impl(stuck_timeout=stuck_timeout, _snapshot=snapshot,
+                                          _packs=packs)
         except Exception:
             self._restore_output_snapshot(snapshot)
             raise
         finally:
             self._finish_output_snapshot(snapshot)
 
-    def _process_all_impl(self, stuck_timeout: Optional[int] = None, _snapshot=None):
-        packs = self.scan_packs()
+    def _route_source_path(self) -> Path:
+        root = self.source_dir
+        for candidate in (root / "source" / "layers", root / "source" / "source" / "layers", root / "layers"):
+            if candidate.is_dir():
+                root = candidate
+                break
+        return root / "nli" / "gis" / "lines.geojson"
+
+    def _validate_active_nli_source(self):
+        return validate_active_route_source(
+            self._route_source_path(), self.curation_recipe_path, self.curation_lock_path,
+            processed_layers_root=(self.output_dir / "nli").resolve(),
+        )
+
+    def _active_metadata_identity(self, evidence):
+        if evidence is None:
+            return None
+        metadata_path = Path(evidence["processedLayersRoot"]) / "release-metadata.json"
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        hashes = metadata.get("runtimeArtifactHashes")
+        if isinstance(hashes, dict):
+            hashes = dict(hashes)
+            hashes.pop("people.geojson", None)
+            metadata["runtimeArtifactHashes"] = hashes
+        return {
+            "metadata": metadata,
+            "lockSha256": hashlib.sha256(self.curation_lock_path.read_bytes()).hexdigest(),
+            "presenterSha256": hashlib.sha256((
+                Path(evidence["repoRoot"])
+                / "otef-interactive/frontend/src/remote/nli-presenter-content.json"
+            ).read_bytes()).hexdigest(),
+        }
+
+    def _process_all_impl(self, stuck_timeout: Optional[int] = None, _snapshot=None,
+                          _nli_token: Optional[str] = None, _nli_evidence=None,
+                          _nli_metadata_identity=None, _packs=None):
+        packs = list(_packs) if _packs is not None else self.scan_packs()
         if not packs:
             logger.warning("No layer packs found to process.")
             return
@@ -477,6 +648,12 @@ class ProcessingOrchestrator:
                     "styles_dir": styles_dir,
                     "pack_output": pack_output,
                 }
+                if pack_id == "nli" and _nli_token:
+                    task["_nli_mutation_token"] = _nli_token
+                    task["_nli_start_evidence"] = _nli_evidence
+                    task["_nli_metadata_identity"] = _nli_metadata_identity
+                    if _snapshot.get("recovery_journal") is not None:
+                        task["_nli_recovery_journal"] = str(_snapshot["recovery_journal"])
                 all_layer_tasks.append(task)
 
             for image_file in image_files:
@@ -485,6 +662,8 @@ class ProcessingOrchestrator:
                     "image_file": image_file,
                     "pack_output": pack_output,
                 }
+                if pack_id == "nli" and _snapshot.get("recovery_journal") is not None:
+                    task["_nli_recovery_journal"] = str(_snapshot["recovery_journal"])
                 all_image_tasks.append(task)
 
         has_wmts_only = any(
@@ -588,7 +767,15 @@ class ProcessingOrchestrator:
                 continue
             out_path = pack_output / f"{geo_file.stem}.geojson"
             try:
-                if transform_to_wgs84(geo_file, out_path):
+                journal = self._nli_recovery_journal if pack_id == "nli" else None
+                if journal is not None:
+                    with tempfile.TemporaryDirectory(dir=pack_output, prefix=".nli-boundary-") as temp_dir:
+                        staged = Path(temp_dir) / out_path.name
+                        if transform_to_wgs84(geo_file, staged):
+                            record_owned_postimage(journal, out_path, file_sha256(staged))
+                            os.replace(staged, out_path)
+                            logger.info(f"Boundary asset: {pack_id}/{geo_file.name} -> {out_path.name}")
+                elif transform_to_wgs84(geo_file, out_path):
                     logger.info(f"Boundary asset: {pack_id}/{geo_file.name} -> {out_path.name}")
             except Exception as e:
                 logger.warning(f"Boundary asset failed {pack_id}/{geo_file.name}: {e}")
@@ -654,6 +841,26 @@ class ProcessingOrchestrator:
         logger.info("Processing complete.")
 
     def process_single_layer(self, task: Dict, log_level: int) -> Optional[Any]:
+        if task.get("pack_id") != "nli":
+            return self._process_single_layer_impl(task, log_level, None)
+        root = Path(task["pack_output"]).resolve()
+        token = task.get("_nli_mutation_token")
+        with nli_mutation_lock(root, owner_token=token) as owned_token:
+            evidence = self._validate_active_nli_source()
+            start_evidence = task.get("_nli_start_evidence", evidence)
+            metadata_identity = task.get("_nli_metadata_identity", self._active_metadata_identity(evidence))
+            if evidence != start_evidence or self._active_metadata_identity(evidence) != metadata_identity:
+                raise RuntimeError("active NLI release metadata changed before worker processing")
+            previous_journal = getattr(self, "_nli_recovery_journal", None)
+            self._nli_recovery_journal = Path(task["_nli_recovery_journal"]) if task.get("_nli_recovery_journal") else None
+            try:
+                return self._process_single_layer_impl(task, log_level, owned_token, evidence,
+                                                       metadata_identity)
+            finally:
+                self._nli_recovery_journal = previous_journal
+
+    def _process_single_layer_impl(self, task: Dict, log_level: int, mutation_token=None,
+                                   route_evidence=None, metadata_identity=None) -> Optional[Any]:
         """
         Process a single layer fully.
         Returns: (LayerEntry, StyleConfig or None, cache_key, cache_value)
@@ -675,6 +882,12 @@ class ProcessingOrchestrator:
         fingerprint, geo_hash, lyrx_hash = _geo_style_cache_fingerprint(
             geo_file, styles_dir
         )
+        active_lines = pack_id == "nli" and layer_id == "lines" and route_evidence is not None
+        if active_lines:
+            fingerprint = hashlib.sha256((fingerprint + json.dumps(
+                {"recipe": route_evidence["curation"].get("recipeSha256"),
+                 "lock": hashlib.sha256(self.curation_lock_path.read_bytes()).hexdigest()},
+                sort_keys=True)).encode()).hexdigest()
         wgs84_file = pack_output / f"{layer_id}.geojson"
         pmtiles_file = pack_output / f"{layer_id}.pmtiles"
         sidecar_file = pack_output / BUFFERED_GRADIENT_SIDECAR
@@ -697,6 +910,11 @@ class ProcessingOrchestrator:
             or cached.get("hash") != fingerprint
             or declared_sidecar_missing
         )
+        if active_lines and not needed:
+            try:
+                validate_active_route_candidate(wgs84_file, route_evidence)
+            except (ValueError, OSError):
+                needed = True
 
         style_config = None
         geom_type = "unknown"
@@ -740,7 +958,7 @@ class ProcessingOrchestrator:
                             raise RuntimeError(
                                 f"Buffered gradient sidecar was not generated for {layer_id}"
                             )
-                        pmtiles_lifecycle = resolve_pmtiles_lifecycle(
+                        pmtiles_lifecycle = _resolve_nli_pmtiles_lifecycle(
                             pack_id,
                             layer_id,
                             geom_type,
@@ -753,6 +971,7 @@ class ProcessingOrchestrator:
                                 preset=preset,
                             ),
                             regenerate_existing=True,
+                            recovery_journal_path=Path(task["_nli_recovery_journal"]) if task.get("_nli_recovery_journal") else None,
                         )
                         _commit_buffered_gradient_transaction(
                             staged_wgs84,
@@ -765,10 +984,35 @@ class ProcessingOrchestrator:
                                 pmtiles_file.is_file()
                                 and not pmtiles_lifecycle.pmtiles_file
                             ),
+                            recovery_journal_path=Path(task["_nli_recovery_journal"]) if task.get("_nli_recovery_journal") else None,
                         )
                 else:
-                    # 1. Transform GeoJSON to WGS84
-                    if not transform_to_wgs84(geo_file, wgs84_file):
+                    # Active curated lines are staged and validated before promotion.
+                    if active_lines:
+                        with tempfile.TemporaryDirectory(dir=pack_output, prefix=".nli-lines-") as temp_dir:
+                            staged = Path(temp_dir) / wgs84_file.name
+                            if not transform_to_wgs84(geo_file, staged):
+                                logger.error("Transformation failed for %s, skipping.", layer_id)
+                                return None
+                            validate_active_route_candidate(staged, route_evidence)
+                            current = self._validate_active_nli_source()
+                            if (current != route_evidence
+                                    or self._active_metadata_identity(current) != metadata_identity):
+                                raise RuntimeError("active NLI release identity changed before line promotion")
+                            if task.get("_nli_recovery_journal"):
+                                record_owned_postimage(Path(task["_nli_recovery_journal"]), wgs84_file,
+                                                       file_sha256(staged))
+                            os.replace(staged, wgs84_file)
+                    elif pack_id == "nli" and task.get("_nli_recovery_journal"):
+                        with tempfile.TemporaryDirectory(dir=pack_output, prefix=".nli-output-") as temp_dir:
+                            staged = Path(temp_dir) / wgs84_file.name
+                            if not transform_to_wgs84(geo_file, staged):
+                                logger.error(f"Transformation failed for {layer_id}, skipping.")
+                                return None
+                            record_owned_postimage(Path(task["_nli_recovery_journal"]), wgs84_file,
+                                                   file_sha256(staged))
+                            os.replace(staged, wgs84_file)
+                    elif not transform_to_wgs84(geo_file, wgs84_file):
                         logger.error(f"Transformation failed for {layer_id}, skipping.")
                         return None
 
@@ -785,7 +1029,7 @@ class ProcessingOrchestrator:
                     if geom_type == "unknown":
                         geom_type = get_geometry_type(wgs84_file)
 
-                    pmtiles_lifecycle = resolve_pmtiles_lifecycle(
+                    pmtiles_lifecycle = _resolve_nli_pmtiles_lifecycle(
                         pack_id,
                         layer_id,
                         geom_type,
@@ -798,6 +1042,7 @@ class ProcessingOrchestrator:
                             preset=preset,
                         ),
                         regenerate_existing=True,
+                        recovery_journal_path=Path(task["_nli_recovery_journal"]) if task.get("_nli_recovery_journal") else None,
                     )
 
                 if is_buffered_gradient_layer and sidecar_file.is_file():
@@ -821,7 +1066,7 @@ class ProcessingOrchestrator:
             style_config = self._apply_animation_style_overrides(
                 pack_id, layer_id, style_config
             )
-            pmtiles_lifecycle = resolve_pmtiles_lifecycle(
+            pmtiles_lifecycle = _resolve_nli_pmtiles_lifecycle(
                 pack_id,
                 layer_id,
                 geom_type,
@@ -834,6 +1079,7 @@ class ProcessingOrchestrator:
                     preset=preset,
                 ),
                 regenerate_existing=True,
+                recovery_journal_path=Path(task["_nli_recovery_journal"]) if task.get("_nli_recovery_journal") else None,
             )
             resources = cached.get("resources")
             if (
@@ -877,7 +1123,13 @@ class ProcessingOrchestrator:
             entry = LayerEntry(**entry_kwargs)
 
         if pack_id == "nli" and layer_id == "people" and wgs84_file.is_file():
-            stamp_nli_runtime_artifact_hash(pack_output)
+            stamp_nli_runtime_artifact_hash(
+                pack_output, mutation_token=mutation_token,
+                processed_layers_root=pack_output,
+                curation_recipe_path=self.curation_recipe_path,
+                curation_lock_path=self.curation_lock_path,
+                recovery_journal_path=Path(task["_nli_recovery_journal"]) if task.get("_nli_recovery_journal") else None,
+            )
 
         return (
             entry,
@@ -965,6 +1217,27 @@ class ProcessingOrchestrator:
     def process_single_layer_merged(
         self, pack_id: str, layer_stem: str, stuck_timeout: Optional[int] = None
     ) -> None:
+        if pack_id == "nli":
+            root = (self.output_dir / "nli").resolve()
+            with nli_mutation_lock(root) as token:
+                evidence = self._validate_active_nli_source()
+                metadata_identity = self._active_metadata_identity(evidence)
+                snapshot = self._begin_output_snapshot([pack_id])
+                self._nli_recovery_journal = snapshot.get("recovery_journal")
+                try:
+                    self._process_single_layer_merged_impl(
+                        pack_id, layer_stem, stuck_timeout, _nli_token=token,
+                        _nli_start_evidence=evidence,
+                        _nli_metadata_identity=metadata_identity,
+                        _nli_recovery_journal=snapshot.get("recovery_journal"),
+                    )
+                except Exception:
+                    self._restore_output_snapshot(snapshot)
+                    raise
+                finally:
+                    self._finish_output_snapshot(snapshot)
+                    self._nli_recovery_journal = None
+            return
         snapshot = self._begin_output_snapshot([pack_id])
         try:
             self._process_single_layer_merged_impl(pack_id, layer_stem, stuck_timeout)
@@ -975,7 +1248,10 @@ class ProcessingOrchestrator:
             self._finish_output_snapshot(snapshot)
 
     def _process_single_layer_merged_impl(
-        self, pack_id: str, layer_stem: str, stuck_timeout: Optional[int] = None
+        self, pack_id: str, layer_stem: str, stuck_timeout: Optional[int] = None,
+        _nli_token: Optional[str] = None, _nli_start_evidence=None,
+        _nli_metadata_identity=None,
+        _nli_recovery_journal=None,
     ) -> None:
         """
         Process one GIS layer and merge it into existing pack + root manifests.
@@ -1020,6 +1296,12 @@ class ProcessingOrchestrator:
             "styles_dir": styles_dir,
             "pack_output": pack_output,
         }
+        if pack_id == "nli" and _nli_token:
+            task["_nli_mutation_token"] = _nli_token
+            task["_nli_start_evidence"] = _nli_start_evidence
+            task["_nli_metadata_identity"] = _nli_metadata_identity
+            if _nli_recovery_journal is not None:
+                task["_nli_recovery_journal"] = str(_nli_recovery_journal)
         log_level = logger.getEffectiveLevel()
         result = self.process_single_layer(task, log_level)
         if not result:
@@ -1110,7 +1392,8 @@ class ProcessingOrchestrator:
             try:
                 # Publish through a sibling temporary path so pack snapshots
                 # remain independent of image updates during later rollback.
-                _atomic_copy_file(image_file, output_file)
+                journal = Path(task["_nli_recovery_journal"]) if task.get("_nli_recovery_journal") else None
+                _atomic_copy_file(image_file, output_file, recovery_journal_path=journal)
                 logger.info(f"Copied image: {layer_id} -> {output_file}")
             except Exception as e:
                 logger.error(f"Error copying image {layer_id}: {e}")

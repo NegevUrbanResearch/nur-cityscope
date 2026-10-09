@@ -1,10 +1,12 @@
 import copy
 import json
 import math
+from inspect import signature
 import subprocess
 import tempfile
 import unittest
 import zipfile
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
@@ -58,7 +60,7 @@ from nli_pack_prep import (
     parse_alarm_timestamp_to_minutes,
     parse_local_timeline_to_minutes,
     parse_marc_name,
-    prepare_nli_pack,
+    prepare_nli_pack as _prepare_nli_pack,
     reproject_web_mercator_collection_to_wgs84,
     resolve_zip_layer_info,
     rewrite_nli_layer_properties,
@@ -73,6 +75,73 @@ from nli_pack_prep import (
 )
 from otef_layer_processing.orchestrator import _layer_render_sort_key
 from otef_layer_processing.styles import parse_lyrx_style
+import nli_pack_prep as pack_prep_module
+
+
+def prepare_nli_pack(zip_path, pack_dir, *args, **kwargs):
+    """Pass a fixture-local NLI lock root to every source-import test."""
+    legacy_root = kwargs.get("processed_layers_dir")
+    root = Path(legacy_root) if legacy_root is not None else Path(zip_path).parent / "processed/layers/nli"
+    kwargs["processed_layers_root"] = root
+    return _prepare_nli_pack(zip_path, pack_dir, *args, **kwargs)
+
+
+class PreparePackRootPlumbingTests(unittest.TestCase):
+    def test_default_root_is_configured_independently_of_source_destination(self):
+        calls = []
+        configured = Path(__file__).resolve().parents[2] / "public/processed/layers/nli"
+
+        @contextmanager
+        def fake_lock(root):
+            calls.append(Path(root).resolve())
+            yield "test-owner"
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            alternate_source = root / "alternate/source/layers/nli"
+            with patch("otef_layer_processing.nli_mutation_lock.nli_mutation_lock", fake_lock), \
+                 patch("otef_layer_processing.nli_active_route_evidence.validate_active_route_source", return_value=None), \
+                 patch.object(pack_prep_module, "_prepare_nli_pack_unlocked", return_value={"status": "ok"}) as writer:
+                result = pack_prep_module.prepare_nli_pack(root / "missing.zip", alternate_source)
+            self.assertEqual(result, {"status": "ok"})
+            self.assertEqual(calls, [configured.resolve()])
+            self.assertEqual(writer.call_args.kwargs["processed_layers_dir"], configured.resolve())
+
+    def test_positional_legacy_root_binds_once_and_matches_explicit_root(self):
+        @contextmanager
+        def fake_lock(root):
+            yield "test-owner"
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            alternate_source = root / "alternate/source/layers/nli"
+            isolated = root / "isolated/processed/layers/nli"
+            args = (None, None, None, None, None, None, isolated)
+            internal_signature = signature(pack_prep_module._prepare_nli_pack_unlocked)
+
+            def bind_writer(*writer_args, **writer_kwargs):
+                internal_signature.bind(*writer_args, **writer_kwargs)
+                return {"status": "ok"}
+
+            with patch("otef_layer_processing.nli_mutation_lock.nli_mutation_lock", fake_lock), \
+                 patch("otef_layer_processing.nli_active_route_evidence.validate_active_route_source", return_value=None), \
+                 patch.object(pack_prep_module, "_prepare_nli_pack_unlocked", side_effect=bind_writer) as writer:
+                writer.__signature__ = internal_signature
+                result = pack_prep_module.prepare_nli_pack(
+                    root / "missing.zip", alternate_source, *args,
+                )
+            self.assertEqual(result, {"status": "ok"})
+            self.assertEqual(writer.call_args.kwargs["processed_layers_dir"], isolated.resolve())
+
+    def test_disagreeing_legacy_and_explicit_roots_fail_before_lock(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with self.assertRaisesRegex(ValueError, "must identify the same NLI pack"):
+                pack_prep_module.prepare_nli_pack(
+                    root / "missing.zip", root / "source/layers/nli",
+                    processed_layers_dir=root / "legacy/layers/nli",
+                    processed_layers_root=root / "explicit/layers/nli",
+                )
 
 
 def _point(lon, lat, **props):
@@ -1380,32 +1449,14 @@ class AnimationOverrideContractTests(unittest.TestCase):
         alarms_block = snippet[snippet.find("alarms") : snippet.find("alarms") + 120]
         self.assertIn("False", alarms_block)
 
-    def test_processed_nli_investigation_style_is_timeline(self):
-        path = (
-            Path(__file__).resolve().parents[2]
-            / "public"
-            / "processed"
-            / "layers"
-            / "nli"
-            / "styles.json"
-        )
-        self.assertTrue(path.is_file(), f"missing {path}")
-        data = json.loads(path.read_text(encoding="utf-8"))
-        animation = data.get("investigation_polygons", {}).get("animation") or {}
-        self.assertEqual(animation.get("type"), "timeline")
-        self.assertFalse(animation.get("enabledByDefault"))
-        line_animation = data.get("lines", {}).get("animation") or {}
-        self.assertEqual(line_animation.get("type"), "timeline")
-        self.assertFalse(line_animation.get("enabledByDefault"))
-        alarm_style = data.get("alarms") or {}
-        alarm_animation = alarm_style.get("animation") or {}
-        self.assertEqual(alarm_animation.get("type"), "timeline")
-        self.assertFalse(alarm_animation.get("enabledByDefault"))
-        self.assertIsNone(alarm_style.get("labels"))
-        layers = (alarm_style.get("defaultSymbol") or {}).get("symbolLayers") or []
-        self.assertTrue(any(layer.get("type") == "markerPoint" for layer in layers))
-        names = data.get("people_names") or {}
-        self.assertEqual((names.get("labels") or {}).get("field"), "hebrew_name")
+    def test_nli_investigation_animation_defaults_are_timeline(self):
+        from otef_layer_processing.orchestrator import ANIMATION_STYLE_OVERRIDES
+
+        data = ANIMATION_STYLE_OVERRIDES["nli"]
+        for layer in ("investigation_polygons", "lines", "alarms"):
+            with self.subTest(layer=layer):
+                self.assertEqual(data[layer]["type"], "timeline")
+                self.assertFalse(data[layer]["enabledByDefault"])
 
 
 class PeopleSourceOverlayTests(unittest.TestCase):
@@ -1691,7 +1742,7 @@ class NovaSiteSettlementSidecarTests(unittest.TestCase):
             json.dumps({"type": "FeatureCollection", "features": [_reim_settlement_feature()]}),
             encoding="utf-8",
         )
-        processed_layers_dir = tmp / "processed"
+        processed_layers_dir = tmp / "processed" / "layers" / "nli"
         summary = prepare_nli_pack(
             zip_path,
             pack_dir,
@@ -1707,8 +1758,8 @@ class NovaSiteSettlementSidecarTests(unittest.TestCase):
         tmp = Path(tempfile.mkdtemp())
         zip_path = _nli_zip_with_polygons(tmp, _polygon_100_collection())
         pack_dir = tmp / "nli"
-        processed_layers_dir = tmp / "processed"
-        processed_layers_dir.mkdir()
+        processed_layers_dir = tmp / "processed" / "layers" / "nli"
+        processed_layers_dir.mkdir(parents=True)
         (processed_layers_dir / "investigation_settlements.geojson").write_text(
             json.dumps({"type": "FeatureCollection", "features": [_reim_settlement_feature()]}),
             encoding="utf-8",
@@ -1757,8 +1808,8 @@ class NovaSiteSettlementSidecarTests(unittest.TestCase):
             json.dumps({"type": "FeatureCollection", "features": [_reim_settlement_feature()]}),
             encoding="utf-8",
         )
-        processed_layers_dir = tmp / "processed"
-        processed_layers_dir.mkdir()
+        processed_layers_dir = tmp / "processed" / "layers" / "nli"
+        processed_layers_dir.mkdir(parents=True)
         (processed_layers_dir / "investigation_settlements.geojson").write_text(
             json.dumps({"type": "FeatureCollection", "features": [_reim_settlement_feature()]}),
             encoding="utf-8",

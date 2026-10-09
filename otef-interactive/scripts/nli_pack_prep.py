@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import struct
 import zipfile
+from inspect import signature
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -1780,6 +1781,42 @@ def generate_nova_escape_index(
 def prepare_nli_pack(
     zip_path: Path,
     pack_dir: Path,
+    *args,
+    processed_layers_root: Optional[Path] = None,
+    curation_recipe_path: Optional[Path] = None,
+    curation_lock_path: Optional[Path] = None,
+    **kwargs,
+) -> Dict[str, Any]:
+    """Prepare source layers while owning the shared NLI mutation lock."""
+    from otef_layer_processing.nli_active_route_evidence import validate_active_route_source
+    from otef_layer_processing.nli_mutation_lock import nli_mutation_lock
+
+    pack_dir = Path(pack_dir)
+    bound = signature(_prepare_nli_pack_unlocked).bind(zip_path, pack_dir, *args, **kwargs)
+    bound.apply_defaults()
+    arguments = bound.arguments
+    legacy_root = arguments.get("processed_layers_dir")
+    repo = Path(__file__).resolve().parents[2]
+    configured_root = repo / "otef-interactive/public/processed/layers/nli"
+    root = Path(processed_layers_root or legacy_root or configured_root).resolve()
+    if legacy_root is not None and Path(legacy_root).resolve() != root:
+        raise ValueError("processed_layers_dir and processed_layers_root must identify the same NLI pack")
+    arguments["processed_layers_dir"] = root
+    recipe = Path(curation_recipe_path).resolve() if curation_recipe_path else repo / "otef-interactive/scripts/nli-border-route-curation.json"
+    lock = Path(curation_lock_path).resolve() if curation_lock_path else repo / "otef-interactive/scripts/nli-border-route-curation.lock.json"
+    with nli_mutation_lock(root) as token:
+        evidence = validate_active_route_source(
+            pack_dir / "gis/lines.geojson", recipe, lock, processed_layers_root=root
+        )
+        if evidence is not None:
+            raise RuntimeError("NLI source import is blocked while route curation is active")
+        arguments["_mutation_token"] = token
+        return _prepare_nli_pack_unlocked(**arguments)
+
+
+def _prepare_nli_pack_unlocked(
+    zip_path: Path,
+    pack_dir: Path,
     popup_path: Optional[Path | Sequence[Path]] = None,
     authorities_path: Optional[Path] = None,
     alarms_path: Optional[Path] = None,
@@ -1798,6 +1835,8 @@ def prepare_nli_pack(
     mazal_xlsx: Optional[Path] = None,
     narrative_polygon_geojson: Optional[Path] = None,
     narrative_polygon_lyrx: Optional[Path] = None,
+    _mutation_token: Optional[str] = None,
+    shelter_fixture_path: Optional[Path] = None,
 ) -> Dict[str, Any]:
     authored_polygon_lyrx = Path(investigation_polygons_lyrx) if investigation_polygons_lyrx is not None else None
     if authored_polygon_lyrx is not None and not authored_polygon_lyrx.is_file():
@@ -1879,7 +1918,10 @@ def prepare_nli_pack(
                             sidecar / "people-search-index.json",
                             aliases_by_pid,
                         )
-                        stamp_nli_runtime_artifact_hash(sidecar, "people-search-index.json")
+                        stamp_nli_runtime_artifact_hash(
+                            sidecar, "people-search-index.json", mutation_token=_mutation_token,
+                            processed_layers_root=sidecar,
+                        )
             layer_summary: Dict[str, Any] = {
                 "features": len(collection.get("features") or []),
                 "dropped_null_geometry": dropped,
@@ -1978,6 +2020,11 @@ def main() -> None:
         type=Path,
         help="Copy an authored investigation polygon .lyrx into the NLI source pack.",
     )
+    parser.add_argument(
+        "--processed-layers-root",
+        type=Path,
+        help="NLI processed pack root used for shared mutation locking and sidecars.",
+    )
     args = parser.parse_args()
     repo = Path(__file__).resolve().parents[2]
     zip_path = default_nli_zip_path(repo)
@@ -1997,13 +2044,15 @@ def main() -> None:
     narrative_polygon_lyrx = Path.home() / "Downloads" / "narrative_polygon.lyrx"
     if not zip_path.is_file() and downloads_zip.is_file():
         zip_path = downloads_zip
+    effective_processed_layers_root = args.processed_layers_root or processed_layers_dir
     summary = prepare_nli_pack(
         zip_path,
         pack_dir,
         popup_paths,
         alarms_path=alarms_path,
         people_overlay_path=people_overlay if people_overlay.is_file() else None,
-        processed_layers_dir=processed_layers_dir,
+        processed_layers_dir=effective_processed_layers_root,
+        processed_layers_root=effective_processed_layers_root,
         fleeing_geojson_zip=fleeing_geojson_zip if fleeing_geojson_zip.is_file() else None,
         fleeing_lyrx_zip=fleeing_lyrx_zip if fleeing_lyrx_zip.is_file() else None,
         fleeing_geojson_sha256=FLEEING_GEOJSON_ZIP_SHA256,
