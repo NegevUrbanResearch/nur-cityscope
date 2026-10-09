@@ -18,6 +18,7 @@ import { attachSettlementOrientationRuntime } from "../shared/nli-settlement-ori
 import { measureClockPreviewWarnings } from "../projection/clock-preview-warnings.js";
 import { syncInvestigationTimelineToMap, disposeInvestigationTimelineForMap } from "../shared/maplibre-investigation-timeline.js";
 import { createNovaExplainerOverlay } from "./nli-nova-explainer-overlay.js";
+import { createGisRoadSignPreview, gisRoadSignHomeCamera } from "./gis-road-sign-preview.js";
 import { filterGazaBorderVisibility } from "../shared/gaza-border-style.js";
 import { novaExplainerName } from "../shared/nli-nova-explainer-copy.js";
 import {
@@ -138,11 +139,6 @@ function storyObjectId(value) {
     ? value
     : (typeof value === "string" && /^[1-9][0-9]*$/.test(value) ? Number(value) : NaN);
   return Number.isInteger(number) && NOVA_STORY_IDS.has(number) ? number : null;
-}
-
-function featureName(feature) {
-  const name = feature?.properties?.Name;
-  return typeof name === "string" && name.trim() ? name : null;
 }
 
 function renderedExplainerCard(container, objectId) {
@@ -322,10 +318,13 @@ export async function bootClockPreview({ window: frameWindow, document: frameDoc
   if (!frameWindow || !frameDocument || typeof fetchImpl !== "function") throw new Error("GIS preview frame dependencies are missing");
   const params = new URLSearchParams(frameWindow.location.search);
   const sessionId = params.get("previewSession");
-  if (params.get("clockPreview") !== "1" || !sessionId) throw new Error("GIS preview session is missing");
+  const roadSignsPreview = params.get("roadSignsPreview") === "1";
+  if ((!roadSignsPreview && params.get("clockPreview") !== "1") || !sessionId
+    || (roadSignsPreview && (params.get("clockPreview") === "1" || params.get("settlementPreview") === "1" || params.get("preview") === "1" || frameWindow.parent === frameWindow))) throw new Error("GIS preview session is missing or invalid");
   const targetOrigin = frameWindow.location.origin;
   const parent = frameWindow.parent;
   const snapshot = await readStateSnapshot(fetchImpl);
+  const homeCamera = roadSignsPreview ? gisRoadSignHomeCamera(snapshot, frameWindow.proj4) : null;
   await layerRegistry.init();
   const registryGroups = clone(layerRegistry.getGroups());
   await Promise.all([
@@ -343,6 +342,7 @@ export async function bootClockPreview({ window: frameWindow, document: frameDoc
   const map = createGISMap("map", {
     center: viewportCenter(snapshot.viewport),
     zoom: Number.isFinite(snapshot.viewport?.zoom) ? snapshot.viewport.zoom : 10,
+    ...homeCamera,
     basemap: normalizeGisBasemap(snapshot.basemap || "osm"),
   });
   attachSettlementOrientationRuntime(map);
@@ -351,6 +351,10 @@ export async function bootClockPreview({ window: frameWindow, document: frameDoc
   applyNliExplainerLayout(clockHost, NLI_GIS_CLOCK_DEFAULT_LAYOUT);
   const escape = localEscapeContext();
   let currentScene = composeGisClockPreviewScene("home", registryGroups);
+  const previewGroups = () => roadSignsPreview ? filterGazaBorderVisibility(currentScene.groups, snapshot.gaza_border_visible === true) : currentScene.groups;
+  const signPreview = roadSignsPreview ? createGisRoadSignPreview({ window: frameWindow, map, container: mapContainer, sessionId, snapshot,
+    getGroups: previewGroups, registry: layerRegistry, clockHost }) : null;
+  const fail = (id, error) => signPreview ? signPreview.fail(id, error) : failRequest(parent, targetOrigin, sessionId, id, error);
   let currentExplainerLayout = null;
   let currentExplainerCamera = null;
   let currentLanguage = 'he';
@@ -381,7 +385,7 @@ export async function bootClockPreview({ window: frameWindow, document: frameDoc
     for (const cancel of [...pendingDrawWaits]) cancel();
   };
   const isCurrent = (generation) => !disposed && generation === renderGeneration;
-  const groupsForMap = () => filterGroupsForGisMap(currentScene.groups);
+  const groupsForMap = () => filterGroupsForGisMap(previewGroups());
   const syncTimeline = async (generation = renderGeneration) => {
     const groups = groupsForMap();
     const focus = narrativeController?.getDefinition?.() || null;
@@ -422,7 +426,7 @@ export async function bootClockPreview({ window: frameWindow, document: frameDoc
     dataContext: localContext,
     storage: null,
     syncTimeline: () => { void syncTimeline(); },
-    resolveExitCenter: () => viewportCenter(snapshot.viewport),
+    resolveExitCenter: () => homeCamera?.center || viewportCenter(snapshot.viewport),
   });
 
   const refreshStyle = async () => {
@@ -448,6 +452,7 @@ export async function bootClockPreview({ window: frameWindow, document: frameDoc
     activeClockLayout = { ...state.clockLayout };
     applyNliExplainerLayout(clockHost, activeClockLayout);
     applyGroups();
+    signPreview?.sync();
     narrativeController?.apply({
       id: currentScene.narrative?.id ?? null,
       transition: currentScene.narrative ? "enter" : "exit",
@@ -457,6 +462,7 @@ export async function bootClockPreview({ window: frameWindow, document: frameDoc
     else setBasemap(snapshot.basemap || "osm");
     // jumpTo stops the narrative fly so an ended clock cannot leave Close on the wide zoom.
     if (explainer) placeNovaExplainerCamera(map, currentExplainerCamera);
+    if (homeCamera) map.jumpTo(homeCamera);
     await syncTimeline(generation);
     if (!isCurrent(generation)) return;
     const drew = await waitForIdle(map, () => isCurrent(generation), pendingDrawWaits);
@@ -464,6 +470,7 @@ export async function bootClockPreview({ window: frameWindow, document: frameDoc
     await settlePreviewFonts(frameDocument);
     if (!isCurrent(generation)) return;
     if (explainer) novaExplainerOverlay.refresh();
+    if (signPreview) { signPreview.rendered(state); return; }
     postFrameMessage(parent, {
       type: "otef_clock_preview_rendered",
       sessionId,
@@ -487,17 +494,17 @@ export async function bootClockPreview({ window: frameWindow, document: frameDoc
   const onMessage = (event) => {
     let state;
     try {
-      state = previewStateFromEvent(event, sessionId, requestId, targetOrigin);
+      state = signPreview ? signPreview.readState(event, requestId) : previewStateFromEvent(event, sessionId, requestId, targetOrigin);
     } catch (error) {
       if (event.origin === targetOrigin && event.source === parent && event.data?.sessionId === sessionId) {
-        failRequest(parent, targetOrigin, sessionId, event.data.requestId, error);
+        fail(event.data.requestId, error);
       }
       return;
     }
     if (!state) return;
     requestId = state.requestId;
     void renderState(state).catch((error) => {
-      if (!disposed && requestId === state.requestId) failRequest(parent, targetOrigin, sessionId, state.requestId, error);
+      if (!disposed && requestId === state.requestId) fail(state.requestId, error);
     });
   };
 
@@ -510,15 +517,16 @@ export async function bootClockPreview({ window: frameWindow, document: frameDoc
       narrativeController,
       getLayerGroups: () => groupsForMap(),
     });
-    void syncTimeline().then(() => {
+    void syncTimeline().then(async () => {
       if (disposed) return;
+      if (signPreview) { await signPreview.ready(); return; }
       postFrameMessage(parent, {
         type: "otef_clock_preview_ready",
         sessionId,
         surface: "gis",
         output: null,
       }, targetOrigin);
-    }).catch((error) => failRequest(parent, targetOrigin, sessionId, null, error));
+    }).catch((error) => fail(null, error));
   };
 
   frameWindow.addEventListener("message", onMessage);
@@ -533,6 +541,7 @@ export async function bootClockPreview({ window: frameWindow, document: frameDoc
     map.off?.("load", onLoad);
     styleRefresh?.();
     narrativeController?.dispose?.();
+    signPreview?.dispose();
     disposeInvestigationTimelineForMap(map);
     novaExplainerOverlay.dispose();
     disposeLayerManagerForMap(map);

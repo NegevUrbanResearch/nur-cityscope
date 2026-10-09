@@ -25,6 +25,7 @@ import { createNovaEscapeCoordinator } from "../shared/nli-nova-escape-coordinat
 import { createMorRouteCoordinator } from "../shared/nli-mor-route-coordinator.js";
 import { createGisBasemapStyleCoordinator } from "./map-main-style-lifecycle.js";
 import { bootClockPreview } from "../map/clock-preview.js";
+import { createGisRoadSignOverlay } from "../map/gis-road-sign-overlay.js";
 import { createNovaExplainerOverlay } from "../map/nli-nova-explainer-overlay.js";
 import { attachSettlementOrientationRuntime } from "../shared/nli-settlement-orientation.js";
 import {
@@ -346,6 +347,10 @@ async function bootstrapMapRuntime() {
     );
     const filterGisDisplayGroups = groups => filterGazaBorderVisibility(filterGroupsForGisMap(groups), OTEFDataContext.getGazaBorderVisible());
     const sceneSnapshot = () => sceneBinding?.getRenderSnapshot() || captureNliDisplaySnapshot(OTEFDataContext, filterGisDisplayGroups);
+    const roadSignOverlay = createGisRoadSignOverlay({ map, container: mapContainer, dataContext: OTEFDataContext,
+      getHomeCamera: () => ({ center: resolveCenterFromBounds(OTEFDataContext.getBounds()) || DEFAULT_MAP_CENTER, zoom: 10 }),
+      getGroups: () => sceneSnapshot().layerGroups });
+    registerDisposer(() => roadSignOverlay.dispose());
     const raiseGisPlaceLabels = () => raiseDarkBasemapPlaceLabels(map, {
       language: OTEFDataContext.getLegendSettings?.()?.language || 'he',
       narrativeId: sceneSnapshot().narrativeState?.id ?? null,
@@ -655,7 +660,7 @@ async function bootstrapMapRuntime() {
       },
       getDisplayedBasemap: () => getDisplayedGisBasemap(map, BASEMAP_STYLES),
       applyBasemap: candidate => candidate.mount(), discardBasemap: candidate => candidate?.discard(),
-      onSnapshotApplied() { applyStoredGisClockLayout(); raiseGisPlaceLabels(); novaExplainerOverlay.refresh(); syncContextRouteProgress(); },
+      onSnapshotApplied() { applyStoredGisClockLayout(); raiseGisPlaceLabels(); novaExplainerOverlay.refresh(); roadSignOverlay.sync(); syncContextRouteProgress(); },
     });
     registerDisposer(() => sceneBinding.dispose());
     const remountScene = () => { void sceneBinding.onStyleLoad(); };
@@ -747,7 +752,8 @@ function initializeTableSwitcher() {
 }
 
 async function boot() {
-  if (new URLSearchParams(window.location.search).get("clockPreview") === "1") {
+  const previewParams = new URLSearchParams(window.location.search);
+  if (previewParams.get("clockPreview") === "1" || previewParams.get("roadSignsPreview") === "1") {
     return bootClockPreview({ window, document, fetchImpl: window.fetch.bind(window) });
   }
   const shouldContinue = initializeTableSwitcher();
