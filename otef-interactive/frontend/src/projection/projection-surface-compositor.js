@@ -1,4 +1,4 @@
-const ORDER = ["image", "map", "settlements", "names", "caption", "pattern", "legend"];
+const ORDER = ["image", "map", "settlements", "roadSigns", "names", "caption", "pattern", "legend"];
 
 export function resolveProjectionSceneLayers(scene = {}) {
   return ORDER.flatMap((id) => scene[id] == null ? [] : [{ id, value: scene[id] }]);

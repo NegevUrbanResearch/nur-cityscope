@@ -16,6 +16,25 @@ import { createBaselineSampler } from "../../frontend/src/shared/projection-base
 import { variableTdMesh } from "../fixtures/td-variable-grid.js";
 import { filterProjectionCalibrationScene } from '../../frontend/src/shared/projection-calibration-scene.js';
 
+test("roadSigns is cleared by the explicit null default and restored after context restoration", async () => {
+  const listeners = {};
+  let roadSigns = { source: { width: 1920, height: 1080 }, contentVersion: 1 };
+  const doc = { createElement() { return { style: {}, dataset: {}, setAttribute() {}, addEventListener(name, handler) { listeners[name] = handler; }, removeEventListener() {}, remove() {} }; } };
+  const draws = [];
+  const surface = await createProjectionBrowserSurface({ host: { ownerDocument: doc, appendChild() {} }, spanId: "left",
+    image: { complete: true, naturalWidth: 10, style: {} }, initialConfig: structuredClone(DEFAULT_PROJECTION_CONFIG),
+    fetchImpl: async () => ({ ok: false }), getScene: () => ({ roadSigns }),
+    rendererFactory: () => ({ draw: scene => draws.push(scene), isContextLost: () => false, dispose() {} }) });
+  expect(draws.at(-1).layers.map(layer => layer.id)).toEqual(["roadSigns"]);
+  roadSigns = null;
+  surface.draw();
+  expect(draws.at(-1).layers).toEqual([]);
+  roadSigns = { source: { width: 1920, height: 1080 }, contentVersion: 1 };
+  listeners.webglcontextlost?.({ preventDefault() {} });
+  listeners.webglcontextrestored?.();
+  expect(draws.at(-1).layers.map(layer => layer.id)).toEqual(["roadSigns"]);
+  surface.dispose();
+});
 test('calibration filter runs after prepared adapters on every draw and restores scene', async () => {
   const doc = { createElement() { return { style: {}, setAttribute() {}, addEventListener() {}, removeEventListener() {}, remove() {} }; } };
   const draws = []; let active = false;

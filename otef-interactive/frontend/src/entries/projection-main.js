@@ -69,7 +69,6 @@ import { createMorRouteCoordinator } from "../shared/nli-mor-route-coordinator.j
 import MapProjectionConfig from "../shared/map-projection-config.js";
 import {
   createSlideshowPackRuntime,
-  resolvePresentationOverlayVisibility,
   suppressInvestigationPlayback,
   syncSlideshowPresentationPoll,
 } from "../shared/slideshow-pack-runtime.js";
@@ -112,6 +111,8 @@ import { createProjectionPattern } from "../projection/projection-pattern.js";
 import { createProjectionCaptionAdapter, drawProjectionCaptionForSpan } from "../projection/projection-caption-adapter.js";
 import { createProjectionLegendAdapter } from "../projection/projection-legend-adapter.js";
 import { createProjectionPatternAdapter } from "../projection/projection-pattern-adapter.js";
+import { createProjectionRoadSignAdapter, reportRoadSignError } from "../projection/projection-road-sign-adapter.js";
+import { resolveProjectionRoadSignVisibility } from "../projection/projection-road-sign-visibility.js";
 import { resolveProjectionResolution, projectionMapPixelRatio, bindProjectionMapResolution } from '../projection/output-resolution.js';
 import { getInvestigationTimelineRenderSnapshot } from "../shared/maplibre-investigation-timeline.js";
 import { loadCapturedProjectionFraming } from "../projection/projection-captured-baseline.js";
@@ -533,6 +534,7 @@ async function bootstrapProjectionRuntime() {
   map.setEffectiveProjectionConfig = projectionConfigBridge.setEffectiveConfig;
   let projectionRuntime = null;
   let projectionPattern = null;
+  let projectionPatternActive = false;
   let lastViewport = null;
   /** @type {ReturnType<import("../shared/slideshow-pack-runtime.js").createSlideshowPackRuntime> | null} */
   let slideshowRuntime = null;
@@ -635,9 +637,16 @@ async function bootstrapProjectionRuntime() {
     const captionAdapter = browserMode ? createProjectionCaptionAdapter({ rasterScale: outputResolution.scale }) : null;
     const legendAdapter = browserMode ? createProjectionLegendAdapter({ rasterScale: outputResolution.scale }) : null;
     const patternAdapter = browserMode ? createProjectionPatternAdapter({ spanId: projectionSpanId, rasterScale: outputResolution.scale }) : null;
+    const roadSignAdapter = browserMode ? createProjectionRoadSignAdapter({ document, output: projectionSpanId,
+      rasterScale: outputResolution.scale, onInvalidate: () => browserSurface?.requestDraw?.(),
+      onError: reportRoadSignError }) : null;
     if (captionAdapter) registerDisposer(() => captionAdapter.dispose());
     if (legendAdapter) registerDisposer(() => legendAdapter.dispose());
     if (patternAdapter) registerDisposer(() => patternAdapter.dispose());
+    if (roadSignAdapter) {
+      registerDisposer(() => roadSignAdapter.dispose());
+      void roadSignAdapter.ready();
+    }
     const nameFieldController = createNliNameFieldController({ map, context: OTEFDataContext, displayProfile: "projection", projectionSpan: projectionSpanId,
       motionMode: resolveMotionMode(), manualProjectionPreparation: browserMode,
       managedScene: () => sceneManaged && !calibrationActive() && !slideshowRuntime?.isActive() });
@@ -749,19 +758,33 @@ async function bootstrapProjectionRuntime() {
         typeof slideshowRuntime?.shouldSuppressProjectionHighlight === "function"
           ? slideshowRuntime.shouldSuppressProjectionHighlight()
           : !!(slideshowRuntime && slideshowRuntime.isActive());
-      const overlayGroups = resolvePresentationOverlayVisibility({
+      const roadSignVisibility = resolveProjectionRoadSignVisibility({
         presentationActive,
         incomingGroups:
           typeof slideshowRuntime?.getCommittedGroups === "function"
             ? slideshowRuntime.getCommittedGroups()
             : null,
-        liveGroups: isolateLayersWhileVictimNamesShown(rawAsArray),
+        liveGroups: rawAsArray,
+        gazaBorderVisible: snapshot.gazaBorderVisible,
         keepSettlementNames: MapProjectionConfig.PROJECTION_SLIDESHOW?.keepSettlementNames === true,
         excludedPresentationPackIds:
           MapProjectionConfig.PROJECTION_SLIDESHOW?.excludedPresentationPackIds,
+        calibrationActive: calibrationActive(),
+        patternActive: projectionPatternActive,
       });
-      return { currentGroups, overlayGroups, presentationActive };
+      return { currentGroups, overlayGroups: roadSignVisibility.overlayGroups, presentationActive,
+        roadSignsEligible: roadSignVisibility.eligible };
     };
+    if (roadSignAdapter) {
+      const syncRoadSignState = (state = OTEFDataContext.getRoadSigns?.()) => {
+        const context = projectionOverlayContext();
+        roadSignAdapter.setState({ settings: state?.settings, eligible: context.roadSignsEligible });
+        if (state?.error) reportRoadSignError(new Error(String(state.error)));
+        browserSurface?.requestDraw?.();
+      };
+      syncRoadSignState();
+      registerDisposer(OTEFDataContext.subscribe("roadSigns", syncRoadSignState));
+    }
     const syncContextRouteProgress = () => {
       if (calibrationActive()) { disposeRouteProgressOverlaysForMap(map); return; }
       const { currentGroups, overlayGroups, presentationActive } = projectionOverlayContext();
@@ -822,6 +845,7 @@ async function bootstrapProjectionRuntime() {
         spanId: projectionSpanId,
         onRenderSnapshot: (snapshot) => {
           patternAdapter?.sync(snapshot);
+          projectionPatternActive = snapshot?.active === true && snapshot?.pattern !== "off";
           browserSurface?.requestDraw?.();
         },
       });
@@ -1021,9 +1045,13 @@ async function bootstrapProjectionRuntime() {
             snapshot: getInvestigationTimelineRenderSnapshot(map),
             layout: currentCaptionLayout,
           });
+          const roadSignState = projectionOverlayContext();
+          roadSignAdapter?.setState({ settings: OTEFDataContext.getRoadSigns?.()?.settings,
+            eligible: roadSignState.roadSignsEligible });
           return {
           image: imageReadiness?.contentVersion() == null ? null : createProjectionImageDescriptor({ map, imageEl: modelImgEl, contentVersion: imageReadiness.contentVersion(), config: effectiveProjectionConfig, spanId: projectionSpanId }),
           map: createProjectionMapDescriptor({ map, config: effectiveProjectionConfig, spanId: projectionSpanId }),
+          roadSigns: roadSignAdapter?.descriptor(),
           caption: drawProjectionCaptionForSpan(captionAdapter, projectionSpanId),
           pattern: patternAdapter?.draw?.(),
           legend: legendAdapter?.draw?.(),
