@@ -89,6 +89,7 @@ export function installProjectionSettlementPreviewBridge({ win, sessionId, outpu
     const state = event.data;
     if (disposed || event.source !== parent || event.origin !== origin || state?.type !== "otef_settlement_preview_state"
       || state.sessionId !== sessionId || state.output !== output || !Number.isSafeInteger(state.requestId) || state.requestId <= lastRequestId) return;
+    if (state.language != null && !['he', 'en'].includes(state.language)) return;
     lastRequestId = state.requestId;
     activeAbort?.abort();
     const controller = new AbortController();
@@ -103,6 +104,7 @@ export function installProjectionSettlementPreviewBridge({ win, sessionId, outpu
       }
       if (!validSettlementOriginGeometry(result.originGeometry)) { fail(new Error('Settlement origin geometry is invalid')); return; }
       reply({ type: "otef_settlement_preview_rendered", requestId: state.requestId, calibrationRevision: result.calibrationRevision,
+        language: state.language || 'he',
         meshIdentity: result.meshIdentity, mesh: result.mesh, labels: result.labels, warnings: result.warnings, originGeometry: result.originGeometry || null,
         ...(result.positionMatrix == null ? {} : {positionMatrix:result.positionMatrix}) });
     }).catch(fail);

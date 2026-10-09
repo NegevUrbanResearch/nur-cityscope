@@ -5,6 +5,7 @@ const SEGEV_CENTER = Object.freeze([34.48647925700004, 31.422958191000077]);
 const SEGEV_NARRATIVE = Object.freeze({
   id: "segev",
   label: "בית משפחת שגב",
+  labelEn: 'Segev family home',
   center: SEGEV_CENTER,
   zoom: 18,
   idleClockMinutes: 401,
@@ -18,6 +19,7 @@ const NOVA_CENTER = Object.freeze([34.46975, 31.39851]);
 const NOVA_NARRATIVE = Object.freeze({
   id: "nova",
   label: "נובה",
+  labelEn: 'Nova',
   center: NOVA_CENTER,
   zoom: 15,
   beat4Zoom: 13.2,
@@ -36,6 +38,7 @@ const SDEROT_MARKER = Object.freeze([34.59205662207849, 31.52320675782405]);
 const SDEROT_NARRATIVE = Object.freeze({
   id: "sderot",
   label: "תחנת המשטרה",
+  labelEn: 'Sderot police station',
   center: SDEROT_CENTER,
   zoom: 15,
   marker: SDEROT_MARKER,
@@ -50,6 +53,7 @@ const HOSTAGES_MARKER = Object.freeze([34.40026099200003, 31.31130147400006]);
 const HOSTAGES_NARRATIVE = Object.freeze({
   id: "hostages",
   label: "בית משפחת פרי",
+  labelEn: 'Peri family home',
   center: HOSTAGES_CENTER,
   zoom: 15,
   marker: HOSTAGES_MARKER,

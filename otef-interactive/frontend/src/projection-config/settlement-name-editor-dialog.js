@@ -39,6 +39,8 @@ export function openSettlementNameEditor({
   output = "left",
   citycode = "",
   settingsClient,
+  getNameLanguage = () => 'he',
+  subscribeNameLanguage,
   catalog = { entries: [] },
   catalogStatus = { status: "ready" },
   onRetryCatalog = () => {},
@@ -196,7 +198,7 @@ export function openSettlementNameEditor({
     if (gesture?.latest && gesture.kind === 'origin') {
       next.leaderOrigins ||= {}; next.leaderOrigins[activeCitycode] = { ...gesture.latest };
     } else if (gesture?.latest) next.outputs[activeOutput][activeCitycode] = { ...gesture.latest };
-    preview.setState({ settings: next, selectedCitycode: activeCitycode });
+    preview.setState({ settings: next, selectedCitycode: activeCitycode, language: getNameLanguage() });
     renderControls();
   }
   function referenceFor(event, rect, frozen = mesh) {
@@ -318,6 +320,11 @@ export function openSettlementNameEditor({
     onError: (error) => { handlesEnabled = false; retry.hidden = false; showMapping(error?.message || "Preview unavailable"); drawOverlay(); },
   });
   const unsubscribe = settingsClient.subscribe?.(() => { if (active) renderControls(); });
+  let lastNameLanguage = getNameLanguage();
+  const unsubscribeLanguage = subscribeNameLanguage?.(() => {
+    const language = getNameLanguage();
+    if (active && language !== lastNameLanguage) { lastNameLanguage = language; publish(); }
+  });
   const onResize = () => invalidate();
   win?.addEventListener?.("resize", onResize);
   retry.addEventListener("click", () => invalidate());
@@ -353,6 +360,7 @@ export function openSettlementNameEditor({
     active = false;
     if (gesture) cancelGesture({ pointerId: gesture.pointerId });
     unsubscribe?.();
+    unsubscribeLanguage?.();
     win?.removeEventListener?.("resize", onResize);
     if (manageBeforeUnload) win?.removeEventListener?.("beforeunload", beforeUnload);
     preview?.destroy();

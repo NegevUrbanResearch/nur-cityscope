@@ -15,6 +15,7 @@ export const DARK_BASEMAP_TEXT_FIELD = Object.freeze([
 ]);
 
 export const DARK_BASEMAP_TEXT_COLOR = "#ffffff";
+const ENGLISH_BASEMAP_TEXT_FIELD = Object.freeze(['coalesce', ['get', 'name:en'], ['get', 'name_en'], ['get', 'name:latin'], '']);
 
 export const DARK_BASEMAP_PLACE_TEXT_FONT = Object.freeze([
   "Guttman Hatzvi",
@@ -22,6 +23,7 @@ export const DARK_BASEMAP_PLACE_TEXT_FONT = Object.freeze([
 ]);
 
 export const DARK_BASEMAP_GUTTMAN_FONT_FACE_URL = "./fonts/Guttman-Hatzvi.ttf";
+const gisPlaceLanguages = new WeakMap();
 
 /** Match projector_base שמות_יישובים label size on projection. */
 export const DARK_BASEMAP_KNOWN_PLACE_TEXT_SIZE = 14;
@@ -153,11 +155,16 @@ export function applyDarkBasemapLabelPolicy(style, options = {}) {
   next.layers = next.layers.map((layer) => {
     if (!layer || layer.type !== "symbol" || layer.layout?.["text-field"] == null) return layer;
     const layout = { ...(layer.layout || {}) };
-    layout["text-font"] = layer["source-layer"] === PLACE_SOURCE_LAYER
+    if (options.language === 'en') {
+      layout['text-font'] = ['Arial'];
+      if (textFieldGetsRef(layout['text-field'])) return { ...layer, layout };
+      layout['text-field'] = cloneJson(ENGLISH_BASEMAP_TEXT_FIELD);
+    }
+    else layout["text-font"] = layer["source-layer"] === PLACE_SOURCE_LAYER
       ? [...DARK_BASEMAP_PLACE_TEXT_FONT]
       : ["Arial"];
     if (!shouldRewriteLabelLayer(layer)) return { ...layer, layout };
-    layout["text-field"] = cloneJson(DARK_BASEMAP_TEXT_FIELD);
+    if (options.language !== 'en') layout["text-field"] = cloneJson(DARK_BASEMAP_TEXT_FIELD);
     if (layout["text-transform"] === "uppercase") {
       delete layout["text-transform"];
     }
@@ -178,6 +185,19 @@ export function applyDarkBasemapLabelPolicy(style, options = {}) {
     return { ...layer, layout, paint };
   });
   return next;
+}
+
+const HEBREW_BASEMAP_LABELS = new Map(applyDarkBasemapLabelPolicy(openFreeMapDarkStyle).layers
+  .filter(layer => layer.type === 'symbol' && layer.layout?.['text-field'] != null)
+  .map(layer => [layer.id, layer.layout]));
+
+function updateBasemapLanguage(map, language) {
+  for (const layer of styleLayers(map)) {
+    const original = HEBREW_BASEMAP_LABELS.get(layer.id);
+    if (!original || textFieldGetsRef(original['text-field'])) continue;
+    map.setLayoutProperty?.(layer.id, 'text-field', language === 'en' ? cloneJson(ENGLISH_BASEMAP_TEXT_FIELD) : original['text-field']);
+    map.setLayoutProperty?.(layer.id, 'text-font', language === 'en' ? ['Arial'] : original['text-font']);
+  }
 }
 
 const FOREGROUND_OVERLAY_PREFIXES = Object.freeze([
@@ -246,7 +266,7 @@ function novaPlaceFeature(catalog = placeCatalog) {
 }
 
 /** GIS-only Nova name: OSM has no place feature, unlike Be'eri and Re'im. */
-export function ensureGisNovaPlaceLabel(map) {
+export function ensureGisNovaPlaceLabel(map, language = 'he') {
   if (!map || typeof map.addLayer !== "function") return;
   const feature = novaPlaceFeature();
   if (!feature) return;
@@ -261,15 +281,21 @@ export function ensureGisNovaPlaceLabel(map) {
   } else if (typeof existingSource.setData === "function") {
     existingSource.setData(collection);
   }
-  if (typeof map.getLayer === "function" && map.getLayer(GIS_NOVA_PLACE_LABEL_LAYER_ID)) return;
+  const text = feature.properties[language === 'en' ? 'name:en' : 'name:he'];
+  const font = language === 'en' ? ['Arial'] : [...DARK_BASEMAP_PLACE_TEXT_FONT];
+  if (typeof map.getLayer === "function" && map.getLayer(GIS_NOVA_PLACE_LABEL_LAYER_ID)) {
+    map.setLayoutProperty?.(GIS_NOVA_PLACE_LABEL_LAYER_ID, 'text-field', text);
+    map.setLayoutProperty?.(GIS_NOVA_PLACE_LABEL_LAYER_ID, 'text-font', font);
+    return;
+  }
   try {
     map.addLayer({
       id: GIS_NOVA_PLACE_LABEL_LAYER_ID,
       type: "symbol",
       source: GIS_NOVA_PLACE_SOURCE_ID,
       layout: {
-        "text-field": feature.properties["name:he"],
-        "text-font": [...DARK_BASEMAP_PLACE_TEXT_FONT],
+        "text-field": text,
+        "text-font": font,
         "text-size": DARK_BASEMAP_KNOWN_PLACE_TEXT_SIZE,
         "text-offset": [...GIS_NOVA_TEXT_OFFSET_EM],
         "text-anchor": "center",
@@ -312,14 +338,17 @@ function applyGisNovaPlaceLabelVisibility(map, hidden) {
  * During the nova narrative the red settlement-name label is already on, so hide
  * the white GIS-only Nova basemap label.
  */
-export function ensureGisSettlementPlaceLabels(map) {
-  installGisSettlementLabels(map, { font: [...DARK_BASEMAP_PLACE_TEXT_FONT], size: DARK_BASEMAP_KNOWN_PLACE_TEXT_SIZE, color: DARK_BASEMAP_TEXT_COLOR });
+export function ensureGisSettlementPlaceLabels(map, language = 'he') {
+  installGisSettlementLabels(map, { language, font: [...DARK_BASEMAP_PLACE_TEXT_FONT], size: DARK_BASEMAP_KNOWN_PLACE_TEXT_SIZE, color: DARK_BASEMAP_TEXT_COLOR });
 }
 
 export function raiseDarkBasemapPlaceLabels(map, options = {}) {
   if (!map) return;
-  ensureGisSettlementPlaceLabels(map);
-  ensureGisNovaPlaceLabel(map);
+  const language = options.language || gisPlaceLanguages.get(map) || 'he';
+  gisPlaceLanguages.set(map, language);
+  updateBasemapLanguage(map, language);
+  ensureGisSettlementPlaceLabels(map, language);
+  ensureGisNovaPlaceLabel(map, language);
   const hidden = hideGisNovaBasemapLabel(options, map);
   novaBasemapLabelHidden.set(map, hidden);
   applyGisNovaPlaceLabelVisibility(map, hidden);

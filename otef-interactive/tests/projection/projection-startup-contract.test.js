@@ -26,7 +26,7 @@ test("font readiness is awaited for names placement, after calibrated preview ge
   const preview = source.slice(source.indexOf("const rebuildPreviewNames"), source.indexOf("const startPreviewNames"));
   expect(preview.indexOf("await projectionFontReady")).toBeGreaterThanOrEqual(0);
   expect(preview.indexOf("await projectionFontReady")).toBeLessThan(preview.indexOf("prepareProjectionNameWall"));
-  const geometry = source.slice(source.indexOf("applyPreviewProjectionConfig = async"), source.indexOf("if (previewMode) registerDisposer(installProjectionPreviewBridge"));
+  const geometry = source.slice(source.indexOf("const applyPreviewConfig = async"), source.indexOf("if (previewMode) { previewBridge"));
   expect(geometry.indexOf("drawAfterMapRender(map, () => browserSurface.draw()")).toBeGreaterThanOrEqual(0);
   expect(geometry.indexOf("if (!drawn) throw new Error('Projection preview draw failed')")).toBeGreaterThanOrEqual(0);
   expect(geometry.indexOf("browserStartupGate?.ready()")).toBeGreaterThanOrEqual(0);

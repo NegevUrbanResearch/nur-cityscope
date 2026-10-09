@@ -15,6 +15,30 @@ const cards = [
 ];
 const disposers = [];
 
+test.each(['saved', 'draft', 'cancel', 'end'])('language metadata refreshes Nova preview without layout writes for %s', async situation => {
+  vi.useFakeTimers();
+  const handlers = new Map();
+  const socket = { on: (name, callback) => handlers.set(name, callback), off: name => handlers.delete(name) };
+  const rig = await editorFixture(savedMaps, { socket }); rig.rendered(); rig.select('104');
+  if (situation === 'draft') rig.setAxis('leftPct', '30');
+  if (situation === 'cancel' || situation === 'end') rig.card('104').dispatch('pointerdown', { pointerId: 4, clientX: 120, clientY: 90 });
+  const before = rig.frame().contentWindow.sent.length;
+  handlers.get('otef_legend_settings_changed')({ table: 'otef', changeKind: 'metadata', legendSettingsPatch: { language: 'en' } });
+  expect(rig.writeClockSlot).not.toHaveBeenCalled();
+  if (situation === 'cancel' || situation === 'end') {
+    expect(rig.frame().contentWindow.sent).toHaveLength(before);
+    rig.docDispatch(situation === 'cancel' ? 'pointercancel' : 'pointerup', { pointerId: 4, clientX: 120, clientY: 90 });
+  }
+  const state = rig.frame().contentWindow.sent.at(-1).message;
+  expect(state.language).toBe('en');
+  expect(state.novaExplainerLayout.close['104']?.leftPct).toBe(situation === 'draft' ? 30 : situation === 'end' ? 12 : undefined);
+  rig.rendered(cards.map(card => ({ ...card, name: 'English caption' })));
+  const names = rig.find(node => node.className === 'nova-explainer-names');
+  expect(names.value).toBe('104');
+  expect(names.children[0].textContent).toContain('English caption');
+  if (situation === 'saved' || situation === 'cancel') expect(rig.writeClockSlot).not.toHaveBeenCalled();
+});
+
 function documentHarness() {
   const winListeners = new Map();
   const docListeners = new Map();
@@ -657,7 +681,7 @@ async function editorFixture(maps = savedMaps, clientOverrides = {}, editorOverr
       const state = frame().contentWindow.sent.at(-1).message;
       message({
         type: "otef_clock_preview_rendered", requestId: state.requestId, surface: "gis", sceneId: "nova", output: null,
-        mesh: null, meshIdentity: null, pageIndex: 0, pageCount: 1, novaExplainerCamera: camera, novaExplainerCards: nextCards,
+        mesh: null, meshIdentity: null, pageIndex: 0, pageCount: 1, language: state.language, novaExplainerCamera: camera, novaExplainerCards: nextCards,
       });
     },
   };

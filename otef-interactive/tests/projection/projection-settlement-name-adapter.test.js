@@ -1,6 +1,21 @@
 import { expect, test } from "vitest";
 import { createProjectionSettlementNameAdapter } from "../../frontend/src/projection/projection-settlement-name-adapter.js";
 
+test('English settlement names preserve saved geometry through repaint', async () => {
+  const document = fakeCanvasDocument();
+  const adapter = createProjectionSettlementNameAdapter({ document, output: 'left' });
+  const settings = initializedSettingsFixture(), original = structuredClone(settings);
+  const catalog = { entries: [{ citycode: '0067', text: 'אור הנר', names: { he: 'אור הנר', en: 'Or HaNer' }, lng: 34.4, lat: 31.3 }] };
+  await adapter.prepare({ catalog, settings, language: 'en' }); adapter.commit();
+  expect(adapter.getLabels()[0]).toMatchObject({ text: 'Or HaNer', x: 500, y: 340, rotateDeg: 35 });
+  adapter.applyScaledOpacity(0.5);
+  expect(adapter.getLabels()[0].text).toBe('Or HaNer');
+  const previousImages = document.images.length;
+  adapter.applyScaledOpacity(['case', ['==', ['get', 'cityname'], 'אור הנר'], 1, 0.08]);
+  expect(document.images.slice(previousImages).some(image => image.opacity < 1)).toBe(false);
+  expect(settings).toEqual(original);
+});
+
 test('draws a chosen two-line projection name centered as one rotated label', async () => {
   const document = fakeCanvasDocument();
   const adapter = createProjectionSettlementNameAdapter({ document, output: 'left' });

@@ -42,7 +42,8 @@ test('focus only changes settlement names and outlines and restores their origin
     getPaintProperty: (id, property) => paints.get(`${id}:${property}`),
     setPaintProperty: (id, property, value) => { paints.set(`${id}:${property}`, value); writes.push([id, property, value]); },
   };
-  const presentation = createNliNameFocusPresentation({ map, field });
+  const englishField = { ...field, groupGeojson: { features: [{ properties: { group_id: 'group-1', name: 'Place', source_name: 'מקום' } }] } };
+  const presentation = createNliNameFocusPresentation({ map, field: englishField });
   presentation.update({ selectedPid: 'person-1' });
   expect(paints.get('projector_base__שמות_יישובים__labels:text-opacity')).toEqual(
     ['case', ['==', ['get', 'cityname'], 'מקום'], 1, 0.08]);

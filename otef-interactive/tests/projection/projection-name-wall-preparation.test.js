@@ -144,6 +144,20 @@ afterEach(() => {
   disposeProjectionNameWallPreparation();
 });
 
+test('a language switch reuses raw inputs but computes canonical English placements and font identity', async () => {
+  globalThis.document = canvasDocument(); installFetch();
+  const config = wallConfig(35);
+  const he = await prepareProjectionNameWall({ config, meshes, datasetVersion: 'people-slice', language: 'he' });
+  const fetches = globalThis.fetch.mock.calls.length;
+  const en = await prepareProjectionNameWall({ config, meshes, datasetVersion: 'people-slice', language: 'en' });
+  expect(en.language).toBe('en');
+  expect(en.textStyle).toMatchObject({ fontFamily: 'Arial', direction: 'ltr' });
+  expect(en.placements.map(p => p.name).sort()).toEqual(features.map(f => f.properties.name).sort());
+  expect(new Set(en.placements.map(p => p.id))).toEqual(new Set(he.placements.map(p => p.id)));
+  expect(en.digest).not.toBe(he.digest);
+  expect(globalThis.fetch.mock.calls.length).toBe(fetches);
+});
+
 test('config rotation recomputes coverage and repacks through projection preparation', async () => {
   const document = canvasDocument();
   globalThis.document = document;

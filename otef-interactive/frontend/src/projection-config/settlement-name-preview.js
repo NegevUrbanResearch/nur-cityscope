@@ -74,6 +74,7 @@ export function mountSettlementNamePreview({ container, output, sessionId = crea
       output: activeOutput,
       settings: structuredClone(state.settings),
       selectedCitycode: state.selectedCitycode,
+      language: state.language,
     }, win.location.origin);
     armTimeout("Settlement preview render timed out");
   }
@@ -117,6 +118,7 @@ export function mountSettlementNamePreview({ container, output, sessionId = crea
       return;
     }
     if (message.type !== "otef_settlement_preview_rendered" || message.requestId !== latestRequest || !state) return;
+    if ((message.language || 'he') !== state.language) return;
     if (!validRendered(message, activeOutput)) return;
     let mesh = null;
     try {
@@ -136,10 +138,11 @@ export function mountSettlementNamePreview({ container, output, sessionId = crea
   return {
     setState(next) {
       const checked = validateSettlementNameSettings(next?.settings);
-      if (checked.errors.length || (next.selectedCitycode != null && typeof next.selectedCitycode !== "string")) {
+      if (checked.errors.length || (next.selectedCitycode != null && typeof next.selectedCitycode !== "string")
+        || (next.language != null && !['he', 'en'].includes(next.language))) {
         throw new TypeError("Invalid settlement preview state");
       }
-      state = { settings: checked.value, selectedCitycode: next.selectedCitycode || null };
+      state = { settings: checked.value, selectedCitycode: next.selectedCitycode || null, language: next.language || 'he' };
       sendState();
     },
     reload({ output: nextOutput } = {}) {

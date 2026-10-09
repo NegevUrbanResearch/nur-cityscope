@@ -12,6 +12,7 @@ describe("NLI narrative registry", () => {
     expect(NLI_NARRATIVES.segev).toEqual({
       id: "segev",
       label: "בית משפחת שגב",
+      labelEn: 'Segev family home',
       center: [34.48647925700004, 31.422958191000077],
       zoom: 18,
       idleClockMinutes: 401,
@@ -22,6 +23,7 @@ describe("NLI narrative registry", () => {
     expect(NLI_NARRATIVES.nova).toEqual({
       id: "nova",
       label: "נובה",
+      labelEn: 'Nova',
       center: [34.46975, 31.39851],
       zoom: 15,
       beat4Zoom: 13.2,
@@ -36,6 +38,7 @@ describe("NLI narrative registry", () => {
     expect(NLI_NARRATIVES.sderot).toEqual({
       id: "sderot",
       label: "תחנת המשטרה",
+      labelEn: 'Sderot police station',
       center: [34.59744, 31.529518],
       zoom: 15,
       marker: [34.59205662207849, 31.52320675782405],
@@ -46,6 +49,7 @@ describe("NLI narrative registry", () => {
     expect(NLI_NARRATIVES.hostages).toEqual({
       id: "hostages",
       label: "בית משפחת פרי",
+      labelEn: 'Peri family home',
       center: [34.40244, 31.312639],
       zoom: 15,
       marker: [34.40026099200003, 31.31130147400006],

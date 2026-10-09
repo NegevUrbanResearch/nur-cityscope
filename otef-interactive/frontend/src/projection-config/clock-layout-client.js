@@ -53,6 +53,13 @@ export function createClockLayoutClient({ getSnapshot, writeClockSlot, writeLege
   let hydrationAbortController = null;
   let connectedOnce = false;
   let hydration = { status: "Loading", error: null };
+  let legendLanguage = 'he', languageEpoch = 0;
+
+  function acceptLanguage(language) {
+    if (!['he', 'en'].includes(language) || legendLanguage === language) return;
+    legendLanguage = language;
+    emit();
+  }
 
   function emit() {
     if (destroyed) return;
@@ -92,8 +99,9 @@ export function createClockLayoutClient({ getSnapshot, writeClockSlot, writeLege
     const domain = domains[domainName];
     if (domain.refreshing || destroyed || typeof getSnapshot !== "function") return;
     domain.refreshing = true;
+    const capturedLanguageEpoch = languageEpoch;
     Promise.resolve().then(() => getSnapshot({ forceFresh: true })).then((snapshot) => {
-      if (!destroyed) acceptSnapshot(snapshot, { authoritative: true });
+      if (!destroyed) acceptSnapshot(snapshot, { authoritative: true, languageEpoch: capturedLanguageEpoch });
     }).catch((error) => {
       if (!destroyed) getLogger().warn("[ClockLayoutClient] Failed to refresh layout revision:", error);
     }).finally(() => {
@@ -179,6 +187,7 @@ export function createClockLayoutClient({ getSnapshot, writeClockSlot, writeLege
 
   function acceptSnapshot(snapshot, options = {}) {
     if (!snapshot || typeof snapshot !== "object") return;
+    if (options.languageEpoch === undefined || options.languageEpoch === languageEpoch) acceptLanguage(snapshot.legend_settings?.language);
     if (snapshot.nli_clock_layout && Number.isInteger(snapshot.nli_clock_layout_revision)) {
       acceptDomainSnapshot("clock", snapshot.nli_clock_layout, snapshot.nli_clock_layout_revision, options);
     }
@@ -196,6 +205,9 @@ export function createClockLayoutClient({ getSnapshot, writeClockSlot, writeLege
 
   function applyLegendEvent(message = {}) {
     if (message.table != null && message.table !== tableName) return;
+    if (message.changeKind === 'metadata' && ['he', 'en'].includes(message.legendSettingsPatch?.language)) {
+      languageEpoch++; acceptLanguage(message.legendSettingsPatch.language);
+    }
     if (message.changeKind === "layout" && message.legendProjection && Number.isInteger(message.legendLayoutRevision)) {
       acceptDomainSnapshot("legend", message.legendProjection, message.legendLayoutRevision);
     }
@@ -217,6 +229,7 @@ export function createClockLayoutClient({ getSnapshot, writeClockSlot, writeLege
 
   async function hydrate(options = {}) {
     if (destroyed) return false;
+    const capturedLanguageEpoch = languageEpoch;
     const generation = ++hydrationGeneration;
     hydrationAbortController?.abort();
     const requestController = new AbortController();
@@ -232,7 +245,7 @@ export function createClockLayoutClient({ getSnapshot, writeClockSlot, writeLege
       hydration = { status: "Failed", error: error?.message || "Layout settings unavailable" }; emit(); throw error;
     }
     if (destroyed || generation !== hydrationGeneration) return false;
-    acceptSnapshot(snapshot, { authoritative: options.forceFresh === true });
+    acceptSnapshot(snapshot, { authoritative: options.forceFresh === true, languageEpoch: capturedLanguageEpoch });
     for (const [surface, layout] of Object.entries(domains.clock.snapshot || {})) {
       if (!["gis", "projection"].includes(surface) || !layout || typeof layout !== "object") continue;
       for (const [slot, value] of Object.entries(layout)) {
@@ -398,12 +411,13 @@ export function createClockLayoutClient({ getSnapshot, writeClockSlot, writeLege
     const record = ensureRecord(resource, details.slot, slotLayout(details.domain, resource, details.slot));
     if (record.draft === null) return Promise.resolve({ status: "Saved" });
     const captured = { generation: record.generation, draft: clone(record.draft), acknowledged: clone(record.acknowledged) };
+    const capturedLanguageEpoch = languageEpoch;
     const snapshot = await getSnapshot({ forceFresh: true });
     if (destroyed || record.generation !== captured.generation || !same(record.draft, captured.draft)) return { status: "superseded" };
     requireCompleteSnapshot(snapshot);
     // Only a change to this target defeats the user's Retry decision.
     if (!same(record.acknowledged, captured.acknowledged)) throw conflictError();
-    acceptSnapshot(snapshot, { authoritative: true });
+    acceptSnapshot(snapshot, { authoritative: true, languageEpoch: capturedLanguageEpoch });
     if (record.generation !== captured.generation || !same(record.draft, captured.draft)) return { status: "superseded" };
     record.status = "Saving";
     record.conflict = null;
@@ -453,6 +467,6 @@ export function createClockLayoutClient({ getSnapshot, writeClockSlot, writeLege
     pendingEvents.clear();
   }
 
-  return { hydrate, getHydrationState: () => ({ ...hydration }), getSlot, subscribe, commit, retry, loadSaved, destroy,
+  return { hydrate, getLegendLanguage: () => legendLanguage, getHydrationState: () => ({ ...hydration }), getSlot, subscribe, commit, retry, loadSaved, destroy,
     hasUnsavedWork: () => [...records.values()].some((record) => record.draft !== null || record.status !== "Saved") };
 }

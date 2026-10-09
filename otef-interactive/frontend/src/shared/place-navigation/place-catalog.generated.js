@@ -171,13 +171,18 @@ const catalog = {
         "featureId": "0342"
       },
       "name": {
-        "he": "גברעם"
+        "he": "גברעם",
+        "en": "Gevaram"
       },
       "aliases": {
         "he": [
           "גברעם"
         ],
-        "en": []
+        "en": [
+          "Gevaram",
+          "Gvaram",
+          "Gvar'am"
+        ]
       },
       "priority": 10,
       "selectable": true,
@@ -366,13 +371,16 @@ const catalog = {
         "featureId": "0415"
       },
       "name": {
-        "he": "שוקדה"
+        "he": "שוקדה",
+        "en": "Shokeda"
       },
       "aliases": {
         "he": [
           "שוקדה"
         ],
-        "en": []
+        "en": [
+          "Shokeda"
+        ]
       },
       "priority": 10,
       "selectable": true,
@@ -1187,13 +1195,16 @@ const catalog = {
         "featureId": "1095"
       },
       "name": {
-        "he": "כפר מימון"
+        "he": "כפר מימון",
+        "en": "Kfar Maimon"
       },
       "aliases": {
         "he": [
           "כפר מימון"
         ],
-        "en": []
+        "en": [
+          "Kfar Maimon"
+        ]
       },
       "priority": 10,
       "selectable": true,
@@ -1340,13 +1351,17 @@ const catalog = {
         "featureId": "1237"
       },
       "name": {
-        "he": "תלמי יוסף"
+        "he": "תלמי יוסף",
+        "en": "Talmei Yosef"
       },
       "aliases": {
         "he": [
           "תלמי יוסף"
         ],
-        "en": []
+        "en": [
+          "Talmei Yosef",
+          "Talmei Yossef"
+        ]
       },
       "priority": 10,
       "selectable": true,
@@ -1454,13 +1469,18 @@ const catalog = {
         "featureId": "1240"
       },
       "name": {
-        "he": "עין הבשור"
+        "he": "עין הבשור",
+        "en": "Ein HaBesor"
       },
       "aliases": {
         "he": [
           "עין הבשור"
         ],
-        "en": []
+        "en": [
+          "Ein HaBesor",
+          "Ein Ha Besor",
+          "Ein Habsor"
+        ]
       },
       "priority": 10,
       "selectable": true,

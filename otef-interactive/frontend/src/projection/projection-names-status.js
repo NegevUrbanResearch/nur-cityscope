@@ -64,6 +64,7 @@ export function createProjectionNamesStatusTracker() {
     activeInstances.set(message.output, message.instanceId);
     outputs.set(message.output, { ...message, installed: message.installed && { ...message.installed } });
     if (message.requestId === requestId && ['current', 'stale', 'failed'].includes(message.state)) pendingOutputs.delete(message.output);
+    if (requestId !== null && pendingOutputs.size === 0) requestId = null;
     return true;
   }
 

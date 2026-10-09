@@ -1244,16 +1244,17 @@ async function bootstrapProjectionRuntime() {
           throw Object.assign(new Error('Preview superseded'), { name: 'AbortError' });
       };
       const rebuildPreviewNames = async (config, signal, generation) => {
+        const language = readNameLanguage();
         await previewNamesPromise?.catch(() => {});
         throwIfPreviewAborted(signal, generation, () => previewNamesSequence);
-        await projectionFontReady;
+        if (language === 'he') await projectionFontReady;
         throwIfPreviewAborted(signal, generation, () => previewNamesSequence);
         const identity = JSON.stringify(config);
         if (JSON.stringify(browserSurface.getConfig()) !== identity) throw new Error('Run names requires the preview to match the applied calibration');
         const pair = await browserSurface.preparePair(config, signal);
         throwIfPreviewAborted(signal, generation, () => previewNamesSequence);
         const field = await prepareProjectionNameWall({ config, meshes: pair.meshes,
-          datasetVersion: acceptedDatasetVersion || undefined, signal });
+          datasetVersion: acceptedDatasetVersion || undefined, signal, language });
         throwIfPreviewAborted(signal, generation, () => previewNamesSequence);
         return commitProjectionPreviewNamesCandidate({
           prepare: () => nameFieldController.prepareProjectionCandidate({ generation, identity, config, field, signal }),
@@ -1290,11 +1291,26 @@ async function bootstrapProjectionRuntime() {
         });
       };
       registerDisposer(() => { void cancelPreviewNames(); });
-      applyPreviewProjectionConfig = async (config, { signal, requestSignal = signal, runNames = false } = {}) => {
+      let previewGeometryJobs = 0, previewLanguagePending = false, observedPreviewLanguage = readNameLanguage();
+      const refreshPreviewLanguage = () => {
+        if (!projectionMapAlive || !isRuntimeAlive()) return;
+        if (!previewGeometryAccepted || previewGeometryJobs) { previewLanguagePending = true; return; }
+        previewLanguagePending = false;
+        void startPreviewNames(browserSurface.getConfig(), new AbortController().signal).catch(error => {
+          if (error?.name !== 'AbortError') { nameFieldController.hideObsoleteLanguage(readNameLanguage()); browserSurface.requestDraw?.(); }
+        });
+      };
+      registerDisposer(OTEFDataContext.subscribe('legendSettings', () => {
+        const language = readNameLanguage();
+        if (language !== observedPreviewLanguage) { observedPreviewLanguage = language; refreshPreviewLanguage(); }
+      }));
+      const applyPreviewConfig = async (config, { signal, requestSignal = signal, runNames = false } = {}) => {
         if (runNames) {
           if (!previewGeometryAccepted) throw new Error('Preview calibration is not ready');
           return startPreviewNames(config, signal);
         }
+        const installedLanguage = nameFieldController.getInstalledNameLanguage();
+        if (previewNamesInitializationStarted && installedLanguage !== readNameLanguage()) previewLanguagePending = true;
         await cancelPreviewNames();
         const generation = ++previewApplySequence;
         const checkCurrent = () => throwIfPreviewAborted(signal, generation, () => previewApplySequence);
@@ -1345,6 +1361,15 @@ async function bootstrapProjectionRuntime() {
         }
         return { committed: true };
       };
+      applyPreviewProjectionConfig = async (config, options = {}) => {
+        const geometry = options.runNames !== true;
+        if (geometry) previewGeometryJobs++;
+        try { return await applyPreviewConfig(config, options); }
+        finally {
+          if (geometry) previewGeometryJobs--;
+          if (previewLanguagePending && !previewGeometryJobs) refreshPreviewLanguage();
+        }
+      };
     }
 
     if (previewMode) { previewBridge = installProjectionPreviewBridge({
@@ -1359,13 +1384,15 @@ async function bootstrapProjectionRuntime() {
       onGeometryState: refreshMatchSourceFrame,
       setCalibrationView: (enabled, options) => map._otefSetPreviewCalibrationView?.(enabled, options),
       validateWall: browserMode ? async (config, { revision, signal }) => {
+        const language = readNameLanguage();
         const prepared = await browserSurface.preparePair(config);
         if (signal?.aborted) throw new Error('Wall preview superseded');
-        await projectionFontReady;
+        if (language === 'he') await projectionFontReady;
         if (signal?.aborted) throw new Error('Wall preview superseded');
         const field = await prepareProjectionNameWall({ config, meshes: prepared.meshes,
-          datasetVersion: acceptedDatasetVersion || undefined, signal });
-        const result = projectionCandidateResult(config, field, JSON.stringify(config));
+          datasetVersion: acceptedDatasetVersion || undefined, signal, language });
+        if (language !== readNameLanguage()) throw new Error('Name language changed during validation');
+        const result = projectionCandidateResult(config, field, JSON.stringify(config), field.datasetVersion, language);
         if (!result.valid) return { reason: result.reason, diagnostics: result.diagnostics };
         return { ...result.wall, heading: field.heading, diagnostics: result.diagnostics };
       } : null,
@@ -1404,25 +1431,28 @@ async function bootstrapProjectionRuntime() {
         prepareGeometry: (config, _revision, signal) => browserSurface.preparePair(config, signal),
         rollbackGeometry: (pair) => browserSurface.rollbackPair(pair),
         finalizeGeometry: (pair) => browserSurface.finalizePair(pair),
-        prepareCandidate: async (config, revision, generation, signal) => {
+        prepareCandidate: async (config, revision, generation, signal, { language = readNameLanguage(), namesOnly = false } = {}) => {
           const surfacePair = await browserSurface.preparePair(config, signal);
           if (signal?.aborted) throw Object.assign(new Error('projection preparation cancelled'), { name: 'AbortError' });
-          await projectionFontReady;
+          if (language === 'he') await projectionFontReady;
           if (signal?.aborted) throw Object.assign(new Error('projection preparation cancelled'), { name: 'AbortError' });
           const field = await prepareProjectionNameWall({ config, meshes: surfacePair.meshes,
-            datasetVersion: acceptedDatasetVersion || undefined, signal });
+            datasetVersion: acceptedDatasetVersion || undefined, signal, language });
           const wall = await nameFieldController.prepareProjectionCandidate({ generation,
             identity: JSON.stringify(config), config, field, revision, signal });
-          return { surfacePair, wall, generation };
+          return { surfacePair, wall, generation, namesOnly };
         },
         commitCandidate: (pair, config, revision) => {
-          browserSurface.commitPair(pair.surfacePair);
-          if (projectionConfigBridge.setEffectiveConfig(config, revision) === false) throw new Error('projection camera rejected calibration');
+          if (!pair.namesOnly) {
+            browserSurface.commitPair(pair.surfacePair);
+            if (projectionConfigBridge.setEffectiveConfig(config, revision) === false) throw new Error('projection camera rejected calibration');
+            projectionPattern?.setConfig?.(config);
+          }
           nameFieldController.commitProjectionCandidate(pair.generation);
-          projectionPattern?.setConfig?.(config);
         },
         rollbackCandidate: (pair, previousConfig, revision, { namesOnly = false } = {}) => {
           nameFieldController.rollbackProjectionCandidate(pair.generation);
+          if (pair.namesOnly) return;
           if (namesOnly) {
             browserSurface.finalizePair(pair.surfacePair);
             return;
@@ -1431,7 +1461,7 @@ async function bootstrapProjectionRuntime() {
           projectionConfigBridge.setEffectiveConfig(previousConfig, revision);
           projectionPattern?.setConfig?.(previousConfig);
         },
-        finalizeCandidate: (pair) => { nameFieldController.finalizeProjectionCandidate(pair.generation); browserSurface.finalizePair(pair.surfacePair); },
+        finalizeCandidate: (pair) => { nameFieldController.finalizeProjectionCandidate(pair.generation); if (!pair.namesOnly) browserSurface.finalizePair(pair.surfacePair); },
         drawCompletion: () => {
           const drawn = browserSurface?.draw?.() === true;
           if (drawn) browserStartupGate?.ready();
@@ -1439,12 +1469,16 @@ async function bootstrapProjectionRuntime() {
         },
         getDatasetVersion: () => acceptedDatasetVersion,
         getDatasetIdentityError: () => acceptedDatasetIdentityError,
+        getNameLanguage: readNameLanguage,
+        hasPreparedNames: () => nameFieldController.getInstalledNameLanguage() === readNameLanguage(),
+        onNameLanguageFailure: language => { nameFieldController.hideObsoleteLanguage(language); browserSurface.requestDraw?.(); },
         route: "browser",
         ...matchLaunch,
         baseline: (config) => browserSurface?.getBaselineIdentity?.(config) || null,
       });
       registerDisposer(() => { projectionRuntime?.stop?.(); projectionRuntime = null; });
       await projectionRuntime.start();
+      registerDisposer(OTEFDataContext.subscribe('legendSettings', () => projectionRuntime?.nameLanguageChanged?.()));
       const matchCursor = bindProjectionMatchCursor({ document, host: displayContainer, output: projectionSpanId,
         instanceId: sourceId, socket: OTEFDataContext._wsClient, runtime: projectionRuntime, launch: matchLaunch,
         // Task 2 installs the evaluated source-frame reader; never infer readiness from a server snapshot.

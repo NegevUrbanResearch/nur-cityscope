@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_PROJECTION_CONFIG } from '../../frontend/src/shared/projection-config-schema.js';
 import { createFullFrameProjectionMesh } from '../../frontend/src/shared/projection-warp-geometry.js';
 
@@ -6,6 +6,7 @@ const { runNameFieldWorker } = vi.hoisted(() => ({
   runNameFieldWorker: vi.fn((payload) => Promise.resolve({ geometry: payload.geometry })),
 }));
 vi.mock('../../frontend/src/shared/nli-name-field-worker-client.js', () => ({ runNameFieldWorker }));
+afterAll(() => vi.doUnmock('../../frontend/src/shared/nli-name-field-worker-client.js'));
 
 const model = {
   west: 34.1,
@@ -28,7 +29,7 @@ function installLoaderGlobals() {
   }));
   globalThis.proj4 = vi.fn((_from, _to, point) => point);
   globalThis.document = {
-    fonts: { load: vi.fn(() => Promise.resolve()) },
+    fonts: { load: vi.fn(() => Promise.resolve([{ family: 'Guttman Hatzvi', status: 'loaded' }])) },
     createElement: vi.fn(() => ({ getContext: () => ctx })),
   };
   globalThis.localStorage = { getItem: vi.fn(() => null) };

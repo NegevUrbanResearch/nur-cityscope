@@ -6,12 +6,15 @@ import {
   polygonAnchorLngLat,
 } from "../shared/nli-nova-explainer-layout.js";
 import { NLI_NOVA_STORY } from "../shared/nli-nova-story.js";
+import { novaExplainerName } from "../shared/nli-nova-explainer-copy.js";
+import { nameTextStyle } from "../shared/nli-name-language.js";
 
 const STORY_IDS = new Set(NOVA_EXPLAINER_OBJECT_IDS);
 const SVG_NS = "http://www.w3.org/2000/svg";
 const CARD_GAP_PX = 14;
 const MAX_CARD_WIDTH_PX = 280;
 const CANVAS_INSET_PX = 8;
+const ENGLISH_FONT_STACK = nameTextStyle('en').canvasFontStack;
 
 function canonicalObjectId(value) {
   if (typeof value === "number" && Number.isInteger(value) && value > 0) return value;
@@ -20,18 +23,6 @@ function canonicalObjectId(value) {
     return Number.isSafeInteger(number) ? number : null;
   }
   return null;
-}
-
-const EITAN_MOR_DISPLAY_NAME = "חטיפת איתן מור, רום ברסלבסקי ומורן סטלה ינאי";
-const EITAN_MOR_NAME_SUFFIX = " (זמן משוער - ייתכן שנחטפו בזמנים שונים לאורך הצהריים)";
-
-function literalName(value) {
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  if (trimmed === `${EITAN_MOR_DISPLAY_NAME}${EITAN_MOR_NAME_SUFFIX}`) return EITAN_MOR_DISPLAY_NAME;
-  if (/^מוקד לחימה \d+ -/.test(trimmed)) return trimmed.replace(/^מוקד לחימה \d+ -/, "מוקד לחימה -");
-  return value;
 }
 
 function currentBeatObjectIds(frame) {
@@ -113,11 +104,13 @@ export function createNovaExplainerOverlay({
   getEscapeOverlay,
   motionMode,
   cameraOverride,
+  getLanguage,
 } = {}) {
   const cards = new Map();
   const leaderGroups = new Map();
   const measured = new Map();
   let lastFrame = null;
+  let lastModels = [], lastLanguage = 'he';
   let escapeScene = false;
   let disposed = false;
   let sceneDeparting = false, cancelSceneHidden = null;
@@ -166,7 +159,7 @@ export function createNovaExplainerOverlay({
     });
   }
 
-  function visibleModels(frame) {
+  function visibleModels(frame, language) {
     if (typeof getNarrativeId === "function" && getNarrativeId() !== "nova") return [];
     if (!frame || frame.phase === "idle") return [];
     const achieved = Array.isArray(frame.achievedPolygonObjectIds) ? frame.achievedPolygonObjectIds : [];
@@ -190,13 +183,13 @@ export function createNovaExplainerOverlay({
       seen.add(id);
       const feature = byId.get(id);
       if (!feature) continue;
-      const name = literalName(feature.properties?.Name);
+      const name = novaExplainerName(feature.properties, language);
       if (!name) continue;
       const anchor = projectAnchor(feature);
       const saved = savedMaps[camera]?.[String(id)] || null;
       const onCanvas = anchor ? anchorOnCanvas(anchor, width, height) : false;
       if (!saved && !onCanvas) continue;
-      models.push({ id, name, anchor, saved, width, height, past: currentIds.size > 0 && !currentIds.has(id) });
+      models.push({ id, name, language, properties: feature.properties, anchor, saved, width, height, past: currentIds.size > 0 && !currentIds.has(id) });
     }
     return models;
   }
@@ -221,6 +214,10 @@ export function createNovaExplainerOverlay({
       cards.set(model.id, card);
     }
     const nameEl = card.querySelector(".nli-nova-explainer-card__name");
+    setAttr(card, 'lang', model.language);
+    setAttr(card, 'dir', model.language === 'en' ? 'ltr' : 'auto');
+    const font = model.language === 'en' ? ENGLISH_FONT_STACK : '';
+    if (nameEl.style.fontFamily !== font) nameEl.style.fontFamily = font;
     if (nameEl.textContent !== model.name) nameEl.textContent = model.name;
     card.classList.toggle("nli-nova-explainer-card--past", model.past === true);
     const maxWidthPx = `${maxWidth}px`;
@@ -229,7 +226,7 @@ export function createNovaExplainerOverlay({
   }
 
   function measureCard(card, model, maxWidth, usedKeys) {
-    const key = `${model.id}\n${model.name}\n${maxWidth}\n${model.width}\n${model.height}`;
+    const key = `${model.id}\n${model.language}\n${model.name}\n${maxWidth}\n${model.width}\n${model.height}`;
     usedKeys.add(key);
     const cached = measured.get(key);
     if (cached) return cached;
@@ -302,16 +299,20 @@ export function createNovaExplainerOverlay({
   }
 
   function paint() {
-    if (disposed || sceneDeparting) return;
+    if (disposed) return;
+    const language = getLanguage?.() === 'en' ? 'en' : 'he';
+    if (sceneDeparting && language === lastLanguage) return;
     const escape = typeof getEscapeOverlay === "function" ? getEscapeOverlay() : null;
-    if (["individual", "overlap", "mor", "settled"].some((flag) => escape?.[flag] === true)) {
+    if (!sceneDeparting && ["individual", "overlap", "mor", "settled"].some((flag) => escape?.[flag] === true)) {
       escapeScene = true;
-    } else if (lastFrame?.phase !== "ended" || getNarrativeId?.() !== "nova") {
+    } else if (!sceneDeparting && (lastFrame?.phase !== "ended" || getNarrativeId?.() !== "nova")) {
       escapeScene = false;
     }
     host.classList.toggle("nli-nova-explainers--hidden", escapeScene);
     setAttr(host, "aria-hidden", String(escapeScene));
-    const models = visibleModels(lastFrame);
+    const models = sceneDeparting ? lastModels.map(model => ({ ...model, language,
+      name: novaExplainerName(model.properties, language) })).filter(model => model.name) : visibleModels(lastFrame, language);
+    lastModels = models; lastLanguage = language;
     const nextIds = new Set(models.map((model) => model.id));
     for (const [id, card] of cards) {
       if (nextIds.has(id)) continue;

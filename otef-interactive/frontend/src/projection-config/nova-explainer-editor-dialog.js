@@ -51,6 +51,8 @@ export function openNovaExplainerEditor({ layoutClient, document = globalThis.do
   let beforeUnloadAttached = false;
   let localLayout = readDocument();
   let previewSerial = 0;
+  const readLanguage = () => layoutClient.getLegendLanguage?.() === 'en' ? 'en' : 'he';
+  let observedLanguage = readLanguage(), languageRefreshPending = false;
   const beforeUnload = (event) => {
     if (unsaved()) { event.preventDefault?.(); event.returnValue = ""; }
   };
@@ -216,10 +218,12 @@ export function openNovaExplainerEditor({ layoutClient, document = globalThis.do
     referencePlane.style.transform = `translate(${(rect.width - 1920 * scale) / 2}px, ${(rect.height - 1080 * scale) / 2}px) scale(${scale})`;
   }
   function publish() {
+    languageRefreshPending = false;
     previewSerial += 1;
     if (!preview || !active) return;
     preview.setState({
       surface: "gis", sceneId: "nova", output: null, element: "novaExplainers", novaExplainerCamera: camera,
+      language: readLanguage(),
       novaExplainerLayout: normalizeNovaExplainerMaps(localLayout), clockLayout: clockRectangle(), legendLayout: null, pageIndex: 0,
     });
   }
@@ -348,6 +352,7 @@ export function openNovaExplainerEditor({ layoutClient, document = globalThis.do
     gesture = null;
     localLayout = startLayout;
     drawHandles();
+    if (active && languageRefreshPending) publish();
   }
   function handleRendered(result) {
     if (!active || gesture) return;
@@ -399,19 +404,23 @@ export function openNovaExplainerEditor({ layoutClient, document = globalThis.do
   win?.addEventListener?.("resize", onResize);
   win?.addEventListener?.("orientationchange", onResize);
   const unsubscribe = layoutClient.subscribe?.(() => {
-    if (!active || gesture) return;
+    if (!active) return;
+    const language = readLanguage(), languageChanged = language !== observedLanguage;
+    observedLanguage = language;
+    if (gesture) { languageRefreshPending ||= languageChanged; return; }
     const record = layoutClient.getSlot?.("gisNovaExplainers", "novaExplainers");
     const keepDraft = Boolean(record?.draft) || (record?.status && record.status !== "Saved");
     if (keepDraft) {
       localLayout = readDocument();
       renderChrome();
+      if (languageChanged) publish();
       return;
     }
     const next = readDocument();
     const changed = JSON.stringify(next) !== JSON.stringify(localLayout);
     localLayout = next;
     renderChrome();
-    if (!changed) return;
+    if (!changed) { if (languageChanged) publish(); return; }
     seedFields();
     alignHandlesToDocument();
     publish();

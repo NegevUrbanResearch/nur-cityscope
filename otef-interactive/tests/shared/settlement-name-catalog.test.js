@@ -28,7 +28,8 @@ describe("settlement name catalog", () => {
     source.properties.otef_map_text_offset_em=[-0.5,1.25];
     const catalog=buildSettlementNameCatalog(collection([source]));
     expect(catalog.referenceOffsets.get('0067')).toEqual([-0.5,1.25]);
-    expect(Object.keys(catalog.entries[0])).toEqual(['citycode','text','lng','lat']);
+    expect(catalog.entries[0]).not.toHaveProperty('otef_map_text_offset_em');
+    expect(catalog.entries[0].names).toEqual({ he: 'label', en: 'Or HaNer' });
   });
   test("keeps feature order, leading zeroes, and point coordinates", () => {
     const catalog = buildSettlementNameCatalog(collection([
@@ -36,8 +37,8 @@ describe("settlement name catalog", () => {
       feature("0424", "מחוץ", 34.2, 31.2),
     ]));
     expect(catalog.entries).toEqual([
-      { citycode: "0067", text: "נירים", lng: 34.4, lat: 31.3 },
-      { citycode: "0424", text: "מחוץ", lng: 34.2, lat: 31.2 },
+      { citycode: "0067", text: "נירים", names: { he: 'נירים', en: 'Or HaNer' }, lng: 34.4, lat: 31.3 },
+      { citycode: "0424", text: "מחוץ", names: { he: 'מחוץ', en: 'Gevim' }, lng: 34.2, lat: 31.2 },
     ]);
     expect(catalog.byCode.get("0067").text).toBe("נירים");
   });

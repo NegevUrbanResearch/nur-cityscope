@@ -347,7 +347,8 @@ async function bootstrapMapRuntime() {
     const filterGisDisplayGroups = groups => filterGazaBorderVisibility(filterGroupsForGisMap(groups), OTEFDataContext.getGazaBorderVisible());
     const sceneSnapshot = () => sceneBinding?.getRenderSnapshot() || captureNliDisplaySnapshot(OTEFDataContext, filterGisDisplayGroups);
     const raiseGisPlaceLabels = () => raiseDarkBasemapPlaceLabels(map, {
-      narrativeId: OTEFDataContext.getNarrativeState?.()?.id ?? null,
+      language: OTEFDataContext.getLegendSettings?.()?.language || 'he',
+      narrativeId: sceneSnapshot().narrativeState?.id ?? null,
     });
     let positionLegend = () => {};
     const applyStoredGisClockLayout = () => {
@@ -488,10 +489,15 @@ async function bootstrapMapRuntime() {
     const personVisual = createGisPersonSelection({
       map,
       maplibregl,
+      language: OTEFDataContext.getLegendSettings?.()?.language || 'he',
       beginCameraTravel: viewportSync.beginCameraTravel,
       managedScene: true,
       onBubbleClick: (person) => archiveBridge.openSelected(person),
     });
+    registerDisposer(OTEFDataContext.subscribe('legendSettings', settings => {
+      personVisual.setLanguage(settings?.language || 'he'); raiseGisPlaceLabels();
+      novaExplainerOverlay.refresh();
+    }));
     const archiveWindow = createNliArchiveWindowController();
     novaEscapeCoordinator = createNovaEscapeCoordinator({
       map,

@@ -175,6 +175,8 @@ test("rejects a GIS explainer preview unless the scene, camera, and layout are v
   const { container } = harness();
   const preview = mountClockLayoutPreview({ container, surface: "gis", sessionId: "explainer-reject" });
   expect(() => preview.setState(gisExplainerState({ novaExplainerCamera: "near" }))).toThrow(TypeError);
+  expect(() => preview.setState(gisExplainerState({ language: 'fr' }))).toThrow(TypeError);
+  expect(() => preview.setState(gisExplainerState({ language: null }))).toThrow(TypeError);
   expect(() => preview.setState(gisExplainerState({ sceneId: "segev" }))).toThrow(TypeError);
   expect(() => preview.setState(gisExplainerState({ novaExplainerLayout: null }))).toThrow(TypeError);
   expect(() => preview.setState(gisExplainerState({ novaExplainerLayout: [] }))).toThrow(TypeError);
@@ -193,6 +195,7 @@ test("sanitizes Nova explainer layout and accepts only matching measured cards",
   const sent = [];
   frame.contentWindow = { postMessage: (message) => sent.push(message) };
   preview.setState(gisExplainerState({
+    language: 'en',
     novaExplainerCamera: "wide",
     novaExplainerLayout: {
       close: {
@@ -226,6 +229,8 @@ test("sanitizes Nova explainer layout and accepts only matching measured cards",
     novaExplainerCards: [{ objectId: 100, name: "Polygon Name", box: { leftPct: 12, topPct: 20, widthPct: 8, heightPct: 4 } }],
   };
   dispatch({ ...reply, novaExplainerCamera: "close" });
+  dispatch({ ...reply, language: 'he' });
+  dispatch(reply);
   dispatch({ ...reply, novaExplainerCards: [{ objectId: 100, name: "Polygon Name", box: { leftPct: NaN, topPct: 1, widthPct: 1, heightPct: 1 } }] });
   dispatch({ ...reply, novaExplainerCards: [{ objectId: "100", name: "Polygon Name", box: null }] });
   dispatch({ ...reply, novaExplainerCards: null });
@@ -235,7 +240,7 @@ test("sanitizes Nova explainer layout and accepts only matching measured cards",
   dispatch({ ...reply, requestId: 0 });
   dispatch({ ...reply, sessionId: "other-session" });
   expect(onRendered).not.toHaveBeenCalled();
-  dispatch(reply);
+  dispatch({ ...reply, language: 'en' });
   expect(onRendered).toHaveBeenCalledWith(expect.objectContaining({
     novaExplainerCamera: "wide",
     novaExplainerCards: reply.novaExplainerCards,

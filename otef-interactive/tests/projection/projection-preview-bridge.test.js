@@ -63,14 +63,15 @@ test('source notifications bind semantic changes to the current guarded render r
   dispose(); expect(unsub).toHaveBeenCalled(); notify();expect(parent.postMessage).toHaveBeenCalledTimes(count);
 });
 
-function createActualPreviewApplyHarness({ preparePair } = {}) {
+function createActualPreviewApplyHarness({ preparePair, initialLanguage = 'he' } = {}) {
   const source = readFileSync(new URL("../../frontend/src/entries/projection-main.js", import.meta.url), "utf8").replace(/\r\n/g, "\n");
-  const start = source.indexOf("applyPreviewProjectionConfig = async");
+  const start = source.indexOf("let previewGeometryJobs = 0");
   const end = source.indexOf("\n    }\n\n    if (previewMode) { previewBridge", start);
   if (start < 0 || end <= start) throw new Error("Could not locate actual projection preview apply route");
   const previous = structuredClone(DEFAULT_PROJECTION_CONFIG);
   let activePair = previous, cameraConfig = previous, namesConfig = previous;
   let rollbackCount = 0;
+  let language = 'he', installedLanguage = initialLanguage, legendListener, rejectNames, namesCalls = 0;
   const mapListeners = new Map();
   const drawSnapshots = [];
   const map = {
@@ -88,10 +89,18 @@ function createActualPreviewApplyHarness({ preparePair } = {}) {
     draw() { drawSnapshots.push({ pair: activePair, camera: cameraConfig, names: namesConfig }); return true; },
     finalizePair() {},
   };
-  const nameFieldController = { applyProjectionConfigGeometry(config) { namesConfig = config; return true; } };
+  const nameFieldController = { applyProjectionConfigGeometry(config) { namesConfig = config; return true; },
+    getInstalledNameLanguage: () => installedLanguage, hideObsoleteLanguage() {} };
   const dependencies = {
     browserSurface, map, nameFieldController, rollbackProjectionPreviewApply, drawAfterMapRender,
-    cancelPreviewNames: async () => {}, startPreviewNames: async () => {},
+    cancelPreviewNames: async () => { rejectNames?.(Object.assign(new Error('Canceled'), { name: 'AbortError' })); rejectNames = null; },
+    startPreviewNames: async () => {
+      if (language !== 'en') return;
+      if (++namesCalls === 1) await new Promise((_resolve, reject) => { rejectNames = reject; });
+      installedLanguage = language;
+    },
+    readNameLanguage: () => language,
+    OTEFDataContext: { subscribe: (_topic, listener) => { legendListener = listener; } }, registerDisposer() {},
     browserStartupGate: { ready() {} }, isRuntimeAlive: () => true,
     throwIfPreviewAborted(signal, generation, latest) {
       if (signal?.aborted || generation !== latest()) throw Object.assign(new Error("Preview superseded"), { name: "AbortError" });
@@ -99,7 +108,8 @@ function createActualPreviewApplyHarness({ preparePair } = {}) {
   };
   const apply = new Function("deps", `
     const { browserSurface, map, nameFieldController, rollbackProjectionPreviewApply, drawAfterMapRender,
-      cancelPreviewNames, startPreviewNames, browserStartupGate, isRuntimeAlive, throwIfPreviewAborted } = deps;
+      cancelPreviewNames, startPreviewNames, browserStartupGate, isRuntimeAlive, throwIfPreviewAborted,
+      readNameLanguage, OTEFDataContext, registerDisposer } = deps;
     let previewGeometryAccepted = true, previewNamesInitializationStarted = true;
     let previewApplySequence = 0, projectionMapAlive = true, applyPreviewProjectionConfig;
     ${source.slice(start, end)}
@@ -117,8 +127,20 @@ function createActualPreviewApplyHarness({ preparePair } = {}) {
   } });
   return { previous, map, mapListeners, browserSurface, nameFieldController, messages, drawSnapshots,
     get activePair() { return activePair; }, get cameraConfig() { return cameraConfig; }, get namesConfig() { return namesConfig; },
-    get rollbackCount() { return rollbackCount; }, send, dispose };
+    get rollbackCount() { return rollbackCount; }, get namesCalls() { return namesCalls; }, get installedLanguage() { return installedLanguage; },
+    setLanguage(next) { language = next; legendListener(); }, send, dispose };
 }
+
+test.each([[false, 'he'], [true, 'he'], [false, null], [true, null]])('actual preview recovers an interrupted language refresh after failed draft=%s with installed=%s', async (failed, initialLanguage) => {
+  const route = createActualPreviewApplyHarness({ initialLanguage, preparePair: failed ? () => Promise.reject(new Error('Bad draft')) : undefined });
+  route.setLanguage('en'); await flushMicrotasks();
+  expect(route.namesCalls).toBe(1);
+  route.send(1, structuredClone(DEFAULT_PROJECTION_CONFIG)); await flushMicrotasks();
+  route.map.emit('render'); await flushMicrotasks();
+  expect(route.namesCalls).toBe(2);
+  expect(route.installedLanguage).toBe('en');
+  route.dispose();
+});
 
 test("clock bridge validates parent, session, increasing requests and finite local layouts", async () => {
   expect(previewBridge.installProjectionClockPreviewBridge).toBeTypeOf("function");

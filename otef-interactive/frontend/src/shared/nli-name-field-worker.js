@@ -16,6 +16,7 @@ export async function computeNameFieldWorkerResult(data) {
   const field = buildNliNameField(data.collection, fieldGeometry, {
     fontSizes: [...widths.keys()],
     datasetVersion: data.datasetVersion,
+    language: data.language || 'he',
     measureText: (name, size) => widths.get(size).get(name),
   });
   return field;

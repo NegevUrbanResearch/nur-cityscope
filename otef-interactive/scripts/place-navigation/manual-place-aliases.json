@@ -27,6 +27,13 @@
       "name": { "en": "Ivim" }
     },
     {
+      "id": "yeshuv-0342",
+      "type": "yeshuv",
+      "citycode": "0342",
+      "name": { "en": "Gevaram" },
+      "aliases": { "en": ["Gvaram", "Gvar'am"] }
+    },
+    {
       "id": "yeshuv-0348",
       "type": "yeshuv",
       "citycode": "0348",
@@ -51,6 +58,12 @@
       "citycode": "0402",
       "name": { "en": "Nir Yitzhak" },
       "aliases": { "en": ["Nir Itzhak"] }
+    },
+    {
+      "id": "yeshuv-0415",
+      "type": "yeshuv",
+      "citycode": "0415",
+      "name": { "en": "Shokeda" }
     },
     {
       "id": "yeshuv-0419",
@@ -179,6 +192,12 @@
       "priority": 40
     },
     {
+      "id": "yeshuv-1095",
+      "type": "yeshuv",
+      "citycode": "1095",
+      "name": { "en": "Kfar Maimon" }
+    },
+    {
       "id": "yeshuv-1146",
       "type": "yeshuv",
       "citycode": "1146",
@@ -210,6 +229,13 @@
       "name": { "en": "Yevul" }
     },
     {
+      "id": "yeshuv-1237",
+      "type": "yeshuv",
+      "citycode": "1237",
+      "name": { "en": "Talmei Yosef" },
+      "aliases": { "en": ["Talmei Yossef"] }
+    },
+    {
       "id": "yeshuv-1238",
       "type": "yeshuv",
       "citycode": "1238",
@@ -220,6 +246,13 @@
       "type": "yeshuv",
       "citycode": "1239",
       "name": { "en": "Holit" }
+    },
+    {
+      "id": "yeshuv-1240",
+      "type": "yeshuv",
+      "citycode": "1240",
+      "name": { "en": "Ein HaBesor" },
+      "aliases": { "en": ["Ein Ha Besor", "Ein Habsor"] }
     },
     {
       "id": "yeshuv-1241",

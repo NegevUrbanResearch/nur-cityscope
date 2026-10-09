@@ -1,11 +1,11 @@
 import { getLocale } from "./remote-locale.js";
 import { sha256Hex } from "../shared/sha256-hex.js";
+import { canonicalPersonNames, resolvePersonName } from '../shared/nli-name-language.js';
+import { resolveNliLocation } from '../shared/nli-name-field-places.js';
 export const PEOPLE_INDEX_URL = "/otef-interactive/public/processed/layers/nli/people-search-index.json";
 export const PEOPLE_RELEASE_METADATA_URL = "/otef-interactive/public/processed/layers/nli/release-metadata.json";
-const UNKNOWN_NAME = "לא ידוע";
 const clean = (value) => typeof value === "string" && value.trim() ? value.trim() : "";
 const normalize = (value) => clean(value).toLocaleLowerCase("he").replace(/[\u0591-\u05c7]/g, "");
-const isHebrew = (value) => /[\u0590-\u05ff]/.test(value);
 const unpack = (value) => value && Object.prototype.hasOwnProperty.call(value, "data") ? value : { data: value, bytes: null };
 async function fetchJson(url) {
   if (typeof fetch !== "function") throw new Error("People search fetch unavailable");
@@ -19,13 +19,11 @@ async function hashBytes(bytes) {
   return sha256Hex(bytes);
 }
 function displayName(row, locale = getLocale()) {
-  const names = (Array.isArray(row?.nameForms) ? row.nameForms : []).map(clean).filter(Boolean);
-  const real = names.filter((name) => name !== UNKNOWN_NAME);
-  const preferred = locale === "en" ? real.find((name) => !isHebrew(name)) : real.find(isHebrew);
-  return preferred || real[0] || UNKNOWN_NAME;
+  try { return resolvePersonName(canonicalPersonNames(row), locale); }
+  catch { return locale === 'en' ? 'Unknown name' : 'לא ידוע'; }
 }
 function toRow(row, datasetVersion, locale) {
-  const location = clean(row?.location) || clean(row?.sublocation);
+  const location = clean(row?.location) ? resolveNliLocation(row.location, locale).label : clean(row?.sublocation);
   return { pid: clean(row?.pid), name: displayName(row, locale), location, hasArchiveRecord: row?.hasArchiveRecord === true, datasetVersion };
 }
 const splitTokens = (value) => normalize(value).split(/[\s,\-\u05be/]+/).filter(Boolean);

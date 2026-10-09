@@ -11,7 +11,7 @@ describe('NLI source location labels', () => {
       anchorCoordinates: [34.4713, 31.3972],
     });
     expect(resolveNliLocation('Nahal Oz Base')).toEqual({
-      groupId: 'nahal oz base', label: 'מוצב נחל עוז', placeId: null,
+      groupId: 'nahal oz base', label: 'מוצב נחל עוז', sourceName: 'מוצב נחל עוז', placeId: null,
       anchorCoordinates: null,
     });
     expect(resolveNliLocation('Nahal Oz')).toMatchObject({
@@ -29,8 +29,8 @@ describe('NLI source location labels', () => {
   });
 
   it('retains an unknown source category', () => {
-    expect(resolveNliLocation('Unlisted Site')).toEqual({
-      groupId: 'unlisted site', label: 'Unlisted Site', placeId: null,
+    expect(resolveNliLocation('Unlisted Site', 'en')).toEqual({
+      groupId: 'unlisted site', label: 'Unlisted Site', sourceName: 'Unlisted Site', placeId: null,
       anchorCoordinates: null,
     });
   });

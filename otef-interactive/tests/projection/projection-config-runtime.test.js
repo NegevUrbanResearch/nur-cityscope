@@ -51,6 +51,8 @@ function makeHarness(spanId = "left", instanceId = "11111111-1111-4111-8111-1111
       isWallEnabled: options.isWallEnabled,
       getDatasetVersion: options.getDatasetVersion,
       getDatasetIdentityError: options.getDatasetIdentityError,
+      getNameLanguage: options.getNameLanguage,
+      hasPreparedNames: options.hasPreparedNames,
       clock: options.clock,
   });
   return {
@@ -67,6 +69,99 @@ function makeHarness(spanId = "left", instanceId = "11111111-1111-4111-8111-1111
     errorListeners,
   };
 }
+
+test.each([false, true])('language-only refresh uses applied geometry even after failed Save=%s', async failedSave => {
+  let language = 'he', visibleLanguage = null;
+  const bad = structuredClone(DEFAULT_PROJECTION_CONFIG); bad.pre.scale += 0.1;
+  const h = makeHarness('left', '11111111-1111-4111-8111-111111111111', {
+    getNameLanguage: () => language, getDatasetVersion: () => 'v1', drawCompletion: () => true,
+    applyConfig: config => { if (failedSave && config.pre.scale === bad.pre.scale) throw new Error('bad geometry'); },
+    prepareCandidate: async (_config, _revision, _generation, _signal, options = {}) => ({ wall: {
+      language: options.language || 'he', datasetVersion: 'v1', digest: (options.language === 'en' ? 'b' : 'a').repeat(64), diagnostics: { expected: 2, placed: 2 } } }),
+    commitCandidate: pair => { visibleLanguage = pair.wall.language; },
+  });
+  try {
+    await h.runtime.start(); h.state(1); h.frame(); h.render();
+    await vi.waitFor(() => { h.render(); expect(h.sent().some(m => m.state === 'current')).toBe(true); });
+    if (failedSave) { h.state(2, bad); h.frame(); h.render(); await vi.waitFor(() => expect(h.sent().some(m => m.revision === 2 && m.success === false)).toBe(true)); }
+    const geometryCalls = h.applied.length;
+    language = 'en'; h.runtime.nameLanguageChanged();
+    await vi.waitFor(() => { h.render(); expect(visibleLanguage).toBe('en'); });
+    await vi.waitFor(() => { h.render(); expect(h.sent().at(-1)?.state).toBe('current'); });
+    expect(h.applied).toHaveLength(geometryCalls);
+    expect(h.sent().at(-1).revision).toBe(1);
+    expect(Object.keys(h.sent().at(-1).installed).sort()).toEqual(['datasetVersion', 'digest', 'expected', 'mode', 'placed', 'placementIdentity', 'revision']);
+    if (failedSave) expect(h.sent().some(m => m.revision === 2 && m.success === true)).toBe(false);
+  } finally { h.runtime.stop(); }
+});
+
+test.each(['save', 'suspend', 'disconnect', 'failed-reapply', 'failed-prepare', 'run'])('an already-started language refresh recovers after %s', async interruption => {
+  let language = 'he', visible = 'he', englishCalls = 0, failNext = false;
+  const h = makeHarness('left', '11111111-1111-4111-8111-111111111111', {
+    getNameLanguage: () => language, getDatasetVersion: () => 'v1', drawCompletion: () => true,
+    applyConfig: () => { if (failNext) { failNext = false; throw new Error('reapply failed'); } },
+    prepareGeometry: async () => { if (failNext && interruption === 'failed-prepare') { failNext = false; throw new Error('geometry preparation failed'); } },
+    prepareCandidate: async (_config, _revision, _generation, signal, options = {}) => {
+      if (options.language === 'en' && ++englishCalls === 1) await new Promise(resolve => signal.addEventListener('abort', resolve, { once: true }));
+      return { options, wall: { language: options.language || 'he', datasetVersion: 'v1', digest: (options.language === 'en' ? 'b' : 'a').repeat(64), diagnostics: { expected: 2, placed: 2 } } };
+    },
+    commitCandidate: pair => { visible = pair.wall.language; },
+  });
+  try {
+    await h.runtime.start(); h.state(1); h.frame(); h.render();
+    await vi.waitFor(() => { h.render(); expect(h.sent().some(m => m.state === 'current')).toBe(true); });
+    language = 'en'; h.runtime.nameLanguageChanged();
+    await vi.waitFor(() => expect(englishCalls).toBe(1));
+    const marker = h.sent().length;
+    if (interruption === 'save') { h.state(2); h.frame(); }
+    else if (interruption === 'disconnect') { h.socketListeners.get('disconnect')(); h.socketListeners.get('connect')(); }
+    else if (interruption === 'run') h.socketListeners.get('otef_projection_names_run')({ table: 'otef', requestId: '30000000-0000-4000-8000-000000000003', revision: 1, datasetVersion: 'v1', placementIdentity: await projectionPlacementInputIdentity(DEFAULT_PROJECTION_CONFIG) });
+    else { h.runtime.invalidate(); failNext = interruption.startsWith('failed-'); h.runtime.resume(); h.frame(); }
+    await vi.waitFor(() => { h.render(); expect(visible).toBe('en'); });
+    await vi.waitFor(() => { h.render(); expect(h.sent().filter(m => m.type === 'otef_projection_names_status').at(-1)?.state).toBe('current'); });
+    expect(h.sent().slice(marker).some(m => m.state === 'current' && m.installed?.digest === 'a'.repeat(64))).toBe(false);
+    if (interruption.startsWith('failed-')) expect(h.sent().some(m => m.success === false)).toBe(true);
+    if (interruption === 'run') expect(h.sent().slice(marker).some(m => m.type === 'otef_projection_applied' && m.success === true)).toBe(true);
+  } finally { h.runtime.stop(); }
+});
+
+test('status render during language-target preparation cannot promote the previous language', async () => {
+  let language = 'he';
+  const h = makeHarness('left', '11111111-1111-4111-8111-111111111111', {
+    getNameLanguage: () => language, getDatasetVersion: () => 'v1', drawCompletion: () => true,
+    prepareCandidate: async (_c, _r, _g, _s, options = {}) => ({ wall: { language: options.language || 'he', datasetVersion: 'v1', digest: (options.language === 'en' ? 'b' : 'a').repeat(64), diagnostics: { expected: 1, placed: 1 } } }),
+  });
+  try {
+    await h.runtime.start(); h.state(1); h.frame(); h.render();
+    await vi.waitFor(() => { h.render(); expect(h.sent().some(m => m.state === 'current')).toBe(true); });
+    const marker = h.sent().length; language = 'en'; h.runtime.nameLanguageChanged(); h.runtime.requestStatus(); h.render();
+    expect(h.sent().slice(marker).some(m => m.state === 'current' && m.installed?.digest === 'a'.repeat(64))).toBe(false);
+    await vi.waitFor(() => { h.render(); expect(h.sent().filter(m => m.state === 'current').at(-1)?.installed.digest).toBe('b'.repeat(64)); });
+  } finally { h.runtime.stop(); }
+});
+
+test('a new explicit Run retires the previous owned request before replacing its job', async () => {
+  let calls = 0;
+  const h = makeHarness('left', '11111111-1111-4111-8111-111111111111', {
+    getDatasetVersion: () => 'v1', drawCompletion: () => true,
+    prepareCandidate: async (_c, _r, _g, signal) => {
+      if (++calls === 2) await new Promise(resolve => signal.addEventListener('abort', resolve, { once: true }));
+      return { wall: { datasetVersion: 'v1', digest: 'a'.repeat(64), diagnostics: { expected: 1, placed: 1 } } };
+    },
+  });
+  try {
+    await h.runtime.start(); h.state(1); h.frame(); h.render();
+    await vi.waitFor(() => { h.render(); expect(h.sent().some(m => m.state === 'current')).toBe(true); });
+    const identity = await projectionPlacementInputIdentity(DEFAULT_PROJECTION_CONFIG);
+    const request = { table: 'otef', revision: 1, datasetVersion: 'v1', placementIdentity: identity };
+    const first = '30000000-0000-4000-8000-000000000003', second = '40000000-0000-4000-8000-000000000004';
+    h.socketListeners.get('otef_projection_names_run')({ ...request, requestId: first });
+    await vi.waitFor(() => expect(calls).toBe(2));
+    h.socketListeners.get('otef_projection_names_run')({ ...request, requestId: second });
+    await vi.waitFor(() => { h.render(); expect(h.sent().some(m => m.requestId === second && m.state === 'current')).toBe(true); });
+    expect(h.sent().some(m => m.requestId === first && m.state === 'stale')).toBe(true);
+  } finally { h.runtime.stop(); }
+});
 
 function spanNode(id) {
   return {

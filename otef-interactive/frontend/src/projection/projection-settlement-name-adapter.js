@@ -4,6 +4,7 @@ import { mapSettlementPosition } from './settlement-name-framing.js';
 import { DEFAULT_SETTLEMENT_LEADER_STYLE, EXCLUDED_SETTLEMENT_CODES, settlementTextLines } from '../shared/settlement-label-presentation.js';
 import { settlementConnector, paintSettlementConnector } from './settlement-name-connectors.js';
 import { paintSettlementOpacityGroup } from './settlement-opacity-group.js';
+import { resolveSettlementName } from '../shared/nli-name-language.js';
 
 const WIDTH = 1920;
 const HEIGHT = 1080;
@@ -84,7 +85,7 @@ export function createProjectionSettlementNameAdapter({ document = globalThis.do
     context.clearRect(0, 0, WIDTH, HEIGHT);
     if (rasterScale !== 1) context.setTransform(rasterScale, 0, 0, rasterScale, 0, 0);
     context.font = fontSpec(style);
-    context.direction = "rtl";
+    context.direction = style.language === 'en' ? 'ltr' : 'rtl';
     context.textAlign = "center";
     context.textBaseline = "middle";
     context.fillStyle = "#ffffff";
@@ -102,7 +103,7 @@ export function createProjectionSettlementNameAdapter({ document = globalThis.do
       const inkBox = { left: Math.min(...measured.map(m => m.box.left)), right: Math.max(...measured.map(m => m.box.right)),
         top: Math.min(...measured.map(m => m.box.top)), bottom: Math.max(...measured.map(m => m.box.bottom)) };
       if (!inkFitsCrop(label, inkBox, framing?.clip)) return { ...label, inkBox, cropped: true };
-      const alpha = clampOpacity(evaluateOpacityExpression(scaledOpacity, { cityname: label.text }));
+      const alpha = clampOpacity(evaluateOpacityExpression(scaledOpacity, { cityname: label.sourceText, citycode: label.citycode }));
       const connector = settlementConnector(label, framing?.outlines?.[label.citycode], inkBox, framing?.origins?.[label.citycode]);
       paintSettlementConnector(context, connector, leaderStyle, alpha, { document, rasterScale });
       context.fillStyle = '#ffffff'; context.strokeStyle = '#ffffff'; context.lineWidth = HALO_PX * 2;
@@ -145,12 +146,12 @@ export function createProjectionSettlementNameAdapter({ document = globalThis.do
   return {
     setFramingProvider(provider) { framingProvider=provider; },
     getFraming() { refreshFraming(); return active?.framing ? structuredClone(active.framing) : null; },
-    async prepare({ catalog, settings, signal } = {}) {
+    async prepare({ catalog, settings, language = 'he', signal } = {}) {
       if (disposed) throw new Error("settlement adapter is disposed");
       const token = ++generation;
       const checked = validateSettlementNameSettings(settings);
       if (checked.errors.length) throw new TypeError(checked.errors.join(", "));
-      const style = checked.value.style;
+      const style = { ...checked.value.style, language, ...(language === 'en' ? { fontFamily: 'Arial' } : {}) };
       if (signal?.aborted) return { stale: true };
       try {
         await document?.fonts?.load?.(fontSpec(style));
@@ -164,7 +165,8 @@ export function createProjectionSettlementNameAdapter({ document = globalThis.do
         if (EXCLUDED_SETTLEMENT_CODES.has(entry.citycode)) continue;
         const position = effectiveSettlementPosition(checked.value, output, entry.citycode);
         if (!position) continue;
-        labels.push({ citycode: entry.citycode, text: entry.text, lines: settlementTextLines(entry.text, checked.value.lineBreaks?.[entry.citycode]), x: position.x, y: position.y, rotateDeg: style.rotateDeg });
+        const text = language === 'en' ? (entry.names?.en || resolveSettlementName(entry.citycode, 'en')) : (entry.names?.he || entry.text);
+        labels.push({ citycode: entry.citycode, sourceText: entry.text, text, lines: settlementTextLines(text, checked.value.lineBreaks?.[entry.citycode]), x: position.x, y: position.y, rotateDeg: style.rotateDeg });
       }
       pending = paint(style, labels, {catalog,settings:checked.value});
       pending.token = token;

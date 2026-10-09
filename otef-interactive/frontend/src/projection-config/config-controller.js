@@ -540,6 +540,8 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
       output: settlementOutput,
       citycode: settlementCitycode,
       settingsClient: settlementClient,
+      getNameLanguage: () => layoutClient?.getLegendLanguage?.() || 'he',
+      subscribeNameLanguage: callback => layoutClient?.subscribe?.(callback),
       catalog,
       catalogStatus,
       onRetryCatalog: retrySettlementCatalog,
@@ -1187,7 +1189,15 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     statusRows.set(`${message.output}:${message.instanceId}`, message); refresh();
   }
   function requestStatus() { socket?.send?.({ type: "otef_projection_status_request", table: "otef", sourceId }); }
-  const namesStatusMessage = (message) => { if (namesTracker.accept(message)) { if (!namesTracker.getState().pending) namesRunPending = false; refresh(); } };
+  const namesStatusMessage = message => {
+    const previousRequest = namesTracker.getState().requestId;
+    if (namesTracker.accept(message)) {
+      const next = namesTracker.getState();
+      if (!next.pending) namesRunPending = false;
+      if (previousRequest && !next.requestId) requestStatus();
+      refresh();
+    }
+  };
   const onDatasetEvent = () => { void updateNamesTarget(true).then((ready) => { if (ready && !disposed) requestStatus(); }); };
   const unsubscribe = client.subscribe(handleState);
   const unsubscribeLayout = layoutClient?.subscribe?.(refresh);

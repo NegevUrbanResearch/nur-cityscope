@@ -12,6 +12,7 @@ async function createArchiveFixture({
   selectPersonCommand = vi.fn(),
   archiveResultTimeoutMs = 6000,
   isNarrativeActive = () => false,
+  localizePerson = person => ({ ...person }),
 } = {}) {
   const { createRemotePeopleArchiveController } = await import(
     "../../frontend/src/remote/remote-people-archive-controller.js"
@@ -39,7 +40,7 @@ async function createArchiveFixture({
     dataContext,
     peopleRuntime: {
       load: vi.fn().mockResolvedValue(undefined),
-      resolve: (pid, datasetVersion) => people.find((item) => item.pid === pid && item.datasetVersion === datasetVersion),
+      resolve: (pid, datasetVersion, locale) => { const person = people.find((item) => item.pid === pid && item.datasetVersion === datasetVersion); return person ? localizePerson(person, locale) : null; },
     },
     getMode: () => "people",
     setMode: vi.fn(),
@@ -68,6 +69,45 @@ describe("remote People and archive controller", () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  test.each([["11", true], ["12", false]])("unchanged selection acknowledges only the already selected person: %s", async (requestedPid, accepted) => {
+    const snapshot = { personId: "11", datasetVersion: "v1", revision: 1 };
+    const fixture = await createArchiveFixture({
+      selectPersonCommand: async () => ({ person_selection: snapshot }),
+    });
+    fixture.dataContext.getPersonSelection = () => snapshot;
+    try {
+      const person = fixture.people.find((item) => item.pid === requestedPid);
+      await expect(fixture.controller.selectPerson(person)).resolves.toBe(accepted);
+      expect(fixture.controller.getAcknowledgedPerson().pid).toBe("11");
+      expect(document.getElementById("placeSearchInput").value).toBe("Ada");
+      if (accepted) expect(fixture.status.textContent).toBe("");
+      else expect(fixture.status.textContent).not.toBe("");
+    } finally {
+      fixture.controller.destroy();
+    }
+  });
+
+  test('locale refresh changes acknowledged titles without commands and preserves an edited query', async () => {
+    document.documentElement = { setAttribute: vi.fn() };
+    const { setLocale } = await import('../../frontend/src/remote/remote-locale.js');
+    setLocale('he', { persist: false });
+    const fixture = await openArchiveSession(await createArchiveFixture({ localizePerson: (person, locale) => ({ ...person, name: locale === 'en' ? 'Ada' : 'עדה' }) }));
+    const input = document.getElementById('placeSearchInput');
+    const phase = fixture.controller.getArchivePhase();
+    setLocale('en', { persist: false });
+    fixture.controller.handleLocaleChange();
+    expect(fixture.controller.getAcknowledgedPerson().name).toBe('Ada');
+    expect(input.value).toBe('Ada');
+    input.value = 'edited search';
+    setLocale('he', { persist: false });
+    fixture.controller.handleLocaleChange();
+    expect(input.value).toBe('edited search');
+    expect(fixture.controller.getAcknowledgedPerson().name).toBe('עדה');
+    expect(fixture.controller.getArchivePhase()).toBe(phase);
+    expect(fixture.dataContext.selectPerson).not.toHaveBeenCalled();
+    expect(fixture.dataContext.archiveWindowCommand).not.toHaveBeenCalled();
   });
 
   test("clear waits for an in-flight selection and then clears its acknowledged revision", async () => {

@@ -82,6 +82,7 @@ export function createRemotePeopleArchiveController(options = {}) {
     isNarrativeActive = () => false,
     isConnected = () => true,
     onStateChange,
+    onArchiveClosed,
   } = options;
 
   const state = {
@@ -93,6 +94,7 @@ export function createRemotePeopleArchiveController(options = {}) {
       requestId: null,
       requestAction: null,
       lastRequestId: null,
+      lastRequestAction: null,
       recoverableOpenRequestId: null,
       closedAppliedRequestId: null,
       generation: 0,
@@ -228,6 +230,7 @@ export function createRemotePeopleArchiveController(options = {}) {
       requestId,
       requestAction: action,
       lastRequestId: requestId,
+      lastRequestAction: action,
       recoverableOpenRequestId: null,
       generation,
     });
@@ -275,7 +278,7 @@ export function createRemotePeopleArchiveController(options = {}) {
     const matchesRecoverableOpen = Boolean(
       archive.recoverableOpenRequestId && result.requestId === archive.recoverableOpenRequestId,
     );
-    if (result.outcome === "unavailable" && result.requestId === archive.closedAppliedRequestId) return;
+    if ((result.outcome === "unavailable" || result.outcome === "closed") && result.requestId === archive.closedAppliedRequestId) return;
     if (result.outcome === "closed" && (matchesCurrent || matchesLast)) {
       if (!samePerson(result, state.person.acknowledged)) return;
       clearArchiveTimeout();
@@ -291,6 +294,7 @@ export function createRemotePeopleArchiveController(options = {}) {
       navigationSection?.classList?.toggle?.("is-archive-open", false);
       setStatus("");
       syncArchiveButton();
+      if (archive.lastRequestAction === "close") onArchiveClosed?.(result);
       return;
     }
     if (!matchesCurrent) {
@@ -409,6 +413,12 @@ export function createRemotePeopleArchiveController(options = {}) {
           const snapshot = [resultSnapshot, currentSnapshot]
             .filter((candidate) => revisionOf(candidate) >= 0)
             .reduce((newest, candidate) => !newest || revisionOf(candidate) > revisionOf(newest) ? candidate : newest, null);
+          if (revisionOf(snapshot) === state.person.revision &&
+              samePerson(snapshot, person) && samePerson(snapshot, state.person.acknowledged)) {
+            restoreAcknowledgedQuery();
+            syncArchiveButton();
+            return true;
+          }
           if (!snapshot || revisionOf(snapshot) <= state.person.revision) throw new Error("selection not acknowledged");
           await applySnapshot(snapshot);
           return true;
@@ -668,6 +678,15 @@ export function createRemotePeopleArchiveController(options = {}) {
       return getMode() === "people" && !!person && String(input?.value || "").trim() === String(person.name || "").trim();
     },
     handleLocaleChange() {
+      const old = state.person.acknowledged;
+      if (old) {
+        const localized = peopleRuntime.resolve(old.pid, old.datasetVersion, getLocale());
+        if (localized && localized.pid === old.pid) {
+          transition('person', { acknowledged: localized });
+          if (input && input.value === old.name) { input.value = localized.name; syncInputDirection?.(input); }
+          if (state.archive.person?.pid === old.pid) transition('archive', { person: localized });
+        }
+      }
       missingMessage.textContent = t("nliRecordMissing");
       dialogClose.textContent = t("dialogClose");
       syncArchiveButton();
