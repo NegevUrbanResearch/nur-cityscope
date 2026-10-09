@@ -484,3 +484,191 @@ rows. Crop Tesuga remains deferred; prior UV / TD blocker still stands.
 | GIS settlements | 2026-09-07 | lab | GIS (outlines); projection (names/leaders) | pending | Must record: outlines on GIS; `שמות_יישובים` + leaders off GIS; projection names/leaders still on. Owner will record on kiosk Chrome + table; do not invent pass/fail. |
 | Archive two GIS | 2026-09-07 | lab | two same-origin GIS + remote | pending | Must record: two same-origin GIS documents: close fans out; remote does not stick on `unavailable` while a named window remains. Note localhost vs 127.0.0.1 as a remaining origin split. Owner will record; do not invent pass/fail. |
 | Crop | 2026-09-07 | lab | projection / TD | blocker | No Tesuga edits this pass; prior UV / TD blocker still stands. Crop Tesuga still deferred. Copy: Zikim UV in-rect skip; remaining table black is TD exhibit blocker. See **Zikim / sea crop UV record (Task 12)**. |
+
+
+## Coordinated scene transition laboratory evidence — 2026-10-08
+
+**Historical observations; acceptance reopened after the local `dev` merge.** The owner reported broken route replay, presentation controls, basemap transitions, settlement-label timing, and unwanted intermediate scenes after merge `b2ff1ec2`. The earlier cue-level drivers and private state setters did not cover the public staff-control and clock-wrapper paths, completed route replay, manual basemap ownership, or selected-person cleanup. The table below records those earlier observations and does not establish acceptance of the merged application.
+
+At source commit `4b70bb9e5727ec922eb13c58aa8387b1b8478db8`, the full frontend run passed 5,181 tests across 369 passing suites, with one existing current-data test/suite skipped. The production frontend build and whitespace check passed. The backend contract run passed 64 tests with one skip against an isolated in-memory database and channels layer; it did not use the live database or Redis.
+
+Deterministic staff-to-follower integration exercises the complete show, nested narratives, Back, Home, hold expiry, cancellation, preparation failure/retry, and reduced motion through the real scene binding, lifecycle, names controller, narrative filters, and GIS viewer. Catalog geometry and decoded media are controlled fixtures in these tests. Focused regressions reproduce and verify the ownership, readiness, transport, and rendering fixes described below.
+
+Browser observations used installed headless Chrome at 1440×1000 with its default GPU backend, the actual mounted application modules and staff cue runner, and accepted read-only assets served by isolated nginx. A clean Home snapshot, private local state setters, fake WebSocket, and local fulfillment of API writes kept shared exhibit state unchanged. These observations establish laboratory behavior, not physical exhibit acceptance.
+
+| Observed laboratory gate | Source provenance | Result |
+|---|---|---|
+| Complete SHOW: all 17 entries and nested narrative branches forward, backward, then Home | GIS at `4b70bb9e`; legacy projection and browser left/right at `8e88af92` | Passed 35 requests per surface; GIS recorded 4,557 frames and projection 3,101 / 3,114 / 3,117 frames. |
+| Native GIS staged presentations, including Shura, Mor, names wall, credits, and Close | `4b70bb9e` | Passed: 12 correlated `ready`, 12 `opened`, and 7 `closed` results; no `unavailable` or `ignored` result. |
+| Identity → Home, Home ↔ Wall, and reduced motion | GIS at `4b70bb9e`; projection at `8e88af92` | Passed; names rendered on projection and map content returned after exit. Reduced-motion writes had no fractional scene factors. |
+| Delayed/failed required resource and shared-group timeout restoration | GIS at `4b70bb9e`; projection at `8e88af92` | Passed; incoming content stayed at zero, distinct failures retained Home, and shared replacement restored captured Home content and readiness. |
+| Retained Mor route after a failed incoming scene | All four surfaces at `8e88af92` | Passed; the same route source remained at factor 1 and actual `setData` head coordinates advanced. This injected a distinct registry-source readiness timeout after Mor apply, not a refresh/mount throw. |
+| First Home → Segev, shared Satellite Color ↔ B&W, inverse Home, and 200 ms preparation reversal | GIS at `4b70bb9e` | Passed with physical `esri` source / `esri-tiles` layer, drawable tiles, evaluated opacity 1, correct saturation, and preserved shared source/tile-cache identity. Saturation changed only at scene factor zero; inverse/reversal removed the satellite resource at zero and settled on Home. |
+| Reduced-motion rendered paint after Wall → Home | Legacy projection at `8e88af92` | Passed; evaluated opacity remained 1 and sampled Sea pixels stayed RGBA `(98,108,112,255)` immediately and at the nominal 500 ms / 1,200 ms captures. The earlier independent MapLibre opacity tween is absent. |
+
+The final GIS runs recorded identical start/end commit and 12 source hashes, including `frontend/src/map/gis-basemap-transition.js` SHA-256 `239be40b6f562c5dac6259ce9dd540a84d851f0f3b67006da84df2ec41286fdc`. Projection and all-four Mor observations retain their actual `8e88af92a608603eba0e11c2b64be272effe4f02` provenance: the subsequent commit changed only the GIS basemap controller, so those unchanged paths were reused rather than relabeled as new runs. Selected logs, source hashes, screenshots, video, and ownership audits are retained in local ignored verification artifacts; they are not repository documentation links.
+
+The waiter checked virtual Nova polygons, Mor, escape, focus, caption, presentation, and basemap members as well as catalog layers. Mor required actual route line/head geometry and both physical layers at factor 1. GIS required the physical satellite layer and evaluated raster opacity, preventing a restored old scene or lifecycle readiness alone from counting as the requested scene. The previously white first-Segev background is corrected: 25 sampled terrain pixels changed from uniform white (mean 255) to textured grayscale imagery (mean 84.24, range 5–214); pixel `(50,50)` changed from RGB `(255,255,255)` to `(107,107,107)`.
+
+Paint-observer ownership, live layout visibility, paint/evaluated paint, desired membership, and clock phase were recorded at layer removal. The final GIS SHOW recorded 922 mapped paint-owned removals; the projection SHOW runs recorded 642 / 640 / 640. No mapped non-idle scene removal had a positive recorded owner factor. Each surface also recorded 46 positive last-factor removals caused by explicit idle/Stop semantic controls: 28 line clears and 18 polygon clears. Those controls remain allowed and are distinct from scene-departure cleanup. Some auxiliary name-field/registry source cleanup has no directly observed own factor, so this record makes no blanket zero-factor claim for every resource removal. Pre-removal evaluated paint can also retain the preceding render frame's value while the scene actor and authored paint are already zero.
+
+The verified fixes cover replaced Home navigation ownership and pending-control recovery; current staged presentation ownership across raw narrative exits; stale lifecycle bindings and readiness renewal without recapturing scaled opacity; bounded scene reconstruction and compatible retained-scene Pause/Stop behavior; preservation of effective Nova overlays through exit; and registry readiness on render. Authored MapLibre opacity transitions now restore after style commit, avoiding a second tween after reduced-motion completion. Managed GIS basemap preparation protects current source/layer ownership across zero, validates the live insertion anchor and assignment identity, and acknowledges readiness only for the required physical resource. Framing JSON preserves the exact accepted manifest bytes; parsed calibration, manifest, and hashes are unchanged.
+
+Diagnostics remain explicit. Final GIS SHOW recorded the existing missing captivity sprite warning and 15 late narrative-focus tile-manager diagnostics; final scenes remained ready, and the missing ESRI layer/style errors were absent. Fault runs recorded expected restoration warnings, and some isolated projection runs recorded disconnected fake-WebSocket warnings. No page exceptions were recorded. These results do not claim a clean console.
+
+All verification browser contexts and owned browser processes are closed. Physical projector output, audible media autoplay, kiosk focus/popup placement and input, disconnected-network commissioning, and sustained performance on the exhibit hardware remain pending. Muted laboratory decoding, screenshots, and sampled frames do not certify those gates or rule out every possible single-frame flash. Historical hardware rows and crop blockers above remain unchanged. No merge, push, deployment, live service restart, or shared data change is part of this laboratory record.
+
+## Transition regression revalidation — 2026-10-08
+
+**Owner follow-up reopened visual acceptance for Identity → Wall and Dark → B&W.** The laboratory observations below precede that follow-up. The final two corrections finish the marker scene before activating the names field, install the GIS blackout at that zero boundary, and preserve an opaque dark underlay throughout the raster dissolve. They retain the existing Home-to-wall transition. Source digest `090d488ca32fdc9d924c3633bed059d3fa78c8a51d1b455a2cc3094577c12499` passes 5,276 frontend tests (one existing skip), the production build, and whitespace checks. These final two visuals await the owner's check; they are not marked visually accepted by the earlier browser results.
+
+The correction separates membership, producer content, and playback intent. Unchanged participants retain their physical resources. Changed shared content exits before replacement, including a still-visible departing route during rapid Stop/Start. Settlement outlines, names, and leaders use the same orientation policy. Manual basemap completion hands its current physical resources back to the scene owner. Staff navigation acquires the public cue hold before clearing person or place focus; cue-less junctions preserve the existing scene. Mor establishes initial source readiness before advancing its existing reveal; impact geometry is published only when its drawn IDs or physical source change.
+
+The final source review passed against frozen frontend digest `ccafc73359337bedcde9ddb925fdc9e19d941cff4b5f1b35dfc6cb67a5c66926`. The full frontend suite passed 5,274 tests with one existing skip; the production build and whitespace check passed. Backend contracts passed 69 tests with one skip in a disposable container with networking disabled, SQLite in memory, and in-memory channels.
+
+Browser checks used actual staff and regular-remote controls, the public context methods, and installed headless Chrome. Fake WebSockets and local API responses isolated writes; responses followed commit, WebSocket delivery, then HTTP acknowledgement. Project code came from frozen source with recorded observation-only instrumentation. Completed replay, labels, and manual-basemap captures used freeze `13d014900af15eee06264a849bdf04ca1b1672fa2701807ed4bdcaebb55d65ed`. Selected cleanup and presentation controls used freeze `91774be26cd6441fc80b10604e62466f044d3162f6d48cd8646c2d2010ff6c97`. Their label, basemap, and remote-control modules remain unchanged. The final freeze adds the Mor readiness and impact-publication corrections, checked through fresh cold entries and the full show.
+
+The preceding full-show check exposed a first-entry readiness failure that aggregate ready snapshots missed. On projection, Mor sent 371 geometry updates while every source event remained unloaded; impact geometry had 74 repeated updates. Fresh cold treatment shows Mor loaded after 42.3 ms, before its first animation update at 49.7 ms, and impact geometry had three actual updates. Both displays' actor batches complete successfully. The existing 1,200 ms readiness deadline is unchanged.
+
+The observed regression checks are recorded below. They establish laboratory behavior through the public controls; the physical exhibit checks remain pending.
+
+| Observed check | Result | Evidence limit |
+|---|---|---|
+| Projection fleeing routes: initial playback, completed replay, 200 ms Stop/Start, and scene reentry | Passed; the visible outgoing geometry stays fixed until zero, then the new run reveals from its start. | Overlap-sibling replay is additionally covered by real producer/binding integration tests; the staff remote has no overlap button. |
+| Nova polygons across fleeing controls and return to compounds | Passed; polygon factors stay at 1 and their resources are retained. | Does not certify physical-projector gradient performance. |
+| Projection settlement outlines, names, and connectors | Passed; 238 comparable browser frames have equal lifecycle factors, with canvas opacity following exit and entry. | Legacy leaders when present are covered by the producer-cohort integration tests. |
+| GIS presentation controls, names wall, credits, and Home | Passed through automatic open, manual close/reopen, Previous/Next, wall/credits replacement, and Home exit. | Audible autoplay and kiosk focus remain hardware checks. |
+| Selected person/place Identity → Wall | Passed with immediate and 200 ms delayed cleanup acknowledgement; outgoing focus remains visible through the hold, with no intermediate Home scene. | The destination overview camera applies under zero-opacity blackout. |
+| Manual Dark/OSM/Satellite/B&W and subsequent scene/Home transitions | Passed at ten settled checkpoints; context, physical resources, displayed snapshot, and lifecycle agree. ESRI color/B&W retains its cache; Home removes departing rasters. | Deferred adoption during an overlapping semantic tween is covered by an integration test; that collision was not reproduced through actual controls. |
+| Full show and nested branches with GIS and projection together | All 17 declared cue entries observed; all narrative choices, names wall, credits, and Finish exercised. Seven choice/return checks preserve the scene without an undeclared mutation. First and repeated Mor entries reach the required actor readiness on projection. | Repeated paths add 14 duplicate cue observations; choice junctions are not counted as extra cue entries. Physical exhibit acceptance remains pending. |
+
+## Nova navigation corrections — 2026-10-08
+
+Back from the Nova branch selected the general timeline step but armed its clock before leaving Nova. The transport consequently chose Nova's five beats and omitted the general timeline's start window. The cue now exits the narrative under its existing hold before arming playback. A staff-button regression checks both followers' original beats, 06:42 lead-in, playable membership, and cleared escape overlays.
+
+Nova Memorial → Shura had a separate command-order failure. The API requires Shura's active narrative to be null, but the remote requested its presentation while Nova was still active. Earlier private browser fixtures bypassed that API validation and falsely accepted the Open command. Automatic presentation preparation now stages the destination narrative under the same cue hold, and the later cue avoids a duplicate null exit. The regression reproduces the API rejection before the correction and verifies one acknowledged exit before Shura Open.
+
+The corrected private browser checks exercise the actual Back and Nova Memorial → Shura controls. The Shura fixture enforces the API's active-narrative rule: Open succeeds with no rejection, the GIS shows Shura's first slide, and projection receives the idle full-timeline scene with escape overlays cleared. Source digest `a95272155b95bf4b8b27f3278205dc0077f874a1d4fe35e097ea02c7267503c6` passes 5,277 frontend tests with one existing skip, the production build, and 69 isolated backend contracts with one skip. Physical exhibit acceptance remains with the owner.
+
+## Gaza border-route release: offline Task 6 — 2026-10-08
+
+The copied worktree baseline and a fresh audit-only candidate were checked against the frozen review preview. The baseline has 80 routes (68 confirmed and 12 unconfirmed). The candidate has 89 (68 confirmed and 21 unconfirmed): nine additions (`1013`–`1021`) and nine edits (`1001`, `1002`, `1005`, `1006`, `1008`, `1009`, `1010`, `1011`, `1012`). All 18 preview operations passed the 2 m comparison; the largest measured deviation was 0.006586 m. The confirmed-feature digest remains `c2d3ec3f50f0c016e6665b39ed93ed758020cf0c2a8339153cb1f51326039358`. After the final F1 correction, the eight origin-direction children contain only the border hit and exact original parent origin; the refreshed candidate runtime byte and feature digests are `b631e63fa6d3eaeb889a0efd88c6229f446ab7b2a3a75bf1c98da810b7b7a2c1` and `f31c9ae3b323454829a43f030b13c74751ff62f2fb414fafc5d9708aac5e86a5`. The earlier `2cfae6b47dd929c147b5795042a57d68e9f21f33ce43872dfbd66ea3d69d1447` / `97db91f303bba202d62833214de07c6626a569a7e7b3bf2e5ea9177335af1a20` candidate is superseded and must not be applied. The confirmed-feature digest remains unchanged.
+
+The full presenter verifier remains strict. Both baseline and candidate produce the same 112 beat minutes, but both differ from the tracked navigation fixture by the missing minutes `572`, `636`, `724`, and `1197`; neither has extra minutes. The fresh bundle is `audit_only` and `publishable: false`. Standard `--prepare` and publication remain blocked until this readiness mismatch is resolved through an authorized fixture decision. Do not regenerate or weaken the fixture, mark this audit ready, or apply this bundle. Presenter records and source references, editorial evidence, accepted caption contracts, accepted source/package digests, and dataset version match the baseline. The refreshed bundle changes route-derived artifact evidence only.
+
+The isolated frontend production build passed after confirming `frontend/dist` and the generated version file resolve inside the worktree and `dist` was not a link. The relevant 203 frontend tests passed at the exact current code in Task 5. The isolated Django integration run passed 29 tests using the worktree runner's in-memory database, channel layer, and cache. These are offline checks; they do not establish served-file hashes or exhibit acceptance.
+
+### Future show-break release procedure
+
+The following commands are templates for a later, explicitly authorized show break. Replace `$repoRoot`, `$python`, and `$preview` with the actual target checkout, its configured Python interpreter with the GIS dependencies, and a reviewed preview JSON that matches that target's original 80-route baseline. First make the reviewed code available in the target checkout. Prepare a new bundle there; a bundle prepared in this worktree is bound to this worktree and cannot be applied to another checkout. The current strict readiness blocker must be resolved before standard preparation can succeed.
+
+Before preparation, verify the target's source/runtime hashes, recipe, canonical border, road input, presenter package, and preview identity. Close GIS, both projection outputs, presenter, and any GIS editing tools before application. Confirm all consumers will be reopened after the served files are verified. Do not proceed from an `audit_only` bundle.
+
+```powershell
+$repoRoot = 'C:\Users\owner\Desktop\city-scope\nur-cityscope'
+$python = '<configured Python 3.11 executable with pyogrio and shapely>'
+$preview = '<reviewed preview JSON for this exact target baseline>'
+$stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+$bundle = Join-Path $repoRoot "artifacts\sdd\gaza-border-route-connections\show-break-$stamp"
+$cli = Join-Path $repoRoot 'otef-interactive\scripts\curate_nli_border_routes.py'
+
+& $python $cli --repo-root $repoRoot --prepare --staging-dir $bundle --preview-reference $preview
+if ($LASTEXITCODE -ne 0) { throw 'Strict preparation failed; do not apply.' }
+```
+
+Inspect the prepared manifest, lock, route counts, 18-operation preview result, and strict presenter verification. Run the approved frontend and isolated Django checks for that target. Then close all outputs and apply the exact bundle:
+
+```powershell
+$journal = $null
+$applyJson = & $python $cli --repo-root $repoRoot --apply --prepared-dir $bundle --outputs-closed
+if ($LASTEXITCODE -ne 0) { throw 'Application failed; keep consumers closed and follow interrupted apply recovery below.' }
+$applyResult = $applyJson | ConvertFrom-Json
+if ($applyResult.status -ne 'published') { throw "Unexpected apply status: $($applyResult.status)" }
+$journal = $applyResult.journal
+```
+
+Before any HTTP request or consumer reload, verify the installed release in the target tree. Both commands must succeed. A nonzero result means keep all consumers closed and recover using the journal instructions below:
+
+```powershell
+& $python $cli --repo-root $repoRoot --check --preview-reference $preview
+if ($LASTEXITCODE -ne 0) { throw 'Installed curation validation failed; keep consumers closed and recover.' }
+& node (Join-Path $repoRoot 'otef-interactive/scripts/verify-nli-presenter-content.mjs')
+if ($LASTEXITCODE -ne 0) { throw 'Installed presenter verification failed; keep consumers closed and recover.' }
+```
+
+Keep the journal until digital and physical acceptance pass. Check the served route and metadata hashes through exhibit nginx before reloading GIS, projection-left, projection-right, and presenter. Application moves the staged lock into the target repository, so read the installed canonical lock after apply and compare its route hash with the still-present prepared manifest. The served route bytes must match that lock, and the served metadata bytes must match the prepared manifest:
+
+```powershell
+$tempLines = Join-Path $env:TEMP "nli-lines-$stamp.geojson"
+$tempMetadata = Join-Path $env:TEMP "nli-release-metadata-$stamp.json"
+Invoke-WebRequest 'http://localhost/otef-interactive/public/processed/layers/nli/lines.geojson' -OutFile $tempLines
+Invoke-WebRequest 'http://localhost/otef-interactive/public/processed/layers/nli/release-metadata.json' -OutFile $tempMetadata
+$installedLockPath = Join-Path $repoRoot 'otef-interactive/scripts/nli-border-route-curation.lock.json'
+$lock = Get-Content $installedLockPath -Raw | ConvertFrom-Json
+$manifest = Get-Content (Join-Path $bundle 'prepared-manifest.json') -Raw | ConvertFrom-Json
+$expectedLineCandidate = ($manifest.targets | Where-Object role -eq 'processed_lines').candidateSha256
+$expectedMetadata = ($manifest.targets | Where-Object role -eq 'release_metadata').candidateSha256
+$expectedLines = $lock.curation.runtimeByteSha256
+if ($expectedLines -ne $expectedLineCandidate) { throw 'Installed lock does not match the prepared route candidate.' }
+$servedLines = (Get-FileHash $tempLines -Algorithm SHA256).Hash.ToLowerInvariant()
+$servedMetadata = (Get-FileHash $tempMetadata -Algorithm SHA256).Hash.ToLowerInvariant()
+if ($servedLines -ne $expectedLines) { throw 'Served route hash does not match the installed lock.' }
+if ($servedMetadata -ne $expectedMetadata) { throw 'Served metadata hash does not match the prepared bundle.' }
+```
+
+After both hashes match, reload every consuming surface so none retains the earlier 80-route data or presenter content. Record the served hashes, browser reloads, and physical results. On both projection outputs and GIS, inspect retained border position, nine aligned existing approaches, nine separate unconfirmed additions, confirmed/unconfirmed styling, continuous joins, direction of reveal, pause/idle/completed flow, and unaffected settlements and presenter captions. Record operator, date, display, and outcome. A successful build, verifier, or HTTP hash check does not substitute for these observations.
+
+If the served hashes or acceptance checks fail, close all consuming surfaces and restore the journal's preimages:
+
+```powershell
+& $python $cli --repo-root $repoRoot --rollback $journal
+if ($LASTEXITCODE -ne 0) { throw 'Rollback failed; preserve the journal and stop deployment.' }
+```
+
+### Interrupted apply recovery
+
+If `--apply` exits without returning successful `published` JSON, keep GIS, both projections, presenter, and editing tools closed. Do not reuse a previous shell value for `$journal`, retry apply, remove the unfinished marker, or delete journals or backups. The apply snippet initializes `$journal` to `$null`; use the marker below to locate the current transaction explicitly.
+
+```powershell
+$recoveryMarker = Join-Path $repoRoot 'otef-interactive/public/processed/layers/.nli-route-release-unfinished.json'
+if (-not (Test-Path -LiteralPath $recoveryMarker)) {
+  Write-Output 'No unfinished marker. A preflight rejection creates no transaction; an automatic rollback removes the marker after restoring preimages. Inspect apply output and verify every target against its recorded preimage before deciding which occurred.'
+  throw 'Stop with consumers closed; do not retry apply or select an older journal.'
+}
+$controlDirectory = (Resolve-Path (Split-Path -Parent $recoveryMarker)).Path
+$markerData = Get-Content -LiteralPath $recoveryMarker -Raw | ConvertFrom-Json
+$journalName = [string]$markerData.journal
+if ([IO.Path]::IsPathRooted($journalName) -or [IO.Path]::GetFileName($journalName) -ne $journalName -or $journalName -notmatch '^\.nli-route-release-[0-9a-f]{32}\.json$') { throw 'Marker journal name is invalid or outside the control directory.' }
+$journalCandidate = [IO.Path]::GetFullPath((Join-Path $controlDirectory $journalName))
+$controlPrefix = $controlDirectory.TrimEnd([char]92) + [char]92
+if (-not $journalCandidate.StartsWith($controlPrefix, [StringComparison]::OrdinalIgnoreCase)) { throw 'Journal path escapes the release control directory.' }
+$recoveryJournal = (Resolve-Path -LiteralPath $journalCandidate).Path
+$transaction = Get-Content -LiteralPath $recoveryJournal -Raw | ConvertFrom-Json
+$expectedRepo = (Resolve-Path -LiteralPath $repoRoot).Path
+$expectedProcessed = [IO.Path]::GetFullPath((Join-Path $repoRoot 'otef-interactive/public/processed/layers/nli'))
+$expectedJournalName = ".nli-route-release-$($transaction.transactionID).json"
+if ($transaction.transactionID -ne $markerData.transactionID -or [IO.Path]::GetFileName($recoveryJournal) -ne $expectedJournalName) { throw 'Marker and journal transaction identities differ.' }
+if ([IO.Path]::GetFullPath($transaction.repoRoot) -ne $expectedRepo -or [IO.Path]::GetFullPath($transaction.processedLayersRoot) -ne $expectedProcessed) { throw 'Journal repository or processed-root identity differs from this target.' }
+& $python $cli --repo-root $repoRoot --rollback $recoveryJournal
+if ($LASTEXITCODE -ne 0) { throw 'Recovery failed; preserve the marker, journal, and backups and stop.' }
+```
+
+With no marker, a failing preflight means publication never began. A failed replacement followed by completed automatic rollback means the publisher restored the recorded preimages and removed the marker; confirm all target hashes before proceeding. If the apply result is `unchanged`, verify that the exact expected release is installed and compare target hashes. If the marker exists, use only the matching verified journal. Never remove the marker manually or delete backups.
+
+After rollback, verify the original route and metadata hashes from the journal preimages and confirm the derived lock is absent or restored to its recorded preimage. Reopen consumers only after those checks pass. Preserve the journal and backups if rollback reports an error.
+
+A future change to the border's geographic geometry requires regenerating only the selected approaches from the saved original 80-route baseline, with a revised recipe and border identity followed by fresh visual reconciliation. Do not apply repeated trims or extensions to an already-curated 89-route file. The original confirmed route geometries remain unchanged. A whole-projection calibration moves the border and routes together and does not require geographic route regeneration.
+
+Served nginx verification, consumer reload, show-break application, rollback exercise, GIS inspection, projector inspection, and physical acceptance remain deferred. No live service, browser, public NLI file, or exhibit display was changed for this offline task.
+
+## Gaza border-route release applied on local dev — 2026-10-09
+
+This record resolves the offline navigation blocker above. The four missing moments (572, 636, 724, 1197) contain only fire polygons. Commit `89de6644` already excluded fire polygons from playback. The owner confirmed that removal; the tracked navigation reference now preserves the original 116 source minutes and records exactly these four exclusions. Current playback has 112 beats (7 opening and 105 remaining). The pinned export digest, source/package identity, presenter text and references, and caption contracts remain unchanged. Sol 6.1 approved the focused reference correction.
+
+The feature branch was merged into local `dev` as `b2bee9c8`. A fresh standard preparation passed the full presenter verifier and all 18 frozen preview operations; maximum preview deviation was 0.006586 m. The earlier audit-only bundle was not applied. With the two observed exhibit tabs unloaded, the validated release was published as transaction `717e481966b032a735d234784995ca10`. The installed proof check and full presenter verifier passed, and nginx served the exact locked runtime digest `b631e63fa6d3eaeb889a0efd88c6229f446ab7b2a3a75bf1c98da810b7b7a2c1`. The tabs were reopened with cache disabled during navigation.
+
+The active dataset has 89 routes: 68 unchanged confirmed routes and 21 unconfirmed routes. Every added connection is unconfirmed. Route 30 uses its short local connection; route 32 follows the reviewed road 4 geometry. Browser checks against the actual nginx URLs, without candidate interception, rendered the expected confirmed and unconfirmed sources on GIS and both projection host frames, with no page exceptions. Screenshots were inspected. These private browser checks did not alter shared playback state and do not certify the physical projector/model fit.
+
+Post-publication verification passed 234 frontend tests across eight relevant files and `npm run build:frontend`. Earlier merged-tree checks passed 189 route/processing tests, 35 buffered-gradient tests, and 29 isolated Django contracts. Existing build chunk-size warnings remain. No container restart or remote push occurred.
+
+Evidence is retained in `artifacts/verification/2026-10-09-gaza-dev/`: preparation/application records, installed proof and presenter results, released nginx bytes, browser results/screenshots, and test/build logs. The rollback journal and its backups are retained at `otef-interactive/public/processed/layers/.nli-route-release-717e481966b032a735d234784995ca10.json`; use the documented rollback CLI with this journal if needed.
