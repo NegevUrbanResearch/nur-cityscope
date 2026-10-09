@@ -229,6 +229,7 @@ class OTEFViewportStateSerializer(serializers.ModelSerializer):
     nli_clock_layout = serializers.SerializerMethodField()
     legend_settings = serializers.SerializerMethodField()
     settlement_name_settings = serializers.SerializerMethodField()
+    road_sign_settings = serializers.SerializerMethodField()
 
     class Meta:
         model = OTEFViewportState
@@ -251,6 +252,8 @@ class OTEFViewportStateSerializer(serializers.ModelSerializer):
             "legend_layout_revision",
             "settlement_name_settings",
             "settlement_name_revision",
+            "road_sign_settings",
+            "road_sign_revision",
             "workshop_auto_publish",
             "workshop_autopublish_started_at",
             "exhibit_mode",
@@ -269,6 +272,8 @@ class OTEFViewportStateSerializer(serializers.ModelSerializer):
             "legend_layout_revision",
             "settlement_name_settings",
             "settlement_name_revision",
+            "road_sign_settings",
+            "road_sign_revision",
             "workshop_autopublish_started_at",
         ]
 
@@ -291,10 +296,17 @@ class OTEFViewportStateSerializer(serializers.ModelSerializer):
     def get_settlement_name_settings(self, obj):
         return normalize_settlement_name_settings(obj.settlement_name_settings)
 
+    def get_road_sign_settings(self, obj):
+        from .otef_road_signs import normalize_road_sign_settings
+
+        return normalize_road_sign_settings(obj.road_sign_settings)
+
     def validate(self, attrs):
         initial = self.initial_data if isinstance(getattr(self, "initial_data", None), dict) else {}
         if {"settlement_name_settings", "settlement_name_revision"} & set(initial):
             raise serializers.ValidationError("Settlement names must use their versioned command")
+        if {"road_sign_settings", "road_sign_revision"} & set(initial):
+            raise serializers.ValidationError("Road 232 signs must use their versioned command")
         return attrs
 
 

@@ -246,3 +246,16 @@ class SettlementNameRelayTests(IsolatedAsyncioTestCase):
             'settlementNameSettings': {}, 'settlementNameRevision': 1,
         })
         consumer.channel_layer.group_send.assert_not_awaited()
+
+
+class RoadSignsRelayTests(IsolatedAsyncioTestCase):
+    async def test_client_cannot_broadcast_saved_road_sign_settings(self):
+        consumer = GeneralConsumer()
+        consumer.room_group_name = "otef_channel"
+        consumer.channel_layer = type("Layer", (), {"group_send": AsyncMock()})()
+        await consumer.handle_otef_message({
+            "type": "otef_road_signs_changed", "table": "otef",
+            "roadSignSettings": {"version": 1, "outputs": {"left": [], "right": []}},
+            "roadSignRevision": 1,
+        })
+        consumer.channel_layer.group_send.assert_not_awaited()

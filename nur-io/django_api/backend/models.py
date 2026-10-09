@@ -419,6 +419,10 @@ class OTEFViewportState(models.Model):
 
     settlement_name_revision = models.PositiveBigIntegerField(default=0)
 
+    road_sign_settings = models.JSONField(default=dict, blank=True)
+
+    road_sign_revision = models.PositiveBigIntegerField(default=0)
+
     basemap = models.CharField(max_length=16, default="osm")
 
     updated_at = models.DateTimeField(auto_now=True)
