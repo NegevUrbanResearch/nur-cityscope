@@ -1,12 +1,14 @@
 // @vitest-environment jsdom
-import { expect, test, vi } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 
 const harness = vi.hoisted(() => ({
   settlement: vi.fn(async () => () => {}),
+  roadSigns: vi.fn(async () => () => {}),
   clock: vi.fn(async () => () => {}),
   table: vi.fn(),
 }));
 vi.mock("../../frontend/src/projection/projection-settlement-name-preview.js", () => ({ bootProjectionSettlementNamePreview: harness.settlement }));
+vi.mock("../../frontend/src/projection/projection-road-sign-preview.js", () => ({ bootProjectionRoadSignPreview: harness.roadSigns }));
 vi.mock("../../frontend/src/projection/projection-clock-preview.js", () => ({ bootProjectionClockPreview: harness.clock }));
 vi.mock("../../frontend/src/shared/table-switcher.js", () => ({
   default: class TableSwitcher { constructor(...args) { harness.table(...args); } getCurrentTable() { return "otef"; } },
@@ -18,7 +20,9 @@ window.WebSocket = class { constructor() { sockets.push("socket"); } close() {} 
 
 async function boot(search) {
   vi.resetModules();
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
   harness.settlement.mockClear();
+  harness.roadSigns.mockClear();
   harness.clock.mockClear();
   harness.table.mockClear();
   sockets.length = 0;
@@ -33,8 +37,36 @@ async function boot(search) {
   const init = vi.spyOn(context.default, "init");
   await import("../../frontend/src/entries/projection-main.js");
   await vi.dynamicImportSettled();
-  return { init };
+  return { init, errorSpy };
 }
+
+test.each(["left", "right"])("Road 232 preview %s boots without exhibit state or writes", async (output) => {
+  const { init } = await boot(`/frontend/projection.html?roadSignsPreview=1&span=${output}&outputMode=browser&previewSession=frame-${output}`);
+  expect(harness.roadSigns).toHaveBeenCalledTimes(1);
+  expect(harness.roadSigns.mock.calls[0][0]).toEqual(expect.objectContaining({ window, document }));
+  expect(harness.settlement).not.toHaveBeenCalled();
+  expect(harness.clock).not.toHaveBeenCalled();
+  expect(init).not.toHaveBeenCalled();
+  expect(harness.table).not.toHaveBeenCalled();
+  expect(sockets).toEqual([]);
+  expect(window.fetch).not.toHaveBeenCalled();
+});
+
+test.each([
+  "/frontend/projection.html?roadSignsPreview=1&span=left&outputMode=browser",
+  "/frontend/projection.html?roadSignsPreview=1&settlementPreview=1&span=right&outputMode=browser&previewSession=mixed",
+  "/frontend/projection.html?roadSignsPreview=1&preview=1&span=right&outputMode=browser&previewSession=mixed",
+  "/frontend/projection.html?roadSignsPreview=1&span=middle&outputMode=browser&previewSession=bad",
+])("invalid Road 232 preview %s does not start the exhibit", async (search) => {
+  const { init, errorSpy } = await boot(search);
+  expect(harness.roadSigns).not.toHaveBeenCalled();
+  expect(harness.settlement).not.toHaveBeenCalled();
+  expect(harness.clock).not.toHaveBeenCalled();
+  expect(init).not.toHaveBeenCalled();
+  expect(harness.table).not.toHaveBeenCalled();
+  expect(sockets).toEqual([]);
+  expect(errorSpy).toHaveBeenCalledWith("[frontend-b] projection bootstrap failed", expect.any(Error));
+});
 
 test.each(["left", "right"])("settlement preview %s boots only the settlement frame", async (output) => {
   const { init } = await boot(`/frontend/projection.html?settlementPreview=1&span=${output}&outputMode=browser&previewSession=frame-${output}`);
@@ -53,10 +85,13 @@ test.each([
   "/frontend/projection.html?settlementPreview=1&clockPreview=1&span=right&outputMode=browser&previewSession=mixed",
   "/frontend/projection.html?settlementPreview=1&span=middle&outputMode=browser&previewSession=bad",
 ])("invalid settlement preview %s does not start the exhibit", async (search) => {
-  const { init } = await boot(search);
+  const { init, errorSpy } = await boot(search);
   expect(harness.settlement).not.toHaveBeenCalled();
   expect(harness.clock).not.toHaveBeenCalled();
   expect(init).not.toHaveBeenCalled();
   expect(harness.table).not.toHaveBeenCalled();
   expect(sockets).toEqual([]);
+  expect(errorSpy).toHaveBeenCalledWith("[frontend-b] projection bootstrap failed", expect.any(Error));
 });
+
+afterEach(() => vi.restoreAllMocks());

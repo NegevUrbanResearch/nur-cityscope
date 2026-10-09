@@ -12,6 +12,7 @@ import { OTEF_API } from "../shared/api-client.js";
 import { withRequestDeadline } from "../shared/request-deadline.js";
 import { createClockLayoutClient } from "../projection-config/clock-layout-client.js";
 import { createSettlementNameClient } from "../projection-config/settlement-name-client.js";
+import { createRoadSignClient } from "../projection-config/road-sign-client.js";
 import { createProjectionTrace } from "../projection-config/projection-trace.js";
 import { loadSettlementNameCatalog } from "../shared/settlement-name-catalog.js";
 import { LayerRegistry } from "../shared/layer-registry.js";
@@ -68,6 +69,7 @@ export async function bootProjectionConfig({ document = globalThis.document, loc
   let mounted = null;
   let layoutClient = null;
   let settlementClient = null;
+  let roadSignClient = null;
   let visibilityClient = null;
   let disposed = false;
   let catalogGeneration = 0;
@@ -155,6 +157,10 @@ export async function bootProjectionConfig({ document = globalThis.document, loc
       settlementClient = createSettlementNameClient({ getSnapshot,
         writeOperation: (body) => OTEF_API.setSettlementNames("otef", body, { sourceId: createUuid() }), socket: ws,
       });
+      const roadSignSourceId = createUuid();
+      roadSignClient = createRoadSignClient({ getSnapshot, socket: ws,
+        writeSettings: (settings, meta) => OTEF_API.setRoadSigns("otef", settings, { ...meta, sourceId: roadSignSourceId }),
+      });
       visibilityClient = createGazaBorderVisibilityClient({ getSnapshot, socket: ws,
         writeVisible: visible => OTEF_API.updateState("otef", { gaza_border_visible: visible }),
       });
@@ -163,11 +169,12 @@ export async function bootProjectionConfig({ document = globalThis.document, loc
       outputController = createOutputWindowController({ location: outputLocation, open: globalThis.open, screenApi: globalThis, navigatorApi: globalThis.navigator, storage: (() => { try { return globalThis.localStorage; } catch { return null; } })() });
       const baselineCatalogLoader = createProjectionBaselineCatalogLoader({ fetchImpl });
       candidateValidator = createProjectionGeometryValidator({ baselineCatalogLoader });
-      mounted = mountProjectionConfig(root, { client, socket: ws, layoutClient, settlementClient, visibilityClient, staffRemoteManager, catalog: { entries: [] }, catalogStatus: { status: "loading" }, retrySettlementCatalog: () => { void startCatalog(); }, outputController, candidateValidator, baselineCatalogLoader,
+      mounted = mountProjectionConfig(root, { client, socket: ws, layoutClient, settlementClient, roadSignClient, visibilityClient, staffRemoteManager, catalog: { entries: [] }, catalogStatus: { status: "loading" }, retrySettlementCatalog: () => { void startCatalog(); }, outputController, candidateValidator, baselineCatalogLoader,
         readNamesDataset: () => readProjectionCandidateInputs({ fetchImpl }), trace,
         share: () => shareConfigUrl({ location, fetchImpl, document, traceSessionId: trace.enabled ? traceSessionId : null }), onExport: downloadExport, onImport: readImportFile });
       void layoutClient.hydrate({ forceFresh: true }).catch(() => {});
       void settlementClient.hydrate({ forceFresh: true }).catch(() => {});
+      void roadSignClient.hydrate({ forceFresh: true }).catch(() => {});
       void visibilityClient.hydrate();
       void startCatalog();
     } catch (error) {
@@ -178,6 +185,8 @@ export async function bootProjectionConfig({ document = globalThis.document, loc
       layoutClient = null;
       try { settlementClient?.destroy?.(); } catch {}
       settlementClient = null;
+      try { roadSignClient?.destroy?.(); } catch {}
+      roadSignClient = null;
       try { client?.stop?.(); } catch {}
       try { outputController?.dispose?.(); } catch {}
       try { candidateValidator?.dispose?.(); } catch {}
@@ -198,6 +207,7 @@ export async function bootProjectionConfig({ document = globalThis.document, loc
     try { mounted?.dispose?.(); } catch {}
     try { layoutClient?.destroy?.(); } catch {}
     try { settlementClient?.destroy?.(); } catch {}
+    try { roadSignClient?.destroy?.(); } catch {}
     visibilityClient?.destroy();
     try { trace?.dispose?.(); } catch {}
     if (ownsSocket) { try { ws.disconnect?.(); } catch {} }

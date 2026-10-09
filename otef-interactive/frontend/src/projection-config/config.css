@@ -1,5 +1,5 @@
 :root { color-scheme: dark; font-family: Inter, system-ui, sans-serif; background: #0c1016; color: #eef2f6; }
-.projection-config-app, .warp-editor-dialog, .parameter-editor-dialog, .clock-layout-dialog, .settlement-name-dialog { --config-canvas: #0c1016; --config-surface: #191f25; --config-surface-raised: #252d35; --config-surface-hover: #253141; --config-text: #eef2f6; --config-muted: #aab5c3; --config-divider: #39434d; --config-border: #68798d; --config-accent: #9adfd5; --config-accent-ink: #101916; --config-error: #f1b4ac; --config-warning: #e6c68a; --config-space: 8px; --config-control-height: 48px; color: var(--config-text); }
+.projection-config-app, .warp-editor-dialog, .parameter-editor-dialog, .clock-layout-dialog, .settlement-name-dialog, .road-sign-editor-dialog { --config-canvas: #0c1016; --config-surface: #191f25; --config-surface-raised: #252d35; --config-surface-hover: #253141; --config-text: #eef2f6; --config-muted: #aab5c3; --config-divider: #39434d; --config-border: #68798d; --config-accent: #9adfd5; --config-accent-ink: #101916; --config-error: #f1b4ac; --config-warning: #e6c68a; --config-space: 8px; --config-control-height: 48px; color: var(--config-text); }
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 0; background: #0c1016; overflow-x: hidden; }
 .projection-config-app { height: 100vh; height: 100dvh; overflow: hidden; }
@@ -751,3 +751,59 @@ h2, h3 { margin: 0 0 10px; }
   .point-match-slots > div { grid-template-columns: 44px minmax(0, 1fr); }
   .point-match-slots > div button:nth-last-child(-n + 2) { grid-row: auto; }
 }
+
+.road-sign-open-button { width: 100%; margin-top: 6px; min-height: 44px; }
+.road-sign-editor-dialog { position: fixed; inset: 0; z-index: 130; height: 100vh; height: 100dvh; display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 10px; overflow: hidden; padding: max(10px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left)); background: #10171d; color: #edf2f7; }
+.road-sign-editor-dialog :is(button, input, select) { min-height: 44px; }
+.road-sign-editor-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.road-sign-editor-header h2 { margin: 0; font-size: 1rem; }
+.road-sign-editor-status { margin: 0 auto 0 0; color: #b8c5d6; font-size: .8rem; }
+.road-sign-editor-body { display: grid; grid-template-columns: minmax(0, 1fr) 320px; min-width: 0; min-height: 0; gap: 12px; }
+.road-sign-editor-stage { position: relative; align-self: center; width: 100%; aspect-ratio: 16 / 9; max-height: 100%; min-width: 0; overflow: hidden; background: #000; }
+.road-sign-preview-host, .road-sign-preview-frame, .road-sign-overlay { position: absolute; inset: 0; width: 100%; height: 100%; }
+.road-sign-preview-frame { border: 0; pointer-events: none; }
+.road-sign-overlay { z-index: 2; overflow: visible; touch-action: none; pointer-events: all; }
+.road-sign-outline { fill: none; stroke: #ffe08a; stroke-width: 3; vector-effect: non-scaling-stroke; pointer-events: none; }
+.road-sign-outline.clipped { stroke-dasharray: 8 5; }
+.road-sign-center-hit.clipped { stroke: #ff8c8c; stroke-dasharray: 4 3; }
+.road-sign-center-marker, .road-sign-leader-marker { fill: #ffe08a; stroke: #10171d; stroke-width: 2; vector-effect: non-scaling-stroke; pointer-events: none; }
+.road-sign-center-hit, .road-sign-leader-hit { fill: transparent; stroke: transparent; stroke-width: 2; vector-effect: non-scaling-stroke; pointer-events: all; cursor: grab; }
+.road-sign-center-hit:active, .road-sign-leader-hit:active { cursor: grabbing; }
+.road-sign-preview-status, .road-sign-mapping-status, .road-sign-editor-warning { margin: 0; color: #ffdf8d; font-size: .8rem; }
+.road-sign-preview-status, .road-sign-mapping-status { position: absolute; left: 8px; right: 8px; bottom: 8px; z-index: 3; padding: 6px; background: #10171d; }
+.road-sign-editor-controls { display: grid; gap: 8px; align-content: start; min-width: 0; min-height: 0; overflow: auto; padding: 8px; border-left: 1px solid #3a4a53; background: #172126; }
+.road-sign-editor-dialog [hidden] { display: none !important; }
+.road-sign-output-label, .road-sign-editor-controls > label { display: grid; gap: 4px; color: #c7d6da; font-size: .8rem; }
+.road-sign-output-label select { width: 100%; }
+.road-sign-applied-calibration { margin: 0; color: #aab9c4; font-size: .78rem; }
+.road-sign-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.road-sign-actions button { flex: 1; }
+.road-sign-instance-list { display: grid; grid-auto-rows: minmax(44px, auto); align-content: start; gap: 4px; min-height: 44px; max-height: 180px; overflow: auto; }
+.road-sign-instance-list button { text-align: left; }
+.road-sign-instance-list button[aria-current="true"] { border-color: #78d6b3; color: #e8fff6; }
+.road-sign-numeric-fields { display: grid; gap: 8px; min-width: 0; }
+.road-sign-numeric-fields > label { display: flex; align-items: center; gap: 10px; min-height: 44px; color: #c7d6da; font-size: .82rem; }
+.road-sign-numeric-fields > label input[type="checkbox"], .road-sign-numeric-fields > label input[type="radio"] { width: 18px; height: 18px; min-height: 18px; flex: 0 0 18px; }
+.road-sign-numeric-fields input[type="number"] { width: 100%; min-width: 0; font-variant-numeric: tabular-nums; }
+.road-sign-numeric-field { min-width: 0; }
+.road-sign-numeric-field .config-field-value { display: none; }
+.road-sign-numeric-field .config-field-controls-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.road-sign-numeric-field .config-field-controls-row input[data-input="number"] { flex: 1 1 88px; width: auto; min-width: 72px; }
+.road-sign-numeric-field .config-field-controls-row > .numeric-sign, .road-sign-numeric-field .config-field-controls-row > .nudge { flex: 0 0 44px; width: 44px; min-height: 44px; }
+.road-sign-coordinate-field .config-field-row { display: block; }
+.road-sign-coordinate-field input[data-input="number"] { width: 100%; }
+.road-sign-coordinate-field .config-field-controls-row input[data-input="number"] { width: 100%; max-width: 100%; }
+.road-sign-numeric-field .config-field-label { color: #c7d6da; font-size: .82rem; }
+.road-sign-numeric-field .config-field-error:not(:empty) { color: #ff8c8c; }
+.road-sign-editor-dialog :is(button, input, select):focus-visible { outline: 2px solid var(--config-accent); outline-offset: 3px; }
+.road-sign-editor-dialog :is(button, input, select):disabled { opacity: .48; cursor: not-allowed; }
+@media (max-width: 760px), (max-height: 600px) and (pointer: coarse), (orientation: portrait) {
+  .road-sign-editor-dialog { gap: 6px; padding: max(6px, env(safe-area-inset-top)) max(6px, env(safe-area-inset-right)) max(6px, env(safe-area-inset-bottom)) max(6px, env(safe-area-inset-left)); }
+  .road-sign-editor-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(190px, 42%); gap: 6px; }
+  .road-sign-editor-stage { width: 100%; height: 100%; max-height: none; aspect-ratio: auto; }
+  .road-sign-editor-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); align-content: start; gap: 6px; border-left: 0; border-top: 1px solid #3a4a53; }
+  .road-sign-applied-calibration, .road-sign-actions, .road-sign-instance-list, .road-sign-numeric-fields, .road-sign-editor-warning { grid-column: 1 / -1; }
+  .road-sign-numeric-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .road-sign-editor-header { gap: 6px; }
+}
+:is(.projection-config-app, .warp-editor-dialog, .parameter-editor-dialog, .clock-layout-dialog, .settlement-name-dialog, .road-sign-editor-dialog) :is(button, input, select, summary):focus-visible { outline: 2px solid var(--config-accent); outline-offset: 3px; }

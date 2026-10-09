@@ -2020,6 +2020,17 @@ async function boot() {
   const previewParams = new URLSearchParams(window.location.search);
   const clockPreview = previewParams.get("clockPreview") === "1";
   const settlementPreview = previewParams.get("settlementPreview") === "1";
+  const roadSignsPreview = previewParams.get("roadSignsPreview") === "1";
+  if (roadSignsPreview) {
+    const span = previewParams.get("span");
+    if (clockPreview || settlementPreview || previewParams.get("preview") === "1" || !previewParams.get("previewSession")
+      || (span !== "left" && span !== "right") || previewParams.get("outputMode") !== "browser") {
+      throw new Error("Projection preview flags are mutually exclusive or the Road 232 preview session is invalid");
+    }
+    const { bootProjectionRoadSignPreview } = await import("../projection/projection-road-sign-preview.js");
+    await bootProjectionRoadSignPreview({ window, document, fetchImpl: window.fetch.bind(window) });
+    return;
+  }
   if (settlementPreview) {
     const span = previewParams.get("span");
     if (clockPreview || !previewParams.get("previewSession") || (span !== "left" && span !== "right") || previewParams.get("outputMode") !== "browser") {

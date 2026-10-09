@@ -316,7 +316,11 @@ export function renderField(doc, descriptor, onField, onNudge, compact = false, 
     if (!descriptor.commitOnChange) finish('range');
   });
   listen(range, 'change', () => { if (retiredPointer === null && heldPointer === null) { if (rangeGesture) endRange(); else finish('range'); } });
-  listen(range, 'keydown', event => { if (event.key === 'Escape' && (session.isDirty() || rangeGesture !== null || rangeRejected || needsAcceptance)) { event.preventDefault?.(); event.stopPropagation?.(); cancel({ clearControllerError: true }); } });
+  listen(range, 'blur', () => { if (rangeGesture && heldPointer === null) endRange(); });
+  listen(range, 'keydown', event => {
+    if (event.key === 'Enter' && rangeGesture && heldPointer === null) { event.preventDefault?.(); endRange(); }
+    else if (event.key === 'Escape' && (session.isDirty() || rangeGesture !== null || rangeRejected || needsAcceptance)) { event.preventDefault?.(); event.stopPropagation?.(); cancel({ clearControllerError: true }); }
+  });
   const selectSensitivity = (nextFineMode) => {
     if (heldPointer !== null || hold) return;
     if (fineMode === nextFineMode) return;

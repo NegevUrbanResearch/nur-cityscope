@@ -86,6 +86,7 @@ export function createProjectionConfigView(root, {
   onOpenClockEditor = () => {},
   onOpenNovaExplainerEditor = () => {},
   onOpenSettlementEditor = () => {},
+  onOpenRoadSignEditor = () => {},
   onSettlementOutput = () => {},
   onSettlementCitycode = () => {},
   onSettlementPosition = () => {},
@@ -133,6 +134,7 @@ export function createProjectionConfigView(root, {
   };
 
   const clockNodeStatuses = new Map();
+  let roadSignNodeStatus = null;
   let selectedGraphNode = "pre";
   const app = make(doc, "div", { className: "config-shell" });
   const staffRemotePanel = staffRemoteManager ? createStaffRemotePanel({ document: doc, manager: staffRemoteManager }) : null;
@@ -164,6 +166,7 @@ export function createProjectionConfigView(root, {
   const graphNodes = [
     ["content", "Content", "Feeds both projector outputs"], ["names-wall", "Names wall", "NLI memorial-name profile; does not change projection geometry"],
     ["settlement-names", "Settlement names", "Place settlement labels on the left and right projectors"],
+    ["road-signs", "Road 232 signs", "Place signs on GIS and the Browser projection outputs"],
     ["clock-gis", "GIS Clock", "Clock layouts for GIS scenes"],
     ["nova-explainers", "Nova explainers", "Place Nova story cards on the GIS map"],
     ["clock-projection", "Projection Clock / Legend", "Shared left projection overlays"],
@@ -177,7 +180,7 @@ export function createProjectionConfigView(root, {
   const categoryGroups = {
     Content: ["content"],
     Geometry: ["pre", "left-crop", "right-crop", "left-fit", "right-fit", "left-keystone", "right-keystone", "left-grid", "right-grid", "left-output", "right-output"],
-    Overlays: ["clock-gis", "nova-explainers", "clock-projection"],
+    Overlays: ["clock-gis", "nova-explainers", "clock-projection", "road-signs"],
     Names: ["names-wall", "settlement-names"],
   };
   const categoryActions = controls.workspaceNav;
@@ -420,6 +423,13 @@ export function createProjectionConfigView(root, {
       openButton.addEventListener("click", (event) => { event.stopPropagation?.(); if (onNode(id) === false) return; dialog.open({ side: id.startsWith("right-") ? "right" : "left", mode: id.endsWith("-grid") ? "grid" : "keystone", opener: openButton }); flushPendingWarpPaint(); });
       card.appendChild(openButton);
     }
+    if (id === "road-signs") {
+      const openButton = button(doc, "Open editor", "road-sign-editor-open", "road-sign-open-button");
+      const status = make(doc, "p", { className: "road-sign-node-status", role: "status", ariaLive: "polite" }, "Loading Road 232 signs");
+      roadSignNodeStatus = status;
+      openButton.addEventListener("click", (event) => { event.stopPropagation?.(); if (onNode(id) === false) return; onOpenRoadSignEditor(); });
+      card.append(openButton, status);
+    }
     if (id === "settlement-names") {
       const openButton = button(doc, "Open editor", "settlement-editor-open", "settlement-open-button");
       openButton.addEventListener("click", (event) => { event.stopPropagation?.(); if (onNode(id) === false) return; onOpenSettlementEditor(); });
@@ -445,7 +455,7 @@ export function createProjectionConfigView(root, {
       }
       card.appendChild(openButton);
     }
-    if (id !== "names-wall" && id !== "settlement-names") {
+    if (id !== "names-wall" && id !== "settlement-names" && id !== "road-signs") {
       const portIn = make(doc, "span", { className: "node-port port-in", ariaHidden: "true", dataset: { port: "in" } });
       const portOut = make(doc, "span", { className: "node-port port-out", ariaHidden: "true", dataset: { port: "out" } });
       card.append(portIn, portOut);
@@ -458,6 +468,7 @@ export function createProjectionConfigView(root, {
       if (event.key === "Enter" && (id === "clock-gis" || id === "clock-projection")) onOpenClockEditor(id);
       if (event.key === "Enter" && id === "nova-explainers") onOpenNovaExplainerEditor();
       if (event.key === "Enter" && id === "settlement-names") onOpenSettlementEditor();
+      if (event.key === "Enter" && id === "road-signs") onOpenRoadSignEditor();
     });
     nodeMap.set(id, card); graph.appendChild(card);
   }
@@ -480,6 +491,7 @@ export function createProjectionConfigView(root, {
     } else if (id === "clock-gis" || id === "clock-projection") onOpenClockEditor(id);
     else if (id === "nova-explainers") onOpenNovaExplainerEditor();
     else if (id === "settlement-names") onOpenSettlementEditor();
+    else if (id === "road-signs") onOpenRoadSignEditor();
   });
 
   const warpPanelView = createWarpPanelView({ document: doc, canChangeSelection: () => !pointerInput?.isActive(),
@@ -807,7 +819,7 @@ export function createProjectionConfigView(root, {
     selectedGraphNode = selected;
     workspace.dataset.selectedNode = selected;
     editorNodeHeading.textContent = graphNodes.find(([id]) => id === selected)?.[1] || "Selected node";
-    const editable = (parameterEditorNodes.has(selected) && descriptors.some((item) => item.node === selected)) || selected.endsWith("-keystone") || selected.endsWith("-grid") || ["clock-gis", "clock-projection", "nova-explainers", "settlement-names"].includes(selected);
+    const editable = (parameterEditorNodes.has(selected) && descriptors.some((item) => item.node === selected)) || selected.endsWith("-keystone") || selected.endsWith("-grid") || ["clock-gis", "clock-projection", "nova-explainers", "settlement-names", "road-signs"].includes(selected);
     enlargeEdit.disabled = !editable;
     editorEmptyState.hidden = editable || selected === "content";
     if (parameterDialog?.isOpen() && parameterDialog.element.dataset.node !== selected) parameterDialog.close();
@@ -1081,7 +1093,7 @@ export function createProjectionConfigView(root, {
     optionalHealthActionError.hidden = !actionError;
     optionalHealthPanel.hidden = !active && !actionError;
   };
-  const update = ({ state = {}, parameterHistory = { undo: 0, redo: 0 }, errors = {}, conflict = "", statusText = "", draftDiffersFromAccepted = false, savePending = false, selectedNode = "pre", loadedPresetId = null, loadedPresetLoadToken = 0, statusRows = [], appliedSummary = 'Pending', outputState = {}, warpStates = {}, activePattern = { pattern: "off" }, namesWallStatus = null, namesRunDisabledReason = "", clockScene = "home", clockElement = "clock", clockLayouts = {}, clockHydration = { status: "Loading" }, settlement = null } = {}) => {
+  const update = ({ state = {}, parameterHistory = { undo: 0, redo: 0 }, errors = {}, conflict = "", statusText = "", draftDiffersFromAccepted = false, savePending = false, selectedNode = "pre", loadedPresetId = null, loadedPresetLoadToken = 0, statusRows = [], appliedSummary = 'Pending', outputState = {}, warpStates = {}, activePattern = { pattern: "off" }, namesWallStatus = null, namesRunDisabledReason = "", clockScene = "home", clockElement = "clock", clockLayouts = {}, clockHydration = { status: "Loading" }, settlement = null, roadSigns = null } = {}) => {
     if (state.draft) currentDraft = state.draft;
     currentFieldErrors = errors.fields || errors.field || errors;
     currentStatus = statusText;
@@ -1094,6 +1106,7 @@ export function createProjectionConfigView(root, {
     controls.projectionElement.value = clockElement;
     for (const [id, status] of clockNodeStatuses) status.render(clockLayouts[id]?.record, clockHydration);
     settlementControls.render(settlement || { hydration: { status: "Loading" }, enabled: false });
+    if (roadSignNodeStatus) { const counts = roadSigns?.counts; const countText = counts ? `GIS ${counts.gis || 0} · Left ${counts.left} · Right ${counts.right}` : "Instance count unavailable"; roadSignNodeStatus.textContent = `${countText} · ${roadSigns?.status || "Loading"} · Exhibit visibility: ${roadSigns?.visibility || "Unknown"}`; }
     renderOptionalHealth(clockHydration, settlement, workspace.dataset.editing === "true" ? errors.action : "");
     const wallConfig = draft.namesWall;
     for (const help of modelSpacingHelpControls) help.hidden = wallConfig?.activeMode !== "model";
@@ -1164,6 +1177,7 @@ export function createProjectionConfigView(root, {
         || [...(card?.children || [])].find((node) => node.dataset?.action === "nova-explainer-editor-open")
         || null;
     },
+    getRoadSignEditorOpener() { return nodeMap.get("road-signs")?.querySelector?.("[data-action=road-sign-editor-open]") || null; },
     getSettlementEditorOpener() {
       return nodeMap.get("settlement-names")?.querySelector?.('[data-action="settlement-editor-open"]') || null;
     },

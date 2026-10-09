@@ -1,6 +1,8 @@
 import { validateProjectionConfig } from "../shared/projection-config-schema.js";
 import { withRequestDeadline } from "../shared/request-deadline.js";
 import { validSettlementOriginGeometry } from '../projection-config/settlement-origin-geometry.js';
+import { validateRoadSignSettings } from '../shared/road-sign-settings.js';
+import { copyProjectionMesh } from '../projection-config/clock-layout-geometry.js';
 
 function runBoundedPreviewOperation(operation, parentSignal) {
   let completedSynchronously = false;
@@ -111,6 +113,49 @@ export function installProjectionSettlementPreviewBridge({ win, sessionId, outpu
   };
   win.addEventListener("message", onMessage);
   reply({ type: "otef_settlement_preview_ready" });
+  return () => { disposed = true; activeAbort?.abort(); win.removeEventListener("message", onMessage); };
+}
+
+/** Read-only, request-scoped bridge for the Road 232 placement preview. */
+export function installProjectionRoadSignPreviewBridge({ win, sessionId, output, renderState }) {
+  if (!win?.parent || win.parent === win || !sessionId || !["left", "right"].includes(output) || typeof renderState !== "function") {
+    throw new Error("Road 232 preview requires its parent, session, output, and renderer");
+  }
+  const parent = win.parent, origin = win.location.origin;
+  let latestRequestId = 0, disposed = false, activeAbort = null;
+  const reply = (payload) => parent.postMessage({ ...payload, sessionId, output }, origin);
+  const onMessage = (event) => {
+    const state = event.data;
+    if (disposed || event.source !== parent || event.origin !== origin || state?.type !== "otef_road_sign_preview_state"
+      || state.sessionId !== sessionId || state.output !== output || !Number.isSafeInteger(state.requestId) || state.requestId <= latestRequestId) return;
+    const checked = validateRoadSignSettings(state.settings);
+    if (!checked.valid || !state.config || typeof state.config !== "object" || Array.isArray(state.config)
+      || Object.keys(validateProjectionConfig(state.config)).length || !Number.isSafeInteger(state.calibrationRevision) || state.calibrationRevision < 0
+      || Object.keys(state).sort().join(",") !== "calibrationRevision,config,output,requestId,sessionId,settings,type") {
+      reply({ type: "otef_road_sign_preview_error", requestId: state.requestId, calibrationRevision: state.calibrationRevision,
+        message: "Invalid Road 232 preview state" });
+      return;
+    }
+    latestRequestId = state.requestId;
+    activeAbort?.abort();
+    const controller = new AbortController(); activeAbort = controller;
+    const isCurrent = () => !disposed && !controller.signal.aborted && latestRequestId === state.requestId;
+    const fail = (error) => { if (isCurrent()) reply({ type: "otef_road_sign_preview_error", requestId: state.requestId,
+      calibrationRevision: state.calibrationRevision, message: error?.message || "Road 232 preview failed" }); };
+    const local = { settings: checked.settings, config: structuredClone(state.config), calibrationRevision: state.calibrationRevision,
+      output, sessionId, requestId: state.requestId };
+    Promise.resolve().then(() => renderState(local, { signal: controller.signal, isCurrent })).then((result) => {
+      if (!isCurrent() || !result) return;
+      const mesh = copyProjectionMesh(result.mesh);
+      if (!mesh?.triangles.length || mesh.triangles.length % 3 || typeof result.meshIdentity !== "string" || !result.meshIdentity.trim()) {
+        fail(new Error("Invalid Road 232 preview mesh")); return;
+      }
+      reply({ type: "otef_road_sign_preview_rendered", requestId: state.requestId, calibrationRevision: state.calibrationRevision,
+        meshIdentity: result.meshIdentity, mesh });
+    }).catch(fail);
+  };
+  win.addEventListener("message", onMessage);
+  reply({ type: "otef_road_sign_preview_ready" });
   return () => { disposed = true; activeAbort?.abort(); win.removeEventListener("message", onMessage); };
 }
 
