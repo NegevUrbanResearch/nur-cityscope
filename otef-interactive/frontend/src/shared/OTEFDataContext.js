@@ -1,4 +1,5 @@
 import { OTEF_API } from "./api-client.js";
+import { ensureGazaBorderStateRow } from "./gaza-border-style.js";
 import { acceptSettlementNameSnapshot, validateSettlementNameSettings } from "./settlement-name-settings.js";
 import { normalizeGisBasemap } from "./gis-basemap.js";
 import { normalizeEscapeOverlay } from "./nli-escape-overlay.js";
@@ -103,6 +104,8 @@ class OTEFDataContextClass {
     this._basemap = "osm";
     this._independentBasemapGeneration = 0;
     this._exhibitMode = false;
+    this._gazaBorderVisible = false;
+    this._gazaBorderVisibilityReceipt = 0;
     this._bounds = null;
     this._viewerAngleDeg = 0;
     this._isConnected = false;
@@ -114,6 +117,7 @@ class OTEFDataContextClass {
       animations: new Set(),
       basemap: new Set(),
       exhibitMode: new Set(),
+      gazaBorderVisibility: new Set(),
       bounds: new Set(),
       connection: new Set(),
       connectionStatus: new Set(),
@@ -198,9 +202,10 @@ class OTEFDataContextClass {
   async _doInit(tableName) {
     this._tableName = tableName;
     const coupledBaseline = this._captureNarrativeSceneBaseline();
+    const visibilityReceipt = this._gazaBorderVisibilityReceipt;
     try {
       const state = await OTEF_API.getState(this._tableName, { forceFresh: true });
-      this._applyStateFromApi(state, { notify: true, hydrate: true, coupledBaseline });
+      this._applyStateFromApi(state, { notify: true, hydrate: true, coupledBaseline, visibilityReceipt });
       this._setupWebSocket();
       this._initialized = true;
     } finally {
@@ -270,6 +275,7 @@ class OTEFDataContextClass {
    * otef_layers_changed: server-side curated GeoJSON changed but the layerGroups API is still shallow).
    */
   _setLayerGroups(layerGroups, options = {}) {
+    layerGroups = ensureGazaBorderStateRow(layerGroups);
     if (!options.bypassEquality && layerGroupsEqual(this._layerGroups, layerGroups)) {
       return;
     }
@@ -335,6 +341,16 @@ class OTEFDataContextClass {
     if (this._exhibitMode === value) return;
     this._exhibitMode = value;
     this._notify("exhibitMode", this._exhibitMode);
+  }
+
+  getGazaBorderVisible() { return this._gazaBorderVisible === true; }
+
+  _setGazaBorderVisible(next) {
+    this._gazaBorderVisibilityReceipt += 1;
+    const value = next === true;
+    if (this._gazaBorderVisible === value) return;
+    this._gazaBorderVisible = value;
+    this._notify("gazaBorderVisibility", value);
   }
 
   _setConfirmedBasemap(basemap) {
@@ -1074,6 +1090,9 @@ class OTEFDataContextClass {
         break;
       case "basemap":
         current = this._basemap;
+        break;
+      case "gazaBorderVisibility":
+        current = this.getGazaBorderVisible();
         break;
       case "exhibitMode":
         current = this._exhibitMode;

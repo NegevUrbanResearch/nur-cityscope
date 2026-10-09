@@ -125,8 +125,8 @@ export const LEGEND_CATEGORY_COPY = Object.freeze({
 // copy and explicit summary permission only; symbol data remains in styles.
 export const LEGEND_POLICY = Object.freeze({
   "gaza.Gaza_Roads": Object.freeze({
-    label: Object.freeze({ he: "דרכי עזה", en: "Gaza roads" }),
-    summary: Object.freeze({ label: Object.freeze({ he: "דרכי עזה", en: "Gaza roads" }) }),
+    label: Object.freeze({ he: "כבישי עזה", en: "Gaza roads" }),
+    summary: Object.freeze({ label: Object.freeze({ he: "כבישי עזה", en: "Gaza roads" }) }),
   }),
   "greens.נחלים": Object.freeze({
     label: Object.freeze({ he: "נחלים", en: "Streams" }),

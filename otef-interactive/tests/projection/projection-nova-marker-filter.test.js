@@ -1,6 +1,7 @@
 import { describe, expect, test, vi } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
+import { filterGazaBorderVisibility } from "../../frontend/src/shared/gaza-border-style.js";
 
 describe("projection Nova marker filter wiring", () => {
   test("filters people synchronously immediately after projection layer sync", () => {

@@ -188,6 +188,11 @@ function applyStateFromApi(ctx, state, options = {}) {
       ctx._applyLegendSettings(state.legend_settings);
     }
   }
+  if (Object.prototype.hasOwnProperty.call(state, "gaza_border_visible")
+    && (options.visibilityReceipt === undefined || options.visibilityReceipt === ctx._gazaBorderVisibilityReceipt)) {
+    if (notify) ctx._setGazaBorderVisible(state.gaza_border_visible);
+    else { ctx._gazaBorderVisible = state.gaza_border_visible === true; ctx._gazaBorderVisibilityReceipt += 1; }
+  }
   if (Object.prototype.hasOwnProperty.call(state, "exhibit_mode")) {
     if (notify && typeof ctx._setExhibitMode === "function") {
       ctx._setExhibitMode(state.exhibit_mode === true);
@@ -225,10 +230,11 @@ function setupWebSocket(ctx) {
       const generation = ++connectionGeneration;
       ctx._setConnection(false, "connecting");
       const coupledBaseline = ctx._captureNarrativeSceneBaseline();
+      const visibilityReceipt = ctx._gazaBorderVisibilityReceipt;
       hydrationPromise = (async () => {
         try {
           const state = await OTEF_API.getState(ctx._tableName, { forceFresh: true });
-          applyStateFromApi(ctx, state, { notify: true, coupledBaseline });
+          applyStateFromApi(ctx, state, { notify: true, coupledBaseline, visibilityReceipt });
         } catch (err) {
           getLogger().error("[OTEFDataContext] Failed to refresh state after WebSocket connect:", err);
         } finally {
@@ -422,6 +428,11 @@ function setupWebSocket(ctx) {
     } else {
       ctx._exhibitMode = msg.exhibitMode === true;
     }
+  });
+
+  ctx._wsClient.on(OTEF_MESSAGE_TYPES.GAZA_BORDER_VISIBILITY_CHANGED, (msg = {}) => {
+    if (msg.table !== ctx._tableName || typeof msg.gazaBorderVisible !== "boolean") return;
+    ctx._setGazaBorderVisible(msg.gazaBorderVisible);
   });
 
   ctx._wsClient.on(OTEF_MESSAGE_TYPES.PROJECTION_SLIDESHOW_CHANGED, async (msg = {}) => {

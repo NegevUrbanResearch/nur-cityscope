@@ -127,7 +127,7 @@ export function projectionAppliedStatus(rows, revision) {
   return 'Applied';
 }
 
-export function mountProjectionConfig(root, { client, share, onExport, onImport, socket, outputController, candidateValidator, baselineCatalogLoader = createProjectionBaselineCatalogLoader(), readNamesDataset = null, layoutClient, settlementClient = null, catalog = { entries: [] }, catalogStatus = { status: "ready" }, retrySettlementCatalog = () => {}, clockEditorFactory = openClockLayoutEditor, novaExplainerEditorFactory = openNovaExplainerEditor, settlementEditorFactory = openSettlementNameEditor, trace } = {}) {
+export function mountProjectionConfig(root, { client, share, onExport, onImport, socket, outputController, candidateValidator, baselineCatalogLoader = createProjectionBaselineCatalogLoader(), readNamesDataset = null, layoutClient, settlementClient = null, visibilityClient = null, catalog = { entries: [] }, catalogStatus = { status: "ready" }, retrySettlementCatalog = () => {}, clockEditorFactory = openClockLayoutEditor, novaExplainerEditorFactory = openNovaExplainerEditor, settlementEditorFactory = openSettlementNameEditor, trace } = {}) {
   if (!client) throw new Error("projection config client is required");
   if (trace?.enabled) client.setLive(false);
   const sourceId = createUuid();
@@ -207,6 +207,8 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     trace,
     descriptors: ALL_FIELD_DESCRIPTORS,
     onField: handleField,
+    onGazaBorderVisibility: value => { void visibilityClient?.setVisible(value); },
+    onGazaBorderReload: () => { void visibilityClient?.hydrate(); },
     onFieldCancel: handleFieldCancel,
     onNudge: handleNudge,
     onWarpFieldCancel: (output) => { warpEditors[output].clearValidation(); refresh(); },
@@ -1188,6 +1190,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
   const onDatasetEvent = () => { void updateNamesTarget(true).then((ready) => { if (ready && !disposed) requestStatus(); }); };
   const unsubscribe = client.subscribe(handleState);
   const unsubscribeLayout = layoutClient?.subscribe?.(refresh);
+  const unsubscribeVisibility = visibilityClient?.subscribe?.(state => view.updateGazaBorderVisibility?.(state));
   const unsubscribeSettlement = settlementClient?.subscribe?.(() => { syncLayoutUnload(); refresh(); });
   const unsubscribeOutput = outputController?.subscribe?.((nextState) => { if (pointMatch?.isActive() && JSON.stringify([outputState.assignments,outputState.reverseModel]) !== JSON.stringify([nextState.assignments,nextState.reverseModel])) pointMatch.invalidatePreview("Output assignment or orientation changed; restart Match points."); outputState = nextState; refresh(); });
   if (view.canManageDisplays) outputController?.refreshDisplays?.().catch(() => {});
@@ -1220,7 +1223,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
       activeSettlementEditor?.setSelection?.({ output: settlementOutput, citycode: settlementCitycode });
       refresh();
     },
-    dispose() { if (disposed) return; disposed = true; pointMatch?.dispose(); editorBaselineSequence += 1; editorBaselineAbort?.abort(); editorBaselineAbort = null; syncLayoutUnload(); closeSettlementEditor({ force: true }); closeClockEditor({ force: true }); closeNovaExplainerEditor(); for (const action of clockCueActions) action.cancel(); clockCueActions.clear(); namesTargetRequest += 1; for (const editor of clockEditors) editor.dispose(); clockEditors.clear(); activeClockEditor = null; activeClockEditorNode = null; activeSettlementEditor = null; if (confirmationTimer !== null) clearTimeout(confirmationTimer); if (patternTimer !== null) clearInterval(patternTimer); socket?.send?.({ type: "otef_projection_pattern", table: "otef", output: activePattern.branch, pattern: "off", sourceId }); socket?.off?.("otef_projection_applied", statusMessage); socket?.off?.("otef_projection_names_status", namesStatusMessage); socket?.off?.("connect", onConnect); socket?.off?.("disconnect", onDisconnect); socket?.off?.('otef_person_selection_changed', onDatasetEvent); socket?.off?.('otef_narrative_scene_changed', onDatasetEvent); unsubscribe?.(); unsubscribeLayout?.(); unsubscribeSettlement?.(); unsubscribeOutput?.(); outputController?.dispose?.(); validator.dispose?.(); view.dispose(); client.stop?.(); },
+    dispose() { if (disposed) return; disposed = true; pointMatch?.dispose(); editorBaselineSequence += 1; editorBaselineAbort?.abort(); editorBaselineAbort = null; syncLayoutUnload(); closeSettlementEditor({ force: true }); closeClockEditor({ force: true }); closeNovaExplainerEditor(); for (const action of clockCueActions) action.cancel(); clockCueActions.clear(); namesTargetRequest += 1; for (const editor of clockEditors) editor.dispose(); clockEditors.clear(); activeClockEditor = null; activeClockEditorNode = null; activeSettlementEditor = null; if (confirmationTimer !== null) clearTimeout(confirmationTimer); if (patternTimer !== null) clearInterval(patternTimer); socket?.send?.({ type: "otef_projection_pattern", table: "otef", output: activePattern.branch, pattern: "off", sourceId }); socket?.off?.("otef_projection_applied", statusMessage); socket?.off?.("otef_projection_names_status", namesStatusMessage); socket?.off?.("connect", onConnect); socket?.off?.("disconnect", onDisconnect); socket?.off?.('otef_person_selection_changed', onDatasetEvent); socket?.off?.('otef_narrative_scene_changed', onDatasetEvent); unsubscribe?.(); unsubscribeLayout?.(); unsubscribeVisibility?.(); unsubscribeSettlement?.(); unsubscribeOutput?.(); outputController?.dispose?.(); validator.dispose?.(); view.dispose(); client.stop?.(); },
   };
 }
 

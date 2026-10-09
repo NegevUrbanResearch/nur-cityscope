@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, test, vi } from "vitest";
 import { NLI_PLAYABLE_IDS } from "../../frontend/src/shared/nli-investigation-beats.js";
+import { LayerRegistry } from "../../frontend/src/shared/layer-registry.js";
 import * as catalog from "../../frontend/src/remote/nli-staff-script.js";
 import {
   NARRATIVES,
@@ -128,7 +129,7 @@ describe("NLI staff run of show", () => {
     expect(SHOW.title).toEqual({ he: "רצף ההקרנה המלא", en: "Full projection sequence" });
   });
 
-  test("Home enables the six geographic layers and leaves the investigation off", () => {
+  test("Home enables the geographic layers and Gaza border while leaving the investigation off", () => {
     expect(catalog.HOME_LAYER_IDS).toEqual([
       "projector_base.שמות_יישובים",
       "projector_base.Locations_Lines",
@@ -136,6 +137,7 @@ describe("NLI staff run of show", () => {
       "nli.ציר_232",
       "projector_base.SEA",
       "gaza.Gaza_Roads",
+      "gaza.gaza_border",
     ]);
     expect(catalog.HOME_CUE).toEqual({
       narrative: null,
@@ -329,15 +331,14 @@ describe("NLI staff run of show", () => {
   });
 
   test.skipIf(!fs.existsSync(path.join(MANIFEST_ROOT, "nli/manifest.json")))(
-    "every cue layer exists in the processed layer manifests",
-    () => {
-      const known = new Set();
-      for (const pack of fs.readdirSync(MANIFEST_ROOT)) {
-        const file = path.join(MANIFEST_ROOT, pack, "manifest.json");
-        if (!fs.existsSync(file)) continue;
-        const manifest = JSON.parse(fs.readFileSync(file, "utf8"));
-        for (const layer of manifest.layers || []) known.add(`${pack}.${layer.id}`);
-      }
+    "every cue layer resolves through the registry, including frontend-authored layers",
+    async () => {
+      const registry = new LayerRegistry({ fetchImpl: async (url) => {
+        const file = path.join(MANIFEST_ROOT, url.split("/processed/layers/")[1]);
+        return { ok: fs.existsSync(file), json: async () => JSON.parse(fs.readFileSync(file, "utf8")) };
+      } });
+      await registry.init();
+      const known = new Set(registry.getAllLayerIds());
       const missing = allCues().flatMap((cue) => cue.layers || []).filter((id) => !known.has(id));
       expect([...new Set(missing)]).toEqual([]);
     },

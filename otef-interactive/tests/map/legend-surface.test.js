@@ -79,11 +79,44 @@ describe("shouldIncludeLayerInLegend", () => {
     expect(shouldIncludeLayerInLegend("nli", "narrative_polygon", "projection")).toBe(false);
   });
 
-  it("strips Gaza roads from both legend surfaces", () => {
-    expect(shouldIncludeLayerInLegend("gaza", "Gaza_Roads", "gis")).toBe(false);
-    expect(shouldIncludeLayerInLegend("gaza", "Gaza_Roads", "projection")).toBe(false);
+  it("includes Gaza roads on both legend surfaces", () => {
+    expect(shouldIncludeLayerInLegend("gaza", "Gaza_Roads", "gis")).toBe(true);
+    expect(shouldIncludeLayerInLegend("gaza", "Gaza_Roads", "projection")).toBe(true);
     expect(shouldIncludeLayerInLegend("gaza", "gaza_boundary", "gis")).toBe(true);
     expect(shouldIncludeLayerInLegend("gaza", "gaza_boundary", "projection")).toBe(true);
+  });
+
+  it.each([
+    ["gis", "he", "כבישי עזה"],
+    ["gis", "en", "Gaza roads"],
+    ["projection", "he", "כבישי עזה"],
+    ["projection", "en", "Gaza roads"],
+  ])("shows one localized Gaza roads row only while enabled on %s in %s", async (surface, language, label) => {
+    const style = {
+      renderer: "uniqueValue",
+      uniqueValues: { field: "type", classes: ["Local Road", "Main Road"].map((value, index) => ({
+        value,
+        symbol: { symbolLayers: [{ type: "stroke", color: "#123456", width: index + 1 }] },
+      })) },
+    };
+    const group = { id: "gaza", layers: [{ id: "Gaza_Roads", enabled: true }] };
+    const options = {
+      surface, language,
+      dataContext: { getLayerGroups: () => [group] },
+      registry: {
+        _initialized: true,
+        getGroups: () => [group],
+        getLayerConfig: () => ({ id: "Gaza_Roads", name: "Gaza_Roads", geometryType: "line", style }),
+        getPackStyleJsonForLayer: () => style,
+      },
+    };
+    const model = await buildLegendModel(options);
+    const roads = model.packs.flatMap((pack) => pack.layers).find((layer) => layer.id === "gaza.Gaza_Roads");
+    expect(roads?.name).toBe(label);
+    expect(roads.items).toHaveLength(1);
+    expect(roads.items[0]).toMatchObject({ label, shape: "line", stroke: "#123456" });
+    group.layers[0].enabled = false;
+    expect((await buildLegendModel(options)).packs).toEqual([]);
   });
 
   it("omits an enabled projector base pack from the built model", async () => {

@@ -1,4 +1,5 @@
 import { OTEF_API } from "../api-client.js";
+import { GAZA_BORDER_FULL_ID } from "../gaza-border-style.js";
 import { isGisBasemapId } from "../gis-basemap.js";
 import { OTEF_MESSAGE_TYPES } from "../message-protocol.js";
 import {
@@ -174,13 +175,21 @@ async function flushGroupEnabledCommand(ctx, groupId, enabled, traceId) {
   return withLayerPatchMutex(ctx, async () => {
     const sendGen = ctx._layerOpGeneration;
     try {
-      const updated = await OTEF_API.setGroupEnabled(ctx._tableName, groupId, enabled, {
+      let updated = await OTEF_API.setGroupEnabled(ctx._tableName, groupId, enabled, {
         sourceId: ctx._clientId,
         timestamp: Date.now(),
         traceId,
       });
       if (sendGen !== ctx._layerOpGeneration) {
         return;
+      }
+      // Older servers cannot include the frontend-authored border in the first group expansion.
+      if (groupId === "gaza" && Array.isArray(updated?.layerGroups)
+        && !updated.layerGroups.some(group => (group.layers || []).some(layer => `${group.id}.${layer.id}` === GAZA_BORDER_FULL_ID))) {
+        updated = await OTEF_API.setLayerToggles(ctx._tableName, [{ full_layer_id: GAZA_BORDER_FULL_ID, enabled: !!enabled }], {
+          sourceId: ctx._clientId, timestamp: Date.now(), traceId,
+        });
+        if (sendGen !== ctx._layerOpGeneration) return;
       }
       if (updated && Array.isArray(updated.layerGroups)) {
         ctx._setLayerGroups(updated.layerGroups);
@@ -978,9 +987,10 @@ async function setNarrative(ctx, id, options = {}) {
       typeof error.details.narrative_state === "object";
     if (staleNarrative) {
       const coupledBaseline = ctx._captureNarrativeSceneBaseline();
+      const visibilityReceipt = ctx._gazaBorderVisibilityReceipt;
       try {
         const state = await OTEF_API.getState(ctx._tableName, { forceFresh: true });
-        ctx._applyStateFromApi(state, { notify: true, coupledBaseline });
+        ctx._applyStateFromApi(state, { notify: true, coupledBaseline, visibilityReceipt });
       } catch (refreshError) {
         getLogger().warn("[OTEFDataContext] Failed to reconcile stale narrative state:", refreshError);
       }

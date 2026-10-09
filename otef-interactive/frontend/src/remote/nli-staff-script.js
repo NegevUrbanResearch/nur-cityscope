@@ -1,4 +1,5 @@
 import { NLI_PLAYABLE_IDS } from "../shared/nli-investigation-beats.js";
+import { GAZA_BORDER_FULL_ID } from "../shared/gaza-border-style.js";
 
 export const COPY = {
   he: {
@@ -78,7 +79,7 @@ const PEOPLE = "nli.people";
 const OPEN_SPACES = "land_use.שטחים_פתוחים";
 
 export const PEOPLE_NAMES_LAYER_IDS = ["nli.people_names"];
-export const FOCUS_LAYER_IDS = [...SETTLEMENT_LAYER_IDS, ROUTE_232, HOUSE_OUTLINES];
+export const FOCUS_LAYER_IDS = [...SETTLEMENT_LAYER_IDS, ROUTE_232, HOUSE_OUTLINES, GAZA_BORDER_FULL_ID];
 export const OPENING_LAYER_IDS = [...FOCUS_LAYER_IDS, SEA, GAZA_ROADS];
 export const TIMELINE_LAYER_IDS = [...OPENING_LAYER_IDS, ...NLI_PLAYABLE_IDS];
 export const HOME_LAYER_IDS = [
@@ -88,6 +89,7 @@ export const HOME_LAYER_IDS = [
   "nli.ציר_232",
   "projector_base.SEA",
   "gaza.Gaza_Roads",
+  GAZA_BORDER_FULL_ID,
 ];
 export const IDENTITY_LAYER_IDS = [...FOCUS_LAYER_IDS, PEOPLE];
 export const WALL_LAYER_IDS = PEOPLE_NAMES_LAYER_IDS;

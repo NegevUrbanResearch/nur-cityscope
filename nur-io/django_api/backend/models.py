@@ -393,6 +393,7 @@ class OTEFViewportState(models.Model):
     workshop_auto_publish = models.BooleanField(default=False)
     workshop_autopublish_started_at = models.DateTimeField(null=True, blank=True)
     exhibit_mode = models.BooleanField(default=False)
+    gaza_border_visible = models.BooleanField(default=False)
 
     # Last projection slideshow command (start/stop + payload), replicated over otef WebSocket
     projection_slideshow = models.JSONField(default=dict, blank=True)

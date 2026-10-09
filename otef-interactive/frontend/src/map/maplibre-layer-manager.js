@@ -1136,7 +1136,7 @@ function addLayerToMap(map, fullId, state, layerStyleOptions, stagedMeta) {
       return;
     }
   } else {
-    const dataUrl = layerRegistry.getLayerDataUrl(fullId);
+    const dataUrl = layerConfig.data || layerRegistry.getLayerDataUrl(fullId);
     if (!dataUrl) {
       return;
     }

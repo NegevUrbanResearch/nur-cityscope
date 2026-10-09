@@ -18,6 +18,7 @@ import { attachSettlementOrientationRuntime } from "../shared/nli-settlement-ori
 import { measureClockPreviewWarnings } from "../projection/clock-preview-warnings.js";
 import { syncInvestigationTimelineToMap, disposeInvestigationTimelineForMap } from "../shared/maplibre-investigation-timeline.js";
 import { createNovaExplainerOverlay } from "./nli-nova-explainer-overlay.js";
+import { filterGazaBorderVisibility } from "../shared/gaza-border-style.js";
 import {
   applyNliExplainerLayout,
   ensureNliExplainerHost,

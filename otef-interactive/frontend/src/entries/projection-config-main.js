@@ -15,6 +15,7 @@ import { createSettlementNameClient } from "../projection-config/settlement-name
 import { createProjectionTrace } from "../projection-config/projection-trace.js";
 import { loadSettlementNameCatalog } from "../shared/settlement-name-catalog.js";
 import { LayerRegistry } from "../shared/layer-registry.js";
+import { createGazaBorderVisibilityClient } from "../projection-config/gaza-border-visibility-client.js";
 
 function downloadExport(content, name) {
   if (typeof document === "undefined" || typeof URL?.createObjectURL !== "function") return;
@@ -66,6 +67,7 @@ export async function bootProjectionConfig({ document = globalThis.document, loc
   let mounted = null;
   let layoutClient = null;
   let settlementClient = null;
+  let visibilityClient = null;
   let disposed = false;
   let catalogGeneration = 0;
   let catalogAbort = null;
@@ -151,19 +153,24 @@ export async function bootProjectionConfig({ document = globalThis.document, loc
       settlementClient = createSettlementNameClient({ getSnapshot,
         writeOperation: (body) => OTEF_API.setSettlementNames("otef", body, { sourceId: createUuid() }), socket: ws,
       });
+      visibilityClient = createGazaBorderVisibilityClient({ getSnapshot, socket: ws,
+        writeVisible: visible => OTEF_API.updateState("otef", { gaza_border_visible: visible }),
+      });
       client = createProjectionConfigClient({ fetchImpl, socket: ws, sourceId: createUuid(), onConflict: (message) => mounted?.setConflict?.(message) });
       const outputLocation = location?.href ? new URL("./projection.html", location.href).href : "projection.html";
       outputController = createOutputWindowController({ location: outputLocation, open: globalThis.open, screenApi: globalThis, navigatorApi: globalThis.navigator, storage: (() => { try { return globalThis.localStorage; } catch { return null; } })() });
       const baselineCatalogLoader = createProjectionBaselineCatalogLoader({ fetchImpl });
       candidateValidator = createProjectionGeometryValidator({ baselineCatalogLoader });
-      mounted = mountProjectionConfig(root, { client, socket: ws, layoutClient, settlementClient, catalog: { entries: [] }, catalogStatus: { status: "loading" }, retrySettlementCatalog: () => { void startCatalog(); }, outputController, candidateValidator, baselineCatalogLoader,
+      mounted = mountProjectionConfig(root, { client, socket: ws, layoutClient, settlementClient, visibilityClient, catalog: { entries: [] }, catalogStatus: { status: "loading" }, retrySettlementCatalog: () => { void startCatalog(); }, outputController, candidateValidator, baselineCatalogLoader,
         readNamesDataset: () => readProjectionCandidateInputs({ fetchImpl }), trace,
         share: () => shareConfigUrl({ location, fetchImpl, document, traceSessionId: trace.enabled ? traceSessionId : null }), onExport: downloadExport, onImport: readImportFile });
       void layoutClient.hydrate({ forceFresh: true }).catch(() => {});
       void settlementClient.hydrate({ forceFresh: true }).catch(() => {});
+      void visibilityClient.hydrate();
       void startCatalog();
     } catch (error) {
       try { mounted?.dispose?.(); } catch {}
+      visibilityClient?.destroy();
       mounted = null;
       try { layoutClient?.destroy?.(); } catch {}
       layoutClient = null;
@@ -188,6 +195,7 @@ export async function bootProjectionConfig({ document = globalThis.document, loc
     try { mounted?.dispose?.(); } catch {}
     try { layoutClient?.destroy?.(); } catch {}
     try { settlementClient?.destroy?.(); } catch {}
+    visibilityClient?.destroy();
     try { trace?.dispose?.(); } catch {}
     if (ownsSocket) { try { ws.disconnect?.(); } catch {} }
   };
