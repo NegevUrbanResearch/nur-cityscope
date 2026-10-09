@@ -102,7 +102,8 @@ test('local calibration waits for prepared labels and overrides opacity without 
   const map={getLayer:()=>true,getPaintProperty:()=>0};
   const runtime=bindProjectionSettlementNames({dataContext:data,adapter,catalog,map,getCalibrationActive:()=>active,getGroups:()=>data.state.groups});
   await runtime.whenReady(); expect(runtime.getReadiness().ready).toBe(true); expect(adapter.descriptor().opacity).toBe(1);
-  active=false;runtime.refreshVisibility();expect(doc.paints.at(-1).globalAlpha).toBe(0);expect(data.state.settings).toEqual(before);runtime();
+  const paintCount = doc.paints.length;
+  active=false;runtime.refreshVisibility();expect(doc.paints).toHaveLength(paintCount);expect(data.state.settings).toEqual(before);runtime();
 });
 
 test('startup does not query opacity before the settlement map layer exists', async () => {
@@ -132,18 +133,20 @@ function settingsFixture() {
 
 function fakeCanvasDocument() {
   const paints = [];
+  const images = [];
   const document = {
-    paints,
+    paints, images,
     fonts: { load: async (spec) => { if (document.fonts.fail) throw new Error("font failed"); return [spec]; } },
     createElement() {
       const canvas = { width: 8, height: 8, getContext() {
         const context = {
           font: "", globalAlpha: 1,
           measureText: () => ({ width: 12, actualBoundingBoxLeft: 6, actualBoundingBoxRight: 6, actualBoundingBoxAscent: 8, actualBoundingBoxDescent: 2 }),
-          clearRect() {}, translate() {}, rotate() {}, drawImage() {}, save() {}, restore() {},
+          clearRect() {}, translate() {}, rotate() {}, setTransform() {}, save() {}, restore() {},
+          drawImage(source) { images.push({ text: source.text, opacity: context.globalAlpha }); },
           getImageData: () => ({ data: new Uint8ClampedArray(64) }),
           strokeText() {},
-          fillText(text) { paints.push({ op: "fill", text, globalAlpha: context.globalAlpha, canvasWidth: canvas.width }); },
+          fillText(text) { canvas.text = text; paints.push({ op: "fill", text, globalAlpha: context.globalAlpha, canvasWidth: canvas.width }); },
         };
         return context;
       } };
@@ -259,7 +262,7 @@ test("adopts the current lifecycle text-opacity when binding after the first wri
   await vi.waitFor(() => expect(adapter.getLabels()).toHaveLength(2));
   const fills = doc.paints.filter((paint) => paint.op === "fill");
   expect(fills.filter((paint) => paint.text === "נירים").at(-1).globalAlpha).toBe(1);
-  expect(fills.filter((paint) => paint.text === "מחוץ").at(-1).globalAlpha).toBeCloseTo(0.08);
+  expect(doc.images.filter(image => image.text === "מחוץ").at(-1).opacity).toBeCloseTo(0.08);
   dispose();
 });
 

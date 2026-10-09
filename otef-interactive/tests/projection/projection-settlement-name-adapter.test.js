@@ -39,8 +39,12 @@ test('applies saved connector width and opacity without changing the text halo',
   adapter.setFramingProvider(() => ({ matrix: [1,0,0,1,0,0], clip: [0,0,1,1], outlines: { '0067': [[[100,300],[200,300],[200,380],[100,380]]] } }));
   await adapter.prepare({ catalog: { entries: [catalogFixture().entries[0]] }, settings }); adapter.commit();
   expect(document.lines.map(line => line.width)).toEqual([5, 3]);
-  expect(document.lines.every(line => line.opacity === 0.4)).toBe(true);
+  expect(document.lines.every(line => line.opacity === 1)).toBe(true);
+  expect(document.images[0].opacity).toBe(0.4);
   expect(document.paints.every(paint => paint.lineWidth === 0.7)).toBe(true);
+  adapter.applyScaledOpacity(0.08);
+  expect(document.images.at(-2).opacity).toBeCloseTo(0.032);
+  expect(document.images.at(-1).opacity).toBe(0.08);
 });
 
 test.each([['240P', 'מועצה אזורית אשכול'], ['724P', 'מכללת ספיר'], ['0338', 'איבים'], ['1223', 'שדי אברהם'], ['1231', 'פרי גן']])('never paints excluded settlement %s even if its historical position remains in the baseline', async (citycode, text) => {
@@ -168,6 +172,7 @@ function fakeCanvasDocument() {
   const loads = [];
   const paints = [];
   const lines = [];
+  const images = [];
   const document = {
     fonts: {
       load: async (spec) => {
@@ -200,7 +205,9 @@ function fakeCanvasDocument() {
             moveTo(x, y) { context.path.push({x,y}); },
             lineTo(x, y) { context.path.push({x,y}); },
             stroke() { lines.push({ points: context.path, width: context.lineWidth, color: context.strokeStyle, opacity: context.globalAlpha }); },
+            drawImage(source, ...bounds) { images.push({ source, bounds, opacity: context.globalAlpha, rotate: context.lastRotate }); },
             fillText(text, x, y) {
+              canvas.text = text;
               paints.push({ op: "fill", text, x, y, lineWidth: context.lineWidth, canvasWidth: canvas.width, globalAlpha: context.globalAlpha, rotate: context.lastRotate });
             },
             strokeText(text, x, y) {
@@ -227,8 +234,22 @@ function fakeCanvasDocument() {
   document.loads = loads;
   document.paints = paints;
   document.lines = lines;
+  document.images = images;
   return document;
 }
+
+test('applies settlement fade once to the combined text and halo', async () => {
+  const document = fakeCanvasDocument();
+  const adapter = createProjectionSettlementNameAdapter({ document, output: 'left' });
+  await adapter.prepare({ catalog: { entries: [catalogFixture().entries[0]] }, settings: initializedSettingsFixture() });
+  adapter.commit();
+  const initialPaints = document.paints.length;
+  adapter.applyScaledOpacity(0.08);
+  expect(document.images).toHaveLength(1);
+  expect(document.images[0].opacity).toBe(0.08);
+  expect(document.paints.slice(initialPaints).map(paint => paint.globalAlpha)).toEqual([1, 1]);
+  expect(document.images[0].rotate).toBeCloseTo(35 * Math.PI / 180);
+});
 
 test("paints each label once with a single halo stroke and fill", async () => {
   const document = fakeCanvasDocument();
@@ -304,7 +325,7 @@ test("applies shared rotation on the canvas and per-cityname lifecycle opacity",
   adapter.applyScaledOpacity(["case", ["in", ["get", "cityname"], ["literal", ["נירים"]]], 1, 0.08]);
   const later = document.paints.filter((paint) => paint.op === "fill" && paint.canvasWidth === 1920);
   expect(later.filter((paint) => paint.text === "נירים").at(-1).globalAlpha).toBe(1);
-  expect(later.filter((paint) => paint.text === "מחוץ").at(-1).globalAlpha).toBeCloseTo(0.08);
+  expect(document.images.filter(image => image.source.text === "מחוץ").at(-1).opacity).toBeCloseTo(0.08);
 });
 
 test("visibility changes descriptor opacity without repacking labels", async () => {

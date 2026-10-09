@@ -1,4 +1,5 @@
 import { OUTPUT_HEIGHT, OUTPUT_WIDTH, projectionOverlayMatrix } from "./projection-overlay-placement.js";
+import { createProjectionClockMotionPainter } from "./projection-clock-motion-painter.js";
 
 const FONT = '"Guttman Hatzvi", "Noto Sans Hebrew", Arial, sans-serif';
 
@@ -16,7 +17,7 @@ function localSize(layout) {
   };
 }
 
-function drawClock(context, text, fontPx, width, height, rasterScale) {
+function drawClock(context, text, fontPx, width, height, rasterScale, motion, paintMotion) {
   context.save?.();
   context.beginPath?.();
   context.rect?.(0, 0, width, height);
@@ -37,20 +38,27 @@ function drawClock(context, text, fontPx, width, height, rasterScale) {
   const fontAscent = Number(metrics.fontBoundingBoxAscent) || actualAscent;
   const fontDescent = Number(metrics.fontBoundingBoxDescent) || Number(metrics.actualBoundingBoxDescent) || fontPx * 0.2;
   const baseline = (fontPx * 1.35 - fontAscent - fontDescent) / 2 + fontAscent;
-  context.fillText(text, 0, baseline);
+  if (motion?.active && motion.fromLabel?.length === text.length && motion.toLabel?.length === text.length) {
+    paintMotion(context, motion, { fontPx, baseline, rasterScale });
+  } else {
+    paintMotion(context, { fromLabel: text, toLabel: text, progress: 1 }, { fontPx, baseline, rasterScale });
+  }
   context.restore?.();
 }
 
 export function createProjectionCaptionAdapter({ canvasFactory, rasterScale = 1 } = {}) {
   const canvas = makeCanvas(canvasFactory); const context = canvas.getContext?.("2d");
   if (!context) throw new Error("projection caption adapter requires a 2d canvas");
+  const paintMotion = createProjectionClockMotionPainter({ canvasFactory });
   let snapshot = null; let layout = {}; let signature = null; let dirty = true; let disposed = false; let contentVersion = 0;
   const sync = (next = {}) => {
     if (disposed) return;
     const nextSnapshot = next.snapshot || next;
     const nextLayout = next.layout || layout;
     const size = localSize(nextLayout);
-    const nextSignature = JSON.stringify([nextSnapshot?.model?.clockLabel || "", Number(nextLayout.fontPx) || 22, size.width, size.height]);
+    const motion = nextSnapshot?.motion;
+    const nextSignature = JSON.stringify([nextSnapshot?.model?.clockLabel || "", Number(nextLayout.fontPx) || 22, size.width, size.height,
+      motion?.active ? [motion.fromLabel, motion.toLabel, motion.progress] : null]);
     snapshot = nextSnapshot;
     layout = nextLayout;
     if (nextSignature === signature) return;
@@ -67,7 +75,7 @@ export function createProjectionCaptionAdapter({ canvasFactory, rasterScale = 1 
       context.clearRect(0, 0, canvas.width, canvas.height);
       context.save();
       context.scale(rasterScale, rasterScale);
-      drawClock(context, snapshot.model.clockLabel || "", Number(layout.fontPx) || 22, canvas.width / rasterScale, canvas.height / rasterScale, rasterScale);
+      drawClock(context, snapshot.model.clockLabel || "", Number(layout.fontPx) || 22, canvas.width / rasterScale, canvas.height / rasterScale, rasterScale, snapshot.motion, paintMotion);
       context.restore();
       dirty = false;
       contentVersion += 1;

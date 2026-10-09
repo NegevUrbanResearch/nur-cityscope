@@ -84,7 +84,7 @@ describe("NLI Nova overlay remount contract", () => {
       layers,
     });
     expect(target.setPaintProperty).toHaveBeenCalledWith("settlements-fill", "fill-opacity", 0.08);
-    expect(target.setPaintProperty).toHaveBeenCalledWith("settlements-label", "text-opacity", 0.18);
+    expect(target.setPaintProperty).toHaveBeenCalledWith("settlements-label", "text-opacity", 0.08);
     expect(target.setPaintProperty).toHaveBeenCalledWith("Locations_Lines", "line-opacity", 0.08);
     expect(JSON.stringify(
       target.setPaintProperty.mock.calls.find(([id]) => id === "settlements-fill")?.[2],

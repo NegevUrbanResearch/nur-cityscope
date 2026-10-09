@@ -209,6 +209,7 @@ def _normalize_investigation_clock_patch(raw):
         "alarmOnsetOriginMs",
         "leadInMinutes",
         "hiddenDisplays",
+        "presentationPendingUntilMs",
         "revision",
         "serverNowMs",
     }
@@ -232,6 +233,18 @@ def _normalize_investigation_clock_patch(raw):
                 "investigation_clock.hiddenDisplays must contain unique GIS/projection display ids"
             )
         visibility["hiddenDisplays"] = [item for item in ("gis", "projection") if item in hidden]
+    if "presentationPendingUntilMs" in raw:
+        deadline = raw["presentationPendingUntilMs"]
+        if (
+            isinstance(deadline, bool)
+            or not isinstance(deadline, (int, float))
+            or not math.isfinite(deadline)
+            or deadline < 0
+        ):
+            return None, _clock_patch_error(
+                "investigation_clock.presentationPendingUntilMs must be a non-negative finite number"
+            )
+        visibility["presentationPendingUntilMs"] = deadline
     if phase == "idle":
         return idle_investigation_clock(loop=raw["loop"]) | visibility, None
 

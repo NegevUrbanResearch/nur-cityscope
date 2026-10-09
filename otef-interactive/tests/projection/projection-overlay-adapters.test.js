@@ -55,7 +55,7 @@ describe("projection overlay adapters", () => {
     adapter.sync({ layout, snapshot: { visible: true, model: { clockLabel: "07:05", rows: [] } } });
     const descriptor = adapter.draw();
     expect(descriptor.source).toBe(c); expect(descriptor.matrix).toHaveLength(9);
-    expect(c.context.calls.some(([name, value]) => name === "fillText" && value === "07:05")).toBe(true);
+    expect(c.context.calls.filter(([name]) => name === "fillText").map(([, value]) => value).join("")).toBe("07:05");
     expect(c.context.font).toContain("800");
     expect(c.context.textAlign).toBe("start");
     expect(c.context.textBaseline).toBe("alphabetic");
@@ -68,11 +68,11 @@ describe("projection overlay adapters", () => {
     const layoutForTest = { ...layout, rotateDeg: 0 };
     adapter.sync({ layout: layoutForTest, snapshot: { visible: true, model: { clockLabel: "06:29", rows: [] } } });
     adapter.draw();
-    const first = c.context.calls.filter(([name, value]) => name === "fillText" && value === "06:29").length;
+    const first = c.context.calls.filter(([name]) => name === "fillText").length;
     adapter.sync({ layout: layoutForTest, snapshot: { visible: true, model: { clockLabel: "06:36", rows: [] } } });
     adapter.draw();
-    expect(c.context.calls.filter(([name, value]) => name === "fillText" && value === "06:29").length).toBe(first);
-    expect(c.context.calls.some(([name, value]) => name === "fillText" && value === "06:36")).toBe(true);
+    expect(c.context.calls.filter(([name]) => name === "fillText").slice(0, first).map(([, value]) => value).join("")).toBe("06:29");
+    expect(c.context.calls.filter(([name]) => name === "fillText").slice(first).map(([, value]) => value).join("")).toBe("06:36");
   });
 
   test("legend lays out a wrapping row with direction and CSS symbol semantics", () => {

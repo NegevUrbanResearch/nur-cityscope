@@ -2,6 +2,7 @@
 
 import copy
 import json
+import math
 import os
 from pathlib import Path
 
@@ -171,6 +172,14 @@ def transition_narrative_scene(locked, narrative_id, expected_revision, hidden_d
         )
         if hidden_displays is not None:
             locked.investigation_clock["hiddenDisplays"] = list(hidden_displays)
+        deadline = previous_clock.get("presentationPendingUntilMs")
+        if (
+            not isinstance(deadline, bool)
+            and isinstance(deadline, (int, float))
+            and math.isfinite(deadline)
+            and deadline >= 0
+        ):
+            locked.investigation_clock["presentationPendingUntilMs"] = deadline
         selection, _changed, _error, _reason = transition_person_selection(
             locked,
             {"personId": None, "datasetVersion": None},

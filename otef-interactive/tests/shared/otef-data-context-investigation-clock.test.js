@@ -442,6 +442,42 @@ describe("OTEFDataContext investigation clock", () => {
     expect(OTEFDataContext.getInvestigationClock()).toMatchObject({ phase: "playing", revision: 2 });
   });
 
+  test("a cancelled queued scene hold cannot resume a newer manual pause", async () => {
+    const api = await import("../../frontend/src/shared/api-client.js");
+    const { default: dataContext } = await import("../../frontend/src/shared/OTEFDataContext.js");
+    const { createCueRunner } = await import("../../frontend/src/remote/nli-staff-cues.js");
+    let serverClock = wireClock({ phase: "playing", seekKind: "none", positionMs: 0 });
+    let acknowledgePause;
+    const serverPhases = [];
+    vi.spyOn(api.OTEF_API, "updateInvestigationClock").mockImplementation(async (_table, clock) => {
+      serverClock = { ...clock, revision: serverClock.revision + 1, serverNowMs: 25_000 };
+      serverPhases.push(serverClock.phase);
+      if (serverPhases.length === 1) await new Promise((resolve) => { acknowledgePause = resolve; });
+      return { investigation_clock: serverClock };
+    });
+    dataContext._tableName = "otef";
+    dataContext._clientId = "clock-client";
+    dataContext._narrativeState = { id: null, transition: "initial", revision: 0 };
+    dataContext._setInvestigationClock(serverClock);
+    const writes = vi.spyOn(dataContext, "patchInvestigationClock");
+    const paused = { ...serverClock, phase: "paused", positionMs: 3200 };
+    const pause = dataContext.patchInvestigationClock(paused);
+    await vi.waitFor(() => expect(acknowledgePause).toBeTypeOf("function"));
+    let sceneMutations = 0;
+    const runner = createCueRunner({ dataContext, commitLayers: async () => { sceneMutations += 1; } });
+    const cue = runner.apply({ layers: [], clock: "idle" }, "segev");
+    await vi.waitFor(() => expect(writes).toHaveBeenCalledTimes(2));
+    runner.cancel();
+    acknowledgePause();
+    expect(await pause).toMatchObject({ ok: true });
+    expect(await cue).toEqual({ status: "cancelled" });
+    await dataContext._clockPatchQueue;
+    expect(serverPhases).toEqual(["paused"]);
+    expect(serverClock).not.toHaveProperty("presentationPendingUntilMs");
+    expect(dataContext.getInvestigationClock()).toMatchObject({ phase: "paused", positionMs: 3200 });
+    expect(sceneMutations).toBe(0);
+  });
+
   test("clock layout starts with empty nova explainer maps", async () => {
     const { default: OTEFDataContext } = await import(
       "../../frontend/src/shared/OTEFDataContext.js"

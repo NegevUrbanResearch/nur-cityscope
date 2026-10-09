@@ -33,6 +33,20 @@ const alarms = INVESTIGATION_ALARMS_FULL_ID;
 const beats = [400, 420, 440];
 
 describe("scene clock visibility", () => {
+  it("keeps the scene presentation deadline through idle, play, end, and normalization", () => {
+    const clock = normalizeNliClock({ ...idleNliClock(), presentationPendingUntilMs: 16000 });
+    expect(clock.presentationPendingUntilMs).toBe(16000);
+    const playing = playNliClock(clock, [polygons], beats, 0);
+    expect(normalizeNliClock(playing).presentationPendingUntilMs).toBe(16000);
+    expect(stopNliClock(playing).presentationPendingUntilMs).toBe(16000);
+    expect(endNliClock(playing).presentationPendingUntilMs).toBe(16000);
+  });
+
+  it.each([true, "16000", null, Infinity, NaN, -1])("ignores an invalid scene presentation deadline: %s", (deadline) => {
+    expect(normalizeNliClock({ ...idleNliClock(), presentationPendingUntilMs: deadline }))
+      .not.toHaveProperty("presentationPendingUntilMs");
+  });
+
   it("preserves hidden displays through normalization and playback controls", () => {
     const clock = normalizeNliClock({ ...idleNliClock(), hiddenDisplays: ["gis", "projection"] });
     expect(clock.hiddenDisplays).toEqual(["gis", "projection"]);

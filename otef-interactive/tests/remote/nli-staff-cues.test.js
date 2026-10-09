@@ -36,6 +36,163 @@ function setup({ narrativeId = null, personId = null, layers, stop, start, end }
 }
 
 describe("NLI staff cue runner", () => {
+  function presentationSetup({ mutate } = {}) {
+    let clock = idleNliClock();
+    let narrativeId = null;
+    const observed = [];
+    const note = (kind) => observed.push({ kind, ...clock, narrativeId });
+    const dataContext = {
+      correctedNow: () => 1000,
+      getInvestigationClock: () => clock,
+      getNarrativeState: () => ({ id: narrativeId }),
+      patchInvestigationClock: async (next) => { clock = next; note("clock"); return { ok: true }; },
+      setNarrative: async (id) => {
+        narrativeId = id;
+        clock = idleNliClock(clock);
+        note("narrative");
+        return { ok: true };
+      },
+      setEscapeOverlay: async () => { note("escape"); return { ok: true }; },
+    };
+    const runner = createCueRunner({
+      dataContext,
+      commitLayers: async () => { note("layers"); await mutate?.(); },
+      stopClock: async () => { clock = idleNliClock(clock); note("stop"); },
+    });
+    return { runner, dataContext, observed, getClock: () => clock };
+  }
+
+  test("Home to Segev retains presentation through every intermediate scene mutation", async () => {
+    const { runner, observed, getClock } = presentationSetup();
+    expect(await runner.apply({ layers: [BASE], clock: "idle" }, "segev")).toEqual({ status: "ready" });
+    const mutations = observed.filter(({ kind }) => kind !== "clock");
+    expect(mutations.map(({ kind }) => kind)).toEqual(["layers", "narrative", "escape", "stop"]);
+    for (const mutation of mutations) expect(mutation.presentationPendingUntilMs).toBeGreaterThan(1000);
+    expect(getClock()).not.toHaveProperty("presentationPendingUntilMs");
+  });
+
+  test("intentional hiding precedes scene mutations even during a presentation hold", async () => {
+    const { runner, observed, getClock } = presentationSetup();
+    await runner.apply({ layers: [BASE], clock: "idle", hiddenDisplays: ["gis", "projection"] }, "segev");
+    for (const mutation of observed.filter(({ kind }) => kind !== "clock")) {
+      expect(mutation.presentationPendingUntilMs).toBeGreaterThan(1000);
+      expect(mutation.hiddenDisplays).toEqual(["gis", "projection"]);
+    }
+    expect(getClock().hiddenDisplays).toEqual(["gis", "projection"]);
+  });
+
+  test("a failed scene mutation releases its presentation hold", async () => {
+    let duringMutation;
+    const setup = presentationSetup({ mutate: () => {
+      duringMutation = setup.getClock();
+      throw new Error("layer failure");
+    } });
+    expect(await setup.runner.apply({ layers: [BASE], clock: "idle" }, "segev")).toEqual({ status: "failed" });
+    expect(duringMutation.presentationPendingUntilMs).toBeGreaterThan(1000);
+    expect(setup.getClock()).not.toHaveProperty("presentationPendingUntilMs");
+  });
+
+  test.each(["cancel", "null cue"])("%s releases the hold after an in-flight scene mutation settles", async (method) => {
+    let release;
+    const setup = presentationSetup({ mutate: () => new Promise((resolve) => { release = resolve; }) });
+    const first = setup.runner.apply({ layers: [BASE], clock: "idle" }, "segev");
+    await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+    expect(setup.getClock().presentationPendingUntilMs).toBeGreaterThan(1000);
+    if (method === "cancel") setup.runner.cancel();
+    else setup.runner.apply(null);
+    release();
+    expect(await first).toEqual({ status: "cancelled" });
+    await vi.waitFor(() => expect(setup.getClock()).not.toHaveProperty("presentationPendingUntilMs"));
+  });
+
+  test("cancellation during the hold acknowledgement clears the server hold without mutating the scene", async () => {
+    let localClock = idleNliClock();
+    let serverClock = localClock;
+    let acknowledge;
+    let sceneMutations = 0;
+    const dataContext = {
+      correctedNow: () => 1000,
+      getInvestigationClock: () => localClock,
+      patchInvestigationClock: async (next, { isCurrent } = {}) => {
+        if (isCurrent && !isCurrent()) return { ok: false, stale: true };
+        serverClock = next;
+        if (Object.hasOwn(next, "presentationPendingUntilMs")) {
+          await new Promise((resolve) => { acknowledge = resolve; });
+        }
+        // Match the state action: superseded acknowledgements do not adopt
+        // the server clock even though the server already accepted the write.
+        if (isCurrent && !isCurrent()) return { ok: false, stale: true };
+        localClock = next;
+        return { ok: true };
+      },
+    };
+    const runner = createCueRunner({ dataContext, commitLayers: async () => { sceneMutations += 1; } });
+    const applying = runner.apply({ layers: [BASE], clock: "idle" }, "segev");
+    await vi.waitFor(() => expect(acknowledge).toBeTypeOf("function"));
+    expect(serverClock.presentationPendingUntilMs).toBeGreaterThan(1000);
+    runner.cancel();
+    acknowledge();
+    expect(await applying).toEqual({ status: "cancelled" });
+    await vi.waitFor(() => expect(serverClock).not.toHaveProperty("presentationPendingUntilMs"));
+    expect(localClock).not.toHaveProperty("presentationPendingUntilMs");
+    expect(sceneMutations).toBe(0);
+  });
+
+  test("superseding a pending cue keeps its hold until the last cue settles", async () => {
+    let release;
+    let calls = 0;
+    const setup = presentationSetup({ mutate: () => {
+      if (++calls === 1) return new Promise((resolve) => { release = resolve; });
+    } });
+    const first = setup.runner.apply({ layers: [BASE], clock: "idle" }, "segev");
+    await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+    const second = setup.runner.apply({ layers: [BASE], clock: "idle" }, "hostages");
+    release();
+    expect(await first).toEqual({ status: "cancelled" });
+    expect(await second).toEqual({ status: "ready" });
+    for (const mutation of setup.observed.slice(0, -1)) {
+      expect(mutation.presentationPendingUntilMs).toBeGreaterThan(1000);
+    }
+    expect(setup.getClock()).not.toHaveProperty("presentationPendingUntilMs");
+  });
+
+  test("cancelling then immediately applying a new cue retains presentation between them", async () => {
+    let release;
+    let calls = 0;
+    const setup = presentationSetup({ mutate: () => {
+      if (++calls === 1) return new Promise((resolve) => { release = resolve; });
+    } });
+    const first = setup.runner.apply({ layers: [BASE], clock: "idle" }, "segev");
+    await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+    setup.runner.cancel();
+    const second = setup.runner.apply({ layers: [BASE], clock: "idle" }, "hostages");
+    release();
+    await Promise.all([first, second]);
+    for (const mutation of setup.observed.slice(0, -1)) {
+      expect(mutation.presentationPendingUntilMs).toBeGreaterThan(1000);
+    }
+  });
+
+  test("cleanup leaves a different staff writer's presentation hold in place", async () => {
+    const setup = presentationSetup({ mutate: async () => {
+      await setup.dataContext.patchInvestigationClock({ ...setup.getClock(), presentationPendingUntilMs: 21000 });
+    } });
+    expect(await setup.runner.apply({ layers: [BASE], clock: "idle" }, "segev")).toEqual({ status: "ready" });
+    expect(setup.getClock().presentationPendingUntilMs).toBe(21000);
+  });
+
+  test("a failed cleanup leaves a finite deadline rather than an unbounded hold", async () => {
+    const setup = presentationSetup();
+    const original = setup.dataContext.patchInvestigationClock;
+    setup.dataContext.patchInvestigationClock = async (clock, options) => {
+      if (!Object.hasOwn(clock, "presentationPendingUntilMs")) return { ok: false, error: new Error("offline") };
+      return original(clock, options);
+    };
+    expect(await setup.runner.apply({ layers: [BASE], clock: "idle" }, "segev")).toEqual({ status: "failed" });
+    expect(setup.getClock().presentationPendingUntilMs).toBeGreaterThan(1000);
+    expect(setup.getClock().presentationPendingUntilMs).toBeLessThanOrEqual(31000);
+  });
+
   test.each([false, true])("Nova scene mutations never publish a visible clock (already hidden: %s)", async (alreadyHidden) => {
     let clock = alreadyHidden
       ? { ...buildNovaEndedClock(), hiddenDisplays: ["gis", "projection"] }

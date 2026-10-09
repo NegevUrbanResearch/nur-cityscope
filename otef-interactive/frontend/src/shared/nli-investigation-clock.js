@@ -35,6 +35,7 @@ const SEEK_KINDS = ["none", "jump"];
  * @property {number} revision
  * @property {number|null} serverNowMs
  * @property {('gis'|'projection')[]|undefined} hiddenDisplays Displays that hide the scene clock.
+ * @property {number|undefined} presentationPendingUntilMs Corrected-time deadline for retaining the previous caption during a staff cue.
  */
 
 function asGroupsArray(layerGroups) {
@@ -81,6 +82,9 @@ function responseMetadata(src) {
     ...(Array.isArray(src?.hiddenDisplays) ? {
       hiddenDisplays: ["gis", "projection"].filter((display) => src.hiddenDisplays.includes(display)),
     } : {}),
+    ...(typeof src?.presentationPendingUntilMs === "number"
+      && Number.isFinite(src.presentationPendingUntilMs) && src.presentationPendingUntilMs >= 0
+      ? { presentationPendingUntilMs: src.presentationPendingUntilMs } : {}),
   };
 }
 

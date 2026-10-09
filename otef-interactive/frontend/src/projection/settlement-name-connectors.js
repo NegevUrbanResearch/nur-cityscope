@@ -1,3 +1,5 @@
+import { paintSettlementOpacityGroup } from './settlement-opacity-group.js';
+
 export function nearestSettlementBoundaryHit(rings, point) {
   let nearest = null, best = Infinity;
   for (const [ringIndex, ring] of (rings || []).entries()) {
@@ -43,16 +45,24 @@ export function settlementConnector(label, rings, inkBox, origin = null) {
   return { start, end: { x: label.x + dx * t, y: label.y + dy * t } };
 }
 
-export function paintSettlementConnector(context, connector, style, alpha) {
+export function paintSettlementConnector(context, connector, style, alpha, { document, rasterScale = 1 } = {}) {
   if (!connector || alpha <= 0 || style.opacity <= 0) return;
   context.save();
-  context.globalAlpha = alpha * style.opacity;
   context.lineCap = 'round'; context.lineJoin = 'round';
   const strokes = [[style.widthPx, style.color]];
   if (style.outlineWidthPx > 0) strokes.unshift([style.widthPx + 2 * style.outlineWidthPx, style.outlineColor]);
-  for (const [width, color] of strokes) {
-    context.lineWidth = width; context.strokeStyle = color;
-    context.beginPath(); context.moveTo(connector.start.x, connector.start.y); context.lineTo(connector.end.x, connector.end.y); context.stroke();
-  }
+  const padding = strokes[0][0] / 2 + 1;
+  paintSettlementOpacityGroup(context, { document, rasterScale, alpha: alpha * style.opacity,
+    bounds: { left: Math.min(connector.start.x, connector.end.x) - padding,
+      right: Math.max(connector.start.x, connector.end.x) + padding,
+      top: Math.min(connector.start.y, connector.end.y) - padding,
+      bottom: Math.max(connector.start.y, connector.end.y) + padding },
+    paint(lineContext) {
+      for (const [width, color] of strokes) {
+        lineContext.lineWidth = width; lineContext.strokeStyle = color;
+        lineContext.beginPath(); lineContext.moveTo(connector.start.x, connector.start.y); lineContext.lineTo(connector.end.x, connector.end.y); lineContext.stroke();
+      }
+    },
+  });
   context.restore();
 }

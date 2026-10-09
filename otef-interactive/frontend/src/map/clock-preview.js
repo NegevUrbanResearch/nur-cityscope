@@ -385,7 +385,7 @@ export async function bootClockPreview({ window: frameWindow, document: frameDoc
       displayProfile: "gis",
       nliCaptionMode: "clock-only",
       clockOnlyCaptionRelevantOverride: currentScene.sceneId === "home",
-      motionMode: resolveMotionMode(),
+      motionMode: 'reduced',
       captionEl,
       allowMapCaption: false,
       now: () => currentScene.clock.serverNowMs ?? Date.now(),
