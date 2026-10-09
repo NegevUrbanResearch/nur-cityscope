@@ -85,8 +85,10 @@ describe("NLI staff presentation controller", () => {
     const opening = h.controller.run("open", "nova_mor");
     h.reply({ outcome: "opened", slide: 9, range: [9, 11] });
     await opening;
-    const html = presentationControlsHtml(step, h.controller.getState(), "en");
+    const html = presentationControlsHtml({ ...step, title: { en: "Mor Levy" } }, h.controller.getState(), "en");
     expect(html).toMatch(/1 \/ 3/);
+    expect(html).toContain('aria-label="Mor Levy"');
+    expect(html).not.toContain("<span>Mor Levy</span>");
     expect(html).toMatch(/Previous/);
     expect(html).toMatch(/Next/);
     expect(html).toMatch(/Close/);

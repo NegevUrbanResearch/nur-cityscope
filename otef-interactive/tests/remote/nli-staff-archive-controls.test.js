@@ -57,12 +57,11 @@ describe("staff archive control HTML", () => {
     expect(open.textContent).toBe(labels.openNliRecord);
   });
 
-  test("open state pairs scroll up and down with Back and the person heading", () => {
+  test("open state pairs scroll up and down with Back without redundant visible headings", () => {
     const host = mount("open");
     const up = host.querySelector("[data-archive-action='page_up']");
     const down = host.querySelector("[data-archive-action='page_down']");
     const close = host.querySelector("[data-archive-action='close']");
-    const heading = host.querySelector(".presentation-controls-heading");
     expect(host.querySelector("[data-archive-action='open']")).toBeNull();
     expect(up.classList.contains("btn")).toBe(true);
     expect(up.classList.contains("btn--outline")).toBe(true);
@@ -70,13 +69,21 @@ describe("staff archive control HTML", () => {
     expect(down.classList.contains("btn")).toBe(true);
     expect(down.classList.contains("btn--outline")).toBe(false);
     expect(down.textContent).toBe(labels.nliArchiveScrollDown);
+    expect(up.classList.contains("nav-button")).toBe(true);
+    expect(down.classList.contains("nav-button")).toBe(true);
+    expect(up.querySelector("svg").getAttribute("aria-hidden")).toBe("true");
+    expect(down.querySelector("svg").getAttribute("aria-hidden")).toBe("true");
+    expect(up.querySelector("path").getAttribute("d")).toBe("M12 19V5m-6 6 6-6 6 6");
+    expect(down.querySelector("path").getAttribute("d")).toBe("M12 5v14m-6-6 6 6 6-6");
     expect(up.parentElement.classList.contains("presentation-slide-actions")).toBe(true);
     expect(up.compareDocumentPosition(down) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(close.classList.contains("btn--outline")).toBe(true);
     expect(close.classList.contains("presentation-close")).toBe(true);
     expect(close.textContent).toBe(labels.backToMap);
-    expect(heading.querySelector("span").textContent).toBe("חיים פרי");
-    expect(heading.querySelector("span:last-child").textContent).toBe(labels.nliArchiveRecord);
+    expect(host.querySelector(".presentation-controls-heading")).toBeNull();
+    expect(host.textContent).not.toContain("חיים פרי");
+    expect(host.textContent).not.toContain(labels.nliArchiveRecord);
+    expect(host.querySelector(".archive-controls").getAttribute("aria-label")).toBe("חיים פרי");
     expect(host.textContent).not.toContain("Hold to keep scrolling");
     expect(host.querySelector(".archive-hold-hint")).toBeNull();
     expect([up, down, close].every((button) => button.disabled)).toBe(false);

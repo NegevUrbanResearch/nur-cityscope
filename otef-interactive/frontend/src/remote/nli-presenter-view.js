@@ -1,5 +1,6 @@
 import { buildPresenterRail, presenterRailKeyAtY } from "./nli-presenter-rail.js";
 import { createPresenterBrowse } from "./nli-presenter-browse.js";
+import { createPresenterTimingView } from "./nli-presenter-timing-view.js";
 import presenterContent from "./nli-presenter-content.json" with { type: "json" };
 
 const COPY = {
@@ -15,7 +16,7 @@ const titlesIn = (corpus) => [...new Set(Object.values(corpus?.records || {})
   .flatMap((record) => [record?.he?.title, record?.en?.title])
   .filter((title) => typeof title === "string" && title.trim()))];
 
-export function createPresenterView({ root, commands, onError = () => {}, onRetry = async () => {}, profileCorpus = presenterContent } = {}) {
+export function createPresenterView({ root, commands, getSnapshot, onError = () => {}, onRetry = async () => {}, profileCorpus = presenterContent } = {}) {
   if (!root) throw new TypeError("Presenter view requires a root element");
   const browse = createPresenterBrowse();
   const listNodes = new Map();
@@ -33,6 +34,7 @@ export function createPresenterView({ root, commands, onError = () => {}, onRetr
 
   const section = el("section", { class: "nli-presenter", "aria-label": COPY.he.section }, root);
   const current = el("article", { class: "nli-presenter-current", "data-presenter-current": "" }, section);
+  const timingView = createPresenterTimingView({ root: current, getSnapshot });
   const time = el("bdi", { class: "nli-presenter-time", dir: "ltr", "data-presenter-time": "" }, current);
   const cardText = el("div", { class: "nli-presenter-text", tabindex: "0", "data-presenter-text": "" }, current);
   const profileProbe = el("span", { class: "nli-presenter-rem-probe", "aria-hidden": "true" }, section);
@@ -140,6 +142,9 @@ export function createPresenterView({ root, commands, onError = () => {}, onRetr
     const hideRail = isNova || isOpeningMinutes;
     rail.hidden = hideRail; rail.setAttribute("aria-hidden", String(hideRail)); rail.tabIndex = hideRail ? -1 : 0;
     area.classList.toggle("is-nova", isNova); area.classList.toggle("is-no-rail", hideRail);
+    footer.hidden = hideRail;
+    now.hidden = hideRail;
+    browser.classList.toggle("is-no-footer", hideRail);
     now.classList.toggle("is-browsing", state.mode === "browse");
     for (const [key, row] of listNodes) row.li.classList.toggle("is-browse", key === state.browseKey);
     rail.replaceChildren(); rail.setAttribute("aria-label", COPY[locale].slider);
@@ -368,7 +373,7 @@ export function createPresenterView({ root, commands, onError = () => {}, onRetr
     svgEl("path", { d: "M12 8v5l3 2M20 12a8 8 0 1 1-2.34-5.66L20 8", fill: "none", stroke: "currentColor", "stroke-width": "2", "stroke-linecap": "round", "stroke-linejoin": "round" }, nowIcon);
     const nowLabel = el("span", {}, now); text(nowLabel, COPY[locale].now); now.dir = locale === "he" ? "rtl" : "ltr";
     now.setAttribute("aria-label", COPY[locale].now);
-    paintRows(snapshot); paintCurrent(snapshot); paintRail(snapshot);
+    timingView.update(snapshot); paintRows(snapshot); paintCurrent(snapshot); paintRail(snapshot);
     if (visible && browse.getState().mode === "follow" && snapshot.appliedKey && (boundaryChanged || !listPointer)) centerOn(snapshot.appliedKey, { instant: true });
     readProfile({ width: root.clientWidth, height: root.clientHeight, textScale: snapshot.textScale });
   }
@@ -376,6 +381,7 @@ export function createPresenterView({ root, commands, onError = () => {}, onRetr
   function setError(message) { localError = message || null; if (!message && snapshot?.boundaryKey) resolvedErrorBoundary = snapshot.boundaryKey; if (snapshot) paintCurrent(snapshot); }
   function setVisible(value) {
     visible = Boolean(value);
+    timingView.setVisible(visible);
     if (!visible) {
       cancelGestures();
       if (snapshot) { browse.follow(snapshot); paintRail(snapshot); }
@@ -386,6 +392,7 @@ export function createPresenterView({ root, commands, onError = () => {}, onRetr
   }
   function dispose() {
     if (disposed) return; disposed = true; cancelGestures(); listenerController.abort(); clearTimeout(listTimer); clearTimeout(workspaceTimer); clearTimeout(programmaticResetTimer); resizeObserver?.disconnect();
+    timingView.dispose();
     fontSet?.removeEventListener?.("loadingdone", reprofileAfterFontLoad);
     fontSet?.removeEventListener?.("loadingerror", reprofileAfterFontLoad);
     rootPlayer?.classList.remove("is-presenter-timeline"); root.replaceChildren(); listNodes.clear();

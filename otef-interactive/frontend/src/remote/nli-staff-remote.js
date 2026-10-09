@@ -21,6 +21,7 @@ import { createStaffFullscreenControl } from "./nli-staff-fullscreen.js";
 import { labelForPlace, placeIsWithinRemoteBounds } from "./remote-place-navigation.js";
 import { applyServerLocale, bindLocaleButtons, getLocale, t, LOCALE_EVENT } from "./remote-locale.js";
 import { homeListHtml } from "./nli-staff-home.js";
+import { navigationButtonContent } from "./nli-staff-icons.js";
 import { COPY, HOME_CUE, NARRATIVES, SCRIPTS, SHOW } from "./nli-staff-script.js";
 import { isCanonicalHome } from "./staff-remote-refresh-guard.js";
 import { nextAction, prevAction, showStepIndex, slideIndexes } from "./nli-staff-flow.js";
@@ -390,9 +391,12 @@ export function initNliStaffRemote(dataContext, { presenterManifest = presenterC
 
   function renderConnection() {
     const el = $("staffConnection");
-    if (!el) return;
-    el.textContent = state.connectionStatus === "connecting"
+    const label = $("staffConnectionLabel");
+    if (!el || !label) return;
+    label.textContent = state.connectionStatus === "connecting"
       ? t("statusConnecting") : state.connected ? txt("connected") : txt("disconnected");
+    const details = $("staffConnectionDetails");
+    if (details) details.textContent = label.textContent;
     el.classList.toggle("is-on", state.connected);
   }
 
@@ -511,6 +515,7 @@ export function initNliStaffRemote(dataContext, { presenterManifest = presenterC
     onPending: (pending) => presenterView?.setPending(pending),
     onError: onPresenterError });
   presenterView = createPresenterView({ root: $("kitTimeline"), commands: presenterCommands,
+    getSnapshot: currentPresenterSnapshot,
     onError: onPresenterError, onRetry: retryPresenterTimeline });
   presenterView.setVisible(false);
 
@@ -519,8 +524,8 @@ export function initNliStaffRemote(dataContext, { presenterManifest = presenterC
     if (!item) return;
     const step = item.steps[state.step];
     const slides = slideIndexes(item);
-    $("playerScript").textContent = loc(item.title);
-    $("stepCount").textContent = `${slides.indexOf(state.step) + 1} ${txt("of")} ${slides.length}`;
+    $("stepCount").textContent = "";
+    $("stepCount").hidden = true;
     $("ticks").innerHTML = slides
       .map((index, n) => {
         const cls = index < state.step ? "is-done" : index === state.step ? "is-current" : "";
@@ -530,8 +535,8 @@ export function initNliStaffRemote(dataContext, { presenterManifest = presenterC
       .join("");
     $("stepClock").textContent = step.clock || "";
     $("stepTitle").textContent = loc(step.title);
-    $("stepNote").textContent = loc(step.note);
-    $("stepNote").classList.toggle("draft-note", Boolean(step.draft));
+    $("stepNote").textContent = "";
+    $("stepNote").hidden = true;
     renderDock();
     renderKit();
   }
@@ -540,10 +545,11 @@ export function initNliStaffRemote(dataContext, { presenterManifest = presenterC
     const next = nextAction(state);
     const choices = next.kind === "choose";
     $("prevBtn").setAttribute("aria-label", getLocale() === "he" ? "הסצנה הקודמת" : "Previous scene");
+    $("prevBtn").innerHTML = navigationButtonContent(txt("prev"), "previous", getLocale());
     $("nextBtn").setAttribute("aria-label", next.kind === "finish" ? txt("done") : getLocale() === "he" ? "הסצנה הבאה" : "Next scene");
     $("prevBtn").disabled = !canReplaceNavigation() || !prevAction(state);
     $("nextBtn").hidden = choices;
-    $("nextBtn").textContent = txt({ step: "next", resume: "backToShow", finish: "done" }[next.kind] || "next");
+    $("nextBtn").innerHTML = navigationButtonContent(txt({ step: "next", resume: "backToShow", finish: "done" }[next.kind] || "next"), "next", getLocale());
     $("nextBtn").disabled = !canReplaceNavigation();
     $("nextChoices").hidden = !choices;
     $("nextChoices").innerHTML = !choices ? "" : next.ids
@@ -633,6 +639,7 @@ export function initNliStaffRemote(dataContext, { presenterManifest = presenterC
   }
 
   function renderResults(query) {
+    renderSearchReset();
     const box = $("searchResults");
     const q = query.trim();
     if (!q) {
@@ -682,7 +689,16 @@ export function initNliStaffRemote(dataContext, { presenterManifest = presenterC
   }
 
   function renderSearchStatus() {
+    renderSearchReset();
     paintSearchStatus(state.searchPending ? txt("searchClearing") : state.searchError || "");
+  }
+
+  function renderSearchReset() {
+    const button = $("searchReset");
+    if (!button) return;
+    const hasSearch = $("searchInput").value.trim() || peopleArchive?.getAcknowledgedPerson?.() ||
+      dataContext?.getPersonSelection?.()?.personId || state.placeName || placeFocusOwnership.hasFocus();
+    button.disabled = state.searchPending || !hasSearch;
   }
 
   function archiveLocaleLabels() {
@@ -790,6 +806,7 @@ export function initNliStaffRemote(dataContext, { presenterManifest = presenterC
 
   async function clearSearchFocus() {
     if (state.searchPending) return;
+    const previousQuery = $("searchInput").value;
     const token = searchTransition.begin();
     state.searchPending = true;
     if (state.screen === "player") renderPlayer();
@@ -798,12 +815,12 @@ export function initNliStaffRemote(dataContext, { presenterManifest = presenterC
     if (!searchTransition.isCurrent(token)) return;
     if (!cleared) {
       failSearchClear(token);
+      if (!$("searchInput").value) $("searchInput").value = previousQuery;
+      renderSearchReset();
       return;
     }
     state.searchPending = false;
-    state.placeName = null;
-    state.searchError = null;
-    renderResults("");
+    clearSearchUi();
     if (state.screen === "player") renderPlayer();
     else renderKit();
   }
@@ -988,6 +1005,7 @@ export function initNliStaffRemote(dataContext, { presenterManifest = presenterC
     syncInputDirection: () => {},
     isNarrativeActive: () => false,
     isConnected: () => state.connected,
+    onArchiveClosed: () => { void clearSearchFocus(); },
     onStateChange: () => {
       if (!archiveUiReady) return;
       renderKit();
@@ -1207,6 +1225,7 @@ export function initNliStaffRemote(dataContext, { presenterManifest = presenterC
   $("kitArchive")?.addEventListener("pointerdown", onArchivePointerDown);
   $("searchArchiveMount")?.addEventListener("pointerdown", onArchivePointerDown);
 
+  $("searchReset")?.addEventListener("click", () => { void clearSearchFocus(); });
   $("searchInput").addEventListener("input", (event) => {
     if (state.searchPending) return;
     if (!event.target.value.trim()) {

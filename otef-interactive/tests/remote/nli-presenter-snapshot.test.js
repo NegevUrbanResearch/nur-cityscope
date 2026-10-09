@@ -33,6 +33,53 @@ it("preserves the authored current step id in the presenter snapshot", () => {
   expect(snapshot.sceneId).toBe("opening-minutes");
 });
 
+it("counts opening playback seconds, including the final hold, rather than story minutes", () => {
+  const minutes = [389, 400, 401];
+  const clock = playNliClock(idleNliClock(), ["nli.lines"], minutes, 0);
+  const input = makeSnapshotInput({ minutes, clock, nowMs: 1500, to: 401 });
+  expect(buildPresenterSnapshot(input).timing).toEqual({ durationMs: 14500, remainingMs: 13000 });
+  const paused = pauseNliClock(clock, 1500);
+  expect(buildPresenterSnapshot({ ...input, clock: paused, nowMs: 90000 }).timing)
+    .toEqual({ durationMs: 14500, remainingMs: 13000 });
+  expect(buildPresenterSnapshot({ ...input, nowMs: 14000 }).timing.remainingMs).toBe(500);
+  expect(buildPresenterSnapshot({ ...input, nowMs: 15000 }).timing.remainingMs).toBe(0);
+});
+
+it("counts only the rest-of-day window and its preview, even after an event jump", () => {
+  const minutes = [389, 400, 403, 660];
+  const clock = { phase: "playing", beats: minutes, membership: ["nli.lines"],
+    positionMs: 0, anchorMs: 0, leadInMinutes: 402 };
+  const input = makeSnapshotInput({ minutes, clock, from: 402, nowMs: 1000 });
+  expect(buildPresenterSnapshot(input).timing).toEqual({ durationMs: 8500, remainingMs: 7500 });
+  expect(buildPresenterSnapshot({ ...input, nowMs: 3000 }).timing.remainingMs).toBe(5500);
+  const jumped = { ...clock, phase: "paused", positionMs: 10500 };
+  delete jumped.leadInMinutes;
+  expect(buildPresenterSnapshot({ ...input, clock: jumped, nowMs: 90000 }).timing)
+    .toEqual({ durationMs: 8500, remainingMs: 3500 });
+});
+
+it("includes the scene-entry preview, while replay can skip its already-shown preview", () => {
+  const minutes = [389, 402, 403];
+  const clock = playNliClock(idleNliClock(), ["nli.lines"], minutes, 0, { leadInMinutes: 402 });
+  const input = makeSnapshotInput({ minutes, clock, from: 402, nowMs: 1000 });
+  expect(buildPresenterSnapshot(input).timing).toEqual({ durationMs: 10000, remainingMs: 6500 });
+  const entry = playNliClock(idleNliClock(), ["nli.lines"], minutes, 0,
+    { leadInMinutes: 402, playLeadIn: true });
+  expect(buildPresenterSnapshot({ ...input, clock: entry }).timing)
+    .toEqual({ durationMs: 10000, remainingMs: 9000 });
+});
+
+it("gives Nova forty playback seconds and follows looping, paused, idle and ended states", () => {
+  const minutes = [...NLI_NOVA_STORY.representativeMinutes];
+  const input = makeSnapshotInput({ minutes, narrative: { id: "nova", revision: 1 } });
+  expect(buildPresenterSnapshot(input).timing).toEqual({ durationMs: 40000, remainingMs: 40000 });
+  const clock = { phase: "playing", beats: minutes, membership: ["nli.lines"],
+    positionMs: 0, anchorMs: 0, loop: true };
+  expect(buildPresenterSnapshot({ ...input, clock, nowMs: 43000 }).timing.remainingMs).toBe(37000);
+  expect(buildPresenterSnapshot({ ...input, clock: { ...clock, phase: "paused", positionMs: 16000 }, nowMs: 90000 }).timing.remainingMs).toBe(24000);
+  expect(buildPresenterSnapshot({ ...input, clock: { ...clock, phase: "ended" } }).timing.remainingMs).toBe(0);
+});
+
 it("filters the list but preserves the clock's earlier context", () => {
   const snapshot = buildPresenterSnapshot(makeSnapshotInput({
     minutes:[389,400,403,453,454,1197],from:402,to:1197,

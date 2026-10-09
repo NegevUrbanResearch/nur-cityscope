@@ -19,7 +19,7 @@ const FIXTURE = `
     <p id="fullscreenStatus" hidden></p>
     <button type="button" id="localeHe"></button>
     <button type="button" id="localeEn"></button>
-    <span id="staffConnection"></span>
+    <span id="staffConnection"><span id="staffConnectionLabel"></span></span>
     <section class="screen is-active" data-screen="home">
       <p id="homeCueStatus" hidden role="status"></p>
       <button id="homeRetry" hidden></button>
@@ -40,6 +40,7 @@ const FIXTURE = `
         <div id="kitSearch">
           <div id="searchKit">
             <input id="searchInput" />
+            <button type="button" id="searchReset" disabled></button>
             <ul id="searchResults"></ul>
             <p id="searchStatus" hidden></p>
             <div id="searchArchiveMount"></div>
@@ -498,6 +499,55 @@ describe("NLI staff Home transitions", () => {
     expect(activeScreen()).toBe("player");
   });
 
+  test("search reset clears the query and selected person while blocking conflicting controls", async () => {
+    setLocale("en", { persist: false });
+    session = mount();
+    await bootRemote(session);
+    await session.h.openCard('[data-show-step="identity-database"]');
+    expect(el("searchReset").disabled).toBe(true);
+
+    session.h.person = { personId: "ada", revision: 2, datasetVersion: "v", name: "Ada" };
+    let releaseClear;
+    session.h.clearPerson = vi.fn(() => new Promise((resolve) => {
+      releaseClear = () => {
+        session.h.person = { personId: null, revision: 3, datasetVersion: "v" };
+        resolve(session.h.person);
+      };
+    }));
+    el("searchInput").value = "Ada";
+    el("searchInput").dispatchEvent(new Event("input", { bubbles: true }));
+    expect(el("searchReset").disabled).toBe(false);
+    el("searchReset").click();
+    await vi.waitFor(() => expect(releaseClear).toBeTypeOf("function"));
+    expect(el("searchReset").disabled).toBe(true);
+    expect(el("searchInput").disabled).toBe(true);
+    expect(el("nextBtn").disabled).toBe(true);
+    releaseClear();
+    await vi.waitFor(() => expect(el("searchInput").disabled).toBe(false));
+    expect(el("searchInput").value).toBe("");
+    expect(session.h.person.personId).toBeNull();
+    expect(el("searchReset").disabled).toBe(true);
+    expect(el("searchResults").children).toHaveLength(0);
+    expect(el("stepTitle").textContent).toBe("Identity database");
+  });
+
+  test("failed search reset keeps the selected person and restores a retryable query", async () => {
+    setLocale("en", { persist: false });
+    session = mount();
+    await bootRemote(session);
+    await session.h.openCard('[data-show-step="identity-database"]');
+    session.h.person = { personId: "ada", revision: 2, datasetVersion: "v", name: "Ada" };
+    session.h.clearPerson = vi.fn(async () => session.h.person);
+    session.h.emit("personSelection", session.h.person);
+    el("searchInput").value = "Ada";
+    el("searchInput").dispatchEvent(new Event("input", { bubbles: true }));
+    el("searchReset").click();
+    await vi.waitFor(() => expect(el("searchStatus").textContent).toBe(COPY.en.searchClearFailed));
+    expect(el("searchInput").value).toBe("Ada");
+    expect(session.h.person.personId).toBe("ada");
+    expect(el("searchReset").disabled).toBe(false);
+  });
+
   test("ordinary search cleanup continues to block Next and Back", async () => {
     setLocale("en", { persist: false });
     session = mount();
@@ -814,7 +864,7 @@ describe("NLI staff Home transitions", () => {
     }
   });
 
-  test("open archive kit paint includes page_down and keeps the player chrome", async () => {
+  test.each(["closed", "unavailable-then-closed"])("archive Back resets search only after a matching close confirmation: %s", async (closeOutcome) => {
     const peopleIndex = {
       datasetVersion: "v1",
       people: [{ pid: "11", nameForms: ["Ada"], hasArchiveRecord: true }],
@@ -842,7 +892,8 @@ describe("NLI staff Home transitions", () => {
       await bootRemote(session);
       session.h.emit("connection", true);
       await session.h.openCard('[data-show-step="identity-database"]');
-      session.h.emit("personSelection", { personId: "11", datasetVersion: "v1", revision: 2 });
+      session.h.person = { personId: "11", datasetVersion: "v1", revision: 2 };
+      session.h.emit("personSelection", session.h.person);
       await vi.waitFor(() => {
         expect(el("searchArchiveMount").querySelector("[data-archive-action='open']")).toBeTruthy();
       });
@@ -863,6 +914,29 @@ describe("NLI staff Home transitions", () => {
       expect(document.querySelector(".dock")).not.toBeNull();
       expect(document.getElementById("archiveBtn")).toBeNull();
       expect(document.getElementById("freeArchiveBtn")).toBeNull();
+      el("searchArchiveMount").querySelector("[data-archive-action='close']").click();
+      await vi.waitFor(() => expect(session.dataContext.archiveWindowCommand.mock.calls.at(-1)[0]).toBe("close"));
+      const closeRequestId = session.dataContext.archiveWindowCommand.mock.calls.at(-1)[3];
+      session.h.emit("archiveWindowResult", {
+        requestId: "stale-close", personId: "11", datasetVersion: "v1", outcome: "closed",
+      });
+      expect(el("searchInput").value).toBe("Ada");
+      expect(session.h.person.personId).toBe("11");
+      if (closeOutcome === "unavailable-then-closed") {
+        session.h.emit("archiveWindowResult", {
+          requestId: closeRequestId, personId: "11", datasetVersion: "v1", outcome: "unavailable",
+        });
+        expect(el("searchInput").value).toBe("Ada");
+        expect(session.h.person.personId).toBe("11");
+      }
+      session.h.emit("archiveWindowResult", {
+        requestId: closeRequestId, personId: "11", datasetVersion: "v1", outcome: "closed",
+      });
+      await vi.waitFor(() => expect(el("searchInput").value).toBe(""));
+      expect(session.h.person.personId).toBeNull();
+      expect(el("searchReset").disabled).toBe(true);
+      expect(el("searchArchiveMount").querySelector("[data-archive-action='open']")).toBeNull();
+      expect(el("stepTitle").textContent).toBe("Identity database");
     } finally {
       vi.unstubAllGlobals();
     }

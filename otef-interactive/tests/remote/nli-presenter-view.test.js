@@ -8,15 +8,95 @@ function makeSnapshot(overrides = {}) {
   const beats = Array.from({ length: 6 }, (_, index) => ({ key: `beat-${index}`, minute: 360 + index * 3, copyKey: `copy-${index}`, copy: { timeLabel: `06:${String(index * 3).padStart(2, "0")}`, title: `Title ${index}`, summary: `Summary ${index}`, details: `Details ${index}` } }));
   return { ready: true, status: "ready", canMutate: true, phase: "playing", appliedKey: beats[0].key, previewMinute: null, error: null, boundaryKey: "scene-a", sceneBoundaryKey: "scene-a", beats, ...overrides };
 }
-function makeViewFixture({ profileCorpus } = {}) {
+function makeViewFixture({ profileCorpus, getSnapshot } = {}) {
   const root = document.createElement("div"); document.body.append(root);
   const commands = { select: vi.fn(async () => ({ ok: true })), step: vi.fn(async () => ({ ok: true })), toggle: vi.fn(async () => ({ ok: true })) };
   const onRetry = vi.fn(async () => ({ ok: true }));
-  const view = createPresenterView({ root, commands, onError: vi.fn(), onRetry, profileCorpus });
+  const view = createPresenterView({ root, commands, onError: vi.fn(), onRetry, profileCorpus, getSnapshot });
   return { root, commands, view, onRetry, snapshot: makeSnapshot() };
 }
 beforeEach(() => { document.body.replaceChildren(); });
 describe("persistent NLI presenter view", () => {
+  it("shows elapsed time on the left and total on the right at the top of the explanation card in both locales", () => {
+    const f = makeViewFixture();
+    f.view.update(makeSnapshot({ timing: { remainingMs: 31501, durationMs: 40000 } }));
+    const timer = f.root.querySelector("[data-presenter-timing]");
+    expect([...timer.querySelectorAll("bdi")].map(node => node.textContent)).toEqual(["0:08", "0:40"]);
+    expect(timer.textContent).toContain("זמן שעבר");
+    expect(timer.textContent).toContain("זמן כולל");
+    const progress = timer.querySelector('[role="progressbar"]');
+    expect(Number(progress.getAttribute("aria-valuenow"))).toBeCloseTo(8.499);
+    expect(progress.getAttribute("aria-valuemax")).toBe("40");
+    const current = f.root.querySelector("[data-presenter-current]");
+    expect(timer.parentElement).toBe(current);
+    expect(current.firstElementChild).toBe(timer);
+    expect(timer.nextElementSibling).toBe(f.root.querySelector("[data-presenter-time]"));
+    expect(timer.querySelector("bdi").dir).toBe("ltr");
+    expect(timer.dir).toBe("ltr");
+    f.view.update(makeSnapshot({ locale: "en", phase: "paused", timing: { remainingMs: 31501, durationMs: 40000 } }));
+    expect(timer.textContent).toContain("Elapsed time");
+    expect(timer.textContent).toContain("Total time");
+    expect([...timer.querySelectorAll("bdi")].map(node => node.textContent)).toEqual(["0:08", "0:40"]);
+    f.view.update(makeSnapshot({ ready: false }));
+    expect(timer.hidden).toBe(true);
+    f.view.dispose();
+  });
+
+  it("refreshes elapsed seconds without resetting the card or list, and stops when hidden or disposed", () => {
+    vi.useFakeTimers();
+    const base = Date.now();
+    let phase = "playing";
+    const getSnapshot = vi.fn(() => makeSnapshot({ phase,
+      timing: { durationMs: 40000, remainingMs: 40000 - (Date.now() - base) } }));
+    const f = makeViewFixture({ getSnapshot });
+    try {
+      f.view.update(getSnapshot());
+      const timer = f.root.querySelector("[data-presenter-timing]");
+      const card = f.root.querySelector("[data-presenter-text]");
+      const row = f.root.querySelector("[data-presenter-event]");
+      card.scrollTop = 35;
+      vi.advanceTimersByTime(1000);
+      expect(timer.querySelector("bdi").textContent).toBe("0:01");
+      expect(timer.querySelector('[role="progressbar"]').getAttribute("aria-valuenow")).toBe("1");
+      expect(card.scrollTop).toBe(35);
+      expect(f.root.querySelector("[data-presenter-event]")).toBe(row);
+      phase = "paused";
+      f.view.update(getSnapshot());
+      const pausedText = timer.textContent;
+      vi.advanceTimersByTime(2000);
+      expect(timer.textContent).toBe(pausedText);
+      phase = "playing";
+      f.view.update(getSnapshot());
+      f.view.setVisible(false);
+      getSnapshot.mockClear();
+      vi.advanceTimersByTime(2000);
+      expect(getSnapshot).not.toHaveBeenCalled();
+      f.view.setVisible(true);
+      f.view.dispose();
+      getSnapshot.mockClear();
+      vi.advanceTimersByTime(2000);
+      expect(getSnapshot).not.toHaveBeenCalled();
+    } finally { f.view.dispose(); vi.useRealTimers(); }
+  });
+
+  it("resets progress on replay, follows event jumps, and fills the bar when playback ends", () => {
+    const f = makeViewFixture();
+    const paint = (remainingMs, phase) => f.view.update(makeSnapshot({ phase,
+      timing: { durationMs: 40000, remainingMs } }));
+    paint(24000, "paused");
+    const timer = f.root.querySelector("[data-presenter-timing]");
+    const progress = timer.querySelector('[role="progressbar"]');
+    expect(timer.querySelector("bdi").textContent).toBe("0:16");
+    expect(progress.firstElementChild.style.width).toBe("40%");
+    paint(0, "ended");
+    expect([...timer.querySelectorAll("bdi")].map(node => node.textContent)).toEqual(["0:40", "0:40"]);
+    expect(progress.firstElementChild.style.width).toBe("100%");
+    paint(40000, "playing");
+    expect(timer.querySelector("bdi").textContent).toBe("0:00");
+    expect(progress.firstElementChild.style.width).toBe("0%");
+    f.view.dispose();
+  });
+
   it("centers rows against the scrolling viewport when the list has a nonzero page offset", () => {
     const f = makeViewFixture(); f.view.update(f.snapshot);
     const list = f.root.querySelector("[data-presenter-list]");
@@ -120,6 +200,27 @@ describe("persistent NLI presenter view", () => {
     const rail = f.root.querySelector("[data-presenter-rail]");
     expect(rail.hidden).toBe(true); expect(f.root.querySelector("[data-presenter-list]").children.length).toBe(6);
     f.view.update(makeSnapshot({ sceneId: "rest-of-day", sceneKey: "timeline:1:7" })); expect(rail.hidden).toBe(false);
+    f.view.dispose();
+  });
+
+  it.each([
+    { sceneId: "opening-minutes", narrativeId: null },
+    { sceneId: "nova", narrativeId: "nova" },
+  ])("hides Back to now on $sceneId and restores it on the longer timeline", (scene) => {
+    const f = makeViewFixture();
+    f.view.update(makeSnapshot(scene));
+    const now = f.root.querySelector("[data-presenter-now]");
+    const footer = now.closest(".nli-presenter-footer");
+    const browser = footer.closest(".nli-presenter-browser");
+    expect(now.hidden).toBe(true);
+    expect(footer.hidden).toBe(true);
+    expect(browser.classList.contains("is-no-footer")).toBe(true);
+    expect(f.root.querySelector("[data-presenter-play]").disabled).toBe(false);
+
+    f.view.update(makeSnapshot({ sceneId: "rest-of-day", narrativeId: null }));
+    expect(now.hidden).toBe(false);
+    expect(footer.hidden).toBe(false);
+    expect(browser.classList.contains("is-no-footer")).toBe(false);
     f.view.dispose();
   });
 

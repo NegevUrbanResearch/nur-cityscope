@@ -7,7 +7,10 @@ export function createStaffFullscreenControl({ root, button, status, labels } = 
   function render() {
     const active = document.fullscreenElement === root;
     button.setAttribute("aria-pressed", String(active));
-    button.setAttribute("aria-label", active ? labels.exit : labels.enter);
+    const label = active ? labels.exit : labels.enter;
+    button.setAttribute("aria-label", label);
+    const visibleLabel = button.querySelector("[data-fullscreen-label]");
+    if (visibleLabel) visibleLabel.textContent = label;
     if (!supported || failed) {
       status.textContent = labels.unavailable;
       status.hidden = false;

@@ -42,7 +42,7 @@ const FIXTURE = `
     <button type="button" id="homeBtn" hidden></button>
     <button type="button" id="localeHe"></button>
     <button type="button" id="localeEn"></button>
-    <span id="staffConnection"></span>
+    <span id="staffConnection"><span id="staffConnectionLabel"></span></span>
     <section class="screen is-active" data-screen="home">
       <div id="narrativeList"></div>
     </section>
@@ -789,6 +789,10 @@ describe("NLI staff scene integration", () => {
     }
 
     await clickNextReady("Mor Levy");
+    expect(el("stepNote").textContent).toBe("");
+    expect(el("stepNote").hidden).toBe(true);
+    expect(el("stepCount").textContent).toBe("");
+    expect(el("stepCount").hidden).toBe(true);
     for (const view of views(session)) {
       expect(view.clock.phase).toBe("ended");
       expect(view.escape.mor).toBe(true);
