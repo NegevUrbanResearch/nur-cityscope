@@ -21,6 +21,10 @@ describe("gis-layer-filter: isCuratedPackFullLayerId", () => {
 });
 
 describe("gis-layer-filter: shouldShowLayerOnGisMap", () => {
+  test("the names wall is projection-only while GIS people points remain available", () => {
+    expect(shouldShowLayerOnGisMap("nli", "people_names")).toBe(false);
+    expect(shouldShowLayerOnGisMap("nli", "people")).toBe(true);
+  });
   test("returns false for projector_base layers outside the GIS allowlist", () => {
     expect(shouldShowLayerOnGisMap("projector_base", "model_base")).toBe(false);
     expect(shouldShowLayerOnGisMap("projector_base", "רקע_שחור")).toBe(false);
@@ -64,6 +68,20 @@ describe("gis-layer-filter: shouldShowLayerOnGisMap", () => {
 });
 
 describe("gis-layer-filter: filterGroupsForGisMap", () => {
+  test("drops the projection names wall without disabling the other GIS layers", () => {
+    const layers = [
+      { id: "people_names", enabled: true },
+      { id: "people", enabled: true },
+      { id: "lines", enabled: true },
+    ];
+    const groups = [{ id: "nli", layers }];
+    expect(filterGroupsForGisMap(groups)).toEqual([{ id: "nli", layers: [
+      { id: "people", enabled: true },
+      { id: "lines", enabled: true },
+    ] }]);
+    expect(groups[0].layers).toBe(layers);
+    expect(groups[0].layers[0].enabled).toBe(true);
+  });
   test("keeps projector_base GIS allowlist layers and drops model_base", () => {
     const layerGroups = [
       {

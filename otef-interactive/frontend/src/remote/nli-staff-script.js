@@ -194,6 +194,13 @@ export const SHOW = {
       kit: ["search", "presentation"],
       presentation: { segmentId: "names_wall", open: "auto", onClose: "stay", controls: false },
     },
+    {
+      id: "credits",
+      title: { he: "קרדיטים", en: "Credits" },
+      cue: { ...HOME_CUE, layers: WALL_LAYER_IDS },
+      kit: ["presentation"],
+      presentation: { segmentId: "credits", open: "auto", onClose: "stay", controls: false },
+    },
   ],
 };
 

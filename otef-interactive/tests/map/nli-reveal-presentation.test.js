@@ -1,8 +1,11 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import fs from "node:fs";
+import path from "node:path";
+import { victimNamesAreShown } from "../../frontend/src/shared/nli-victim-name-layer-isolation.js";
 import rawManifest from "../../public/presentation/nli-presentation-manifest.json";
 import { validateNliPresentationManifest } from "../../frontend/src/shared/nli-presentation-manifest.js";
-import { createNliRevealPresentation } from "../../frontend/src/map/nli-reveal-presentation.js";
+import { createNliRevealPresentation, shouldCloseViewerForNarrative } from "../../frontend/src/map/nli-reveal-presentation.js";
 
 const manifest = validateNliPresentationManifest(rawManifest);
 const assetVersion = manifest.deck.assetVersion ?? manifest.deck.pdfSha256;
@@ -84,7 +87,7 @@ function makeHarness(overrideManifest = manifest) {
     async send(action, overrides = {}) {
       const pending = start(action, overrides);
       for (let attempt = 0; attempt < 12; attempt += 1) {
-        root.querySelector("section.present img")?.dispatchEvent(new Event("load"));
+        root.querySelector(".nli-reveal-overlay section.present img")?.dispatchEvent(new Event("load"));
         await Promise.resolve();
       }
       await new Promise((resolve) => { requestAnimationFrame(() => requestAnimationFrame(resolve)); });
@@ -193,6 +196,26 @@ describe("GIS Reveal presentation", () => {
     expect(h.lastResult()).toMatchObject({ outcome: "ready", slide: 37 });
     await h.send("close");
     expect(root.querySelector(".nli-reveal-overlay")).toBeNull();
+  });
+
+  test("a failed Credits image retains the outgoing identity screen until Home", async () => {
+    const h = makeHarness();
+    await h.send("open", { segmentId: "names_wall" });
+    const identity = root.querySelector(".nli-reveal-overlay");
+    const opening = h.start("open", { segmentId: "credits", presentationGeneration: 11 });
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      root.querySelector(".nli-reveal-overlay section.present img")?.dispatchEvent(new Event("error"));
+      await Promise.resolve();
+    }
+    await opening;
+    expect(h.lastResult().outcome).toBe("unavailable");
+    expect(root.querySelector(".nli-reveal-overlay")).toBeNull();
+    expect(identity.isConnected).toBe(true);
+    expect(identity.style.opacity).toBe("1");
+    await h.send("close");
+    expect(identity.isConnected).toBe(false);
+    h.viewer.dispose();
+    expect(root.children).toHaveLength(0);
   });
 
   test("Hostages keeps its five original slides without showing the credits", async () => {
@@ -439,6 +462,47 @@ describe("presentation open and close lifecycle", () => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
     delete HTMLImageElement.prototype.decode;
+  });
+
+  test("identity fades in initially and crossfades from Credits without exposing GIS", async () => {
+    vi.useFakeTimers();
+    const h = makeHarness();
+    const first = h.start("open", { segmentId: "names_wall" });
+    expect(overlay().style.opacity).toBe("0");
+    await vi.advanceTimersByTimeAsync(16);
+    expect(overlay().style.transition).toBe("");
+    await vi.advanceTimersByTimeAsync(600);
+    await first;
+    const identity = overlay();
+    const gates = deferDecode();
+    const credits = h.start("open", {
+      segmentId: "credits", presentationSessionId: "credits", presentationGeneration: 11,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(identity.isConnected).toBe(true);
+    expect(identity.style.opacity).toBe("1");
+    expect(overlay().style.opacity).toBe("0");
+    gates[0].resolve();
+    await vi.advanceTimersByTimeAsync(16);
+    expect(identity.isConnected).toBe(true);
+    await vi.advanceTimersByTimeAsync(600);
+    await credits;
+    expect(identity.isConnected).toBe(false);
+    const outgoingCredits = overlay();
+    const returning = h.start("open", {
+      segmentId: "names_wall", presentationSessionId: "wall-return", presentationGeneration: 12,
+    });
+    expect(outgoingCredits.isConnected).toBe(true);
+    expect(outgoingCredits.style.opacity).toBe("1");
+    expect(overlay().style.opacity).toBe("0");
+    await vi.advanceTimersByTimeAsync(16);
+    expect(outgoingCredits.isConnected).toBe(true);
+    expect(overlay().style.transition).toBe("");
+    await vi.advanceTimersByTimeAsync(600);
+    await returning;
+    expect(outgoingCredits.isConnected).toBe(false);
+    h.viewer.dispose();
+    expect(root.children).toHaveLength(0);
   });
 
   test("emits opened only after the first image decodes and the 600ms overlay fade", async () => {
@@ -1202,6 +1266,18 @@ describe("presentation open and close lifecycle", () => {
       state: { id: null, transition: "exit", revision: 5 },
       segment: shura,
     })).toMatchObject({ close: true, handledExitRevision: 5 });
+    expect(mod.shouldCloseViewerForNarrative({
+      handledExitRevision: 0,
+      state: { id: null, transition: "exit", revision: 5 },
+      segment: { id: "names_wall", requiredNarrative: null },
+      namesWallActive: true,
+    })).toMatchObject({ close: false, handledExitRevision: 5 });
+    expect(mod.shouldCloseViewerForNarrative({
+      handledExitRevision: 0,
+      state: { id: null, transition: "exit", revision: 5 },
+      segment: { id: "names_wall", requiredNarrative: null },
+      namesWallActive: false,
+    })).toMatchObject({ close: true, handledExitRevision: 5 });
     const replay = mod.shouldCloseViewerForNarrative({
       handledExitRevision: 5,
       state: { id: null, transition: "exit", revision: 5 },
@@ -1216,4 +1292,300 @@ describe("presentation open and close lifecycle", () => {
       segment: { id: "nova_mor", requiredNarrative: "nova" },
     })).toMatchObject({ close: true, handledExitRevision: 5 });
   });
+});
+
+test("managed open stages ready while old viewer remains until common reveal", async () => {
+  HTMLImageElement.prototype.decode = vi.fn().mockResolvedValue();
+  const results = [];
+  const viewer = createNliRevealPresentation(root, { manifest, RevealClass: FakeReveal, emitResult: result => results.push(result) });
+  await viewer.handleCommand(command("open", { segmentId: "names_wall" }));
+  const old = root.querySelector(".nli-reveal-overlay");
+  const next = command("open", { segmentId: "credits", presentationGeneration: 11, presentationSessionId: "next" });
+  await viewer.handleCommand(next, { managedScene: true });
+  expect(results.at(-1).outcome).toBe("ready");
+  expect(old.isConnected).toBe(true); expect(old.style.opacity).toBe("1");
+  const snapshot = { presentationCommand: next };
+  const prepared = await viewer.prepareScene(snapshot, {});
+  const writes = new Map();
+  const runtime = {
+    registerElement: (id, el) => { el.style.transition = "none"; el.style.opacity = "0"; writes.set(id, el); },
+    markMemberReady: () => {}, onMemberHidden: () => () => {},
+  };
+  viewer.applyScene(prepared, { snapshot, runtime });
+  expect(root.querySelectorAll(".nli-reveal-overlay, .nli-reveal-outgoing").length).toBe(2);
+  expect(results.at(-1).outcome).toBe("ready");
+  writes.get("nli.presentation.next").style.opacity = "1";
+  await viewer.settleScene(snapshot);
+  expect(results.at(-1).outcome).toBe("opened");
+  expect(old.isConnected).toBe(false); viewer.dispose();
+});
+test("managed decode failure preserves the old viewer and visible session", async () => {
+  HTMLImageElement.prototype.decode = vi.fn().mockResolvedValue();
+  const results = [];
+  const viewer = createNliRevealPresentation(root, { manifest, RevealClass: FakeReveal, emitResult: result => results.push(result) });
+  await viewer.handleCommand(command("open", { segmentId: "names_wall" }));
+  const old = root.querySelector(".nli-reveal-overlay");
+  HTMLImageElement.prototype.decode.mockRejectedValueOnce(new Error("decode"));
+  await viewer.handleCommand(command("open", { segmentId: "credits", presentationGeneration: 11, presentationSessionId: "next" }), { managedScene: true });
+  expect(results.at(-1).outcome).toBe("unavailable");
+  expect(old.isConnected).toBe(true); expect(old.style.opacity).toBe("1"); viewer.dispose();
+});
+
+test("managed candidate cancellation closes its correlation while preserving the old viewer", async () => {
+  HTMLImageElement.prototype.decode = vi.fn().mockResolvedValue();
+  const results = [];
+  const viewer = createNliRevealPresentation(root, { manifest, RevealClass: FakeReveal, emitResult: result => results.push(result) });
+  await viewer.handleCommand(command("open", { segmentId: "names_wall" }));
+  const old = root.querySelector(".nli-reveal-overlay");
+  const next = command("open", { segmentId: "credits", presentationGeneration: 11, presentationSessionId: "candidate" });
+  await viewer.handleCommand(next, { managedScene: true });
+  const close = { ...next, presentationAction: "close", sequence: next.sequence + 1, requestId: "cancel" };
+  await viewer.handleCommand(close, { managedScene: true });
+  expect(results.at(-1)).toMatchObject({ outcome: "closed", requestId: "cancel", presentationSessionId: "candidate" });
+  expect(old.isConnected).toBe(true); expect(old.style.opacity).toBe("1"); viewer.dispose();
+});
+test("managed visible close completes only at lifecycle zero", async () => {
+  const results = [];
+  const viewer = createNliRevealPresentation(root, { manifest, RevealClass: FakeReveal, emitResult: result => results.push(result) });
+  const opening = command("open", { segmentId: "names_wall" });
+  await viewer.handleCommand(opening, { managedScene: true });
+  const snapshot = { presentationCommand: opening }, prepared = await viewer.prepareScene(snapshot);
+  let hidden;
+  viewer.applyScene(prepared, { snapshot, runtime: { registerElement: (_id, el, bindings) => { el.style.opacity = "1"; hidden = bindings.onTeardown; }, markMemberReady() {} } });
+  await viewer.settleScene(snapshot);
+  const close = { ...opening, presentationAction: "close", sequence: opening.sequence + 1, requestId: "close" };
+  await viewer.handleCommand(close, { managedScene: true });
+  expect(viewer.getSceneCommand()).toBeNull();
+  expect(results.at(-1).outcome).toBe("opened"); expect(root.querySelector(".nli-reveal-overlay")).toBeTruthy();
+  hidden();
+  expect(results.at(-1)).toMatchObject({ outcome: "closed", requestId: "close" });
+  expect(root.querySelector(".nli-reveal-overlay")).toBeNull(); viewer.dispose();
+});
+test("cancelling a mounted but unfinished candidate restores the old fixed-screen viewer", async () => {
+  HTMLImageElement.prototype.decode = vi.fn().mockResolvedValue();
+  const viewer = createNliRevealPresentation(root, { manifest, RevealClass: FakeReveal });
+  await viewer.handleCommand(command("open", { segmentId: "names_wall" }));
+  const old = root.querySelector(".nli-reveal-overlay");
+  const next = command("open", { segmentId: "credits", presentationGeneration: 11, presentationSessionId: "next" });
+  await viewer.handleCommand(next, { managedScene: true });
+  const snapshot = { presentationCommand: next }, prepared = await viewer.prepareScene(snapshot);
+  viewer.applyScene(prepared, { snapshot, runtime: { registerElement() {}, markMemberReady() {} } });
+  viewer.discardScene(prepared);
+  expect(old.isConnected).toBe(true);
+  expect(root.querySelector(".nli-reveal-overlay")).toBe(old);
+  expect(viewer.getSceneCommand().segmentId).toBe("names_wall"); viewer.dispose();
+});
+
+test.each(["command", "public"])("manual %s close permits a subsequent structural binding scene", async closeKind => {
+  const { createNliSceneDisplayBinding } = await import("../../frontend/src/shared/nli-scene-display-binding.js");
+  const { createFakeMapLibreMap } = await import("../helpers/fake-maplibre-map.js");
+  const { getLayerLifecycleRuntime } = await import("../../frontend/src/shared/layer-lifecycle-fade.js");
+  const viewer = createNliRevealPresentation(root, { manifest, RevealClass: FakeReveal });
+  const open = command("open", { segmentId: "names_wall" });
+  await viewer.handleCommand(open);
+  const map = createFakeMapLibreMap(), runtime = getLayerLifecycleRuntime(map);
+  let narrativeState = { id: null };
+  const binding = await createNliSceneDisplayBinding({ map, runtime,
+    dataContext: { getLayerGroups: () => [], getInvestigationClock: () => ({ phase: "idle" }),
+      getNarrativeState: () => narrativeState, subscribe: () => () => {} },
+    getPresentationCommand: viewer.getSceneCommand,
+    getDisplaySceneIds: viewer.getSceneIds,
+    prepareDisplay: viewer.prepareScene,
+    applyDisplay: (prepared, options) => viewer.applyScene(prepared, { ...options, runtime }),
+    discardDisplay: viewer.discardScene,
+  });
+  await binding.request();
+  if (closeKind === "public") await viewer.close();
+  else await viewer.handleCommand({ ...open, presentationAction: "close", sequence: open.sequence + 1, requestId: "manual-close" });
+  narrativeState = { id: "segev" };
+  await expect(binding.request()).resolves.toEqual({ status: "ready" });
+  expect(binding.getRenderSnapshot().presentationCommand).toBeNull();
+  binding.dispose(); runtime.dispose(); viewer.dispose();
+});
+test("manual old-viewer close preserves a newer staged presentation intent", async () => {
+  HTMLImageElement.prototype.decode = vi.fn().mockResolvedValue();
+  const viewer = createNliRevealPresentation(root, { manifest, RevealClass: FakeReveal });
+  await viewer.handleCommand(command("open", { segmentId: "names_wall" }));
+  const next = command("open", { segmentId: "credits", presentationGeneration: 11, presentationSessionId: "staged-new" });
+  await viewer.handleCommand(next, { managedScene: true });
+  await viewer.close();
+  expect(viewer.getSceneCommand()).toBe(next);
+  await expect(viewer.prepareScene({ presentationCommand: next })).resolves.toBeTruthy(); viewer.dispose();
+});
+test.each(["staged", "revealing"])("production hold-released close cancels only the %s managed candidate", async phase => {
+  HTMLImageElement.prototype.decode = vi.fn().mockResolvedValue();
+  const results = [];
+  const viewer = createNliRevealPresentation(root, { manifest, RevealClass: FakeReveal, emitResult: value => results.push(value) });
+  await viewer.handleCommand(command("open", { segmentId: "names_wall" }));
+  const old = root.querySelector(".nli-reveal-overlay");
+  const next = command("open", { segmentId: "credits", presentationGeneration: 11, presentationSessionId: "released" });
+  await viewer.handleCommand(next, { managedScene: true });
+  if (phase === "revealing") {
+    const snapshot = { presentationCommand: next };
+    viewer.applyScene(await viewer.prepareScene(snapshot), { snapshot,
+      runtime: { registerElement: (_id, el) => { el.style.opacity = ".4"; }, markMemberReady() {} } });
+  }
+  // Production map-main sends false once the cue has released its hold.
+  const close = { ...next, presentationAction: "close", sequence: next.sequence + 1, requestId: "released-cancel" };
+  const closing = viewer.handleCommand(close, { managedScene: false });
+  await Promise.resolve();
+  expect(old.isConnected).toBe(true);
+  expect(root.querySelector(".nli-reveal-overlay")).toBe(old);
+  expect(viewer.getSceneCommand().presentationSessionId).toBe("session-current");
+  await closing;
+  expect(results.at(-1)).toMatchObject({ outcome: "closed", requestId: "released-cancel" });
+  expect(old.isConnected).toBe(true); viewer.dispose();
+});
+test("managed blackout waits for the exact versioned background to decode", async () => {
+  let decodeImage, finishDecode;
+  HTMLImageElement.prototype.decode = vi.fn(function () {
+    decodeImage = this; return new Promise(resolve => { finishDecode = resolve; });
+  });
+  const results = [];
+  const viewer = createNliRevealPresentation(root, { manifest, RevealClass: FakeReveal, emitResult: value => results.push(value) });
+  const opening = viewer.handleCommand(command("open", { segmentId: "names_wall" }), { managedScene: true });
+  await Promise.resolve();
+  expect(results).toEqual([]);
+  expect(decodeImage.src).toContain("/otef-interactive/public/local/presentations/nli/supplements/slide-background.png?v=" + assetVersion);
+  finishDecode(); await opening;
+  expect(results.at(-1).outcome).toBe("ready"); viewer.dispose();
+});
+test("failed blackout background decode preserves the previous visible viewer", async () => {
+  HTMLImageElement.prototype.decode = vi.fn().mockRejectedValue(new Error("background failed"));
+  const results = [];
+  const viewer = createNliRevealPresentation(root, { manifest, RevealClass: FakeReveal, emitResult: value => results.push(value) });
+  await viewer.handleCommand(command("open", { segmentId: "names_wall" }));
+  const old = root.querySelector(".nli-reveal-overlay");
+  await viewer.handleCommand(command("open", { segmentId: "names_wall", presentationGeneration: 11, presentationSessionId: "cold" }), { managedScene: true });
+  expect(results.at(-1).outcome).toBe("unavailable");
+  expect(old.isConnected).toBe(true); expect(old.style.opacity).toBe("1"); viewer.dispose();
+});
+test("cancelled blackout decode cannot acknowledge ready after its late completion", async () => {
+  let finishDecode;
+  HTMLImageElement.prototype.decode = vi.fn(() => new Promise(resolve => { finishDecode = resolve; }));
+  const results = [];
+  const viewer = createNliRevealPresentation(root, { manifest, RevealClass: FakeReveal, emitResult: value => results.push(value) });
+  await viewer.handleCommand(command("open", { segmentId: "names_wall" }));
+  const old = root.querySelector(".nli-reveal-overlay");
+  const next = command("open", { segmentId: "names_wall", presentationGeneration: 11, presentationSessionId: "cold" });
+  const pending = viewer.handleCommand(next, { managedScene: true }); await Promise.resolve();
+  await viewer.handleCommand({ ...next, presentationAction: "close", sequence: next.sequence + 1, requestId: "cancel-cold" }, { managedScene: false });
+  finishDecode?.(); await pending;
+  expect(results.filter(value => value.presentationSessionId === "cold").map(value => value.outcome)).toEqual(["closed"]);
+  expect(old.isConnected).toBe(true); viewer.dispose();
+});
+
+test("unresolved blackout background preparation fails at the existing image deadline", async () => {
+  HTMLImageElement.prototype.decode = vi.fn(() => new Promise(() => {}));
+  const results = [];
+  const viewer = createNliRevealPresentation(root, { manifest, RevealClass: FakeReveal, emitResult: value => results.push(value) });
+  vi.useFakeTimers();
+  const pending = viewer.handleCommand(command("open", { segmentId: "names_wall" }), { managedScene: true });
+  await vi.advanceTimersByTimeAsync(1499);
+  expect(results).toEqual([]);
+  await vi.advanceTimersByTimeAsync(1); await pending;
+  expect(results.at(-1).outcome).toBe("unavailable");
+  expect(root.querySelector(".nli-reveal-overlay")).toBeNull();
+  viewer.dispose(); vi.useRealTimers();
+});
+test("aborting blackout decode preserves old viewer and ignores the late decode", async () => {
+  let finishDecode;
+  HTMLImageElement.prototype.decode = vi.fn(() => new Promise(resolve => { finishDecode = resolve; }));
+  const results = [];
+  const viewer = createNliRevealPresentation(root, { manifest, RevealClass: FakeReveal, emitResult: value => results.push(value) });
+  await viewer.handleCommand(command("open", { segmentId: "names_wall" }));
+  const old = root.querySelector(".nli-reveal-overlay"), abort = new AbortController();
+  const next = command("open", { segmentId: "names_wall", presentationGeneration: 11, presentationSessionId: "aborted" });
+  const pending = viewer.handleCommand(next, { managedScene: true, signal: abort.signal });
+  await Promise.resolve(); abort.abort(); finishDecode(); await pending;
+  expect(results.some(value => value.presentationSessionId === "aborted")).toBe(false);
+  expect(old.isConnected).toBe(true); expect(viewer.getSceneCommand().presentationSessionId).toBe("session-current"); viewer.dispose();
+});
+
+
+function nativeEntryExit(viewer, context, sceneBinding, activeSegment = null) {
+  const entry = fs.readFileSync(path.resolve(import.meta.dirname, "../../frontend/src/entries/map-main.js"), "utf8");
+  const start = entry.indexOf("applyNarrativeExit = (state) => {");
+  const end = entry.indexOf("const queuedExits", start);
+  return new Function("presentationViewer", "presentationManifest", "OTEFDataContext", "sceneBinding", "victimNamesAreShown", "shouldCloseViewerForNarrative", "activePresentationSegmentId",
+    `let handledExitRevision = 0, activePresentationSessionId = null, activePresentationGeneration = 0;
+     const presentationBootstrapActive = true; let applyNarrativeExit;
+     ${entry.slice(start, end)} return applyNarrativeExit;`)(viewer, manifest, context, sceneBinding, victimNamesAreShown, shouldCloseViewerForNarrative, activeSegment);
+}
+
+test.each(manifest.segments.map(segment => segment.id))("native GIS narrative updates preserve current prepared %s intent through coordinated opening", async segmentId => {
+  HTMLImageElement.prototype.decode = vi.fn().mockResolvedValue();
+  vi.spyOn(HTMLMediaElement.prototype, "readyState", "get").mockReturnValue(4);
+  vi.useFakeTimers(); vi.setSystemTime(0);
+  const segment = manifest.segments.find(segment => segment.id === segmentId);
+  const target = segment.requiredNarrative;
+  const fixedScreen = ["names_wall", "credits"].includes(segmentId);
+  const { createNliSceneDisplayBinding } = await import("../../frontend/src/shared/nli-scene-display-binding.js");
+  const { createFakeMapLibreMap } = await import("../helpers/fake-maplibre-map.js");
+  const { getLayerLifecycleRuntime } = await import("../../frontend/src/shared/layer-lifecycle-fade.js");
+  const { filterGroupsForGisMap } = await import("../../frontend/src/shared/gis-layer-filter.js");
+  const results = [], viewer = createNliRevealPresentation(root, { manifest, RevealClass: FakeReveal, emitResult: result => results.push(result) });
+  const map = createFakeMapLibreMap(), runtime = getLayerLifecycleRuntime(map, { now: () => Date.now(), requestFrame: cb => map.requestAnimationFrame(cb), cancelFrame: id => map.cancelAnimationFrame(id) });
+  let clock = { phase: "idle" };
+  const context = { getLayerGroups: () => fixedScreen ? [{ id: "nli", layers: [{ id: "people_names", enabled: true }] }] : [], getNarrativeState: () => ({ id: target }), getInvestigationClock: () => clock, subscribe: () => () => {} };
+  const binding = await createNliSceneDisplayBinding({ map, runtime, dataContext: context, filterGroups: filterGroupsForGisMap,
+    getPresentationCommand: viewer.getSceneCommand, getDisplaySceneIds: viewer.getSceneIds, prepareDisplay: viewer.prepareScene,
+    applyDisplay: (prepared, options) => viewer.applyScene(prepared, { ...options, runtime }), discardDisplay: viewer.discardScene, onSceneSettled: viewer.settleScene,
+  });
+  try {
+    clock = { phase: "idle", presentationPendingUntilMs: 15000 };
+    const opening = command("open", { segmentId }); await viewer.handleCommand(opening, { managedScene: true });
+    expect(results.at(-1).outcome).toBe("ready");
+    expect(viewer.getPendingSceneCommand()).toEqual(opening);
+    const exit = nativeEntryExit(viewer, context, binding);
+    exit({ id: target, transition: target ? "enter" : "exit", revision: 1 });
+    expect(viewer.getSceneCommand()).toEqual(opening);
+    expect(root.querySelector(".nli-reveal-overlay").style.opacity).toBe("0");
+    clock = { phase: "idle" }; const completion = binding.request();
+    for (let i = 0; i < 45; i++) await Promise.resolve();
+    expect(results.map(result => result.outcome)).toEqual(["ready"]);
+    await vi.advanceTimersByTimeAsync(300); for (let i = 0; i < 4; i++) map.driveAnimationFrame(Date.now());
+    expect(root.querySelector(".nli-reveal-overlay").style.opacity).toBe("0.5");
+    expect(viewer.getPendingSceneCommand()).toEqual(opening);
+    exit({ id: target, transition: target ? "enter" : "exit", revision: 2 });
+    expect(viewer.getSceneCommand()).toEqual(opening);
+    await vi.advanceTimersByTimeAsync(300); for (let i = 0; i < 4; i++) map.driveAnimationFrame(Date.now());
+    await expect(completion).resolves.toMatchObject({ status: "ready" });
+    expect(results.at(-1).outcome).toBe("opened");
+    expect(viewer.getPendingSceneCommand()).toBeNull();
+    expect(root.querySelector(".nli-reveal-overlay").style.opacity).toBe("1");
+    exit({ id: target, transition: target ? "enter" : "exit", revision: 1 });
+    expect(viewer.getSceneCommand()).toEqual(opening);
+  } finally { binding.dispose(); runtime.dispose(); viewer.dispose(); vi.useRealTimers(); }
+});
+
+test("native GIS exit still closes a mismatched prepared narrative presentation", async () => {
+  HTMLImageElement.prototype.decode = vi.fn().mockResolvedValue();
+  const viewer = createNliRevealPresentation(root, { manifest, RevealClass: FakeReveal });
+  await viewer.handleCommand(command("open", { segmentId: "segev" }), { managedScene: true });
+  nativeEntryExit(viewer, { getLayerGroups: () => [], getInvestigationClock: () => ({ presentationPendingUntilMs: Date.now() + 15000 }) }, { isManaging: () => true, request: () => Promise.resolve() })({ id: "nova", transition: "enter", revision: 1 });
+  expect(viewer.getSceneCommand()).toBeNull(); expect(root.querySelector(".nli-reveal-overlay")).toBeNull(); viewer.dispose();
+});
+
+
+test("native GIS fresh exit still closes a manual standalone viewer while a cue hold is active", async () => {
+  HTMLImageElement.prototype.decode = vi.fn().mockResolvedValue();
+  const h = makeHarness(); await h.send("open", { segmentId: "shura" });
+  expect(h.viewer.getPendingSceneCommand()).toBeNull();
+  const old = root.querySelector(".nli-reveal-overlay");
+  nativeEntryExit(h.viewer, { getLayerGroups: () => [], getInvestigationClock: () => ({ presentationPendingUntilMs: Date.now() + 15000 }) }, { isManaging: () => true, request: () => Promise.resolve() }, "shura")({ id: null, transition: "exit", revision: 1 });
+  expect(h.viewer.getSceneCommand()).toBeNull();
+  expect(old.isConnected).toBe(true); h.viewer.dispose();
+});
+
+test("cancelled scene intent cannot protect the old manual viewer from a later exit", async () => {
+  HTMLImageElement.prototype.decode = vi.fn().mockResolvedValue();
+  const h = makeHarness(); await h.send("open", { segmentId: "names_wall" });
+  const staged = command("open", { segmentId: "shura", presentationGeneration: 11, presentationSessionId: "new-candidate" });
+  await h.viewer.handleCommand(staged, { managedScene: true });
+  await h.viewer.handleCommand({ ...staged, presentationAction: "close", sequence: staged.sequence + 1, requestId: "cancel-candidate" });
+  expect(h.viewer.getSceneCommand().presentationSessionId).toBe("session-current");
+  expect(h.viewer.getPendingSceneCommand()).toBeNull();
+  nativeEntryExit(h.viewer, { getLayerGroups: () => [] }, { isManaging: () => true, request: () => Promise.resolve() }, "names_wall")({ id: null, transition: "exit", revision: 1 });
+  expect(h.viewer.getSceneCommand()).toBeNull(); h.viewer.dispose();
 });

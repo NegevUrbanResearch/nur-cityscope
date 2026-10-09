@@ -20,6 +20,168 @@ const payload = (overrides = {}) => ({ records: records(), metrics: metrics(), c
   logicalPlane: { heading: 0, planeScale: 1 }, referenceZoom: 10, overviewBounds: [[34,31],[35,32]],
   configRevision: 4, namesWall: structuredClone(namesWall), ...overrides });
 
+test('English model visits disjoint spans and names left to right without changing coverage or ownership', async () => {
+  const rows = ['Alpha', 'Beta', 'Gamma', 'Zeta'].map((name, i) => ({ pid: String(i), name, orderKey: name, location: "Be'eri", sourceCoordinates: [34.5, 31.4] }));
+  const split = { pieces: { left: [rectPiece(0, 40, 0, 25)], right: [rectPiece(60, 100, 0, 25)] }, outputIdentities: coverage.outputIdentities };
+  const wall = structuredClone(namesWall); wall.activeMode = 'model';
+  const metric = { width: 12, left: 5, right: 7, ascent: 5, descent: 2 };
+  const result = await buildNamesWallLayout(payload({ language: 'en', records: rows, namesWall: wall, coverage: split,
+    metrics: [[8, rows.map(row => [row.name, metric])]], ring: [[0,0],[100,0],[100,25],[0,25],[0,0]], ringHash: 'split' }));
+  expect(result.diagnostics).toMatchObject({ state: 'valid', placed: 4, duplicate: 0, overlap: 0 });
+  expect(result.placements.slice().sort((a,b) => a.y - b.y || a.x - b.x).map(p => p.name)).toEqual(['Alpha', 'Beta', 'Gamma', 'Zeta']);
+  expect(result.placements[0].x).toBeLessThan(result.placements[1].x);
+  expect(result.textStyle).toMatchObject({ language: 'en', direction: 'ltr', fontFamily: 'Arial' });
+  expect(result.placements[0].textOffsetX).toBe(-1);
+});
+
+test.each([0, 5])('model names reach both outer row edges while preserving the %ipx minimum gap', async (spacing) => {
+  const ids = ['a', 'b', 'c', 'd', 'e'];
+  const wall = structuredClone(namesWall); wall.activeMode = 'model'; wall.profiles.model.spacingPx = spacing;
+  const result = await buildNamesWallLayout(payload({ namesWall: wall, records: records(ids), metrics: metrics(ids),
+    ring: [[0,0],[100,0],[100,80],[0,80],[0,0]], ringHash: 'both-edges' }));
+  expect(result.diagnostics.state).toBe('valid');
+  const row = result.placements.slice().sort((a,b) => b.x - a.x);
+  expect(new Set(row.map((p) => p.y)).size).toBe(1);
+  expect(row[0].x + row[0].width / 2).toBeCloseTo(98, 5);
+  expect(row.at(-1).x - row.at(-1).width / 2).toBeCloseTo(2, 5);
+  for (let i = 1; i < row.length; i++) expect(row[i - 1].x - row[i - 1].width / 2 -
+    (row[i].x + row[i].width / 2)).toBeGreaterThanOrEqual(spacing - 1e-7);
+});
+
+test('model crosses a calibrated join once while sharing remaining row width', async () => {
+  const ids = ['a', 'b', 'c', 'd', 'e'];
+  const joined = { pieces: { left: [rectPiece(0, 50, 0, 20)], right: [rectPiece(50, 100, 0, 20)] },
+    outputIdentities: coverage.outputIdentities };
+  const wall = structuredClone(namesWall); wall.activeMode = 'model';
+  wall.profiles.model.spacingPx = 0;
+  wall.profiles.model.strokeWidthPx = 2;
+  const result = await buildNamesWallLayout(payload({ records: records(ids), metrics: metrics(ids), coverage: joined,
+    namesWall: wall, ring: [[0,0],[100,0],[100,20],[0,20],[0,0]], ringHash: 'joined' }));
+  expect(result.diagnostics).toMatchObject({ state: 'valid', placed: 5, duplicate: 0, overlap: 0 });
+  expect(result.placements.every((p) => p.y === result.placements[0].y)).toBe(true);
+  expect(result.placements.find((p) => p.outputs.length === 2)).toBeDefined();
+  const byX = result.placements.slice().sort((a,b) => a.x - b.x);
+  for (let i = 1; i < byX.length; i++) expect(byX[i].x - byX[i].width / 2 -
+    (byX[i - 1].x + byX[i - 1].width / 2)).toBeGreaterThanOrEqual(-1e-7);
+  expect(result.byPid.size).toBe(ids.length);
+  expect(result.geojson.features.map((f) => f.properties.visible_spans)).toEqual(result.placements.map((p) => p.outputs));
+  expect(result.outputMasks.left).toHaveLength(1);
+});
+
+test('model outer margin affects ring without adding a join margin', async () => {
+  const wall = structuredClone(namesWall); wall.activeMode = 'model';
+  wall.profiles.model.edgeInsetPx = 20;
+  const result = await buildNamesWallLayout(payload({ records: records(['a']), metrics: metrics(['a'], 60),
+    namesWall: wall, ring: [[-30,-30],[130,-30],[130,110],[-30,110],[-30,-30]], ringHash: 'margin' }));
+  expect(result.diagnostics.state).toBe('valid');
+  expect(result.placements[0].outputs).toEqual(['left', 'right']);
+});
+
+test('model packs through a slanted join but does not bridge a calibrated gap', async () => {
+  const wall = structuredClone(namesWall); wall.activeMode = 'model';
+  const ring = [[0,0],[100,0],[100,20],[0,20],[0,0]];
+  const joined = { pieces: {
+    left: [{ polygon: [[0,0],[40,0],[60,20],[0,20]] }],
+    right: [{ polygon: [[40,0],[100,0],[100,20],[60,20]] }],
+  }, outputIdentities: coverage.outputIdentities };
+  const input = payload({ records: records(['a']), metrics: metrics(['a'], 70), coverage: joined,
+    namesWall: wall, ring, ringHash: 'slanted' });
+  const result = await buildNamesWallLayout(input);
+  expect(result.diagnostics.state).toBe('valid');
+  expect(result.placements[0].outputs).toEqual(['left', 'right']);
+  const gapped = structuredClone(joined);
+  gapped.pieces.right[0].polygon[0][0] += 1;
+  gapped.pieces.right[0].polygon[3][0] += 1;
+  const rejected = await buildNamesWallLayout({ ...input, coverage: gapped });
+  expect(rejected.diagnostics.state).toBe('invalid');
+});
+
+test('model memberships exclude projector overlap owned by the other output', async () => {
+  const wall = structuredClone(namesWall); wall.activeMode = 'model';
+  const overlapped = { pieces: { left: [rectPiece(0,100)], right: [rectPiece(0,100)] },
+    outputIdentities: coverage.outputIdentities };
+  const result = await buildNamesWallLayout(payload({ namesWall: wall, coverage: overlapped,
+    ring: [[0,0],[100,0],[100,80],[0,80],[0,0]], ringHash: 'overlap' }));
+  expect(result.diagnostics.state).toBe('valid');
+  expect(result.placements.every((p) => p.output === 'left' && p.outputs.join() === 'left')).toBe(true);
+  expect(result.outputMasks.right).toEqual([]);
+});
+
+test('model layout uses configured stroke and includes its change in the digest', async () => {
+  const wall = structuredClone(namesWall); wall.activeMode = 'model';
+  wall.profiles.model.strokeWidthPx = 1;
+  const input = payload({ namesWall: wall, ring: [[0,0],[100,0],[100,80],[0,80],[0,0]], ringHash: 'stroke' });
+  const thin = await buildNamesWallLayout(input);
+  const thickWall = structuredClone(wall); thickWall.profiles.model.strokeWidthPx = 6;
+  const thick = await buildNamesWallLayout({ ...input, namesWall: thickWall });
+  expect(thin.diagnostics.state).toBe('valid');
+  expect(thick.diagnostics.state).toBe('valid');
+  expect(thick.fontSize).toBe(thin.fontSize);
+  expect(thick.placements[0].width - thin.placements[0].width).toBe(5);
+  expect(thick.placements[0].height - thin.placements[0].height).toBe(5);
+  expect(thick.digest).not.toBe(thin.digest);
+});
+
+test('model spreads tightly packed rows through the full tall model instead of leaving a blank tail', async () => {
+  const ids = Array.from({ length: 48 }, (_, i) => String(i).padStart(2, '0'));
+  const wall = structuredClone(namesWall); wall.activeMode = 'model'; wall.profiles.model.spacingPx = 0;
+  const tall = { pieces: { left: [rectPiece(0,50,0,300)], right: [rectPiece(50,100,0,300)] },
+    outputIdentities: coverage.outputIdentities };
+  const input = payload({ namesWall: wall, coverage: tall, records: records(ids), metrics: metrics(ids),
+    ring: [[0,0],[100,0],[100,300],[0,300],[0,0]], ringHash: 'tall' });
+  const result = await buildNamesWallLayout(input);
+  expect(result.diagnostics.state).toBe('valid');
+  expect(result.fontSize).toBe(8);
+  const first = Math.min(...result.placements.map((p) => p.y - p.height / 2));
+  const last = Math.max(...result.placements.map((p) => p.y + p.height / 2));
+  expect(first).toBeLessThan(5);
+  expect(last - first).toBeGreaterThan(290);
+  expect([...Map.groupBy(result.placements, (p) => p.y).values()].map((row) => row.length))
+    .toEqual([9, 9, 9, 9, 9, 3]);
+  for (const row of Map.groupBy(result.placements, (p) => p.y).values()) {
+    row.sort((a,b) => b.x - a.x);
+    for (let i = 1; i < row.length; i++) expect(row[i - 1].x - row[i - 1].width / 2 -
+      (row[i].x + row[i].width / 2)).toBeGreaterThanOrEqual(-1e-7);
+    expect(row[0].x + row[0].width / 2).toBeCloseTo(98, 5);
+    expect(row.at(-1).x - row.at(-1).width / 2).toBeCloseTo(2, 5);
+  }
+  expect((await buildNamesWallLayout({ ...input, records: input.records.slice().reverse() })).digest).toBe(result.digest);
+});
+
+test('model keeps full-height distribution across an irregular shape without filling its hole', async () => {
+  const ids = Array.from({ length: 70 }, (_, i) => String(i).padStart(2, '0'));
+  const wall = structuredClone(namesWall); wall.activeMode = 'model'; wall.profiles.model.spacingPx = 2;
+  const ring = [[0,0],[100,0],[100,100],[65,100],[65,200],[100,200],[100,300],[0,300],[0,0]];
+  const tall = { pieces: { left: [rectPiece(0,50,0,300)], right: [rectPiece(50,100,0,300)] },
+    outputIdentities: coverage.outputIdentities };
+  const result = await buildNamesWallLayout(payload({ namesWall: wall, coverage: tall,
+    records: records(ids), metrics: metrics(ids), ring, ringHash: 'tall-notch' }));
+  expect(result.diagnostics).toMatchObject({ state: 'valid', placed: ids.length, overlap: 0, invalidCoverage: 0 });
+  expect(result.fontSize).toBe(8);
+  expect(Math.max(...result.placements.map((p) => p.y + p.height / 2))).toBeGreaterThan(290);
+  for (const placement of result.placements) expect(ringContainsGuardedRect(ring, placement, 2)).toBe(true);
+  for (const row of Map.groupBy(result.placements, (p) => p.y).values()) {
+    row.sort((a,b) => b.x - a.x);
+    for (let i = 1; i < row.length; i++) expect(row[i - 1].x - row[i - 1].width / 2 -
+      (row[i].x + row[i].width / 2)).toBeGreaterThanOrEqual(2 - 1e-7);
+  }
+});
+
+test('model row stretching preserves disconnected calibrated coverage', async () => {
+  const ids = Array.from({ length: 60 }, (_, i) => String(i).padStart(2, '0'));
+  const wall = structuredClone(namesWall); wall.activeMode = 'model'; wall.profiles.model.spacingPx = 0;
+  const disconnected = { pieces: {
+    left: [rectPiece(0,50,0,90), rectPiece(0,50,150,300)],
+    right: [rectPiece(50,100,0,90), rectPiece(50,100,150,300)],
+  }, outputIdentities: coverage.outputIdentities };
+  const result = await buildNamesWallLayout(payload({ namesWall: wall, coverage: disconnected,
+    records: records(ids), metrics: metrics(ids), ring: [[0,0],[100,0],[100,300],[0,300],[0,0]], ringHash: 'disconnected' }));
+  expect(result.diagnostics).toMatchObject({ state: 'valid', placed: ids.length, overlap: 0, invalidCoverage: 0 });
+  expect(Math.max(...result.placements.map((p) => p.y + p.height / 2))).toBeGreaterThan(285);
+  for (const p of result.placements) expect(rectCoveredByPieces({ ...p, width: p.width + 4, height: p.height + 4 },
+    [...disconnected.pieces.left, ...disconnected.pieces.right])).toBe(true);
+});
+
 test('assigns whole names equally and ignores transport revision', async () => {
   const first = await buildNamesWallLayout(payload());
   const second = await buildNamesWallLayout(payload({ records: records(['c', 'a', 'b']), configRevision: 999 }));
@@ -63,11 +225,11 @@ test('regular pages split evenly while model fills safe spans in one ordered str
   expect(model).not.toHaveProperty('pages');
   expect(model.fontSize).toBe(wall.fontSize);
   expect(wall.diagnostics).toMatchObject({ left: 2, right: 2 });
-  expect(model.diagnostics).toMatchObject({ left: 4, right: 0, placed: 4, missing: 0, duplicate: 0 });
+  expect(model.diagnostics).toMatchObject({ left: 2, right: 2, placed: 4, missing: 0, duplicate: 0 });
   expect(model.placements.map((p) => p.id)).toEqual(ids);
-  expect(model.placements.map((p) => p.output)).toEqual(['left', 'left', 'left', 'left']);
+  expect(model.placements.map((p) => p.output)).toEqual(['right', 'right', 'left', 'left']);
   expect(model.geojson.features.map((feature) => feature.properties.visible_spans)).toEqual([
-    ['left'], ['left'], ['left'], ['left'],
+    ['right'], ['right'], ['left'], ['left'],
   ]);
 });
 
@@ -107,8 +269,8 @@ test('model digest captures ink offsets and stays stable under reversal and prew
 
 test('model waits for a wider later span without dropping the next long name', async () => {
   const ids = ['a', 'b', 'c'];
-  const narrowFirst = { pieces: { left: [rectPiece(0, 60, 0, 40), rectPiece(70, 90, 0, 40)],
-    right: [rectPiece(100, 160, 0, 40)] }, outputIdentities: coverage.outputIdentities };
+  const narrowFirst = { pieces: { left: [rectPiece(0, 60, 0, 40), rectPiece(70, 76, 0, 40)],
+    right: [rectPiece(130, 140, 0, 40)] }, outputIdentities: coverage.outputIdentities };
   const measured = [[8, ids.map((id) => [`שם ${id}`, { width: id === 'a' ? 14 : 4,
     left: 0, right: id === 'a' ? 14 : 4, ascent: 7, descent: 2 }])]];
   const wall = structuredClone(namesWall); wall.activeMode = 'model';
@@ -134,13 +296,13 @@ test('model keeps the requested font when the full span can fit every name', asy
   const result = await buildNamesWallLayout(payload({ records: records(ids),
     metrics: [...metrics(ids, 11, [8]), ...metrics(ids, 11, [7])], coverage: oneRow, namesWall: wall,
     ring: [[0,0],[113,0],[113,20],[0,20],[0,0]], ringHash: 'one-row' }));
-  expect(result.diagnostics).toMatchObject({ state: 'valid', placed: 4, left: 2, right: 2,
+  expect(result.diagnostics).toMatchObject({ state: 'valid', placed: 4, left: 1, right: 3,
     missing: 0, duplicate: 0, invalidCoverage: 0 });
   expect(result.fontSize).toBe(8);
   expect(result.placements.map((p) => p.id)).toEqual(ids);
 });
 
-test('model distributes each populated row across its full safe span', async () => {
+test('model shares unused row width while preserving the requested minimum gap', async () => {
   const ids = ['a', 'b', 'c', 'd'];
   const twoSpans = { pieces: { left: [rectPiece(0, 60, 0, 20)], right: [rectPiece(60, 120, 0, 20)] },
     outputIdentities: coverage.outputIdentities };
@@ -150,23 +312,23 @@ test('model distributes each populated row across its full safe span', async () 
     ring: [[0,0],[120,0],[120,20],[0,20],[0,0]], ringHash: 'two-spans' }));
   expect(result.diagnostics).toMatchObject({ state: 'valid', placed: 4, left: 2, right: 2,
     invalidCoverage: 0, overlap: 0 });
-  for (const side of ['left', 'right']) {
-    const [first, second] = result.placements.filter((p) => p.output === side);
+  for (let i = 1; i < result.placements.length; i++) {
+    const [first, second] = [result.placements[i - 1], result.placements[i]];
     expect(first.y).toBe(second.y);
-    const [left, right] = side === 'left' ? [0, 60] : [60, 120];
-    expect(first.x + first.width / 2).toBeCloseTo(right, 5);
-    expect(second.x - second.width / 2).toBeCloseTo(left, 5);
-    expect(first.x - first.width / 2 - (second.x + second.width / 2)).toBeGreaterThanOrEqual(2);
+    expect(first.x - first.width / 2 - (second.x + second.width / 2)).toBeGreaterThanOrEqual(2 - 1e-7);
   }
+  expect(result.placements[0].x + result.placements[0].width / 2).toBeCloseTo(118, 5);
+  expect(result.placements.at(-1).x - result.placements.at(-1).width / 2).toBeCloseTo(2, 5);
 });
 
-test('model centers a single name in a safe span', async () => {
+test('model centers a single name without stretching its glyphs', async () => {
   const wall = structuredClone(namesWall); wall.activeMode = 'model';
   const result = await buildNamesWallLayout(payload({ records: records(['a']), metrics: metrics(['a']),
     namesWall: wall, ring: [[0,0],[100,0],[100,80],[0,80],[0,0]], ringHash: 'single' }));
   expect(result.diagnostics.state).toBe('valid');
   expect(result.placements).toHaveLength(1);
-  expect(result.placements[0].x).toBeCloseTo(25, 5);
+  expect(result.placements[0].x).toBeCloseTo(50, 5);
+  expect(result.placements[0].width).toBe(10);
 });
 
 test('shrinks both outputs together below 8 px and never returns a partial field', async () => {

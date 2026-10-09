@@ -23,6 +23,10 @@ import {
 
 const clone = (value) => JSON.parse(JSON.stringify(value));
 
+test("names spacing is labeled as a minimum for rows reaching both edges", () => {
+  expect(NAMES_WALL_DESCRIPTORS.find((field) => field.path === "namesWall.spacingPx").label).toBe("Minimum name spacing");
+});
+
 // Real mounted editor and publication client; only HTTP/socket and iframe draw receipts are simulated.
 async function pointApplyHarness({ config = clone(DEFAULTS), baselineCatalogLoader, beforeMatch } = {}) {
   vi.useFakeTimers();

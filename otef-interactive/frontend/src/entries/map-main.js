@@ -33,7 +33,7 @@ import {
 } from "../map/legend-integration.js";
 import { filterGroupsForGisMap } from "../shared/gis-layer-filter.js";
 import { filterGazaBorderVisibility } from "../shared/gaza-border-style.js";
-import { isolateLayersWhileVictimNamesShown } from "../shared/nli-victim-name-layer-isolation.js";
+import { victimNamesAreShown } from "../shared/nli-victim-name-layer-isolation.js";
 import { normalizeGisBasemap } from "../shared/gis-basemap.js";
 import OTEFDataContext from "../shared/OTEFDataContext.js";
 import { createNliVideoPlaybackPublisher } from "../shared/nli-video-playback-channel.js";
@@ -290,7 +290,10 @@ async function bootstrapMapRuntime() {
           const segment = sceneSegmentId
             ? presentationManifest?.segments?.find((candidate) => candidate.id === sceneSegmentId) || null
             : null;
-          const decision = shouldCloseViewerForNarrative({ handledExitRevision, state, segment });
+          const decision = shouldCloseViewerForNarrative({
+            handledExitRevision, state, segment,
+            namesWallActive: victimNamesAreShown(OTEFDataContext.getLayerGroups()),
+          });
           handledExitRevision = decision.handledExitRevision;
           if (!presentationBootstrapActive || !presentationViewer || !decision.close) return;
           const pending = sceneBinding?.isManaging() ? presentationViewer.getPendingSceneCommand?.() : null;
@@ -390,7 +393,7 @@ async function bootstrapMapRuntime() {
 
     const gisDisplayGroups = (raw) => {
       const groupsAsArray = Array.isArray(raw) ? raw : Object.values(raw || {});
-      return isolateLayersWhileVictimNamesShown(groupsAsArray);
+      return groupsAsArray;
     };
     const gisOverlayGroups = (snapshot = sceneSnapshot()) => {
       const groupsAsArray = gisDisplayGroups(snapshot.rawLayerGroups);

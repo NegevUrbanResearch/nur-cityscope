@@ -51,7 +51,7 @@ const NAMES_WALL_DESCRIPTORS = [
   { path: "namesWall.rotateDeg", node: "names-wall", label: "Rotation", min: -180, max: 180, step: 1, fine: 1, unit: "°" },
   { path: "namesWall.strokeWidthPx", node: "names-wall", label: "Name outline", min: 1, max: 6, step: 1, fine: 1, unit: "px" },
   { path: "namesWall.requestedFontPx", node: "names-wall", label: "Requested font", min: 1, max: 48, step: 1, fine: 1, unit: "px" },
-  { path: "namesWall.spacingPx", node: "names-wall", label: "Name spacing", min: 0, max: 32, step: 1, fine: 1, unit: "px" },
+  { path: "namesWall.spacingPx", node: "names-wall", label: "Minimum name spacing", min: 0, max: 32, step: 1, fine: 1, unit: "px" },
   { path: "namesWall.edgeInsetPx", node: "names-wall", label: "Edge inset", min: 0, max: 256, step: 1, fine: 1, unit: "px" },
   { path: "namesWall.inwardShiftPercent", node: "names-wall", label: "Bring pages together", min: 0, max: 100, step: 1, fine: 1, unit: "%", wallOnly: true, commitOnChange: true },
   { path: "namesWall.innerEdgeInsetPx.left", node: "names-wall", label: "Left inner-edge clearance", min: 0, max: 960, step: 1, fine: 1, unit: "output px" },

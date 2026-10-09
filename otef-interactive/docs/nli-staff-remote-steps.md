@@ -38,13 +38,17 @@ Presentation steps show GIS slide controls in the staff remote. Use Previous
 and Next for slides and the separate Close button to leave the presentation.
 Scene Back, Scene Next, and Home close the presentation before changing the
 run-of-show step. Close always stays on the current step and offers Open for
-that segment again; no presentation Close changes the step. The Wall of names
-step is the exception to the controls: it opens a black GIS slide with no
-slide controls on the remote.
-Wall of names is the final scene. Its **סיום** (Finish) button closes the
-black GIS slide, clears search focus, and returns both displays to Home.
-There is no credits scene in the staff remote. A failed Home reset stays on
-Wall of names; press Finish again to retry. Hostages covers slides 32–36.
+that segment again; no presentation Close changes the step. Wall of names
+and Credits are fixed scenes with no slide controls on the remote.
+The names wall is projection-only. GIS shows the identity or Credits slide
+and does not load or render the names-wall layer.
+On entry, their GIS image finishes fading in before the underlying layers
+change. If opening fails, the previous map scene stays in place for Retry.
+Credits opens slide 37 automatically while retaining the Wall of names layers.
+Next and Back switch directly between these scenes without closing the GIS
+slide or resetting the scene. The projection keeps the names visible.
+Finish or Home restores the Home layers beneath the GIS slide, then fades
+the slide out. Hostages covers slides 32–36.
 
 The runtime presentation has 37 slides and retains all 34 original slides in
 their original order. Gelem's first 9 seconds is the last Segev slide (9),
@@ -124,7 +128,7 @@ the visitor remote.
 
 ## Main show
 
-The full projection sequence has seven steps and no separate opening slide.
+The full projection sequence has eight steps and no separate opening slide.
 Home is that opening state. The show has no narrative, so any step with a cue
 exits the current narrative.
 
@@ -136,7 +140,8 @@ exits the current narrative.
 | 4 | Nova and Mor Levy | Unchanged until the story starts | Unchanged | Junction, not a slide | One choice: Nova |
 | 5 | Narratives | Unchanged until a story starts | Unchanged | Junction, not a slide | Sderot, Shura Camp, Hostages |
 | 6 | Identity database | Identity | Stopped (idle) | | Name search |
-| 7 | Wall of names | Wall | Stopped (idle) | A black GIS slide titled מאגר הזהויות opens automatically | Name or place search; no slide controls; **סיום** (Finish) returns Home |
+| 7 | Wall of names | Wall | Stopped (idle) | A black GIS slide titled מאגר הזהויות opens automatically | Name or place search; no slide controls |
+| 8 | Credits (קרדיטים) | Wall | Stopped (idle) | Keep the Wall of names layers and automatically open slide 37 on GIS only | No slide controls; Back returns to Wall of names; Finish returns Home |
 
 The narratives are not separate slides. On the slide before a narrative, the
 Next button is replaced by a button that starts it, so the show cannot skip
@@ -150,7 +155,7 @@ A narrative opened from the home screen ends with **Finish**.
 ## The timeline
 
 The home screen opens a direct three-step timeline. It is not part of the
-seven-step sequence. The first two steps are the same opening-minutes and
+eight-step sequence. The first two steps are the same opening-minutes and
 rest-of-day cues. The third step, **The full timeline**, shows the complete
 idle story immediately: timeline layers, overview narrative, idle clock, and
 no escape routes. It does not keep playing and it does not use the Nova ended

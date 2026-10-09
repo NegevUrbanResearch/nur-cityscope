@@ -59,6 +59,7 @@ import { installProjectionPreviewBridge } from "../projection/projection-preview
 import { bindProjectionHeadingStorage } from "../projection/projection-heading-storage.js";
 import { createProjectionConfigClient } from "../shared/projection-config-client.js";
 import { createProjectionConfigRuntime } from "../projection/projection-config-runtime.js";
+import { createProjectionNamesEntry, projectionNamesEntryKey, waitForProjectionNamesStart } from '../projection/projection-names-entry.js';
 import { bindProjectionMatchCursor, readProjectionMatchLaunch } from '../projection/projection-match-cursor.js';
 import { readProjectionCandidateInputs } from "../projection/projection-candidate-validation.js";
 import { createUuid } from "../shared/uuid.js";
@@ -641,6 +642,8 @@ async function bootstrapProjectionRuntime() {
       motionMode: resolveMotionMode(), manualProjectionPreparation: browserMode,
       managedScene: () => sceneManaged && !calibrationActive() && !slideshowRuntime?.isActive() });
     registerDisposer(() => nameFieldController.dispose());
+    const readNameLanguage = () => OTEFDataContext.getLegendSettings?.()?.language === 'en' ? 'en' : 'he';
+    if (!browserMode) registerDisposer(OTEFDataContext.subscribe('legendSettings', () => nameFieldController.refreshNameLanguage?.()));
     const motionMode = resolveMotionMode();
     const settlementGlow = createProjectionSettlementGlow({
       map,
@@ -1571,13 +1574,54 @@ async function bootstrapProjectionRuntime() {
     );
 
     if (sceneManaged) {
+      const entryParams = new URLSearchParams(startupSearch);
+      const postHost = (type, key) => {
+        if (entryParams.get('projectionHost') === '1' && window.parent !== window) {
+          window.parent.postMessage({ type: `otef-projection-${type}`, key }, window.location.origin);
+        }
+      };
+      const namesEntry = browserMode && !previewMode && ['left', 'right'].includes(projectionSpanId)
+        ? createProjectionNamesEntry({ output: projectionSpanId,
+          attempt: key => entryParams.get('namesEntryRetry') === '1' && entryParams.get('namesEntryKey') === key ? 1 : 0,
+          onFailure: (key, error, attempt) => {
+            console.warn('[nli-scene] paired Names preparation failed', { output: projectionSpanId, key, error, attempt });
+            postHost(attempt === 0 ? 'refresh' : 'failed', key);
+          } }) : null;
+      registerDisposer(() => namesEntry?.dispose());
       sceneBinding = await createNliSceneDisplayBinding({
         map, dataContext: OTEFDataContext, filterGroups: filterProjectionDisplayGroups,
+        diagnosticContext: { displayProfile: "projection", output: projectionSpanId || "full",
+          displaySide: new URLSearchParams(startupSearch).get("matchDisplaySide") || projectionSpanId || "full" },
         narrativeController: projectionNarrativeController, escapeCoordinator: novaEscapeCoordinator, morCoordinator: morRouteCoordinator,
         refreshLayers: applyProjectionRefresh, syncTimeline: syncContextInvestigation,
         getDisplaySceneIds: snapshot => browserMode && projectionSpanId === "right" ? [] : getNliClockSceneIds(snapshot, "projection"),
-        prepareDisplay: (snapshot, options) => nameFieldController.prepareScene(snapshot, options),
-        applyDisplay: (prepared, options) => nameFieldController.applyScene(prepared, { ...options, runtime: getLayerLifecycleRuntime(map) }),
+        coordinateEntry: (snapshot, options, produce) => {
+          const enabled = snapshot.enabledIds.includes('nli.people_names');
+          const key = enabled ? projectionNamesEntryKey(snapshot, readNameLanguage()) : null;
+          postHost('scene', key);
+          if (!enabled) namesEntry?.cancel();
+          return namesEntry && enabled && !options.previousSnapshot?.enabledIds?.includes('nli.people_names')
+            ? namesEntry.prepare(key, produce, options) : produce();
+        },
+        waitForEntry: waitForProjectionNamesStart,
+        prepareDisplay: async (snapshot, options) => {
+          if (snapshot.enabledIds.includes('nli.people_names')) await projectionRuntime?.ensureNamesReady(options);
+          return nameFieldController.prepareScene(snapshot, options);
+        },
+        applyDisplay: (prepared, options) => {
+          nameFieldController.applyScene(prepared, { ...options, runtime: getLayerLifecycleRuntime(map) });
+        },
+        onSceneSettled: snapshot => {
+          if (namesEntry && snapshot.enabledIds.includes('nli.people_names')) {
+            const key = projectionNamesEntryKey(snapshot, readNameLanguage());
+            if (browserSurface?.draw?.() !== true) { namesEntry.fail(key, 'Completed Names scene could not be drawn'); return; }
+            void namesEntry.displayed(key).then(() => postHost('entered', key)).catch(() => {});
+          }
+        },
+        onSceneFailed: (error, snapshot) => {
+          if (snapshot.enabledIds.includes('nli.people_names')) namesEntry?.fail(projectionNamesEntryKey(snapshot, readNameLanguage()),
+            error?.reason || error?.message || 'Names scene did not become drawable');
+        },
         discardDisplay: prepared => nameFieldController.discardScene(prepared),
         getTimelineSceneIds: snapshot => snapshot.narrativeState?.id === "nova" ? ["nli.investigation_polygons"] : [],
         getTimelineSceneContentKey: getInvestigationSceneContentKey,
@@ -1929,6 +1973,14 @@ async function boot() {
     return;
   }
   const previewMode = new URLSearchParams(window.location.search).get("preview") === "1";
+  if (!previewMode && window.parent === window && ['left', 'right'].includes(previewParams.get('span')) &&
+      previewParams.get('outputMode') === 'browser' && previewParams.get('projectionHost') !== '1') {
+    const { mountProjectionFrameHost } = await import('../projection/projection-frame-host.js');
+    const host = mountProjectionFrameHost({ document, window, source: new URL(window.location.href),
+      title: `OTEF Projection | ${previewParams.get('span')} display` });
+    window.addEventListener('pagehide', host.dispose, { once: true });
+    return;
+  }
   const shouldContinue = previewMode || initializeTableSwitcher();
   if (!shouldContinue) return;
   await bootstrapProjectionRuntime();

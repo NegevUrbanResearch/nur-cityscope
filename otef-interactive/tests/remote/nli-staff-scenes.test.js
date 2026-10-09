@@ -113,8 +113,8 @@ test("Home shortcuts target the canonical final show steps", () => {
 });
 
 describe("NLI staff run of show", () => {
-  test("follows the seven-stage sequence, starts at the opening minutes, and ends at the wall of names", () => {
-    expect(SHOW.steps).toHaveLength(7);
+  test("follows the eight-stage sequence, starts at the opening minutes, and returns Home", () => {
+    expect(SHOW.steps).toHaveLength(8);
     expect(SHOW.steps[0].id).toBe("opening-minutes");
     expect(SHOW.steps.map((step) => step.id)).not.toContain("opening");
     expect(SHOW.steps.map((step) => step.id)).not.toContain("timeline-complete");
@@ -123,9 +123,11 @@ describe("NLI staff run of show", () => {
     for (const id of branches) {
       expect(NARRATIVES.some((narrative) => narrative.id === id)).toBe(true);
     }
-    expect(SHOW.steps.at(-1).id).toBe("names-wall");
-    expect(SHOW.steps.at(-1).title).toEqual({ he: "קיר השמות", en: "Wall of names" });
-    expect(SHOW.steps.at(-1).presentation).toEqual({ segmentId: "names_wall", open: "auto", onClose: "stay", controls: false });
+    expect(SHOW.steps.at(-1).id).toBe("credits");
+    expect(SHOW.steps.at(-1).title).toEqual({ he: "קרדיטים", en: "Credits" });
+    expect(SHOW.steps.at(-1).cue).toEqual({ narrative: null, layers: ["nli.people_names"], clock: "idle", escape: {} });
+    expect(SHOW.steps.at(-1).cue).not.toBe(catalog.HOME_CUE);
+    expect(SHOW.steps.at(-1).presentation).toEqual({ segmentId: "credits", open: "auto", onClose: "stay", controls: false });
     expect(SHOW.title).toEqual({ he: "רצף ההקרנה המלא", en: "Full projection sequence" });
   });
 
@@ -213,6 +215,7 @@ describe("NLI staff run of show", () => {
   test("presentation segments use the approved GIS mapping including names_wall", () => {
     const expected = [
       ["names_wall", "auto", "stay", false],
+      ["credits", "auto", "stay", false],
       ["segev", "manual", "stay", true],
       ["nova_mor", "auto", "stay", true],
       ["nova_memorial", "auto", "stay", true],

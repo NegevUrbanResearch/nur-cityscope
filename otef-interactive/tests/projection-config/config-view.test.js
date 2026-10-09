@@ -335,7 +335,7 @@ test("view renders draggable node workspace and preserves an existing focused in
     ...view.nodeMap.get("names-wall").children,
   ].filter((node) => node.className?.includes("names-wall-model-help"));
   expect(modelHelps).toHaveLength(1);
-  expect(modelHelps.every((node) => node.textContent === "Rows spread across the model. Set 0 for the tightest fit." && !node.hidden)).toBe(true);
+  expect(modelHelps.every((node) => node.textContent === "Rows reach both model edges and spread over the full height. Spacing sets the minimum gap; leftover row width is shared between names. Names continue across the projector join. Edge inset applies to the model outline." && !node.hidden)).toBe(true);
   expect(namesDraft.namesWall.profiles.model).toMatchObject({ requestedFontPx: 12, spacingPx: 2 });
   namesDraft.namesWall.activeMode = "wall";
   view.update({ state: { draft: namesDraft }, selectedNode: "names-wall" });

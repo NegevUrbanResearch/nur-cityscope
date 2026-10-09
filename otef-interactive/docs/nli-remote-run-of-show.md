@@ -4,7 +4,7 @@ This document began as an English translation of the NLI-authored Hebrew run
 of show received on 2026-09-22. It now also incorporates the exhibit owner's
 2026-09-24 decisions about the revised 34-slide deck, presentation controls,
 and Shura, the 2026-09-27 staff-remote sequence, the 2026-10-04 corrected deck,
-and the 2026-10-06 removal of the credits scene from the remote. The tables describe the
+and the 2026-10-07 restoration of the credits scene. The tables describe the
 current operating sequence. Hardware and browser acceptance stay in the
 [NLI exhibit verification guide](nli-exhibit-verification.md).
 
@@ -31,7 +31,7 @@ inclusive. Presentation Previous/Next stays within the active segment.
 Home, before this sequence, is the six-layer overview: settlement names,
 outlines, settlements, Route 232, SEA, and Gaza roads, with an idle clock and
 no narrative house. The projection camera stays fixed. The sequence itself has
-seven steps and starts at the opening minutes.
+eight steps and starts at the opening minutes.
 
 | GIS screen | Projection / model | Stage | Order |
 | :--- | :--- | :--- | :---: |
@@ -42,10 +42,7 @@ seven steps and starts at the opening minutes.
 | See each narrative table. The narrative names are links. |  | Narratives (free choice): [Sderot](#sderot), [Shura Camp](#shura-camp), and [Hostages (Haim Peri of Nir Oz)](#hostages-haim-peri) | 5 |
 | Settlement names and outlines, Route 232, and people shown as points. After a name search, zoom in on the point and show a pop-up with the name above it. Do not show Gaza roads. A remote action opens that person's archive record. | Settlement names and outlines, Route 232, and people shown as points. After a name search, zoom in on the point and mark it with a square of light. Dim the other points or make the selected point more prominent. Do not show Gaza roads. | Identity database | 6 |
 | A black slide titled מאגר הזהויות covers the GIS map automatically; the remote shows no slide controls. The operator can search for a specific name or place. | All names appear on the model as a wall. All other layers are dimmed; no layer other than the names is visible. The operator can search for a specific name or place. Associated names stay bright and the others dim. | Wall of names | 7 |
-
-Wall of names is the final scene. The remote shows **סיום** (Finish), which
-closes the black GIS slide and returns both displays to Home. The remote
-does not open the credits segment.
+| Credits slide 34 replaces the identity screen directly, with no slide controls. Back returns to Wall of names; Finish returns Home. | The wall of names stays visible and the clock is idle. The projection camera stays fixed; no credits slide appears on projection. | Credits (קרדיטים) | 8 |
 
 The home screen also opens **The timeline**, three steps that are not extra
 rows in the sequence above: the opening minutes, the rest of the day, and

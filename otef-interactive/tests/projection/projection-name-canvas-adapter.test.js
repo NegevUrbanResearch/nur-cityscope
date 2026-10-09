@@ -4,7 +4,7 @@ import { DEFAULT_PROJECTION_CONFIG } from '../../frontend/src/shared/projection-
 import { planeToOutputUv } from '../../frontend/src/shared/projection-config-geometry.js';
 
 function fakeCanvas() {
-  const ctx = Object.fromEntries(['save','restore','setTransform','fillText','strokeText','clearRect']
+  const ctx = Object.fromEntries(['save','restore','setTransform','fillText','strokeText','clearRect','beginPath','moveTo','lineTo','closePath','clip']
     .map((key) => [key, vi.fn()]));
   return { canvas: { width: 0, height: 0, getContext: () => ctx }, ctx };
 }
@@ -13,6 +13,38 @@ const placements = [
   { id: 'a', name: 'אביגיל בן דוד', output: 'left', x: 0, y: 0, width: 40, height: 20 },
   { id: 'b', name: 'תמר', output: 'right', x: 10, y: 10, width: 20, height: 10 },
 ];
+
+test('a seam crossing PID paints on both outputs with one reveal identity and calibrated masks', () => {
+  const crossing = {...placements[0], outputs:['left','right']};
+  const masks = {left:[[[-20,-10],[0,-10],[0,10],[-20,10]]],right:[[[0,-10],[20,-10],[20,10],[0,10]]]};
+  const descriptors = [];
+  for (const output of ['left','right']) {
+    const f = fakeCanvas();
+    const adapter = createProjectionNameCanvasAdapter({document:{createElement:()=>f.canvas}, output});
+    adapter.prepare({config:DEFAULT_PROJECTION_CONFIG,placements:[crossing],logicalPlane:plane,outputMasks:masks});
+    adapter.commit(); adapter.setSelectedPid(crossing.id);
+    expect(f.ctx.fillText).toHaveBeenCalledExactlyOnceWith(crossing.name,0,0);
+    expect(f.ctx.clip).toHaveBeenCalledTimes(1);
+    const first = planeToOutputUv(masks[output][0][0],DEFAULT_PROJECTION_CONFIG,output,plane);
+    expect(f.ctx.moveTo).toHaveBeenCalledWith(first.u*1920,first.v*1080);
+    expect(adapter.descriptor().clip).toHaveLength(4);
+    descriptors.push(adapter.descriptor());
+    adapter.applyGeometry({config:DEFAULT_PROJECTION_CONFIG,logicalPlane:plane});
+    expect(f.ctx.clip).toHaveBeenCalledTimes(2);
+  }
+  expect(descriptors[0].selectedIndex).toBe(descriptors[1].selectedIndex);
+  expect(descriptors[0].revealVertices[2]).toBe(descriptors[1].revealVertices[2]);
+  expect(descriptors[0].revealVertices[3]).toBe(descriptors[1].revealVertices[3]);
+});
+
+test('malformed output memberships and mask coordinates are rejected', () => {
+  const adapter = createProjectionNameCanvasAdapter({document:{createElement:()=>fakeCanvas().canvas},output:'left'});
+  for (const outputs of [[],['left','left'],['right','left'],['unknown']]) {
+    expect(()=>adapter.prepare({config:DEFAULT_PROJECTION_CONFIG,placements:[{...placements[0],outputs}],logicalPlane:plane})).toThrow(/output/);
+  }
+  expect(()=>adapter.prepare({config:DEFAULT_PROJECTION_CONFIG,placements,logicalPlane:plane,
+    outputMasks:{left:[[[0,0],[1,0],[NaN,1]]],right:[]}})).toThrow(/mask/);
+});
 
 test('4K people names keep logical positions, reveal quads and font size with double-density painting', () => {
   const a = fakeCanvas(), b = fakeCanvas();

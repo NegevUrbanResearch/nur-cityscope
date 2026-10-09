@@ -35,6 +35,9 @@ export function createProjectionConfigRuntime({
   finalizeCandidate = null,
   getDatasetVersion = () => null,
   getDatasetIdentityError = () => null,
+  getNameLanguage = () => 'he',
+  onNameLanguageFailure = () => {},
+  hasPreparedNames = () => true,
 } = {}) {
   let stopped = true;
   let unsubscribe = null;
@@ -51,6 +54,7 @@ export function createProjectionConfigRuntime({
   let namesGeneration = 0;
   let namesTargetGeneration = 0;
   let namesJob = null;
+  let observedNameLanguage = getNameLanguage() === 'en' ? 'en' : 'he', languageRefreshPending = false;
   let namesRenderWait = null;
   let initialNamesAttempted = false;
   let initialNamesDatasetRetry = false;
@@ -67,6 +71,9 @@ export function createProjectionConfigRuntime({
   let awaitingReapply = false;
   const initialConfig = clone(map?.getEffectiveProjectionConfig?.() || DEFAULT_PROJECTION_CONFIG);
   const socketHandlers = [];
+  const namesWaiters = new Set();
+  let initialNamesPreparation = null, sceneNamesPreparation = null, namesError = null;
+  const notifyNamesWaiters = () => { for (const notify of [...namesWaiters]) notify(); };
 
   const send = (message) => {
     if (socket && typeof socket.send === "function") socket.send(message);
@@ -109,37 +116,48 @@ export function createProjectionConfigRuntime({
     if (typeof wall.datasetVersion !== 'string' || !wall.datasetVersion || !/^[a-f0-9]{64}$/i.test(wall.digest || '') ||
       !Number.isSafeInteger(expected) || expected < 1 || placed !== expected) return null;
     return { datasetVersion: wall.datasetVersion, mode: config.namesWall?.activeMode,
-      digest: wall.digest, expected, placed };
+      digest: wall.digest, expected, placed, language: wall.language || 'he' };
   };
+  const serializedWall = wall => ({ datasetVersion: wall.datasetVersion, mode: wall.mode,
+    digest: wall.digest, expected: wall.expected, placed: wall.placed });
 
   const acknowledge = (revision, success, error, baselineOverride = undefined) => {
     const message = { type: "otef_projection_applied", table, output: spanId, revision, instanceId, success, route, displaySide, reversed };
     const baselineIdentity = baselineOverride !== undefined ? baselineOverride : (typeof baseline === "function" ? baseline() : baseline);
     if (baselineIdentity != null) message.baseline = clone(baselineIdentity);
     if (error) message.error = String(error).slice(0, 240);
-    if (success && appliedWall) message.wall = clone(appliedWall);
+    if (success && appliedWall) message.wall = serializedWall(appliedWall);
     send(message);
+    notifyNamesWaiters();
   };
   const reportNames = (state = namesState, request = null, error = "", correlationTarget = null) => {
-    if (!correlationTarget) namesState = state;
+    if (!correlationTarget) { namesState = state; namesError = error || null; }
     if (!error && state === "failed") error = datasetIdentityError || "";
     const target = correlationTarget || namesTarget;
     const message = { type: "otef_projection_names_status", table, output: spanId, instanceId,
       requestId: request?.requestId ?? null, revision: target?.revision ?? Math.max(0, appliedRevision),
       datasetVersion: target?.datasetVersion ?? "", placementIdentity: target?.placementIdentity ?? "",
-      state, installed: installedNames ? { ...installedNames } : null };
+      state, installed: installedNames ? { revision: installedNames.revision, datasetVersion: installedNames.datasetVersion,
+        placementIdentity: installedNames.placementIdentity, mode: installedNames.mode, digest: installedNames.digest,
+        expected: installedNames.expected, placed: installedNames.placed } : null };
     if (error) message.error = String(error).slice(0, 240);
     send(message);
+    notifyNamesWaiters();
   };
   const baselineFor = (config) => typeof baseline === "function" ? baseline(config) : baseline;
   const currentDatasetVersion = () => getDatasetVersion() || null;
+  const currentNameLanguage = () => getNameLanguage() === 'en' ? 'en' : 'he';
+  const geometryPending = () => Boolean(preparing || (renderWait && renderWait.revision !== appliedRevision) || awaitingReapply ||
+    (latestRevision !== appliedRevision && failedRevision !== latestRevision));
+  const targetGeometryCurrent = target => appliedRevision === target.revision &&
+    (target.kind === 'presentation' ? !geometryPending() && JSON.stringify(appliedConfig) === target.configIdentity : latestRevision === target.revision);
   const wallDatasetChanged = (wall) => Boolean(wall && currentDatasetVersion() &&
     wall.datasetVersion !== currentDatasetVersion());
 
   function promoteInstalledNamesForTarget(target = namesTarget) {
     if (!target || appliedRevision !== target.revision || !installedNames ||
       installedNames.datasetVersion !== target.datasetVersion || installedNames.placementIdentity !== target.placementIdentity ||
-      currentDatasetVersion() !== target.datasetVersion) return false;
+      currentDatasetVersion() !== target.datasetVersion || (installedNames.language || 'he') !== target.language || target.language !== currentNameLanguage()) return false;
     if (installedNames.revision !== target.revision) installedNames = { ...installedNames, revision: target.revision };
     reportNames("current");
     return true;
@@ -185,9 +203,11 @@ export function createProjectionConfigRuntime({
       try { nameFieldController._rollbackProjectionConfig(rollbackConfig, revision); } catch { /* keep the render failure visible */ }
     }
     failedRevision = revision;
+    awaitingReapply = false;
     failedError = String(error?.message || error || "projection render failed").slice(0, 240);
     failedBaseline = failedIdentity ?? null;
     acknowledge(revision, false, failedError, failedIdentity);
+    drainLanguageRefresh();
   }
 
   const settleRender = (event) => {
@@ -219,10 +239,11 @@ export function createProjectionConfigRuntime({
     promoteInstalledNamesForTarget();
     if (wait.geometryPair && typeof finalizeGeometry === 'function') finalizeGeometry(wait.geometryPair, wait.config, wait.revision);
     acknowledge(wait.revision, true);
+    if (languageRefreshPending) { drainLanguageRefresh(); return; }
     if (!initialNamesAttempted && !installedNames) {
       initialNamesAttempted = true;
       const config = clone(latest.config), revision = latestRevision;
-      void setNamesTarget(config, revision).then((target) => {
+      initialNamesPreparation = setNamesTarget(config, revision).then((target) => {
         if (!target || stopped || latestRevision !== revision || appliedRevision !== revision) return;
         if (!target.datasetVersion) {
           const identityError = getDatasetIdentityError?.() || datasetIdentityError;
@@ -234,8 +255,9 @@ export function createProjectionConfigRuntime({
           }
           return;
         }
-        void runNamesBuild(null, config, target);
-      }).catch((error) => reportNames("failed", null, error?.message || error));
+        return runNamesBuild(null, config, target);
+      }).catch((error) => { reportNames("failed", null, error?.message || error); return false; })
+        .finally(() => { initialNamesPreparation = null; notifyNamesWaiters(); });
     }
   };
 
@@ -287,6 +309,7 @@ export function createProjectionConfigRuntime({
         try {
           applyConfig(item.config, item.revision);
           failedRevision = item.revision;
+          awaitingReapply = false;
           failedError = "render completion unavailable";
           acknowledge(item.revision, false, failedError, baselineFor(item.config));
         } catch (error) { acknowledge(item.revision, false, error?.message || error, baselineFor(item.config)); }
@@ -339,12 +362,14 @@ export function createProjectionConfigRuntime({
         if (typeof map?.triggerRepaint === "function") map.triggerRepaint();
       } catch (error) {
         if (preparing === preparation) preparing = null;
+        notifyNamesWaiters();
         if (geometryPair && !renderWait && typeof rollbackGeometry === "function") {
           try { rollbackGeometry(geometryPair, appliedConfig || initialConfig, item.revision); } catch { /* report the apply error below */ }
         }
         if (stopped || abort.signal.aborted || latestRevision !== item.revision) return;
         if (renderWait?.revision === item.revision) handleRenderFailure(item.revision, error);
         else {
+          awaitingReapply = false;
           failedRevision = item.revision;
           failedError = String(error?.message || error || "projection geometry validation failed").slice(0, 240);
           acknowledge(item.revision, false, failedError, baselineFor(item.config));
@@ -352,11 +377,14 @@ export function createProjectionConfigRuntime({
       } finally {
         if (preparing === preparation) preparing = null;
         if (!stopped && !suspended && latestRevision > item.revision) schedule();
+        drainLanguageRefresh();
       }
     })();
   }
 
   function cancelNamesBuild(reason) {
+    if (!stopped && (installedNames?.language || 'he') !== currentNameLanguage()) languageRefreshPending = true;
+    if (namesJob?.request) reportNames('stale', namesJob.request, reason || 'Names run canceled', namesJob.request);
     namesGeneration += 1;
     namesJob?.abort?.abort();
     // Ownership lasts through the render promise continuation, so a newer
@@ -370,25 +398,28 @@ export function createProjectionConfigRuntime({
       namesRenderWait.cancel?.(Object.assign(new Error(reason || "names run cancelled"), { name: "AbortError" }));
       namesRenderWait = null;
     }
+    notifyNamesWaiters();
   }
 
-  async function setNamesTarget(config, revision) {
+  async function setNamesTarget(config, revision, kind = 'calibration') {
     const token = ++namesTargetGeneration;
     const datasetVersion = currentDatasetVersion() || "";
     let placementIdentity = "";
     try { placementIdentity = await projectionPlacementInputIdentity(config); } catch { /* the ordinary config validator reports malformed configs */ }
-    if (stopped || token !== namesTargetGeneration || latestRevision !== revision || !latest || JSON.stringify(latest.config) !== JSON.stringify(config)) return;
-    namesTarget = { revision, datasetVersion, placementIdentity };
+    const current = kind === 'presentation' ? appliedConfig : latest?.config;
+    const currentRevision = kind === 'presentation' ? appliedRevision : latestRevision;
+    if (stopped || token !== namesTargetGeneration || currentRevision !== revision || !current || JSON.stringify(current) !== JSON.stringify(config)) return;
+    namesTarget = { revision, datasetVersion, placementIdentity, kind, configIdentity: JSON.stringify(config), language: currentNameLanguage() };
     datasetIdentityError = getDatasetIdentityError?.() || datasetIdentityError;
     if (datasetIdentityError) {
       reportNames("failed", null, datasetIdentityError);
     } else if (!promoteInstalledNamesForTarget(namesTarget)) {
-      reportNames(installedNames && installedNames.revision === revision && installedNames.datasetVersion === datasetVersion && installedNames.placementIdentity === placementIdentity ? "current" : installedNames ? "stale" : "initializing");
+      reportNames(installedNames && installedNames.revision === revision && installedNames.datasetVersion === datasetVersion && installedNames.placementIdentity === placementIdentity && (installedNames.language || 'he') === namesTarget.language ? "current" : installedNames ? "stale" : "initializing");
     }
     return namesTarget;
   }
 
-  function awaitNamesRender(pair, config, revision, token, request) {
+  function awaitNamesRender(pair, config, revision, token, request, target) {
     return new Promise((resolve, reject) => {
       if (typeof map?.on !== "function" && typeof map?.once !== "function") { reject(new Error("render completion unavailable")); return; }
       const onTimeout = () => {
@@ -402,7 +433,7 @@ export function createProjectionConfigRuntime({
       const timer = typeof clock.setTimeout === "function" ? clock.setTimeout(onTimeout, renderTimeoutMs) : null;
       const listener = () => {
         if (namesRenderWait?.listener !== listener) return;
-        if (stopped || suspended || token !== namesGeneration || latestRevision !== revision || (request && namesJob?.request?.requestId !== request.requestId)) {
+        if (stopped || suspended || token !== namesGeneration || !targetGeometryCurrent(target) || target.language !== currentNameLanguage() || (request && namesJob?.request?.requestId !== request.requestId)) {
           finish(Object.assign(new Error("names run superseded"), { name: "AbortError" })); return;
         }
         let complete = false;
@@ -429,16 +460,19 @@ export function createProjectionConfigRuntime({
       (requestId && (latestRevision !== target.revision || appliedRevision !== target.revision))) return false;
     const request = requestId ? { requestId, ...target } : null;
     if (request && namesRequests.has(requestId)) return namesRequests.get(requestId);
+    if (namesJob || namesRenderWait) cancelNamesBuild('Names run superseded');
+    if (target.language === currentNameLanguage()) languageRefreshPending = false;
     const token = ++namesGeneration;
     const abort = new AbortController();
-    namesJob = { abort, request };
+    const job = { abort, request, target };
+    namesJob = job;
     reportNames("rebuilding", request);
     const operation = (async () => {
       let pair;
       let committed = false;
       let candidateRolledBack = false;
       const isCurrentTarget = () => !stopped && !suspended && token === namesGeneration && !abort.signal.aborted &&
-        latestRevision === target.revision && appliedRevision === target.revision && namesTarget === target &&
+        targetGeometryCurrent(target) && namesTarget === target && target.language === currentNameLanguage() &&
         (currentDatasetVersion() || "") === target.datasetVersion;
       const rollbackPrepared = () => {
         if (!pair || candidateRolledBack) return;
@@ -446,7 +480,7 @@ export function createProjectionConfigRuntime({
         candidateRolledBack = true;
       };
       try {
-        pair = await prepareCandidate(config, target.revision, token, abort.signal);
+        pair = await prepareCandidate(config, target.revision, token, abort.signal, { language: target.language, namesOnly: target.kind === 'presentation' });
         if (!isCurrentTarget()) {
           rollbackPrepared(); throw Object.assign(new Error("names run superseded"), { name: "AbortError" });
         }
@@ -455,33 +489,38 @@ export function createProjectionConfigRuntime({
           rollbackPrepared(); throw Object.assign(new Error("names run superseded"), { name: "AbortError" });
         }
         const wall = wallFor(pair, config);
-        if (!wall || wall.datasetVersion !== target.datasetVersion) {
+        if (!wall || wall.datasetVersion !== target.datasetVersion || wall.language !== target.language) {
           rollbackPrepared(); throw new Error("prepared name wall does not match the requested dataset");
         }
         commitCandidate?.(pair, config, target.revision);
         committed = true;
         if (namesJob?.abort === abort) namesJob.rollback = rollbackPrepared;
-        const renderPromise = awaitNamesRender(pair, config, target.revision, token, request);
+        const renderPromise = awaitNamesRender(pair, config, target.revision, token, request, target);
         if (namesRenderWait) namesRenderWait.rollback = rollbackPrepared;
         await renderPromise;
         if (!isCurrentTarget()) throw Object.assign(new Error("names run superseded"), { name: "AbortError" });
         finalizeCandidate?.(pair, config, target.revision);
         installedNames = { revision: target.revision, datasetVersion: wall.datasetVersion,
           placementIdentity: target.placementIdentity, mode: wall.mode, digest: wall.digest,
-          expected: wall.expected, placed: wall.placed };
+          expected: wall.expected, placed: wall.placed, language: target.language };
         appliedWall = wall;
         reportNames("current", request);
-        acknowledge(target.revision, true);
+        if (target.kind !== 'presentation') acknowledge(target.revision, true);
         return true;
       } catch (error) {
         if (pair && !committed && !candidateRolledBack) rollbackPrepared();
         if (pair && committed && !candidateRolledBack) rollbackCandidate?.(pair, appliedConfig || initialConfig, target.revision, { namesOnly: true });
-        if (token === namesGeneration && error?.name !== "AbortError") reportNames("failed", request, error?.message || error);
+        if (token === namesGeneration && error?.name !== "AbortError") {
+          reportNames("failed", request, error?.message || error);
+          if ((installedNames?.language || 'he') !== target.language) onNameLanguageFailure(target.language);
+        }
         return false;
       } finally {
         if (namesJob?.abort === abort) namesJob = null;
+        notifyNamesWaiters();
       }
     })();
+    job.operation = operation;
     if (requestId) {
       namesRequests.set(requestId, operation);
       while (namesRequests.size > 32) namesRequests.delete(namesRequests.keys().next().value);
@@ -517,7 +556,10 @@ export function createProjectionConfigRuntime({
       });
       return;
     }
-    void runNamesBuild(message.requestId, config, target);
+    cancelNamesBuild('Names run superseded');
+    namesTargetGeneration++;
+    namesTarget = { ...target, kind: 'calibration' };
+    void runNamesBuild(message.requestId, config, namesTarget);
   }
 
   function invalidateNames(reason) {
@@ -630,7 +672,8 @@ export function createProjectionConfigRuntime({
     cancelNamesBuild("runtime invalidated");
     if (hadNamesWork && namesTarget) {
       const installedMatches = installedNames && installedNames.revision === namesTarget.revision &&
-        installedNames.datasetVersion === namesTarget.datasetVersion && installedNames.placementIdentity === namesTarget.placementIdentity;
+        installedNames.datasetVersion === namesTarget.datasetVersion && installedNames.placementIdentity === namesTarget.placementIdentity &&
+        (installedNames.language || 'he') === currentNameLanguage() && namesTarget.language === currentNameLanguage();
       reportNames(installedMatches ? "current" : "stale");
     }
     abortPreparation();
@@ -642,6 +685,7 @@ export function createProjectionConfigRuntime({
     if (stopped || !suspended) return;
     suspended = false;
     schedule();
+    drainLanguageRefresh();
   }
 
   function reapply(reason = null) {
@@ -652,6 +696,7 @@ export function createProjectionConfigRuntime({
     const nextVersion = currentDatasetVersion();
     if (!nextVersion || nextVersion === observedDatasetVersion) return false;
     datasetIdentityError = null;
+    if (languageRefreshPending) { observedDatasetVersion = nextVersion; drainLanguageRefresh(); return true; }
     if (!observedDatasetVersion) {
       observedDatasetVersion = nextVersion;
       if (!initialNamesAttempted || installedNames || initialNamesDatasetRetry || !latest || appliedRevision !== latestRevision) return false;
@@ -681,5 +726,72 @@ export function createProjectionConfigRuntime({
       failed: failedRevision >= 0, suspended, stopped, namesState };
   }
 
-  return { start, stop, requestStatus, invalidate, resume, reapply, datasetChanged, datasetIdentityFailed, getAppliedGeometryState };
+  function drainLanguageRefresh() {
+    if (!languageRefreshPending || stopped || suspended || geometryPending() || !appliedConfig || !currentDatasetVersion()) return;
+    languageRefreshPending = false;
+    initialNamesAttempted = true;
+    const config = clone(appliedConfig), revision = appliedRevision, language = currentNameLanguage();
+    void setNamesTarget(config, revision, 'presentation').then(target => {
+      if (target && target.language === language && language === currentNameLanguage()) void runNamesBuild(null, config, target);
+    }).catch(error => { reportNames('failed', null, error.message); onNameLanguageFailure(language); });
+  }
+
+  function nameLanguageChanged() {
+    const language = currentNameLanguage();
+    if (language === observedNameLanguage) return false;
+    observedNameLanguage = language;
+    cancelNamesBuild('Name language changed');
+    namesTargetGeneration++;
+    languageRefreshPending = true;
+    reportNames('stale');
+    drainLanguageRefresh();
+    return true;
+  }
+
+  // Scene cancellation stops only the waiter. Accepted preload work can finish
+  // hidden; geometry/dataset/language changes retain the ordinary job guards.
+  function waitForNames(promise, signal) {
+    if (!signal) return promise;
+    return new Promise((resolve, reject) => {
+      const cancel = () => { cleanup(); reject(Object.assign(new Error('Names scene cancelled'), { name: 'AbortError' })); };
+      const cleanup = () => signal.removeEventListener('abort', cancel);
+      if (signal.aborted) { cancel(); return; }
+      signal.addEventListener('abort', cancel, { once: true });
+      promise.then(value => { cleanup(); resolve(value); }, error => { cleanup(); reject(error); });
+    });
+  }
+
+  function ensureNamesReady({ signal } = {}) {
+    const installed = () => installedNames && hasPreparedNames() &&
+      installedNames.datasetVersion === currentDatasetVersion() && (installedNames.language || 'he') === currentNameLanguage();
+    const waitForGeometry = () => new Promise((resolve, reject) => {
+      const check = () => {
+        const error = stopped ? 'Projection runtime stopped' : getDatasetIdentityError?.() || datasetIdentityError;
+        if (error || (!suspended && appliedConfig && !geometryPending() && currentDatasetVersion())) {
+          namesWaiters.delete(check);
+          if (error) reject(new Error(error)); else resolve();
+        }
+      };
+      namesWaiters.add(check); check();
+    });
+    if (!sceneNamesPreparation) {
+      sceneNamesPreparation = (async () => {
+        if (installed()) return true;
+        await waitForGeometry();
+        const existing = namesJob?.operation || initialNamesPreparation;
+        if (existing) await existing;
+        if (installed()) return true;
+        await waitForGeometry();
+        const config = clone(appliedConfig), revision = appliedRevision;
+        const target = await setNamesTarget(config, revision, 'presentation');
+        if (!target || !await runNamesBuild(null, config, target) || !installed()) {
+          throw new Error(namesError || 'Accepted names preparation was interrupted');
+        }
+        return true;
+      })().finally(() => { sceneNamesPreparation = null; });
+    }
+    return waitForNames(sceneNamesPreparation, signal);
+  }
+
+  return { start, stop, requestStatus, invalidate, resume, reapply, datasetChanged, datasetIdentityFailed, getAppliedGeometryState, nameLanguageChanged, ensureNamesReady };
 }
