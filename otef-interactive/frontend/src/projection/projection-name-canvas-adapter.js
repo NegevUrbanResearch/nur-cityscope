@@ -1,5 +1,7 @@
 import { planeToOutputUv } from '../shared/projection-config-geometry.js';
 import { nameRevealSchedule, NAME_FIELD_REVEAL_DURATION_MS } from '../shared/nli-name-field-animation.js';
+import { getProjectionSpanClipRect } from './projection-span-view.js';
+import { nameTextStyle } from '../shared/nli-name-language.js';
 
 const WIDTH = 1920;
 const HEIGHT = 1080;
@@ -17,15 +19,25 @@ export function createProjectionNameCanvasAdapter({ document = globalThis.docume
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.restore();
     ctx.save();
+    if (entry.maskPolygons) {
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.beginPath();
+      for (const polygon of entry.maskPolygons) {
+        ctx.moveTo(polygon[0].u * canvas.width, polygon[0].v * canvas.height);
+        for (const point of polygon.slice(1)) ctx.lineTo(point.u * canvas.width, point.v * canvas.height);
+        ctx.closePath();
+      }
+      ctx.clip();
+    }
     ctx.setTransform(...matrix);
-    ctx.font = `${fontPx}px "${fontFamily}"`;
+    ctx.font = `${fontPx}px ${entry.textStyle.canvasFontStack}`;
     ctx.fillStyle = color;
     ctx.strokeStyle = '#000000';
     ctx.lineWidth = strokeWidthPx;
     ctx.lineJoin = 'round';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.direction = 'rtl';
+    ctx.direction = entry.textStyle.direction;
     for (const name of placements) {
       const alpha = presentation.alphaFor?.(name.id, name) ?? 1;
       if (!Number.isFinite(alpha) || alpha < 0 || alpha > 1) throw new Error('invalid Canvas name focus opacity');
@@ -39,7 +51,7 @@ export function createProjectionNameCanvasAdapter({ document = globalThis.docume
     entry.contentVersion = ++version;
   };
   const adapter = {
-    prepare({ config, placements, fontPx = 12, fontFamily = 'Guttman Hatzvi', color = '#fff', logicalPlane } = {}) {
+    prepare({ config, placements, fontPx = 12, fontFamily = 'Guttman Hatzvi', textStyle = { ...nameTextStyle(), fontFamily, canvasFontStack: `"${fontFamily}"` }, color = '#fff', logicalPlane, outputMasks } = {}) {
       if (disposed) throw new Error('name adapter is disposed');
       if (!config || !Array.isArray(placements) || !Number.isFinite(logicalPlane?.heading) ||
           !Number.isFinite(logicalPlane?.planeScale)) throw new Error('incomplete name canvas candidate');
@@ -54,7 +66,22 @@ export function createProjectionNameCanvasAdapter({ document = globalThis.docume
       const matrix = [(xUnit.u - origin.u) * WIDTH, (xUnit.v - origin.v) * HEIGHT,
         (yUnit.u - origin.u) * WIDTH, (yUnit.v - origin.v) * HEIGHT,
         origin.u * WIDTH, origin.v * HEIGHT].map(value => value * rasterScale);
-      const own = placements.filter((item) => item.output === output);
+      const sides = ['left', 'right'];
+      for (const item of placements) {
+        const outputs = item.outputs ?? [item.output];
+        if (!Array.isArray(outputs) || !outputs.length || !outputs.includes(item.output) ||
+            outputs.some(side => !sides.includes(side)) ||
+            outputs.join('|') !== sides.filter(side => outputs.includes(side)).join('|'))
+          throw new Error('invalid name canvas output membership');
+      }
+      const own = placements.filter((item) => (item.outputs ?? [item.output]).includes(output));
+      if (outputMasks != null && sides.some(side => !Array.isArray(outputMasks[side]) ||
+          outputMasks[side].some(polygon => !Array.isArray(polygon) || polygon.length < 3 ||
+            polygon.some(point => !Array.isArray(point) || point.length !== 2 || !point.every(Number.isFinite)))))
+        throw new Error('invalid name canvas output mask');
+      const maskPolygons = outputMasks?.[output].map(polygon => polygon.map(point => planeToOutputUv(point, config, output, logicalPlane)));
+      const crop = getProjectionSpanClipRect(config, output);
+      if (!crop) throw new Error('invalid name canvas output crop');
       if (own.some((item) => !item.id || !item.name || ![item.x, item.y, item.width, item.height].every(Number.isFinite) ||
           ['textOffsetX', 'textOffsetY'].some((key) => Object.hasOwn(item, key) && !Number.isFinite(item[key]))))
         throw new Error('invalid name canvas placement');
@@ -77,7 +104,8 @@ export function createProjectionNameCanvasAdapter({ document = globalThis.docume
       }
       const activeMode = config.namesWall?.activeMode;
       const strokeWidthPx = config.namesWall?.profiles?.[activeMode]?.strokeWidthPx ?? (activeMode === 'wall' ? 3 : 2);
-      pending = { canvas, ctx, placements: own, allPlacements: placements, matrix, fontPx, fontFamily, color, strokeWidthPx,
+      pending = { canvas, ctx, placements: own, allPlacements: placements, matrix, fontPx, fontFamily: textStyle.fontFamily, textStyle, color, strokeWidthPx,
+        outputMasks, maskPolygons, clip: [crop.x0, crop.y0, crop.x1, crop.y1],
         revealVertices: new Float32Array(vertices), indexByPid };
       paint(pending);
       return { source: canvas };
@@ -86,7 +114,7 @@ export function createProjectionNameCanvasAdapter({ document = globalThis.docume
       if (disposed) throw new Error('name adapter is disposed');
       if (!active) return false;
       adapter.prepare({ config, placements: active.allPlacements, fontPx: active.fontPx,
-        fontFamily: active.fontFamily, color: active.color, logicalPlane });
+        fontFamily: active.fontFamily, textStyle: active.textStyle, color: active.color, logicalPlane, outputMasks: active.outputMasks });
       adapter.commit();
       adapter.finalize();
       return true;
@@ -114,7 +142,7 @@ export function createProjectionNameCanvasAdapter({ document = globalThis.docume
     },
     rollback() { if (hasRollback) { active = previous; previous = null; hasRollback = false; } else pending = null; },
     finalize() { previous = null; hasRollback = false; },
-    descriptor() { return active ? { source: active.canvas, opacity, contentVersion: active.contentVersion,
+    descriptor() { return active ? { source: active.canvas, opacity, contentVersion: active.contentVersion, clip: active.clip,
       revealVertices: active.revealVertices, revealSeconds,
       selectedIndex: active.indexByPid.get(selectedPid) ?? -1 } : null; },
     dispose() { disposed = true; pending = null; previous = null; hasRollback = false; active = null; },

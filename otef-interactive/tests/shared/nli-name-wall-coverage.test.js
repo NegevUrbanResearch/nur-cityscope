@@ -4,7 +4,33 @@ import { DEFAULT_PROJECTION_CONFIG } from '../../frontend/src/shared/projection-
 import { createFullFrameProjectionMesh, evaluateWarpMesh } from '../../frontend/src/shared/projection-warp-geometry.js';
 import { migrateProjectionConfigToV2 } from '../../frontend/src/shared/projection-warp-schema.js';
 import { outputToT3, planeToOutputUv } from '../../frontend/src/shared/projection-config-geometry.js';
-import { evaluateNameWallCoverage, nameWallRowSpans, rectCoveredByPieces, ringContainsGuardedRect } from '../../frontend/src/shared/nli-name-wall-coverage.js';
+import { evaluateNameWallCoverage, nameWallRowSpans, rectCoveredByPieces, rectIntersectsPieces, ringContainsGuardedRect } from '../../frontend/src/shared/nli-name-wall-coverage.js';
+
+test('union row spans preserve full coverage at a slanted projector join', () => {
+  const coverage = { pieces: {
+    left: [{ polygon: [[0,0],[5,0],[7,10],[0,10]] }],
+    right: [{ polygon: [[5,0],[10,0],[10,10],[7,10]] }],
+  } };
+  expect(nameWallRowSpans(coverage, { outputs: ['left', 'right'], y0: 2, y1: 8, inset: 1 }))
+    .toEqual([[1,9]]);
+});
+
+test('union spans retain genuine projector gaps independently of ring inset', () => {
+  const coverage = { pieces: {
+    left: [{ polygon: [[0,0],[4,0],[4,10],[0,10]] }],
+    right: [{ polygon: [[6,0],[10,0],[10,10],[6,10]] }],
+  } };
+  const ring = [[-20,-20],[30,-20],[30,30],[-20,30],[-20,-20]];
+  expect(nameWallRowSpans(coverage, { outputs: ['left', 'right'], y0: 2, y1: 8,
+    inset: 1, ringInset: 10, ring })).toEqual([[1,3],[7,9]]);
+});
+
+test('output membership requires visible area rather than edge contact or bounding-box contact', () => {
+  const piece = { polygon: [[0,0],[10,0],[0,10]] };
+  expect(rectIntersectsPieces({ x: 8, y: 8, width: 2, height: 2 }, [piece])).toBe(false);
+  expect(rectIntersectsPieces({ x: 5, y: 5, width: 2, height: 2 }, [piece])).toBe(true);
+  expect(rectIntersectsPieces({ x: 11, y: 1, width: 2, height: 2 }, [piece])).toBe(false);
+});
 
 test('row spans exclude a hole that moves through the band', () => {
   const coverage = { pieces: { left: [

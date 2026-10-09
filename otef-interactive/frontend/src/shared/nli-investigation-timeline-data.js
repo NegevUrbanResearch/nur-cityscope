@@ -7,6 +7,7 @@ import {
   timelineBeatDurationMs,
 } from "./nli-investigation-beats.js";
 import layerRegistry from "./layer-registry.js";
+import { visibleInvestigationFeatures } from "./nli-investigation-visibility.js";
 import {
   bufferedGradientResource,
   isBufferedGradientStyle,
@@ -337,7 +338,7 @@ export function refreshInvestigationTimelineData(data, deps = {}) {
 
   const injected = (key, value) => {
     if (value === undefined) return;
-    const next = featureList(value);
+    const next = key === "polygonFeatures" ? visibleInvestigationFeatures(featureList(value)) : featureList(value);
     if (data[key] !== next) changed = true;
     data[key] = next;
   };
@@ -496,7 +497,7 @@ export async function ensureInvestigationLayerFeatures(data, deps, key, fullId, 
   if (data.featureLoadPromises.get(key) === record) data.featureLoadPromises.delete(key);
   if (data.dataVersion !== version || !isCurrent(record.request)) return;
   if (!Array.isArray(data[key])) {
-    data[key] = featureList(loaded);
+    data[key] = key === "polygonFeatures" ? visibleInvestigationFeatures(featureList(loaded)) : featureList(loaded);
     data.dataRevision += 1;
     invalidateIndexes(data);
   }

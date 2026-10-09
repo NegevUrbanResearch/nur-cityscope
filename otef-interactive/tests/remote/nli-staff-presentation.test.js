@@ -40,6 +40,20 @@ function makeControllerHarness() {
 afterEach(() => vi.useRealTimers());
 
 describe("NLI staff presentation controller", () => {
+  test("replacing a fixed scene supersedes an unacknowledged Open without a Close", async () => {
+    const h = makeControllerHarness();
+    const first = h.controller.run("open", "names_wall");
+    const previous = h.sent[0];
+    const replacement = h.controller.replace("credits");
+    await expect(first).resolves.toBe(false);
+    expect(h.sent.map(({ presentationAction, segmentId }) => [presentationAction, segmentId]))
+      .toEqual([["open", "names_wall"], ["open", "credits"]]);
+    h.replyTo(previous, { outcome: "opened" });
+    expect(h.controller.getState()).toMatchObject({ phase: "opening", segmentId: "credits" });
+    h.reply({ outcome: "opened", slide: 37, range: [37, 37] });
+    await expect(replacement).resolves.toBe(true);
+    h.controller.destroy();
+  });
   test("Hostages opens after its cue, explicit Close stays, and Scene Next reaches Nir Oz", async () => {
     const item = NARRATIVES.find(narrative => narrative.id === "hostages");
     const index = item.steps.findIndex(candidate => candidate.presentation);
@@ -541,4 +555,37 @@ describe("failed presentation recovery", () => {
     expect(await retry).toBe(false);
     expect(signals.every(signal => signal.aborted)).toBe(true);
   });
+});
+
+test("scene ready accepts preparation without opening or counting responders", async () => {
+  const h = makeControllerHarness();
+  const handle = h.controller.prepareScene("names_wall");
+  h.reply({ outcome: "ready", sourceId: "gis-prepared" });
+  await expect(handle.prepared).resolves.toBe(true);
+  expect(h.controller.getState().phase).toBe("opening");
+  let opened = false; handle.opened.then(value => { opened = value; });
+  await Promise.resolve(); expect(opened).toBe(false);
+  h.reply({ outcome: "opened", sourceId: "gis-opened" });
+  await expect(handle.opened).resolves.toBe(true);
+  const close = h.controller.run("close", "names_wall");
+  h.reply({ outcome: "closed", sourceId: "gis-prepared" });
+  expect(h.controller.getState().phase).toBe("closing");
+  h.reply({ outcome: "closed", sourceId: "gis-opened" });
+  await expect(close).resolves.toBe(true); h.controller.destroy();
+});
+test("scene cancellation settles preparation and open and ignores stale completion", async () => {
+  const h = makeControllerHarness(); const abort = new AbortController();
+  const handle = h.controller.prepareScene("credits", { signal: abort.signal });
+  const open = h.sent[0]; abort.abort();
+  await expect(handle.prepared).resolves.toBe(false);
+  await expect(handle.opened).resolves.toBe(false);
+  h.replyTo(open, { outcome: "opened" });
+  expect(h.controller.getState().phase).not.toBe("open"); h.controller.destroy();
+});
+test("scene command timeout settles both waits", async () => {
+  vi.useFakeTimers(); const h = makeControllerHarness();
+  const handle = h.controller.prepareScene("names_wall");
+  await vi.advanceTimersByTimeAsync(6000);
+  await expect(handle.prepared).resolves.toBe(false);
+  await expect(handle.opened).resolves.toBe(false); h.controller.destroy();
 });

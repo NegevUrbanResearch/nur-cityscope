@@ -330,7 +330,7 @@ export function createProjectionConfigView(root, {
     return run;
   }
   function modelSpacingHelp() {
-    const help = make(doc, "p", { className: "names-wall-units names-wall-model-help" }, "Rows spread across the model. Set 0 for the tightest fit.");
+    const help = make(doc, "p", { className: "names-wall-units names-wall-model-help" }, "Rows reach both model edges and spread over the full height. Spacing sets the minimum gap; leftover row width is shared between names. Names continue across the projector join. Edge inset applies to the model outline.");
     modelSpacingHelpControls.push(help);
     return help;
   }

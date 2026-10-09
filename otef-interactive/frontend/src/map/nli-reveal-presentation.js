@@ -57,9 +57,12 @@ export function nextHandledExitRevision(handledExitRevision, state) {
   return { handledExitRevision: state.revision, fresh: true };
 }
 
-export function shouldCloseViewerForNarrative({ handledExitRevision = 0, state, segment } = {}) {
+export function shouldCloseViewerForNarrative({ handledExitRevision = 0, state, segment, namesWallActive = false } = {}) {
   const next = nextHandledExitRevision(handledExitRevision, state);
-  if (next.fresh) return { ...next, close: true };
+  if (next.fresh) {
+    const keepsFixedScreen = namesWallActive && ["names_wall", "credits"].includes(segment?.id);
+    return { ...next, close: !keepsFixedScreen };
+  }
   if (state?.id === null && state?.transition === "exit") return { ...next, close: false };
   const mismatched = Boolean(segment?.requiredNarrative) && state?.id !== segment.requiredNarrative;
   return { ...next, close: mismatched };
@@ -80,6 +83,9 @@ export function createNliRevealPresentation(container, {
 } = {}) {
   let highestGeneration = 0;
   let active = null;
+  let outgoing = null;
+  let staged = null;
+  let sceneCommand = null;
   let operationToken = 0;
   let disposed = false;
   const emitted = new WeakSet();
@@ -106,7 +112,7 @@ export function createNliRevealPresentation(container, {
     return true;
   };
 
-  const isCurrent = (state, token) => Boolean(state) && active === state && state.token === token && !disposed;
+  const isCurrent = (state, token) => Boolean(state) && (active === state || staged === state) && state.token === token && !disposed;
 
   const cancelPending = (state) => {
     if (!state?.cancels) return;
@@ -142,7 +148,20 @@ export function createNliRevealPresentation(container, {
     for (const video of state.overlay.querySelectorAll("video")) stopStateVideo(state, video, { mediaStopped });
     try { state.reveal?.destroy?.(); } catch (_) { /* Keep GIS usable if Reveal teardown fails. */ }
     state.overlay.remove();
+    if (sceneCommand?.presentationSessionId === state.sessionId &&
+        sceneCommand?.presentationGeneration === state.generation) sceneCommand = null;
     if (active === state) active = null;
+    if (staged === state) staged = null;
+  };
+
+  const clearOutgoing = () => {
+    if (outgoing) removeState(outgoing);
+    outgoing = null;
+  };
+
+  const completeOpen = (state) => {
+    state.opened = true; sceneCommand = state.command;
+    clearOutgoing();
   };
 
   const setPlaybackActive = (state, nextActive) => {
@@ -163,10 +182,20 @@ export function createNliRevealPresentation(container, {
     if (!mediaStopped) stopVideo(video);
   };
 
+  const restoreOutgoing = () => {
+    if (!outgoing) return;
+    active = outgoing; outgoing = null;
+    active.closing = false;
+    active.overlay.classList.replace("nli-reveal-outgoing", "nli-reveal-overlay");
+    sceneCommand = active.command;
+  };
   const fail = (command, state, token, message) => {
-    if (!state || state.token !== token || active !== state || disposed || emitted.has(command)) return;
+    if (!state || state.token !== token || (active !== state && staged !== state) || disposed || emitted.has(command)) return;
     clearTimeout(state.deadlineTimer);
+    const candidate = staged === state;
     removeState(state);
+    if (!candidate && state.managedScene) restoreOutgoing();
+    sceneCommand = active?.command || null;
     emitOnce(command, "unavailable", state, message);
   };
 
@@ -239,8 +268,8 @@ export function createNliRevealPresentation(container, {
     return waitForOpacity(state, token);
   };
 
-  const waitForImage = (state, token, slide) => {
-    const image = state.sections.get(slide)?.querySelector("img");
+  const waitForImage = (state, token, slide, imageOverride) => {
+    const image = imageOverride || state.sections.get(slide)?.querySelector("img");
     if (!image) return Promise.resolve(false);
     if (typeof image.decode === "function") {
       return new Promise((resolve) => {
@@ -357,7 +386,8 @@ export function createNliRevealPresentation(container, {
     overlay.style.opacity = "0";
     if (segment.kind === "blackout") {
       overlay.classList.add("nli-reveal-overlay--blackout");
-      overlay.style.backgroundImage = `url("${mediaUrl(imageAssetPath(manifest, "local/presentations/nli/supplements/slide-background.png"))}")`;
+      const backgroundUrl = mediaUrl(imageAssetPath(manifest, "local/presentations/nli/supplements/slide-background.png"));
+      overlay.style.backgroundImage = `url("${backgroundUrl}")`;
       const copy = element("div", "nli-blackout-copy");
       const title = element("p", "nli-blackout-title");
       title.lang = "he";
@@ -370,7 +400,7 @@ export function createNliRevealPresentation(container, {
       copy.append(title, date);
       overlay.append(copy);
       container.append(overlay);
-      return { overlay, revealRoot: null, sections: new Map(), cancels: [] };
+      return { overlay, backgroundUrl, revealRoot: null, sections: new Map(), cancels: [] };
     }
     const revealRoot = element("div", "reveal");
     const slides = element("div", "slides");
@@ -443,10 +473,22 @@ export function createNliRevealPresentation(container, {
       emitOnce(command, "unavailable", null, "Unknown presentation segment");
       return;
     }
-    if (active) removeState(active);
+    if (active) {
+      const fixedSceneSwap = active.opened &&
+        [active.segment.id, segment.id].every((id) => ["names_wall", "credits"].includes(id));
+      if (fixedSceneSwap) {
+        clearOutgoing();
+        outgoing = active;
+        clearTimeout(outgoing.deadlineTimer);
+        cancelPending(outgoing);
+        outgoing.overlay.classList.replace("nli-reveal-overlay", "nli-reveal-outgoing");
+      } else {
+        removeState(active);
+      }
+    }
     const state = {
       ...buildOverlay(segment),
-      segment,
+      command, segment,
       reveal: null,
       slide: segment.range[0],
       sessionId: command.presentationSessionId,
@@ -467,6 +509,7 @@ export function createNliRevealPresentation(container, {
         const faded = await fadeOverlay(state, token, 1);
         if (!isCurrent(state, token) || !faded) return;
         clearTimeout(state.deadlineTimer);
+        completeOpen(state);
         emitOnce(command, "opened", state);
         emit(command, "ready", state);
         return;
@@ -511,6 +554,7 @@ export function createNliRevealPresentation(container, {
       }
       if (!isCurrent(state, token)) return;
       clearTimeout(state.deadlineTimer);
+      completeOpen(state);
       emitOnce(command, "opened", state);
     } catch (error) {
       if (!isCurrent(state, token)) return;
@@ -518,10 +562,160 @@ export function createNliRevealPresentation(container, {
     }
   };
 
+  const openManaged = async (command, { signal } = {}) => {
+    if (signal?.aborted) return;
+    if (!Number.isInteger(command.presentationGeneration) || command.presentationGeneration <= highestGeneration) {
+      emitOnce(command, "ignored", active); return;
+    }
+    highestGeneration = command.presentationGeneration;
+    const segment = manifest?.segments?.find(value => value.id === command.segmentId);
+    if (!segment) { emitOnce(command, "unavailable", null, "Unknown presentation segment"); return; }
+    if (staged) removeState(staged);
+    const state = { ...buildOverlay(segment), command, segment, managedScene: true, reveal: null,
+      slide: segment.range[0], sessionId: command.presentationSessionId,
+      generation: command.presentationGeneration, lastSequence: command.sequence,
+      token: 0, playbackActive: false, currentVideo: null, videoListeners: null, videoActivation: 0 };
+    staged = state; sceneCommand = command;
+    const token = beginOperation(state);
+    boundOperation(command, state, token, "Presentation open timed out");
+    if (signal) {
+      const abort = () => {
+        if (state.opened || !isCurrent(state, token)) return;
+        const candidate = staged === state;
+        removeState(state);
+        if (!candidate) restoreOutgoing();
+        sceneCommand = active?.command || null;
+      };
+      signal.addEventListener("abort", abort, { once: true });
+      listen(state, token, () => signal.removeEventListener("abort", abort));
+    }
+    try {
+      if (segment.kind === "blackout") {
+        const background = element("img");
+        background.src = state.backgroundUrl;
+        if (!await waitForImage(state, token, state.slide, background)) {
+          fail(command, state, token, "Presentation background image could not be loaded"); return;
+        }
+      } else {
+        state.reveal = new RevealClass(state.revealRoot, { ...REVEAL_OPTIONS });
+        await Promise.race([
+          Promise.resolve(state.reveal.initialize()),
+          new Promise(resolve => listen(state, token, resolve)),
+        ]);
+        if (!isCurrent(state, token)) return;
+        if (!await waitForImage(state, token, state.slide)) {
+          fail(command, state, token, "Presentation slide image could not be loaded"); return;
+        }
+        const video = state.sections.get(state.slide)?.querySelector("video");
+        if (video) {
+          // Decode the first frame without starting audible playback under the hold.
+          video.preload = "auto"; video.src = video.dataset.mediaSource;
+          const loaded = await new Promise(resolve => {
+            let drop = () => {};
+            const finish = ok => {
+              video.removeEventListener("loadeddata", onReady); video.removeEventListener("error", onError);
+              drop(); resolve(ok && isCurrent(state, token));
+            };
+            const onReady = () => finish(true), onError = () => finish(false);
+            video.addEventListener("loadeddata", onReady, { once: true });
+            video.addEventListener("error", onError, { once: true });
+            drop = listen(state, token, () => finish(false));
+            if (video.readyState >= 2) finish(true);
+          });
+          if (!loaded) { fail(command, state, token, "Presentation video could not be decoded"); return; }
+        }
+      }
+      if (!isCurrent(state, token)) return;
+      state.prepared = true;
+      emit(command, "ready", state);
+    } catch (error) {
+      if (isCurrent(state, token)) fail(command, state, token, error?.message || "Presentation preparation failed");
+    }
+  };
+
+  const getSceneIds = snapshot => snapshot.presentationCommand
+    ? ["nli.presentation." + snapshot.presentationCommand.presentationSessionId] : [];
+  const prepareScene = async (snapshot, { signal, previousSnapshot } = {}) => {
+    if (signal?.aborted) throw new Error("Presentation scene cancelled");
+    const command = snapshot.presentationCommand;
+    if (!command) return null;
+    const state = [staged, active, outgoing].find(value => value?.sessionId === command.presentationSessionId && value.generation === command.presentationGeneration);
+    if (!state || (!state.prepared && !state.opened)) throw new Error("Presentation candidate is not prepared");
+    return { state, signal, installed: active === state || outgoing === state,
+      exitBeforeEntry: state.segment.kind === "blackout" && !state.opened && previousSnapshot?.enabledIds?.includes("nli.people") === true };
+  };
+  const applyScene = (prepared, { snapshot, runtime, signal, semanticOnly = false } = {}) => {
+    if (disposed || signal?.aborted || semanticOnly || !prepared) return;
+    const state = prepared.state;
+    if (prepared.signal?.aborted || state !== active && state !== staged && state !== outgoing) return;
+    if (outgoing === state) restoreOutgoing();
+    if (staged === state) {
+      clearOutgoing();
+      outgoing = active;
+      if (outgoing) {
+        clearTimeout(outgoing.deadlineTimer); cancelPending(outgoing);
+        for (const video of outgoing.overlay.querySelectorAll("video")) stopStateVideo(outgoing, video);
+        outgoing.overlay.classList.replace("nli-reveal-overlay", "nli-reveal-outgoing");
+      }
+      active = state; staged = null;
+    }
+    state.overlay.style.transition = "none";
+    runtime.registerElement(getSceneIds(snapshot)[0], state.overlay, {
+      // The outgoing map is already at zero for a blackout entry. Cover the
+      // basemap immediately so its overview labels cannot show through the wall.
+      adoptVisible: state.opened === true || prepared.exitBeforeEntry === true,
+      onTeardown: () => {
+        const close = state.closeCommand;
+        removeState(state);
+        if (outgoing === state) outgoing = null;
+        if (close) emitOnce(close, "closed", state);
+      },
+    });
+    runtime.markMemberReady(getSceneIds(snapshot)[0]);
+  };
+  const settleScene = async snapshot => {
+    const state = active;
+    if (!state || state.opened || state.closing || state.sessionId !== snapshot.presentationCommand?.presentationSessionId) return;
+    const video = state.sections.get(state.slide)?.querySelector("video");
+    if (video && !await startVideo(state, state.token, video)) {
+      fail(state.command, state, state.token, "Presentation video playback is unavailable"); return;
+    }
+    if (!isCurrent(state, state.token)) return;
+    clearTimeout(state.deadlineTimer); completeOpen(state);
+    emitOnce(state.command, "opened", state);
+  };
+  const closeManaged = command => {
+    const match = state => state && command.segmentId === state.segment.id &&
+      command.presentationSessionId === state.sessionId && command.presentationGeneration === state.generation;
+    if (!isValidatedClose(command)) { emitOnce(command, "ignored", active); return; }
+    if (match(staged)) {
+      const state = staged;
+      if (command.sequence <= state.lastSequence) { emitOnce(command, "ignored", state); return; }
+      removeState(state); sceneCommand = active?.command || null; emitOnce(command, "closed", state); return;
+    }
+    if (!match(active)) {
+      highestGeneration = Math.max(highestGeneration, command.presentationGeneration);
+      emitOnce(command, "closed", null); return;
+    }
+    if (!active.opened) {
+      const state = active;
+      if (command.sequence <= state.lastSequence) { emitOnce(command, "ignored", state); return; }
+      removeState(state); restoreOutgoing();
+      emitOnce(command, "closed", state); return;
+    }
+    if (command.sequence <= active.lastSequence) { emitOnce(command, "ignored", active); return; }
+    active.lastSequence = command.sequence; active.closeCommand = command; active.closing = true;
+    cancelPending(active); sceneCommand = null;
+    for (const video of active.overlay.querySelectorAll("video")) stopStateVideo(active, video);
+  };
+
   const hide = async (state, token) => {
     for (const video of state.overlay.querySelectorAll("video")) stopStateVideo(state, video);
     await fadeOverlay(state, token, 0);
-    if (active === state && state.token === token && !disposed) removeState(state, { mediaStopped: true });
+    if ((active === state || staged === state) && state.token === token && !disposed) {
+      removeState(state, { mediaStopped: true });
+      clearOutgoing();
+    }
   };
 
   const beginClose = (state) => {
@@ -543,6 +737,7 @@ export function createNliRevealPresentation(container, {
       command.presentationSessionId === state.sessionId &&
       command.presentationGeneration === state.generation);
     if (!matches) {
+      if (!state && command.presentationGeneration >= highestGeneration) clearOutgoing();
       highestGeneration = Math.max(highestGeneration, command.presentationGeneration);
       emitOnce(command, "closed", null);
       return;
@@ -556,14 +751,27 @@ export function createNliRevealPresentation(container, {
     emitOnce(command, "closed", state);
   };
 
-  const handleCommand = async (command) => {
+  const ownsManagedCandidate = command => command?.presentationAction === "close" &&
+    [staged, active].some(state => state?.managedScene && !state.opened &&
+      command.segmentId === state.segment.id && command.presentationSessionId === state.sessionId &&
+      command.presentationGeneration === state.generation);
+  const getPendingSceneCommand = () => {
+    if (sceneCommand?.presentationAction !== "open") return null;
+    const state = [staged, active].find(candidate => candidate?.managedScene && !candidate.opened && !candidate.closing &&
+      candidate.segment.id === sceneCommand.segmentId && candidate.sessionId === sceneCommand.presentationSessionId &&
+      candidate.generation === sceneCommand.presentationGeneration);
+    return state?.command || null;
+  };
+  const handleCommand = async (command, { managedScene = false, signal } = {}) => {
     if (disposed || !command || typeof command !== "object") return;
     if (command.presentationAction === "open") {
-      await open(command);
+      if (managedScene) await openManaged(command, { signal });
+      else await open(command);
       return;
     }
     if (command.presentationAction === "close") {
-      await closeCommand(command);
+      if (managedScene || ownsManagedCandidate(command)) closeManaged(command);
+      else await closeCommand(command);
       return;
     }
     if (!active || active.closing ||
@@ -597,16 +805,38 @@ export function createNliRevealPresentation(container, {
   };
 
   return {
-    handleCommand,
+    handleCommand, getSceneIds, prepareScene, applyScene, settleScene,
+    getSceneCommand: () => sceneCommand, getPendingSceneCommand,
+    closeForScene() {
+      if (staged) removeState(staged);
+      sceneCommand = null;
+      if (active) {
+        active.closing = true; cancelPending(active);
+        for (const video of active.overlay.querySelectorAll("video")) stopStateVideo(active, video);
+      }
+    },
+    discardScene(prepared) {
+      if (prepared && !prepared.installed && (staged === prepared.state || active === prepared.state)) {
+        const candidate = staged === prepared.state;
+        removeState(prepared.state);
+        if (!candidate) restoreOutgoing();
+        sceneCommand = active?.command || null;
+      }
+    },
     close() {
       if (disposed) return Promise.resolve();
       const state = active;
-      if (!state) return Promise.resolve();
+      if (!state) {
+        clearOutgoing();
+        return Promise.resolve();
+      }
       return beginClose(state);
     },
     dispose() {
       if (disposed) return;
       disposed = true;
+      if (staged) removeState(staged);
+      clearOutgoing();
       const state = active;
       if (state) {
         state.token = ++operationToken;

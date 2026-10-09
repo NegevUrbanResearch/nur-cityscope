@@ -20,6 +20,7 @@ import {
   validateOptionalSourceZip,
   captionFingerprint,
   validateNavigationFixture,
+  buildNavigationFixture,
   resolveVerifierInputs,
   writeNavigationFixture,
 } from "../../scripts/verify-nli-presenter-content.mjs";
@@ -249,6 +250,22 @@ describe("presenter release verifier", () => {
     const fixture = JSON.parse(fs.readFileSync(new URL("../fixtures/nli-presenter-navigation.json", import.meta.url), "utf8"));
     expect(validateNavigationFixture({ fixture, computedMinutes: fixture.minutes })).toEqual([]);
     expect(validateNavigationFixture({ fixture, computedMinutes: fixture.minutes.slice(1) })).toContain("Beat minutes differ from the tracked navigation fixture");
+    expect(validateNavigationFixture({ fixture: { ...fixture, minutes: fixture.minutes.slice(1) }, computedMinutes: fixture.minutes.slice(1) }))
+      .toContain("Tracked navigation fixture omits minutes beyond the exact fire-only exclusions");
+    expect(validateNavigationFixture({ fixture: { ...fixture, excludedBeats: fixture.excludedBeats.slice(1) }, computedMinutes: fixture.minutes }))
+      .toContain("Tracked navigation fixture does not preserve the pinned source minutes and exact fire-only exclusions");
+  });
+
+  it("derives the current fixture only after validating the complete pinned export", () => {
+    const tracked = JSON.parse(fs.readFileSync(new URL("../fixtures/nli-presenter-navigation.json", import.meta.url), "utf8"));
+    const exportBytes = Buffer.from(JSON.stringify({ beats: tracked.sourceMinutes.map((minute) => ({ minute })) }));
+    const expectedSha256 = createHash("sha256").update(exportBytes).digest("hex");
+    const fixture = buildNavigationFixture({ exportBytes, expectedSha256, computedMinutes: tracked.minutes });
+    expect(fixture.sourceMinutes).toEqual(tracked.sourceMinutes);
+    expect(fixture.minutes).toEqual(tracked.minutes);
+    expect(fixture.excludedBeats).toEqual(tracked.excludedBeats);
+    expect(() => buildNavigationFixture({ exportBytes, expectedSha256, computedMinutes: tracked.minutes.slice(1) }))
+      .toThrow(/fire-only exclusions/i);
   });
 
   it("defaults verifier inputs to tracked provenance and fixture without SDD or mockup paths", () => {
@@ -354,9 +371,10 @@ describe("presenter release verifier", () => {
     const exportBytes = Buffer.from(JSON.stringify({ beats: [{ minute: 10 }] }));
     expect(() => writeNavigationFixture({ exportBytes, computedMinutes: [10], fixturePath: target })).toThrow(/pinned export SHA-256 mismatch/i);
     expect(fs.existsSync(target)).toBe(false);
-    const pinnedBytes = Buffer.from(JSON.stringify({ beats: [{ minute: 10 }] }));
+    const tracked = JSON.parse(fs.readFileSync(new URL("../fixtures/nli-presenter-navigation.json", import.meta.url), "utf8"));
+    const pinnedBytes = Buffer.from(JSON.stringify({ beats: tracked.sourceMinutes.map((minute) => ({ minute })) }));
     const testDigest = createHash("sha256").update(pinnedBytes).digest("hex");
-    expect(() => writeNavigationFixture({ exportBytes: pinnedBytes, expectedSha256: testDigest, computedMinutes: [11], fixturePath: target })).toThrow(/beat minutes differ/i);
+    expect(() => writeNavigationFixture({ exportBytes: pinnedBytes, expectedSha256: testDigest, computedMinutes: [11], fixturePath: target })).toThrow(/fire-only exclusions/i);
     expect(fs.existsSync(target)).toBe(false);
     fs.rmSync(directory, { recursive: true, force: true });
   });

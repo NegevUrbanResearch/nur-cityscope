@@ -51,6 +51,10 @@ export function createNliStaffPresentationController({ dataContext, onStateChang
       return;
     }
     const request = pending;
+    if (request.scene && request.command.presentationAction === "open" && result.outcome === "ready") {
+      request.resolvePrepared(true);
+      return;
+    }
     const successful = (request.command.presentationAction === "open" && result.outcome === "opened") ||
       (["next", "previous"].includes(request.command.presentationAction) && result.outcome === "ready") ||
       (request.command.presentationAction === "close" && result.outcome === "closed");
@@ -140,7 +144,8 @@ export function createNliStaffPresentationController({ dataContext, onStateChang
     });
   }
 
-  function dispatch(action, segmentId) {
+  function dispatch(action, segmentId, options = {}) {
+    const previousSession = session, previousState = { ...state };
     if (destroyed || !ACTIONS.has(action) || typeof dataContext?.narrativePresentationCommand !== "function") {
       setFailed(Boolean(session));
       return Promise.resolve(false);
@@ -172,13 +177,32 @@ export function createNliStaffPresentationController({ dataContext, onStateChang
     const request = {
       command,
       promise,
-      resolve: resolveRequest,
+      scene: options.scene === true,
+      resolvePrepared: options.resolvePrepared || (() => {}),
+      resolve(value) {
+        request.resolvePrepared(value);
+        options.signal?.removeEventListener("abort", request.cancel);
+        if (!value && request.scene) {
+          session = previousSession;
+          publish(previousSession ? previousState : { phase: "failed", sessionId: null, retryOpenSegmentId: targetSegment });
+          // Existing Close cancels only this candidate generation on the GIS.
+          void Promise.resolve().then(() => dataContext.narrativePresentationCommand({
+            ...command, presentationAction: "close", sequence: command.sequence + 1, requestId: uuid(),
+          })).catch(() => {});
+        }
+        resolveRequest(value);
+      },
       timer: null,
       transport: new AbortController(),
       closeResponders,
       closeRequiresKnownResponders: Boolean(closeResponders?.size),
     };
+    request.cancel = () => {
+      if (pending !== request) return;
+      pending = null; clearTimeout(request.timer); request.transport.abort(); request.resolve(false);
+    };
     pending = request;
+    options.signal?.addEventListener("abort", request.cancel, { once: true });
     request.timer = setTimeout(() => {
       if (pending === request) {
         request.transport.abort();
@@ -210,12 +234,42 @@ export function createNliStaffPresentationController({ dataContext, onStateChang
       request.resolve(false);
       if (openObservation === request) openObservation = null;
     });
+    if (options.signal?.aborted) request.cancel();
     return promise;
+  }
+
+  function prepareScene(segmentId, { signal } = {}) {
+    if (pending) pending.cancel();
+    let resolvePrepared;
+    const prepared = new Promise(resolve => { resolvePrepared = resolve; });
+    const opened = dispatch("open", segmentId, { scene: true, signal, resolvePrepared });
+    const request = pending;
+    if (!request) resolvePrepared(false);
+    return { prepared, opened, cancel: () => request?.cancel() };
+  }
+
+  function closeScene({ signal } = {}) {
+    if (pending?.scene) pending.cancel();
+    if (!session) return { prepared: Promise.resolve(true), opened: Promise.resolve(true), cancel() {} };
+    const opened = dispatch("close", session.segmentId, { signal });
+    const request = pending;
+    return { prepared: Promise.resolve(true), opened, cancel: () => request?.cancel() };
   }
 
   async function run(action, segmentId) {
     if (pending) return false;
     return dispatch(action, segmentId);
+  }
+
+  function replace(segmentId) {
+    if (pending) {
+      const request = pending;
+      pending = null;
+      clearTimeout(request.timer);
+      request.transport.abort();
+      request.resolve(false);
+    }
+    return dispatch("open", segmentId);
   }
 
   function clearSessionlessFailure() {
@@ -270,6 +324,9 @@ export function createNliStaffPresentationController({ dataContext, onStateChang
 
   return {
     run,
+    prepareScene,
+    closeScene,
+    replace,
     recoverOpen,
     releaseFailedSession,
     closeForStepChange,

@@ -28,6 +28,7 @@ import {
   addInvestigationOverlayLayer,
   completeInvestigationOverlayMount,
   fadeInvestigationOverlayLayer,
+  deferInvestigationOverlaySceneExit,
   isOverlayOpacityProperty,
   publishInvestigationOverlayOpacity,
 } from "./investigation-overlay-lifecycle.js";
@@ -738,8 +739,16 @@ export function createInvestigationLineRenderer(map, profile = NLI_DISPLAY_PROFI
     paintInitialized = true;
   }
 
-  function reset({ preserveBasePaints = false, immediate = false } = {}) {
+  function reset({ preserveBasePaints = false, immediate = false, sceneDeparture = false } = {}) {
     if (disposed) return;
+    if (sceneDeparture) {
+      const generation = ++hideGeneration;
+      if (deferInvestigationOverlaySceneExit(map, INVESTIGATION_LINES_FULL_ID, () => {
+        if (generation !== hideGeneration) return;
+        reset({ preserveBasePaints: true, immediate: true });
+        for (const [layerId, sourceId] of OWNED) removeLayerAndSource(map, layerId, sourceId);
+      })) return;
+    }
     const overlayPairs = OWNED.filter(([layerId]) => OVERLAY.has(layerId));
     const generation = ++hideGeneration;
     const finish = () => {

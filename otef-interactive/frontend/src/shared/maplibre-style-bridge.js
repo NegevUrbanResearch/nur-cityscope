@@ -2,6 +2,7 @@
  * Translate OTEF AdvancedStyleEngine IR (symbolLayers)
  * into MapLibre style layer definitions.
  */
+import { INVESTIGATION_VISIBILITY_FILTER } from "./nli-investigation-visibility.js";
 import {
   GIS_GAZA_ROADS_LINE_OPACITY_SCALE,
   OPEN_SPACES_FILL_OPACITY_SCALE,
@@ -1544,6 +1545,10 @@ export function irToMapLibreLayers(fullLayerId, sourceLayerId, layerConfig, styl
     ? buildLabelSymbolLayer(idBase, style, layerConfig?.geometryType, fullLayerId)
     : [];
   const layers = [...baseLayers, ...leaderLineLayers, ...labelLayers];
+  if (fullLayerId === "nli.investigation_polygons") {
+    const keepCategory = INVESTIGATION_VISIBILITY_FILTER;
+    return layers.map(layer => ({ ...layer, filter: layer.filter ? ["all", layer.filter, keepCategory] : keepCategory }));
+  }
   if (fullLayerId === "projector_base.SEA" && hatchPresentation.applyProjectionHatchPresentation) {
     return layers.map(layer => layer.type === "fill"
       ? { ...layer, paint: { ...layer.paint, "fill-color": PROJECTION_SEA_FILL_COLOR } }

@@ -291,3 +291,13 @@ describe("projection overlay adapters", () => {
     expect(c.context.calls.some(([name, value]) => name === "fillText" && value === "שימושי קרקע")).toBe(false);
   });
 });
+
+test("caption carries scene opacity without rerasterizing semantic glyphs", () => {
+  const c = canvasFactory(), adapter = createProjectionCaptionAdapter({ canvasFactory: () => c });
+  adapter.sync({ layout, snapshot: { visible: true, sceneOpacity: 1, model: { clockLabel: "06:29" } } });
+  const first = adapter.draw(); const paints = c.context.calls.length;
+  adapter.sync({ layout, snapshot: { visible: true, sceneOpacity: .5, model: { clockLabel: "06:29" } } });
+  expect(adapter.draw().opacity).toBe(.5);
+  expect(adapter.draw().contentVersion).toBe(first.contentVersion);
+  expect(c.context.calls.length).toBe(paints); adapter.dispose();
+});

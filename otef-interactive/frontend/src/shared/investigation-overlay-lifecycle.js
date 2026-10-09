@@ -64,3 +64,11 @@ export function fadeInvestigationOverlayLayer(map, fullId, layerId, onHidden) {
   }
   return runtime.fadePaintLayer(fullId, layerId, { durationMs: LAYER_FADE_MS, onHidden });
 }
+
+/** Hold renderer content through scene departure; semantic resets remain immediate. */
+export function deferInvestigationOverlaySceneExit(map, fullId, onHidden) {
+  const runtime = peekLayerLifecycleRuntime(map);
+  if (!runtime) return false;
+  runtime.onMemberHidden(fullId, onHidden);
+  return true;
+}

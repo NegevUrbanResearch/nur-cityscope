@@ -3,6 +3,7 @@
  * projector_base is projector-only except the GIS allowlist: Tkuma_Area_LIne and ישובים.
  * Black background (רקע_שחור) is retired and stays excluded.
  * The allowlist does not force a disabled remote row on and does not add these rows to the legend.
+ * NLI's names wall is projection-only; GIS keeps ordinary people points.
  */
 
 const PROJECTOR_BASE_GIS_LAYERS = new Set([
@@ -33,6 +34,7 @@ function isCuratedPackFullLayerId(fullLayerId) {
  * @returns {boolean} - true if the layer should be shown on the GIS map
  */
 function shouldShowLayerOnGisMap(groupId, layerId) {
+  if (groupId === "nli" && layerId === "people_names") return false;
   // Pink-line companions are driven by pink-line modules, not registry GeoJSON.
   if (
     groupId === "curated_moresht_axis" &&

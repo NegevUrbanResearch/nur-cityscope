@@ -101,3 +101,21 @@ describe('committed NLI clock presentation', () => {
     expect(getInvestigationTimelineRenderSnapshot(p.map).visible).toBe(false);
   });
 });
+
+it("managed departing clock retains model and DOM until lifecycle zero", async () => {
+  const p = setup(); let desired = ["nli.clock-caption.gis"], teardown, write;
+  const runtime = {
+    getDesiredIds: () => desired,
+    registerElement: (_id, _element, bindings) => { teardown = bindings.onTeardown; },
+    registerOpacityTarget: (_id, callback) => { write = callback; },
+    markMemberReady() {},
+  };
+  await p.sync(idleNliClock(), HOME_CUE.layers, null, { sceneClockRuntime: runtime, sceneCaptionId: desired[0] });
+  const old = getInvestigationTimelineRenderSnapshot(p.map).model.clockLabel;
+  desired = [];
+  await p.sync(idleNliClock(), ["nli.people_names"], null, { sceneClockRuntime: runtime, sceneCaptionId: "nli.clock-caption.gis" });
+  write(.5);
+  expect(p.caption.hidden).toBe(false);
+  expect(getInvestigationTimelineRenderSnapshot(p.map)).toMatchObject({ visible: true, sceneOpacity: .5, model: { clockLabel: old } });
+  teardown(); expect(p.caption.hidden).toBe(true);
+});

@@ -1,14 +1,16 @@
 import { createNameFieldGeometry } from './nli-name-field-geometry.js';
 import { resolveNliLocation } from './nli-name-field-places.js';
-import { nameWallRowSpans, rectCoveredByPieces, ringContainsGuardedRect, validNameWallRing } from './nli-name-wall-coverage.js';
+import { nameWallRowSpans, rectCoveredByPieces, rectIntersectsPieces, ringContainsGuardedRect, validNameWallRing } from './nli-name-wall-coverage.js';
+import { partitionNameWallCoverage } from './nli-name-wall-output-mask.js';
 import { sha256Hex } from './sha256-hex.js';
 import { inwardPageTravel } from './nli-name-wall-inward-travel.js';
-import { modelNameTextBounds } from './nli-name-wall-text-bounds.js';
+import { modelNameTextBounds, MODEL_NAME_ANTIALIAS_GUARD } from './nli-name-wall-text-bounds.js';
+import { nameTextStyle } from './nli-name-language.js';
 
 const SIDES = ['left', 'right'];
 const finite = (value) => typeof value === 'number' && Number.isFinite(value);
 const round = (value) => Math.round(value * 1e6) / 1e6;
-const compare = (a, b) => a.orderKey.localeCompare(b.orderKey, 'he', { sensitivity: 'base', numeric: true }) || a.pid.localeCompare(b.pid);
+const compare = (a, b, language) => a.orderKey.localeCompare(b.orderKey, language, { sensitivity: 'base', numeric: true }) || a.pid.localeCompare(b.pid);
 const keySort = (value) => Array.isArray(value) ? value.map(keySort) : value && typeof value === 'object'
   ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, keySort(value[key])])) : value;
 const boxOf = (pieces) => {
@@ -24,10 +26,10 @@ function metricRectangle(metric, size) {
     height: 2 * Math.max(metric.ascent, metric.descent) + 4 };
 }
 
-function overlapCount(placements) {
+function overlapCount(placements, sharedPlane = false) {
   let count = 0;
-  const ordered = placements.slice().sort((a, b) => a.output.localeCompare(b.output) || a.y - b.y);
-  for (let i = 0; i < ordered.length; i++) for (let j = i + 1; j < ordered.length && ordered[j].output === ordered[i].output; j++) {
+  const ordered = placements.slice().sort((a, b) => (sharedPlane ? 0 : a.output.localeCompare(b.output)) || a.y - b.y);
+  for (let i = 0; i < ordered.length; i++) for (let j = i + 1; j < ordered.length && (sharedPlane || ordered[j].output === ordered[i].output); j++) {
     const a = ordered[i], b = ordered[j];
     if (b.y - a.y > Math.max(a.height, b.height)) break;
     if (Math.abs(a.x - b.x) < (a.width + b.width) / 2 - 1e-7 && Math.abs(a.y - b.y) < (a.height + b.height) / 2 - 1e-7) count++;
@@ -35,29 +37,32 @@ function overlapCount(placements) {
   return count;
 }
 
-const MODEL_ALGORITHM = 'ordered-shared-justified-ink-v3';
-const MODEL_SEARCH_STEPS = 28;
-function modelScanSpans(dimensions, profile, coverage, ring, boxes, rowOrigin) {
+const MODEL_ALGORITHM = 'union-justified-min-gap-adaptive-vertical-owned-mask-v6';
+const MODEL_PITCH_SAMPLES = 24;
+const MODEL_PITCH_REFINEMENTS = 12;
+function modelScanSpans(dimensions, profile, coverage, ring, unionBox, rowPitch = null, direction = 'rtl') {
   const rowHeight = Math.max(...[...dimensions.values()].map((item) => item.height));
-  const pitch = rowHeight + profile.spacingPx, result = [];
-  for (const output of SIDES) {
-    const yLimit = boxes[output].y1 - profile.edgeInsetPx;
-    for (let y = rowOrigin + rowHeight / 2; y + rowHeight / 2 <= yLimit + 1e-7; y += pitch) {
-      const spans = nameWallRowSpans(coverage, { output, y0: y - rowHeight / 2, y1: y + rowHeight / 2,
-        inset: profile.edgeInsetPx, ring });
-      for (const [left, right] of spans.slice().reverse()) result.push({ output, y, left, right });
-    }
+  const pitch = rowPitch ?? rowHeight + profile.spacingPx, result = [];
+  const ringBox = boxOf([{ polygon: ring }]);
+  const guard = MODEL_NAME_ANTIALIAS_GUARD;
+  const rowOrigin = Math.max(unionBox.y0 + guard, ringBox.y0 + profile.edgeInsetPx + guard);
+  const yLimit = Math.min(unionBox.y1 - guard, ringBox.y1 - profile.edgeInsetPx - guard);
+  for (let y = rowOrigin + rowHeight / 2; y + rowHeight / 2 <= yLimit + 1e-7; y += pitch) {
+    const spans = nameWallRowSpans(coverage, { outputs: SIDES, y0: y - rowHeight / 2, y1: y + rowHeight / 2,
+      inset: guard, ringInset: profile.edgeInsetPx + guard, ring });
+    for (const [left, right] of direction === 'ltr' ? spans : spans.slice().reverse()) result.push({ y, left, right });
   }
   return result;
 }
 
-function packModelStream(items, dimensions, profile, spans, fraction, collect = false) {
+function packModelStream(items, dimensions, profile, spans, ownedPieces, collect = true, direction = 'rtl') {
   const result = collect ? [] : null;
   let index = 0;
   let usedSpans = 0;
-  for (const { output, y, left, right } of spans) {
+  let lastUsedY = null;
+  for (const { y, left, right } of spans) {
     if (index === items.length) break;
-    const budget = fraction * (right - left);
+    const budget = right - left;
     let used = 0, count = 0;
     const first = index;
     while (index < items.length) {
@@ -69,19 +74,67 @@ function packModelStream(items, dimensions, profile, spans, fraction, collect = 
     }
     if (!count) continue;
     usedSpans++;
-    if (collect) {
-      const widths = items.slice(first, index).map((row) => dimensions.get(row.name).width);
-      const gap = count > 1 ? (right - left - widths.reduce((sum, width) => sum + width, 0)) / (count - 1) : 0;
-      let cursor = count === 1 ? (left + right + widths[0]) / 2 : right;
-      for (let i = 0; i < count; i++) {
-        const row = items[first + i], measure = dimensions.get(row.name);
-        result.push({ id: row.pid, name: row.name, output, x: cursor - measure.width / 2, y,
-          width: measure.width, height: measure.height, textOffsetX: measure.textOffsetX, textOffsetY: measure.textOffsetY });
-        cursor -= measure.width + gap;
-      }
+    lastUsedY = y;
+    if (!collect) continue;
+    const widthSum = used - profile.spacingPx * (count - 1);
+    const gap = count > 1 ? (right - left - widthSum) / (count - 1) : 0;
+    const step = direction === 'ltr' ? 1 : -1;
+    let cursor = count === 1 ? (left + right - step * widthSum) / 2 : (step === 1 ? left : right);
+    for (let i = 0; i < count; i++) {
+      const row = items[first + i], measure = dimensions.get(row.name);
+      const rect = { x: cursor + step * measure.width / 2, y, width: measure.width, height: measure.height };
+      const outputs = SIDES.filter((side) => rectIntersectsPieces(rect, ownedPieces[side]));
+      if (!outputs.length) return null;
+      result.push({ id: row.pid, name: row.name, output: outputs[0], outputs, x: rect.x, y,
+        width: measure.width, height: measure.height, textOffsetX: measure.textOffsetX, textOffsetY: measure.textOffsetY });
+      cursor += step * (measure.width + gap);
     }
   }
-  return index === items.length ? { placements: result, usedSpans } : null;
+  return index === items.length ? { placements: result, usedSpans, lastUsedY } : null;
+}
+
+/** Stretch row pitch while keeping greedy horizontal fit unchanged and checking actual coverage. */
+function chooseModelPacking(items, dimensions, profile, coverage, ring, unionBox, ownedPieces, direction) {
+  const rowHeight = Math.max(...[...dimensions.values()].map((item) => item.height));
+  const minPitch = rowHeight + profile.spacingPx;
+  const scan = (pitch) => {
+    const spans = modelScanSpans(dimensions, profile, coverage, ring, unionBox, pitch, direction);
+    const packed = packModelStream(items, dimensions, profile, spans, ownedPieces, false, direction);
+    return packed && { ...packed, spans, pitch };
+  };
+  let best = scan(minPitch);
+  if (!best) return null;
+  const firstY = best.spans[0].y;
+  const ringBox = boxOf([{ polygon: ring }]);
+  const lastY = Math.min(unionBox.y1, ringBox.y1 - profile.edgeInsetPx) - MODEL_NAME_ANTIALIAS_GUARD - rowHeight / 2 - 1e-6;
+  const height = Math.max(0, lastY - firstY);
+  const widest = Math.max(...best.spans.map((span) => span.right - span.left));
+  const total = items.reduce((sum, item) => sum + dimensions.get(item.name).width + profile.spacingPx, 0);
+  const minimumRows = Math.max(2, Math.ceil(total / (widest + profile.spacingPx)));
+  const maxPitch = Math.max(minPitch, height / (minimumRows - 1));
+  const candidates = [{ pitch: minPitch, packed: best }];
+  const consider = (candidate) => {
+    if (candidate && (candidate.lastUsedY > best.lastUsedY + PAGE_EPS ||
+      (Math.abs(candidate.lastUsedY - best.lastUsedY) <= PAGE_EPS && candidate.pitch > best.pitch))) best = candidate;
+  };
+  // Sample the whole bounded range: irregular polygons do not have strictly monotonic capacity.
+  for (let step = 1; step <= MODEL_PITCH_SAMPLES; step++) {
+    const pitch = minPitch * (maxPitch / minPitch) ** (step / MODEL_PITCH_SAMPLES);
+    const packed = scan(pitch);
+    candidates.push({ pitch, packed });
+    consider(packed);
+  }
+  // Refine every feasible-to-infeasible boundary, retaining the known valid fallback throughout.
+  for (let i = 1; i < candidates.length; i++) {
+    if (!candidates[i - 1].packed || candidates[i].packed) continue;
+    let low = candidates[i - 1].pitch, high = candidates[i].pitch;
+    for (let step = 0; step < MODEL_PITCH_REFINEMENTS; step++) {
+      const pitch = (low + high) / 2, packed = scan(pitch);
+      if (packed) { low = pitch; consider(packed); } else high = pitch;
+    }
+  }
+  return { safeSpans: best.spans.length, rowPitch: best.pitch,
+    ...packModelStream(items, dimensions, profile, best.spans, ownedPieces, true, direction) };
 }
 
 const PAGE_ALGORITHM = 'fixed-pitch-page-minimax-inward-v2';
@@ -184,7 +237,7 @@ function minimaxRegularLines(items, dimensions, width, spacing, availableRows) {
   return null;
 }
 
-function placeRegularSide(items, output, dimensions, profile, coverage, origin, yLimit, mapping) {
+function placeRegularSide(items, output, dimensions, profile, coverage, origin, yLimit, mapping, direction = 'rtl') {
   if (!items.length) return { placements: [], page: null };
   const rowHeight = Math.max(...[...dimensions.values()].map((item) => item.height));
   const pitch = rowHeight + profile.spacingPx;
@@ -200,12 +253,13 @@ function placeRegularSide(items, output, dimensions, profile, coverage, origin, 
     const [start, end] = lines[row], count = end - start;
     const sum = items.slice(start, end).reduce((total, item) => total + dimensions.get(item.name).width, 0);
     const gap = count > 1 ? (page.width - sum) / (count - 1) : 0;
-    let cursor = page.right;
+    const step = direction === 'ltr' ? 1 : -1;
+    let cursor = step === 1 ? page.left : page.right;
     for (let i = start; i < end; i++) {
       const item = items[i], measure = dimensions.get(item.name);
-      placements.push({ id: item.pid, name: item.name, output, x: cursor - measure.width / 2,
+      placements.push({ id: item.pid, name: item.name, output, x: cursor + step * measure.width / 2,
         y: rowOrigin + row * pitch + rowHeight / 2, width: measure.width, height: measure.height });
-      cursor -= measure.width + gap;
+      cursor += step * (measure.width + gap);
     }
     }
     return placements;
@@ -225,12 +279,13 @@ function emptyResult(payload, diagnostics) {
   return { placements: [], logicalPlane: payload.logicalPlane, geojson: { type: 'FeatureCollection', features: [] },
     groupGeojson: { type: 'FeatureCollection', features: [] }, byPid: new Map(), fontSize: null,
     heading: payload.logicalPlane?.heading, referenceZoom: payload.referenceZoom, overviewBounds: payload.overviewBounds,
-    datasetVersion: payload.datasetVersion, digest: null, diagnostics };
+    datasetVersion: payload.datasetVersion, language: payload.language || 'he', textStyle: payload.textStyle || nameTextStyle(payload.language), digest: null, diagnostics };
 }
 
-/** Pack complete guarded names into the two actual output domains. */
+/** Pack names into calibrated output coverage, sharing one logical plane in Model mode. */
 export async function buildNamesWallLayout(payload) {
   const started = performance.now();
+  const language = payload.language === 'en' ? 'en' : 'he', textStyle = payload.textStyle || nameTextStyle(language);
   const { records, coverage, namesWall, datasetVersion, ringHash = null } = payload;
   const mode = namesWall?.activeMode, profile = namesWall?.profiles?.[mode], logicalPlane = payload.logicalPlane;
   const diagnostics = { state: 'invalid', reason: null, expected: records?.length ?? 0, placed: 0,
@@ -249,10 +304,12 @@ export async function buildNamesWallLayout(payload) {
   if (!Number.isInteger(profile.requestedFontPx) || profile.requestedFontPx < 1 || profile.requestedFontPx > 48 ||
       !Number.isInteger(profile.spacingPx) || profile.spacingPx < 0 || profile.spacingPx > 32 ||
       !Number.isInteger(profile.edgeInsetPx) || profile.edgeInsetPx < 0 || profile.edgeInsetPx > 256) return fail('invalid wall profile');
-  const ordered = records.slice().sort(compare), half = Math.ceil(ordered.length / 2);
+  const ordered = records.slice().sort((a, b) => compare(a, b, language)), half = Math.ceil(ordered.length / 2);
   const halves = { left: ordered.slice(0, half), right: ordered.slice(half) };
   const metricSets = new Map(payload.metrics?.map(([size, values]) => [size, new Map(values)]));
   const boxes = Object.fromEntries(SIDES.map((side) => [side, boxOf(coverage.pieces[side])]));
+  const modelPieces = mode === 'model' ? SIDES.flatMap((side) => coverage.pieces[side]) : null;
+  const ownedCoverage = mode === 'model' ? partitionNameWallCoverage(coverage) : null;
   const origin = Math.min(boxes.left.y0, boxes.right.y0) + profile.edgeInsetPx;
   let ring = null;
   if (mode === 'model') {
@@ -267,27 +324,19 @@ export async function buildNamesWallLayout(payload) {
     if (!metrics || ordered.some((row) => !metrics.has(row.name))) return fail(`missing font metrics at ${size}px`);
     let dimensions;
     try { dimensions = new Map(ordered.map((row) => [row.name, mode === 'model'
-      ? modelNameTextBounds(metrics.get(row.name)) : metricRectangle(metrics.get(row.name), size)])); }
+      ? modelNameTextBounds(metrics.get(row.name), profile.strokeWidthPx ?? 2) : metricRectangle(metrics.get(row.name), size)])); }
     catch (error) { return fail(error.message); }
     let placed = [], pages = {}, model = null;
     if (mode === 'model') {
-      const spans = modelScanSpans(dimensions, profile, coverage, ring, boxes, origin);
-      if (!packModelStream(ordered, dimensions, profile, spans, 1)) continue;
-      let low = 0, high = 1;
-      for (let step = 0; step < MODEL_SEARCH_STEPS; step++) {
-        const middle = (low + high) / 2;
-        if (packModelStream(ordered, dimensions, profile, spans, middle)) high = middle;
-        else low = middle;
-      }
-      model = { fraction: high, safeSpans: spans.length,
-        ...packModelStream(ordered, dimensions, profile, spans, high, true) };
+      model = chooseModelPacking(ordered, dimensions, profile, coverage, ring, boxOf(modelPieces), ownedCoverage.pieces, textStyle.direction);
+      if (!model) continue;
       placed = model.placements;
     } else {
       let complete = true;
       for (const side of SIDES) {
         const regular = placeRegularSide(halves[side], side, dimensions, profile, coverage,
           origin, boxes[side].y1 - profile.edgeInsetPx, { config: payload.config || payload.geometry?.projectionConfig,
-            mesh: payload.meshes?.[side], logicalPlane });
+            mesh: payload.meshes?.[side], logicalPlane }, textStyle.direction);
         if (!regular) { complete = false; break; }
         pages[side] = regular.page;
         placed.push(...regular.placements);
@@ -295,11 +344,12 @@ export async function buildNamesWallLayout(payload) {
       if (!complete) continue;
     }
     const invalid = placed.some((p) => {
-      const expanded = { ...p, width: p.width + 2 * profile.edgeInsetPx, height: p.height + 2 * profile.edgeInsetPx };
-      return !rectCoveredByPieces(expanded, coverage.pieces[p.output]) ||
-        (ring && !ringContainsGuardedRect(ring, p, profile.edgeInsetPx));
+      const inset = mode === 'model' ? MODEL_NAME_ANTIALIAS_GUARD : profile.edgeInsetPx;
+      const expanded = { ...p, width: p.width + 2 * inset, height: p.height + 2 * inset };
+      return !rectCoveredByPieces(expanded, modelPieces || coverage.pieces[p.output]) ||
+        (ring && !ringContainsGuardedRect(ring, p, profile.edgeInsetPx + inset));
     });
-    if (invalid || overlapCount(placed)) continue;
+    if (invalid || overlapCount(placed, mode === 'model')) continue;
     chosen = placed; effective = size; chosenPages = mode === 'wall' ? pages : null;
     chosenModel = model; break;
   }
@@ -309,49 +359,51 @@ export async function buildNamesWallLayout(payload) {
   diagnostics.placed = chosen.length; diagnostics.missing = ids.filter((id) => !actual.has(id)).length;
   diagnostics.extra = placedIds.filter((id) => !expected.has(id)).length;
   diagnostics.duplicate += chosen.length - actual.size;
-  diagnostics.overlap = overlapCount(chosen);
-  diagnostics.invalidCoverage = chosen.filter((p) => !rectCoveredByPieces(p, coverage.pieces[p.output])).length;
+  diagnostics.overlap = overlapCount(chosen, mode === 'model');
+  diagnostics.invalidCoverage = chosen.filter((p) => !rectCoveredByPieces(p, modelPieces || coverage.pieces[p.output])).length;
   if (diagnostics.missing || diagnostics.extra || diagnostics.duplicate || diagnostics.overlap || diagnostics.invalidCoverage)
     return fail('layout validation failed');
   const positions = new Map(chosen.map((p) => [p.id, p]));
   const geometry = payload.geometry && createNameFieldGeometry({ ...payload.geometry, heading: logicalPlane.heading });
   const groups = new Map(), byPid = new Map();
   const geojson = { type: 'FeatureCollection', features: ordered.map((row) => {
-    const p = positions.get(row.pid), place = resolveNliLocation(row.location || '');
+    const p = positions.get(row.pid), place = resolveNliLocation(row.location || '', language);
     const groupId = place.groupId || `unknown-${row.pid}`;
     if (!groups.has(groupId)) groups.set(groupId, { ...place, id: groupId, rows: [] });
     groups.get(groupId).rows.push(row);
     const feature = { type: 'Feature', id: row.pid, properties: { pid: row.pid, name: row.name,
-      location: row.location || '', group_id: groupId, visible_spans: [p.output] },
+      location: row.location || '', group_id: groupId, visible_spans: p.outputs || [p.output] },
     geometry: { type: 'Point', coordinates: geometry ? geometry.unproject([p.x, p.y]) : [p.x, p.y] } };
     byPid.set(row.pid, { feature, sourceCoordinates: row.sourceCoordinates.slice() });
     return feature;
   }) };
   const median = (values) => values.sort((a, b) => a - b)[Math.floor(values.length / 2)];
   const groupGeojson = { type: 'FeatureCollection', features: [...groups.values()].map((group) => ({
-    type: 'Feature', properties: { group_id: group.id, name: group.label,
+    type: 'Feature', properties: { group_id: group.id, name: group.label, source_name: group.sourceName,
       place_ids: group.placeId ? [group.placeId] : [], visible_spans: [] }, geometry: { type: 'Point',
       coordinates: group.anchorCoordinates || [median(group.rows.map((row) => row.sourceCoordinates[0])),
         median(group.rows.map((row) => row.sourceCoordinates[1]))] } })) };
   const calibration = payload.geometry?.projectionConfig;
-  const digestInput = keySort({ datasetVersion, logicalPlane,
+  const digestInput = keySort({ datasetVersion, language, textStyle, logicalPlane,
     calibration: calibration && { pre: calibration.pre, outputs: calibration.outputs },
     coverageIdentity: payload.coverageIdentity || coverage.outputIdentities, fontIdentity: payload.fontIdentity,
     mode, profile, innerEdgeInsetPx: namesWall.innerEdgeInsetPx, effective,
     ringHash: mode === 'model' ? ringHash : null,
-    ...(mode === 'wall' ? { pageAlgorithm: PAGE_ALGORITHM, pages: chosenPages } : { modelAlgorithm: MODEL_ALGORITHM }),
+    ...(mode === 'wall' ? { pageAlgorithm: PAGE_ALGORITHM, pages: chosenPages } : {
+      modelAlgorithm: MODEL_ALGORITHM, outputMasks: ownedCoverage.pieces }),
     placements: chosen.map((p) => ({ ...p, x: round(p.x), y: round(p.y), width: round(p.width), height: round(p.height),
       ...(mode === 'model' ? { textOffsetX: round(p.textOffsetX), textOffsetY: round(p.textOffsetY) } : {}) })) });
   const digest = await sha256Hex(new TextEncoder().encode(JSON.stringify(digestInput)));
   diagnostics.state = 'valid'; diagnostics.reason = null; diagnostics.effectiveFontPx = effective;
   if (chosenModel) {
-    diagnostics.modelUtilization = chosenModel.fraction;
     diagnostics.modelSafeSpans = chosenModel.safeSpans;
     diagnostics.modelUsedSpans = chosenModel.usedSpans;
+    diagnostics.modelRowPitch = chosenModel.rowPitch;
   }
   diagnostics.left = chosen.filter((p) => p.output === 'left').length;
   diagnostics.right = chosen.length - diagnostics.left;
-  return { placements: chosen, ...(mode === 'wall' ? { pages: chosenPages } : {}), logicalPlane, geojson, groupGeojson, byPid, fontSize: effective,
+  return { placements: chosen, ...(mode === 'wall' ? { pages: chosenPages } : {
+    outputMasks: Object.fromEntries(SIDES.map((side) => [side, ownedCoverage.pieces[side].map((piece) => piece.polygon)])) }), logicalPlane, geojson, groupGeojson, byPid, fontSize: effective,
     heading: logicalPlane.heading, referenceZoom: payload.referenceZoom ?? geometry?.referenceZoom,
-    overviewBounds: payload.overviewBounds ?? geometry?.overviewBounds, datasetVersion, digest, diagnostics };
+    overviewBounds: payload.overviewBounds ?? geometry?.overviewBounds, datasetVersion, language, textStyle, digest, diagnostics };
 }

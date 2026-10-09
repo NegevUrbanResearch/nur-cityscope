@@ -15,6 +15,7 @@ import { shouldShowLayerOnGisMap } from "../shared/gis-layer-filter.js";
 import { isolateLayersWhileVictimNamesShown } from "../shared/nli-victim-name-layer-isolation.js";
 import { filterGazaBorderVisibility } from "../shared/gaza-border-style.js";
 import { resolvedColorsToLegendFill } from "../shared/nli-investigation-legend.js";
+import { investigationCategoryVisible } from "../shared/nli-investigation-visibility.js";
 import { novaEscapeLegendLayer } from "../shared/nli-nova-escape-legend.js";
 import { projectionHatchRasterParams } from "../shared/hatch-projection-presentation.js";
 import {
@@ -495,6 +496,7 @@ function itemsFromSimple(config, options = {}) {
 function uniqueValueClassesForLegend(config, options = {}) {
   const classes = config.style?.uniqueValues?.classes || [];
   const visible = classes.filter((entry) => entry?.legend?.hidden !== true);
+  if (options.fullId === "nli.investigation_polygons") return visible.filter(entry => investigationCategoryVisible(entry?.value));
   if (options.fullId !== "nli.people") return visible;
   return visible.filter((entry) => peopleLegendClassVisible(options.narrativeId, entry?.value));
 }

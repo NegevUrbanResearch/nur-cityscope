@@ -541,18 +541,34 @@ function removeManagedFullId(map, fullId) {
 
 function bindRegistrySourceReady(map, sourceId) {
   return ({ ready }) => {
-    if (typeof map.isSourceLoaded !== "function" || map.isSourceLoaded(sourceId)) {
-      ready();
-      return undefined;
-    }
-    const onSourceData = (event) => {
-      if (event?.sourceId && event.sourceId !== sourceId) return;
-      if (typeof map.isSourceLoaded === "function" && !map.isSourceLoaded(sourceId)) return;
+    const expectedSource = map.getSource?.(sourceId);
+    const expectedStyle = map.style;
+    let active = true;
+    const cleanup = () => {
+      active = false;
       map.off?.("sourcedata", onSourceData);
+      map.off?.("render", checkReady);
+    };
+    const checkReady = () => {
+      if (!active) return;
+      if (map.style !== expectedStyle || map.getSource?.(sourceId) !== expectedSource) {
+        cleanup();
+        return;
+      }
+      if (typeof map.isSourceLoaded === "function" && !map.isSourceLoaded(sourceId)) return;
+      cleanup();
       ready();
     };
+    const onSourceData = event => {
+      if (event?.sourceId && event.sourceId !== sourceId) return;
+      checkReady();
+    };
+    // Hidden timeline bases can become loaded without another sourcedata event.
+    // Reconcile their readiness at MapLibre's existing style/render boundary.
     map.on?.("sourcedata", onSourceData);
-    return () => map.off?.("sourcedata", onSourceData);
+    map.on?.("render", checkReady);
+    checkReady();
+    return cleanup;
   };
 }
 
@@ -577,10 +593,8 @@ function excludesLiveOwnership(layerStyleOptions) {
 }
 
 function shouldOwnLiveLayer(map, layerStyleOptions) {
+  if (layerStyleOptions?.lifecycle?.joinBatch === true) return true;
   if (excludesLiveOwnership(layerStyleOptions)) return false;
-  if (layerStyleOptions?.lifecycle?.joinBatch === true) {
-    return liveFadeDuration(map, layerStyleOptions) > 0;
-  }
   return true;
 }
 
@@ -602,7 +616,10 @@ function mergedLiveDesiredIds(map, state, enabledFullIds, registryIds) {
     if (isCuratedManagedFullId(id)) next.add(id);
   }
   for (const id of getLayerLifecycleRuntime(map).getDesiredIds()) {
-    if (next.has(id) || isCuratedManagedFullId(id)) continue;
+    // Curated membership belongs to its refresh session, even when a generic
+    // registry update carries no curated rows. Preserve that owner's live intent.
+    if (isCuratedManagedFullId(id)) { next.add(id); continue; }
+    if (next.has(id)) continue;
     if (state.loadedLayerIds.has(id) || state.loadedSources.has(id)) continue;
     next.add(id);
   }
@@ -637,14 +654,27 @@ function paintSnapshot(map, layerId, type) {
   return paint;
 }
 
-function adoptMountedIntoPending(map, state) {
+function registryLifecycleRuntime(map, state) {
   const runtime = getLayerLifecycleRuntime(map);
+  if (state.lifecycleRuntime && state.lifecycleRuntime !== runtime) state.lifecycleBoundFullIds.clear();
+  state.lifecycleRuntime = runtime;
+  return runtime;
+}
+
+function adoptMountedIntoPending(map, state) {
+  const runtime = registryLifecycleRuntime(map, state);
   const pending = runtime?.getPendingBatch?.();
-  if (!pending || pending.sealed || pending.durationMs <= 0) return;
+  if (!pending || pending.sealed) return;
   for (const fullId of state.loadedLayerIds.keys()) {
-    if (isCuratedManagedFullId(fullId) || state.lifecycleBoundFullIds.has(fullId)) continue;
+    if (isCuratedManagedFullId(fullId)) continue;
     const storedSource = state.loadedSources.get(fullId);
     const sourceId = Array.isArray(storedSource) ? storedSource[0] : storedSource;
+    if (state.lifecycleBoundFullIds.has(fullId)) {
+      // Superseding a pending batch cancels its readiness subscription. Renew
+      // readiness without recapturing scaled paint or resetting the member factor.
+      if (runtime.getDesiredIds().includes(fullId)) runtime.subscribeMemberReady(fullId, bindRegistrySourceReady(map, sourceId || fullId));
+      continue;
+    }
     let staged = false;
     for (const layerId of state.loadedLayerIds.get(fullId) || []) {
       const layer = map.getLayer?.(layerId);
@@ -666,13 +696,13 @@ function adoptMountedIntoPending(map, state) {
 }
 
 function adoptMountedLayers(map, state) {
+  const runtime = registryLifecycleRuntime(map, state);
   const ids = [];
   for (const fullId of state.loadedLayerIds.keys()) {
     if (isCuratedManagedFullId(fullId) || state.lifecycleBoundFullIds.has(fullId)) continue;
     ids.push(fullId);
   }
   if (ids.length === 0) return;
-  const runtime = getLayerLifecycleRuntime(map);
   const opening = state.lifecycleBoundFullIds.size === 0;
   if (opening) {
     const desired = new Set(runtime.getDesiredIds());
@@ -1225,11 +1255,12 @@ function addLayerToMap(map, fullId, state, layerStyleOptions, stagedMeta) {
         pendingStageTargets[stagedLayerDef.id] = targetOpacity;
       }
     } else if (shouldOwnLiveLayer(map, layerStyleOptions)) {
-      const immediate = liveFadeDuration(map, layerStyleOptions) <= 0;
+      const immediate = layerStyleOptions?.lifecycle?.joinBatch !== true
+        && liveFadeDuration(map, layerStyleOptions) <= 0;
       const bindings = immediate
         ? { onTeardown: () => removeManagedFullId(map, fullId) }
         : lifecycleBindings(map, fullId, sourceId);
-      const { stagedLayerDef } = getLayerLifecycleRuntime(map).stageMapLayer(
+      const { stagedLayerDef } = registryLifecycleRuntime(map, state).stageMapLayer(
         fullId,
         layerDef,
         bindings,
@@ -1288,7 +1319,9 @@ function syncLayerGroupsToMap(map, layerGroups, layerStyleOptions, stagedMeta) {
   for (const fullId of trackedFullIds) {
     if (!enabledFullIds.has(fullId)) {
       if (isCuratedManagedFullId(fullId)) continue;
-      if (liveFadeDuration(map, layerStyleOptions) > 0 && state.lifecycleBoundFullIds.has(fullId)) {
+      const ownedDeparture = layerStyleOptions?.lifecycle?.joinBatch === true
+        || liveFadeDuration(map, layerStyleOptions) > 0;
+      if (ownedDeparture && state.lifecycleBoundFullIds.has(fullId)) {
         continue;
       }
       if (!hideRetainedFullId(map, fullId, state, lifecycleOptions)) {
@@ -1345,18 +1378,15 @@ export function applyLayerGroupsToMap(map, layerGroups, layerStyleOptions) {
     syncLayerGroupsToMap(map, layerGroups, layerStyleOptions, null);
     return;
   }
-  const runtime = getLayerLifecycleRuntime(map);
+  const runtime = registryLifecycleRuntime(map, state);
   const next = new Set(registryFullIds(enabledFullIds));
-  if (joinBatch || durationMs > 0) dropInstantHideMembers(runtime, state, next);
   if (joinBatch) {
-    if (durationMs > 0) adoptMountedIntoPending(map, state);
+    adoptMountedIntoPending(map, state);
     state.lifecycleDesiredIds = next;
   } else {
     adoptMountedLayers(map, state);
-    const sameSet = sameIdSet(state.lifecycleDesiredIds, next);
-    const desiredIds = durationMs <= 0
-      ? [...mergedLiveDesiredIds(map, state, enabledFullIds, next)]
-      : [...next];
+    const desiredIds = [...mergedLiveDesiredIds(map, state, enabledFullIds, next)];
+    const sameSet = sameIdSet(new Set(runtime.getDesiredIds()), new Set(desiredIds));
     runtime.setDesiredIds(desiredIds, { durationMs, sameSet });
     state.lifecycleDesiredIds = next;
   }

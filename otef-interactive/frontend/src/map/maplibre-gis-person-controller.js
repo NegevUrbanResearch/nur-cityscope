@@ -33,6 +33,7 @@ export function createGisPersonController({
   isNarrativeActive = () => false,
   closeArchive = () => {},
   reducedMotion = false,
+  managedScene = false,
 } = {}) {
   let disposed = false;
   let generation = 0;
@@ -154,13 +155,17 @@ export function createGisPersonController({
   const disposers = [];
   let sawSelection = false;
   onGroups(readGroups ? readGroups() : undefined);
-  if (typeof context?.subscribe === "function") {
+  if (!managedScene && typeof context?.subscribe === "function") {
     disposers.push(context.subscribe("layerGroups", (value) => onGroups(value)));
     disposers.push(context.subscribe("personSelection", (value) => { sawSelection = true; renderSelection(value); }));
   }
-  if (!sawSelection) renderSelection(snapshot);
+  if (!managedScene && !sawSelection) renderSelection(snapshot);
 
   return {
+    applySnapshot(next) {
+      onGroups(next.layerGroups);
+      if (!sameSelection(snapshot, next.personSelection) || !!activePerson !== !!next.personSelection?.personId) renderSelection(next.personSelection);
+    },
     dispose() {
       if (disposed) return;
       disposed = true;

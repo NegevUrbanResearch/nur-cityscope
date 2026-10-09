@@ -15,7 +15,7 @@ describe("projection Nova marker filter wiring", () => {
       const syncLayers=vi.fn((...args)=>events.push(['layers',...args]));
       const people=vi.fn((...args)=>events.push(['people',...args])),houses=vi.fn((...args)=>events.push(['houses',...args]));
       const dim=vi.fn(),clear=vi.fn();
-      const sync=new Function('calibrationActive','calibrationGroups','syncProjectionLayers','browserSurface','applyNarrativePeopleFilter','OTEFDataContext','applyPeopleFocusDim','clearPeopleFocusDim','applyNarrativeHouseOutlineFilter',`${source.slice(start,end)};return syncProjectionLayersWithNarrative;`)(()=>active,landmarks,syncLayers,null,people,{getNarrativeState:()=>({id:'nova'}),getPersonSelection:()=>({personId:'person'})},dim,clear,houses);
+      const sync=new Function('calibrationActive','calibrationGroups','syncProjectionLayers','browserSurface','applyNarrativePeopleFilter','OTEFDataContext','applyPeopleFocusDim','clearPeopleFocusDim','applyNarrativeHouseOutlineFilter','sceneSnapshot','filterGazaBorderVisibility',`${source.slice(start,end)};return syncProjectionLayersWithNarrative;`)(()=>active,landmarks,syncLayers,null,people,{getNarrativeState:()=>({id:'nova'}),getPersonSelection:()=>({personId:'person'})},dim,clear,houses,()=>({narrativeState:{id:"nova"},personSelection:{personId:"person"},gazaBorderVisible:true}),filterGazaBorderVisibility);
       sync(map,normal,{});expect(events.map(event=>event[0])).toEqual(['layers','people','houses']);
       expect(syncLayers.mock.calls[0][1]).toBe(active?landmarks:normal);expect(people).toHaveBeenCalledWith(map,active?null:'nova');expect(houses).toHaveBeenCalledWith(map,active?null:'nova');
       if(active)expect(clear).toHaveBeenCalledWith(map);else expect(dim).toHaveBeenCalledWith(map,'person');
@@ -28,9 +28,9 @@ describe("projection Nova marker filter wiring", () => {
     const end = source.indexOf("const syncProjectionLayersAndRaiseHighlight", start);
     let active = true, narrativeId = "nova", personId = "first";
     const people = vi.fn(), houses = vi.fn(), dim = vi.fn(), clear = vi.fn();
-    const sync = new Function("calibrationActive", "calibrationGroups", "syncProjectionLayers", "browserSurface", "applyNarrativePeopleFilter", "OTEFDataContext", "applyPeopleFocusDim", "clearPeopleFocusDim", "applyNarrativeHouseOutlineFilter", `${source.slice(start, end)};return syncProjectionLayersWithNarrative;`)(
+    const sync = new Function("calibrationActive", "calibrationGroups", "syncProjectionLayers", "browserSurface", "applyNarrativePeopleFilter", "OTEFDataContext", "applyPeopleFocusDim", "clearPeopleFocusDim", "applyNarrativeHouseOutlineFilter", "sceneSnapshot", "filterGazaBorderVisibility", `${source.slice(start, end)};return syncProjectionLayersWithNarrative;`)(
       () => active, [], () => {}, null, people,
-      { getNarrativeState: () => ({ id: narrativeId }), getPersonSelection: () => ({ personId }) }, dim, clear, houses,
+      { getNarrativeState: () => ({ id: narrativeId }), getPersonSelection: () => ({ personId }) }, dim, clear, houses, () => ({ narrativeState: { id: narrativeId }, personSelection: { personId }, gazaBorderVisible: true }), filterGazaBorderVisibility,
     );
     const map = {};
     sync(map, [], {});

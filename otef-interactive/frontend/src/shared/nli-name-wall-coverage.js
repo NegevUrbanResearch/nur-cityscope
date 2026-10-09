@@ -67,6 +67,16 @@ function clipConvex(subject, clip) {
   }
   return p;
 }
+export function rectIntersectsPieces(rect, pieces) {
+  if (!rect || ![rect.x, rect.y, rect.width, rect.height].every(finite) || rect.width <= 0 || rect.height <= 0) return false;
+  const box = boundsOf(rectPolygon(rect));
+  for (const piece of indexedCandidates(pieces, box)) {
+    if (!overlaps(box, piece.bounds || boundsOf(piece.polygon || piece))) continue;
+    const polygon = clipBox(piece.polygon || piece, box, 0, 1, 0);
+    if (polygon.length && Math.abs(area(polygon)) > 0) return true;
+  }
+  return false;
+}
 export function rectCoveredByPieces(rect, pieces) {
   if (!rect || ![rect.x, rect.y, rect.width, rect.height].every(finite) || rect.width <= 0 || rect.height <= 0) return false;
   const box = boundsOf(rectPolygon(rect));
@@ -299,15 +309,23 @@ function bandSpans(polygons, y0, y1) {
 }
 
 const ringBandPieces = new WeakMap();
-export function nameWallRowSpans(coverage, { output, y0, y1, inset = 0, ring = null } = {}) {
-  const pieces = coverage?.pieces?.[output];
-  if (!pieces || !finite(y0) || !finite(y1) || !finite(inset) || inset < 0) return [];
+const unionPieces = new WeakMap();
+export function nameWallRowSpans(coverage, { output, outputs, y0, y1, inset = 0, ring = null, ringInset = inset } = {}) {
+  let pieces = coverage?.pieces?.[output];
+  if (outputs?.length && coverage?.pieces) {
+    let unions = unionPieces.get(coverage);
+    if (!unions) { unions = new Map(); unionPieces.set(coverage, unions); }
+    const key = outputs.join(':');
+    if (!unions.has(key)) unions.set(key, outputs.flatMap((side) => coverage.pieces[side] || []));
+    pieces = unions.get(key);
+  }
+  if (!pieces || !finite(y0) || !finite(y1) || !finite(inset) || inset < 0 || !finite(ringInset) || ringInset < 0) return [];
   let spans = bandSpans(pieces, y0 - inset, y1 + inset)
     .map(([a, b]) => [a + inset, b - inset]).filter(([a, b]) => b > a + EPS);
   if (ring) {
     if (!ringBandPieces.has(ring)) ringBandPieces.set(ring, [{ polygon: ring }]);
-    spans = intersectSpans(spans, bandSpans(ringBandPieces.get(ring), y0 - inset - EPS,
-    y1 + inset + EPS).map(([a, b]) => [a + inset + 10 * EPS, b - inset - 10 * EPS])
+    spans = intersectSpans(spans, bandSpans(ringBandPieces.get(ring), y0 - ringInset - EPS,
+    y1 + ringInset + EPS).map(([a, b]) => [a + ringInset + 10 * EPS, b - ringInset - 10 * EPS])
     .filter(([a, b]) => b > a + EPS));
   }
   return spans;

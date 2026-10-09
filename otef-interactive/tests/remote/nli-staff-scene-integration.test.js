@@ -3,6 +3,7 @@
  */
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { createFakeMapLibreMap } from "../helpers/fake-maplibre-map.js";
+import { createRenderedFollower } from "../helpers/nli-rendered-follower.js";
 import { setupWebSocket } from "../../frontend/src/shared/otef-data-context/OTEFDataContext-websocket.js";
 import OTEFDataContext from "../../frontend/src/shared/OTEFDataContext.js";
 import { OTEF_MESSAGE_TYPES } from "../../frontend/src/shared/message-protocol.js";
@@ -158,6 +159,13 @@ function expectHome(view) {
   expect(view.chips).toEqual([]);
   expect(view.virtual).toEqual([]);
   expect(view.viewport).toBeNull();
+}
+
+function expectNamesWall(view) {
+  expect(view.layers).toEqual(["nli.people_names"]);
+  expect(view.narrativeId).toBeNull();
+  expect(view.clock.phase).toBe("idle");
+  expect(view.escape).toEqual(NO_ESCAPE);
 }
 
 function mount() {
@@ -372,43 +380,107 @@ describe("NLI staff scene integration", () => {
     setLocale("he", { force: true, persist: false });
   });
 
-  test("Names Wall finishes directly to Home on both displays without opening credits", async () => {
-    setLocale("he", { persist: false });
+  test("names-wall layers wait until the GIS identity slide has finished opening", async () => {
+    setLocale("en", { persist: false });
+    session = mount();
+    await boot(session);
+    const layerWrites = session.h.layers.length;
+    const sceneRevision = session.h.narrative.revision;
+    const clockRevision = session.h.clock.revision;
+    let opening;
+    session.dataContext.narrativePresentationCommand = async (command) => {
+      opening = command;
+      session.h.commands.push(command);
+      return { status: "ok" };
+    };
+    el("narrativeList").querySelector('[data-show-step="names-wall"]').click();
+    await vi.waitFor(() => expect(opening).toMatchObject({ presentationAction: "open", segmentId: "names_wall" }));
+    expect(session.h.layers).toHaveLength(layerWrites);
+    expect(session.h.narrative.revision).toBe(sceneRevision);
+    expect(session.h.clock.revision).toBe(clockRevision + 1);
+    expect(session.h.clock.presentationPendingUntilMs).toBeGreaterThan(session.dataContext.correctedNow());
+    for (const view of views(session)) expectHome(view);
+    session.h.emit("narrativePresentationResult", { ...opening, outcome: "opened", slide: 0, range: [0, 0] });
+    await vi.waitFor(() => expect(el("cueStatus").dataset.status).toBe("ready"));
+    for (const view of views(session)) expectNamesWall(view);
+    expect(session.h.commands).toHaveLength(1);
+  });
+
+  test("Credits keeps the names wall until Finish and automatically opens the GIS slide", async () => {
+    setLocale("en", { persist: false });
     session = mount();
     await boot(session);
     await openCard('[data-show-step="names-wall"]');
     await vi.waitFor(() => expect(session.h.commands.at(-1)).toMatchObject({
       presentationAction: "open", segmentId: "names_wall",
     }));
-    expect(el("nextBtn").textContent).toBe("סיום");
-    expect(el("nextBtn").getAttribute("aria-label")).toBe("סיום");
-    el("nextBtn").click();
-    await vi.waitFor(() => expect(document.querySelector(".screen.is-active")?.dataset.screen).toBe("home"));
+    const open = session.dataContext.narrativePresentationCommand;
+    const wallAtOpen = [];
+    const wallLayerIndex = session.h.layers.length;
+    const narrativeRevision = session.h.narrative.revision;
+    const clockRevision = session.h.clock.revision;
+    session.dataContext.narrativePresentationCommand = async (command) => {
+      if (command.presentationAction === "open" && command.segmentId === "credits") {
+        for (const view of views(session)) expectNamesWall(view);
+        wallAtOpen.push(true);
+      }
+      return open(command);
+    };
+    await clickNextReady("Credits");
+    await vi.waitFor(() => expect(wallAtOpen).toEqual([true]));
     expect(session.h.commands.slice(-2).map(({ presentationAction, segmentId }) =>
-      [presentationAction, segmentId])).toEqual([["open", "names_wall"], ["close", "names_wall"]]);
-    expect(session.h.commands.some((command) => command.segmentId === "credits")).toBe(false);
-    for (const view of views(session)) expectHome(view);
+      [presentationAction, segmentId])).toEqual([["open", "names_wall"], ["open", "credits"]]);
+    for (const view of views(session)) expectNamesWall(view);
+    expect(session.h.layers.slice(wallLayerIndex)).toEqual([]);
+    expect(session.h.narrative.revision).toBe(narrativeRevision);
+    expect(session.h.clock.revision).toBe(clockRevision);
+    expect(el("kitPresentation").hidden).toBe(true);
+    expect(el("kitPresentation").querySelector("button")).toBeNull();
 
     session.remote.render();
-    expect(document.querySelector(".screen.is-active")?.dataset.screen).toBe("home");
+    expect(wallAtOpen).toEqual([true]);
+    const closeSnapshots = [];
+    const send = session.dataContext.narrativePresentationCommand;
+    session.dataContext.narrativePresentationCommand = async (command) => {
+      if (command.presentationAction === "close") closeSnapshots.push(...views(session));
+      return send(command);
+    };
+    el("nextBtn").click();
+    await vi.waitFor(() => expect(document.querySelector(".screen.is-active")?.dataset.screen).toBe("home"));
+    expect(session.h.commands.at(-1)).toMatchObject({ presentationAction: "close", segmentId: "credits" });
+    expect(closeSnapshots).toHaveLength(2);
+    for (const view of closeSnapshots) expectNamesWall(view);
     for (const view of views(session)) expectHome(view);
   });
 
-  test("failed Finish reset stays on Names Wall and can retry directly to Home", async () => {
+  test("Back from Credits does not wait for its opening acknowledgement", async () => {
     setLocale("en", { persist: false });
     session = mount();
     await boot(session);
     await openCard('[data-show-step="names-wall"]');
-    session.h.failNull = true;
+    const send = session.dataContext.narrativePresentationCommand;
+    let pendingCredits;
+    session.dataContext.narrativePresentationCommand = async (command) => {
+      if (command.presentationAction === "open" && command.segmentId === "credits") {
+        pendingCredits = command;
+        session.h.commands.push(command);
+        return { status: "ok" };
+      }
+      return send(command);
+    };
     el("nextBtn").click();
-    await vi.waitFor(() => expect(el("cueStatus").dataset.status).toBe("failed"));
+    await vi.waitFor(() => expect(pendingCredits).toBeTruthy());
+    expect(el("stepTitle").textContent).toBe("Credits");
+    for (const view of views(session)) expectNamesWall(view);
+    el("prevBtn").click();
+    await vi.waitFor(() => expect(el("stepTitle").textContent).toBe("Wall of names"));
+    expect(session.h.commands.slice(-2).map(({ presentationAction, segmentId }) =>
+      [presentationAction, segmentId])).toEqual([["open", "credits"], ["open", "names_wall"]]);
+    session.h.emit("narrativePresentationResult", { ...pendingCredits, outcome: "opened", slide: 37, range: [37, 37] });
     expect(el("stepTitle").textContent).toBe("Wall of names");
-    expect(document.querySelector(".screen.is-active")?.dataset.screen).toBe("player");
-    expect(el("nextBtn").textContent).toBe("Finish");
-    expect(session.h.commands.some((command) => command.segmentId === "credits")).toBe(false);
-    el("nextBtn").click();
+    for (const view of views(session)) expectNamesWall(view);
+    el("homeBtn").click();
     await vi.waitFor(() => expect(document.querySelector(".screen.is-active")?.dataset.screen).toBe("home"));
-    expect(session.h.commands.some((command) => command.segmentId === "credits")).toBe(false);
     for (const view of views(session)) expectHome(view);
   });
 
@@ -457,6 +529,57 @@ describe("NLI staff scene integration", () => {
       sameMembers(view.layers, TIMELINE_LAYER_IDS);
       expect(view.escape).toEqual(NO_ESCAPE);
       expect(view.viewport).toBeNull();
+    }
+    const timelineBeats = [...views(session)[0].clock.beats];
+    el("nextChoices").querySelector('[data-branch="nova"]').click();
+    await vi.waitFor(() => {
+      expect(el("stepTitle").textContent).toBe("The Nova site");
+      expect(el("cueStatus").dataset.status).toBe("ready");
+    });
+    el("prevBtn").click();
+    await vi.waitFor(() => {
+      expect(el("stepTitle").textContent).toBe("The rest of the day");
+      expect(el("cueStatus").dataset.status).toBe("ready");
+    });
+    for (const view of views(session)) {
+      expect(view.narrativeId).toBeNull();
+      expect(view.clock.phase).toBe("playing");
+      expect(view.clock.beats).toEqual(timelineBeats);
+      expect(view.clock.leadInMinutes).toBe(402);
+      sameMembers(view.layers, TIMELINE_LAYER_IDS);
+      expect(view.escape).toEqual(NO_ESCAPE);
+    }
+  });
+
+  test("Nova Memorial to Shura exits the required narrative before requesting its presentation", async () => {
+    setLocale("en", { persist: false }); session = mount(); await boot(session);
+    await openCard('[data-open="show"]');
+    el("nextChoices").querySelector('[data-branch="segev"]').click();
+    await vi.waitFor(() => expect(el("cueStatus").dataset.status).toBe("ready"));
+    await clickNextReady("The rest of the day");
+    el("nextChoices").querySelector('[data-branch="nova"]').click();
+    await vi.waitFor(() => expect(el("stepTitle").textContent).toBe("The Nova site"));
+    await vi.waitFor(() => expect(el("cueStatus").dataset.status).toBe("ready"));
+    for (const step of NARRATIVES.find(item => item.id === "nova").steps.slice(1)) await clickNextReady(step.title.en);
+    const send = session.dataContext.narrativePresentationCommand;
+    const novaRevision = session.h.narrative.revision;
+    let shuraOpened = false;
+    session.dataContext.narrativePresentationCommand = async command => {
+      if (command.segmentId === "shura" && command.presentationAction === "open") {
+        if (session.h.narrative.id !== null) throw new Error("409: narrative presentation requires the active narrative");
+        expect(session.h.clock.presentationPendingUntilMs).toBeGreaterThan(0);
+        shuraOpened = true;
+      }
+      return send(command);
+    };
+    el("nextChoices").querySelector('[data-branch="shura"]').click();
+    await vi.waitFor(() => expect(el("cueStatus").dataset.status).toBe("ready"));
+    expect(shuraOpened).toBe(true);
+    expect(session.h.narrative.revision).toBe(novaRevision + 1);
+    expect(el("stepTitle").textContent).toBe("Shura Camp");
+    for (const view of views(session)) {
+      expect(view.narrativeId).toBeNull(); expect(view.clock.phase).toBe("idle");
+      expect(view.escape).toEqual(NO_ESCAPE); sameMembers(view.layers, TIMELINE_LAYER_IDS);
     }
   });
 
@@ -735,7 +858,7 @@ describe("NLI staff scene integration", () => {
     });
   });
 
-  test("Hostages presentation opens after its cue is ready, and Close stays on the scene", async () => {
+  test("Hostages presentation prepares under the cue hold, and manual Close stays on the scene", async () => {
     setLocale("en", { persist: false });
     session = mount();
     await boot(session);
@@ -751,7 +874,8 @@ describe("NLI staff scene integration", () => {
     el("nextBtn").click();
     await vi.waitFor(() => expect(releaseCue).toBeTypeOf("function"));
     expect(el("stepTitle").textContent).toBe("Presentation");
-    expect(session.h.commands).toHaveLength(0);
+    expect(session.h.commands).toEqual([expect.objectContaining({ segmentId: "hostages", presentationAction: "open" })]);
+    expect(session.h.clock.presentationPendingUntilMs).toBeGreaterThan(session.dataContext.correctedNow());
     releaseCue();
     await vi.waitFor(() => {
       expect(el("cueStatus").dataset.status).toBe("ready");
@@ -764,7 +888,7 @@ describe("NLI staff scene integration", () => {
     expect(session.h.commands.at(-1)).toMatchObject({ segmentId: "hostages", presentationAction: "close" });
   });
 
-  test("Mor opens its slides when the cue is ready, keeps its route active, and can reopen", async () => {
+  test("Mor stages slides under the cue hold, keeps its route active, and can reopen", async () => {
     setLocale("en", { persist: false });
     session = mount();
     await boot(session);
@@ -783,7 +907,8 @@ describe("NLI staff scene integration", () => {
     await vi.waitFor(() => expect(releaseMorCue).toBeTypeOf("function"));
     expect(el("stepTitle").textContent).toBe("Mor Levy");
     expect(el("cueStatus").dataset.status).not.toBe("ready");
-    expect(session.h.commands.filter((command) => command.segmentId === "nova_mor")).toHaveLength(0);
+    expect(session.h.commands.filter((command) => command.segmentId === "nova_mor")).toHaveLength(1);
+    expect(session.h.clock.presentationPendingUntilMs).toBeGreaterThan(session.dataContext.correctedNow());
 
     releaseMorCue();
     await vi.waitFor(() => {
@@ -816,6 +941,27 @@ describe("NLI staff scene integration", () => {
       expect(el("cueStatus").dataset.status).toBe("ready");
       for (const view of views(session)) expectHome(view);
     });
+  });
+
+  test("a show replacing gated boot Home restores the real presenter Play control", async () => {
+    setLocale("en", { persist: false }); session = mount();
+    const layers = session.dataContext.setEnabledLayerIds;
+    let release;
+    const gate = new Promise(resolve => { release = resolve; }); let first = true;
+    session.dataContext.setEnabledLayerIds = async ids => { if (first) { first = false; await gate; } return layers(ids); };
+    const { initNliStaffRemote } = await import("../../frontend/src/remote/nli-staff-remote.js");
+    session.remote = initNliStaffRemote(session.dataContext, { presenterManifest: await syntheticPresenterManifest() });
+    session.h.emit("narrativeState", session.h.narrative); session.h.emit("connection", true);
+    await vi.waitFor(() => expect(el("cueStatus").dataset.status).toBe("applying"));
+    await vi.waitFor(() => expect(el("narrativeList").querySelector('[data-open="show"]').disabled).toBe(false));
+    el("narrativeList").querySelector('[data-open="show"]').click();
+    expect(el("cueStatus").dataset.status).toBe("applying");
+    expect(el("stepTitle").textContent).not.toBe("The opening minutes");
+    release();
+    await vi.waitFor(() => expect(el("stepTitle").textContent).toBe("The opening minutes"));
+    await vi.waitFor(() => expect(el("cueStatus").dataset.status).toBe("ready"));
+    await vi.waitFor(() => expect(el("kitTimeline").querySelectorAll("[data-presenter-event]")).toHaveLength(2));
+    expect(el("kitTimeline").querySelector("[data-presenter-play]").disabled).toBe(false);
   });
 
   test("rapid Next, Back, and Home leave both followers on the Home cue", async () => {
@@ -877,5 +1023,149 @@ describe("NLI staff scene integration", () => {
       expect(map.getLayer(NOVA_ESCAPE_INDIVIDUAL_LAYER_ID)).toBeNull();
     }
     for (const view of views(session)) expectHome(view);
+  });
+
+  describe("rendered display followers", () => {
+    let displays = [], decodeDescriptor, originalMatchMedia;
+    const flush = async () => { for (let i = 0; i < 60; i++) await Promise.resolve(); };
+    async function advance(ms) {
+      await vi.advanceTimersByTimeAsync(ms);
+      for (const display of displays) display.drive();
+      await flush();
+    }
+    async function settle() {
+      for (let i = 0; i < 200; i++) {
+        await advance(20);
+        if (el("cueStatus").dataset.status === "ready" && displays.every(d => d.runtime.getRenderedReadiness().ready)) return;
+      }
+      throw new Error("rendered cue did not settle: " + JSON.stringify({ title: el("stepTitle").textContent, cue: el("cueStatus").dataset.status, results: displays[0].results, displays: displays.map(d => d.runtime.getRenderedReadiness()) }));
+    }
+    async function start(reduced = false) {
+      vi.useFakeTimers(); vi.setSystemTime(50_000);
+      originalMatchMedia = window.matchMedia;
+      window.matchMedia = () => ({ matches: reduced });
+      decodeDescriptor = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, "decode");
+      Object.defineProperty(HTMLImageElement.prototype, "decode", { configurable: true, value: async () => {} });
+      vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue();
+      vi.spyOn(HTMLMediaElement.prototype, "readyState", "get").mockReturnValue(4);
+      vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
+      vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => {});
+      setLocale("en", { persist: false }); session = mount();
+      session.dataContext.correctedNow = () => Date.now();
+      for (const follower of session.h.followers) follower.correctedNow = () => Date.now();
+      for (const [index, surface] of ["gis", "projection"].entries()) {
+        displays.push(await createRenderedFollower(session.h.followers[index], surface, result => session.h.emit("narrativePresentationResult", result)));
+      }
+      session.dataContext.narrativePresentationCommand = async command => {
+        session.h.commands.push(command);
+        await displays[0].command(command);
+        return { status: "ok" };
+      };
+      await boot(session); await settle();
+    }
+    function expectRenderedHome() {
+      for (const display of displays) {
+        expect(display.binding.getDisplayedSnapshot().narrativeState.id).toBeNull();
+        expect(display.runtime.getRenderedReadiness().ready).toBe(true);
+        expect(display.map.getLayer("nli__people")).toBeNull();
+        expect(display.map.getSource("nli-name-field")).toBeNull();
+        expect(display.root.querySelector(".nli-reveal-overlay")).toBeNull();
+      }
+    }
+    afterEach(() => {
+      displays.forEach(display => display.dispose()); displays = [];
+      if (decodeDescriptor) Object.defineProperty(HTMLImageElement.prototype, "decode", decodeDescriptor);
+      else delete HTMLImageElement.prototype.decode;
+      if (originalMatchMedia === undefined) delete window.matchMedia;
+      else window.matchMedia = originalMatchMedia;
+      vi.restoreAllMocks(); vi.useRealTimers();
+    });
+
+    test("full staff show, nested narrative, Back and Home settle real paint/name/viewer members", async () => {
+      await start();
+      el("narrativeList").querySelector('[data-open="show"]').click(); await settle();
+      const visited = [];
+      for (let i = 0; i < 20; i++) {
+        const title = el("stepTitle").textContent; visited.push(title);
+        for (const display of displays) {
+          expect(display.binding.getDisplayedSnapshot().narrativeState.id).toBe(session.h.narrative.id);
+          expect(display.runtime.getRenderedReadiness().ready).toBe(true);
+        }
+        if (title === "Credits") break;
+        const branch = !el("nextChoices").hidden && el("nextChoices").querySelector('[data-branch]');
+        (branch || el("nextBtn")).click(); await settle();
+      }
+      expect(visited).toEqual(expect.arrayContaining(["The opening minutes", "The house in Be'eri", "The rest of the day", "The compounds", "Escape routes", "Mor Levy", "Memorial", "Identity database", "Wall of names", "Credits"]));
+      expect(displays[1].map.getSource("nli-name-field")).toBeTruthy();
+      expect(displays[0].map.getSource("nli-name-field")).toBeNull();
+      expect(displays[0].root.querySelector("section.present")?.dataset.slide).toBe("37");
+      const results = displays[0].results;
+      for (const opened of results.filter(result => result.outcome === "opened")) {
+        const ready = results.find(result => result.requestId === opened.requestId && result.outcome === "ready");
+        expect(ready).toBeTruthy(); expect(opened.time - ready.time).toBeGreaterThanOrEqual(600);
+      }
+      const backwards = [];
+      for (let i = 0; i < 20 && el("stepTitle").textContent !== "The opening minutes"; i++) {
+        el("prevBtn").click(); await settle(); backwards.push(el("stepTitle").textContent);
+      }
+      expect(backwards).toContain("Wall of names"); expect(backwards).toContain("Identity database");
+      expect(backwards.at(-1)).toBe("The opening minutes");
+      el("homeBtn").click(); await settle(); expectRenderedHome();
+      for (const display of displays) {
+        expect(display.removals.length).toBeGreaterThan(0);
+        expect(display.removals.filter(removal => removal.opacity > 0)).toEqual([]);
+      }
+    }, 15_000);
+
+    test("Identity people stay mounted at the common half factor and remove only at zero on Home", async () => {
+      await start();
+      el("narrativeList").querySelector('[data-show-step="identity-database"]').click(); await settle();
+      el("homeBtn").click(); await flush();
+      await advance(300);
+      for (const display of displays) {
+        expect(display.map.getLayer("nli__people")).toBeTruthy();
+        expect(display.map.getPaintProperty("nli__people", "circle-opacity")).toBeCloseTo(.4);
+      }
+      await advance(300); await settle(); expectRenderedHome();
+    });
+
+    test("a failed held Home cue retains its outgoing narrative and explicit retry settles", async () => {
+      await start();
+      el("narrativeList").querySelector('[data-open="segev"]').click(); await settle();
+      const outgoing = displays.map(d => d.binding.getDisplayedSnapshot());
+      session.h.failNull = true; el("homeBtn").click(); await flush();
+      expect(el("playerCueFailure").hidden).toBe(false);
+      for (const [i, display] of displays.entries()) {
+        expect(display.binding.getDisplayedSnapshot().narrativeState.id).toBe(outgoing[i].narrativeState.id);
+        expect(display.binding.getRenderSnapshot().narrativeState.id).toBe(outgoing[i].narrativeState.id);
+      }
+      el("playerCueRetry").click(); await settle(); expectRenderedHome();
+    });
+
+    test("lost staff hold expires once and late cancelled preparation cannot replace Home", async () => {
+      await start();
+      for (const follower of session.h.followers) follower._setInvestigationClock({ ...follower.getInvestigationClock(), presentationPendingUntilMs: Date.now() + 1000 });
+      session.h.publish({ type: OTEF_MESSAGE_TYPES.LAYERS_CHANGED, layerGroups: layerGroupsFor(["nli.people"]) }); await flush();
+      await advance(999);
+      for (const display of displays) expect(display.map.getLayer("nli__people")).toBeNull();
+      await advance(2); await advance(600);
+      for (const display of displays) expect(display.map.getPaintProperty("nli__people", "circle-opacity")).toBe(.8);
+      let release; const gate = new Promise(resolve => { release = resolve; }); displays.forEach(d => d.gate(gate));
+      session.h.publish({ type: OTEF_MESSAGE_TYPES.LAYERS_CHANGED, layerGroups: layerGroupsFor(["nli.people_names"]) }); await flush();
+      displays.forEach(d => d.gate(null));
+      session.h.publish({ type: OTEF_MESSAGE_TYPES.LAYERS_CHANGED, layerGroups: layerGroupsFor(HOME_LAYER_IDS) }); await flush();
+      release(); await settle(); expectRenderedHome();
+      await advance(16000); expectRenderedHome();
+    });
+
+    test("reduced motion still waits for readiness and never reveals a required subset", async () => {
+      await start(true);
+      let release; const gate = new Promise(resolve => { release = resolve; }); displays.forEach(d => d.gate(gate));
+      el("narrativeList").querySelector('[data-show-step="identity-database"]').click(); await flush();
+      for (const display of displays) expect(display.map.getLayer("nli__people")).toBeNull();
+      displays.forEach(d => d.gate(null)); release(); await settle();
+      for (const display of displays) expect(display.map.getPaintProperty("nli__people", "circle-opacity")).toBe(.8);
+      el("homeBtn").click(); await settle(); expectRenderedHome();
+    });
   });
 });

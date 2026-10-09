@@ -1591,3 +1591,268 @@ describe("investigation overlay intro fade", () => {
     expect(hidden).toEqual(["overlay"]);
   });
 });
+describe("strict scene batches", () => {
+  it("shares one factor across paint, DOM, and callback channels through completion", async () => {
+    const hooks = createHooks(), map = createMap();
+    const runtime = getLayerLifecycleRuntime(map, hooks);
+    const batch = runtime.setDesiredIds(["scene"], { durationMs: 600, requiredIds: ["scene"] });
+    stage(runtime, map, "scene", layerDef("fill", { "fill-opacity": 0.8 }));
+    const element = { style: { opacity: "0.6" } };
+    runtime.registerElement("scene", element);
+    let factor;
+    const write = (value) => { factor = value; };
+    runtime.registerOpacityTarget("scene", write);
+    runtime.registerOpacityTarget("scene", write);
+    runtime.markMemberReady("scene");
+    const completion = runtime.waitForBatch(batch);
+    runtime.commitBatch();
+    expect([paintOf(map, "fill", "fill-opacity"), Number(element.style.opacity), factor]).toEqual([0, 0, 0]);
+    hooks.setTime(300); hooks.flushFrame();
+    expect(paintOf(map, "fill", "fill-opacity")).toBeCloseTo(0.4);
+    expect(Number(element.style.opacity)).toBeCloseTo(0.3);
+    expect(factor).toBeCloseTo(0.5);
+    hooks.setTime(600); hooks.flushFrame();
+    await expect(completion).resolves.toEqual({ status: "ready" });
+    expect(factor).toBe(1);
+    runtime.dispose();
+  });
+
+  it.each(["failed", "timeout"])("keeps outgoing pixels unchanged when required incoming readiness is %s", async (failure) => {
+    const hooks = createHooks(), map = createMap();
+    const runtime = getLayerLifecycleRuntime(map, hooks);
+    runtime.setDesiredIds(["old"], { durationMs: 0 });
+    stage(runtime, map, "old", layerDef("old", { "fill-opacity": 0.8 }), { adoptVisible: true });
+    runtime.commitBatch();
+    const batch = runtime.setDesiredIds(["new"], { durationMs: 600, requiredIds: ["new"] });
+    stage(runtime, map, "new", layerDef("new", { "fill-opacity": 1 }));
+    const completion = runtime.waitForBatch(batch);
+    // Preparation time must not spend the readiness budget.
+    hooks.setTime(5000); hooks.fireDueTimers();
+    expect(paintOf(map, "old", "fill-opacity")).toBe(0.8);
+    runtime.commitBatch();
+    if (failure === "failed") runtime.markMemberFailed("new");
+    else { hooks.setTime(6200); hooks.fireDueTimers(); }
+    await expect(completion).resolves.toEqual({ status: "failed" });
+    expect(paintOf(map, "old", "fill-opacity")).toBe(0.8);
+    expect(hooks.timerCount).toBe(0);
+    runtime.dispose();
+  });
+
+  it("requires missing members even at zero duration", async () => {
+    const hooks = createHooks(), runtime = getLayerLifecycleRuntime({}, hooks);
+    const batch = runtime.setDesiredIds(["missing"], { durationMs: 0, requiredIds: ["missing"] });
+    const completion = runtime.waitForBatch(batch);
+    runtime.commitBatch();
+    hooks.setTime(1200); hooks.fireDueTimers();
+    await expect(completion).resolves.toEqual({ status: "failed" });
+    runtime.dispose();
+  });
+
+  it.each(["abort", "dispose", "supersede"])("%s settles the captured batch and releases readiness subscriptions and timers", async (action) => {
+    const hooks = createHooks(), runtime = getLayerLifecycleRuntime({}, hooks);
+    const controller = new AbortController();
+    const batch = runtime.setDesiredIds(["new"], { requiredIds: ["new"] });
+    let listeners = 0;
+    runtime.registerOpacityTarget("new", () => {}, { subscribeReady: () => {
+      listeners += 1; return () => { listeners -= 1; };
+    } });
+    const completion = runtime.waitForBatch(batch, { signal: controller.signal });
+    runtime.commitBatch();
+    if (action === "abort") controller.abort();
+    if (action === "dispose") runtime.dispose();
+    if (action === "supersede") runtime.setDesiredIds([], { requiredIds: [] });
+    await expect(completion).resolves.toEqual({ status: "cancelled" });
+    expect(listeners).toBe(0);
+    runtime.dispose();
+    expect(hooks.timerCount).toBe(0);
+    expect(hooks.pendingFrame).toBeNull();
+  });
+
+  it("reverses the sampled callback factor without a second opacity engine", async () => {
+    const hooks = createHooks(), runtime = getLayerLifecycleRuntime({}, hooks);
+    runtime.setDesiredIds(["a"], { durationMs: 0 });
+    let factor = 0;
+    runtime.registerOpacityTarget("a", value => { factor = value; }, { adoptVisible: true });
+    runtime.commitBatch();
+    const exit = runtime.setDesiredIds([], { durationMs: 600, requiredIds: [] });
+    const oldCompletion = runtime.waitForBatch(exit);
+    runtime.commitBatch();
+    hooks.setTime(200); hooks.flushFrame();
+    expect(factor).toBeCloseTo(2 / 3);
+    const enter = runtime.setDesiredIds(["a"], { durationMs: 600, requiredIds: ["a"] });
+    const completion = runtime.waitForBatch(enter);
+    runtime.commitBatch();
+    await expect(oldCompletion).resolves.toEqual({ status: "cancelled" });
+    expect(factor).toBeCloseTo(2 / 3);
+    hooks.setTime(800); hooks.flushFrame();
+    await expect(completion).resolves.toEqual({ status: "ready" });
+    expect(factor).toBe(1);
+    runtime.dispose();
+  });
+});
+describe("strict batch ownership edge cases", () => {
+  it("does not let a stale readiness callback reveal a superseding member", async () => {
+    const hooks = createHooks(), runtime = getLayerLifecycleRuntime({}, hooks);
+    let stale;
+    const first = runtime.setDesiredIds(["a"], { requiredIds: ["a"] });
+    runtime.registerOpacityTarget("a", () => {}, { subscribeReady: callbacks => { stale = callbacks; return () => {}; } });
+    const cancelled = runtime.waitForBatch(first); runtime.commitBatch();
+    const second = runtime.setDesiredIds(["a"], { requiredIds: ["a"] });
+    runtime.registerOpacityTarget("a", () => {}, { subscribeReady: () => () => {} });
+    let settled = false;
+    const completion = runtime.waitForBatch(second).then(value => { settled = true; return value; });
+    runtime.commitBatch(); stale.ready(); await Promise.resolve();
+    expect(settled).toBe(false);
+    runtime.markMemberReady("a"); hooks.setTime(600); hooks.flushFrame();
+    await expect(cancelled).resolves.toEqual({ status: "cancelled" });
+    await expect(completion).resolves.toEqual({ status: "ready" });
+    runtime.dispose();
+  });
+
+  it("releases a synchronous readiness subscription registered after seal", async () => {
+    const hooks = createHooks(), runtime = getLayerLifecycleRuntime({}, hooks);
+    const batch = runtime.setDesiredIds(["late"], { durationMs: 0, requiredIds: ["late"] });
+    const completion = runtime.waitForBatch(batch); runtime.commitBatch();
+    let listeners = 0;
+    runtime.registerOpacityTarget("late", () => {}, { subscribeReady: ({ ready }) => {
+      listeners += 1; ready(); return () => { listeners -= 1; };
+    } });
+    await expect(completion).resolves.toEqual({ status: "ready" });
+    expect(listeners).toBe(0);
+    runtime.dispose();
+  });
+
+  it("does not replace a paint source readiness subscription when attaching a callback without its own subscription", async () => {
+    const hooks = createHooks(), map = createMap(), runtime = getLayerLifecycleRuntime(map, hooks);
+    const batch = runtime.setDesiredIds(["a"], { requiredIds: ["a"] });
+    let source, listeners = 0;
+    stage(runtime, map, "a", layerDef("a", { "fill-opacity": 1 }), { subscribeReady: callbacks => {
+      source = callbacks; listeners += 1; return () => { listeners -= 1; };
+    } });
+    runtime.registerOpacityTarget("a", () => {});
+    expect(listeners).toBe(1);
+    const completion = runtime.waitForBatch(batch); runtime.commitBatch(); source.ready();
+    hooks.setTime(600); hooks.flushFrame();
+    await expect(completion).resolves.toEqual({ status: "ready" });
+    expect(listeners).toBe(0);
+    runtime.dispose();
+  });
+
+  it("deduplicates repeated callback registration without squaring the scene factor", () => {
+    const hooks = createHooks(), runtime = getLayerLifecycleRuntime({}, hooks);
+    runtime.setDesiredIds(["a"], { durationMs: 600, requiredIds: ["a"] });
+    const writes = [];
+    const write = factor => writes.push(0.8 * 0.5 * factor);
+    runtime.registerOpacityTarget("a", write); runtime.registerOpacityTarget("a", write);
+    runtime.markMemberReady("a"); runtime.commitBatch();
+    writes.length = 0; hooks.setTime(300); hooks.flushFrame();
+    expect(writes).toEqual([0.2]);
+    runtime.dispose();
+  });
+});
+it("honors an explicit strict readiness contract even when a caller labels the ID set unchanged", async () => {
+  const hooks = createHooks(), runtime = getLayerLifecycleRuntime({}, hooks);
+  runtime.setDesiredIds(["a"], { durationMs: 0 });
+  runtime.registerOpacityTarget("a", () => {}, { adoptVisible: true }); runtime.commitBatch();
+  const batch = runtime.setDesiredIds(["a"], { durationMs: 600, requiredIds: ["missing"], sameSet: true });
+  const completion = runtime.waitForBatch(batch);
+  runtime.commitBatch(); hooks.setTime(1200); hooks.fireDueTimers();
+  await expect(completion).resolves.toEqual({ status: "failed" });
+  runtime.dispose();
+});
+
+
+// MapLibre consumes current transition settings when committing dirty paint.
+function createStyleCommitMap() {
+  const map = createMap();
+  const listeners = new Map();
+  const dirty = new Set();
+  const commits = [];
+  const originalSet = map.setPaintProperty;
+  map.style = {};
+  map.on = (type, callback) => {
+    if (!listeners.has(type)) listeners.set(type, new Set());
+    listeners.get(type).add(callback);
+  };
+  map.off = (type, callback) => listeners.get(type)?.delete(callback);
+  map.listenerCount = type => listeners.get(type)?.size || 0;
+  map.setPaintProperty = (id, key, value) => {
+    originalSet(id, key, value);
+    dirty.add(id);
+  };
+  map.render = () => {
+    for (const id of dirty) {
+      const def = map.getLayer(id);
+      if (!def) continue;
+      const property = `${def.type}-opacity`;
+      commits.push({
+        id,
+        value: map.getPaintProperty(id, property) ?? 1,
+        transition: map.getPaintProperty(id, `${property}-transition`) ?? { duration: 300, delay: 0 },
+      });
+    }
+    dirty.clear();
+    for (const callback of [...(listeners.get("render") || [])]) callback();
+  };
+  map.commits = commits;
+  return map;
+}
+
+describe("paint restoration at the MapLibre style commit", () => {
+  const zeroTransition = { duration: 0, delay: 0 };
+
+  it.each([undefined, { duration: 450, delay: 20 }])("commits final authored opacity with zero transition before restoring %j", transition => {
+    const map = createStyleCommitMap();
+    const runtime = getLayerLifecycleRuntime(map, createHooks());
+    const authored = ["case", ["get", "selected"], 0.8, 0.4];
+    const paint = { "fill-opacity": authored };
+    if (transition) paint["fill-opacity-transition"] = transition;
+    reveal(runtime, map, "sea", layerDef("sea-fill", paint));
+    expect(map.getPaintProperty("sea-fill", "fill-opacity")).toEqual(authored);
+    expect(map.getPaintProperty("sea-fill", "fill-opacity-transition")).toEqual(zeroTransition);
+    map.render();
+    expect(map.commits.at(-1)).toMatchObject({ value: authored, transition: zeroTransition });
+    expect(map.getPaintProperty("sea-fill", "fill-opacity-transition")).toEqual(transition);
+    expect(map.listenerCount("render")).toBe(0);
+    // An ordinary caller after ownership ends keeps its authored transition.
+    map.setPaintProperty("sea-fill", "fill-opacity", 0.2);
+    map.render();
+    expect(map.commits.at(-1).transition).toEqual(transition ?? { duration: 300, delay: 0 });
+    runtime.dispose();
+  });
+
+  it("cancels pending restoration when an exit supersedes an instant entry", () => {
+    const map = createStyleCommitMap();
+    const hooks = createHooks();
+    const runtime = getLayerLifecycleRuntime(map, hooks);
+    reveal(runtime, map, "sea", layerDef("sea-fill", { "fill-opacity": 1 }));
+    runtime.setDesiredIds([], { durationMs: 600 });
+    runtime.commitBatch();
+    map.render();
+    expect(map.getPaintProperty("sea-fill", "fill-opacity-transition")).toEqual(zeroTransition);
+    hooks.setTime(300);
+    hooks.flushFrame();
+    map.render();
+    expect(map.commits.at(-1)).toMatchObject({ value: 0.5, transition: zeroTransition });
+    runtime.dispose();
+    expect(map.listenerCount("render")).toBe(0);
+  });
+
+  it.each(["drop", "restage", "invalidate", "dispose", "layer", "style"])("does not restore stale paint after %s", action => {
+    const map = createStyleCommitMap();
+    const runtime = getLayerLifecycleRuntime(map, createHooks());
+    reveal(runtime, map, "sea", layerDef("sea-fill", { "fill-opacity": 1, "fill-opacity-transition": { duration: 450 } }));
+    expect(map.listenerCount("render")).toBeGreaterThan(0);
+    if (action === "drop") runtime.dropChannels("sea");
+    if (action === "restage") runtime.stageMapLayer("sea", layerDef("sea-fill", { "fill-opacity": 0.7 }), { adoptVisible: true });
+    if (action === "invalidate") runtime.invalidateMember("sea");
+    if (action === "dispose") runtime.dispose();
+    if (action === "layer") map.addLayer(layerDef("sea-fill", { "fill-opacity": 0.6 }));
+    if (action === "style") map.style = {};
+    map.setPaintProperty("sea-fill", "fill-opacity-transition", { duration: 80 });
+    map.render();
+    expect(map.getPaintProperty("sea-fill", "fill-opacity-transition")).toEqual({ duration: 80 });
+    expect(map.listenerCount("render")).toBe(0);
+    runtime.dispose();
+  });
+});

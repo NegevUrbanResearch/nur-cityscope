@@ -1,7 +1,10 @@
+import { captureNliDisplaySnapshot, createNliSceneDisplayBinding } from "../shared/nli-scene-display-binding.js";
+import { getLayerLifecycleRuntime } from "../shared/layer-lifecycle-fade.js";
+import { transitionGisBasemap, getDisplayedGisBasemap, adoptDisplayedGisBasemap, deferDisplayedGisBasemapAdoption } from "../map/gis-basemap-transition.js";
 import TableSwitcher from "../shared/table-switcher.js";
 import { mountGisDisplayResolution } from '../map/gis-display-resolution.js';
 import TableSwitcherPopup from "../shared/table-switcher-popup.js";
-import { createGISMap, setGISBasemap, maplibregl } from "../map/maplibre-map.js";
+import { createGISMap, setGISBasemap, BASEMAP_STYLES, maplibregl } from "../map/maplibre-map.js";
 import { setupViewportSync } from "../map/maplibre-viewport-sync.js";
 import { applyLayerGroupsToMap, disposeLayerManagerForMap } from "../map/maplibre-layer-manager.js";
 import { raiseDarkBasemapPlaceLabels } from "../map/dark-basemap-labels.js";
@@ -14,7 +17,6 @@ import {
 } from "../map/nli-archive-window.js";
 import { createNliArchivePagerClient } from "../map/nli-archive-pager-client.js";
 import { createGisPersonController } from "../map/maplibre-gis-person-controller.js";
-import { createNliNameFieldController } from "../shared/nli-name-field-controller.js";
 import { createGisNarrativeController } from "../map/nli-narrative-controller.js";
 import { loadNliPresentationManifest } from "../shared/nli-presentation-manifest.js";
 import { applyNarrativeHouseOutlineFilter, applyNarrativePeopleFilter } from "../map/nli-people-marker-filter.js";
@@ -31,7 +33,7 @@ import {
 } from "../map/legend-integration.js";
 import { filterGroupsForGisMap } from "../shared/gis-layer-filter.js";
 import { filterGazaBorderVisibility } from "../shared/gaza-border-style.js";
-import { isolateLayersWhileVictimNamesShown } from "../shared/nli-victim-name-layer-isolation.js";
+import { victimNamesAreShown } from "../shared/nli-victim-name-layer-isolation.js";
 import { normalizeGisBasemap } from "../shared/gis-basemap.js";
 import OTEFDataContext from "../shared/OTEFDataContext.js";
 import { createNliVideoPlaybackPublisher } from "../shared/nli-video-playback-channel.js";
@@ -48,6 +50,8 @@ import {
 import {
   disposeInvestigationTimelineForMap,
   syncInvestigationTimelineToMap,
+  getNliClockSceneIds,
+  getInvestigationSceneContentKey,
   wakeInvestigationTimelinePersonGlow,
 } from "../shared/maplibre-investigation-timeline.js";
 import { idleNliClock } from "../shared/nli-investigation-clock.js";
@@ -219,6 +223,7 @@ async function bootstrapMapRuntime() {
   map.on("load", async () => {
     registerDisposer(() => disposeLayerManagerForMap(map));
     let presentationViewer = null;
+    let sceneBinding = null;
     const videoPlaybackPublisher = createNliVideoPlaybackPublisher({
       table: OTEFDataContext._tableName || "otef",
       socket: OTEFDataContext._wsClient,
@@ -254,20 +259,11 @@ async function bootstrapMapRuntime() {
         emitUnavailablePresentation(command);
         return;
       }
-      if (command.presentationAction === "open") {
-        if (command.presentationGeneration > highestPresentationGeneration) {
-          highestPresentationGeneration = command.presentationGeneration;
-          activePresentationSegmentId = command.segmentId;
-          activePresentationSessionId = command.presentationSessionId;
-          activePresentationGeneration = command.presentationGeneration;
-        }
-      } else if (command.presentationAction === "close") {
-        if (command.presentationSessionId === activePresentationSessionId &&
-            command.presentationGeneration === activePresentationGeneration) {
-          activePresentationSegmentId = null;
-        }
-      }
-      void presentationViewer.handleCommand(command).catch((error) => {
+      const held = OTEFDataContext.getInvestigationClock()?.presentationPendingUntilMs >
+        (OTEFDataContext.correctedNow?.() ?? Date.now());
+      void presentationViewer.handleCommand(command, { managedScene: held }).then(() => {
+        void sceneBinding?.request();
+      }).catch((error) => {
         console.error("[map-main] NLI presentation command failed", error);
         emitUnavailablePresentation(command);
       });
@@ -290,12 +286,23 @@ async function bootstrapMapRuntime() {
         const { createNliRevealPresentation, shouldCloseViewerForNarrative } = await import("../map/nli-reveal-presentation.js");
         presentationManifest = manifest;
         applyNarrativeExit = (state) => {
-          const segment = activePresentationSegmentId
-            ? presentationManifest?.segments?.find((candidate) => candidate.id === activePresentationSegmentId) || null
+          const sceneSegmentId = presentationViewer?.getSceneCommand?.()?.segmentId || activePresentationSegmentId;
+          const segment = sceneSegmentId
+            ? presentationManifest?.segments?.find((candidate) => candidate.id === sceneSegmentId) || null
             : null;
-          const decision = shouldCloseViewerForNarrative({ handledExitRevision, state, segment });
+          const decision = shouldCloseViewerForNarrative({
+            handledExitRevision, state, segment,
+            namesWallActive: victimNamesAreShown(OTEFDataContext.getLayerGroups()),
+          });
           handledExitRevision = decision.handledExitRevision;
           if (!presentationBootstrapActive || !presentationViewer || !decision.close) return;
+          const pending = sceneBinding?.isManaging() ? presentationViewer.getPendingSceneCommand?.() : null;
+          if (pending && pending.segmentId === segment?.id &&
+              (!segment.requiredNarrative || segment.requiredNarrative === state?.id)) return;
+          if (sceneBinding?.isManaging()) {
+            presentationViewer.closeForScene(); void sceneBinding.request();
+            return;
+          }
           void presentationViewer.close();
           activePresentationSegmentId = null;
           activePresentationSessionId = null;
@@ -309,7 +316,15 @@ async function bootstrapMapRuntime() {
           typeof map.getContainer === "function" ? map.getContainer() : document.getElementById("map");
         presentationViewer = createNliRevealPresentation(mapContainer, {
           manifest,
-          emitResult: (result) => { void OTEFDataContext.narrativePresentationResult(result); },
+          emitResult: (result) => {
+            if (result.outcome === "opened" && result.presentationGeneration >= highestPresentationGeneration) {
+              highestPresentationGeneration = result.presentationGeneration;
+              activePresentationSegmentId = result.segmentId; activePresentationSessionId = result.presentationSessionId;
+              activePresentationGeneration = result.presentationGeneration;
+            } else if (result.outcome === "closed" && result.presentationSessionId === activePresentationSessionId &&
+                result.presentationGeneration === activePresentationGeneration) activePresentationSegmentId = null;
+            void OTEFDataContext.narrativePresentationResult(result);
+          },
           onVideoPlaybackChange: (playing) => videoPlaybackPublisher.setActive(playing),
         });
       } catch (error) {
@@ -318,8 +333,6 @@ async function bootstrapMapRuntime() {
         console.error("[map-main] NLI presentation viewer failed to load", error);
       }
     })();
-    const nameFieldController = createNliNameFieldController({ map, context: OTEFDataContext, displayProfile: "gis", motionMode: resolveMotionMode() });
-    registerDisposer(() => nameFieldController.dispose());
     registerDisposer(() => {
       disposeRouteProgressOverlaysForMap(map);
       disposeInvestigationTimelineForMap(map);
@@ -331,13 +344,15 @@ async function bootstrapMapRuntime() {
       mapContainer,
       { hostId: "nliGisClockHost" },
     );
+    const filterGisDisplayGroups = groups => filterGazaBorderVisibility(filterGroupsForGisMap(groups), OTEFDataContext.getGazaBorderVisible());
+    const sceneSnapshot = () => sceneBinding?.getRenderSnapshot() || captureNliDisplaySnapshot(OTEFDataContext, filterGisDisplayGroups);
     const raiseGisPlaceLabels = () => raiseDarkBasemapPlaceLabels(map, {
       narrativeId: OTEFDataContext.getNarrativeState?.()?.id ?? null,
     });
     let positionLegend = () => {};
     const applyStoredGisClockLayout = () => {
       const stored = OTEFDataContext.getNliClockLayout?.()?.gis || {};
-      const slotId = gisClockLayoutSlotId(OTEFDataContext.getNarrativeState?.()?.id);
+      const slotId = gisClockLayoutSlotId(sceneSnapshot().narrativeState?.id);
       const box = mergeGisClockLayout(slotId, stored, NLI_GIS_CLOCK_DEFAULT_LAYOUT);
       applyNliExplainerLayout(nliGisClockHost, box);
       positionLegend();
@@ -347,8 +362,9 @@ async function bootstrapMapRuntime() {
       map,
       container: mapContainer,
       getLayout: () => OTEFDataContext.getNliClockLayout?.()?.gisOverlays?.novaExplainers,
-      getNarrativeId: () => OTEFDataContext.getNarrativeState?.()?.id ?? null,
-      getEscapeOverlay: () => OTEFDataContext.getEscapeOverlay?.(),
+      getNarrativeId: () => sceneSnapshot().narrativeState?.id ?? null,
+      getEscapeOverlay: () => sceneSnapshot().escapeOverlay,
+      getLanguage: () => OTEFDataContext.getLegendSettings?.()?.language,
       motionMode: resolveMotionMode(),
     });
     registerDisposer(() => novaExplainerOverlay.dispose());
@@ -356,14 +372,7 @@ async function bootstrapMapRuntime() {
       applyStoredGisClockLayout();
       novaExplainerOverlay.refresh();
     }));
-    registerDisposer(OTEFDataContext.subscribe("narrativeState", () => {
-      applyStoredGisClockLayout();
-      raiseGisPlaceLabels();
-      novaExplainerOverlay.refresh();
-    }));
-    registerDisposer(OTEFDataContext.subscribe("escapeOverlay", () => {
-      novaExplainerOverlay.refresh();
-    }));
+
     const raiseGisClockHost = () => {
       if (typeof mapContainer?.appendChild !== "function" || !nliGisClockHost) return;
       mapContainer.appendChild(nliGisClockHost);
@@ -384,13 +393,13 @@ async function bootstrapMapRuntime() {
 
     const gisDisplayGroups = (raw) => {
       const groupsAsArray = Array.isArray(raw) ? raw : Object.values(raw || {});
-      return isolateLayersWhileVictimNamesShown(groupsAsArray);
+      return groupsAsArray;
     };
-    const gisOverlayGroups = () => {
-      const groupsAsArray = gisDisplayGroups(OTEFDataContext.getLayerGroups());
+    const gisOverlayGroups = (snapshot = sceneSnapshot()) => {
+      const groupsAsArray = gisDisplayGroups(snapshot.rawLayerGroups);
       return {
         groupsAsArray,
-        currentGroups: filterGroupsForGisMap(groupsAsArray),
+        currentGroups: snapshot.layerGroups,
       };
     };
     const syncContextRouteProgress = () => {
@@ -404,18 +413,20 @@ async function bootstrapMapRuntime() {
     let narrativeController = null;
     let novaEscapeCoordinator = null;
     let morRouteCoordinator = null;
-    const syncContextInvestigation = () => {
-      const { groupsAsArray, currentGroups } = gisOverlayGroups();
+    const syncContextInvestigation = (snapshot = sceneSnapshot(), sceneOptions = {}) => {
+      const { groupsAsArray, currentGroups } = gisOverlayGroups(snapshot);
       const clock =
         typeof OTEFDataContext.getInvestigationClock === "function"
-          ? OTEFDataContext.getInvestigationClock()
+          ? snapshot.investigationClock
           : idleNliClock();
       const correctedNow =
         typeof OTEFDataContext.correctedNow === "function"
           ? OTEFDataContext.correctedNow()
           : Date.now();
       narrativeController?.syncInvestigationClock?.(clock, correctedNow);
-      void syncInvestigationTimelineToMap(map, clock, currentGroups, {
+      return syncInvestigationTimelineToMap(map, clock, currentGroups, {
+        ...sceneOptions,
+        sceneClockRuntime: getLayerLifecycleRuntime(map), sceneCaptionId: "nli.clock-caption.gis",
         visibilityLayerGroups: groupsAsArray,
         displayProfile: "gis",
         nliCaptionMode: "clock-only",
@@ -429,14 +440,14 @@ async function bootstrapMapRuntime() {
             : Date.now(),
         onClockFrame: (frameClock, frameNow) =>
           narrativeController?.syncInvestigationClock?.(frameClock, frameNow),
-        getPersonSelection: () => OTEFDataContext.getPersonSelection(),
+        getPersonSelection: () => sceneSnapshot().personSelection,
+        resolvePerson: (pid, version) => personVisual.resolve(pid, version),
         narrativeFocus: narrativeController?.getDefinition?.() || null,
       }).finally(raiseGisPlaceLabels);
     };
     const onNliLabelHeadingStorage = (event) => {
       if (event.key !== NLI_LABEL_HEADING_STORAGE_KEY) return;
       applyStoredNliLabelHeading(map);
-      nameFieldController.reload();
     };
     window.addEventListener("storage", onNliLabelHeadingStorage);
     registerDisposer(() => window.removeEventListener("storage", onNliLabelHeadingStorage));
@@ -445,7 +456,7 @@ async function bootstrapMapRuntime() {
       syncContextInvestigation();
     };
     registerDisposer(OTEFDataContext.subscribe("animations", syncContextRouteProgress));
-    registerDisposer(OTEFDataContext.subscribe("investigationClock", syncContextInvestigation));
+
 
     const viewportSync = setupViewportSync(map, OTEFDataContext);
     registerDisposer(viewportSync);
@@ -460,14 +471,14 @@ async function bootstrapMapRuntime() {
     const rawInitialLayerGroups = Array.isArray(layerGroups)
       ? layerGroups
       : Object.values(layerGroups || {});
-    const initialGroups = filterGroupsForGisMap(gisDisplayGroups(rawInitialLayerGroups));
+    const initialGroups = filterGisDisplayGroups(gisDisplayGroups(rawInitialLayerGroups));
     const applyGisLayerGroups = (groups, layerStyleOptions) => {
       applyLayerGroupsToMap(map, groups, layerStyleOptions);
-      applyNarrativePeopleFilter(map, OTEFDataContext.getNarrativeState?.()?.id ?? null);
-      const selectedPid = OTEFDataContext.getPersonSelection?.()?.personId;
+      applyNarrativePeopleFilter(map, sceneSnapshot().narrativeState?.id ?? null);
+      const selectedPid = sceneSnapshot().personSelection?.personId;
       if (selectedPid) applyPeopleFocusDim(map, selectedPid);
       else clearPeopleFocusDim(map);
-      applyNarrativeHouseOutlineFilter(map, OTEFDataContext.getNarrativeState?.()?.id ?? null);
+      applyNarrativeHouseOutlineFilter(map, sceneSnapshot().narrativeState?.id ?? null);
       raiseGisPlaceLabels();
     };
     syncContextInvestigation();
@@ -478,12 +489,14 @@ async function bootstrapMapRuntime() {
       map,
       maplibregl,
       beginCameraTravel: viewportSync.beginCameraTravel,
+      managedScene: true,
       onBubbleClick: (person) => archiveBridge.openSelected(person),
     });
     const archiveWindow = createNliArchiveWindowController();
     novaEscapeCoordinator = createNovaEscapeCoordinator({
       map,
       dataContext: OTEFDataContext,
+      managedScene: true,
       profile: "gis",
       surface: "gis",
     });
@@ -491,24 +504,25 @@ async function bootstrapMapRuntime() {
     morRouteCoordinator = createMorRouteCoordinator({
       map,
       dataContext: OTEFDataContext,
+      managedScene: true,
       profile: "gis",
     });
     registerDisposer(() => morRouteCoordinator?.dispose?.());
     narrativeController = createGisNarrativeController({
       map,
       dataContext: OTEFDataContext,
+      managedScene: true,
       viewportSync,
       personVisual,
       closeArchive: () => archiveWindow.close(),
       resolveExitCenter: () => resolveCenterFromBounds(OTEFDataContext.getBounds()) || DEFAULT_MAP_CENTER,
-      syncTimeline: syncContextInvestigation,
+      syncTimeline: () => {},
       onStyleLoadOverlay: () => {
-        novaEscapeCoordinator?.onStyleLoad?.({ styleLoss: true });
-        morRouteCoordinator?.onStyleLoad?.({ styleLoss: true });
+
       },
     });
     registerDisposer(() => narrativeController?.dispose?.());
-    registerDisposer(OTEFDataContext.subscribe("narrativeState", (state) => narrativeController?.apply(state)));
+
     const archivePager = createNliArchivePagerClient();
     const archiveBridge = createNliArchiveCommandBridge({
       windowController: archiveWindow,
@@ -537,6 +551,7 @@ async function bootstrapMapRuntime() {
     const personController = createGisPersonController({
       map,
       context: OTEFDataContext,
+      managedScene: true,
       visual: personVisual,
       isNarrativeActive: () => narrativeController?.isActive?.() === true,
       closeArchive: () => archiveWindow.close(),
@@ -568,12 +583,11 @@ async function bootstrapMapRuntime() {
     const { refreshCuratedLayers } = createGisCuratedRefresh({
       map,
       displayGate: curatedDisplay,
-      getLayerGroups: () => OTEFDataContext.getLayerGroups(),
+      getLayerGroups: () => sceneSnapshot().rawLayerGroups,
       displayGroups: gisDisplayGroups,
-      filterGroups: filterGroupsForGisMap,
+      filterGroups: groups => filterGazaBorderVisibility(filterGroupsForGisMap(groups), sceneSnapshot().gazaBorderVisible),
       applyLayerGroups: applyGisLayerGroups,
       applyLabelHeading: applyStoredNliLabelHeading,
-      nameFieldController,
       personVisual,
       syncFlowAnimations: syncContextFlowAnimations,
       getNarrativeController: () => narrativeController,
@@ -585,31 +599,62 @@ async function bootstrapMapRuntime() {
     await refreshCuratedLayers({
       groupsOverride: rawInitialLayerGroups,
     });
-    narrativeController.apply(OTEFDataContext.getNarrativeState?.());
+    narrativeController.apply(sceneSnapshot().narrativeState);
 
     let legendLifecycle = null;
     const basemapCoordinator = createGisBasemapStyleCoordinator({
       map,
       initialBasemap: currentBasemap,
-      setBasemap: setGISBasemap,
+      setBasemap: (target, id, options = {}) => setGISBasemap(target, id, {
+        ...options,
+        onSettled(result) {
+          options.onSettled?.(result);
+          if (result?.status === "completed" && basemapCoordinator.getRequestedBasemap() === result.basemapId) {
+            const adopt = () => basemapCoordinator.getRequestedBasemap() === result.basemapId &&
+              sceneBinding?.adoptManualBasemap(result.basemapId, ({ runtime }) =>
+                adoptDisplayedGisBasemap(map, result.basemapId, { styles: BASEMAP_STYLES, runtime }));
+            if (!adopt()) deferDisplayedGisBasemapAdoption(map, result.basemapId, {
+              runtime: getLayerLifecycleRuntime(map), onReady: adopt,
+            });
+          }
+        },
+      }),
     });
     registerDisposer(() => basemapCoordinator.dispose());
-    registerDisposer(
-      OTEFDataContext.subscribe("basemap", (basemap) => {
-        const nextBasemap = normalizeGisBasemap(basemap);
-        basemapCoordinator.request(nextBasemap);
+    sceneBinding = await createNliSceneDisplayBinding({
+      map, dataContext: OTEFDataContext, filterGroups: filterGisDisplayGroups,
+      diagnosticContext: { displayProfile: "gis" },
+      narrativeController, escapeCoordinator: novaEscapeCoordinator, morCoordinator: morRouteCoordinator,
+      refreshLayers: refreshCuratedLayers, syncTimeline: syncContextInvestigation,
+      getPresentationCommand: () => presentationViewer?.getSceneCommand() || null,
+      getDisplaySceneIds: snapshot => [...getNliClockSceneIds(snapshot, "gis"), ...(presentationViewer?.getSceneIds(snapshot) || [])],
+      prepareDisplay: (snapshot, options) => presentationViewer?.prepareScene(snapshot, options),
+      applyDisplay(prepared, options) {
+        const runtime = getLayerLifecycleRuntime(map);
+        if (!options.semanticOnly) novaExplainerOverlay.applyScene(options.snapshot, { runtime });
+        presentationViewer?.applyScene(prepared, { ...options, runtime });
+      },
+      discardDisplay: prepared => presentationViewer?.discardScene(prepared),
+      getTimelineSceneIds: snapshot => snapshot.narrativeState?.id === "nova" ? ["nli.investigation_polygons"] : [],
+      getTimelineSceneContentKey: getInvestigationSceneContentKey,
+      syncPerson: (_selection, snapshot) => personController.applySnapshot(snapshot),
+      closeArchive: () => archiveWindow.close(),
+      requestManualBasemap: id => basemapCoordinator.request(normalizeGisBasemap(id)),
+      prepareBasemap: (id, { signal } = {}) => transitionGisBasemap(map, id, {
+        styles: BASEMAP_STYLES, managedScene: { runtime: getLayerLifecycleRuntime(map), signal },
       }),
-    );
-
-    // layerGroups updates must drive curated lifecycle (WebSocket + manual workshop refresh).
-    registerDisposer(
-      OTEFDataContext.subscribe("layerGroups", (groups) => {
-        syncContextFlowAnimations();
-        void refreshCuratedLayers({
-          groupsOverride: groups,
-        });
-      }),
-    );
+      onSceneSettled: snapshot => {
+        basemapCoordinator.acceptSceneBasemap(snapshot.basemapId);
+        void presentationViewer?.settleScene(snapshot);
+      },
+      getDisplayedBasemap: () => getDisplayedGisBasemap(map, BASEMAP_STYLES),
+      applyBasemap: candidate => candidate.mount(), discardBasemap: candidate => candidate?.discard(),
+      onSnapshotApplied() { applyStoredGisClockLayout(); raiseGisPlaceLabels(); novaExplainerOverlay.refresh(); syncContextRouteProgress(); },
+    });
+    registerDisposer(() => sceneBinding.dispose());
+    const remountScene = () => { void sceneBinding.onStyleLoad(); };
+    map.on("style.load", remountScene);
+    registerDisposer(() => map.off("style.load", remountScene));
 
     // Curated layers (Supabase-synced overlays like annotations, pink line route)
     try {
@@ -626,7 +671,7 @@ async function bootstrapMapRuntime() {
               ...options,
             }),
             applyLayerGroupsState: (groups) => {
-              applyGisLayerGroups(filterGroupsForGisMap(gisDisplayGroups(groups)));
+              applyGisLayerGroups(filterGisDisplayGroups(gisDisplayGroups(groups)));
               applyStoredNliLabelHeading(map);
               syncContextFlowAnimations();
               legendLifecycle?.refresh();

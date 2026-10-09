@@ -1,3 +1,4 @@
+import { getLayerLifecycleRuntime } from "../shared/layer-lifecycle-fade.js";
 import { NLI_VISUAL_TOKENS } from "../shared/nli-investigation-theme.js";
 import { applyPeopleFocusDim, clearPeopleFocusDim } from "../shared/nli-people-focus-presentation.js";
 
@@ -167,7 +168,7 @@ export function syncPersonHaloPaint() {
 }
 
 /** Own one reusable MapLibre halo and bubble. */
-export function createGisPersonSelection({ map, maplibregl, fetchJson: fetcher, hashBytes, peopleUrl, indexUrl, metadataUrl, beginCameraTravel, onBubbleClick } = {}) {
+export function createGisPersonSelection({ map, maplibregl, fetchJson: fetcher, hashBytes, peopleUrl, indexUrl, metadataUrl, beginCameraTravel, onBubbleClick, managedScene = false } = {}) {
   let disposed = false; let current = null; let renderToken = 0; let cameraListener = null; let overviewCamera = null;
   const popup = typeof maplibregl?.Popup === "function" ? new maplibregl.Popup({ className: "gis-person-bubble-popup", closeButton: false, closeOnClick: false, maxWidth: "280px", offset: 14 }) : null;
   const runtimePromise = loadPeopleRuntime({ fetchJson: fetcher, hashBytes, peopleUrl, indexUrl, metadataUrl });
@@ -190,9 +191,10 @@ export function createGisPersonSelection({ map, maplibregl, fetchJson: fetcher, 
     popup.setLngLat(person.coordinates).setHTML(popupMarkup(person)).addTo(map);
     const element = popup.getElement?.();
     if (!element) return;
+    if (managedScene) getLayerLifecycleRuntime(map).registerElement("nli.people", element);
     const clickable = Boolean(onBubbleClick && person.nliUrl);
     element.classList.toggle("gis-person-bubble-popup--link", clickable);
-    element.onclick = clickable ? () => onBubbleClick(person) : null;
+    element.onclick = clickable ? () => { if (!managedScene || getLayerLifecycleRuntime(map).getDesiredIds().includes("nli.people")) onBubbleClick(person); } : null;
   };
   const show = (person, { focus = false, reducedMotion = false } = {}) => {
     const coordinates = coordinatesOf(person);

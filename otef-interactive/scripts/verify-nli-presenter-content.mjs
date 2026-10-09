@@ -9,6 +9,8 @@ import { nliFeatureBagsFromCache } from "../frontend/src/remote/nli-timeline-tra
 import { validatePresenterCoverage } from "../frontend/src/remote/nli-presenter-content.js";
 
 export const PINNED_EXPORT_SHA256 = "ec806708e478426efa1b0b793784dac3257ca78fd742f49ca382130475400fcf";
+const FIRE_ONLY_EXCLUSIONS = [572, 636, 724, 1197];
+const FIRE_ONLY_EXCLUSION_EVIDENCE = FIRE_ONLY_EXCLUSIONS.map((minute) => ({ minute, reason: "fire-only" }));
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const ids = ["nli.investigation_polygons", "nli.lines", "nli.alarms"];
 const names = ["investigation_polygons.geojson", "lines.geojson", "alarms.geojson"];
@@ -211,18 +213,30 @@ export function buildNavigationFixture({ exportBytes, computedMinutes, expectedS
   if (exportSha256 !== expectedSha256) throw new Error(`Pinned export SHA-256 mismatch: ${exportSha256}`);
   const pinned = JSON.parse(Buffer.from(exportBytes).toString("utf8"));
   const exportMinutes = pinned.beats?.map((beat) => beat.minute);
-  if (!Array.isArray(exportMinutes) || !sameValue(computedMinutes, exportMinutes)) {
+  if (!Array.isArray(exportMinutes)) {
     throw new Error("Beat minutes differ from the pinned export");
+  }
+  const sourceOpening = exportMinutes.filter((minute) => minute <= 401);
+  const sourceRemaining = exportMinutes.filter((minute) => minute >= 402);
+  if (exportMinutes.length !== 116 || sourceOpening.length !== 7 || sourceRemaining.length !== 109
+    || ![453, 454, 1197].every((minute) => exportMinutes.includes(minute))) {
+    throw new Error("Pinned source navigation snapshot does not match expected fixture evidence");
+  }
+  const expectedMinutes = exportMinutes.filter((minute) => !FIRE_ONLY_EXCLUSIONS.includes(minute));
+  if (!sameValue(computedMinutes, expectedMinutes)) {
+    throw new Error("Current beat minutes differ from the pinned export after the documented fire-only exclusions");
   }
   const fixture = {
     exportSha256,
-    minutes: exportMinutes,
-    occupiedHours: [...new Set(exportMinutes.map((minute) => Math.floor(minute / 60)))],
+    sourceMinutes: exportMinutes,
+    excludedBeats: FIRE_ONLY_EXCLUSION_EVIDENCE,
+    minutes: expectedMinutes,
+    occupiedHours: [...new Set(expectedMinutes.map((minute) => Math.floor(minute / 60)))],
   };
   const opening = fixture.minutes.filter((minute) => minute <= 401);
   const remaining = fixture.minutes.filter((minute) => minute >= 402);
-  if (fixture.minutes.length !== 116 || opening.length !== 7 || remaining.length !== 109
-    || ![453, 454, 1197].every((minute) => fixture.minutes.includes(minute))) {
+  if (fixture.minutes.length !== 112 || opening.length !== 7 || remaining.length !== 105
+    || ![453, 454].every((minute) => fixture.minutes.includes(minute))) {
     throw new Error("Pinned navigation snapshot does not match expected fixture evidence");
   }
   return fixture;
@@ -236,13 +250,21 @@ export function writeNavigationFixture({ exportBytes, computedMinutes, fixturePa
 
 export function validateNavigationFixture({ fixture, computedMinutes, expectedSha256 = PINNED_EXPORT_SHA256 }) {
   if (fixture?.exportSha256 !== expectedSha256) return ["Navigation fixture export digest differs from the pinned digest"];
+  if (!Array.isArray(fixture?.sourceMinutes) || !sameValue(fixture.excludedBeats, FIRE_ONLY_EXCLUSION_EVIDENCE)) {
+    return ["Tracked navigation fixture does not preserve the pinned source minutes and exact fire-only exclusions"];
+  }
+  const derivedMinutes = fixture.sourceMinutes.filter((minute) => !FIRE_ONLY_EXCLUSIONS.includes(minute));
+  if (!sameValue(derivedMinutes, fixture.minutes)) {
+    return ["Tracked navigation fixture omits minutes beyond the exact fire-only exclusions"];
+  }
   if (!Array.isArray(fixture?.minutes) || !sameValue(computedMinutes, fixture.minutes)) {
     return ["Beat minutes differ from the tracked navigation fixture"];
   }
   const opening = fixture.minutes.filter((minute) => minute <= 401);
   const remaining = fixture.minutes.filter((minute) => minute >= 402);
-  if (fixture.minutes.length !== 116 || opening.length !== 7 || remaining.length !== 109
-    || ![453, 454, 1197].every((minute) => fixture.minutes.includes(minute))) {
+  if (fixture.sourceMinutes.length !== 116 || fixture.minutes.length !== 112 || opening.length !== 7 || remaining.length !== 105
+    || ![453, 454].every((minute) => fixture.minutes.includes(minute))
+    || ![453, 454, 1197].every((minute) => fixture.sourceMinutes.includes(minute))) {
     return ["Tracked navigation fixture does not match expected pinned evidence"];
   }
   return [];

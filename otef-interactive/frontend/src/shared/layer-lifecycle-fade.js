@@ -188,6 +188,7 @@ function createLayerLifecycleRuntime(map, hooks) {
   const members = new Map();
   let desired = new Set();
   let pending = null;
+  let activeBatch = null;
   let durationMs = LAYER_FADE_MS;
   let serial = 0;
   let batchSerial = 0;
@@ -207,6 +208,7 @@ function createLayerLifecycleRuntime(map, hooks) {
   }
 
   function unsubscribe(member) {
+    member.readySubscription = null;
     const list = member.unsubscribers.splice(0, member.unsubscribers.length);
     for (const unsub of list) {
       if (typeof unsub === "function") unsub();
@@ -221,11 +223,16 @@ function createLayerLifecycleRuntime(map, hooks) {
   function subscribeReady(member, bindings) {
     unsubscribe(member);
     if (typeof bindings?.subscribeReady !== "function") return;
+    const subscription = {};
+    member.readySubscription = subscription;
     const unsubscribeReady = bindings.subscribeReady({
-      ready: () => markMemberReady(member.fullId),
-      failed: () => markMemberFailed(member.fullId),
+      ready: () => { if (member.readySubscription === subscription) markMemberReady(member.fullId); },
+      failed: () => { if (member.readySubscription === subscription) markMemberFailed(member.fullId); },
     });
-    if (typeof unsubscribeReady === "function") member.unsubscribers.push(unsubscribeReady);
+    if (typeof unsubscribeReady === "function") {
+      if (member.readySubscription === subscription) member.unsubscribers.push(unsubscribeReady);
+      else unsubscribeReady();
+    }
   }
 
   function addMembership(fullId) {
@@ -246,14 +253,14 @@ function createLayerLifecycleRuntime(map, hooks) {
 
   function armDeadline() {
     clearDeadline();
-    if (!pending || pending.durationMs <= 0) return;
+    if (!pending || (pending.strict ? !pending.sealed : pending.durationMs <= 0)) return;
     deadlineId = setTimer(() => {
       deadlineId = null;
       if (!pending || disposed) return;
       pending.timedOut = true;
       pending.sealed = true;
       tryFinishBatch();
-    }, LAYER_FADE_READY_TIMEOUT_MS);
+    }, pending.readinessTimeoutMs);
   }
 
   function sampleFactor(member, time) {
@@ -351,7 +358,44 @@ function createLayerLifecycleRuntime(map, hooks) {
     }
   }
 
+  function cancelTransitionRestore(channel) {
+    channel.cancelTransitionRestore?.();
+  }
+
+  function restorePaintTransitionAfterRender(member, channel, transitionKey) {
+    const restoreTransition = () => map.setPaintProperty(
+      channel.layerId,
+      transitionKey,
+      channel.transitionPresent ? channel.transition : undefined,
+    );
+    // Lightweight map adapters without events have no deferred style commit.
+    if (typeof map.on !== "function" || typeof map.off !== "function") {
+      restoreTransition();
+      return;
+    }
+    const style = map.style;
+    const layer = map.getLayer?.(channel.layerId);
+    const cancel = () => {
+      map.off("render", onRender);
+      if (channel.cancelTransitionRestore === cancel) channel.cancelTransitionRestore = null;
+    };
+    const onRender = () => {
+      const current = channel.cancelTransitionRestore === cancel;
+      cancel();
+      if (!current || disposed || members.get(member.fullId) !== member
+        || member.invalidated || member.tornDown || member.factor !== 1
+        || member.trajectory || hasEffectiveOverride(channel)
+        || map.style !== style || map.getLayer?.(channel.layerId) !== layer) return;
+      restoreTransition();
+    };
+    channel.cancelTransitionRestore = cancel;
+    // MapLibre updates/evaluates dirty paint before this event. Restoring sooner
+    // lets its default/authored transition interpolate after our final factor.
+    map.on("render", onRender);
+  }
+
   function writePaint(member, channel, factor, restore) {
+    cancelTransitionRestore(channel);
     const transitionKey = `${channel.property}-transition`;
     const restoreAuthored = restore && !hasEffectiveOverride(channel);
     const value = restoreAuthored
@@ -373,11 +417,7 @@ function createLayerLifecycleRuntime(map, hooks) {
       } else {
         map.setPaintProperty(channel.layerId, channel.property, undefined);
       }
-      map.setPaintProperty(
-        channel.layerId,
-        transitionKey,
-        channel.transitionPresent ? channel.transition : undefined,
-      );
+      restorePaintTransitionAfterRender(member, channel, transitionKey);
       return;
     }
     map.setPaintProperty(channel.layerId, transitionKey, { duration: 0, delay: 0 });
@@ -393,6 +433,7 @@ function createLayerLifecycleRuntime(map, hooks) {
   function writeMember(member, factor, restore) {
     for (const channel of member.channels) {
       if (channel.kind === "dom") writeDom(channel, factor);
+      else if (channel.kind === "callback") channel.writeFactor(factor);
       else writePaint(member, channel, factor, restore);
     }
   }
@@ -420,6 +461,10 @@ function createLayerLifecycleRuntime(map, hooks) {
     if (!member || member.tornDown) return;
     if (desired.has(member.fullId) && !member.invalidated) return;
     notifyHideListeners(member, { forceHidden: true });
+    const sceneHidden = member.sceneHiddenListeners;
+    member.sceneHiddenListeners = null;
+    for (const callback of sceneHidden || []) callback();
+    for (const channel of member.channels) cancelTransitionRestore(channel);
     member.tornDown = true;
     member.ready = false;
     member.trajectory = null;
@@ -492,6 +537,7 @@ function createLayerLifecycleRuntime(map, hooks) {
         teardown(member);
       }
     }
+    completeActiveBatch();
   }
 
   function beginTrajectory(member, from, to, duration, time) {
@@ -522,27 +568,39 @@ function createLayerLifecycleRuntime(map, hooks) {
     return member.staged && !member.revealed && !member.trajectory && member.factor === 0 && !member.tornDown;
   }
 
-  function beginBatch(nextDuration = durationMs) {
+  function beginBatch(nextDuration = durationMs, options = {}) {
     if (disposed) return null;
+    if (activeBatch) cancelBatch(activeBatch, false);
     clearDeadline();
     const createdAt = now();
     const duration = typeof nextDuration === "number" && Number.isFinite(nextDuration)
       ? Math.max(0, nextDuration)
       : durationMs;
+    const readinessTimeoutMs = Number.isFinite(options.readinessTimeoutMs) && options.readinessTimeoutMs > 0
+      ? options.readinessTimeoutMs : LAYER_FADE_READY_TIMEOUT_MS;
     durationMs = duration;
     pending = {
       id: ++batchSerial,
       createdAt,
-      deadlineAt: createdAt + LAYER_FADE_READY_TIMEOUT_MS,
+      readinessTimeoutMs,
+      deadlineAt: createdAt + readinessTimeoutMs,
       durationMs: duration,
       membership: [],
       sealed: false,
       timedOut: false,
+      strict: Object.prototype.hasOwnProperty.call(options, "requiredIds"),
+      requiredIds: normalizeIds(options.requiredIds),
+      previousDesired: options.previousDesired || new Set(desired),
+      desiredIds: new Set(desired),
+      waiters: new Set(),
+      status: null,
+      started: false,
     };
+    activeBatch = pending;
     for (const [id, member] of members) {
       if (desired.has(id) && hiddenPreparing(member) && !member.invalidated) addMembership(id);
     }
-    armDeadline();
+    if (!pending.strict) armDeadline();
     return pending;
   }
 
@@ -577,6 +635,63 @@ function createLayerLifecycleRuntime(map, hooks) {
     if (!preserve) cancelIdleFrame();
   }
 
+  function settleBatch(batch, status) {
+    if (!batch || batch.status) return;
+    batch.status = status;
+    for (const resolve of [...batch.waiters]) resolve({ status });
+    batch.waiters.clear();
+    if (activeBatch === batch) activeBatch = null;
+  }
+
+  function cancelBatch(batch, freeze = true) {
+    if (!batch || batch.status) return;
+    if (pending === batch) {
+      finishBatch(batch);
+      if (batch.strict && freeze) desired = new Set(batch.previousDesired);
+    }
+    for (const id of batch.membership) {
+      const member = members.get(id);
+      if (member) unsubscribe(member);
+    }
+    if (freeze && batch.started) {
+      const time = now();
+      for (const member of members.values()) {
+        if (!member.trajectory) continue;
+        member.factor = sampleFactor(member, time);
+        member.trajectory = null;
+        writeMember(member, member.factor, false);
+      }
+      cancelIdleFrame();
+    }
+    settleBatch(batch, "cancelled");
+  }
+
+  function completeActiveBatch() {
+    const batch = activeBatch;
+    if (!batch?.started || batch.status) return;
+    for (const member of members.values()) {
+      if (member.trajectory) return;
+    }
+    settleBatch(batch, "ready");
+  }
+
+  /** Observe this batch, including completion after its pending readiness stage. */
+  function waitForBatch(batch, { signal } = {}) {
+    if (!batch || disposed) return Promise.resolve({ status: "cancelled" });
+    if (batch.status) return Promise.resolve({ status: batch.status });
+    return new Promise(resolve => {
+      const finish = result => {
+        signal?.removeEventListener("abort", onAbort);
+        batch.waiters.delete(finish);
+        resolve(result);
+      };
+      const onAbort = () => cancelBatch(batch);
+      batch.waiters.add(finish);
+      signal?.addEventListener("abort", onAbort, { once: true });
+      if (signal?.aborted) onAbort();
+    });
+  }
+
   function finishBatch(batch) {
     clearDeadline();
     for (const id of batch.membership) {
@@ -589,15 +704,48 @@ function createLayerLifecycleRuntime(map, hooks) {
 
   function tryFinishBatch() {
     if (!pending || !pending.sealed) return;
+    if (pending.strict) {
+      const required = [...pending.requiredIds];
+      const failed = required.some(id => {
+        const member = members.get(id);
+        return member && (member.failed || member.invalidated);
+      });
+      const ready = required.every(id => {
+        const member = members.get(id);
+        return member?.staged && member.ready && !member.failed && !member.invalidated && !member.tornDown;
+      });
+      if (failed || (!ready && pending.timedOut)) {
+        const batch = pending;
+        const failedIds = required.filter(id => members.get(id)?.failed || members.get(id)?.invalidated);
+        batch.failure = {
+          reason: failed ? "member-failed" : "readiness-timeout", requiredIds: required, failedIds,
+          pendingIds: required.filter(id => {
+            const member = members.get(id);
+            return !failedIds.includes(id) && (!member?.staged || !member.ready || member.tornDown);
+          }),
+        };
+        desired = new Set(batch.previousDesired);
+        for (const id of batch.membership) {
+          const member = members.get(id);
+          if (member) unsubscribe(member);
+        }
+        finishBatch(batch);
+        settleBatch(batch, "failed");
+        return;
+      }
+      if (!ready) return;
+    }
     const waiting = pending.membership.filter((id) => {
       const member = members.get(id);
       if (!member || member.invalidated || member.tornDown || member.failed || member.ready) return false;
       return desired.has(id);
     });
-    if (waiting.length > 0 && !pending.timedOut && pending.durationMs > 0) return;
+    if (!pending.strict && waiting.length > 0 && !pending.timedOut && pending.durationMs > 0) return;
     const batch = pending;
+    batch.started = true;
     startTrajectories(batch);
     finishBatch(batch);
+    completeActiveBatch();
   }
 
   function dropDesired(fullId) {
@@ -636,13 +784,24 @@ function createLayerLifecycleRuntime(map, hooks) {
     cancelIdleFrame();
   }
 
+  /**
+   * With requiredIds, create a strict captured batch even when sameSet is true.
+   * Seal only after mounting: every required member gates the whole phase,
+   * including missing members and zero-duration reduced-motion phases.
+   * Without requiredIds, retain the legacy readiness and same-set behavior.
+   */
   function setDesiredIds(fullIds, options = {}) {
     if (disposed) return null;
     const next = normalizeIds(fullIds);
+    for (const id of next) {
+      // Reentry cancels cleanup owned by an earlier departure.
+      const member = members.get(id);
+      if (member) member.sceneHiddenListeners = null;
+    }
     const explicitZero = typeof options.durationMs === "number"
       && Number.isFinite(options.durationMs)
       && options.durationMs <= 0;
-    if (options.sameSet === true) {
+    if (options.sameSet === true && !Object.prototype.hasOwnProperty.call(options, "requiredIds")) {
       desired = next;
       if (explicitZero) {
         durationMs = 0;
@@ -657,14 +816,14 @@ function createLayerLifecycleRuntime(map, hooks) {
     }
     const previous = desired;
     desired = next;
-    beginBatch(durationMs);
+    beginBatch(durationMs, { ...options, previousDesired: previous });
     if (pending && options.preserveKeptTrajectories === true) {
       pending.preserveKeptTrajectories = true;
     }
     for (const id of previous) {
       if (!next.has(id)) dropDesired(id);
     }
-    if (durationMs <= 0) {
+    if (durationMs <= 0 && !pending?.strict) {
       if (options.preserveKeptTrajectories === true) {
         const time = now();
         for (const [id, member] of members) {
@@ -729,7 +888,10 @@ function createLayerLifecycleRuntime(map, hooks) {
   function rememberPaintChannels(member, layerDef) {
     const paint = layerDef?.paint || {};
     const layerId = layerDef?.id;
-    member.channels = member.channels.filter((channel) => channel.kind === "dom" || channel.layerId !== layerId);
+    for (const channel of member.channels) {
+      if (channel.kind === "paint" && channel.layerId === layerId) cancelTransitionRestore(channel);
+    }
+    member.channels = member.channels.filter((channel) => channel.kind !== "paint" || channel.layerId !== layerId);
     for (const property of opacityChannelsForLayerType(layerDef?.type)) {
       const present = Object.prototype.hasOwnProperty.call(paint, property);
       const transitionKey = `${property}-transition`;
@@ -881,6 +1043,33 @@ function createLayerLifecycleRuntime(map, hooks) {
     subscribeReady(member, bindings);
   }
 
+  /**
+   * Attach a renderer-owned target to the existing member factor. The callback
+   * composes authored/semantic opacity itself; it receives only the scene factor.
+   * Re-registering the same callback is idempotent.
+   */
+  function registerOpacityTarget(fullId, writeFactor, bindings = {}) {
+    if (disposed || typeof writeFactor !== "function") return;
+    const member = ensureMember(fullId);
+    member.staged = true;
+    member.tornDown = false;
+    member.failed = false;
+    if (desired.has(member.fullId)) member.invalidated = false;
+    bindCallbacks(member, bindings);
+    if (bindings.adoptVisible === true && !member.trajectory) {
+      member.factor = 1;
+      member.revealed = true;
+      member.ready = true;
+    }
+    if (!member.channels.some(channel => channel.kind === "callback" && channel.writeFactor === writeFactor)) {
+      member.channels.push({ kind: "callback", writeFactor });
+    }
+    member.factor = sampleFactor(member, now());
+    writeFactor(member.factor);
+    if (pending && desired.has(member.fullId)) addMembership(member.fullId);
+    if (typeof bindings.subscribeReady === "function") subscribeReady(member, bindings);
+  }
+
   function markMemberReady(fullId) {
     const member = members.get(String(fullId));
     if (!member || member.invalidated || member.tornDown || member.failed || !desired.has(member.fullId)) return;
@@ -913,6 +1102,7 @@ function createLayerLifecycleRuntime(map, hooks) {
   function invalidateMember(fullId) {
     const member = members.get(String(fullId));
     if (!member) return;
+    for (const channel of member.channels) cancelTransitionRestore(channel);
     member.invalidated = true;
     member.requestToken = ++serial;
     removeMembership(member.fullId);
@@ -927,6 +1117,9 @@ function createLayerLifecycleRuntime(map, hooks) {
   function dropChannels(fullId) {
     const member = members.get(String(fullId));
     if (!member) return;
+    for (const channel of member.channels) {
+      if (channel.kind !== "paint" || channel.overlay !== true) cancelTransitionRestore(channel);
+    }
     member.channels = member.channels.filter((channel) => channel.kind === "paint" && channel.overlay === true);
     cancelIdleFrame();
   }
@@ -958,7 +1151,7 @@ function createLayerLifecycleRuntime(map, hooks) {
     const channel = member.channels.find((entry) => entry.property === property);
     if (!channel) return;
     commitEffectiveGoal(channel, value);
-    writeMember(member, member.factor, member.factor === 1 && !member.trajectory);
+    writePaint(member, channel, member.factor, member.factor === 1 && !member.trajectory);
     cancelIdleFrame();
   }
 
@@ -993,7 +1186,7 @@ function createLayerLifecycleRuntime(map, hooks) {
       channel.effectiveLeaves = leaves;
       channel.effective = emitOpacityMix(leaves);
       member.factor = sampleFactor(member, time);
-      writeMember(member, member.factor, false);
+      writePaint(member, channel, member.factor, false);
       ensureFrame();
       return true;
     }
@@ -1001,7 +1194,7 @@ function createLayerLifecycleRuntime(map, hooks) {
       commitEffectiveGoal(channel, value);
       const factor = sampleFactor(member, time);
       member.factor = factor;
-      writeMember(member, factor, factor === 1 && !member.trajectory);
+      writePaint(member, channel, factor, factor === 1 && !member.trajectory);
       cancelIdleFrame();
       return true;
     }
@@ -1055,6 +1248,19 @@ function createLayerLifecycleRuntime(map, hooks) {
     return true;
   }
 
+  /** Register cleanup for this departure; reentry cancels it before a later exit. */
+  function onMemberHidden(fullId, callback) {
+    const member = members.get(String(fullId));
+    if (!member || member.tornDown || disposed) {
+      callback?.();
+      return () => {};
+    }
+    if (!member.sceneHiddenListeners) member.sceneHiddenListeners = new Set();
+    const listeners = member.sceneHiddenListeners;
+    listeners.add(callback);
+    return () => listeners.delete(callback);
+  }
+
   function beginRequest(fullId) {
     const member = ensureMember(fullId);
     member.failed = false;
@@ -1068,8 +1274,12 @@ function createLayerLifecycleRuntime(map, hooks) {
   }
 
   function commitBatch() {
-    if (disposed || !pending) return;
+    if (disposed || !pending || pending.sealed) return;
     pending.sealed = true;
+    if (pending.strict) {
+      pending.deadlineAt = now() + pending.readinessTimeoutMs;
+      armDeadline();
+    }
     tryFinishBatch();
   }
 
@@ -1100,14 +1310,22 @@ function createLayerLifecycleRuntime(map, hooks) {
   function dispose() {
     if (disposed) return;
     settleMountedEffective(true);
+    if (activeBatch) cancelBatch(activeBatch, false);
     disposed = true;
     if (frameHandle != null) cancelFrame(frameHandle);
     frameHandle = null;
     frameQueued = false;
     clearDeadline();
-    for (const member of members.values()) unsubscribe(member);
+    for (const member of members.values()) {
+      unsubscribe(member);
+      for (const channel of member.channels) cancelTransitionRestore(channel);
+    }
     members.clear();
     pending = null;
+    const onRemove = runtimeRemoveHandlers.get(map);
+    if (onRemove && typeof map.off === "function") map.off("remove", onRemove);
+    runtimeRemoveHandlers.delete(map);
+    removalDiscards.delete(map);
     runtimes.delete(map);
   }
 
@@ -1131,6 +1349,8 @@ function createLayerLifecycleRuntime(map, hooks) {
     settleHiddenIds,
     stageMapLayer,
     registerElement,
+    registerOpacityTarget,
+    waitForBatch,
     markMemberReady,
     markMemberFailed,
     subscribeMemberReady,
@@ -1142,6 +1362,7 @@ function createLayerLifecycleRuntime(map, hooks) {
     updateEffectiveOpacity,
     updateEffectivePaint,
     fadePaintLayer,
+    onMemberHidden,
     beginRequest,
     isRequestCurrent,
     getDesiredIds: () => [...desired],

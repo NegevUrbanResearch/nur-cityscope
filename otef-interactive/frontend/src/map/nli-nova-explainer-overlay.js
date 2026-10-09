@@ -120,6 +120,7 @@ export function createNovaExplainerOverlay({
   let lastFrame = null;
   let escapeScene = false;
   let disposed = false;
+  let sceneDeparting = false, cancelSceneHidden = null;
   const reducedMotion = motionMode === "reduced";
 
   const host = document.createElement("div");
@@ -301,7 +302,7 @@ export function createNovaExplainerOverlay({
   }
 
   function paint() {
-    if (disposed) return;
+    if (disposed || sceneDeparting) return;
     const escape = typeof getEscapeOverlay === "function" ? getEscapeOverlay() : null;
     if (["individual", "overlap", "mor", "settled"].some((flag) => escape?.[flag] === true)) {
       escapeScene = true;
@@ -340,6 +341,7 @@ export function createNovaExplainerOverlay({
 
   function sync(frame) {
     if (disposed) return;
+    if (sceneDeparting) return;
     lastFrame = frame;
     paint();
   }
@@ -367,7 +369,7 @@ export function createNovaExplainerOverlay({
 
   function dispose() {
     if (disposed) return;
-    disposed = true;
+    disposed = true; cancelSceneHidden?.();
     measured.clear();
     cards.clear();
     leaderGroups.clear();
@@ -376,5 +378,20 @@ export function createNovaExplainerOverlay({
     host.remove();
   }
 
-  return { sync, refresh, dispose };
+  function applyScene(snapshot, { runtime } = {}) {
+    if (disposed) return;
+    cancelSceneHidden?.(); cancelSceneHidden = null;
+    const fullId = "nli.investigation_polygons";
+    sceneDeparting = snapshot.narrativeState?.id !== "nova" || !runtime?.getDesiredIds().includes(fullId);
+    if (sceneDeparting) {
+      cancelSceneHidden = runtime?.onMemberHidden(fullId, () => {
+        if (!sceneDeparting || disposed) return;
+        lastFrame = null; sceneDeparting = false; paint(); host.hidden = true;
+      });
+      return;
+    }
+    host.hidden = false; host.style.transition = "none";
+    runtime?.registerElement(fullId, host);
+  }
+  return { sync, refresh, applyScene, dispose };
 }

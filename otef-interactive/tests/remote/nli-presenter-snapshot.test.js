@@ -46,17 +46,17 @@ it("filters the list but preserves the clock's earlier context", () => {
   expect(snapshot.arm).toEqual({ visibleMembership: ["nli.lines"], beats: [389,400,403,453,454,1197], from: 402, to: 1197 });
 });
 
-it("keeps canonical indices across the real 7/109 fixture split and event boundaries", () => {
+it("keeps canonical indices across the real 7/105 fixture split and event boundaries", () => {
   const all=navigationFixture.minutes;
-  expect(all).toHaveLength(116);
+  expect(all).toHaveLength(112);
   const input=makeSnapshotInput({minutes:all,from:402,to:1197});
   const snap=buildPresenterSnapshot(input);
   expect(snap.beats.map(b=>b.minute)).toEqual(all.slice(7));
-  expect(snap.beats).toHaveLength(109);
+  expect(snap.beats).toHaveLength(105);
   expect(snap.beats[0].clockIndex).toBe(7);
   expect(snap.beats.map(b=>b.minute)).toContain(453); // 07:33
   expect(snap.beats.map(b=>b.minute)).toContain(454); // 07:34
-  expect(snap.beats.at(-1).minute).toBe(1197); // 19:57 fixture endpoint
+  expect(snap.beats.at(-1).minute).toBe(810);
 });
 
 it("uses actual canonical minute values and stable locale-independent row keys", () => {

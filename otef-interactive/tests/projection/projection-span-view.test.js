@@ -1093,3 +1093,21 @@ test("clearProjectionSpanView unwraps layers and does not jumpTo", () => {
   expect(mapContainerEl.style.transform || "").toBe("");
   expect(containerEl.style.overflow || "").toBe("");
 });
+
+test("zero-duration model readiness retains the captured strict owner batch", async () => {
+  const hooks = fadeHooks(), map = warpMap(), image = modelImage("1");
+  const { runtime } = shownModel(image, hooks, map);
+  const handle = runtime.setDesiredIds(["nli.people_names"], { durationMs: 0, requiredIds: ["nli.people_names"] });
+  const pending = runtime.getPendingBatch();
+  syncProjectionModelImage({ map, imageEl: image, layerGroups: modelGroups(false),
+    modelInfo: { durationMs: 0, joinBatch: true }, sealBatch: false });
+  expect(runtime.getPendingBatch()).toBe(pending);
+  expect(image.style.opacity).toBe("1");
+  let factor;
+  runtime.registerOpacityTarget("nli.people_names", value => { factor = value; });
+  runtime.commitBatch();
+  expect(factor).toBe(0); expect(image.style.opacity).toBe("1");
+  runtime.markMemberReady("nli.people_names");
+  await expect(runtime.waitForBatch(handle)).resolves.toMatchObject({ status: "ready" });
+  expect(image.style.opacity).toBe("0"); expect(factor).toBe(1); runtime.dispose();
+});

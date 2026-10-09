@@ -47,6 +47,7 @@ import {
   getLayerLifecycleRuntime,
   peekLayerLifecycleRuntime,
 } from "../../frontend/src/shared/layer-lifecycle-fade.js";
+import { HOME_LAYER_IDS, IDENTITY_LAYER_IDS } from "../../frontend/src/remote/nli-staff-script.js";
 import { scaleOpacityExpression } from "../../frontend/src/shared/layer-opacity-expression.js";
 import { NLI_VISUAL_TOKENS } from "../../frontend/src/shared/nli-investigation-theme.js";
 import {
@@ -1543,6 +1544,8 @@ describe("maplibre-layer-manager", () => {
     hooks.setTime(LAYER_FADE_MS);
     hooks.flushFrame();
     expect(map.getPaintProperty(layerId, "fill-opacity")).toBe(0.8);
+    expect(map.getPaintProperty(layerId, "fill-opacity-transition")).toEqual({ duration: 0, delay: 0 });
+    map.emit("render");
     expect(map.getPaintProperty(layerId, "fill-opacity-transition")).toEqual(transition);
 
     applyLayerGroupsToMap(map, []);
@@ -1584,6 +1587,8 @@ describe("maplibre-layer-manager", () => {
     hooks.setTime(LAYER_FADE_MS);
     hooks.flushFrame();
     expect(map.getPaintProperty(layerId, "fill-opacity")).toBeUndefined();
+    expect(map.getPaintProperty(layerId, "fill-opacity-transition")).toEqual({ duration: 0, delay: 0 });
+    map.emit("render");
     expect(map.getPaintProperty(layerId, "fill-opacity-transition")).toBeUndefined();
   });
 
@@ -2377,7 +2382,7 @@ describe("ordinary live settlement ownership", () => {
     expect(map.getLayer(`${outgoing}-fill`)).toBeFalsy();
   });
 
-  it("snaps leaving people and playables to hidden while a settlement fade stays in flight", () => {
+  it("fades leaving people and playables from their incomplete intro while keeping a companion in flight", () => {
     const map = createMapMock();
     const hooks = createLifecycleHooks();
     getLayerLifecycleRuntime(map, hooks);
@@ -2405,17 +2410,24 @@ describe("ordinary live settlement ownership", () => {
 
     applyLayerGroupsToMap(map, groupsFor([settlementId]));
 
-    expect(map.getLayer(peopleLayer)).toBeFalsy();
-    expect(map.getLayer(playableLayer)).toBeFalsy();
+    expect(map.getLayer(peopleLayer)).toBeTruthy();
+    expect(map.getLayer(playableLayer)).toBeTruthy();
+    expect(map.getPaintProperty(peopleLayer, "circle-opacity")).toBeCloseTo(0.5);
     expect(map.getPaintProperty(settlementLayer, "fill-opacity")).toBeCloseTo(0.5);
 
     hooks.setTime(600);
     hooks.flushFrame();
     expect(map.getPaintProperty(settlementLayer, "fill-opacity")).toBe(1);
     expect(map.getLayer(settlementLayer)).toBeTruthy();
+    expect(map.getPaintProperty(peopleLayer, "circle-opacity")).toBeCloseTo(0.25);
+    expect(map.getPaintProperty(playableLayer, "fill-opacity")).toBeCloseTo(0.25);
+    hooks.setTime(900);
+    hooks.flushFrame();
+    expect(map.getLayer(peopleLayer)).toBeFalsy();
+    expect(map.getLayer(playableLayer)).toBeFalsy();
   });
 
-  it("snaps leaving people and playables inside an open joined batch without sealing it", () => {
+  it("fades leaving people and playables inside an open joined batch without sealing it", () => {
     const map = createMapMock();
     const hooks = createLifecycleHooks();
     const runtime = getLayerLifecycleRuntime(map, hooks);
@@ -2446,8 +2458,9 @@ describe("ordinary live settlement ownership", () => {
 
     applyLayerGroupsToMap(map, groupsFor([settlementId]), { lifecycle: { joinBatch: true } });
 
-    expect(map.getLayer(peopleLayer)).toBeFalsy();
-    expect(map.getLayer(playableLayer)).toBeFalsy();
+    expect(map.getLayer(peopleLayer)).toBeTruthy();
+    expect(map.getLayer(playableLayer)).toBeTruthy();
+    expect(map.getPaintProperty(peopleLayer, "circle-opacity")).toBeCloseTo(0.5);
     expect(map.getPaintProperty(settlementLayer, "fill-opacity")).toBeCloseTo(0.5);
     expect(runtime.getPendingBatch()).toBe(batch);
     expect(batch.sealed).toBe(false);
@@ -2457,5 +2470,200 @@ describe("ordinary live settlement ownership", () => {
     hooks.flushFrame();
     expect(map.getPaintProperty(settlementLayer, "fill-opacity")).toBe(1);
     expect(map.getLayer(settlementLayer)).toBeTruthy();
+    expect(map.getPaintProperty(peopleLayer, "circle-opacity")).toBeCloseTo(0.25);
+    expect(map.getPaintProperty(playableLayer, "fill-opacity")).toBeCloseTo(0.25);
+    hooks.setTime(900);
+    hooks.flushFrame();
+    expect(map.getLayer(peopleLayer)).toBeFalsy();
+    expect(map.getLayer(playableLayer)).toBeFalsy();
+  });
+
+  it.each([false, true])("retains every outgoing Home and Identity ID through a 600 ms exit (joined=%s)", (joined) => {
+    const map = createMapMock(); const hooks = createLifecycleHooks();
+    const runtime = getLayerLifecycleRuntime(map,hooks);
+    const ids = [...new Set([...HOME_LAYER_IDS,...IDENTITY_LAYER_IDS,"nli.lines","nli.alarms","nli.investigation_polygons"])];
+    bridgeMock.irToMapLibreLayers.mockImplementation(fullId => [{ id:`${fullId}-fill`,type:"fill",paint:{ "fill-opacity":0.8 },layout:{} }]);
+    applyLayerGroupsToMap(map,groupsFor(ids));
+    hooks.setTime(600); hooks.flushFrame();
+    if (joined) runtime.setDesiredIds([], { durationMs:600 });
+    applyLayerGroupsToMap(map,[],joined ? { lifecycle:{ joinBatch:true } } : undefined);
+    if (joined) runtime.commitBatch();
+    for (const id of ids) {
+      expect(map.getLayer(`${id}-fill`),id).toBeTruthy();
+      expect(map.getPaintProperty(`${id}-fill`,"fill-opacity"),id).toBeCloseTo(0.8);
+    }
+    hooks.setTime(900); hooks.flushFrame();
+    for (const id of ids) {
+      expect(map.getLayer(`${id}-fill`),id).toBeTruthy();
+      expect(map.getSource(id),id).toBeTruthy();
+      expect(map.getPaintProperty(`${id}-fill`,"fill-opacity"),id).toBeCloseTo(0.4);
+    }
+    hooks.setTime(1200); hooks.flushFrame();
+    for (const id of ids) {
+      expect(map.getLayer(`${id}-fill`),id).toBeFalsy();
+      expect(map.getSource(id),id).toBeFalsy();
+    }
+  });
+
+
+  it.each(["ready", "failed"])("zero-duration joined registry incoming layers wait for source and companion readiness (%s)", async (outcome) => {
+    const map = createMapMock();
+    const runtime = getLayerLifecycleRuntime(map, createLifecycleHooks());
+    let sourceReady = false;
+    map.isSourceLoaded = vi.fn(() => sourceReady);
+    bridgeMock.irToMapLibreLayers.mockReturnValue([{ id:"incoming-fill", type:"fill", paint:{ "fill-opacity":0.8 } }]);
+    const handle = runtime.setDesiredIds(["home.incoming", "missing"], { durationMs:0, requiredIds:["home.incoming", "missing"] });
+    applyLayerGroupsToMap(map, groupsFor(["home.incoming"]), { lifecycle:{ joinBatch:true }, transition:{ transitionMs:0 } });
+    expect(runtime.getPendingBatch()).toBe(handle);
+    expect(handle.sealed).toBe(false);
+    expect(map.getPaintProperty("incoming-fill", "fill-opacity")).toBe(0);
+    runtime.commitBatch();
+    runtime.registerOpacityTarget("missing", () => {});
+    if (outcome === "failed") runtime.markMemberFailed("missing");
+    else runtime.markMemberReady("missing");
+    expect(map.getPaintProperty("incoming-fill", "fill-opacity")).toBe(0);
+    if (outcome === "ready") {
+      expect(runtime.getPendingBatch()).toBe(handle);
+      sourceReady = true;
+      map.emit("sourcedata", { sourceId:"home.incoming" });
+    }
+    expect(await runtime.waitForBatch(handle)).toEqual({ status:outcome });
+    expect(map.getPaintProperty("incoming-fill", "fill-opacity")).toBe(outcome === "ready" ? 0.8 : 0);
+    runtime.dispose();
+  });
+
+  it.each(["ready", "failed"])("zero-duration joined registry outgoing layers are adopted and retained until owned completion (%s)", async (outcome) => {
+    const map = createMapMock();
+    bridgeMock.irToMapLibreLayers.mockReturnValue([{ id:"outgoing-fill", type:"fill", paint:{ "fill-opacity":0.8 } }]);
+    // A legacy cached/calibration mount has no lifecycle paint ownership yet.
+    applyInstant(map, groupsFor(["home.outgoing"]), { lifecycle:{ retainDisabled:true } });
+    const runtime = getLayerLifecycleRuntime(map, createLifecycleHooks());
+    runtime.setDesiredIds(["home.outgoing"], { durationMs:0 });
+    runtime.registerOpacityTarget("home.outgoing", () => {}, { adoptVisible:true });
+    runtime.commitBatch();
+    const handle = runtime.setDesiredIds(["missing"], { durationMs:0, requiredIds:["missing"] });
+    applyLayerGroupsToMap(map, [], { lifecycle:{ joinBatch:true }, transition:{ transitionMs:0 } });
+    expect(runtime.getPendingBatch()).toBe(handle);
+    expect(handle.sealed).toBe(false);
+    expect(map.getLayer("outgoing-fill")).toBeTruthy();
+    expect(map.getSource("home.outgoing")).toBeTruthy();
+    expect(map.getPaintProperty("outgoing-fill", "fill-opacity")).toBe(0.8);
+    runtime.commitBatch();
+    expect(map.getLayer("outgoing-fill")).toBeTruthy();
+    runtime.registerOpacityTarget("missing", () => {});
+    if (outcome === "ready") runtime.markMemberReady("missing");
+    else runtime.markMemberFailed("missing");
+    expect(await runtime.waitForBatch(handle)).toEqual({ status:outcome });
+    expect(Boolean(map.getLayer("outgoing-fill"))).toBe(outcome === "failed");
+    expect(Boolean(map.getSource("home.outgoing"))).toBe(outcome === "failed");
+    if (outcome === "failed") expect(map.getPaintProperty("outgoing-fill", "fill-opacity")).toBe(0.8);
+    runtime.dispose();
+  });
+
+
+  it("re-adopts loaded registry sources after the lifecycle runtime is replaced before a strict scene", () => {
+    const map = createMapMock(); const hooks = createLifecycleHooks();
+    map.isSourceLoaded = vi.fn(() => true);
+    useSettlementFill(1);
+    const previous = getLayerLifecycleRuntime(map, hooks);
+    applyLayerGroupsToMap(map, groupsFor([YISHUV_ID]));
+    hooks.setTime(600); hooks.flushFrame();
+    expect(previous.getRenderedReadiness().ready).toBe(true);
+    const source = map.getSource(YISHUV_ID), layer = map.getLayer(YISHUV_LAYER);
+    previous.dispose();
+    const fresh = getLayerLifecycleRuntime(map, hooks);
+    fresh.setDesiredIds([YISHUV_ID], { durationMs: 0, requiredIds: [YISHUV_ID] });
+    applyLayerGroupsToMap(map, groupsFor([YISHUV_ID]), { lifecycle: { joinBatch: true } });
+    expect(fresh.hasPaintChannel(YISHUV_ID, "fill-opacity")).toBe(true);
+    fresh.commitBatch();
+    expect(fresh.getRenderedReadiness()).toMatchObject({ ready: true, pendingIds: [] });
+    expect(map.getSource(YISHUV_ID)).toBe(source);
+    expect(map.getLayer(YISHUV_LAYER)).toBe(layer);
+    expect(map.removeLayer).not.toHaveBeenCalled();
+    expect(map.removeSource).not.toHaveBeenCalled();
+    fresh.dispose();
+  });
+
+  it("acknowledges a required hidden alarm source loaded without another sourcedata event on render", () => {
+    const map = createMapMock();
+    let loaded = false;
+    map.isSourceLoaded = vi.fn(() => loaded);
+    bridgeMock.irToMapLibreLayers.mockReturnValue([{ id: "alarm-base", type: "circle", paint: { "circle-opacity": .4 } }]);
+    const runtime = getLayerLifecycleRuntime(map, createLifecycleHooks());
+    runtime.setDesiredIds([INVESTIGATION_ALARMS_FULL_ID, "companion"], { durationMs: 0,
+      requiredIds: [INVESTIGATION_ALARMS_FULL_ID, "companion"] });
+    applyLayerGroupsToMap(map, groupsFor([INVESTIGATION_ALARMS_FULL_ID]), { lifecycle: { joinBatch: true } });
+    syncTimelineBaseLayerVisibility(map, { suppressedFullIds: [INVESTIGATION_ALARMS_FULL_ID], enabledFullIds: [INVESTIGATION_ALARMS_FULL_ID] });
+    runtime.registerOpacityTarget("companion", () => {});
+    runtime.commitBatch();
+    map.emit("sourcedata", { sourceId: INVESTIGATION_ALARMS_FULL_ID, isSourceLoaded: false });
+    loaded = true;
+    map.emit("render");
+    expect(map.listenerCount("sourcedata")).toBe(0);
+    expect(map.listenerCount("render")).toBe(0);
+    expect(runtime.getRenderedReadiness().ready).toBe(false);
+    expect(map.getPaintProperty("alarm-base", "circle-opacity")).toBe(0);
+    runtime.markMemberReady("companion");
+    expect(runtime.getRenderedReadiness()).toMatchObject({ ready: true, pendingIds: [] });
+    expect(map.getLayoutProperty("alarm-base", "visibility")).toBe("none");
+    runtime.dispose();
+  });
+
+  it.each(["supersede", "dispose", "replace-source", "replace-style"])("pending render source readiness ignores stale callbacks after %s", (action) => {
+    const map = createMapMock();
+    let loaded = false;
+    map.isSourceLoaded = vi.fn(() => loaded);
+    bridgeMock.irToMapLibreLayers.mockReturnValue([{ id: "alarm-base", type: "circle", paint: { "circle-opacity": .4 } }]);
+    const runtime = getLayerLifecycleRuntime(map, createLifecycleHooks());
+    runtime.setDesiredIds([INVESTIGATION_ALARMS_FULL_ID], { durationMs: 0, requiredIds: [INVESTIGATION_ALARMS_FULL_ID] });
+    applyLayerGroupsToMap(map, groupsFor([INVESTIGATION_ALARMS_FULL_ID]), { lifecycle: { joinBatch: true } });
+    runtime.commitBatch();
+    const stale = map.on.mock.calls.filter(([event]) => event === "render").map(([, callback]) => callback);
+    expect(stale).toHaveLength(1);
+    if (action === "dispose") runtime.dispose();
+    else if (action === "supersede") {
+      runtime.setDesiredIds([INVESTIGATION_ALARMS_FULL_ID], { durationMs: 0, requiredIds: [INVESTIGATION_ALARMS_FULL_ID] });
+      applyLayerGroupsToMap(map, groupsFor([INVESTIGATION_ALARMS_FULL_ID]), { lifecycle: { joinBatch: true } });
+      runtime.commitBatch();
+    } else if (action === "replace-style") {
+      map.style = {};
+    } else {
+      map.removeSource(INVESTIGATION_ALARMS_FULL_ID);
+      map.addSource(INVESTIGATION_ALARMS_FULL_ID, { type: "geojson" });
+    }
+    loaded = true;
+    const writes = map.setPaintProperty.mock.calls.length;
+    stale.forEach(callback => callback());
+    expect(map.setPaintProperty).toHaveBeenCalledTimes(writes);
+    if (action === "supersede") {
+      expect(runtime.getRenderedReadiness().ready).toBe(false);
+      map.emit("render");
+      expect(runtime.getRenderedReadiness().ready).toBe(true);
+    } else {
+      map.emit("render");
+      expect(runtime.getRenderedReadiness().ready).toBe(false);
+    }
+    expect(map.listenerCount("render")).toBe(0);
+    expect(map.listenerCount("sourcedata")).toBe(0);
+    runtime.dispose();
+  });
+  it("renews source readiness when a strict scene supersedes a pending initial registry mount", () => {
+    const map = createMapMock(); const hooks = createLifecycleHooks(); let loaded = false;
+    map.isSourceLoaded = vi.fn(() => loaded); useSettlementFill(.8);
+    const runtime = getLayerLifecycleRuntime(map, hooks);
+    applyLayerGroupsToMap(map, groupsFor([YISHUV_ID]));
+    expect(map.getPaintProperty(YISHUV_LAYER, "fill-opacity")).toBe(0);
+    const staleReady = map.on.mock.calls.filter(([event]) => event === "sourcedata").map(([, callback]) => callback);
+    runtime.setDesiredIds([YISHUV_ID], { durationMs: 0, requiredIds: [YISHUV_ID] });
+    applyLayerGroupsToMap(map, groupsFor([YISHUV_ID]), { lifecycle: { joinBatch: true } });
+    runtime.commitBatch();
+    expect(map.getPaintProperty(YISHUV_LAYER, "fill-opacity")).toBe(0);
+    loaded = true;
+    for (const callback of staleReady) callback({ sourceId: YISHUV_ID, isSourceLoaded: true });
+    expect(runtime.getRenderedReadiness().ready).toBe(false);
+    map.emit("sourcedata", { sourceId: YISHUV_ID, isSourceLoaded: true });
+    expect(runtime.getRenderedReadiness()).toMatchObject({ ready: true, pendingIds: [] });
+    expect(map.getPaintProperty(YISHUV_LAYER, "fill-opacity")).toBe(.8);
+    runtime.dispose();
   });
 });

@@ -404,7 +404,6 @@ describe("investigation polygon renderer", () => {
     };
     const cases = [
       ["battle", "מרחב לחימה - קרב", ["#000000", "#808080", "#ffffff"], [0.2, 0.4, 0.6]],
-      ["fire", "שריפה", ["#202020", "#808080", "#d0d0d0"], [0.2, 0.4, 0.6]],
       ["kidnap", "מוקד חטיפה", ["#ffff73", "#ffff73", "#ffff73"], [0.1, 0.3, 0.8]],
     ];
     for (const [suffix, notes, colors, opacities] of cases) {
@@ -551,7 +550,6 @@ describe("investigation polygon renderer", () => {
 
   it.each([
     ["battle", "מרחב לחימה - קרב", ["#8e0912", "#c7171c", "#f14230", "#fb7a5a", "#fcad91", "#fdd1be"], [1, 1, 1, 1, 1, 1]],
-    ["fire", "שריפה", ["#7b5622", "#a66b18", "#d07e0c", "#f99201", "#ffc400"], [1, 1, 1, 1, 1]],
     ["kidnap", "מוקד חטיפה", ["#ffff73", "#ffff73", "#ffff73", "#ffff73", "#ffff73"], [0.14, 0.27, 0.46, 0.68, 1]],
   ])("hands off %s entry paint to the current conveyor at completion", (suffix, notes, colors, opacities) => {
     const makeData = () => {
@@ -638,7 +636,7 @@ describe("investigation polygon renderer", () => {
     expect(allSources.every((source, index) => source.setData.mock.calls.length === setDataCalls[index])).toBe(true);
   });
 
-  it("renders processed buffered bands outside-to-inside and uses original fire outlines", () => {
+  it("renders battle bands but excludes fire geometry, bands, and outlines at the same timestamp", () => {
     const map = makeMap();
     const renderer = createInvestigationPolygonRenderer(map, {}, { dataVersion: "v1" });
     const battle = polygon(1, 400, "עלומים", "מרחב לחימה - קרב");
@@ -659,7 +657,7 @@ describe("investigation polygon renderer", () => {
     const band = { ...battle, properties: { ...battle.properties, __cim_gradient_band: 0 } };
     renderer.render(frame([400], { motionMode: "full" }), {
       polygonFeatures: [battle, fire],
-      bufferedGradientFeatures: [band],
+      bufferedGradientFeatures: [band, { ...fire, properties: { ...fire.properties, __cim_gradient_band: 0 } }],
       polygonStyle: style,
       bufferedGradientSidecarStatus: "ready",
     });
@@ -671,9 +669,11 @@ describe("investigation polygon renderer", () => {
     const fireOutline = map.addLayer.mock.calls
       .map(([layer]) => layer)
       .find((layer) => layer.type === "line" && layer.id.includes("fire"));
-    expect(fireOutline.paint["line-color"]).toBe("#555555");
-    expect(fireOutline.source).toBe("nli-investigation-polygon-category-outline");
-    expect(fireOutline.paint["line-gradient"]).toBeUndefined();
+    expect(fireOutline).toBeUndefined();
+    for (const id of ["nli-investigation-polygon-category", "nli-investigation-polygon-category-outline", "nli-investigation-polygon-buffered-gradient"]) {
+      const features = map.sources.get(id).setData.mock.calls.at(-1)[0].features;
+      expect(features.some(feature => feature.properties.Notes === "שריפה")).toBe(false);
+    }
   });
 
   it("keeps kidnapping solid when a declared buffered sidecar fails", () => {
@@ -716,7 +716,7 @@ describe("investigation polygon renderer", () => {
     ]);
   });
 
-  it("keeps failed battle and fire fills transparent during projection dimming", () => {
+  it("keeps failed battle fills transparent and fire layers absent during projection dimming", () => {
     const map = makeMap();
     const renderer = createInvestigationPolygonRenderer(map, {});
     const battle = polygon(1, 400, "עלומים", "מרחב לחימה - קרב");
@@ -731,7 +731,7 @@ describe("investigation polygon renderer", () => {
       bufferedGradientSidecarStatus: "failed",
     });
     expect(map.paints.get("nli-investigation-polygon-category-fill-battle:fill-opacity")).toBe(0);
-    expect(map.paints.get("nli-investigation-polygon-category-fill-fire:fill-opacity")).toBe(0);
+    expect(map.getLayer("nli-investigation-polygon-category-fill-fire")).toBeNull();
   });
 
   it("composes processed outline opacity with projection dimming", () => {
@@ -989,7 +989,7 @@ describe("investigation polygon renderer", () => {
     renderer.render(frame([400], {
       motionMode: "reduced", projectionNovaDim: true,
     }), processedOverlayData(features));
-    for (const suffix of ["battle", "kidnap", "fire"]) {
+    for (const suffix of ["battle", "kidnap"]) {
       expect(map.paints.get(`nli-investigation-polygon-category-fill-${suffix}:fill-opacity`)).toEqual([
         "case",
         ["in", ["to-string", ["get", "OBJECTID"]], ["literal", []]],
@@ -1042,11 +1042,11 @@ describe("investigation polygon renderer", () => {
   it("writes polygon hole rings to the authored outline source", () => {
     const map = makeMap();
     const renderer = createInvestigationPolygonRenderer(map, {});
-    const fire = polygon(1, 400, "עלומים", "שריפה");
-    fire.geometry.coordinates.push([
+    const battle = polygon(1, 400, "עלומים", "מרחב לחימה - קרב");
+    battle.geometry.coordinates.push([
       [34.002, 31.002], [34.008, 31.002], [34.008, 31.008], [34.002, 31.008], [34.002, 31.002],
     ]);
-    renderer.render(frame([400]), processedOverlayData([fire]));
+    renderer.render(frame([400]), processedOverlayData([battle]));
     const outline = map.sources.get("nli-investigation-polygon-category-outline");
     const feats = outline.setData.mock.calls.at(-1)[0].features;
     expect(feats).toHaveLength(2);

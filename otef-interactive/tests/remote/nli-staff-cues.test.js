@@ -36,6 +36,21 @@ function setup({ narrativeId = null, personId = null, layers, stop, start, end }
 }
 
 describe("NLI staff cue runner", () => {
+  test("the GIS cover opens before any scene mutation and a failed cover keeps the old scene", async () => {
+    const h = setup();
+    let releaseCover;
+    const opening = new Promise((resolve) => { releaseCover = resolve; });
+    const pending = h.runner.apply({ layers: ["nli.people_names"], clock: "idle" }, null, () => opening);
+    await Promise.resolve();
+    expect(h.calls).toEqual([]);
+    releaseCover(true);
+    await expect(pending).resolves.toEqual({ status: "ready" });
+    expect(h.calls[0]).toEqual(["layers", ["nli.people_names"]]);
+    const failed = setup();
+    await expect(failed.runner.apply({ layers: ["nli.people_names"], clock: "idle" }, null, async () => false))
+      .resolves.toEqual({ status: "failed" });
+    expect(failed.calls).toEqual([]);
+  });
   function presentationSetup({ mutate } = {}) {
     let clock = idleNliClock();
     let narrativeId = null;
@@ -279,15 +294,15 @@ describe("NLI staff cue runner", () => {
     expect(calls.slice(before).find(([name]) => name === "start")[1]).toEqual({ from: 402 });
   });
 
-  test("Segev idle to rest-of-day starts the clock before clearing narrative", async () => {
+  test("Segev idle to rest-of-day clears narrative under the hold before selecting timeline beats", async () => {
     const { runner, calls } = setup({ narrativeId: "segev" });
     await runner.apply({ layers: [BASE, LINES], clock: { from: 402 }, escape: {} }, null);
-    expect(calls.map(([name]) => name)).toEqual(["escape", "start", "narrative", "layers"]);
+    expect(calls.map(([name]) => name)).toEqual(["narrative", "escape", "start", "layers"]);
     expect(calls.find(([name]) => name === "start")[1]).toEqual({ from: 402 });
     expect(calls.find(([name]) => name === "narrative")[1]).toBeNull();
     expect(calls.some(([name]) => name === "stop")).toBe(false);
     expect(calls.findIndex(([name]) => name === "start"))
-      .toBeLessThan(calls.findIndex(([name]) => name === "narrative"));
+      .toBeGreaterThan(calls.findIndex(([name]) => name === "narrative"));
   });
 
   test("rest-of-day play to Nova idle publishes Nova before dropping timeline layers", async () => {
@@ -511,4 +526,176 @@ describe("NLI staff cue runner", () => {
     await commitSceneLayers({ setEnabledLayerIds }, [BASE, BASE]);
     expect(setEnabledLayerIds).toHaveBeenCalledWith([BASE]);
   });
+});
+test("publishes the scene hold before dispatching the presentation callback", async () => {
+  let clock = idleNliClock();
+  let heldAtDispatch;
+  const dataContext = {
+    correctedNow: () => 1000,
+    getInvestigationClock: () => clock,
+    patchInvestigationClock: async next => { clock = next; return { ok: true }; },
+  };
+  const runner = createCueRunner({ dataContext, commitLayers: async () => {}, stopClock: async () => {} });
+  await runner.apply({ layers: [], clock: "idle" }, null, async () => {
+    heldAtDispatch = clock.presentationPendingUntilMs; return true;
+  });
+  expect(heldAtDispatch).toBe(16000);
+  expect(clock).not.toHaveProperty("presentationPendingUntilMs");
+});
+
+test("an old runner cannot release a newer runner's hold at the same clock time", async () => {
+  let clock = idleNliClock(), releaseA, releaseB;
+  const dataContext = {
+    correctedNow: () => 1000,
+    getInvestigationClock: () => clock,
+    patchInvestigationClock: async next => { clock = next; return { ok: true }; },
+  };
+  const a = createCueRunner({ dataContext, commitLayers: () => new Promise(resolve => { releaseA = resolve; }), stopClock: async () => {} });
+  const b = createCueRunner({ dataContext, commitLayers: () => new Promise(resolve => { releaseB = resolve; }), stopClock: async () => {} });
+  const first = a.apply({ layers: [], clock: "idle" });
+  await vi.waitFor(() => expect(releaseA).toBeTypeOf("function"));
+  const second = b.apply({ layers: [], clock: "idle" });
+  await vi.waitFor(() => expect(releaseB).toBeTypeOf("function"));
+  const newestDeadline = clock.presentationPendingUntilMs;
+  a.cancel(); releaseA(); await first;
+  await new Promise(resolve => setTimeout(resolve, 0));
+  expect(clock.presentationPendingUntilMs).toBe(newestDeadline);
+  releaseB(); await second;
+  expect(clock).not.toHaveProperty("presentationPendingUntilMs");
+});
+test("queued ordinary clock mutations preserve the active cue hold accepted ahead of them", async () => {
+  const { patchInvestigationClock } = await import("../../frontend/src/shared/otef-data-context/OTEFDataContext-actions.js");
+  const { OTEF_API } = await import("../../frontend/src/shared/api-client.js");
+  const ctx = {
+    _tableName: "otef", _clientId: "test",
+    _narrativeState: { id: null, revision: 0 },
+    _investigationClock: idleNliClock(),
+    correctedNow: () => 1000,
+    _setInvestigationClock(next) { this._investigationClock = next; },
+  };
+  let serverClock = ctx._investigationClock;
+  const transmitted = [];
+  const send = vi.spyOn(OTEF_API, "updateInvestigationClock").mockImplementation(async (_, value) => {
+    transmitted.push(value);
+    serverClock = { ...value, revision: serverClock.revision + 1 };
+    return { investigation_clock: serverClock };
+  });
+  try {
+    const begin = patchInvestigationClock(ctx, { ...ctx._investigationClock, presentationPendingUntilMs: 16000 },
+      { claimPresentationHold: true });
+    const transport = patchInvestigationClock(ctx, { ...ctx._investigationClock, phase: "paused" });
+    await expect(begin).resolves.toMatchObject({ ok: true });
+    await expect(transport).resolves.toMatchObject({ ok: true });
+    expect(transmitted[1].presentationPendingUntilMs).toBe(16000);
+    expect(ctx._investigationClock.presentationPendingUntilMs).toBe(16000);
+    const oldRelease = patchInvestigationClock(ctx, idleNliClock(), { releasePresentationHold: 15999 });
+    await oldRelease;
+    expect(ctx._investigationClock.presentationPendingUntilMs).toBe(16000);
+    await patchInvestigationClock(ctx, idleNliClock(), { releasePresentationHold: 16000 });
+    expect(ctx._investigationClock).not.toHaveProperty("presentationPendingUntilMs");
+  } finally { send.mockRestore(); }
+});
+
+test("three simultaneous cue writers each own a distinct bounded hold", async () => {
+  let clock = idleNliClock();
+  const releases = [];
+  const dataContext = {
+    correctedNow: () => 1000, getInvestigationClock: () => clock,
+    patchInvestigationClock: async next => { clock = next; return { ok: true }; },
+  };
+  const deadlines = [], work = [], runners = [];
+  for (let i = 0; i < 3; i += 1) {
+    const runner = createCueRunner({ dataContext, stopClock: async () => {},
+      commitLayers: () => new Promise(resolve => releases.push(resolve)) });
+    runners.push(runner); work.push(runner.apply({ layers: [], clock: "idle" }));
+    await vi.waitFor(() => expect(releases).toHaveLength(i + 1));
+    deadlines.push(clock.presentationPendingUntilMs);
+  }
+  expect(new Set(deadlines).size).toBe(3);
+  expect(deadlines.every(value => value > 1000 && value <= 16000)).toBe(true);
+  for (let i = 0; i < 2; i += 1) { runners[i].cancel(); releases[i](); await work[i]; }
+  await new Promise(resolve => setTimeout(resolve, 0));
+  expect(clock.presentationPendingUntilMs).toBe(deadlines[2]);
+  releases[2](); await work[2];
+});
+async function actionClockHarness(initialClock = idleNliClock()) {
+  const { patchInvestigationClock } = await import("../../frontend/src/shared/otef-data-context/OTEFDataContext-actions.js");
+  const { OTEF_API } = await import("../../frontend/src/shared/api-client.js");
+  const ctx = {
+    _tableName: "otef", _clientId: "review-regression",
+    _narrativeState: { id: null, revision: 0 }, _investigationClock: initialClock,
+    correctedNow: () => 1000,
+    _setInvestigationClock(next) { this._investigationClock = next; },
+    getInvestigationClock() { return this._investigationClock; },
+    getNarrativeState() { return this._narrativeState; },
+    patchInvestigationClock(next, options) { return patchInvestigationClock(this, next, options); },
+  };
+  return { ctx, OTEF_API };
+}
+
+test("a clock payload queued behind its owned release cannot recreate the released hold", async () => {
+  const { ctx, OTEF_API } = await actionClockHarness({ ...idleNliClock(), presentationPendingUntilMs: 16000 });
+  const heldClock = ctx.getInvestigationClock();
+  let acknowledgeRelease, revision = 0;
+  const transmitted = [];
+  const send = vi.spyOn(OTEF_API, "updateInvestigationClock").mockImplementation(async (_, clock) => {
+    transmitted.push(clock);
+    const acknowledgement = { ...clock, revision: ++revision };
+    if (transmitted.length === 1) await new Promise(resolve => { acknowledgeRelease = resolve; });
+    return { investigation_clock: acknowledgement };
+  });
+  try {
+    const releaseClock = idleNliClock(heldClock);
+    delete releaseClock.presentationPendingUntilMs;
+    const release = ctx.patchInvestigationClock(releaseClock, { releasePresentationHold: 16000 });
+    await vi.waitFor(() => expect(acknowledgeRelease).toBeTypeOf("function"));
+    const ordinary = ctx.patchInvestigationClock({ ...heldClock, phase: "paused" });
+    acknowledgeRelease(); await release; await ordinary;
+    expect(transmitted.map(clock => clock.presentationPendingUntilMs)).toEqual([undefined, undefined]);
+    expect(ctx.getInvestigationClock()).not.toHaveProperty("presentationPendingUntilMs");
+  } finally { send.mockRestore(); }
+});
+
+test.each([false, true])("WS-first owned release acknowledgement settles the actual cue and protects a newer hold (newer=%s)", async (newerHold) => {
+  const { ctx, OTEF_API } = await actionClockHarness();
+  let revision = 0;
+  const send = vi.spyOn(OTEF_API, "updateInvestigationClock").mockImplementation(async (_, clock) => {
+    const acknowledgement = { ...clock, revision: ++revision };
+    if (!Object.hasOwn(clock, "presentationPendingUntilMs")) {
+      ctx._setInvestigationClock(newerHold
+        ? { ...acknowledgement, presentationPendingUntilMs: 17000, revision: ++revision }
+        : acknowledgement);
+    }
+    return { investigation_clock: acknowledgement };
+  });
+  try {
+    const runner = createCueRunner({ dataContext: ctx, commitLayers: async () => {}, stopClock: async () => {} });
+    await expect(runner.apply({ layers: [], clock: "idle" })).resolves.toEqual({ status: newerHold ? "failed" : "ready" });
+    if (newerHold) expect(ctx.getInvestigationClock().presentationPendingUntilMs).toBe(17000);
+    else expect(ctx.getInvestigationClock()).not.toHaveProperty("presentationPendingUntilMs");
+  } finally { send.mockRestore(); }
+});
+
+test("scene handle accepts ready under hold and waits opened after release", async () => {
+  let clock = idleNliClock(); const order = [];
+  let ready, opened;
+  const handle = { prepared: new Promise(r => { ready = r; }), opened: new Promise(r => { opened = r; }), cancel: vi.fn() };
+  const runner = createCueRunner({
+    dataContext: {
+      getInvestigationClock: () => clock, correctedNow: () => 0,
+      getNarrativeState: () => ({ id: null }),
+      patchInvestigationClock: async value => { clock = value; order.push(value.presentationPendingUntilMs ? "hold" : "release"); return { ok: true }; },
+      setNarrative: async () => {}, setEscapeOverlay: async () => {},
+    },
+    commitLayers: async () => { order.push("layers"); expect(clock.presentationPendingUntilMs).toBe(15000); },
+    stopClock: async () => {},
+  });
+  let settled = false;
+  const result = runner.apply({ layers: ["nli.people_names"], clock: "idle" }, null, () => { order.push("dispatch"); return handle; });
+  result.then(() => { settled = true; });
+  for (let i = 0; i < 12; i++) await Promise.resolve();
+  expect(order).toEqual(["hold", "dispatch"]);
+  ready(true); for (let i = 0; i < 20; i++) await Promise.resolve();
+  expect(order).toEqual(["hold", "dispatch", "layers", "release"]); expect(settled).toBe(false);
+  opened(true); await expect(result).resolves.toEqual({ status: "ready" });
 });

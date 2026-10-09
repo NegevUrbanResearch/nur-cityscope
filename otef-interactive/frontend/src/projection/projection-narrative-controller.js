@@ -1,5 +1,6 @@
 import { getNliNarrative, normalizeNarrativeState } from "../shared/nli-narratives.js";
 import { applyNarrativeHouseOutlineFilter, applyNarrativePeopleFilter } from "../map/nli-people-marker-filter.js";
+import { getNarrativeSceneContentKey } from "../shared/maplibre-narrative-focus.js";
 
 /** Apply durable narrative state on projection without a GIS family marker. */
 export function createProjectionNarrativeController({
@@ -15,6 +16,7 @@ export function createProjectionNarrativeController({
   };
 
   return {
+    getSceneContentKey: getNarrativeSceneContentKey,
     apply(nextState) {
       if (disposed) return false;
       const normalized = normalizeNarrativeState(nextState);

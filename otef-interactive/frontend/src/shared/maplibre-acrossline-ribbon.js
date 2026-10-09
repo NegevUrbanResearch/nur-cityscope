@@ -366,7 +366,7 @@ export function createAcrossLineRibbonLayer({ id, profile, getFrame, onDrawable 
         && onDrawable() === true;
       if (resetOrigin) built = buildRibbonVertexData(features, builtOptions);
       drawRibbonVertices(gl, this, projection, built, frame.opacity);
-      if (resetOrigin || progressIsRevealing(built.progressData)) requestRenderFrame(this.map);
+      if (resetOrigin || (frame.revealPaused !== true && progressIsRevealing(built.progressData))) requestRenderFrame(this.map);
     },
     onRemove(map, gl) {
       if (this.buffer) gl.deleteBuffer(this.buffer);

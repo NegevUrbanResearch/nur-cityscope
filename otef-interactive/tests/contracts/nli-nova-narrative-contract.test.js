@@ -107,11 +107,13 @@ describe("NLI Nova overlay remount contract", () => {
     expect(coordinator).toMatch(/surface === "gis"|surface === 'gis'/);
   });
 
-  test("GIS map-main overlay remount still uses the narrative onStyleLoad bus", () => {
+  test("GIS managed overlay remount delegates reset and snapshot activation to the scene binding", () => {
     const mapEntry = readSource("../../frontend/src/entries/map-main.js");
-    expect(mapEntry).toMatch(
-      /onStyleLoadOverlay:\s*\(\)\s*=>\s*\{\s*novaEscapeCoordinator\?\.onStyleLoad\?\.\(\{\s*styleLoss:\s*true\s*\}\)/,
-    );
+    const binding = readSource("../../frontend/src/shared/nli-scene-display-binding.js");
+    expect(mapEntry).toContain("void sceneBinding.onStyleLoad()");
+    expect(mapEntry).toContain("escapeCoordinator: novaEscapeCoordinator");
+    expect(binding).toContain("escapeCoordinator?.resetStyle?.()");
+    expect(binding).toContain("escapeCoordinator?.applySnapshot?.(snapshot, options)");
   });
 
   test("projection-main wires onParallelImpactIdsChanged; GIS map-main does not", () => {

@@ -46,6 +46,7 @@ import {
   stopNliClock,
 } from "../../frontend/src/shared/nli-investigation-clock.js";
 import { NLI_NOVA_STORY } from "../../frontend/src/shared/nli-nova-story.js";
+import { scaleOpacityExpression } from "../../frontend/src/shared/layer-opacity-expression.js";
 import { getLayerLifecycleRuntime } from "../../frontend/src/shared/layer-lifecycle-fade.js";
 
 const INVESTIGATION_FEATURES = [
@@ -607,7 +608,7 @@ describe("syncInvestigationTimelineToMap", () => {
       ["case", ["==", ["get", "OBJECTID"], 19], 1, 0.08],
     );
     expect(map.getPaintProperty(SHEMOT_LABEL_ID, "text-opacity")).toEqual(
-      ["case", ["==", ["get", "cityname"], "בארי"], 1, 0.18],
+      ["case", ["==", ["get", "cityname"], "בארי"], 1, 0.08],
     );
 
     await syncInvestigationTimelineToMap(map, idleNliClock(), hidden, { ...deps, narrativeFocus: null });
@@ -1253,6 +1254,79 @@ describe("syncInvestigationTimelineToMap", () => {
     );
     expect(map.getLayoutProperty("nli__lines__line__0", "visibility")).toBe("visible");
     disposeInvestigationTimelineForMap(map);
+  });
+
+  it.each(["gis", "projection"])("keeps the solid base hidden after the idle final-state scene fade on %s", async (displayProfile) => {
+    const map = makeMap();
+    const baseId = "nli__lines__line__0";
+    let time = 0;
+    let lifecycleFrame = null;
+    const runtime = getLayerLifecycleRuntime(map, {
+      now: () => time,
+      requestFrame: (callback) => { lifecycleFrame = callback; return 1; },
+      cancelFrame: () => { lifecycleFrame = null; },
+    });
+    const stageBase = () => {
+      const { stagedLayerDef } = runtime.stageMapLayer(INVESTIGATION_LINES_FULL_ID, {
+        id: baseId, type: "line", source: INVESTIGATION_LINES_FULL_ID,
+        paint: { "line-opacity": 1 },
+      }, { onTeardown: () => map.removeLayer(baseId) });
+      if (!map.getLayer(baseId)) map.addLayer(stagedLayerDef);
+    };
+    runtime.setDesiredIds([INVESTIGATION_LINES_FULL_ID], { durationMs: 400 });
+    stageBase();
+    const approach = {
+      type: "Feature",
+      properties: { OBJECTID: 1001, parent_objectid: 9, route_confidence: "unconfirmed", timeline_minutes: 400 },
+      geometry: { type: "LineString", coordinates: [[34.3, 31.3], [34.4, 31.4]] },
+    };
+    const groups = [{ id: "nli", layers: [{ id: "lines", enabled: true }] }];
+    const deps = {
+      featuresById: { [INVESTIGATION_LINES_FULL_ID]: [LINE_FEATURES[0], approach] },
+      investigationSettlementsUrl: null, displayProfile, now: () => time, joinBatch: true,
+    };
+    await syncInvestigationTimelineToMap(map, idleNliClock(), groups, deps);
+    runtime.commitBatch();
+    time = 1000;
+    lifecycleFrame?.(time);
+
+    // Scene fades must not fill the unconfirmed overlay's gaps with the base line.
+    expect(map.getPaintProperty(baseId, "line-opacity")).toBe(0);
+    const unconfirmed = map.getSource("nli-investigation-line-unconfirmed-completed").setData.mock.calls.at(-1)[0];
+    expect(unconfirmed.features.map((feature) => feature.properties.OBJECTID)).toEqual([1001]);
+    const carrier = map.getSource("nli-investigation-line-completed-carrier").setData.mock.calls.at(-1)[0];
+    expect(carrier.features.map((feature) => feature.properties.OBJECTID)).toEqual([9]);
+    const dashId = "nli-investigation-line-unconfirmed-completed-line";
+    const dash = map.getPaintProperty(dashId, "line-dasharray");
+    const width = map.getPaintProperty(dashId, "line-width");
+    expect(dash[0] * width).toBeCloseTo(9);
+    expect(dash[1] * width).toBeCloseTo(12);
+
+    runtime.setDesiredIds([], { durationMs: 400 });
+    await syncInvestigationTimelineToMap(map, idleNliClock(), [], deps);
+    runtime.commitBatch();
+    time = 1500;
+    lifecycleFrame?.(time);
+    expect(map.getLayer(baseId)).toBeFalsy();
+
+    // Re-entering after a story scene can remount the same base layer ID.
+    runtime.setDesiredIds([INVESTIGATION_LINES_FULL_ID], { durationMs: 400 });
+    stageBase();
+    await syncInvestigationTimelineToMap(map, idleNliClock(), groups, deps);
+    runtime.commitBatch();
+    time = 2000;
+    lifecycleFrame?.(time);
+    expect(map.getPaintProperty(baseId, "line-opacity")).toBe(0);
+
+    disposeInvestigationTimelineForMap(map);
+    runtime.setDesiredIds([], { durationMs: 400 });
+    runtime.commitBatch();
+    time = 2200;
+    lifecycleFrame?.(time);
+    const opacity = map.getPaintProperty(baseId, "line-opacity");
+    expect(opacity).toBeGreaterThan(0);
+    expect(opacity).toBeLessThanOrEqual(0.42);
+    runtime.dispose();
   });
 
   it("explicit disposal restores resting red routes on a live map", async () => {
@@ -2533,6 +2607,7 @@ describe("syncInvestigationTimelineToMap", () => {
     const home = [
       "projector_base.שמות_יישובים", "projector_base.Locations_Lines", "projector_base.ישובים",
       "nli.ציר_232", "projector_base.SEA", "gaza.Gaza_Roads",
+      "gaza.gaza_border",
     ];
     expect(isHomeCueLayerSet(home)).toBe(true);
     expect(isHomeCueLayerSet([...home, "other.layer"])).toBe(false);
@@ -2859,7 +2934,7 @@ describe("syncInvestigationTimelineToMap", () => {
       .reverse()
       .find(([id, key]) => id === SHEMOT_LEADER_ID && key === "line-opacity");
     expect(leaderCall?.[2]).toEqual(
-      ["case", ["in", ["get", "cityname"], ["literal", ["עיר א"]]], 1, 0.18],
+      ["case", ["in", ["get", "cityname"], ["literal", ["עיר א"]]], 1, 0.08],
     );
     expect(map.setPaintProperty).toHaveBeenCalledWith(LOCATIONS_LINE_ID, "line-opacity", 0.08);
     const textCall = [...map.setPaintProperty.mock.calls]
@@ -2867,7 +2942,7 @@ describe("syncInvestigationTimelineToMap", () => {
       .find(([id, key]) => id === SHEMOT_LABEL_ID && key === "text-opacity");
     expect(textCall).toBeDefined();
     const expression = JSON.stringify(textCall[2]);
-    expect(expression).toContain("0.18");
+    expect(expression).toContain("0.08");
     expect(expression).toContain("1");
     expect(expression).toContain("עיר א");
     expect(dottedOrientationPaintCalls(map)).toEqual([]);
@@ -2885,7 +2960,7 @@ describe("syncInvestigationTimelineToMap", () => {
     expect(map.getPaintProperty(YISHUVIM_LINE_ID, "line-opacity")).toBe(0.08);
     expect(map.getPaintProperty(LOCATIONS_LINE_ID, "line-opacity")).toBe(0.08);
     expect(map.getPaintProperty(SHEMOT_LABEL_ID, "text-opacity")).toEqual(
-      ["case", ["in", ["get", "cityname"], ["literal", ["עיר א"]]], 1, 0.18],
+      ["case", ["in", ["get", "cityname"], ["literal", ["עיר א"]]], 1, 0.08],
     );
     disposeInvestigationTimelineForMap(map);
   });
@@ -2911,7 +2986,7 @@ describe("syncInvestigationTimelineToMap", () => {
     disposeInvestigationTimelineForMap(map);
   });
 
-  it("Identity people scene dims settlements, callout leaders, and names while idle", async () => {
+  it("Identity overview keeps settlements, callout leaders, and names visible", async () => {
     const map = makeOrientationMap();
     await syncInvestigationTimelineToMap(map, idleNliClock(), [{
       id: "nli",
@@ -2923,11 +2998,55 @@ describe("syncInvestigationTimelineToMap", () => {
       ],
     }], orientationDeps());
 
-    expect(map.getPaintProperty(YISHUVIM_FILL_ID, "fill-opacity")).toBe(0.08);
-    expect(map.getPaintProperty(YISHUVIM_LINE_ID, "line-opacity")).toBe(0.08);
-    expect(map.getPaintProperty(SHEMOT_LEADER_ID, "line-opacity")).toBe(0.18);
-    expect(map.getPaintProperty(SHEMOT_LABEL_ID, "text-opacity")).toBe(0.18);
-    expect(map.getPaintProperty(LOCATIONS_LINE_ID, "line-opacity")).toBe(0.08);
+    expect(map.getPaintProperty(YISHUVIM_FILL_ID, "fill-opacity")).toBe(1);
+    expect(map.getPaintProperty(YISHUVIM_LINE_ID, "line-opacity")).toBe(1);
+    expect(map.getPaintProperty(SHEMOT_LEADER_ID, "line-opacity")).toBe(1);
+    expect(map.getPaintProperty(SHEMOT_LABEL_ID, "text-opacity")).toBe(1);
+    expect(map.getPaintProperty(LOCATIONS_LINE_ID, "line-opacity")).toBe(1);
+    disposeInvestigationTimelineForMap(map);
+  });
+
+  it.each(["gis", "projection"])("Identity selection lights its settlement and clears back to overview on %s", async (displayProfile) => {
+    const map = makeOrientationMap();
+    map.getSource("projector_base.שמות_יישובים").data.features[0].properties.OBJECTID = 7;
+    let selection = { personId: "person-a", datasetVersion: "accepted" };
+    const groups = [{ id: "nli", layers: [{ id: "people", enabled: true }] }];
+    const deps = { ...orientationDeps(), displayProfile,
+      settlementFeatures: [{ ...STORY_SETTLEMENT, properties: { outlineObjectId: 19, locations: ["עיר א"] } }],
+      getPersonSelection: () => selection,
+      resolvePerson: async (pid, version) => pid === "person-a" && version === "accepted" ? { location: "עיר א" } : null,
+    };
+    await syncInvestigationTimelineToMap(map, idleNliClock(), groups, deps);
+    expect(map.getPaintProperty(YISHUVIM_LINE_ID, "line-opacity"))
+      .toEqual(["case", ["==", ["get", "OBJECTID"], 19], 1, 0.08]);
+    expect(map.getPaintProperty(SHEMOT_LABEL_ID, "text-opacity"))
+      .toEqual(["case", ["==", ["get", "cityname"], "עיר א"], 1, 0.08]);
+    expect(map.getPaintProperty(SHEMOT_LEADER_ID, "line-opacity"))
+      .toEqual(map.getPaintProperty(SHEMOT_LABEL_ID, "text-opacity"));
+    expect(map.getPaintProperty(LOCATIONS_LINE_ID, "line-opacity"))
+      .toEqual(["case", ["in", ["get", "OBJECTID"], ["literal", [7]]], 1, 0.08]);
+    selection = { personId: null, datasetVersion: null };
+    await syncInvestigationTimelineToMap(map, idleNliClock(), groups, deps);
+    for (const [id, property] of [[YISHUVIM_LINE_ID, "line-opacity"], [SHEMOT_LABEL_ID, "text-opacity"], [SHEMOT_LEADER_ID, "line-opacity"], [LOCATIONS_LINE_ID, "line-opacity"]]) {
+      expect(map.getPaintProperty(id, property)).toBe(1);
+    }
+    disposeInvestigationTimelineForMap(map);
+  });
+
+  it("clearing Identity selection ignores a delayed person resolution", async () => {
+    const map = makeOrientationMap();
+    let selection = { personId: "person-a", datasetVersion: "accepted" };
+    let resolve;
+    const person = new Promise(done => { resolve = done; });
+    const groups = [{ id: "nli", layers: [{ id: "people", enabled: true }] }];
+    const deps = { ...orientationDeps(), getPersonSelection: () => selection, resolvePerson: () => person };
+    const pending = syncInvestigationTimelineToMap(map, idleNliClock(), groups, deps);
+    selection = { personId: null };
+    await syncInvestigationTimelineToMap(map, idleNliClock(), groups, deps);
+    resolve({ location: "עיר א" });
+    await pending;
+    expect(map.getPaintProperty(SHEMOT_LABEL_ID, "text-opacity")).toBe(1);
+    expect(map.getPaintProperty(YISHUVIM_LINE_ID, "line-opacity")).toBe(1);
     disposeInvestigationTimelineForMap(map);
   });
 
@@ -2944,7 +3063,7 @@ describe("syncInvestigationTimelineToMap", () => {
     });
     setEscapeImpactOrientationIds(map, ["19", "100"]);
     expect(map.getPaintProperty(SHEMOT_LABEL_ID, "text-opacity"))
-      .toEqual(["case", ["in", ["get", "cityname"], ["literal", ["נובה", "עיר א"]]], 1, 0.18]);
+      .toEqual(["case", ["in", ["get", "cityname"], ["literal", ["נובה", "עיר א"]]], 1, 0.08]);
     expect(JSON.stringify(map.getPaintProperty(SHEMOT_LABEL_ID, "text-opacity"))).not.toMatch(/רעים/);
     disposeInvestigationTimelineForMap(map);
   });
@@ -2964,7 +3083,7 @@ describe("syncInvestigationTimelineToMap", () => {
     });
     setEscapeImpactOrientationIds(nova, ["19"]);
     expect(nova.getPaintProperty(SHEMOT_LABEL_ID, "text-opacity"))
-      .toEqual(["case", ["in", ["get", "cityname"], ["literal", ["נובה", "עיר א"]]], 1, 0.18]);
+      .toEqual(["case", ["in", ["get", "cityname"], ["literal", ["נובה", "עיר א"]]], 1, 0.08]);
     disposeInvestigationTimelineForMap(nova);
 
     const sderot = makeOrientationMap();
@@ -2975,7 +3094,7 @@ describe("syncInvestigationTimelineToMap", () => {
     });
     setEscapeImpactOrientationIds(sderot, ["19"]);
     expect(sderot.getPaintProperty(SHEMOT_LABEL_ID, "text-opacity"))
-      .toEqual(["case", ["==", ["get", "cityname"], "שדרות"], 1, 0.18]);
+      .toEqual(["case", ["==", ["get", "cityname"], "שדרות"], 1, 0.08]);
     disposeInvestigationTimelineForMap(sderot);
 
     const flagged = makeOrientationMap();
@@ -2986,7 +3105,7 @@ describe("syncInvestigationTimelineToMap", () => {
     });
     setEscapeImpactOrientationIds(flagged, ["19"]);
     expect(flagged.getPaintProperty(SHEMOT_LABEL_ID, "text-opacity"))
-      .toEqual(["case", ["in", ["get", "cityname"], ["literal", ["שדרות", "עיר א"]]], 1, 0.18]);
+      .toEqual(["case", ["in", ["get", "cityname"], ["literal", ["שדרות", "עיר א"]]], 1, 0.08]);
     disposeInvestigationTimelineForMap(flagged);
   });
 
@@ -2998,7 +3117,7 @@ describe("syncInvestigationTimelineToMap", () => {
       displayProfile: "projection",
     });
     expect(map.getPaintProperty(SHEMOT_LABEL_ID, "text-opacity"))
-      .toEqual(["case", ["in", ["get", "cityname"], ["literal", ["נובה"]]], 1, 0.18]);
+      .toEqual(["case", ["in", ["get", "cityname"], ["literal", ["נובה"]]], 1, 0.08]);
     expect(map.getPaintProperty(YISHUVIM_FILL_ID, "fill-opacity"))
       .toEqual(["case", ["==", ["get", "OBJECTID"], 43], 1, 0.08]);
     expect(map.getPaintProperty(YISHUVIM_LINE_ID, "line-opacity"))
@@ -3391,6 +3510,135 @@ describe("syncInvestigationTimelineToMap", () => {
     disposeInvestigationTimelineForMap(map);
   });
 
+  it.each(["ended", "paused"])("retains virtual Nova polygon sources through %s semantic freeze and coordinated exit", async (phase) => {
+    const map = makeMap();
+    let time = 0;
+    let fadeFrame;
+    const ids = [INVESTIGATION_POLYGONS_FULL_ID, INVESTIGATION_LINES_FULL_ID];
+    const runtime = getLayerLifecycleRuntime(map, {
+      now: () => time,
+      requestFrame: callback => { fadeFrame = callback; return 1; },
+      cancelFrame: () => { fadeFrame = null; },
+    });
+    const hiddenGroups = [{ id: "nli", layers: [
+      { id: "investigation_polygons", enabled: false },
+      { id: "lines", enabled: false },
+      { id: "people", enabled: true },
+    ] }];
+    const novaOutline = { ...STORY_SETTLEMENT, properties: { outlineObjectId: 43, OBJECTID: 43 } };
+    const novaPolygon = { ...STORY_POLYGON_A, properties: { ...STORY_POLYGON_A.properties, OBJECTID: 97 } };
+    const deps = withProcessedPolygons({
+      joinBatch: true,
+      featuresById: { [INVESTIGATION_POLYGONS_FULL_ID]: [novaPolygon], [INVESTIGATION_LINES_FULL_ID]: LINE_FEATURES },
+      settlementFeatures: [novaOutline],
+      narrativeFocus: NLI_NARRATIVES.nova,
+      displayProfile: "gis",
+      motionMode: "reduced",
+      now: () => 0,
+    });
+    const playing = playNliClock(idleNliClock(), ids, NLI_NOVA_STORY.representativeMinutes, 0, { narrativeId: "nova" });
+    const clock = phase === "ended" ? endNliClock(playing) : { ...playing, phase: "paused", positionMs: 1000, seekKind: "none" };
+    runtime.setDesiredIds(ids, { durationMs: 0 });
+    await syncInvestigationTimelineToMap(map, clock, hiddenGroups, deps);
+    runtime.commitBatch();
+    const sourceId = "nli-investigation-settlement-impact";
+    const layerId = "nli-investigation-settlement-impact-outline";
+    const source = map.getSource(sourceId);
+    const category = map.getSource("nli-investigation-polygon-category");
+    expect(source.setData.mock.calls.at(-1)[0].features).toContainEqual(novaOutline);
+    const paint = map.getPaintProperty(layerId, "line-opacity");
+    expect(paint).toBeGreaterThan(0);
+    map.removeLayer.mockClear();
+    map.removeSource.mockClear();
+
+    // Binding freezes the retained snapshot before publishing departing IDs.
+    await syncInvestigationTimelineToMap(map, pauseNliClock(clock, 0, { narrativeId: "nova" }), hiddenGroups,
+      { ...deps, joinBatch: false, semanticOnly: true });
+    expect(map.removeLayer).not.toHaveBeenCalled();
+    expect(map.removeSource).not.toHaveBeenCalled();
+    expect(map.getSource(sourceId)).toBe(source);
+    expect(map.getSource("nli-investigation-polygon-category")).toBe(category);
+
+    runtime.setDesiredIds([], { durationMs: 600 });
+    await syncInvestigationTimelineToMap(map, idleNliClock(), [], { ...deps, narrativeFocus: null });
+    runtime.commitBatch();
+    expect(map.getSource(sourceId)).toBe(source);
+    time = 300; fadeFrame?.();
+    expect(map.getLayer(layerId)).toBeTruthy();
+    expect(map.getPaintProperty(layerId, "line-opacity")).toBeCloseTo(paint * .5);
+    time = 600; fadeFrame?.();
+    expect(map.getLayer(layerId)).toBeFalsy();
+    expect(map.getSource(sourceId)).toBeFalsy();
+    disposeInvestigationTimelineForMap(map); runtime.dispose();
+  });
+
+  it("Nova Stop keeps the virtual site outline in its idle preview", async () => {
+    const map = makeMap();
+    const hiddenGroups = [{ id: "nli", layers: [{ id: "investigation_polygons", enabled: false }] }];
+    const deps = withProcessedPolygons({ featuresById: { [INVESTIGATION_POLYGONS_FULL_ID]: [STORY_POLYGON_A] },
+      narrativeFocus: NLI_NARRATIVES.nova, motionMode: "reduced", now: () => 0 });
+    const clock = endNliClock(playNliClock(idleNliClock(), [], NLI_NOVA_STORY.representativeMinutes, 0, { narrativeId: "nova" }));
+    await syncInvestigationTimelineToMap(map, clock, hiddenGroups, deps);
+    expect(map.getLayer("nli-investigation-settlement-impact-outline")).toBeTruthy();
+    await syncInvestigationTimelineToMap(map, stopNliClock(clock), hiddenGroups, { ...deps, semanticOnly: true });
+    expect(map.getSource("nli-investigation-settlement-impact")).toBeTruthy();
+    expect(map.getLayer("nli-investigation-settlement-impact-outline")).toBeTruthy();
+    disposeInvestigationTimelineForMap(map);
+  });
+
+  it("ordinary non-Nova catalog disable still removes semantic polygon overlays", async () => {
+    const map = makeMap();
+    const clock = { ...playNliClock(idleNliClock(), [INVESTIGATION_POLYGONS_FULL_ID], [400], 0), phase: "paused", seekKind: "none" };
+    const deps = withProcessedPolygons({ featuresById: { [INVESTIGATION_POLYGONS_FULL_ID]: [STORY_POLYGON_A] }, motionMode: "reduced", now: () => 0 });
+    await syncInvestigationTimelineToMap(map, clock, polygonOnlyGroups(), deps);
+    expect(map.getSource("nli-investigation-polygon-category")).toBeTruthy();
+    await syncInvestigationTimelineToMap(map, clock, [], { ...deps, semanticOnly: true });
+    expect(map.getSource("nli-investigation-polygon-category")).toBeFalsy();
+    disposeInvestigationTimelineForMap(map);
+  });
+  it.each(["lines", "alarms", "polygons"])("managed scene exit retains %s overlay content until factor zero", async (kind) => {
+    const map = makeMap(); let time=0; let fadeFrame;
+    const fullId = { lines:INVESTIGATION_LINES_FULL_ID,alarms:INVESTIGATION_ALARMS_FULL_ID,polygons:INVESTIGATION_POLYGONS_FULL_ID }[kind];
+    const layerId = { lines:"nli-investigation-line-active-line",alarms:"nli-investigation-alarm-circles",polygons:"nli-investigation-polygon-category-fill-battle" }[kind];
+    const sourceId = { lines:"nli-investigation-line-active",alarms:"nli-investigation-alarm-points",polygons:"nli-investigation-polygon-category" }[kind];
+    const property = kind === "lines" ? "line-opacity" : kind === "alarms" ? "circle-opacity" : "fill-opacity";
+    const baseId = { lines:"nli__lines__line__0",alarms:"nli__alarms__circle__0",polygons:"nli__investigation_polygons__fill__0" }[kind];
+    const runtime = getLayerLifecycleRuntime(map, { now: () => time, requestFrame: cb => { fadeFrame=cb; return 1; }, cancelFrame: () => {} });
+    runtime.setDesiredIds([fullId], { durationMs: 0 });
+    runtime.stageMapLayer(fullId, { id:baseId,type:kind === "lines" ? "line" : kind === "alarms" ? "circle" : "fill",paint:{ [property]:1 } }, { adoptVisible:true,onTeardown:() => map.removeLayer(baseId) });
+    runtime.commitBatch();
+    const groups = [{ id:"nli", layers:[{ id:kind === "polygons" ? "investigation_polygons" : kind,enabled:true }] }];
+    const deps = withProcessedPolygons({ joinBatch:true, featuresById:{
+      [INVESTIGATION_LINES_FULL_ID]:LINE_FEATURES,
+      [INVESTIGATION_POLYGONS_FULL_ID]:[STORY_POLYGON_A,STORY_POLYGON_B],
+      [INVESTIGATION_ALARMS_FULL_ID]:[{ type:"Feature",properties:{ city:"A",alarm_minutes:[400],alarm_count_total:1 },geometry:{ type:"Point",coordinates:[34.4,31.4] } }],
+    }, investigationSettlementsUrl:null, motionMode:"reduced",now:() => 0 });
+    await syncInvestigationTimelineToMap(map,playNliClock(idleNliClock(),[fullId],[400,420],0),groups,deps);
+    time=600; fadeFrame?.();
+    const source=map.getSource(sourceId);
+    const originalPaint=map.getPaintProperty(layerId,property);
+    const writes=source.setData.mock.calls.length;
+    expect(originalPaint).not.toBe(0);
+    runtime.setDesiredIds([], { durationMs:600 });
+    await syncInvestigationTimelineToMap(map,idleNliClock(),[],deps);
+    runtime.commitBatch();
+    expect(map.getLayer(layerId)).toBeTruthy();
+    expect(source.setData.mock.calls).toHaveLength(writes);
+    expect(map.getPaintProperty(layerId,property)).toEqual(originalPaint);
+    time=900; fadeFrame?.();
+    expect(map.getLayer(layerId)).toBeTruthy();
+    expect(map.getPaintProperty(layerId,property)).toEqual(scaleOpacityExpression(originalPaint,0.5));
+    time=1200; fadeFrame?.();
+    expect(map.getLayer(layerId)).toBeFalsy();
+    expect(map.getSource(sourceId)).toBeFalsy();
+    const layerRemoval = map.removeLayer.mock.invocationCallOrder[map.removeLayer.mock.calls.findIndex(([id]) => id === layerId)];
+    const sourceRemoval = map.removeSource.mock.invocationCallOrder[map.removeSource.mock.calls.findIndex(([id]) => id === sourceId)];
+    expect(layerRemoval).toBeLessThan(sourceRemoval);
+    if (kind === "lines") expect(map.getSource("nli-investigation-line-future")).toBeFalsy();
+    expect(map.getLayer(baseId)).toBeFalsy();
+    disposeInvestigationTimelineForMap(map);
+  });
+
   it("GIS national play restores line and alarm opacity after idle instant-hide", async () => {
     const map = makeMap();
     let now = 0;
@@ -3778,7 +4026,7 @@ function subscribeCallbackName(src, topic) {
 }
 
 function namedArrowFunctionBody(src, name) {
-  const match = src.match(new RegExp(`const ${name} = \\(\\) => \\{([\\s\\S]*?)\\n    \\};`));
+  const match = src.match(new RegExp(`const ${name} = \\([^\\n]*\\) => \\{([\\s\\S]*?)\\n    \\};`));
   expect(match).toBeTruthy();
   return match[1];
 }
@@ -3790,7 +4038,8 @@ describe("maps ignore leftover nli animation booleans", () => {
       "utf8",
     );
     const animCb = subscribeCallbackName(src, "animations");
-    const clockCb = subscribeCallbackName(src, "investigationClock");
+    const clockCb = "syncContextInvestigation";
+    expect(src).toContain("syncTimeline: syncContextInvestigation");
     expect(animCb).not.toBe("syncContextFlowAnimations");
     expect(namedArrowFunctionBody(src, animCb)).not.toContain("syncContextInvestigation");
     expect(namedArrowFunctionBody(src, animCb)).not.toContain("syncInvestigationTimelineToMap");
@@ -3807,7 +4056,8 @@ describe("maps ignore leftover nli animation booleans", () => {
       "utf8",
     );
     const animCb = subscribeCallbackName(src, "animations");
-    const clockCb = subscribeCallbackName(src, "investigationClock");
+    const clockCb = "syncContextInvestigation";
+    expect(src).toContain("syncTimeline: syncContextInvestigation");
     expect(animCb).not.toBe("syncContextFlowAnimations");
     expect(namedArrowFunctionBody(src, animCb)).not.toContain("syncContextInvestigation");
     expect(namedArrowFunctionBody(src, animCb)).not.toContain("syncInvestigationTimelineToMap");

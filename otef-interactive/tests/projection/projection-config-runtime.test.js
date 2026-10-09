@@ -108,6 +108,95 @@ function realSpanAndNames() {
 }
 
 describe("projection config runtime", () => {
+  test.each(['calibration', 'disconnect'])('scene entry recovers a startup names build interrupted by %s', async interruption => {
+    let calls = 0, installed = null;
+    const preparedConfigs = [];
+    const h = makeHarness('left', '11111111-1111-4111-8111-111111111111', {
+      getDatasetVersion: () => 'v1', drawCompletion: () => true,
+      hasPreparedNames: () => installed !== null,
+      prepareCandidate: async (config, revision, generation, signal) => {
+        preparedConfigs.push({ config, revision });
+        if (++calls === 1) await new Promise(resolve => signal.addEventListener('abort', resolve, { once: true }));
+        return { wall: { datasetVersion: 'v1', digest: 'a'.repeat(64), diagnostics: { expected: 2, placed: 2 } } };
+      },
+      commitCandidate: pair => { installed = pair.wall; },
+    });
+    try {
+      await h.runtime.start(); h.state(1); h.frame(); h.render();
+      await vi.waitFor(() => expect(calls).toBe(1));
+      const applied = structuredClone(DEFAULT_PROJECTION_CONFIG); applied.pre.scale += .02;
+      if (interruption === 'calibration') { h.state(2, applied); h.frame(); }
+      else { h.socketListeners.get('disconnect')(); h.socketListeners.get('connect')(); }
+      await vi.waitFor(() => { h.render(); expect(h.runtime.getAppliedGeometryState().pending).toBe(false); });
+      expect(installed).toBeNull();
+      const ready = h.runtime.ensureNamesReady();
+      await vi.waitFor(() => { h.render(); expect(installed?.diagnostics.placed).toBe(2); });
+      await expect(ready).resolves.toBe(true);
+      expect(preparedConfigs.at(-1).revision).toBe(interruption === 'calibration' ? 2 : 1);
+      expect(preparedConfigs.at(-1).config.pre.scale).toBe(interruption === 'calibration' ? applied.pre.scale : DEFAULT_PROJECTION_CONFIG.pre.scale);
+    } finally { h.runtime.stop(); }
+  });
+
+  test('scene entry joins a running startup build and waits for its validated render', async () => {
+    let release, calls = 0, installed = null;
+    const h = makeHarness('left', '11111111-1111-4111-8111-111111111111', {
+      getDatasetVersion: () => 'v1', drawCompletion: () => true,
+      hasPreparedNames: () => installed !== null,
+      prepareCandidate: async () => { calls++; await new Promise(resolve => { release = resolve; });
+        return { wall: { datasetVersion: 'v1', digest: 'a'.repeat(64), diagnostics: { expected: 2, placed: 2 } } }; },
+      commitCandidate: pair => { installed = pair.wall; },
+    });
+    try {
+      await h.runtime.start(); h.state(1); h.frame(); h.render();
+      await vi.waitFor(() => expect(calls).toBe(1));
+      let settled = false;
+      const ready = h.runtime.ensureNamesReady().then(result => { settled = true; return result; });
+      await Promise.resolve(); expect(settled).toBe(false);
+      release(); await vi.waitFor(() => { h.render(); expect(settled).toBe(true); });
+      await expect(ready).resolves.toBe(true); expect(calls).toBe(1);
+      await expect(h.runtime.ensureNamesReady()).resolves.toBe(true); expect(calls).toBe(1);
+    } finally { h.runtime.stop(); }
+  });
+
+  test('a cancelled scene stops waiting while accepted recovery can finish hidden', async () => {
+    let calls = 0, release, installed = null;
+    const h = makeHarness('left', '11111111-1111-4111-8111-111111111111', {
+      getDatasetVersion: () => 'v1', drawCompletion: () => true,
+      hasPreparedNames: () => installed !== null,
+      prepareCandidate: async () => { if (++calls === 1) throw new Error('startup interrupted');
+        await new Promise(resolve => { release = resolve; });
+        return { wall: { datasetVersion: 'v1', digest: 'b'.repeat(64), diagnostics: { expected: 2, placed: 2 } } }; },
+      commitCandidate: pair => { installed = pair.wall; },
+    });
+    try {
+      await h.runtime.start(); h.state(1); h.frame(); h.render();
+      await vi.waitFor(() => expect(h.sent().some(message => message.state === 'failed')).toBe(true));
+      const controller = new AbortController();
+      const ready = h.runtime.ensureNamesReady({ signal: controller.signal }).catch(error => error);
+      await vi.waitFor(() => expect(calls).toBe(2));
+      controller.abort(); expect((await ready).name).toBe('AbortError');
+      release();
+      await vi.waitFor(() => { h.render(); expect(installed?.diagnostics.placed).toBe(2); });
+      await h.runtime.ensureNamesReady();
+      expect(calls).toBe(2);
+    } finally { h.runtime.stop(); }
+  });
+
+  test('scene recovery preserves names validation and rejects an incomplete wall', async () => {
+    let calls = 0, installed = null;
+    const h = makeHarness('left', '11111111-1111-4111-8111-111111111111', {
+      getDatasetVersion: () => 'v1', drawCompletion: () => true,
+      prepareCandidate: async () => { if (++calls === 1) throw new Error('startup interrupted');
+        return { wall: { datasetVersion: 'v1', digest: 'a'.repeat(64), diagnostics: { expected: 2, placed: 0 } } }; },
+      commitCandidate: pair => { installed = pair.wall; },
+    });
+    try {
+      await h.runtime.start(); h.state(1); h.frame(); h.render();
+      await vi.waitFor(() => expect(h.sent().some(message => message.state === 'failed')).toBe(true));
+      await expect(h.runtime.ensureNamesReady()).rejects.toThrow('prepared name wall does not match');
+      expect(calls).toBe(2); expect(installed).toBeNull();
+    } finally { h.runtime.stop(); }
+  });
   test('drawn-state accessor retains completed geometry through preparation, rollback, suspension and stop', async () => {
     let resolvePreparation;
     const h = makeHarness('left', undefined, { drawCompletion: () => true,

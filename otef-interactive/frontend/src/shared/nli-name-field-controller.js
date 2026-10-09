@@ -3,7 +3,9 @@ import { createNameGroupOverlay } from "./nli-name-field-group-overlay.js";
 import { createNameFieldAnimation, withNameRevealDelays, NAME_FIELD_MOTION, NAME_FIELD_REVEAL_DURATION_MS } from './nli-name-field-animation.js';
 import { createNliNameFocusPresentation, getNameFocusOpacity, getNameFocusAlpha, getRelevantPlaceGroup } from './nli-name-focus-presentation.js';
 import { DEFAULT_PROJECTION_CONFIG, migrateProjectionConfigToV7, validateProjectionConfig } from "./projection-config-schema.js";
+import { getLayerLifecycleRuntime } from "./layer-lifecycle-fade.js";
 import { equalProjectionConfig } from "./projection-config-client.js";
+import { nameTextStyle } from './nli-name-language.js';
 
 const ORIGINAL_LABEL_ID = "nli__people_names__labels";
 const SOURCE_ID = "nli-name-field";
@@ -38,14 +40,14 @@ const cleanup = (fn, ...args) => {
   }
 };
 
-function textLayer(id, source, heading, textSize, filter) {
+function textLayer(id, source, heading, textSize, filter, textStyle = nameTextStyle()) {
   return {
     id,
     type: "symbol",
     source,
     layout: {
       "text-field": ["get", "name"],
-      "text-font": ["Guttman Hatzvi", "Arial Unicode MS Regular", "sans-serif"],
+      "text-font": textStyle.mapFontStack,
       "text-size": textSize,
       "text-max-width": 1000,
       "text-anchor": "center",
@@ -72,17 +74,17 @@ function hideLegacyLabels(map) {
   }
 }
 
-function validateCandidateField(candidate) {
+function validateCandidateField(candidate, mode = 'wall', canvas = false) {
   const features = candidate?.geojson?.features;
   if (!Array.isArray(features) || !features.length || !(candidate?.byPid instanceof Map)) {
     throw new Error("Invalid NLI name field data");
   }
-  const total = candidate.diagnostics?.total;
+  const total = canvas ? candidate.diagnostics?.expected : candidate.diagnostics?.total;
   const placed = candidate.diagnostics?.placed;
   if (!Number.isFinite(total) || total !== features.length || !Number.isFinite(placed) || placed !== total || candidate.byPid.size !== features.length) {
     throw new Error("Invalid NLI name field data");
   }
-  const unplaced = candidate.diagnostics?.unplaced;
+  const unplaced = canvas ? 0 : candidate.diagnostics?.unplaced;
   const unplacedCount = Array.isArray(unplaced) ? unplaced.length : unplaced;
   if (!Number.isFinite(unplacedCount) || unplacedCount < 0) {
     throw new Error("Invalid NLI name field data");
@@ -90,7 +92,7 @@ function validateCandidateField(candidate) {
   if (unplacedCount !== 0) {
     throw new Error("NLI name field capacity exhausted");
   }
-  const pids = new Set();
+  const pids = new Set(), ownersByPid = new Map();
   for (const feature of features) {
     const pid = typeof feature?.properties?.pid === "string"
       ? feature.properties.pid.trim()
@@ -100,8 +102,23 @@ function validateCandidateField(candidate) {
     }
     pids.add(pid);
     const owners = feature?.properties?.visible_spans;
-    if (!Array.isArray(owners) || owners.length !== 1 || !["left", "right"].includes(owners[0])) {
+    if (!Array.isArray(owners) || !owners.length || owners.length > (mode === 'model' ? 2 : 1) ||
+        new Set(owners).size !== owners.length || owners.some((owner) => !["left", "right"].includes(owner))) {
       throw new Error("Invalid NLI name field ownership");
+    }
+    ownersByPid.set(pid, owners);
+  }
+  if (canvas) {
+    const placements = new Set();
+    for (const item of candidate.placements) {
+      if (!pids.has(item.id) || placements.has(item.id)) throw new Error("Invalid NLI name field data");
+      placements.add(item.id);
+      const owners = ownersByPid.get(item.id);
+      const outputs = item.outputs ?? [item.output];
+      if (!owners.includes(item.output) || !Array.isArray(outputs) || outputs.length !== owners.length ||
+          new Set(outputs).size !== outputs.length || outputs.some((output) => !owners.includes(output))) {
+        throw new Error("Invalid NLI name field ownership");
+      }
     }
   }
   return candidate;
@@ -115,7 +132,10 @@ export function createNliNameFieldController({
   loadField = defaultLoadNliNameField,
   motionMode = "full",
   manualProjectionPreparation = false,
+  managedScene = false,
 } = {}) {
+  const isManaged = () => typeof managedScene === "function" ? managedScene() : managedScene;
+  let sceneRuntime = null, sceneGeneration = 0, sceneWanted = false, cancelSceneHidden = null;
   let disposed = false;
   let enabled = false;
   let ready = false;
@@ -143,6 +163,9 @@ export function createNliNameFieldController({
   let preparedCanvas = null;
   let previousCanvas = null;
   let canvasRequestToken = 0;
+  let blockedLanguage = null;
+  const readLanguage = () => context.getLegendSettings?.()?.language === 'en' ? 'en' : 'he';
+  let observedLanguage = readLanguage();
   let observedDatasetVersion = context.getPersonSelection?.()?.datasetVersion || null;
   let fadeFrame = null, fadeStart = 0, fadeFrom = 0, fadeTarget = 0, fadeOpacity = 0;
   let fadeComplete = null;
@@ -161,7 +184,7 @@ export function createNliNameFieldController({
     publishReveal();
   };
   const clearReveal = () => { freezeReveal(); revealElapsedMs = 0; publishReveal(); };
-  const startReveal = ({ restart = false } = {}) => {
+  const startReveal = ({ restart = false, startAtMs } = {}) => {
     if (!canvasAdapter || !ready) return;
     if (revealRunning && !restart) revealElapsedMs = Math.min(revealDurationMs, Math.max(0, Date.now() - revealStart));
     if (revealFrame != null) { cancelFrame(revealFrame); revealFrame = null; }
@@ -172,7 +195,7 @@ export function createNliNameFieldController({
       return;
     }
     if (restart) revealElapsedMs = 0;
-    revealStart = Date.now() - revealElapsedMs;
+    revealStart = restart && Number.isFinite(startAtMs) ? startAtMs : Date.now() - revealElapsedMs;
     revealRunning = true;
     const tick = () => {
       if (!revealRunning || disposed) return;
@@ -183,15 +206,19 @@ export function createNliNameFieldController({
     };
     tick();
   };
+  const writeSceneFactor = value => {
+    setCanvasOpacity(value);
+  };
   const setCanvasOpacity = (value) => {
     fadeOpacity = value;
-    canvasAdapter?.setOpacity(value);
-    groupOverlay?.setOpacity?.(value);
+    const effective = blockedLanguage && (field?.language || 'he') !== blockedLanguage ? 0 : value;
+    canvasAdapter?.setOpacity(effective);
+    groupOverlay?.setOpacity?.(effective);
     if (focusPresentation) {
-      if (value <= 0 && focusVisible) { focusPresentation.dispose(); focusVisible = false; }
-      else if (value > 0) {
+      if (effective <= 0 && focusVisible) { focusPresentation.dispose(); focusVisible = false; }
+      else if (effective > 0) {
         focusVisible = true;
-        focusPresentation.update({ selectedPid, selectedGroup, opacity: value });
+        focusPresentation.update({ selectedPid, selectedGroup, opacity: effective });
       }
     }
     map.triggerRepaint?.();
@@ -285,7 +312,7 @@ export function createNliNameFieldController({
       rebuildState,
       rebuildError,
       ...(canvasAdapter ? { canvasEnabled: enabled, canvasOpacity: fadeOpacity,
-        canvasFadePending: fadeFrame !== null, canvasRevealSeconds: revealElapsedMs / 1000,
+        canvasFadePending: fadeFrame !== null, canvasRevealSeconds: revealElapsedMs / 1000, canvasRevealStartMs: revealStart,
         canvasRevealPending: revealFrame !== null } : {}),
       owned,
       ...(rebuildState === "idle" ? { unowned: 0 } : {}),
@@ -302,8 +329,8 @@ export function createNliNameFieldController({
     animation?.dispose();
     animation = null;
   };
-  const removeOwned = ({ preserveFade = false } = {}) => {
-    disposeAnimation({ preserveFade });
+  const removeOwned = ({ preserveFade = false, preserveAnimation = false } = {}) => {
+    if (!preserveAnimation) disposeAnimation({ preserveFade });
     const previousPresentation = focusPresentation;
     focusPresentation = null;
     previousPresentation?.dispose();
@@ -378,15 +405,15 @@ export function createNliNameFieldController({
     const trimmed = name.trim();
     return trimmed || null;
   };
-  const mountInstalledField = ({ repaintCanvas = true } = {}) => {
+  const mountInstalledField = ({ repaintCanvas = true, preserveAnimation = false } = {}) => {
     if (disposed || (!enabled && !canvasAdapter) || !ready || !field) return;
-    removeOwned({ preserveFade: Boolean(canvasAdapter) });
+    removeOwned({ preserveFade: Boolean(canvasAdapter), preserveAnimation });
     try {
       useSourceGeometry = displayProfile === "gis" && map.getZoom() >= field.referenceZoom + DETAIL_ZOOM_DELTA;
       map.addSource(SOURCE_ID, { type: "geojson", data: geojsonAt(field, useSourceGeometry) });
       const textSize = useSourceGeometry ? 14 : overviewTextSize(field);
       if (!canvasAdapter) {
-        const baseLayer = textLayer(LABEL_ID, SOURCE_ID, field.heading, textSize);
+        const baseLayer = textLayer(LABEL_ID, SOURCE_ID, field.heading, textSize, undefined, field.textStyle);
         baseLayer.layout["text-allow-overlap"] = !useSourceGeometry;
         baseLayer.layout["text-ignore-placement"] = !useSourceGeometry;
         map.addLayer(baseLayer);
@@ -394,6 +421,7 @@ export function createNliNameFieldController({
           SELECTED_LABEL_ID, SOURCE_ID, field.heading,
           useSourceGeometry ? 16 : overviewTextSize(field),
           ["==", ["get", "pid"], "__none__"],
+          field.textStyle,
         );
         selectedLayer.paint["text-halo-width"] = 2;
         map.addLayer(selectedLayer);
@@ -403,14 +431,24 @@ export function createNliNameFieldController({
       if (canvasAdapter) setCanvasOpacity(fadeOpacity);
       if (pendingPlaceId) selectedGroup = groupOverlay.groupForPlace(pendingPlaceId);
       if (map.getLayer(ORIGINAL_LABEL_ID)) map.setLayoutProperty(ORIGINAL_LABEL_ID, "visibility", "none");
-      if (!canvasAdapter) animation = createNameFieldAnimation({
+      if (!canvasAdapter && !animation) animation = createNameFieldAnimation({
         motionMode,
         apply: ({ baseOpacity, selectedOpacity }) => {
-          if (map.getLayer(LABEL_ID)) map.setPaintProperty(LABEL_ID, "text-opacity", baseOpacity);
-          if (map.getLayer(SELECTED_LABEL_ID)) map.setPaintProperty(SELECTED_LABEL_ID, "text-opacity", selectedOpacity);
+          if (sceneRuntime && isManaged()) {
+            sceneRuntime.updateEffectivePaint("nli.people_names", LABEL_ID, "text-opacity", baseOpacity);
+            sceneRuntime.updateEffectivePaint("nli.people_names", SELECTED_LABEL_ID, "text-opacity", selectedOpacity);
+          } else {
+            if (map.getLayer(LABEL_ID)) map.setPaintProperty(LABEL_ID, "text-opacity", baseOpacity);
+            if (map.getLayer(SELECTED_LABEL_ID)) map.setPaintProperty(SELECTED_LABEL_ID, "text-opacity", selectedOpacity);
+          }
         },
       });
-      animation?.show();
+      if (sceneRuntime && isManaged()) {
+        for (const id of [LABEL_ID, SELECTED_LABEL_ID]) {
+          if (map.getLayer(id)) sceneRuntime.stageMapLayer("nli.people_names", map.getLayer(id));
+        }
+      }
+      animation?.show({ restart: !preserveAnimation });
       applySelection(undefined, { repaintCanvas });
       publishDiagnostics();
     } catch (error) {
@@ -431,15 +469,19 @@ export function createNliNameFieldController({
     rebuildError = null;
     publishDiagnostics();
     try {
-      const candidate = validateCandidateField(await loadField({ projectionConfig }));
+      const language = readLanguage();
+      const candidate = validateCandidateField(await loadField({ projectionConfig, language }), projectionConfig?.namesWall?.activeMode);
+      if (language !== readLanguage()) return;
       if (disposed || !enabled || generation !== requestGeneration) return;
+      const preserveAnimation = ready && field?.datasetVersion === candidate.datasetVersion &&
+        (field?.language || 'he') !== (candidate.language || 'he');
       field = candidate;
       ready = true;
       installedGeneration = generation;
       installedRevision = revision;
       rebuildState = "idle";
       retryOnNextEnable = false;
-      mountInstalledField();
+      mountInstalledField({ preserveAnimation });
     } catch (error) {
       if (!disposed && generation === requestGeneration) {
         rebuildState = "error";
@@ -498,7 +540,7 @@ export function createNliNameFieldController({
     if (disposed || !enabled || updatingBackground || (canvasAdapter && fadeOpacity <= 0)) return;
     updatingBackground = true;
     try {
-      focusPresentation?.update({ selectedPid, selectedGroup, opacity: canvasAdapter ? fadeOpacity : 1 });
+      focusPresentation?.update({ selectedPid, selectedGroup, opacity: isManaged() || canvasAdapter ? fadeOpacity : 1 });
       if (focusPresentation) focusVisible = true;
     } finally {
       updatingBackground = false;
@@ -534,6 +576,7 @@ export function createNliNameFieldController({
       setCanvasOpacity(0);
     }
     if (nextVersion) observedDatasetVersion = nextVersion;
+    if (isManaged() && !catalogSwap) return;
     selectedGroup = null;
     pendingPlaceId = null;
     applySelection(snapshot);
@@ -567,6 +610,82 @@ export function createNliNameFieldController({
   const unsubscribeNavigation = context.subscribe("navigationCommand", onNavigation);
 
   const api = {
+    isSceneManaged: isManaged,
+    async prepareScene(snapshot, { signal, previousSnapshot } = {}) {
+      if (!hasPeopleNames(snapshot.layerGroups)) return null;
+      const exitBeforeEntry = !enabled && previousSnapshot?.enabledIds?.includes("nli.people") === true;
+      const token = ++sceneGeneration;
+      if (ready && field && rebuildState === "idle" && (field.language || 'he') === readLanguage()) return { token, field, installed: true, signal, exitBeforeEntry };
+      if (canvasAdapter) {
+        // Browser startup/calibration owns the validated accepted v7 candidate.
+        // The entrypoint awaits runtime preparation before reaching this gate;
+        // never generate or promote a draft inside the controller.
+        if (!ready || !field) throw new Error("Validated projection Canvas candidate is not ready");
+        return { token, field, installed: true, signal, exitBeforeEntry };
+      }
+      const config = structuredClone(requestedConfig || DEFAULT_PROJECTION_CONFIG);
+      const language = readLanguage();
+      const candidate = validateCandidateField(await loadField({ projectionConfig: config,
+        datasetVersion: snapshot.personSelection?.datasetVersion, signal, language }), config.namesWall?.activeMode);
+      if (disposed || signal?.aborted || token !== sceneGeneration || language !== readLanguage()) throw new Error("Stale names scene candidate");
+      return { token, field: candidate, config, signal, exitBeforeEntry };
+    },
+    applyScene(prepared, { snapshot, signal, namesEntry, semanticOnly = false, runtime = getLayerLifecycleRuntime(map) } = {}) {
+      if (disposed || signal?.aborted) return;
+      if (prepared?.field && !prepared.installed && (prepared.field.language || 'he') !== readLanguage()) throw new Error('Stale name language scene');
+      sceneRuntime = runtime;
+      const nextEnabled = hasPeopleNames(snapshot.layerGroups);
+      if (semanticOnly) {
+        if (enabled && nextEnabled) applySelection(snapshot.personSelection);
+        return;
+      }
+      sceneWanted = nextEnabled;
+      cancelSceneHidden?.(); cancelSceneHidden = null;
+      if (!nextEnabled) {
+        enabled = false; freezeReveal(); animation?.hold();
+        if (map.getSource(SOURCE_ID)) cancelSceneHidden = runtime.onMemberHidden("nli.people_names", () => {
+          if (!sceneWanted) removeOwned();
+        });
+        return;
+      }
+      if (prepared?.signal?.aborted || prepared && prepared.token !== sceneGeneration) return;
+      const fresh = !enabled;
+      enabled = true;
+      if (prepared?.field && !prepared.installed) {
+        field = prepared.field; ready = true; rebuildState = "idle";
+        if (prepared.config) { installedConfig = prepared.config; installedGeneration = requestGeneration; }
+      }
+      if (!ready || !field) throw new Error("Names scene has no drawable field");
+      cancelFadeFrame();
+      runtime.registerOpacityTarget("nli.people_names", writeSceneFactor, {
+        onTeardown: () => { if (!sceneWanted) { removeOwned(); freezeReveal(); } },
+        onFrameDraw: () => map.triggerRepaint?.(),
+      });
+      if (!map.getSource(SOURCE_ID)) mountInstalledField();
+      else for (const id of [LABEL_ID, SELECTED_LABEL_ID]) {
+        if (map.getLayer(id)) runtime.stageMapLayer("nli.people_names", map.getLayer(id));
+      }
+      hideLegacyLabels(map); suppressCanvasSymbols();
+      applySelection(snapshot.personSelection);
+      if (canvasAdapter) {
+        if (fresh) startReveal({ restart: fadeOpacity <= 0, startAtMs: namesEntry?.startAtMs });
+        runtime.markMemberReady("nli.people_names");
+      } else {
+        animation?.show({ restart: fresh });
+        runtime.subscribeMemberReady("nli.people_names", ({ ready: markReady, failed }) => {
+          const onData = event => { if (event?.sourceId === SOURCE_ID && map.isSourceLoaded?.(SOURCE_ID)) markReady(); };
+          const onError = event => { if (event?.sourceId === SOURCE_ID) failed(); };
+          map.on?.("sourcedata", onData); map.on?.("error", onError);
+          if (map.isSourceLoaded?.(SOURCE_ID)) markReady();
+          return () => { map.off?.("sourcedata", onData); map.off?.("error", onError); };
+        });
+      }
+      publishDiagnostics();
+    },
+    discardScene(prepared) {
+      if (!prepared || prepared.installed) return;
+      if (prepared.token === sceneGeneration) sceneGeneration++;
+    },
     placeNameForPlace,
     getPendingPlaceId() {
       return pendingPlaceId;
@@ -585,6 +704,7 @@ export function createNliNameFieldController({
       if (!canvasAdapter || disposed) throw new Error('projection Canvas adapter unavailable');
       if (Object.keys(validateProjectionConfig(config)).length || !candidate) throw new Error('invalid projection Canvas candidate');
       if (signal?.aborted) throw Object.assign(new Error('projection preparation cancelled'), { name: 'AbortError' });
+      if ((candidate.language || 'he') !== readLanguage()) throw new Error('Stale name language candidate');
       const wallConfig = migrateProjectionConfigToV7(config, config.namesWall?.rotateDeg ?? 35);
       const token = ++canvasRequestToken;
       rebuildState = 'building';
@@ -597,13 +717,14 @@ export function createNliNameFieldController({
           candidate.placements.length !== diagnostics.expected || candidate.byPid?.size !== diagnostics.expected) {
           throw new Error(diagnostics?.reason || 'incomplete projection Canvas name wall');
         }
+        validateCandidateField(candidate, wallConfig.namesWall.activeMode, true);
         canvasAdapter.prepare({ config: wallConfig, placements: candidate.placements,
-          fontPx: candidate.fontSize, logicalPlane: candidate.logicalPlane });
+          fontPx: candidate.fontSize, textStyle: candidate.textStyle, logicalPlane: candidate.logicalPlane, outputMasks: candidate.outputMasks });
         preparedCanvas = { generation, identity, config: wallConfig, revision, field: candidate };
         rebuildState = 'pending';
         rebuildError = null;
         publishDiagnostics();
-        return { digest: candidate.digest, datasetVersion: candidate.datasetVersion, diagnostics };
+        return { digest: candidate.digest, datasetVersion: candidate.datasetVersion, language: candidate.language || 'he', diagnostics };
       } catch (error) {
         if (!disposed && token === canvasRequestToken && !signal?.aborted) {
           rebuildState = 'error';
@@ -615,11 +736,13 @@ export function createNliNameFieldController({
     },
     commitProjectionCandidate(generation) {
       if (!preparedCanvas || preparedCanvas.generation !== generation || disposed) throw new Error('stale projection Canvas commit');
+      if ((preparedCanvas.field.language || 'he') !== readLanguage()) throw new Error('Stale name language commit');
       previousCanvas = { generation, field, ready, installedRevision, installedGeneration, requestedConfig, requestedRevision, installedConfig,
         revealElapsedMs };
       const next = preparedCanvas;
       canvasAdapter.commit();
       field = next.field;
+      blockedLanguage = null;
       ready = true;
       requestedConfig = next.config;
       installedConfig = next.config;
@@ -630,7 +753,10 @@ export function createNliNameFieldController({
       preparedCanvas = null;
       try {
         mountInstalledField();
-        if (enabled) showCanvas({ restart: !previousCanvas.ready ||
+        if (isManaged()) {
+          cancelFadeFrame(); setCanvasOpacity(fadeOpacity);
+          if (enabled) startReveal({ restart: !previousCanvas.ready || previousCanvas.field?.datasetVersion !== next.field?.datasetVersion });
+        } else if (enabled) showCanvas({ restart: !previousCanvas.ready ||
           previousCanvas.field?.datasetVersion !== next.field?.datasetVersion });
         else if (!previousCanvas.ready || previousCanvas.field?.datasetVersion !== next.field?.datasetVersion) {
           clearReveal(); setCanvasOpacity(0);
@@ -755,6 +881,20 @@ export function createNliNameFieldController({
           canvasRevealPending: revealFrame !== null } : {}),
       };
     },
+    hideObsoleteLanguage(language) {
+      blockedLanguage = language;
+      if (canvasAdapter) setCanvasOpacity(fadeOpacity);
+      else if ((field?.language || 'he') !== language) hideProjectionField();
+    },
+    refreshNameLanguage() {
+      if (canvasAdapter || disposed) return;
+      const language = readLanguage();
+      if (language === observedLanguage) return;
+      observedLanguage = language;
+      requestGeneration++; rebuildState = 'pending';
+      void startProjectionBuild();
+    },
+    getInstalledNameLanguage() { return ready && field ? field.language || 'he' : null; },
     fadeOut() {
       if (disposed) return Promise.resolve();
       if (canvasAdapter) {
@@ -780,7 +920,7 @@ export function createNliNameFieldController({
       }));
     },
     sync(groups) {
-      if (disposed) return;
+      if (disposed || isManaged()) return;
       const nextEnabled = hasPeopleNames(groups);
       if (canvasAdapter) {
         if (nextEnabled === enabled) return;
@@ -850,7 +990,7 @@ export function createNliNameFieldController({
     },
     dispose() {
       if (disposed) return;
-      disposed = true;
+      disposed = true; cancelSceneHidden?.();
       cancelFadeFrame();
       freezeReveal();
       requestGeneration += 1;

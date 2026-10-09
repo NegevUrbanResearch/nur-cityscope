@@ -450,8 +450,7 @@ describe("GIS owners mount the overlay and projection does not", () => {
     expect(src).toMatch(/getNliClockLayout\?\.\(\)\?\.gisOverlays\?\.novaExplainers/);
     expect(src).toContain("getEscapeOverlay");
     expect(src).toMatch(/subscribe\("nliClockLayout", \(\) => \{[\s\S]*?refresh\(\)/);
-    expect(src).toMatch(/subscribe\("narrativeState", \(\) => \{[\s\S]*?refresh\(\)/);
-    expect(src).toMatch(/subscribe\("escapeOverlay", \(\) => \{[\s\S]*?refresh\(\)/);
+    expect(src).toContain("novaExplainerOverlay.applyScene(options.snapshot");
     expect(src).toContain("novaExplainerOverlay.dispose()");
     expect(preview).toContain("novaExplainerOverlay.dispose");
     expect(src).toMatch(
@@ -485,4 +484,17 @@ describe("GIS owners mount the overlay and projection does not", () => {
     expect(section).toContain("prefers-reduced-motion");
     expect(section).not.toMatch(/line-clamp|text-overflow:\s*ellipsis|transform:/);
   });
+});
+
+it("managed departing cards retain content until the companion reaches zero", () => {
+  const ui = mount(); ui.overlay.sync(visual());
+  const old = ui.container.querySelector(".nli-nova-explainer-card");
+  let hidden;
+  ui.overlay.applyScene({ narrativeState: { id: null }, escapeOverlay: {} }, { runtime: {
+    getDesiredIds: () => [], onMemberHidden: (_id, fn) => { hidden = fn; return () => {}; },
+    registerElement() {},
+  } });
+  ui.overlay.sync({ phase: "idle", achievedPolygonObjectIds: [] });
+  expect(old.isConnected).toBe(true);
+  hidden(); expect(old.isConnected).toBe(false); ui.overlay.dispose();
 });

@@ -26,7 +26,7 @@ Confirm audio stops and rewinds when leaving each video slide or closing the
 presentation. Confirm Shura and the Hostages presentation step open after their cues. Confirm Close on Shura and
 Hostages (like every segment) stays on the current step and offers Open again;
 Scene Next on the Hostages presentation step continues to Nir Oz people.
-Scene Back, Scene Next, and Home must close the overlay before changing step. Confirm that
+Scene Back, Scene Next, and Home stage Close under the cue hold and dispatch the destination cue before visible-close acknowledgement. Outgoing GIS pixels remain mounted until their scene fade reaches zero. Confirm that
 slides stay on GIS and do not appear on projection. Opening and closing must
 leave GIS mounted in place without reloading the map or switching applications.
 
@@ -36,9 +36,9 @@ hardware/browser result below; automated tests do not count as exhibit checks.
 | Check | Date | Operator | Browser / display | pass/fail | Notes |
 |---|---|---|---|---|---|
 | Seven slide segment starts and boundary clamping |  |  |  | pending |  |
-| Names Wall → Credits resets to Home layers and automatically opens slide 34 on GIS only |  |  |  | pending |  |
-| Credits Close/reopen stays on credits; Back, Finish, and Home close before navigation |  |  |  | pending |  |
-| Credits cue failure retries on credits without opening early |  |  |  | pending |  |
+| Names Wall → Credits keeps the names visible on projection and automatically opens slide 34 on GIS only |  |  |  | pending |  |
+| Credits has no slide controls; Next/Back switches the GIS image without closing or resetting the scene |  |  |  | pending |  |
+| Credits Finish and Home close the GIS image and restore Home layers |  |  |  | pending |  |
 | Slides remain on GIS, not projection |  |  |  | pending |  |
 | Open/close causes no GIS reload or application switch |  |  |  | pending |  |
 | Slides 2, 10, 18, 21, 23, 24 autoplay audibly |  |  |  | pending |  |
@@ -46,7 +46,7 @@ hardware/browser result below; automated tests do not count as exhibit checks.
 | Shura and Hostages Close stays on step and offers Open again |  |  |  | pending |  |
 | Hostages presentation opens automatically after its scene is ready |  |  |  | pending |  |
 | Nova Memorial route control starts stopped; Start replays routes and Stop restores settled intersections |  |  |  | pending |  |
-| Scene Back/Next and Home close the overlay before changing step |  |  |  | pending |  |
+| Scene Back/Next and Home coordinate destination changes with overlay exit and visible-close acknowledgement |  |  |  | pending |  |
 | External network disconnected; fresh Chrome launch |  |  |  | pending |  |
 
 After the exhibit and when the source terms require removal, delete

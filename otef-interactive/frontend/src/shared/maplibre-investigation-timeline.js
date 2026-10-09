@@ -1,3 +1,5 @@
+import { peekLayerLifecycleRuntime } from "./layer-lifecycle-fade.js";
+import { publishInvestigationOverlayOpacity } from "./investigation-overlay-lifecycle.js";
 /**
  * Shared-clock highlight for NLI investigation polygons, lines, and alarms.
  * Maps evaluate `NliInvestigationClock` (GIS and projection share T via correctedNow).
@@ -16,7 +18,7 @@ import {
   NLI_CAPTION_MODE_CLOCK_ONLY,
 } from "./nli-explainer-model.js";
 import { nliClockPresentationPending, syncNliClockPresentationPending, renderNliClockCaption,
-  hideNliClockCaption, disposeNliClockPresentation, settleNliClockReducedMotion } from "./nli-clock-presentation.js";
+  hideNliClockCaption, disposeNliClockPresentation, settleNliClockReducedMotion, syncNliClockScene } from "./nli-clock-presentation.js";
 import {
   collectUnionTimelineBeats,
   INVESTIGATION_ALARMS_FULL_ID,
@@ -62,11 +64,13 @@ import {
   achievedSettlementCitynames,
   applySettlementOrientationPaint,
   collectKnownCitynamesFromMap,
+  collectShemotObjectIdsForCitynames,
   collectOrientationTargets,
 } from "./nli-settlement-orientation.js";
 import { shouldIncludeNarrativeSettlementOutline } from "./nli-nova-escape-impact.js";
 import { peopleMarkersAreShown } from "../map/nli-people-marker-filter.js";
 import { syncPersonHaloPaint } from "../map/maplibre-person-selection.js";
+import { personSettlementFocus } from "./nli-person-settlement-focus.js";
 import { syncTimelineBaseLayerVisibility } from "../map/maplibre-layer-manager.js";
 
 export {
@@ -106,6 +110,31 @@ export function isIdleOverviewCueLayerSet(enabledIds, narrativeId = null) {
     const expected = new Set(cue.layers);
     return actual.size === expected.size && [...expected].every((id) => actual.has(id));
   });
+}
+
+/** Declare caption membership before the shared batch opens. */
+export function getNliClockSceneIds(snapshot, displayProfile = "gis") {
+  if (snapshot.investigationClock?.hiddenDisplays?.includes(displayProfile)) return [];
+  const ids = new Set(snapshot.enabledIds || []);
+  const narrativeId = snapshot.narrativeState?.id;
+  const active = snapshot.investigationClock?.phase !== "idle" &&
+    [INVESTIGATION_ALARMS_FULL_ID, INVESTIGATION_LINES_FULL_ID, INVESTIGATION_POLYGONS_FULL_ID].some(id => ids.has(id));
+  return getNliNarrative(narrativeId) || active || isIdleOverviewCueLayerSet(ids, narrativeId)
+    ? ["nli.clock-caption." + displayProfile] : [];
+}
+
+/** Static producer inputs only; reveal frames and clock transport remain semantic. */
+export function getInvestigationSceneContentKey(snapshot, fullId) {
+  const focus = getNliNarrative(snapshot.narrativeState?.id);
+  if (["projector_base.ישובים", "projector_base.שמות_יישובים", "projector_base.Locations_Lines"].includes(fullId)) {
+    const peopleScene = peopleMarkersAreShown(snapshot.layerGroups) && !focus;
+    return JSON.stringify([focus ? "narrative" : null,
+      focus?.focusSettlement ?? null, focus?.focusSettlementOutlineId ?? null, focus?.keepFocusLabelWithAchieved === true,
+      peopleScene ? snapshot.personSelection?.personId ?? null : null,
+      peopleScene ? snapshot.personSelection?.datasetVersion ?? null : null]);
+  }
+  if (![INVESTIGATION_POLYGONS_FULL_ID, INVESTIGATION_LINES_FULL_ID, INVESTIGATION_ALARMS_FULL_ID].includes(fullId)) return undefined;
+  return JSON.stringify([focus?.id === "nova", fullId === INVESTIGATION_POLYGONS_FULL_ID ? focus?.focusInvestigationPolygonObjectId ?? null : null]);
 }
 
 /** @type {WeakMap<object, object>} */
@@ -289,7 +318,7 @@ function restorePaints(map, saved) {
       if (value === undefined) continue;
       try {
         if (typeof map.getLayer === "function" && !map.getLayer(id)) continue;
-        map.setPaintProperty(id, key, value);
+        publishInvestigationOverlayOpacity(map, INVESTIGATION_LINES_FULL_ID, id, key, value);
       } catch (_) {
         /* layer may have been removed */
       }
@@ -309,7 +338,9 @@ function hideBaseLines(map, saved) {
   if (!saved || typeof map.setPaintProperty !== "function") return;
   for (const id of Object.keys(saved)) {
     try {
-      map.setPaintProperty(id, "line-opacity", 0);
+      // Publish the timeline's effective opacity so scene fades cannot restore
+      // the solid authored base underneath the unconfirmed dashed overlay.
+      publishInvestigationOverlayOpacity(map, INVESTIGATION_LINES_FULL_ID, id, "line-opacity", 0);
     } catch (_) {
       /* ignore */
     }
@@ -494,7 +525,9 @@ function applyRestingRoutePaints(map, visible) {
   for (const id of collectBaseLineLayerIds(map)) {
     try {
       map.setPaintProperty(id, "line-color", NLI_VISUAL_TOKENS.incidentRed);
-      map.setPaintProperty(
+      publishInvestigationOverlayOpacity(
+        map,
+        INVESTIGATION_LINES_FULL_ID,
         id,
         "line-opacity",
         visible ? NLI_VISUAL_TOKENS.routeRestingOpacity : 0,
@@ -611,8 +644,7 @@ function clearOrientationTargets(state) {
 }
 
 function applyOrientationVisuals(map, state, outlineIds = []) {
-  const focus = state.narrativeFocus;
-  const peopleScene = state.peopleMarkersShown === true && !focus;
+  const focus = state.narrativeFocus || state.personSettlementFocus;
   state.lastOrientationOutlineIds = Array.isArray(outlineIds) ? outlineIds : [];
   const impactIds = Array.isArray(state.escapeImpactOutlineIds) ? state.escapeImpactOutlineIds : [];
   const merged = [...new Set(
@@ -632,10 +664,13 @@ function applyOrientationVisuals(map, state, outlineIds = []) {
     ),
     layers: state.orientationLayers,
     shemotSourceId: state.shemotSourceId,
-    mode: focus || peopleScene ? "narrative" : undefined,
+    mode: focus ? "narrative" : undefined,
     focusCityname: focus?.focusSettlement,
     focusOutlineObjectId: focus?.focusSettlementOutlineId,
     keepFocusLabelWithAchieved: focus?.keepFocusLabelWithAchieved === true,
+    ...(focus && focus === state.personSettlementFocus ? {
+      leaderObjectIds: collectShemotObjectIdsForCitynames(map, [focus.focusSettlement], state.shemotSourceId),
+    } : {}),
   });
 }
 
@@ -724,13 +759,14 @@ function applyPlayingVisuals(map, state, phase, frame = null, targetAlarmMode = 
       if (onsetFinished) state.alarmOnsetHistory.add(onsetId);
     }
   }
-  applyAlarmMode(map, state, targetAlarmMode, {
+  if (!state.sceneDepartingIds?.has(INVESTIGATION_ALARMS_FULL_ID)) applyAlarmMode(map, state, targetAlarmMode, {
     frame: alarmFrame || resolvedFrame,
     dataVersion: state.data.dataVersion,
   });
   let achievedSettlementOutlineIds = [];
   const novaSiteOverlay = isNovaNarrative(state);
-  if (state.polygonOn || state.lineOn || narrativeFocusOutlineActive(state) || novaSiteOverlay) {
+  if (!state.sceneDepartingIds?.has(INVESTIGATION_POLYGONS_FULL_ID) &&
+      (state.polygonOn || state.lineOn || narrativeFocusOutlineActive(state) || novaSiteOverlay)) {
     const lineData = state.lineOn && Array.isArray(state.data.lineFeatures)
       ? buildInvestigationLineFeaturesForFrame(state.data, lineFrame)
       : emptyLinePartition();
@@ -773,10 +809,10 @@ function applyPlayingVisuals(map, state, phase, frame = null, targetAlarmMode = 
       projectionNovaDim,
       parallelImpactIds,
     });
-  } else {
+  } else if (!state.sceneDepartingIds?.has(INVESTIGATION_POLYGONS_FULL_ID)) {
     state.polygonRenderer?.reset({ preserveBasePaints: true, immediate: true });
   }
-  if (state.lineOn) {
+  if (state.lineOn && !state.sceneDepartingIds?.has(INVESTIGATION_LINES_FULL_ID)) {
     state.lineRenderer?.render(
       {
         ...lineFrame,
@@ -816,6 +852,7 @@ function enablePolygonPlayback(map, state) {
 }
 
 function disablePolygonPlayback(map, state, { preserveBasePaints = false, immediate = false } = {}) {
+  if (state.sceneDepartingIds?.has(INVESTIGATION_POLYGONS_FULL_ID)) return;
   if (!state.polygonPlaybackActive) return;
   state.polygonRenderer?.reset({ preserveBasePaints, immediate });
   state.polygonPlaybackActive = false;
@@ -823,22 +860,15 @@ function disablePolygonPlayback(map, state, { preserveBasePaints = false, immedi
 
 function enableLinePlayback(map, state) {
   const baseIds = collectBaseLineLayerIds(map);
-  if (!state.linePlaybackActive) {
-    state.savedBaseLines = mergeSavedPaints(map, state.savedBaseLines, baseIds, ["line-opacity"]);
-    hideBaseLines(map, state.savedBaseLines);
-    state.linePlaybackActive = true;
-  } else {
-    const previousIds = new Set(Object.keys(state.savedBaseLines || {}));
-    const freshIds = baseIds.filter((id) => !previousIds.has(id));
-    if (freshIds.length) {
-      state.savedBaseLines = mergeSavedPaints(map, state.savedBaseLines, freshIds, ["line-opacity"]);
-      hideBaseLines(map, Object.fromEntries(freshIds.map((id) => [id, state.savedBaseLines[id]])));
-    }
-  }
+  state.savedBaseLines = mergeSavedPaints(map, state.savedBaseLines, baseIds, ["line-opacity"]);
+  // A scene remount can reuse an ID while replacing its lifecycle paint channel.
+  hideBaseLines(map, state.savedBaseLines);
+  state.linePlaybackActive = true;
   state.lineRenderer?.mount();
 }
 
 function disableLinePlayback(map, state, { preserveBasePaints = false, immediate = false } = {}) {
+  if (state.sceneDepartingIds?.has(INVESTIGATION_LINES_FULL_ID)) return;
   if (!state.linePlaybackActive && !state.savedBaseLines) {
     state.lineRenderer?.reset({ preserveBasePaints, immediate });
     return;
@@ -990,11 +1020,13 @@ function stopPlayback(map, { preserveBasePaints = false } = {}) {
   applyOrientationVisuals(map, state, []);
   const polygonWasPlaying = state.polygonPlaybackActive;
   disablePolygonPlayback(map, state, { preserveBasePaints, immediate: true });
-  if (!polygonWasPlaying) {
+  if (!polygonWasPlaying && !state.sceneDepartingIds?.has(INVESTIGATION_POLYGONS_FULL_ID)) {
     state.polygonRenderer?.reset({ preserveBasePaints, immediate: true });
   }
   disableLinePlayback(map, state, { preserveBasePaints, immediate: true });
-  state.alarmRenderer?.reset({ preserveBasePaints, immediate: true });
+  if (!state.sceneDepartingIds?.has(INVESTIGATION_ALARMS_FULL_ID)) {
+    state.alarmRenderer?.reset({ preserveBasePaints, immediate: true });
+  }
   updateCaption(state, { mode: "hold", clock: null, index: -1, beatElapsedMs: 0 });
 }
 
@@ -1070,7 +1102,7 @@ function applyStoryPlayback(map, state) {
     enablePolygonPlayback(map, state);
   } else {
     disablePolygonPlayback(map, state, { immediate: true });
-    if (!state.lineOn) {
+    if (!state.lineOn && !state.sceneDepartingIds?.has(INVESTIGATION_POLYGONS_FULL_ID)) {
       state.polygonRenderer?.reset({ preserveBasePaints: true, immediate: true });
     }
   }
@@ -1079,20 +1111,22 @@ function applyStoryPlayback(map, state) {
 }
 
 function resetEffectiveRenderers(map, state, nextMembership, { preservePolygonBasePaints = true } = {}) {
-  if (state.lineOn && !nextMembership.lineOn) {
+  if (state.lineOn && !nextMembership.lineOn && !state.sceneDepartingIds?.has(INVESTIGATION_LINES_FULL_ID)) {
     disableLinePlayback(map, state, { immediate: true });
     applyRestingRoutePaints(
       map,
       nextMembership.visible.has(INVESTIGATION_LINES_FULL_ID),
     );
   }
-  if (state.polygonOn && !nextMembership.visible.has(INVESTIGATION_POLYGONS_FULL_ID)) {
+  if (state.polygonOn && !nextMembership.polygonOn && !isNovaNarrative(state) &&
+      !nextMembership.visible.has(INVESTIGATION_POLYGONS_FULL_ID)) {
     disablePolygonPlayback(map, state, {
       preserveBasePaints: preservePolygonBasePaints,
       immediate: true,
     });
   }
-  if (state.alarmMode !== "off" && !nextMembership.alarmVisible) {
+  if (state.alarmMode !== "off" && !nextMembership.alarmVisible &&
+      !state.sceneDepartingIds?.has(INVESTIGATION_ALARMS_FULL_ID)) {
     applyAlarmMode(map, state, "off", { immediate: true });
   }
 }
@@ -1150,6 +1184,7 @@ export function getInvestigationTimelineDiagnostics(map) {
  *   requestAnimationFrame?: (callback: (timestamp: number) => void) => number,
  *   cancelAnimationFrame?: (id: number) => void,
  *   visibilityLayerGroups?: unknown,
+ *   joinBatch?: boolean,
  *   displayProfile?: 'gis'|'projection'|object,
  *   nliCaptionMode?: 'full'|'clock-only',
  *   motionMode?: 'full'|'reduced',
@@ -1178,8 +1213,27 @@ export async function syncInvestigationTimelineToMap(map, clockInput, layerGroup
   if (typeof deps.getPersonSelection === "function") state.getPersonSelection = deps.getPersonSelection;
   applyPersonGlow(state);
   applyCaptionDeps(state, map, deps);
+  syncNliClockScene(state, deps.sceneClockRuntime, deps.sceneCaptionId);
   const narrativeId = state.narrativeFocus?.id ?? null;
   const nextMembership = effectiveMembership(clock, visibilityGroups, narrativeId);
+  // The scene owner has already published complete desired membership. Retain
+  // departing renderer inputs; ordinary transport/preview calls keep their resets.
+  const runtime = deps.joinBatch === true ? peekLayerLifecycleRuntime(map) : null;
+  const desired = new Set(runtime?.getDesiredIds() || []);
+  state.sceneDepartingIds = new Set();
+  if (runtime) {
+    for (const [id, renderer] of [
+      [INVESTIGATION_LINES_FULL_ID, state.lineRenderer],
+      [INVESTIGATION_POLYGONS_FULL_ID, state.polygonRenderer],
+      [INVESTIGATION_ALARMS_FULL_ID, state.alarmRenderer],
+    ]) {
+      if (!desired.has(id)) {
+        state.sceneDepartingIds.add(id);
+        renderer?.reset({ sceneDeparture: true });
+      }
+    }
+  }
+
   const armedMembership = new Set(Array.isArray(clock.membership) ? clock.membership.map(String) : []);
   const suppressedTimelineFullIds = clock.phase === "idle"
     ? []
@@ -1221,6 +1275,19 @@ export async function syncInvestigationTimelineToMap(map, clockInput, layerGroup
 
   refreshInvestigationTimelineData(state.data, deps);
   refreshOrientationTargets(map, state);
+  const selection = deps.getPersonSelection?.();
+  state.personSettlementFocus = null;
+  if (state.peopleMarkersShown && !state.narrativeFocus && selection?.personId && typeof deps.resolvePerson === "function") {
+    const [person] = await Promise.all([
+      Promise.resolve().then(() => deps.resolvePerson(selection.personId, selection.datasetVersion)).catch(() => null),
+      ensureInvestigationSettlementFeatures(state.data, deps, {
+        request: syncRequest, isCurrent: () => !isStaleTimelineSyncRequest(map, syncRequest),
+      }),
+    ]);
+    if (isStaleTimelineSyncRequest(map, syncRequest)) return;
+    state.personSettlementFocus = personSettlementFocus(person, state.data.settlementFeatures,
+      collectKnownCitynamesFromMap(map, state.shemotSourceId));
+  }
   const polygonsVisible = nextMembership.visible.has(INVESTIGATION_POLYGONS_FULL_ID);
   const linesVisible = nextMembership.visible.has(INVESTIGATION_LINES_FULL_ID);
   const novaSiteOverlay = isNovaNarrative(state);
@@ -1274,7 +1341,7 @@ export async function syncInvestigationTimelineToMap(map, clockInput, layerGroup
       });
       if (isStaleTimelineSyncRequest(map, syncRequest)) return;
       enableLinePlayback(map, state);
-    } else {
+    } else if (!state.sceneDepartingIds?.has(INVESTIGATION_LINES_FULL_ID)) {
       applyRestingRoutePaints(map, false);
     }
     assignVisibleStoryBeats(state, polygonsVisible, linesVisible);
@@ -1368,7 +1435,8 @@ export async function syncInvestigationTimelineToMap(map, clockInput, layerGroup
   state.lastRenderNow = nowMs;
   applyStoryPlayback(map, state);
   applyPlayingVisuals(map, state, vis, frame, alarmMode);
-  if (semantic.polygonOn && !nextMembership.polygonOn) {
+  if (semantic.polygonOn && !nextMembership.polygonOn &&
+      !state.sceneDepartingIds?.has(INVESTIGATION_POLYGONS_FULL_ID)) {
     const semanticFrame = deriveInvestigationFrame(
       clock,
       nowMs,
@@ -1413,6 +1481,7 @@ export function disposeInvestigationTimelineForMap(map) {
   invalidateTimelineSyncRequests(map);
   const state = stateByMap.get(map);
   if (!state) return;
+  state.sceneDepartingIds = new Set();
   stopPlayback(map);
   disposeNliClockPresentation(state);
   applyRestingRoutePaints(map, state.routeLayerVisible);

@@ -141,6 +141,10 @@ export function createNameFieldAnimation({ apply, motionMode = 'full', now = () 
       focusStart = now();
       tick();
     },
+    hold() {
+      frozenReveal = Math.max(0, now() - revealStart);
+      tick();
+    },
     hide(complete) {
       if (disposed) {
         complete?.();

@@ -183,8 +183,9 @@ describe("NLI Segev narrative cross-surface contract", () => {
   test("subscribes both surfaces to durable state while keeping NLI-sheet commands remote-owned", () => {
     const cleanMapEntry = stripComments(mapEntry);
     const cleanProjectionEntry = stripComments(projectionEntry);
-    expect(cleanMapEntry).toMatch(/subscribe\("narrativeState",\s*\(state\)\s*=>\s*narrativeController\?\.apply\(state\)\)/);
-    expect(cleanMapEntry).toContain("narrativeController.apply(OTEFDataContext.getNarrativeState?.())");
+    expect(cleanMapEntry).toContain("createNliSceneDisplayBinding({");
+    expect(cleanMapEntry).toContain("narrativeController, escapeCoordinator: novaEscapeCoordinator");
+    expect(cleanMapEntry).toContain("narrativeController.apply(sceneSnapshot().narrativeState)");
     expect(cleanProjectionEntry).toMatch(/subscribe\("narrativeState",\s*\(state\)\s*=>\s*\{[\s\S]{0,200}?projectionNarrativeController\?\.apply\(state\);/);
     expect(cleanProjectionEntry).toContain("projectionNarrativeController.apply(OTEFDataContext.getNarrativeState())");
     expect(layerSheet).not.toContain("nliNarrativeControlsHtml(");
@@ -197,7 +198,10 @@ describe("NLI Segev narrative cross-surface contract", () => {
 
   test("investigation clock updates do not apply narrative camera scenes", () => {
     const cleanMapEntry = stripComments(mapEntry);
-    expect(cleanMapEntry).toMatch(/subscribe\("investigationClock",\s*syncContextInvestigation\)/);
+    const binding = readSource("../../frontend/src/shared/nli-scene-display-binding.js");
+    expect(cleanMapEntry).toContain("syncTimeline: syncContextInvestigation");
+    expect(binding).toContain('"investigationClock"');
+    expect(binding).toContain("syncTimeline(snapshot");
     expect(cleanMapEntry).not.toMatch(/subscribe\("investigationClock"[\s\S]{0,200}narrativeController\?\.apply/);
     expect(stripComments(gisNarrativeController)).not.toMatch(/subscribe\(["']investigationClock["']/);
   });

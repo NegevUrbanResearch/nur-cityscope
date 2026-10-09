@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createFakeMapLibreMap } from "../helpers/fake-maplibre-map.js";
 import { DEFAULT_PROJECTION_CONFIG as DEFAULTS } from "../../frontend/src/shared/projection-config-schema.js";
+import { getLayerLifecycleRuntime } from "../../frontend/src/shared/layer-lifecycle-fade.js";
 import { NAME_FIELD_MOTION } from "../../frontend/src/shared/nli-name-field-animation.js";
 
 vi.mock("../../frontend/src/shared/nli-name-field-data.js", () => ({
@@ -40,7 +41,7 @@ const groupedField = () => {
   return data;
 };
 
-function setup({ profile = "projection", projectionSpan, applyProjectionConfig = true, manualProjectionPreparation = false, motionMode = "reduced", snapshot = { personId: null, datasetVersion: null, revision: 0 }, onWallEnabledChange } = {}) {
+function setup({ managedScene = false, profile = "projection", projectionSpan, applyProjectionConfig = true, manualProjectionPreparation = false, motionMode = "reduced", snapshot = { personId: null, datasetVersion: null, revision: 0 }, onWallEnabledChange } = {}) {
   const map = createFakeMapLibreMap({ layers: [
     { id: "nli__people_names__labels", type: "symbol", layout: { visibility: "visible" } },
   ] });
@@ -68,7 +69,7 @@ function setup({ profile = "projection", projectionSpan, applyProjectionConfig =
     if (topic === "personSelection") state.snapshot = value;
     listeners.get(topic)?.(value);
   };
-  const controller = createNliNameFieldController({ map, context, displayProfile: profile, projectionSpan, loadField: loadNliNameField, motionMode, onWallEnabledChange, manualProjectionPreparation });
+  const controller = createNliNameFieldController({ map, context, displayProfile: profile, projectionSpan, loadField: loadNliNameField, motionMode, onWallEnabledChange, manualProjectionPreparation, managedScene });
   if (applyProjectionConfig) controller.setProjectionConfig(DEFAULTS, 1);
   return { map, context, controller, emit, state };
 }
@@ -124,6 +125,105 @@ describe("createNliNameFieldController", () => {
       descriptor: () => ({ source: {}, opacity, revealSeconds }), getOpacity: () => opacity,
       getRevealSeconds: () => revealSeconds };
   };
+  it('applying an older installed scene retains the latest Canvas language and group metadata', async () => {
+    let language = 'he';
+    const d = setup({ managedScene: true, manualProjectionPreparation: true });
+    d.context.getLegendSettings = () => ({ language });
+    const adapter = canvasAdapter(); d.controller.installProjectionCanvas(adapter);
+    await d.controller.prepareProjectionCandidate({ generation: 1, config: DEFAULTS, field: canvasField(), revision: 1 });
+    d.controller.commitProjectionCandidate(1); d.controller.finalizeProjectionCandidate(1);
+    const snapshot = { layerGroups: [{ id: 'nli', layers: [{ id: 'people_names', enabled: true }] }], personSelection: {} };
+    const oldScene = await d.controller.prepareScene(snapshot);
+    const english = { ...canvasField(), language: 'en' };
+    english.groupGeojson.features[0].properties.name = 'Nova';
+    language = 'en';
+    await d.controller.prepareProjectionCandidate({ generation: 2, config: DEFAULTS, field: english, revision: 1 });
+    d.controller.commitProjectionCandidate(2); d.controller.finalizeProjectionCandidate(2);
+    const runtime = getLayerLifecycleRuntime(d.map);
+    runtime.setDesiredIds(['nli.people_names'], { durationMs: 0, requiredIds: ['nli.people_names'] });
+    d.controller.applyScene(oldScene, { snapshot, runtime }); runtime.commitBatch();
+    expect(d.controller.placeNameForPlace('custom-reim-parking')).toBe('Nova');
+    d.controller.dispose(); runtime.dispose();
+  });
+  it.each(["left", "right"])("managed %s Canvas output uses exactly the lifecycle factor", async projectionSpan => {
+    vi.useFakeTimers(); vi.setSystemTime(0);
+    const d = setup({ projectionSpan, managedScene: true, motionMode: "full" });
+    const adapter = canvasAdapter(); d.controller.installProjectionCanvas(adapter);
+    await d.controller.prepareProjectionCandidate({ generation: 1, config: DEFAULTS, field: canvasField(), revision: 1 });
+    d.controller.commitProjectionCandidate(1); d.controller.finalizeProjectionCandidate(1);
+    const runtime = getLayerLifecycleRuntime(d.map, { now: () => Date.now(), requestFrame: cb => d.map.requestAnimationFrame(cb), cancelFrame: id => d.map.cancelAnimationFrame(id) });
+    const snapshot = { layerGroups: [{ id: "nli", layers: [{ id: "people_names", enabled: true }] }], personSelection: {} };
+    const candidate = await d.controller.prepareScene(snapshot);
+    runtime.setDesiredIds(["nli.people_names"], { durationMs: 600, requiredIds: ["nli.people_names"] });
+    d.controller.applyScene(candidate, { snapshot, runtime }); runtime.commitBatch();
+    expect(adapter.getOpacity()).toBe(0);
+    await vi.advanceTimersByTimeAsync(300); d.map.driveAnimationFrame(Date.now());
+    expect(adapter.getOpacity()).toBeCloseTo(.5);
+    expect(adapter.getRevealSeconds()).toBeGreaterThan(0);
+    const before = adapter.getRevealSeconds();
+    d.controller.applyScene(undefined, { snapshot: { ...snapshot, personSelection: { personId: "p-1" } }, runtime, semanticOnly: true });
+    expect(adapter.getOpacity()).toBeCloseTo(.5); expect(adapter.getRevealSeconds()).toBe(before);
+    await vi.advanceTimersByTimeAsync(300); d.map.driveAnimationFrame(Date.now());
+    expect(adapter.getOpacity()).toBe(1); runtime.dispose(); d.controller.dispose();
+  });
+  it('prepares unique Model names with shared visibility and forwards output masks', async () => {
+    const d = setup({ applyProjectionConfig: false, projectionSpan: 'left' });
+    const adapter = canvasAdapter(); d.controller.installProjectionCanvas(adapter);
+    const config = structuredClone(DEFAULTS); config.namesWall.activeMode = 'model';
+    const candidate = canvasField();
+    candidate.geojson.features[0].properties.visible_spans = ['left', 'right'];
+    candidate.placements[0].outputs = ['left', 'right'];
+    candidate.outputMasks = { left: [[[0, 0], [1, 0], [1, 1]]], right: [] };
+    await d.controller.prepareProjectionCandidate({ generation: 1, config, field: candidate, revision: 1 });
+    expect(adapter.prepare.mock.calls[0][0].outputMasks).toBe(candidate.outputMasks);
+    d.controller.commitProjectionCandidate(1); d.controller.finalizeProjectionCandidate(1);
+    expect(d.controller.getProjectionNameDiagnostics().owners).toEqual({ 'p-1': 'left', 'p-2': 'right' });
+    d.controller.dispose();
+  });
+  it('installs Model source visibility on both projection spans with one PID', async () => {
+    const candidate = field(); candidate.geojson.features[0].properties.visible_spans = ['left', 'right'];
+    loadNliNameField.mockResolvedValueOnce(candidate);
+    const d = setup({ applyProjectionConfig: false, projectionSpan: 'right' });
+    const config = structuredClone(DEFAULTS); config.namesWall.activeMode = 'model';
+    d.controller.setProjectionConfig(config, 1); enable(d); await settle();
+    expect(d.map.getLayer('nli-name-field-labels')).toBeTruthy();
+    expect(d.map.getLayer('nli-name-field-labels').filter).toEqual(['in', 'right', ['get', 'visible_spans']]);
+    expect(d.controller.getProjectionNameDiagnostics().owners).toEqual({ 'p-1': 'left', 'p-2': 'right' });
+    d.controller.dispose();
+  });
+  it.each([
+    ['wall', ['left', 'right']], ['model', []], ['model', ['left', 'left']],
+    ['model', ['left', 'unknown']],
+  ])('rejects invalid %s Canvas visibility %j', async (mode, spans) => {
+    const d = setup({ applyProjectionConfig: false });
+    const adapter = canvasAdapter(); d.controller.installProjectionCanvas(adapter);
+    const config = structuredClone(DEFAULTS); config.namesWall.activeMode = mode;
+    const candidate = canvasField(); candidate.geojson.features[0].properties.visible_spans = spans;
+    await expect(d.controller.prepareProjectionCandidate({ generation: 1, config, field: candidate, revision: 1 }))
+      .rejects.toThrow('Invalid NLI name field ownership');
+    expect(adapter.prepare).not.toHaveBeenCalled(); d.controller.dispose();
+  });
+  it('rejects duplicate or foreign Canvas placement PIDs', async () => {
+    for (const pid of ['p-1', 'foreign']) {
+      const d = setup({ applyProjectionConfig: false });
+      const adapter = canvasAdapter(); d.controller.installProjectionCanvas(adapter);
+      const candidate = canvasField(); candidate.placements[1].id = pid;
+      await expect(d.controller.prepareProjectionCandidate({ generation: 1, config: DEFAULTS, field: candidate, revision: 1 }))
+        .rejects.toThrow('Invalid NLI name field data');
+      expect(adapter.prepare).not.toHaveBeenCalled(); d.controller.dispose();
+    }
+  });
+  it.each([{ outputs: ['left', 'left'] }, { outputs: ['right'] }, { outputs: ['left', 'unknown'] }])
+    ('rejects mismatched Model placement outputs $outputs', async ({ outputs }) => {
+    const d = setup({ applyProjectionConfig: false });
+    const adapter = canvasAdapter(); d.controller.installProjectionCanvas(adapter);
+    const config = structuredClone(DEFAULTS); config.namesWall.activeMode = 'model';
+    const candidate = canvasField(); candidate.geojson.features[0].properties.visible_spans = ['left', 'right'];
+    candidate.placements[0].outputs = outputs;
+    await expect(d.controller.prepareProjectionCandidate({ generation: 1, config, field: candidate, revision: 1 }))
+      .rejects.toThrow('Invalid NLI name field ownership');
+    expect(adapter.prepare).not.toHaveBeenCalled(); d.controller.dispose();
+  });
   it('remaps installed names through new geometry without replacing their placement field', async () => {
     const d = setup({ applyProjectionConfig: false, projectionSpan: 'left' });
     const adapter = canvasAdapter(); d.controller.installProjectionCanvas(adapter);

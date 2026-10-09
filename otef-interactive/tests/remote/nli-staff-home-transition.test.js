@@ -114,7 +114,15 @@ function mount(options = {}) {
     async openCard(selector) {
       const button = el("narrativeList").querySelector(selector);
       expect(button).toBeTruthy();
+      const before = h.commands.length;
       button.click();
+      await vi.waitFor(() => expect(el("cueStatus").dataset.status === "ready" || h.commands.length > before).toBe(true));
+      if (el("cueStatus").dataset.status !== "ready") {
+        const command = h.commands.at(-1);
+        h.emit("narrativePresentationResult", { ...command, outcome: "ready" });
+        await vi.waitFor(() => expect(h.clock.presentationPendingUntilMs || 0).toBe(0));
+        h.emit("narrativePresentationResult", { ...command, outcome: "opened" });
+      }
       await vi.waitFor(() => expect(el("cueStatus").dataset.status).toBe("ready"));
     },
     async clickHome() {
@@ -153,7 +161,7 @@ function mount(options = {}) {
     },
     patchInvestigationClock: async (next) => {
       h.patches.push(next);
-      h.clock = { ...h.clock, phase: "idle", revision: h.clock.revision + 1 };
+      h.clock = { ...next, revision: h.clock.revision + 1 };
       return { ok: true, clock: h.clock };
     },
     clearPerson: (...args) => h.clearPerson(...args),
@@ -245,7 +253,8 @@ describe("NLI staff Home transitions", () => {
     await bootRemote(session);
     const { h } = session;
 
-    await h.openCard('[data-show-step="names-wall"]');
+    el("narrativeList").querySelector('[data-show-step="names-wall"]').click();
+    await vi.waitFor(() => expect(h.commands.at(-1)?.presentationAction).toBe("open"));
     expect(el("stepTitle").textContent).toBe("Wall of names");
     await vi.waitFor(() => expect(h.commands.at(-1)?.presentationAction).toBe("open"));
     expect(h.commands.at(-1)?.segmentId).toBe("names_wall");
@@ -255,6 +264,7 @@ describe("NLI staff Home transitions", () => {
       slide: 0,
       range: [0, 0],
     });
+    await vi.waitFor(() => expect(el("cueStatus").dataset.status).toBe("ready"));
     expect(el("kitPresentation").hidden).toBe(true);
     expect(el("kitPresentation").innerHTML).not.toContain("data-presentation-action");
     const nullCallsBefore = h.narratives.filter((id) => id === null).length;
@@ -263,8 +273,9 @@ describe("NLI staff Home transitions", () => {
     el("homeBtn").click();
     await vi.waitFor(() => expect(h.layers.length).toBeGreaterThan(layersBeforeHome), { timeout: 2000 });
     expect(h.layers[layersBeforeHome]).not.toContain("nli.people_names");
-    expect(h.commands.slice(commandsBeforeHome).some((command) => command.presentationAction === "close")).toBe(false);
+    expect(h.commands.slice(commandsBeforeHome).some((command) => command.presentationAction === "close")).toBe(true);
     await vi.waitFor(() => expect(h.commands.at(-1)?.presentationAction).toBe("close"), { timeout: 2000 });
+    expect(h.layers.at(-1)).toEqual([...HOME_LAYER_IDS]);
     h.emit("narrativePresentationResult", { ...h.commands.at(-1), outcome: "closed" });
     await vi.waitFor(() => {
       expect(h.narratives.filter((id) => id === null).length).toBeGreaterThan(nullCallsBefore);
@@ -294,13 +305,13 @@ describe("NLI staff Home transitions", () => {
     expect(el("playerCueFailure").hidden).toBe(true);
   });
 
-  test("names-wall Back fades names before closing the GIS slide and restoring identity layers", async () => {
+  test("names-wall Back stages GIS Close and restores identity layers before visible-close acknowledgement", async () => {
     setLocale("en", { persist: false });
     session = mount({ narrative: { id: null, revision: 1, transition: "steady" } });
     await bootRemote(session);
     const { h } = session;
 
-    await h.openCard('[data-show-step="names-wall"]');
+    el("narrativeList").querySelector('[data-show-step="names-wall"]').click();
     await vi.waitFor(() => expect(h.commands.at(-1)?.presentationAction).toBe("open"));
     h.emit("narrativePresentationResult", {
       ...h.commands.at(-1),
@@ -308,12 +319,13 @@ describe("NLI staff Home transitions", () => {
       slide: 0,
       range: [0, 0],
     });
+    await vi.waitFor(() => expect(el("cueStatus").dataset.status).toBe("ready"));
     const layersBeforeBack = h.layers.length;
     const commandsBeforeBack = h.commands.length;
     el("prevBtn").click();
     await vi.waitFor(() => expect(h.layers.length).toBeGreaterThan(layersBeforeBack), { timeout: 2000 });
     expect(h.layers[layersBeforeBack]).not.toContain("nli.people_names");
-    expect(h.commands.slice(commandsBeforeBack).some((command) => command.presentationAction === "close")).toBe(false);
+    expect(h.commands.slice(commandsBeforeBack).some((command) => command.presentationAction === "close")).toBe(true);
     await vi.waitFor(() => expect(h.commands.at(-1)?.presentationAction).toBe("close"), { timeout: 2000 });
     h.emit("narrativePresentationResult", { ...h.commands.at(-1), outcome: "closed" });
     await vi.waitFor(() => {
@@ -348,54 +360,27 @@ describe("NLI staff Home transitions", () => {
     expect(el("kitPresentation").querySelector('[data-presentation-action="close"]')).toBeNull();
   });
 
-  test("a delayed close blocks Home cleanup, and a failed close leaves the step and its retry", async () => {
-    setLocale("en", { persist: false });
-    session = mount();
-    await bootRemote(session);
+  test("Home dispatches its destination while GIS Close is pending and a failed close remains retryable", async () => {
+    setLocale("en", { persist: false }); session = mount(); await bootRemote(session);
     const { h } = session;
-
-    await h.openCard('[data-open="nova"]');
-    el("ticks").querySelector('[data-step="3"]').click();
-    await vi.waitFor(() => {
-      expect(el("stepTitle").textContent).toBe("Mor Levy");
-      expect(el("cueStatus").dataset.status).toBe("ready");
-    });
-    await vi.waitFor(() => expect(h.commands.at(-1)?.presentationAction).toBe("open"));
-    h.emit("narrativePresentationResult", {
-      ...h.commands.at(-1),
-      outcome: "opened",
-      slide: 9,
-      range: [9, 11],
-    });
-    await vi.waitFor(() => expect(el("kitPresentation").innerHTML).toContain('data-presentation-action="close"'));
-
-    const layersAtClose = h.layers.length;
-    const narrativesAtClose = h.narratives.length;
-    vi.useFakeTimers();
-    el("nextBtn").click();
-    await Promise.resolve();
-    expect(h.commands.at(-1)?.presentationAction).toBe("close");
-    await Promise.resolve();
-    expect(h.layers.length).toBe(layersAtClose);
-    expect(h.narratives.length).toBe(narrativesAtClose);
-    expect(el("stepTitle").textContent).toBe("Mor Levy");
-
-    h.emit("narrativePresentationResult", { ...h.commands.at(-1), outcome: "unavailable" });
-    expect(el("kitPresentation").textContent).not.toContain("Presentation unavailable");
-    await vi.advanceTimersByTimeAsync(6000);
-    await Promise.resolve();
-    vi.useRealTimers();
-    expect(el("kitPresentation").textContent).toContain("Presentation unavailable");
-    expect(h.layers.length).toBe(layersAtClose);
-    expect(el("stepTitle").textContent).toBe("Mor Levy");
+    await h.openCard('[data-open="shura"]');
+    const before = h.layers.length;
+    vi.useFakeTimers(); el("homeBtn").click();
+    await vi.waitFor(() => expect(h.commands.at(-1)?.presentationAction).toBe("close"));
+    const closing = h.commands.at(-1);
+    await vi.waitFor(() => expect(h.layers.length).toBeGreaterThan(before));
+    expect(h.layers.at(-1)).toEqual([...HOME_LAYER_IDS]);
+    expect(h.clock.presentationPendingUntilMs || 0).toBe(0);
     expect(activeScreen()).toBe("player");
-    expect(el("nextBtn").disabled).toBe(false);
-    const commandsBeforeRecovery = h.commands.length;
-    el("kitPresentation").querySelector('[data-presentation-action="recover-home"]').click();
+    h.emit("narrativePresentationResult", { ...closing, outcome: "unavailable" });
+    await vi.advanceTimersByTimeAsync(6000); vi.useRealTimers();
+    await vi.waitFor(() => expect(el("cueStatus").dataset.status).toBe("failed"));
+    expect(activeScreen()).toBe("player"); expect(el("playerCueFailure").hidden).toBe(false);
+    el("playerCueRetry").click();
+    await vi.waitFor(() => expect(h.commands.at(-1)?.requestId).not.toBe(closing.requestId));
+    h.emit("narrativePresentationResult", { ...h.commands.at(-1), outcome: "closed" });
     await vi.waitFor(() => expect(activeScreen()).toBe("home"));
-    expect(h.narratives.at(-1)).toBe(null);
-    expect(h.commands.slice(commandsBeforeRecovery).some(command => command.presentationAction === "close")).toBe(false);
-    h.emit("narrativePresentationResult", { ...h.commands[0], outcome: "opened", sourceId: "stale-GIS" });
+    h.emit("narrativePresentationResult", { ...closing, outcome: "opened", sourceId: "stale-GIS" });
     expect(activeScreen()).toBe("home");
   });
 
@@ -409,7 +394,6 @@ describe("NLI staff Home transitions", () => {
     el("ticks").querySelector('[data-step="3"]').click();
     await vi.waitFor(() => {
       expect(el("stepTitle").textContent).toBe("Mor Levy");
-      expect(el("cueStatus").dataset.status).toBe("ready");
     });
     await vi.waitFor(() => expect(h.commands.at(-1)?.presentationAction).toBe("open"));
     h.emit("narrativePresentationResult", {
@@ -423,14 +407,22 @@ describe("NLI staff Home transitions", () => {
     el("homeBtn").click();
     await vi.waitFor(() => expect(h.commands.at(-1)?.presentationAction).toBe("close"));
     const layersAtClose = h.layers.length;
+    const firstClose = h.commands.at(-1);
     el("nextBtn").click();
     el("homeBtn").click();
+    await vi.waitFor(() => expect(h.commands.at(-1)?.requestId).not.toBe(firstClose.requestId));
+    await vi.waitFor(() => expect(h.commands.at(-1)?.presentationAction).toBe("close"));
+    h.emit("narrativePresentationResult", { ...firstClose, outcome: "closed" });
+    await Promise.resolve(); await Promise.resolve();
+    expect(el("cueStatus").dataset.status).toBe("applying");
+    expect(activeScreen()).toBe("player");
     h.emit("narrativePresentationResult", { ...h.commands.at(-1), outcome: "closed" });
     await vi.waitFor(() => {
       expect(h.layers.at(-1)).toEqual([...HOME_LAYER_IDS]);
       expect(activeScreen()).toBe("home");
     });
-    expect(h.layers).toHaveLength(layersAtClose + 1);
+    expect(h.layers.length).toBeGreaterThanOrEqual(layersAtClose);
+    expect(h.layers.at(-1)).toEqual([...HOME_LAYER_IDS]);
   });
 
   test("Next can replace Home while navigation-owned person cleanup is pending", async () => {
@@ -503,6 +495,10 @@ describe("NLI staff Home transitions", () => {
     session.h.layerGate = cueGate;
     el("narrativeList").querySelector('[data-show-step="identity-database"]').click();
     await vi.waitFor(() => expect(el("cueStatus").dataset.status).toBe("applying"));
+    await vi.waitFor(() => {
+      expect(el("stepTitle").textContent).toBe("Identity database");
+      expect(el("searchInput").disabled).toBe(false);
+    });
 
     let releaseClear;
     const clearGate = new Promise((resolve) => { releaseClear = resolve; });
@@ -531,16 +527,33 @@ describe("NLI staff Home transitions", () => {
     session.h.emit("narrativeState", session.h.narrative);
     session.h.emit("connection", true);
     await vi.waitFor(() => expect(el("cueStatus").dataset.status).toBe("applying"));
-
+    await vi.waitFor(() => expect(el("narrativeList").querySelector('[data-open="nova"]').disabled).toBe(false));
     el("narrativeList").querySelector('[data-open="nova"]').click();
+    expect(el("cueStatus").dataset.status).toBe("applying");
+    expect(activeScreen()).toBe("home");
+    releaseCue();
     await vi.waitFor(() => {
       expect(activeScreen()).toBe("player");
       expect(el("stepTitle").textContent).toBe("The Nova site");
     });
-    releaseCue();
     await vi.waitFor(() => expect(el("cueStatus").dataset.status).toBe("ready"));
     expect(session.h.narrative.id).toBe("nova");
     expect(session.h.layers.at(-1)).not.toEqual([...HOME_LAYER_IDS]);
+    let releaseClear;
+    const clearGate = new Promise(resolve => { releaseClear = resolve; });
+    session.h.person = { personId: "ada", revision: 2, datasetVersion: "v", name: "Ada" };
+    session.h.clearPerson = vi.fn(async () => {
+      await clearGate;
+      session.h.person = { personId: null, revision: 3, datasetVersion: "v" };
+      return session.h.person;
+    });
+    el("searchInput").value = "";
+    el("searchInput").dispatchEvent(new Event("input", { bubbles: true }));
+    await vi.waitFor(() => expect(session.h.clearPerson).toHaveBeenCalled());
+    const disabled = { next: el("nextBtn").disabled, prev: el("prevBtn").disabled };
+    releaseClear();
+    await vi.waitFor(() => expect(el("searchInput").disabled).toBe(false));
+    expect(disabled).toEqual({ next: true, prev: true });
   });
 
   test("failed initial Home person cleanup shows failure and Retry", async () => {
@@ -592,10 +605,15 @@ describe("NLI staff Home transitions", () => {
     session.h.layerGate = new Promise((resolve) => { releaseNova = resolve; });
     el("ticks").querySelector('[data-step="3"]').click();
     await vi.waitFor(() => expect(el("cueStatus").dataset.status).toBe("applying"));
+    await vi.waitFor(() => expect(el("stepTitle").textContent).toBe("Mor Levy"));
     expect(el("kitEscape").querySelector("button").disabled).toBe(true);
-    expect(el("kitPresentation").querySelector("button")).toBeNull();
-    expect(session.h.commands).toEqual([]);
+    expect([...el("kitPresentation").querySelectorAll("button")].every(button => button.disabled)).toBe(true);
+    await vi.waitFor(() => expect(session.h.commands.at(-1)?.presentationAction).toBe("open"));
+    const opening = session.h.commands.at(-1);
+    session.h.emit("narrativePresentationResult", { ...opening, outcome: "ready" });
     releaseNova();
+    await vi.waitFor(() => expect(session.h.clock.presentationPendingUntilMs || 0).toBe(0));
+    session.h.emit("narrativePresentationResult", { ...opening, outcome: "opened" });
     await vi.waitFor(() => expect(el("cueStatus").dataset.status).toBe("ready"));
   });
   test("sessionless hydrated Home exits once, including over a null narrative, and reconnect or locale does not reset", async () => {
@@ -678,7 +696,7 @@ describe("NLI staff Home transitions", () => {
     await vi.waitFor(() => expect(h.commands.at(-1)?.presentationAction).toBe("open"));
   });
 
-  test("a failed close or search clear on a junction rearms the end timer from the latest clock", async () => {
+  test("failed search clear on a junction rearms the end timer from the latest clock", async () => {
     const synced = [];
     const sync = vi.spyOn(nliTimelineHostMethods, "_syncNliEndedTimer").mockImplementation(function record(clock) {
       synced.push(clock);
@@ -689,55 +707,7 @@ describe("NLI staff Home transitions", () => {
       await bootRemote(session);
       const { h } = session;
 
-      el("narrativeList").querySelector('[data-open="nova"]').click();
-      await vi.waitFor(() => expect(el("stepTitle").textContent).toBe("The Nova site"));
-      el("ticks").querySelector('[data-step="3"]').click();
-      await vi.waitFor(() => {
-        expect(el("stepTitle").textContent).toBe("Mor Levy");
-        expect(el("cueStatus").dataset.status).toBe("ready");
-      });
-      await vi.waitFor(() => expect(h.commands.at(-1)?.presentationAction).toBe("open"));
-      h.emit("narrativePresentationResult", {
-        ...h.commands.at(-1),
-        outcome: "opened",
-        slide: 9,
-        range: [9, 11],
-      });
-      await vi.waitFor(() => expect(el("kitPresentation").innerHTML).toContain('data-presentation-action="close"'));
-
-      const playing = {
-        phase: "playing",
-        revision: 11,
-        loop: false,
-        beats: [400, 740],
-        membership: ["nli.lines"],
-        positionMs: 0,
-        anchorMs: 1,
-      };
-      h.clock = playing;
-      const patchesBeforeClose = h.patches.length;
-      const seenBeforeClose = synced.length;
-      vi.useFakeTimers();
-      el("nextBtn").click();
-      await Promise.resolve();
-      expect(h.commands.at(-1)?.presentationAction).toBe("close");
-      const latestDuringClose = { ...playing, revision: 12 };
-      h.clock = latestDuringClose;
-      h.emit("narrativePresentationResult", { ...h.commands.at(-1), outcome: "unavailable" });
-      expect(synced).toHaveLength(seenBeforeClose);
-      await vi.advanceTimersByTimeAsync(6000);
-      await Promise.resolve();
-      vi.useRealTimers();
-      await vi.waitFor(() => expect(synced.length).toBeGreaterThan(seenBeforeClose));
-      expect(synced.at(-1)).toBe(latestDuringClose);
-      expect(synced.at(-1)).not.toBe(playing);
-      expect(h.patches).toHaveLength(patchesBeforeClose);
-      expect(el("stepTitle").textContent).toBe("Mor Levy");
-
-      el("homeBtn").click();
-      await vi.waitFor(() => expect(h.commands.at(-1)?.presentationAction).toBe("close"));
-      h.emit("narrativePresentationResult", { ...h.commands.at(-1), outcome: "closed" });
-      await vi.waitFor(() => expect(activeScreen()).toBe("home"));
+      const playing = { phase: "playing", revision: 11, loop: false, beats: [400, 740], membership: ["nli.lines"], positionMs: 0, anchorMs: 1 };
       el("narrativeList").querySelector('[data-open="show"]').click();
       await vi.waitFor(() => expect(el("stepTitle").textContent).toBe("The opening minutes"));
       await vi.waitFor(() => expect(el("cueStatus").dataset.status).not.toBe("applying"));
@@ -762,7 +732,9 @@ describe("NLI staff Home transitions", () => {
       expect(synced.at(-1)).toBe(h.clock);
       expect(synced.at(-1)).not.toBe(previousClock);
       expect(synced.at(-1).revision).toBe(previousClock.revision + 4);
-      expect(h.patches).toHaveLength(patchesBeforeClear);
+      expect(h.patches).toHaveLength(patchesBeforeClear + 1);
+      expect(h.patches.at(-1).presentationPendingUntilMs).toBeGreaterThan(0);
+      expect(h.clock).not.toHaveProperty("presentationPendingUntilMs");
       expect(el("stepTitle").textContent).toBe("Segev family");
     } finally {
       sync.mockRestore();

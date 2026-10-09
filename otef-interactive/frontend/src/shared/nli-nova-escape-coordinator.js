@@ -20,6 +20,7 @@ import {
 } from "./nli-nova-escape-impact.js";
 import { parseNovaEscapeIndex } from "./nli-nova-escape-index.js";
 import { setEscapeImpactOrientationIds } from "./maplibre-investigation-timeline.js";
+import { getLayerLifecycleRuntime } from "./layer-lifecycle-fade.js";
 import { resolveMotionMode } from "./reduced-motion.js";
 
 export const NOVA_FLEEING_INDIVIDUAL_URL =
@@ -57,6 +58,7 @@ export function createNovaEscapeCoordinator({
   profile,
   surface,
   onParallelImpactIdsChanged,
+  managedScene = false,
 } = {}) {
   const resolvedProfile = NLI_DISPLAY_PROFILES[profile] ? profile : "gis";
   const ribbonsAllowed = surface === "projection" || surface === "gis";
@@ -83,9 +85,38 @@ export function createNovaEscapeCoordinator({
   let parsedImpactIndex = null;
   let validatedImpactIndexData = null;
   let validatedImpactIndexRoutes = null;
+  let publishedImpactSource = null, publishedImpactIds = null;
   let impactIndexValidation = null;
   let impactIndexWarned = false;
   const inflight = new Map();
+  let runtime = managedScene ? getLayerLifecycleRuntime(map) : null;
+  const sceneFactors = new Map();
+  const factorWriters = new Map();
+  let cancelDepartures = [];
+  let appliedKey = null, appliedSnapshot = null, heldRevealAt = null, heldRevealFrame = null;
+  let requestedIndividualOn = false, requestedRun = 0, displayedRun = null;
+
+  // Observe acknowledged intent before the scene owner buffers/coalesces it.
+  // The displayed ribbon continues to use its retained frame until activation.
+  const captureSceneInput = snapshot => {
+    if (Number.isInteger(snapshot.escapePlaybackRun)) return snapshot;
+    const individualOn = snapshot.narrativeState?.id === "nova" && snapshot.escapeOverlay?.individual === true;
+    if (!disposed) {
+      if (individualOn && !requestedIndividualOn) requestedRun += 1;
+      requestedIndividualOn = individualOn;
+    }
+    return { ...snapshot, escapePlaybackRun: requestedRun };
+  };
+
+  const resumeReveal = () => {
+    if (heldRevealFrame) {
+      staggerOriginMs = heldRevealFrame.origin;
+      lastIndividualOn = heldRevealFrame.individualOn;
+      pendingRevealOriginReset = heldRevealFrame.pendingReset;
+    }
+    if (heldRevealAt != null && staggerOriginMs != null) staggerOriginMs += Math.max(0, Date.now() - heldRevealAt);
+    heldRevealAt = null; heldRevealFrame = null;
+  };
 
   const lineWidth = () => 1.8 * Number(
     NLI_DISPLAY_PROFILES[resolvedProfile]?.lineWidthMultiplier || 1,
@@ -95,15 +126,13 @@ export function createNovaEscapeCoordinator({
     NOVA_RIBBON_DISPLAY_PROFILES[resolvedProfile] || NOVA_RIBBON_DISPLAY_PROFILES.gis
   );
 
-  const removeRibbonLayers = () => {
-    removeLayerIfPresent(map, NOVA_ESCAPE_INDIVIDUAL_LAYER_ID);
-    removeLayerIfPresent(map, NOVA_ESCAPE_OVERLAP_LAYER_ID);
+  const removeSceneLayer = id => {
+    if (runtime && map.getLayer?.(id) && !runtime.getDesiredIds().includes(id)) {
+      cancelDepartures.push(runtime.onMemberHidden(id, () => removeLayerIfPresent(map, id)));
+      return;
+    }
+    removeLayerIfPresent(map, id);
   };
-
-  const removeImpactLayer = () => {
-    removeLayerIfPresent(map, NOVA_ESCAPE_IMPACT_LAYER_ID);
-  };
-
   const scheduleRaf = (callback) => {
     if (typeof map?.requestAnimationFrame === "function") return map.requestAnimationFrame(callback);
     return globalRequestAnimationFrame()?.(callback);
@@ -196,20 +225,22 @@ export function createNovaEscapeCoordinator({
   };
 
   const featureProgress = (feature, stagger) => {
-    if (overlay?.settled === true) return 1;
+    const frameOverlay = heldRevealFrame?.overlay ?? overlay;
+    if (frameOverlay?.settled === true) return 1;
     if (revealOverride != null) return clamp01(revealOverride);
     if (!stagger || resolveMotionMode() === "reduced") return 1;
-    if (staggerOriginMs == null) return 0;
+    const origin = heldRevealFrame ? heldRevealFrame.origin : staggerOriginMs;
+    if (origin == null) return 0;
     const delay = staggerDelayMs(feature?.properties?.OBJECTID ?? 0);
     const duration = revealDurationMs(lineLengthMeters(feature));
-    const elapsed = Date.now() - staggerOriginMs - delay;
+    const elapsed = (heldRevealAt ?? Date.now()) - origin - delay;
     if (!Number.isFinite(duration) || duration <= 0) return 1;
     if (elapsed <= 0) return 0;
     return clamp01(elapsed / duration);
   };
 
   const noteRibbonDrawable = () => {
-    if (!pendingRevealOriginReset) return false;
+    if (disposed || heldRevealFrame || !pendingRevealOriginReset) return false;
     pendingRevealOriginReset = false;
     staggerOriginMs = Date.now();
     return true;
@@ -217,13 +248,17 @@ export function createNovaEscapeCoordinator({
 
   const addRibbon = (id, collection, options) => {
     if (!map || typeof map.addLayer !== "function" || map.getLayer?.(id)) return;
+    const token = generation;
+    const memberRuntime = runtime;
+    const requestToken = memberRuntime?.beginRequest(id);
     const layer = createAcrossLineRibbonLayer({
       id,
       profile: ribbonProfile(),
-      onDrawable: options.stagger === true ? noteRibbonDrawable : undefined,
+      onDrawable: () => { if (disposed || (memberRuntime ? memberRuntime !== runtime || memberRuntime.isDisposed() || !memberRuntime.isRequestCurrent(id, requestToken) : token !== generation)) return false; const reset = options.stagger === true && noteRibbonDrawable(); runtime?.markMemberReady(id); return reset; },
       getFrame: () => ({
         features: collection?.features || [],
-        opacity: options.opacity,
+        opacity: options.opacity * (sceneFactors.get(id) ?? 1),
+        revealPaused: heldRevealAt != null,
         featureProgress: (feature) => featureProgress(feature, options.stagger === true),
       }),
     });
@@ -232,6 +267,11 @@ export function createNovaEscapeCoordinator({
       : map.getStyle?.()?.layers?.find((candidate) => (
         candidate.source === "nli.people" && ["circle", "symbol"].includes(candidate.type)
       ))?.id;
+    if (runtime) {
+      let writer = factorWriters.get(id);
+      if (!writer) { writer = factor => { sceneFactors.set(id, factor); map.triggerRepaint?.(); }; factorWriters.set(id, writer); }
+      runtime.registerOpacityTarget(id, writer);
+    }
     map.addLayer(layer, beforeId);
     map.triggerRepaint?.();
   };
@@ -241,14 +281,25 @@ export function createNovaEscapeCoordinator({
     if (!map.getSource?.(id) && typeof map.addSource === "function") {
       map.addSource(id, { type: "geojson", data: emptyCollection() });
     }
-    map.addLayer({
+    const layer = {
       id,
       type: "line",
       source: id,
       ...(filter ? { filter } : {}),
       layout: { "line-cap": "round", "line-join": "round" },
       paint,
-    }, beforeId && map.getLayer?.(beforeId) ? beforeId : undefined);
+    };
+    const staged = runtime?.stageMapLayer(id, layer);
+    map.addLayer(staged?.stagedLayerDef || layer, beforeId && map.getLayer?.(beforeId) ? beforeId : undefined);
+    if (runtime) {
+      runtime.subscribeMemberReady(id, ({ ready, failed }) => {
+        const data = event => { if (event?.sourceId === id && map.isSourceLoaded?.(id)) ready(); };
+        const error = event => { if (event?.sourceId === id) failed(); };
+        map.on?.("sourcedata", data); map.on?.("error", error);
+        if (map.isSourceLoaded?.(id)) ready();
+        return () => { map.off?.("sourcedata", data); map.off?.("error", error); };
+      });
+    }
   };
 
   const mountImpactOutline = () => {
@@ -275,7 +326,11 @@ export function createNovaEscapeCoordinator({
         features.push(found);
         drawnIds.push(id);
       }
-      source.setData({ type: "FeatureCollection", features });
+      const key = JSON.stringify(drawnIds);
+      if (source !== publishedImpactSource || key !== publishedImpactIds) {
+        source.setData({ type: "FeatureCollection", features });
+        publishedImpactSource = source; publishedImpactIds = key;
+      }
       setEscapeImpactOrientationIds(map, drawnIds, settlementFeatures);
       return;
     }
@@ -366,11 +421,12 @@ export function createNovaEscapeCoordinator({
     lastIndividualOn = true;
   };
 
-  async function remount({ styleLoss = false } = {}) {
+  async function remount({ styleLoss = false, preserveIds = new Set() } = {}) {
     const token = ++generation;
     cancelImpactRaf();
-    removeRibbonLayers();
-    removeImpactLayer();
+    for (const id of [NOVA_ESCAPE_INDIVIDUAL_LAYER_ID, NOVA_ESCAPE_OVERLAP_LAYER_ID, NOVA_ESCAPE_IMPACT_LAYER_ID]) {
+      if (!preserveIds.has(id)) removeSceneLayer(id);
+    }
     if (disposed) return;
     const active = narrative?.id === "nova";
     const flags = overlay || EMPTY_OVERLAY;
@@ -499,15 +555,118 @@ export function createNovaEscapeCoordinator({
     return coalescedSync;
   }
 
-  const unsubN = dataContext?.subscribe?.("narrativeState", (state) => {
+  const unsubN = !managedScene && dataContext?.subscribe?.("narrativeState", (state) => {
     void notifySync(state ?? dataContext.getNarrativeState?.(), dataContext.getEscapeOverlay?.());
   });
-  const unsubO = dataContext?.subscribe?.("escapeOverlay", (next) => {
+  const unsubO = !managedScene && dataContext?.subscribe?.("escapeOverlay", (next) => {
     void notifySync(dataContext.getNarrativeState?.(), next ?? dataContext.getEscapeOverlay?.());
   });
-  void remount();
+  if (!managedScene) void remount();
 
+  const sceneIds = snapshot => snapshot.narrativeState?.id !== "nova" ? [] : [
+    ...(snapshot.escapeOverlay?.individual && ribbonsAllowed ? [NOVA_ESCAPE_INDIVIDUAL_LAYER_ID] : []),
+    ...(snapshot.escapeOverlay?.overlap && ribbonsAllowed ? [NOVA_ESCAPE_OVERLAP_LAYER_ID] : []),
+    ...(snapshot.escapeOverlay?.settled || snapshot.escapeOverlay?.individual && ribbonsAllowed ? [NOVA_ESCAPE_IMPACT_LAYER_ID] : []),
+  ];
+  const contentKey = (snapshot, fullId) => {
+    if (fullId === NOVA_ESCAPE_OVERLAP_LAYER_ID) return JSON.stringify([snapshot.narrativeState?.id ?? null, "overlap"]);
+    if (![NOVA_ESCAPE_INDIVIDUAL_LAYER_ID, NOVA_ESCAPE_IMPACT_LAYER_ID].includes(fullId)) return undefined;
+    const settled = snapshot.escapeOverlay?.settled === true;
+    return JSON.stringify([snapshot.narrativeState?.id ?? null, settled ? "settled" : "individual",
+      fullId === NOVA_ESCAPE_IMPACT_LAYER_ID && settled ? null : snapshot.escapePlaybackRun ?? 0]);
+  };
   return {
+    captureSceneInput,
+    getSceneContentKey: contentKey,
+    resetStyle() { generation += 1; cancelImpactRaf(); for (const cancel of cancelDepartures) cancel?.(); cancelDepartures = []; appliedKey = null; appliedSnapshot = null; if (managedScene) runtime = getLayerLifecycleRuntime(map); },
+    getSceneIds: sceneIds,
+    async prepareSnapshot(snapshot, { signal } = {}) {
+      const ids = sceneIds(snapshot);
+      if (!ids.length) return;
+      const results = await Promise.all([
+        loadCollection(NOVA_FLEEING_INDIVIDUAL_URL, individualData, inflight),
+        ids.includes(NOVA_ESCAPE_OVERLAP_LAYER_ID) ? loadCollection(NOVA_FLEEING_OVERLAP_URL, overlapData, inflight) : overlapData,
+        loadCollection(DEFAULT_INVESTIGATION_SETTLEMENTS_URL, settlementsData, inflight),
+        loadImpactIndex(NOVA_FLEEING_IMPACT_INDEX_URL, impactIndexData, inflight),
+      ]);
+      if (disposed || signal?.aborted) throw new Error("Escape preparation cancelled");
+      if (!results[0] || ids.includes(NOVA_ESCAPE_OVERLAP_LAYER_ID) && !results[1] || !results[2]) throw new Error("Escape preparation failed");
+      [individualData, overlapData, settlementsData, impactIndexData] = results;
+      settlementFeatures = settlementsData.features || [];
+    },
+    holdForScene({ changedIds = [NOVA_ESCAPE_INDIVIDUAL_LAYER_ID, NOVA_ESCAPE_OVERLAP_LAYER_ID, NOVA_ESCAPE_IMPACT_LAYER_ID] } = {}) {
+      if (changedIds.includes(NOVA_ESCAPE_INDIVIDUAL_LAYER_ID) || changedIds.includes(NOVA_ESCAPE_IMPACT_LAYER_ID)) {
+        generation += 1; cancelImpactRaf();
+        if (heldRevealAt == null) {
+          heldRevealAt = Date.now();
+          heldRevealFrame = { overlay: { ...overlay }, origin: staggerOriginMs, individualOn: lastIndividualOn, pendingReset: pendingRevealOriginReset, run: displayedRun };
+        }
+      }
+      for (const cancel of cancelDepartures) cancel(); cancelDepartures = [];
+      for (const id of changedIds) {
+        if (map.getLayer?.(id)) cancelDepartures.push(runtime?.onMemberHidden(id, () => removeLayerIfPresent(map, id)));
+      }
+    },
+    resumeForScene(snapshot) {
+      for (const cancel of cancelDepartures) cancel?.(); cancelDepartures = [];
+      if (snapshot) {
+        narrative = snapshot.narrativeState;
+        overlay = snapshot.escapeOverlay || EMPTY_OVERLAY;
+        appliedSnapshot = snapshot;
+        appliedKey = JSON.stringify(sceneIds(snapshot).map(id => [id, contentKey(snapshot, id)]));
+        displayedRun = overlay.individual ? snapshot.escapePlaybackRun : null;
+      }
+      resumeReveal();
+      if (snapshot) refreshImpactFromProgress();
+      if (overlay?.individual) scheduleImpactTick();
+      map?.triggerRepaint?.();
+    },
+    applySnapshot(snapshot) {
+      if (disposed) return;
+      snapshot = captureSceneInput(snapshot);
+      const ids = sceneIds(snapshot);
+      const key = JSON.stringify(ids.map(id => [id, contentKey(snapshot, id)]));
+      const previousIds = appliedSnapshot ? sceneIds(appliedSnapshot) : [];
+      const preserveIds = new Set(ids.filter(id => previousIds.includes(id) && map.getLayer?.(id) &&
+        contentKey(appliedSnapshot, id) === contentKey(snapshot, id)));
+      for (const cancel of cancelDepartures) cancel?.(); cancelDepartures = [];
+      if (!sceneIds(snapshot).length && runtime) {
+        this.holdForScene();
+        narrative = snapshot.narrativeState; overlay = snapshot.escapeOverlay || EMPTY_OVERLAY;
+        appliedKey = key;
+        appliedSnapshot = snapshot;
+        updateStagger(false);
+        // Keep outgoing geometry for its fade, but release the fleeing
+        // settlement and parallel-route highlights.
+        setEscapeImpactOrientationIds(map, []);
+        resetParallelImpactIds();
+        return;
+      }
+      const individualOn = snapshot.narrativeState?.id === "nova" && snapshot.escapeOverlay?.individual === true;
+      // Logical Stop must not rewind a ribbon that is still fading out.
+      // An unchanged overlap sibling can keep this producer active during exit.
+      if (!individualOn && runtime && map.getLayer?.(NOVA_ESCAPE_INDIVIDUAL_LAYER_ID)) {
+        this.holdForScene({ changedIds: [NOVA_ESCAPE_INDIVIDUAL_LAYER_ID, NOVA_ESCAPE_IMPACT_LAYER_ID] });
+      }
+      const sameRun = individualOn && snapshot.escapePlaybackRun === (heldRevealFrame?.run ?? displayedRun);
+      if (sameRun) resumeReveal();
+      else if (individualOn || !map.getLayer?.(NOVA_ESCAPE_INDIVIDUAL_LAYER_ID)) {
+        heldRevealAt = null; heldRevealFrame = null;
+        updateStagger(false);
+      }
+      if (key === appliedKey && sceneIds(snapshot).every(id => map.getLayer?.(id))) {
+        narrative = snapshot.narrativeState; overlay = snapshot.escapeOverlay || EMPTY_OVERLAY;
+        appliedSnapshot = snapshot;
+        if (overlay?.individual) scheduleImpactTick();
+        map?.triggerRepaint?.();
+        return;
+      }
+      narrative = snapshot.narrativeState; overlay = snapshot.escapeOverlay || EMPTY_OVERLAY;
+      displayedRun = individualOn ? snapshot.escapePlaybackRun : null;
+      appliedKey = key;
+      appliedSnapshot = snapshot;
+      return remount({ preserveIds });
+    },
     sync,
     onStyleLoad({ styleLoss = false } = {}) {
       return remount({ styleLoss });
@@ -533,12 +692,16 @@ export function createNovaEscapeCoordinator({
     dispose() {
       if (disposed) return;
       disposed = true;
+      publishedImpactSource = null; publishedImpactIds = null;
+      heldRevealAt = null; heldRevealFrame = null;
       generation += 1;
       cancelImpactRaf();
-      unsubN?.();
-      unsubO?.();
-      removeRibbonLayers();
-      removeImpactLayer();
+      if (typeof unsubN === "function") unsubN();
+      if (typeof unsubO === "function") unsubO();
+      for (const cancel of cancelDepartures) cancel?.();
+      removeLayerIfPresent(map, NOVA_ESCAPE_INDIVIDUAL_LAYER_ID);
+      removeLayerIfPresent(map, NOVA_ESCAPE_OVERLAP_LAYER_ID);
+      removeLayerIfPresent(map, NOVA_ESCAPE_IMPACT_LAYER_ID);
       setEscapeImpactOrientationIds(map, []);
       clearParallelImpact({ disposeEmit: true });
     },
