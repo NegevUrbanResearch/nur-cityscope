@@ -732,6 +732,7 @@ async function bootstrapProjectionRuntime() {
     );
     let legendLifecycle = installMapLegendLifecycle({
       element: legendElement,
+      map,
       surface: "projection",
       projectionSpan: legendSpan,
       dataContext: OTEFDataContext,
@@ -817,6 +818,16 @@ async function bootstrapProjectionRuntime() {
         motionMode: resolveMotionMode(),
         captionEl: nliExplainerCaptionEl,
         allowMapCaption: false,
+        getShelterProjectionPresentation: () => {
+          if (browserMode) return browserSurface?.getShelterPresentation?.();
+          // TD applies its downstream warp externally: size the existing capture
+          // and keep offsets zero until physical-output validation.
+          const canvas = map.getCanvas();
+          const width = canvas.clientWidth || displayContainerEl.clientWidth;
+          const height = canvas.clientHeight || displayContainerEl.clientHeight;
+          return { inputCapture: true, sourceDimensions: { width, height }, outputResolution: { width, height } };
+        },
+        onShelterDiagnostic: error => console.warn("[NLI shelters]", error.message),
         now: () =>
           typeof OTEFDataContext.correctedNow === "function"
             ? OTEFDataContext.correctedNow()
@@ -1070,6 +1081,7 @@ async function bootstrapProjectionRuntime() {
           image: modelImgEl,
           mapCanvas: map.getCanvas?.(),
           getScene: renderBrowserScene,
+          onShelterPresentationChange: () => map.fire("nli-shelter-presentation-change"),
           filterScene: scene => calibrationActive() ? filterProjectionCalibrationScene(scene) : scene,
           hideTargets: hiddenSources,
           signal: projectionLifecycle.signal,

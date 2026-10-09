@@ -988,6 +988,14 @@ async function buildLegendModel(options = {}) {
     });
   }
 
+  const roadVisible = layerGroups.some(group => group.id === "nli" && group.layers?.some(layer => layer.id === "ציר_232" && layer.enabled));
+  if (roadVisible && options.sheltersVisible === true) {
+    let nliPack = packs.find(pack => pack.id === "nli");
+    if (!nliPack) { nliPack = { id: "nli", name: legendPackDisplayLabel("nli", localeFor(options)), layers: [] }; packs.push(nliPack); }
+    nliPack.layers = sortLegendLayersByGeometry([...nliPack.layers, { id: "nli.shelters232", name: "מיגוניות", geometryType: "point",
+      items: [{ id: "nli.shelters232:category", label: options.language === "en" ? "Roadside shelters" : "מיגוניות", shape: "shelter", fill: NLI_VISUAL_TOKENS.annotationInk, stroke: NLI_VISUAL_TOKENS.annotationHalo }] }]);
+  }
+
   const fleeingRoutes = novaEscapeLegendLayer(ctx, localeFor(options));
   if (fleeingRoutes) {
     let nliPack = packs.find((pack) => pack.id === "nli");

@@ -1,6 +1,8 @@
 import { buildLegendModel, getDashBackground } from "./legend-model-builder.js";
 import { escapeHtml } from "../shared/html-utils.js";
 import { resolveLegendLayout } from "../projection/legend-layout.js";
+import { sheltersVisibleOnMap } from "../shared/maplibre-nli-shelters.js";
+import { shelterSymbolDataUrl } from "../shared/nli-shelter-symbol.js";
 import { OUTPUT_HEIGHT, OUTPUT_WIDTH } from "../projection/projection-overlay-placement.js";
 import { layoutProjectionLegend, PROJECTION_LEGEND_FONT, resolveLegendRasterSize } from "../projection/legend-content-layout.js";
 
@@ -27,6 +29,10 @@ export function applyProjectionLegendLayout(element, layout, { span = "full", re
 
 function symbolMarkup(part = {}, geometry = null, fontPx = 22) {
   const shape = part.shape || "polygon";
+  if (shape === "shelter") {
+    const position = geometry ? `position:absolute;left:${geometry.x - geometry.width / 2}px;top:${geometry.y - geometry.height / 2}px;width:${geometry.width}px;height:${geometry.height}px;` : "width:24px;height:20px;";
+    return `<img alt="" aria-hidden="true" src="${shelterSymbolDataUrl()}" style="${position}object-fit:contain;" />`;
+  }
   const stroke = part.stroke ?? "transparent";
   const width = Number.isFinite(part.strokeWidth) ? part.strokeWidth : 1;
   const strokeOpacity = Number.isFinite(part.strokeOpacity) ? part.strokeOpacity : 1;
@@ -121,7 +127,7 @@ function makeChildren(element) {
   return { content, pager };
 }
 
-function mountMapLegend({ element, surface = "gis", projectionSpan = "full", dataContext, registry, buildModel = buildLegendModel, onRenderSnapshot, measureText } = {}) {
+function mountMapLegend({ element, map, surface = "gis", projectionSpan = "full", dataContext, registry, buildModel = buildLegendModel, onRenderSnapshot, measureText } = {}) {
   if (!element) return { refresh: async () => {}, setEditing: () => {}, setPage: () => 0, dispose: () => {} };
   const mode = surface === "projection" ? "projection" : "gis";
   const { content, pager } = makeChildren(element);
@@ -381,7 +387,7 @@ function mountMapLegend({ element, surface = "gis", projectionSpan = "full", dat
         });
       }
       element.dir = language() === "en" ? "ltr" : "rtl";
-      const model = await buildModel({ surface: mode, dataContext, registry, language: current.language, summarizedGroupIds: current.summarizedGroupIds });
+      const model = await buildModel({ surface: mode, dataContext, registry, sheltersVisible: sheltersVisibleOnMap(map), language: current.language, summarizedGroupIds: current.summarizedGroupIds });
       if (disposed || version !== generation) return;
       if (mode === "projection") {
         const layout = resolveLegendLayout({ settings: current, span: projectionSpan });

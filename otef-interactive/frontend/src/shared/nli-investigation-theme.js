@@ -76,6 +76,10 @@ export const NLI_VISUAL_TOKENS = Object.freeze({
 
 export const NLI_DISPLAY_PROFILES = Object.freeze({
   gis: Object.freeze({
+    shelter: Object.freeze({
+      bodyWidth: 12,
+      zoomBodyWidths: Object.freeze([[10, 12], [13, 15], [16, 18]]),
+    }),
     lineWidthMultiplier: 1,
     radiusMultiplier: 1,
     routeScale: 1,
@@ -88,6 +92,7 @@ export const NLI_DISPLAY_PROFILES = Object.freeze({
     }),
   }),
   projection: Object.freeze({
+    shelter: Object.freeze({ bodyWidth: 20 }),
     lineWidthMultiplier: 1.2,
     radiusMultiplier: 1.15,
     routeScale: 1.15,

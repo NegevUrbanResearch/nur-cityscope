@@ -83,7 +83,11 @@ export class LayerRegistry {
       const basePath = `/otef-interactive/public/processed/layers/${packId}`;
 
       // Load manifest
-      const manifestResponse = await this._fetch(`${basePath}/manifest.json`);
+      // NLI resource declarations can change while public data is cached for an
+      // hour. Revalidate this manifest once at startup before resolving sidecars.
+      const manifestResponse = packId === "nli"
+        ? await this._fetch(`${basePath}/manifest.json`, { cache: "no-cache" })
+        : await this._fetch(`${basePath}/manifest.json`);
       if (manifestResponse.ok) {
         const manifest = await manifestResponse.json();
         this._packManifests.set(packId, manifest);

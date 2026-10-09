@@ -1,3 +1,4 @@
+import { paintShelterSymbol } from "../shared/nli-shelter-symbol.js";
 import { OUTPUT_HEIGHT, OUTPUT_WIDTH, projectionOverlayMatrix } from "./projection-overlay-placement.js";
 import { paintCaptivityBleedMarker } from "../shared/captivity-bleed-marker.js";
 import { PROJECTION_LEGEND_FONT as FONT, layoutProjectionLegend, resolveLegendRasterSize } from "./legend-content-layout.js";
@@ -87,6 +88,11 @@ function drawSymbol(context, part, x, y, font, geometry, scale) {
   context.shadowOffsetX = 0;
   context.shadowOffsetY = 0;
   context.shadowBlur = 0;
+  if (shape === "shelter") {
+    paintShelterSymbol(context, { cx: x, cy: y, bodyWidthPx: symbolWidth, bodyColor: fill, separatorPx: scale });
+    context.restore?.();
+    return;
+  }
   if (shape === "line") {
     const dash = part.dash && (Array.isArray(part.dash) ? part.dash : part.dash.array);
     const dashScale = part.carrier ? 0.5 : 1.5;

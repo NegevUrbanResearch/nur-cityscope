@@ -23,6 +23,7 @@ function glyphWidth(shape, font) {
 }
 
 function glyphHeight(part, font) {
+  if (part.shape === "shelter") return font * 1.23 * .78;
   return part.shape === "line" ? Math.max(2, Number(part.strokeWidth) || 1) : part.shape === "point" || part.shape === "square" ? font * 0.55 : part.shape === "diamond" ? font * 0.45 : font * 0.68;
 }
 

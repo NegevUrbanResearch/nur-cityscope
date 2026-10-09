@@ -704,6 +704,7 @@ async function bootstrapMapRuntime() {
     const legendElement = document.getElementById("mapLegend");
     legendLifecycle = installMapLegendLifecycle({
       element: legendElement,
+      map,
       surface: "gis",
       dataContext: OTEFDataContext,
       registry: layerRegistry,

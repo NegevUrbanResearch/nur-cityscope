@@ -1,3 +1,5 @@
+import { orientInvestigationLineFeature } from "./nli-investigation-route-geometry.js";
+export { orientInvestigationLineFeature } from "./nli-investigation-route-geometry.js";
 /**
  * Shared MapLibre renderer for the NLI investigation routes.
  *
@@ -109,29 +111,6 @@ function validLineCoordinates(geometry) {
       .filter((part) => part.length > 1);
   }
   return [];
-}
-
-function reverseGeometry(geometry) {
-  if (!geometry || !Array.isArray(geometry.coordinates)) return geometry;
-  if (geometry.type === "LineString") {
-    return { ...geometry, coordinates: [...geometry.coordinates].reverse() };
-  }
-  if (geometry.type === "MultiLineString") {
-    return {
-      ...geometry,
-      coordinates: [...geometry.coordinates]
-        .reverse()
-        .map((part) => (Array.isArray(part) ? [...part].reverse() : part)),
-    };
-  }
-  return geometry;
-}
-
-/** Orient one route according to its reviewed direction metadata. */
-export function orientInvestigationLineFeature(feature) {
-  if (!feature || typeof feature !== "object") return feature;
-  if (feature?.properties?.flow_direction !== "reverse") return feature;
-  return { ...feature, geometry: reverseGeometry(feature.geometry) };
 }
 
 function featureId(feature, index) {
@@ -499,7 +478,7 @@ export function createInvestigationLineRenderer(map, profile = NLI_DISPLAY_PROFI
       source: INVESTIGATION_LINE_SOURCE_IDS.active,
       layout: { "line-cap": "round", "line-join": "round" },
       paint: { "line-color": NLI_VISUAL_TOKENS.incidentRed, "line-width": 2.6 * width, "line-opacity": ACTIVE_OPACITY, "line-gradient": buildLineProgressGradient(0, NLI_VISUAL_TOKENS.incidentRed, "rgba(195,31,79,0)") },
-    }, { type: "geojson", lineMetrics: true, data: featureCollection([]) }, beforeId);
+    }, { type: "geojson", lineMetrics: true, tolerance: 0, data: featureCollection([]) }, beforeId);
     addSourceAndLayer(map, INVESTIGATION_LINE_SOURCE_IDS.head, {
       id: INVESTIGATION_LINE_LAYER_IDS.head,
       type: "circle",

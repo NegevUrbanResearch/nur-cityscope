@@ -28,6 +28,7 @@ from .nli_border_route_release import (
     validate_active_route_candidate,
     validate_active_route_source,
 )
+from .nli_shelters import merge_shelter_resource
 
 logger = logging.getLogger(__name__)
 
@@ -1096,6 +1097,9 @@ class ProcessingOrchestrator:
                     }
                 }
 
+        if pack_id == "nli" and layer_id == "ציר_232":
+            resources = merge_shelter_resource(resources, pack_output)
+
         popup_cfg = self._get_popup_config_for_layer(pack_id, layer_id)
         ui_popup = (
             {k: v for k, v in (popup_cfg or {}).items() if k != "legendLabel"}
@@ -1560,6 +1564,9 @@ class ProcessingOrchestrator:
                                     "format": "geojson",
                                 }
                             }
+
+                if pack_id == "nli" and layer_id == "ציר_232":
+                    resources = merge_shelter_resource((existing_layers.get(layer_id) or {}).get("resources"), pack_output)
 
                 # Popup and legend overrides
                 layer_popup_cfg = self._get_popup_config_for_layer(pack_id, layer_id)

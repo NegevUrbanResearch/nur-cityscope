@@ -25,6 +25,7 @@ function rectanglesIntersect(a, b) {
 
 function installMapLegendLifecycle({
   element,
+  map,
   surface,
   projectionSpan,
   dataContext,
@@ -35,6 +36,7 @@ function installMapLegendLifecycle({
 } = {}) {
   const mounted = mount({
     element,
+    map,
     surface,
     projectionSpan,
     dataContext,
@@ -61,6 +63,8 @@ function installMapLegendLifecycle({
     });
     if (typeof unsubscribe === "function") unsubscribers.push(unsubscribe);
   }
+  map?.on?.("nli-shelters-change", scheduleRefresh);
+  unsubscribers.push(() => map?.off?.("nli-shelters-change", scheduleRefresh));
   scheduleRefresh();
 
   return {
