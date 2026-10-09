@@ -85,7 +85,7 @@ test("boots from one read per resource and draws Home clock plus real legend thr
   expect(reply.meshIdentity).toBeTypeOf("string");
   const layers = draws.at(-1); expect(layers.map((layer) => layer.id)).toContain("caption"); expect(layers.map((layer) => layer.id)).toContain("legend");
   expect(layers.find((layer) => layer.id === "caption").matrix).toEqual(projectionOverlayMatrix(layout));
-  expect(contexts.some((context) => context.fillText.mock.calls.some(([text]) => text === "06:29"))).toBe(true);
+  expect(contexts.some((context) => context.fillText.mock.calls.map(([text]) => text).join("").includes("06:29"))).toBe(true);
   expect(contexts.some((context) => context.fillText.mock.calls.some(([text]) => text === "Actual legend entry"))).toBe(true);
   expect(rig.timeline.mock.calls[0][3]).toMatchObject({ displayProfile: "projection", clockOnlyCaptionRelevantOverride: true });
   const groups = rig.syncLayers.mock.calls[0][1];
@@ -278,7 +278,7 @@ test("the actual projection timeline supplies the Home 06:29 model to the captio
     dispose = await bootProjectionClockPreview({ window, document, fetchImpl });
     expect(actualTimeline.getInvestigationTimelineRenderSnapshot(rig.map)).toMatchObject({ visible: true, model: { clockLabel: "06:29" } });
     send(frameState(1)); await vi.waitFor(() => expect(messages("otef_clock_preview_rendered")).toHaveLength(1));
-    expect(contexts.some((context) => context.fillText.mock.calls.some(([text]) => text === "06:29"))).toBe(true);
+    expect(contexts.some((context) => context.fillText.mock.calls.map(([text]) => text).join("").includes("06:29"))).toBe(true);
   } finally { actualTimeline.disposeInvestigationTimelineForMap(rig.map); }
 });
 

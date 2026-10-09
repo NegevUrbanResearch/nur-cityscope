@@ -786,6 +786,7 @@ async function bootstrapProjectionRuntime() {
         getPersonSelection: () => OTEFDataContext.getPersonSelection(),
         narrativeFocus: projectionNarrativeController?.getDefinition(),
         parallelImpactIds,
+        onClockPresentationFrame: () => browserSurface?.requestDraw?.(),
       }).then(() => {
         captionAdapter?.sync({
           snapshot: getInvestigationTimelineRenderSnapshot(map),

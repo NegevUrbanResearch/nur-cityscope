@@ -3,6 +3,7 @@ import { evaluateOpacityExpression } from "../shared/layer-opacity-expression.js
 import { mapSettlementPosition } from './settlement-name-framing.js';
 import { DEFAULT_SETTLEMENT_LEADER_STYLE, EXCLUDED_SETTLEMENT_CODES, settlementTextLines } from '../shared/settlement-label-presentation.js';
 import { settlementConnector, paintSettlementConnector } from './settlement-name-connectors.js';
+import { paintSettlementOpacityGroup } from './settlement-opacity-group.js';
 
 const WIDTH = 1920;
 const HEIGHT = 1080;
@@ -103,18 +104,23 @@ export function createProjectionSettlementNameAdapter({ document = globalThis.do
       if (!inkFitsCrop(label, inkBox, framing?.clip)) return { ...label, inkBox, cropped: true };
       const alpha = clampOpacity(evaluateOpacityExpression(scaledOpacity, { cityname: label.text }));
       const connector = settlementConnector(label, framing?.outlines?.[label.citycode], inkBox, framing?.origins?.[label.citycode]);
-      paintSettlementConnector(context, connector, leaderStyle, alpha);
+      paintSettlementConnector(context, connector, leaderStyle, alpha, { document, rasterScale });
       context.fillStyle = '#ffffff'; context.strokeStyle = '#ffffff'; context.lineWidth = HALO_PX * 2;
       context.save();
-      context.globalAlpha = alpha;
       context.translate(label.x, label.y);
       context.rotate(label.rotateDeg * Math.PI / 180);
-      for (const { text, dy, extents } of measured) {
-        const biasX = (extents.right - extents.left) / 2;
-        const biasY = (extents.descent - extents.ascent) / 2;
-        context.strokeText(text, -biasX, dy - biasY);
-        context.fillText(text, -biasX, dy - biasY);
-      }
+      paintSettlementOpacityGroup(context, { document, rasterScale, alpha,
+        bounds: { left: inkBox.left - label.x, right: inkBox.right - label.x,
+          top: inkBox.top - label.y, bottom: inkBox.bottom - label.y },
+        paint(textContext) {
+          for (const { text, dy, extents } of measured) {
+            const biasX = (extents.right - extents.left) / 2;
+            const biasY = (extents.descent - extents.ascent) / 2;
+            textContext.strokeText(text, -biasX, dy - biasY);
+            textContext.fillText(text, -biasX, dy - biasY);
+          }
+        },
+      });
       context.restore();
       return { ...label, inkBox, connector, cropped: false };
     });

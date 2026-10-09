@@ -80,6 +80,30 @@ class OTEFInvestigationClockApiTests(TestCase):
             self.assertEqual(response.json()["investigation_clock"]["hiddenDisplays"], ["gis", "projection"])
             self.assertEqual(OTEFViewportState.objects.get(table=self.table).investigation_clock["hiddenDisplays"], ["gis", "projection"])
 
+    def test_scene_presentation_deadline_survives_clock_phase_round_trips(self):
+        for phase in ("idle", "playing", "paused", "ended"):
+            payload = self.canonical_clock(
+                phase=phase, anchorMs=None if phase in ("idle", "ended") else 1000,
+                presentationPendingUntilMs=16000,
+            )
+            response = self.client.patch(
+                "/api/otef_viewport/by-table/otef/",
+                data=json.dumps({"investigation_clock": payload}),
+                content_type="application/json",
+            )
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()["investigation_clock"]["presentationPendingUntilMs"], 16000)
+            self.assertEqual(OTEFViewportState.objects.get(table=self.table).investigation_clock["presentationPendingUntilMs"], 16000)
+
+    def test_scene_presentation_deadline_rejects_invalid_values(self):
+        for deadline in (True, "16000", None, float("inf"), -1):
+            response = self.client.patch(
+                "/api/otef_viewport/by-table/otef/",
+                data=json.dumps({"investigation_clock": self.canonical_clock(presentationPendingUntilMs=deadline)}),
+                content_type="application/json",
+            )
+            self.assertEqual(response.status_code, 400)
+
     def test_scene_visibility_rejects_unknown_displays(self):
         for hidden in ("projection", ["remote"], [True], ["gis", "gis"]):
             response = self.client.patch(

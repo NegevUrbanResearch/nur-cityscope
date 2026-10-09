@@ -228,6 +228,19 @@ class OTEFNarrativeApiTests(TestCase):
         message = get_layer.return_value.group_send.call_args.args[1]["message"]
         self.assertEqual(message["scene"]["investigationClock"]["hiddenDisplays"], ["gis", "projection"])
 
+    @patch("channels.layers.get_channel_layer")
+    def test_narrative_reset_preserves_pending_scene_presentation(self, get_layer):
+        get_layer.return_value.group_send = AsyncMock()
+        self.state.investigation_clock["presentationPendingUntilMs"] = 16000
+        self.state.save(update_fields=["investigation_clock"])
+        response = self.activate()
+        self.assertEqual(response.status_code, 200)
+        clock = response.json()["scene"]["investigationClock"]
+        self.assertEqual(clock["phase"], "idle")
+        self.assertEqual(clock["presentationPendingUntilMs"], 16000)
+        message = get_layer.return_value.group_send.call_args.args[1]["message"]
+        self.assertEqual(message["scene"]["investigationClock"]["presentationPendingUntilMs"], 16000)
+
     def test_narrative_rejects_invalid_clock_visibility_before_mutation(self):
         for hidden in ("projection", ["remote"], ["gis", "gis"]):
             response = self.activate(hiddenDisplays=hidden)

@@ -324,6 +324,7 @@ function installSceneHarness(initialClock) {
     },
   });
   return {
+    initialClock,
     dataContext,
     runner,
     layers,
@@ -341,7 +342,18 @@ function expectFullStoryIdle(harness) {
   expect(enabled).toEqual([...catalog.TIMELINE_LAYER_IDS]);
   expect(clock.phase).toBe("idle");
   expect(harness.endCalls).toEqual([]);
-  expect(harness.patches.filter((patch) => patch.phase === "playing")).toEqual([]);
+  // A caption hold can republish the currently playing clock. It must not
+  // restart or seek playback while the full idle story is being selected.
+  for (const patch of harness.patches.filter((patch) => patch.phase === "playing")) {
+    const previous = harness.initialClock;
+    expect(patch).toMatchObject({
+      phase: previous.phase, membership: previous.membership, beats: previous.beats,
+      loop: previous.loop, positionMs: previous.positionMs, anchorMs: previous.anchorMs,
+      seekKind: previous.seekKind,
+    });
+    expect(patch.leadInMinutes).toBe(previous.leadInMinutes);
+    expect(patch.alarmOnsetOriginMs).toBe(previous.alarmOnsetOriginMs);
+  }
   expect(harness.dataContext.narrativeId).toBeNull();
   expect(harness.dataContext.escape).toEqual(NO_ESCAPE);
   const frame = fullStoryFrame(clock, enabled);

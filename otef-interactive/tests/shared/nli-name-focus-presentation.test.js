@@ -45,7 +45,7 @@ test('focus only changes settlement names and outlines and restores their origin
   const presentation = createNliNameFocusPresentation({ map, field });
   presentation.update({ selectedPid: 'person-1' });
   expect(paints.get('projector_base__שמות_יישובים__labels:text-opacity')).toEqual(
-    ['case', ['==', ['get', 'cityname'], 'מקום'], 1, 0.18]);
+    ['case', ['==', ['get', 'cityname'], 'מקום'], 1, 0.08]);
   expect(paints.get('projector_base__ישובים__outline:line-opacity')).toBe(0.08);
   expect(paints.get('projector_base__Locations_Lines:line-opacity')).toBe(0.08);
   const firstWrites = writes.length;
@@ -70,7 +70,7 @@ test('focus refreshes an overwritten paint and recaptures a recreated layer base
   focus.update({ selectedGroup: 'group-1' });
   paint.set('text-opacity', 0.4);
   focus.update({ selectedGroup: 'group-1' });
-  expect(paint.get('text-opacity')).toEqual(['case', ['==', ['get', 'cityname'], 'מקום'], 1, 0.18]);
+  expect(paint.get('text-opacity')).toEqual(['case', ['==', ['get', 'cityname'], 'מקום'], 1, 0.08]);
   layer = { ...layer };
   paint.set('text-opacity', 0.9);
   focus.update({ selectedGroup: 'group-1' });
@@ -107,7 +107,7 @@ test('timeline requests cannot blink memorial settlement paint and release resto
   });
   expect(paints.get('projector_base__Locations_Lines__line:line-opacity')).toBe(0.08);
   expect(paints.get('projector_base__שמות_יישובים__labels:text-opacity')).toEqual(
-    ['case', ['in', ['get', 'cityname'], ['literal', []]], 1, 0.18]);
+    ['case', ['in', ['get', 'cityname'], ['literal', []]], 1, 0.08]);
 });
 
 const LABEL_ID = 'projector_base__שמות_יישובים__labels';
@@ -215,19 +215,19 @@ test('name-focus place change keeps its deadline through refresh and timeline ti
   hooks.setTime(400);
   hooks.flushFrame();
   expect(map.getPaintProperty(LABEL_ID, 'text-opacity')).toEqual(
-    ['case', ['==', ['get', 'cityname'], 'ב'], 1, 0.18],
+    ['case', ['==', ['get', 'cityname'], 'ב'], 1, 0.08],
   );
 
   focus.dispose();
   hooks.setTime(600);
   hooks.flushFrame();
   expect(map.getPaintProperty(LABEL_ID, 'text-opacity')).not.toEqual(
-    ['case', ['in', ['get', 'cityname'], ['literal', []]], 1, 0.18],
+    ['case', ['in', ['get', 'cityname'], ['literal', []]], 1, 0.08],
   );
   hooks.setTime(800);
   hooks.flushFrame();
   expect(map.getPaintProperty(LABEL_ID, 'text-opacity')).toEqual(
-    ['case', ['in', ['get', 'cityname'], ['literal', []]], 1, 0.18],
+    ['case', ['in', ['get', 'cityname'], ['literal', []]], 1, 0.08],
   );
   expect(map.getPaintProperty(FILL_ID, 'fill-opacity')).toBe(0.08);
 });

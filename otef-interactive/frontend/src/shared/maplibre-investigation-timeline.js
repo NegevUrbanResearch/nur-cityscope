@@ -13,9 +13,10 @@ import {
 } from "./maplibre-investigation-alarms.js";
 import {
   buildNliExplainerModel,
-  nliExplainerInnerHtml,
   NLI_CAPTION_MODE_CLOCK_ONLY,
 } from "./nli-explainer-model.js";
+import { nliClockPresentationPending, syncNliClockPresentationPending, renderNliClockCaption,
+  hideNliClockCaption, disposeNliClockPresentation, settleNliClockReducedMotion } from "./nli-clock-presentation.js";
 import {
   collectUnionTimelineBeats,
   INVESTIGATION_ALARMS_FULL_ID,
@@ -361,12 +362,6 @@ function ensureCaptionEl(map) {
   return el;
 }
 
-function clearCaption(el) {
-  if (!el) return;
-  el.hidden = true;
-  el.innerHTML = "";
-}
-
 function applyCaptionDeps(state, map, deps = {}) {
   state.nliCaptionMode = deps.nliCaptionMode === NLI_CAPTION_MODE_CLOCK_ONLY
     ? NLI_CAPTION_MODE_CLOCK_ONLY
@@ -397,11 +392,11 @@ function publishClockOnlyCaptionRelevance(state, visibleIds, localOverride = fal
   if (state.nliCaptionMode !== NLI_CAPTION_MODE_CLOCK_ONLY) return;
   const visible = visibleIds instanceof Set ? visibleIds : new Set(visibleIds || []);
   const recognizedNarrative = !!getNliNarrative(state.narrativeFocus?.id);
-  state.clockOnlyCaptionRelevant = !hidden && (localOverride === true || recognizedNarrative || activeTimeline ||
+  state.clockOnlyCaptionRelevant = !hidden && ((nliClockPresentationPending(state) && state.captionRenderSnapshot?.visible) || localOverride === true || recognizedNarrative || activeTimeline ||
     isIdleOverviewCueLayerSet(visible, state.narrativeFocus?.id));
   if (!state.clockOnlyCaptionRelevant) {
     state.lastCaption = null;
-    clearCaption(state.captionEl);
+    hideNliClockCaption(state);
   }
 }
 
@@ -414,8 +409,11 @@ function updateCaption(state, phase, _previousClock) {
   const el = state.captionEl;
   if (!el) return;
   if (state.nliCaptionMode === NLI_CAPTION_MODE_CLOCK_ONLY && !state.clockOnlyCaptionRelevant) {
-    clearCaption(el);
-    state.captionRenderSnapshot = { model: null, visible: false, phase: state.clockPhase };
+    hideNliClockCaption(state);
+    return;
+  }
+  if (state.nliCaptionMode === NLI_CAPTION_MODE_CLOCK_ONLY && nliClockPresentationPending(state)) {
+    settleNliClockReducedMotion(state);
     return;
   }
   setCaptionDirRtl(el);
@@ -465,11 +463,7 @@ function updateCaption(state, phase, _previousClock) {
       clock: snap.clock,
       previousClock: snap.previousClock,
     });
-    el.hidden = false;
-    el.innerHTML = nliExplainerInnerHtml(model, {
-      nliCaptionMode: state.nliCaptionMode,
-    });
-    state.captionRenderSnapshot = { model, visible: true, phase: state.clockPhase };
+    renderNliClockCaption(state, model);
     return;
   }
   if (state.nliCaptionMode === NLI_CAPTION_MODE_CLOCK_ONLY) {
@@ -479,16 +473,10 @@ function updateCaption(state, phase, _previousClock) {
       clock: Number.isFinite(idleClock) ? idleClock : 389,
       nliCaptionMode: state.nliCaptionMode,
     });
-    el.hidden = false;
-    el.innerHTML = nliExplainerInnerHtml(model, {
-      nliCaptionMode: state.nliCaptionMode,
-    });
-    state.captionRenderSnapshot = { model, visible: true, phase: state.clockPhase };
+    renderNliClockCaption(state, model);
     return;
   }
-  el.hidden = true;
-  el.innerHTML = "";
-  state.captionRenderSnapshot = { model: null, visible: false, phase: state.clockPhase };
+  hideNliClockCaption(state);
 }
 
 function jumpPreviousClock(state, vis, frame) {
@@ -1180,6 +1168,9 @@ export async function syncInvestigationTimelineToMap(map, clockInput, layerGroup
   const syncRequest = beginTimelineSyncRequest(map, clock);
   const nowFn = typeof deps.now === "function" ? deps.now : state.now || (() => Date.now());
   state.now = nowFn;
+  syncNliClockPresentationPending(state, clock, () => {
+    void syncInvestigationTimelineToMap(map, clock, layerGroups, deps);
+  });
   state.peopleMarkersShown = peopleMarkersAreShown(visibilityGroups);
   state.motionMode = deps.motionMode === "reduced" ? "reduced" : "full";
   state.displayProfile = displayProfileFromDeps(deps, state.displayProfile);
@@ -1423,6 +1414,7 @@ export function disposeInvestigationTimelineForMap(map) {
   const state = stateByMap.get(map);
   if (!state) return;
   stopPlayback(map);
+  disposeNliClockPresentation(state);
   applyRestingRoutePaints(map, state.routeLayerVisible);
   discardRendererHandles(state);
   if (state.styleListener && typeof map.off === "function") {

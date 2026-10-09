@@ -3,6 +3,8 @@ import { endNliClock, idleNliClock } from "../shared/nli-investigation-clock.js"
 import { NLI_NOVA_STORY } from "../shared/nli-nova-story.js";
 
 const NO_ESCAPE = Object.freeze({ individual: false, overlap: false, mor: false, settled: false });
+// Release a presentation hold even if the staff tab closes or its cleanup write fails.
+const PRESENTATION_HOLD_LIMIT_MS = 15000;
 
 export function buildNovaEndedClock(previous) {
   return endNliClock({
@@ -65,6 +67,47 @@ export function createCueRunner({
 }) {
   let queue = Promise.resolve();
   let token = 0;
+  let presentationDeadline = null;
+
+  async function beginPresentation(cue, live) {
+    const clock = dataContext?.getInvestigationClock?.();
+    if (!clock || typeof dataContext?.patchInvestigationClock !== "function") return;
+    const now = dataContext?.correctedNow?.() ?? Date.now();
+    presentationDeadline = now + PRESENTATION_HOLD_LIMIT_MS;
+    const previous = clock.hiddenDisplays ?? [];
+    const hiddenDisplays = ["gis", "projection"].filter((display) =>
+      previous.includes(display) || cue.hiddenDisplays?.includes(display));
+    // The state action checks before sending and after acknowledgement. Skip a
+    // cancelled queued write, but adopt an already-sent hold so cleanup can
+    // release it if cancellation happens while its acknowledgement is in flight.
+    let sent = false;
+    const canSendOrAdopt = () => sent || (sent = live());
+    assertAcknowledged(await dataContext.patchInvestigationClock({
+      ...clock, hiddenDisplays, presentationPendingUntilMs: presentationDeadline,
+    }, { isCurrent: canSendOrAdopt }), "Clock presentation update was not acknowledged");
+    if (!live()) throw cancelled();
+  }
+
+  async function releasePresentation() {
+    const clock = dataContext?.getInvestigationClock?.();
+    if (presentationDeadline == null || clock?.presentationPendingUntilMs !== presentationDeadline) return;
+    const next = { ...clock };
+    delete next.presentationPendingUntilMs;
+    assertAcknowledged(await dataContext.patchInvestigationClock(next), "Clock presentation release was not acknowledged");
+    presentationDeadline = null;
+  }
+
+  function queueRelease() {
+    const mine = token;
+    const release = async () => {
+      if (mine === token) {
+        try { await releasePresentation(); } catch { /* The deadline still bounds failed cleanup. */ }
+      }
+      return { status: "cancelled" };
+    };
+    queue = queue.then(release, release);
+    return queue;
+  }
 
   async function applyClockVisibility(hiddenDisplays, live) {
     const clock = dataContext?.getInvestigationClock?.();
@@ -155,31 +198,32 @@ export function createCueRunner({
       const live = () => mine === token;
       if (!cue) {
         onStatus(null);
-        const run = async () => ({ status: "cancelled" });
-        queue = queue.then(run, run);
-        return queue;
+        return queueRelease();
       }
       onStatus("applying");
       const run = async () => {
         if (!live()) return { status: "cancelled" };
+        let status = "ready";
         try {
-          // Hide before any scene mutation; only restore visibility after the
-          // destination is ready. Retain both scenes' hidden displays in between.
-          if (cue.hiddenDisplays?.length) {
-            const previous = dataContext?.getInvestigationClock?.()?.hiddenDisplays ?? [];
-            await applyClockVisibility(["gis", "projection"].filter((display) =>
-              previous.includes(display) || cue.hiddenDisplays.includes(display)), live);
-          }
+          // Publish intentional hiding and a caption hold before any scene mutation.
+          // Restore visibility and release the old caption only once the cue is ready.
+          await beginPresentation(cue, live);
           await applySteps(cue, narrativeId, live);
           if (!live()) return { status: "cancelled" };
           await applyClockVisibility(cue.hiddenDisplays ?? [], live);
-          onStatus("ready");
-          return { status: "ready" };
         } catch (error) {
           if (!live() || error?.cancelled) return { status: "cancelled" };
-          onStatus("failed");
-          return { status: "failed" };
+          status = "failed";
+        } finally {
+          // A superseding cue inherits the hold through the serialized queue.
+          // Explicit cancellation queues its own release after in-flight work.
+          if (live()) {
+            try { await releasePresentation(); } catch { status = "failed"; }
+          }
         }
+        if (!live()) return { status: "cancelled" };
+        onStatus(status);
+        return { status };
       };
       queue = queue.then(run, run);
       return queue;
@@ -187,6 +231,7 @@ export function createCueRunner({
     cancel() {
       token += 1;
       onStatus(null);
+      queueRelease();
     },
   };
 }

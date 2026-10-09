@@ -77,7 +77,7 @@ describe("narrative settlement orientation", () => {
     const label = painted(target, "settlements-label");
     const fill = painted(target, "settlements-fill");
     const line = painted(target, "settlements-line");
-    expect(label).toEqual(["case", ["==", ["get", "cityname"], "בארי"], 1, 0.18]);
+    expect(label).toEqual(["case", ["==", ["get", "cityname"], "בארי"], 1, 0.08]);
     expect(fill).toEqual(["case", ["==", ["get", "OBJECTID"], 19], 1, 0.08]);
     expect(line).toEqual(["case", ["==", ["get", "OBJECTID"], 19], 1, 0.08]);
     expect(target.setPaintProperty).toHaveBeenCalledWith("Locations_Lines", "line-opacity", 0.08);
@@ -97,7 +97,7 @@ describe("narrative settlement orientation", () => {
     const label = painted(target, "settlements-label");
     const fill = painted(target, "settlements-fill");
     const line = painted(target, "settlements-line");
-    expect(label).toEqual(["case", ["in", ["get", "cityname"], ["literal", ["נובה"]]], 1, 0.18]);
+    expect(label).toEqual(["case", ["in", ["get", "cityname"], ["literal", ["נובה"]]], 1, 0.08]);
     expect(fill).toEqual(["case", ["==", ["get", "OBJECTID"], 43], 1, 0.08]);
     expect(line).toEqual(["case", ["==", ["get", "OBJECTID"], 43], 1, 0.08]);
   });
@@ -115,7 +115,7 @@ describe("narrative settlement orientation", () => {
     });
 
     const label = painted(target, "settlements-label");
-    expect(label).toEqual(["case", ["in", ["get", "cityname"], ["literal", ["נובה", "עיר א"]]], 1, 0.18]);
+    expect(label).toEqual(["case", ["in", ["get", "cityname"], ["literal", ["נובה", "עיר א"]]], 1, 0.08]);
   });
 
   it("Sderot lights yeshuv OBJECTID 32 and שדרות", () => {
@@ -129,7 +129,7 @@ describe("narrative settlement orientation", () => {
     });
     const label = painted(target, "settlements-label");
     const fill = painted(target, "settlements-fill");
-    expect(label).toEqual(["case", ["==", ["get", "cityname"], "שדרות"], 1, 0.18]);
+    expect(label).toEqual(["case", ["==", ["get", "cityname"], "שדרות"], 1, 0.08]);
     expect(fill).toEqual(["case", ["==", ["get", "OBJECTID"], 32], 1, 0.08]);
   });
 
@@ -144,7 +144,7 @@ describe("narrative settlement orientation", () => {
     });
     const label = painted(target, "settlements-label");
     const fill = painted(target, "settlements-fill");
-    expect(label).toEqual(["case", ["==", ["get", "cityname"], "ניר עוז"], 1, 0.18]);
+    expect(label).toEqual(["case", ["==", ["get", "cityname"], "ניר עוז"], 1, 0.08]);
     expect(fill).toEqual(["case", ["==", ["get", "OBJECTID"], 14], 1, 0.08]);
   });
 
@@ -160,7 +160,7 @@ describe("narrative settlement orientation", () => {
       layers,
     });
     expect(painted(nova, "settlements-label"))
-      .toEqual(["case", ["in", ["get", "cityname"], ["literal", ["נובה", "עיר א"]]], 1, 0.18]);
+      .toEqual(["case", ["in", ["get", "cityname"], ["literal", ["נובה", "עיר א"]]], 1, 0.08]);
 
     const sderot = map();
     applySettlementOrientationPaint(sderot, {
@@ -173,7 +173,7 @@ describe("narrative settlement orientation", () => {
       layers,
     });
     expect(painted(sderot, "settlements-label"))
-      .toEqual(["case", ["==", ["get", "cityname"], "שדרות"], 1, 0.18]);
+      .toEqual(["case", ["==", ["get", "cityname"], "שדרות"], 1, 0.08]);
   });
 
   it("restores normal host paint outside narrative mode", () => {
@@ -197,7 +197,7 @@ describe("narrative settlement orientation", () => {
     expect(painted(target, "settlements-fill")).toBe(0.08);
     expect(painted(target, "Locations_Lines")).toBe(0.08);
     expect(painted(target, "settlements-label")).toEqual(
-      ["case", ["in", ["get", "cityname"], ["literal", ["עיר א"]]], 1, 0.18],
+      ["case", ["in", ["get", "cityname"], ["literal", ["עיר א"]]], 1, 0.08],
     );
   });
 
@@ -223,18 +223,17 @@ describe("narrative settlement orientation", () => {
       ["case", ["==", ["get", "OBJECTID"], 19], 1, 0.08],
     );
     expect(target.getPaintProperty("projector_base__שמות_יישובים__labels", "text-opacity")).toEqual(
-      ["case", ["==", ["get", "cityname"], "בארי"], 1, 0.18],
+      ["case", ["==", ["get", "cityname"], "בארי"], 1, 0.08],
     );
   });
 
-  it("keeps dimmed settlement names readable above geometry dim", () => {
+  it("dims settlement names to the same opacity as geometry", () => {
     const target = map();
     applySettlementOrientationPaint(target, { phase: "idle", mode: "narrative", layers });
-    expect(NLI_VISUAL_TOKENS.dimTextOpacity).toBeGreaterThan(NLI_VISUAL_TOKENS.dimOpacity);
     expect(target.setPaintProperty).toHaveBeenCalledWith(
       "settlements-label",
       "text-opacity",
-      NLI_VISUAL_TOKENS.dimTextOpacity,
+      0.08,
     );
     expect(target.setPaintProperty).toHaveBeenCalledWith(
       "settlements-fill",
@@ -268,7 +267,7 @@ describe("narrative settlement orientation", () => {
     });
     expect(target.setPaintProperty).toHaveBeenCalledWith("settlements-fill", "fill-opacity", 0.08);
     expect(target.setPaintProperty).toHaveBeenCalledWith("settlements-line", "line-opacity", 0.08);
-    expect(target.setPaintProperty).toHaveBeenCalledWith("settlements-label", "text-opacity", 0.18);
+    expect(target.setPaintProperty).toHaveBeenCalledWith("settlements-label", "text-opacity", 0.08);
     expect(target.setPaintProperty).toHaveBeenCalledWith("Locations_Lines", "line-opacity", 0.08);
     const fill = painted(target, "settlements-fill");
     expect(JSON.stringify(fill)).not.toMatch(/18/);
@@ -296,7 +295,7 @@ describe("narrative settlement orientation", () => {
       layers,
     });
     expect(painted(target, "settlements-label"))
-      .toEqual(["case", ["in", ["get", "cityname"], ["literal", ["בארי"]]], 1, 0.18]);
+      .toEqual(["case", ["in", ["get", "cityname"], ["literal", ["בארי"]]], 1, 0.08]);
     expect(target.setPaintProperty).toHaveBeenCalledWith("settlements-fill", "fill-opacity", 0.08);
     expect(JSON.stringify(painted(target, "settlements-fill"))).not.toMatch(/18/);
     expect(target.setPaintProperty).toHaveBeenCalledWith("Locations_Lines", "line-opacity", 0.08);
@@ -355,10 +354,10 @@ describe("narrative settlement orientation", () => {
       layers: collected,
     });
     expect(map.getPaintProperty("projector_base__שמות_יישובים__leader", "line-opacity")).toEqual(
-      ["case", ["in", ["get", "cityname"], ["literal", ["בארי"]]], 1, 0.18],
+      ["case", ["in", ["get", "cityname"], ["literal", ["בארי"]]], 1, 0.08],
     );
     expect(map.getPaintProperty("projector_base__שמות_יישובים__labels", "text-opacity")).toEqual(
-      ["case", ["in", ["get", "cityname"], ["literal", ["בארי"]]], 1, 0.18],
+      ["case", ["in", ["get", "cityname"], ["literal", ["בארי"]]], 1, 0.08],
     );
   });
 
@@ -374,11 +373,11 @@ describe("narrative settlement orientation", () => {
       layers: identityLayers,
     });
     expect(target.setPaintProperty).toHaveBeenCalledWith("settlements-fill", "fill-opacity", 0.08);
-    expect(target.setPaintProperty).toHaveBeenCalledWith("settlements-label", "text-opacity", 0.18);
+    expect(target.setPaintProperty).toHaveBeenCalledWith("settlements-label", "text-opacity", 0.08);
     expect(target.setPaintProperty).toHaveBeenCalledWith(
       "projector_base__שמות_יישובים__leader",
       "line-opacity",
-      0.18,
+      0.08,
     );
   });
 
@@ -415,7 +414,7 @@ const GLOW_MS = NLI_VISUAL_TOKENS.highlightOpacityTransitionMs;
 const FOCUS_CASE = ["case", ["==", ["get", "OBJECTID"], 19], 1, 0.08];
 const NEXT_FOCUS_CASE = ["case", ["==", ["get", "OBJECTID"], 32], 1, 0.08];
 const LEADER_CASE = ["case", ["in", ["get", "OBJECTID"], ["literal", [77]]], 1, 0.08];
-const LABEL_CASE = ["case", ["==", ["get", "cityname"], "בארי"], 1, 0.18];
+const LABEL_CASE = ["case", ["==", ["get", "cityname"], "בארי"], 1, 0.08];
 
 function evaluatePaint(property, expression, properties) {
   const spec = property === "text-opacity" ? v8.paint_symbol["text-opacity"] : v8.paint_line["line-opacity"];
@@ -550,7 +549,7 @@ describe("owned settlement orientation", () => {
     expect(map.getPaintProperty(LABEL_ID, "text-opacity-transition")).not.toEqual({ duration: 350, delay: 0 });
     const text = map.getPaintProperty(LABEL_ID, "text-opacity");
     expect(evaluatePaint("text-opacity", text, { cityname: "בארי" })).toBeCloseTo(1);
-    expect(evaluatePaint("text-opacity", text, { cityname: "אחר" })).toBeCloseTo(0.59);
+    expect(evaluatePaint("text-opacity", text, { cityname: "אחר" })).toBeCloseTo(0.54);
     writes.length = 0;
     applySettlementOrientationPaint(map, {
       phase: "playing",
@@ -561,7 +560,7 @@ describe("owned settlement orientation", () => {
     hooks.flushFrame();
     expect(map.getPaintProperty(FILL_ID, "fill-opacity")).toBe(0.08);
     expect(map.getPaintProperty(LABEL_ID, "text-opacity")).toEqual(
-      ["case", ["in", ["get", "cityname"], ["literal", ["בארי"]]], 1, 0.18],
+      ["case", ["in", ["get", "cityname"], ["literal", ["בארי"]]], 1, 0.08],
     );
   });
 
@@ -659,7 +658,7 @@ describe("owned settlement orientation", () => {
     hooks.flushFrame();
     expect(map.getPaintProperty(FILL_ID, "fill-opacity")).toBe(0.08);
     expect(map.getPaintProperty(LABEL_ID, "text-opacity")).toEqual(
-      ["case", ["in", ["get", "cityname"], ["literal", []]], 1, 0.18],
+      ["case", ["in", ["get", "cityname"], ["literal", []]], 1, 0.08],
     );
     expect(map.getPaintProperty(LABEL_ID, "icon-opacity")).toBe(1);
     expect(map.getPaintProperty(CIRCLE_ID, "circle-opacity")).toBe(1);
@@ -769,10 +768,10 @@ describe("owned settlement orientation", () => {
     hooks.setTime(0);
     setMemorialSettlementFocus(map, { active: true, placeName: "א", strength: 0.3 });
     expect(hooks.pendingFrame).toBeNull();
-    expect(evaluatePaint("text-opacity", map.getPaintProperty(LABEL_ID, "text-opacity"), { cityname: "ב" })).toBeCloseTo(0.754);
+    expect(evaluatePaint("text-opacity", map.getPaintProperty(LABEL_ID, "text-opacity"), { cityname: "ב" })).toBeCloseTo(0.724);
     setMemorialSettlementFocus(map, { active: true, placeName: "א", strength: 0.6 });
     expect(hooks.pendingFrame).toBeNull();
-    expect(evaluatePaint("text-opacity", map.getPaintProperty(LABEL_ID, "text-opacity"), { cityname: "ב" })).toBeCloseTo(0.508);
+    expect(evaluatePaint("text-opacity", map.getPaintProperty(LABEL_ID, "text-opacity"), { cityname: "ב" })).toBeCloseTo(0.448);
     setMemorialSettlementFocus(map, { active: true, placeName: "ב", strength: 0.6 });
     hooks.setTime(200);
     hooks.flushFrame();
@@ -780,7 +779,7 @@ describe("owned settlement orientation", () => {
     hooks.setTime(GLOW_MS);
     hooks.flushFrame();
     expect(evaluatePaint("text-opacity", map.getPaintProperty(LABEL_ID, "text-opacity"), { cityname: "ב" })).toBeCloseTo(1);
-    expect(evaluatePaint("text-opacity", map.getPaintProperty(LABEL_ID, "text-opacity"), { cityname: "א" })).toBeCloseTo(0.508);
+    expect(evaluatePaint("text-opacity", map.getPaintProperty(LABEL_ID, "text-opacity"), { cityname: "א" })).toBeCloseTo(0.448);
   });
 
   it("replays an active memorial goal and settles it when reduced motion republishes the same goal", () => {
@@ -806,14 +805,14 @@ describe("owned settlement orientation", () => {
     hooks.setTime(100);
     hooks.flushFrame();
     expect(map.getPaintProperty(LABEL_ID, "text-opacity")).not.toEqual(
-      ["case", ["==", ["get", "cityname"], "שדרות"], 1, 0.18],
+      ["case", ["==", ["get", "cityname"], "שדרות"], 1, 0.08],
     );
     vi.stubGlobal("window", {
       matchMedia: (query) => ({ matches: query === "(prefers-reduced-motion: reduce)" }),
     });
     refreshMemorialSettlementFocus(map);
     expect(map.getPaintProperty(LABEL_ID, "text-opacity")).toEqual(
-      ["case", ["==", ["get", "cityname"], "שדרות"], 1, 0.18],
+      ["case", ["==", ["get", "cityname"], "שדרות"], 1, 0.08],
     );
     expect(hooks.pendingFrame).toBeNull();
   });
