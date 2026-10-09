@@ -3169,6 +3169,24 @@ describe("syncInvestigationTimelineToMap", () => {
     disposeInvestigationTimelineForMap(map);
   });
 
+  it.each(["gis", "projection"])("all-hostages overview restores settlement outlines, names, and leaders after Nir Oz focus on %s", async (displayProfile) => {
+    const map = makeOrientationMap();
+    const groups = [{ id: "nli", layers: [{ id: "people", enabled: true }] }];
+    const clock = { ...idleNliClock(), hiddenDisplays: ["gis", "projection"] };
+    const deps = { ...orientationDeps(), displayProfile };
+    await syncInvestigationTimelineToMap(map, clock, groups, { ...deps, narrativeFocus: NLI_NARRATIVES.hostages });
+    expect(map.getPaintProperty(YISHUVIM_LINE_ID, "line-opacity"))
+      .toEqual(["case", ["==", ["get", "OBJECTID"], 14], 1, 0.08]);
+
+    await syncInvestigationTimelineToMap(map, clock, groups, { ...deps, narrativeFocus: NLI_NARRATIVES.hostages_all });
+    expect(map.getPaintProperty(YISHUVIM_FILL_ID, "fill-opacity")).toBe(1);
+    expect(map.getPaintProperty(YISHUVIM_LINE_ID, "line-opacity")).toBe(1);
+    expect(map.getPaintProperty(SHEMOT_LABEL_ID, "text-opacity")).toBe(1);
+    expect(map.getPaintProperty(SHEMOT_LEADER_ID, "line-opacity")).toBe(1);
+    expect(map.getPaintProperty(LOCATIONS_LINE_ID, "line-opacity")).toBe(1);
+    disposeInvestigationTimelineForMap(map);
+  });
+
   it("Identity overview keeps settlements, callout leaders, and names visible", async () => {
     const map = makeOrientationMap();
     await syncInvestigationTimelineToMap(map, idleNliClock(), [{

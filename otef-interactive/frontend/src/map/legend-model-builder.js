@@ -89,14 +89,14 @@ function getCssForHatch(hatchConfig, color, presentation = {}) {
  * CSS background for a dashed line using only the stroke color (no border = no black gaps).
  * dashArray e.g. [4, 4] => 4px on, 4px off. Scale to ~24px legend symbol width.
  */
-function getDashBackground(dashArray, color) {
+function getDashBackground(dashArray, color, scale = 1) {
   if (!dashArray || !Array.isArray(dashArray) || dashArray.length === 0)
     return color;
-  const on = Math.max(1, Math.round((dashArray[0] || 4) * 1.5));
+  const on = Math.max(1, Math.round((dashArray[0] || 4) * 1.5)) * scale;
   const off = Math.max(
     1,
     Math.round((dashArray[1] != null ? dashArray[1] : dashArray[0] || 4) * 1.5),
-  );
+  ) * scale;
   const total = on + off;
   return `repeating-linear-gradient(90deg, ${color} 0px, ${color} ${on}px, transparent ${on}px, transparent ${total}px)`;
 }
@@ -378,25 +378,28 @@ function investigationRouteDash() {
   return { array: [period * duty, period * (1 - duty)] };
 }
 
-function applyInvestigationRouteLegendPart(part) {
+function applyInvestigationRouteLegendPart(part, surface) {
+  const projection = surface === "projection";
   const dash = investigationRouteDash();
+  const stroke = NLI_VISUAL_TOKENS.routeFlowColor;
   const next = {
     ...part,
     carrier: NLI_VISUAL_TOKENS.incidentRed,
-    stroke: NLI_VISUAL_TOKENS.routeFlowColor,
+    stroke,
     halo: "#ffffff",
+    ...(projection ? { segmentedCarrier: true, gisLineSwatch: true } : {}),
     dash,
   };
   if (Array.isArray(part?.strokeSwatches)) {
     next.strokeSwatches = part.strokeSwatches.map((swatch) => ({
       ...swatch,
-      color: NLI_VISUAL_TOKENS.routeFlowColor,
+      color: stroke,
       dash,
     }));
   }
   if (Array.isArray(part?.components)) {
     next.components = part.components.map((component) => (
-      component?.shape === "line" ? applyInvestigationRouteLegendPart(component) : component
+      component?.shape === "line" ? applyInvestigationRouteLegendPart(component, surface) : component
     ));
   }
   return next;
@@ -404,7 +407,7 @@ function applyInvestigationRouteLegendPart(part) {
 
 function applyInvestigationRouteLegend(items, fullId, options) {
   if (fullId !== "nli.lines") return items;
-  const confirmed = items.map((item) => applyInvestigationRouteLegendPart(item));
+  const confirmed = items.map((item) => applyInvestigationRouteLegendPart(item, options?.surface));
   const locale = options?.language === "en" ? "en" : "he";
   const profile = options?.surface === "projection" ? NLI_DISPLAY_PROFILES.projection : NLI_DISPLAY_PROFILES.gis;
   const unconfirmed = {
@@ -412,8 +415,10 @@ function applyInvestigationRouteLegend(items, fullId, options) {
     shape: "line",
     label: getLayerDisplayLabel("nli.lines.unconfirmed", locale, "Unconfirmed approach"),
     stroke: NLI_VISUAL_TOKENS.incidentRed,
+    ...(options?.surface === "projection" ? { gisLineSwatch: true } : {}),
     strokeOpacity: NLI_VISUAL_TOKENS.routeUnconfirmedOpacity * (Number(profile.unconfirmedOpacityMultiplier) || 1),
-    dash: { array: [...NLI_VISUAL_TOKENS.routeUnconfirmedDashPx] },
+    // Keep multiple dashes visible in the short GIS and projection swatches.
+    dash: { array: [4, 4] },
   };
   return [...confirmed, unconfirmed];
 }
@@ -986,6 +991,14 @@ async function buildLegendModel(options = {}) {
       name: String(packName || group.id).trim() || group.id,
       layers: packLayers,
     });
+  }
+
+  const roadVisible = layerGroups.some(group => group.id === "nli" && group.layers?.some(layer => layer.id === "ציר_232" && layer.enabled));
+  if (roadVisible && options.sheltersVisible === true) {
+    let nliPack = packs.find(pack => pack.id === "nli");
+    if (!nliPack) { nliPack = { id: "nli", name: legendPackDisplayLabel("nli", localeFor(options)), layers: [] }; packs.push(nliPack); }
+    nliPack.layers = sortLegendLayersByGeometry([...nliPack.layers, { id: "nli.shelters232", name: "מיגוניות", geometryType: "point",
+      items: [{ id: "nli.shelters232:category", label: options.language === "en" ? "Roadside shelters" : "מיגוניות", shape: "shelter", fill: NLI_VISUAL_TOKENS.annotationInk, stroke: NLI_VISUAL_TOKENS.annotationHalo }] }]);
   }
 
   const fleeingRoutes = novaEscapeLegendLayer(ctx, localeFor(options));

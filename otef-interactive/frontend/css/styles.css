@@ -160,6 +160,8 @@ body {
 .map-legend-layer + .map-legend-layer { margin-top: .45em; }
 .map-legend-layer-title { margin-bottom: .32em; color: var(--legend-sub); font-size: .58em; font-weight: 600; }
 .map-legend-item { display: flex; align-items: flex-start; gap: .36em; min-width: 0; min-height: 1.14em; margin: .32em 0; }
+.map-legend-item--shelter { align-items: center; }
+.map-legend-item--shelter .map-legend-symbols { margin-top: 0; }
 .map-legend-symbols { display: inline-flex; align-items: center; gap: .18em; flex: 0 0 auto; min-width: 1.23em; margin-top: .18em; }
 .map-legend-symbol { position: relative; display: inline-block; width: 1.23em; height: .68em; flex: 0 0 1.23em; box-sizing: border-box; overflow: hidden; border: var(--legend-stroke-width) solid var(--legend-stroke); border-color: color-mix(in srgb, var(--legend-stroke), transparent calc((1 - var(--legend-stroke-opacity)) * 100%)); border-radius: 1px; }
 .map-legend-symbol::before { position: absolute; inset: 0; content: ""; opacity: var(--legend-fill-opacity); background: var(--legend-fill); border-radius: inherit; }

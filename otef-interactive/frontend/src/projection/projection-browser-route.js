@@ -154,6 +154,7 @@ export async function createProjectionBrowserSurface({
   initialConfig = null,
   search = globalThis.location?.search || '',
   onError,
+  onShelterPresentationChange,
   onContextLost: onContextLostCallback,
   onContextRestored: onContextRestoredCallback,
 } = {}) {
@@ -235,6 +236,7 @@ export async function createProjectionBrowserSurface({
       renderer.setMesh(prepared.mesh);
       activeMesh = prepared.mesh;
       activeConfig = prepared.config;
+      onShelterPresentationChange?.();
       return true;
     };
     const baselineIdentity = (config = activeConfig) => {
@@ -291,6 +293,13 @@ export async function createProjectionBrowserSurface({
       compositor,
       baseline,
       getMesh: () => copyProjectionMesh(activeMesh),
+      getShelterPresentation: () => {
+        const descriptor = readScene().map;
+        const source = descriptor?.source || mapCanvas;
+        return { mesh: activeMesh, mapDescriptor: descriptor,
+          sourceDimensions: { width: source?.clientWidth || source?.width, height: source?.clientHeight || source?.height },
+          outputResolution: { width: canvas.width, height: canvas.height } };
+      },
       draw: () => drawScheduler.drawNow(),
       requestDraw: () => drawScheduler.requestDraw(),
       setVideoPlaybackActive(active) {
@@ -307,6 +316,7 @@ export async function createProjectionBrowserSurface({
         renderer.setMesh(prepared.mesh);
         activeMesh = prepared.mesh;
         activeConfig = prepared.config;
+        onShelterPresentationChange?.();
         baseline = prepared.loaded?.[spanId] || { ...prepared.snapshot, mesh: null, asset: null };
       },
       rollbackPair(prepared) {
@@ -314,6 +324,7 @@ export async function createProjectionBrowserSurface({
         renderer.setMesh(previousPair.mesh);
         activeMesh = previousPair.mesh;
         activeConfig = previousPair.config;
+        onShelterPresentationChange?.();
         baseline = previousPair.baseline;
         previousPair = null;
         return true;

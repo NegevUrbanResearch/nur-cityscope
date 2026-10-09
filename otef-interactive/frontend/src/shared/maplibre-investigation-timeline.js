@@ -1,3 +1,5 @@
+import { createShelterTimeline } from "./nli-shelter-timeline.js";
+import { shelterSceneIds } from "./nli-shelter-scene.js";
 import { peekLayerLifecycleRuntime } from "./layer-lifecycle-fade.js";
 import { publishInvestigationOverlayOpacity } from "./investigation-overlay-lifecycle.js";
 /**
@@ -128,7 +130,7 @@ export function getInvestigationSceneContentKey(snapshot, fullId) {
   const focus = getNliNarrative(snapshot.narrativeState?.id);
   if (["projector_base.ישובים", "projector_base.שמות_יישובים", "projector_base.Locations_Lines"].includes(fullId)) {
     const peopleScene = peopleMarkersAreShown(snapshot.layerGroups) && !focus;
-    return JSON.stringify([focus ? "narrative" : null,
+    return JSON.stringify([focus?.settlementOrientation ?? (focus ? "narrative" : null),
       focus?.focusSettlement ?? null, focus?.focusSettlementOutlineId ?? null, focus?.keepFocusLabelWithAchieved === true,
       peopleScene ? snapshot.personSelection?.personId ?? null : null,
       peopleScene ? snapshot.personSelection?.datasetVersion ?? null : null]);
@@ -238,6 +240,8 @@ function findLayerOrderAnchor(map, profile) {
 }
 
 function rendererFactories(map, state) {
+  if (state.shelters) state.shelters.mountRenderer();
+  else state.shelters = createShelterTimeline(map, () => state.rendererDeps || {});
   const anchor = findLayerOrderAnchor(map, state.displayProfile);
   if (anchor) state.displayProfile.beforeId = anchor;
   state.lineRenderer = createInvestigationLineRenderer(map, state.displayProfile);
@@ -260,6 +264,7 @@ function discardRendererHandles(state, { preserveBasePaints = false } = {}) {
   for (const renderer of [state.alarmRenderer, state.lineRenderer, state.polygonRenderer]) {
     try { renderer?.dispose?.({ preserveBasePaints }); } catch (_) { /* style can already be gone */ }
   }
+  state.shelters?.disposeRenderer();
   state.alarmRenderer = null;
   state.lineRenderer = null;
   state.polygonRenderer = null;
@@ -664,7 +669,7 @@ function applyOrientationVisuals(map, state, outlineIds = []) {
     ),
     layers: state.orientationLayers,
     shemotSourceId: state.shemotSourceId,
-    mode: focus ? "narrative" : undefined,
+    mode: focus?.settlementOrientation ?? (focus ? "narrative" : undefined),
     focusCityname: focus?.focusSettlement,
     focusOutlineObjectId: focus?.focusSettlementOutlineId,
     keepFocusLabelWithAchieved: focus?.keepFocusLabelWithAchieved === true,
@@ -824,6 +829,13 @@ function applyPlayingVisuals(map, state, phase, frame = null, targetAlarmMode = 
     );
   }
   applyOrientationVisuals(map, state, achievedSettlementOutlineIds);
+  const shelterLines = state.lineOn
+    ? { ...buildInvestigationLineFeaturesForFrame(state.data, lineFrame), activeProgress: lineFrame.activeProgress }
+    : {};
+  state.shelters?.render({ frame: resolvedFrame, lineFrame: shelterLines, data: state.data,
+    polygonVisible: state.polygonOn || novaSiteOverlay, lineVisible: state.lineOn,
+    narrativeId: state.narrativeFocus?.id ?? null, peopleVisible: state.peopleMarkersShown,
+    timelineVisible: state.timelineLayersVisible });
   // Keep the adapter's previous mode available until it applies the transition,
   // then publish the target mode for captions and subsequent animation ticks.
   state.alarmMode = targetAlarmMode;
@@ -1251,6 +1263,9 @@ export async function syncInvestigationTimelineToMap(map, clockInput, layerGroup
     enabledFullIds: nextMembership.visible,
   });
   const enabledSceneIds = getEnabledMapFullLayerIds(visibilityGroups);
+  state.timelineLayersVisible = [INVESTIGATION_POLYGONS_FULL_ID, INVESTIGATION_LINES_FULL_ID]
+    .some(id => enabledSceneIds.has(id));
+  state.shelters?.configure(deps, shelterSceneIds([...enabledSceneIds], narrativeId).length > 0);
   const activeTimeline = clock.phase !== "idle" && [
     INVESTIGATION_ALARMS_FULL_ID,
     INVESTIGATION_LINES_FULL_ID,
@@ -1296,6 +1311,19 @@ export async function syncInvestigationTimelineToMap(map, clockInput, layerGroup
   // Visibility changes are applied before any optional network work so a
   // hidden renderer cannot remain visible while its sibling dataset loads.
   resetEffectiveRenderers(map, state, nextMembership, { preservePolygonBasePaints: true });
+
+  // The scene owner awaits this method before committing membership/person
+  // selection. Optional shelter bytes must never hold that completion promise.
+  if (state.shelters?.needsLoad) {
+    void state.shelters.load(deps, () => !isStaleTimelineSyncRequest(map, syncRequest)).then(() => {
+      if (isStaleTimelineSyncRequest(map, syncRequest) || state.clock !== clock) return;
+      const nowMs = nowFn();
+      const freshFrame = deriveTimelineFrame(state, nowMs);
+      const freshVis = evaluateClock(clock, nowMs, isNovaManifestClock(clock, narrativeId)
+        ? { narrativeId: "nova" } : undefined);
+      applyPlayingVisuals(map, state, freshVis, freshFrame, state.alarmMode);
+    });
+  }
 
   if (clock.phase === "idle") {
     if (state.clockPhase !== "idle") stopPlayback(map, { preserveBasePaints: true });
@@ -1369,6 +1397,7 @@ export async function syncInvestigationTimelineToMap(map, clockInput, layerGroup
     if (shouldRafClock(frame) || shouldRafClock(lineFrame)) scheduleFrame(map, state);
     else cancelScheduledFrame(state);
     updateCaption(state, { mode: "hold", clock: null, index: -1, beatElapsedMs: 0 });
+
     return;
   }
 
@@ -1459,6 +1488,7 @@ export async function syncInvestigationTimelineToMap(map, clockInput, layerGroup
 
   if (shouldRafClock(frame)) scheduleFrame(map, state);
   else cancelScheduledFrame(state);
+
 }
 
 /** Re-read person selection and start the shared glow RAF. No helper-owned RAF. */
@@ -1495,6 +1525,7 @@ export function disposeInvestigationTimelineForMap(map) {
     state.captionEl.hidden = true;
     state.captionEl.innerHTML = "";
   }
+  state.shelters?.dispose();
   stateByMap.delete(map);
 }
 

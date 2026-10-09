@@ -1,6 +1,8 @@
 import { buildLegendModel, getDashBackground } from "./legend-model-builder.js";
 import { escapeHtml } from "../shared/html-utils.js";
 import { resolveLegendLayout } from "../projection/legend-layout.js";
+import { sheltersVisibleOnMap } from "../shared/maplibre-nli-shelters.js";
+import { shelterSymbolDataUrl } from "../shared/nli-shelter-symbol.js";
 import { OUTPUT_HEIGHT, OUTPUT_WIDTH } from "../projection/projection-overlay-placement.js";
 import { layoutProjectionLegend, PROJECTION_LEGEND_FONT, resolveLegendRasterSize } from "../projection/legend-content-layout.js";
 
@@ -27,6 +29,10 @@ export function applyProjectionLegendLayout(element, layout, { span = "full", re
 
 function symbolMarkup(part = {}, geometry = null, fontPx = 22) {
   const shape = part.shape || "polygon";
+  if (shape === "shelter") {
+    const position = geometry ? `position:absolute;left:${geometry.x - geometry.width / 2}px;top:${geometry.y - geometry.height / 2}px;width:${geometry.width}px;height:${geometry.height}px;` : "width:24px;height:20px;";
+    return `<img alt="" aria-hidden="true" src="${shelterSymbolDataUrl()}" style="${position}object-fit:contain;" />`;
+  }
   const stroke = part.stroke ?? "transparent";
   const width = Number.isFinite(part.strokeWidth) ? part.strokeWidth : 1;
   const strokeOpacity = Number.isFinite(part.strokeOpacity) ? part.strokeOpacity : 1;
@@ -34,6 +40,7 @@ function symbolMarkup(part = {}, geometry = null, fontPx = 22) {
     ? part.fillOpacity
     : (Number.isFinite(part.opacity) ? part.opacity : 1);
   const fill = part.fill ?? "transparent";
+  const swatchScale = geometry?.swatchScale || 1;
   let background = fill;
   if (shape === "line") {
     const dash = part.dash && (Array.isArray(part.dash) ? part.dash : part.dash.array);
@@ -41,11 +48,11 @@ function symbolMarkup(part = {}, geometry = null, fontPx = 22) {
     if (part.strokeGradient?.length) {
       background = `linear-gradient(180deg, ${part.strokeGradient.map(({ offset, color }) => `${color} ${offset * 100}%`).join(", ")})`;
     } else if (part.carrier) {
-      const on = Math.max(2, Math.round((dash?.[0] || 4) * 0.5));
-      const off = Math.max(2, Math.round((dash?.[1] != null ? dash[1] : dash?.[0] || 4) * 0.5));
+      const on = Math.max(2, Math.round((dash?.[0] || 4) * 0.5)) * swatchScale;
+      const off = Math.max(2, Math.round((dash?.[1] != null ? dash[1] : dash?.[0] || 4) * 0.5)) * swatchScale;
       background = `repeating-linear-gradient(90deg, ${dashColor} 0px, ${dashColor} ${on}px, transparent ${on}px, transparent ${on + off}px), linear-gradient(${part.carrier}, ${part.carrier})`;
     } else {
-      background = dash?.length ? getDashBackground(dash, dashColor) : dashColor;
+      background = dash?.length ? getDashBackground(dash, dashColor, swatchScale) : dashColor;
     }
   } else if (part.hatchStyle2 && part.hatchStyle) background = `${part.hatchStyle2}, ${part.hatchStyle}, ${fill}`;
   else if (part.hatchStyle) background = `${part.hatchStyle}, ${fill}`;
@@ -66,18 +73,21 @@ function symbolMarkup(part = {}, geometry = null, fontPx = 22) {
   // A diamond's planned width/height are its diagonals, not its rotated sides.
   const border = shape === "line" || captivityBleed ? 0 : legendStrokeWidth;
   const cssWidth = geometry ? geometry.width / (shape === "diamond" ? Math.SQRT2 : 1) + border : 0;
-  const cssHeight = geometry ? (shape === "line" && part.carrier
+  const cssHeight = geometry ? (shape === "line" && part.carrier && !part.segmentedCarrier
     ? Math.max(2, (Number(part.strokeWidth) || 1) + 2)
     : geometry.height / (shape === "diamond" ? Math.SQRT2 : 1) + border) : 0;
   const position = geometry ? `position:absolute;left:${geometry.x - cssWidth / 2}px;top:${geometry.y - cssHeight / 2}px;width:${cssWidth}px;height:${cssHeight}px;margin:0;flex:none;${shape !== "point" && shape !== "line" ? "border-radius:0px;" : ""}` : "";
-  const lineStroke = geometry && shape === "line" && part.carrier
+  const outline = part.gisLineSwatch && part.segmentedCarrier
+    ? `box-shadow:0 0 0 ${swatchScale}px rgba(255,255,255,0.35);border-radius:${swatchScale}px;`
+    : "";
+  const lineStroke = geometry && shape === "line" && part.carrier && !part.segmentedCarrier
     ? `<span class="map-legend-projection-line-stroke" style="position:absolute;left:0;top:${(cssHeight - geometry.height) / 2}px;width:${geometry.width}px;height:${geometry.height}px;background:${escapeHtml(background)}" aria-hidden="true"></span>`
     : "";
   if (lineStroke) background = part.carrier;
   const style = `${position}--legend-fill:${background};--legend-fill-opacity:${fillOpacity};--legend-stroke:${legendStroke};--legend-stroke-width:${legendStrokeWidth}px;--legend-stroke-opacity:${strokeOpacity};--legend-halo:${halo};${part.alarmShockwave ? `--legend-alarm-shockwave:${shockwaveColor};` : ""}${swatchImage}`;
   const ringSize = geometry && part.alarmShockwave ? Math.max(geometry.width, geometry.height) + fontPx * 0.56 + 1.6 : 0;
   const ring = ringSize ? `<span class="map-legend-projection-shockwave" style="position:absolute;left:${geometry.x - ringSize / 2}px;top:${geometry.y - ringSize / 2}px;width:${ringSize}px;height:${ringSize}px;border:1.6px solid ${escapeHtml(shockwaveColor)};opacity:0.4;border-radius:50%;box-sizing:border-box" aria-hidden="true"></span>` : "";
-  return `<span class="map-legend-symbol map-legend-symbol--${escapeHtml(shape)}${shockwave}${captivityBleed}" style="${escapeHtml(style)}" aria-hidden="true">${lineStroke}</span>${ring}`;
+  return `<span class="map-legend-symbol map-legend-symbol--${escapeHtml(shape)}${shockwave}${captivityBleed}" style="${escapeHtml(style + outline)}" aria-hidden="true">${lineStroke}</span>${ring}`;
 }
 
 function itemMarkup(item) {
@@ -86,7 +96,8 @@ function itemMarkup(item) {
     : Array.isArray(item.strokeSwatches) && item.strokeSwatches.length
       ? item.strokeSwatches.map((swatch) => ({ ...item, stroke: swatch.color, dash: swatch.dash, strokeWidth: swatch.width, strokeOpacity: swatch.opacity }))
       : [item];
-  return `<div class="map-legend-item" data-legend-item-id="${escapeHtml(item.id || "")}"><span class="map-legend-symbols">${components.map((part) => symbolMarkup(part)).join("")}</span><span class="map-legend-label" dir="auto">${escapeHtml(item.label || "")}</span></div>`;
+  const shelterClass = components.some((part) => part.shape === "shelter") ? " map-legend-item--shelter" : "";
+  return `<div class="map-legend-item${shelterClass}" data-legend-item-id="${escapeHtml(item.id || "")}"><span class="map-legend-symbols">${components.map((part) => symbolMarkup(part)).join("")}</span><span class="map-legend-label" dir="auto">${escapeHtml(item.label || "")}</span></div>`;
 }
 
 function projectionItemMarkup(placement, fontPx, layerId = "") {
@@ -121,7 +132,7 @@ function makeChildren(element) {
   return { content, pager };
 }
 
-function mountMapLegend({ element, surface = "gis", projectionSpan = "full", dataContext, registry, buildModel = buildLegendModel, onRenderSnapshot, measureText } = {}) {
+function mountMapLegend({ element, map, surface = "gis", projectionSpan = "full", dataContext, registry, buildModel = buildLegendModel, onRenderSnapshot, measureText } = {}) {
   if (!element) return { refresh: async () => {}, setEditing: () => {}, setPage: () => 0, dispose: () => {} };
   const mode = surface === "projection" ? "projection" : "gis";
   const { content, pager } = makeChildren(element);
@@ -381,7 +392,7 @@ function mountMapLegend({ element, surface = "gis", projectionSpan = "full", dat
         });
       }
       element.dir = language() === "en" ? "ltr" : "rtl";
-      const model = await buildModel({ surface: mode, dataContext, registry, language: current.language, summarizedGroupIds: current.summarizedGroupIds });
+      const model = await buildModel({ surface: mode, dataContext, registry, sheltersVisible: sheltersVisibleOnMap(map), language: current.language, summarizedGroupIds: current.summarizedGroupIds });
       if (disposed || version !== generation) return;
       if (mode === "projection") {
         const layout = resolveLegendLayout({ settings: current, span: projectionSpan });

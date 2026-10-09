@@ -66,6 +66,7 @@ describe("NLI narrative registry", () => {
     });
     expect(NLI_NARRATIVES.hostages_all).toEqual({
       id: "hostages_all",
+      settlementOrientation: "overview",
       center: [34.5, 31.4],
       zoom: 10,
       basemap: "satellite_bw",

@@ -22,6 +22,10 @@ import { parseNovaEscapeIndex } from "./nli-nova-escape-index.js";
 import { setEscapeImpactOrientationIds } from "./maplibre-investigation-timeline.js";
 import { getLayerLifecycleRuntime } from "./layer-lifecycle-fade.js";
 import { resolveMotionMode } from "./reduced-motion.js";
+import { publishNovaShelterDestinations } from "./nli-shelter-nova-state.js";
+import { ensureShelterLayerOrder } from "./maplibre-nli-shelters.js";
+
+const routeHashes = new WeakMap();
 
 export const NOVA_FLEEING_INDIVIDUAL_URL =
   "/otef-interactive/public/processed/layers/nli/fleeing_route.geojson";
@@ -206,6 +210,7 @@ export function createNovaEscapeCoordinator({
     if (!parsedImpactIndex) {
       clearImpactState();
       warnImpactIndexOnce("schema or route IDs");
+      if (routeHashes.has(individualData)) scheduleImpactTick();
       return;
     }
     if (overlay?.settled === true) {
@@ -273,6 +278,7 @@ export function createNovaEscapeCoordinator({
       runtime.registerOpacityTarget(id, writer);
     }
     map.addLayer(layer, beforeId);
+    ensureShelterLayerOrder(map);
     map.triggerRepaint?.();
   };
 
@@ -291,6 +297,7 @@ export function createNovaEscapeCoordinator({
     };
     const staged = runtime?.stageMapLayer(id, layer);
     map.addLayer(staged?.stagedLayerDef || layer, beforeId && map.getLayer?.(beforeId) ? beforeId : undefined);
+    ensureShelterLayerOrder(map);
     if (runtime) {
       runtime.subscribeMemberReady(id, ({ ready, failed }) => {
         const data = event => { if (event?.sourceId === id && map.isSourceLoaded?.(id)) ready(); };
@@ -339,17 +346,21 @@ export function createNovaEscapeCoordinator({
 
   const refreshImpactFromProgress = () => {
     if (!individualData || (overlay?.settled !== true && overlay?.individual !== true)) return;
-    if (!parsedImpactIndex) {
-      clearImpactState();
-      return;
-    }
-    const index = parsedImpactIndex;
     const progressByObjectId = {};
     for (const feature of individualData.features || []) {
       const id = feature?.properties?.OBJECTID ?? feature?.id;
       if (id == null) continue;
       progressByObjectId[String(id)] = featureProgress(feature, true);
     }
+    publishNovaShelterDestinations(map, narrative?.id === "nova" && overlay?.individual === true ? {
+      routeSHA256: routeHashes.get(individualData),
+      completedRouteIds: Object.keys(progressByObjectId).filter(id => progressByObjectId[id] >= 1),
+    } : null);
+    if (!parsedImpactIndex) {
+      clearImpactState();
+      return;
+    }
+    const index = parsedImpactIndex;
     absorbParallelImpactIds(novaParallelImpactFeatureIds({
       progressByObjectId,
       crossingIndex: index.crossingIndex,
@@ -363,10 +374,7 @@ export function createNovaEscapeCoordinator({
   const runImpactTick = () => {
     impactRaf = null;
     if (disposed || narrative?.id !== "nova" || overlay?.individual !== true || !ribbonsAllowed) return;
-    if (!parsedImpactIndex) {
-      clearImpactState();
-      return;
-    }
+    if (!parsedImpactIndex && !routeHashes.has(individualData)) return;
     refreshImpactFromProgress();
     const pending = (individualData?.features || []).some((feature) => featureProgress(feature, true) < 1);
     if (!pending) return;
@@ -379,10 +387,7 @@ export function createNovaEscapeCoordinator({
   const scheduleImpactTick = () => {
     cancelImpactRaf();
     if (disposed || narrative?.id !== "nova" || overlay?.individual !== true || !ribbonsAllowed) return;
-    if (!parsedImpactIndex) {
-      clearImpactState();
-      return;
-    }
+    if (!parsedImpactIndex && !routeHashes.has(individualData)) return;
     const raf = scheduleRaf(runImpactTick);
     if (raf == null) {
       refreshImpactFromProgress();
@@ -402,6 +407,7 @@ export function createNovaEscapeCoordinator({
 
   const updateStagger = (individualOn) => {
     if (!individualOn) {
+      publishNovaShelterDestinations(map, null);
       lastIndividualOn = false;
       staggerOriginMs = null;
       pendingRevealOriginReset = false;
@@ -414,6 +420,7 @@ export function createNovaEscapeCoordinator({
       return;
     }
     if (!lastIndividualOn) {
+      publishNovaShelterDestinations(map, null);
       staggerOriginMs = null;
       pendingRevealOriginReset = true;
       resetParallelImpactIds();
@@ -475,6 +482,7 @@ export function createNovaEscapeCoordinator({
         mountImpactOutline();
       }
       maybeAdoptImpactIndex(token);
+      if (flags.individual && ribbonsAllowed) scheduleImpactTick();
       return loaded;
     });
 
@@ -704,6 +712,7 @@ export function createNovaEscapeCoordinator({
       removeLayerIfPresent(map, NOVA_ESCAPE_IMPACT_LAYER_ID);
       setEscapeImpactOrientationIds(map, []);
       clearParallelImpact({ disposeEmit: true });
+      publishNovaShelterDestinations(map, null);
     },
   };
 }
@@ -751,6 +760,15 @@ async function fetchSuccessfulJson(url) {
   try {
     const response = await fetch(url);
     if (!response?.ok) return null;
+    if (url === NOVA_FLEEING_INDIVIDUAL_URL && typeof response.arrayBuffer === "function") {
+      const bytes = await response.arrayBuffer();
+      const collection = JSON.parse(new TextDecoder().decode(bytes));
+      if (globalThis.crypto?.subtle) {
+        const hash = await globalThis.crypto.subtle.digest("SHA-256", bytes);
+        routeHashes.set(collection, [...new Uint8Array(hash)].map(byte => byte.toString(16).padStart(2, "0")).join(""));
+      }
+      return collection;
+    }
     return await response.json();
   } catch {
     /* exhibit fetch can fail; retry on the next remount instead of caching empty */
