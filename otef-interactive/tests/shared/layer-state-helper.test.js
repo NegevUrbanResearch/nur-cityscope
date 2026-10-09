@@ -277,3 +277,11 @@ describe("layer-state-helper: curated group display names", () => {
   });
 });
 
+
+test("captured effective groups are merged without consulting newer raw flags", () => {
+  const captured = [{ id: "nli", enabled: true, layers: [{ id: "people", enabled: true }] }];
+  global.OTEFDataContext = { getLayerGroups: () => [{ id: "nli", layers: [{ id: "people", enabled: false }] }] };
+  delete global.layerRegistry;
+  expect(getEffectiveLayerGroups(captured)[0].layers[0].enabled).toBe(true);
+  delete global.OTEFDataContext;
+});

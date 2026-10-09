@@ -71,6 +71,7 @@ export function createNameFieldExitGate(nameFieldController) {
   let namesDrawn = false;
   return {
     holdUntilHidden(groups, isCurrent = () => true) {
+      if (nameFieldController?.isSceneManaged?.()) return true;
       const requested = victimNamesAreShown(groups);
       if (namesDrawn && !requested) {
         return Promise.resolve(nameFieldController?.fadeOut?.()).then(() => {

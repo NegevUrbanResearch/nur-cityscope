@@ -57,10 +57,11 @@ export function settleNliClockReducedMotion(state) {
 
 /** Time, visibility, and animation pose are published together to projection. */
 export function renderNliClockCaption(state, model) {
+  if (state.sceneCaptionDeparting) return;
   const el = state.captionEl;
   if (!el) return;
   el.hidden = false;
-  state.captionRenderSnapshot = { model, visible: true, phase: state.clockPhase };
+  state.captionRenderSnapshot = { model, visible: true, phase: state.clockPhase, ...(state.sceneClockRuntime ? { sceneOpacity: state.sceneCaptionFactor ?? 0 } : {}) };
   if (state.nliCaptionMode !== NLI_CAPTION_MODE_CLOCK_ONLY) {
     cancelMotionFrame(state);
     const html = nliExplainerInnerHtml(model);
@@ -82,6 +83,7 @@ export function renderNliClockCaption(state, model) {
 }
 
 export function hideNliClockCaption(state) {
+  if (state.sceneCaptionDeparting) { cancelMotionFrame(state); return; }
   cancelMotionFrame(state);
   state.clockPresentation?.motion.setTarget('', state.monotonicNow(), { visible: false });
   if (state.captionEl) {
@@ -98,4 +100,20 @@ export function disposeNliClockPresentation(state) {
   clearTimeout(state.clockPresentationTimer);
   state.clockPresentationRetry = null;
   state.clockPresentation = null;
+}
+
+/** Preserve the outgoing clock model until its owning lifecycle member reaches zero. */
+export function syncNliClockScene(state, runtime, fullId) {
+  state.sceneClockRuntime = runtime;
+  state.sceneCaptionDeparting = !!runtime && !runtime.getDesiredIds().includes(fullId) && !!state.captionRenderSnapshot?.visible;
+  if (!runtime || !fullId || state.sceneCaptionDeparting || !runtime.getDesiredIds().includes(fullId)) return;
+  const teardown = () => { state.sceneCaptionDeparting = false; hideNliClockCaption(state); };
+  runtime.registerElement(fullId, state.captionEl, { onTeardown: teardown });
+  if (!state.writeSceneCaptionFactor) state.writeSceneCaptionFactor = factor => {
+    state.sceneCaptionFactor = factor;
+    if (state.captionRenderSnapshot) state.captionRenderSnapshot.sceneOpacity = factor;
+    state.rendererDeps?.onClockPresentationFrame?.();
+  };
+  runtime.registerOpacityTarget(fullId, state.writeSceneCaptionFactor);
+  runtime.markMemberReady(fullId);
 }

@@ -1,3 +1,4 @@
+import { opacityChannelsForLayerType } from "../shared/layer-opacity-expression.js";
 import {
   GIS_BASEMAP_FADE_MS,
   GIS_BASEMAP_SOURCE_WAIT_MS,
@@ -13,9 +14,105 @@ const ZERO_TRANSITION = Object.freeze({ duration: 0, delay: 0 });
 
 const states = new WeakMap();
 
+export function getDisplayedGisBasemap(map, styles) { return states.get(map)?.completedId || inferCompletedId(map, styles); }
+
+/** Transfer a completed manual group to an idle scene owner without remounting. */
+export function adoptDisplayedGisBasemap(map, basemapId, { styles, runtime } = {}) {
+  const state = states.get(map);
+  if (!state || state.pendingId != null || state.preparedBasemap || state.completedId !== basemapId ||
+      !runtime || runtime.isDisposed() || runtime.getPendingBatch() || runtime.getRenderedReadiness().moving ||
+      !physicalGroupMatches(map, state.completedPhysical) || !map.isSourceLoaded(sourceIdFor(basemapId))) return false;
+  const fullId = `nli.basemap.${physicalKind(basemapId)}`;
+  const desired = runtime.getDesiredIds().filter(id => !id.startsWith("nli.basemap."));
+  for (const id of runtime.getDesiredIds().filter(id => id.startsWith("nli.basemap."))) runtime.dropChannels(id);
+  registerManagedGroup(map, state, basemapId, styles, runtime, true);
+  runtime.setDesiredIds([...desired, fullId], { durationMs: 0, requiredIds: [fullId] });
+  runtime.markMemberReady(fullId); runtime.commitBatch();
+  return true;
+}
+
+/** Keep one completed handoff while an existing lifecycle frame is still moving.
+ * No new frame is scheduled. The next idle rendered boundary consumes it once;
+ * the callback still owns the current-intent/binding eligibility checks.
+ */
+export function deferDisplayedGisBasemapAdoption(map, basemapId, { runtime, onReady } = {}) {
+  const state = states.get(map);
+  if (!state || state.pendingId != null || state.preparedBasemap || state.completedId !== basemapId ||
+      !runtime || runtime.isDisposed() || typeof onReady !== "function" ||
+      !physicalGroupMatches(map, state.completedPhysical) ||
+      !(runtime.getPendingBatch() || runtime.getRenderedReadiness().moving)) return false;
+  state.cancelAdoption?.();
+  const generation = state.generation, physical = state.completedPhysical, style = map.style;
+  const cancel = () => {
+    map.off("render", onRender);
+    if (state.cancelAdoption === cancel) state.cancelAdoption = null;
+  };
+  const onRender = () => {
+    if (states.get(map) !== state || state.generation !== generation || state.completedPhysical !== physical ||
+        map.style !== style || runtime.isDisposed() || !physicalGroupMatches(map, physical)) { cancel(); return; }
+    if (runtime.getPendingBatch() || runtime.getRenderedReadiness().moving) return;
+    cancel(); onReady();
+  };
+  state.cancelAdoption = cancel;
+  map.on("render", onRender);
+  return true;
+}
+
+function capturePhysicalGroup(map, basemapId, styles) {
+  return { basemapId,
+    layers: new Map(groupLayerIds(basemapId, styles).filter(id => map.getLayer(id)).map(id => [id, map.getLayer(id)])),
+    sources: new Map(groupSourceIds(basemapId, styles).filter(id => map.getSource(id)).map(id => [id, map.getSource(id)])),
+  };
+}
+
+function physicalGroupMatches(map, group) {
+  return !!group && group.layers.size > 0 && group.sources.has(sourceIdFor(group.basemapId)) &&
+    [...group.layers].every(([id, layer]) => map.getLayer(id) === layer) &&
+    [...group.sources].every(([id, source]) => map.getSource(id) === source);
+}
+
+function cleanupManagedGroup(map, fullId, runtime) {
+  const state = states.get(map), owner = state?.managedOwners.get(fullId);
+  if (!owner || owner.runtime !== runtime || runtime.getDesiredIds().includes(fullId) ||
+      (state.preparedBasemap?.fullId === fullId || state.preparedBasemap?.retainedFullId === fullId) || !physicalGroupMatches(map, owner.physical)) return;
+  state.managedOwners.delete(fullId);
+  removeGroup(map, owner.physical.basemapId, owner.styles);
+}
+
+function managedLayerDefinition(definition) {
+  const layer = { ...definition, paint: { ...(definition.paint || {}) } };
+  for (const property of opacityChannelsForLayerType(layer.type)) layer.paint[property] ??= 1;
+  if (layer.type === "raster") layer.paint["raster-opacity-transition"] = ZERO_TRANSITION;
+  return layer;
+}
+
+function registerManagedGroup(map, state, basemapId, styles, runtime, adoptVisible) {
+  const fullId = `nli.basemap.${physicalKind(basemapId)}`;
+  const physical = capturePhysicalGroup(map, basemapId, styles);
+  if (!physicalGroupMatches(map, physical)) return false;
+  state.managedOwners.set(fullId, { physical, styles, runtime });
+  // Raster dissolves reveal the opaque dark map beneath them. Scaling that
+  // underlay as well exposes the browser's white clear color between scenes.
+  if (basemapId === "dark") {
+    runtime.dropChannels(fullId);
+    state.darkOpacityTarget ||= () => {};
+    runtime.registerOpacityTarget(fullId, state.darkOpacityTarget, {
+      adoptVisible, onTeardown: () => cleanupManagedGroup(map, fullId, runtime),
+    });
+    return true;
+  }
+  const fullyVisible = styles[basemapId].layers.every(layer => opacityChannelsForLayerType(layer.type).every(property =>
+    JSON.stringify(map.getPaintProperty(layer.id, property) ?? 1) === JSON.stringify(layer.paint?.[property] ?? 1)));
+  for (const definition of styles[basemapId].layers.filter(layer => map.getLayer(layer.id))) runtime.stageMapLayer(fullId, managedLayerDefinition(definition), {
+    adoptVisible: adoptVisible && fullyVisible, onTeardown: () => cleanupManagedGroup(map, fullId, runtime),
+  });
+  return true;
+}
+
 export function transitionGisBasemap(map, basemapId, options = {}) {
   const styles = options.styles;
   const onSettled = options.onSettled;
+  if (options.managedScene) return prepareManagedBasemap(map, basemapId, options);
   if (!isUsableMap(map) || !isGisBasemapId(basemapId) || !isStyleSet(styles)) return false;
 
   const state = ensureState(map, styles);
@@ -30,7 +127,143 @@ export function transitionGisBasemap(map, basemapId, options = {}) {
   return true;
 }
 
+/** Managed callers stage a candidate, then mount it inside the owner's batch.
+ * The existing tile deadline bounds preparation. Only the lifecycle writes scene
+ * opacity; cancellation discards candidate-owned sources, never the retained base.
+ */
+function prepareManagedBasemap(map, basemapId, { styles, managedScene: { runtime, signal } }) {
+  if (!isUsableMap(map) || !isGisBasemapId(basemapId) || !isStyleSet(styles)) return Promise.reject(new Error("Invalid managed basemap"));
+  const state = ensureState(map, styles);
+  if (!state) return Promise.reject(new Error("Missing displayed basemap"));
+  state.cancelAdoption?.();
+  state.cancelAttempt?.(); state.generation += 1;
+  registerManagedGroup(map, state, state.completedId, styles, runtime, true);
+  const generation = state.generation;
+  const attempt = createAttempt();
+  state.cancelAttempt = () => attempt.cancel();
+  const fullId = `nli.basemap.${physicalKind(basemapId)}`;
+  const oldKind = physicalKind(state.completedId);
+  const samePhysical = oldKind === physicalKind(basemapId);
+  const ownedSources = new Map();
+  const ownedLayers = new Map();
+  const existingLayers = styles[basemapId].layers.filter(layer => map.getLayer(layer.id));
+  const adoptedVisible = samePhysical && existingLayers.length > 0 && existingLayers.every(layer =>
+    opacityChannelsForLayerType(layer.type).every(property =>
+      JSON.stringify(map.getPaintProperty(layer.id, property) ?? 1) === JSON.stringify(layer.paint?.[property] ?? 1)));
+  let cancelPrepared = () => attempt.cancel();
+  state.cancelAttempt = () => cancelPrepared();
+  let mounted = false;
+  let readiness = false;
+  const current = () => !signal?.aborted && state.generation === generation && !attempt.cancelled;
+  const definitions = styles[basemapId].layers;
+  const sourceHandles = new Map();
+  const protection = { fullId, generation, sourceHandles,
+    retainedFullId: oldKind === "dark" && !samePhysical ? "nli.basemap.dark" : null };
+  state.preparedBasemap = protection;
+  const releaseProtection = () => { if (state.preparedBasemap === protection) state.preparedBasemap = null; };
+  const physicalLayersPresent = () => definitions.every(layer => map.getLayer(layer.id) &&
+    (!layer.source || map.getLayer(layer.id).source === layer.source && map.getSource(layer.source) && map.getSource(layer.source) === sourceHandles.get(layer.source)));
+  function removeOwned() {
+    for (const [layerId, handle] of [...ownedLayers].reverse()) {
+      if (map.getLayer(layerId) === handle) map.removeLayer(layerId);
+    }
+    ownedLayers.clear();
+    for (const [sourceId, source] of ownedSources) {
+      if (map.getSource(sourceId) !== source) continue;
+      for (const layer of [...definitions].reverse()) if (layer.source === sourceId && map.getLayer(layer.id)) map.removeLayer(layer.id);
+      if (!sourceInUse(map, sourceId)) map.removeSource(sourceId);
+    }
+    ownedSources.clear();
+  }
+  function stage(adopt = false) {
+    const ground = styles.dark.layers.find(layer => layer.type === "background");
+    if (ground && !map.getLayer(ground.id)) map.addLayer(ground, map.getStyle().layers[0]?.id);
+    const boundary = basemapId === "dark" ? layerIdFor(state.completedId) || firstOverlayId(map, styles) : firstOverlayId(map, styles);
+    for (const [sourceId, source] of Object.entries(styles[basemapId].sources || {})) {
+      if (sourceHandles.has(sourceId) && map.getSource(sourceId) !== sourceHandles.get(sourceId)) throw new Error("Managed basemap source changed");
+      if (!map.getSource(sourceId)) { map.addSource(sourceId, { ...source }); ownedSources.set(sourceId, map.getSource(sourceId)); }
+      sourceHandles.set(sourceId, map.getSource(sourceId));
+    }
+    for (const definition of definitions) {
+      if (definition.source && !map.getSource(definition.source)) continue;
+      const layer = managedLayerDefinition(definition);
+      const staged = basemapId === "dark" ? { stagedLayerDef: layer } : runtime.stageMapLayer(fullId, layer, { adoptVisible: adopt && adoptedVisible,
+        onTeardown: () => cleanupManagedGroup(map, fullId, runtime),
+      });
+      if (!map.getLayer(layer.id)) { map.addLayer(staged.stagedLayerDef, boundary ?? undefined); if (map.getLayer(layer.id)) ownedLayers.set(layer.id, map.getLayer(layer.id)); }
+    }
+    if (!physicalLayersPresent()) throw new Error("Managed basemap layer missing");
+  }
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const fail = reason => {
+      releaseProtection();
+      if (settled) {
+        if (!current()) return;
+        readiness = false;
+        if (mounted) runtime.markMemberFailed(fullId);
+        else { attempt.cancel(); removeOwned(); }
+        return;
+      }
+      settled = true; attempt.cancel(); removeOwned(); reject(new Error(`Managed basemap ${reason}`));
+    };
+    cancelPrepared = () => { if (!settled) fail("cancelled"); else { releaseProtection(); candidate.discard(); attempt.cancel(); } };
+    const candidate = {
+      basemapId, fullId,
+      replaceIds: samePhysical && basemapId !== state.completedId ? [fullId] : [],
+      complete() {
+        if (current() && mounted && physicalLayersPresent()) {
+          if (oldKind === "dark" && !samePhysical) {
+            state.managedOwners.delete("nli.basemap.dark");
+            for (const layer of [...styles.dark.layers].reverse()) if (layer.type !== "background" && map.getLayer(layer.id)) map.removeLayer(layer.id);
+            for (const id of groupSourceIds("dark", styles)) if (map.getSource(id) && !sourceInUse(map, id)) map.removeSource(id);
+          }
+          releaseProtection(); state.completedId = basemapId; state.pendingId = null;
+          state.completedPhysical = capturePhysicalGroup(map, basemapId, styles);
+        }
+      },
+      mount() {
+        if (!current()) throw new Error("Managed basemap cancelled");
+        // Shared ESRI saturation changes occur only after the owner's common exit.
+        try { stage(); } catch (error) { fail("layer-missing"); throw error; }
+        if (!readiness || !map.isSourceLoaded(sourceIdFor(basemapId))) {
+          fail("source-unready"); throw new Error("Managed basemap source unready");
+        }
+        mounted = true;
+        registerManagedGroup(map, state, basemapId, styles, runtime, false);
+        if (physicalKind(basemapId) === "esri") setRasterPaint(map, ESRI_LAYER_ID, "raster-saturation", basemapId === "satellite_bw" ? -1 : 0, 0);
+        runtime.subscribeMemberReady(fullId, ({ ready, failed }) => {
+          const error = event => { if (current() && (event?.sourceId || event?.error?.sourceId) === sourceIdFor(basemapId) && !event.tile) failed(); };
+          map.on("error", error);
+          if (readiness && current() && physicalLayersPresent() && map.isSourceLoaded(sourceIdFor(basemapId))) ready();
+          else failed();
+          return () => map.off("error", error);
+        });
+        // Completion is accepted only while this physical resource still belongs
+        // to the current request. The runtime owns reveal and zero cleanup.
+
+      },
+      discard() { releaseProtection(); if (!mounted) { attempt.cancel(); removeOwned(); } },
+    };
+    const abort = () => { if (!settled) fail("cancelled"); else candidate.discard(); };
+    signal?.addEventListener("abort", abort, { once: true });
+    attempt.add(() => signal?.removeEventListener("abort", abort));
+    if (signal?.aborted) { fail("cancelled"); return; }
+    try { stage(true); } catch { fail("layer-missing"); return; }
+    const sourceId = sourceIdFor(basemapId);
+    const waiter = waitForReady(map, sourceId, {
+      onReady() { if (!current()) return; if (!physicalLayersPresent()) { fail("layer-missing"); return; } readiness = true; settled = true; resolve(candidate); },
+      onFail: fail,
+    });
+    attempt.add(() => waiter.cancel());
+    if (samePhysical || hasDrawableCachedTiles(map, sourceId)) waiter.noteLoaded();
+  });
+}
+
 function beginTransition(map, state, basemapId, styles, onSettled) {
+  state.cancelAdoption?.();
+  for (const [fullId, owner] of state.managedOwners) owner.runtime.dropChannels(fullId);
+  state.managedOwners.clear();
   const interrupting = state.pendingId != null;
   state.generation += 1;
   const generation = state.generation;
@@ -61,6 +294,7 @@ function beginTransition(map, state, basemapId, styles, onSettled) {
 }
 
 function startSaturation(map, state, generation, styles, targetId, onSettled, attempt) {
+  attempt.physical = capturePhysicalGroup(map, targetId, styles);
   const value = targetId === "satellite_bw" ? -1 : 0;
   setRasterPaint(map, ESRI_LAYER_ID, "raster-saturation", value, GIS_BASEMAP_FADE_MS);
   armRenderedCompletion(map, state, generation, attempt, () => {
@@ -106,6 +340,7 @@ function startCrossfade(map, state, generation, styles, targetId, onSettled, att
     ensureRaster(map, styles[targetId], boundary);
   }
   opened = true;
+  attempt.physical = capturePhysicalGroup(map, targetId, styles);
 
   if (queued === "fail") {
     finishFailure(map, state, generation, styles, onSettled, attempt, failureReason);
@@ -149,6 +384,10 @@ function armRenderedCompletion(map, state, generation, attempt, onComplete) {
 
 function finishSuccess(map, state, generation, styles, nextId, onSettled, attempt, sourceId) {
   if (!isCurrent(state, generation, attempt)) return;
+  if (!physicalGroupMatches(map, attempt.physical)) {
+    finishFailure(map, state, generation, styles, onSettled, attempt, "physical-group-changed");
+    return;
+  }
   if (sourceId && !map.getSource(sourceId)) {
     finishFailure(map, state, generation, styles, onSettled, attempt, "source-removed");
     return;
@@ -161,6 +400,7 @@ function finishSuccess(map, state, generation, styles, nextId, onSettled, attemp
     removeGroup(map, previousId, styles);
   }
   state.completedId = nextId;
+  state.completedPhysical = capturePhysicalGroup(map, nextId, styles);
   state.pendingId = null;
   onSettled?.({ status: "completed", basemapId: nextId });
 }
@@ -170,8 +410,10 @@ function finishFailure(map, state, generation, styles, onSettled, attempt, reaso
   state.generation += 1;
   attempt.cancel();
   state.pendingId = null;
-  restoreRetainedRaster(map, state);
-  removeGroupsExcept(map, state.completedId, styles);
+  if (physicalGroupMatches(map, state.completedPhysical)) restoreRetainedRaster(map, state);
+  // A same-ID replacement belongs to another physical owner, even if an old
+  // tile/render callback arrives for its ID. Never remove it as our candidate.
+  if (!attempt.physical || physicalGroupMatches(map, attempt.physical)) removeGroupsExcept(map, state.completedId, styles);
   onSettled?.({ status: "failed", basemapId: state.completedId, reason });
 }
 
@@ -292,19 +534,29 @@ function ensureState(map, styles) {
 
   const state = {
     completedId,
+    completedPhysical: capturePhysicalGroup(map, completedId, styles),
+    managedOwners: new Map(),
     pendingId: null,
     generation: 0,
     cancelAttempt: null,
   };
   const onRemove = () => {
+    state.cancelAdoption?.();
     state.generation += 1;
     state.pendingId = null;
     const cancel = state.cancelAttempt;
     state.cancelAttempt = null;
     cancel?.();
+    map.off("style.load", onStyle);
     map.off("remove", onRemove);
     states.delete(map);
   };
+  const onStyle = () => {
+    state.cancelAdoption?.();
+    state.generation += 1; state.cancelAttempt?.(); state.cancelAttempt = null;
+    states.delete(map); map.off("style.load", onStyle); map.off("remove", onRemove);
+  };
+  map.on("style.load", onStyle);
   map.on("remove", onRemove);
   states.set(map, state);
   return state;

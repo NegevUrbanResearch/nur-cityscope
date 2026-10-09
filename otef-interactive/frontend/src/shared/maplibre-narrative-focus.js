@@ -4,6 +4,20 @@
  * Hebrew label above the matching polygon (or the coded point as fallback).
  */
 
+import { getLayerLifecycleRuntime } from "./layer-lifecycle-fade.js";
+import { getNliNarrative } from "./nli-narratives.js";
+import { peopleFilterForNarrative, houseOutlineFilterForNarrative } from "../map/nli-people-marker-filter.js";
+
+export const NARRATIVE_FOCUS_SCENE_ID = "nli.scene-focus";
+
+export function getNarrativeSceneContentKey(snapshot, fullId) {
+  const definition = getNliNarrative(snapshot.narrativeState?.id);
+  if (fullId === NARRATIVE_FOCUS_SCENE_ID) return JSON.stringify(definition);
+  if (fullId === "nli.people") return JSON.stringify(peopleFilterForNarrative(definition?.id ?? null));
+  if (fullId === "nli.narrative_polygon") return JSON.stringify(houseOutlineFilterForNarrative(definition?.id ?? null));
+  return undefined;
+}
+
 import { NLI_DISPLAY_PROFILES, NLI_VISUAL_TOKENS } from "./nli-investigation-theme.js";
 
 export const NARRATIVE_FOCUS_RENDERER_IDS = Object.freeze({
@@ -170,13 +184,25 @@ function collectionFor(definition, map) {
 }
 
 /** Create a reusable label renderer for GIS and projection narrative scenes. */
-export function createNarrativeFocusRenderer(map, { profile } = {}) {
+export function createNarrativeFocusRenderer(map, { profile, managedScene = false, getLanguage } = {}) {
   const displayProfile = profileFor(profile);
   let definition = null;
   let disposed = false;
+  let runtime = managedScene ? getLayerLifecycleRuntime(map) : null;
+  let cancelDeparture = null, sceneHeld = false;
+  let mountedLanguage = null;
+  const readLanguage = () => getLanguage?.() === 'en' ? 'en' : 'he';
+  const font = () => readLanguage() === 'en' ? ['Arial'] : ['Guttman Hatzvi', 'Arial'];
+
+  function refresh() {
+    if (disposed || !definition || readLanguage() === mountedLanguage) return;
+    map.getSource?.(NARRATIVE_FOCUS_RENDERER_IDS.source)?.setData?.(collectionFor(definition, map, readLanguage()));
+    if (layerPresent(map, NARRATIVE_FOCUS_RENDERER_IDS.label)) map.setLayoutProperty?.(NARRATIVE_FOCUS_RENDERER_IDS.label, 'text-font', font());
+    mountedLanguage = readLanguage();
+  }
 
   function onSourceData(event) {
-    if (disposed || !definition) return;
+    if (disposed || !definition || sceneHeld) return;
     if (event?.sourceId !== HOUSE_OUTLINE_SOURCE_ID) return;
     if (event?.isSourceLoaded === false) return;
     mount();
@@ -200,7 +226,7 @@ export function createNarrativeFocusRenderer(map, { profile } = {}) {
       ? NLI_VISUAL_TOKENS.annotationHalo
       : NLI_VISUAL_TOKENS.incidentRed;
     if (!layerPresent(map, NARRATIVE_FOCUS_RENDERER_IDS.label)) {
-      map.addLayer?.({
+      const layer = {
         id: NARRATIVE_FOCUS_RENDERER_IDS.label,
         type: "symbol",
         source: NARRATIVE_FOCUS_RENDERER_IDS.source,
@@ -213,13 +239,26 @@ export function createNarrativeFocusRenderer(map, { profile } = {}) {
           "text-offset": [0, -0.4],
         },
         paint: {
+          "text-opacity": 1,
           "text-color": NLI_VISUAL_TOKENS.annotationInk,
           "text-halo-color": haloColor,
           "text-halo-width": displayProfile.narrativeFocus.textHaloWidth,
         },
-      });
+      };
+      const staged = runtime?.stageMapLayer(NARRATIVE_FOCUS_SCENE_ID, layer);
+      map.addLayer?.(staged?.stagedLayerDef || layer);
     } else {
+      map.setLayoutProperty?.(NARRATIVE_FOCUS_RENDERER_IDS.label, 'text-font', font());
       map.setPaintProperty?.(NARRATIVE_FOCUS_RENDERER_IDS.label, "text-halo-color", haloColor);
+    }
+    if (runtime) {
+      runtime.subscribeMemberReady(NARRATIVE_FOCUS_SCENE_ID, ({ ready, failed }) => {
+        const onData = event => { if (event?.sourceId === NARRATIVE_FOCUS_RENDERER_IDS.source && map.isSourceLoaded?.(event.sourceId)) ready(); };
+        const onError = event => { if (event?.sourceId === NARRATIVE_FOCUS_RENDERER_IDS.source) failed(); };
+        map.on?.("sourcedata", onData); map.on?.("error", onError);
+        if (map.isSourceLoaded?.(NARRATIVE_FOCUS_RENDERER_IDS.source)) ready();
+        return () => { map.off?.("sourcedata", onData); map.off?.("error", onError); };
+      });
     }
     bringToFront(map, NARRATIVE_FOCUS_RENDERER_IDS.label);
   }
@@ -230,11 +269,18 @@ export function createNarrativeFocusRenderer(map, { profile } = {}) {
       clear();
       return;
     }
+    cancelDeparture?.(); cancelDeparture = null; sceneHeld = false;
+    if (definition === nextDefinition && sourcePresent(map, NARRATIVE_FOCUS_RENDERER_IDS.source) && layerPresent(map, NARRATIVE_FOCUS_RENDERER_IDS.label)) { refresh(); return; }
     definition = nextDefinition;
     mount();
   }
 
-  function clear() {
+  function clear({ sceneDeparture = managedScene } = {}) {
+    if (runtime && sceneDeparture && definition) {
+      cancelDeparture?.();
+      cancelDeparture = runtime.onMemberHidden(NARRATIVE_FOCUS_SCENE_ID, () => clear({ sceneDeparture: false }));
+      return;
+    }
     definition = null;
     removeLayer(map, NARRATIVE_FOCUS_RENDERER_IDS.label);
     removeLayer(map, NARRATIVE_FOCUS_RENDERER_IDS.halo);
@@ -244,13 +290,20 @@ export function createNarrativeFocusRenderer(map, { profile } = {}) {
   return {
     show,
     clear,
+    holdForScene() {
+      sceneHeld = true;
+      if (runtime && definition) { cancelDeparture?.(); cancelDeparture = runtime.onMemberHidden(NARRATIVE_FOCUS_SCENE_ID, () => clear({ sceneDeparture: false })); }
+    },
+    resumeForScene() { cancelDeparture?.(); cancelDeparture = null; sceneHeld = false; },
     onStyleLoad: mount,
+    resetStyle() { cancelDeparture?.(); cancelDeparture = null; if (managedScene) runtime = getLayerLifecycleRuntime(map); },
     dispose() {
       if (disposed) return;
       if (typeof map?.off === "function") {
         map.off("sourcedata", onSourceData);
       }
-      clear();
+      cancelDeparture?.();
+      clear({ sceneDeparture: false });
       disposed = true;
     },
   };

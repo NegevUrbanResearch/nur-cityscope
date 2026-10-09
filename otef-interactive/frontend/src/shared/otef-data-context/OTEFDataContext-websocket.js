@@ -94,13 +94,10 @@ function applyStateFromApi(ctx, state, options = {}) {
 
   if (notify) {
     if (state.viewport) ctx._setViewport(state.viewport);
-    if (state.layerGroups) {
-      ctx._setLayerGroups(state.layerGroups);
-      if (typeof ctx._ackLayerGroupsServerBaseline === "function") {
-        ctx._ackLayerGroupsServerBaseline(state.layerGroups);
-      }
+    if (state.layerGroups) ctx._applyLayerGroupsSnapshot(state.layerGroups, options.layerGroupsReceipt);
+    if (state.animations && (options.animationsReceipt === undefined || options.animationsReceipt === ctx._animationsReceipt)) {
+      ctx._setAnimations(state.animations);
     }
-    if (state.animations) ctx._setAnimations(state.animations);
     if (!hasNarrativeSnapshot && Object.prototype.hasOwnProperty.call(state, "basemap")) {
       ctx._setConfirmedBasemap(state.basemap);
     }
@@ -132,13 +129,17 @@ function applyStateFromApi(ctx, state, options = {}) {
         ctx._viewportSeq = incomingSeq;
       }
     }
-    if (state.layerGroups) {
+    if (state.layerGroups && (options.layerGroupsReceipt === undefined || options.layerGroupsReceipt === ctx._layerGroupsReceipt)) {
       ctx._layerGroups = state.layerGroups;
+      ctx._layerGroupsReceipt += 1;
       if (typeof ctx._ackLayerGroupsServerBaseline === "function") {
         ctx._ackLayerGroupsServerBaseline(state.layerGroups);
       }
     }
-    if (state.animations) ctx._animations = state.animations;
+    if (state.animations && (options.animationsReceipt === undefined || options.animationsReceipt === ctx._animationsReceipt)) {
+      ctx._animations = state.animations;
+      ctx._animationsReceipt += 1;
+    }
     if (!hasNarrativeSnapshot && Object.prototype.hasOwnProperty.call(state, "basemap")) {
       ctx._basemap = normalizeGisBasemap(state.basemap);
     }
@@ -231,10 +232,13 @@ function setupWebSocket(ctx) {
       ctx._setConnection(false, "connecting");
       const coupledBaseline = ctx._captureNarrativeSceneBaseline();
       const visibilityReceipt = ctx._gazaBorderVisibilityReceipt;
+      const layerGroupsReceipt = ctx._beginLayerGroupsSnapshot();
+      const animationsReceipt = ctx._animationsReceipt;
       hydrationPromise = (async () => {
         try {
           const state = await OTEF_API.getState(ctx._tableName, { forceFresh: true });
-          applyStateFromApi(ctx, state, { notify: true, coupledBaseline, visibilityReceipt });
+          if (generation !== connectionGeneration) return;
+          applyStateFromApi(ctx, state, { notify: true, coupledBaseline, visibilityReceipt, layerGroupsReceipt, animationsReceipt });
         } catch (err) {
           getLogger().error("[OTEFDataContext] Failed to refresh state after WebSocket connect:", err);
         } finally {
@@ -320,23 +324,20 @@ function setupWebSocket(ctx) {
       : [];
     try {
       if (Array.isArray(msg.layerGroups)) {
-        ctx._setLayerGroups(msg.layerGroups, { bypassEquality: true });
-        if (typeof ctx._ackLayerGroupsServerBaseline === "function") {
-          ctx._ackLayerGroupsServerBaseline(msg.layerGroups);
-        }
+        ctx._applyLayerGroupsSnapshot(msg.layerGroups, undefined, { bypassEquality: true });
         if (traceId) {
           recordTraceEvent(traceId, "context.layers_from_ws_payload", {
             groupCount: msg.layerGroups.length,
           });
         }
       } else {
+        const generation = connectionGeneration;
+        const receipt = ctx._beginLayerGroupsSnapshot();
         const state = await OTEF_API.getState(ctx._tableName, { forceFresh: true });
+        if (generation !== connectionGeneration) return;
         if (state.layerGroups) {
-          ctx._setLayerGroups(state.layerGroups, { bypassEquality: true });
-          if (typeof ctx._ackLayerGroupsServerBaseline === "function") {
-            ctx._ackLayerGroupsServerBaseline(state.layerGroups);
-          }
-          if (traceId) {
+          const applied = ctx._applyLayerGroupsSnapshot(state.layerGroups, receipt, { bypassEquality: true });
+          if (traceId && applied) {
             recordTraceEvent(traceId, "context.layers_from_api_fallback", {
               groupCount: state.layerGroups.length,
             });
@@ -362,20 +363,23 @@ function setupWebSocket(ctx) {
   });
 
   ctx._wsClient.on(OTEF_MESSAGE_TYPES.ANIMATION_CHANGED, async (msg) => {
+    if (msg?.table && msg.table !== ctx._tableName) return;
     if (ctx._pendingAnimationOps > 0) {
       getLogger().debug("[OTEFDataContext] Suppressing ANIMATION_CHANGED echo (pending local op)");
       return;
     }
+    const animationsReceipt = ++ctx._animationsReceipt;
+    const layerGroupsReceipt = ctx._beginLayerGroupsSnapshot();
+    const generation = connectionGeneration;
     try {
       const state = await OTEF_API.getState(ctx._tableName, { forceFresh: true });
+      if (generation !== connectionGeneration || animationsReceipt !== ctx._animationsReceipt || ctx._pendingAnimationOps > 0) return;
       // Apply layerGroups first so followers (GIS / projection) do not run route overlay sync
       // with animation=true while merged-row siblings are still disabled in context.
       if (state.layerGroups) {
-        ctx._setLayerGroups(state.layerGroups, { bypassEquality: true });
-        if (typeof ctx._ackLayerGroupsServerBaseline === "function") {
-          ctx._ackLayerGroupsServerBaseline(state.layerGroups);
-        }
+        ctx._applyLayerGroupsSnapshot(state.layerGroups, layerGroupsReceipt, { bypassEquality: true });
       }
+      if (animationsReceipt !== ctx._animationsReceipt || ctx._pendingAnimationOps > 0) return;
       let mergedAnimations = null;
       if (state.animations && typeof state.animations === "object") {
         mergedAnimations = { ...state.animations };

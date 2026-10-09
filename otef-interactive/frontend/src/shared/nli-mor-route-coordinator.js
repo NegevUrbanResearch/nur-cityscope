@@ -1,4 +1,6 @@
 import { NLI_DISPLAY_PROFILES } from "./nli-investigation-theme.js";
+import { getLayerLifecycleRuntime } from "./layer-lifecycle-fade.js";
+export const MOR_ROUTE_SCENE_ID = "nli.scene-mor";
 import { resolveMotionMode } from "./reduced-motion.js";
 
 export const MOR_ROUTE_URL = "/otef-interactive/public/processed/layers/nli/mor_levy_route.geojson";
@@ -119,16 +121,23 @@ function routeFrame(route, progress, reduced) {
   return { type: "FeatureCollection", features };
 }
 
-export function createMorRouteCoordinator({ map, dataContext, profile = "gis" } = {}) {
+export function createMorRouteCoordinator({ map, dataContext, profile = "gis", managedScene = false } = {}) {
   const resolvedProfile = NLI_DISPLAY_PROFILES[profile] || NLI_DISPLAY_PROFILES.gis;
   const width = 2.2 * Number(resolvedProfile.lineWidthMultiplier || 1);
   let narrative = dataContext?.getNarrativeState?.() || { id: null };
   let overlay = dataContext?.getEscapeOverlay?.() || { mor: false };
   let route = null; let loading = null; let mounted = false; let disposed = false; let startedAt = null; let raf = null; let generation = 0;
   const unsubs = [];
+  let runtime = managedScene ? getLayerLifecycleRuntime(map) : null;
+  let cancelDeparture = null, heldAt = null, owner = null;
   const active = () => narrative?.id === "nova" && overlay?.mor === true;
+  const currentOwner = record => !!record && owner === record && !disposed && record.generation === generation &&
+    (!record.runtime || record.runtime === runtime && !record.runtime.isDisposed()) &&
+    record.style === map.style && source(map, MOR_ROUTE_SOURCE_ID) === record.source &&
+    [...record.layers].every(([id, handle]) => layer(map, id) === handle);
+  const canReveal = () => !runtime || currentOwner(owner) && owner.ready && runtime.getDesiredIds().includes(MOR_ROUTE_SCENE_ID);
   const schedule = () => {
-    if (raf != null || disposed || !mounted || resolveMotionMode() === "reduced") return;
+    if (raf != null || disposed || !mounted || heldAt != null || !canReveal() || resolveMotionMode() === "reduced") return;
     const request = typeof map?.requestAnimationFrame === "function"
       ? map.requestAnimationFrame.bind(map)
       : typeof globalThis.requestAnimationFrame === "function"
@@ -137,7 +146,8 @@ export function createMorRouteCoordinator({ map, dataContext, profile = "gis" } 
     if (request) raf = request(tick);
   };
   const tick = () => {
-    raf = null; if (disposed || !mounted || !route || !active()) return;
+    raf = null; if (disposed || !mounted || !route || !active() || heldAt != null || !canReveal()) return;
+    if (startedAt == null) startedAt = Date.now();
     const reduced = resolveMotionMode() === "reduced";
     const progress = reduced ? 1 : (startedAt == null ? 0 : clamp((Date.now() - startedAt) / REVEAL_MS));
     const routeSource = source(map, MOR_ROUTE_SOURCE_ID);
@@ -156,21 +166,54 @@ export function createMorRouteCoordinator({ map, dataContext, profile = "gis" } 
     } catch { /* map may be gone */ }
     raf = null;
   };
+  const retireOwner = (record = owner) => {
+    if (!record || owner !== record) return;
+    cancelScheduled(); record.cancelReady?.();
+    for (const [id, handle] of [...record.layers].reverse()) if (layer(map, id) === handle) map.removeLayer(id);
+    if (source(map, MOR_ROUTE_SOURCE_ID) === record.source && !map.getStyle().layers.some(layer => layer.source === MOR_ROUTE_SOURCE_ID)) map.removeSource(MOR_ROUTE_SOURCE_ID);
+    owner = null; mounted = false; startedAt = null; heldAt = null;
+  };
+  const addSceneLayer = layerDef => {
+    const memberRuntime = runtime;
+    const staged = runtime?.stageMapLayer(MOR_ROUTE_SCENE_ID, layerDef, {
+      onTeardown: () => { if (owner?.runtime === memberRuntime && !memberRuntime.getDesiredIds().includes(MOR_ROUTE_SCENE_ID)) retireOwner(); },
+    });
+    map.addLayer(staged?.stagedLayerDef || layerDef);
+  };
+  const watchInitialSource = record => {
+    if (!runtime || record.waiting || record.ready) return;
+    record.runtime.subscribeMemberReady(MOR_ROUTE_SCENE_ID, ({ ready, failed }) => {
+      record.waiting = true;
+      const accept = () => {
+        if (!currentOwner(record) || record.ready || !active() || !record.runtime.getDesiredIds().includes(MOR_ROUTE_SCENE_ID) || !map.isSourceLoaded?.(MOR_ROUTE_SOURCE_ID)) return;
+        record.ready = true; ready();
+        if (currentOwner(record) && heldAt == null && resolveMotionMode() !== "reduced") tick();
+      };
+      const data = event => { if (event?.sourceId === MOR_ROUTE_SOURCE_ID) accept(); };
+      const error = event => { if (currentOwner(record) && (event?.sourceId || event?.error?.sourceId) === MOR_ROUTE_SOURCE_ID) failed(); };
+      const detach = () => { if (!record.waiting) return; record.waiting = false; map.off?.("sourcedata", data); map.off?.("error", error); };
+      record.cancelReady = detach;
+      map.on?.("sourcedata", data); map.on?.("error", error); accept();
+      return () => { detach(); if (!record.runtime.getDesiredIds().includes(MOR_ROUTE_SCENE_ID)) retireOwner(record); };
+    });
+  };
   const mount = () => {
     if (disposed || !active() || !route || typeof map?.addSource !== "function") return;
     cancelScheduled();
     remove(map);
+    generation += 1;
     map.addSource(MOR_ROUTE_SOURCE_ID, { type: "geojson", lineMetrics: true, data: routeFrame(route, 0, resolveMotionMode() === "reduced") });
-    map.addLayer({ id: MOR_ROUTE_LAYER_ID, type: "line", source: MOR_ROUTE_SOURCE_ID, filter: ["==", ["get", "role"], "line"], layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": TURQUOISE, "line-width": width, "line-opacity": 0.6 } });
-    map.addLayer({ id: MOR_ROUTE_HEAD_LAYER_ID, type: "circle", source: MOR_ROUTE_SOURCE_ID, filter: ["==", ["get", "role"], "head"], paint: { "circle-radius": 5.5 * Number(resolvedProfile.radiusMultiplier || 1), "circle-color": "#eaffff", "circle-stroke-color": TURQUOISE, "circle-stroke-width": 2.5, "circle-opacity": 0.98 } });
+    addSceneLayer({ id: MOR_ROUTE_LAYER_ID, type: "line", source: MOR_ROUTE_SOURCE_ID, filter: ["==", ["get", "role"], "line"], layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": TURQUOISE, "line-width": width, "line-opacity": 0.6 } });
+    addSceneLayer({ id: MOR_ROUTE_HEAD_LAYER_ID, type: "circle", source: MOR_ROUTE_SOURCE_ID, filter: ["==", ["get", "role"], "head"], paint: { "circle-radius": 5.5 * Number(resolvedProfile.radiusMultiplier || 1), "circle-color": "#eaffff", "circle-stroke-color": TURQUOISE, "circle-stroke-width": 2.5, "circle-opacity": 0.98 } });
+    owner = { generation, runtime, style: map.style, source: source(map, MOR_ROUTE_SOURCE_ID), layers: new Map([MOR_ROUTE_LAYER_ID, MOR_ROUTE_HEAD_LAYER_ID].map(id => [id, layer(map, id)])), ready: !runtime, waiting: false };
     mounted = true;
-    if (startedAt == null) startedAt = Date.now();
-    tick(Date.now());
+    if (runtime) watchInitialSource(owner);
+    else tick();
   };
   const sync = () => {
     if (disposed) return;
-    if (!active()) { mounted = false; startedAt = null; cancelScheduled(); remove(map); return; }
-    if (route && mounted && layer(map, MOR_ROUTE_LAYER_ID)) return;
+    if (!active()) { if (runtime) retireOwner(); else { mounted = false; startedAt = null; cancelScheduled(); remove(map); } return; }
+    if (route && mounted && layer(map, MOR_ROUTE_LAYER_ID)) { if (runtime) watchInitialSource(owner); schedule(); return; }
     if (route) mount();
   };
   const loadAndSync = async () => {
@@ -186,11 +229,45 @@ export function createMorRouteCoordinator({ map, dataContext, profile = "gis" } 
       if (!disposed) console.warn(`[Mor Levy route] ${error?.message || error}`);
     }
   };
-  unsubs.push(dataContext?.subscribe?.("narrativeState", (value) => { narrative = value; if (!active()) cancelScheduled(); void loadAndSync(); }));
-  unsubs.push(dataContext?.subscribe?.("escapeOverlay", (value) => { overlay = value; if (!active()) cancelScheduled(); void loadAndSync(); }));
-  if (active()) void loadAndSync();
+  if (!managedScene) unsubs.push(dataContext?.subscribe?.("narrativeState", (value) => { narrative = value; if (!active()) cancelScheduled(); void loadAndSync(); }));
+  if (!managedScene) unsubs.push(dataContext?.subscribe?.("escapeOverlay", (value) => { overlay = value; if (!active()) cancelScheduled(); void loadAndSync(); }));
+  if (!managedScene && active()) void loadAndSync();
   return {
+    resetStyle() { generation += 1; cancelScheduled(); owner?.cancelReady?.(); owner = null; cancelDeparture?.(); cancelDeparture = null; mounted = false; if (managedScene) runtime = getLayerLifecycleRuntime(map); },
+    getSceneIds(snapshot) { return snapshot.narrativeState?.id === "nova" && snapshot.escapeOverlay?.mor ? [MOR_ROUTE_SCENE_ID] : []; },
+    async prepareSnapshot(snapshot, { signal } = {}) {
+      if (snapshot.narrativeState?.id !== "nova" || !snapshot.escapeOverlay?.mor || route) return;
+      const response = await fetch(MOR_ROUTE_URL, { signal });
+      if (!response?.ok) throw new Error("Mor route preparation failed");
+      const loaded = projectAndReverseMorRoute(await response.json());
+      if (disposed || signal?.aborted) throw new Error("Mor route preparation cancelled");
+      route = loaded;
+    },
+    holdForScene() {
+      cancelScheduled();
+      if (heldAt == null) heldAt = Date.now();
+      if (runtime && mounted) { const retained = owner; cancelDeparture?.(); cancelDeparture = runtime.onMemberHidden(MOR_ROUTE_SCENE_ID, () => retireOwner(retained)); }
+    },
+    resumeForScene() {
+      cancelDeparture?.(); cancelDeparture = null;
+      if (heldAt != null && startedAt != null) startedAt += Math.max(0, Date.now() - heldAt);
+      heldAt = null;
+      if (active()) schedule();
+    },
+    applySnapshot(snapshot) {
+      cancelDeparture?.(); cancelDeparture = null;
+      narrative = snapshot.narrativeState; overlay = snapshot.escapeOverlay;
+      if (active() && heldAt != null) {
+        if (startedAt != null) startedAt += Math.max(0, Date.now() - heldAt);
+        heldAt = null;
+      }
+      if (!active() && runtime && mounted) {
+        const retained = owner; cancelScheduled(); cancelDeparture = runtime.onMemberHidden(MOR_ROUTE_SCENE_ID, () => retireOwner(retained));
+        return;
+      }
+      sync();
+    },
     async onStyleLoad() { if (active()) await loadAndSync(); else remove(map); },
-    dispose() { disposed = true; generation += 1; cancelScheduled(); unsubs.forEach((unsubscribe) => unsubscribe?.()); remove(map); route = null; },
+    dispose() { cancelDeparture?.(); disposed = true; generation += 1; cancelScheduled(); unsubs.forEach((unsubscribe) => unsubscribe?.()); if (managedScene) retireOwner(); else remove(map); route = null; },
   };
 }

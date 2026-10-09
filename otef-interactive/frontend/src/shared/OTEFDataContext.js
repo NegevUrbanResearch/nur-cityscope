@@ -100,7 +100,9 @@ class OTEFDataContextClass {
     this._tableName = null;
     this._viewport = null;
     this._layerGroups = null;
+    this._layerGroupsReceipt = 0;
     this._animations = null;
+    this._animationsReceipt = 0;
     this._basemap = "osm";
     this._independentBasemapGeneration = 0;
     this._exhibitMode = false;
@@ -188,11 +190,11 @@ class OTEFDataContextClass {
    */
   async refreshLayerGroupsFromApi() {
     if (!this._tableName) return;
+    const receipt = this._beginLayerGroupsSnapshot();
     try {
       const state = await OTEF_API.getState(this._tableName, { forceFresh: true });
       if (state && state.layerGroups) {
-        this._setLayerGroups(state.layerGroups, { bypassEquality: true });
-        this._ackLayerGroupsServerBaseline(state.layerGroups);
+        this._applyLayerGroupsSnapshot(state.layerGroups, receipt, { bypassEquality: true });
       }
     } catch (err) {
       getLogger().error("[OTEFDataContext] refreshLayerGroupsFromApi failed:", err);
@@ -203,9 +205,11 @@ class OTEFDataContextClass {
     this._tableName = tableName;
     const coupledBaseline = this._captureNarrativeSceneBaseline();
     const visibilityReceipt = this._gazaBorderVisibilityReceipt;
+    const layerGroupsReceipt = this._beginLayerGroupsSnapshot();
+    const animationsReceipt = this._animationsReceipt;
     try {
       const state = await OTEF_API.getState(this._tableName, { forceFresh: true });
-      this._applyStateFromApi(state, { notify: true, hydrate: true, coupledBaseline, visibilityReceipt });
+      this._applyStateFromApi(state, { notify: true, hydrate: true, coupledBaseline, visibilityReceipt, layerGroupsReceipt, animationsReceipt });
       this._setupWebSocket();
       this._initialized = true;
     } finally {
@@ -275,6 +279,8 @@ class OTEFDataContextClass {
    * otef_layers_changed: server-side curated GeoJSON changed but the layerGroups API is still shallow).
    */
   _setLayerGroups(layerGroups, options = {}) {
+    // Even a same-value confirmation supersedes an earlier asynchronous read.
+    this._layerGroupsReceipt += 1;
     layerGroups = ensureGazaBorderStateRow(layerGroups);
     if (!options.bypassEquality && layerGroupsEqual(this._layerGroups, layerGroups)) {
       return;
@@ -286,6 +292,20 @@ class OTEFDataContextClass {
       });
     }
     this._notify("layerGroups", this._layerGroups);
+  }
+
+  _beginLayerGroupsSnapshot() {
+    return ++this._layerGroupsReceipt;
+  }
+
+  _applyLayerGroupsSnapshot(layerGroups, receipt, options = {}) {
+    if (receipt !== undefined && (receipt !== this._layerGroupsReceipt || this._isLocalLayerOpPending())) return false;
+    const appliedReceipt = this._layerGroupsReceipt + 1;
+    this._setLayerGroups(layerGroups, options);
+    // A synchronous observer may have installed a newer scene during notification.
+    if (this._layerGroupsReceipt !== appliedReceipt) return false;
+    this._ackLayerGroupsServerBaseline(layerGroups);
+    return true;
   }
 
   _setActiveLayerTrace(trace) {
@@ -324,6 +344,7 @@ class OTEFDataContextClass {
   }
 
   _setAnimations(animations) {
+    this._animationsReceipt += 1;
     if (animationsEqual(this._animations, animations)) return;
     this._animations = animations;
     this._notify("animations", this._animations);
@@ -421,9 +442,12 @@ class OTEFDataContextClass {
    * Push an investigation clock through the OTEF API (WebSocket fan-out).
    * Patches serialize on `_clockPatchQueue` (one in flight).
    * `isCurrent` is checked immediately before send and stays off the payload.
+   * Ordinary patches preserve a live presentation hold. Claims install the
+   * requested deadline; releases clear only the matching owned deadline.
+   * These ownership options stay local to the queue.
    *
    * @param {unknown} next
-   * @param {{ isCurrent?: () => boolean }} [options]
+   * @param {{ isCurrent?: () => boolean, claimPresentationHold?: boolean, releasePresentationHold?: number }} [options]
    * @returns {Promise<{ok: true, clock: object} | {ok: false, stale?: boolean, error?: unknown}>}
    */
   async patchInvestigationClock(next, options = {}) {
@@ -433,7 +457,11 @@ class OTEFDataContextClass {
       return { ok: false, error: "Missing patchInvestigationClock action helper" };
     }
     const isCurrent = typeof options?.isCurrent === "function" ? options.isCurrent : () => true;
-    return actions.patchInvestigationClock(this, next, { isCurrent });
+    return actions.patchInvestigationClock(this, next, {
+      isCurrent,
+      claimPresentationHold: options?.claimPresentationHold === true,
+      releasePresentationHold: options?.releasePresentationHold,
+    });
   }
 
   /**

@@ -759,7 +759,7 @@ export async function loadCuratedLayerToMapLibre(map, fullLayerId, opts = {}) {
     null;
   const force = opts && opts.force === true;
   const fadeMs = typeof opts.fadeMs === "number" && Number.isFinite(opts.fadeMs) ? Math.max(0, opts.fadeMs) : 0;
-  const lifecycleRuntime = fadeMs > 0 ? getLayerLifecycleRuntime(map) : null;
+  const lifecycleRuntime = fadeMs > 0 || opts.joinBatch === true ? getLayerLifecycleRuntime(map) : null;
   const requestToken = lifecycleRuntime ? lifecycleRuntime.beginRequest(fullLayerId) : null;
   const userCurrent = typeof opts.isCurrent === "function" ? opts.isCurrent : () => true;
   const isCurrent = () => userCurrent()
@@ -1307,6 +1307,7 @@ function createCuratedBatchSession(map, displayGate) {
   } = {}) => {
     const durationMs = resolveRefreshDuration(layerStyleOptions, fromSlideshowTick);
     const liveFade = durationMs > 0;
+    const joinBatch = layerStyleOptions?.lifecycle?.joinBatch === true;
     const enabledCuratedIds = new Set(collectEnabledCuratedIds(groups));
     const previousCuratedIds = new Set(activeCuratedIds);
     const affectedSet = new Set(
@@ -1325,9 +1326,9 @@ function createCuratedBatchSession(map, displayGate) {
       return gateCheck(fullId);
     };
     let runtime = null;
-    if (liveFade) {
+    if (liveFade || joinBatch) {
       runtime = getLayerLifecycleRuntime(map);
-      if (reopenGate === true && keepLiveRuntime !== true) {
+      if (!joinBatch && reopenGate === true && keepLiveRuntime !== true) {
         runtime.dispose();
         runtime = getLayerLifecycleRuntime(map);
       }
@@ -1353,15 +1354,18 @@ function createCuratedBatchSession(map, displayGate) {
       for (const fullId of toRefresh) forceIds.add(fullId);
     }
     const pending = runtime?.getPendingBatch?.() || null;
-    const sameSet = sameIds && !contentInvalid && !(toRefresh.length > 0 && !pending);
+    const desiredIds = getEnabledMapFullLayerIds(groups);
+    const sameSet = sameIdSet(new Set(runtime?.getDesiredIds() || []), desiredIds)
+      && !contentInvalid && !(toRefresh.length > 0 && !pending);
     if (runtime) {
-      runtime.setDesiredIds([...getEnabledMapFullLayerIds(groups)], { durationMs, sameSet });
+      if (!joinBatch) runtime.setDesiredIds([...desiredIds], { durationMs, sameSet });
       for (const fullId of toRefresh) armCuratedMember(map, fullId, runtime);
     }
     activeCuratedIds = enabledCuratedIds;
     return {
       durationMs,
       liveFade,
+      joinBatch,
       isCurrent,
       runtime,
       toRefresh,
@@ -1370,7 +1374,7 @@ function createCuratedBatchSession(map, displayGate) {
       enabledCuratedIds,
       affectedSet,
       joined: withJoinedBatch(layerStyleOptions, durationMs),
-      modelInfo: { durationMs, fromSlideshowTick: fromSlideshowTick === true },
+      modelInfo: { durationMs, ...(joinBatch ? { joinBatch: true } : {}), fromSlideshowTick: fromSlideshowTick === true },
     };
   };
 
@@ -1387,7 +1391,6 @@ async function loadCuratedMembers(map, plan, resolveMaplibregl, warnLabel) {
   if (!isCurrent()) return;
   await Promise.all(toRefresh.map(async (fullId) => {
     if (!isCurrent(fullId)) {
-      runtime?.markMemberFailed(fullId);
       return;
     }
     try {
@@ -1395,11 +1398,12 @@ async function loadCuratedMembers(map, plan, resolveMaplibregl, warnLabel) {
         maplibregl,
         force: forceIds.has(fullId),
         fadeMs: durationMs,
+        joinBatch: plan.joinBatch,
         isCurrent: () => isCurrent(fullId),
       });
-      if (!isCurrent(fullId)) runtime?.markMemberFailed(fullId);
-      else armCuratedSourceReadiness(map, fullId, runtime);
+      if (isCurrent(fullId)) armCuratedSourceReadiness(map, fullId, runtime);
     } catch (err) {
+      if (!isCurrent(fullId)) return;
       runtime?.markMemberFailed(fullId);
       console.warn(warnLabel, err);
     }
@@ -1407,7 +1411,7 @@ async function loadCuratedMembers(map, plan, resolveMaplibregl, warnLabel) {
 }
 
 function removeImmediateCurated(map, plan, layerStyleOptions) {
-  if (plan.liveFade) return true;
+  if (plan.liveFade || plan.joinBatch) return true;
   for (const fullId of plan.previousCuratedIds) {
     if (!plan.isCurrent()) return false;
     if (!plan.enabledCuratedIds.has(fullId)) {
@@ -1480,7 +1484,7 @@ export function createGisCuratedRefresh({
     personVisual.bringToFront?.();
     if (syncFlow) syncFlowAnimations();
     if (!removeImmediateCurated(map, plan, layerStyleOptions)) return;
-    if (plan.runtime) plan.runtime.commitBatch();
+    if (plan.runtime && !plan.joinBatch) plan.runtime.commitBatch();
 
     const finish = () => {
       if (!isCurrent()) return;
@@ -1536,6 +1540,7 @@ export function createProjectionCuratedRefresh({
     affectedCuratedFullLayerIds,
     fromSlideshowTick,
     groupsOverride,
+    syncFlow = true,
     layerStyleOptions,
     isCurrent: providedCurrent,
     reopenGate = false,
@@ -1563,13 +1568,13 @@ export function createProjectionCuratedRefresh({
     syncProjectionLayersWithNarrative(map, currentGroups, plan.joined);
     applyLabelHeading(map);
     nameFieldController.sync(currentGroups);
-    syncFlowAnimations();
+    if (syncFlow) syncFlowAnimations();
     if (!removeImmediateCurated(map, plan, layerStyleOptions)) return;
-    if (plan.runtime) plan.runtime.commitBatch();
+    if (plan.runtime && !plan.joinBatch) plan.runtime.commitBatch();
 
     const finish = () => {
       if (!plan.isCurrent()) return;
-      syncFlowAnimations();
+      if (syncFlow) syncFlowAnimations();
       syncPinkLine(map, currentGroups);
       getNarrativeController()?.onStyleLoad();
       refreshLegend();
@@ -1584,7 +1589,6 @@ export function createProjectionCuratedRefresh({
     if (!isRuntimeAlive() || !isCurrent()) return;
     await Promise.all(plan.toRefresh.map(async (fullId) => {
       if (!isCurrent(fullId)) {
-        plan.runtime?.markMemberFailed(fullId);
         return;
       }
       try {
@@ -1592,15 +1596,16 @@ export function createProjectionCuratedRefresh({
           maplibregl,
           force: plan.forceIds.has(fullId),
           fadeMs: plan.durationMs,
+          joinBatch: plan.joinBatch,
           isCurrent: () => isCurrent(fullId),
         });
       } catch (err) {
+        if (!isCurrent(fullId)) return;
         plan.runtime?.markMemberFailed(fullId);
         console.warn(`[projection-main] Failed to load curated layer ${fullId}`, err);
         return;
       }
-      if (!plan.isCurrent(fullId)) plan.runtime?.markMemberFailed(fullId);
-      else armCuratedSourceReadiness(map, fullId, plan.runtime);
+      if (plan.isCurrent(fullId)) armCuratedSourceReadiness(map, fullId, plan.runtime);
     }));
     finish();
   };
@@ -1609,6 +1614,7 @@ export function createProjectionCuratedRefresh({
     groupsOverride,
     affectedCuratedFullLayerIds,
     fromSlideshowTick,
+    syncFlow = true,
     layerStyleOptions,
     isCurrent,
     reopenGate,
@@ -1621,6 +1627,7 @@ export function createProjectionCuratedRefresh({
       groupsOverride,
       affectedCuratedFullLayerIds,
       fromSlideshowTick,
+      syncFlow,
       layerStyleOptions,
       isCurrent,
       reopenGate,

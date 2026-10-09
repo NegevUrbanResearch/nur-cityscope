@@ -239,7 +239,7 @@ describe("narrative house outline filter", () => {
         }
         expect(after, file).toMatch(
           isEntry
-            ? /applyNarrativePeopleFilter\([^;]*\);\s*const selectedPid = (?:calibrationActive\(\) \? null : )?OTEFDataContext\.getPersonSelection\?\.\(\)\?\.personId;\s*if \(selectedPid\) applyPeopleFocusDim\([^,]+, selectedPid\);\s*else clearPeopleFocusDim\([^)]+\);\s*applyNarrativeHouseOutlineFilter\(/
+            ? /applyNarrativePeopleFilter\([^;]*\);\s*const selectedPid = [^;]+;\s*if \(selectedPid\) applyPeopleFocusDim\([^,]+, selectedPid\);\s*else clearPeopleFocusDim\([^)]+\);\s*applyNarrativeHouseOutlineFilter\(/
             : /applyNarrativePeopleFilter\([^;]*\);\s*applyNarrativeHouseOutlineFilter\(/,
         );
       }

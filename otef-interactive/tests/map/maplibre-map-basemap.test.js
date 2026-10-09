@@ -52,9 +52,10 @@ describe("maplibre basemap switching", () => {
       expect(map.getSource("esri").tiles).toEqual(BASEMAP_STYLES.satellite.sources.esri.tiles);
       expect(map.getLayer("esri-tiles")).toBeTruthy();
       expect(map.calls.some((call) => call.method === "setStyle")).toBe(false);
-      expect(map.listenerCount("style.load")).toBe(0);
+      expect(map.listenerCount("style.load")).toBe(1);
     } finally {
       map.remove();
+      expect(map.listenerCount("style.load")).toBe(0);
       vi.useRealTimers();
     }
   });
@@ -201,7 +202,7 @@ function expectDarkLabelsAboveInvestigation(map) {
   expect(people).toBeGreaterThan(place);
   expect(selection).toBeGreaterThan(people);
   expect(map.calls.some((call) => call.method === "setStyle")).toBe(false);
-  expect(map.listenerCount("style.load")).toBe(0);
+  expect(map.listenerCount("style.load")).toBe(1);
 }
 
 async function finishReveal(map) {

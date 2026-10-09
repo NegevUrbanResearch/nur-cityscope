@@ -1,3 +1,4 @@
+import { captureNliDisplaySnapshot, createNliSceneDisplayBinding } from "../shared/nli-scene-display-binding.js";
 import TableSwitcher from "../shared/table-switcher.js";
 import { filterGazaBorderVisibility } from "../shared/gaza-border-style.js";
 import { filterProjectionCalibrationScene } from '../shared/projection-calibration-scene.js';
@@ -32,6 +33,8 @@ import {
 import {
   disposeInvestigationTimelineForMap,
   syncInvestigationTimelineToMap,
+  getNliClockSceneIds,
+  getInvestigationSceneContentKey,
   wakeInvestigationTimelinePersonGlow,
 } from "../shared/maplibre-investigation-timeline.js";
 import { idleNliClock } from "../shared/nli-investigation-clock.js";
@@ -139,14 +142,14 @@ export function bindProjectionClockLayout({ dataContext, host, span, onLayout, g
   return () => { unsubscribe?.(); win.removeEventListener("resize", onChange); };
 }
 
-function getRawEffectiveProjectionLayerGroups() {
+function getRawEffectiveProjectionLayerGroups(rawGroups) {
   const groups = (
     typeof window !== "undefined" &&
     window.LayerStateHelper &&
     typeof window.LayerStateHelper.getEffectiveLayerGroups === "function"
   )
-    ? window.LayerStateHelper.getEffectiveLayerGroups()
-    : OTEFDataContext.getLayerGroups();
+    ? window.LayerStateHelper.getEffectiveLayerGroups(rawGroups)
+    : rawGroups ?? OTEFDataContext.getLayerGroups();
   return groups;
 }
 const getNormalProjectionLayerGroups = () => filterGazaBorderVisibility(isolateLayersWhileVictimNamesShown(getRawEffectiveProjectionLayerGroups()), OTEFDataContext.getGazaBorderVisible());
@@ -274,7 +277,11 @@ async function bootstrapProjectionRuntime() {
   const sourceStateListeners = new Set();
   const refreshMatchSourceFrame = () => matchFrameCache?.refresh();
   const calibrationActive = () => calibrationGroups !== null;
-  const getEffectiveProjectionLayerGroups = () => calibrationGroups ?? getNormalProjectionLayerGroups();
+  let sceneBinding = null;
+  const sceneManaged = !previewMode;
+  const filterProjectionDisplayGroups = raw => filterGazaBorderVisibility(isolateLayersWhileVictimNamesShown(getRawEffectiveProjectionLayerGroups(raw)), OTEFDataContext.getGazaBorderVisible());
+  const sceneSnapshot = () => (sceneBinding?.isManaging() ? sceneBinding.getRenderSnapshot() : null) || captureNliDisplaySnapshot(OTEFDataContext, filterProjectionDisplayGroups);
+  const getEffectiveProjectionLayerGroups = () => calibrationGroups ?? (sceneBinding?.isManaging() ? sceneSnapshot().layerGroups : getNormalProjectionLayerGroups());
   if (previewMode) document.body.classList.add("projection-preview");
   const startupSearch = typeof window !== "undefined" ? window.location.search : "";
   const projectionSpanId = parseProjectionSpanId(startupSearch);
@@ -631,7 +638,8 @@ async function bootstrapProjectionRuntime() {
     if (legendAdapter) registerDisposer(() => legendAdapter.dispose());
     if (patternAdapter) registerDisposer(() => patternAdapter.dispose());
     const nameFieldController = createNliNameFieldController({ map, context: OTEFDataContext, displayProfile: "projection", projectionSpan: projectionSpanId,
-      motionMode: resolveMotionMode(), manualProjectionPreparation: browserMode });
+      motionMode: resolveMotionMode(), manualProjectionPreparation: browserMode,
+      managedScene: () => sceneManaged && !calibrationActive() && !slideshowRuntime?.isActive() });
     registerDisposer(() => nameFieldController.dispose());
     const motionMode = resolveMotionMode();
     const settlementGlow = createProjectionSettlementGlow({
@@ -670,14 +678,14 @@ async function bootstrapProjectionRuntime() {
         return syncProjectionSettlementGlow({ setFocus: options => settlementGlow.setFocus({ ...options,
           isCurrent: () => current() && !calibrationActive() }) }, {
           exhibitMode: OTEFDataContext.getExhibitMode?.() === true,
-          narrativeId: OTEFDataContext.getNarrativeState?.()?.id ?? null,
+          narrativeId: sceneSnapshot().narrativeState?.id ?? null,
           personLocation,
           placeName: nameFieldController.placeNameForPlace?.(lastPlaceId) ?? null,
           wallEnabled: victimNamesAreShown(OTEFDataContext.getLayerGroups()),
         });
       };
       return peopleRuntimePromise.then((runtime) => {
-        const selection = OTEFDataContext.getPersonSelection?.();
+        const selection = sceneSnapshot().personSelection;
         const personLocation = runtime?.resolve?.(selection?.personId, selection?.datasetVersion)?.location ?? null;
         return apply(personLocation);
       }).catch(() => apply(null));
@@ -730,10 +738,10 @@ async function bootstrapProjectionRuntime() {
       disposeInvestigationTimelineForMap(map);
     });
 
-    const projectionOverlayContext = () => {
-      const rawGroups = OTEFDataContext.getLayerGroups();
+    const projectionOverlayContext = (snapshot = sceneSnapshot()) => {
+      const rawGroups = snapshot.rawLayerGroups;
       const rawAsArray = Array.isArray(rawGroups) ? rawGroups : Object.values(rawGroups || {});
-      const currentGroups = asLayerGroupsArray(getEffectiveProjectionLayerGroups());
+      const currentGroups = asLayerGroupsArray(calibrationGroups ?? snapshot.layerGroups);
       const presentationActive =
         typeof slideshowRuntime?.shouldSuppressProjectionHighlight === "function"
           ? slideshowRuntime.shouldSuppressProjectionHighlight()
@@ -765,15 +773,18 @@ async function bootstrapProjectionRuntime() {
     let novaEscapeCoordinator = null;
     let morRouteCoordinator = null;
     let parallelImpactIds = new Set();
-    const syncContextInvestigation = () => {
+    const syncContextInvestigation = (snapshot = sceneSnapshot(), sceneOptions = {}) => {
       if (calibrationActive()) { disposeInvestigationTimelineForMap(map); return; }
-      const { currentGroups, overlayGroups, presentationActive } = projectionOverlayContext();
+      const { currentGroups, overlayGroups, presentationActive } = projectionOverlayContext(snapshot);
       const clock =
         typeof OTEFDataContext.getInvestigationClock === "function"
-          ? OTEFDataContext.getInvestigationClock()
+          ? snapshot.investigationClock
           : idleNliClock();
       const overlayClock = presentationActive ? idleNliClock(clock) : clock;
-      void syncInvestigationTimelineToMap(map, overlayClock, currentGroups, {
+      return syncInvestigationTimelineToMap(map, overlayClock, currentGroups, {
+        ...sceneOptions,
+        sceneClockRuntime: sceneManaged && !slideshowRuntime?.isActive() && (!browserMode || projectionSpanId !== "right") ? getLayerLifecycleRuntime(map) : null,
+        sceneCaptionId: "nli.clock-caption.projection",
         visibilityLayerGroups: overlayGroups,
         displayProfile: "projection",
         nliCaptionMode: "clock-only",
@@ -784,7 +795,8 @@ async function bootstrapProjectionRuntime() {
           typeof OTEFDataContext.correctedNow === "function"
             ? OTEFDataContext.correctedNow()
             : Date.now(),
-        getPersonSelection: () => OTEFDataContext.getPersonSelection(),
+        getPersonSelection: () => sceneSnapshot().personSelection,
+        resolvePerson: (pid, version) => peopleRuntimePromise.then(runtime => runtime.resolve(pid, version)),
         narrativeFocus: projectionNarrativeController?.getDefinition(),
         parallelImpactIds,
         onClockPresentationFrame: () => browserSurface?.requestDraw?.(),
@@ -825,31 +837,34 @@ async function bootstrapProjectionRuntime() {
     novaEscapeCoordinator = createNovaEscapeCoordinator({
       map,
       dataContext: OTEFDataContext,
+      managedScene: sceneManaged,
       profile: "projection",
       surface: "projection",
       onParallelImpactIdsChanged: (ids) => {
         parallelImpactIds = ids instanceof Set ? ids : new Set(ids || []);
-        syncContextInvestigation();
+        if (sceneBinding?.isManaging()) void sceneBinding.request();
+        else if (!sceneManaged || sceneBinding) syncContextInvestigation();
       },
     });
     registerDisposer(() => novaEscapeCoordinator?.dispose?.());
     morRouteCoordinator = createMorRouteCoordinator({
       map,
       dataContext: OTEFDataContext,
+      managedScene: sceneManaged,
       profile: "projection",
     });
     registerDisposer(() => morRouteCoordinator?.dispose?.());
     projectionNarrativeController = createProjectionNarrativeController({
       map,
-      syncTimeline: syncContextInvestigation,
+      syncTimeline: () => { if (!sceneManaged) syncContextInvestigation(); },
       onStyleLoadOverlay: () => {
-        if (calibrationActive()) return;
+        if (calibrationActive() || sceneManaged) return;
         novaEscapeCoordinator?.onStyleLoad?.();
         morRouteCoordinator?.onStyleLoad?.();
       },
     });
     registerDisposer(() => projectionNarrativeController?.dispose());
-    registerDisposer(
+    if (!sceneManaged) registerDisposer(
       OTEFDataContext.subscribe("narrativeState", (state) => {
         projectionNarrativeController?.apply(state);
         if (calibrationActive()) {
@@ -861,10 +876,13 @@ async function bootstrapProjectionRuntime() {
     projectionNarrativeController.apply(OTEFDataContext.getNarrativeState());
     void syncSettlementGlow();
     registerDisposer(OTEFDataContext.subscribe("animations", syncContextRouteProgress));
-    registerDisposer(OTEFDataContext.subscribe("investigationClock", syncContextInvestigation));
+    if (!sceneManaged) registerDisposer(OTEFDataContext.subscribe("investigationClock", () => syncContextInvestigation()));
+    const scenePersonListeners = new Set();
     registerDisposer(bindProjectionPersonHalo({
       map,
-      subscribe: (topic, listener) => OTEFDataContext.subscribe(topic, listener),
+      subscribe: (topic, listener) => sceneManaged
+        ? (scenePersonListeners.add(listener), () => scenePersonListeners.delete(listener))
+        : OTEFDataContext.subscribe(topic, listener),
       loadPeopleRuntime: () => peopleRuntimePromise,
       motionMode,
     }));
@@ -872,7 +890,7 @@ async function bootstrapProjectionRuntime() {
       wakeInvestigationTimelinePersonGlow(map);
     };
     registerDisposer(OTEFDataContext.subscribe("personSelection", wakeProjectionPersonGlow));
-    registerDisposer(OTEFDataContext.subscribe("personSelection", () => {
+    if (!sceneManaged) registerDisposer(OTEFDataContext.subscribe("personSelection", () => {
       void syncSettlementGlow();
     }));
     registerDisposer(OTEFDataContext.subscribe("navigationCommand", (command) => {
@@ -1087,7 +1105,7 @@ async function bootstrapProjectionRuntime() {
       const mapMask = createProjectionCalibrationMapMask({ map });
       map.on('styledata', mapMask.refresh);
       const applyScene = createProjectionCalibrationRenderer({
-        setOverride: groups => { calibrationGroups = groups; calibrationEpoch += 1; if (groups) mapMask.apply(groups); else mapMask.clear(); refreshMatchSourceFrame(); },
+        setOverride: groups => { if (groups) sceneBinding?.suspend(); calibrationGroups = groups; calibrationEpoch += 1; if (groups) mapMask.apply(groups); else mapMask.clear(); refreshMatchSourceFrame(); },
         refreshScene: applyProjectionRefresh,
         readNormalGroups: getNormalProjectionLayerGroups,
         getLabels: () => settlementNameRuntime,
@@ -1100,6 +1118,8 @@ async function bootstrapProjectionRuntime() {
           void syncSettlementGlow(); syncProjectionHighlight(lastViewport);
         },
         restoreOverlays: async ({ isCurrent }) => {
+          await sceneBinding?.resumeNormal({ isCurrent });
+          if (!isCurrent()) return;
           await syncSettlementGlow({ isCurrent });
           if (isCurrent()) syncProjectionHighlight(lastViewport);
         },
@@ -1150,7 +1170,7 @@ async function bootstrapProjectionRuntime() {
           const imageParticipates = !calibrationActive() && projectionModelEnabled(groups);
           const lifecycle = getLayerLifecycleRuntime(map).getRenderedReadiness();
           const names = browserSurface.getNameAdapter?.()?.descriptor?.();
-          return { output: projectionSpanId, sceneId: OTEFDataContext.getNarrativeState?.()?.id || 'home',
+          return { output: projectionSpanId, sceneId: sceneSnapshot().narrativeState?.id || 'home',
             camera: { bounds: map.getBounds().toArray(), bearing: map.getBearing(), pitch: map.getPitch() },
             groups: asLayerGroupsArray(groups).map(group => ({ ...group, layers: (group.layers || []).map(layer => ({ ...layer,
               style: layer.fullLayerIds ? [...layer.fullLayerIds].sort().map(id => layerRegistry.getLayerConfig(id)?.style)
@@ -1163,7 +1183,7 @@ async function bootstrapProjectionRuntime() {
               settingsIdentity: labels.settingsIdentity, catalogIdentity: labels.catalogIdentity } : null,
             labels, datasetVersion: acceptedDatasetVersion, cameraMoving: map.isMoving(), connected: OTEFDataContext._wsClient?.isConnected === true,
             sourcesReady: map.loaded() === true && lifecycle.ready && (!calibrationActive() || calibrationView?.getState()?.ready === true),
-            narrativeIdle: OTEFDataContext.getInvestigationClock?.()?.phase === 'idle', slideshowActive: Boolean(slideshowRuntime?.isActive()),
+            narrativeIdle: sceneSnapshot().investigationClock?.phase === 'idle', slideshowActive: Boolean(slideshowRuntime?.isActive()),
             namesDrawn: !calibrationActive() && Boolean(names && names.opacity !== 0 && victimNamesAreShown(groups)), geometry: geometryState() };
         },
         onChange: state => {
@@ -1456,12 +1476,13 @@ async function bootstrapProjectionRuntime() {
 
     function syncProjectionLayersWithNarrative(targetMap, groups, options) {
       if (calibrationActive()) groups = calibrationGroups;
+      groups = filterGazaBorderVisibility(groups, sceneSnapshot().gazaBorderVisible);
       syncProjectionLayers(targetMap, groups, { ...options, suppressCanvasNameSymbols: Boolean(browserSurface?.getNameAdapter()), suppressSettlementSymbols: Boolean(browserSurface?.getSettlementAdapter()) });
-      applyNarrativePeopleFilter(targetMap, calibrationActive() ? null : OTEFDataContext.getNarrativeState?.()?.id ?? null);
-      const selectedPid = calibrationActive() ? null : OTEFDataContext.getPersonSelection?.()?.personId;
+      applyNarrativePeopleFilter(targetMap, calibrationActive() ? null : sceneSnapshot().narrativeState?.id ?? null);
+      const selectedPid = calibrationActive() ? null : sceneSnapshot().personSelection?.personId;
       if (selectedPid) applyPeopleFocusDim(targetMap, selectedPid);
       else clearPeopleFocusDim(targetMap);
-      applyNarrativeHouseOutlineFilter(targetMap, calibrationActive() ? null : OTEFDataContext.getNarrativeState?.()?.id ?? null);
+      applyNarrativeHouseOutlineFilter(targetMap, calibrationActive() ? null : sceneSnapshot().narrativeState?.id ?? null);
     }
 
     const syncProjectionLayersAndRaiseHighlight = (projectionMap, groups, options) => {
@@ -1491,6 +1512,7 @@ async function bootstrapProjectionRuntime() {
     });
 
     const syncAfterStart = () => {
+      if (slideshowRuntime?.isActive()) sceneBinding?.suspend();
       refreshMatchSourceFrame();
       syncPresentationFlag();
       syncSlideshowPresentationPoll(slideshowRuntime, {
@@ -1501,7 +1523,11 @@ async function bootstrapProjectionRuntime() {
       syncProjectionHighlight(lastViewport);
     };
 
-    const syncAfterStop = syncAfterStart;
+    const syncAfterStop = async () => {
+      const epoch = calibrationEpoch;
+      await sceneBinding?.resumeNormal({ isCurrent: () => epoch === calibrationEpoch && !calibrationActive() && !slideshowRuntime?.isActive() });
+      if (epoch === calibrationEpoch && !slideshowRuntime?.isActive()) syncAfterStart();
+    };
     const syncAfterStopFailure = () => {
       refreshMatchSourceFrame();
       syncPresentationFlag();
@@ -1544,22 +1570,36 @@ async function bootstrapProjectionRuntime() {
       }),
     );
 
-    registerDisposer(
-      OTEFDataContext.subscribe("layerGroups", () => {
-        if (calibrationActive()) { calibrationView?.normalSceneChanged(); return; }
-        // Use the same effective groups as initial loading, including retired-layer filtering.
-        const groups = getEffectiveProjectionLayerGroups();
-        void applyProjectionRefresh({
-          groupsOverride: groups,
-        });
-        void syncSettlementGlow();
-      }),
-    );
+    if (sceneManaged) {
+      sceneBinding = await createNliSceneDisplayBinding({
+        map, dataContext: OTEFDataContext, filterGroups: filterProjectionDisplayGroups,
+        narrativeController: projectionNarrativeController, escapeCoordinator: novaEscapeCoordinator, morCoordinator: morRouteCoordinator,
+        refreshLayers: applyProjectionRefresh, syncTimeline: syncContextInvestigation,
+        getDisplaySceneIds: snapshot => browserMode && projectionSpanId === "right" ? [] : getNliClockSceneIds(snapshot, "projection"),
+        prepareDisplay: (snapshot, options) => nameFieldController.prepareScene(snapshot, options),
+        applyDisplay: (prepared, options) => nameFieldController.applyScene(prepared, { ...options, runtime: getLayerLifecycleRuntime(map) }),
+        discardDisplay: prepared => nameFieldController.discardScene(prepared),
+        getTimelineSceneIds: snapshot => snapshot.narrativeState?.id === "nova" ? ["nli.investigation_polygons"] : [],
+        getTimelineSceneContentKey: getInvestigationSceneContentKey,
+        syncPerson(selection) { for (const listener of scenePersonListeners) listener(selection); },
+        onSnapshotApplied() { syncContextRouteProgress(); void syncSettlementGlow(); },
+        isManaged: () => !calibrationActive() && !slideshowRuntime?.isActive(),
+        onUnmanagedSnapshot() {
+          if (calibrationActive()) calibrationView?.normalSceneChanged();
+          else { projectionNarrativeController.apply(OTEFDataContext.getNarrativeState()); void applyProjectionRefresh({ groupsOverride: getNormalProjectionLayerGroups() }); }
+        },
+      });
+      registerDisposer(() => sceneBinding.dispose());
+    } else registerDisposer(OTEFDataContext.subscribe("layerGroups", () => {
+      if (calibrationActive()) { calibrationView?.normalSceneChanged(); return; }
+      void applyProjectionRefresh({ groupsOverride: getEffectiveProjectionLayerGroups() }); void syncSettlementGlow();
+    }));
     registerDisposer(() => {
       releaseProjectionModelImage(map);
       getLayerLifecycleRuntime(map)?.dispose();
     });
     registerDisposer(OTEFDataContext.subscribe("gazaBorderVisibility", () => {
+      if (sceneBinding) return;
       if (calibrationActive()) { calibrationView?.normalSceneChanged(); return; }
       void applyProjectionRefresh({ groupsOverride: getEffectiveProjectionLayerGroups() });
     }));
@@ -1567,6 +1607,7 @@ async function bootstrapProjectionRuntime() {
       if (!isRuntimeAlive()) return;
       releaseProjectionModelImage(map);
       projectionDisplay.invalidateStyle();
+      if (sceneBinding && !calibrationActive()) { void sceneBinding.onStyleLoad(); return; }
       if (calibrationActive()) { calibrationView?.normalSceneChanged({force:true}); return; }
       const groups = getEffectiveProjectionLayerGroups();
       void applyProjectionRefresh({

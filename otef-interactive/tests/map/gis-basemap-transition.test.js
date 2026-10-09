@@ -3,7 +3,7 @@ import {
   GIS_BASEMAP_FADE_MS,
   GIS_BASEMAP_SOURCE_WAIT_MS,
 } from "../../frontend/src/shared/gis-basemap.js";
-import { transitionGisBasemap } from "../../frontend/src/map/gis-basemap-transition.js";
+import { getDisplayedGisBasemap, transitionGisBasemap } from "../../frontend/src/map/gis-basemap-transition.js";
 import { createFakeMapLibreMap } from "../helpers/fake-maplibre-map.js";
 
 const OVERLAYS = Object.freeze([
@@ -1182,4 +1182,217 @@ describe("transitionGisBasemap", () => {
     expect(retained.getPaintProperty("osm-tiles", "raster-opacity")).toBe(1);
     expect(retained.calls.filter((call) => call.method === "addSource" && call.id === "osm")).toHaveLength(osmSourceAdds);
   });
+});
+
+test("managed basemap uses lifecycle factors and cancels tile readiness without losing displayed raster", async () => {
+  const { getLayerLifecycleRuntime } = await import("../../frontend/src/shared/layer-lifecycle-fade.js");
+  const map = createFakeMapLibreMap({ paints: { "osm-tiles": { "raster-opacity": 1 } }, layers: [{ id: "osm-tiles", type: "raster", source: "osm", paint: { "raster-opacity": 1 } }], sources: { osm: STYLES.osm.sources.osm } });
+  const runtime = getLayerLifecycleRuntime(map, { now: () => Date.now(), requestFrame: callback => map.requestAnimationFrame(callback), cancelFrame: id => map.cancelAnimationFrame(id) });
+  const controller = new AbortController();
+  const preparation = transitionGisBasemap(map, "satellite_bw", { styles: STYLES, managedScene: { runtime, signal: controller.signal } });
+  expect(preparation).toBeInstanceOf(Promise);
+  expect(map.getPaintProperty("osm-tiles", "raster-opacity")).toBe(1);
+  expect(map.getPaintProperty("esri-tiles", "raster-opacity")).toBe(0);
+  controller.abort();
+  await expect(preparation).rejects.toThrow();
+  expect(map.getLayer("osm-tiles")).toBeTruthy();
+  expect(map.getLayer("esri-tiles")).toBeFalsy(); runtime.dispose();
+});
+
+async function managedBasemapHarness() {
+  vi.useFakeTimers(); vi.setSystemTime(0);
+  const { createNliSceneDisplayBinding } = await import("../../frontend/src/shared/nli-scene-display-binding.js");
+  const { getLayerLifecycleRuntime } = await import("../../frontend/src/shared/layer-lifecycle-fade.js");
+  const map = createFakeMapLibreMap({ paints: { water: { "fill-opacity": 1 } }, layers: STYLES.dark.layers, sources: STYLES.dark.sources });
+  map.setSourceLoaded("openmaptiles", true); map.setSourceLoaded("ne2_shaded", true);
+  map.style = { tileManagers: { openmaptiles: { getRenderableIds: () => ["dark-tile"] } } };
+  const runtime = getLayerLifecycleRuntime(map, { now: () => Date.now(), requestFrame: cb => map.requestAnimationFrame(cb), cancelFrame: id => map.cancelAnimationFrame(id) });
+  const state = { basemap: "dark", clock: { phase: "idle" } }; const listeners = new Map();
+  const binding = await createNliSceneDisplayBinding({ map, runtime,
+    dataContext: { getLayerGroups: () => [], getInvestigationClock: () => state.clock, getBasemap: () => state.basemap,
+      subscribe: (topic, callback) => { listeners.set(topic, callback); return () => listeners.delete(topic); } },
+    prepareBasemap: (id, { signal } = {}) => transitionGisBasemap(map, id, { styles: STYLES, managedScene: { runtime, signal } }),
+    applyBasemap: candidate => candidate.mount(), discardBasemap: candidate => candidate?.discard(),
+  });
+  const flush = async () => { for (let i = 0; i < 35; i++) await Promise.resolve(); };
+  return { map, runtime, state, binding, flush,
+    emit(topic) { listeners.get(topic)?.(); },
+    async advance(ms) { await vi.advanceTimersByTimeAsync(ms); map.driveAnimationFrame(Date.now()); await flush(); },
+    close() { binding.dispose(); runtime.dispose(); map.remove(); },
+  };
+}
+test("a basemap-only held cue dissolves satellite over a fully opaque dark underlay", async () => {
+  const h = await managedBasemapHarness();
+  h.state.clock = { phase: "idle", presentationPendingUntilMs: Date.now() + 15000 }; h.emit("investigationClock");
+  h.state.basemap = "satellite_bw"; h.emit("basemap"); await h.flush();
+  expect(h.map.getLayer("esri-tiles")).toBeFalsy(); expect(h.map.getPaintProperty("water", "fill-opacity")).toBe(1);
+  h.state.clock = { phase: "idle" }; h.emit("investigationClock"); await h.flush();
+  expect(h.map.getPaintProperty("esri-tiles", "raster-opacity")).toBe(0);
+  expect(h.map.getPaintProperty("water", "fill-opacity")).toBe(1);
+  emitSuccessfulTile(h.map, "esri"); await h.flush();
+  await h.advance(300);
+  expect(h.map.getPaintProperty("esri-tiles", "raster-opacity")).toBeCloseTo(.5);
+  expect(h.map.getPaintProperty("water", "fill-opacity")).toBe(1);
+  await h.advance(300); expect(h.binding.getDisplayedSnapshot().basemapId).toBe("satellite_bw"); h.close();
+});
+test("failed managed tiles and a 200 ms basemap reversal preserve the displayed basemap", async () => {
+  const h = await managedBasemapHarness();
+  h.state.clock = { phase: "idle", presentationPendingUntilMs: Date.now() + 15000 }; h.emit("investigationClock"); h.state.basemap = "satellite_bw"; h.emit("basemap");
+  h.state.clock = { phase: "idle" }; h.emit("investigationClock"); await h.flush();
+  h.map.emit("error", { sourceId: "esri", error: new Error("tiles failed") }); await h.flush();
+  expect(h.binding.getDisplayedSnapshot().basemapId).toBe("dark"); expect(h.map.getPaintProperty("water", "fill-opacity")).toBe(1);
+  h.state.clock = { phase: "idle", presentationPendingUntilMs: Date.now() + 15000 }; h.emit("investigationClock"); h.state.basemap = "satellite_bw"; h.emit("basemap");
+  h.state.clock = { phase: "idle" }; h.emit("investigationClock"); await h.flush(); emitSuccessfulTile(h.map, "esri"); await h.flush(); await h.advance(200);
+  const factor = h.map.getPaintProperty("water", "fill-opacity"); h.state.basemap = "dark"; h.emit("basemap"); await h.flush();
+  expect(h.map.getPaintProperty("water", "fill-opacity")).toBeCloseTo(factor);
+  await h.advance(600); expect(h.binding.getDisplayedSnapshot().basemapId).toBe("dark"); expect(h.map.getLayer("water")).toBeTruthy(); h.close();
+});
+
+
+// MapLibre emits style errors for rejected layer insertion and returns normally.
+function rejectBasemapLayerAdds(map, shouldReject) {
+  const addLayer = map.addLayer.bind(map);
+  map.addLayer = (layer, beforeId) => {
+    if (layer.id === "esri-tiles" && shouldReject(layer, beforeId)) {
+      map.emit("error", { error: new Error("Cannot add layer " + layer.id + " before " + beforeId) });
+      return map;
+    }
+    return addLayer(layer, beforeId);
+  };
+}
+
+test("a prepared basemap survives the shared exit without losing its loaded source", async () => {
+  const h = await managedBasemapHarness();
+  const preparation = transitionGisBasemap(h.map, "satellite_bw", { styles: STYLES, managedScene: { runtime: h.runtime } });
+  emitSuccessfulTile(h.map, "esri");
+  const candidate = await preparation;
+  const source = h.map.getSource("esri"), layer = h.map.getLayer("esri-tiles");
+  h.runtime.setDesiredIds([], { requiredIds: [], durationMs: 600 }); h.runtime.commitBatch();
+  expect(h.map.getLayer("esri-tiles")).toBe(layer);
+  await h.advance(600);
+  expect(h.map.getLayer("esri-tiles")).toBe(layer);
+  expect(h.map.getSource("esri")).toBe(source);
+  expect(h.map.getPaintProperty("water", "fill-opacity")).toBe(1);
+  expect(h.map.getPaintProperty("background", "background-opacity") ?? 1).toBe(1);
+  h.runtime.setDesiredIds([candidate.fullId], { requiredIds: [candidate.fullId], durationMs: 600 });
+  candidate.mount(); h.runtime.commitBatch(); await h.advance(600);
+  expect(h.map.getPaintProperty("esri-tiles", "raster-opacity")).toBe(1);
+  h.close();
+});
+
+test("activation inserts a missing prepared layer below the current overlay after the old overlay exits", async () => {
+  const h = await managedBasemapHarness();
+  h.map.addLayer({ id: "old-scene-overlay", type: "fill" });
+  const preparation = transitionGisBasemap(h.map, "satellite", { styles: STYLES, managedScene: { runtime: h.runtime } });
+  emitSuccessfulTile(h.map, "esri"); const candidate = await preparation;
+  h.map.removeLayer("esri-tiles"); h.map.removeLayer("old-scene-overlay");
+  h.map.addLayer({ id: "new-scene-overlay", type: "fill" });
+  rejectBasemapLayerAdds(h.map, (_, beforeId) => beforeId != null && !h.map.getLayer(beforeId));
+  const paint = h.map.setPaintProperty.bind(h.map);
+  h.map.setPaintProperty = (id, ...args) => { if (h.map.getLayer(id)) return paint(id, ...args); h.map.emit("error", { error: new Error("Cannot style " + id) }); };
+  h.runtime.setDesiredIds([candidate.fullId], { requiredIds: [candidate.fullId], durationMs: 600 });
+  candidate.mount(); h.runtime.commitBatch(); await h.advance(600);
+  expect(h.map.getLayer("esri-tiles")).toBeTruthy();
+  expect(layerIds(h.map).indexOf("esri-tiles")).toBeLessThan(layerIds(h.map).indexOf("new-scene-overlay"));
+  expect(h.map.getPaintProperty("esri-tiles", "raster-opacity")).toBe(1);
+  h.close();
+});
+
+test("a silent rejected required basemap layer cannot be accepted as prepared", async () => {
+  const h = await managedBasemapHarness();
+  rejectBasemapLayerAdds(h.map, () => true);
+  const preparation = transitionGisBasemap(h.map, "satellite_bw", { styles: STYLES, managedScene: { runtime: h.runtime } });
+  emitSuccessfulTile(h.map, "esri");
+  await expect(preparation).rejects.toThrow(/layer/i);
+  expect(h.map.getLayer("water")).toBeTruthy();
+  expect(h.map.getSource("esri")).toBeFalsy();
+  h.close();
+});
+
+test("a silent rejected required basemap layer cannot start the mounted scene phase", async () => {
+  const h = await managedBasemapHarness();
+  const preparation = transitionGisBasemap(h.map, "satellite_bw", { styles: STYLES, managedScene: { runtime: h.runtime } });
+  emitSuccessfulTile(h.map, "esri"); const candidate = await preparation;
+  h.map.removeLayer("esri-tiles"); rejectBasemapLayerAdds(h.map, () => true);
+  const paint = h.map.setPaintProperty.bind(h.map);
+  h.map.setPaintProperty = (id, ...args) => { if (h.map.getLayer(id)) return paint(id, ...args); };
+  h.runtime.setDesiredIds([candidate.fullId], { requiredIds: [candidate.fullId], durationMs: 600 });
+  expect(() => candidate.mount()).toThrow(/layer/i);
+  expect(h.runtime.getRenderedReadiness().ready).toBe(false);
+  candidate.complete(); expect(getDisplayedGisBasemap(h.map, STYLES)).toBe("dark");
+  candidate.discard(); h.close();
+});
+
+
+test("a prepared saturation change retains the same ESRI layer and source through the outgoing shared phase", async () => {
+  const h = await managedBasemapHarness();
+  const first = transitionGisBasemap(h.map, "satellite", { styles: STYLES, managedScene: { runtime: h.runtime } });
+  emitSuccessfulTile(h.map, "esri"); const color = await first;
+  h.runtime.setDesiredIds([color.fullId], { requiredIds: [color.fullId], durationMs: 0 }); color.mount(); h.runtime.commitBatch(); color.complete();
+  const source = h.map.getSource("esri"), layer = h.map.getLayer("esri-tiles");
+  const gray = await transitionGisBasemap(h.map, "satellite_bw", { styles: STYLES, managedScene: { runtime: h.runtime } });
+  expect(h.map.getPaintProperty("esri-tiles", "raster-saturation")).toBe(0);
+  h.runtime.setDesiredIds([], { requiredIds: [], durationMs: 600 }); h.runtime.commitBatch(); await h.advance(600);
+  expect(h.map.getLayer("esri-tiles")).toBe(layer);
+  expect(h.map.getSource("esri")).toBe(source);
+  h.runtime.setDesiredIds([gray.fullId], { requiredIds: [gray.fullId], durationMs: 600 }); gray.mount();
+  expect(h.map.getPaintProperty("esri-tiles", "raster-opacity")).toBe(0);
+  expect(h.runtime.getRenderedReadiness().pendingIds).toContain(gray.fullId);
+  h.runtime.commitBatch(); await h.advance(600); gray.complete();
+  expect(h.map.getPaintProperty("esri-tiles", "raster-saturation")).toBe(-1);
+  expect(h.map.getPaintProperty("esri-tiles", "raster-opacity")).toBe(1);
+  h.close();
+});
+
+test("discarding an obsolete candidate does not release or remove the current candidate", async () => {
+  const h = await managedBasemapHarness(); h.binding.dispose();
+  const first = transitionGisBasemap(h.map, "satellite", { styles: STYLES, managedScene: { runtime: h.runtime } });
+  emitSuccessfulTile(h.map, "esri"); const obsolete = await first;
+  const second = transitionGisBasemap(h.map, "satellite_bw", { styles: STYLES, managedScene: { runtime: h.runtime } });
+  emitSuccessfulTile(h.map, "esri"); const current = await second;
+  const source = h.map.getSource("esri"), layer = h.map.getLayer("esri-tiles");
+  obsolete.discard();
+  h.runtime.setDesiredIds([], { requiredIds: [], durationMs: 600 }); h.runtime.commitBatch(); await h.advance(600);
+  expect(h.map.getLayer("esri-tiles")).toBe(layer); expect(h.map.getSource("esri")).toBe(source);
+  h.runtime.setDesiredIds([current.fullId], { requiredIds: [current.fullId], durationMs: 600 }); current.mount(); h.runtime.commitBatch(); await h.advance(600);
+  expect(() => obsolete.mount()).toThrow(/cancelled/); current.complete(); obsolete.complete();
+  expect(getDisplayedGisBasemap(h.map, STYLES)).toBe("satellite_bw");
+  expect(h.map.getPaintProperty("esri-tiles", "raster-saturation")).toBe(-1); h.close();
+});
+
+test("a same-ID source replacement invalidates prepared readiness and survives candidate discard", async () => {
+  const h = await managedBasemapHarness(); h.binding.dispose();
+  const preparation = transitionGisBasemap(h.map, "satellite", { styles: STYLES, managedScene: { runtime: h.runtime } });
+  emitSuccessfulTile(h.map, "esri"); const candidate = await preparation;
+  h.map.removeLayer("esri-tiles"); h.map.removeSource("esri");
+  h.map.addSource("esri", STYLES.satellite.sources.esri); h.map.addLayer({ ...STYLES.satellite.layers[0], paint: { "raster-opacity": .7 } });
+  const replacement = h.map.getSource("esri"), layer = h.map.getLayer("esri-tiles");
+  h.runtime.setDesiredIds([candidate.fullId], { requiredIds: [candidate.fullId], durationMs: 600 });
+  expect(() => candidate.mount()).toThrow(/source changed/); candidate.complete(); candidate.discard();
+  expect(getDisplayedGisBasemap(h.map, STYLES)).toBe("dark");
+  expect(h.map.getSource("esri")).toBe(replacement); expect(h.map.getLayer("esri-tiles")).toBe(layer);
+  expect(h.map.getPaintProperty("esri-tiles", "raster-opacity")).toBe(.7); h.close();
+});
+
+test("style replacement cancels a prepared candidate without removing same-ID replacement resources", async () => {
+  const h = await managedBasemapHarness(); h.binding.dispose();
+  const preparation = transitionGisBasemap(h.map, "satellite_bw", { styles: STYLES, managedScene: { runtime: h.runtime } });
+  emitSuccessfulTile(h.map, "esri"); const candidate = await preparation;
+  h.map.setStyle(STYLES.satellite); const source = h.map.getSource("esri"), layer = h.map.getLayer("esri-tiles");
+  candidate.discard(); expect(() => candidate.mount()).toThrow(/cancelled/); candidate.complete();
+  expect(h.map.getSource("esri")).toBe(source); expect(h.map.getLayer("esri-tiles")).toBe(layer);
+  expect(h.map.listenerCount("sourcedata")).toBe(0); h.close();
+});
+
+test("a mounted managed cleanup does not remove the raster after manual basemap ownership takes over", async () => {
+  const h = await managedBasemapHarness(); h.binding.dispose();
+  const preparation = transitionGisBasemap(h.map, "satellite", { styles: STYLES, managedScene: { runtime: h.runtime } });
+  emitSuccessfulTile(h.map, "esri"); const candidate = await preparation;
+  h.runtime.setDesiredIds([candidate.fullId], { requiredIds: [candidate.fullId], durationMs: 0 }); candidate.mount(); h.runtime.commitBatch(); candidate.complete();
+  transitionGisBasemap(h.map, "satellite_bw", { styles: STYLES });
+  h.map.emit("render"); await h.advance(GIS_BASEMAP_FADE_MS); h.map.emit("render");
+  const source = h.map.getSource("esri"), layer = h.map.getLayer("esri-tiles");
+  h.runtime.setDesiredIds([], { requiredIds: [], durationMs: 0 }); h.runtime.commitBatch();
+  expect(h.map.getLayer("esri-tiles")).toBe(layer); expect(h.map.getSource("esri")).toBe(source);
+  expect(h.map.getPaintProperty("esri-tiles", "raster-saturation")).toBe(-1); h.close();
 });

@@ -881,7 +881,10 @@ function sameClockAcknowledgement(requested, actual) {
     === JSON.stringify(clockAcknowledgementContent(actual));
 }
 
-async function patchInvestigationClock(ctx, next, { isCurrent = () => true } = {}) {
+// Hold options are local queue ownership controls and are never serialized.
+async function patchInvestigationClock(ctx, next, {
+  isCurrent = () => true, claimPresentationHold = false, releasePresentationHold,
+} = {}) {
   if (!ctx?._tableName) return { ok: false, error: "Missing table" };
   const predicate = typeof isCurrent === "function" ? isCurrent : () => true;
   const run = async () => {
@@ -892,6 +895,17 @@ async function patchInvestigationClock(ctx, next, { isCurrent = () => true } = {
     const writeClock = { ...(next && typeof next === "object" ? next : {}) };
     delete writeClock.serverNowMs;
     delete writeClock.isCurrent;
+    const activeHold = ctx._investigationClock?.presentationPendingUntilMs;
+    if (releasePresentationHold != null && activeHold !== releasePresentationHold) {
+      return { ok: false, stale: true, error: "Superseded presentation hold" };
+    }
+    const correctedNow = ctx.correctedNow?.() ?? Date.now();
+    if (!claimPresentationHold && releasePresentationHold == null) {
+      delete writeClock.presentationPendingUntilMs;
+      if (typeof activeHold === "number" && activeHold > correctedNow) {
+        writeClock.presentationPendingUntilMs = activeHold;
+      }
+    }
     let state;
     try {
       state = await OTEF_API.updateInvestigationClock(ctx._tableName, writeClock, {
@@ -902,7 +916,15 @@ async function patchInvestigationClock(ctx, next, { isCurrent = () => true } = {
       getLogger().error("[OTEFDataContext] Failed to update investigation clock:", error);
       return { ok: false, error };
     }
-    if (!predicate()) return { ok: false, stale: true, error: "Superseded" };
+    // WS can acknowledge this owned release before HTTP returns. Ownership
+    // was checked at send; accept only the exact newer local acknowledgement.
+    const acknowledged = normalizeNliClock(ctx._investigationClock);
+    const releaseAlreadyAcknowledged = releasePresentationHold != null
+      && acknowledged.revision > revisionAtSend
+      && sameClockAcknowledgement(writeClock, acknowledged);
+    if (!predicate() && !releaseAlreadyAcknowledged) {
+      return { ok: false, stale: true, error: "Superseded" };
+    }
     const narrativeNow = normalizeNarrativeState(ctx._narrativeState);
     if (
       narrativeNow.id !== narrativeAtSend.id
@@ -912,7 +934,7 @@ async function patchInvestigationClock(ctx, next, { isCurrent = () => true } = {
     }
     const local = normalizeNliClock(ctx._investigationClock);
     if (local.revision > revisionAtSend) {
-      if (sameClockAcknowledgement(next, local)) return { ok: true, clock: local };
+      if (sameClockAcknowledgement(writeClock, local)) return { ok: true, clock: local };
       return { ok: false, stale: true, error: "Superseded clock" };
     }
     const raw = state?.investigation_clock;
@@ -920,7 +942,7 @@ async function patchInvestigationClock(ctx, next, { isCurrent = () => true } = {
       return { ok: false, error: "Invalid clock response" };
     }
     const responseClock = normalizeNliClock(raw);
-    if (!sameClockAcknowledgement(next, responseClock)) {
+    if (!sameClockAcknowledgement(writeClock, responseClock)) {
       return { ok: false, error: "Invalid clock response" };
     }
     const currentClock = normalizeNliClock(ctx._investigationClock);
@@ -928,7 +950,7 @@ async function patchInvestigationClock(ctx, next, { isCurrent = () => true } = {
       ctx._setInvestigationClock(responseClock);
     }
     const adopted = normalizeNliClock(ctx._investigationClock);
-    if (!sameClockAcknowledgement(next, adopted)) {
+    if (!sameClockAcknowledgement(writeClock, adopted)) {
       return { ok: false, error: "Invalid clock response" };
     }
     return { ok: true, clock: adopted };
@@ -988,9 +1010,11 @@ async function setNarrative(ctx, id, options = {}) {
     if (staleNarrative) {
       const coupledBaseline = ctx._captureNarrativeSceneBaseline();
       const visibilityReceipt = ctx._gazaBorderVisibilityReceipt;
+      const layerGroupsReceipt = ctx._beginLayerGroupsSnapshot();
+      const animationsReceipt = ctx._animationsReceipt;
       try {
         const state = await OTEF_API.getState(ctx._tableName, { forceFresh: true });
-        ctx._applyStateFromApi(state, { notify: true, coupledBaseline, visibilityReceipt });
+        ctx._applyStateFromApi(state, { notify: true, coupledBaseline, visibilityReceipt, layerGroupsReceipt, animationsReceipt });
       } catch (refreshError) {
         getLogger().warn("[OTEFDataContext] Failed to reconcile stale narrative state:", refreshError);
       }

@@ -93,15 +93,16 @@ export function syncProjectionModelImage({
   const durationMs = typeof modelInfo.durationMs === "number" && Number.isFinite(modelInfo.durationMs)
     ? Math.max(0, modelInfo.durationMs)
     : 0;
-  const snap = modelInfo.fromSlideshowTick === true || !(durationMs > 0) || !map;
+  const runtime = map ? getLayerLifecycleRuntime(map) : null;
+  const pendingBefore = runtime?.getPendingBatch();
+  const managed = modelInfo.joinBatch === true || pendingBefore?.strict === true;
+  const snap = modelInfo.fromSlideshowTick === true || !map || (!managed && !(durationMs > 0));
   if (snap) {
     if (map) releaseProjectionModelImage(map);
     snapOpacity(imageEl, enabled);
     return;
   }
 
-  const runtime = getLayerLifecycleRuntime(map);
-  const pendingBefore = runtime.getPendingBatch();
   const desiredNow = runtime.getDesiredIds();
   const already = desiredNow.includes(PROJECTION_MODEL_FULL_ID);
   const previous = bindingByMap.get(map);
@@ -111,7 +112,7 @@ export function syncProjectionModelImage({
     if (enabled && imageEl.style.opacity === "1") return;
     if (!enabled && imageEl.style.opacity === "0") return;
   }
-  if (!pendingBefore) {
+  if (!pendingBefore && !managed) {
     const desired = new Set(desiredNow);
     if (enabled) desired.add(PROJECTION_MODEL_FULL_ID);
     else desired.delete(PROJECTION_MODEL_FULL_ID);

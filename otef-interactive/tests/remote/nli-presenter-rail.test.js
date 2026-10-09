@@ -41,9 +41,9 @@ describe("weighted occupied-hour presenter rail", () => {
     expectValidRail(rail, beats, 360);
   });
 
-  it("lays out the full 116 minute fixture with all marks in bounds", () => {
+  it("lays out the 112 current fixture beats with all marks in bounds", () => {
     const beats = beatsFor(navigationFixture.minutes);
-    expect(beats).toHaveLength(116);
+    expect(beats).toHaveLength(112);
     expectValidRail(buildPresenterRail(beats, { height: 720 }), beats, 720);
   });
 

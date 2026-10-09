@@ -91,7 +91,7 @@ export const HOME_LAYER_IDS = [
   "gaza.Gaza_Roads",
   GAZA_BORDER_FULL_ID,
 ];
-export const IDENTITY_LAYER_IDS = [...FOCUS_LAYER_IDS, PEOPLE];
+export const IDENTITY_LAYER_IDS = [...HOME_LAYER_IDS.filter(id => id !== GAZA_ROADS), PEOPLE];
 export const WALL_LAYER_IDS = PEOPLE_NAMES_LAYER_IDS;
 
 const NOVA_TIMELINE_LAYER_IDS = [...FOCUS_LAYER_IDS, ...NLI_PLAYABLE_IDS];

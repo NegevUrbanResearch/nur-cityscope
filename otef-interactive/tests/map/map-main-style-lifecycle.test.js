@@ -36,7 +36,7 @@ describe("map-main GIS style reload lifecycle", () => {
       "utf8",
     );
     expect(source).toMatch(
-      /const applyGisLayerGroups = \(groups, layerStyleOptions\) => \{\s*applyLayerGroupsToMap\(map, groups, layerStyleOptions\);\s*applyNarrativePeopleFilter\(map, OTEFDataContext\.getNarrativeState\?\.\(\)\?\.id \?\? null\);\s*const selectedPid = OTEFDataContext\.getPersonSelection\?\.\(\)\?\.personId;\s*if \(selectedPid\) applyPeopleFocusDim\(map, selectedPid\);\s*else clearPeopleFocusDim\(map\);\s*applyNarrativeHouseOutlineFilter\(map, OTEFDataContext\.getNarrativeState\?\.\(\)\?\.id \?\? null\);\s*raiseGisPlaceLabels\(\);\s*\};/,
+      /const applyGisLayerGroups = \(groups, layerStyleOptions\) => \{\s*applyLayerGroupsToMap\(map, groups, layerStyleOptions\);\s*applyNarrativePeopleFilter\(map, sceneSnapshot\(\)\.narrativeState\?\.id \?\? null\);\s*const selectedPid = sceneSnapshot\(\)\.personSelection\?\.personId;\s*if \(selectedPid\) applyPeopleFocusDim\(map, selectedPid\);\s*else clearPeopleFocusDim\(map\);\s*applyNarrativeHouseOutlineFilter\(map, sceneSnapshot\(\)\.narrativeState\?\.id \?\? null\);\s*raiseGisPlaceLabels\(\);\s*\};/,
     );
     expect(source.match(/applyLayerGroupsToMap\(/g)).toHaveLength(1);
   });
@@ -402,12 +402,12 @@ describe("map-main GIS style reload lifecycle", () => {
       "utf8",
     );
     const subscriber = source.slice(
-      source.indexOf('OTEFDataContext.subscribe("layerGroups"'),
+      source.indexOf("sceneBinding = await createNliSceneDisplayBinding"),
       source.indexOf("// Curated layers (Supabase-synced overlays"),
     );
     expect(subscriber).not.toMatch(/curatedDisplay\.begin\(/);
     expect(source).toMatch(/displayGate:\s*curatedDisplay/);
-    expect(subscriber).toMatch(/refreshCuratedLayers\(\{/);
+    expect(subscriber).toMatch(/refreshLayers:\s*refreshCuratedLayers/);
     expect(source).toMatch(/createGisCuratedRefresh\(/);
     const loader = fs.readFileSync(
       path.resolve(import.meta.dirname, "../../frontend/src/map/maplibre-curated-layer-loader.js"),
@@ -1163,4 +1163,14 @@ describe("GIS curated and registry refresh batches", () => {
       vi.useRealTimers();
     }
   });
+});
+
+test("a settled managed basemap becomes the manual coordinator's displayed and requested baseline", () => {
+  const setBasemap = vi.fn(() => true);
+  const coordinator = createGisBasemapStyleCoordinator({ map: {}, initialBasemap: "dark", setBasemap });
+  expect(coordinator.acceptSceneBasemap).toBeTypeOf("function");
+  coordinator.acceptSceneBasemap("satellite_bw");
+  expect(coordinator.getDisplayedBasemap()).toBe("satellite_bw");
+  expect(coordinator.request("dark")).toBe(true);
+  expect(setBasemap).toHaveBeenCalledOnce(); coordinator.dispose();
 });

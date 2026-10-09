@@ -224,3 +224,25 @@ describe("Mor Levy route coordinator", () => {
     coordinator.dispose();
   });
 });
+
+describe("managed Mor scene reentry", () => {
+  test("200 ms reversal retains sampled opacity and resumes existing route timing", async () => {
+    const { getLayerLifecycleRuntime } = await import("../../frontend/src/shared/layer-lifecycle-fade.js");
+    let time = 0; vi.spyOn(Date, "now").mockImplementation(() => time);
+    vi.stubGlobal("fetch", vi.fn(async () => response(sourceCollection)));
+    const map = createFakeMapLibreMap(); let lifecycleFrame;
+    const runtime = getLayerLifecycleRuntime(map, { now: () => time, requestFrame: cb => { lifecycleFrame = cb; return 1; }, cancelFrame: () => { lifecycleFrame = null; } });
+    const snapshot = { narrativeState: { id: "nova" }, escapeOverlay: { mor: true } };
+    const controller = createMorRouteCoordinator({ map, managedScene: true });
+    await controller.prepareSnapshot(snapshot);
+    runtime.setDesiredIds(["nli.scene-mor"], { durationMs: 0 }); controller.applySnapshot(snapshot); runtime.commitBatch();
+    time = 1000; map.driveAnimationFrame(time); const source = map.getSource("nli-mor-route"); const old = JSON.stringify(source.data);
+    controller.holdForScene(); runtime.setDesiredIds([], { durationMs: 600 }); runtime.commitBatch();
+    time = 1200; lifecycleFrame?.(); const factor = map.getPaintProperty("nli-mor-route-line", "line-opacity");
+    runtime.setDesiredIds(["nli.scene-mor"], { durationMs: 600 }); controller.applySnapshot(snapshot); runtime.commitBatch();
+    expect(map.getPaintProperty("nli-mor-route-line", "line-opacity")).toBeCloseTo(factor);
+    expect(map.pendingAnimationFrameCount()).toBeGreaterThan(0);
+    time = 5000; map.driveAnimationFrame(time); expect(JSON.stringify(source.data)).not.toBe(old);
+    expect(source).toBe(map.getSource("nli-mor-route")); controller.dispose(); runtime.dispose(); vi.unstubAllGlobals(); vi.restoreAllMocks();
+  });
+});

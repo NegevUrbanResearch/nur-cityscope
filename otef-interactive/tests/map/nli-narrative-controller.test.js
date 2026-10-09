@@ -278,15 +278,14 @@ describe("GIS Segev narrative scene", () => {
     expect(onStyleLoadOverlay).toHaveBeenCalledTimes(1);
   });
 
-  test("GIS map-main overlay remount passes styleLoss true", async () => {
+  test("GIS map-main delegates overlay remount to the managed binding", async () => {
     const fs = await import("node:fs/promises");
     const source = await fs.readFile(
       new URL("../../frontend/src/entries/map-main.js", import.meta.url),
       "utf8",
     );
-    expect(source).toMatch(
-      /onStyleLoadOverlay:\s*\(\)\s*=>\s*\{\s*novaEscapeCoordinator\?\.onStyleLoad\?\.\(\{\s*styleLoss:\s*true\s*\}\)/,
-    );
+    expect(source).toMatch(/escapeCoordinator: novaEscapeCoordinator, morCoordinator: morRouteCoordinator/);
+    expect(source).toMatch(/sceneBinding\.onStyleLoad\(\)/);
   });
 
   test("Sderot flies to the settlement at zoom 15 and marks the police station", async () => {

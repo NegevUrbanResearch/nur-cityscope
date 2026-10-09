@@ -80,7 +80,7 @@ export function createProjectionCaptionAdapter({ canvasFactory, rasterScale = 1 
       dirty = false;
       contentVersion += 1;
     }
-    return { source: canvas, contentVersion, matrix: projectionOverlayMatrix(layout) };
+    return { source: canvas, contentVersion, opacity: snapshot.sceneOpacity ?? 1, matrix: projectionOverlayMatrix(layout) };
   };
   return { canvas, sync, draw, dispose() { disposed = true; context.clearRect(0, 0, canvas.width, canvas.height); snapshot = null; signature = null; } };
 }

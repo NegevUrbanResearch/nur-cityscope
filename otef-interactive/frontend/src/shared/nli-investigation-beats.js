@@ -4,6 +4,7 @@
  */
 
 import { NLI_VISUAL_TOKENS } from "./nli-investigation-theme.js";
+import { investigationCategoryVisible } from "./nli-investigation-visibility.js";
 import { NLI_NOVA_STORY, isNovaStoryBeats, novaBeatIndexAtPosition } from "./nli-nova-story.js";
 
 export const INVESTIGATION_POLYGONS_FULL_ID = "nli.investigation_polygons";
@@ -96,6 +97,7 @@ export function formatMinutesAsLocalClock(minutes) {
 export function collectTimelineBeats(features) {
   const beats = new Set();
   for (const feature of features || []) {
+    if (!investigationCategoryVisible(feature?.properties?.Notes)) continue;
     const raw = feature?.properties?.timeline_minutes;
     if (typeof raw === "boolean" || !Number.isFinite(Number(raw))) continue;
     beats.add(Number(raw));

@@ -12,9 +12,7 @@ test("map entry does not poll Supabase curated heartbeat", () => {
 
 test("map entry bootstraps maplibre runtime modules", () => {
   const src = read("frontend/src/entries/map-main.js");
-  const idxCreateMap = src.indexOf(
-    'import { createGISMap, setGISBasemap, maplibregl } from "../map/maplibre-map.js";',
-  );
+  const idxCreateMap = src.search(/import \{[^}]*createGISMap[^}]*setGISBasemap[^}]*maplibregl[^}]*\} from "\.\.\/map\/maplibre-map\.js"/);
   const idxViewportSync = src.indexOf(
     'import { setupViewportSync } from "../map/maplibre-viewport-sync.js";',
   );
@@ -68,7 +66,7 @@ test("projection entry wires MapLibre curated pipeline (manual Supabase sync via
   expect(refreshSrc.includes("fromSlideshowTick,")).toBe(true);
   expect(refreshSrc.includes("loadCuratedLayerToMapLibre(map, fullId,")).toBe(true);
   expect(src.includes("skipInitialVectorLayerSync")).toBe(false);
-  const curatedSubscription = /OTEFDataContext\.subscribe\(\s*["']layerGroups["']\s*,\s*\(\)\s*=>\s*\{[\s\S]{0,900}?getEffectiveProjectionLayerGroups\(\)[\s\S]{0,400}?groupsOverride:\s*groups/;
+  const curatedSubscription = /OTEFDataContext\.subscribe\(\s*["']layerGroups["']\s*,\s*\(\)\s*=>\s*\{[\s\S]{0,400}?groupsOverride:\s*getEffectiveProjectionLayerGroups\(\)/;
   expect(src).toMatch(curatedSubscription);
   expect(src).not.toMatch(/OTEFDataContext\.subscribe\(\s*["']layerGroups["']\s*,\s*\(\s*groups\s*\)[\s\S]{0,800}?groupsOverride:\s*groups/);
 });

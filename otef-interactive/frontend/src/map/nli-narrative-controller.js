@@ -1,4 +1,4 @@
-import { createNarrativeFocusRenderer } from "../shared/maplibre-narrative-focus.js";
+import { createNarrativeFocusRenderer, getNarrativeSceneContentKey } from "../shared/maplibre-narrative-focus.js";
 import { getNliNarrative, normalizeNarrativeState } from "../shared/nli-narratives.js";
 import { NLI_NOVA_STORY } from "../shared/nli-nova-story.js";
 import { evaluateClock } from "../shared/nli-investigation-clock.js";
@@ -49,8 +49,11 @@ export function createGisNarrativeController({
   resolveExitCenter,
   syncTimeline = () => {},
   onStyleLoadOverlay,
+  managedScene = false,
 } = {}) {
-  const focus = createNarrativeFocusRenderer(map, { profile: "gis" });
+  const focus = createNarrativeFocusRenderer(map, { profile: "gis", managedScene,
+    getLanguage: () => dataContext?.getLegendSettings?.()?.language });
+  const unsubscribeLanguage = dataContext?.subscribe?.('legendSettings', () => focus.refresh());
   let disposed = false;
   let state = normalizeNarrativeState(null);
   let activeDefinition = null;
@@ -130,12 +133,21 @@ export function createGisNarrativeController({
     map?.flyTo?.({ center: exitCenter(), zoom: 10, essential: true, duration: 1600 });
   };
 
-  const unsubscribeOverlay = dataContext?.subscribe?.("escapeOverlay", (nextOverlay) => {
+  const unsubscribeOverlay = !managedScene && dataContext?.subscribe?.("escapeOverlay", (nextOverlay) => {
     escapeOverlay = nextOverlay || { mor: false };
     syncMorCamera();
   });
 
   return {
+    resetStyle() { styleGeneration += 1; focus.resetStyle(); },
+    getSceneIds(snapshot) { return getNliNarrative(snapshot.narrativeState?.id)?.label ? ["nli.scene-focus"] : []; },
+    getSceneContentKey: getNarrativeSceneContentKey,
+    holdForScene() { focus.holdForScene(); },
+    resumeForScene() { focus.resumeForScene(); },
+    applySnapshot(snapshot) {
+      escapeOverlay = snapshot.escapeOverlay || { mor: false };
+      return this.apply(snapshot.narrativeState);
+    },
     apply(nextState) {
       if (disposed) return false;
       const normalized = normalizeNarrativeState(nextState);
@@ -192,7 +204,8 @@ export function createGisNarrativeController({
       disposed = true;
       activeDefinition = null;
       focus.dispose();
-      unsubscribeOverlay?.();
+      unsubscribeLanguage?.();
+      if (typeof unsubscribeOverlay === "function") unsubscribeOverlay();
     },
   };
 }

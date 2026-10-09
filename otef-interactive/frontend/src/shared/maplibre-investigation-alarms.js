@@ -8,6 +8,7 @@ import {
   addInvestigationOverlayLayer,
   completeInvestigationOverlayMount,
   fadeInvestigationOverlayLayer,
+  deferInvestigationOverlaySceneExit,
   isOverlayOpacityProperty,
   publishInvestigationOverlayOpacity,
 } from "./investigation-overlay-lifecycle.js";
@@ -470,8 +471,15 @@ export function createInvestigationAlarmRenderer(map, profile = NLI_DISPLAY_PROF
     }
   }
 
-  function reset({ preserveBasePaints = false, immediate = false } = {}) {
+  function reset({ preserveBasePaints = false, immediate = false, sceneDeparture = false } = {}) {
     if (disposed) return;
+    if (sceneDeparture) {
+      const generation = ++hideGeneration;
+      if (deferInvestigationOverlaySceneExit(map, INVESTIGATION_ALARMS_FULL_ID, () => {
+        if (generation !== hideGeneration) return;
+        reset({ preserveBasePaints: true, immediate: true });
+      })) return;
+    }
     if (resetDone) return;
     resetDone = true;
     const overlayIds = ALARM_OWNED_LAYER_IDS.filter((id) => safelyGetLayer(map, id));

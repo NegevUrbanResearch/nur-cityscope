@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createFakeMapLibreMap } from "../helpers/fake-maplibre-map.js";
 import { DEFAULT_PROJECTION_CONFIG as DEFAULTS } from "../../frontend/src/shared/projection-config-schema.js";
+import { getLayerLifecycleRuntime } from "../../frontend/src/shared/layer-lifecycle-fade.js";
 import { NAME_FIELD_MOTION } from "../../frontend/src/shared/nli-name-field-animation.js";
 
 vi.mock("../../frontend/src/shared/nli-name-field-data.js", () => ({
@@ -40,7 +41,7 @@ const groupedField = () => {
   return data;
 };
 
-function setup({ profile = "projection", projectionSpan, applyProjectionConfig = true, manualProjectionPreparation = false, motionMode = "reduced", snapshot = { personId: null, datasetVersion: null, revision: 0 }, onWallEnabledChange } = {}) {
+function setup({ managedScene = false, profile = "projection", projectionSpan, applyProjectionConfig = true, manualProjectionPreparation = false, motionMode = "reduced", snapshot = { personId: null, datasetVersion: null, revision: 0 }, onWallEnabledChange } = {}) {
   const map = createFakeMapLibreMap({ layers: [
     { id: "nli__people_names__labels", type: "symbol", layout: { visibility: "visible" } },
   ] });
@@ -68,7 +69,7 @@ function setup({ profile = "projection", projectionSpan, applyProjectionConfig =
     if (topic === "personSelection") state.snapshot = value;
     listeners.get(topic)?.(value);
   };
-  const controller = createNliNameFieldController({ map, context, displayProfile: profile, projectionSpan, loadField: loadNliNameField, motionMode, onWallEnabledChange, manualProjectionPreparation });
+  const controller = createNliNameFieldController({ map, context, displayProfile: profile, projectionSpan, loadField: loadNliNameField, motionMode, onWallEnabledChange, manualProjectionPreparation, managedScene });
   if (applyProjectionConfig) controller.setProjectionConfig(DEFAULTS, 1);
   return { map, context, controller, emit, state };
 }

@@ -4,6 +4,8 @@ import * as curatedService from "../../frontend/src/shared/curated-layer-service
 import { createFakeMapLibreMap } from "../helpers/fake-maplibre-map.js";
 import {
   leafletStyleToMapLibre,
+  createGisCuratedRefresh,
+  createProjectionCuratedRefresh,
   loadCuratedLayerToMapLibre,
   maplibreLineDashFromLeafletPx,
   maplibreLineDashWithLeafletOffset,
@@ -377,3 +379,134 @@ describe("curated polyline op order: halo → secondary → primary", () => {
     expect(iSec).toBeLessThan(iPri);
   });
 });
+
+
+describe("curated batch membership", () => {
+  test("registry-only toggles start a new batch even with unchanged curated IDs", async () => {
+    const { getLayerLifecycleRuntime } = await import("../../frontend/src/shared/layer-lifecycle-fade.js");
+    const map = createFakeMapLibreMap(); let time = 0; let frame;
+    const runtime = getLayerLifecycleRuntime(map, { now: () => time, requestFrame: cb => { frame=cb; return 1; }, cancelFrame: () => {} });
+    const factors = [];
+    const refresh = createGisCuratedRefresh({ map, applyLayerGroups: groups => {
+      if (groups[0]?.layers[0]?.enabled) {
+        runtime.registerOpacityTarget("home.model", factor => factors.push(factor));
+        runtime.markMemberReady("home.model");
+      }
+    }});
+    await refresh.refreshCuratedLayers({ groupsOverride: [{ id: "home", layers: [{ id: "model", enabled: true }] }] });
+    time=600; frame?.();
+    expect(factors.at(-1)).toBe(1);
+    await refresh.refreshCuratedLayers({ groupsOverride: [] });
+    expect(factors.at(-1)).toBe(1);
+    time=900; frame?.();
+    expect(factors.at(-1)).toBeCloseTo(0.5);
+    time=1200; frame?.();
+    expect(factors.at(-1)).toBe(0);
+  });
+});
+
+
+test("joined curated refresh preserves the coordinator's strict full-membership handle and seal ownership", async () => {
+  const { getLayerLifecycleRuntime } = await import("../../frontend/src/shared/layer-lifecycle-fade.js");
+  const map = createFakeMapLibreMap();
+  const runtime = getLayerLifecycleRuntime(map);
+  const ids = ["home.model", "scene.clock", "scene.names"];
+  const handle = runtime.setDesiredIds(ids, { durationMs:600,requiredIds:ids });
+  const refresh = createGisCuratedRefresh({ map, applyLayerGroups: () => {
+    runtime.registerOpacityTarget("home.model", () => {});
+    runtime.markMemberReady("home.model");
+  }});
+  await refresh.refreshCuratedLayers({ groupsOverride:[{ id:"home",layers:[{ id:"model",enabled:true }] }],layerStyleOptions:{ lifecycle:{ joinBatch:true } } });
+  expect(runtime.getPendingBatch()).toBe(handle);
+  expect(handle.sealed).toBe(false);
+  expect(runtime.getDesiredIds()).toEqual(ids);
+  runtime.dispose();
+});
+
+
+test.each(["gis", "projection"])("stale %s curated failures cannot fail a newer captured batch", async (display) => {
+  const { getLayerLifecycleRuntime } = await import("../../frontend/src/shared/layer-lifecycle-fade.js");
+  let rejectData;
+  const data = new Promise((resolve, reject) => { rejectData = reject; });
+  const fetch = vi.spyOn(curatedService, "fetchCuratedLayerData").mockReturnValue(data);
+  const map = createFakeMapLibreMap();
+  const runtime = getLayerLifecycleRuntime(map);
+  let current = true;
+  const factory = display === "gis" ? createGisCuratedRefresh : createProjectionCuratedRefresh;
+  const refresh = factory({ map });
+  const run = refresh.refreshCuratedLayers || refresh.runProjectionCuratedRefresh;
+  const old = run({ groupsOverride:[{ id:"curated",layers:[{ id:"1",enabled:true }] }], isCurrent:() => current });
+  await Promise.resolve(); await Promise.resolve();
+  expect(fetch).toHaveBeenCalled();
+  current = false;
+  const handle = runtime.setDesiredIds(["curated.1"], { durationMs:0,requiredIds:["curated.1"] });
+  runtime.registerOpacityTarget("curated.1", () => {});
+  runtime.markMemberReady("curated.1"); runtime.commitBatch();
+  rejectData(new Error("superseded load"));
+  await old;
+  expect(await runtime.waitForBatch(handle)).toEqual({ status:"ready" });
+  expect(runtime.getRenderedReadiness().failedIds).toEqual([]);
+  fetch.mockRestore(); runtime.dispose();
+});
+
+
+test("zero-duration joined curated resources stage hidden until the captured batch is sealed", async () => {
+  const { getLayerLifecycleRuntime } = await import("../../frontend/src/shared/layer-lifecycle-fade.js");
+  const data = vi.spyOn(curatedService, "fetchCuratedLayerData").mockResolvedValue({ geojson:polygonCollection(),layerData:{} });
+  const pink = vi.spyOn(curatedService, "fetchPinkLinePaths").mockResolvedValue({ basePaths:[] });
+  const map = createFakeMapLibreMap();
+  const runtime = getLayerLifecycleRuntime(map);
+  const handle = runtime.setDesiredIds(["curated.1"], { durationMs:0,requiredIds:["curated.1"] });
+  const refresh = createGisCuratedRefresh({ map });
+  await refresh.refreshCuratedLayers({ groupsOverride:[{ id:"curated",layers:[{ id:"1",enabled:true }] }],layerStyleOptions:{ lifecycle:{ joinBatch:true },transition:{ transitionMs:0 } } });
+  expect(runtime.getPendingBatch()).toBe(handle);
+  expect(map.getPaintProperty("curated.1__plain__fill","fill-opacity")).toBe(0);
+  runtime.commitBatch();
+  expect(await runtime.waitForBatch(handle)).toEqual({ status:"ready" });
+  expect(map.getPaintProperty("curated.1__plain__fill","fill-opacity")).toBe(0.4);
+  data.mockRestore(); pink.mockRestore(); runtime.dispose();
+});
+
+
+test.each(["gis", "projection"].flatMap(display => ["ready", "failed"].map(outcome => ({ display, outcome }))))(
+  "zero-duration joined $display curated exits retain outgoing resources until the captured batch is $outcome", async ({ display, outcome }) => {
+    const { getLayerLifecycleRuntime } = await import("../../frontend/src/shared/layer-lifecycle-fade.js");
+    const data = vi.spyOn(curatedService, "fetchCuratedLayerData").mockResolvedValue({ geojson:polygonCollection(), layerData:{} });
+    const pink = vi.spyOn(curatedService, "fetchPinkLinePaths").mockResolvedValue({ basePaths:[] });
+    const map = createFakeMapLibreMap();
+    const runtime = getLayerLifecycleRuntime(map);
+    const factory = display === "gis" ? createGisCuratedRefresh : createProjectionCuratedRefresh;
+    const refresh = factory({ map });
+    const run = refresh.refreshCuratedLayers || refresh.runProjectionCuratedRefresh;
+    const options = { lifecycle:{ joinBatch:true }, transition:{ transitionMs:0 } };
+    runtime.setDesiredIds(["curated.1"], { durationMs:0, requiredIds:["curated.1"] });
+    await run({ groupsOverride:[{ id:"curated", layers:[{ id:"1", enabled:true }] }], layerStyleOptions:options });
+    runtime.commitBatch();
+    const layerId = "curated.1__plain__fill";
+    const sourceId = map.getLayer(layerId).source;
+    expect(map.getPaintProperty(layerId, "fill-opacity")).toBe(0.4);
+    const handle = runtime.setDesiredIds(["incoming", "missing"], { durationMs:0, requiredIds:["incoming", "missing"] });
+    const incomingFactors = [];
+    runtime.registerOpacityTarget("incoming", factor => incomingFactors.push(factor));
+    runtime.markMemberReady("incoming");
+    await run({ groupsOverride:[], layerStyleOptions:options });
+    expect(runtime.getPendingBatch()).toBe(handle);
+    expect(handle.sealed).toBe(false);
+    expect(incomingFactors.at(-1)).toBe(0);
+    expect(map.getLayer(layerId)).toBeTruthy();
+    expect(map.getSource(sourceId)).toBeTruthy();
+    expect(map.getPaintProperty(layerId, "fill-opacity")).toBe(0.4);
+    runtime.commitBatch();
+    expect(map.getLayer(layerId)).toBeTruthy();
+    expect(incomingFactors.at(-1)).toBe(0);
+    runtime.registerOpacityTarget("missing", () => {});
+    if (outcome === "ready") runtime.markMemberReady("missing");
+    else runtime.markMemberFailed("missing");
+    expect(await runtime.waitForBatch(handle)).toEqual({ status:outcome });
+    expect(incomingFactors.at(-1)).toBe(outcome === "ready" ? 1 : 0);
+    expect(Boolean(map.getLayer(layerId))).toBe(outcome === "failed");
+    expect(Boolean(map.getSource(sourceId))).toBe(outcome === "failed");
+    if (outcome === "failed") expect(map.getPaintProperty(layerId, "fill-opacity")).toBe(0.4);
+    data.mockRestore(); pink.mockRestore(); runtime.dispose();
+  },
+);

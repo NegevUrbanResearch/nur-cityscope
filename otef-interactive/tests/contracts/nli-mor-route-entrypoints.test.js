@@ -12,7 +12,13 @@ describe("Mor route entrypoints", () => {
       const code = source(entry);
       expect(code).toMatch(/import \{ createMorRouteCoordinator \} from "\.\.\/shared\/nli-mor-route-coordinator\.js"/);
       expect(code).toMatch(/createMorRouteCoordinator\(\{[\s\S]*?map,[\s\S]*?dataContext: OTEFDataContext,[\s\S]*?profile: "(?:gis|projection)"/);
-      expect(code).toMatch(/morRouteCoordinator\?\.onStyleLoad\?\.\(/);
+      if (entry === "map-main.js") {
+        expect(code).toContain("void sceneBinding.onStyleLoad()");
+        expect(code).toMatch(/narrativeController, escapeCoordinator: novaEscapeCoordinator, morCoordinator/);
+        const binding = fs.readFileSync(path.resolve(import.meta.dirname, "../../frontend/src/shared/nli-scene-display-binding.js"), "utf8");
+        expect(binding).toContain("morCoordinator?.resetStyle?.()");
+        expect(binding).toContain("morCoordinator?.applySnapshot?.(snapshot, options)");
+      } else expect(code).toMatch(/morRouteCoordinator\?\.onStyleLoad\?\.\(/);
       expect(code).toMatch(/morRouteCoordinator\?\.dispose\?\.\(/);
     });
   }

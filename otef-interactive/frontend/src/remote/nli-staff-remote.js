@@ -11,7 +11,6 @@ import { createPresenterCommands } from "./nli-presenter-commands.js";
 import { createPresenterView } from "./nli-presenter-view.js";
 import { consumeNliNovaEscapeClick, nliNovaEscapeTogglesHtml } from "./nli-nova-escape-toggles.js";
 import { buildNovaEndedClock, commitSceneLayers, createCueRunner } from "./nli-staff-cues.js";
-import { createNameWallSceneExit } from "../shared/nli-name-wall-scene-exit.js";
 import { createNliStaffSearchTransition } from "./nli-staff-search-transition.js";
 import { createPeopleSearchRuntime } from "./remote-people-search.js";
 import {
@@ -96,6 +95,7 @@ export function createNliStaffSearchEventHandlers({
   setDestination = () => {},
   renderDestination = () => {},
   applyDestinationCue = () => {},
+  runDestinationTransition,
   beforeTransition = () => {},
   onNavigationCleanupComplete = () => {},
   afterDestinationCue = () => {},
@@ -115,22 +115,34 @@ export function createNliStaffSearchEventHandlers({
     cancelCues();
     setPending(true);
     renderPending();
+    let prepared = false;
     try {
-      const before = beforeTransition();
-      const closed = before && typeof before.then === "function" ? await before : before;
-      if (!transition.isCurrent(token)) return false;
-      if (closed === false) return false;
-      const cleared = await transition.clearAll(token);
-      if (!transition.isCurrent(token)) return false;
-      if (!cleared) return failClear(token);
-      clearSearchUi();
-      onNavigationCleanupComplete();
-      setPending(false);
-      renderPending();
-      setDestination(item, index, returnTo);
-      renderDestination();
-      const cueResult = await applyDestinationCue(item, index);
-      if (!transition.isCurrent(token)) return false;
+      const prepareDestination = async (isCueCurrent = () => true) => {
+        const live = () => transition.isCurrent(token) && isCueCurrent();
+        if (!live()) return false;
+        const before = beforeTransition(item, index);
+        const closed = before && typeof before.then === "function" ? await before : before;
+        if (!live() || closed === false) return false;
+        const cleared = await transition.clearAll(token);
+        if (!live()) return false;
+        if (!cleared) return failClear(token);
+        clearSearchUi();
+        onNavigationCleanupComplete();
+        setPending(false);
+        renderPending();
+        setDestination(item, index, returnTo);
+        renderDestination();
+        prepared = true;
+        return true;
+      };
+      let cueResult;
+      if (runDestinationTransition) {
+        cueResult = await runDestinationTransition(item, index, prepareDestination);
+      } else {
+        if (!await prepareDestination()) return false;
+        cueResult = await applyDestinationCue(item, index);
+      }
+      if (!prepared || !transition.isCurrent(token)) return false;
       afterDestinationCue(item, index, cueResult);
       return true;
     } finally {
@@ -319,6 +331,7 @@ export function initNliStaffRemote(dataContext, { presenterManifest = presenterC
       }
     },
     onStatus: (status) => {
+      if (disposed) return;
       state.cueStatus = status;
       if (status === "applying") state.failedCue = null;
       else if (status === "failed") state.failedCue = state.cueAttempt;
@@ -328,15 +341,11 @@ export function initNliStaffRemote(dataContext, { presenterManifest = presenterC
       if (state.screen === "home") renderHome();
     },
   });
-  const nameWallExit = createNameWallSceneExit({
-    getLayerGroups: () => dataContext?.getLayerGroups?.(),
-    commitLayers: (ids) => commitSceneLayers(dataContext, ids),
-  });
-  const applyCue = (cue, narrativeId) => {
+  const applyCue = (cue, narrativeId, beforeApply = null) => {
     dataContext.setExhibitMode(true);
-    const attempt = { cue, narrativeId };
+    const attempt = { cue, narrativeId, beforeApply };
     state.cueAttempt = attempt;
-    return cues.apply(cue, narrativeId).then((result) => {
+    return cues.apply(cue, narrativeId, beforeApply).then((result) => {
       if (state.cueAttempt === attempt && result?.status !== "failed") state.cueAttempt = null;
       return result;
     });
@@ -564,7 +573,7 @@ export function initNliStaffRemote(dataContext, { presenterManifest = presenterC
     if (homeStatus) {
       homeStatus.hidden = !homeFailure;
       homeStatus.textContent = homeFailure
-        ? txt(state.cueStatus === "failed" ? "cueFailed" : "searchClearFailed")
+        ? txt(state.homeFailure ? "searchClearFailed" : "cueFailed")
         : "";
     }
     if (homeRetry) homeRetry.hidden = !homeFailure;
@@ -721,7 +730,14 @@ export function initNliStaffRemote(dataContext, { presenterManifest = presenterC
   }
 
   async function transitionToStep(item, index, { returnTo = state.returnTo } = {}) {
+    const nextIndex = Math.max(0, Math.min(index, item.steps.length - 1));
+    const destination = item.steps[nextIndex];
+    const fixedSceneSwitch = state.screen === "player" && state.scriptId === item.id &&
+      state.cueStatus === "ready" && !state.searchPending &&
+      [currentStep(), destination].every((step) =>
+        ["names_wall", "credits"].includes(step?.presentation?.segmentId));
     navigationGeneration += 1;
+    state.presentationClosePending = false;
     clearPresenterError();
     const generation = navigationGeneration;
     state.navigationPending = true;
@@ -730,6 +746,15 @@ export function initNliStaffRemote(dataContext, { presenterManifest = presenterC
     presenterCommands.invalidate();
     presenterView.setVisible(false);
     try {
+      if (fixedSceneSwitch) {
+        searchTransition.begin();
+        cues.cancel();
+        state.cueStatus = "ready";
+        state.step = nextIndex;
+        state.returnTo = returnTo;
+        renderPlayer();
+        return await presentation.replace(destination.presentation.segmentId);
+      }
       return await searchActions.transitionToStep(item, index, returnTo);
     } finally {
       if (generation === navigationGeneration) {
@@ -837,6 +862,7 @@ export function initNliStaffRemote(dataContext, { presenterManifest = presenterC
   }
 
   async function performHomeExit() {
+    let homeCueResult = null;
     navigationGeneration += 1;
     clearPresenterError();
     const generation = navigationGeneration;
@@ -859,33 +885,35 @@ export function initNliStaffRemote(dataContext, { presenterManifest = presenterC
     };
     paintPending();
     try {
-      state.presentationClosePending = true;
-      paintPending();
       let closed = true;
       try {
-        if (nameWallExit.needsFade()) {
-          const faded = await nameWallExit.fadeOutIfShown();
-          if (faded === false) return false;
-        }
-        closed = await presentation?.closeForStepChange();
+        homeCueResult = await applyCue(HOME_CUE, null, async (isCurrent, options) => {
+          if (!isCurrent() || !searchTransition.isCurrent(token)) return false;
+          const cleared = await searchTransition.clearAll(token);
+          if (!isCurrent() || !searchTransition.isCurrent(token)) return false;
+          if (!cleared) return failSearchClear(token);
+          state.navigationPending = false;
+          state.searchPending = false;
+          clearSearchUi();
+          if (peopleArchive?.getArchivePhase?.() === "open") void peopleArchive.closeArchive();
+          state.presentationClosePending = true;
+          paintPending();
+          return presentation.closeScene(options);
+        });
+        closed = homeCueResult?.status === "ready";
       } finally {
-        state.presentationClosePending = false;
-        if (searchTransition.isCurrent(token)) paintPending();
+        if (searchTransition.isCurrent(token)) {
+          state.presentationClosePending = false;
+          paintPending();
+        }
       }
       if (!searchTransition.isCurrent(token) || closed === false) return false;
-      const cleared = await searchTransition.clearAll(token);
-      if (!searchTransition.isCurrent(token)) return false;
-      if (!cleared) return failSearchClear(token);
-      state.navigationPending = false;
-      state.searchPending = false;
-      clearSearchUi();
-      if (peopleArchive?.getArchivePhase?.() === "open") void peopleArchive.closeArchive();
       state.scriptId = null;
       state.step = 0;
       state.returnTo = null;
       showScreen("home");
       renderHome();
-      const result = await applyCue(HOME_CUE, null);
+      const result = homeCueResult ?? await applyCue(HOME_CUE, null);
       if (!searchTransition.isCurrent(token)) return false;
       if (result?.status !== "ready") {
         state.scriptId = previous.scriptId;
@@ -1008,20 +1036,7 @@ export function initNliStaffRemote(dataContext, { presenterManifest = presenterC
     restoreLiveSearchLabel,
     showClearFailed: () => { state.searchError = txt("searchClearFailed"); },
     clearSearchUi,
-    beforeTransition: async () => {
-      state.presentationClosePending = true;
-      if (state.screen === "player") renderPlayer();
-      try {
-        if (nameWallExit.needsFade()) {
-          const faded = await nameWallExit.fadeOutIfShown();
-          if (faded === false) return false;
-        }
-        return await presentation?.closeForStepChange();
-      } finally {
-        state.presentationClosePending = false;
-        if (state.screen === "player") renderPlayer();
-      }
-    },
+    beforeTransition: () => true,
     onNavigationCleanupComplete: () => { state.navigationPending = false; },
     setDestination: (item, index, returnTo) => {
       const nextIndex = Math.max(0, Math.min(index, item.steps.length - 1));
@@ -1035,11 +1050,24 @@ export function initNliStaffRemote(dataContext, { presenterManifest = presenterC
       renderPlayer();
       void timelineHost._ensureNliFeatureCache?.();
     },
-    applyDestinationCue: async (item, index) => {
+    runDestinationTransition: async (item, index, prepareDestination) => {
       const generation = navigationGeneration;
       try {
         const destination = item.steps[Math.max(0, Math.min(index, item.steps.length - 1))];
-        return await applyCue(destination?.cue, item.narrative);
+        const beforeApply = async (isCurrent, options) => {
+          if (!isCurrent()) return false;
+          if (!await prepareDestination(isCurrent) || !isCurrent()) return false;
+          if (!destination?.cue) return true;
+          if (destination?.presentation?.open === "auto") {
+            // The API validates the segment against the active narrative,
+            // including Shura's required null narrative. Stage it under the hold.
+            await options.prepareNarrative();
+            if (!isCurrent()) return false;
+            return presentation.prepareScene(destination.presentation.segmentId, options);
+          }
+          return presentation.closeScene(options);
+        };
+        return await applyCue(destination?.cue, item.narrative, beforeApply);
       } finally {
         if (generation === navigationGeneration) rearmTransport();
       }
@@ -1049,6 +1077,8 @@ export function initNliStaffRemote(dataContext, { presenterManifest = presenterC
       const nextIndex = Math.max(0, Math.min(index, item.steps.length - 1));
       if (state.scriptId !== item.id || state.step !== nextIndex) return;
       const destination = item.steps[nextIndex];
+      const opened = presentation.getState();
+      if (opened.phase === "open" && opened.segmentId === destination.presentation?.segmentId) return;
       if (shouldAutoOpenNliPresentation({
         item, index: nextIndex, currentScript: script(), currentStep: currentStep(), cueStatus: "ready",
       })) {
@@ -1084,9 +1114,9 @@ export function initNliStaffRemote(dataContext, { presenterManifest = presenterC
       await exitToHome();
       return;
     }
-    const result = await applyCue(failedCue.cue, failedCue.narrativeId);
+    const result = await applyCue(failedCue.cue, failedCue.narrativeId, failedCue.beforeApply);
     rearmTransport();
-    if (result?.status !== "ready") return;
+    if (result?.status !== "ready" || failedCue.beforeApply) return;
     const item = script();
     const step = currentStep();
     if (shouldAutoOpenNliPresentation({
@@ -1266,6 +1296,11 @@ export function initNliStaffRemote(dataContext, { presenterManifest = presenterC
   return { render, dispose() {
     if (disposed) return;
     disposed = true;
+    archiveUiReady = false;
+    navigationGeneration += 1;
+    searchTransition.begin();
+    cues.cancel();
+    presentation.destroy();
     for (const unsubscribe of unsubscribers) unsubscribe();
     window.removeEventListener(LOCALE_EVENT, onLocaleChange);
     window.removeEventListener("pagehide", releaseExhibitMode);

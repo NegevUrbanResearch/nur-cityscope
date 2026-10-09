@@ -7,6 +7,9 @@ import {
   tessellateRibbon,
 } from "../../frontend/src/shared/maplibre-acrossline-ribbon.js";
 import { idleNliClock, playNliClock } from "../../frontend/src/shared/nli-investigation-clock.js";
+import { NLI_NARRATIVES } from "../../frontend/src/shared/nli-narratives.js";
+import { getLayerLifecycleRuntime } from "../../frontend/src/shared/layer-lifecycle-fade.js";
+import { createNliSceneDisplayBinding } from "../../frontend/src/shared/nli-scene-display-binding.js";
 import { INVESTIGATION_LINES_FULL_ID } from "../../frontend/src/shared/nli-investigation-beats.js";
 import {
   disposeInvestigationTimelineForMap,
@@ -1685,5 +1688,125 @@ describe("settled Nova intersections", () => {
     expect(map.pendingAnimationFrameCount()).toBeGreaterThan(0);
     expect(onParallelImpactIdsChanged).not.toHaveBeenCalled();
     coordinator.dispose();
+  });
+});
+
+describe("managed Nova ribbon hold", () => {
+  test("restores fleeing highlights when Mor's scene activation fails", async () => {
+    installMemorialFetch();
+    const map = memorialMap();
+    const state = { narrative: { id: "nova" }, overlay: { individual: true } };
+    const context = {
+      getLayerGroups: () => [], getNarrativeState: () => state.narrative,
+      getEscapeOverlay: () => state.overlay, getInvestigationClock: () => idleNliClock(),
+    };
+    const runtime = getLayerLifecycleRuntime(map, {
+      now: () => 0, requestFrame: callback => map.requestAnimationFrame(callback),
+      cancelFrame: id => map.cancelAnimationFrame(id),
+    });
+    const controller = createNovaEscapeCoordinator({
+      map, dataContext: context, managedScene: true, surface: "projection", profile: "projection",
+      onParallelImpactIdsChanged: vi.fn(),
+    });
+    const mor = {
+      getSceneIds: snapshot => snapshot.escapeOverlay?.mor ? ["test-mor"] : [],
+      prepareSnapshot: async () => {},
+      applySnapshot(snapshot) {
+        if (!snapshot.escapeOverlay?.mor) return;
+        map.addLayer(runtime.stageMapLayer("test-mor", {
+          id: "test-mor", type: "line", paint: { "line-opacity": 1 },
+        }).stagedLayerDef);
+        runtime.markMemberFailed("test-mor");
+      },
+    };
+    let binding;
+    try {
+      binding = await createNliSceneDisplayBinding({ map, dataContext: context, runtime, escapeCoordinator: controller, morCoordinator: mor });
+      controller.setRevealProgress(1);
+      const labels = () => map.getPaintProperty("projector_base__שמות_יישובים__labels", "text-opacity");
+      const litBeeri = ["case", ["in", ["get", "cityname"], ["literal", ["בארי"]]], 1, 0.08];
+      expect(labels()).toEqual(litBeeri);
+      expect(controller.debugParallelImpactIds()).toEqual(new Set(["line:232"]));
+      state.overlay = { mor: true };
+      expect(await binding.request()).toMatchObject({ status: "failed" });
+      expect(binding.getDisplayedSnapshot().escapeOverlay).toEqual({ individual: true });
+      expect(labels()).toEqual(litBeeri);
+      expect(controller.debugParallelImpactIds()).toEqual(new Set(["line:232"]));
+    } finally {
+      binding?.dispose(); controller.dispose(); runtime.dispose();
+      vi.unstubAllGlobals(); vi.restoreAllMocks();
+    }
+  });
+
+  test.each(["gis", "projection"])("%s clears fleeing settlement highlights when entering Mor's route", async surface => {
+    installMemorialFetch();
+    const map = memorialMap();
+    map.getSource("projector_base.שמות_יישובים").data.features.push({
+      type: "Feature", properties: { cityname: "נובה", OBJECTID: 43 },
+      geometry: { type: "Point", coordinates: [34.47, 31.4] },
+    });
+    let time = 0;
+    let fadeFrame;
+    const runtime = getLayerLifecycleRuntime(map, {
+      now: () => time,
+      requestFrame: callback => { fadeFrame = callback; return 1; },
+      cancelFrame: () => { fadeFrame = null; },
+    });
+    const controller = createNovaEscapeCoordinator({ map, managedScene: true, surface, profile: surface });
+    try {
+      await syncInvestigationTimelineToMap(map, idleNliClock(), [], {
+        featuresById: { "nli.investigation_polygons": [] },
+        settlementFeatures: [memorialSettlement], getLayerDataUrl: () => null,
+        narrativeFocus: NLI_NARRATIVES.nova, displayProfile: surface, now: () => time,
+      });
+      const fleeing = { narrativeState: { id: "nova" }, escapeOverlay: { individual: true } };
+      await controller.prepareSnapshot(fleeing);
+      runtime.setDesiredIds(controller.getSceneIds(fleeing), { durationMs: 0 });
+      await controller.applySnapshot(fleeing);
+      runtime.commitBatch();
+      controller.setRevealProgress(1);
+      const labelsId = "projector_base__שמות_יישובים__labels";
+      const names = () => map.getPaintProperty(labelsId, "text-opacity");
+      expect(names()[1][2][1]).toEqual(expect.arrayContaining(["בארי", "נובה"]));
+      const impactSource = map.getSource(NOVA_ESCAPE_IMPACT_LAYER_ID);
+      expect(impactSource.data.features).toHaveLength(1);
+
+      const mor = { narrativeState: { id: "nova" }, escapeOverlay: { mor: true } };
+      runtime.setDesiredIds([], { durationMs: 400 });
+      controller.holdForScene();
+      await controller.applySnapshot(mor);
+      runtime.commitBatch();
+      // The outgoing geometry remains available for the scene fade.
+      expect(impactSource.data.features).toHaveLength(1);
+      time = 500;
+      fadeFrame?.(time);
+      expect(names()).toEqual(["case", ["in", ["get", "cityname"], ["literal", ["נובה"]]], 1, 0.08]);
+    } finally {
+      controller.dispose();
+      disposeInvestigationTimelineForMap(map);
+      runtime.dispose();
+      vi.unstubAllGlobals();
+      vi.restoreAllMocks();
+    }
+  });
+
+  test.each(["reversal", "failed scene"])("freezes the actual custom-layer frame during exit and resumes its retained reveal on %s", async outcome => {
+    const { getLayerLifecycleRuntime } = await import("../../frontend/src/shared/layer-lifecycle-fade.js");
+    let time = 0; vi.spyOn(Date, "now").mockImplementation(() => time);
+    vi.stubGlobal("fetch", vi.fn(async url => String(url) === INDIVIDUAL_URL ? jsonResponse(individualCollection) : String(url) === IMPACT_INDEX_URL ? impactIndex() : jsonResponse({ type: "FeatureCollection", features: [] })));
+    const map = createFakeMapLibreMap(); const runtime = getLayerLifecycleRuntime(map, { now: () => time });
+    const controller = createNovaEscapeCoordinator({ map, managedScene: true, surface: "projection", profile: "projection" });
+    const snapshot = { narrativeState: { id: "nova" }, escapeOverlay: { individual: true } };
+    await controller.prepareSnapshot(snapshot); runtime.setDesiredIds(controller.getSceneIds(snapshot), { durationMs: 0 }); await controller.applySnapshot(snapshot); runtime.commitBatch();
+    controller.debugNoteRibbonDrawable(); time = 2000;
+    const ribbon = map.getLayer("nli-nova-escape-individual"); const progress = controller.debugFeatureProgress(individualCollection.features[0]); expect(progress).toBeGreaterThan(0);
+    controller.holdForScene(); time = 2300;
+    expect(controller.debugFeatureProgress(individualCollection.features[0])).toBe(progress);
+    if (outcome === "reversal") await controller.applySnapshot(snapshot);
+    else controller.resumeForScene();
+    expect(controller.debugFeatureProgress(individualCollection.features[0])).toBe(progress);
+    time = 3300; expect(controller.debugFeatureProgress(individualCollection.features[0])).toBeGreaterThan(progress);
+    expect(map.getLayer("nli-nova-escape-individual")).toBe(ribbon);
+    controller.dispose(); runtime.dispose(); vi.unstubAllGlobals(); vi.restoreAllMocks();
   });
 });

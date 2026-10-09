@@ -9,6 +9,7 @@ import {
   INVESTIGATION_POLYGONS_FULL_ID,
 } from "./nli-investigation-beats.js";
 import { NLI_DISPLAY_PROFILES, NLI_VISUAL_TOKENS } from "./nli-investigation-theme.js";
+import { visibleInvestigationFeatures } from "./nli-investigation-visibility.js";
 import {
   BUFFERED_GRADIENT_BAND_PROPERTY,
   buildBufferedGradientRenderPlan,
@@ -27,6 +28,7 @@ import {
   addInvestigationOverlayLayer,
   completeInvestigationOverlayMount,
   fadeInvestigationOverlayLayer,
+  deferInvestigationOverlaySceneExit,
   isOverlayOpacityProperty,
   publishInvestigationOverlayOpacity,
 } from "./investigation-overlay-lifecycle.js";
@@ -41,11 +43,9 @@ const SETTLEMENT_OUTLINE = NLI_VISUAL_TOKENS.settlementImpactOutline;
 const NARRATIVE_SETTLEMENT_OUTLINE = NLI_VISUAL_TOKENS.narrativeSettlementOutline;
 const NOTES_BATTLE = "מרחב לחימה - קרב";
 const NOTES_KIDNAP = "מוקד חטיפה";
-const NOTES_FIRE = "שריפה";
 const CATEGORY_SPECS = Object.freeze([
   Object.freeze({ suffix: "battle", notes: NOTES_BATTLE }),
   Object.freeze({ suffix: "kidnap", notes: NOTES_KIDNAP }),
-  Object.freeze({ suffix: "fire", notes: NOTES_FIRE }),
 ]);
 const CATEGORY_FILL_LAYER_IDS = Object.freeze({
   battle: `${CATEGORY_SOURCE_ID}-fill-battle`,
@@ -377,7 +377,7 @@ export function createInvestigationPolygonRenderer(
         : undefined;
     if (polygonFeatures !== undefined && (force || versionChanged || state.inputRefs.polygonFeatures !== polygonFeatures)) {
       state.inputRefs.polygonFeatures = polygonFeatures;
-      state.polygonFeatures = asArray(polygonFeatures);
+      state.polygonFeatures = visibleInvestigationFeatures(asArray(polygonFeatures));
       registryChanged = true;
     }
 
@@ -387,7 +387,7 @@ export function createInvestigationPolygonRenderer(
       : (force || versionChanged) ? state.inputRefs.bufferedGradientFeatures : undefined;
     if (gradientFeatures !== undefined && (force || versionChanged || state.inputRefs.bufferedGradientFeatures !== gradientFeatures)) {
       state.inputRefs.bufferedGradientFeatures = gradientFeatures;
-      state.bufferedGradientFeatures = asArray(gradientFeatures);
+      state.bufferedGradientFeatures = visibleInvestigationFeatures(asArray(gradientFeatures));
       if (!Object.prototype.hasOwnProperty.call(data, "bufferedGradientSidecarStatus")
         && !Object.prototype.hasOwnProperty.call(data, "bufferedGradientStatus")
         && gradientFeatures != null) {
@@ -1005,8 +1005,15 @@ export function createInvestigationPolygonRenderer(
     }
   }
 
-  function reset({ preserveBasePaints = false, immediate = false } = {}) {
+  function reset({ preserveBasePaints = false, immediate = false, sceneDeparture = false } = {}) {
     if (state.disposed) return;
+    if (sceneDeparture) {
+      const generation = ++state.overlayHideGeneration;
+      if (deferInvestigationOverlaySceneExit(map, INVESTIGATION_POLYGONS_FULL_ID, () => {
+        if (generation !== state.overlayHideGeneration) return;
+        reset({ preserveBasePaints: true, immediate: true });
+      })) return;
+    }
     const hasOwnedState =
       state.mounted ||
       state.currentFrame ||

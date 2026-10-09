@@ -99,6 +99,12 @@ export function createGisBasemapStyleCoordinator({
 
   return {
     request,
+    acceptSceneBasemap(basemapId) {
+      if (disposed || !isGisBasemapId(basemapId)) return;
+      cancelRetry(intent);
+      intent = { basemapId, retryUsed: false, retryTimer: null };
+      displayedBasemap = basemapId;
+    },
     getRequestedBasemap: () => intent.basemapId,
     getDisplayedBasemap: () => displayedBasemap,
     dispose() {

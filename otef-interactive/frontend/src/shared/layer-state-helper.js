@@ -202,11 +202,10 @@ function getLayerState(fullLayerId) {
  *
  * @returns {Array<{id: string, name?: string, enabled: boolean, layers: Array<{id: string, name?: string, enabled: boolean}>}>}
  */
-function getEffectiveLayerGroups() {
-  const contextGroups =
-    typeof OTEFDataContext !== "undefined"
-      ? OTEFDataContext.getLayerGroups()
-      : null;
+function getEffectiveLayerGroups(contextGroupsOverride) {
+  const contextGroups = contextGroupsOverride ?? (
+    typeof OTEFDataContext !== "undefined" ? OTEFDataContext.getLayerGroups() : null
+  );
   const contextMap = new Map();
   if (Array.isArray(contextGroups)) {
     for (const g of contextGroups) {

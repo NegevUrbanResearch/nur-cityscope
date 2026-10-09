@@ -5,6 +5,7 @@ import { NLI_NOVA_STORY } from "../shared/nli-nova-story.js";
 const NO_ESCAPE = Object.freeze({ individual: false, overlap: false, mor: false, settled: false });
 // Release a presentation hold even if the staff tab closes or its cleanup write fails.
 const PRESENTATION_HOLD_LIMIT_MS = 15000;
+const holdSequences = new WeakMap();
 
 export function buildNovaEndedClock(previous) {
   return endNliClock({
@@ -68,12 +69,23 @@ export function createCueRunner({
   let queue = Promise.resolve();
   let token = 0;
   let presentationDeadline = null;
+  let sceneHandle = null;
+  let cueController = null;
 
   async function beginPresentation(cue, live) {
     const clock = dataContext?.getInvestigationClock?.();
     if (!clock || typeof dataContext?.patchInvestigationClock !== "function") return;
     const now = dataContext?.correctedNow?.() ?? Date.now();
-    presentationDeadline = now + PRESENTATION_HOLD_LIMIT_MS;
+    // The deadline doubles as the hold ownership token. Distinguish cues
+    // sharing the same corrected millisecond without extending the hold limit.
+    const previousSequence = holdSequences.get(dataContext);
+    let sequence = previousSequence?.now === now ? previousSequence.sequence + 1 : 0;
+    presentationDeadline = now + PRESENTATION_HOLD_LIMIT_MS - sequence;
+    if (clock.presentationPendingUntilMs === presentationDeadline) {
+      sequence += 1;
+      presentationDeadline -= 1;
+    }
+    holdSequences.set(dataContext, { now, sequence });
     const previous = clock.hiddenDisplays ?? [];
     const hiddenDisplays = ["gis", "projection"].filter((display) =>
       previous.includes(display) || cue.hiddenDisplays?.includes(display));
@@ -84,7 +96,7 @@ export function createCueRunner({
     const canSendOrAdopt = () => sent || (sent = live());
     assertAcknowledged(await dataContext.patchInvestigationClock({
       ...clock, hiddenDisplays, presentationPendingUntilMs: presentationDeadline,
-    }, { isCurrent: canSendOrAdopt }), "Clock presentation update was not acknowledged");
+    }, { isCurrent: canSendOrAdopt, claimPresentationHold: true }), "Clock presentation update was not acknowledged");
     if (!live()) throw cancelled();
   }
 
@@ -93,7 +105,11 @@ export function createCueRunner({
     if (presentationDeadline == null || clock?.presentationPendingUntilMs !== presentationDeadline) return;
     const next = { ...clock };
     delete next.presentationPendingUntilMs;
-    assertAcknowledged(await dataContext.patchInvestigationClock(next), "Clock presentation release was not acknowledged");
+    const ownedDeadline = presentationDeadline;
+    assertAcknowledged(await dataContext.patchInvestigationClock(next, {
+      isCurrent: () => dataContext.getInvestigationClock()?.presentationPendingUntilMs === ownedDeadline,
+      releasePresentationHold: ownedDeadline,
+    }), "Clock presentation release was not acknowledged");
     presentationDeadline = null;
   }
 
@@ -141,14 +157,13 @@ export function createCueRunner({
     if (!live()) throw cancelled();
   }
 
-  async function applySteps(cue, narrativeId, live) {
+  async function applySteps(cue, narrativeId, live, narrativePrepared = false) {
     const kind = clockKind(cue.clock);
     const layers = partitionLayers(cue.layers);
     const currentId = dataContext?.getNarrativeState?.()?.id ?? null;
     const target = "narrative" in cue ? cue.narrative : narrativeId;
     const enteringNova = target === "nova" && currentId !== "nova";
     const stagePartial = kind === "ended" && enteringNova;
-    const playWhileHoldingNarrative = kind === "play" && target == null && currentId != null;
     if (!live()) throw cancelled();
 
     if (stagePartial) await commitLayers(layers.rest);
@@ -156,23 +171,18 @@ export function createCueRunner({
     if (!live()) throw cancelled();
 
     if (kind === "play") {
-      if (playWhileHoldingNarrative) {
-        await applyEscape(cue, live);
-        const started = await startClock(cue.clock, layers.playable, live);
-        if (!live() || started === false) throw cancelled();
-        await applyNarrative(target, live);
-      } else {
-        await applyNarrative(target, live);
-        await applyEscape(cue, live);
-        const started = await startClock(cue.clock, layers.playable, live);
-        if (!live() || started === false) throw cancelled();
-      }
+      // Beat selection reads the live narrative. Exit Nova under the cue hold
+      // before arming a general timeline, otherwise its Nova beats survive Back.
+      await applyNarrative(target, live);
+      await applyEscape(cue, live);
+      const started = await startClock(cue.clock, layers.playable, live);
+      if (!live() || started === false) throw cancelled();
       await commitLayers(layers.all);
       if (!live()) throw cancelled();
       return;
     }
 
-    await applyNarrative(target, live, { force: kind === "idle" && target == null });
+    await applyNarrative(target, live, { force: kind === "idle" && target == null && !narrativePrepared });
 
     if (kind === "idle") {
       await applyEscape(cue, live);
@@ -193,10 +203,13 @@ export function createCueRunner({
   }
 
   return {
-    apply(cue, narrativeId = null) {
+    apply(cue, narrativeId = null, beforeApply = null) {
+      cueController?.abort(); sceneHandle?.cancel(); sceneHandle = null;
+      cueController = new AbortController();
+      const signal = cueController.signal;
       const mine = ++token;
       const live = () => mine === token;
-      if (!cue) {
+      if (!cue && !beforeApply) {
         onStatus(null);
         return queueRelease();
       }
@@ -204,13 +217,33 @@ export function createCueRunner({
       const run = async () => {
         if (!live()) return { status: "cancelled" };
         let status = "ready";
+        let narrativePrepared = false;
+        const prepareNarrative = async () => {
+          if (!cue || narrativePrepared) return;
+          const target = "narrative" in cue ? cue.narrative : narrativeId;
+          const previous = dataContext?.getNarrativeState?.()?.id ?? null;
+          await applyNarrative(target, live);
+          narrativePrepared = previous !== target;
+        };
         try {
+          // Hold all scene topics before staging any scene-bound presentation.
+          await beginPresentation(cue || {}, live);
+          if (beforeApply) {
+            const result = await beforeApply(live, { signal, prepareNarrative });
+            if (result && typeof result === "object" && result.prepared && result.opened) {
+              sceneHandle = result;
+              if (signal.aborted) result.cancel();
+              if (await result.prepared === false) throw new Error("GIS presentation preparation failed");
+            } else if (result === false) throw new Error("GIS presentation did not open");
+          }
+          if (!live()) throw cancelled();
           // Publish intentional hiding and a caption hold before any scene mutation.
           // Restore visibility and release the old caption only once the cue is ready.
-          await beginPresentation(cue, live);
-          await applySteps(cue, narrativeId, live);
-          if (!live()) return { status: "cancelled" };
-          await applyClockVisibility(cue.hiddenDisplays ?? [], live);
+          if (cue) {
+            await applySteps(cue, narrativeId, live, narrativePrepared);
+            if (!live()) return { status: "cancelled" };
+            await applyClockVisibility(cue.hiddenDisplays ?? [], live);
+          }
         } catch (error) {
           if (!live() || error?.cancelled) return { status: "cancelled" };
           status = "failed";
@@ -222,6 +255,11 @@ export function createCueRunner({
           }
         }
         if (!live()) return { status: "cancelled" };
+        const handle = sceneHandle;
+        if (status !== "ready") handle?.cancel();
+        else if (handle && await handle.opened === false) status = "failed";
+        if (!live()) return { status: "cancelled" };
+        if (sceneHandle === handle) sceneHandle = null;
         onStatus(status);
         return { status };
       };
@@ -229,6 +267,7 @@ export function createCueRunner({
       return queue;
     },
     cancel() {
+      cueController?.abort(); sceneHandle?.cancel(); sceneHandle = null;
       token += 1;
       onStatus(null);
       queueRelease();
