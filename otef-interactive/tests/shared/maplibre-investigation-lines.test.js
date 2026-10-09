@@ -334,6 +334,60 @@ describe("investigation line renderer", () => {
       .toBeGreaterThan(maps[0].paints.get("nli-investigation-line-completed-motion-line:line-width"));
   });
 
+  it("keeps composite classification shared across GIS and projection profiles", () => {
+    const parent = line(23, 400, [[8, 0], [10, 0]]);
+    const child = line(1013, 400, [[0, 0], [4, 0], [8, 0]]);
+    child.properties = { ...child.properties, route_confidence: "unconfirmed", parent_objectid: 23 };
+    const unrelated = line(9000, 410, [[30, 30], [31, 31]]);
+    const results = ["gis", "projection"].map((profile) => {
+      const map = makeMap();
+      const renderer = createInvestigationLineRenderer(map, profile);
+      renderer.render(
+        { activeProgress: 0.9, completedRouteFlow: { active: false, progress: 0 }, motionMode: "full" },
+        { futureFeatures: [], completedFeatures: [], activeFeatures: [parent, child, unrelated] },
+      );
+      return {
+        map,
+        confirmed: map.sources.get("nli-investigation-line-composite-active").setData.mock.calls.at(-1)[0].features,
+        unconfirmedActive: map.sources.get("nli-investigation-line-unconfirmed-active").setData.mock.calls.at(-1)[0].features,
+        unconfirmedCompleted: map.sources.get("nli-investigation-line-unconfirmed-completed").setData.mock.calls.at(-1)[0].features,
+        ordinaryActive: map.sources.get("nli-investigation-line-active").setData.mock.calls.at(-1)[0].features,
+      };
+    });
+    const classification = (result) => ({
+      confirmed: result.confirmed.map((feature) => feature.properties.OBJECTID),
+      unconfirmedActive: result.unconfirmedActive.map((feature) => feature.properties.OBJECTID),
+      unconfirmedCompleted: result.unconfirmedCompleted.map((feature) => feature.properties.OBJECTID),
+      ordinaryActive: result.ordinaryActive.map((feature) => feature.properties.OBJECTID),
+    });
+    expect(classification(results[0])).toEqual({
+      confirmed: [23], unconfirmedActive: [], unconfirmedCompleted: [1013], ordinaryActive: [9000],
+    });
+    expect(classification(results[1])).toEqual(classification(results[0]));
+    const gisUnconfirmed = results[0].map.getLayer("nli-investigation-line-unconfirmed-completed-line").paint["line-width"];
+    const projectionUnconfirmed = results[1].map.getLayer("nli-investigation-line-unconfirmed-completed-line").paint["line-width"];
+    expect(projectionUnconfirmed).toBeGreaterThan(gisUnconfirmed);
+  });
+
+  it("freezes reveal progress while completed confirmed flow keeps moving", () => {
+    const map = makeMap();
+    const renderer = createInvestigationLineRenderer(map, "gis");
+    const parent = line(23, 400, [[8, 0], [10, 0]]);
+    const child = line(1013, 400, [[0, 0], [8, 0]]);
+    child.properties = { ...child.properties, route_confidence: "unconfirmed", parent_objectid: 23 };
+    const completed = line(8, 390, [[20, 0], [21, 0]]);
+    const data = { futureFeatures: [], completedFeatures: [completed], activeFeatures: [parent, child] };
+    renderer.render({ activeProgress: 0.4, completedRouteFlow: { active: true, progress: 0 }, motionMode: "full" }, data);
+    const revealBeforePause = map.sources.get("nli-investigation-line-unconfirmed-active").setData.mock.calls.at(-1)[0];
+    const flowAtPause = map.paints.get("nli-investigation-line-completed-motion-line:line-dasharray");
+    renderer.render({ activeProgress: 0.4, completedRouteFlow: { active: true, progress: 0.25 }, motionMode: "full" }, data);
+    const revealDuringPause = map.sources.get("nli-investigation-line-unconfirmed-active").setData.mock.calls.at(-1)[0];
+    const flowDuringPause = map.paints.get("nli-investigation-line-completed-motion-line:line-dasharray");
+    expect(revealDuringPause).toEqual(revealBeforePause);
+    expect(flowDuringPause).not.toEqual(flowAtPause);
+    expect(revealDuringPause.features[0].geometry.coordinates.at(-1)).toEqual([4, 0]);
+  });
+
   it("invalidates geometry caches after an in-place mutation and data-version bump", () => {
     const map = makeMap();
     const renderer = createInvestigationLineRenderer(map, {});

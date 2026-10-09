@@ -176,6 +176,30 @@ describe("settlement outline achievement", () => {
     expect(ids.size).toBe(0);
   });
 
+  it("keeps confirmed collision progress and achievements unchanged when a child overlaps another settlement", () => {
+    const confirmed = route(23, [[8, 0], [10, 0]]);
+    const child = {
+      ...route(1013, [[0, 0], [8, 0]]),
+      properties: { OBJECTID: 1013, parent_objectid: 23, route_confidence: "unconfirmed", timeline_minutes: 400 },
+    };
+    const outlines = [settlement(20, square(8.5, 9)), settlement(21, square(4, 6))];
+    const baseline = buildRouteSettlementCollisionIndex([confirmed], outlines);
+    const withApproach = buildRouteSettlementCollisionIndex([confirmed, child], outlines);
+
+    expect(withApproach.get("23")).toEqual(baseline.get("23"));
+    expect(withApproach.has("1013")).toBe(false);
+    const baselineAchievements = deriveAchievedSettlementOutlineIds({
+      collisionIndex: baseline,
+      completedRouteFeatures: [confirmed],
+    });
+    const withApproachAchievements = deriveAchievedSettlementOutlineIds({
+      collisionIndex: withApproach,
+      completedRouteFeatures: [confirmed, child],
+    });
+    expect([...withApproachAchievements]).toEqual([...baselineAchievements]);
+    expect([...withApproachAchievements]).toEqual(["20"]);
+  });
+
   it("an infiltration line that enters the Nova site polygon lights 100", () => {
     const polygons = loadProcessedFeatures(POLYGONS_PATH);
     const sidecar = loadProcessedFeatures(SETTLEMENTS_PATH);
