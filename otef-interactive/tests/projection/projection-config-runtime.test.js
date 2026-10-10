@@ -2,6 +2,7 @@ import { describe, expect, test, vi } from "vitest";
 import { DEFAULT_PROJECTION_CONFIG } from "../../frontend/src/shared/projection-config-schema.js";
 import { createProjectionConfigRuntime } from "../../frontend/src/projection/projection-config-runtime.js";
 import { projectionPlacementInputIdentity } from "../../frontend/src/projection/projection-names-run.js";
+import { nameTextStyle } from "../../frontend/src/shared/nli-name-language.js";
 import { applyProjectionSpanView } from "../../frontend/src/projection/projection-span-view.js";
 import { createNliNameFieldController } from "../../frontend/src/shared/nli-name-field-controller.js";
 import { createFakeMapLibreMap } from "../helpers/fake-maplibre-map.js";
@@ -70,6 +71,94 @@ function makeHarness(spanId = "left", instanceId = "11111111-1111-4111-8111-1111
   };
 }
 
+test('font-only accepted config rebuilds names and readiness waits for the active rendered font', async () => {
+  let resolveReplacement;
+  let installedFont = null;
+  let preparations = 0;
+  const first = structuredClone(DEFAULT_PROJECTION_CONFIG);
+  first.nliFonts.en = 'hadassah';
+  const prepareCandidate = vi.fn((config, _revision, _generation, _signal, { language = 'he' } = {}) => {
+    const fontFamily = nameTextStyle(language, config.nliFonts).fontFamily;
+    const wall = { language, fontFamily, datasetVersion: 'v1', digest: (++preparations).toString(16).padStart(64, 'a'), diagnostics: { expected: 1, placed: 1 } };
+    if (preparations === 2) return new Promise(resolve => { resolveReplacement = () => resolve({ wall }); });
+    return Promise.resolve({ wall });
+  });
+  const h = makeHarness('left', '11111111-1111-4111-8111-111111111111', {
+    getNameLanguage: () => 'en', getDatasetVersion: () => 'v1', hasPreparedNames: () => true,
+    prepareCandidate, commitCandidate: pair => { installedFont = pair.wall.fontFamily; }, drawCompletion: () => true,
+  });
+  try {
+    await h.runtime.start(); h.state(1, first); h.frame(); h.render();
+    await vi.waitFor(() => { h.render(); expect(installedFont).toBe('NLI Content Hadassah Friedlaender'); });
+    const next = structuredClone(first); next.nliFonts.en = 'marcellus';
+    h.state(2, next); h.frame(); h.render();
+    await vi.waitFor(() => expect(h.applied.at(-1)?.revision).toBe(2));
+    await vi.waitFor(() => expect(prepareCandidate).toHaveBeenCalledTimes(2));
+    const ready = h.runtime.ensureNamesReady();
+    let resolved = false; ready.then(() => { resolved = true; });
+    await Promise.resolve();
+    expect(resolved).toBe(false);
+    expect(installedFont).toBe('NLI Content Hadassah Friedlaender');
+    resolveReplacement();
+    await vi.waitFor(() => { h.render(); expect(installedFont).toBe('NLI Content Marcellus'); });
+    await expect(ready).resolves.toBe(true);
+  } finally { h.runtime.stop(); }
+});
+
+test('a newer font-only target retries after stale scene preparation settles', async () => {
+  let releaseMarcellus;
+  let installedFont = null;
+  const preparedFonts = [];
+  const committedFonts = [];
+  const first = structuredClone(DEFAULT_PROJECTION_CONFIG);
+  first.nliFonts.en = 'hadassah';
+  const prepareCandidate = vi.fn((config, _revision, _generation, _signal, { language = 'he' } = {}) => {
+    const fontFamily = nameTextStyle(language, config.nliFonts).fontFamily;
+    preparedFonts.push(fontFamily);
+    if (fontFamily === 'NLI Content Belleza') return Promise.reject(new Error('selected face unavailable'));
+    const wall = { language, fontFamily, datasetVersion: 'v1', digest: preparedFonts.length.toString(16).padStart(64, 'a'), diagnostics: { expected: 1, placed: 1 } };
+    if (fontFamily === 'NLI Content Marcellus') {
+      return new Promise(resolve => { releaseMarcellus = () => resolve({ wall }); });
+    }
+    return Promise.resolve({ wall });
+  });
+  const h = makeHarness('left', '11111111-1111-4111-8111-111111111111', {
+    getNameLanguage: () => 'en', getDatasetVersion: () => 'v1', hasPreparedNames: () => true,
+    prepareCandidate, commitCandidate: pair => { installedFont = pair.wall.fontFamily; committedFonts.push(installedFont); }, drawCompletion: () => true,
+  });
+  try {
+    await h.runtime.start(); h.state(1, first); h.frame(); h.render();
+    await vi.waitFor(() => { h.render(); expect(installedFont).toBe('NLI Content Hadassah Friedlaender'); });
+
+    const second = structuredClone(first); second.nliFonts.en = 'marcellus';
+    h.state(2, second); h.frame(); h.render();
+    await vi.waitFor(() => expect(h.applied.at(-1)?.revision).toBe(2));
+    await vi.waitFor(() => expect(releaseMarcellus).toBeTypeOf('function'));
+
+    const third = structuredClone(first); third.nliFonts.en = 'narkiss';
+    h.state(3, third); h.frame(); h.render();
+    await vi.waitFor(() => expect(h.applied.at(-1)?.revision).toBe(3));
+    releaseMarcellus();
+
+    await vi.waitFor(() => expect(preparedFonts).toEqual([
+      'NLI Content Hadassah Friedlaender', 'NLI Content Marcellus', 'NLI Content Narkiss Block',
+    ]));
+    await vi.waitFor(() => { h.render(); expect(installedFont).toBe('NLI Content Narkiss Block'); });
+    await expect(h.runtime.ensureNamesReady()).resolves.toBe(true);
+    expect(installedFont).toBe('NLI Content Narkiss Block');
+    expect(committedFonts).toEqual(['NLI Content Hadassah Friedlaender', 'NLI Content Narkiss Block']);
+
+    const fourth = structuredClone(first); fourth.nliFonts.en = 'belleza';
+    h.state(4, fourth); h.frame(); h.render();
+    await vi.waitFor(() => expect(h.applied.at(-1)?.revision).toBe(4));
+    await vi.waitFor(() => expect(preparedFonts).toHaveLength(4));
+    await vi.waitFor(() => expect(h.sent().some(message => message.state === 'failed')).toBe(true));
+    expect(installedFont).toBe('NLI Content Narkiss Block');
+    expect(committedFonts).toEqual(['NLI Content Hadassah Friedlaender', 'NLI Content Narkiss Block']);
+    expect(h.sent().some(message => message.state === 'failed' && /interrupted/.test(message.error || ''))).toBe(false);
+  } finally { h.runtime.stop(); }
+});
+
 test.each([false, true])('language-only refresh uses applied geometry even after failed Save=%s', async failedSave => {
   let language = 'he', visibleLanguage = null;
   const bad = structuredClone(DEFAULT_PROJECTION_CONFIG); bad.pre.scale += 0.1;
@@ -115,7 +204,7 @@ test.each(['save', 'suspend', 'disconnect', 'failed-reapply', 'failed-prepare', 
     const marker = h.sent().length;
     if (interruption === 'save') { h.state(2); h.frame(); }
     else if (interruption === 'disconnect') { h.socketListeners.get('disconnect')(); h.socketListeners.get('connect')(); }
-    else if (interruption === 'run') h.socketListeners.get('otef_projection_names_run')({ table: 'otef', requestId: '30000000-0000-4000-8000-000000000003', revision: 1, datasetVersion: 'v1', placementIdentity: await projectionPlacementInputIdentity(DEFAULT_PROJECTION_CONFIG) });
+    else if (interruption === 'run') h.socketListeners.get('otef_projection_names_run')({ table: 'otef', requestId: '30000000-0000-4000-8000-000000000003', revision: 1, datasetVersion: 'v1', placementIdentity: await projectionPlacementInputIdentity(DEFAULT_PROJECTION_CONFIG, 'en') });
     else { h.runtime.invalidate(); failNext = interruption.startsWith('failed-'); h.runtime.resume(); h.frame(); }
     await vi.waitFor(() => { h.render(); expect(visible).toBe('en'); });
     await vi.waitFor(() => { h.render(); expect(h.sent().filter(m => m.type === 'otef_projection_names_status').at(-1)?.state).toBe('current'); });

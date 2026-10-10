@@ -1,17 +1,19 @@
-import { effectiveSettlementPosition, SETTLEMENT_FONT_STACK, validateSettlementNameSettings } from "../shared/settlement-name-settings.js";
+import { effectiveSettlementPosition, validateSettlementNameSettings } from "../shared/settlement-name-settings.js";
 import { evaluateOpacityExpression } from "../shared/layer-opacity-expression.js";
 import { mapSettlementPosition } from './settlement-name-framing.js';
 import { DEFAULT_SETTLEMENT_LEADER_STYLE, EXCLUDED_SETTLEMENT_CODES, settlementTextLines } from '../shared/settlement-label-presentation.js';
 import { settlementConnector, paintSettlementConnector } from './settlement-name-connectors.js';
 import { paintSettlementOpacityGroup } from './settlement-opacity-group.js';
 import { resolveSettlementName } from '../shared/nli-name-language.js';
+import { nameTextStyle } from '../shared/nli-name-language.js';
+import { ensureNameFont } from '../shared/nli-name-font.js';
 
 const WIDTH = 1920;
 const HEIGHT = 1080;
 const HALO_PX = 0.35;
 
 function fontSpec(style) {
-  return `${style.fontPx}px ${SETTLEMENT_FONT_STACK[style.fontFamily]}`;
+  return `${style.fontPx}px ${style.canvasFontStack}`;
 }
 
 function glyphExtents(context, text) {
@@ -146,15 +148,17 @@ export function createProjectionSettlementNameAdapter({ document = globalThis.do
   return {
     setFramingProvider(provider) { framingProvider=provider; },
     getFraming() { refreshFraming(); return active?.framing ? structuredClone(active.framing) : null; },
-    async prepare({ catalog, settings, language = 'he', signal } = {}) {
+    async prepare({ catalog, settings, language = 'he', fontChoices, signal } = {}) {
       if (disposed) throw new Error("settlement adapter is disposed");
       const token = ++generation;
       const checked = validateSettlementNameSettings(settings);
       if (checked.errors.length) throw new TypeError(checked.errors.join(", "));
-      const style = { ...checked.value.style, language, ...(language === 'en' ? { fontFamily: 'Arial' } : {}) };
+      const baseline = { ...checked.value.style, language, direction: language === 'en' ? 'ltr' : 'rtl',
+        canvasFontStack: `"${checked.value.style.fontFamily}", sans-serif`, mapFontStack: [checked.value.style.fontFamily] };
+      const style = { ...checked.value.style, ...nameTextStyle(language, fontChoices, baseline) };
       if (signal?.aborted) return { stale: true };
       try {
-        await document?.fonts?.load?.(fontSpec(style));
+        await ensureNameFont(style, style.fontPx, document);
       } catch (error) {
         if (token !== generation || signal?.aborted) return { stale: true };
         throw new Error(`settlement font failed to load: ${error.message}`);

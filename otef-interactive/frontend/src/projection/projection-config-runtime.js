@@ -1,5 +1,6 @@
 import { DEFAULT_PROJECTION_CONFIG } from "../shared/projection-config-schema.js";
 import { projectionPlacementInputIdentity } from "./projection-names-run.js";
+import { nameTextStyle } from "../shared/nli-name-language.js";
 
 const TABLE = "otef";
 
@@ -229,6 +230,11 @@ export function createProjectionConfigRuntime({
       try { complete = drawCompletion(wait.config, wait.revision) === true; } catch (error) { handleRenderFailure(wait.revision, error); return; }
       if (!complete) return;
     }
+    const previousConfig = appliedConfig;
+    const renderedLanguage = currentNameLanguage();
+    const fontOnlyNameChange = Boolean(previousConfig &&
+      JSON.stringify({ ...previousConfig, nliFonts: undefined }) === JSON.stringify({ ...wait.config, nliFonts: undefined }) &&
+      nameTextStyle(renderedLanguage, previousConfig.nliFonts).fontFamily !== nameTextStyle(renderedLanguage, wait.config.nliFonts).fontFamily);
     appliedConfig = clone(wait.config);
     appliedRevision = wait.revision;
     failedRevision = -1;
@@ -240,6 +246,11 @@ export function createProjectionConfigRuntime({
     if (wait.geometryPair && typeof finalizeGeometry === 'function') finalizeGeometry(wait.geometryPair, wait.config, wait.revision);
     acknowledge(wait.revision, true);
     if (languageRefreshPending) { drainLanguageRefresh(); return; }
+    if (fontOnlyNameChange) {
+      initialNamesAttempted = true;
+      void ensureNamesReady().catch(error => reportNames('failed', null, error?.message || error));
+      return;
+    }
     if (!initialNamesAttempted && !installedNames) {
       initialNamesAttempted = true;
       const config = clone(latest.config), revision = latestRevision;
@@ -405,11 +416,12 @@ export function createProjectionConfigRuntime({
     const token = ++namesTargetGeneration;
     const datasetVersion = currentDatasetVersion() || "";
     let placementIdentity = "";
-    try { placementIdentity = await projectionPlacementInputIdentity(config); } catch { /* the ordinary config validator reports malformed configs */ }
+    const language = currentNameLanguage();
+    try { placementIdentity = await projectionPlacementInputIdentity(config, language); } catch { /* the ordinary config validator reports malformed configs */ }
     const current = kind === 'presentation' ? appliedConfig : latest?.config;
     const currentRevision = kind === 'presentation' ? appliedRevision : latestRevision;
     if (stopped || token !== namesTargetGeneration || currentRevision !== revision || !current || JSON.stringify(current) !== JSON.stringify(config)) return;
-    namesTarget = { revision, datasetVersion, placementIdentity, kind, configIdentity: JSON.stringify(config), language: currentNameLanguage() };
+    namesTarget = { revision, datasetVersion, placementIdentity, kind, configIdentity: JSON.stringify(config), language };
     datasetIdentityError = getDatasetIdentityError?.() || datasetIdentityError;
     if (datasetIdentityError) {
       reportNames("failed", null, datasetIdentityError);
@@ -484,7 +496,7 @@ export function createProjectionConfigRuntime({
         if (!isCurrentTarget()) {
           rollbackPrepared(); throw Object.assign(new Error("names run superseded"), { name: "AbortError" });
         }
-        const actualIdentity = await projectionPlacementInputIdentity(config);
+        const actualIdentity = await projectionPlacementInputIdentity(config, target.language);
         if (!isCurrentTarget() || actualIdentity !== target.placementIdentity) {
           rollbackPrepared(); throw Object.assign(new Error("names run superseded"), { name: "AbortError" });
         }
@@ -547,7 +559,7 @@ export function createProjectionConfigRuntime({
       });
       return;
     }
-    const actualIdentity = await projectionPlacementInputIdentity(config);
+    const actualIdentity = await projectionPlacementInputIdentity(config, target.language);
     if (stopped || suspended || targetGeneration !== namesTargetGeneration || target !== namesTarget ||
       latestRevision !== message.revision || appliedRevision !== message.revision ||
       (currentDatasetVersion() || "") !== message.datasetVersion || actualIdentity !== message.placementIdentity) {
@@ -762,8 +774,12 @@ export function createProjectionConfigRuntime({
   }
 
   function ensureNamesReady({ signal } = {}) {
-    const installed = () => installedNames && hasPreparedNames() &&
-      installedNames.datasetVersion === currentDatasetVersion() && (installedNames.language || 'he') === currentNameLanguage();
+    const installed = () => installedNames && hasPreparedNames() && namesTarget && appliedConfig &&
+      namesTarget.revision === appliedRevision && namesTarget.configIdentity === JSON.stringify(appliedConfig) &&
+      namesTarget.datasetVersion === currentDatasetVersion() && namesTarget.language === currentNameLanguage() &&
+      installedNames.datasetVersion === namesTarget.datasetVersion &&
+      installedNames.placementIdentity === namesTarget.placementIdentity &&
+      (installedNames.language || 'he') === namesTarget.language;
     const waitForGeometry = () => new Promise((resolve, reject) => {
       const check = () => {
         const error = stopped ? 'Projection runtime stopped' : getDatasetIdentityError?.() || datasetIdentityError;
@@ -774,23 +790,36 @@ export function createProjectionConfigRuntime({
       };
       namesWaiters.add(check); check();
     });
-    if (!sceneNamesPreparation) {
-      sceneNamesPreparation = (async () => {
+    const targetKey = () => JSON.stringify([appliedRevision, appliedConfig && JSON.stringify(appliedConfig),
+      currentDatasetVersion() || '', currentNameLanguage()]);
+    const key = targetKey();
+    if (sceneNamesPreparation?.key !== key) {
+      const owner = { key, promise: null };
+      const isCurrentOwner = () => sceneNamesPreparation === owner && targetKey() === owner.key;
+      owner.promise = (async () => {
         if (installed()) return true;
         await waitForGeometry();
+        if (!isCurrentOwner()) return ensureNamesReady();
         const existing = namesJob?.operation || initialNamesPreparation;
         if (existing) await existing;
+        if (!isCurrentOwner()) return ensureNamesReady();
         if (installed()) return true;
         await waitForGeometry();
+        if (!isCurrentOwner()) return ensureNamesReady();
         const config = clone(appliedConfig), revision = appliedRevision;
         const target = await setNamesTarget(config, revision, 'presentation');
-        if (!target || !await runNamesBuild(null, config, target) || !installed()) {
+        if (!isCurrentOwner()) return ensureNamesReady();
+        if (!target || !await runNamesBuild(null, config, target)) {
+          if (!isCurrentOwner()) return ensureNamesReady();
           throw new Error(namesError || 'Accepted names preparation was interrupted');
         }
+        if (!isCurrentOwner()) return ensureNamesReady();
+        if (!installed()) throw new Error(namesError || 'Accepted names preparation was interrupted');
         return true;
-      })().finally(() => { sceneNamesPreparation = null; });
+      })().finally(() => { if (sceneNamesPreparation === owner) sceneNamesPreparation = null; });
+      sceneNamesPreparation = owner;
     }
-    return waitForNames(sceneNamesPreparation, signal);
+    return waitForNames(sceneNamesPreparation.promise, signal);
   }
 
   return { start, stop, requestStatus, invalidate, resume, reapply, datasetChanged, datasetIdentityFailed, getAppliedGeometryState, nameLanguageChanged, ensureNamesReady };

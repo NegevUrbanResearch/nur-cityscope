@@ -186,6 +186,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
   let namesRunPending = false;
   let namesDatasetVersion = "";
   let namesTargetRequest = 0;
+  const readNliDisplayLanguage = () => layoutClient?.getLegendLanguage?.() === "en" ? "en" : "he";
   let namesStatusReplayPending = false;
   const win = root?.ownerDocument?.defaultView || globalThis.document?.defaultView;
   let layoutUnloadAttached = false;
@@ -558,7 +559,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
       output: settlementOutput,
       citycode: settlementCitycode,
       settingsClient: settlementClient,
-      getNameLanguage: () => layoutClient?.getLegendLanguage?.() || 'he',
+      getNameLanguage: readNliDisplayLanguage,
       subscribeNameLanguage: callback => layoutClient?.subscribe?.(callback),
       catalog,
       catalogStatus,
@@ -632,14 +633,15 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     const snapshot = state.snapshot;
     if (!snapshot?.config || !Number.isSafeInteger(snapshot.revision) || snapshot.revision < 0) { namesTracker.setTarget(null); refresh(); return false; }
     const token = ++namesTargetRequest;
+    const language = readNliDisplayLanguage();
     try {
       if (readDataset) {
         const inputs = await readNamesDataset?.();
         if (disposed || token !== namesTargetRequest || state.snapshot?.revision !== snapshot.revision) return false;
         namesDatasetVersion = typeof inputs?.datasetVersion === "string" && inputs.datasetVersion.trim() && inputs.datasetVersion.length <= 128 ? inputs.datasetVersion : "";
       }
-      const placementIdentity = await projectionPlacementInputIdentity(snapshot.config);
-      if (disposed || token !== namesTargetRequest || state.snapshot?.revision !== snapshot.revision) return false;
+      const placementIdentity = await projectionPlacementInputIdentity(snapshot.config, language);
+      if (disposed || token !== namesTargetRequest || state.snapshot?.revision !== snapshot.revision || readNliDisplayLanguage() !== language) return false;
       const changed = namesDatasetVersion
         ? namesTracker.setTarget({ revision: snapshot.revision, datasetVersion: namesDatasetVersion, placementIdentity })
         : namesTracker.setTarget(null);
@@ -669,7 +671,11 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
         state.pending || state.hasLocalDraft || typeof datasetVersion !== "string" || !datasetVersion.trim() || datasetVersion.length > 128) {
         namesRunPending = false; refresh(); return false;
       }
-      const placementIdentity = await projectionPlacementInputIdentity(config);
+      const language = readNliDisplayLanguage();
+      const placementIdentity = await projectionPlacementInputIdentity(config, language);
+      if (disposed || state.snapshot?.revision !== revision || readNliDisplayLanguage() !== language) {
+        namesRunPending = false; refresh(); return false;
+      }
       namesDatasetVersion = datasetVersion;
       namesTracker.setTarget({ revision, datasetVersion, placementIdentity });
       const requestId = createUuid();

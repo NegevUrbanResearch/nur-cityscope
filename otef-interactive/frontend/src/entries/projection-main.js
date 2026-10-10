@@ -525,7 +525,9 @@ async function bootstrapProjectionRuntime() {
       ) {
         return false;
       }
+      const fontChoicesChanged = JSON.stringify(effectiveProjectionConfig?.nliFonts) !== JSON.stringify(nextConfig.nliFonts);
       effectiveProjectionConfig = nextConfig;
+      if (fontChoicesChanged) settlementNameRuntime?.fontChoicesChanged?.();
       return applySpanCamera(revision);
     },
   };

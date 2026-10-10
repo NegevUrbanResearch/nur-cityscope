@@ -24,6 +24,7 @@ import { applyPeopleFocusDim, clearPeopleFocusDim } from "../shared/nli-people-f
 import { createNovaEscapeCoordinator } from "../shared/nli-nova-escape-coordinator.js";
 import { createMorRouteCoordinator } from "../shared/nli-mor-route-coordinator.js";
 import { createGisBasemapStyleCoordinator } from "./map-main-style-lifecycle.js";
+import { createGisNliFontChoiceLifecycle } from "./gis-nli-font-choice-lifecycle.js";
 import { bootClockPreview } from "../map/clock-preview.js";
 import { createGisRoadSignOverlay } from "../map/gis-road-sign-overlay.js";
 import { createNovaExplainerOverlay } from "../map/nli-nova-explainer-overlay.js";
@@ -71,6 +72,8 @@ import {
 } from "../shared/nli-label-heading.js";
 import { createNliFontSubscription } from "../shared/nli-font-subscription.js";
 import { NLI_FONT_DEFAULTS } from "../shared/nli-font-settings.js";
+import { nameTextStyle } from "../shared/nli-name-language.js";
+import { ensureNameFont } from "../shared/nli-name-font.js";
 import { createUuid } from "../shared/uuid.js";
 
 const DEFAULT_MAP_CENTER = [34.5, 31.4];
@@ -354,10 +357,35 @@ async function bootstrapMapRuntime() {
       getHomeCamera: () => ({ center: resolveCenterFromBounds(OTEFDataContext.getBounds()) || DEFAULT_MAP_CENTER, zoom: 10 }),
       getGroups: () => sceneSnapshot().layerGroups });
     registerDisposer(() => roadSignOverlay.dispose());
-    const raiseGisPlaceLabels = () => raiseDarkBasemapPlaceLabels(map, {
-      language: OTEFDataContext.getLegendSettings?.()?.language || 'he',
-      narrativeId: sceneSnapshot().narrativeState?.id ?? null,
+    let publishedNliFontChoices = { ...NLI_FONT_DEFAULTS };
+    const getNliFontChoices = () => ({ ...publishedNliFontChoices });
+    let personController = null;
+    let gisLabelFontGeneration = 0;
+    const nliFontChoiceLifecycle = createGisNliFontChoiceLifecycle({
+      ensureReady: choices => {
+        const language = OTEFDataContext.getLegendSettings?.()?.language === 'en' ? 'en' : 'he';
+        return ensureNameFont(nameTextStyle(language, choices), 14);
+      },
+      applyChoices: choices => {
+        if (JSON.stringify(choices) === JSON.stringify(publishedNliFontChoices)) return;
+        publishedNliFontChoices = choices;
+        raiseGisPlaceLabels();
+        personController?.refreshNliFontChoices?.();
+      },
+      onError: error => console.warn('[map-main] published NLI font unavailable', error),
     });
+    registerDisposer(() => { nliFontChoiceLifecycle.dispose(); gisLabelFontGeneration += 1; });
+    const applyGisPlaceLabels = async () => {
+      const generation = ++gisLabelFontGeneration;
+      const language = OTEFDataContext.getLegendSettings?.()?.language === 'en' ? 'en' : 'he';
+      const fontChoices = getNliFontChoices();
+      await ensureNameFont(nameTextStyle(language, fontChoices), 14);
+      if (generation !== gisLabelFontGeneration) return false;
+      raiseDarkBasemapPlaceLabels(map, { language, fontChoices, narrativeId: sceneSnapshot().narrativeState?.id ?? null });
+      return true;
+    };
+    const raiseGisPlaceLabels = () => { void applyGisPlaceLabels().catch(error =>
+      console.warn('[map-main] NLI settlement font unavailable', error)); };
     let positionLegend = () => {};
     const applyStoredGisClockLayout = () => {
       const stored = OTEFDataContext.getNliClockLayout?.()?.gis || {};
@@ -497,13 +525,18 @@ async function bootstrapMapRuntime() {
     const personVisual = createGisPersonSelection({
       map,
       maplibregl,
+      getNliFontChoices,
       language: OTEFDataContext.getLegendSettings?.()?.language || 'he',
       beginCameraTravel: viewportSync.beginCameraTravel,
       managedScene: true,
       onBubbleClick: (person) => archiveBridge.openSelected(person),
     });
     registerDisposer(OTEFDataContext.subscribe('legendSettings', settings => {
-      personVisual.setLanguage(settings?.language || 'he'); raiseGisPlaceLabels();
+      const language = settings?.language === 'en' ? 'en' : 'he';
+      void ensureNameFont(nameTextStyle(language, getNliFontChoices()), 14).then(() => {
+        if (language !== (OTEFDataContext.getLegendSettings?.()?.language === 'en' ? 'en' : 'he')) return;
+        personVisual.setLanguage(language); raiseGisPlaceLabels();
+      }).catch(error => console.warn('[map-main] NLI person font unavailable', error));
       novaExplainerOverlay.refresh();
     }));
     const archiveWindow = createNliArchiveWindowController();
@@ -562,18 +595,16 @@ async function bootstrapMapRuntime() {
       wakeInvestigationTimelinePersonGlow(map);
     };
     registerDisposer(OTEFDataContext.subscribe("personSelection", syncContextPersonSelection));
-    let publishedNliFontChoices = { ...NLI_FONT_DEFAULTS };
-    const getNliFontChoices = () => ({ ...publishedNliFontChoices });
     const nliFontSubscription = createNliFontSubscription({
       socket: OTEFDataContext._wsClient,
       sourceId: createUuid(),
       fetchImpl: window.fetch.bind(window),
-      onChoices: choices => { publishedNliFontChoices = choices; },
+      onChoices: choices => { void nliFontChoiceLifecycle.publish(choices); },
       onError: error => console.warn("[map-main] NLI font settings unavailable", error),
     });
     registerDisposer(() => nliFontSubscription.stop());
     void nliFontSubscription.start().catch(() => {});
-    const personController = createGisPersonController({
+    personController = createGisPersonController({
       map,
       context: OTEFDataContext,
       managedScene: true,

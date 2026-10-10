@@ -2,6 +2,7 @@ import { getLayerLifecycleRuntime } from "../shared/layer-lifecycle-fade.js";
 import { NLI_VISUAL_TOKENS } from "../shared/nli-investigation-theme.js";
 import { applyPeopleFocusDim, clearPeopleFocusDim } from "../shared/nli-people-focus-presentation.js";
 import { canonicalPersonNames, resolvePersonName } from '../shared/nli-name-language.js';
+import { nameTextStyle } from '../shared/nli-name-language.js';
 
 export const PEOPLE_SOURCE_ID = "otef-person-selection";
 export const PEOPLE_HALO_LAYER_ID = "otef-person-selection-halo";
@@ -120,7 +121,13 @@ export function loadPeopleRuntime({ fetchJson: fetcher = fetchJson, hashBytes = 
 }
 
 const escapeHtml = (value) => clean(value).replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]));
-const popupMarkup = (person) => `<div class="gis-person-bubble" lang="${person.language === 'en' ? 'en' : 'he'}" dir="${person.language === 'en' ? 'ltr' : 'rtl'}">${person.name ? `<div class="gis-person-bubble__name"${person.language === 'en' ? ' style="font-family:Arial,sans-serif"' : ''}>${escapeHtml(person.name)}</div>` : ""}</div>`;
+const popupMarkup = (person, fontChoices) => {
+  const baseFamily = person.language === 'en' ? 'Arial' : 'Hadassah Friedlaender';
+  const baseline = { language: person.language, direction: person.language === 'en' ? 'ltr' : 'rtl',
+    fontFamily: baseFamily, canvasFontStack: `"${baseFamily}", sans-serif`, mapFontStack: [baseFamily] };
+  const style = nameTextStyle(person.language, fontChoices, baseline);
+  return `<div class="gis-person-bubble" lang="${style.language}" dir="${style.direction}">${person.name ? `<div class="gis-person-bubble__name" style="font-family:&quot;${escapeHtml(style.fontFamily)}&quot;,sans-serif">${escapeHtml(person.name)}</div>` : ""}</div>`;
+};
 const motionReduced = (value) => value === true || value === "reduced";
 
 function readCamera(map) {
@@ -166,7 +173,7 @@ export function syncPersonHaloPaint() {
 }
 
 /** Own one reusable MapLibre halo and bubble. */
-export function createGisPersonSelection({ map, maplibregl, fetchJson: fetcher, hashBytes, peopleUrl, indexUrl, metadataUrl, beginCameraTravel, onBubbleClick, managedScene = false, language = 'he' } = {}) {
+export function createGisPersonSelection({ map, maplibregl, fetchJson: fetcher, hashBytes, peopleUrl, indexUrl, metadataUrl, beginCameraTravel, onBubbleClick, managedScene = false, language = 'he', getNliFontChoices = () => undefined } = {}) {
   let disposed = false; let current = null; let renderToken = 0; let cameraListener = null; let overviewCamera = null;
   const popup = typeof maplibregl?.Popup === "function" ? new maplibregl.Popup({ className: "gis-person-bubble-popup", closeButton: false, closeOnClick: false, maxWidth: "280px", offset: 14 }) : null;
   const runtimePromise = loadPeopleRuntime({ fetchJson: fetcher, hashBytes, peopleUrl, indexUrl, metadataUrl });
@@ -186,7 +193,7 @@ export function createGisPersonSelection({ map, maplibregl, fetchJson: fetcher, 
   const showBubble = (person, token) => {
     if (disposed || token !== renderToken || current !== person || !popup) return;
     if (!clean(person.name)) return;
-    popup.setLngLat(person.coordinates).setHTML(popupMarkup(person)).addTo(map);
+    popup.setLngLat(person.coordinates).setHTML(popupMarkup(person, getNliFontChoices?.())).addTo(map);
     const element = popup.getElement?.();
     if (!element) return;
     if (managedScene) getLayerLifecycleRuntime(map).registerElement("nli.people", element);
@@ -233,6 +240,7 @@ export function createGisPersonSelection({ map, maplibregl, fetchJson: fetcher, 
       if (!current.name) popup?.remove();
       else if (!cameraListener) showBubble(current, renderToken);
     },
+    refreshNliFontChoices() { if (current && !cameraListener) showBubble(current, renderToken); },
     bringToFront,
     show,
     hide: (options = {}) => {

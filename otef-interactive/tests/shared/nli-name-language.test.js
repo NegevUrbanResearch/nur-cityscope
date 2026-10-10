@@ -11,8 +11,10 @@ test('requested canonical names retain spelling and never fall back to the other
   expect(resolveSettlementName('1240', 'he')).toBe('עין הבשור');
 });
 
-test('English names use an explicit Latin font and source group identity survives language changes', () => {
-  expect(nameTextStyle('en')).toMatchObject({ language: 'en', direction: 'ltr', fontFamily: 'Arial', canvasFontStack: 'Arial, sans-serif', mapFontStack: ['Arial'] });
+test('English names resolve the published default face and source group identity survives language changes', () => {
+  expect(nameTextStyle('en')).toMatchObject({ language: 'en', direction: 'ltr', fontFamily: 'NLI Content Hadassah Friedlaender', canvasFontStack: '"NLI Content Hadassah Friedlaender", sans-serif', mapFontStack: ['NLI Content Hadassah Friedlaender'] });
+  expect(nameTextStyle('he', { he: 'default', en: 'arial' })).toMatchObject({ language: 'he', direction: 'rtl', fontFamily: 'Guttman Hatzvi' });
+  expect(nameTextStyle('en', { he: 'narkiss', en: 'marcellus' }).fontFamily).toBe('NLI Content Marcellus');
   for (const raw of ['Nova', 'Nahal Oz Base', 'Pri Gan', "Be'eri"]) {
     const he = resolveNliLocation(raw, 'he'), en = resolveNliLocation(raw, 'en');
     expect(en.groupId).toBe(he.groupId);

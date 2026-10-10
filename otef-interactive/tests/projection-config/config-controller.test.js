@@ -3028,7 +3028,7 @@ test('Cancel immediately hides a retained Wall-only wrapper when no controller e
     const candidateValidator = { validateCandidate: vi.fn(async ({ identity }) => ({ identity, valid: true })), dispose() {} };
     let holdDatasetRead = false; let releaseDatasetRead; let runReads = 0;
     const root = element('main');
-    const api = mountProjectionConfig(root, { client, socket, candidateValidator, readNamesDataset: async () => {
+    const api = mountProjectionConfig(root, { client, socket, candidateValidator, layoutClient: { getLegendLanguage: () => 'en' }, readNamesDataset: async () => {
       if (holdDatasetRead) { runReads += 1; await new Promise((resolve) => { releaseDatasetRead = resolve; }); }
       return { datasetVersion: 'release-1' };
     } });
@@ -3064,6 +3064,8 @@ test('Cancel immediately hides a retained Wall-only wrapper when no controller e
       table: 'otef', revision: 2, datasetVersion: 'release-1', placementIdentity: expect.stringMatching(/^[a-f0-9]{64}$/i), requestId: expect.stringMatching(/^[0-9a-f-]{36}$/i),
     });
     const run = sent.find((message) => message.type === 'otef_projection_names_run');
+    expect(run.placementIdentity).toBe(await projectionPlacementInputIdentity(client.getState().snapshot.config, 'en'));
+    expect(run.placementIdentity).not.toBe(await projectionPlacementInputIdentity(client.getState().snapshot.config, 'he'));
     const reportNames = (output, instanceId, requestId, state) => socketHandlers.get('otef_projection_names_status')({
       type: 'otef_projection_names_status', table: 'otef', output, instanceId, requestId, revision: run.revision,
       datasetVersion: run.datasetVersion, placementIdentity: run.placementIdentity, state, installed: null,

@@ -7,6 +7,8 @@ test('English settlement names preserve saved geometry through repaint', async (
   const settings = initializedSettingsFixture(), original = structuredClone(settings);
   const catalog = { entries: [{ citycode: '0067', text: 'אור הנר', names: { he: 'אור הנר', en: 'Or HaNer' }, lng: 34.4, lat: 31.3 }] };
   await adapter.prepare({ catalog, settings, language: 'en' }); adapter.commit();
+  expect(document.loads.at(-1)).toContain('NLI Content Hadassah Friedlaender');
+  expect(document.paints.find(paint => paint.op === 'fill')?.font).toContain('NLI Content Hadassah Friedlaender');
   expect(adapter.getLabels()[0]).toMatchObject({ text: 'Or HaNer', x: 500, y: 340, rotateDeg: 35 });
   adapter.applyScaledOpacity(0.5);
   expect(adapter.getLabels()[0].text).toBe('Or HaNer');
@@ -14,6 +16,28 @@ test('English settlement names preserve saved geometry through repaint', async (
   adapter.applyScaledOpacity(['case', ['==', ['get', 'cityname'], 'אור הנר'], 1, 0.08]);
   expect(document.images.slice(previousImages).some(image => image.opacity < 1)).toBe(false);
   expect(settings).toEqual(original);
+});
+
+test('Hebrew settlement font choice overrides rendering and Default restores the saved baseline', async () => {
+  const document = fakeCanvasDocument();
+  const adapter = createProjectionSettlementNameAdapter({ document, output: 'left' });
+  const settings = initializedSettingsFixture();
+  const catalog = { entries: [{ citycode: '0067', text: 'אור הנר', names: { he: 'אור הנר', en: 'Or HaNer' } }] };
+  await adapter.prepare({ catalog, settings, language: 'he', fontChoices: { he: 'narkiss', en: 'hadassah' } }); adapter.commit();
+  expect(document.loads.at(-1)).toContain('NLI Content Narkiss Block');
+  expect(settings.style.fontFamily).toBe('Guttman Hatzvi');
+  await adapter.prepare({ catalog, settings, language: 'he', fontChoices: { he: 'default', en: 'hadassah' } }); adapter.commit();
+  expect(document.loads.at(-1)).toContain('Guttman Hatzvi');
+  expect(settings.style.fontFamily).toBe('Guttman Hatzvi');
+});
+
+test('an unavailable selected content webface fails instead of falling back', async () => {
+  const document = fakeCanvasDocument();
+  const adapter = createProjectionSettlementNameAdapter({ document, output: 'left' });
+  await expect(adapter.prepare({ catalog: catalogFixture(), settings: initializedSettingsFixture(), language: 'en',
+    fontChoices: { he: 'default', en: 'arial' } })).rejects.toThrow(/NLI Content Arial/);
+  expect(adapter.descriptor()).toBeNull();
+  expect(document.paints).toEqual([]);
 });
 
 test('draws a chosen two-line projection name centered as one rotated label', async () => {
@@ -137,9 +161,10 @@ test('a camera or opacity repaint cannot cancel a saved position waiting for fon
   let finishFont; document.fonts.load=()=>new Promise(resolve=>{finishFont=resolve;});
   settings.outputs.left['0067']={x:600,y:340};
   const pending=adapter.prepare({catalog:catalogFixture(),settings});
+  await Promise.resolve();
   frame={matrix:[1,0,0,1,100,0],clip:[0,0,1,1]};
   adapter.descriptor(); adapter.applyScaledOpacity(0.5);
-  finishFont();
+  finishFont([{ family: 'Guttman Hatzvi', status: 'loaded' }]);
   expect(await pending).not.toMatchObject({stale:true});
   adapter.commit();
   expect(adapter.getLabels()[0]).toMatchObject({x:700,y:340});
@@ -193,7 +218,9 @@ function fakeCanvasDocument() {
       load: async (spec) => {
         loads.push(spec);
         if (document.fonts.fail) throw new Error("font failed");
-        return [spec];
+        const family = String(spec).match(/"([^"]+)"/)?.[1] || String(spec).replace(/^\d+(?:\.\d+)?px\s*/, '').split(',')[0];
+        if (family === 'NLI Content Arial') return [];
+        return [{ family, status: 'loaded' }];
       },
     },
     createElement() {
@@ -223,10 +250,10 @@ function fakeCanvasDocument() {
             drawImage(source, ...bounds) { images.push({ source, bounds, opacity: context.globalAlpha, rotate: context.lastRotate }); },
             fillText(text, x, y) {
               canvas.text = text;
-              paints.push({ op: "fill", text, x, y, lineWidth: context.lineWidth, canvasWidth: canvas.width, globalAlpha: context.globalAlpha, rotate: context.lastRotate });
+              paints.push({ op: "fill", text, x, y, font: context.font, lineWidth: context.lineWidth, canvasWidth: canvas.width, globalAlpha: context.globalAlpha, rotate: context.lastRotate });
             },
             strokeText(text, x, y) {
-              paints.push({ op: "stroke", text, x, y, lineWidth: context.lineWidth, canvasWidth: canvas.width, globalAlpha: context.globalAlpha, rotate: context.lastRotate });
+              paints.push({ op: "stroke", text, x, y, font: context.font, lineWidth: context.lineWidth, canvasWidth: canvas.width, globalAlpha: context.globalAlpha, rotate: context.lastRotate });
             },
             measureText(text) {
               const size = Number(String(context.font).match(/(\d+(?:\.\d+)?)px/)?.[1] || 14);
@@ -382,21 +409,23 @@ test("failed, aborted, and stale preparation keep the active descriptor", async 
   let release;
   document.fonts.load = () => new Promise((resolve) => { release = resolve; });
   const aborted = adapter.prepare({ catalog: catalogFixture(), settings, signal: controller.signal });
+  await Promise.resolve();
   controller.abort();
-  release(["late"]);
+  release([{ family: 'Guttman Hatzvi', status: 'loaded' }]);
   await aborted;
   expect(adapter.descriptor()).toBe(active);
 
   let releaseFirst;
   document.fonts.load = () => new Promise((resolve) => { releaseFirst = resolve; });
   const first = adapter.prepare({ catalog: catalogFixture(), settings });
-  document.fonts.load = async () => ["ready"];
+  await Promise.resolve();
+  document.fonts.load = async () => [{ family: 'Guttman Hatzvi', status: 'loaded' }];
   const next = initializedSettingsFixture();
   next.outputs.left["0067"] = { x: 80, y: 90 };
   await adapter.prepare({ catalog: catalogFixture(), settings: next });
   adapter.commit();
   expect(adapter.getLabels().find((n) => n.citycode === "0067")).toMatchObject({ x: 80, y: 90 });
-  releaseFirst(["stale"]);
+  releaseFirst([{ family: 'Guttman Hatzvi', status: 'loaded' }]);
   await first;
   expect(adapter.getLabels().find((n) => n.citycode === "0067")).toMatchObject({ x: 80, y: 90 });
   expect(adapter.descriptor().source).toBeTruthy();

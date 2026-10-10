@@ -1,14 +1,17 @@
 import catalog from './place-navigation/place-catalog.generated.js';
+import { NLI_FONT_DEFAULTS, resolveNliFont } from './nli-font-settings.js';
 
 const places = new Map(catalog.entries.map(place => [place.citycode, place]));
 const clean = value => typeof value === 'string' ? value.trim() : '';
 
-export function nameTextStyle(language = 'he') {
+export function nameTextStyle(language = 'he', fontChoices = NLI_FONT_DEFAULTS, baseline = null) {
   const english = language === 'en';
-  return { language: english ? 'en' : 'he', direction: english ? 'ltr' : 'rtl',
+  const resolvedLanguage = english ? 'en' : 'he';
+  const style = baseline || { language: resolvedLanguage, direction: english ? 'ltr' : 'rtl',
     fontFamily: english ? 'Arial' : 'Guttman Hatzvi',
     canvasFontStack: english ? 'Arial, sans-serif' : '"Guttman Hatzvi", sans-serif',
     mapFontStack: english ? ['Arial'] : ['Guttman Hatzvi', 'Arial'] };
+  return resolveNliFont(resolvedLanguage, fontChoices, style);
 }
 
 export function resolvePersonName(properties, language = 'he') {

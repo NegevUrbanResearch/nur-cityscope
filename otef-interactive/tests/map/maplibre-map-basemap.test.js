@@ -131,9 +131,7 @@ describe("maplibre basemap switching", () => {
     const woodland = BASEMAP_STYLES.dark.layers.find((layer) => layer.id === "landcover_wood");
     expect(woodland.paint["fill-pattern"]).toBeUndefined();
     expect(woodland.paint["fill-color"]).toBeTruthy();
-    expect(BASEMAP_STYLES.dark["font-faces"]["Guttman Hatzvi"][0].url).toBe(
-      "./fonts/Guttman-Hatzvi.ttf",
-    );
+    expect(BASEMAP_STYLES.dark["font-faces"]).toBeUndefined();
 
     const motorway = BASEMAP_STYLES.dark.layers.find(
       (layer) => layer.id === "highway_name_motorway",

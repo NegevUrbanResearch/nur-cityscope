@@ -187,8 +187,14 @@ export function prepareProjectionNameWall({ config, meshes, datasetVersion, sign
   }
   const owner = projectionPreparation;
   const mode = config.namesWall.activeMode;
+  const modeKey = (selected) => {
+    const textStyle = nameTextStyle(language, config.nliFonts);
+    return JSON.stringify({ profile: config.namesWall.profiles[selected], datasetVersion, language,
+      fontFamily: textStyle.fontFamily });
+  };
   const startMode = (selected) => {
-    const key = JSON.stringify({ profile: config.namesWall.profiles[selected], datasetVersion, language });
+    const textStyle = nameTextStyle(language, config.nliFonts);
+    const key = modeKey(selected);
     const previous = owner.modes.get(selected);
     if (previous?.key === key) return previous.promise;
     previous?.controller?.abort();
@@ -198,7 +204,7 @@ export function prepareProjectionNameWall({ config, meshes, datasetVersion, sign
     if (owner.controller.signal.aborted) controller.abort();
     const promise = (async () => {
       const input = await loadInputs(datasetVersion);
-      const records = prepareMemorialNameRecords(input.collection, language), textStyle = nameTextStyle(language);
+      const records = prepareMemorialNameRecords(input.collection, language);
       rejectAbortedLayout(controller.signal);
       const profile = config.namesWall.profiles[selected];
       const [{ fontIdentity, metrics }, tkuma] = await Promise.all([
@@ -227,7 +233,7 @@ export function prepareProjectionNameWall({ config, meshes, datasetVersion, sign
   };
   const active = startMode(mode);
   const inactive = mode === 'wall' ? 'model' : 'wall';
-  const inactiveKey = JSON.stringify({ profile: config.namesWall.profiles[inactive], datasetVersion, language });
+  const inactiveKey = modeKey(inactive);
   const scheduled = owner.modes.get(inactive);
   if (!scheduled || scheduled.key !== inactiveKey || (!scheduled.controller && scheduled.after !== active)) {
     scheduled?.controller?.abort();
@@ -245,12 +251,12 @@ export function prepareProjectionNameWall({ config, meshes, datasetVersion, sign
   return waitForPreparation(active, signal);
 }
 
-export async function loadNliNameField({ projectionConfig = DEFAULT_PROJECTION_CONFIG, datasetVersion, coverage, configRevision, coverageIdentity, signal, language = 'he' } = {}) {
+export async function loadNliNameField({ projectionConfig = DEFAULT_PROJECTION_CONFIG, datasetVersion, coverage, configRevision, coverageIdentity, signal, language = 'he', fontChoices = projectionConfig?.nliFonts } = {}) {
   rejectAbortedLayout(signal);
   if (datasetVersion && activeDatasetVersion && datasetVersion !== activeDatasetVersion) invalidateNliNameFieldInputs();
   if (datasetVersion) activeDatasetVersion = datasetVersion;
   const input = await loadInputs(datasetVersion);
-  const records = prepareMemorialNameRecords(input.collection, language), textStyle = nameTextStyle(language);
+  const records = prepareMemorialNameRecords(input.collection, language), textStyle = nameTextStyle(language, fontChoices);
   rejectAbortedLayout(signal);
   if (!datasetVersion) activeDatasetVersion = input.datasetVersion;
   const current = generation;

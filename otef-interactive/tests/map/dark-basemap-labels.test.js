@@ -60,7 +60,8 @@ describe("applyDarkBasemapLabelPolicy", () => {
     const result = applyDarkBasemapLabelPolicy({ version: 8, layers }, { language: 'en' });
     for (const item of result.layers) {
       expect(item.layout['text-field']).toEqual(['coalesce', ['get', 'name:en'], ['get', 'name_en'], ['get', 'name:latin'], '']);
-      expect(item.layout['text-font']).toEqual(['Arial']);
+      expect(item.layout['text-font']).toEqual(item['source-layer'] === 'place'
+        ? ['NLI Content Hadassah Friedlaender'] : ['Arial']);
     }
   });
   it('updates live basemap labels and restores Hebrew without changing shields or opacity', () => {
@@ -112,7 +113,7 @@ describe("applyDarkBasemapLabelPolicy", () => {
     expect(style.layers[0].layout["text-field"]).toEqual(BILINGUAL_NAME_FIELD);
   });
 
-  it("sets place labels to the projection settlement font stack and registers Guttman locally", () => {
+  it("sets place labels to the resolved content font stack without a style font registry", () => {
     const style = {
       version: 8,
       glyphs: "https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf",
@@ -129,9 +130,7 @@ describe("applyDarkBasemapLabelPolicy", () => {
 
     expect(DARK_BASEMAP_PLACE_TEXT_FONT).toEqual(["Guttman Hatzvi", "Arial"]);
     expect(next.layers[0].layout["text-font"]).toEqual(DARK_BASEMAP_PLACE_TEXT_FONT);
-    expect(next["font-faces"]["Guttman Hatzvi"]).toEqual([
-      { url: DARK_BASEMAP_GUTTMAN_FONT_FACE_URL },
-    ]);
+    expect(next["font-faces"]).toBeUndefined();
     expect(DARK_BASEMAP_GUTTMAN_FONT_FACE_URL).toBe("./fonts/Guttman-Hatzvi.ttf");
     expect(style["font-faces"]).toBeUndefined();
   });
@@ -341,9 +340,7 @@ describe("applyDarkBasemapLabelPolicy", () => {
     const { BASEMAP_STYLES } = await import("../../frontend/src/map/maplibre-map.js");
 
     expect(BASEMAP_STYLES.dark.glyphs).toBeUndefined();
-    expect(BASEMAP_STYLES.dark["font-faces"]["Guttman Hatzvi"]).toEqual([
-      { url: "./fonts/Guttman-Hatzvi.ttf" },
-    ]);
+    expect(BASEMAP_STYLES.dark["font-faces"]).toBeUndefined();
     const textLayers = BASEMAP_STYLES.dark.layers.filter(
       (candidate) => candidate.type === "symbol" && candidate.layout?.["text-field"] != null,
     );
@@ -358,6 +355,24 @@ describe("applyDarkBasemapLabelPolicy", () => {
 });
 
 describe("raiseDarkBasemapPlaceLabels", () => {
+  it("reinstalls the current ready NLI alias after style reload without changing road fonts", () => {
+    const roadId = openFreeMapDarkStyle.layers.find(item => item['source-layer'] === 'transportation_name' && item.type === 'symbol').id;
+    const placeId = openFreeMapDarkStyle.layers.find(item => item['source-layer'] === 'place' && item.type === 'symbol').id;
+    const map = createFakeMapLibreMap({ layers: [
+      { id: placeId, type: "symbol", "source-layer": "place", layout: { "text-font": ["Arial"] } },
+      { id: roadId, type: "symbol", "source-layer": "transportation_name", layout: { "text-font": ["Arial"] } },
+    ] });
+    raiseDarkBasemapPlaceLabels(map, { language: "en", fontChoices: { he: "default", en: "marcellus" } });
+    expect(map.getLayoutProperty(placeId, "text-font")).toEqual(["NLI Content Marcellus"]);
+    expect(map.getLayoutProperty(roadId, "text-font")).toEqual(["Arial"]);
+    const nextStyle = createFakeMapLibreMap({ layers: [
+      { id: placeId, type: "symbol", "source-layer": "place", layout: { "text-font": ["Arial"] } },
+      { id: roadId, type: "symbol", "source-layer": "transportation_name", layout: { "text-font": ["Arial"] } },
+    ] });
+    raiseDarkBasemapPlaceLabels(nextStyle, { language: "en", fontChoices: { he: "default", en: "marcellus" } });
+    expect(nextStyle.getLayoutProperty(placeId, "text-font")).toEqual(["NLI Content Marcellus"]);
+    expect(nextStyle.getLayoutProperty(roadId, "text-font")).toEqual(["Arial"]);
+  });
   it("moves basemap place labels above later fill overlays and keeps people names on top", () => {
     const map = createFakeMapLibreMap({
       layers: [

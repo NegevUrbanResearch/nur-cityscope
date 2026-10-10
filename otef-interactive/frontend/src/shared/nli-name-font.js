@@ -1,6 +1,6 @@
 /** Content aliases must resolve to their own same-origin webface before rendering. */
-export async function ensureNameFont(style, size) {
-  const fonts = globalThis.document?.fonts;
+export async function ensureNameFont(style, size, document = globalThis.document) {
+  const fonts = document?.fonts;
   if (!fonts?.load) throw new Error(`Name rendering requires ${style.fontFamily}`);
   await fonts.ready;
   const faces = await fonts.load(`${size}px ${style.canvasFontStack}`);

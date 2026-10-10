@@ -1,5 +1,6 @@
 import placeCatalog from '../shared/place-navigation/place-catalog.generated.js';
 import { EXCLUDED_SETTLEMENT_CODES } from '../shared/settlement-label-presentation.js';
+import { nameTextStyle } from '../shared/nli-name-language.js';
 
 export const GIS_SETTLEMENT_LABEL_LAYER_ID = 'gis-settlement-place-labels';
 
@@ -23,11 +24,11 @@ for (const group of collocated.values()) if (group.length > 1) {
 }
 
 /** Local data guarantees every canonical settlement is available at the Home zoom. */
-export function installGisSettlementLabels(map, { font, size, color, language = 'he' } = {}) {
+export function installGisSettlementLabels(map, { font, fontChoices, size, color, language = 'he' } = {}) {
   if (typeof map?.addLayer !== 'function') return;
   if (!map.getSource?.(GIS_SETTLEMENT_LABEL_LAYER_ID)) map.addSource(GIS_SETTLEMENT_LABEL_LAYER_ID, { type: 'geojson', data: collection });
   const textField = ['get', language === 'en' ? 'cityname_en' : 'cityname'];
-  const textFont = language === 'en' ? ['Arial'] : font;
+  const textFont = font || nameTextStyle(language, fontChoices).mapFontStack;
   if (map.getLayer?.(GIS_SETTLEMENT_LABEL_LAYER_ID)) {
     map.setLayoutProperty?.(GIS_SETTLEMENT_LABEL_LAYER_ID, 'text-field', textField);
     if (textFont) map.setLayoutProperty?.(GIS_SETTLEMENT_LABEL_LAYER_ID, 'text-font', textFont);
