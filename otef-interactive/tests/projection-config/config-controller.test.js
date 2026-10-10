@@ -426,6 +426,27 @@ test('mounted point matching prevents Live re-enable and footer Apply cannot pub
   } finally { api.dispose(); }
 });
 
+test("Content font edits update the existing draft while Live is off", async () => {
+  const doc = documentStub();
+  const previousDocument = globalThis.document;
+  globalThis.document = doc;
+  const root = element("main"); root.ownerDocument = doc;
+  const client = fakeClient();
+  const api = mountProjectionConfig(root, { client });
+  try {
+    client.setLive(false);
+    const english = find(root, node => node.dataset?.fontLanguage === "en");
+    english.value = "arial";
+    english.dispatch("change");
+    expect(client.getState().draft.nliFonts).toEqual({ he: "default", en: "arial" });
+    expect(client.apply).not.toHaveBeenCalled();
+    expect(client.setDraft).toHaveBeenCalledTimes(1);
+    await api.handleAction("save-new", "Content font choices");
+    await api.handleAction("load", "new-preset");
+    expect(client.getState().draft.nliFonts).toEqual({ he: "default", en: "arial" });
+  } finally { api.dispose(); globalThis.document = previousDocument; }
+});
+
 test('visible preset commands save the loaded preset while a different candidate is selected', async () => {
   const previousDocument = globalThis.document;
   globalThis.document = documentStub();

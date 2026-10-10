@@ -21,7 +21,7 @@ test("compact command rows keep direct actions visible and setup controls disclo
   expect(css).toMatch(/\.config-menu-content\s*\{[^}]*box-shadow:/s);
   expect(css).toMatch(/\.config-workspace-band\s*\{[^}]*flex-wrap:\s*wrap/s);
   expect(css).toMatch(/\.config-command-bar button, \.config-command-bar select\s*\{[^}]*min-height:\s*44px/s);
-  expect(css).toMatch(/@media\s*\(max-width:\s*700px\)\s*\{[^}]*\.config-command-row-primary\s*\{[^}]*flex-wrap:\s*wrap/s);
+  expect(css).toMatch(/@media\s*\(max-width:\s*700px\)\s*\{[\s\S]*?\.config-command-row-primary\s*\{[^}]*flex-wrap:\s*wrap/s);
   expect(css).toMatch(/\.config-presets-menu > \.config-menu-content, \.config-displays-menu > \.config-menu-content, \.config-tools > \.config-menu-content\s*\{[^}]*position:\s*absolute/s);
   expect(css).toMatch(/\.config-command-bar \[data-action='apply'\][^{]*\{[^}]*background:\s*var\(--config-accent\)/s);
   expect(css).toMatch(/^body\s*\{[^}]*min-width:\s*0/m);
@@ -128,7 +128,7 @@ test("view renders draggable node workspace and preserves an existing focused in
   expect(labels.join(" ")).toContain("Drag headers to move nodes");
   expect(labels.join(" ")).toContain("Left inner-edge clearance");
   expect(labels.join(" ")).toContain("Right inner-edge clearance");
-  expect([...view.nodeMap.keys()]).toEqual(["content", "names-wall", "settlement-names", "clock-gis", "nova-explainers", "clock-projection", "pre", "left-crop", "right-crop", "left-fit", "right-fit", "left-keystone", "right-keystone", "left-grid", "right-grid", "left-output", "right-output"]);
+  expect([...view.nodeMap.keys()]).toEqual(["content", "names-wall", "settlement-names", "road-signs", "clock-gis", "nova-explainers", "clock-projection", "pre", "left-crop", "right-crop", "left-fit", "right-fit", "left-keystone", "right-keystone", "left-grid", "right-grid", "left-output", "right-output"]);
   for (const id of ["left-keystone", "right-keystone", "left-grid", "right-grid"]) {
     const preview = descendants(view.nodeMap.get(id)).find((node) => node.className === "warp-node-geometry");
     expect(preview).toBeDefined();
@@ -229,7 +229,7 @@ test("view renders draggable node workspace and preserves an existing focused in
   view.parameterDialog.close();
   const novaNode = view.nodeMap.get("nova-explainers");
   expect(labels.join(" ")).toContain("Nova explainers");
-  expect(descendants(root).find((node) => node.dataset?.action === "focus-overlays").dataset.focusNodes).toBe("clock-gis nova-explainers clock-projection");
+  expect(descendants(root).find((node) => node.dataset?.action === "focus-overlays").dataset.focusNodes).toBe("clock-gis nova-explainers clock-projection road-signs");
   expect(descendants(novaNode).some((node) => node.textContent === "Show on exhibit")).toBe(false);
   novaNode.children.find((node) => node.dataset?.action === "nova-explainer-editor-open").dispatch("click");
   novaNode.dispatch("keydown", { key: "Enter", preventDefault() {} });
@@ -750,6 +750,53 @@ test("view renders draggable node workspace and preserves an existing focused in
   disposePaint();
   expect(scheduledView.controls.warpSurface.children.find((node) => node.attributes?.["data-index"] === "0")).toBe(retainedHandle);
   expect(retainedHandle.attributes.cx).toBe(beforeDisposeX);
+});
+
+test("Content font selectors stay synchronized across graph and inspector during edit, preset load, and reload", () => {
+  const make = (tag = "div") => ({ tagName: tag.toUpperCase(), children: [], dataset: {}, style: {}, attributes: {}, classList: { toggle() {}, add() {} }, appendChild(child) { if (child.parentElement) child.parentElement.children = child.parentElement.children.filter((item) => item !== child); this.children.push(child); child.parentElement = this; return child; }, append(...children) { children.forEach((child) => this.appendChild(child)); }, prepend(...children) { children.forEach((child) => this.appendChild(child)); }, remove() {}, focus() {}, setAttribute(key, value) { this.attributes[key] = value; }, addEventListener(type, handler) { this.listeners ||= {}; (this.listeners[type] ||= []).push(handler); }, removeEventListener() {}, dispatch(type) { for (const handler of this.listeners?.[type] || []) handler({ target: this, currentTarget: this, stopPropagation() {} }); }, replaceChildren(...children) { this.children = []; children.forEach((child) => this.appendChild(child)); } });
+  const doc = { createElement: make, createElementNS: (_ns, tag) => make(tag), createTextNode: (text) => ({ textContent: String(text) }), listeners: {}, addEventListener() {}, removeEventListener() {}, defaultView: { matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }) } };
+  const root = make("main"); root.ownerDocument = doc;
+  const onNliFont = vi.fn();
+  const view = createProjectionConfigView(root, { descriptors: [...FIELD_DESCRIPTORS, ...NAMES_WALL_DESCRIPTORS], onNliFont });
+  const descendants = (node) => [node, ...(node.children || []).flatMap(descendants)];
+  const graphChoices = descendants(view.nodeMap.get("content")).filter((node) => node.dataset?.fontLanguage);
+  expect(graphChoices.map((node) => node.dataset.fontLanguage)).toEqual(["he", "en"]);
+  const draft = structuredClone(DEFAULT_PROJECTION_CONFIG);
+  draft.nliFonts = { he: "narkiss", en: "arial" };
+  view.update({ state: { draft }, selectedNode: "content" });
+  const selectedChoices = descendants(view.controls.editorRegion).filter((node) => node.dataset?.fontLanguage);
+  expect(selectedChoices.map((node) => node.value)).toEqual(["narkiss", "arial"]);
+  expect(graphChoices.map((node) => node.value)).toEqual(["narkiss", "arial"]);
+  expect([...graphChoices[0].children].map((node) => node.value)).toEqual(["default", "guttman", "hadassah", "narkiss", "arial"]);
+  expect([...graphChoices[1].children].map((node) => node.value)).toEqual(["hadassah", "narkiss", "arial", "belleza", "marcellus"]);
+  graphChoices[0].value = "guttman"; graphChoices[0].dispatch("change");
+  expect(onNliFont).toHaveBeenCalledWith("he", "guttman");
+  draft.nliFonts = { ...draft.nliFonts, he: "guttman" };
+  view.update({ state: { draft }, selectedNode: "content" });
+  expect(graphChoices.map((node) => node.value)).toEqual(["guttman", "arial"]);
+  expect(selectedChoices.map((node) => node.value)).toEqual(["guttman", "arial"]);
+  selectedChoices[1].value = "belleza"; selectedChoices[1].dispatch("change");
+  expect(onNliFont).toHaveBeenLastCalledWith("en", "belleza");
+  draft.nliFonts = { he: "guttman", en: "belleza" };
+  view.update({ state: { draft }, selectedNode: "content" });
+  expect(graphChoices.map((node) => node.value)).toEqual(["guttman", "belleza"]);
+  expect(selectedChoices.map((node) => node.value)).toEqual(["guttman", "belleza"]);
+  graphChoices[1].value = "marcellus"; graphChoices[1].dispatch("change");
+  expect(onNliFont).toHaveBeenLastCalledWith("en", "marcellus");
+  draft.nliFonts = { he: "guttman", en: "marcellus" };
+  view.update({ state: { draft }, selectedNode: "content" });
+  expect(graphChoices.map((node) => node.value)).toEqual(["guttman", "marcellus"]);
+  expect(selectedChoices.map((node) => node.value)).toEqual(["guttman", "marcellus"]);
+  draft.nliFonts = { he: "default", en: "belleza" };
+  view.update({ state: { draft }, selectedNode: "content", loadedPresetId: "preset-2", loadedPresetLoadToken: 1 });
+  expect(graphChoices.map((node) => node.value)).toEqual(["default", "belleza"]);
+  expect(selectedChoices.map((node) => node.value)).toEqual(["default", "belleza"]);
+  draft.nliFonts = { he: "hadassah", en: "narkiss" };
+  view.update({ state: { draft }, selectedNode: "content", loadedPresetId: "original", loadedPresetLoadToken: 2 });
+  expect(graphChoices.map((node) => node.value)).toEqual(["hadassah", "narkiss"]);
+  expect(selectedChoices.map((node) => node.value)).toEqual(["hadassah", "narkiss"]);
+  expect(descendants(view.nodeMap.get("settlement-names")).some((node) => node.dataset?.field === "fontFamily")).toBe(false);
+  view.dispose();
 });
 
 test("Grid Warp selection controls reserve 48px targets without a nested status scroller", () => {

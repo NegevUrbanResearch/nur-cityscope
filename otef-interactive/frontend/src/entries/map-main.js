@@ -69,6 +69,9 @@ import {
   NLI_LABEL_HEADING_STORAGE_KEY,
   readNliLabelHeading,
 } from "../shared/nli-label-heading.js";
+import { createNliFontSubscription } from "../shared/nli-font-subscription.js";
+import { NLI_FONT_DEFAULTS } from "../shared/nli-font-settings.js";
+import { createUuid } from "../shared/uuid.js";
 
 const DEFAULT_MAP_CENTER = [34.5, 31.4];
 
@@ -559,6 +562,17 @@ async function bootstrapMapRuntime() {
       wakeInvestigationTimelinePersonGlow(map);
     };
     registerDisposer(OTEFDataContext.subscribe("personSelection", syncContextPersonSelection));
+    let publishedNliFontChoices = { ...NLI_FONT_DEFAULTS };
+    const getNliFontChoices = () => ({ ...publishedNliFontChoices });
+    const nliFontSubscription = createNliFontSubscription({
+      socket: OTEFDataContext._wsClient,
+      sourceId: createUuid(),
+      fetchImpl: window.fetch.bind(window),
+      onChoices: choices => { publishedNliFontChoices = choices; },
+      onError: error => console.warn("[map-main] NLI font settings unavailable", error),
+    });
+    registerDisposer(() => nliFontSubscription.stop());
+    void nliFontSubscription.start().catch(() => {});
     const personController = createGisPersonController({
       map,
       context: OTEFDataContext,
@@ -567,6 +581,7 @@ async function bootstrapMapRuntime() {
       isNarrativeActive: () => narrativeController?.isActive?.() === true,
       closeArchive: () => archiveWindow.close(),
       reducedMotion: resolveMotionMode(),
+      getNliFontChoices,
     });
     registerDisposer(() => personController.dispose?.());
     registerDisposer(attachGisFeaturePopups(map, maplibregl, { onGisClick: personController.handleMapClick }));

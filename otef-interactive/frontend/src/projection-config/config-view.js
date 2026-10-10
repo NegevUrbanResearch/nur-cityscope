@@ -18,6 +18,7 @@ import { createWarpPanelView } from "./warp-panel-view.js";
 import { createProjectionTraceUi } from './projection-trace-ui.js';
 import { bindProjectionTraceInput, bindProjectionTracePage, recordProjectionTrace, projectionTraceTime } from './projection-trace-input.js';
 import { createStaffRemotePanel } from "./staff-remote-panel.js";
+import { NLI_FONT_CATALOG, NLI_FONT_DEFAULTS } from "../shared/nli-font-settings.js";
 
 const docFor = (root) => root?.ownerDocument || globalThis.document;
 const WARP_OUTPUT_WIDTH = 1920;
@@ -51,6 +52,25 @@ function namesWallProfileScoped(path) {
   return path.startsWith("namesWall.") && path !== "namesWall.rotateDeg" && !path.startsWith("namesWall.innerEdgeInsetPx.");
 }
 
+function createNliFontControls(doc, onChoice) {
+  const controls = {};
+  const elements = [];
+  for (const [language, labelText] of [["he", "Hebrew font"], ["en", "English font"]]) {
+    const label = make(doc, "label", { className: "nli-font-control" }, labelText);
+    const select = make(doc, "select", { ariaLabel: labelText, dataset: { fontLanguage: language } });
+    for (const choice of NLI_FONT_CATALOG[language]) {
+      const text = choice === "default" ? "Default" : NLI_FONT_CATALOG.families[choice];
+      select.appendChild(make(doc, "option", { value: choice }, text));
+    }
+    select.addEventListener("click", event => event.stopPropagation?.());
+    select.addEventListener("change", () => onChoice(language, select.value));
+    label.appendChild(select);
+    controls[language] = select;
+    elements.push(label);
+  }
+  return { controls, elements };
+}
+
 function descriptorFor(descriptors, path) { return descriptors.find((item) => item.path === path); }
 function svgNode(doc, tag, attrs = {}, text = "") {
   const item = doc.createElementNS?.("http://www.w3.org/2000/svg", tag) || doc.createElement(tag);
@@ -77,6 +97,7 @@ export function createProjectionConfigView(root, {
   onRunNames = () => {},
   onOutputAction = () => {},
   onField = () => {},
+  onNliFont = () => {},
   onFieldCancel = () => {},
   onNudge = () => {},
   onNamesMode = () => {},
@@ -213,6 +234,8 @@ export function createProjectionConfigView(root, {
   const pageSpacingResetControls = [];
   const namesWallUnitsHelp = "Font, spacing, and edge inset use reference-plane pixels. Inner-edge clearances reserve final-output pixels in both modes and repack names.";
   const namesWallRotationHelp = "Rotation applies to both wall and model profiles and follows Live, Apply, and Save.";
+  const graphFontChoices = createNliFontControls(doc, onNliFont);
+  const selectedFontChoices = createNliFontControls(doc, onNliFont);
   const updateWarpNodePreviews = (warpStates = {}) => {
     for (const [id, preview] of warpNodePreviews) {
       const state = warpStates[preview.output];
@@ -369,7 +392,7 @@ export function createProjectionConfigView(root, {
       controls.gisClockScene = sceneControl;
       card.appendChild(sceneControl);
     }
-    if (id === "content") card.appendChild(borderVisibility.element);
+    if (id === "content") card.append(borderVisibility.element, ...graphFontChoices.elements);
     if (id === "clock-projection") {
       elementControl = make(doc, "select", { className: "clock-element-selector", ariaLabel: "Projection overlay", dataset: { action: "clock-element" } });
       elementControl.append(make(doc, "option", { value: "clock" }, "Clock"), make(doc, "option", { value: "legend" }, "Legend"));
@@ -1101,6 +1124,12 @@ export function createProjectionConfigView(root, {
     reconciliationActive = Boolean(state.reconciliation);
     updateLiveGuard();
     const draft = state.draft || DEFAULT_PROJECTION_CONFIG;
+    const nliFonts = draft.nliFonts || NLI_FONT_DEFAULTS;
+    for (const controlsForSurface of [graphFontChoices.controls, selectedFontChoices.controls]) {
+      for (const [language, select] of Object.entries(controlsForSurface)) {
+        if (doc.activeElement !== select) select.value = nliFonts[language] || NLI_FONT_DEFAULTS[language];
+      }
+    }
     setNode(selectedNode);
     controls.gisClockScene.value = clockScene;
     controls.projectionElement.value = clockElement;
@@ -1146,7 +1175,7 @@ export function createProjectionConfigView(root, {
     const selectedDescriptors = descriptors.filter((descriptor) => descriptor.node === selectedNode && !fields.get(`${descriptor.node}:${descriptor.path}`)?.wrap.hidden);
     selectedContext.replaceChildren();
     selectedContext.setAttribute("aria-label", `Current parameters for ${editorNodeHeading.textContent}`);
-    if (selectedNode === "content") selectedContext.appendChild(borderEditorVisibility.element);
+    if (selectedNode === "content") selectedContext.append(borderEditorVisibility.element, ...selectedFontChoices.elements);
     else if (selectedDescriptors.length) {
       const list = make(doc, "dl", { className: "config-selected-parameters" });
       for (const descriptor of selectedDescriptors) {

@@ -211,6 +211,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     trace,
     descriptors: ALL_FIELD_DESCRIPTORS,
     onField: handleField,
+    onNliFont: handleNliFont,
     onGazaBorderVisibility: value => { void visibilityClient?.setVisible(value); },
     onGazaBorderReload: () => { void visibilityClient?.hydrate(); },
     onFieldCancel: handleFieldCancel,
@@ -791,6 +792,22 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
   function setClientDraft(candidate) {
     localDraftNotification = true;
     try { client.setDraft(candidate); } finally { localDraftNotification = false; }
+  }
+  function handleNliFont(language, choice) {
+    if (disposed || !state.draft || !["he", "en"].includes(language)) return false;
+    const candidate = clone(state.draft);
+    if (!candidate.nliFonts || typeof candidate.nliFonts !== "object") return false;
+    if (candidate.nliFonts[language] === choice) return false;
+    candidate.nliFonts[language] = choice;
+    if (!validCandidate(candidate, `nliFonts.${language}`)) return false;
+    try {
+      setClientDraft(candidate);
+      fieldErrors = {};
+    } catch (error) {
+      fieldErrors = { [`nliFonts.${language}`]: error.message };
+    }
+    refresh();
+    return true;
   }
   function commitScalar({ path, resolvedPath: editPath, value, baseValue, override = false, phase, gestureId }) {
     const descriptor = descriptorFor(path);

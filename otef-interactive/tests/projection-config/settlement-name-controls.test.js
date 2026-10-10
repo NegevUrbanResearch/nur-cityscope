@@ -70,6 +70,7 @@ test("shared style controls explain both projectors and reject an out-of-range f
   expect(note.textContent).toMatch(/both projectors/i);
   expect(note.textContent).toMatch(/save automatically/i);
   expect(note.textContent).toMatch(/Live and Apply/i);
+  expect(find(controls.element, (node) => node.dataset?.field === "fontFamily")).toBeUndefined();
   const font = find(controls.element, (node) => node.dataset?.field === "fontPx");
   font.value = "7";
   font.dispatch('input');
@@ -79,6 +80,7 @@ test("shared style controls explain both projectors and reject an out-of-range f
   font.dispatch('input');
   font.dispatch("change");
   expect(onStyle).toHaveBeenCalledWith(expect.objectContaining({ fontPx: 24, rotateDeg: 35 }));
+  expect(onStyle.mock.calls.at(-1)[0].fontFamily).toBe("Guttman Hatzvi");
   expect(find(controls.element, (node) => node.className === "settlement-name-status").textContent).toBe("Changed on another screen");
 });
 

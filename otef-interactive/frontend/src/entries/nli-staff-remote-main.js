@@ -5,6 +5,9 @@ import { initNliStaffRemote } from "../remote/nli-staff-remote.js";
 import { createStaffRemoteManagement } from "../remote/staff-remote-management.js";
 import { OTEF_API } from "../shared/api-client.js";
 import { FRONTEND_BUILD_ID } from "../../runtime/frontend-version.js";
+import { createNliFontSubscription } from "../shared/nli-font-subscription.js";
+import { NLI_FONT_DEFAULTS } from "../shared/nli-font-settings.js";
+import { createUuid } from "../shared/uuid.js";
 
 export { FRONTEND_BUILD_ID };
 
@@ -62,6 +65,17 @@ async function boot() {
   await layerRegistry.init();
   await OTEFDataContext.init("otef");
   bindRemoteConnectionRecovery(() => OTEFDataContext.reconnect());
+  let publishedNliFontChoices = { ...NLI_FONT_DEFAULTS };
+  const getNliFontChoices = () => ({ ...publishedNliFontChoices });
+  const nliFontSubscription = createNliFontSubscription({
+    socket: OTEFDataContext.getManagementSocket(),
+    sourceId: createUuid(),
+    fetchImpl: window.fetch.bind(window),
+    onChoices: choices => { publishedNliFontChoices = choices; },
+    onError: error => console.warn("[nli-staff-remote] NLI font settings unavailable", error),
+  });
+  void nliFontSubscription.start().catch(() => {});
+  window.addEventListener("beforeunload", () => nliFontSubscription.stop(), { once: true });
   let staffRemote = null;
   let sessionStorage = null;
   try { sessionStorage = window.sessionStorage; } catch { /* refresh will reject when storage is unavailable */ }
@@ -79,7 +93,7 @@ async function boot() {
     document,
     reload: () => window.location.reload(),
   });
-  staffRemote = initNliStaffRemote(OTEFDataContext, { onHomeSuccess: () => management.noteHomeSuccess() });
+  staffRemote = initNliStaffRemote(OTEFDataContext, { onHomeSuccess: () => management.noteHomeSuccess(), getNliFontChoices });
 }
 
 boot().catch((error) => console.error("[nli-staff-remote] bootstrap failed", error));

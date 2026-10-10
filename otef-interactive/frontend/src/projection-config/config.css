@@ -745,6 +745,8 @@ h2, h3 { margin: 0 0 10px; }
 .content-visibility-label { display: flex; align-items: center; gap: 10px; min-height: 44px; }
 .content-visibility-label input { width: 18px; height: 18px; flex: none; }
 .content-visibility-status { font-size: 12px; }
+.nli-font-control { display: grid; gap: 4px; min-width: 0; color: #c7d6da; font-size: .8rem; }
+.nli-font-control select { width: 100%; min-height: 44px; }
 .warp-edit-surface[data-point-match-active="true"] .warp-handle,
 .warp-edit-surface[data-point-match-active="true"] .warp-grid-line { visibility: hidden; }
 @container (max-width: 380px) {
