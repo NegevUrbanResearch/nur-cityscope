@@ -838,6 +838,7 @@ async function bootstrapProjectionRuntime() {
         ...sceneOptions,
         sceneClockRuntime: sceneManaged && !slideshowRuntime?.isActive() && (!browserMode || projectionSpanId !== "right") ? getLayerLifecycleRuntime(map) : null,
         sceneCaptionId: "nli.clock-caption.projection",
+        cueLayerGroups: snapshot.rawLayerGroups,
         visibilityLayerGroups: overlayGroups,
         displayProfile: "projection",
         nliCaptionMode: "clock-only",

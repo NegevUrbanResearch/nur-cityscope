@@ -475,6 +475,7 @@ async function bootstrapMapRuntime() {
       return syncInvestigationTimelineToMap(map, clock, currentGroups, {
         ...sceneOptions,
         sceneClockRuntime: getLayerLifecycleRuntime(map), sceneCaptionId: "nli.clock-caption.gis",
+        cueLayerGroups: snapshot.rawLayerGroups,
         visibilityLayerGroups: groupsAsArray,
         displayProfile: "gis",
         nliCaptionMode: "clock-only",
