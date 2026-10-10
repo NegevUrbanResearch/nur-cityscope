@@ -698,6 +698,14 @@ def projection_presets_defaults():
     }]
 
 
+class OTEFStaffRemoteUpdates(models.Model):
+    table = models.OneToOneField(Table, on_delete=models.CASCADE, related_name="staff_remote_updates")
+    device_id = models.UUIDField(null=True, blank=True)
+    revision = models.PositiveBigIntegerField(default=0)
+    notice_build_id = models.CharField(max_length=25, null=True, blank=True)
+    notice_created_at = models.DateTimeField(null=True, blank=True)
+
+
 class OTEFProjectionCalibration(models.Model):
     table = models.OneToOneField(Table, on_delete=models.CASCADE, related_name="projection_calibration")
     working_config = models.JSONField(default=projection_config_defaults)

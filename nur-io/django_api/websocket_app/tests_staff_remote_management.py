@@ -1,11 +1,12 @@
 import asyncio
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 from .consumers import GeneralConsumer
 from .staff_remote_management import (
     disconnect_staff_remote_management,
     handle_staff_remote_management,
+    send_staff_remote_management,
     validate_staff_remote_message,
 )
 
@@ -32,6 +33,34 @@ def observer():
 
 
 class StaffRemoteManagementTests(IsolatedAsyncioTestCase):
+    async def test_registered_binding_and_retired_recipient_gate(self):
+        tablet = observer()
+        tablet.send = AsyncMock()
+        await handle_staff_remote_management(tablet, status())
+        bind = {"type": "otef_staff_remote_device_bind_v1", "table": "otef", "deviceId": REMOTE,
+                "remoteId": REMOTE, "instanceId": INSTANCE, "connectionSeq": 1}
+        with patch("websocket_app.staff_remote_management.registered_device", AsyncMock(return_value=REMOTE)):
+            await handle_staff_remote_management(tablet, bind)
+            self.assertEqual(tablet._staff_remote_device_id, REMOTE)
+            event = tablet.channel_layer.group_send.call_args.args[1]["message"]
+            self.assertEqual(event["type"], "otef_staff_remote_device_binding_v1")
+        with patch("websocket_app.staff_remote_management.registered_device", AsyncMock(return_value=None)):
+            await send_staff_remote_management(tablet, {"type": "otef_staff_remote_refresh"})
+            tablet.send.assert_not_awaited()
+        await disconnect_staff_remote_management(tablet)
+
+    async def test_rejected_binding_cannot_fall_back_to_legacy_refresh(self):
+        tablet = observer()
+        tablet.send = AsyncMock()
+        await handle_staff_remote_management(tablet, status())
+        with patch("websocket_app.staff_remote_management.registered_device", AsyncMock(return_value=None)):
+            await handle_staff_remote_management(tablet, {"type": "otef_staff_remote_device_bind_v1", "table": "otef",
+                "deviceId": REMOTE, "remoteId": REMOTE, "instanceId": INSTANCE, "connectionSeq": 1})
+            await send_staff_remote_management(tablet, {"type": "otef_staff_remote_refresh"})
+            tablet.send.assert_not_awaited()
+        self.assertTrue(await handle_staff_remote_management(tablet, {"type": "otef_staff_remote_notice_changed_v1", "table": "otef", "revision": 1}))
+        await disconnect_staff_remote_management(tablet)
+
     async def test_schemas_room_identity_and_server_only_disconnect(self):
         self.assertIsNotNone(validate_staff_remote_message(status()))
         invalid = [

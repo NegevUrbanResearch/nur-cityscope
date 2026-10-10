@@ -12,6 +12,9 @@ export const STAFF_REMOTE_MANAGEMENT = Object.freeze({
 });
 
 const schemas = {
+  otef_staff_remote_device_bind_v1: ["deviceId", "remoteId", "instanceId", "connectionSeq"],
+  otef_staff_remote_device_binding_v1: ["deviceId", "remoteId", "instanceId", "connectionSeq"],
+  otef_staff_remote_notice_changed_v1: ["revision"],
   otef_staff_remote_subscribe: ["sourceId"],
   otef_staff_remote_status_query: ["sourceId"],
   otef_staff_remote_status: ["remoteId", "instanceId", "connectionSeq", "leaseSeq", "buildId", "visibility", "ready", "refreshBlockReason", "reloadReceipt"],
@@ -30,8 +33,9 @@ export function validateStaffRemoteMessage(value) {
   const keys = ["type", "table", ...required].sort();
   if (Object.keys(value).sort().join("\0") !== keys.join("\0")) return null;
   if (new TextEncoder().encode(JSON.stringify(value)).byteLength >= STAFF_REMOTE_MANAGEMENT.MAX_REPORT_BYTES) return null;
-  const idFields = required.filter((key) => ["sourceId", "requestId", "remoteId", "instanceId"].includes(key));
+  const idFields = required.filter((key) => ["sourceId", "requestId", "remoteId", "instanceId", "deviceId"].includes(key));
   if (!idFields.every((key) => isId(value[key]))) return null;
+  if ("revision" in value && (!Number.isSafeInteger(value.revision) || value.revision < 0)) return null;
   if (["connectionSeq", "leaseSeq"].some((key) => key in value && !isCounter(value[key]))) return null;
   if (value.type === "otef_staff_remote_status") {
     if (!(value.buildId === null || (typeof value.buildId === "string" && /^[\x20-\x7e]{0,64}$/.test(value.buildId)))) return null;
