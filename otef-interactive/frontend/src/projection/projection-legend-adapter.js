@@ -142,7 +142,10 @@ function drawSymbol(context, part, x, y, font, geometry, scale) {
       context.strokeStyle = gradient;
     }
     context.setLineDash?.(dashArray);
-    if (part.halo && part.halo !== "transparent") { context.shadowColor = part.halo; context.shadowBlur = scale; }
+    if (part.halo && part.halo !== "transparent") {
+      context.shadowColor = part.halo;
+      context.shadowBlur = Number.isFinite(part.haloBlur) ? Math.max(0, part.haloBlur) * swatchScale : scale;
+    }
     context.stroke();
     context.setLineDash?.([]);
   } else if (part.captivityBleed) {

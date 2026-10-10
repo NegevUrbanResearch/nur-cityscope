@@ -357,7 +357,7 @@ describe("legend content model", () => {
     expect(layer.items[0].components.map((part) => part.shape)).toEqual(["line", "square"]);
   });
 
-  it("applies the shared surface presentation rules to legend symbols", () => {
+  it("keeps Gaza roads legends light with a soft halo on both surfaces", () => {
     const config = {
       id: "Gaza_Roads",
       name: "Gaza roads",
@@ -380,9 +380,13 @@ describe("legend content model", () => {
       surface: "projection",
     });
     expect(gis.items[0].strokeWidth).toBe(10);
-    expect(gis.items[0].strokeOpacity).toBeCloseTo(0.8 * 0.45);
+    expect(gis.items[0].strokeOpacity).toBe(0.8);
     expect(projection.items[0].strokeWidth).toBeCloseTo(10 * 0.3);
     expect(projection.items[0].strokeOpacity).toBe(0.8);
+    for (const layer of [gis, projection]) {
+      expect(layer.items[0]).toMatchObject({ halo: "#123456", haloBlur: 2 });
+      expect(layer.items[0].components[0]).toMatchObject({ halo: "#123456", haloBlur: 2 });
+    }
   });
 
   it("preserves solid fill opacity and every distinct stroke", () => {

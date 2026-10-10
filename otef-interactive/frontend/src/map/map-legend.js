@@ -58,6 +58,7 @@ function symbolMarkup(part = {}, geometry = null, fontPx = 22) {
   } else if (part.hatchStyle2 && part.hatchStyle) background = `${part.hatchStyle2}, ${part.hatchStyle}, ${fill}`;
   else if (part.hatchStyle) background = `${part.hatchStyle}, ${fill}`;
   const halo = part.halo || "transparent";
+  const haloBlur = Number.isFinite(part.haloBlur) ? Math.max(0, part.haloBlur) * swatchScale : 0;
   const shockwave = part.alarmShockwave
     ? ` map-legend-symbol--alarm-shockwave`
     : "";
@@ -85,7 +86,7 @@ function symbolMarkup(part = {}, geometry = null, fontPx = 22) {
     ? `<span class="map-legend-projection-line-stroke" style="position:absolute;left:0;top:${(cssHeight - geometry.height) / 2}px;width:${geometry.width}px;height:${geometry.height}px;background:${escapeHtml(background)}" aria-hidden="true"></span>`
     : "";
   if (lineStroke) background = part.carrier;
-  const style = `${position}--legend-fill:${background};--legend-fill-opacity:${fillOpacity};--legend-stroke:${legendStroke};--legend-stroke-width:${legendStrokeWidth}px;--legend-stroke-opacity:${strokeOpacity};--legend-halo:${halo};${part.alarmShockwave ? `--legend-alarm-shockwave:${shockwaveColor};` : ""}${swatchImage}`;
+  const style = `${position}--legend-fill:${background};--legend-fill-opacity:${fillOpacity};--legend-stroke:${legendStroke};--legend-stroke-width:${legendStrokeWidth}px;--legend-stroke-opacity:${strokeOpacity};--legend-halo:${halo};--legend-halo-blur:${haloBlur}px;${part.alarmShockwave ? `--legend-alarm-shockwave:${shockwaveColor};` : ""}${swatchImage}`;
   const ringSize = geometry && part.alarmShockwave ? Math.max(geometry.width, geometry.height) + fontPx * 0.56 + 1.6 : 0;
   const ring = ringSize ? `<span class="map-legend-projection-shockwave" style="position:absolute;left:${geometry.x - ringSize / 2}px;top:${geometry.y - ringSize / 2}px;width:${ringSize}px;height:${ringSize}px;border:1.6px solid ${escapeHtml(shockwaveColor)};opacity:0.4;border-radius:50%;box-sizing:border-box" aria-hidden="true"></span>` : "";
   return `<span class="map-legend-symbol map-legend-symbol--${escapeHtml(shape)}${shockwave}${captivityBleed}" style="${escapeHtml(style + outline)}" aria-hidden="true">${lineStroke}</span>${ring}`;

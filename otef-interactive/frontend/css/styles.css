@@ -165,7 +165,7 @@ body {
 .map-legend-symbols { display: inline-flex; align-items: center; gap: .18em; flex: 0 0 auto; min-width: 1.23em; margin-top: .18em; }
 .map-legend-symbol { position: relative; display: inline-block; width: 1.23em; height: .68em; flex: 0 0 1.23em; box-sizing: border-box; overflow: hidden; border: var(--legend-stroke-width) solid var(--legend-stroke); border-color: color-mix(in srgb, var(--legend-stroke), transparent calc((1 - var(--legend-stroke-opacity)) * 100%)); border-radius: 1px; }
 .map-legend-symbol::before { position: absolute; inset: 0; content: ""; opacity: var(--legend-fill-opacity); background: var(--legend-fill); border-radius: inherit; }
-.map-legend-symbol--line { height: max(2px, var(--legend-stroke-width)); margin-top: .27em; overflow: visible; opacity: var(--legend-stroke-opacity); background: var(--legend-fill); border: 0; box-shadow: 0 0 0 1px color-mix(in srgb, var(--legend-halo, transparent) 35%, transparent); }
+.map-legend-symbol--line { height: max(2px, var(--legend-stroke-width)); margin-top: .27em; overflow: visible; opacity: var(--legend-stroke-opacity); background: var(--legend-fill); border: 0; box-shadow: 0 0 var(--legend-halo-blur, 0px) 1px color-mix(in srgb, var(--legend-halo, transparent) 35%, transparent); }
 .map-legend-symbol--line::before { content: none; }
 .map-legend-symbol--point { width: .55em; height: .55em; flex-basis: .55em; margin: .09em .32em 0; border-radius: 50%; }
 .map-legend-symbol--point.map-legend-symbol--captivity-bleed { border: 0; background: transparent; }

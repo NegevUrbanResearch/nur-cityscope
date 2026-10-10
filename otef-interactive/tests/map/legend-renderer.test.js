@@ -245,6 +245,30 @@ describe("mountMapLegend", () => {
     mounted.dispose();
   });
 
+  it.each(["gis", "projection"])("renders a light Gaza roads chip with a soft halo on %s", async (surface) => {
+    const { element } = setup();
+    const style = { renderer: "simple", defaultSymbol: { symbolLayers: [
+      { type: "stroke", color: "#828282", width: 2.67, opacity: 1 },
+    ] } };
+    const group = { id: "gaza", layers: [{ id: "Gaza_Roads", enabled: true }] };
+    const mounted = mountMapLegend({
+      element, surface,
+      dataContext: { getLayerGroups: () => [group] },
+      registry: {
+        _initialized: true,
+        getGroups: () => [group],
+        getLayerConfig: () => ({ geometryType: "line", style }),
+        getPackStyleJsonForLayer: () => style,
+      },
+    });
+    await mounted.refresh();
+    expect(element.innerHTML).toContain("--legend-fill:#828282");
+    expect(element.innerHTML).toContain("--legend-stroke-opacity:1");
+    expect(element.innerHTML).toContain("--legend-halo:#828282");
+    expect(element.innerHTML).toContain("--legend-halo-blur:2px");
+    mounted.dispose();
+  });
+
   it("paints alarms with a static shockwave ring and leaves other points alone", async () => {
     const { element } = setup();
     const mounted = mountMapLegend({
@@ -619,7 +643,7 @@ describe("mountMapLegend", () => {
     expect(css).toMatch(/\.map-legend-projection \.map-legend-content\s*\{[^}]*position:\s*absolute[^}]*padding:\s*0/s);
     expect(css).toMatch(/\.map-legend-projection \.map-legend-item\s*\{[^}]*display:\s*block/s);
     expect(css).toMatch(/\.map-legend-gis \.map-legend-layers\s*\{[^}]*display:\s*flex[^}]*flex-flow:\s*row wrap/s);
-    expect(css).toMatch(/\.map-legend-symbol--line\s*\{[^}]*box-shadow:\s*0 0 0 1px color-mix\(\s*in srgb,\s*var\(--legend-halo,\s*transparent\) 35%,\s*transparent\s*\)/s);
+    expect(css).toMatch(/\.map-legend-symbol--line\s*\{[^}]*box-shadow:\s*0 0 var\(--legend-halo-blur, 0px\) 1px color-mix\(\s*in srgb,\s*var\(--legend-halo,\s*transparent\) 35%,\s*transparent\s*\)/s);
     expect(css).toMatch(/\.map-legend-symbol--alarm-shockwave::after\s*\{[^}]*border:\s*1(?:\.6)?px solid color-mix\(\s*in srgb,\s*var\(--legend-alarm-shockwave,\s*transparent\) 40%,\s*transparent\s*\)/s);
     expect(css).toMatch(/\.map-legend-symbol::before\s*\{[^}]*border-radius:\s*inherit/s);
     expect(css).toMatch(/\.map-legend-symbol--point\s*\{[^}]*border-radius:\s*50%/s);
@@ -937,6 +961,24 @@ describe("projection legend paint geometry", () => {
     expect(symbols.map((node) => node.style.position || "")).toEqual(["", "", ""]);
     expect(symbols.every((node) => !/NaN|undefined/.test(node.style.cssText))).toBe(true);
     legend.dispose();
+  });
+
+  it("paints the same soft grey halo in projection DOM and canvas", async () => {
+    const { legend, snapshot, dom } = await mount([
+      { id: "gaza", label: "Gaza roads", shape: "line", stroke: "#828282", strokeOpacity: 1, halo: "#828282", haloBlur: 2 },
+      { id: "ordinary", label: "232", shape: "line", stroke: "#873e23" },
+    ]);
+    const strokes = [];
+    const context = new Proxy({}, { get: (target, key) => {
+      if (key === "stroke") return () => strokes.push({ color: target.strokeStyle, opacity: target.globalAlpha, halo: target.shadowColor, blur: target.shadowBlur });
+      return key in target ? target[key] : () => {};
+    } });
+    const adapter = createProjectionLegendAdapter({ canvasFactory: () => ({ getContext: () => context }) });
+    adapter.sync(snapshot); adapter.draw();
+    const symbol = dom.querySelector('[data-legend-item-id="gaza"]').querySelector(".map-legend-symbol");
+    expect(strokes[0]).toEqual({ color: "#828282", opacity: 1, halo: "#828282", blur: number(symbol, "--legend-halo-blur") });
+    expect(strokes[1]).toEqual({ color: "#873e23", opacity: 1, halo: "transparent", blur: 0 });
+    adapter.dispose(); legend.dispose();
   });
 
   it("allows unscaled final items to reach the outer fitted clip", async () => {
