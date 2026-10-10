@@ -67,16 +67,19 @@ async function boot() {
   bindRemoteConnectionRecovery(() => OTEFDataContext.reconnect());
   let publishedNliFontChoices = { ...NLI_FONT_DEFAULTS };
   const getNliFontChoices = () => ({ ...publishedNliFontChoices });
+  let staffRemote = null;
   const nliFontSubscription = createNliFontSubscription({
     socket: OTEFDataContext.getManagementSocket(),
     sourceId: createUuid(),
     fetchImpl: window.fetch.bind(window),
-    onChoices: choices => { publishedNliFontChoices = choices; },
+    onChoices: choices => {
+      publishedNliFontChoices = choices;
+      void staffRemote?.applyNliFontChoices?.(choices);
+    },
     onError: error => console.warn("[nli-staff-remote] NLI font settings unavailable", error),
   });
   void nliFontSubscription.start().catch(() => {});
   window.addEventListener("beforeunload", () => nliFontSubscription.stop(), { once: true });
-  let staffRemote = null;
   let sessionStorage = null;
   try { sessionStorage = window.sessionStorage; } catch { /* refresh will reject when storage is unavailable */ }
   const management = createStaffRemoteManagement({

@@ -5,6 +5,9 @@
   --presentation-next-border: rgba(255, 214, 0, 0.75);
 }
 
+.app [lang="he"] { font-family: var(--nli-staff-font-he, var(--font)); }
+.app [lang="en"] { font-family: var(--nli-staff-font-en, var(--font)); }
+
 #stepNote { display: none; }
 .player-top { display: none; }
 

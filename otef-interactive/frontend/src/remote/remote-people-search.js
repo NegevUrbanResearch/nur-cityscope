@@ -23,8 +23,11 @@ function displayName(row, locale = getLocale()) {
   catch { return locale === 'en' ? 'Unknown name' : 'לא ידוע'; }
 }
 function toRow(row, datasetVersion, locale) {
-  const location = clean(row?.location) ? resolveNliLocation(row.location, locale).label : clean(row?.sublocation);
-  return { pid: clean(row?.pid), name: displayName(row, locale), location, hasArchiveRecord: row?.hasArchiveRecord === true, datasetVersion };
+  const localizedLocation = clean(row?.location) ? resolveNliLocation(row.location, locale).label : "";
+  const location = localizedLocation || clean(row?.sublocation);
+  return { pid: clean(row?.pid), name: displayName(row, locale), nameLanguage: locale,
+    location, ...(localizedLocation ? { locationLanguage: locale } : {}),
+    hasArchiveRecord: row?.hasArchiveRecord === true, datasetVersion };
 }
 const splitTokens = (value) => normalize(value).split(/[\s,\-\u05be/]+/).filter(Boolean);
 

@@ -43,6 +43,22 @@ describe("native staff remote module graph", () => {
     expect(entry.indexOf("if (!response.ok)")).toBeLessThan(entry.indexOf("return response.json()"));
   });
 
+  test("forwards each published font choice into the live staff remote", () => {
+    const { entryPath, staffUrl } = servedModuleChain();
+    const entry = readFileSync(entryPath, "utf8");
+    const staff = readFileSync(fileURLToPath(new URL(staffUrl)), "utf8");
+    const html = readFileSync(staffHtml, "utf8");
+    expect(entry).toContain("void staffRemote?.applyNliFontChoices?.(choices)");
+    expect(staff).toContain("window.addEventListener(LOCALE_EVENT, onLocaleChange)");
+    expect(staff).toContain("void applyNliFontChoices(getNliFontChoices())");
+    expect(staff).toContain("const adopted = await staffFonts.applyChoices(choices)");
+    expect(staff).toContain("if (!disposed) render()");
+    expect(staff).toContain('lang="${person.nameLanguage}"');
+    expect(staff).toContain('lang="${person.locationLanguage}"');
+    expect(html).toMatch(/id="localeHe"[^>]*\blang="he"/);
+    expect(html).toMatch(/id="localeEn"[^>]*\blang="en"/);
+  });
+
   test("loads the served HTML entry and its staff module graph under native ESM", () => {
     const { entryPath, entryUrl, staffUrl } = servedModuleChain();
     const entryCheck = spawnSync(process.execPath, ["--check", entryPath], { encoding: "utf8" });

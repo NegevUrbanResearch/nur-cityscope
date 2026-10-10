@@ -13,6 +13,8 @@ import { consumeNliNovaEscapeClick, nliNovaEscapeTogglesHtml } from "./nli-nova-
 import { buildNovaEndedClock, commitSceneLayers, createCueRunner } from "./nli-staff-cues.js";
 import { createNliStaffSearchTransition } from "./nli-staff-search-transition.js";
 import { createPeopleSearchRuntime } from "./remote-people-search.js";
+import { createNliStaffFontController } from "./nli-staff-fonts.js";
+import { NLI_FONT_DEFAULTS } from "../shared/nli-font-settings.js";
 import {
   createRemotePeopleArchiveController,
   waitForInvestigationClockIdle,
@@ -197,6 +199,8 @@ export function initNliStaffLocaleControls(dataContext, { onFailure } = {}) {
 export function initNliStaffRemote(dataContext, {
   presenterManifest = presenterContent,
   onHomeSuccess,
+  getNliFontChoices = () => ({ ...NLI_FONT_DEFAULTS }),
+  onNliFontError = (error) => console.warn("[nli-staff-remote] NLI staff font unavailable", error),
   navigationSession = createNliStaffNavigationSession(),
 } = {}) {
   dataContext.setExhibitMode(true);
@@ -206,6 +210,7 @@ export function initNliStaffRemote(dataContext, {
   window.addEventListener("pagehide", releaseExhibitMode);
   window.addEventListener("beforeunload", releaseExhibitMode);
   const peopleSearch = createPeopleSearchRuntime();
+  const staffFonts = createNliStaffFontController({ document, getLocale, onError: onNliFontError });
   const placeFocusOwnership = createNliStaffPlaceFocusOwnership();
   void peopleSearch.load().catch(() => {});
 
@@ -798,8 +803,8 @@ export function initNliStaffRemote(dataContext, {
       (person) => `
               <li>
                 <button type="button" data-kind="person" data-pid="${person.pid}" data-version="${person.datasetVersion}" data-archive="${person.hasArchiveRecord ? "1" : "0"}"${state.searchPending ? " disabled" : ""}>
-                  <span class="result-name">${person.name}</span>
-                  <span class="result-place">${person.location || ""}</span>
+                  <span class="result-name" lang="${person.nameLanguage}">${person.name}</span>
+                  <span class="result-place"${person.locationLanguage ? ` lang="${person.locationLanguage}"` : ""}>${person.location || ""}</span>
                 </button>
               </li>`,
     );
@@ -1613,8 +1618,15 @@ export function initNliStaffRemote(dataContext, {
     peopleArchive.handleLocaleChange();
     if (state.presenterError) onPresenterError();
     render();
+    void applyNliFontChoices(getNliFontChoices());
   };
   window.addEventListener(LOCALE_EVENT, onLocaleChange);
+
+  async function applyNliFontChoices(choices) {
+    const adopted = await staffFonts.applyChoices(choices);
+    if (!disposed) render();
+    return adopted;
+  }
 
   subscribe("connection", (isConnected) => {
     state.connected = !!isConnected;
@@ -1646,6 +1658,7 @@ export function initNliStaffRemote(dataContext, {
   });
   state.connected = dataContext?.isConnected?.() !== false;
   render();
+  void applyNliFontChoices(getNliFontChoices());
   void timelineHost._ensureNliFeatureCache?.();
   function getRefreshState() {
     const connected = state.connected && dataContext?.isConnected?.() === true;
@@ -1682,9 +1695,10 @@ export function initNliStaffRemote(dataContext, {
     return { ready, refreshBlockReason };
   }
 
-  return { render, getRefreshState, dispose() {
+  return { render, applyNliFontChoices, getRefreshState, dispose() {
     if (disposed) return;
     disposed = true;
+    staffFonts.dispose();
     archiveUiReady = false;
     navigationGeneration += 1;
     if (activeNavigationAttempt) navigationSession.abandon(activeNavigationAttempt.ticket);

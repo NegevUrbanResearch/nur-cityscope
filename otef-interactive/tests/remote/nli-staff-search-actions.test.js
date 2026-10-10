@@ -1,5 +1,6 @@
 import { describe, expect, test, vi } from "vitest";
 import { createNliStaffSearchTransition } from "../../frontend/src/remote/nli-staff-search-transition.js";
+import { createPeopleSearchRuntime } from "../../frontend/src/remote/remote-people-search.js";
 
 async function staffActions() {
   const remote = await import("../../frontend/src/remote/nli-staff-remote.js");
@@ -40,6 +41,35 @@ function stateFixture(overrides = {}) {
 }
 
 describe("NLI staff search event handlers", () => {
+  test("carries localized producer fields through staff selection without changing PID or labels", async () => {
+    const source = { datasetVersion: "v1", people: [
+      { pid: "1", nameForms: ["דוד כהן", "David Cohen"], location: "Be'eri", sublocation: "Dining room", hasArchiveRecord: true },
+      { pid: "2", nameForms: ["דנה לוי", "Dana Levi"], location: "", sublocation: "Dining room", hasArchiveRecord: false },
+    ] };
+    const runtime = createPeopleSearchRuntime({
+      fetchJson: async (url) => ({ data: url.includes("release")
+        ? { datasetVersion: "v1", runtimeArtifactHashes: { "people-search-index.json": "hash" } }
+        : source, bytes: new Uint8Array([1]) }),
+      hashBytes: async () => "hash",
+    });
+    await runtime.load();
+    const [person] = runtime.search("David", "en");
+    const [raw] = runtime.search("Dana", "en");
+    expect(person).toMatchObject({ pid: "1", name: "David Cohen", nameLanguage: "en", location: "Be'eri", locationLanguage: "en" });
+    expect(raw).toMatchObject({ pid: "2", name: "Dana Levi", nameLanguage: "en", location: "Dining room" });
+    expect(raw.locationLanguage).toBeUndefined();
+
+    const fixture = stateFixture();
+    const createHandlers = await staffActions();
+    const handlers = createHandlers({ transition: createNliStaffSearchTransition({ clearPersonSelection: async () => true, hasPlaceFocus: () => false }), ...fixture.options });
+    const selected = vi.fn(async (result) => ({ pid: result.pid, name: result.name, location: result.location }));
+    await expect(handlers.selectPerson(person, selected)).resolves.toMatchObject({ pid: "1", name: "David Cohen", location: "Be'eri" });
+    expect(selected).toHaveBeenCalledWith(person, expect.anything());
+    expect(person.pid).toBe("1");
+    expect(person.name).toBe("David Cohen");
+    expect(person.location).toBe("Be'eri");
+  });
+
   test("passes the lexical operation context through preparation and cue settlement", async () => {
     const fixture = stateFixture();
     const context = { ticket: { id: 7 }, generation: 12, kind: "cue" };
