@@ -201,8 +201,18 @@ export function initNliStaffRemote(dataContext, {
   onHomeSuccess,
   getNliFontChoices = () => ({ ...NLI_FONT_DEFAULTS }),
   onNliFontError = (error) => console.warn("[nli-staff-remote] NLI staff font unavailable", error),
+  onRefreshStateChange,
   navigationSession = createNliStaffNavigationSession(),
 } = {}) {
+  let lastRefreshSignature = null;
+  function notifyRefreshState() {
+    if (typeof onRefreshStateChange !== "function") return;
+    try {
+      const value = getRefreshState();
+      const signature = `${value.ready}:${value.refreshBlockReason}`;
+      if (signature !== lastRefreshSignature) { lastRefreshSignature = signature; onRefreshStateChange(value); }
+    } catch { /* early construction may not have initialized owned sessions yet */ }
+  }
   dataContext.setExhibitMode(true);
   const releaseExhibitMode = () => {
     dataContext.setExhibitMode(false);
@@ -412,6 +422,7 @@ export function initNliStaffRemote(dataContext, {
   }
 
   function renderConnection() {
+    notifyRefreshState();
     const el = $("staffConnection");
     const label = $("staffConnectionLabel");
     if (!el || !label) return;
@@ -435,6 +446,7 @@ export function initNliStaffRemote(dataContext, {
   }
 
   function renderHome() {
+    notifyRefreshState();
     $("narrativeList").innerHTML = homeListHtml({ locale: getLocale(), pending: state.searchPending });
   }
 
@@ -542,6 +554,7 @@ export function initNliStaffRemote(dataContext, {
   presenterView.setVisible(false);
 
   function renderPlayer() {
+    notifyRefreshState();
     const item = script();
     if (!item) return;
     const focusKey = storyChooserOpen ? (document.activeElement?.dataset?.focusKey || chooserFocusKey) : null;
@@ -734,6 +747,7 @@ export function initNliStaffRemote(dataContext, {
   }
 
   function renderKit() {
+    notifyRefreshState();
     const step = currentStep();
     const kits = stepKits(step);
     const show = {
@@ -1641,6 +1655,7 @@ export function initNliStaffRemote(dataContext, {
   });
   subscribe("investigationClock", () => {
     paintTimelineMounts();
+    notifyRefreshState();
   });
   subscribe("narrativeState", () => {
     hydrated = true;
@@ -1655,6 +1670,7 @@ export function initNliStaffRemote(dataContext, {
     presenterCommands.invalidate();
     void presenterGate.refresh();
     paintTimelineMounts();
+    notifyRefreshState();
   });
   state.connected = dataContext?.isConnected?.() !== false;
   render();

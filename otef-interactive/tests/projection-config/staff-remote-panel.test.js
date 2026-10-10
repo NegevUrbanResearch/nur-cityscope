@@ -48,9 +48,9 @@ test("limits live announcements to status changes and refreshes only panel DOM o
   const live = panel.element.querySelector('[aria-live="polite"]');
   expect(live).not.toBeNull();
   const initialText = live.textContent;
-  state = { ...state, remotes: [{ ...state.remotes[0], ageMs: 10_000 }] }; listener();
+  state = { ...state, remotes: [{ ...state.remotes[0], ageMs: 10_000 }] }; listener(state);
   expect(live.textContent).toBe(initialText);
-  state = { ...state, remotes: [{ ...state.remotes[0], status: "Not responding", actionEnabled: false }] }; listener();
+  state = { ...state, remotes: [{ ...state.remotes[0], status: "Not responding", actionEnabled: false }] }; listener(state);
   expect(live.textContent).not.toBe(initialText);
   panel.dispose(); panel.element.remove();
 });

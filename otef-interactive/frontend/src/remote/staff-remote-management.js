@@ -1,33 +1,13 @@
 import { STAFF_REMOTE_MANAGEMENT, validateStaffRemoteMessage } from "../shared/staff-remote-management-protocol.js";
-import { withRequestDeadline } from "../shared/request-deadline.js";
 import { createUuid } from "../shared/uuid.js";
-import { isCanonicalHome } from "./staff-remote-refresh-guard.js";
+import { createStaffRemoteReload } from "./staff-remote-reload.js";
 
 const REMOTE_ID_KEY = "otef-staff-remote-id";
-const RECEIPT_KEY = "otef-staff-remote-reload-receipt";
-const RECEIPT_MAX_AGE_MS = 60_000;
-const RECEIPT_MAX_BYTES = 512;
-const FRESH_READ_TIMEOUT_MS = 3_000;
 
 function elapsed(now, then) {
   return Number.isFinite(now) && Number.isFinite(then) ? now - then : NaN;
 }
 
-function validReceipt(raw, remoteId, nowMs) {
-  if (typeof raw !== "string" || new TextEncoder().encode(raw).byteLength > RECEIPT_MAX_BYTES) return null;
-  try {
-    const receipt = JSON.parse(raw);
-    const age = nowMs - receipt.savedAtMs;
-    const expectedKeys = ["schemaVersion", "remoteId", "sourceId", "requestId", "previousInstanceId", "savedAtMs"];
-    if (!receipt || receipt.schemaVersion !== 1 || receipt.remoteId !== remoteId ||
-        Object.keys(receipt).sort().join("\0") !== expectedKeys.sort().join("\0") ||
-        ![receipt.remoteId, receipt.sourceId, receipt.requestId, receipt.previousInstanceId].every(isUuid) ||
-        !Number.isSafeInteger(receipt.savedAtMs) || receipt.savedAtMs < 0 || age < 0 || age > RECEIPT_MAX_AGE_MS) return null;
-    return receipt;
-  } catch {
-    return null;
-  }
-}
 
 function isUuid(value) {
   return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value);
@@ -45,10 +25,14 @@ function readRemoteId(storage) {
   }
 }
 
+export function createStaffRemoteDocumentIdentity({ storage } = {}) {
+  return { remoteId: readRemoteId(storage), instanceId: createUuid() };
+}
+
 export function createStaffRemoteManagement({
   socket, buildId = null, getRefreshState = () => ({ ready: false, refreshBlockReason: "not_ready" }),
   readCanonicalState, storage, window: win = globalThis.window, document: doc = globalThis.document,
-  wallNow = Date.now, monotonicNow = () => globalThis.performance?.now?.() ?? Date.now(), reload, ids = {},
+  wallNow = Date.now, monotonicNow = () => globalThis.performance?.now?.() ?? Date.now(), reload, ids = {}, reloadController, getDeviceId = () => null,
 }) {
   const remoteId = isUuid(ids.remoteId) ? ids.remoteId : readRemoteId(storage);
   const instanceId = isUuid(ids.instanceId) ? ids.instanceId : createUuid();
@@ -58,22 +42,12 @@ export function createStaffRemoteManagement({
   let lastReportMono = NaN;
   let timer = null;
   let pending = null;
-  let reloadIssued = false;
   let disposed = false;
-  let receipt = null;
-  let receiptHomeAtMono = null;
   const processedRequestIds = new Set();
 
-  try {
-    const raw = storage?.getItem(RECEIPT_KEY);
-    receipt = validReceipt(raw, remoteId, wallNow());
-    storage?.removeItem(RECEIPT_KEY);
-    if (!receipt && raw !== null) storage?.removeItem(RECEIPT_KEY);
-  } catch {
-    receipt = null;
-  }
-
   const isConnected = () => !disposed && socket?.getConnected?.() === true;
+  const reloader = reloadController || createStaffRemoteReload({ getRefreshState, readCanonicalState, isConnected,
+    storage, remoteId, wallNow, monotonicNow, reload: reload || (() => win?.location?.reload?.()) });
   const localState = () => {
     try {
       const state = getRefreshState?.() || {};
@@ -94,11 +68,7 @@ export function createStaffRemoteManagement({
     const ws = socket.ws;
     if (!force && Number(ws?.bufferedAmount) > STAFF_REMOTE_MANAGEMENT.MAX_BUFFERED_BYTES) return false;
     const state = localState();
-    if (receiptHomeAtMono !== null && elapsed(monotonicNow(), receiptHomeAtMono) >= RECEIPT_MAX_AGE_MS) {
-      try { storage?.removeItem(RECEIPT_KEY); } catch { /* best effort cleanup */ }
-      receipt = null;
-      receiptHomeAtMono = null;
-    }
+    const receipt = reloader.getOperatorReceipt();
     leaseSeq += 1;
     lastReportWall = wallNow();
     lastReportMono = monotonicNow();
@@ -107,7 +77,7 @@ export function createStaffRemoteManagement({
       connectionSeq, leaseSeq, buildId: typeof buildId === "string" ? buildId : null,
       visibility: doc?.visibilityState === "hidden" ? "hidden" : "visible",
       ready: state.ready, refreshBlockReason: state.refreshBlockReason,
-      reloadReceipt: receipt && state.ready && receiptHomeAtMono !== null
+      reloadReceipt: receipt && state.ready
         ? { sourceId: receipt.sourceId, requestId: receipt.requestId, previousInstanceId: receipt.previousInstanceId }
         : null,
     };
@@ -119,16 +89,24 @@ export function createStaffRemoteManagement({
     connectionSeq += 1;
     leaseSeq = 0;
     report({ force: true });
+    reportDeviceBinding();
   }
   function onDisconnected() {
     if (pending) pending.invalidated = true;
+    reloader.invalidate();
   }
   function onVisible() {
     if (doc?.visibilityState !== "hidden") report({ force: true });
   }
   function onStatusQuery(message) {
     const query = validateStaffRemoteMessage(message);
-    if (query?.type === "otef_staff_remote_status_query") report({ force: true });
+    if (query?.type === "otef_staff_remote_status_query") { report({ force: true }); reportDeviceBinding(); }
+  }
+
+  function reportDeviceBinding() {
+    const deviceId = getDeviceId();
+    if (!isConnected() || !isUuid(deviceId)) return false;
+    return socket.send({ type: "otef_staff_remote_device_bind_v1", table: "otef", deviceId, remoteId, instanceId, connectionSeq }) === true;
   }
 
   function leaseIsCurrent(targetLease) {
@@ -155,7 +133,7 @@ export function createStaffRemoteManagement({
         request.remoteId !== remoteId || request.instanceId !== instanceId || request.connectionSeq !== connectionSeq) return;
     if (processedRequestIds.has(request.requestId)) return;
     processedRequestIds.add(request.requestId);
-    if (reloadIssued || pending) {
+    if (pending || reloader.isBusy()) {
       if (pending && request.requestId === pending.request.requestId) return;
       reject(request, "busy");
       return;
@@ -172,44 +150,14 @@ export function createStaffRemoteManagement({
     const token = { request, invalidated: false };
     pending = token;
     try {
-      if (typeof readCanonicalState !== "function") throw new Error("canonical state reader unavailable");
-      const snapshot = await withRequestDeadline((signal) => readCanonicalState({ signal }), { timeoutMs: FRESH_READ_TIMEOUT_MS });
-      if (disposed || pending !== token || token.invalidated) return;
-      const after = localState();
-      if (!isConnected()) return;
-      if (!after.ready || (after.refreshBlockReason && after.refreshBlockReason !== "not_home")) {
-        reject(request, after.refreshBlockReason || "not_ready");
-        return;
-      }
-      if (!leaseIsCurrent(request.leaseSeq)) {
-        reject(request, "expired");
-        return;
-      }
-      if (!isCanonicalHome(snapshot)) {
-        reject(request, "not_home");
-        return;
-      }
-      const receiptValue = { schemaVersion: 1, remoteId, sourceId: request.sourceId, requestId: request.requestId,
-        previousInstanceId: instanceId, savedAtMs: wallNow() };
-      const encoded = JSON.stringify(receiptValue);
-      if (new TextEncoder().encode(encoded).byteLength > RECEIPT_MAX_BYTES) {
-        reject(request, "storage_unavailable");
-        return;
-      }
-      try {
-        if (!storage || typeof storage.setItem !== "function") throw new Error("session storage unavailable");
-        storage.setItem(RECEIPT_KEY, encoded);
-      }
-      catch { reject(request, "storage_unavailable"); return; }
-      if (!sendAck(request, "accepted", null)) {
-        try { storage?.removeItem(RECEIPT_KEY); } catch { /* best effort rollback */ }
-        return;
-      }
-      reloadIssued = true;
-      try {
-        if (typeof reload === "function") reload();
-        else win?.location?.reload?.();
-      } catch { /* acceptance was already acknowledged; never send a contradictory rejection */ }
+      const outcome = await reloader.attempt({ owner: "operator",
+        isCurrent: () => !disposed && pending === token && !token.invalidated && leaseIsCurrent(request.leaseSeq),
+        receipt: { schemaVersion: 1, remoteId, sourceId: request.sourceId, requestId: request.requestId, previousInstanceId: instanceId },
+        beforeReload: () => sendAck(request, "accepted", null) === true,
+      });
+      if (disposed || token.invalidated || !isConnected()) return;
+      if (outcome.result === "rejected") reject(request, outcome.reason);
+      else if (outcome.result === "cancelled" && !leaseIsCurrent(request.leaseSeq)) reject(request, "expired");
     } catch {
       if (disposed || pending !== token || token.invalidated) return;
       reject(request, "state_unavailable");
@@ -228,14 +176,15 @@ export function createStaffRemoteManagement({
   timer = globalThis.setInterval(() => report(), STAFF_REMOTE_MANAGEMENT.HEARTBEAT_MS);
 
   return {
-    noteHomeSuccess() {
-      if (receipt && receiptHomeAtMono === null) receiptHomeAtMono = monotonicNow();
-    },
+    getIdentity: () => ({ remoteId, instanceId, connectionSeq }), reportDeviceBinding,
+    noteHomeSuccess: () => reloader.noteHomeSuccess(),
     dispose() {
       if (disposed) return;
       disposed = true;
       if (timer !== null) globalThis.clearInterval(timer);
       if (pending) pending.invalidated = true;
+      if (!reloadController) reloader.dispose();
+      else reloader.invalidate("operator");
       socket?.off?.("connect", onConnected);
       socket?.off?.("disconnect", onDisconnected);
       socket?.off?.("connecting", onDisconnected);

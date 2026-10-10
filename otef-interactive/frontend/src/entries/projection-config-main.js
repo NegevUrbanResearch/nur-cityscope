@@ -1,5 +1,6 @@
 import { createProjectionConfigClient } from "../shared/projection-config-client.js";
 import { createUuid } from "../shared/uuid.js";
+import { createStaffRemoteUpdateApi, readFrontendBuildId } from "../shared/staff-remote-update-api.js";
 import { loadShareHosts } from "../shared/share-origin.js";
 import { copyUrl } from "../shared/copy-url.js";
 import { renderQr } from "../shared/qr-code.js";
@@ -75,7 +76,8 @@ export async function bootProjectionConfig({ document = globalThis.document, loc
   let catalogGeneration = 0;
   let catalogAbort = null;
   let currentCatalog = { entries: [] };
-  const staffRemoteManager = createStaffRemoteManager({ socket: ws, sourceId: createUuid() });
+  const staffRemoteManager = createStaffRemoteManager({ socket: ws, sourceId: createUuid(), document,
+    updateApi: createStaffRemoteUpdateApi({ fetchImpl }), readBuildId: () => readFrontendBuildId({ fetchImpl }) });
 
   function linkedAbortSignal(...signals) {
     const controller = new AbortController();

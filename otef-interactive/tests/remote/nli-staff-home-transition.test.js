@@ -230,6 +230,17 @@ describe("NLI staff Home transitions", () => {
     expect(session.remote.getRefreshState()).toEqual({ ready: false, refreshBlockReason: "not_ready" });
   });
 
+  test("refresh-state subscribers are notified when startup Home becomes ready and on disconnect", async () => {
+    session = mount({ connected: true });
+    const states = [];
+    await bootRemote(session, { onRefreshStateChange: value => states.push(value) });
+    session.h.emit("connection", true);
+    session.h.emit("narrativeState", session.h.narrative);
+    await vi.waitFor(() => expect(states.some(value => value.ready && value.refreshBlockReason === null)).toBe(true));
+    session.h.emit("connection", false);
+    expect(states.at(-1)).toEqual({ ready: false, refreshBlockReason: "not_ready" });
+  });
+
   test("a pending scene navigation blocks refresh while canonical Home is still cached", async () => {
     setLocale("en", { persist: false });
     session = mount({ connected: true });

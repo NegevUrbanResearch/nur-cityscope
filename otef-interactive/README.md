@@ -34,6 +34,29 @@ choose **Open**. Clear it and reopen outputs to return to the normal orientation
 
 ## Phone remotes and QR
 
+### Exhibit tablet updates
+
+After installing this feature, manually refresh the NLI staff remote once on
+the exhibit tablet and choose **Register as exhibit tablet**. Use the same
+remote address and browser profile during normal operation. Clearing site data
+or changing that address requires explicit registration again.
+
+In projection-config, **Send update notice** saves the latest notice even while
+the tablet is locked or offline. Finish installing frontend files and run
+`npm run publish:frontend-version` in `otef-interactive` before sending it.
+Repeated sends for the same build keep the same notice; a newer build replaces
+the previous notice. Unlocking/reopening the remote checks the saved notice.
+A browser that already loaded the current build needs no additional refresh.
+
+The presenter chooses **Refresh** or **Later**. A busy remote shows a reminder
+until Home and any archive/presentation work have settled. **Refresh now** in
+projection-config reloads a selected online tablet session using the same
+guards; it is never queued for an offline tablet. Local desktop remotes remain
+outside the registered tablet list. Browser full screen is optional.
+
+This feature uses browser registration, not a hardware MAC address. Database
+volumes retain the saved registration/notice across normal container restarts.
+
 GIS and workstation Open links stay on `http://localhost`. Tablet remotes and the QR use **Local** (`http://{current-lan-ipv4}`) or **Tailnet** (`http://{tailscale-ipv4}`), including nginx's published port when it is not 80. Local is selected on each launcher/QR load when a LAN address is available; otherwise Tailnet is selected when available.
 
 Those origins are detected and written once per helper run, on the host, by:

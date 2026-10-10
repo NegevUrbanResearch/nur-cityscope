@@ -37,9 +37,9 @@ describe("native staff remote module graph", () => {
     expect(management).toBeGreaterThanOrEqual(0);
     expect(initializerMatch).not.toBeNull();
     expect(initializer).toBeGreaterThan(management);
-    expect(entry).toContain("readCanonicalState: async ({ signal })");
+    expect(entry).toContain("const readCanonicalState = async ({ signal })");
     expect(entry).toContain('cache: "no-store"');
-    expect(entry).toContain("onHomeSuccess: () => management.noteHomeSuccess()");
+    expect(entry).toContain("management.noteHomeSuccess()");
     expect(entry.indexOf("if (!response.ok)")).toBeLessThan(entry.indexOf("return response.json()"));
   });
 
