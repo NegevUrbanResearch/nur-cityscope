@@ -82,9 +82,30 @@ describe("MapLibre narrative focus renderer", () => {
     expect(renderedFocus(map).properties.label).toBe({ segev: 'Segev family home', hostages: 'Peri family home', sderot: 'Sderot police station', nova: 'Nova' }[id]);
     expect(renderedFocus(map).geometry.coordinates).toEqual(position);
     expect(map.getLayer(NARRATIVE_FOCUS_RENDERER_IDS.label)).toBe(originalLayer);
-    expect(map.getLayoutProperty(NARRATIVE_FOCUS_RENDERER_IDS.label, 'text-font')).toEqual(['Arial']);
+    expect(map.getLayoutProperty(NARRATIVE_FOCUS_RENDERER_IDS.label, 'text-font')).toEqual(['NLI Content Hadassah Friedlaender']);
     language = 'he'; renderer.refresh();
     expect(renderedFocus(map).properties.label).toBe(NLI_NARRATIVES[id].label);
+    expect(map.getLayoutProperty(NARRATIVE_FOCUS_RENDERER_IDS.label, 'text-font')).toEqual(['Guttman Hatzvi', 'Arial']);
+    renderer.dispose();
+  });
+
+  it('refreshes the mounted label family when a published Hebrew choice changes', () => {
+    let choices = { he: 'default', en: 'hadassah' };
+    const map = createFakeMapLibreMap();
+    const renderer = createNarrativeFocusRenderer(map, {
+      profile: 'gis', getLanguage: () => 'he', getFontChoices: () => choices,
+    });
+    renderer.show(segev);
+    const source = map.getSource(NARRATIVE_FOCUS_RENDERER_IDS.source);
+    const geometry = renderedFocus(map).geometry;
+    expect(map.getLayoutProperty(NARRATIVE_FOCUS_RENDERER_IDS.label, 'text-font')).toEqual(['Guttman Hatzvi', 'Arial']);
+    choices = { he: 'narkiss', en: 'hadassah' };
+    renderer.refresh();
+    expect(map.getLayoutProperty(NARRATIVE_FOCUS_RENDERER_IDS.label, 'text-font')).toEqual(['NLI Content Narkiss Block']);
+    expect(map.getSource(NARRATIVE_FOCUS_RENDERER_IDS.source)).toBe(source);
+    expect(renderedFocus(map).geometry).toEqual(geometry);
+    choices = { he: 'default', en: 'hadassah' };
+    renderer.refresh();
     expect(map.getLayoutProperty(NARRATIVE_FOCUS_RENDERER_IDS.label, 'text-font')).toEqual(['Guttman Hatzvi', 'Arial']);
     renderer.dispose();
   });

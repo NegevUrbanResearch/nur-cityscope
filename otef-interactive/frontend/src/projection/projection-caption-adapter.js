@@ -17,12 +17,13 @@ function localSize(layout) {
   };
 }
 
-function drawClock(context, text, fontPx, width, height, rasterScale, motion, paintMotion) {
+function drawClock(context, text, fontPx, width, height, rasterScale, motion, paintMotion, fontStyle) {
   context.save?.();
   context.beginPath?.();
   context.rect?.(0, 0, width, height);
   context.clip?.();
-  context.font = `800 ${fontPx}px ${FONT}`;
+  const canvasFontStack = fontStyle?.canvasFontStack || FONT;
+  context.font = `800 ${fontPx}px ${canvasFontStack}`;
   context.fillStyle = "white";
   context.direction = "ltr";
   context.textAlign = "start";
@@ -39,9 +40,9 @@ function drawClock(context, text, fontPx, width, height, rasterScale, motion, pa
   const fontDescent = Number(metrics.fontBoundingBoxDescent) || Number(metrics.actualBoundingBoxDescent) || fontPx * 0.2;
   const baseline = (fontPx * 1.35 - fontAscent - fontDescent) / 2 + fontAscent;
   if (motion?.active && motion.fromLabel?.length === text.length && motion.toLabel?.length === text.length) {
-    paintMotion(context, motion, { fontPx, baseline, rasterScale });
+    paintMotion(context, motion, { fontPx, baseline, rasterScale, font: context.font });
   } else {
-    paintMotion(context, { fromLabel: text, toLabel: text, progress: 1 }, { fontPx, baseline, rasterScale });
+    paintMotion(context, { fromLabel: text, toLabel: text, progress: 1 }, { fontPx, baseline, rasterScale, font: context.font });
   }
   context.restore?.();
 }
@@ -57,7 +58,9 @@ export function createProjectionCaptionAdapter({ canvasFactory, rasterScale = 1 
     const nextLayout = next.layout || layout;
     const size = localSize(nextLayout);
     const motion = nextSnapshot?.motion;
-    const nextSignature = JSON.stringify([nextSnapshot?.model?.clockLabel || "", Number(nextLayout.fontPx) || 22, size.width, size.height,
+    const fontStyle = nextSnapshot?.fontStyle || null;
+    const nextSignature = JSON.stringify([nextSnapshot?.model?.clockLabel || "", fontStyle?.fontFamily || "", fontStyle?.canvasFontStack || "",
+      Number(nextLayout.fontPx) || 22, size.width, size.height,
       motion?.active ? [motion.fromLabel, motion.toLabel, motion.progress] : null]);
     snapshot = nextSnapshot;
     layout = nextLayout;
@@ -75,7 +78,8 @@ export function createProjectionCaptionAdapter({ canvasFactory, rasterScale = 1 
       context.clearRect(0, 0, canvas.width, canvas.height);
       context.save();
       context.scale(rasterScale, rasterScale);
-      drawClock(context, snapshot.model.clockLabel || "", Number(layout.fontPx) || 22, canvas.width / rasterScale, canvas.height / rasterScale, rasterScale, snapshot.motion, paintMotion);
+      drawClock(context, snapshot.model.clockLabel || "", Number(layout.fontPx) || 22, canvas.width / rasterScale,
+        canvas.height / rasterScale, rasterScale, snapshot.motion, paintMotion, snapshot.fontStyle);
       context.restore();
       dirty = false;
       contentVersion += 1;

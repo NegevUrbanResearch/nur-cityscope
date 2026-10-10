@@ -64,6 +64,9 @@ import { bindProjectionMatchCursor, readProjectionMatchLaunch } from '../project
 import { readProjectionCandidateInputs } from "../projection/projection-candidate-validation.js";
 import { createUuid } from "../shared/uuid.js";
 import { createProjectionNarrativeController } from "../projection/projection-narrative-controller.js";
+import { nameTextStyle } from "../shared/nli-name-language.js";
+import { NLI_FONT_DEFAULTS } from "../shared/nli-font-settings.js";
+import { createProjectionNliFontChoiceLifecycle } from "../projection/projection-nli-font-choice-lifecycle.js";
 import { createNovaEscapeCoordinator } from "../shared/nli-nova-escape-coordinator.js";
 import { createMorRouteCoordinator } from "../shared/nli-mor-route-coordinator.js";
 import MapProjectionConfig from "../shared/map-projection-config.js";
@@ -126,12 +129,12 @@ import {
   installMapLegendLifecycle,
 } from "../map/legend-integration.js";
 
-export function bindProjectionClockLayout({ dataContext, host, span, onLayout, getBrowserSurface, win = globalThis.window }) {
+export function bindProjectionClockLayout({ dataContext, host, span, onLayout, getFontStyle, getBrowserSurface, win = globalThis.window }) {
   const apply = () => {
     const remote = dataContext.getNliClockLayout?.()?.projection?.left;
     const layout = mergeNliExplainerLayout("left", remote ? { left: remote } : {}, MapProjectionConfig.NLI_EXPLAINER_LAYOUT);
     onLayout(layout);
-    applyNliExplainerLayout(host, layout);
+    applyNliExplainerLayout(host, layout, getFontStyle?.());
     applyNliExplainerHostPresence(host, span);
   };
   apply();
@@ -449,6 +452,18 @@ async function bootstrapProjectionRuntime() {
   }
   if (!isRuntimeAlive()) return;
   const getEffectiveProjectionConfig = () => effectiveProjectionConfig;
+  let refreshProjectionNliFontOwners = () => {};
+  const projectionNliFontLifecycle = createProjectionNliFontChoiceLifecycle({
+    initialChoices: NLI_FONT_DEFAULTS,
+    getLanguage: () => OTEFDataContext.getLegendSettings?.()?.language === 'en' ? 'en' : 'he',
+    onChoices: (choices) => {
+      settlementNameRuntime?.fontChoicesChanged?.();
+      refreshProjectionNliFontOwners(choices);
+    },
+    onError: (error) => console.warn("[projection-main] published NLI font unavailable", error),
+  });
+  registerDisposer(() => projectionNliFontLifecycle.dispose());
+  void projectionNliFontLifecycle.publish(effectiveProjectionConfig?.nliFonts || NLI_FONT_DEFAULTS);
   const displayContainerEl = document.getElementById("displayContainer");
   if (projectionSpanId) {
     applyProjectionSpanView({
@@ -527,7 +542,9 @@ async function bootstrapProjectionRuntime() {
       }
       const fontChoicesChanged = JSON.stringify(effectiveProjectionConfig?.nliFonts) !== JSON.stringify(nextConfig.nliFonts);
       effectiveProjectionConfig = nextConfig;
-      if (fontChoicesChanged) settlementNameRuntime?.fontChoicesChanged?.();
+      if (fontChoicesChanged) {
+        void projectionNliFontLifecycle.publish(nextConfig.nliFonts || NLI_FONT_DEFAULTS);
+      }
       return applySpanCamera(revision);
     },
   };
@@ -654,6 +671,11 @@ async function bootstrapProjectionRuntime() {
       managedScene: () => sceneManaged && !calibrationActive() && !slideshowRuntime?.isActive() });
     registerDisposer(() => nameFieldController.dispose());
     const readNameLanguage = () => OTEFDataContext.getLegendSettings?.()?.language === 'en' ? 'en' : 'he';
+    const getNliFontChoices = () => projectionNliFontLifecycle.getChoices();
+    const getNliFontStyle = (language = readNameLanguage()) => nameTextStyle(language, getNliFontChoices(), {
+      language, direction: language === 'en' ? 'ltr' : 'rtl', fontFamily: 'Guttman Hatzvi',
+      canvasFontStack: '"Guttman Hatzvi", "Noto Sans Hebrew", Arial, sans-serif', mapFontStack: ['Guttman Hatzvi', 'Arial'],
+    });
     if (!browserMode) registerDisposer(OTEFDataContext.subscribe('legendSettings', () => nameFieldController.refreshNameLanguage?.()));
     const motionMode = resolveMotionMode();
     const settlementGlow = createProjectionSettlementGlow({
@@ -723,6 +745,7 @@ async function bootstrapProjectionRuntime() {
       ensureNliExplainerHost(displayContainer);
     let currentCaptionLayout = {};
     registerDisposer(bindProjectionClockLayout({ dataContext: OTEFDataContext, host: nliExplainerHost, span: projectionSpanId,
+      getFontStyle: getNliFontStyle,
       onLayout: (layout) => { currentCaptionLayout = layout; }, getBrowserSurface: () => browserSurface }));
     await new Promise((resolve) => {
       window.requestAnimationFrame(() => window.requestAnimationFrame(resolve));
@@ -739,6 +762,7 @@ async function bootstrapProjectionRuntime() {
       projectionSpan: legendSpan,
       dataContext: OTEFDataContext,
       registry: layerRegistry,
+      getNliFontStyle,
       onRenderSnapshot: (snapshot) => {
         legendAdapter?.sync(snapshot);
         browserSurface?.requestDraw?.();
@@ -819,6 +843,8 @@ async function bootstrapProjectionRuntime() {
         nliCaptionMode: "clock-only",
         motionMode: resolveMotionMode(),
         captionEl: nliExplainerCaptionEl,
+        getNliFontChoices,
+        getNliFontLanguage: readNameLanguage,
         allowMapCaption: false,
         getShelterProjectionPresentation: () => {
           if (browserMode) return browserSurface?.getShelterPresentation?.();
@@ -847,6 +873,15 @@ async function bootstrapProjectionRuntime() {
         browserSurface?.requestDraw?.();
       });
     };
+    refreshProjectionNliFontOwners = () => {
+      applyNliExplainerLayout(nliExplainerHost, currentCaptionLayout, getNliFontStyle());
+      void syncContextInvestigation();
+      legendLifecycle?.refresh?.();
+      browserSurface?.requestDraw?.();
+    };
+    registerDisposer(OTEFDataContext.subscribe('legendSettings', () => {
+      void projectionNliFontLifecycle.languageChanged();
+    }));
     const syncContextFlowAnimations = () => {
       syncContextRouteProgress();
       syncContextInvestigation();
@@ -1106,7 +1141,7 @@ async function bootstrapProjectionRuntime() {
             dataContext: OTEFDataContext,
             adapter: browserSurface.getSettlementAdapter(),
             output: projectionSpanId,
-            getConfig: () => effectiveProjectionConfig,
+            getConfig: () => ({ ...effectiveProjectionConfig, nliFonts: getNliFontChoices() }),
             catalog: settlementCatalog,
             map,
             getGroups: getEffectiveProjectionLayerGroups,

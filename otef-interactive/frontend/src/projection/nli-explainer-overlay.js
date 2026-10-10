@@ -156,7 +156,7 @@ export function normalizeNliClockLayout(raw) {
   };
 }
 
-export function applyNliExplainerLayout(hostEl, layout) {
+export function applyNliExplainerLayout(hostEl, layout, fontStyle = null) {
   if (!hostEl) return;
   if (!hostEl.style) hostEl.style = {};
   const box = clampNliExplainerLayout(layout, layout);
@@ -167,7 +167,7 @@ export function applyNliExplainerLayout(hostEl, layout) {
   hostEl.style.fontSize = `${box.fontPx}px`;
   hostEl.style.transform = `rotate(${box.rotateDeg}deg)`;
   hostEl.style.transformOrigin = "center center";
-  hostEl.style.fontFamily = HOST_FONT_FAMILY;
+  hostEl.style.fontFamily = fontStyle?.canvasFontStack || HOST_FONT_FAMILY;
 }
 
 export function ensureNliExplainerHost(displayContainer, options = {}) {

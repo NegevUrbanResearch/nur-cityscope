@@ -175,10 +175,10 @@ function drawSymbol(context, part, x, y, font, geometry, scale) {
   context.restore?.();
 }
 
-function drawPlacement(context, placement, font, scale) {
+function drawPlacement(context, placement, font, scale, fontStack) {
   const label = placement.labelGeometry;
   context.fillStyle = INK;
-  context.font = `${font}px ${FONT}`;
+  context.font = `${font}px ${fontStack || FONT}`;
   context.direction = label.direction;
   context.textAlign = label.align;
   context.textBaseline = "alphabetic";
@@ -219,8 +219,10 @@ export function createProjectionLegendAdapter({ canvasFactory, rasterScale = 1 }
     snapshot = next.snapshot || next;
     layout = snapshot.layout || layout;
     const size = resolveLegendRasterSize(layout);
+    const fontStyle = snapshot.fontStyle || null;
     const nextPlan = planFor(snapshot, layout, size);
-    const nextSignature = JSON.stringify([snapshot.language, snapshot.blocks, snapshot.pages, snapshot.pageIndex, Number(layout.fontPx) || 22,
+    const nextSignature = JSON.stringify([snapshot.language, fontStyle?.fontFamily || "", fontStyle?.canvasFontStack || "",
+      snapshot.blocks, snapshot.pages, snapshot.pageIndex, Number(layout.fontPx) || 22,
       size.width, size.height, Number(layout.columns) || 0, nextPlan, Number(snapshot.fontRevision) || 0]);
     if (nextSignature === signature) return;
     signature = nextSignature;
@@ -242,7 +244,8 @@ export function createProjectionLegendAdapter({ canvasFactory, rasterScale = 1 }
       context.save?.();
       context.scale?.(rasterScale, rasterScale);
       context.scale?.(scale, scale);
-      for (const placement of contentLayout?.placements || []) drawPlacement(context, placement, font, scale * rasterScale);
+      for (const placement of contentLayout?.placements || []) drawPlacement(context, placement, font, scale * rasterScale,
+        snapshot.fontStyle?.canvasFontStack);
       context.restore?.();
       dirty = false;
       contentVersion += 1;

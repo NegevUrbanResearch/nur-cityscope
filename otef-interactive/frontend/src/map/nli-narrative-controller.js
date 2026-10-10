@@ -50,9 +50,11 @@ export function createGisNarrativeController({
   syncTimeline = () => {},
   onStyleLoadOverlay,
   managedScene = false,
+  getNliFontChoices,
 } = {}) {
   const focus = createNarrativeFocusRenderer(map, { profile: "gis", managedScene,
-    getLanguage: () => dataContext?.getLegendSettings?.()?.language });
+    getLanguage: () => dataContext?.getLegendSettings?.()?.language,
+    getFontChoices: getNliFontChoices });
   const unsubscribeLanguage = dataContext?.subscribe?.('legendSettings', () => focus.refresh());
   let disposed = false;
   let state = normalizeNarrativeState(null);
@@ -142,6 +144,7 @@ export function createGisNarrativeController({
     resetStyle() { styleGeneration += 1; focus.resetStyle(); },
     getSceneIds(snapshot) { return getNliNarrative(snapshot.narrativeState?.id)?.label ? ["nli.scene-focus"] : []; },
     getSceneContentKey: getNarrativeSceneContentKey,
+    refreshNliFontChoices() { focus.refresh(); },
     holdForScene() { focus.holdForScene(); },
     resumeForScene() { focus.resumeForScene(); },
     applySnapshot(snapshot) {

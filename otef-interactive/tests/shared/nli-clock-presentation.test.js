@@ -20,7 +20,7 @@ function setup() {
     getContainer: () => ({ querySelector: () => null }), setPaintProperty() {}, setLayoutProperty() {}, on() {}, off() {} };
   maps.push(map);
   let html = '', writes = 0, nowMs = 0;
-  const caption = { hidden: true, setAttribute() {}, get innerHTML() { return html; }, set innerHTML(value) { html = value; writes += 1; } };
+  const caption = { hidden: true, style: {}, setAttribute() {}, get innerHTML() { return html; }, set innerHTML(value) { html = value; writes += 1; } };
   const sync = (clock, ids, narrativeFocus = null, options = {}) => syncInvestigationTimelineToMap(map, clock, groups(ids), {
     captionEl: caption, allowMapCaption: false, nliCaptionMode: 'clock-only', settlementFeatures: [],
     getLayerDataUrl: () => null, now: () => nowMs, monotonicNow: () => nowMs, narrativeFocus, ...options,

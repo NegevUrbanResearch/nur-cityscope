@@ -5,6 +5,7 @@ import { sheltersVisibleOnMap } from "../shared/maplibre-nli-shelters.js";
 import { shelterSymbolDataUrl } from "../shared/nli-shelter-symbol.js";
 import { OUTPUT_HEIGHT, OUTPUT_WIDTH } from "../projection/projection-overlay-placement.js";
 import { layoutProjectionLegend, PROJECTION_LEGEND_FONT, resolveLegendRasterSize } from "../projection/legend-content-layout.js";
+import { nameTextStyle } from "../shared/nli-name-language.js";
 
 export function applyProjectionLegendLayout(element, layout, { span = "full", referenceElement } = {}) {
   if (!element?.style) return;
@@ -132,7 +133,8 @@ function makeChildren(element) {
   return { content, pager };
 }
 
-function mountMapLegend({ element, map, surface = "gis", projectionSpan = "full", dataContext, registry, buildModel = buildLegendModel, onRenderSnapshot, measureText } = {}) {
+function mountMapLegend({ element, map, surface = "gis", projectionSpan = "full", dataContext, registry,
+  buildModel = buildLegendModel, onRenderSnapshot, measureText, getNliFontStyle } = {}) {
   if (!element) return { refresh: async () => {}, setEditing: () => {}, setPage: () => 0, dispose: () => {} };
   const mode = surface === "projection" ? "projection" : "gis";
   const { content, pager } = makeChildren(element);
@@ -158,13 +160,15 @@ function mountMapLegend({ element, map, surface = "gis", projectionSpan = "full"
   const clearTimer = () => { if (timer != null) clearInterval(timer); timer = null; };
   const settings = () => dataContext?.getLegendSettings?.() || {};
   const language = () => settings().language === "en" ? "en" : "he";
+  const fontStyle = () => getNliFontStyle?.(language()) || nameTextStyle(language());
+  let lastFontIdentity = null;
   const buildProjectionPlan = (blocks, layout) => {
     const { width, height } = resolveLegendRasterSize(layout);
     const context = measurementContext;
     if (context) {
       context.textAlign = "left";
       context.textBaseline = "alphabetic";
-      context.font = `${layout.fontPx}px ${PROJECTION_LEGEND_FONT}`;
+      context.font = `${layout.fontPx}px ${fontStyle().canvasFontStack || PROJECTION_LEGEND_FONT}`;
       context.letterSpacing = "0px";
     }
     const measure = typeof measureText === "function"
@@ -194,7 +198,7 @@ function mountMapLegend({ element, map, surface = "gis", projectionSpan = "full"
     if (typeof getComputedStyle === "function") {
       const liveStyle = getComputedStyle(element);
       holder.style.fontSize = liveStyle.fontSize;
-      holder.style.fontFamily = liveStyle.fontFamily;
+      holder.style.fontFamily = getNliFontStyle?.(language())?.canvasFontStack || liveStyle.fontFamily;
     }
     holder.innerHTML = html;
     (content.ownerDocument.body || element).appendChild(holder);
@@ -217,7 +221,7 @@ function mountMapLegend({ element, map, surface = "gis", projectionSpan = "full"
     if (typeof getComputedStyle === "function") {
       const liveStyle = getComputedStyle(element);
       holder.style.fontSize = liveStyle.fontSize;
-      holder.style.fontFamily = liveStyle.fontFamily;
+      holder.style.fontFamily = getNliFontStyle?.(language())?.canvasFontStack || liveStyle.fontFamily;
     }
     holder.innerHTML = `<div class="map-legend-content">${html}</div>`;
     (content.ownerDocument.body || element).appendChild(holder);
@@ -334,6 +338,7 @@ function mountMapLegend({ element, map, surface = "gis", projectionSpan = "full"
       layout,
       contentLayout,
       fontRevision,
+      fontStyle: fontStyle(),
       animationNow: Date.now(),
     };
   };
@@ -354,7 +359,7 @@ function mountMapLegend({ element, map, surface = "gis", projectionSpan = "full"
       if (content?.style) Object.assign(content.style, {
         position: "absolute", left: `${offsetX}px`, top: `${offsetY}px`, width: `${width}px`, height: `${height}px`,
         padding: "0", border: "0", boxSizing: "content-box", fontSize: `${Number(layout.fontPx) || 22}px`,
-        fontFamily: PROJECTION_LEGEND_FONT, transform: `scale(${scale})`, transformOrigin: "top left", overflow: "visible", direction: "ltr",
+        fontFamily: fontStyle().canvasFontStack || PROJECTION_LEGEND_FONT, transform: `scale(${scale})`, transformOrigin: "top left", overflow: "visible", direction: "ltr",
       });
       const byId = new Map(currentBlocks.map((block) => [block.id, block]));
       const rendered = (contentLayout?.placements || []).map((placement) => {
@@ -385,6 +390,11 @@ function mountMapLegend({ element, map, surface = "gis", projectionSpan = "full"
     const priorId = pages[page]?.[0] || null;
     try {
       const current = settings();
+      const selectedFontStyle = fontStyle();
+      const fontIdentity = JSON.stringify(selectedFontStyle);
+      if (lastFontIdentity !== null && lastFontIdentity !== fontIdentity) fontRevision += 1;
+      lastFontIdentity = fontIdentity;
+      if (content?.style) content.style.fontFamily = selectedFontStyle.canvasFontStack || PROJECTION_LEGEND_FONT;
       if (mode === "projection") {
         applyProjectionLegendLayout(element, resolveLegendLayout({ settings: current, span: projectionSpan }), {
           span: projectionSpan,

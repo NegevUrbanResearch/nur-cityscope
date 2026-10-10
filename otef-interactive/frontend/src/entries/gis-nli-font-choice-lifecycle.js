@@ -1,5 +1,5 @@
 /** Ignore stale published font checks after a newer choice or runtime disposal. */
-export function createGisNliFontChoiceLifecycle({ ensureReady, applyChoices, onError = () => {} } = {}) {
+export function createGisNliFontChoiceLifecycle({ ensureReady, applyChoices, onError = () => {}, isCurrent = () => true } = {}) {
   let generation = 0;
   let latestKey = null;
   let disposed = false;
@@ -16,7 +16,7 @@ export function createGisNliFontChoiceLifecycle({ ensureReady, applyChoices, onE
         if (!disposed && token === generation && key === latestKey) onError(error);
         return false;
       }
-      if (disposed || token !== generation || key !== latestKey) return false;
+      if (disposed || token !== generation || key !== latestKey || !isCurrent(selected)) return false;
       applyChoices(selected);
       return true;
     },

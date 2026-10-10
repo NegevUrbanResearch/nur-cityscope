@@ -93,3 +93,19 @@ test("resting and moving clock glyphs keep the same tabular positions and baseli
   expect(settledGlyphs.map(call => call.text).join("")).toBe("06:30");
   expect(settledGlyphs.map(({ x, y }) => ({ x, y }))).toEqual(resting.map(({ x, y }) => ({ x, y })));
 });
+
+test('uses one resolved family for resting and animated clock digits and rerasterizes while paused', () => {
+  const harness = canvasHarness();
+  const adapter = createProjectionCaptionAdapter({ canvasFactory: harness.factory });
+  const fontStyle = { fontFamily: 'NLI Content Narkiss Block', canvasFontStack: '"NLI Content Narkiss Block", sans-serif', mapFontStack: ['NLI Content Narkiss Block'] };
+  const snapshot = { visible: true, model: { clockLabel: '06:29' }, fontStyle };
+  adapter.sync({ layout, snapshot }); adapter.draw();
+  expect(harness.canvases[0].context.font).toContain('"NLI Content Narkiss Block", sans-serif');
+  const firstVersion = adapter.draw().contentVersion;
+  adapter.sync({ layout, snapshot: { ...snapshot, motion: movingSnapshot(0.25).motion } }); adapter.draw();
+  expect(harness.canvases[1].context.font).toContain('"NLI Content Narkiss Block", sans-serif');
+  adapter.sync({ layout, snapshot: { ...snapshot, fontStyle: { ...fontStyle,
+    fontFamily: 'Guttman Hatzvi', canvasFontStack: '"Guttman Hatzvi", sans-serif', mapFontStack: ['Guttman Hatzvi'] } } });
+  expect(adapter.draw().contentVersion).toBeGreaterThan(firstVersion);
+  expect(harness.canvases[0].context.font).toContain('"Guttman Hatzvi", sans-serif');
+});

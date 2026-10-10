@@ -31,7 +31,7 @@ function setup() {
   return { element, surface: {} };
 }
 
-function setupWithDocument() {
+function setupWithDocument({ simulateFontWrap = false } = {}) {
   let document;
   const measurementStyles = [];
   const makeElement = () => {
@@ -70,6 +70,16 @@ function setupWithDocument() {
       },
       remove() {},
     };
+    if (simulateFontWrap) {
+      node.querySelectorAll = (selector) => {
+        if (selector !== ".map-legend-item") return [];
+        const count = (node.innerHTML.match(/class="map-legend-item"/g) || []).length;
+        const narrowFace = node.style.fontFamily?.includes("NLI Content Narkiss Block");
+        return Array.from({ length: count }, (_, index) => ({
+          getBoundingClientRect: () => ({ top: narrowFace ? (index < 2 ? 0 : 30) : index * 30 }),
+        }));
+      };
+    }
     return node;
   };
   document = { createElement: makeElement, body: { appendChild() {} } };
@@ -84,6 +94,40 @@ function setupWithDocument() {
 }
 
 describe("mountMapLegend", () => {
+  it('updates a mounted legend family and snapshot after a same-language choice change', async () => {
+    const { element, content } = setupWithDocument();
+    let fontStyle = { fontFamily: 'Guttman Hatzvi', canvasFontStack: '"Guttman Hatzvi", sans-serif', mapFontStack: ['Guttman Hatzvi'] };
+    const legend = mountMapLegend({ element, buildModel: async () => model(),
+      dataContext: { getLegendSettings: () => ({ language: 'he' }) }, getNliFontStyle: () => fontStyle });
+    await legend.refresh();
+    expect(content().style.fontFamily).toBe('"Guttman Hatzvi", sans-serif');
+    fontStyle = { fontFamily: 'NLI Content Narkiss Block', canvasFontStack: '"NLI Content Narkiss Block", sans-serif', mapFontStack: ['NLI Content Narkiss Block'] };
+    await legend.refresh();
+    expect(content().style.fontFamily).toBe('"NLI Content Narkiss Block", sans-serif');
+    expect(legend.getRenderSnapshot().fontStyle).toEqual(fontStyle);
+    legend.dispose();
+  });
+  it("measures near-wrap legend candidates with the resolved content family", async () => {
+    const { element, measurementStyles } = setupWithDocument({ simulateFontWrap: true });
+    vi.stubGlobal("getComputedStyle", () => ({ fontSize: "22px", fontFamily: '"Guttman Hatzvi", sans-serif' }));
+    element.clientWidth = 300;
+    let fontStyle = { fontFamily: "NLI Content Narkiss Block", canvasFontStack: '"NLI Content Narkiss Block", sans-serif', mapFontStack: ["NLI Content Narkiss Block"] };
+    const legend = mountMapLegend({
+      element,
+      buildModel: async () => ({ packs: ["first", "second"].map(id => ({ id, name: id, layers: [{ id: `${id}.layer`, name: id, items: ["a", "b"].map(suffix => ({ id: `${id}.${suffix}`, label: `${id} ${suffix}`, shape: "line", stroke: "#123456" })) }] })) }),
+      dataContext: { getLegendSettings: () => ({ language: "he" }) },
+      getNliFontStyle: () => fontStyle,
+    });
+    await legend.refresh();
+    expect(legend.getRenderSnapshot().pages).toHaveLength(1);
+    expect(measurementStyles.some(style => style.fontFamily === fontStyle.canvasFontStack)).toBe(true);
+    fontStyle = { ...fontStyle, fontFamily: "NLI Content Marcellus", canvasFontStack: '"NLI Content Marcellus", sans-serif', mapFontStack: ["NLI Content Marcellus"] };
+    await legend.refresh();
+    expect(legend.getRenderSnapshot().pages).toHaveLength(2);
+    expect(measurementStyles.some(style => style.fontFamily === fontStyle.canvasFontStack)).toBe(true);
+    legend.dispose();
+    vi.unstubAllGlobals();
+  });
   it("applies saved reference-plane geometry and hides only the right DOM legend", () => {
     const element = { style: {} };
     const parent = { getBoundingClientRect: () => ({ width: 1920, height: 1080 }) };

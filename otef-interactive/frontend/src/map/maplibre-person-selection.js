@@ -122,7 +122,7 @@ export function loadPeopleRuntime({ fetchJson: fetcher = fetchJson, hashBytes = 
 
 const escapeHtml = (value) => clean(value).replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]));
 const popupMarkup = (person, fontChoices) => {
-  const baseFamily = person.language === 'en' ? 'Arial' : 'Hadassah Friedlaender';
+  const baseFamily = 'Hadassah Friedlaender';
   const baseline = { language: person.language, direction: person.language === 'en' ? 'ltr' : 'rtl',
     fontFamily: baseFamily, canvasFontStack: `"${baseFamily}", sans-serif`, mapFontStack: [baseFamily] };
   const style = nameTextStyle(person.language, fontChoices, baseline);

@@ -174,6 +174,20 @@ describe("GIS person selection visual", () => {
     expect(d.map.getPaintProperty("nli__people__circle", "circle-opacity")).toBe(1);
   });
 
+  test('refreshes the selected popup to the Hadassah baseline and a concrete published font choice', async () => {
+    let choices = { he: 'default', en: 'hadassah' };
+    const d = setup(undefined, undefined, { language: 'he', getNliFontChoices: () => choices });
+    const person = { pid: '11', coordinates: [30, 20], name: 'Ada', names: { hebrew_name: 'אדה', name: 'Ada' } };
+    d.visual.show(person);
+    expect(d.bubble.setHTML.mock.calls.at(-1)[0]).toContain('font-family:&quot;Hadassah Friedlaender&quot;');
+    choices = { he: 'narkiss', en: 'hadassah' };
+    d.visual.refreshNliFontChoices();
+    expect(d.bubble.setHTML.mock.calls.at(-1)[0]).toContain('NLI Content Narkiss Block');
+    d.visual.setLanguage('en');
+    expect(d.bubble.setHTML.mock.calls.at(-1)[0]).toContain('NLI Content Hadassah Friedlaender');
+    d.visual.dispose();
+  });
+
   test("show does not mount a plaque when the person has no usable name", () => {
     const d = setup();
     d.visual.show({ pid: "11", coordinates: [30, 20], name: "   ", nliUrl: "https://www.nli.org.il/he/authorities/11" });
