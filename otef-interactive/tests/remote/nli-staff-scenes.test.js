@@ -17,7 +17,7 @@ import {
   TIMELINE_LAYER_IDS,
   WALL_LAYER_IDS,
 } from "../../frontend/src/remote/nli-staff-script.js";
-import { showStepIndex } from "../../frontend/src/remote/nli-staff-flow.js";
+import { nextAction, showStepIndex } from "../../frontend/src/remote/nli-staff-flow.js";
 import { getNliNarrative } from "../../frontend/src/shared/nli-narratives.js";
 import {
   createNliStaffPresentationButtonHandler,
@@ -100,6 +100,14 @@ test("Wall of Names auto-opens the names_wall blackout when its cue is ready", (
   expect(shouldAutoOpenNliPresentation({
     item: SHOW, index, currentScript: SHOW, currentStep: wall, cueStatus: "failed",
   })).toBe(false);
+});
+
+test("navigation settlement does not change the authored Wall to Credits sequence", () => {
+  const wallIndex = showStepIndex(SHOW_STEP_IDS.WALL);
+  expect(nextAction({ scriptId: SHOW.id, step: wallIndex, returnTo: null })).toEqual({
+    kind: "step", scriptId: SHOW.id, step: wallIndex + 1,
+  });
+  expect(SHOW.steps[wallIndex + 1].id).toBe("credits");
 });
 
 test("Home shortcuts target the canonical final show steps", () => {

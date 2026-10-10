@@ -40,6 +40,30 @@ function stateFixture(overrides = {}) {
 }
 
 describe("NLI staff search event handlers", () => {
+  test("passes the lexical operation context through preparation and cue settlement", async () => {
+    const fixture = stateFixture();
+    const context = { ticket: { id: 7 }, generation: 12, kind: "cue" };
+    const runDestinationTransition = vi.fn(async (_item, _index, prepareDestination, operationContext) => {
+      expect(operationContext).toBe(context);
+      expect(await prepareDestination()).toBe(true);
+      return { status: "ready" };
+    });
+    const afterDestinationCue = vi.fn();
+    const createHandlers = await staffActions();
+    const handlers = createHandlers({
+      transition: createNliStaffSearchTransition({ clearPersonSelection: async () => true, hasPlaceFocus: () => false }),
+      ...fixture.options,
+      runDestinationTransition,
+      afterDestinationCue,
+    });
+
+    await expect(handlers.transitionToStep({ id: "show", steps: [{ cue: {} }] }, 0, null, context)).resolves.toBe(true);
+    expect(runDestinationTransition).toHaveBeenCalledWith(
+      expect.anything(), 0, expect.any(Function), context,
+    );
+    expect(afterDestinationCue).toHaveBeenCalledWith(expect.anything(), 0, { status: "ready" }, context);
+  });
+
   test("disables conflicting controls while a step reset is pending", async () => {
     let releaseClear;
     const transition = createNliStaffSearchTransition({

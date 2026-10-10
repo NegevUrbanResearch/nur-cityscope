@@ -24,7 +24,8 @@ import { homeListHtml } from "./nli-staff-home.js";
 import { navigationButtonContent } from "./nli-staff-icons.js";
 import { COPY, HOME_CUE, NARRATIVES, SCRIPTS, SHOW } from "./nli-staff-script.js";
 import { isCanonicalHome } from "./staff-remote-refresh-guard.js";
-import { nextAction, prevAction, showStepIndex, slideIndexes } from "./nli-staff-flow.js";
+import { createNliStaffNavigationSession } from "./nli-staff-navigation-session.js";
+import { nextAction, showStepIndex, slideIndexes } from "./nli-staff-flow.js";
 import { searchPlaces } from "../shared/place-navigation/place-catalog.js";
 import {
   createNliStaffPresentationButtonHandler,
@@ -111,7 +112,7 @@ export function createNliStaffSearchEventHandlers({
     return false;
   }
 
-  async function transitionToStep(item, index, returnTo) {
+  async function transitionToStep(item, index, returnTo, operationContext = null) {
     if (!item) return false;
     const token = transition.begin();
     cancelCues();
@@ -139,13 +140,14 @@ export function createNliStaffSearchEventHandlers({
       };
       let cueResult;
       if (runDestinationTransition) {
-        cueResult = await runDestinationTransition(item, index, prepareDestination);
+        cueResult = await runDestinationTransition(item, index, prepareDestination, operationContext);
       } else {
         if (!await prepareDestination()) return false;
         cueResult = await applyDestinationCue(item, index);
       }
-      if (!prepared || !transition.isCurrent(token)) return false;
-      afterDestinationCue(item, index, cueResult);
+      if (!transition.isCurrent(token)) return false;
+      afterDestinationCue(item, index, cueResult, operationContext);
+      if (!prepared) return false;
       return true;
     } finally {
       if (transition.isCurrent(token)) {
@@ -191,7 +193,11 @@ export function initNliStaffLocaleControls(dataContext, { onFailure } = {}) {
   });
 }
 
-export function initNliStaffRemote(dataContext, { presenterManifest = presenterContent, onHomeSuccess } = {}) {
+export function initNliStaffRemote(dataContext, {
+  presenterManifest = presenterContent,
+  onHomeSuccess,
+  navigationSession = createNliStaffNavigationSession(),
+} = {}) {
   dataContext.setExhibitMode(true);
   const releaseExhibitMode = () => {
     dataContext.setExhibitMode(false);
@@ -210,6 +216,7 @@ export function initNliStaffRemote(dataContext, { presenterManifest = presenterC
     cueStatus: null,
     cueAttempt: null,
     failedCue: null,
+    navigationFailure: false,
     presenterError: null,
     connected: false,
     connectionStatus: "disconnected",
@@ -238,6 +245,8 @@ export function initNliStaffRemote(dataContext, { presenterManifest = presenterC
     labels: fullscreenLabels,
   });
   let navigationGeneration = 0;
+  let activeNavigationAttempt = null;
+  let failedNavigationAttempt = null;
   let presenterGeneration = 0;
   let presenterGate;
   let presenterCommands;
@@ -544,10 +553,13 @@ export function initNliStaffRemote(dataContext, { presenterManifest = presenterC
   function renderDock() {
     const next = nextAction(state);
     const choices = next.kind === "choose";
+    const sessionState = navigationSession.getState();
+    const canRecover = Boolean(sessionState.current && activeNavigationAttempt);
+    const canGoBack = canRecover || Boolean(navigationSession.backTarget());
     $("prevBtn").setAttribute("aria-label", getLocale() === "he" ? "הסצנה הקודמת" : "Previous scene");
     $("prevBtn").innerHTML = navigationButtonContent(txt("prev"), "previous", getLocale());
     $("nextBtn").setAttribute("aria-label", next.kind === "finish" ? txt("done") : getLocale() === "he" ? "הסצנה הבאה" : "Next scene");
-    $("prevBtn").disabled = !canReplaceNavigation() || !prevAction(state);
+    $("prevBtn").disabled = !canReplaceNavigation() || !canGoBack;
     $("nextBtn").hidden = choices;
     $("nextBtn").innerHTML = navigationButtonContent(txt({ step: "next", resume: "backToShow", finish: "done" }[next.kind] || "next"), "next", getLocale());
     $("nextBtn").disabled = !canReplaceNavigation();
@@ -571,7 +583,8 @@ export function initNliStaffRemote(dataContext, { presenterManifest = presenterC
     }
     const playerFailure = $("playerCueFailure");
     if (playerFailure) {
-      const failed = state.screen === "player" && state.cueStatus === "failed" && Boolean(state.failedCue);
+      const failed = state.screen === "player" && (state.navigationFailure ||
+        (state.cueStatus === "failed" && Boolean(state.failedCue)));
       playerFailure.hidden = !failed;
       $("playerCueFailureText").textContent = failed ? txt("cueFailed") : "";
     }
@@ -747,17 +760,73 @@ export function initNliStaffRemote(dataContext, { presenterManifest = presenterC
     renderSearchStatus();
   }
 
-  async function transitionToStep(item, index, { returnTo = state.returnTo } = {}) {
+  function beginNavigationAttempt(destination, intent, kind) {
+    if (activeNavigationAttempt) navigationSession.abandon(activeNavigationAttempt.ticket);
+    const ticket = navigationSession.begin(destination, intent);
+    const attempt = Object.freeze({
+      ticket,
+      generation: navigationGeneration,
+      destination,
+      kind,
+    });
+    activeNavigationAttempt = attempt;
+    failedNavigationAttempt = null;
+    state.navigationFailure = false;
+    return attempt;
+  }
+
+  function settleNavigationAttempt(attempt, result) {
+    if (disposed || !attempt || activeNavigationAttempt !== attempt ||
+      attempt.generation !== navigationGeneration) return false;
+    const ready = attempt.kind === "fixed-presentation"
+      ? result === true
+      : result?.status === "ready";
+    if (ready && navigationSession.complete(attempt.ticket)) {
+      activeNavigationAttempt = null;
+      failedNavigationAttempt = null;
+      state.navigationFailure = false;
+      return true;
+    }
+    const failed = attempt.kind === "fixed-presentation" ? result === false : result?.status === "failed";
+    if (failed) {
+      failedNavigationAttempt = attempt;
+      state.navigationFailure = true;
+      renderCueStatus();
+    }
+    return false;
+  }
+
+  async function transitionToStep(item, index, {
+    returnTo = state.returnTo,
+    navigationIntent = "forward",
+  } = {}) {
     const nextIndex = Math.max(0, Math.min(index, item.steps.length - 1));
     const destination = item.steps[nextIndex];
+    navigationGeneration += 1;
+    const generation = navigationGeneration;
     const fixedSceneSwitch = state.screen === "player" && state.scriptId === item.id &&
       state.cueStatus === "ready" && !state.searchPending &&
       [currentStep(), destination].every((step) =>
         ["names_wall", "credits"].includes(step?.presentation?.segmentId));
-    navigationGeneration += 1;
+    const junction = Array.isArray(destination?.branch);
+    const intent = navigationIntent === "forward" && state.screen === "home" && !navigationSession.getState().current
+      ? "entry" : navigationIntent;
+    const kind = fixedSceneSwitch ? "fixed-presentation" : "cue";
+    let operationContext = null;
+    if (junction) {
+      if (activeNavigationAttempt) navigationSession.abandon(activeNavigationAttempt.ticket);
+      activeNavigationAttempt = null;
+      failedNavigationAttempt = null;
+      state.navigationFailure = false;
+    } else {
+      operationContext = beginNavigationAttempt({
+        scriptId: item.id,
+        step: nextIndex,
+        returnTo: returnTo == null ? null : { id: returnTo.id, step: returnTo.step },
+      }, intent, kind);
+    }
     state.presentationClosePending = false;
     clearPresenterError();
-    const generation = navigationGeneration;
     state.navigationPending = true;
     if (state.screen === "home") renderHome();
     timelineHost.invalidateTransport();
@@ -771,9 +840,11 @@ export function initNliStaffRemote(dataContext, { presenterManifest = presenterC
         state.step = nextIndex;
         state.returnTo = returnTo;
         renderPlayer();
-        return await presentation.replace(destination.presentation.segmentId);
+        const replaced = await presentation.replace(destination.presentation.segmentId);
+        settleNavigationAttempt(operationContext, replaced);
+        return replaced;
       }
-      return await searchActions.transitionToStep(item, index, returnTo);
+      return await searchActions.transitionToStep(item, index, returnTo, operationContext);
     } finally {
       if (generation === navigationGeneration) {
         state.navigationPending = false;
@@ -880,10 +951,19 @@ export function initNliStaffRemote(dataContext, { presenterManifest = presenterC
     return performHomeExit();
   }
 
-  async function performHomeExit() {
+  async function performHomeExit(replayAttempt = null) {
     state.homeReady = false;
     let homeCueResult = null;
     navigationGeneration += 1;
+    const attempt = replayAttempt
+      ? Object.freeze({ ...replayAttempt, generation: navigationGeneration })
+      : beginNavigationAttempt(null, "home", "home");
+    if (replayAttempt) {
+      activeNavigationAttempt = attempt;
+      failedNavigationAttempt = null;
+      state.navigationFailure = false;
+    }
+    let navigationSettled = false;
     clearPresenterError();
     const generation = navigationGeneration;
     state.navigationPending = true;
@@ -945,9 +1025,13 @@ export function initNliStaffRemote(dataContext, { presenterManifest = presenterC
         return false;
       }
       state.homeReady = true;
+      navigationSettled = settleNavigationAttempt(attempt, { status: "ready" });
       try { onHomeSuccess?.(); } catch { /* completion notification must not change Home behavior */ }
       return true;
     } finally {
+      if (!navigationSettled && attempt.generation === navigationGeneration) {
+        settleNavigationAttempt(attempt, { status: "failed" });
+      }
       if (searchTransition.isCurrent(token)) {
         state.presentationClosePending = false;
         state.searchPending = false;
@@ -961,6 +1045,45 @@ export function initNliStaffRemote(dataContext, { presenterManifest = presenterC
         rearmTransport();
       }
     }
+  }
+
+  async function retrySceneNavigation() {
+    const failed = failedNavigationAttempt;
+    if (!failed || activeNavigationAttempt !== failed || disposed) return false;
+    state.navigationFailure = false;
+    if (failed.kind === "home") {
+      state.homeFailure = false;
+      return performHomeExit(failed);
+    }
+    if (failed.kind === "fixed-presentation") {
+      const item = SCRIPTS.find((entry) => entry.id === failed.destination.scriptId);
+      const step = item?.steps[failed.destination.step];
+      state.navigationPending = true;
+      try {
+        const result = await presentation.replace(step?.presentation?.segmentId);
+        settleNavigationAttempt(failed, result);
+        return result;
+      } finally {
+        if (failed.generation === navigationGeneration) {
+          state.navigationPending = false;
+          if (state.screen === "player") renderPlayer();
+          rearmTransport();
+        }
+      }
+    }
+    const failedCue = state.failedCue;
+    if (!failedCue || state.cueStatus !== "failed") return false;
+    const result = await applyCue(failedCue.cue, failedCue.narrativeId, failedCue.beforeApply);
+    settleNavigationAttempt(failed, result);
+    rearmTransport();
+    if (result?.status === "ready" && !failedCue.beforeApply) {
+      const item = script();
+      const step = currentStep();
+      if (shouldAutoOpenNliPresentation({
+        item, index: state.step, currentScript: item, currentStep: step, cueStatus: "ready",
+      })) void presentation.run("open", step.presentation.segmentId);
+    }
+    return result?.status === "ready";
   }
 
   function findPerson(query) {
@@ -1073,7 +1196,7 @@ export function initNliStaffRemote(dataContext, { presenterManifest = presenterC
       renderPlayer();
       void timelineHost._ensureNliFeatureCache?.();
     },
-    runDestinationTransition: async (item, index, prepareDestination) => {
+    runDestinationTransition: async (item, index, prepareDestination, operationContext) => {
       const generation = navigationGeneration;
       try {
         const destination = item.steps[Math.max(0, Math.min(index, item.steps.length - 1))];
@@ -1095,7 +1218,8 @@ export function initNliStaffRemote(dataContext, { presenterManifest = presenterC
         if (generation === navigationGeneration) rearmTransport();
       }
     },
-    afterDestinationCue: (item, index, cueResult) => {
+    afterDestinationCue: (item, index, cueResult, operationContext) => {
+      settleNavigationAttempt(operationContext, cueResult);
       if (cueResult?.status !== "ready") return;
       const nextIndex = Math.max(0, Math.min(index, item.steps.length - 1));
       if (state.scriptId !== item.id || state.step !== nextIndex) return;
@@ -1127,10 +1251,14 @@ export function initNliStaffRemote(dataContext, { presenterManifest = presenterC
   });
 
   $("homeRetry")?.addEventListener("click", () => {
-    void exitToHome();
+    void retrySceneNavigation();
   });
 
   $("playerCueRetry")?.addEventListener("click", async () => {
+    if (failedNavigationAttempt) {
+      await retrySceneNavigation();
+      return;
+    }
     const failedCue = state.failedCue;
     if (!failedCue || state.cueStatus !== "failed") return;
     if (failedCue.cue === HOME_CUE && failedCue.narrativeId === null) {
@@ -1155,10 +1283,15 @@ export function initNliStaffRemote(dataContext, { presenterManifest = presenterC
 
   $("prevBtn").addEventListener("click", () => {
     if (!canReplaceNavigation()) return;
-    const prev = prevAction(state);
-    if (!prev) return;
-    if (prev.scriptId === state.scriptId) goToStep(prev.step);
-    else enterScript(prev.scriptId, prev);
+    const sessionState = navigationSession.getState();
+    const recovering = Boolean(sessionState.current && activeNavigationAttempt);
+    const target = navigationSession.backTarget({ recoverCurrent: recovering });
+    if (!target) return;
+    const item = SCRIPTS.find((entry) => entry.id === target.scriptId);
+    if (item) void transitionToStep(item, target.step, {
+      returnTo: target.returnTo,
+      navigationIntent: recovering ? "reapply" : "back",
+    });
   });
 
   $("nextBtn").addEventListener("click", () => {
@@ -1357,6 +1490,9 @@ export function initNliStaffRemote(dataContext, { presenterManifest = presenterC
     disposed = true;
     archiveUiReady = false;
     navigationGeneration += 1;
+    if (activeNavigationAttempt) navigationSession.abandon(activeNavigationAttempt.ticket);
+    activeNavigationAttempt = null;
+    failedNavigationAttempt = null;
     searchTransition.begin();
     cues.cancel();
     presentation.destroy();
