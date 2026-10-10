@@ -12,11 +12,11 @@ from scripts import nli_presentation_assets as assets
 
 
 class NliPresentationAssetsTests(unittest.TestCase):
-    def test_pins_the_october_6_sources_used_by_the_runtime_manifest(self):
+    def test_pins_the_october_10_pdf_and_october_6_pptx_used_by_the_runtime_manifest(self):
         import json
 
         manifest = json.loads((assets.ROOT / "public/presentation/nli-presentation-manifest.json").read_text(encoding="utf-8"))
-        self.assertEqual(assets.EXPECTED_PDF_SHA256, "cadc48656462a3d968a0ded6616dd5c380be6588399c68b9f3dbf637dc7b5114")
+        self.assertEqual(assets.EXPECTED_PDF_SHA256, "d9d2a715b5bc46f105ebbce4b36dcaae9cde5a65b8cdbdfa6da560a212233707")
         self.assertEqual(assets.EXPECTED_PPTX_SHA256, "edf994532d8e190ea45f5c7f5f7c26ebe27d2ef87cb574b65cb1ac1a0a31847c")
         self.assertEqual(assets.EXPECTED_PDF_SHA256, manifest["deck"]["pdfSha256"])
         self.assertEqual(assets.EXPECTED_PPTX_SHA256, manifest["deck"]["pptxSha256"])

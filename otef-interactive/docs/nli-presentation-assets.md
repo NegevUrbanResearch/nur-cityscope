@@ -11,13 +11,17 @@ streams are copied without re-encoding; original media files and the three silen
 clips are preserved. `normalization-report.json` in that directory records source
 and output hashes, measured levels and verification results.
 
-Use the October 6 PDF and PPTX whose SHA-256 values are pinned in
+Use the October 10 PDF and October 6 PPTX whose SHA-256 values are pinned in
 `scripts/nli_presentation_assets.py` and the runtime manifest. A PDF-only export
 retains sharp text, but several photos are downsampled. The photo restoration
 option uses larger RGB JPEG originals from the same PPTX slide only when their
 aspect ratio and pixels identify a unique match. It substitutes image resources
 in a temporary PDF and verifies that page content and dimensions are unchanged.
 It never prints, uses a printer driver, or changes the source PDF/PPTX.
+
+The October 10 release replaces only PDF slide 34 (runtime slide 37) with
+the revised credits at 3840 × 2160. Slides 1–33, the restored photos, shared
+background and all video assets retain their October 6 bytes.
 
 The three supplemental videos credit רשות העתיקות beside the video, using
 right-aligned Narkiss Block text with the organization in bold. Be'eri (runtime
