@@ -2,7 +2,7 @@ import {
   DEFAULT_PROJECTION_CONFIG,
   parseProjectionImport,
   serializeProjectionExport,
-  migrateProjectionConfigToV7,
+  migrateProjectionConfigToV8,
   validateProjectionConfig,
 } from "../shared/projection-config-schema.js";
 import { equalProjectionConfig } from "../shared/projection-config-client.js";
@@ -83,7 +83,7 @@ function resolvedFieldPath(config, path) {
 function readField(config, path) { return path.split(".").reduce((target, key) => target?.[key], namesWallProfileScoped(path) ? { namesWall: config?.namesWall?.profiles?.[path === "namesWall.inwardShiftPercent" ? "wall" : config?.namesWall?.activeMode] } : config); }
 function normalizeConfig(config) {
   if (!config) return config;
-  return migrateProjectionConfigToV7(config, config.namesWall?.rotateDeg ?? 35);
+  return migrateProjectionConfigToV8(config, config.namesWall?.rotateDeg ?? 35);
 }
 function normalizeState(value) {
   if (!value || typeof value !== "object") return value;
@@ -1140,8 +1140,8 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
       const parsed = typeof imported === "string" ? parseProjectionImport(imported, rotateDeg) : imported?.config ? imported : parseProjectionImport(String(imported), rotateDeg);
       const warnings = [...(parsed?.warnings || [])];
       let config = parsed?.config;
-      if (config && config.schemaVersion < 7) {
-        config = migrateProjectionConfigToV7(config, rotateDeg, warnings);
+      if (config && config.schemaVersion < 8) {
+        config = migrateProjectionConfigToV8(config, rotateDeg, warnings);
       } else config = normalizeConfig(config);
       const importErrors = validateProjectionConfig(config);
       if (Object.keys(importErrors).length) throw new Error(`invalid imported projection config: ${Object.entries(importErrors).map(([path, message]) => `${path} ${message}`).join("; ")}`);

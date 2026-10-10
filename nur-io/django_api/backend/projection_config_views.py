@@ -46,7 +46,7 @@ class ProjectionConfigView(View):
             )
             return JsonResponse(state)
         except ProjectionSchemaChanged as exc:
-            required = exc.state.get("config", {}).get("schemaVersion", 7) if isinstance(exc.state, dict) else 7
+            required = exc.state.get("config", {}).get("schemaVersion", 8) if isinstance(exc.state, dict) else 8
             return JsonResponse({"error": "schema_changed", "requiredSchemaVersion": required, "state": exc.state}, status=409)
         except ProjectionConflict as exc:
             return JsonResponse({"error": "conflict", "state": exc.state}, status=409)

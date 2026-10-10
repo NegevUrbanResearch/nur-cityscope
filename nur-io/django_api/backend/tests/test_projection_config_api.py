@@ -95,14 +95,25 @@ class ProjectionConfigApiTests(TestCase):
         self.assertEqual(row.revision, current['revision'])
         self.assertEqual(row.working_config, current['config'])
 
-    def test_installed_v7_rejects_stale_writer_with_authoritative_snapshot(self):
+    def test_installed_v8_rejects_stale_writer_with_authoritative_snapshot(self):
         current = self.state()
         stale = migrate_projection_config_to_v6(legacy_projection_config_defaults(), 35)
         response = self.post_action('preview', current['revision'], config=stale)
         self.assertEqual(response.status_code, 409)
         self.assertEqual(response.json()['error'], 'schema_changed')
-        self.assertEqual(response.json()['requiredSchemaVersion'], 7)
-        self.assertEqual(response.json()['state']['config']['schemaVersion'], 7)
+        self.assertEqual(response.json()['requiredSchemaVersion'], 8)
+        self.assertEqual(response.json()['state']['config']['schemaVersion'], 8)
+
+    def test_v8_rejects_non_string_font_choices_as_field_errors(self):
+        current = self.state()
+        for choice in ([], {}):
+            with self.subTest(choice=choice):
+                config = copy.deepcopy(current['config'])
+                config['nliFonts']['he'] = choice
+                response = self.post_action('preview', current['revision'], config=config)
+                self.assertEqual(response.status_code, 400)
+                self.assertIn('nliFonts.he', response.json()['fields'])
+                self.assertEqual(self.state(), current)
 
     def test_older_install_rejects_incoming_v7_until_upgrade(self):
         self.state()

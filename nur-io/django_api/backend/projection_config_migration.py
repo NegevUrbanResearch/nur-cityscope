@@ -1,7 +1,7 @@
 from copy import deepcopy
 
 from .projection_config_schema import validate_projection_config, validate_projection_snapshot
-from .projection_warp_schema import migrate_projection_config_to_v2, migrate_projection_config_to_v3, migrate_projection_config_to_v4, migrate_projection_config_to_v5, migrate_projection_config_to_v7
+from .projection_warp_schema import migrate_projection_config_to_v2, migrate_projection_config_to_v3, migrate_projection_config_to_v4, migrate_projection_config_to_v5, migrate_projection_config_to_v7, migrate_projection_config_to_v8
 
 
 def convert_projection_calibration_payload(working_config, presets, selected_preset_id, revision):
@@ -130,6 +130,25 @@ def convert_projection_calibration_payload_to_v7(working_config, presets, select
             raise ValueError(f'presets[{index}] has an invalid shape')
         converted = deepcopy(preset)
         converted['config'] = migrate_projection_config_to_v7(preset['config'])
+        converted_presets.append(converted)
+    candidate = {'revision': revision, 'config': converted_working, 'presets': converted_presets, 'selectedPresetId': selected_preset_id}
+    errors = validate_projection_snapshot(candidate)
+    if errors:
+        raise ValueError('invalid projection calibration: ' + '; '.join(f'{path} {message}' for path, message in errors.items()))
+    return converted_working, converted_presets
+
+
+def convert_projection_calibration_payload_to_v8(working_config, presets, selected_preset_id, revision):
+    """Upgrade one complete calibration envelope while preserving its identity and revisions."""
+    converted_working = migrate_projection_config_to_v8(working_config)
+    if not isinstance(presets, list):
+        raise ValueError('presets must be a list')
+    converted_presets = []
+    for index, preset in enumerate(presets):
+        if not isinstance(preset, dict) or set(preset) != {'id', 'name', 'config', 'readOnly'}:
+            raise ValueError(f'presets[{index}] has an invalid shape')
+        converted = deepcopy(preset)
+        converted['config'] = migrate_projection_config_to_v8(preset['config'])
         converted_presets.append(converted)
     candidate = {'revision': revision, 'config': converted_working, 'presets': converted_presets, 'selectedPresetId': selected_preset_id}
     errors = validate_projection_snapshot(candidate)

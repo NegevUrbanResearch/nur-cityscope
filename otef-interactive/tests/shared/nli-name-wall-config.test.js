@@ -50,7 +50,7 @@ test('V4 preserves calibration and removes the old font floor', () => {
 });
 
 test('current defaults contain a wall-only closeness setting and independent profiles', () => {
-  expect(DEFAULT_PROJECTION_CONFIG.schemaVersion).toBe(7);
+  expect(DEFAULT_PROJECTION_CONFIG.schemaVersion).toBe(8);
   expect(DEFAULT_PROJECTION_CONFIG.namesWall.rotateDeg).toBe(35);
   expect(DEFAULT_PROJECTION_CONFIG.namesWall.profiles.wall).toEqual({ requestedFontPx: 12, spacingPx: 2, edgeInsetPx: 0, inwardShiftPercent: 0, strokeWidthPx: 3 });
   expect(DEFAULT_NAMES_WALL.profiles.wall).toEqual({ requestedFontPx: 12, spacingPx: 2, edgeInsetPx: 0 });

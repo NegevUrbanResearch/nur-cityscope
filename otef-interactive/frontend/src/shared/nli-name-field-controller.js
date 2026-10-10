@@ -2,7 +2,7 @@ import { loadNliNameField as defaultLoadNliNameField } from "./nli-name-field-da
 import { createNameGroupOverlay } from "./nli-name-field-group-overlay.js";
 import { createNameFieldAnimation, withNameRevealDelays, NAME_FIELD_MOTION, NAME_FIELD_REVEAL_DURATION_MS } from './nli-name-field-animation.js';
 import { createNliNameFocusPresentation, getNameFocusOpacity, getNameFocusAlpha, getRelevantPlaceGroup } from './nli-name-focus-presentation.js';
-import { DEFAULT_PROJECTION_CONFIG, migrateProjectionConfigToV7, validateProjectionConfig } from "./projection-config-schema.js";
+import { DEFAULT_PROJECTION_CONFIG, migrateProjectionConfigToV8, validateProjectionConfig } from "./projection-config-schema.js";
 import { getLayerLifecycleRuntime } from "./layer-lifecycle-fade.js";
 import { equalProjectionConfig } from "./projection-config-client.js";
 import { nameTextStyle } from './nli-name-language.js';
@@ -705,7 +705,7 @@ export function createNliNameFieldController({
       if (Object.keys(validateProjectionConfig(config)).length || !candidate) throw new Error('invalid projection Canvas candidate');
       if (signal?.aborted) throw Object.assign(new Error('projection preparation cancelled'), { name: 'AbortError' });
       if ((candidate.language || 'he') !== readLanguage()) throw new Error('Stale name language candidate');
-      const wallConfig = migrateProjectionConfigToV7(config, config.namesWall?.rotateDeg ?? 35);
+      const wallConfig = migrateProjectionConfigToV8(config, config.namesWall?.rotateDeg ?? 35);
       const token = ++canvasRequestToken;
       rebuildState = 'building';
       publishDiagnostics();
@@ -848,7 +848,7 @@ export function createNliNameFieldController({
       if (map?._otefProjectionConfigRollback === true) return api._rollbackProjectionConfig(config, revision);
       if (Object.keys(validateProjectionConfig(config)).length || !Number.isSafeInteger(revision) || revision < 0 ||
         (Number.isFinite(requestedRevision) && revision < requestedRevision)) return false;
-      const wallConfig = migrateProjectionConfigToV7(config, config.namesWall?.rotateDeg ?? 35);
+      const wallConfig = migrateProjectionConfigToV8(config, config.namesWall?.rotateDeg ?? 35);
       if (!canvasAdapter) return api.setProjectionConfig(wallConfig, revision);
       if (ready && field && installedConfig) {
         const remapped = { ...wallConfig, namesWall: installedConfig.namesWall };

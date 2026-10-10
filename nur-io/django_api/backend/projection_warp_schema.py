@@ -221,6 +221,26 @@ def validate_projection_config_v7(value, trusted_manifest=None):
     return errors
 
 
+def validate_projection_config_v8(value, trusted_manifest=None):
+    from .nli_font_settings import validate_nli_font_choices
+    errors = {}
+    if not isinstance(value, dict):
+        return {'config': 'must be an object'}
+    expected = {'schemaVersion', 'pre', 'outputs', 'namesWall', 'nliFonts'}
+    for key in expected - value.keys(): errors[key] = 'is required'
+    for key in value.keys() - expected: errors[key] = 'unknown field'
+    if value.get('schemaVersion') != 8 or isinstance(value.get('schemaVersion'), bool):
+        errors['schemaVersion'] = 'must equal 8'
+    if 'nliFonts' not in value:
+        errors['nliFonts'] = 'is required'
+    else:
+        errors.update(validate_nli_font_choices(value['nliFonts']))
+    geometry = {key: item for key, item in value.items() if key != 'nliFonts'}
+    geometry['schemaVersion'] = 7
+    errors.update(validate_projection_config_v7(geometry, trusted_manifest))
+    return errors
+
+
 def normalize_rotation_deg(value):
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
         raise ValueError('invalid rotation')
@@ -343,4 +363,19 @@ def migrate_projection_config_to_v7(config, rotate_deg=None):
         grid['columnPositions'] = [index / (columns - 1) for index in range(columns)]
         grid['rowPositions'] = [index / (rows - 1) for index in range(rows)]
     result['schemaVersion'] = 7
+    return result
+
+
+def migrate_projection_config_to_v8(config, rotate_deg=None):
+    from .projection_config_schema import validate_projection_config
+    if not isinstance(config, dict) or isinstance(config.get('schemaVersion'), bool) or config.get('schemaVersion') not in (1, 2, 3, 4, 5, 6, 7, 8):
+        raise ValueError('projection config must be schema version 1, 2, 3, 4, 5, 6, 7, or 8')
+    if validate_projection_config(config):
+        raise ValueError('invalid projection config')
+    if config['schemaVersion'] == 8:
+        return deepcopy(config)
+    result = migrate_projection_config_to_v7(config, rotate_deg)
+    from .nli_font_settings import NLI_FONT_DEFAULTS
+    result['schemaVersion'] = 8
+    result['nliFonts'] = deepcopy(NLI_FONT_DEFAULTS)
     return result

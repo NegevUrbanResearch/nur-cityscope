@@ -79,7 +79,7 @@ def _requires_grid_preparation(mesh, warp, side):
 def _prepare_v7_warp(warp, side, schema_version=None):
     grid = warp.get('grid') if isinstance(warp, dict) else None
     has_axes = isinstance(grid, dict) and ('columnPositions' in grid or 'rowPositions' in grid)
-    if schema_version != 7 and not has_axes:
+    if schema_version not in (7, 8) and not has_axes:
         return warp, False
     if side not in SIDES:
         raise ValueError('v7 warp evaluation requires explicit side')
@@ -96,7 +96,7 @@ def _prepare_v7_warp(warp, side, schema_version=None):
 def evaluate_warp_point(x, y, warp, s=None, t=None, *, side=None, schema_version=None, mesh=None):
     """Evaluate a warp point: x/y are baseline destination and s/t are source coordinates.
 
-    V7 evaluation requires explicit ``side``; ``schema_version=7`` also forces
+    V7 and V8 evaluation require explicit ``side``; ``schema_version=7`` or ``8`` also force
     v7 validation when axis arrays are absent. Disabled v7 warps return [x, y]
     unchanged. Enabled uniform v7 grids use the legacy evaluator. Enabled
     nonlegacy grids require ``mesh`` to be the trusted original source TD

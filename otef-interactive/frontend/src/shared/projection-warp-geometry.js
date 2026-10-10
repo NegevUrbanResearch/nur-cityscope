@@ -65,7 +65,7 @@ function sideForWarp(warp, fallback = 'left') { return warp?.side || (warp?.grid
 
 function createEvaluator(warp, side = null, schemaVersion = null) {
   const resolvedSide = side || sideForWarp(warp);
-  const errors = schemaVersion === 7 || Object.hasOwn(warp?.grid || {}, 'columnPositions') || Object.hasOwn(warp?.grid || {}, 'rowPositions')
+  const errors = schemaVersion >= 7 || Object.hasOwn(warp?.grid || {}, 'columnPositions') || Object.hasOwn(warp?.grid || {}, 'rowPositions')
     ? validateProjectionWarpV7(warp, side, {})
     : validateProjectionWarp(warp, resolvedSide);
   if (Object.keys(errors).length) throw new Error(`invalid warp: ${Object.entries(errors).map(([path, message]) => `${path} ${message}`).join('; ')}`);
@@ -94,7 +94,7 @@ export function evaluateWarpPoint(x, y, warp, s = x, t = y, options = {}) {
   const side = options.side || null;
   const schemaVersion = options.schemaVersion || null;
   let actual = warp;
-  if (schemaVersion === 7 || Object.hasOwn(warp?.grid || {}, 'columnPositions') || Object.hasOwn(warp?.grid || {}, 'rowPositions')) {
+  if (schemaVersion >= 7 || Object.hasOwn(warp?.grid || {}, 'columnPositions') || Object.hasOwn(warp?.grid || {}, 'rowPositions')) {
     if (!side) throw new Error('v7 warp evaluation requires explicit side');
     const validation = validateProjectionWarpV7(warp, side);
     if (Object.keys(validation).length) throw new Error(`invalid warp: ${Object.entries(validation).map(([path, message]) => `${path} ${message}`).join('; ')}`);
@@ -106,7 +106,7 @@ export function evaluateWarpPoint(x, y, warp, s = x, t = y, options = {}) {
     if (actual.enabled === false) return [x, y];
     delete actual.grid.columnPositions;
     delete actual.grid.rowPositions;
-  } else if (schemaVersion === 7) {
+  } else if (schemaVersion >= 7) {
     throw new Error('v7 warp requires both axis arrays');
   }
   return createEvaluator(actual, side, null)(x, y, s, t);
@@ -242,7 +242,7 @@ export function createIdentityProjectionMesh({ side = 'left' } = {}) {
 
 export function evaluateWarpMesh(mesh, warp, { side = null, schemaVersion = null } = {}) {
   const hasAxes = Object.hasOwn(warp?.grid || {}, 'columnPositions') || Object.hasOwn(warp?.grid || {}, 'rowPositions');
-  const isV7 = schemaVersion === 7 || hasAxes;
+  const isV7 = schemaVersion >= 7 || hasAxes;
   const resolvedSide = side || (isV7 ? null : mesh?.side || sideForWarp(warp));
   let sourceValidated = false;
   if (isV7) {
@@ -258,7 +258,7 @@ export function evaluateWarpMesh(mesh, warp, { side = null, schemaVersion = null
     warp = structuredClone(warp);
     delete warp.grid.columnPositions;
     delete warp.grid.rowPositions;
-  } else if (schemaVersion === 7) {
+  } else if (schemaVersion >= 7) {
     throw new Error('v7 warp requires both axis arrays');
   }
   if (warp?.enabled === false) return validateWarpMesh(createFullFrameProjectionMesh({ side: resolvedSide || mesh?.side || sideForWarp(warp) }));

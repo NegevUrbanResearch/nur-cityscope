@@ -138,7 +138,7 @@ export async function fitProjectionKeystone({ config, output, baselineMesh = nul
   maxErrorPx = .5, signal, yieldControl = defaultYield } = {}) {
   try {
     if (signal?.aborted) throw fail('cancelled', 'Projection point fit cancelled.');
-    if (!['left', 'right'].includes(output) || !config || config.schemaVersion !== 7 ||
+    if (!['left', 'right'].includes(output) || !config || config.schemaVersion < 7 ||
       Object.keys(validateProjectionConfig(config)).length || !Number.isFinite(maxErrorPx) || maxErrorPx <= 0 || maxErrorPx > .5 || typeof yieldControl !== 'function') throw fail('input', 'Invalid projection fit configuration or tolerance.');
     const candidate = clone(config), warp = candidate.outputs[output].warp;
     if (!warp.enabled) throw fail('bypassed', 'Enable Grid Warp before fitting keystone landmarks.');

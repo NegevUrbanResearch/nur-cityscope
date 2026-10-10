@@ -621,6 +621,7 @@ test("mounted Start fresh preserves TD Undo/Redo and framing without reloading a
   const viewSpy = vi.spyOn(configView, "createProjectionConfigView").mockImplementation((root, options) => { warpAction = options.onWarpAction; return actualCreate(root, options); });
   const api = mountProjectionConfig(root, { client, baselineCatalogLoader: loader });
   try {
+    expect(client.getState().draft.schemaVersion).toBe(8);
     const button = find(root, node => node.dataset?.action === "warp-start-fresh");
     await vi.waitFor(() => expect(warpAction("warp-nudge", { output: "left", direction: "right" })).toBe(true));
     const before = clone(client.getState().draft);
@@ -631,6 +632,7 @@ test("mounted Start fresh preserves TD Undo/Redo and framing without reloading a
     button.dispatch("click");
     expect(doc.defaultView.confirm).toHaveBeenLastCalledWith(expect.stringContaining("left projector"));
     const fresh = clone(client.getState().draft);
+    expect(fresh.schemaVersion).toBe(8);
     expect(fresh.outputs.left.warp.baseline.type).toBe("identity");
     expect(fresh.pre).toEqual(before.pre);
     expect(fresh.outputs.left.crop).toEqual(before.outputs.left.crop);
@@ -3431,6 +3433,7 @@ test('Cancel immediately hides a retained Wall-only wrapper when no controller e
     globalThis.document = documentStub();
     const legacy = clone(DEFAULTS);
     legacy.schemaVersion = 1;
+    delete legacy.nliFonts;
     delete legacy.namesWall;
     for (const output of ["left", "right"]) {
       delete legacy.outputs[output].presentationEffect;
