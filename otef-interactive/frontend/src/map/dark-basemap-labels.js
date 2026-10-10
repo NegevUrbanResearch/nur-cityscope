@@ -98,6 +98,12 @@ export function collectKnownBasemapPlaceNames(catalog = placeCatalog) {
   return [...names].sort((a, b) => a.localeCompare(b, "he"));
 }
 
+const DEFAULT_GIS_KNOWN_PLACE_NAME_ADDITIONS = Object.freeze([
+  "אשקלון", "Ashkelon",
+  "נתיבות", "Netivot",
+  "אופקים", "Ofakim",
+]);
+
 function scaleUnknownPlaceSize(size) {
   const scale = DARK_BASEMAP_UNKNOWN_PLACE_SIZE_SCALE;
   if (typeof size === "number" && Number.isFinite(size)) return size * scale;
@@ -144,9 +150,13 @@ export function applyDarkBasemapLabelPolicy(style, options = {}) {
   if (!style || !Array.isArray(style.layers)) return style;
   const next = cloneJson(style);
   delete next.glyphs;
-  const knownPlaceNames = Array.isArray(options.knownPlaceNames)
+  const customKnownPlaceNames = Array.isArray(options.knownPlaceNames);
+  const overlayKnownPlaceNames = customKnownPlaceNames
     ? options.knownPlaceNames.map((name) => String(name)).filter(Boolean)
     : collectKnownBasemapPlaceNames({ entries: placeCatalog.entries.filter(place => place.type === 'yeshuv').map(place => ({ ...place, selectable: true })) });
+  const prominentPlaceNames = customKnownPlaceNames
+    ? overlayKnownPlaceNames
+    : [...new Set([...overlayKnownPlaceNames, ...DEFAULT_GIS_KNOWN_PLACE_NAME_ADDITIONS])];
 
   next.layers = next.layers.map((layer) => {
     if (!layer || layer.type !== "symbol" || layer.layout?.["text-field"] == null) return layer;
@@ -168,12 +178,12 @@ export function applyDarkBasemapLabelPolicy(style, options = {}) {
     const paint = { ...(layer.paint || {}) };
     paint["text-color"] = DARK_BASEMAP_TEXT_COLOR;
     if (layer["source-layer"] === PLACE_SOURCE_LAYER) {
-      if (knownPlaceNames.length > 0) {
-        const knownMatch = knownPlaceNameMatch(knownPlaceNames);
-        layout["text-size"] = placeTextSizeExpression(layout["text-size"], knownMatch);
+      if (prominentPlaceNames.length > 0) {
+        const prominentMatch = knownPlaceNameMatch(prominentPlaceNames);
+        layout["text-size"] = placeTextSizeExpression(layout["text-size"], prominentMatch);
         paint["text-opacity"] = [
           "case",
-          knownMatch,
+          knownPlaceNameMatch(overlayKnownPlaceNames),
           0,
           DARK_BASEMAP_UNKNOWN_PLACE_TEXT_OPACITY,
         ];

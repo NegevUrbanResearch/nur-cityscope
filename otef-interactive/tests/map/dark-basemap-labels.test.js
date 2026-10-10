@@ -52,7 +52,51 @@ function layer(id, extras) {
   };
 }
 
+function evaluateExpression(expression, properties) {
+  if (!Array.isArray(expression)) return expression;
+  switch (expression[0]) {
+    case "get": return properties[expression[1]];
+    case "literal": return expression[1];
+    case "coalesce": return expression.slice(1).map(value => evaluateExpression(value, properties)).find(value => value != null);
+    case "in": return evaluateExpression(expression[2], properties).includes(evaluateExpression(expression[1], properties));
+    case "case": return evaluateExpression(expression[1], properties)
+      ? evaluateExpression(expression[2], properties) : evaluateExpression(expression[3], properties);
+    default: throw new Error(`Unsupported test expression: ${expression[0]}`);
+  }
+}
+
 describe("applyDarkBasemapLabelPolicy", () => {
+  it("emphasizes Ashkelon, Netivot, and Ofakim without hiding their Hebrew or English labels", () => {
+    const towns = [
+      { he: "אשקלון", en: "Ashkelon" },
+      { he: "נתיבות", en: "Netivot" },
+      { he: "אופקים", en: "Ofakim" },
+    ];
+    const baseStyle = { version: 8, layers: [layer("place_city", {
+      "source-layer": "place",
+      layout: { "text-field": BILINGUAL_NAME_FIELD, "text-size": 10 },
+      paint: { "text-color": "white" },
+    })] };
+
+    for (const language of ["he", "en"]) {
+      const result = applyDarkBasemapLabelPolicy(baseStyle, { language }).layers[0];
+      const nameProperty = language === "he" ? "name:he" : "name:en";
+      for (const town of towns) {
+        const knownProperties = { [nameProperty]: town[language] };
+        const unknownProperties = { [nameProperty]: "Unknown place" };
+        expect(evaluateExpression(result.layout["text-size"], knownProperties)).toBe(DARK_BASEMAP_KNOWN_PLACE_TEXT_SIZE);
+        expect(evaluateExpression(result.paint["text-opacity"], knownProperties)).toBe(DARK_BASEMAP_UNKNOWN_PLACE_TEXT_OPACITY);
+        expect(evaluateExpression(result.layout["text-size"], unknownProperties)).toBe(10 * DARK_BASEMAP_UNKNOWN_PLACE_SIZE_SCALE);
+        expect(evaluateExpression(result.paint["text-opacity"], unknownProperties)).toBe(DARK_BASEMAP_UNKNOWN_PLACE_TEXT_OPACITY);
+      }
+    }
+
+    const defaultHebrewLayer = applyDarkBasemapLabelPolicy(baseStyle).layers[0];
+    const overlayBackedProperties = { "name:he": "בארי" };
+    expect(evaluateExpression(defaultHebrewLayer.layout["text-size"], overlayBackedProperties)).toBe(DARK_BASEMAP_KNOWN_PLACE_TEXT_SIZE);
+    expect(evaluateExpression(defaultHebrewLayer.paint["text-opacity"], overlayBackedProperties)).toBe(0);
+  });
+
   it('uses only English or Latin names for all named basemap layers in English mode', () => {
     const layers = ['place', 'transportation_name', 'water_name', 'poi'].map((sourceLayer, i) => layer(`label-${i}`, {
       'source-layer': sourceLayer, layout: { 'text-field': BILINGUAL_NAME_FIELD },
