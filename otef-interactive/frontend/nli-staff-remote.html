@@ -71,6 +71,12 @@
       }
 
       * { box-sizing: border-box; }
+      #staffStartupFallback { position: fixed; inset: 16px; z-index: 1000; margin: auto;
+        width: min(480px, calc(100% - 32px)); height: fit-content; max-height: calc(100dvh - 32px);
+        overflow: auto; padding: 24px; background: #17171a; color: #f4f2ee;
+        border: 1px solid #333338; border-radius: 16px; font-family: system-ui, sans-serif; }
+      #staffStartupFallback[hidden] { display: none; }
+      #staffStartupFallback button { min-height: 48px; padding: 12px 20px; border-radius: 10px; background: #ffd600; color: #15130a; }
       html, body {
         height: 100%;
         overflow: hidden;
@@ -1358,6 +1364,27 @@
       <div id="table-switcher" hidden></div>
     </div>
 
+    <div id="staffStartupFallback" role="alert" hidden>
+      <p>השלט לא נטען. אפשר לנסות שוב.</p>
+      <button type="button">נסו שוב</button>
+    </div>
+    <script id="staffStartupScript">
+      (() => {
+        const panel = document.getElementById("staffStartupFallback");
+        const retry = panel.querySelector("button");
+        let ready = false;
+        const timer = setTimeout(() => { if (!ready) panel.hidden = false; }, 30000);
+        window.otefStaffStartupReady = () => { ready = true; clearTimeout(timer); panel.hidden = true; };
+        retry.addEventListener("click", () => {
+          if (retry.disabled) return;
+          retry.disabled = true; window.location.reload();
+        });
+        if (document.documentElement.lang === "en") {
+          panel.querySelector("p").textContent = "The remote did not load. Try again.";
+          retry.textContent = "Retry";
+        }
+      })();
+    </script>
     <script type="module" src="./src/entries/nli-staff-remote-main.js"></script>
   </body>
 </html>
