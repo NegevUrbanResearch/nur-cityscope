@@ -19,12 +19,13 @@ import {
 } from "./remote-people-archive-controller.js";
 import { createStaffFullscreenControl } from "./nli-staff-fullscreen.js";
 import { labelForPlace, placeIsWithinRemoteBounds } from "./remote-place-navigation.js";
-import { applyServerLocale, bindLocaleButtons, getLocale, t, LOCALE_EVENT } from "./remote-locale.js";
+import { applyServerLocale, bindLocaleButtons, getLocale, messageForLocale, t, LOCALE_EVENT } from "./remote-locale.js";
 import { homeListHtml } from "./nli-staff-home.js";
 import { navigationButtonContent } from "./nli-staff-icons.js";
 import { COPY, HOME_CUE, NARRATIVES, SCRIPTS, SHOW } from "./nli-staff-script.js";
 import { isCanonicalHome } from "./staff-remote-refresh-guard.js";
 import { createNliStaffNavigationSession } from "./nli-staff-navigation-session.js";
+import { hasSceneStrip, navigationLabel, optionalStoryActions, optionalStoryContext, storyChooserHtml } from "./nli-staff-navigation-view.js";
 import { nextAction, showStepIndex, slideIndexes } from "./nli-staff-flow.js";
 import { searchPlaces } from "../shared/place-navigation/place-catalog.js";
 import {
@@ -253,6 +254,9 @@ export function initNliStaffRemote(dataContext, {
   let presenterView;
   let disposed = false;
   let paintingTimeline = false;
+  let storyChooserOpen = false;
+  let chooserOpenerKey = "navigation-choose";
+  let chooserFocusKey = "story-sderot";
 
   const timelineHost = createNliStaffTimelineHost({
     sheet: $("kitTimeline"),
@@ -367,6 +371,10 @@ export function initNliStaffRemote(dataContext, {
     return timelineHost.isManualMutationAllowed?.() !== false;
   }
 
+  function chooserManualMutationsOpen() {
+    return !storyChooserOpen && manualMutationsOpen();
+  }
+
   function rearmTransport() {
     const clock = dataContext?.getInvestigationClock?.() || null;
     timelineHost._syncNliPlayheadTicker?.(clock);
@@ -462,7 +470,7 @@ export function initNliStaffRemote(dataContext, {
       dataset: { ...presenterGate?.getState(), identity: presenterManifest.datasetVersion,
         generation: presenterGeneration },
       connected: dataContext?.isConnected?.() === true || state.connected,
-      mutationAllowed: manualMutationsOpen() && !state.navigationPending && !state.presentationClosePending,
+      mutationAllowed: chooserManualMutationsOpen() && !state.navigationPending && !state.presentationClosePending,
     });
   }
 
@@ -531,13 +539,17 @@ export function initNliStaffRemote(dataContext, {
   function renderPlayer() {
     const item = script();
     if (!item) return;
+    const focusKey = storyChooserOpen ? (document.activeElement?.dataset?.focusKey || chooserFocusKey) : null;
     const step = item.steps[state.step];
     const slides = slideIndexes(item);
     $("stepCount").textContent = "";
     $("stepCount").hidden = true;
+    $("ticks").hidden = !hasSceneStrip(item.id);
+    const visitedScenes = navigationSession.getState().visitedScenes;
     $("ticks").innerHTML = slides
       .map((index, n) => {
-        const cls = index < state.step ? "is-done" : index === state.step ? "is-current" : "";
+        const visited = visitedScenes.some((ref) => ref.scriptId === item.id && ref.step === index);
+        const cls = [index === state.step ? "is-current" : "", visited ? "is-visited" : ""].filter(Boolean).join(" ");
         const current = index === state.step ? ' aria-current="step"' : "";
         return `<button type="button" class="${cls}" data-step="${index}"${current}${state.searchPending ? " disabled" : ""} aria-label="${txt("stepAria", { n: n + 1 })}"></button>`;
       })
@@ -548,22 +560,138 @@ export function initNliStaffRemote(dataContext, {
     $("stepNote").hidden = true;
     renderDock();
     renderKit();
+    renderStoryChooser();
+    applyChooserFocusScope();
+    if (storyChooserOpen && focusKey) focusSemanticControl(focusKey);
+  }
+
+  function currentDisplayedRef() {
+    return state.scriptId ? { scriptId: state.scriptId, step: state.step, returnTo: state.returnTo } : null;
+  }
+
+  function optionalActionsAvailable() {
+    return optionalStoryActions({
+      current: navigationSession.getState().current,
+      displayed: currentDisplayedRef(),
+      navigationPending: state.navigationPending || Boolean(activeNavigationAttempt),
+      searchPending: state.searchPending || state.presentationClosePending,
+      cueStatus: state.cueStatus,
+      presentationPhase: presentation?.getState?.()?.phase || "closed",
+      navigationFailed: state.navigationFailure || Boolean(failedNavigationAttempt),
+    });
+  }
+
+  function renderStoryChooser() {
+    const mount = $("storyChooserMount");
+    if (!mount) return;
+    const scrollTop = storyChooserOpen ? $("storyChooser")?.scrollTop || 0 : 0;
+    mount.innerHTML = storyChooserHtml({
+      locale: getLocale(),
+      visitedStoryIds: navigationSession.getState().visitedStoryIds,
+      pending: state.navigationPending || state.searchPending,
+    });
+    const dialog = $("storyChooser");
+    dialog.hidden = !storyChooserOpen;
+    dialog.scrollTop = scrollTop;
+    if (storyChooserOpen) {
+      dialog.querySelector("#storyChooserStatus").textContent = "";
+    }
+  }
+
+  function chooserAllowed(element) {
+    return Boolean(element?.closest?.("#storyChooser, #homeBtn, #localeHe, #localeEn, #fullscreenBtn, #staffConnection, #staffConnectionDetails"));
+  }
+
+  function applyChooserFocusScope() {
+    const body = $("player")?.querySelector(".player-body");
+    if (body) {
+      body.inert = storyChooserOpen;
+      body.setAttribute("aria-hidden", String(storyChooserOpen));
+    }
+    const dock = $("player")?.querySelector(".dock");
+    if (dock) {
+      dock.inert = storyChooserOpen;
+      dock.setAttribute("aria-hidden", String(storyChooserOpen));
+    }
+  }
+
+  function focusSemanticControl(key) {
+    const target = [...document.querySelectorAll("[data-focus-key]")]
+      .find((element) => element.dataset.focusKey === key && !element.hidden && !element.disabled);
+    target?.focus?.();
+    if (target) chooserFocusKey = key;
+  }
+
+  function openStoryChooser() {
+    if (!optionalActionsAvailable() || storyChooserOpen) return false;
+    storyChooserOpen = true;
+    chooserOpenerKey = document.activeElement?.dataset?.focusKey || "navigation-choose";
+    chooserFocusKey = "story-sderot";
+    renderStoryChooser();
+    applyChooserFocusScope();
+    focusSemanticControl(chooserFocusKey);
+    return true;
+  }
+
+  function closeStoryChooser({ restoreFocus = true } = {}) {
+    if (!storyChooserOpen) return false;
+    storyChooserOpen = false;
+    renderStoryChooser();
+    applyChooserFocusScope();
+    if (restoreFocus) {
+      const key = optionalActionsAvailable() ? chooserOpenerKey : "navigation-back";
+      focusSemanticControl(key);
+    }
+    return true;
+  }
+
+  function selectOptionalStory(id, sourceButton) {
+    if (!storyChooserOpen || !sourceButton || !$("storyChooser")?.contains(sourceButton) ||
+      sourceButton.disabled || !optionalActionsAvailable()) return false;
+    const item = NARRATIVES.find((narrative) => narrative.id === id && ["sderot", "shura", "hostages"].includes(id));
+    if (!item) return false;
+    closeStoryChooser({ restoreFocus: false });
+    enterScript(item.id, { step: 0, returnTo: { id: "show", step: showStepIndex("narratives") } });
+    return true;
   }
 
   function renderDock() {
     const next = nextAction(state);
-    const choices = next.kind === "choose";
+    const optionalContext = optionalStoryContext(currentDisplayedRef());
+    const choices = next.kind === "choose" && !optionalContext;
     const sessionState = navigationSession.getState();
     const canRecover = Boolean(sessionState.current && activeNavigationAttempt);
     const canGoBack = canRecover || Boolean(navigationSession.backTarget());
-    $("prevBtn").setAttribute("aria-label", getLocale() === "he" ? "הסצנה הקודמת" : "Previous scene");
-    $("prevBtn").innerHTML = navigationButtonContent(txt("prev"), "previous", getLocale());
-    $("nextBtn").setAttribute("aria-label", next.kind === "finish" ? txt("done") : getLocale() === "he" ? "הסצנה הבאה" : "Next scene");
+    const backTarget = canGoBack ? navigationSession.backTarget({ recoverCurrent: Boolean(activeNavigationAttempt) }) : null;
+    const backText = backTarget
+      ? navigationLabel({ current: currentDisplayedRef(), target: backTarget, direction: "back", locale: getLocale() })
+      : txt("prev");
+    $("prevBtn").setAttribute("aria-label", backText);
+    $("prevBtn").innerHTML = navigationButtonContent(backText, "previous", getLocale());
+    const nextTarget = next.kind === "step" || next.kind === "resume"
+      ? { scriptId: next.scriptId, step: next.step, returnTo: next.kind === "resume" ? null : state.returnTo }
+      : null;
+    const nextText = nextTarget
+      ? navigationLabel({ current: currentDisplayedRef(), target: nextTarget, direction: "next", locale: getLocale() })
+      : txt({ step: "next", resume: "backToShow", finish: "done" }[next.kind] || "next");
+    const optionalActions = optionalActionsAvailable();
+    $("prevBtn").hidden = false;
     $("prevBtn").disabled = !canReplaceNavigation() || !canGoBack;
     $("nextBtn").hidden = choices;
-    $("nextBtn").innerHTML = navigationButtonContent(txt({ step: "next", resume: "backToShow", finish: "done" }[next.kind] || "next"), "next", getLocale());
+    $("nextBtn").innerHTML = navigationButtonContent(nextText, "next", getLocale());
     $("nextBtn").disabled = !canReplaceNavigation();
     $("nextChoices").hidden = !choices;
+    const chooseStoryLabel = messageForLocale(getLocale(), state.scriptId === "nova" ? "chooseStory" : "chooseAnotherStory");
+    const nextButton = $("nextBtn");
+    if (optionalContext) {
+      nextButton.setAttribute("aria-label", chooseStoryLabel);
+      nextButton.innerHTML = navigationButtonContent(chooseStoryLabel, "next", getLocale());
+      nextButton.dataset.navigationAction = "choose-story";
+      nextButton.disabled = !optionalActions || !canReplaceNavigation();
+    } else {
+      nextButton.removeAttribute("aria-label");
+      nextButton.dataset.navigationAction = "next";
+    }
     $("nextChoices").innerHTML = !choices ? "" : next.ids
       .map((id) => {
         const item = NARRATIVES.find((narrative) => narrative.id === id);
@@ -800,6 +928,7 @@ export function initNliStaffRemote(dataContext, {
     returnTo = state.returnTo,
     navigationIntent = "forward",
   } = {}) {
+    if (storyChooserOpen) closeStoryChooser({ restoreFocus: false });
     const nextIndex = Math.max(0, Math.min(index, item.steps.length - 1));
     const destination = item.steps[nextIndex];
     navigationGeneration += 1;
@@ -876,7 +1005,7 @@ export function initNliStaffRemote(dataContext, {
   }
 
   async function clearSearchFocus() {
-    if (state.searchPending) return;
+    if (storyChooserOpen || state.searchPending) return;
     const previousQuery = $("searchInput").value;
     const token = searchTransition.begin();
     state.searchPending = true;
@@ -945,6 +1074,7 @@ export function initNliStaffRemote(dataContext, {
   }
 
   function exitToHome() {
+    if (storyChooserOpen) closeStoryChooser({ restoreFocus: false });
     bootArmed = false;
     state.homeFailure = false;
     renderCueStatus();
@@ -1076,6 +1206,7 @@ export function initNliStaffRemote(dataContext, {
     const result = await applyCue(failedCue.cue, failedCue.narrativeId, failedCue.beforeApply);
     settleNavigationAttempt(failed, result);
     rearmTransport();
+    if (state.screen === "player") renderPlayer();
     if (result?.status === "ready" && !failedCue.beforeApply) {
       const item = script();
       const step = currentStep();
@@ -1152,7 +1283,10 @@ export function initNliStaffRemote(dataContext, {
   presentation = createNliStaffPresentationController({
     dataContext,
     onStateChange: () => {
-      if (archiveUiReady && state.screen === "player") renderKit();
+      if (archiveUiReady && state.screen === "player") {
+        renderKit();
+        renderDock();
+      }
     },
   });
   const handlePresentationButton = createNliStaffPresentationButtonHandler({
@@ -1247,6 +1381,7 @@ export function initNliStaffRemote(dataContext, {
   });
 
   $("homeBtn").addEventListener("click", () => {
+    if (storyChooserOpen) closeStoryChooser({ restoreFocus: false });
     void exitToHome();
   });
 
@@ -1281,7 +1416,8 @@ export function initNliStaffRemote(dataContext, {
     if (tick) goToStep(Number(tick.dataset.step));
   });
 
-  $("prevBtn").addEventListener("click", () => {
+  function navigateBack() {
+    if (storyChooserOpen) return;
     if (!canReplaceNavigation()) return;
     const sessionState = navigationSession.getState();
     const recovering = Boolean(sessionState.current && activeNavigationAttempt);
@@ -1292,10 +1428,16 @@ export function initNliStaffRemote(dataContext, {
       returnTo: target.returnTo,
       navigationIntent: recovering ? "reapply" : "back",
     });
-  });
+  }
 
+  $("prevBtn").addEventListener("click", navigateBack);
   $("nextBtn").addEventListener("click", () => {
+    if (storyChooserOpen) return;
     if (!canReplaceNavigation()) return;
+    if (optionalStoryContext(currentDisplayedRef())) {
+      if (optionalActionsAvailable()) openStoryChooser();
+      return;
+    }
     const next = nextAction(state);
     if (next.kind === "step") goToStep(next.step);
     else if (next.kind === "resume") enterScript(next.scriptId, { step: next.step });
@@ -1303,6 +1445,7 @@ export function initNliStaffRemote(dataContext, {
   });
 
   $("nextChoices").addEventListener("click", (event) => {
+    if (storyChooserOpen || optionalStoryContext(currentDisplayedRef())) return;
     if (!canReplaceNavigation()) return;
     const btn = event.target.closest("[data-branch]");
     const next = nextAction(state);
@@ -1310,8 +1453,60 @@ export function initNliStaffRemote(dataContext, {
     enterScript(btn.dataset.branch, { returnTo: { id: next.scriptId, step: next.junction } });
   });
 
+  $("storyChooserMount")?.addEventListener("click", (event) => {
+    const continueIdentity = event.target.closest?.('[data-chooser-action="continue-identity"]');
+    if (continueIdentity && storyChooserOpen && $("storyChooser")?.contains(continueIdentity) &&
+      !continueIdentity.disabled && optionalActionsAvailable() && canReplaceNavigation()) {
+      closeStoryChooser({ restoreFocus: false });
+      enterScript(SHOW.id, { step: showStepIndex("identity-database") });
+      return;
+    }
+    const cancel = event.target.closest?.('[data-chooser-action="cancel"]');
+    if (cancel && storyChooserOpen) {
+      closeStoryChooser();
+      return;
+    }
+    const story = event.target.closest?.("[data-story-id]");
+    if (story) selectOptionalStory(story.dataset.storyId, story);
+  });
+
+  const onChooserDocumentClick = (event) => {
+    if (storyChooserOpen && !chooserAllowed(event.target)) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    }
+  };
+  document.addEventListener("click", onChooserDocumentClick, true);
+
+  const onChooserFocusIn = (event) => {
+    if (storyChooserOpen && chooserAllowed(event.target) && event.target.dataset?.focusKey) {
+      chooserFocusKey = event.target.dataset.focusKey;
+    }
+  };
+  document.addEventListener("focusin", onChooserFocusIn);
+
+  const onChooserKeydown = (event) => {
+    if (!storyChooserOpen) return;
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeStoryChooser();
+      return;
+    }
+    if (event.key !== "Tab") return;
+    const scope = [...document.querySelectorAll("#storyChooser button, #homeBtn, #localeHe, #localeEn, #fullscreenBtn, #staffConnection")]
+      .filter((element) => !element.disabled && !element.closest("[hidden]") && element.getAttribute("aria-hidden") !== "true");
+    if (!scope.length) return;
+    const index = scope.indexOf(document.activeElement);
+    const nextIndex = event.shiftKey
+      ? (index <= 0 ? scope.length - 1 : index - 1)
+      : (index < 0 || index === scope.length - 1 ? 0 : index + 1);
+    event.preventDefault();
+    scope[nextIndex].focus();
+  };
+  document.addEventListener("keydown", onChooserKeydown);
+
   $("kitPresentation").addEventListener("click", (event) => {
-    if (!manualMutationsOpen()) return;
+    if (!chooserManualMutationsOpen()) return;
     const button = event.target.closest("[data-presentation-action]");
     if (!button) return;
     const action = button.dataset.presentationAction;
@@ -1323,7 +1518,7 @@ export function initNliStaffRemote(dataContext, {
   });
 
   $("kitEscape").addEventListener("click", (event) => {
-    if (!manualMutationsOpen()) return;
+    if (!chooserManualMutationsOpen()) return;
     consumeNliNovaEscapeClick(event, escapeHost);
   });
 
@@ -1333,6 +1528,7 @@ export function initNliStaffRemote(dataContext, {
   }
 
   function onArchiveClick(event) {
+    if (storyChooserOpen) return;
     const { button, action } = archiveActionFrom(event);
     if (!button || (action !== "open" && action !== "close")) return;
     if (action === "close") {
@@ -1348,6 +1544,7 @@ export function initNliStaffRemote(dataContext, {
   }
 
   function onArchivePointerDown(event) {
+    if (storyChooserOpen) return;
     const { action } = archiveActionFrom(event);
     if (action !== "page_up" && action !== "page_down") return;
     archivePageHold?.start(event);
@@ -1360,7 +1557,7 @@ export function initNliStaffRemote(dataContext, {
 
   $("searchReset")?.addEventListener("click", () => { void clearSearchFocus(); });
   $("searchInput").addEventListener("input", (event) => {
-    if (state.searchPending) return;
+    if (storyChooserOpen || state.searchPending) return;
     if (!event.target.value.trim()) {
       renderResults("");
       void clearSearchFocus();
@@ -1370,7 +1567,7 @@ export function initNliStaffRemote(dataContext, {
   });
 
   $("searchResults").addEventListener("click", (event) => {
-    if (state.searchPending) return;
+    if (storyChooserOpen || state.searchPending) return;
     const placeBtn = event.target.closest("[data-kind='place']");
     if (placeBtn) {
       const place = lastPlaces.find((item) => item.id === placeBtn.dataset.placeId);
@@ -1498,6 +1695,9 @@ export function initNliStaffRemote(dataContext, {
     presentation.destroy();
     for (const unsubscribe of unsubscribers) unsubscribe();
     window.removeEventListener(LOCALE_EVENT, onLocaleChange);
+    document.removeEventListener("click", onChooserDocumentClick, true);
+    document.removeEventListener("focusin", onChooserFocusIn);
+    document.removeEventListener("keydown", onChooserKeydown);
     window.removeEventListener("pagehide", releaseExhibitMode);
     window.removeEventListener("beforeunload", releaseExhibitMode);
     timelineHost.invalidateTransport();

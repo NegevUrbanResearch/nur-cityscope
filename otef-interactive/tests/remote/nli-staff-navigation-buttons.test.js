@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import { readFileSync } from "node:fs";
 import { expect, test } from "vitest";
 import { navigationButtonContent } from "../../frontend/src/remote/nli-staff-icons.js";
 
@@ -14,4 +15,19 @@ test.each([
   expect(button.querySelector("svg").getAttribute("aria-hidden")).toBe("true");
   expect(button.querySelector("path").getAttribute("d")).toBe(path);
   expect(button.firstElementChild.tagName).toBe(firstTag);
+});
+
+test("optional endings keep the original Back and one primary chooser button in the dock", () => {
+  document.body.innerHTML = readFileSync("frontend/nli-staff-remote.html", "utf8");
+  const back = document.querySelector("#prevBtn");
+  const opener = document.querySelector("#nextBtn");
+  expect(back.className).toBe("btn btn--outline btn--muted nav-button");
+  expect(back.dataset.navigationAction).toBe("back");
+  expect(opener.className).toBe("btn nav-button");
+  expect(opener.dataset.navigationAction).toBe("next");
+  expect(document.querySelector("#storyNavigationRow")).toBeNull();
+  expect(document.querySelector("#storyBackBtn")).toBeNull();
+  expect(document.querySelector("#chooseStoryBtn")).toBeNull();
+  expect(document.querySelector("#continueIdentityBtn")).toBeNull();
+  document.body.innerHTML = "";
 });

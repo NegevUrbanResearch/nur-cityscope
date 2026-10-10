@@ -137,6 +137,14 @@ describe("NLI staff presentation controller", () => {
     expect(html).toContain('data-presentation-action="next"');
   });
 
+  test("uses the explicit Previous slide and Next slide labels in English", () => {
+    const html = presentationControlsHtml(step, {
+      phase: "open", segmentId: step.presentation.segmentId, slide: 10, range: [9, 11],
+    }, "en");
+    expect(html).toContain("Previous slide");
+    expect(html).toContain("Next slide");
+  });
+
   test("manual steps show Open while Shura never exposes a manual Open button", () => {
     expect(presentationControlsHtml(step, { phase: "closed" }, "en"))
       .toContain('data-presentation-action="open"');

@@ -72,8 +72,30 @@ does not send it again.
 
 ## Home shortcuts
 
-The Home screen links directly to the existing Identity Database and Names Wall
-steps. These links use the same cues and search controls as the run of show.
+The Home screen links directly to Identity Database and Names Wall. These
+shortcuts use the same cues and search controls as the show. Identity has Back
+and Next controls and no story chooser. Back from Identity returns to the
+previous scene actually visited, when one exists. Wall of names always sends
+Back to Identity, including when opened directly from Home. Credits returns
+Back to Wall of names; Finish returns Home.
+
+At the final Nova scene and after each optional story, the original Back button
+stays beside one forward button labeled **Choose a story** or **Choose another
+story**. That button opens the local chooser, where staff can select an optional
+story or continue to Identity. Choosing a story opens it immediately; there is
+no confirmation step. The chooser is available only at
+the final Nova scene or the ending of an optional story entered through the
+show. It is absent from direct Home shortcuts and standalone stories.
+The Hebrew forward labels are **בחירת סיפור** at Nova and **בחירת סיפור נוסף**
+after an optional story. Identity continuation is inside the chooser.
+
+Back follows successful scene visits across story boundaries. Next after Back
+continues in the authored sequence. Repeating a one-scene Sderot or Shura
+story does not add a duplicate Back entry. Repeating a multi-scene Hostages
+story from its ending returns to its first scene and records that transition.
+The illuminated scene strip appears only for Nova, Hostages, and the separate
+three-scene timeline. It marks successful visits; jumping over a scene does
+not mark it visited. Returning to Home successfully clears the visit marks.
 
 Clearing the search field, returning Home, or moving between these two steps
 clears both person and place focus. The field is never empty while a search
@@ -143,14 +165,19 @@ exits the current narrative.
 | 7 | Wall of names | Wall | Stopped (idle) | A black GIS slide titled מאגר הזהויות opens automatically | Name or place search; no slide controls |
 | 8 | Credits (קרדיטים) | Wall | Stopped (idle) | Keep the Wall of names layers and automatically open slide 37 on GIS only | No slide controls; Back returns to Wall of names; Finish returns Home |
 
-The narratives are not separate slides. On the slide before a narrative, the
-Next button is replaced by a button that starts it, so the show cannot skip
-it. The last slide of a narrative shows **Finish story, continue sequence**, which
-continues with the following show slide. The last Nova slide instead replaces
-Next with three side-by-side choices: Sderot, Shura Camp, and Hostages. After
-the chosen narrative, the show continues with the identity database.
-**Previous** on a narrative's first slide returns to the show slide before it.
-A narrative opened from the home screen ends with **Finish**.
+The narratives are not separate slides. The single-story Segev and Nova
+entries remain direct. At the final Nova scene, the presenter can choose an
+optional story or continue to Identity. Optional stories may be chosen in any
+order and may be repeated before continuing. At each optional-story ending,
+the same two-part forward control offers another story or Identity.
+
+**Back** returns to the prior successfully visited scene, including across
+story boundaries. The previous scene can therefore be another optional
+story, rather than the main-sequence junction. **Next** always follows the
+authored order; after Back it does not replay a separate forward-history
+stack. A narrative opened from Home ends at Home. The Identity shortcut from
+Home has no Back destination, while the Wall shortcut's Back destination is
+Identity.
 
 ## The timeline
 

@@ -43,7 +43,13 @@ export async function createRenderedFollower(context, surface, emitResult) {
   const narrative = surface === "gis" ? createGisNarrativeController({ map, managedScene: true, dataContext: context }) : createProjectionNarrativeController({ map });
   const names = surface === "projection" ? createNliNameFieldController({ map, context, managedScene: true, loadField: async () => nameField() }) : null;
   const viewer = surface === "gis" ? createNliRevealPresentation(root, { manifest: validateNliPresentationManifest(rawManifest), RevealClass: SlideEngine,
-    emitResult(result) { results.push({ ...result, time: Date.now() }); emitResult(result); },
+    emitResult(result) {
+      const overlay = root.querySelector(".nli-reveal-overlay");
+      results.push({ ...result, time: Date.now(),
+        opacity: overlay ? Number(overlay.style.opacity) : null,
+        displayedSlide: overlay?.querySelector("section.present")?.dataset.slide ?? null });
+      emitResult(result);
+    },
   }) : null;
   let preparationGate = null, failedPreparation = false;
   const binding = await createNliSceneDisplayBinding({ map, dataContext: context, runtime, narrativeController: narrative,
@@ -85,8 +91,17 @@ export async function createRenderedFollower(context, surface, emitResult) {
     discardDisplay(prepared) { names?.discardScene(prepared?.names); viewer?.discardScene(prepared?.presentation); },
     onSceneSettled: snapshot => viewer?.settleScene(snapshot),
   });
-  return { map, runtime, binding, root, paints, removals, results, viewer,
-    command: command => viewer?.handleCommand(command, { managedScene: true }),
+  const dispatchedCommands = [];
+  async function command(command) {
+    const clock = context?.getInvestigationClock?.();
+    const managedScene = Number(clock?.presentationPendingUntilMs) > (context?.correctedNow?.() ?? Date.now());
+    dispatchedCommands.push({ command: { ...command }, managedScene, time: Date.now() });
+    const result = await viewer?.handleCommand(command, { managedScene });
+    void binding.request();
+    return result;
+  }
+  return { map, runtime, binding, root, paints, removals, results, viewer, dispatchedCommands,
+    command,
     gate(promise) { preparationGate = promise; }, fail(value) { failedPreparation = value; },
     drive() { for (let i = 0; i < 8; i++) map.driveAnimationFrame(Date.now()); },
     dispose() { binding.dispose(); names?.dispose(); narrative.dispose(); viewer?.dispose(); unobserve(); runtime.dispose(); root.remove(); },

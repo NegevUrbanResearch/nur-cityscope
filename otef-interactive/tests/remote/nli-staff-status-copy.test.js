@@ -13,6 +13,16 @@ describe("staff scene failures and reviewed Nova copy", () => {
     expect(html).toMatch(/id="playerCueRetry"/);
   });
 
+  it("keeps chooser controls inside the existing staff player", () => {
+    expect(html).toContain('id="storyChooserMount"');
+    expect(html).toContain('id="nextBtn"');
+    expect(html).not.toContain('id="continueIdentityBtn"');
+    expect(html).not.toContain('id="chooseStoryBtn"');
+    expect(html).not.toContain('id="storyBackBtn"');
+    expect(html).toContain('data-focus-key="navigation-choose"');
+    expect(html).toContain(".story-visited { display: inline-flex; color: var(--accent); }");
+  });
+
   it("removes only the repeated Nova location from summaries across both memberships", () => {
     const keys = Object.keys(manifest.records).filter((key) => key.startsWith('["nova"'));
     expect(keys).toHaveLength(10);
