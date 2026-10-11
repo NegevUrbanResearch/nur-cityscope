@@ -558,6 +558,20 @@ describe("createNliNameFieldController", () => {
     expect(d.map.getSource('nli-name-field').data.features).toHaveLength(2);
     d.controller.dispose();
   });
+  it('failed_replacement_keeps_installed_names', async () => {
+    const d = setup({ applyProjectionConfig: false, projectionSpan: 'left' });
+    const adapter = canvasAdapter(); d.controller.installProjectionCanvas(adapter);
+    await d.controller.prepareProjectionCandidate({ generation: 1, config: DEFAULTS, field: canvasField(), revision: 1 });
+    d.controller.commitProjectionCandidate(1); d.controller.finalizeProjectionCandidate(1);
+    const installed = d.map.getSource('nli-name-field').data.features;
+    adapter.prepare.mockImplementationOnce(() => { throw new Error('required content font unavailable'); });
+    const fontOnly = structuredClone(DEFAULTS); fontOnly.nliFonts.he = 'narkiss';
+    await expect(d.controller.prepareProjectionCandidate({ generation: 2, config: fontOnly, field: canvasField(), revision: 2 }))
+      .rejects.toThrow(/font unavailable/);
+    expect(d.map.getSource('nli-name-field').data.features).toEqual(installed);
+    expect(adapter.commit).toHaveBeenCalledTimes(1);
+    d.controller.dispose();
+  });
   it('rolls back a staged Canvas candidate when cancellation lands after preparation and before commit', async () => {
     const d = setup({ applyProjectionConfig: false, projectionSpan: 'left' });
     const adapter = canvasAdapter(); d.controller.installProjectionCanvas(adapter);

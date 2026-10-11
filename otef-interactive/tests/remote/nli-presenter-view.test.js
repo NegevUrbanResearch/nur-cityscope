@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createPresenterView } from "../../frontend/src/remote/nli-presenter-view.js";
 import presenterContent from "../../frontend/src/remote/nli-presenter-content.json" with { type: "json" };
+import { createNliStaffFontController } from "../../frontend/src/remote/nli-staff-fonts.js";
 
 function makeSnapshot(overrides = {}) {
   const beats = Array.from({ length: 6 }, (_, index) => ({ key: `beat-${index}`, minute: 360 + index * 3, copyKey: `copy-${index}`, copy: { timeLabel: `06:${String(index * 3).padStart(2, "0")}`, title: `Title ${index}`, summary: `Summary ${index}`, details: `Details ${index}` } }));
@@ -676,4 +677,75 @@ it("remeasures titles after font readiness and late loads even when font status 
     delete document.fonts;
   }
   expect(fontSet.removeEventListener).toHaveBeenCalledWith("loadingdone", expect.any(Function));
+});
+
+it("remeasures a visible presenter after staff adoption when the selected face is already loaded", async () => {
+  const loadedFaces = [];
+  Object.defineProperty(document, "fonts", { configurable: true, value: {
+    status: "loaded",
+    ready: Promise.resolve(),
+    load: vi.fn(async (query) => {
+      const name = query.includes("Hadassah") ? "NLI Content Hadassah Friedlaender" : "NLI Content Belleza";
+      const fontFace = { family: name, status: "loaded" };
+      loadedFaces.push(fontFace);
+      return [fontFace];
+    }),
+  } });
+  const f = makeViewFixture({ profileCorpus: { records: { a: { he: { title: "כותרת ארוכה שעוטפת שורות" }, en: { title: "A long English title that wraps to several lines" } } } } });
+  const probe = f.root.querySelector(".nli-presenter-title-probe");
+  const measure = vi.fn(() => ({ height: probe.style.fontFamily.includes("Hadassah") ? 84 : 20 }));
+  probe.getBoundingClientRect = measure;
+  f.view.update(makeSnapshot({ locale: "he" }));
+  f.view.setVisible(true);
+  const profile = f.root.querySelector(".nli-presenter");
+  const beforeLines = Number(profile.style.getPropertyValue("--presenter-title-lines"));
+  const controller = createNliStaffFontController({ document, getLocale: () => "he" });
+  expect(await controller.applyChoices({ he: "hadassah", en: "belleza" })).toBe(true);
+  expect(loadedFaces.some((face) => face.family === "NLI Content Hadassah Friedlaender" && face.status === "loaded")).toBe(true);
+  f.view.update(makeSnapshot({ locale: "he" }));
+  const afterLines = Number(profile.style.getPropertyValue("--presenter-title-lines"));
+  expect(measure.mock.calls.length).toBeGreaterThan(2);
+  expect(afterLines).toBeGreaterThan(beforeLines);
+  controller.dispose();
+  f.view.dispose();
+});
+
+it("remeasures a visible presenter in Hebrew when a failed replacement falls back to its accepted face", async () => {
+  const fontSet = {
+    status: "loaded",
+    ready: Promise.resolve(),
+    load: vi.fn(async (query) => {
+      const family = query.match(/"([^"]+)"/)?.[1];
+      if (family?.includes("Marcellus")) throw new Error("blocked Marcellus");
+      return [{ family, status: "loaded" }];
+    }),
+  };
+  Object.defineProperty(document, "fonts", { configurable: true, value: fontSet });
+  let locale = "en";
+  const controller = createNliStaffFontController({ document, getLocale: () => locale });
+  const accepted = { he: "hadassah", en: "narkiss" };
+  const replacement = { he: "hadassah", en: "marcellus" };
+  expect(await controller.applyChoices(accepted)).toBe(true);
+
+  const f = makeViewFixture({ profileCorpus: { records: { a: {
+    he: { title: "כותרת בעברית שממלאת כמה שורות" },
+    en: { title: "A long English title that takes several lines" },
+  } } } });
+  const probe = f.root.querySelector(".nli-presenter-title-probe");
+  probe.getBoundingClientRect = vi.fn(() => ({ height: probe.style.fontFamily.includes("Hadassah") ? 84 : 20 }));
+  f.view.update(makeSnapshot({ locale }));
+  f.view.setVisible(true);
+  const profile = f.root.querySelector(".nli-presenter");
+  const englishLines = Number(profile.style.getPropertyValue("--presenter-title-lines"));
+
+  locale = "he";
+  f.view.update(makeSnapshot({ locale }));
+  expect(await controller.applyChoices(replacement)).toBe(false);
+  f.view.update(makeSnapshot({ locale }));
+  expect(document.body.style.fontFamily).toContain("Hadassah");
+  const hebrewLines = Number(profile.style.getPropertyValue("--presenter-title-lines"));
+  expect(hebrewLines).toBeGreaterThan(englishLines);
+
+  controller.dispose();
+  f.view.dispose();
 });

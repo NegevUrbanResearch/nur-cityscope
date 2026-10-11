@@ -6,6 +6,7 @@ import {
   serializeProjectionExport,
   validateProjectionConfig,
   migrateProjectionConfigToV7,
+  migrateProjectionConfigToV8,
 } from '../../frontend/src/shared/projection-config-schema.js';
 import { migrateProjectionConfigToV2 } from '../../frontend/src/shared/projection-warp-schema.js';
 import { migrateNamesWallToV3, migrateNamesWallToV4, migrateNamesWallToV5, migrateNamesWallToV6 } from '../../frontend/src/shared/nli-name-wall-config.js';
@@ -16,12 +17,34 @@ const clone = (value) => JSON.parse(JSON.stringify(value));
 
 test('canonical fixture and defaults validate', () => {
   expect(validateProjectionConfig(fixture)).toEqual({});
-  expect(DEFAULT_PROJECTION_CONFIG).toEqual(migrateProjectionConfigToV7(fixture, 35));
-  expect(DEFAULT_PROJECTION_CONFIG.schemaVersion).toBe(7);
+  expect(DEFAULT_PROJECTION_CONFIG).toEqual(migrateProjectionConfigToV8(fixture, 35));
+  expect(DEFAULT_PROJECTION_CONFIG.schemaVersion).toBe(8);
   expect(DEFAULT_PROJECTION_CONFIG.namesWall.rotateDeg).toBe(35);
   expect(DEFAULT_PROJECTION_CONFIG.namesWall.profiles.wall.strokeWidthPx).toBe(3);
   expect(DEFAULT_PROJECTION_CONFIG.namesWall.profiles.model.strokeWidthPx).toBe(2);
   expect(Object.isFrozen(DEFAULT_PROJECTION_CONFIG)).toBe(true);
+});
+
+test('v7_upgrades_fonts_without_geometry_changes', () => {
+  const v7 = migrateProjectionConfigToV7(fixture, 35);
+  const v8 = migrateProjectionConfigToV8(v7);
+  const { schemaVersion: _v7Version, ...v7Body } = v7;
+  const { schemaVersion: _v8Version, nliFonts: _fonts, ...v8Body } = v8;
+  expect(v8.schemaVersion).toBe(8);
+  expect(v8.nliFonts).toEqual({ he: 'default', en: 'hadassah' });
+  expect(v8Body).toEqual(v7Body);
+});
+
+test('v8_rejects_unknown_or_wrong_script_choices', () => {
+  const config = migrateProjectionConfigToV8(fixture, 35);
+  for (const [language, choice] of [['he', 'marcellus'], ['en', 'guttman'], ['en', 'unknown']]) {
+    const invalid = clone(config);
+    invalid.nliFonts[language] = choice;
+    expect(validateProjectionConfig(invalid)).toHaveProperty(`nliFonts.${language}`);
+  }
+  const extraChoice = clone(config);
+  extraChoice.nliFonts.extra = 'arial';
+  expect(validateProjectionConfig(extraChoice)).toHaveProperty('nliFonts.extra');
 });
 
 test('V6 names wall outline widths default per profile and validate bounded integers', () => {
@@ -86,13 +109,13 @@ test('accepts a .01 crop extent at nonzero bounds', () => {
 
 test('import trims names and enforces wrapper shape', () => {
   const parsed = parseProjectionImport(JSON.stringify({ schemaVersion: 1, name: '  Checkpoint  ', config: fixture }));
-  expect(parsed).toEqual({ name: 'Checkpoint', config: migrateProjectionConfigToV7(fixture), warnings: [] });
+  expect(parsed).toEqual({ name: 'Checkpoint', config: migrateProjectionConfigToV8(fixture), warnings: [] });
   expect(() => parseProjectionImport(JSON.stringify({ schemaVersion: 2, name: 'x', config: fixture }))).toThrow(/schemaVersion/);
   expect(() => parseProjectionImport(JSON.stringify({ schemaVersion: 1, name: '', config: fixture }))).toThrow(/name/);
 });
 
 test('export emits only the versioned document', () => {
-  expect(JSON.parse(serializeProjectionExport('Original calibration', fixture))).toEqual({ schemaVersion: 7, name: 'Original calibration', config: migrateProjectionConfigToV7(fixture) });
+  expect(JSON.parse(serializeProjectionExport('Original calibration', fixture))).toEqual({ schemaVersion: 8, name: 'Original calibration', config: migrateProjectionConfigToV8(fixture) });
 });
 
 test('V5 export and legacy import round trip without dropping either profile', () => {
@@ -101,10 +124,10 @@ test('V5 export and legacy import round trip without dropping either profile', (
   config.namesWall.profiles.wall.requestedFontPx = 15;
   config.namesWall.innerEdgeInsetPx.right = 60;
   const document = JSON.parse(serializeProjectionExport('  Desk  ', config));
-  expect(document.schemaVersion).toBe(7);
-  expect(parseProjectionImport(JSON.stringify(document))).toEqual({ name: 'Desk', config: migrateProjectionConfigToV7(config), warnings: [] });
+  expect(document.schemaVersion).toBe(8);
+  expect(parseProjectionImport(JSON.stringify(document))).toEqual({ name: 'Desk', config: migrateProjectionConfigToV8(config), warnings: [] });
   const v2 = migrateProjectionConfigToV2(fixture);
-  expect(parseProjectionImport(JSON.stringify({ schemaVersion: 2, name: 'Old', config: v2 })).config).toEqual(migrateProjectionConfigToV7(v2));
+  expect(parseProjectionImport(JSON.stringify({ schemaVersion: 2, name: 'Old', config: v2 })).config).toEqual(migrateProjectionConfigToV8(v2));
 });
 
 test('language-only non-finite numbers are rejected', () => {
@@ -112,14 +135,14 @@ test('language-only non-finite numbers are rejected', () => {
   expect(validateProjectionConfig({ ...clone(fixture), pre: { ...fixture.pre, tx: Number.POSITIVE_INFINITY } })).toHaveProperty('pre.tx');
 });
 
-test('current V7 defaults and export preserve the wall-only closeness setting', () => {
+test('current V8 defaults and export preserve the wall-only closeness setting', () => {
   const current = migrateNamesWallToV5(fixture);
-  expect(DEFAULT_PROJECTION_CONFIG).toEqual(migrateProjectionConfigToV7(current, 35));
+  expect(DEFAULT_PROJECTION_CONFIG).toEqual(migrateProjectionConfigToV8(current, 35));
   expect(validateProjectionConfig(current)).toEqual({});
   current.namesWall.profiles.wall.inwardShiftPercent = 50;
   const exported = JSON.parse(serializeProjectionExport('Close pages', current));
-  expect(exported.schemaVersion).toBe(7);
-  expect(parseProjectionImport(JSON.stringify(exported)).config).toEqual(migrateProjectionConfigToV7(current));
+  expect(exported.schemaVersion).toBe(8);
+  expect(parseProjectionImport(JSON.stringify(exported)).config).toEqual(migrateProjectionConfigToV8(current));
   expect(parseProjectionImport(JSON.stringify({ schemaVersion: 4, name: 'Old', config: migrateNamesWallToV4(fixture) })).config.namesWall.profiles.wall.inwardShiftPercent).toBe(0);
 });
 
@@ -141,7 +164,7 @@ test('V6 keeps an independent finite rotation and seeds old imports from the ack
   expect(wall.migrateNamesWallToV6(fixture, 180).namesWall.rotateDeg).toBe(-180);
   const imported = schema.parseProjectionImport(JSON.stringify({ schemaVersion: 5, name: 'Captured', config: v5 }), 70);
   expect(imported.config.namesWall.rotateDeg).toBe(70);
-  expect(imported.config.schemaVersion).toBe(7);
+  expect(imported.config.schemaVersion).toBe(8);
   expect(imported.config.outputs.left.warp.grid.columnPositions).toEqual(Array.from({ length: 7 }, (_, i) => i / 6));
   const preserved = schema.parseProjectionImport(JSON.stringify({ schemaVersion: 6, name: 'Kept', config: seeded }));
   expect(preserved.config.namesWall.rotateDeg).toBe(35);
@@ -172,7 +195,7 @@ test('V6 keeps an independent finite rotation and seeds old imports from the ack
   expect(wall.validateNamesWallV6(extraProfile.namesWall)).toHaveProperty('namesWall.profiles.extra');
   expect(schema.validateProjectionConfigV6(extraProfile)).toHaveProperty('namesWall.profiles.extra');
   const exported = JSON.parse(schema.serializeProjectionExport('Kept', seeded));
-  expect(exported.schemaVersion).toBe(7);
+  expect(exported.schemaVersion).toBe(8);
   expect(exported.config.namesWall.rotateDeg).toBe(35);
 });
 
@@ -180,7 +203,7 @@ test('V6 import of a V3 file keeps the seam-gap conversion warning', () => {
   const v3 = migrateNamesWallToV3(fixture);
   v3.namesWall.profiles.wall.seamGapPx = 3;
   const parsed = parseProjectionImport(JSON.stringify({ schemaVersion: 3, name: 'Historical seam', config: v3 }), 35);
-  expect(parsed.config.schemaVersion).toBe(7);
+  expect(parsed.config.schemaVersion).toBe(8);
   expect(parsed.config.namesWall.rotateDeg).toBe(35);
   expect(parsed.warnings).toContain('The wall seam gap needs readjustment in final-output pixels.');
 });

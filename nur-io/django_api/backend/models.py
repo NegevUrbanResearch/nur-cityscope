@@ -3,7 +3,6 @@ import os
 from django.utils import timezone
 
 from .projection_config_schema import legacy_projection_config_defaults
-from .projection_warp_schema import migrate_projection_config_to_v7
 
 
 def indicator_media_path(instance, filename):
@@ -686,7 +685,8 @@ class LayerState(models.Model):
 
 
 def projection_config_defaults():
-    return migrate_projection_config_to_v7(legacy_projection_config_defaults(), 35)
+    from .projection_warp_schema import migrate_projection_config_to_v8
+    return migrate_projection_config_to_v8(legacy_projection_config_defaults(), 35)
 
 
 def projection_presets_defaults():
@@ -696,6 +696,14 @@ def projection_presets_defaults():
         "config": projection_config_defaults(),
         "readOnly": True,
     }]
+
+
+class OTEFStaffRemoteUpdates(models.Model):
+    table = models.OneToOneField(Table, on_delete=models.CASCADE, related_name="staff_remote_updates")
+    device_id = models.UUIDField(null=True, blank=True)
+    revision = models.PositiveBigIntegerField(default=0)
+    notice_build_id = models.CharField(max_length=25, null=True, blank=True)
+    notice_created_at = models.DateTimeField(null=True, blank=True)
 
 
 class OTEFProjectionCalibration(models.Model):

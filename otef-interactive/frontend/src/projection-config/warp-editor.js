@@ -261,7 +261,7 @@ export function createWarpEditor({
     const warp = configWarp(candidate, output);
     warp.enabled = true;
     warp.baseline = { type: "identity", width: OUTPUT_WIDTH, height: OUTPUT_HEIGHT, origin: "top-left" };
-    if (candidate.schemaVersion === 7) warp.grid = uniformGrid(warp.grid);
+    if (candidate.schemaVersion >= 7) warp.grid = uniformGrid(warp.grid);
     return apply(candidate, { reason: "start-fresh", flush: true });
   }
   function setEnabled(enabled) { if (!allowCommand()) return false; const candidate = clone(current); candidate.outputs[output].warp.enabled = Boolean(enabled); return apply(candidate, { reason: "warp-enabled", flush: true }); }
@@ -482,7 +482,7 @@ export function createWarpEditor({
     if (usesTdMesh && !baselineMesh) return retain([]);
     let evaluated = null;
     try { evaluated = evaluate(current); } catch { if (usesTdMesh) return retain([]); }
-    const exactKnots = current.schemaVersion === 7 || Object.hasOwn(grid, "columnPositions") || Object.hasOwn(grid, "rowPositions");
+    const exactKnots = current.schemaVersion >= 7 || Object.hasOwn(grid, "columnPositions") || Object.hasOwn(grid, "rowPositions");
     const tolerance = exactKnots ? 1e-12 : 1e-6;
     if (usesTdMesh && exactKnots && regular.some((point) => !evaluated?.vertices?.some((candidate) => Math.abs(candidate.s - point.s) <= tolerance && Math.abs(candidate.t - point.t) <= tolerance))) return retain([]);
     const points = regular.map((point) => {

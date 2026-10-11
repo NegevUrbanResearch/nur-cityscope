@@ -1,5 +1,6 @@
 import { validateNamesWall, validateNamesWallV3, validateNamesWallV5, validateNamesWallV6 } from './nli-name-wall-config.js';
 import { resolveProjectionBaselineAsset } from './projection-baseline-manifest.js';
+import { validateNliFontChoices } from './nli-font-settings.js';
 
 const SIDES = Object.freeze({ left: { columns: 7, rows: 7 }, right: { columns: 8, rows: 7 } });
 const SAFETY_MIN = -1;
@@ -171,6 +172,25 @@ export function validateProjectionConfigV7(value, options = {}) {
   if (value.schemaVersion !== 7 || typeof value.schemaVersion !== 'number') errors.schemaVersion = 'must equal 7';
   legacyFields(value, errors, options, validateProjectionWarpV7);
   validateNamesWallV6(value.namesWall, 'namesWall', errors);
+  return errors;
+}
+
+export function validateProjectionConfigV8(value, options = {}) {
+  const errors = {};
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return { config: 'must be an object' };
+  const expected = ['schemaVersion', 'pre', 'outputs', 'namesWall', 'nliFonts'];
+  for (const key of expected) if (!Object.hasOwn(value, key)) errors[key] = 'is required';
+  for (const key of Object.keys(value)) if (!expected.includes(key)) errors[key] = 'unknown field';
+  if (value.schemaVersion !== 8 || typeof value.schemaVersion !== 'number') errors.schemaVersion = 'must equal 8';
+  if (Object.hasOwn(value, 'nliFonts')) {
+    for (const [key, message] of Object.entries(validateNliFontChoices(value.nliFonts))) errors[`nliFonts.${key}`] = message;
+    if (value.nliFonts && typeof value.nliFonts === 'object' && !Array.isArray(value.nliFonts)) {
+      for (const key of Object.keys(value.nliFonts)) if (!['he', 'en'].includes(key)) errors[`nliFonts.${key}`] = 'unknown field';
+    }
+  }
+  const geometry = { ...value, schemaVersion: 7 };
+  delete geometry.nliFonts;
+  Object.assign(errors, validateProjectionConfigV7(geometry, options));
   return errors;
 }
 

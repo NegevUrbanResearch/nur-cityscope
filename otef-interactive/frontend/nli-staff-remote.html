@@ -10,6 +10,8 @@
     <meta name="color-scheme" content="dark" />
     <link rel="icon" href="./favicon.ico?v=urban95" sizes="any" />
     <link rel="manifest" href="./nli-staff.webmanifest" />
+    <link rel="stylesheet" href="./css/nli-content-fonts.css" />
+    <link rel="stylesheet" href="./src/remote/staff-remote-updates.css" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <title>הקרנה · הספרייה הלאומית</title>
@@ -69,6 +71,12 @@
       }
 
       * { box-sizing: border-box; }
+      #staffStartupFallback { position: fixed; inset: 16px; z-index: 1000; margin: auto;
+        width: min(480px, calc(100% - 32px)); height: fit-content; max-height: calc(100dvh - 32px);
+        overflow: auto; padding: 24px; background: #17171a; color: #f4f2ee;
+        border: 1px solid #333338; border-radius: 16px; font-family: system-ui, sans-serif; }
+      #staffStartupFallback[hidden] { display: none; }
+      #staffStartupFallback button { min-height: 48px; padding: 12px 20px; border-radius: 10px; background: #ffd600; color: #15130a; }
       html, body {
         height: 100%;
         overflow: hidden;
@@ -140,6 +148,8 @@
 
       /* Header */
       .header {
+        position: relative;
+        z-index: 21;
         direction: rtl;
         display: flex;
         flex-wrap: wrap;
@@ -422,6 +432,65 @@
         scroll-padding-block: 24px;
         padding: var(--space) var(--pad);
       }
+      #player.screen { position: relative; }
+      .story-chooser[hidden] { display: none !important; }
+      .story-chooser {
+        position: absolute;
+        z-index: 20;
+        inset: 8% max(var(--pad), 4%) 20%;
+        display: flex;
+        flex-direction: column;
+        justify-content: safe center;
+        overflow-y: auto;
+        overscroll-behavior-y: contain;
+        scroll-padding-block: 12px;
+        gap: var(--space);
+        padding: clamp(18px, 4vw, 36px);
+        border: 1px solid var(--accent-line);
+        border-radius: var(--radius-lg);
+        background: var(--surface);
+        box-shadow: var(--shadow-pop);
+      }
+      .story-chooser > * { flex-shrink: 0; }
+      .story-chooser button { scroll-margin-block: 12px; }
+      @media (max-height: 540px) {
+        .story-chooser {
+          inset-block: 8px;
+          padding: 16px;
+          gap: 12px;
+        }
+      }
+      .story-chooser::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        z-index: -1;
+        background: rgba(0, 0, 0, .58);
+      }
+      .story-chooser h2 { font-size: var(--text-h2); text-align: center; }
+      .story-chooser-actions { display: grid; gap: 16px; }
+      .story-chooser-action {
+        min-height: 64px;
+        display: grid;
+        grid-template-columns: 24px minmax(0, 1fr) 24px;
+        align-items: center;
+        gap: 16px;
+        padding: 12px 20px;
+        border: 1px solid var(--line-strong);
+        border-radius: var(--radius);
+        background: var(--surface-2);
+        color: var(--text);
+        text-align: center;
+      }
+      .story-chooser-action > span:first-child { grid-column: 2; grid-row: 1; }
+      .story-chooser-action .story-visited { grid-column: 3; grid-row: 1; justify-self: center; }
+      .story-chooser-action:disabled { opacity: .55; }
+      .story-visited { display: inline-flex; color: var(--accent); }
+      .story-visited svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+      .story-chooser-cancel { align-self: center; min-width: 44%; }
+      @media (min-width: 720px) {
+        .story-chooser-action { min-height: 72px; }
+      }
       #player.screen { padding: 0; }
       .player-top {
         display: flex;
@@ -448,6 +517,7 @@
         margin: 0 0 var(--space);
         flex-shrink: 0;
       }
+      .ticks[hidden] { display: none !important; }
       .ticks button {
         flex: 1;
         height: 24px;
@@ -464,7 +534,7 @@
         background: var(--surface-3);
         transition: background-color 0.25s var(--ease);
       }
-      .ticks button.is-done::after { background: var(--accent-line); }
+      .ticks button.is-visited::after { background: var(--accent-line); }
       .ticks button.is-current::after {
         background: var(--accent);
         box-shadow: 0 0 12px rgba(255, 214, 0, 0.45);
@@ -1203,12 +1273,13 @@
     <div class="app">
       <header class="header">
         <div class="header-side header-side--start">
-          <button type="button" class="staff-connection" id="staffConnection" popovertarget="staffConnectionDetails"><span class="visually-hidden" id="staffConnectionLabel"></span></button>
+          <button type="button" class="staff-connection" id="staffConnection" data-focus-key="management-connection" popovertarget="staffConnectionDetails"><span class="visually-hidden" id="staffConnectionLabel"></span></button>
           <div class="staff-connection-details" id="staffConnectionDetails" popover></div>
           <button
             type="button"
             class="home-btn"
             id="homeBtn"
+            data-focus-key="header-home"
             hidden
             data-i18n-aria="home"
             aria-label="חזרה לבית"
@@ -1223,15 +1294,15 @@
         </div>
         <div class="header-side header-side--end">
           <span class="fullscreen-status" id="fullscreenStatus" role="status" hidden></span>
-          <button type="button" class="header-action" id="fullscreenBtn" aria-label="מסך מלא" aria-pressed="false" data-i18n-aria="fullscreenEnter">
+          <button type="button" class="header-action" id="fullscreenBtn" data-focus-key="management-fullscreen" aria-label="מסך מלא" aria-pressed="false" data-i18n-aria="fullscreenEnter">
             <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M8 3H5a2 2 0 0 0-2 2v3m13-5h3a2 2 0 0 1 2 2v3M3 16v3a2 2 0 0 0 2 2h3m13-5v3a2 2 0 0 1-2 2h-3" />
             </svg>
             <bdi data-fullscreen-label>מסך מלא</bdi>
           </button>
           <div class="locale" role="group" aria-label="Language">
-            <button type="button" id="localeHe" data-locale="he" class="is-active" aria-pressed="true">עב</button>
-            <button type="button" id="localeEn" data-locale="en" aria-pressed="false">EN</button>
+            <button type="button" id="localeHe" data-focus-key="locale-he" data-locale="he" lang="he" class="is-active" aria-pressed="true">עב</button>
+            <button type="button" id="localeEn" data-focus-key="locale-en" data-locale="en" lang="en" aria-pressed="false">EN</button>
           </div>
         </div>
       </header>
@@ -1281,9 +1352,10 @@
               <div class="kit-block kit-action" id="kitArchive" hidden></div>
             </div>
           </div>
+          <div id="storyChooserMount"></div>
           <div class="dock">
-            <button type="button" class="btn btn--outline btn--muted nav-button" id="prevBtn" data-i18n="prev">הקודם</button>
-            <button type="button" class="btn nav-button" id="nextBtn" data-i18n="next">הבא</button>
+            <button type="button" class="btn btn--outline btn--muted nav-button" id="prevBtn" data-navigation-action="back" data-i18n="prev" data-focus-key="navigation-back">הקודם</button>
+            <button type="button" class="btn nav-button" id="nextBtn" data-navigation-action="next" data-focus-key="navigation-choose" data-i18n="next">הבא</button>
             <div class="dock-choices" id="nextChoices" hidden></div>
           </div>
         </section>
@@ -1292,6 +1364,27 @@
       <div id="table-switcher" hidden></div>
     </div>
 
+    <div id="staffStartupFallback" role="alert" hidden>
+      <p>השלט לא נטען. אפשר לנסות שוב.</p>
+      <button type="button">נסו שוב</button>
+    </div>
+    <script id="staffStartupScript">
+      (() => {
+        const panel = document.getElementById("staffStartupFallback");
+        const retry = panel.querySelector("button");
+        let ready = false;
+        const timer = setTimeout(() => { if (!ready) panel.hidden = false; }, 30000);
+        window.otefStaffStartupReady = () => { ready = true; clearTimeout(timer); panel.hidden = true; };
+        retry.addEventListener("click", () => {
+          if (retry.disabled) return;
+          retry.disabled = true; window.location.reload();
+        });
+        if (document.documentElement.lang === "en") {
+          panel.querySelector("p").textContent = "The remote did not load. Try again.";
+          retry.textContent = "Retry";
+        }
+      })();
+    </script>
     <script type="module" src="./src/entries/nli-staff-remote-main.js"></script>
   </body>
 </html>

@@ -23,10 +23,11 @@ import {
   NOVA_FLEEING_INDIVIDUAL_URL,
 } from "../../frontend/src/shared/nli-nova-escape-coordinator.js";
 import { DEFAULT_INVESTIGATION_SETTLEMENTS_URL } from "../../frontend/src/shared/nli-investigation-timeline-data.js";
-import { HOME_LAYER_IDS, NARRATIVES, TIMELINE_LAYER_IDS } from "../../frontend/src/remote/nli-staff-script.js";
+import { HOME_LAYER_IDS, NARRATIVES, SCRIPTS, TIMELINE_LAYER_IDS } from "../../frontend/src/remote/nli-staff-script.js";
 import { setLocale } from "../../frontend/src/remote/remote-locale.js";
 import { sha256Hex } from "../../frontend/src/shared/sha256-hex.js";
 import { presenterCopyKey } from "../../frontend/src/remote/nli-presenter-content.js";
+import { createNliStaffNavigationSession } from "../../frontend/src/remote/nli-staff-navigation-session.js";
 
 const STORY_MINUTES = [389, 401, 402, 780];
 const ESCAPE_URLS = new Set([
@@ -74,6 +75,7 @@ const FIXTURE = `
         <button type="button" id="prevBtn"></button>
         <button type="button" id="nextBtn"></button>
         <div id="nextChoices" hidden></div>
+        <div id="storyChooserMount"></div>
       </div>
     </section>
   </div>
@@ -310,7 +312,8 @@ function mount() {
 
 async function boot(session, options) {
   const { initNliStaffRemote } = await import("../../frontend/src/remote/nli-staff-remote.js");
-  session.remote = initNliStaffRemote(session.dataContext, options);
+  session.navigation = options?.navigationSession || session.navigation || createNliStaffNavigationSession();
+  session.remote = initNliStaffRemote(session.dataContext, { ...options, navigationSession: session.navigation });
   session.h.emit("narrativeState", session.h.narrative);
   session.h.emit("connection", true);
   await vi.waitFor(() => {
@@ -572,7 +575,8 @@ describe("NLI staff scene integration", () => {
       }
       return send(command);
     };
-    el("nextChoices").querySelector('[data-branch="shura"]').click();
+    el("nextBtn").click();
+    el("storyChooser").querySelector('[data-story-id="shura"]').click();
     await vi.waitFor(() => expect(el("cueStatus").dataset.status).toBe("ready"));
     expect(shuraOpened).toBe(true);
     expect(session.h.narrative.revision).toBe(novaRevision + 1);
@@ -934,6 +938,8 @@ describe("NLI staff scene integration", () => {
     session = mount();
     await boot(session);
     await openCard('[data-open="segev"]');
+    expect(el("ticks").hidden).toBe(true);
+    expect(getComputedStyle(el("ticks")).display).toBe("none");
     session.h.failNull = true;
     el("homeBtn").click();
     await vi.waitFor(() => expect(el("playerCueFailure").hidden).toBe(false));
@@ -1037,12 +1043,45 @@ describe("NLI staff scene integration", () => {
       for (const display of displays) display.drive();
       await flush();
     }
-    async function settle() {
+    async function settle(expectedTitle = null) {
       for (let i = 0; i < 200; i++) {
         await advance(20);
-        if (el("cueStatus").dataset.status === "ready" && displays.every(d => d.runtime.getRenderedReadiness().ready)) return;
+        const back = el("prevBtn");
+        const backSettled = !session.navigation?.backTarget?.() || !back.disabled;
+        const currentRef = session.navigation?.getState?.().current;
+        const committedTitle = currentRef && SCRIPTS.find(script => script.id === currentRef.scriptId)?.steps[currentRef.step]?.title?.en;
+        const activeScreen = document.querySelector(".screen.is-active")?.dataset.screen;
+        const navigationCommitted = activeScreen === "home" ? currentRef == null : committedTitle === el("stepTitle").textContent;
+        const observedTitle = expectedTitle || el("stepTitle").textContent;
+        const presentationStep = SCRIPTS.flatMap(script => script.steps).find(step => step.title?.en === observedTitle);
+        const expectedPresentation = presentationStep?.presentation?.open === "auto" ? presentationStep.presentation : null;
+        const displayedCommand = displays[0].binding.getDisplayedSnapshot().presentationCommand;
+        const presentationAcknowledged = !expectedPresentation || (
+          displayedCommand?.segmentId === expectedPresentation.segmentId &&
+          displays[0].results.some(result => result.requestId === displayedCommand.requestId && result.outcome === "opened"));
+        if ((!expectedTitle || el("stepTitle").textContent === expectedTitle) &&
+          !el("nextBtn").disabled && backSettled && el("cueStatus").dataset.status === "ready" &&
+          navigationCommitted &&
+          presentationAcknowledged &&
+          displays.every(d => d.runtime.getRenderedReadiness().ready)) return;
       }
       throw new Error("rendered cue did not settle: " + JSON.stringify({ title: el("stepTitle").textContent, cue: el("cueStatus").dataset.status, results: displays[0].results, displays: displays.map(d => d.runtime.getRenderedReadiness()) }));
+    }
+    async function settleHome() {
+      for (let i = 0; i < 300; i++) {
+        await advance(20);
+        if (document.querySelector(".screen.is-active")?.dataset.screen === "home" &&
+          session.navigation.getState().current == null &&
+          el("cueStatus").dataset.status === "ready" && displays.every(display =>
+            display.runtime.getRenderedReadiness().ready &&
+            display.binding.getDisplayedSnapshot().narrativeState.id == null &&
+            display.root.querySelector(".nli-reveal-overlay") == null)) return;
+      }
+      throw new Error("Home did not remove the fixed GIS overlays: " + JSON.stringify({
+        screen: document.querySelector(".screen.is-active")?.dataset.screen,
+        overlays: displays.map(display => display.root.querySelector(".nli-reveal-overlay")?.outerHTML || null),
+        snapshots: displays.map(display => display.binding.getDisplayedSnapshot()),
+      }));
     }
     async function start(reduced = false) {
       vi.useFakeTimers(); vi.setSystemTime(50_000);
@@ -1085,19 +1124,145 @@ describe("NLI staff scene integration", () => {
       vi.restoreAllMocks(); vi.useRealTimers();
     });
 
-    test("full staff show, nested narrative, Back and Home settle real paint/name/viewer members", async () => {
+    async function reachCredits() {
       await start();
-      el("narrativeList").querySelector('[data-open="show"]').click(); await settle();
+      el("narrativeList").querySelector('[data-open="show"]').click(); await settle("The opening minutes");
+      for (let i = 0; i < 20 && el("stepTitle").textContent !== "Credits"; i++) {
+        if (el("nextBtn").dataset.navigationAction === "choose-story") {
+          el("nextBtn").click();
+          el("storyChooser").querySelector('[data-chooser-action="continue-identity"]').click();
+        }
+        else if (!el("nextChoices").hidden) el("nextChoices").querySelector('[data-branch]').click();
+        else el("nextBtn").click();
+        await settle();
+      }
+      expect(el("stepTitle").textContent).toBe("Credits");
+    }
+
+    test("Hostages strip jumps preserve follower scenes, visit only endpoints, and Back does not create forward history", async () => {
+      await start();
+      el("narrativeList").querySelector('[data-open="hostages"]').click();
+      await settle("Nir Oz");
+      const tick = step => el("ticks").querySelector(`[data-step="${step}"]`);
+      tick(3).click();
+      await settle("All hostages");
+      expect(tick(0).classList.contains("is-visited")).toBe(true);
+      expect(tick(1).classList.contains("is-visited")).toBe(false);
+      expect(tick(2).classList.contains("is-visited")).toBe(false);
+      expect(tick(3).classList.contains("is-current")).toBe(true);
+      for (const display of displays) {
+        expect(display.binding.getDisplayedSnapshot().narrativeState.id).toBe("hostages_all");
+        expect(display.runtime.getRenderedReadiness().ready).toBe(true);
+      }
+
+      el("prevBtn").click();
+      await settle("Nir Oz");
+      expect(tick(0).classList.contains("is-current")).toBe(true);
+      expect(tick(3).classList.contains("is-visited")).toBe(true);
+      for (const display of displays) {
+        expect(display.binding.getDisplayedSnapshot().narrativeState.id).toBe("hostages");
+        expect(display.runtime.getRenderedReadiness().ready).toBe(true);
+      }
+
+      el("nextBtn").click();
+      await settle("Presentation");
+      expect(tick(1).classList.contains("is-current")).toBe(true);
+      el("prevBtn").click();
+      await settle("Nir Oz");
+      expect(tick(0).classList.contains("is-current")).toBe(true);
+      expect(tick(3).classList.contains("is-visited")).toBe(true);
+      for (const display of displays) {
+        expect(display.binding.getDisplayedSnapshot().narrativeState.id).toBe("hostages");
+        expect(display.runtime.getRenderedReadiness().ready).toBe(true);
+      }
+    }, 15_000);
+
+    test("a Home intent supersedes a pending failed-cue Retry on both followers", async () => {
+      await start();
+      el("narrativeList").querySelector('[data-open="segev"]').click();
+      await settle("The house in Be'eri");
+      session.h.failNull = true;
+      el("homeBtn").click();
+      await flush();
+      expect(el("playerCueFailure").hidden).toBe(false);
+      for (const display of displays) {
+        expect(display.binding.getDisplayedSnapshot().narrativeState.id).toBe("segev");
+      }
+
+      const setLayers = session.dataContext.setEnabledLayerIds;
+      let releaseLayers;
+      const heldLayers = new Promise(resolve => { releaseLayers = resolve; });
+      let holdNext = true;
+      session.dataContext.setEnabledLayerIds = async ids => {
+        if (holdNext) { holdNext = false; await heldLayers; }
+        return setLayers(ids);
+      };
+      el("playerCueRetry").click();
+      await vi.waitFor(() => expect(el("cueStatus").dataset.status).toBe("applying"));
+      await flush();
+      el("homeBtn").click();
+      releaseLayers();
+      await settleHome();
+      expect(session.navigation.getState().current).toBeNull();
+      expect(el("playerCueFailure").hidden).toBe(true);
+      expectRenderedHome();
+    }, 15_000);
+
+    test("full staff show, optional Identity, Wall, Credits, Back history and Home settle followers", async () => {
+      await start();
+      el("narrativeList").querySelector('[data-open="show"]').click(); await settle("The opening minutes");
+      expect(el("ticks").hidden).toBe(true);
+      expect(getComputedStyle(el("ticks")).display).toBe("none");
       const visited = [];
       for (let i = 0; i < 20; i++) {
         const title = el("stepTitle").textContent; visited.push(title);
+        if (title === "Identity database") {
+          expect(el("ticks").hidden).toBe(true);
+          expect(getComputedStyle(el("ticks")).display).toBe("none");
+        }
         for (const display of displays) {
           expect(display.binding.getDisplayedSnapshot().narrativeState.id).toBe(session.h.narrative.id);
           expect(display.runtime.getRenderedReadiness().ready).toBe(true);
         }
         if (title === "Credits") break;
+        if (title === "Memorial") {
+          el("nextBtn").click();
+          const focusedStory = document.querySelector('#storyChooser [data-story-id="shura"]');
+          focusedStory.focus();
+          const commandCount = session.h.commands.length;
+          const beforeClock = session.h.clock;
+          const playingClock = { ...beforeClock, phase: "playing", membership: PLAYABLE_LAYER_IDS.map(id => `nli.${id}`),
+            beats: STORY_MINUTES, loop: false, positionMs: 0, anchorMs: Date.now(), serverNowMs: Date.now(), revision: beforeClock.revision + 1 };
+          session.h.clock = playingClock;
+          session.h.publish({ type: OTEF_MESSAGE_TYPES.INVESTIGATION_CLOCK_CHANGED, investigationClock: playingClock });
+          session.h.emit("investigationClock", playingClock);
+          await advance(500);
+          const clockAtStart = displays[0].binding.getDisplayedSnapshot().investigationClock;
+          const frameAtStart = deriveInvestigationFrame(clockAtStart, Date.now(), displays[0].binding.getDisplayedSnapshot().enabledIds,
+            { motionMode: "full", storyBeats: STORY_MINUTES, polygonMotionActive: true, narrativeId: null });
+          await advance(5_000);
+          const displayedClock = displays[0].binding.getDisplayedSnapshot().investigationClock;
+          const frameAfterProgress = deriveInvestigationFrame(displayedClock, Date.now(), displays[0].binding.getDisplayedSnapshot().enabledIds,
+            { motionMode: "full", storyBeats: STORY_MINUTES, polygonMotionActive: true, narrativeId: null });
+          expect(frameAfterProgress.activeProgress).toBeGreaterThan(frameAtStart.activeProgress);
+          expect(displays.every(display => display.runtime.getRenderedReadiness().ready)).toBe(true);
+          expect(el("storyChooser").hidden).toBe(false);
+          expect(document.activeElement.dataset.focusKey).toBe("story-shura");
+          setLocale("he", { persist: false });
+          expect(document.activeElement.dataset.focusKey).toBe("story-shura");
+          setLocale("en", { persist: false });
+          expect(document.activeElement.dataset.focusKey).toBe("story-shura");
+          expect(session.h.commands).toHaveLength(commandCount);
+          document.querySelector('#storyChooser [data-chooser-action="cancel"]').click();
+        }
         const branch = !el("nextChoices").hidden && el("nextChoices").querySelector('[data-branch]');
-        (branch || el("nextBtn")).click(); await settle();
+        if (branch) branch.click();
+        else if (el("nextBtn").dataset.navigationAction === "choose-story") {
+          el("nextBtn").click();
+          const identity = el("storyChooser").querySelector('[data-chooser-action="continue-identity"]');
+          if (identity) identity.click();
+        } else el("nextBtn").click();
+        await settle();
       }
       expect(visited).toEqual(expect.arrayContaining(["The opening minutes", "The house in Be'eri", "The rest of the day", "The compounds", "Escape routes", "Mor Levy", "Memorial", "Identity database", "Wall of names", "Credits"]));
       expect(displays[1].map.getSource("nli-name-field")).toBeTruthy();
@@ -1105,20 +1270,44 @@ describe("NLI staff scene integration", () => {
       expect(displays[0].root.querySelector("section.present")?.dataset.slide).toBe("37");
       const results = displays[0].results;
       for (const opened of results.filter(result => result.outcome === "opened")) {
+        const dispatch = displays[0].dispatchedCommands.find(entry => entry.command.requestId === opened.requestId);
+        expect(dispatch, `opened ${opened.segmentId} must have a correlated dispatch`).toBeDefined();
+        expect(dispatch.command.segmentId).toBe(opened.segmentId);
         const ready = results.find(result => result.requestId === opened.requestId && result.outcome === "ready");
-        expect(ready).toBeTruthy(); expect(opened.time - ready.time).toBeGreaterThanOrEqual(600);
+        if (dispatch.managedScene) {
+          expect(ready, `managed open ${opened.segmentId} must acknowledge preparation`).toBeDefined();
+          expect(ready.time).toBeLessThan(opened.time);
+          expect(opened.time - ready.time).toBeGreaterThanOrEqual(600);
+        } else {
+          expect(opened.time - dispatch.time).toBeGreaterThanOrEqual(600);
+        }
+        expect(opened.opacity).toBe(1);
+        if (opened.slide > 0) expect(opened.displayedSlide).toBe(String(opened.slide));
+        else expect(opened.displayedSlide).toBeNull();
       }
       const backwards = [];
-      for (let i = 0; i < 20 && el("stepTitle").textContent !== "The opening minutes"; i++) {
-        el("prevBtn").click(); await settle(); backwards.push(el("stepTitle").textContent);
+      for (let i = 0; i < 24 && el("stepTitle").textContent !== "The opening minutes"; i++) {
+        const target = session.navigation.backTarget();
+        const targetTitle = SCRIPTS.find(script => script.id === target?.scriptId)?.steps[target?.step]?.title?.en;
+        const back = el("prevBtn");
+        back.click(); await settle(targetTitle); backwards.push(el("stepTitle").textContent);
       }
-      expect(backwards).toContain("Wall of names"); expect(backwards).toContain("Identity database");
+      expect(backwards).toContain("Wall of names");
+      expect(backwards, JSON.stringify({ backwards, navigation: session.navigation.getState() })).toContain("Identity database");
+      expect(backwards).toContain("Memorial");
       expect(backwards.at(-1)).toBe("The opening minutes");
-      el("homeBtn").click(); await settle(); expectRenderedHome();
+      el("homeBtn").click(); await settleHome(); expectRenderedHome();
       for (const display of displays) {
         expect(display.removals.length).toBeGreaterThan(0);
         expect(display.removals.filter(removal => removal.opacity > 0)).toEqual([]);
       }
+    }, 15_000);
+
+    test("Credits Back to Wall then Home removes the Identity blackout", async () => {
+      await reachCredits();
+      el("prevBtn").click(); await settle("Wall of names");
+      expect(displays[1].map.getSource("nli-name-field")).toBeTruthy();
+      el("homeBtn").click(); await settleHome(); expectRenderedHome();
     }, 15_000);
 
     test("Identity people stay mounted at the common half factor and remove only at zero on Home", async () => {

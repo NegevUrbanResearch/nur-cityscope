@@ -12,7 +12,7 @@ describe("NLI presentation manifest", () => {
 
     expect(manifest.deck).toMatchObject({
       slideCount: 37,
-      pdfSha256: "cadc48656462a3d968a0ded6616dd5c380be6588399c68b9f3dbf637dc7b5114",
+      pdfSha256: "d9d2a715b5bc46f105ebbce4b36dcaae9cde5a65b8cdbdfa6da560a212233707",
       pptxSha256: "edf994532d8e190ea45f5c7f5f7c26ebe27d2ef87cb574b65cb1ac1a0a31847c",
       slidePathPattern: "local/presentations/nli/slides/slide-{slide}.png",
     });

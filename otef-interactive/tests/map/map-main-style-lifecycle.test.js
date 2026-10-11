@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { createFakeMapLibreMap } from "../helpers/fake-maplibre-map.js";
 import { createGisBasemapStyleCoordinator, installGisStyleReload } from "../../frontend/src/entries/map-main-style-lifecycle.js";
+import { createGisNliFontChoiceLifecycle } from "../../frontend/src/entries/gis-nli-font-choice-lifecycle.js";
 import { applyLayerGroupsToMap } from "../../frontend/src/map/maplibre-layer-manager.js";
 import { createCuratedDisplayGate, createGisCuratedRefresh, loadCuratedLayerToMapLibre, removeCuratedHtmlMarkers } from "../../frontend/src/map/maplibre-curated-layer-loader.js";
 import * as curatedService from "../../frontend/src/shared/curated-layer-service.js";
@@ -39,6 +40,37 @@ describe("map-main GIS style reload lifecycle", () => {
       /const applyGisLayerGroups = \(groups, layerStyleOptions\) => \{\s*applyLayerGroupsToMap\(map, groups, layerStyleOptions\);\s*applyNarrativePeopleFilter\(map, sceneSnapshot\(\)\.narrativeState\?\.id \?\? null\);\s*const selectedPid = sceneSnapshot\(\)\.personSelection\?\.personId;\s*if \(selectedPid\) applyPeopleFocusDim\(map, selectedPid\);\s*else clearPeopleFocusDim\(map\);\s*applyNarrativeHouseOutlineFilter\(map, sceneSnapshot\(\)\.narrativeState\?\.id \?\? null\);\s*raiseGisPlaceLabels\(\);\s*\};/,
     );
     expect(source.match(/applyLayerGroupsToMap\(/g)).toHaveLength(1);
+  });
+
+  test('a slower previous font readiness check cannot replace the latest published choice', async () => {
+    const waits = new Map(), applied = vi.fn(), onError = vi.fn();
+    const lifecycle = createGisNliFontChoiceLifecycle({
+      ensureReady: choices => new Promise((resolve, reject) => waits.set(choices.en, { resolve, reject })),
+      applyChoices: applied,
+      onError,
+    });
+    const hadassah = lifecycle.publish({ he: 'default', en: 'hadassah' });
+    const marcellus = lifecycle.publish({ he: 'default', en: 'marcellus' });
+    waits.get('marcellus').resolve();
+    await expect(marcellus).resolves.toBe(true);
+    waits.get('hadassah').resolve();
+    await expect(hadassah).resolves.toBe(false);
+    expect(applied).toHaveBeenCalledOnce();
+    expect(applied).toHaveBeenCalledWith({ he: 'default', en: 'marcellus' });
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  test('runtime disposal prevents a deferred published font check from applying', async () => {
+    let resolve;
+    const applied = vi.fn();
+    const lifecycle = createGisNliFontChoiceLifecycle({
+      ensureReady: () => new Promise(done => { resolve = done; }),
+      applyChoices: applied,
+    });
+    const pending = lifecycle.publish({ he: 'default', en: 'marcellus' });
+    lifecycle.dispose(); resolve();
+    await expect(pending).resolves.toBe(false);
+    expect(applied).not.toHaveBeenCalled();
   });
 
   test("reapplies ordinary layers before bringing the selected overlay to front", async () => {

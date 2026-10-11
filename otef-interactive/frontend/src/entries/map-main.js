@@ -24,6 +24,7 @@ import { applyPeopleFocusDim, clearPeopleFocusDim } from "../shared/nli-people-f
 import { createNovaEscapeCoordinator } from "../shared/nli-nova-escape-coordinator.js";
 import { createMorRouteCoordinator } from "../shared/nli-mor-route-coordinator.js";
 import { createGisBasemapStyleCoordinator } from "./map-main-style-lifecycle.js";
+import { createGisNliFontChoiceLifecycle } from "./gis-nli-font-choice-lifecycle.js";
 import { bootClockPreview } from "../map/clock-preview.js";
 import { createGisRoadSignOverlay } from "../map/gis-road-sign-overlay.js";
 import { createNovaExplainerOverlay } from "../map/nli-nova-explainer-overlay.js";
@@ -69,6 +70,11 @@ import {
   NLI_LABEL_HEADING_STORAGE_KEY,
   readNliLabelHeading,
 } from "../shared/nli-label-heading.js";
+import { createNliFontSubscription } from "../shared/nli-font-subscription.js";
+import { NLI_FONT_DEFAULTS } from "../shared/nli-font-settings.js";
+import { nameTextStyle } from "../shared/nli-name-language.js";
+import { ensureNameFont } from "../shared/nli-name-font.js";
+import { createUuid } from "../shared/uuid.js";
 
 const DEFAULT_MAP_CENTER = [34.5, 31.4];
 
@@ -351,10 +357,45 @@ async function bootstrapMapRuntime() {
       getHomeCamera: () => ({ center: resolveCenterFromBounds(OTEFDataContext.getBounds()) || DEFAULT_MAP_CENTER, zoom: 10 }),
       getGroups: () => sceneSnapshot().layerGroups });
     registerDisposer(() => roadSignOverlay.dispose());
-    const raiseGisPlaceLabels = () => raiseDarkBasemapPlaceLabels(map, {
-      language: OTEFDataContext.getLegendSettings?.()?.language || 'he',
-      narrativeId: sceneSnapshot().narrativeState?.id ?? null,
+    let publishedNliFontChoices = { ...NLI_FONT_DEFAULTS };
+    const getNliFontChoices = () => ({ ...publishedNliFontChoices });
+    const getNliFontStyle = (language = OTEFDataContext.getLegendSettings?.()?.language) => {
+      const resolvedLanguage = language === 'en' ? 'en' : 'he';
+      return nameTextStyle(resolvedLanguage, getNliFontChoices(), {
+        language: resolvedLanguage, direction: resolvedLanguage === 'en' ? 'ltr' : 'rtl',
+        fontFamily: 'Guttman Hatzvi', canvasFontStack: '"Guttman Hatzvi", "Noto Sans Hebrew", Arial, sans-serif',
+        mapFontStack: ['Guttman Hatzvi', 'Arial'],
+      });
+    };
+    let personController = null;
+    let gisLabelFontGeneration = 0;
+    const nliFontChoiceLifecycle = createGisNliFontChoiceLifecycle({
+      ensureReady: choices => Promise.all(['he', 'en'].map(language =>
+        ensureNameFont(nameTextStyle(language, choices), 14))),
+      applyChoices: choices => {
+        if (JSON.stringify(choices) === JSON.stringify(publishedNliFontChoices)) return;
+        publishedNliFontChoices = choices;
+        raiseGisPlaceLabels();
+        personController?.refreshNliFontChoices?.();
+        novaExplainerOverlay?.refresh?.();
+        narrativeController?.refreshNliFontChoices?.();
+        void syncContextInvestigation();
+        legendLifecycle?.refresh?.();
+      },
+      onError: error => console.warn('[map-main] published NLI font unavailable', error),
     });
+    registerDisposer(() => { nliFontChoiceLifecycle.dispose(); gisLabelFontGeneration += 1; });
+    const applyGisPlaceLabels = async () => {
+      const generation = ++gisLabelFontGeneration;
+      const language = OTEFDataContext.getLegendSettings?.()?.language === 'en' ? 'en' : 'he';
+      const fontChoices = getNliFontChoices();
+      await ensureNameFont(nameTextStyle(language, fontChoices), 14);
+      if (generation !== gisLabelFontGeneration) return false;
+      raiseDarkBasemapPlaceLabels(map, { language, fontChoices, narrativeId: sceneSnapshot().narrativeState?.id ?? null });
+      return true;
+    };
+    const raiseGisPlaceLabels = () => { void applyGisPlaceLabels().catch(error =>
+      console.warn('[map-main] NLI settlement font unavailable', error)); };
     let positionLegend = () => {};
     const applyStoredGisClockLayout = () => {
       const stored = OTEFDataContext.getNliClockLayout?.()?.gis || {};
@@ -371,6 +412,7 @@ async function bootstrapMapRuntime() {
       getNarrativeId: () => sceneSnapshot().narrativeState?.id ?? null,
       getEscapeOverlay: () => sceneSnapshot().escapeOverlay,
       getLanguage: () => OTEFDataContext.getLegendSettings?.()?.language,
+      getFontChoices: getNliFontChoices,
       motionMode: resolveMotionMode(),
     });
     registerDisposer(() => novaExplainerOverlay.dispose());
@@ -433,11 +475,14 @@ async function bootstrapMapRuntime() {
       return syncInvestigationTimelineToMap(map, clock, currentGroups, {
         ...sceneOptions,
         sceneClockRuntime: getLayerLifecycleRuntime(map), sceneCaptionId: "nli.clock-caption.gis",
+        cueLayerGroups: snapshot.rawLayerGroups,
         visibilityLayerGroups: groupsAsArray,
         displayProfile: "gis",
         nliCaptionMode: "clock-only",
         motionMode: resolveMotionMode(),
         captionEl: nliGisClockCaptionEl,
+        getNliFontChoices,
+        getNliFontLanguage: () => OTEFDataContext.getLegendSettings?.()?.language,
         allowMapCaption: false,
         onVisualFrame: novaExplainerOverlay.sync,
         now: () =>
@@ -497,11 +542,17 @@ async function bootstrapMapRuntime() {
       language: OTEFDataContext.getLegendSettings?.()?.language || 'he',
       beginCameraTravel: viewportSync.beginCameraTravel,
       managedScene: true,
+      getNliFontChoices,
       onBubbleClick: (person) => archiveBridge.openSelected(person),
     });
     registerDisposer(OTEFDataContext.subscribe('legendSettings', settings => {
-      personVisual.setLanguage(settings?.language || 'he'); raiseGisPlaceLabels();
+      const language = settings?.language === 'en' ? 'en' : 'he';
+      void ensureNameFont(nameTextStyle(language, getNliFontChoices()), 14).then(() => {
+        if (language !== (OTEFDataContext.getLegendSettings?.()?.language === 'en' ? 'en' : 'he')) return;
+        personVisual.setLanguage(language); raiseGisPlaceLabels();
+      }).catch(error => console.warn('[map-main] NLI person font unavailable', error));
       novaExplainerOverlay.refresh();
+      void syncContextInvestigation();
     }));
     const archiveWindow = createNliArchiveWindowController();
     novaEscapeCoordinator = createNovaEscapeCoordinator({
@@ -525,6 +576,7 @@ async function bootstrapMapRuntime() {
       managedScene: true,
       viewportSync,
       personVisual,
+      getNliFontChoices,
       closeArchive: () => archiveWindow.close(),
       resolveExitCenter: () => resolveCenterFromBounds(OTEFDataContext.getBounds()) || DEFAULT_MAP_CENTER,
       syncTimeline: () => {},
@@ -559,7 +611,16 @@ async function bootstrapMapRuntime() {
       wakeInvestigationTimelinePersonGlow(map);
     };
     registerDisposer(OTEFDataContext.subscribe("personSelection", syncContextPersonSelection));
-    const personController = createGisPersonController({
+    const nliFontSubscription = createNliFontSubscription({
+      socket: OTEFDataContext._wsClient,
+      sourceId: createUuid(),
+      fetchImpl: window.fetch.bind(window),
+      onChoices: choices => { void nliFontChoiceLifecycle.publish(choices); },
+      onError: error => console.warn("[map-main] NLI font settings unavailable", error),
+    });
+    registerDisposer(() => nliFontSubscription.stop());
+    void nliFontSubscription.start().catch(() => {});
+    personController = createGisPersonController({
       map,
       context: OTEFDataContext,
       managedScene: true,
@@ -567,6 +628,7 @@ async function bootstrapMapRuntime() {
       isNarrativeActive: () => narrativeController?.isActive?.() === true,
       closeArchive: () => archiveWindow.close(),
       reducedMotion: resolveMotionMode(),
+      getNliFontChoices,
     });
     registerDisposer(() => personController.dispose?.());
     registerDisposer(attachGisFeaturePopups(map, maplibregl, { onGisClick: personController.handleMapClick }));
@@ -708,6 +770,7 @@ async function bootstrapMapRuntime() {
       surface: "gis",
       dataContext: OTEFDataContext,
       registry: layerRegistry,
+      getNliFontStyle,
     });
     registerDisposer(() => legendLifecycle.dispose());
     positionLegend = () => positionGisLegend({

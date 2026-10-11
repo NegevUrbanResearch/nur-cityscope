@@ -31,24 +31,33 @@ const sourcePath = 'public/processed/layers/nli/people_names.geojson';
 const metadataPath = 'public/processed/layers/nli/release-metadata.json';
 const read = (path) => JSON.parse(readFileSync(path, 'utf8'));
 
-function assertCapturedFont(capture, language) {
-  const style = nameTextStyle(language);
+function assertCapturedFont(capture, language, expectedChoices = capture.nliFonts) {
+  expect(capture.nliFonts).toEqual(expectedChoices);
+  const style = nameTextStyle(language, capture.nliFonts);
   expect(capture.textStyle).toEqual(style);
   const identity = JSON.parse(capture.fontIdentity);
   expect(identity).toHaveLength(4);
   expect(identity.slice(0, 3)).toEqual([language, style.direction, style.canvasFontStack]);
   expect(Array.isArray(identity[3])).toBe(true);
   expect(identity[3].every(face => typeof face === 'string')).toBe(true);
-  if (language === 'he') expect(identity[3].some(face => face.startsWith('Guttman Hatzvi:') && face.endsWith(':loaded'))).toBe(true);
+  expect(identity[3].some(face => face.startsWith(`${style.fontFamily}:`) && face.endsWith(':loaded'))).toBe(true);
 }
 
 test('capture font validation rejects a mislabeled stack or unrelated identity', () => {
-  const textStyle = nameTextStyle('en');
+  const nliFonts = { he: 'default', en: 'hadassah' };
+  const textStyle = nameTextStyle('en', nliFonts);
   const fontIdentity = JSON.stringify(['en', 'ltr', textStyle.canvasFontStack, []]);
-  expect(() => assertCapturedFont({ textStyle, fontIdentity }, 'en')).not.toThrow();
-  expect(() => assertCapturedFont({ textStyle: { ...textStyle, canvasFontStack: nameTextStyle('he').canvasFontStack }, fontIdentity }, 'en')).toThrow();
-  expect(() => assertCapturedFont({ textStyle, fontIdentity: '' }, 'en')).toThrow();
-  expect(() => assertCapturedFont({ textStyle, fontIdentity: JSON.stringify(['he', 'rtl', textStyle.canvasFontStack, []]) }, 'en')).toThrow();
+  const loadedIdentity = JSON.stringify(['en', 'ltr', textStyle.canvasFontStack,
+    ['NLI Content Hadassah Friedlaender:normal:400:loaded']]);
+  expect(() => assertCapturedFont({ nliFonts, textStyle, fontIdentity: loadedIdentity }, 'en')).not.toThrow();
+  expect(() => assertCapturedFont({ nliFonts, textStyle: { ...textStyle, canvasFontStack: nameTextStyle('he', nliFonts).canvasFontStack }, fontIdentity: loadedIdentity }, 'en')).toThrow();
+  expect(() => assertCapturedFont({ nliFonts, textStyle, fontIdentity }, 'en')).toThrow();
+  expect(() => assertCapturedFont({ nliFonts, textStyle, fontIdentity: '' }, 'en')).toThrow();
+  expect(() => assertCapturedFont({ nliFonts, textStyle, fontIdentity: JSON.stringify(['he', 'rtl', textStyle.canvasFontStack, []]) }, 'en')).toThrow();
+  const overrides = { he: 'hadassah', en: 'marcellus' };
+  const overrideStyle = nameTextStyle('en', overrides);
+  expect(() => assertCapturedFont({ nliFonts: overrides, textStyle: overrideStyle,
+    fontIdentity: JSON.stringify(['en', 'ltr', overrideStyle.canvasFontStack, []]) }, 'en')).toThrow();
 });
 
 test.skipIf(!acceptanceArtifactDir).each(['he', 'en'])('optional %s name wall artifacts keep every PID whole, safe, and stable in both modes', async language => {
@@ -74,7 +83,7 @@ test.skipIf(!acceptanceArtifactDir).each(['he', 'en'])('optional %s name wall ar
   for (const capture of captures) {
     expect(capture.language).toBe(language);
     expect(capture.datasetVersion).toBe(read(metadataPath).datasetVersion);
-    assertCapturedFont(capture, language);
+    assertCapturedFont(capture, language, config.nliFonts);
   }
   const sizes = captures[0].sizes;
   for (let size = 1; size <= Math.max(config.namesWall.profiles.wall.requestedFontPx, config.namesWall.profiles.model.requestedFontPx); size++)
@@ -158,7 +167,8 @@ test.skipIf(!acceptanceArtifactDir).each(['he', 'en'])('optional %s name wall ar
   const ring = read('public/processed/layers/projector_base/Tkuma_Area_LIne.geojson').features[0].geometry.coordinates;
   assertComplete(first, 'wall');
   const moved = [];
-  for (const percent of [50, 100]) {
+  const startingShiftPercent = config.namesWall.profiles.wall.inwardShiftPercent;
+  for (const percent of [0, 50, 100]) {
     const adjusted = structuredClone(config.namesWall);
     adjusted.profiles.wall.inwardShiftPercent = percent;
     const field = await buildNamesWallLayout({ ...input, namesWall: adjusted });
@@ -168,10 +178,11 @@ test.skipIf(!acceptanceArtifactDir).each(['he', 'en'])('optional %s name wall ar
       .toEqual(first.placements.map((p) => [p.id, p.name, p.output, p.x, p.width, p.height]));
     for (let i = 0; i < field.placements.length; i++) {
       const side = field.placements[i].output;
-      expect(field.placements[i].y - first.placements[i].y).toBeCloseTo(field.pages[side].inwardTravel * percent / 100, 6);
+      expect(field.placements[i].y - first.placements[i].y).toBeCloseTo(
+        first.pages[side].inwardTravel * (percent - startingShiftPercent) / 100, 6);
     }
-    expect(field.pages.left.rowOrigin).toBe(first.pages.left.rowOrigin);
-    expect(field.pages.right.rowOrigin).toBeGreaterThan(first.pages.right.rowOrigin);
+    for (const side of ['left', 'right']) expect(field.pages[side].rowOrigin - first.pages[side].rowOrigin)
+      .toBeCloseTo(first.pages[side].inwardTravel * (percent - startingShiftPercent) / 100, 6);
     moved.push(field);
   }
   expect(new Set([first.digest, ...moved.map((field) => field.digest)]).size).toBe(3);
@@ -191,7 +202,7 @@ test.skipIf(!acceptanceArtifactDir).each(['he', 'en'])('optional %s name wall ar
     usedSpans: modeled.diagnostics.modelUsedSpans, safeSpans: modeled.diagnostics.modelSafeSpans });
   assertComplete(modeled, 'model');
   expect(modeled).not.toHaveProperty('pages');
-  expect(modeled.fontSize).toBeGreaterThanOrEqual(6);
+  expect.soft(modeled.fontSize).toBeGreaterThanOrEqual(6);
   expect(modeled.diagnostics.left + modeled.diagnostics.right).toBe(records.length);
   expect(modeled.diagnostics.modelUsedSpans).toBeLessThanOrEqual(modeled.diagnostics.modelSafeSpans);
   console.info('Captured model spacing 2', { fontPx: modeled.fontSize,
@@ -211,7 +222,7 @@ test.skipIf(!acceptanceArtifactDir).each(['he', 'en'])('optional %s name wall ar
     safeSpans: zero.diagnostics.modelSafeSpans, missing: zero.diagnostics.missing,
     duplicate: zero.diagnostics.duplicate, overlap: zero.diagnostics.overlap,
     invalidCoverage: zero.diagnostics.invalidCoverage, digest: zero.digest });
-  expect(zero.fontSize).toBeGreaterThan(6);
+  expect.soft(zero.fontSize).toBeGreaterThan(6);
   expect(zero.placements.every((p) => Number.isFinite(p.textOffsetX) && Number.isFinite(p.textOffsetY))).toBe(true);
   const tighterModel = structuredClone(modelWall);
   tighterModel.profiles.model.spacingPx = 1;
@@ -267,8 +278,8 @@ test.skipIf(!acceptanceArtifactDir).each(['he', 'en'])('optional %s name wall ar
     adapter.prepare({ config: renderConfig, placements: field.placements, outputMasks: field.outputMasks,
       fontPx: field.fontSize, textStyle: captures[0].textStyle, logicalPlane });
     adapter.commit();
-    expect(ctx.font).toBe(`${field.fontSize}px ${nameTextStyle(language).canvasFontStack}`);
-    expect(ctx.direction).toBe(nameTextStyle(language).direction);
+    expect(ctx.font).toBe(`${field.fontSize}px ${captures[0].textStyle.canvasFontStack}`);
+    expect(ctx.direction).toBe(captures[0].textStyle.direction);
     const descriptor = adapter.descriptor();
     const own = field.placements.filter((placement) => (placement.outputs || [placement.output]).includes(side));
     if (mode === 'wall') expect(own).toHaveLength(field.diagnostics[side]);
@@ -302,12 +313,12 @@ test.skipIf(!acceptanceArtifactDir).each(['he', 'en'])('optional %s name wall ar
   expect(modelWithMovedWall.digest).toBe(modeled.digest);
   expect(modeled.placements.map((p) => [p.id, p.output])).not.toEqual(first.placements.map((p) => [p.id, p.output]));
   const leftInsetConfig = structuredClone(config);
-  leftInsetConfig.namesWall.innerEdgeInsetPx.left = 16;
+  leftInsetConfig.namesWall.innerEdgeInsetPx.left += 256;
   const leftInsetCoverage = evaluateNameWallCoverage({ config: leftInsetConfig, meshes, logicalPlane });
   expect(leftInsetCoverage.pieces.right).toEqual(coverage.pieces.right);
   expect(leftInsetCoverage.pieces.left).not.toEqual(coverage.pieces.left);
   const rightInsetConfig = structuredClone(config);
-  rightInsetConfig.namesWall.innerEdgeInsetPx.right = 16;
+  rightInsetConfig.namesWall.innerEdgeInsetPx.right += 256;
   const rightInsetCoverage = evaluateNameWallCoverage({ config: rightInsetConfig, meshes, logicalPlane });
   expect(rightInsetCoverage.pieces.left).toEqual(coverage.pieces.left);
   expect(rightInsetCoverage.pieces.right).not.toEqual(coverage.pieces.right);
@@ -321,11 +332,11 @@ test.skipIf(!acceptanceArtifactDir).each(['he', 'en'])('optional %s name wall ar
     for (const placement of insetField.placements)
       expect(rectCoveredByPieces(placement, insetCoverage.pieces[placement.output])).toBe(true);
   }
-  for (const [side, pixels] of [['left', 16], ['right', 24]]) {
+  for (const side of ['left', 'right']) {
     const insetConfig = structuredClone(config);
     insetConfig.namesWall.activeMode = 'model';
 
-    insetConfig.namesWall.innerEdgeInsetPx[side] = pixels;
+    insetConfig.namesWall.innerEdgeInsetPx[side] += 256;
     const insetCoverage = evaluateNameWallCoverage({ config: insetConfig, meshes, logicalPlane });
     expect(insetCoverage.pieces[side]).not.toEqual(coverage.pieces[side]);
     expect(insetCoverage.pieces[side === 'left' ? 'right' : 'left'])

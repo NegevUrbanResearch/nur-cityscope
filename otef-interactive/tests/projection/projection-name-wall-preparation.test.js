@@ -9,6 +9,7 @@ import { migrateNamesWallToV6 } from '../../frontend/src/shared/nli-name-wall-co
 import { evaluateNameWallCoverage, rectCoveredByPieces } from '../../frontend/src/shared/nli-name-wall-coverage.js';
 import { DEFAULT_PROJECTION_CONFIG } from '../../frontend/src/shared/projection-config-schema.js';
 import { createFullFrameProjectionMesh } from '../../frontend/src/shared/projection-warp-geometry.js';
+import { projectionPlacementInputIdentity } from '../../frontend/src/projection/projection-names-run.js';
 
 const MEMORIAL = new Set(['Murdered', 'Killed on duty', 'Murdered in captivity']);
 const peoplePath = fileURLToPath(new URL('../../public/processed/layers/nli/people_names.geojson', import.meta.url));
@@ -36,7 +37,11 @@ function canvasDocument() {
   const paints = [];
   const blits = [];
   const document = {
-    fonts: { load: vi.fn(async () => [{ family: 'Guttman Hatzvi', status: 'loaded' }]) },
+    fonts: { load: vi.fn(async spec => {
+      const family = String(spec).match(/"([^"]+)"/)?.[1] || 'Guttman Hatzvi';
+      if (family === 'NLI Content Arial') throw new Error('Arial content webface is unavailable');
+      return [{ family, status: 'loaded' }];
+    }) },
     paints,
     blits,
     createElement() {
@@ -151,11 +156,63 @@ test('a language switch reuses raw inputs but computes canonical English placeme
   const fetches = globalThis.fetch.mock.calls.length;
   const en = await prepareProjectionNameWall({ config, meshes, datasetVersion: 'people-slice', language: 'en' });
   expect(en.language).toBe('en');
-  expect(en.textStyle).toMatchObject({ fontFamily: 'Arial', direction: 'ltr' });
+  expect(en.textStyle).toMatchObject({ fontFamily: 'NLI Content Hadassah Friedlaender', direction: 'ltr' });
   expect(en.placements.map(p => p.name).sort()).toEqual(features.map(f => f.properties.name).sort());
   expect(new Set(en.placements.map(p => p.id))).toEqual(new Set(he.placements.map(p => p.id)));
   expect(en.digest).not.toBe(he.digest);
   expect(globalThis.fetch.mock.calls.length).toBe(fetches);
+});
+
+test('font_only_change_remeasures_and_changes_placement_identity', async () => {
+  globalThis.document = canvasDocument(); installFetch();
+  const config = wallConfig(35);
+  const first = await prepareProjectionNameWall({ config, meshes, datasetVersion: 'people-slice', language: 'en' });
+  const initialIdentity = await projectionPlacementInputIdentity(config, 'en');
+  const activeChanged = structuredClone(config);
+  activeChanged.nliFonts.en = 'marcellus';
+  const activeIdentity = await projectionPlacementInputIdentity(activeChanged, 'en');
+  const rebuilt = await prepareProjectionNameWall({ config: activeChanged, meshes, datasetVersion: 'people-slice', language: 'en' });
+  expect(activeIdentity).not.toBe(initialIdentity);
+  expect(rebuilt).not.toBe(first);
+  expect(rebuilt.textStyle.fontFamily).toBe('NLI Content Marcellus');
+});
+
+test('inactive_language_change_reuses_active_field', async () => {
+  globalThis.document = canvasDocument(); installFetch();
+  const config = wallConfig(35);
+  const first = await prepareProjectionNameWall({ config, meshes, datasetVersion: 'people-slice', language: 'en' });
+  await vi.waitFor(() => expect(globalThis.document.fonts.load).toHaveBeenCalledTimes(2));
+  await new Promise(resolve => setTimeout(resolve, 0));
+  await prepareProjectionNameWall({ config: structuredClone(config), meshes, datasetVersion: 'people-slice', language: 'en' });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  expect(globalThis.document.fonts.load).toHaveBeenCalledTimes(2);
+  const inactiveChanged = structuredClone(config);
+  inactiveChanged.nliFonts.he = 'narkiss';
+  expect(await projectionPlacementInputIdentity(inactiveChanged, 'en'))
+    .toBe(await projectionPlacementInputIdentity(config, 'en'));
+  const reused = await prepareProjectionNameWall({ config: inactiveChanged, meshes, datasetVersion: 'people-slice', language: 'en' });
+  expect(reused).toBe(first);
+});
+
+test('late font build cannot commit after an active font choice changes', async () => {
+  globalThis.document = canvasDocument(); installFetch();
+  const config = wallConfig(35); config.nliFonts.en = 'hadassah';
+  let releaseFirst;
+  let calls = 0;
+  const originalLoad = globalThis.document.fonts.load;
+  globalThis.document.fonts.load = vi.fn(spec => {
+    calls += 1;
+    if (calls !== 1) return originalLoad(spec);
+    return new Promise(resolve => { releaseFirst = () => originalLoad(spec).then(resolve); });
+  });
+  const obsolete = prepareProjectionNameWall({ config, meshes, datasetVersion: 'people-slice', language: 'en' });
+  while (!releaseFirst) await new Promise(resolve => setTimeout(resolve, 0));
+  const replacementConfig = structuredClone(config); replacementConfig.nliFonts.en = 'narkiss';
+  const replacement = prepareProjectionNameWall({ config: replacementConfig, meshes, datasetVersion: 'people-slice', language: 'en' });
+  releaseFirst();
+  await expect(obsolete).rejects.toThrow(/cancel|stale/i);
+  const current = await replacement;
+  expect(current.textStyle.fontFamily).toBe('NLI Content Narkiss Block');
 });
 
 test('config rotation recomputes coverage and repacks through projection preparation', async () => {

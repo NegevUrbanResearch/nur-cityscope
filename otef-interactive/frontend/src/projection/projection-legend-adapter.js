@@ -2,6 +2,9 @@ import { paintShelterSymbol } from "../shared/nli-shelter-symbol.js";
 import { OUTPUT_HEIGHT, OUTPUT_WIDTH, projectionOverlayMatrix } from "./projection-overlay-placement.js";
 import { paintCaptivityBleedMarker } from "../shared/captivity-bleed-marker.js";
 import { PROJECTION_LEGEND_FONT as FONT, layoutProjectionLegend, resolveLegendRasterSize } from "./legend-content-layout.js";
+import { createLegendMotion } from "../shared/legend-motion.js";
+import { resolveMotionMode } from "../shared/reduced-motion.js";
+import { interpolateLegendPlacement } from "../shared/legend-placement-motion.js";
 
 const INK = "#f2f3f4";
 
@@ -64,18 +67,18 @@ function drawHatch(context, style, x, y, width, height) {
   context.restore?.();
 }
 
-function drawBands(context, bands, x, y, width, height) {
+function drawBands(context, bands, x, y, width, height, opacity) {
   for (const band of bands || []) {
     const size = Math.max(0, Math.min(1, Number(band.size)));
     if (!band.color || size <= 0) continue;
     shapePath(context, "polygon", x, y, width * size, height * size);
     context.fillStyle = band.color;
-    context.globalAlpha = Number.isFinite(band.opacity) ? band.opacity : 1;
+    context.globalAlpha = opacity * (Number.isFinite(band.opacity) ? band.opacity : 1);
     context.fill?.();
   }
 }
 
-function drawSymbol(context, part, x, y, font, geometry, scale) {
+function drawSymbol(context, part, x, y, font, geometry, scale, opacity) {
   const shape = part.shape || "polygon";
   const symbolWidth = geometry.width;
   const symbolHeight = geometry.height;
@@ -84,6 +87,7 @@ function drawSymbol(context, part, x, y, font, geometry, scale) {
   const fillOpacity = Number.isFinite(part.fillOpacity) ? part.fillOpacity : (Number.isFinite(part.opacity) ? part.opacity : 1);
   const strokeOpacity = Number.isFinite(part.strokeOpacity) ? part.strokeOpacity : 1;
   context.save?.();
+  context.globalAlpha = opacity;
   context.shadowColor = "transparent";
   context.shadowOffsetX = 0;
   context.shadowOffsetY = 0;
@@ -104,11 +108,11 @@ function drawSymbol(context, part, x, y, font, geometry, scale) {
       const top = y - symbolHeight / 2;
       if (part.halo && part.halo !== "transparent") {
         context.strokeStyle = part.halo;
-        context.globalAlpha = strokeOpacity * 0.35;
+        context.globalAlpha = opacity * strokeOpacity * 0.35;
         context.lineWidth = swatchScale;
         context.strokeRect(left - swatchScale / 2, top - swatchScale / 2, symbolWidth + swatchScale, symbolHeight + swatchScale);
       }
-      context.globalAlpha = strokeOpacity;
+      context.globalAlpha = opacity * strokeOpacity;
       context.fillStyle = part.carrier;
       context.fillRect(left, top, symbolWidth, symbolHeight);
       context.fillStyle = stroke;
@@ -125,7 +129,7 @@ function drawSymbol(context, part, x, y, font, geometry, scale) {
     context.lineTo(x + symbolWidth / 2, y);
     if (part.carrier) {
       context.strokeStyle = part.carrier;
-      context.globalAlpha = strokeOpacity;
+      context.globalAlpha = opacity * strokeOpacity;
       context.lineWidth = Math.max(2, (Number(part.strokeWidth) || 1) + 2);
       context.setLineDash?.([]);
       context.stroke();
@@ -134,7 +138,7 @@ function drawSymbol(context, part, x, y, font, geometry, scale) {
       context.lineTo(x + symbolWidth / 2, y);
     }
     context.strokeStyle = stroke || fill;
-    context.globalAlpha = strokeOpacity;
+    context.globalAlpha = opacity * strokeOpacity;
     context.lineWidth = part.gisLineSwatch ? symbolHeight : Math.max(2, Number(part.strokeWidth) || 1);
     if (part.strokeGradient?.length) {
       const gradient = context.createLinearGradient(x, y - context.lineWidth / 2, x, y + context.lineWidth / 2);
@@ -142,7 +146,10 @@ function drawSymbol(context, part, x, y, font, geometry, scale) {
       context.strokeStyle = gradient;
     }
     context.setLineDash?.(dashArray);
-    if (part.halo && part.halo !== "transparent") { context.shadowColor = part.halo; context.shadowBlur = scale; }
+    if (part.halo && part.halo !== "transparent") {
+      context.shadowColor = part.halo;
+      context.shadowBlur = Number.isFinite(part.haloBlur) ? Math.max(0, part.haloBlur) * swatchScale : scale;
+    }
     context.stroke();
     context.setLineDash?.([]);
   } else if (part.captivityBleed) {
@@ -151,21 +158,21 @@ function drawSymbol(context, part, x, y, font, geometry, scale) {
   } else {
     shapePath(context, shape, x, y, symbolWidth, symbolHeight);
     if (Array.isArray(part.bands) && part.bands.length > 0) {
-      drawBands(context, part.bands, x, y, symbolWidth, symbolHeight);
+      drawBands(context, part.bands, x, y, symbolWidth, symbolHeight, opacity);
     } else {
       context.fillStyle = fill;
-      context.globalAlpha = fillOpacity;
+      context.globalAlpha = opacity * fillOpacity;
       context.fill?.();
     }
     context.strokeStyle = stroke;
-    context.globalAlpha = strokeOpacity;
+    context.globalAlpha = opacity * strokeOpacity;
     context.lineWidth = Number(part.strokeWidth) || 1;
     context.stroke?.();
     if (part.hatchStyle) drawHatch(context, part.hatchStyle, x, y, symbolWidth, symbolHeight);
     if (part.hatchStyle2) drawHatch(context, part.hatchStyle2, x, y, symbolWidth, symbolHeight);
   }
   if (part.alarmShockwave) {
-    context.globalAlpha = 0.4;
+    context.globalAlpha = opacity * 0.4;
     context.strokeStyle = part.alarmShockwaveColor || fill || "transparent";
     context.lineWidth = 1.6;
     context.beginPath();
@@ -175,10 +182,11 @@ function drawSymbol(context, part, x, y, font, geometry, scale) {
   context.restore?.();
 }
 
-function drawPlacement(context, placement, font, scale) {
+function drawPlacement(context, placement, font, scale, fontStack, opacity = 1) {
   const label = placement.labelGeometry;
   context.fillStyle = INK;
-  context.font = `${font}px ${FONT}`;
+  context.globalAlpha = opacity;
+  context.font = `${font}px ${fontStack || FONT}`;
   context.direction = label.direction;
   context.textAlign = label.align;
   context.textBaseline = "alphabetic";
@@ -186,11 +194,15 @@ function drawPlacement(context, placement, font, scale) {
   setShadow(context, scale);
   placement.labelLines.forEach((line, index) => context.fillText(line, label.x, label.y + label.lineHeight * index));
   for (const component of placement.symbolGeometry.components) {
-    drawSymbol(context, component.part, component.x, component.y, font, component, scale);
+    drawSymbol(context, component.part, component.x, component.y, font, component, scale, opacity);
   }
 }
 
-export function createProjectionLegendAdapter({ canvasFactory, rasterScale = 1 } = {}) {
+export function createProjectionLegendAdapter({ canvasFactory, rasterScale = 1, onInvalidate,
+  now = () => performance.now(), requestFrame = globalThis.requestAnimationFrame?.bind(globalThis),
+  cancelFrame = globalThis.cancelAnimationFrame?.bind(globalThis),
+  motionMode = () => requestFrame ? resolveMotionMode() : "reduced",
+} = {}) {
   const canvas = makeCanvas(canvasFactory);
   const context = canvas.getContext?.("2d");
   if (!context) throw new Error("projection legend adapter requires a 2d canvas");
@@ -200,8 +212,20 @@ export function createProjectionLegendAdapter({ canvasFactory, rasterScale = 1 }
   let disposed = false;
   let signature = null;
   let contentVersion = 0;
-  let contentLayout = null;
   let rasterSize = { width: canvas.width, height: canvas.height };
+  const motion = createLegendMotion({ now, motionMode, interpolateData: interpolateLegendPlacement });
+  let frame = null, wasMoving = false;
+
+  const scheduleFrame = () => {
+    if (disposed || frame != null || !requestFrame || !motion.sample().moving) return;
+    frame = requestFrame(() => {
+      frame = null;
+      if (disposed) return;
+      dirty = true;
+      onInvalidate?.();
+      scheduleFrame();
+    });
+  };
 
   const planFor = (source, sourceLayout, size) => {
     if (source.contentLayout) return source.contentLayout;
@@ -219,12 +243,20 @@ export function createProjectionLegendAdapter({ canvasFactory, rasterScale = 1 }
     snapshot = next.snapshot || next;
     layout = snapshot.layout || layout;
     const size = resolveLegendRasterSize(layout);
+    const fontStyle = snapshot.fontStyle || null;
     const nextPlan = planFor(snapshot, layout, size);
-    const nextSignature = JSON.stringify([snapshot.language, snapshot.blocks, snapshot.pages, snapshot.pageIndex, Number(layout.fontPx) || 22,
+    const nextSignature = JSON.stringify([snapshot.language, fontStyle?.fontFamily || "", fontStyle?.canvasFontStack || "",
+      snapshot.blocks, snapshot.pages, snapshot.pageIndex, Number(layout.fontPx) || 22,
       size.width, size.height, Number(layout.columns) || 0, nextPlan, Number(snapshot.fontRevision) || 0]);
+    const visible = snapshot.visible !== false && snapshot.spanId !== "right" && snapshot.layout?.visible !== false;
+    motion.update((nextPlan.placements || []).map(placement => ({
+      id: `${placement.packId}:${placement.itemId}`, x: placement.x * nextPlan.scale, y: placement.y * nextPlan.scale,
+      scale: nextPlan.scale, data: { placement, fitScale: nextPlan.scale,
+        font: Number(layout.fontPx) || 22, fontStack: fontStyle?.canvasFontStack },
+    })), { visible, immediate: snapshot.editing === true || snapshot.spanId === "right" });
+    scheduleFrame();
     if (nextSignature === signature) return;
     signature = nextSignature;
-    contentLayout = nextPlan;
     rasterSize = size;
     if (canvas.width !== size.width * rasterScale || canvas.height !== size.height * rasterScale) {
       canvas.width = size.width * rasterScale;
@@ -234,24 +266,31 @@ export function createProjectionLegendAdapter({ canvasFactory, rasterScale = 1 }
   };
 
   const draw = () => {
-    if (disposed || !snapshot || snapshot.visible === false || snapshot.spanId === "right" || snapshot.layout?.visible === false) return null;
-    if (dirty) {
+    if (disposed || !snapshot || snapshot.spanId === "right") return null;
+    const state = motion.sample();
+    if (state.opacity === 0 && !state.moving) return null;
+    if (dirty || state.moving || wasMoving) {
       context.clearRect(0, 0, canvas.width, canvas.height);
-      const font = Number(layout.fontPx) || 22;
-      const scale = Number(contentLayout?.scale) || 1;
       context.save?.();
       context.scale?.(rasterScale, rasterScale);
-      context.scale?.(scale, scale);
-      for (const placement of contentLayout?.placements || []) drawPlacement(context, placement, font, scale * rasterScale);
+      for (const row of state.rows) {
+        const { placement, font, fontStack } = row.data;
+        context.save?.();
+        context.translate?.(row.x - placement.x * row.scale, row.y - placement.y * row.scale);
+        context.scale?.(row.scale, row.scale);
+        drawPlacement(context, placement, font, row.scale * rasterScale, fontStack, row.opacity);
+        context.restore?.();
+      }
       context.restore?.();
       dirty = false;
       contentVersion += 1;
     }
+    wasMoving = state.moving;
     const rasterWidthPct = rasterSize.width / OUTPUT_WIDTH * 100;
     const rasterHeightPct = rasterSize.height / OUTPUT_HEIGHT * 100;
     const paintLayout = { ...layout, leftPct: layout.leftPct + (layout.widthPct - rasterWidthPct) / 2,
       topPct: layout.topPct + (layout.heightPct - rasterHeightPct) / 2, widthPct: rasterWidthPct, heightPct: rasterHeightPct };
-    return { source: canvas, contentVersion, matrix: projectionOverlayMatrix(paintLayout) };
+    return { source: canvas, contentVersion, matrix: projectionOverlayMatrix(paintLayout), opacity: state.opacity };
   };
 
   return {
@@ -260,6 +299,9 @@ export function createProjectionLegendAdapter({ canvasFactory, rasterScale = 1 }
     draw,
     dispose() {
       disposed = true;
+      if (frame != null) cancelFrame?.(frame);
+      frame = null;
+      motion.clear();
       context.clearRect(0, 0, canvas.width, canvas.height);
       snapshot = null;
     },

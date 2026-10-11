@@ -2,7 +2,7 @@ import {
   DEFAULT_PROJECTION_CONFIG,
   parseProjectionImport,
   serializeProjectionExport,
-  migrateProjectionConfigToV7,
+  migrateProjectionConfigToV8,
   validateProjectionConfig,
 } from "../shared/projection-config-schema.js";
 import { equalProjectionConfig } from "../shared/projection-config-client.js";
@@ -83,7 +83,7 @@ function resolvedFieldPath(config, path) {
 function readField(config, path) { return path.split(".").reduce((target, key) => target?.[key], namesWallProfileScoped(path) ? { namesWall: config?.namesWall?.profiles?.[path === "namesWall.inwardShiftPercent" ? "wall" : config?.namesWall?.activeMode] } : config); }
 function normalizeConfig(config) {
   if (!config) return config;
-  return migrateProjectionConfigToV7(config, config.namesWall?.rotateDeg ?? 35);
+  return migrateProjectionConfigToV8(config, config.namesWall?.rotateDeg ?? 35);
 }
 function normalizeState(value) {
   if (!value || typeof value !== "object") return value;
@@ -186,6 +186,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
   let namesRunPending = false;
   let namesDatasetVersion = "";
   let namesTargetRequest = 0;
+  const readNliDisplayLanguage = () => layoutClient?.getLegendLanguage?.() === "en" ? "en" : "he";
   let namesStatusReplayPending = false;
   const win = root?.ownerDocument?.defaultView || globalThis.document?.defaultView;
   let layoutUnloadAttached = false;
@@ -211,6 +212,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     trace,
     descriptors: ALL_FIELD_DESCRIPTORS,
     onField: handleField,
+    onNliFont: handleNliFont,
     onGazaBorderVisibility: value => { void visibilityClient?.setVisible(value); },
     onGazaBorderReload: () => { void visibilityClient?.hydrate(); },
     onFieldCancel: handleFieldCancel,
@@ -557,7 +559,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
       output: settlementOutput,
       citycode: settlementCitycode,
       settingsClient: settlementClient,
-      getNameLanguage: () => layoutClient?.getLegendLanguage?.() || 'he',
+      getNameLanguage: readNliDisplayLanguage,
       subscribeNameLanguage: callback => layoutClient?.subscribe?.(callback),
       catalog,
       catalogStatus,
@@ -631,14 +633,15 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     const snapshot = state.snapshot;
     if (!snapshot?.config || !Number.isSafeInteger(snapshot.revision) || snapshot.revision < 0) { namesTracker.setTarget(null); refresh(); return false; }
     const token = ++namesTargetRequest;
+    const language = readNliDisplayLanguage();
     try {
       if (readDataset) {
         const inputs = await readNamesDataset?.();
         if (disposed || token !== namesTargetRequest || state.snapshot?.revision !== snapshot.revision) return false;
         namesDatasetVersion = typeof inputs?.datasetVersion === "string" && inputs.datasetVersion.trim() && inputs.datasetVersion.length <= 128 ? inputs.datasetVersion : "";
       }
-      const placementIdentity = await projectionPlacementInputIdentity(snapshot.config);
-      if (disposed || token !== namesTargetRequest || state.snapshot?.revision !== snapshot.revision) return false;
+      const placementIdentity = await projectionPlacementInputIdentity(snapshot.config, language);
+      if (disposed || token !== namesTargetRequest || state.snapshot?.revision !== snapshot.revision || readNliDisplayLanguage() !== language) return false;
       const changed = namesDatasetVersion
         ? namesTracker.setTarget({ revision: snapshot.revision, datasetVersion: namesDatasetVersion, placementIdentity })
         : namesTracker.setTarget(null);
@@ -668,7 +671,11 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
         state.pending || state.hasLocalDraft || typeof datasetVersion !== "string" || !datasetVersion.trim() || datasetVersion.length > 128) {
         namesRunPending = false; refresh(); return false;
       }
-      const placementIdentity = await projectionPlacementInputIdentity(config);
+      const language = readNliDisplayLanguage();
+      const placementIdentity = await projectionPlacementInputIdentity(config, language);
+      if (disposed || state.snapshot?.revision !== revision || readNliDisplayLanguage() !== language) {
+        namesRunPending = false; refresh(); return false;
+      }
       namesDatasetVersion = datasetVersion;
       namesTracker.setTarget({ revision, datasetVersion, placementIdentity });
       const requestId = createUuid();
@@ -791,6 +798,22 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
   function setClientDraft(candidate) {
     localDraftNotification = true;
     try { client.setDraft(candidate); } finally { localDraftNotification = false; }
+  }
+  function handleNliFont(language, choice) {
+    if (disposed || !state.draft || !["he", "en"].includes(language)) return false;
+    const candidate = clone(state.draft);
+    if (!candidate.nliFonts || typeof candidate.nliFonts !== "object") return false;
+    if (candidate.nliFonts[language] === choice) return false;
+    candidate.nliFonts[language] = choice;
+    if (!validCandidate(candidate, `nliFonts.${language}`)) return false;
+    try {
+      setClientDraft(candidate);
+      fieldErrors = {};
+    } catch (error) {
+      fieldErrors = { [`nliFonts.${language}`]: error.message };
+    }
+    refresh();
+    return true;
   }
   function commitScalar({ path, resolvedPath: editPath, value, baseValue, override = false, phase, gestureId }) {
     const descriptor = descriptorFor(path);
@@ -1140,8 +1163,8 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
       const parsed = typeof imported === "string" ? parseProjectionImport(imported, rotateDeg) : imported?.config ? imported : parseProjectionImport(String(imported), rotateDeg);
       const warnings = [...(parsed?.warnings || [])];
       let config = parsed?.config;
-      if (config && config.schemaVersion < 7) {
-        config = migrateProjectionConfigToV7(config, rotateDeg, warnings);
+      if (config && config.schemaVersion < 8) {
+        config = migrateProjectionConfigToV8(config, rotateDeg, warnings);
       } else config = normalizeConfig(config);
       const importErrors = validateProjectionConfig(config);
       if (Object.keys(importErrors).length) throw new Error(`invalid imported projection config: ${Object.entries(importErrors).map(([path, message]) => `${path} ${message}`).join("; ")}`);

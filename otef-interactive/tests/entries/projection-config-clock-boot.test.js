@@ -95,25 +95,30 @@ test("config boot owns one layout client that hydrates asynchronously from the O
 test("config boot exposes failed layout hydration, blocks writes, and recovers with a fresh read", async () => {
   const snapshot = { nli_clock_layout: { gis: {}, projection: {} }, nli_clock_layout_revision: 2,
     legend_settings: { projection: {} }, legend_layout_revision: 3 };
-  const fetchImpl = vi.fn()
-    .mockRejectedValueOnce(new Error("Offline"))
-    .mockImplementation(async () => ({ ok: true, json: async () => structuredClone(snapshot) }));
+  let failedLayoutRead = false;
+  const fetchImpl = vi.fn(async (url) => {
+    if (url === "/api/otef/staff-remote-management/?table=otef") return Response.json({ table: "otef", revision: 0, deviceId: null, notice: null });
+    if (url === "/otef-interactive/runtime/frontend-version.js") return new Response('export const FRONTEND_BUILD_ID = "frontend-aaaaaaaaaaaaaaaa";');
+    if (!failedLayoutRead) { failedLayoutRead = true; throw new Error("Offline"); }
+    return { ok: true, json: async () => structuredClone(snapshot) };
+  });
+  const layoutCalls = () => fetchImpl.mock.calls.filter(([url]) => url === "/api/otef/");
   harness.writeClock = vi.fn(); harness.writeLegend = vi.fn(); harness.socketCtor = vi.fn();
   let layoutClient;
   harness.mount = vi.fn((_root, options) => { layoutClient = options.layoutClient; return { dispose() {} }; });
   const dispose = await bootProjectionConfig({ document: { getElementById: () => ({}) },
     location: { href: "http://localhost/otef-interactive/projection-config.html" }, fetchImpl, socket: { on() {}, off() {} } });
   await vi.waitFor(() => expect(layoutClient.getHydrationState()).toMatchObject({ status: "Failed", error: "Offline" }));
-  const failedRequestSignal = fetchImpl.mock.calls[0][1].signal;
+  const failedRequestSignal = layoutCalls()[0][1].signal;
   expect(failedRequestSignal).toBeInstanceOf(AbortSignal);
   expect(layoutClient.getHydrationState()).toMatchObject({ status: "Failed", error: "Offline" });
   await expect(layoutClient.commit("gisClock", "start", { leftPct: 12 })).rejects.toThrow("not loaded");
   expect(harness.writeClock).not.toHaveBeenCalled();
+  const readsBeforeRetry = layoutCalls().length;
   await layoutClient.hydrate({ forceFresh: true });
   expect(layoutClient.getHydrationState().status).toBe("Saved");
-  expect(fetchImpl).toHaveBeenCalledTimes(4);
-  expect(fetchImpl.mock.calls.at(-1)[0]).toBe("/api/otef/");
-  expect(fetchImpl.mock.calls.at(-1)[1].signal).toBeInstanceOf(AbortSignal);
-  expect(fetchImpl.mock.calls.at(-1)[1].signal).not.toBe(failedRequestSignal);
+  expect(layoutCalls().length).toBeGreaterThan(readsBeforeRetry);
+  expect(layoutCalls().at(-1)[1].signal).toBeInstanceOf(AbortSignal);
+  expect(layoutCalls().at(-1)[1].signal).not.toBe(failedRequestSignal);
   dispose();
 });

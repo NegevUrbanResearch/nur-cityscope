@@ -7,7 +7,8 @@ from django.test import TestCase
 
 from backend.models import OTEFProjectionCalibration
 from backend.projection_config_schema import legacy_projection_config_defaults, validate_projection_snapshot
-from backend.projection_warp_schema import migrate_projection_config_to_v2, migrate_projection_config_to_v5, migrate_projection_config_to_v7
+from backend.projection_warp_schema import migrate_projection_config_to_v2, migrate_projection_config_to_v5, migrate_projection_config_to_v7, migrate_projection_config_to_v8
+from backend.projection_config_migration import convert_projection_calibration_payload_to_v8
 from backend.tests.settlement_name_fixtures import (
     BASELINE_POSITIONS,
     CALIBRATION_CONFIG_DIGEST,
@@ -31,6 +32,71 @@ class ProjectionNameInitializationTests(SettlementNameFixtureMixin, TestCase):
 
         return initialize_projection_name_settings("otef", initialization_payload(**overrides))
 
+    def install_v7_capture_with_v8_envelope(self):
+        self.initialize()
+        self.state.refresh_from_db()
+        self.calibration.refresh_from_db()
+        payload = initialization_payload()
+        historical_working = migrate_projection_config_to_v7(json.loads(payload['calibrationConfigJson']), payload['wallRotateDeg'])
+        historical_presets = []
+        for preset in self.calibration.presets:
+            historical = deepcopy(preset['config'])
+            historical['schemaVersion'] = 7
+            historical.pop('nliFonts')
+            historical_presets.append({**preset, 'config': historical})
+        self.calibration.working_config = historical_working
+        self.calibration.presets = historical_presets
+        self.calibration.save(update_fields=['working_config', 'presets'])
+        working, presets = convert_projection_calibration_payload_to_v8(
+            self.calibration.working_config, self.calibration.presets,
+            self.calibration.selected_preset_id, self.calibration.revision,
+        )
+        self.calibration.working_config = working
+        self.calibration.presets = presets
+        self.calibration.save(update_fields=['working_config', 'presets'])
+        return deepcopy(self.state.settlement_name_settings), self.calibration.revision, self.state.settlement_name_revision
+
+    def test_v7_capture_retry_succeeds_after_v8_install(self):
+        settings, calibration_revision, settlement_revision = self.install_v7_capture_with_v8_envelope()
+        from backend.projection_name_initialization import _current_v8_envelopes, _positions_subset, _settlement_snapshot_complete, compact_json, digest_text
+        payload = initialization_payload()
+        parsed = json.loads(payload['calibrationConfigJson'])
+        expected = migrate_projection_config_to_v7(parsed, payload['wallRotateDeg'])
+        self.calibration.refresh_from_db()
+        self.assertEqual(settings['baseline']['successor']['configDigest'], digest_text(compact_json(expected)))
+        self.assertTrue(_current_v8_envelopes(self.calibration))
+        self.assertTrue(_settlement_snapshot_complete(settings))
+        self.assertTrue(_positions_subset(payload['baselinePositions'], settings['baseline']['outputs']))
+        result = self.initialize()
+        self.assertEqual(result['status'], 'ok')
+        self.assertEqual(result['settlementNameSettings'], settings)
+        self.assertEqual(result['settlementNameRevision'], settlement_revision)
+        self.assertEqual(result['projectionState']['revision'], calibration_revision)
+        self.assertEqual(result['projectionState']['config']['schemaVersion'], 8)
+        self.assertEqual(result['projectionState']['config']['nliFonts'], {'he': 'default', 'en': 'hadassah'})
+
+    def test_initialized_retry_rejects_non_object_config_json_without_server_error(self):
+        self.initialize()
+        payload = initialization_payload(calibrationConfigJson='[]', calibrationConfigDigest=sha256_text('[]'))
+        response = self.client.post(
+            '/api/otef_viewport/by-table/otef/command/',
+            json.dumps(payload),
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, 409, response.content)
+        self.assertEqual(response.json()['error'], 'conflict')
+
+    def test_initialized_settlements_remain_ready_after_v8_upgrade(self):
+        settings, calibration_revision, settlement_revision = self.install_v7_capture_with_v8_envelope()
+        self.state.refresh_from_db()
+        self.calibration.refresh_from_db()
+        self.assertEqual(self.state.settlement_name_settings, settings)
+        self.assertEqual(self.state.settlement_name_revision, settlement_revision)
+        self.assertEqual(self.calibration.revision, calibration_revision)
+        self.assertEqual(self.calibration.working_config['schemaVersion'], 8)
+        self.assertEqual(self.calibration.working_config['outputs'], migrate_projection_config_to_v8(canonical_v5_config(), WALL_ROTATE_DEG)['outputs'])
+        self.assertEqual([preset['config']['schemaVersion'] for preset in self.calibration.presets], [8, 8])
+
     def test_initialization_preserves_geometry_presets_and_records_provenance(self):
         before_working = deepcopy(self.calibration.working_config)
         before_presets = deepcopy(self.calibration.presets)
@@ -44,7 +110,8 @@ class ProjectionNameInitializationTests(SettlementNameFixtureMixin, TestCase):
         self.assertEqual(self.state.settlement_name_revision, 1)
         self.assertEqual(self.calibration.revision, CALIBRATION_REVISION + 1)
         self.assertEqual(self.calibration.selected_preset_id, "original")
-        self.assertEqual(self.calibration.working_config["schemaVersion"], 7)
+        self.assertEqual(self.calibration.working_config["schemaVersion"], 8)
+        self.assertEqual(self.calibration.working_config["nliFonts"], {'he': 'default', 'en': 'hadassah'})
         self.assertEqual(self.calibration.working_config["pre"], before_working["pre"])
         self.assertEqual(self.calibration.working_config["outputs"], migrate_projection_config_to_v7(before_working, WALL_ROTATE_DEG)["outputs"])
         self.assertEqual(self.calibration.working_config["namesWall"]["rotateDeg"], WALL_ROTATE_DEG)
@@ -60,7 +127,7 @@ class ProjectionNameInitializationTests(SettlementNameFixtureMixin, TestCase):
             self.assertEqual(after["config"]["pre"], before["config"]["pre"])
             self.assertEqual(after["config"]["outputs"], migrate_projection_config_to_v7(before["config"], WALL_ROTATE_DEG)["outputs"])
             self.assertEqual(after["config"]["namesWall"]["rotateDeg"], WALL_ROTATE_DEG)
-            self.assertEqual(after["config"]["schemaVersion"], 7)
+            self.assertEqual(after["config"]["schemaVersion"], 8)
         baseline = self.state.settlement_name_settings["baseline"]
         self.assertEqual(baseline["outputs"], BASELINE_POSITIONS)
         self.assertEqual(baseline["sourceDigest"], PROCESSED_SOURCE_DIGEST)
@@ -118,7 +185,7 @@ class ProjectionNameInitializationTests(SettlementNameFixtureMixin, TestCase):
         self.state.refresh_from_db()
         self.calibration.refresh_from_db()
         self.assertEqual(self.state.settlement_name_revision, 1)
-        self.assertEqual(self.calibration.working_config["schemaVersion"], 7)
+        self.assertEqual(self.calibration.working_config["schemaVersion"], 8)
         self.state.settlement_name_settings = {}
         self.state.settlement_name_revision = 0
         self.state.save(update_fields=["settlement_name_settings", "settlement_name_revision"])
@@ -483,10 +550,11 @@ class ProjectionV6SchemaTests(TestCase):
         snapshot["presets"][0]["config"] = shifted
         self.assertIn("presets[0]", validate_projection_snapshot(snapshot))
 
-    def test_new_defaults_use_v7_and_35_degrees(self):
+    def test_new_defaults_use_v8_and_35_degrees(self):
         from backend.models import projection_config_defaults
 
         defaults = projection_config_defaults()
-        self.assertEqual(defaults["schemaVersion"], 7)
+        self.assertEqual(defaults["schemaVersion"], 8)
+        self.assertEqual(defaults["nliFonts"], {'he': 'default', 'en': 'hadassah'})
         self.assertEqual(defaults["namesWall"]["rotateDeg"], 35)
         self.assertEqual(defaults["pre"], {"scale": 1.41, "rotateDeg": -50, "tx": 0.01, "ty": 0})

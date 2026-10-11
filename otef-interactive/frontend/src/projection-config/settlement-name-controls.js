@@ -2,8 +2,6 @@ import { effectiveSettlementPosition } from "../shared/settlement-name-settings.
 import { renderField } from './config-field-control.js';
 import { DEFAULT_SETTLEMENT_LEADER_STYLE, EXCLUDED_SETTLEMENT_CODES } from '../shared/settlement-label-presentation.js';
 
-const FONTS = ["Guttman Hatzvi", "Arial"];
-
 function make(doc, tag, props = {}, text = "") {
   const node = doc.createElement(tag);
   for (const [key, value] of Object.entries(props)) {
@@ -45,7 +43,7 @@ export function createSettlementNameControls(doc, {
   onLoad = () => {},
 } = {}) {
   const element = make(doc, "div", { className: "settlement-name-controls" });
-  const note = make(doc, "p", { className: "settlement-shared-note" }, "Position edits save automatically for this output. Font, rotation, line breaks, and line style save automatically for both projectors. Line breaks affect projection only. These edits are separate from projection calibration Live and Apply.");
+  const note = make(doc, "p", { className: "settlement-shared-note" }, "Position edits save automatically for this output. Rotation, line breaks, and line style save automatically for both projectors. Line breaks affect projection only. These edits are separate from projection calibration Live and Apply.");
   const outputLabel = make(doc, "label", { className: "settlement-name-field" }, "Output");
   const output = make(doc, "select", { ariaLabel: "Settlement output", dataset: { field: "output" } });
   output.append(make(doc, "option", { value: "left" }, "Left"), make(doc, "option", { value: "right" }, "Right"));
@@ -53,10 +51,6 @@ export function createSettlementNameControls(doc, {
   const cityLabel = make(doc, "label", { className: "settlement-name-field" }, "Settlement");
   const city = make(doc, "select", { ariaLabel: "Settlement name", dataset: { field: "citycode" } });
   cityLabel.appendChild(city);
-  const fontLabel = make(doc, "label", { className: "settlement-name-field" }, "Font");
-  const fontFamily = make(doc, "select", { ariaLabel: "Settlement font", dataset: { field: "fontFamily" } });
-  for (const family of FONTS) fontFamily.appendChild(make(doc, "option", { value: family }, family));
-  fontLabel.appendChild(fontFamily);
   const breakLabel = make(doc, 'label', { className: 'settlement-name-field' }, 'Line break (projection only)');
   const connectorNote = make(doc, 'p', { className: 'settlement-connector-note', hidden: true }, 'No settlement outline is linked to this name; its connector is unavailable.');
   const lineBreak = make(doc, 'select', { ariaLabel: 'Projection line break', dataset: { field: 'lineBreak' } });
@@ -103,13 +97,12 @@ export function createSettlementNameControls(doc, {
   const load = make(doc, "button", { type: "button", className: "settlement-name-load" }, "Load saved");
   const actions = make(doc, "div", { className: "settlement-name-status-actions" });
   actions.append(status, retry, load);
-  element.append(note, catalogStatus, catalogRetry, outputLabel, cityLabel, connectorNote, breakLabel, ...leaderLabels, originHelp, resetOrigin, fontLabel, ...fieldLabels, actions);
+  element.append(note, catalogStatus, catalogRetry, outputLabel, cityLabel, connectorNote, breakLabel, ...leaderLabels, originHelp, resetOrigin, ...fieldLabels, actions);
   let current = { position: null, style: null };
   const stop = (event) => event.stopPropagation?.();
-  for (const node of [output, city, fontFamily, lineBreak, ...fields.values(), ...colors.values()]) node.addEventListener("click", stop);
+  for (const node of [output, city, lineBreak, ...fields.values(), ...colors.values()]) node.addEventListener("click", stop);
   output.addEventListener("change", () => onOutput(output.value));
   city.addEventListener("change", () => onCitycode(city.value));
-  fontFamily.addEventListener("change", () => onStyle({ ...current.style, fontFamily: fontFamily.value }));
   retry.addEventListener("click", (event) => { stop(event); onRetry(); });
   catalogRetry.addEventListener("click", (event) => { stop(event); onRetryCatalog(); });
   load.addEventListener("click", (event) => { stop(event); onLoad(); });
@@ -146,7 +139,6 @@ export function createSettlementNameControls(doc, {
       }
       if (doc.activeElement !== output) output.value = state.output || "left";
       if (doc.activeElement !== city && state.citycode) city.value = state.citycode;
-      if (doc.activeElement !== fontFamily && state.style?.fontFamily) fontFamily.value = state.style.fontFamily;
       for (const [key, input] of fields) {
         const value = key === "x" || key === "y" ? state.position?.[key]
           : Object.hasOwn(DEFAULT_SETTLEMENT_LEADER_STYLE, key) ? current.leaderStyle[key] : state.style?.[key];
@@ -155,7 +147,7 @@ export function createSettlementNameControls(doc, {
       const enabled = state.enabled !== false && state.hydration?.status === "Saved";
       resetOrigin.disabled = !enabled || !state.leaderOrigin;
       for (const [key, input] of colors) input.value = current.leaderStyle[key];
-      for (const node of [output, city, fontFamily, lineBreak, ...fields.values(), ...colors.values()]) node.disabled = !enabled;
+      for (const node of [output, city, lineBreak, ...fields.values(), ...colors.values()]) node.disabled = !enabled;
       for (const control of sessions.values()) for (const node of control.wrap.querySelectorAll?.('button') || []) node.disabled = !enabled || (node.dataset?.action === 'numeric-use-mine' && node.disabled);
       const extraRecords = [state.lineBreakRecord, state.leaderStyleRecord, state.leaderOriginRecord].filter(Boolean);
       status.textContent = statusText(state.positionRecord, state.styleRecord, state.hydration, extraRecords);

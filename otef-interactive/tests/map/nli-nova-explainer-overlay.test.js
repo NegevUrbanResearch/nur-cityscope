@@ -64,6 +64,7 @@ function mount(options = {}) {
   let escape = options.escape || { mor: options.mor === true };
   let layout = options.layout || { close: {}, wide: {} };
   let language = options.language || 'he';
+  let fontChoices = options.fontChoices || { he: 'default', en: 'hadassah' };
   const overlay = createNovaExplainerOverlay({
     map,
     container,
@@ -73,6 +74,7 @@ function mount(options = {}) {
     motionMode: options.motionMode || "full",
     cameraOverride: options.cameraOverride,
     getLanguage: () => language,
+    getFontChoices: () => fontChoices,
   });
   return {
     overlay,
@@ -83,6 +85,7 @@ function mount(options = {}) {
     setEscape(value) { escape = value; },
     setLayout(next) { layout = next; },
     setLanguage(next) { language = next; },
+    setFontChoices(next) { fontChoices = next; },
     setSize(nextWidth, nextHeight) { width = nextWidth; height = nextHeight; },
     host: () => container.querySelector("#nliNovaExplainerHost"),
     card: (id) => container.querySelector(`.nli-nova-explainer-card[data-object-id="${id}"]`),
@@ -109,12 +112,26 @@ afterEach(() => {
 });
 
 describe("createNovaExplainerOverlay", () => {
+  it('uses the Hadassah baseline for Hebrew Default and English, and refreshes a concrete Hebrew family in place', () => {
+    const ui = mount();
+    ui.overlay.sync(visual());
+    const card = ui.card(97);
+    expect(card.firstElementChild.style.fontFamily).toBe('"Hadassah Friedlaender", sans-serif');
+    const reads = measureReads;
+    ui.setFontChoices({ he: 'narkiss', en: 'hadassah' });
+    ui.overlay.refresh();
+    expect(card.firstElementChild.style.fontFamily).toBe('"NLI Content Narkiss Block", sans-serif');
+    expect(measureReads).toBeGreaterThan(reads);
+    ui.setLanguage('en'); ui.overlay.refresh();
+    expect(card.firstElementChild.style.fontFamily).toBe('"NLI Content Hadassah Friedlaender", sans-serif');
+    ui.overlay.dispose();
+  });
   it('uses the localized height to keep a long English caption inside the canvas without changing its saved position', () => {
     const ui = mount({ width: 500, height: 300,
       layout: { close: { 104: { leftPct: 80, topPct: 90 } }, wide: {} } });
     vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockImplementation(function () {
       if (this.getAttribute('lang') === 'en') {
-        expect(this.firstElementChild.style.fontFamily).toBe('Arial, sans-serif');
+        expect(this.firstElementChild.style.fontFamily).toBe('"NLI Content Hadassah Friedlaender", sans-serif');
         expect(this.getAttribute('dir')).toBe('ltr');
         return 280;
       }
@@ -144,7 +161,7 @@ describe("createNovaExplainerOverlay", () => {
     expect(card.textContent).toBe('Fighting — Highway 232');
     expect(card.getAttribute('lang')).toBe('en');
     expect(card.getAttribute('dir')).toBe('ltr');
-    expect(card.firstElementChild.style.fontFamily).toBe('Arial, sans-serif');
+    expect(card.firstElementChild.style.fontFamily).toBe('"NLI Content Hadassah Friedlaender", sans-serif');
     expect(measureReads).toBeGreaterThan(reads);
     expect(ui.card(97)).toBe(card); expect(ui.leader(97)).toBe(leader);
     expect(card.style.left).toBe('80px'); expect(card.style.top).toBe('120px');
@@ -152,7 +169,7 @@ describe("createNovaExplainerOverlay", () => {
     const englishReads = measureReads; ui.overlay.refresh(); expect(measureReads).toBe(englishReads);
     ui.setLanguage('he'); ui.overlay.refresh();
     expect(card.textContent).toBe(frame.polygonFeatures[0].properties.Name);
-    expect(card.firstElementChild.style.fontFamily).toBe('');
+    expect(card.firstElementChild.style.fontFamily).toBe('"Hadassah Friedlaender", sans-serif');
     ui.overlay.dispose();
   });
   it('updates outgoing cards on a language switch while keeping their lifecycle owner until hidden', () => {
@@ -161,8 +178,11 @@ describe("createNovaExplainerOverlay", () => {
     ui.overlay.applyScene({ narrativeState: { id: null } }, { runtime: {
       getDesiredIds: () => [], onMemberHidden: (_id, fn) => { hidden = fn; return () => {}; },
     } });
-    ui.setNarrative(null); ui.setLanguage('en'); ui.overlay.refresh();
+    ui.setNarrative(null); ui.setFontChoices({ he: 'narkiss', en: 'hadassah' }); ui.overlay.refresh();
+    expect(card.firstElementChild.style.fontFamily).toBe('"NLI Content Narkiss Block", sans-serif');
+    ui.setLanguage('en'); ui.overlay.refresh();
     expect(card.isConnected).toBe(true); expect(card.textContent).toBe('Fighting — Highway 232');
+    expect(card.firstElementChild.style.fontFamily).toBe('"NLI Content Hadassah Friedlaender", sans-serif');
     hidden(); expect(card.isConnected).toBe(false); ui.overlay.dispose();
   });
   it("shows only achieved story ids, with the literal name and dir=auto", () => {

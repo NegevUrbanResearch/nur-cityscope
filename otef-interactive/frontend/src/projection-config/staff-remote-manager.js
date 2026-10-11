@@ -3,12 +3,16 @@ import { createUuid } from "../shared/uuid.js";
 
 const copy = (value) => ({ ...value });
 
-export function createStaffRemoteManager({ socket, sourceId, monotonicNow = () => globalThis.performance?.now?.() ?? Date.now(), timers = globalThis } = {}) {
+export function createStaffRemoteManager({ socket, sourceId, monotonicNow = () => globalThis.performance?.now?.() ?? Date.now(), timers = globalThis,
+  updateApi, readBuildId, document: doc = globalThis.document } = {}) {
   const rows = new Map();
   const requests = new Map();
   const retiredDocuments = new Set();
   const retiredConnections = new Set();
   const listeners = new Set();
+  const bindings = new Map();
+  let registration = null, servedBuildId = null, noticeSaveStatus = "", readError = false, sending = false, readGeneration = 0;
+  let retryPayload = null;
   let disposed = false;
   let tickTimer = null;
   let connected = socket?.getConnected?.() === true || socket?.isConnected === true;
@@ -19,7 +23,9 @@ export function createStaffRemoteManager({ socket, sourceId, monotonicNow = () =
     !Number.isFinite(age(row)) || age(row) < 0 ? "Connection unavailable" :
       age(row) > STAFF_REMOTE_MANAGEMENT.STALE_AFTER_MS ? "Not responding" : "Online";
   const ensureTicker = () => { if (tickTimer === null && rows.size) tickTimer = timers.setInterval(emit, 1_000); };
-  const canRefresh = (row) => connected && rowStatus(row) === "Online" && Number.isFinite(age(row)) && age(row) >= 0 && age(row) < STAFF_REMOTE_MANAGEMENT.LEASE_MS &&
+  const boundToTablet = row => !updateApi || (registration?.deviceId && bindings.get(`${row.remoteId}:${row.instanceId}`)?.deviceId === registration.deviceId &&
+    bindings.get(`${row.remoteId}:${row.instanceId}`)?.connectionSeq === row.connectionSeq);
+  const canRefresh = (row) => boundToTablet(row) && connected && rowStatus(row) === "Online" && Number.isFinite(age(row)) && age(row) >= 0 && age(row) < STAFF_REMOTE_MANAGEMENT.LEASE_MS &&
     row.ready && row.refreshBlockReason === null && !row.pending;
   const blockedCopy = (reason) => ({ not_home: "Return GIS/projection to Home before refreshing", busy: "Remote is busy",
     owned_session: "Close the archive or presentation before refreshing" })[reason] || "Remote is not ready";
@@ -53,14 +59,62 @@ export function createStaffRemoteManager({ socket, sourceId, monotonicNow = () =
       visibleKeys.add(`${latest.remoteId}:${latest.instanceId}`);
       for (const row of documents) if (row.pending) visibleKeys.add(`${row.remoteId}:${row.instanceId}`);
     }
-    return { connectionStatus: connected ? "Connected" : "Connection unavailable", remotes: [...rows.values()].filter((row) =>
-      visibleKeys.has(`${row.remoteId}:${row.instanceId}`)).map((row) => ({
+    return { connectionStatus: connected ? "Connected" : "Connection unavailable", registration, noticeSaveStatus,
+      sendEnabled: Boolean(updateApi && (retryPayload || registration?.deviceId) && !sending), sendRetryPending: retryPayload !== null,
+      noticeStatus: readError ? "unavailable" : !registration?.notice ? "none" : registration.notice.targetBuildId !== servedBuildId ? "obsolete" : "saved",
+      remotes: [...rows.values()].filter((row) => boundToTablet(row) && visibleKeys.has(`${row.remoteId}:${row.instanceId}`)).map((row) => ({
       ...copy(row), status: rowStatus(row), ageMs: age(row), actionEnabled: canRefresh(row),
       blockedReason: !connected ? "connection_unavailable" : row.refreshBlockReason,
       blockedCopy: rowBlockedCopy(row),
       archiveSettling: row.refreshBlockReason === "owned_session",
     })) };
   }
+
+  async function reconcileUpdates() {
+    if (!updateApi || disposed) return;
+    const generation = ++readGeneration;
+    try {
+      const [value, build] = await Promise.all([updateApi.read(), readBuildId()]);
+      if (disposed || generation !== readGeneration || (registration && value.revision < registration.revision)) return;
+      registration = value; servedBuildId = build; readError = false;
+    } catch { if (!disposed && generation === readGeneration) readError = true; }
+    emit();
+  }
+  async function sendNotice() {
+    if (!updateApi || disposed || sending || (!retryPayload && !registration?.deviceId)) return;
+    const snapshot = retryPayload || { deviceId: registration.deviceId, expectedRevision: registration.revision };
+    let submittedPayload = null;
+    sending = true; noticeSaveStatus = "Saving update notice…"; emit();
+    try {
+      const payload = retryPayload || { ...snapshot, targetBuildId: await readBuildId() };
+      if (disposed) return;
+      submittedPayload = payload;
+      const value = await updateApi.send(payload);
+      if (disposed) return;
+      retryPayload = null;
+      if (!registration || value.revision >= registration.revision) registration = value;
+      readGeneration += 1; readError = false; noticeSaveStatus = "Notice saved";
+      void reconcileUpdates();
+      return value;
+    } catch (error) {
+      if (disposed) return;
+      retryPayload = ["conflict", "unregistered", "invalid", "not_found"].includes(error.code) ? null : submittedPayload;
+      if (error.state && (!registration || error.state.revision >= registration.revision)) registration = error.state;
+      noticeSaveStatus = error.code === "conflict" || error.code === "unregistered" ? "Tablet or notice changed. Review it before sending again." : "Notice not confirmed. Retry to check the saved state.";
+      void reconcileUpdates();
+    } finally { sending = false; emit(); }
+  }
+  function acceptBinding(message) {
+    const value = validateStaffRemoteMessage(message);
+    if (value?.type !== "otef_staff_remote_device_binding_v1") return;
+    const key = `${value.remoteId}:${value.instanceId}`;
+    const previous = bindings.get(key);
+    if (!previous || value.connectionSeq >= previous.connectionSeq) { bindings.set(key, value); emit(); }
+  }
+  function onNoticeChanged(message) {
+    if (validateStaffRemoteMessage(message)?.type === "otef_staff_remote_notice_changed_v1") void reconcileUpdates();
+  }
+  const onVisible = () => { if (doc?.visibilityState !== "hidden") void reconcileUpdates(); };
 
   function query() {
     if (!connected || disposed) return;
@@ -184,26 +238,34 @@ export function createStaffRemoteManager({ socket, sourceId, monotonicNow = () =
     return true;
   }
 
-  function onConnect() { connected = true; query(); ensureTicker(); emit(); }
+  function onConnect() { connected = true; query(); ensureTicker(); emit(); void reconcileUpdates(); }
   function onDisconnect() { connected = false; for (const row of rows.values()) row.unconfirmed = true; emit(); }
   socket?.on?.("connect", onConnect);
   socket?.on?.("disconnect", onDisconnect);
   socket?.on?.("otef_staff_remote_status", acceptStatus);
   socket?.on?.("otef_staff_remote_disconnected", acceptDisconnect);
   socket?.on?.("otef_staff_remote_refresh_ack", acceptAck);
+  socket?.on?.("otef_staff_remote_device_binding_v1", acceptBinding);
+  socket?.on?.("otef_staff_remote_notice_changed_v1", onNoticeChanged);
+  doc?.addEventListener?.("visibilitychange", onVisible);
   if (connected) query();
   ensureTicker();
+  void reconcileUpdates();
 
   return {
     getState,
     subscribe(listener) { listeners.add(listener); listener(getState()); return () => listeners.delete(listener); },
     refresh,
+    reconcileUpdates, sendNotice,
     dispose() {
       if (disposed) return;
       disposed = true;
       if (tickTimer !== null) timers.clearInterval(tickTimer);
       for (const record of requests.values()) if (record.timer !== null) timers.clearTimeout(record.timer);
       for (const type of ["connect", "disconnect", "otef_staff_remote_status", "otef_staff_remote_disconnected", "otef_staff_remote_refresh_ack"]) socket?.off?.(type, { connect: onConnect, disconnect: onDisconnect, otef_staff_remote_status: acceptStatus, otef_staff_remote_disconnected: acceptDisconnect, otef_staff_remote_refresh_ack: acceptAck }[type]);
+      socket?.off?.("otef_staff_remote_device_binding_v1", acceptBinding);
+      socket?.off?.("otef_staff_remote_notice_changed_v1", onNoticeChanged);
+      doc?.removeEventListener?.("visibilitychange", onVisible);
       listeners.clear();
     },
   };

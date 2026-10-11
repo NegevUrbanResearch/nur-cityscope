@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
-async function setup({ clearSucceeds = true, delayClear = false, focus = "person" } = {}) {
+async function setup({ clearSucceeds = true, delayClear = false, focus = "person", onTransitionContext, onSettledContext } = {}) {
   const { default: dataContext } = await import("../../frontend/src/shared/OTEFDataContext.js");
   const { createCueRunner } = await import("../../frontend/src/remote/nli-staff-cues.js");
   const { createNliStaffSearchEventHandlers } = await import("../../frontend/src/remote/nli-staff-remote.js");
@@ -61,9 +61,11 @@ async function setup({ clearSucceeds = true, delayClear = false, focus = "person
     showClearFailed: () => errors.push("clear failed"),
     setDestination: (item, index) => destinations.push({ id: item.id, index, hold: dataContext.getInvestigationClock().presentationPendingUntilMs }),
     applyDestinationCue: (item, index) => runner.apply(item.steps[index].cue),
-    runDestinationTransition: (item, index, prepareDestination) => runner.apply(
-      item.steps[index].cue, null, isCurrent => prepareDestination(isCurrent),
-    ),
+    runDestinationTransition: (item, index, prepareDestination, operationContext) => {
+      onTransitionContext?.(operationContext);
+      return runner.apply(item.steps[index].cue, null, isCurrent => prepareDestination(isCurrent));
+    },
+    afterDestinationCue: (_item, _index, _result, operationContext) => onSettledContext?.(operationContext),
   });
   return { dataContext, requests, clears, destinations, errors, runner, handlers, releaseClear: () => releaseClear?.() };
 }
@@ -89,6 +91,17 @@ describe("selected staff scene handoff through the public clock API", () => {
     expect(h.requests.map(body => body.action || "clock"))
       .toEqual(["clock", focus === "person" ? "clear_person" : "cancel_navigation_focus", "clock"]);
     expect(h.dataContext.getInvestigationClock()).not.toHaveProperty("presentationPendingUntilMs");
+  });
+
+  test("keeps one lexical navigation context through the public cue handoff", async () => {
+    const contexts = [];
+    const h = await setup({
+      onTransitionContext: (context) => contexts.push(["run", context]),
+      onSettledContext: (context) => contexts.push(["settled", context]),
+    });
+    const context = { ticket: { id: 91 }, generation: 4, kind: "cue" };
+    expect(await h.handlers.transitionToStep(step("wall"), 0, null, context)).toBe(true);
+    expect(contexts).toEqual([["run", context], ["settled", context]]);
   });
 
   test.each(["scene", "cleanup-only"])("a failed %s clear releases its hold without publishing a destination", async kind => {

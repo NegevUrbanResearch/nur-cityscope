@@ -12,7 +12,7 @@ from .models import OTEFProjectionCalibration, Table, projection_config_defaults
 from .projection_config_schema import validate_projection_config
 from .projection_warp_assets import load_trusted_projection_asset, read_projection_baseline_manifest
 from .projection_warp_geometry import evaluate_warp_mesh
-from .projection_warp_schema import validate_projection_config_v2, validate_projection_config_v3, validate_projection_config_v4, validate_projection_config_v5, validate_projection_config_v6, validate_projection_config_v7, migrate_projection_config_to_v5, migrate_projection_config_to_v6, migrate_projection_config_to_v7
+from .projection_warp_schema import validate_projection_config_v2, validate_projection_config_v3, validate_projection_config_v4, validate_projection_config_v5, validate_projection_config_v6, validate_projection_config_v7, validate_projection_config_v8, migrate_projection_config_to_v5, migrate_projection_config_to_v6, migrate_projection_config_to_v7, migrate_projection_config_to_v8
 
 
 class ProjectionConfigError(Exception):
@@ -49,14 +49,14 @@ def validate_projection_config_for_persistence(config):
     errors = validate_projection_config(config)
     if errors:
         return errors
-    if config.get('schemaVersion') not in (2, 3, 4, 5, 6, 7):
+    if config.get('schemaVersion') not in (2, 3, 4, 5, 6, 7, 8):
         return {}
     root = projection_baseline_root()
     td_sides = [side for side in ('left', 'right')
                 if config['outputs'][side]['warp'].get('enabled') and
                 config['outputs'][side]['warp']['baseline']['type'] == 'tdMesh']
     manifest = None
-    validator = {2: validate_projection_config_v2, 3: validate_projection_config_v3, 4: validate_projection_config_v4, 5: validate_projection_config_v5, 6: validate_projection_config_v6, 7: validate_projection_config_v7}[config['schemaVersion']]
+    validator = {2: validate_projection_config_v2, 3: validate_projection_config_v3, 4: validate_projection_config_v4, 5: validate_projection_config_v5, 6: validate_projection_config_v6, 7: validate_projection_config_v7, 8: validate_projection_config_v8}[config['schemaVersion']]
     if td_sides:
         try:
             manifest, manifest_errors = read_projection_baseline_manifest(root)
@@ -161,12 +161,16 @@ def _accept_config(row, config):
         raise ProjectionSchemaChanged(_snapshot(row))
     if stored == 7 and incoming != 7:
         raise ProjectionSchemaChanged(_snapshot(row))
+    if stored == 8 and incoming != 8:
+        raise ProjectionSchemaChanged(_snapshot(row))
     if stored != 6 and incoming == 6:
         raise ProjectionConfigError("invalid", {"schemaVersion": "must match the installed schema"})
     if stored != 7 and incoming == 7:
         raise ProjectionConfigError("invalid", {"schemaVersion": "must match the installed schema"})
+    if stored != 8 and incoming == 8:
+        raise ProjectionConfigError("invalid", {"schemaVersion": "must match the installed schema"})
     try:
-        accepted = migrate_projection_config_to_v7(config, config.get('namesWall', {}).get('rotateDeg', 35)) if stored == 7 else migrate_projection_config_to_v6(config, config.get('namesWall', {}).get('rotateDeg', 35)) if stored == 6 else migrate_projection_config_to_v5(config)
+        accepted = migrate_projection_config_to_v8(config, config.get('namesWall', {}).get('rotateDeg', 35)) if stored == 8 else migrate_projection_config_to_v7(config, config.get('namesWall', {}).get('rotateDeg', 35)) if stored == 7 else migrate_projection_config_to_v6(config, config.get('namesWall', {}).get('rotateDeg', 35)) if stored == 6 else migrate_projection_config_to_v5(config)
     except ValueError as error:
         raise ProjectionConfigError("invalid", validate_projection_config(config) or {"config": str(error)}) from error
     errors = validate_projection_config_for_persistence(accepted)

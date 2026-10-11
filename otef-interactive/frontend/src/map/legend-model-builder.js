@@ -19,7 +19,6 @@ import { investigationCategoryVisible } from "../shared/nli-investigation-visibi
 import { novaEscapeLegendLayer } from "../shared/nli-nova-escape-legend.js";
 import { projectionHatchRasterParams } from "../shared/hatch-projection-presentation.js";
 import {
-  scaleLineOpacityPaintForGis,
   scaleLineWidthPaintForProjection,
   scaleNliPeoplePointRadius,
   scaleOpenSpacesFillOpacity,
@@ -340,8 +339,10 @@ function applySurfacePresentation(item, surface, fullId) {
   if (next.strokeWidth != null) {
     next.strokeWidth = scaleLineWidthPaintForProjection(next.strokeWidth, hatchPresentation, fullId);
   }
-  if (next.strokeOpacity != null) {
-    next.strokeOpacity = scaleLineOpacityPaintForGis(next.strokeOpacity, hatchPresentation, fullId);
+  if (fullId === "gaza.Gaza_Roads" && next.shape === "line") {
+    // The map dims a dense road network; a single legend line needs the authored opacity.
+    next.halo = next.stroke;
+    next.haloBlur = 2;
   }
   if (next.fillOpacity != null) {
     next.fillOpacity = scaleOpenSpacesFillOpacity(next.fillOpacity, fullId);
@@ -363,7 +364,6 @@ function applySurfacePresentation(item, surface, fullId) {
     next.strokeSwatches = next.strokeSwatches.map((swatch) => ({
       ...swatch,
       width: swatch.width == null ? swatch.width : scaleLineWidthPaintForProjection(swatch.width, hatchPresentation, fullId),
-      opacity: swatch.opacity == null ? swatch.opacity : scaleLineOpacityPaintForGis(swatch.opacity, hatchPresentation, fullId),
     }));
   }
   if (Array.isArray(next.components)) {

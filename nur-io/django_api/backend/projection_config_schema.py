@@ -142,6 +142,9 @@ def _number(value, path, low, high, errors):
         errors[path] = f'must be between {low} and {high}'
 
 def validate_projection_config(value):
+    if isinstance(value, dict) and value.get('schemaVersion') == 8 and not isinstance(value.get('schemaVersion'), bool):
+        from .projection_warp_schema import validate_projection_config_v8
+        return validate_projection_config_v8(value)
     if isinstance(value, dict) and value.get('schemaVersion') == 7 and not isinstance(value.get('schemaVersion'), bool):
         from .projection_warp_schema import validate_projection_config_v7
         return validate_projection_config_v7(value)
@@ -187,7 +190,16 @@ def validate_projection_config(value):
     return errors
 
 
-def _original_config(config, historical, version_six, version_seven=None):
+def _original_config(config, historical, version_six, version_seven=None, version_eight=None):
+    if isinstance(config, dict) and config.get('schemaVersion') == 8 and not isinstance(config.get('schemaVersion'), bool):
+        from .projection_warp_schema import migrate_projection_config_to_v8
+        try:
+            normalized = migrate_projection_config_to_v8(config)
+        except (TypeError, ValueError):
+            return False
+        stripped = {**normalized, 'namesWall': {key: value for key, value in normalized['namesWall'].items() if key != 'rotateDeg'}}
+        canonical = {**version_eight, 'namesWall': {key: value for key, value in version_eight['namesWall'].items() if key != 'rotateDeg'}}
+        return stripped == canonical
     if isinstance(config, dict) and config.get('schemaVersion') == 7 and not isinstance(config.get('schemaVersion'), bool):
         from .projection_warp_schema import migrate_projection_config_to_v7
         try:
@@ -239,6 +251,8 @@ def validate_projection_snapshot(value):
     version_six = migrate_projection_config_to_v6(original, 35)
     from .projection_warp_schema import migrate_projection_config_to_v7
     version_seven = migrate_projection_config_to_v7(version_six, 35)
+    from .projection_warp_schema import migrate_projection_config_to_v8
+    version_eight = migrate_projection_config_to_v8(version_seven, 35)
     ids = set()
     original_count = 0
     uuid_pattern = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$', re.I)
@@ -258,7 +272,7 @@ def validate_projection_snapshot(value):
         if isinstance(preset_id, str): ids.add(preset_id)
         if preset_id == 'original':
             original_count += 1
-            if read_only is not True or name != 'Original calibration' or not _original_config(preset.get('config'), (original, upgraded, historical, previous, current), version_six, version_seven):
+            if read_only is not True or name != 'Original calibration' or not _original_config(preset.get('config'), (original, upgraded, historical, previous, current), version_six, version_seven, version_eight):
                 errors[f'{path}'] = 'must be the immutable Original calibration preset'
         elif preset_id == TD_MIGRATION_PRESET_ID:
             if read_only is not True or name != TD_MIGRATION_PRESET_NAME:

@@ -87,6 +87,27 @@ describe("projection overlay adapters", () => {
     expect(descriptor.matrix[1]).toBeCloseTo(Math.sin(Math.PI / 15) * 0.3 * (1920 / 1080));
     expect(descriptor.matrix[4]).toBeCloseTo(Math.cos(Math.PI / 15) * 0.1);
   });
+  test('legend and caption snapshots rerasterize when resolved font identity changes', () => {
+    const a = canvasFactory(); const b = canvasFactory();
+    const fontStyle = { fontFamily: 'NLI Content Narkiss Block', canvasFontStack: '"NLI Content Narkiss Block", sans-serif', mapFontStack: ['NLI Content Narkiss Block'] };
+    const caption = createProjectionCaptionAdapter({ canvasFactory: () => a });
+    caption.sync({ layout, snapshot: { visible: true, model: { clockLabel: '07:05' }, fontStyle } });
+    const firstCaptionVersion = caption.draw().contentVersion;
+    caption.sync({ layout, snapshot: { visible: true, model: { clockLabel: '07:05' }, fontStyle: { ...fontStyle,
+      fontFamily: 'Guttman Hatzvi', canvasFontStack: '"Guttman Hatzvi", sans-serif', mapFontStack: ['Guttman Hatzvi'] } } });
+    expect(caption.draw().contentVersion).toBeGreaterThan(firstCaptionVersion);
+    expect(a.context.font).toContain('"Guttman Hatzvi", sans-serif');
+
+    const legend = createProjectionLegendAdapter({ canvasFactory: () => b });
+    const snapshot = { layout: { ...layout, widthPct: 40, heightPct: 40 }, visible: true, spanId: 'left', language: 'he',
+      fontStyle, blocks: [{ id: 'nli', layers: [{ items: [{ label: 'תווית', shape: 'line', stroke: '#fff' }] }] }] };
+    legend.sync(snapshot); legend.draw();
+    const firstLegendVersion = legend.draw().contentVersion;
+    legend.sync({ ...snapshot, fontStyle: { ...fontStyle, fontFamily: 'Guttman Hatzvi',
+      canvasFontStack: '"Guttman Hatzvi", sans-serif', mapFontStack: ['Guttman Hatzvi'] } });
+    expect(legend.draw().contentVersion).toBeGreaterThan(firstLegendVersion);
+    expect(b.context.font).toContain('"Guttman Hatzvi", sans-serif');
+  });
 
   test("caption rerasterizes successive canonical timeline snapshots without another sync event", () => {
     const c = canvasFactory(); const adapter = createProjectionCaptionAdapter({ canvasFactory: () => c });

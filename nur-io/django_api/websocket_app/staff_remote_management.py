@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 import uuid
+from channels.db import database_sync_to_async
 
 HEARTBEAT_MS = 10_000
 LEASE_MS = 10_000
@@ -12,6 +13,9 @@ _UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{1
 _REASONS = {"not_ready", "not_home", "busy", "owned_session"}
 _REJECTIONS = _REASONS | {"expired", "storage_unavailable", "state_unavailable"}
 _SCHEMAS = {
+    "otef_staff_remote_device_bind_v1": {"deviceId", "remoteId", "instanceId", "connectionSeq"},
+    "otef_staff_remote_device_binding_v1": {"deviceId", "remoteId", "instanceId", "connectionSeq"},
+    "otef_staff_remote_notice_changed_v1": {"revision"},
     "otef_staff_remote_subscribe": {"sourceId"},
     "otef_staff_remote_status_query": {"sourceId"},
     "otef_staff_remote_status": {"remoteId", "instanceId", "connectionSeq", "leaseSeq", "buildId", "visibility", "ready", "refreshBlockReason", "reloadReceipt"},
@@ -46,7 +50,7 @@ def validate_staff_remote_message(value):
             return None
     except (TypeError, ValueError, UnicodeEncodeError):
         return None
-    ids = fields & {"sourceId", "requestId", "remoteId", "instanceId"}
+    ids = fields & {"sourceId", "requestId", "remoteId", "instanceId", "deviceId"}
     if not all(_valid_uuid(value[key]) for key in ids):
         return None
     if any(not _positive_counter(value[key]) for key in fields & {"connectionSeq", "leaseSeq"}):
@@ -66,7 +70,7 @@ def validate_staff_remote_message(value):
         if not ((value["result"] == "accepted" and rejected_reason is None) or
                 (value["result"] == "rejected" and isinstance(rejected_reason, str) and rejected_reason in _REJECTIONS)):
             return None
-    if kind == "otef_staff_remote_disconnected":
+    if kind in {"otef_staff_remote_disconnected", "otef_staff_remote_device_binding_v1", "otef_staff_remote_notice_changed_v1"}:
         return None  # This event is generated only by the server.
     return dict(value)
 
@@ -111,7 +115,20 @@ def _ensure_renewal(consumer):
 
 
 async def send_staff_remote_management(consumer, event):
+    if event.get("type") == "otef_staff_remote_refresh" and getattr(consumer, "_staff_remote_binding_attempted", False):
+        try:
+            active = await registered_device()
+        except Exception:
+            return  # An unconfirmed registered browser must never receive a refresh.
+        if not active or active != getattr(consumer, "_staff_remote_device_id", None):
+            return
     await consumer.send(text_data=json.dumps(event, separators=(",", ":")))
+
+
+@database_sync_to_async
+def registered_device():
+    from backend.staff_remote_updates import read_management_state
+    return read_management_state("otef")["deviceId"]
 
 
 async def handle_staff_remote_management(consumer, data):
@@ -125,6 +142,22 @@ async def handle_staff_remote_management(consumer, data):
     if message is None:
         return True
     role = getattr(consumer, "_staff_remote_role", None)
+    if kind == "otef_staff_remote_device_bind_v1":
+        identity = (message["remoteId"], message["instanceId"], str(message["connectionSeq"]))
+        if role != "producer" or identity != getattr(consumer, "_staff_remote_identity", None):
+            return True
+        consumer._staff_remote_binding_attempted = True
+        consumer._staff_remote_device_id = None
+        try:
+            active = await registered_device()
+        except Exception:
+            return True
+        if message["deviceId"] != active:
+            return True
+        consumer._staff_remote_device_id = active
+        await consumer.channel_layer.group_send(_group("observers_all"), {"type": "staff_remote_management_event",
+            "message": {**message, "type": "otef_staff_remote_device_binding_v1"}})
+        return True
     if kind == "otef_staff_remote_subscribe":
         if role not in (None, "observer"):
             return True

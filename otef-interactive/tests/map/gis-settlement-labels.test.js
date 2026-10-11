@@ -10,7 +10,7 @@ test('GIS settlement and separate Nova label switch language without replacing g
   const geometry = structuredClone(source._data || source.data);
   raiseDarkBasemapPlaceLabels(map, { language: 'en', narrativeId: 'nova' });
   expect(map.getLayoutProperty(GIS_SETTLEMENT_LABEL_LAYER_ID, 'text-field')).toEqual(['get', 'cityname_en']);
-  expect(map.getLayoutProperty(GIS_SETTLEMENT_LABEL_LAYER_ID, 'text-font')).toEqual(['Arial']);
+  expect(map.getLayoutProperty(GIS_SETTLEMENT_LABEL_LAYER_ID, 'text-font')).toEqual(['NLI Content Hadassah Friedlaender']);
   expect(map.getLayoutProperty('gis-nova-place-label', 'text-field')).toBe('Nova');
   expect(map.getLayoutProperty('gis-nova-place-label', 'visibility')).toBe('none');
   expect(source._data || source.data).toEqual(geometry);

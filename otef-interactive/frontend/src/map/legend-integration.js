@@ -33,6 +33,7 @@ function installMapLegendLifecycle({
   mount = mountMapLegend,
   onLegendSettings,
   onRenderSnapshot,
+  getNliFontStyle,
 } = {}) {
   const mounted = mount({
     element,
@@ -42,6 +43,7 @@ function installMapLegendLifecycle({
     dataContext,
     registry,
     onRenderSnapshot,
+    getNliFontStyle,
   });
   const unsubscribers = [];
   let disposed = false;

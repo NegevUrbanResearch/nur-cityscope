@@ -2,6 +2,7 @@ import placeCatalog from "../shared/place-navigation/place-catalog.generated.js"
 import openFreeMapDarkStyle from "./basemaps/openfreemap-dark.js";
 import { GIS_SETTLEMENT_LABEL_LAYER_ID, installGisSettlementLabels } from './gis-settlement-labels.js';
 import { EXCLUDED_SETTLEMENT_CODES } from '../shared/settlement-label-presentation.js';
+import { nameTextStyle } from '../shared/nli-name-language.js';
 
 const DARK_BASEMAP_LAYER_IDS = new Set(
   (openFreeMapDarkStyle.layers || []).map((layer) => layer.id).filter(Boolean),
@@ -97,6 +98,12 @@ export function collectKnownBasemapPlaceNames(catalog = placeCatalog) {
   return [...names].sort((a, b) => a.localeCompare(b, "he"));
 }
 
+const DEFAULT_GIS_KNOWN_PLACE_NAME_ADDITIONS = Object.freeze([
+  "אשקלון", "Ashkelon",
+  "נתיבות", "Netivot",
+  "אופקים", "Ofakim",
+]);
+
 function scaleUnknownPlaceSize(size) {
   const scale = DARK_BASEMAP_UNKNOWN_PLACE_SIZE_SCALE;
   if (typeof size === "number" && Number.isFinite(size)) return size * scale;
@@ -143,25 +150,25 @@ export function applyDarkBasemapLabelPolicy(style, options = {}) {
   if (!style || !Array.isArray(style.layers)) return style;
   const next = cloneJson(style);
   delete next.glyphs;
-  const knownPlaceNames = Array.isArray(options.knownPlaceNames)
+  const customKnownPlaceNames = Array.isArray(options.knownPlaceNames);
+  const overlayKnownPlaceNames = customKnownPlaceNames
     ? options.knownPlaceNames.map((name) => String(name)).filter(Boolean)
     : collectKnownBasemapPlaceNames({ entries: placeCatalog.entries.filter(place => place.type === 'yeshuv').map(place => ({ ...place, selectable: true })) });
-
-  next["font-faces"] = {
-    ...(next["font-faces"] || {}),
-    "Guttman Hatzvi": [{ url: DARK_BASEMAP_GUTTMAN_FONT_FACE_URL }],
-  };
+  const prominentPlaceNames = customKnownPlaceNames
+    ? overlayKnownPlaceNames
+    : [...new Set([...overlayKnownPlaceNames, ...DEFAULT_GIS_KNOWN_PLACE_NAME_ADDITIONS])];
 
   next.layers = next.layers.map((layer) => {
     if (!layer || layer.type !== "symbol" || layer.layout?.["text-field"] == null) return layer;
     const layout = { ...(layer.layout || {}) };
     if (options.language === 'en') {
-      layout['text-font'] = ['Arial'];
+      layout['text-font'] = layer['source-layer'] === PLACE_SOURCE_LAYER
+        ? nameTextStyle('en', options.fontChoices).mapFontStack : ['Arial'];
       if (textFieldGetsRef(layout['text-field'])) return { ...layer, layout };
       layout['text-field'] = cloneJson(ENGLISH_BASEMAP_TEXT_FIELD);
     }
     else layout["text-font"] = layer["source-layer"] === PLACE_SOURCE_LAYER
-      ? [...DARK_BASEMAP_PLACE_TEXT_FONT]
+      ? nameTextStyle('he', options.fontChoices).mapFontStack
       : ["Arial"];
     if (!shouldRewriteLabelLayer(layer)) return { ...layer, layout };
     if (options.language !== 'en') layout["text-field"] = cloneJson(DARK_BASEMAP_TEXT_FIELD);
@@ -171,12 +178,12 @@ export function applyDarkBasemapLabelPolicy(style, options = {}) {
     const paint = { ...(layer.paint || {}) };
     paint["text-color"] = DARK_BASEMAP_TEXT_COLOR;
     if (layer["source-layer"] === PLACE_SOURCE_LAYER) {
-      if (knownPlaceNames.length > 0) {
-        const knownMatch = knownPlaceNameMatch(knownPlaceNames);
-        layout["text-size"] = placeTextSizeExpression(layout["text-size"], knownMatch);
+      if (prominentPlaceNames.length > 0) {
+        const prominentMatch = knownPlaceNameMatch(prominentPlaceNames);
+        layout["text-size"] = placeTextSizeExpression(layout["text-size"], prominentMatch);
         paint["text-opacity"] = [
           "case",
-          knownMatch,
+          knownPlaceNameMatch(overlayKnownPlaceNames),
           0,
           DARK_BASEMAP_UNKNOWN_PLACE_TEXT_OPACITY,
         ];
@@ -191,12 +198,13 @@ const HEBREW_BASEMAP_LABELS = new Map(applyDarkBasemapLabelPolicy(openFreeMapDar
   .filter(layer => layer.type === 'symbol' && layer.layout?.['text-field'] != null)
   .map(layer => [layer.id, layer.layout]));
 
-function updateBasemapLanguage(map, language) {
+function updateBasemapLanguage(map, language, fontChoices) {
   for (const layer of styleLayers(map)) {
     const original = HEBREW_BASEMAP_LABELS.get(layer.id);
     if (!original || textFieldGetsRef(original['text-field'])) continue;
     map.setLayoutProperty?.(layer.id, 'text-field', language === 'en' ? cloneJson(ENGLISH_BASEMAP_TEXT_FIELD) : original['text-field']);
-    map.setLayoutProperty?.(layer.id, 'text-font', language === 'en' ? ['Arial'] : original['text-font']);
+    map.setLayoutProperty?.(layer.id, 'text-font', layer['source-layer'] === PLACE_SOURCE_LAYER
+      ? nameTextStyle(language, fontChoices).mapFontStack : (language === 'en' ? ['Arial'] : original['text-font']));
   }
 }
 
@@ -266,7 +274,7 @@ function novaPlaceFeature(catalog = placeCatalog) {
 }
 
 /** GIS-only Nova name: OSM has no place feature, unlike Be'eri and Re'im. */
-export function ensureGisNovaPlaceLabel(map, language = 'he') {
+export function ensureGisNovaPlaceLabel(map, language = 'he', fontChoices) {
   if (!map || typeof map.addLayer !== "function") return;
   const feature = novaPlaceFeature();
   if (!feature) return;
@@ -282,7 +290,7 @@ export function ensureGisNovaPlaceLabel(map, language = 'he') {
     existingSource.setData(collection);
   }
   const text = feature.properties[language === 'en' ? 'name:en' : 'name:he'];
-  const font = language === 'en' ? ['Arial'] : [...DARK_BASEMAP_PLACE_TEXT_FONT];
+  const font = nameTextStyle(language, fontChoices).mapFontStack;
   if (typeof map.getLayer === "function" && map.getLayer(GIS_NOVA_PLACE_LABEL_LAYER_ID)) {
     map.setLayoutProperty?.(GIS_NOVA_PLACE_LABEL_LAYER_ID, 'text-field', text);
     map.setLayoutProperty?.(GIS_NOVA_PLACE_LABEL_LAYER_ID, 'text-font', font);
@@ -338,17 +346,17 @@ function applyGisNovaPlaceLabelVisibility(map, hidden) {
  * During the nova narrative the red settlement-name label is already on, so hide
  * the white GIS-only Nova basemap label.
  */
-export function ensureGisSettlementPlaceLabels(map, language = 'he') {
-  installGisSettlementLabels(map, { language, font: [...DARK_BASEMAP_PLACE_TEXT_FONT], size: DARK_BASEMAP_KNOWN_PLACE_TEXT_SIZE, color: DARK_BASEMAP_TEXT_COLOR });
+export function ensureGisSettlementPlaceLabels(map, language = 'he', fontChoices) {
+  installGisSettlementLabels(map, { language, fontChoices, size: DARK_BASEMAP_KNOWN_PLACE_TEXT_SIZE, color: DARK_BASEMAP_TEXT_COLOR });
 }
 
 export function raiseDarkBasemapPlaceLabels(map, options = {}) {
   if (!map) return;
   const language = options.language || gisPlaceLanguages.get(map) || 'he';
   gisPlaceLanguages.set(map, language);
-  updateBasemapLanguage(map, language);
-  ensureGisSettlementPlaceLabels(map, language);
-  ensureGisNovaPlaceLabel(map, language);
+  updateBasemapLanguage(map, language, options.fontChoices);
+  ensureGisSettlementPlaceLabels(map, language, options.fontChoices);
+  ensureGisNovaPlaceLabel(map, language, options.fontChoices);
   const hidden = hideGisNovaBasemapLabel(options, map);
   novaBasemapLabelHidden.set(map, hidden);
   applyGisNovaPlaceLabelVisibility(map, hidden);

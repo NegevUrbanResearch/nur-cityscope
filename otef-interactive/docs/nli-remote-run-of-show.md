@@ -42,7 +42,35 @@ eight steps and starts at the opening minutes.
 | See each narrative table. The narrative names are links. |  | Narratives (free choice): [Sderot](#sderot), [Shura Camp](#shura-camp), and [Hostages (Haim Peri of Nir Oz)](#hostages-haim-peri) | 5 |
 | Settlement names and outlines, Route 232, and people shown as points. After a name search, zoom in on the point and show a pop-up with the name above it. Do not show Gaza roads. A remote action opens that person's archive record. | Settlement names and outlines, Route 232, and people shown as points. After a name search, zoom in on the point and mark it with a square of light. Dim the other points or make the selected point more prominent. Do not show Gaza roads. | Identity database | 6 |
 | A black slide titled מאגר הזהויות covers the GIS map automatically; the remote shows no slide controls. The operator can search for a specific name or place. | All names appear on the model as a wall. All other layers are dimmed; no layer other than the names is visible. The operator can search for a specific name or place. Associated names stay bright and the others dim. | Wall of names | 7 |
-| Credits slide 34 replaces the identity screen directly, with no slide controls. Back returns to Wall of names; Finish returns Home. | The wall of names stays visible and the clock is idle. The projection camera stays fixed; no credits slide appears on projection. | Credits (קרדיטים) | 8 |
+| Credits opens automatically while retaining the Wall of names layers, with no slide controls. Back returns to Wall of names; Finish returns Home. | The wall of names stays visible and the clock is idle. The projection camera stays fixed; no credits slide appears on projection. | Credits (קרדיטים) | 8 |
+
+## Staff remote navigation
+
+The Home screen keeps direct Identity database and Wall of names shortcuts.
+Identity has Back and Next, with no story chooser. Back returns to the prior
+successfully visited scene when there is one; a direct Identity shortcut has
+no Back destination. Wall of names always returns Back to Identity, even when
+opened directly from Home. Credits returns Back to Wall of names.
+
+At the final Nova scene, use **Choose a story** to open the local chooser and
+select Sderot, Shura Camp, or Hostages, or continue to Identity. At the end of
+an optional story, use **Choose another story** to open the same chooser. Optional stories
+can be chosen in any order and repeated. Back follows actual successful scene visits across
+story boundaries; Next after Back follows the authored order. The single-story
+Sderot and Shura endings can be repeated without adding a duplicate Back
+entry. A repeated Hostages story starts at Nir Oz and adds that scene
+transition to Back history.
+The forward labels are **בחירת סיפור** / **Choose a story** at Nova, then
+**בחירת סיפור נוסף** / **Choose another story** after an optional story.
+Identity continuation is available inside the chooser.
+
+Nova, Hostages, and the independent timeline show a scene strip. It marks the
+current scene and other scenes successfully visited during this Home session.
+A forward jump does not mark skipped scenes. Back preserves visited marks.
+Finishing or returning Home successfully clears the marks. Presentation slides,
+timeline beats, search actions, and chooser actions do not count as scene
+visits. Opening, canceling, or rerendering the optional-story chooser leaves
+the current scene and any running presentation or animation in place.
 
 The home screen also opens **The timeline**, three steps that are not extra
 rows in the sequence above: the opening minutes, the rest of the day, and

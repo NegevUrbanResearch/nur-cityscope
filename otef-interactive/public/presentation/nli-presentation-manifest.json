@@ -2,9 +2,9 @@
   "version": 1,
   "deck": {
     "slideCount": 37,
-    "pdfSha256": "cadc48656462a3d968a0ded6616dd5c380be6588399c68b9f3dbf637dc7b5114",
+    "pdfSha256": "d9d2a715b5bc46f105ebbce4b36dcaae9cde5a65b8cdbdfa6da560a212233707",
     "pptxSha256": "edf994532d8e190ea45f5c7f5f7c26ebe27d2ef87cb574b65cb1ac1a0a31847c",
-    "assetVersion": "43e121e29dfc11fe15030f8103c66a1f9b17bf0c53d12859c68e085350aab043",
+    "assetVersion": "cc65645dee7cb1c65b04b55f98d5e1fc9edc1ebf1edcd6db916aff22533f933e",
     "slidePathPattern": "local/presentations/nli/slides/slide-{slide}.png",
     "slidePaths": [
       "local/presentations/nli/slides/slide-01.png",

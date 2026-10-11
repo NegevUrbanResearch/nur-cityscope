@@ -1,7 +1,7 @@
 import { evaluateWarpMesh } from '../shared/projection-warp-geometry.js';
 import { validateProjectionBaselineMesh } from '../shared/projection-warp-assets.js';
 import { validateProjectionConfig } from '../shared/projection-config-schema.js';
-import { migrateProjectionConfigToV7 } from '../shared/projection-config-schema.js';
+import { migrateProjectionConfigToV8 } from '../shared/projection-config-schema.js';
 
 const SIDES = ['left', 'right'];
 const HASH = /^[a-f0-9]{64}$/i;
@@ -20,7 +20,7 @@ function sameInputs(left, right) {
   return validInput(left) && validInput(right) && left.datasetVersion === right.datasetVersion;
 }
 function projectionMeshConfig(config) {
-  return migrateProjectionConfigToV7(config, config?.namesWall?.rotateDeg ?? 35);
+  return migrateProjectionConfigToV8(config, config?.namesWall?.rotateDeg ?? 35);
 }
 
 export async function readProjectionCandidateInputs({ fetchImpl = globalThis.fetch, signal } = {}) {

@@ -426,6 +426,27 @@ test('mounted point matching prevents Live re-enable and footer Apply cannot pub
   } finally { api.dispose(); }
 });
 
+test("Content font edits update the existing draft while Live is off", async () => {
+  const doc = documentStub();
+  const previousDocument = globalThis.document;
+  globalThis.document = doc;
+  const root = element("main"); root.ownerDocument = doc;
+  const client = fakeClient();
+  const api = mountProjectionConfig(root, { client });
+  try {
+    client.setLive(false);
+    const english = find(root, node => node.dataset?.fontLanguage === "en");
+    english.value = "arial";
+    english.dispatch("change");
+    expect(client.getState().draft.nliFonts).toEqual({ he: "default", en: "arial" });
+    expect(client.apply).not.toHaveBeenCalled();
+    expect(client.setDraft).toHaveBeenCalledTimes(1);
+    await api.handleAction("save-new", "Content font choices");
+    await api.handleAction("load", "new-preset");
+    expect(client.getState().draft.nliFonts).toEqual({ he: "default", en: "arial" });
+  } finally { api.dispose(); globalThis.document = previousDocument; }
+});
+
 test('visible preset commands save the loaded preset while a different candidate is selected', async () => {
   const previousDocument = globalThis.document;
   globalThis.document = documentStub();
@@ -621,6 +642,7 @@ test("mounted Start fresh preserves TD Undo/Redo and framing without reloading a
   const viewSpy = vi.spyOn(configView, "createProjectionConfigView").mockImplementation((root, options) => { warpAction = options.onWarpAction; return actualCreate(root, options); });
   const api = mountProjectionConfig(root, { client, baselineCatalogLoader: loader });
   try {
+    expect(client.getState().draft.schemaVersion).toBe(8);
     const button = find(root, node => node.dataset?.action === "warp-start-fresh");
     await vi.waitFor(() => expect(warpAction("warp-nudge", { output: "left", direction: "right" })).toBe(true));
     const before = clone(client.getState().draft);
@@ -631,6 +653,7 @@ test("mounted Start fresh preserves TD Undo/Redo and framing without reloading a
     button.dispatch("click");
     expect(doc.defaultView.confirm).toHaveBeenLastCalledWith(expect.stringContaining("left projector"));
     const fresh = clone(client.getState().draft);
+    expect(fresh.schemaVersion).toBe(8);
     expect(fresh.outputs.left.warp.baseline.type).toBe("identity");
     expect(fresh.pre).toEqual(before.pre);
     expect(fresh.outputs.left.crop).toEqual(before.outputs.left.crop);
@@ -3005,7 +3028,7 @@ test('Cancel immediately hides a retained Wall-only wrapper when no controller e
     const candidateValidator = { validateCandidate: vi.fn(async ({ identity }) => ({ identity, valid: true })), dispose() {} };
     let holdDatasetRead = false; let releaseDatasetRead; let runReads = 0;
     const root = element('main');
-    const api = mountProjectionConfig(root, { client, socket, candidateValidator, readNamesDataset: async () => {
+    const api = mountProjectionConfig(root, { client, socket, candidateValidator, layoutClient: { getLegendLanguage: () => 'en' }, readNamesDataset: async () => {
       if (holdDatasetRead) { runReads += 1; await new Promise((resolve) => { releaseDatasetRead = resolve; }); }
       return { datasetVersion: 'release-1' };
     } });
@@ -3041,6 +3064,8 @@ test('Cancel immediately hides a retained Wall-only wrapper when no controller e
       table: 'otef', revision: 2, datasetVersion: 'release-1', placementIdentity: expect.stringMatching(/^[a-f0-9]{64}$/i), requestId: expect.stringMatching(/^[0-9a-f-]{36}$/i),
     });
     const run = sent.find((message) => message.type === 'otef_projection_names_run');
+    expect(run.placementIdentity).toBe(await projectionPlacementInputIdentity(client.getState().snapshot.config, 'en'));
+    expect(run.placementIdentity).not.toBe(await projectionPlacementInputIdentity(client.getState().snapshot.config, 'he'));
     const reportNames = (output, instanceId, requestId, state) => socketHandlers.get('otef_projection_names_status')({
       type: 'otef_projection_names_status', table: 'otef', output, instanceId, requestId, revision: run.revision,
       datasetVersion: run.datasetVersion, placementIdentity: run.placementIdentity, state, installed: null,
@@ -3431,6 +3456,7 @@ test('Cancel immediately hides a retained Wall-only wrapper when no controller e
     globalThis.document = documentStub();
     const legacy = clone(DEFAULTS);
     legacy.schemaVersion = 1;
+    delete legacy.nliFonts;
     delete legacy.namesWall;
     for (const output of ["left", "right"]) {
       delete legacy.outputs[output].presentationEffect;

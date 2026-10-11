@@ -1,0 +1,26 @@
+.staff-updates { flex-shrink: 0; }
+.staff-update-controls { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; padding: 6px 12px; }
+.staff-update-controls[hidden] { display: none; }
+.staff-update-controls p { margin: 0; font-size: 14px; color: var(--text-2); }
+.staff-update-reminder { min-height: 44px; padding: 8px 12px; border: 1px solid var(--line-strong); border-radius: 10px; color: var(--accent); font-size: 14px; }
+.staff-update-reminder:disabled { opacity: 1; color: var(--text-2); }
+.staff-update-dialog { color: var(--text); background: var(--surface); font: inherit; text-align: start;
+  width: min(480px, calc(100% - 32px)); max-height: calc(100vh - 32px);
+  max-height: calc(100dvh - 32px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+  padding: 24px; border: 1px solid var(--line-strong); border-radius: 20px; margin: auto; overflow: hidden; }
+.staff-update-dialog[open] { display: flex; flex-direction: column; min-height: 0; }
+.staff-update-dialog::backdrop { background: rgba(8, 8, 10, .76); }
+.staff-update-dialog h2 { flex-shrink: 0; margin: 0 0 12px; font-size: 28px; font-weight: 500; line-height: 1.3; }
+.staff-update-body { margin: 0; color: var(--text-2); font-size: 18px; line-height: 1.6; overflow: auto; min-height: 0; }
+.staff-update-actions { flex-shrink: 0; display: grid; grid-template-columns: 1.3fr 1fr; gap: 12px; margin-top: 24px; }
+.staff-update-button { min-height: 48px; padding: 12px 16px; border: 1px solid var(--line-strong); border-radius: 12px; font: inherit; font-size: 17px; color: var(--text); background: var(--surface-2); }
+.staff-update-primary { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
+.staff-update-button:disabled { opacity: .45; }
+.staff-update-button:focus-visible, .staff-update-reminder:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
+@media (max-width: 440px), (max-height: 360px) {
+  .staff-update-dialog { padding: 16px; }
+  .staff-update-dialog h2 { font-size: 23px; }
+  .staff-update-body { font-size: 17px; }
+  .staff-update-actions { margin-top: 16px; gap: 10px; }
+  .staff-update-button { padding: 10px; }
+}

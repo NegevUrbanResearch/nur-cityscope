@@ -1,4 +1,6 @@
 import { describe, expect, test, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { createFakeMapLibreMap } from "../helpers/fake-maplibre-map.js";
 import { NLI_NARRATIVES } from "../../frontend/src/shared/nli-narratives.js";
 import { NLI_NOVA_STORY } from "../../frontend/src/shared/nli-nova-story.js";
@@ -39,6 +41,7 @@ function setup(options = {}) {
       map, dataContext, viewportSync, personVisual,
       closeArchive, storage: options.storage ?? { getItem: () => null, setItem: vi.fn() }, syncTimeline,
       onStyleLoadOverlay: options.onStyleLoadOverlay,
+      getNliFontChoices: options.getNliFontChoices,
     }),
   }));
 }
@@ -62,6 +65,19 @@ function novaStoryBoundsFit({ center, zoom, width = 1280, height = 720, margin =
 }
 
 describe("GIS Segev narrative scene", () => {
+  test("the map entry constructs its narrative controller with live published font choices", async () => {
+    const entry = readFileSync(resolve(import.meta.dirname, "../../frontend/src/entries/map-main.js"), "utf8");
+    expect(entry).toMatch(/narrativeController = createGisNarrativeController\(\{[\s\S]{0,700}getNliFontChoices,/);
+    let choices = { he: "narkiss", en: "hadassah" };
+    const d = await setup({ getNliFontChoices: () => choices });
+    d.controller.apply({ id: "segev", transition: "enter", revision: 1 });
+    expect(d.map.getLayoutProperty("nli-narrative-focus-label", "text-font")).toEqual(["NLI Content Narkiss Block"]);
+    choices = { he: "default", en: "hadassah" };
+    d.controller.refreshNliFontChoices();
+    expect(d.map.getLayoutProperty("nli-narrative-focus-label", "text-font")).toEqual(["Guttman Hatzvi", "Arial"]);
+    d.controller.dispose();
+  });
+
   test('language metadata refreshes the polygon label without camera or narrative side effects', async () => {
     let language = 'he';
     const d = await setup({ getLanguage: () => language });

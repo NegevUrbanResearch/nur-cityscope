@@ -28,3 +28,13 @@ test("detailed shelter retains its fine illustration strokes", () => {
   const strokes = strokeWidths(80);
   expect(strokes.at(-1).width).toBeCloseTo(1.1 * 80 / 116);
 });
+
+test("vector shelter impact blends palette colors while retaining opaque walls", () => {
+  vi.stubGlobal("Path2D", class { constructor(data) { this.data = data; } });
+  const fills = [];
+  const context = { save() {}, restore() {}, translate() {}, scale() {}, stroke() {},
+    fill() { fills.push(this.fillStyle); } };
+  paintShelterArtwork(context, { cx: 0, cy: 0, bodyWidthPx: 24, impactProgress: 0.5 });
+  expect(fills[0]).toBe("#a5757a");
+  expect(fills[1]).toBe("#d38091");
+});

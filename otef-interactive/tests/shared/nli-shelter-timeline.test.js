@@ -14,6 +14,8 @@ import { createGisNarrativeController } from "../../frontend/src/map/nli-narrati
 import { createProjectionNarrativeController } from "../../frontend/src/projection/projection-narrative-controller.js";
 import {
   SHELTER_LAYER_ID,
+  SHELTER_VECTOR_LAYER_ID,
+  getShelterProjectionFrame,
   SHELTER_SOURCE_ID,
 } from "../../frontend/src/shared/maplibre-nli-shelters.js";
 import { buildLegendModel } from "../../frontend/src/map/legend-model-builder.js";
@@ -77,7 +79,7 @@ it.each(["gis", "projection"])("%s restricts shelters to overview, timeline, Nov
   }
 });
 
-it("retains shelters until the global scene departure fade finishes and fades them back in", async () => {
+it.each([false, true])("retains shelters through departure and reentry fades with vector projection %s", async vectorProjection => {
   const m = setup();
   let time = 0, callback;
   const runtime = getLayerLifecycleRuntime(m, {
@@ -85,19 +87,29 @@ it("retains shelters until the global scene departure fade finishes and fades th
     requestFrame: fn => { callback = fn; return 1; }, cancelFrame: () => {},
   });
   runtime.setDesiredIds(["nli.shelters232"]);
-  const deps = { ...dependencies, joinBatch: true };
+  const deps = { ...dependencies, joinBatch: true,
+    displayProfile: vectorProjection ? "projection" : "gis",
+    shelterVectorProjection: vectorProjection,
+    shelterVectorLayer: vectorProjection ? { id: SHELTER_VECTOR_LAYER_ID, type: "custom" } : null,
+  };
   await syncInvestigationTimelineToMap(m, null, groups(), deps);
   await vi.waitFor(() => expect(m.getSource(SHELTER_SOURCE_ID)?.data.features).toHaveLength(9));
   expect(m.getPaintProperty(SHELTER_LAYER_ID, "icon-opacity")).toBe(0);
   runtime.commitBatch(); time = 600; callback(time);
   expect(m.getPaintProperty(SHELTER_LAYER_ID, "icon-opacity")).toBe(1);
+  if (vectorProjection) {
+    expect(m.getLayer(SHELTER_VECTOR_LAYER_ID)).toBeTruthy();
+    expect(getShelterProjectionFrame(m)?.frame.visible).toBe(true);
+  }
   runtime.setDesiredIds([]);
   await syncInvestigationTimelineToMap(m, null, groups(), { ...deps, narrativeFocus: { id: "segev" } });
   runtime.commitBatch(); time = 900; callback(time);
   expect(m.getLayoutProperty(SHELTER_LAYER_ID, "visibility")).toBe("visible");
   expect(m.getPaintProperty(SHELTER_LAYER_ID, "icon-opacity")).toBeCloseTo(.5);
+  if (vectorProjection) expect(getShelterProjectionFrame(m)?.frame.visible).toBe(true);
   time = 1200; callback(time);
   expect(!m.getLayer(SHELTER_LAYER_ID) || m.getLayoutProperty(SHELTER_LAYER_ID, "visibility") === "none").toBe(true);
+  if (vectorProjection) expect(getShelterProjectionFrame(m)).toBeNull();
   runtime.setDesiredIds(["nli.shelters232"]);
   await syncInvestigationTimelineToMap(m, null, groups(), deps);
   await vi.waitFor(() => expect(m.getLayoutProperty(SHELTER_LAYER_ID, "visibility")).toBe("visible"));

@@ -1,6 +1,7 @@
 import { expect, test, vi } from 'vitest';
 import { normalizePeopleRuntime, createGisPersonSelection } from '../../frontend/src/map/maplibre-person-selection.js';
 import { createFakeMapLibreMap } from '../helpers/fake-maplibre-map.js';
+import { createGisNliFontChoiceLifecycle } from '../../frontend/src/entries/gis-nli-font-choice-lifecycle.js';
 
 test('GIS runtime resolves the canonical requested name rather than search aliases', () => {
   const properties = { pid: '1', hebrew_name: 'יוסף', name: 'Éé', source_lon: 34.5, source_lat: 31.4 };
@@ -30,4 +31,35 @@ test('a language change preserves pending camera travel and rerenders the same s
   expect(bubble.setHTML.mock.calls.at(-1)[0]).toContain('יוסף');
   expect(map.flyTo).toHaveBeenCalledTimes(1);
   visual.dispose();
+});
+
+test('superseded font loads cannot replace the latest published family', async () => {
+  let releaseOld;
+  const applied = [];
+  const lifecycle = createGisNliFontChoiceLifecycle({
+    ensureReady: choices => choices.he === 'narkiss' ? new Promise(resolve => { releaseOld = resolve; }) : Promise.resolve(),
+    applyChoices: choices => applied.push(choices),
+  });
+  const old = lifecycle.publish({ he: 'narkiss', en: 'hadassah' });
+  const latest = lifecycle.publish({ he: 'arial', en: 'hadassah' });
+  await expect(latest).resolves.toBe(true);
+  releaseOld();
+  await expect(old).resolves.toBe(false);
+  expect(applied).toEqual([{ he: 'arial', en: 'hadassah' }]);
+  lifecycle.dispose();
+});
+
+test('a rejected font load leaves the accepted choices in place', async () => {
+  const applied = [];
+  const errors = [];
+  const lifecycle = createGisNliFontChoiceLifecycle({
+    ensureReady: choices => choices.he === 'narkiss' ? Promise.reject(new Error('face missing')) : Promise.resolve(),
+    applyChoices: choices => applied.push(choices),
+    onError: error => errors.push(error.message),
+  });
+  await expect(lifecycle.publish({ he: 'default', en: 'hadassah' })).resolves.toBe(true);
+  await expect(lifecycle.publish({ he: 'narkiss', en: 'hadassah' })).resolves.toBe(false);
+  expect(applied).toEqual([{ he: 'default', en: 'hadassah' }]);
+  expect(errors).toEqual(['face missing']);
+  lifecycle.dispose();
 });

@@ -44,4 +44,21 @@ describe('NLI clock DOM rendering', () => {
     expect(root.querySelectorAll('.nli-clock-half')).toHaveLength(0);
     caption.remove();
   });
+  it('updates a paused clock family in place and restores the Hebrew baseline', () => {
+    const caption = document.createElement('div');
+    let choices = { he: 'default', en: 'hadassah' };
+    const state = { captionEl: caption, nliCaptionMode: 'clock-only', clockPhase: 'paused',
+      monotonicNow: () => 0, motionMode: 'reduced',
+      rendererDeps: { getNliFontChoices: () => choices, getLanguage: () => 'he' } };
+    renderNliClockCaption(state, { clockLabel: '06:29', rows: [] });
+    const clock = caption.firstElementChild;
+    expect(clock.style.fontFamily).toBe('"Guttman Hatzvi", "Noto Sans Hebrew", Arial, sans-serif');
+    choices = { he: 'narkiss', en: 'hadassah' };
+    renderNliClockCaption(state, { clockLabel: '06:29', rows: [] });
+    expect(caption.firstElementChild).toBe(clock);
+    expect(clock.style.fontFamily).toBe('"NLI Content Narkiss Block", sans-serif');
+    choices = { he: 'default', en: 'hadassah' };
+    renderNliClockCaption(state, { clockLabel: '06:29', rows: [] });
+    expect(clock.style.fontFamily).toBe('"Guttman Hatzvi", "Noto Sans Hebrew", Arial, sans-serif');
+  });
 });

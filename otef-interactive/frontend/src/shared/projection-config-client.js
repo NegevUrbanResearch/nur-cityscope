@@ -4,6 +4,7 @@ import {
   TD_MIGRATION_PRESET_ID,
   TD_MIGRATION_PRESET_NAME,
   migrateProjectionConfigToV7,
+  migrateProjectionConfigToV8,
   validateProjectionConfig,
 } from './projection-config-schema.js';
 import { migrateNamesWallToV5, migrateNamesWallToV6 } from './nli-name-wall-config.js';
@@ -32,6 +33,7 @@ export function equalProjectionConfig(a, b) {
 const equal = equalProjectionConfig;
 const V2_DEFAULT_PROJECTION_CONFIG = migrateProjectionConfigToV2(LEGACY_DEFAULT_PROJECTION_CONFIG);
 const V5_DEFAULT_PROJECTION_CONFIG = migrateNamesWallToV5(LEGACY_DEFAULT_PROJECTION_CONFIG);
+const V7_DEFAULT_PROJECTION_CONFIG = migrateProjectionConfigToV7(LEGACY_DEFAULT_PROJECTION_CONFIG, 35);
 const isUuid = (value) => typeof value === 'string' && UUID.test(value);
 
 function withoutRotation(config) {
@@ -41,10 +43,15 @@ function withoutRotation(config) {
 }
 
 function originalConfigOk(config) {
+  if (config?.schemaVersion === 8) {
+    const angle = config.namesWall?.rotateDeg;
+    if (typeof angle !== 'number' || !Number.isFinite(angle) || angle < -180 || angle > 180) return false;
+    return equal(withoutRotation(migrateProjectionConfigToV8(config, angle)), withoutRotation(DEFAULT_PROJECTION_CONFIG));
+  }
   if (config?.schemaVersion === 7) {
     const angle = config.namesWall?.rotateDeg;
     if (typeof angle !== 'number' || !Number.isFinite(angle) || angle < -180 || angle > 180) return false;
-    return equal(withoutRotation(migrateProjectionConfigToV7(config, angle)), withoutRotation(DEFAULT_PROJECTION_CONFIG));
+    return equal(withoutRotation(migrateProjectionConfigToV7(config, angle)), withoutRotation(V7_DEFAULT_PROJECTION_CONFIG));
   }
   if (config?.schemaVersion === 6) {
     const angle = config.namesWall?.rotateDeg;
@@ -81,7 +88,7 @@ function validSnapshot(value) {
 }
 
 function normalizeSnapshot(value, warnings = []) {
-  const normalizeConfig = (config) => migrateProjectionConfigToV7(config, config?.namesWall?.rotateDeg ?? 35, warnings);
+  const normalizeConfig = (config) => migrateProjectionConfigToV8(config, config?.namesWall?.rotateDeg ?? 35, warnings);
   return {
     ...clone(value),
     config: normalizeConfig(value.config),
@@ -155,13 +162,13 @@ export function createProjectionConfigClient({
       reconciliation: reconciliation ? { ...reconciliation } : null,
       previewError,
       migrationWarnings: [...migrationWarnings],
-      initializationRequired: Boolean(snapshot?.config && installedSchemaVersion < 7),
+      initializationRequired: Boolean(snapshot?.config && installedSchemaVersion < 8),
       schemaChanged,
     };
   }
 
   function setupRequired() {
-    return Boolean(snapshot?.config && installedSchemaVersion < 7);
+    return Boolean(snapshot?.config && installedSchemaVersion < 8);
   }
 
   function notify(receipt) {
@@ -417,7 +424,7 @@ export function createProjectionConfigClient({
       const responseIsCurrent = equal(snapshot, normalizeSnapshot(bodyResponse));
       if (request.action === 'load' || request.action === 'revert') {
         if ((adopted || responseIsCurrent) && conflictGeneration === request.conflictGeneration && draftVersion === sentVersion) {
-          draft = migrateProjectionConfigToV7(bodyResponse.config, bodyResponse.config?.namesWall?.rotateDeg ?? 35);
+          draft = migrateProjectionConfigToV8(bodyResponse.config, bodyResponse.config?.namesWall?.rotateDeg ?? 35);
           hasLocalDraft = false;
           draftReplaced = true;
         }
@@ -612,7 +619,7 @@ export function createProjectionConfigClient({
 
   function setDraft(config) {
     if (!config || Object.keys(validateProjectionConfig(config)).length) throw new Error('invalid projection config');
-    const nextDraft = migrateProjectionConfigToV7(config, config?.namesWall?.rotateDeg ?? 35);
+    const nextDraft = migrateProjectionConfigToV8(config, config?.namesWall?.rotateDeg ?? 35);
     if (draft && equal(draft, nextDraft)) return;
     cancelPreflight('projection config operation superseded');
     draft = clone(nextDraft);

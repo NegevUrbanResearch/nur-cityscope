@@ -6,6 +6,7 @@ import { COPY, HOME_CUE, HOME_LAYER_IDS, IDENTITY_LAYER_IDS } from "../../fronte
 import { nliTimelineHostMethods } from "../../frontend/src/remote/nli-timeline-transport.js";
 import { shouldCloseViewerForNarrative } from "../../frontend/src/map/nli-reveal-presentation.js";
 import { setLocale } from "../../frontend/src/remote/remote-locale.js";
+import { createNliStaffNavigationSession } from "../../frontend/src/remote/nli-staff-navigation-session.js";
 import {
   PEOPLE_INDEX_URL,
   PEOPLE_RELEASE_METADATA_URL,
@@ -227,6 +228,17 @@ describe("NLI staff Home transitions", () => {
     expect(session.remote.getRefreshState()).toEqual({ ready: true, refreshBlockReason: "not_home" });
     session.h.emit("connection", false);
     expect(session.remote.getRefreshState()).toEqual({ ready: false, refreshBlockReason: "not_ready" });
+  });
+
+  test("refresh-state subscribers are notified when startup Home becomes ready and on disconnect", async () => {
+    session = mount({ connected: true });
+    const states = [];
+    await bootRemote(session, { onRefreshStateChange: value => states.push(value) });
+    session.h.emit("connection", true);
+    session.h.emit("narrativeState", session.h.narrative);
+    await vi.waitFor(() => expect(states.some(value => value.ready && value.refreshBlockReason === null)).toBe(true));
+    session.h.emit("connection", false);
+    expect(states.at(-1)).toEqual({ ready: false, refreshBlockReason: "not_ready" });
   });
 
   test("a pending scene navigation blocks refresh while canonical Home is still cached", async () => {
@@ -687,6 +699,26 @@ describe("NLI staff Home transitions", () => {
     expect(onHomeSuccess).toHaveBeenCalledOnce();
   });
 
+  test("a failed Home reset preserves committed navigation until its retry succeeds", async () => {
+    setLocale("en", { persist: false });
+    session = mount();
+    const navigationSession = createNliStaffNavigationSession();
+    await bootRemote(session, { navigationSession });
+    await session.h.openCard('[data-show-step="identity-database"]');
+    const current = navigationSession.getState().current;
+    session.h.failNull = true;
+    el("homeBtn").click();
+    await vi.waitFor(() => expect(el("playerCueRetry").hidden).toBe(false));
+    expect(navigationSession.getState().current).toEqual(current);
+    expect(navigationSession.getState().visitedScenes).toHaveLength(1);
+
+    session.h.failNull = false;
+    el("playerCueRetry").click();
+    await vi.waitFor(() => expect(navigationSession.getState().current).toBeNull());
+    expect(navigationSession.getState().backStack).toEqual([]);
+    expect(navigationSession.getState().visitedScenes).toEqual([]);
+  });
+
   test("cue busy state disables the rendered escape and presentation controls", async () => {
     setLocale("en", { persist: false });
     session = mount({ connected: true });
@@ -867,7 +899,7 @@ describe("NLI staff Home transitions", () => {
   test.each(["closed", "unavailable-then-closed"])("archive Back resets search only after a matching close confirmation: %s", async (closeOutcome) => {
     const peopleIndex = {
       datasetVersion: "v1",
-      people: [{ pid: "11", nameForms: ["Ada"], hasArchiveRecord: true }],
+      people: [{ pid: "11", nameForms: ["עדה", "Ada"], hasArchiveRecord: true }],
     };
     const indexBytes = new TextEncoder().encode(JSON.stringify(peopleIndex));
     const digest = await sha256Hex(indexBytes);

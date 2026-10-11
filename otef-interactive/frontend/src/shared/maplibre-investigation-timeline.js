@@ -117,7 +117,9 @@ export function isIdleOverviewCueLayerSet(enabledIds, narrativeId = null) {
 /** Declare caption membership before the shared batch opens. */
 export function getNliClockSceneIds(snapshot, displayProfile = "gis") {
   if (snapshot.investigationClock?.hiddenDisplays?.includes(displayProfile)) return [];
-  const ids = new Set(snapshot.enabledIds || []);
+  // Display filters can remove Home layers without changing the selected cue.
+  const ids = snapshot.rawLayerGroups != null
+    ? getEnabledMapFullLayerIds(snapshot.rawLayerGroups) : new Set(snapshot.enabledIds || []);
   const narrativeId = snapshot.narrativeState?.id;
   const active = snapshot.investigationClock?.phase !== "idle" &&
     [INVESTIGATION_ALARMS_FULL_ID, INVESTIGATION_LINES_FULL_ID, INVESTIGATION_POLYGONS_FULL_ID].some(id => ids.has(id));
@@ -1196,6 +1198,7 @@ export function getInvestigationTimelineDiagnostics(map) {
  *   requestAnimationFrame?: (callback: (timestamp: number) => void) => number,
  *   cancelAnimationFrame?: (id: number) => void,
  *   visibilityLayerGroups?: unknown,
+ *   cueLayerGroups?: unknown,
  *   joinBatch?: boolean,
  *   displayProfile?: 'gis'|'projection'|object,
  *   nliCaptionMode?: 'full'|'clock-only',
@@ -1272,7 +1275,8 @@ export async function syncInvestigationTimelineToMap(map, clockInput, layerGroup
     INVESTIGATION_POLYGONS_FULL_ID,
   ].some((id) => nextMembership.visible.has(id));
   const clockHidden = clock.hiddenDisplays?.includes(isProjectionDisplayProfile(deps) ? "projection" : "gis") === true;
-  publishClockOnlyCaptionRelevance(state, enabledSceneIds, deps.clockOnlyCaptionRelevantOverride, activeTimeline, clockHidden);
+  const cueIds = deps.cueLayerGroups != null ? getEnabledMapFullLayerIds(deps.cueLayerGroups) : enabledSceneIds;
+  publishClockOnlyCaptionRelevance(state, cueIds, deps.clockOnlyCaptionRelevantOverride, activeTimeline, clockHidden);
 
   // A setStyle call can fire style.load before the host has re-synced its base
   // layers. The style listener marks the coordinator ready; this branch keeps

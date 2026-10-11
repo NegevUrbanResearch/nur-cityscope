@@ -8,6 +8,29 @@ const nextInstanceId = "00000000-0000-4000-8000-000000000004";
 const requestId = "00000000-0000-4000-8000-000000000005";
 const thirdInstanceId = "00000000-0000-4000-8000-000000000006";
 
+test.each(["newer notice", "replacement tablet"])("uncertain retry keeps the original payload after %s", async kind => {
+  const A = "frontend-aaaaaaaaaaaaaaaa", B = "frontend-bbbbbbbbbbbbbbbb";
+  let server = { table: "otef", revision: 1, deviceId: remoteId, notice: null };
+  const submitted = [];
+  const manager = createStaffRemoteManager({ sourceId, socket: { getConnected: () => false, on() {}, off() {} },
+    readBuildId: async () => A, updateApi: { read: async () => structuredClone(server), send: async body => {
+      submitted.push(structuredClone(body));
+      if (submitted.length === 1) throw Error("response lost");
+      if (body.expectedRevision !== server.revision || body.deviceId !== server.deviceId) {
+        const error = Error("conflict"); error.code = "conflict"; error.state = structuredClone(server); throw error;
+      }
+      server = { ...server, revision: server.revision + 1, notice: { revision: server.revision + 1, targetBuildId: body.targetBuildId, createdAt: "2026-10-10T00:00:00Z" } };
+      return structuredClone(server);
+    } } });
+  await manager.reconcileUpdates(); await manager.sendNotice();
+  server = { table: "otef", revision: 3, deviceId: kind === "replacement tablet" ? thirdInstanceId : remoteId,
+    notice: { revision: 3, targetBuildId: B, createdAt: "2026-10-10T00:00:00Z" } };
+  await manager.reconcileUpdates(); await manager.sendNotice();
+  expect(submitted[1]).toEqual(submitted[0]);
+  expect(server.notice.targetBuildId).toBe(B); expect(server.revision).toBe(3);
+  manager.dispose();
+});
+
 function harness() {
   let now = 100;
   const listeners = new Map();
@@ -33,12 +56,41 @@ test("subscribes and queries only on an open socket, then orders per-document co
   h.report({ leaseSeq: 2 });
   h.report({ leaseSeq: 1, buildId: "old" });
   h.report({ connectionSeq: 2, leaseSeq: 1, instanceId: nextInstanceId, buildId: null });
+  h.report({ connectionSeq: 2, leaseSeq: 1 });
   h.report({ connectionSeq: 1, leaseSeq: 99, buildId: "retired" });
   expect(h.manager.getState().remotes).toHaveLength(2);
   expect(h.manager.getState().remotes[0].version).toBe("frontend-0123456789abcdef");
   expect(h.manager.getState().remotes[1].version).toBeNull();
   expect(h.manager.getState().remotes[0].sessionId).not.toBe(h.manager.getState().remotes[1].sessionId);
   h.manager.dispose();
+});
+
+test("registered offline tablet can receive a notice, desktop rows are filtered, and Send pins its click revision", async () => {
+  const listeners = new Map(); let connected = false, resolveBuild;
+  const base = { table: "otef", revision: 1, deviceId: remoteId, notice: null };
+  let server = base;
+  const writes = [];
+  const manager = createStaffRemoteManager({ sourceId, socket: { getConnected: () => connected, send: () => true,
+    on: (key, fn) => listeners.set(key, fn), off() {} }, updateApi: {
+    read: async () => server, send: async body => { writes.push(body); const failure = Error("conflict"); failure.code = "conflict"; failure.state = server; throw failure; }
+  }, readBuildId: async () => "frontend-aaaaaaaaaaaaaaaa" });
+  await manager.reconcileUpdates(); expect(manager.getState().sendEnabled).toBe(true); expect(manager.getState().remotes).toHaveLength(0);
+  connected = true; listeners.get("connect")();
+  listeners.get("otef_staff_remote_status")({ type: "otef_staff_remote_status", table: "otef", remoteId, instanceId,
+    connectionSeq: 1, leaseSeq: 1, buildId: null, visibility: "visible", ready: true, refreshBlockReason: null, reloadReceipt: null });
+  expect(manager.getState().remotes).toHaveLength(0);
+  listeners.get("otef_staff_remote_device_binding_v1")({ type: "otef_staff_remote_device_binding_v1", table: "otef", deviceId: remoteId, remoteId, instanceId, connectionSeq: 1 });
+  expect(manager.getState().remotes).toHaveLength(1);
+  manager.dispose();
+  const sendManager = createStaffRemoteManager({ sourceId, socket: { getConnected: () => false, on() {}, off() {} },
+    updateApi: { read: async () => server, send: async body => { writes.push(body); const error = Error("conflict"); error.code = "conflict"; error.state = server; throw error; } },
+    readBuildId: () => resolveBuild ? Promise.resolve("frontend-bbbbbbbbbbbbbbbb") : new Promise(done => { resolveBuild = done; }) });
+  // The initial reader needs a version before the operator can act.
+  resolveBuild("frontend-aaaaaaaaaaaaaaaa"); await sendManager.reconcileUpdates();
+  resolveBuild = null; const pending = sendManager.sendNotice();
+  server = { ...base, revision: 2, notice: { revision: 2, targetBuildId: "frontend-bbbbbbbbbbbbbbbb", createdAt: "2026-10-10T00:00:00Z" } };
+  await sendManager.reconcileUpdates(); resolveBuild("frontend-aaaaaaaaaaaaaaaa"); await pending;
+  expect(writes.at(-1).expectedRevision).toBe(1); expect(sendManager.getState().registration.revision).toBe(2); sendManager.dispose();
 });
 
 test("uses strict staleness and ignores stale connection reports and uncorrelated receipts", () => {

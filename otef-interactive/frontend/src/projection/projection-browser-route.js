@@ -4,7 +4,7 @@ import { evaluateWarpMesh } from "../shared/projection-warp-geometry.js";
 import { createProjectionNameCanvasAdapter } from "./projection-name-canvas-adapter.js";
 import { createProjectionSettlementNameAdapter } from "./projection-settlement-name-adapter.js";
 import { migrateProjectionConfigToV2 } from "../shared/projection-warp-schema.js";
-import { migrateProjectionConfigToV7 } from "../shared/projection-config-schema.js";
+import { migrateProjectionConfigToV8 } from "../shared/projection-config-schema.js";
 import {
   DEFAULT_PROJECTION_BASELINE,
   createProjectionBaselineCatalogLoader,
@@ -41,7 +41,7 @@ function abortError() {
 
 function browserProjectionConfig(config) {
   if (!config) return null;
-  return migrateProjectionConfigToV7(config, config.namesWall?.rotateDeg ?? 35);
+  return migrateProjectionConfigToV8(config, config.namesWall?.rotateDeg ?? 35);
 }
 
 function throwIfAborted(signal) {
@@ -178,7 +178,7 @@ export async function createProjectionBrowserSurface({
     try {
       baseline = await loadCapturedProjectionFraming({ fetchImpl, signal });
     } catch (error) {
-      const fallbackWarp = [2, 3, 4, 5, 6, 7].includes(initialConfig?.schemaVersion) ? initialConfig.outputs?.[spanId]?.warp : null;
+      const fallbackWarp = [2, 3, 4, 5, 6, 7, 8].includes(initialConfig?.schemaVersion) ? initialConfig.outputs?.[spanId]?.warp : null;
       if (error?.name === "AbortError" || !fallbackWarp || (fallbackWarp.enabled !== false && fallbackWarp.baseline?.type !== "identity")) throw error;
       baseline = { manifest: { width: 1920, height: 1080, assets: {}, framing: {} }, framing: initialConfig };
     }

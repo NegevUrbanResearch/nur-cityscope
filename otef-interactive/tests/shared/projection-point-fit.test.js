@@ -3,14 +3,14 @@ import { readFileSync } from 'node:fs';
 import { fitProjectionKeystone, measureProjectionLandmarks, pickProjectionLandmark } from '../../frontend/src/shared/projection-point-fit.js';
 import { createBaselineSampler } from '../../frontend/src/shared/projection-baseline-sampler.js';
 import { createFullFrameProjectionMesh, evaluateWarpMesh } from '../../frontend/src/shared/projection-warp-geometry.js';
-import { migrateProjectionConfigToV7 } from '../../frontend/src/shared/projection-config-schema.js';
+import { migrateProjectionConfigToV8 } from '../../frontend/src/shared/projection-config-schema.js';
 import { prepareProjectionSideMesh } from '../../frontend/src/projection/projection-candidate-validation.js';
 import { variableTdMesh } from '../fixtures/td-variable-grid.js';
 
 const roadJunctions = [[0.213, 0.237], [0.787, 0.193], [0.181, 0.773], [0.819, 0.827]];
 const perspective = [[0.06, 0.03], [0.91, 0.13], [0.13, 0.91], [0.83, 0.82]];
 function configFixture() {
-  const config = migrateProjectionConfigToV7(JSON.parse(readFileSync(new URL('../../../nur-io/django_api/backend/tests/fixtures/projection-config-v1.json', import.meta.url))).valid);
+  const config = migrateProjectionConfigToV8(JSON.parse(readFileSync(new URL('../../../nur-io/django_api/backend/tests/fixtures/projection-config-v1.json', import.meta.url))).valid);
   for (const side of ['left', 'right']) config.outputs[side].warp.baseline = { type: 'identity', width: 1920, height: 1080, origin: 'top-left' };
   return config;
 }

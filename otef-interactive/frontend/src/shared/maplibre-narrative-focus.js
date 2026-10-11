@@ -7,6 +7,8 @@
 import { getLayerLifecycleRuntime } from "./layer-lifecycle-fade.js";
 import { getNliNarrative } from "./nli-narratives.js";
 import { peopleFilterForNarrative, houseOutlineFilterForNarrative } from "../map/nli-people-marker-filter.js";
+import { nameTextStyle } from "./nli-name-language.js";
+import { NLI_FONT_DEFAULTS } from "./nli-font-settings.js";
 
 export const NARRATIVE_FOCUS_SCENE_ID = "nli.scene-focus";
 
@@ -184,21 +186,29 @@ function collectionFor(definition, map, language) {
 }
 
 /** Create a reusable label renderer for GIS and projection narrative scenes. */
-export function createNarrativeFocusRenderer(map, { profile, managedScene = false, getLanguage } = {}) {
+export function createNarrativeFocusRenderer(map, { profile, managedScene = false, getLanguage,
+  getFontChoices = () => NLI_FONT_DEFAULTS } = {}) {
   const displayProfile = profileFor(profile);
   let definition = null;
   let disposed = false;
   let runtime = managedScene ? getLayerLifecycleRuntime(map) : null;
   let cancelDeparture = null, sceneHeld = false;
-  let mountedLanguage = null;
+  let mountedIdentity = null;
   const readLanguage = () => getLanguage?.() === 'en' ? 'en' : 'he';
-  const font = () => readLanguage() === 'en' ? ['Arial'] : ['Guttman Hatzvi', 'Arial'];
+  const font = () => nameTextStyle(readLanguage(), getFontChoices(), {
+    language: readLanguage(), direction: readLanguage() === 'en' ? 'ltr' : 'rtl',
+    fontFamily: readLanguage() === 'en' ? 'Arial' : 'Guttman Hatzvi',
+    canvasFontStack: readLanguage() === 'en' ? 'Arial, sans-serif' : '"Guttman Hatzvi", sans-serif',
+    mapFontStack: readLanguage() === 'en' ? ['Arial'] : ['Guttman Hatzvi', 'Arial'],
+  }).mapFontStack;
+  const identity = () => JSON.stringify([readLanguage(), font()]);
 
   function refresh() {
-    if (disposed || !definition || readLanguage() === mountedLanguage) return;
+    const nextIdentity = identity();
+    if (disposed || !definition || nextIdentity === mountedIdentity) return;
     map.getSource?.(NARRATIVE_FOCUS_RENDERER_IDS.source)?.setData?.(collectionFor(definition, map, readLanguage()));
     if (layerPresent(map, NARRATIVE_FOCUS_RENDERER_IDS.label)) map.setLayoutProperty?.(NARRATIVE_FOCUS_RENDERER_IDS.label, 'text-font', font());
-    mountedLanguage = readLanguage();
+    mountedIdentity = nextIdentity;
   }
 
   function onSourceData(event) {
@@ -215,7 +225,7 @@ export function createNarrativeFocusRenderer(map, { profile, managedScene = fals
   function mount() {
     if (disposed || !definition || !map) return;
     const data = collectionFor(definition, map, readLanguage());
-    mountedLanguage = readLanguage();
+    mountedIdentity = identity();
     if (!sourcePresent(map, NARRATIVE_FOCUS_RENDERER_IDS.source)) {
       map.addSource?.(NARRATIVE_FOCUS_RENDERER_IDS.source, { type: "geojson", data });
     } else {

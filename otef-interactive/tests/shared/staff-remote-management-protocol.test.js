@@ -3,6 +3,9 @@ import { validateStaffRemoteMessage } from "../../frontend/src/shared/staff-remo
 
 const uuid = "11111111-1111-4111-8111-111111111111";
 const fixtures = {
+  otef_staff_remote_device_bind_v1: { deviceId: uuid, remoteId: uuid, instanceId: uuid, connectionSeq: 1 },
+  otef_staff_remote_device_binding_v1: { deviceId: uuid, remoteId: uuid, instanceId: uuid, connectionSeq: 1 },
+  otef_staff_remote_notice_changed_v1: { revision: 1 },
   otef_staff_remote_subscribe: { sourceId: uuid },
   otef_staff_remote_status_query: { sourceId: uuid },
   otef_staff_remote_status: { remoteId: uuid, instanceId: uuid, connectionSeq: 1, leaseSeq: 1, buildId: null, visibility: "visible", ready: true, refreshBlockReason: null, reloadReceipt: null },

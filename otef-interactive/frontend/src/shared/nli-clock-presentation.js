@@ -1,6 +1,17 @@
 import { createNliClockMotion } from './nli-clock-motion.js';
 import { createNliClockDomRenderer } from './nli-clock-dom.js';
 import { nliExplainerInnerHtml, NLI_CAPTION_MODE_CLOCK_ONLY } from './nli-explainer-model.js';
+import { nameTextStyle } from './nli-name-language.js';
+import { NLI_FONT_DEFAULTS } from './nli-font-settings.js';
+
+function captionFontStyle(state) {
+  const language = state.rendererDeps?.getNliFontLanguage?.() === 'en' ? 'en' : 'he';
+  return nameTextStyle(language, state.rendererDeps?.getNliFontChoices?.() || NLI_FONT_DEFAULTS, {
+    language, direction: 'ltr', fontFamily: 'Guttman Hatzvi',
+    canvasFontStack: '"Guttman Hatzvi", "Noto Sans Hebrew", Arial, sans-serif',
+    mapFontStack: ['Guttman Hatzvi', 'Arial'],
+  });
+}
 
 export function nliClockPresentationPending(state) {
   return state.clockPresentationDeadline > state.now();
@@ -60,8 +71,11 @@ export function renderNliClockCaption(state, model) {
   if (state.sceneCaptionDeparting) return;
   const el = state.captionEl;
   if (!el) return;
+  const fontStyle = captionFontStyle(state);
+  el.style.fontFamily = fontStyle.canvasFontStack;
   el.hidden = false;
-  state.captionRenderSnapshot = { model, visible: true, phase: state.clockPhase, ...(state.sceneClockRuntime ? { sceneOpacity: state.sceneCaptionFactor ?? 0 } : {}) };
+  state.captionRenderSnapshot = { model, visible: true, phase: state.clockPhase, fontStyle,
+    ...(state.sceneClockRuntime ? { sceneOpacity: state.sceneCaptionFactor ?? 0 } : {}) };
   if (state.nliCaptionMode !== NLI_CAPTION_MODE_CLOCK_ONLY) {
     cancelMotionFrame(state);
     const html = nliExplainerInnerHtml(model);
@@ -74,6 +88,7 @@ export function renderNliClockCaption(state, model) {
     presentation.renderer = el.ownerDocument?.createElement && el.replaceChildren
       ? createNliClockDomRenderer(el) : null;
   }
+  presentation.renderer?.setFontFamily?.(fontStyle.canvasFontStack);
   presentation.motion.setTarget(model.clockLabel, state.monotonicNow(), { motionMode: state.motionMode });
   if (!presentation.renderer) {
     const html = nliExplainerInnerHtml(model, { nliCaptionMode: state.nliCaptionMode });

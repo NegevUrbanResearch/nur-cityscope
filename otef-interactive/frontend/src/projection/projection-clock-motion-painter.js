@@ -23,7 +23,7 @@ function drawHalf(context, char, width, half, scale, baseline, height, x) {
 export function createProjectionClockMotionPainter({ canvasFactory } = {}) {
   let digitCanvas;
   let digitContext;
-  return (context, motion, { fontPx, baseline, rasterScale }) => {
+  return (context, motion, { fontPx, baseline, rasterScale, font }) => {
     const { fromLabel, toLabel } = motion;
     const progress = Math.max(0, Math.min(1, motion.progress));
     const height = fontPx * 1.35;
@@ -46,7 +46,7 @@ export function createProjectionClockMotionPainter({ canvasFactory } = {}) {
         digitCanvas.height = Math.ceil(height * rasterScale);
         digitContext.setTransform(rasterScale, 0, 0, rasterScale, PADDING * rasterScale, 0);
         digitContext.clearRect(-PADDING, 0, digitCanvas.width / rasterScale, digitCanvas.height / rasterScale);
-        digitContext.font = context.font;
+        digitContext.font = font || context.font;
         digitContext.fillStyle = context.fillStyle;
         digitContext.direction = "ltr";
         digitContext.textAlign = "start";

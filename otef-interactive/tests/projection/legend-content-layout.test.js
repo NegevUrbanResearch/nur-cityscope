@@ -1,5 +1,14 @@
 import { describe, expect, test } from "vitest";
-import { layoutProjectionLegend, resolveLegendRasterSize } from "../../frontend/src/projection/legend-content-layout.js";
+import { layoutProjectionLegend, projectionLegendSymbolMetrics, resolveLegendRasterSize } from "../../frontend/src/projection/legend-content-layout.js";
+
+test("uses a half-size shelter icon while preserving the legend symbol slot", () => {
+  const shelter = projectionLegendSymbolMetrics([{ shape: "shelter" }], 20);
+  const polygon = projectionLegendSymbolMetrics([{ shape: "polygon" }], 20);
+  expect(shelter.children[0].width).toBeCloseTo(12.3);
+  expect(shelter.children[0].height).toBeCloseTo(9.594);
+  expect(shelter.width).toBe(polygon.width);
+  expect(polygon.children[0].width).toBeCloseTo(24.6);
+});
 
 function metricFor(fontPx) {
   return (text) => {

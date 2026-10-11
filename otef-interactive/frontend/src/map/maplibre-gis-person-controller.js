@@ -34,6 +34,7 @@ export function createGisPersonController({
   closeArchive = () => {},
   reducedMotion = false,
   managedScene = false,
+  getNliFontChoices = () => undefined,
 } = {}) {
   let disposed = false;
   let generation = 0;
@@ -44,6 +45,7 @@ export function createGisPersonController({
   let peopleEnabled = true;
   let archiveClosed = false;
   const readGroups = getLayerGroups || context?.getLayerGroups?.bind(context);
+  const refreshNliFontChoices = () => visual?.refreshNliFontChoices?.(getNliFontChoices?.());
 
   const requestClear = (expected = snapshot) => {
     if (disposed || !expected?.personId || clearRevision === expected.revision) return;
@@ -176,6 +178,7 @@ export function createGisPersonController({
       visual?.dispose?.();
     },
     handleMapClick,
+    refreshNliFontChoices,
   };
 }
 

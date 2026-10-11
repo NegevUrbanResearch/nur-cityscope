@@ -467,8 +467,8 @@ test('hydration converts historical working and preset configs to V4', async () 
   const starting = h.client.start(); h.resolveNext(saved); await starting;
   const state = h.client.getState();
   expect(state.snapshot.revision).toBe(9);
-  expect(state.snapshot.config.schemaVersion).toBe(7);
-  expect(state.snapshot.presets[1].config.schemaVersion).toBe(7);
+  expect(state.snapshot.config.schemaVersion).toBe(8);
+  expect(state.snapshot.presets[1].config.schemaVersion).toBe(8);
   expect(state.draft.namesWall.innerEdgeInsetPx).toEqual({ left: 0, right: 0 });
   expect(state.draft.namesWall.profiles.wall).not.toHaveProperty('seamGapPx');
   expect(state.draft.pre).toEqual(historical.pre);
@@ -1146,7 +1146,7 @@ for (const [label, body, status] of [
   });
 }
 
-test('a V5 snapshot requires initialization, normalizes to v7, and does not write', async () => {
+test('a V5 snapshot requires initialization, normalizes to v8, and does not write', async () => {
   const h = harness();
   const v5 = migrateNamesWallToV5(LEGACY_DEFAULT_PROJECTION_CONFIG);
   const snapshot = h.stateFor(4, v5);
@@ -1156,7 +1156,7 @@ test('a V5 snapshot requires initialization, normalizes to v7, and does not writ
   await started;
   const state = h.client.getState();
   expect(state.initializationRequired).toBe(true);
-  expect(state.snapshot.config.schemaVersion).toBe(7);
+  expect(state.snapshot.config.schemaVersion).toBe(8);
   expect(state.draft?.namesWall?.rotateDeg).toBe(35);
   expect(h.pendingRequests()).toHaveLength(0);
   await expect(h.client.apply()).rejects.toThrow(/initialization/i);
@@ -1170,7 +1170,7 @@ test('a V6 snapshot normalizes locally but stays gated by the installed schema v
   const snapshot = h.stateFor(4, v6);
   snapshot.presets[0].config = clone(v6);
   const started = h.client.start(); h.resolveNext(snapshot); await started;
-  expect(h.client.getState()).toMatchObject({ initializationRequired: true, snapshot: { config: { schemaVersion: 7 } } });
+  expect(h.client.getState()).toMatchObject({ initializationRequired: true, snapshot: { config: { schemaVersion: 8 } } });
   await expect(h.client.apply()).rejects.toThrow(/initialization/i);
   expect(h.pendingRequests()).toHaveLength(0);
   h.client.stop();
@@ -1185,11 +1185,11 @@ test('same-revision authoritative hydration refreshes installed schema while pre
   const draft = clone(DEFAULTS); draft.pre.tx = 0.27; h.client.setDraft(draft);
   const upgraded = h.stateFor(4, DEFAULTS);
   h.disconnect(); h.reconnect(); h.resolveNext(upgraded); await h.flushPromises();
-  expect(h.client.getState()).toMatchObject({ initializationRequired: false, snapshot: { revision: 4, config: { schemaVersion: 7 } }, draft, hasLocalDraft: true });
+  expect(h.client.getState()).toMatchObject({ initializationRequired: false, snapshot: { revision: 4, config: { schemaVersion: 8 } }, draft, hasLocalDraft: true });
   h.disconnect(); h.reconnect();
   const authoritativeOld = h.stateFor(4, v6); authoritativeOld.presets[0].config = clone(v6);
   h.resolveNext(authoritativeOld); await h.flushPromises();
-  expect(h.client.getState()).toMatchObject({ initializationRequired: true, snapshot: { revision: 4, config: { schemaVersion: 7 } }, draft, hasLocalDraft: true });
+  expect(h.client.getState()).toMatchObject({ initializationRequired: true, snapshot: { revision: 4, config: { schemaVersion: 8 } }, draft, hasLocalDraft: true });
   await expect(h.client.apply()).rejects.toThrow(/initialization/i);
   expect(h.pendingRequests()).toHaveLength(0);
 });

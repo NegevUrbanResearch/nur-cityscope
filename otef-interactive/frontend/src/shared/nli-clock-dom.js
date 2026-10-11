@@ -51,5 +51,8 @@ export function createNliClockDomRenderer(caption) {
       }
     }
   }
-  return { render, isMounted: () => caption.firstElementChild === root };
+  function setFontFamily(fontFamily) {
+    root.style.fontFamily = fontFamily;
+  }
+  return { render, setFontFamily, isMounted: () => caption.firstElementChild === root };
 }

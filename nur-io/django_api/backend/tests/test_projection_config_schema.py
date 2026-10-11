@@ -6,10 +6,31 @@ from backend.projection_config_schema import validate_projection_config, validat
 from backend.models import projection_config_defaults
 from backend.projection_warp_schema import TD_MIGRATION_PRESET_ID, TD_MIGRATION_PRESET_NAME, migrate_projection_config_to_v2
 from backend.projection_warp_schema import migrate_projection_config_to_v3, migrate_projection_config_to_v4, migrate_projection_config_to_v5
+from backend.projection_warp_schema import migrate_projection_config_to_v7, migrate_projection_config_to_v8, validate_projection_config_v8
 from backend.projection_config_schema import default_names_wall, legacy_names_wall, validate_names_wall, validate_names_wall_v3, validate_names_wall_v5
 
 
 class ProjectionConfigSchemaTests(SimpleTestCase):
+    def test_v7_upgrades_fonts_without_geometry_changes(self):
+        v7 = migrate_projection_config_to_v7(legacy_projection_config_defaults())
+        v8 = migrate_projection_config_to_v8(v7)
+        self.assertEqual(v8['schemaVersion'], 8)
+        self.assertEqual(v8['nliFonts'], {'he': 'default', 'en': 'hadassah'})
+        self.assertEqual({key: value for key, value in v8.items() if key != 'nliFonts' and key != 'schemaVersion'},
+                         {key: value for key, value in v7.items() if key != 'schemaVersion'})
+        self.assertEqual(validate_projection_config_v8(v8), {})
+
+    def test_v8_rejects_unknown_or_wrong_script_choices(self):
+        v8 = migrate_projection_config_to_v8(legacy_projection_config_defaults())
+        for language, choice in [('he', 'marcellus'), ('en', 'guttman'), ('en', 'unknown')]:
+            invalid = copy.deepcopy(v8)
+            invalid['nliFonts'][language] = choice
+            self.assertIn(f'nliFonts.{language}', validate_projection_config_v8(invalid))
+        for choice in ([], {}):
+            invalid = copy.deepcopy(v8)
+            invalid['nliFonts']['he'] = choice
+            self.assertIn('nliFonts.he', validate_projection_config_v8(invalid))
+
     def test_v5_regular_closeness_is_strict_and_v4_remains_historical(self):
         v4 = migrate_projection_config_to_v4(legacy_projection_config_defaults())
         v5 = migrate_projection_config_to_v5(v4)
@@ -167,9 +188,10 @@ class ProjectionConfigSchemaTests(SimpleTestCase):
         snapshot['presets'][0]['config']['namesWall']['profiles']['wall']['strokeWidthPx'] = 4
         self.assertIn('presets[0]', validate_projection_snapshot(snapshot))
 
-    def test_defaults_are_v7_identity_warp_without_changing_framing(self):
+    def test_defaults_are_v8_identity_warp_without_changing_framing(self):
         defaults = projection_config_defaults()
-        self.assertEqual(defaults['schemaVersion'], 7)
+        self.assertEqual(defaults['schemaVersion'], 8)
+        self.assertEqual(defaults['nliFonts'], {'he': 'default', 'en': 'hadassah'})
         self.assertEqual(defaults['namesWall']['rotateDeg'], 35)
         self.assertEqual(defaults['pre'], {'scale': 1.41, 'rotateDeg': -50, 'tx': 0.01, 'ty': 0})
         for side, columns in (('left', 7), ('right', 8)):

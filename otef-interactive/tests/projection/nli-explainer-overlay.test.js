@@ -179,6 +179,9 @@ describe("nli explainer layout", () => {
     expect(host.style.transform).not.toMatch(/skew/i);
     expect(host.style.transform).not.toMatch(/scale\(/i);
     expect(host.style.left).toBe(`${fallback.leftPct}%`);
+    applyNliExplainerLayout(host, fallback, { fontFamily: 'NLI Content Narkiss Block',
+      canvasFontStack: '"NLI Content Narkiss Block", sans-serif', mapFontStack: ['NLI Content Narkiss Block'] });
+    expect(host.style.fontFamily).toBe('"NLI Content Narkiss Block", sans-serif');
     applyNliExplainerLayout(host, { ...fallback, rotateDeg: 50 });
     expect(host.style.transform).toMatch(/rotate\(50deg\)/);
     expect(host.style.transformOrigin).toMatch(/center/i);

@@ -94,7 +94,7 @@ export function bindProjectionSettlementNames({ dataContext, adapter, catalog, h
       const [catalogSignature, settingsSignature] = await Promise.all([catalogIdentity, identity(settings)]);
       if (disposed || current !== token) return;
       report({ catalogIdentity: catalogSignature, settingsIdentity: settingsSignature });
-      const prepared = await adapter.prepare({ catalog, settings, language });
+      const prepared = await adapter.prepare({ catalog, settings, language, fontChoices: getConfig?.()?.nliFonts });
       if (disposed || current !== token || prepared?.stale) return;
       adapter.commit();
       committedLanguage = language;
@@ -146,6 +146,7 @@ export function bindProjectionSettlementNames({ dataContext, adapter, catalog, h
     offPaint();
   };
   dispose.getReadiness = () => ({ ...readiness });
+  dispose.fontChoicesChanged = () => { if (!disposed) onNames(); };
   dispose.whenReady = async () => { await pending; if (!readiness.ready) throw new Error(readiness.error || 'Settlement labels are not prepared'); return { ...readiness }; };
   dispose.refreshVisibility = () => { applyGroupVisibility(); replayMapOpacity(); };
   return dispose;
