@@ -6,6 +6,7 @@ import { shelterSymbolDataUrl } from "../shared/nli-shelter-symbol.js";
 import { OUTPUT_HEIGHT, OUTPUT_WIDTH } from "../projection/projection-overlay-placement.js";
 import { layoutProjectionLegend, PROJECTION_LEGEND_FONT, resolveLegendRasterSize } from "../projection/legend-content-layout.js";
 import { nameTextStyle } from "../shared/nli-name-language.js";
+import { createLegendDomMotion } from "./legend-dom-motion.js";
 
 export function applyProjectionLegendLayout(element, layout, { span = "full", referenceElement } = {}) {
   if (!element?.style) return;
@@ -139,6 +140,7 @@ function mountMapLegend({ element, map, surface = "gis", projectionSpan = "full"
   if (!element) return { refresh: async () => {}, setEditing: () => {}, setPage: () => 0, dispose: () => {} };
   const mode = surface === "projection" ? "projection" : "gis";
   const { content, pager } = makeChildren(element);
+  const domMotion = createLegendDomMotion({ element, content });
   element.classList?.add?.(`map-legend-${mode}`);
   let generation = 0;
   let disposed = false;
@@ -356,7 +358,7 @@ function mountMapLegend({ element, map, surface = "gis", projectionSpan = "full"
       const savedHeight = referenceHeight * (Number(layout.heightPct) || 0) / 100;
       const offsetX = (savedWidth - width * referenceScale) / 2;
       const offsetY = (savedHeight - height * referenceScale) / 2;
-      const scale = (contentLayout?.scale || 1) * referenceScale;
+      const scale = referenceScale;
       if (content?.style) Object.assign(content.style, {
         position: "absolute", left: `${offsetX}px`, top: `${offsetY}px`, width: `${width}px`, height: `${height}px`,
         padding: "0", border: "0", boxSizing: "content-box", fontSize: `${Number(layout.fontPx) || 22}px`,
@@ -368,7 +370,9 @@ function mountMapLegend({ element, map, surface = "gis", projectionSpan = "full"
         const layer = block?.layers?.find((candidate) => candidate.items?.includes(placement.item));
         return projectionItemMarkup(placement, Number(layout.fontPx) || 22, layer?.id || "");
       }).join("");
-      content.innerHTML = rendered;
+      domMotion.render(rendered, { visible: projectionSpan !== "right" && layout?.visible !== false && !!rendered,
+        immediate: editing, placements: contentLayout?.placements || [], scale: contentLayout?.scale || 1,
+        font: Number(layout.fontPx) || 22, renderProjection: projectionItemMarkup });
       if (pager) { pager.innerHTML = ""; pager.hidden = true; }
       onRenderSnapshot?.(renderSnapshot(currentBlocks));
       return;
@@ -381,7 +385,7 @@ function mountMapLegend({ element, map, surface = "gis", projectionSpan = "full"
       if (prior?.pack.id === block.pack.id) prior.layersMarkup += block.layersMarkup;
       else groups.push({ pack: block.pack, layersMarkup: block.layersMarkup });
     }
-    content.innerHTML = groups.map(({ pack, layersMarkup }) => packMarkup(pack, layersMarkup)).join("");
+    domMotion.render(groups.map(({ pack, layersMarkup }) => packMarkup(pack, layersMarkup)).join(""), { immediate: editing });
     renderPager();
     onRenderSnapshot?.(renderSnapshot(visible));
   };
@@ -434,7 +438,7 @@ function mountMapLegend({ element, map, surface = "gis", projectionSpan = "full"
     } catch (error) {
       if (disposed || version !== generation) return;
       console.warn("[MapLegend] build failed", error);
-      content.innerHTML = "";
+      domMotion.render("", { visible: false });
       currentModel = null;
       currentBlocks = [];
       contentLayout = null;
@@ -444,14 +448,18 @@ function mountMapLegend({ element, map, surface = "gis", projectionSpan = "full"
       onRenderSnapshot?.(renderSnapshot([]));
     }
   };
-  const setEditing = (next) => { editing = !!next; if (editing) clearTimer(); else renderPager(); };
+  const setEditing = (next) => { editing = !!next; if (editing) clearTimer(); else renderPager(); renderPage(); };
   on(typeof document !== "undefined" ? document : null, "visibilitychange", () => { if (document.hidden) clearTimer(); else renderPager(); });
   if (typeof ResizeObserver !== "undefined") {
-    const observer = new ResizeObserver(() => { if (!disposed) refresh(); });
+    const observer = new ResizeObserver((entries) => {
+      const parentChanged = mode === "projection" && entries?.some(entry => entry.target === element.parentElement);
+      if (!disposed && (parentChanged || !domMotion.isAnimating())) refresh();
+    });
     observer.observe(element);
     if (mode === "projection" && element.parentElement && element.parentElement !== element) observer.observe(element.parentElement);
     listeners.push(() => observer.disconnect());
   }
+  on(typeof window !== "undefined" ? window : null, "resize", () => { if (!disposed) refresh(); });
   if (typeof document !== "undefined" && document.fonts?.addEventListener) { const callback = () => { if (mode === "projection") fontRevision += 1; refresh(); }; document.fonts.addEventListener("loadingdone", callback); listeners.push(() => document.fonts.removeEventListener("loadingdone", callback)); }
   return {
     refresh,
@@ -469,6 +477,7 @@ function mountMapLegend({ element, map, surface = "gis", projectionSpan = "full"
     dispose() {
       if (!disposed) onRenderSnapshot?.(renderSnapshot([], mode === "projection"));
       disposed = true;
+      domMotion.dispose();
       generation += 1;
       clearTimer();
       listeners.splice(0).forEach((remove) => remove());

@@ -151,7 +151,7 @@ body {
   line-height: 1.35;
 }
 .map-legend:empty { display: none; }
-.map-legend-content { min-width: 0; }
+.map-legend-content { position: relative; min-width: 0; }
 .map-legend-gis { left: 50%; bottom: 20px; width: max-content; max-width: calc(100vw - 36px); padding: 8px 16px; padding-inline-end: 12px; transform: translateX(-50%); }
 .map-legend-projection { padding: 0; background: transparent; border: 0; border-radius: 0; box-shadow: none; }
 .map-legend-group { min-width: 0; }

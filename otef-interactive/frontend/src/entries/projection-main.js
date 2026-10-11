@@ -654,7 +654,8 @@ async function bootstrapProjectionRuntime() {
     if (projectionMapBooted) return;
     projectionMapBooted = true;
     const captionAdapter = browserMode ? createProjectionCaptionAdapter({ rasterScale: outputResolution.scale }) : null;
-    const legendAdapter = browserMode ? createProjectionLegendAdapter({ rasterScale: outputResolution.scale }) : null;
+    const legendAdapter = browserMode ? createProjectionLegendAdapter({ rasterScale: outputResolution.scale,
+      onInvalidate: () => browserSurface?.requestDraw?.() }) : null;
     const patternAdapter = browserMode ? createProjectionPatternAdapter({ spanId: projectionSpanId, rasterScale: outputResolution.scale }) : null;
     const roadSignAdapter = browserMode ? createProjectionRoadSignAdapter({ document, output: projectionSpanId,
       rasterScale: outputResolution.scale, onInvalidate: () => browserSurface?.requestDraw?.(),
