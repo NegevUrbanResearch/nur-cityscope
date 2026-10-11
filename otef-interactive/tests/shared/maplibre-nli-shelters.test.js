@@ -6,7 +6,9 @@ import Pbf from "pbf";
 import { createExpression } from "@maplibre/maplibre-gl-style-spec";
 import {
   createShelterRenderer,
+  getShelterProjectionFrame,
   SHELTER_LAYER_ID,
+  SHELTER_VECTOR_LAYER_ID,
   SHELTER_SOURCE_ID,
 } from "../../frontend/src/shared/maplibre-nli-shelters.js";
 import {
@@ -21,6 +23,7 @@ function mapFake() {
     sources = new Map(),
     images = new Map();
   return {
+    getLayersOrder: () => layers.map(layer => layer.id),
     getStyle: () => ({ layers }),
     getLayer: (id) => layers.find((l) => l.id === id),
     getSource: (id) => sources.get(id),
@@ -82,6 +85,34 @@ const imageFactory = () => ({
   data: new Uint8Array(56 * 48 * 4),
 });
 describe("decorative shelter renderer", () => {
+  it("publishes vector projection placement without rasterizing shelter artwork", () => {
+    const m = mapFake();
+    const readStyle = m.getStyle;
+    m.getStyle = () => ({ layers: readStyle().layers.filter(layer => layer.type !== "custom") });
+    const moves = vi.spyOn(m, "moveLayer");
+    const factory = vi.fn(imageFactory);
+    const renderer = createShelterRenderer(m, { displayProfile: "projection", vectorProjection: true,
+      vectorLayer: { id: SHELTER_VECTOR_LAYER_ID, type: "custom" },
+      imageFactory: factory, getProjectionPresentation: () => ({ inputCapture: true,
+        sourceDimensions: { width: 1920, height: 1080 }, outputResolution: { width: 1920, height: 1080 } }),
+    });
+    renderer.render({ visible: true, shelters, impactedIds: new Set(["a"]) });
+    expect(factory).not.toHaveBeenCalled();
+    const snapshot = getShelterProjectionFrame(m);
+    expect(snapshot.frame.shelters).toBe(shelters);
+    expect(snapshot.layout.get("a").bodyWidth).toBeCloseTo(6);
+    expect([...m.images.values()].every(({ img }) => img.data.every(value => value === 0))).toBe(true);
+    const order = m.getLayersOrder();
+    expect(order.indexOf(SHELTER_VECTOR_LAYER_ID)).toBeGreaterThan(order.indexOf("areas"));
+    expect(order.indexOf(SHELTER_VECTOR_LAYER_ID)).toBeLessThan(order.indexOf("nli__people-circle"));
+    const moveCount = moves.mock.calls.length;
+    renderer.ensureOrder();
+    expect(moves).toHaveBeenCalledTimes(moveCount);
+    renderer.reset();
+    expect(getShelterProjectionFrame(m)).toBeNull();
+    renderer.dispose();
+    expect(m.getLayer(SHELTER_VECTOR_LAYER_ID)).toBeUndefined();
+  });
   it("keeps Aner Shapira's shelter visible after real GeoJSON tile encoding", () => {
     const m = mapFake();
     const cohort = [

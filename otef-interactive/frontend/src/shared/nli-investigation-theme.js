@@ -93,7 +93,7 @@ export const NLI_DISPLAY_PROFILES = Object.freeze({
     }),
   }),
   projection: Object.freeze({
-    shelter: Object.freeze({ bodyWidth: 12, rotationDeg: 85 }),
+    shelter: Object.freeze({ bodyWidth: 6, rotationDeg: 85, legendScale: 0.5 }),
     lineWidthMultiplier: 1.2,
     radiusMultiplier: 1.15,
     routeScale: 1.15,

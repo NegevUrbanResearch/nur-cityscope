@@ -2,10 +2,14 @@ import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 
-it("loads shelter contact modules through the native browser resolver", () => {
+it.each([
+  ["shared/nli-shelter-contacts.js", "buildShelterContactIndex"],
+  ["projection/projection-shelter-adapter.js", "createProjectionShelterAdapter"],
+  ["projection/projection-shelter-layer.js", "createProjectionShelterLayer"],
+])("loads %s through the native browser resolver", (modulePath, exportName) => {
   const entry = fileURLToPath(
     new URL(
-      "../../frontend/src/shared/nli-shelter-contacts.js",
+      `../../frontend/src/${modulePath}`,
       import.meta.url,
     ),
   );
@@ -13,11 +17,12 @@ it("loads shelter contact modules through the native browser resolver", () => {
     import { readFileSync } from 'node:fs';
     import { pathToFileURL } from 'node:url';
     import { SourceTextModule, createContext } from 'node:vm';
-    const context = createContext({ console });
+    const context = createContext({ console, URL, structuredClone });
     const modules = new Map();
     function load(url) {
       if (!modules.has(url.href)) modules.set(url.href, new SourceTextModule(
-        readFileSync(url, 'utf8'), { context, identifier: url.href },
+        readFileSync(url, 'utf8'), { context, identifier: url.href,
+          initializeImportMeta(meta) { meta.url = url.href; } },
       ));
       return modules.get(url.href);
     }
@@ -29,7 +34,7 @@ it("loads shelter contact modules through the native browser resolver", () => {
       return load(new URL(specifier, parent.identifier));
     });
     await entry.evaluate();
-    console.log(typeof entry.namespace.buildShelterContactIndex);
+    console.log(typeof entry.namespace[process.argv[2]]);
   `;
   expect(
     execFileSync(
@@ -40,6 +45,7 @@ it("loads shelter contact modules through the native browser resolver", () => {
         "-e",
         harness,
         entry,
+        exportName,
       ],
       { encoding: "utf8" },
     ).trim(),

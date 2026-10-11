@@ -1,4 +1,5 @@
 import { OUTPUT_WIDTH, OUTPUT_HEIGHT } from "./projection-overlay-placement.js";
+import { NLI_DISPLAY_PROFILES } from "../shared/nli-investigation-theme.js";
 
 export const PROJECTION_LEGEND_FONT = '"Guttman Hatzvi", "Noto Sans Hebrew", Arial, sans-serif';
 
@@ -19,11 +20,12 @@ export function normalizeLegendComponents(item) {
 }
 
 function glyphWidth(shape, font) {
+  if (shape === "shelter") return font * 1.23 * NLI_DISPLAY_PROFILES.projection.shelter.legendScale;
   return shape === "point" || shape === "square" ? font * 0.55 : shape === "diamond" ? font * 0.45 : font * 1.23;
 }
 
 function glyphHeight(part, font) {
-  if (part.shape === "shelter") return font * 1.23 * .78;
+  if (part.shape === "shelter") return font * 1.23 * .78 * NLI_DISPLAY_PROFILES.projection.shelter.legendScale;
   return part.shape === "line" ? Math.max(2, Number(part.strokeWidth) || 1) : part.shape === "point" || part.shape === "square" ? font * 0.55 : part.shape === "diamond" ? font * 0.45 : font * 0.68;
 }
 

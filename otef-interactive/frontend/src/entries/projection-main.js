@@ -115,6 +115,7 @@ import { createProjectionCaptionAdapter, drawProjectionCaptionForSpan } from "..
 import { createProjectionLegendAdapter } from "../projection/projection-legend-adapter.js";
 import { createProjectionPatternAdapter } from "../projection/projection-pattern-adapter.js";
 import { createProjectionRoadSignAdapter, reportRoadSignError } from "../projection/projection-road-sign-adapter.js";
+import { createProjectionShelterLayer } from "../projection/projection-shelter-layer.js";
 import { resolveProjectionRoadSignVisibility } from "../projection/projection-road-sign-visibility.js";
 import { resolveProjectionResolution, projectionMapPixelRatio, bindProjectionMapResolution } from '../projection/output-resolution.js';
 import { getInvestigationTimelineRenderSnapshot } from "../shared/maplibre-investigation-timeline.js";
@@ -660,6 +661,7 @@ async function bootstrapProjectionRuntime() {
     const roadSignAdapter = browserMode ? createProjectionRoadSignAdapter({ document, output: projectionSpanId,
       rasterScale: outputResolution.scale, onInvalidate: () => browserSurface?.requestDraw?.(),
       onError: reportRoadSignError }) : null;
+    const shelterVectorLayer = browserMode ? createProjectionShelterLayer({ document }) : null;
     if (captionAdapter) registerDisposer(() => captionAdapter.dispose());
     if (legendAdapter) registerDisposer(() => legendAdapter.dispose());
     if (patternAdapter) registerDisposer(() => patternAdapter.dispose());
@@ -857,6 +859,9 @@ async function bootstrapProjectionRuntime() {
           const height = canvas.clientHeight || displayContainerEl.clientHeight;
           return { inputCapture: true, sourceDimensions: { width, height }, outputResolution: { width, height } };
         },
+        shelterVectorProjection: browserMode,
+        shelterVectorLayer,
+        onShelterProjectionInvalidate: () => browserSurface?.requestDraw?.(),
         onShelterDiagnostic: error => console.warn("[NLI shelters]", error.message),
         now: () =>
           typeof OTEFDataContext.correctedNow === "function"

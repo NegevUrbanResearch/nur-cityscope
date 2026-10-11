@@ -12,6 +12,7 @@ import {
 
 export const SHELTER_SOURCE_ID = "nli-shelters-232";
 export const SHELTER_LAYER_ID = "nli-shelters-232-symbol";
+export const SHELTER_VECTOR_LAYER_ID = "nli-shelters-232-vectors";
 const IMAGES = {
   neutral: "nli-shelter-concrete-neutral",
   red: "nli-shelter-concrete-red",
@@ -20,15 +21,23 @@ const MURAL_IMAGES = { neutral: "nli-shelter-mural-neutral", red: "nli-shelter-m
 const variantFor = id => id === REIM_WEST_SHELTER_ID ? "mural" : "normal";
 const imagesFor = id => id === REIM_WEST_SHELTER_ID ? MURAL_IMAGES : IMAGES;
 const available = new WeakMap();
+const projectionFrames = new WeakMap();
+export function getShelterProjectionFrame(map) {
+  return projectionFrames.get(map) || null;
+}
 export function sheltersVisibleOnMap(map) {
   return available.get(map) === true;
 }
 export function ensureShelterLayerOrder(map) {
   if (!map?.getLayer?.(SHELTER_LAYER_ID)) return;
-  const layers = map.getStyle?.()?.layers || [];
+  // getStyle serializes native layers only; custom vector layers still belong
+  // to the real drawing order exposed by getLayersOrder.
+  const layers = map.getLayersOrder?.().map(id => map.getLayer(id)).filter(Boolean)
+    || map.getStyle?.()?.layers || [];
   const protectedLayers = layers.filter(
     (layer) =>
       layer.id !== SHELTER_LAYER_ID &&
+      layer.id !== SHELTER_VECTOR_LAYER_ID &&
       (layer.id.startsWith("nli__people") ||
         layer.id.startsWith("otef-person-selection") ||
         layer.type === "symbol"),
@@ -38,16 +47,19 @@ export function ensureShelterLayerOrder(map) {
       layer.id !== SHELTER_LAYER_ID && !protectedLayers.includes(layer),
   );
   const desired = [
-    ...activityLayers.map((layer) => layer.id),
+    ...activityLayers.filter(layer => layer.id !== SHELTER_VECTOR_LAYER_ID).map((layer) => layer.id),
     SHELTER_LAYER_ID,
+    ...(map.getLayer(SHELTER_VECTOR_LAYER_ID) ? [SHELTER_VECTOR_LAYER_ID] : []),
     ...protectedLayers.map((layer) => layer.id),
   ];
   if (desired.every((id, index) => layers[index]?.id === id)) return;
   map.moveLayer?.(SHELTER_LAYER_ID);
+  if (map.getLayer(SHELTER_VECTOR_LAYER_ID)) map.moveLayer?.(SHELTER_VECTOR_LAYER_ID);
   for (const layer of protectedLayers) map.moveLayer?.(layer.id);
 }
 
 export function createShelterRenderer(map, options = {}) {
+  const vectorProjection = options.vectorProjection === true;
   let disposed = false,
     lastFrame = null,
     signature = null,
@@ -65,11 +77,19 @@ export function createShelterRenderer(map, options = {}) {
   const now = options.now || (() => globalThis.performance.now());
   let animation = null;
   const spritePairs = new Map();
+  function publishProjection(frame = projectionFrames.get(map)?.frame) {
+    if (!vectorProjection || !frame) return;
+    projectionFrames.set(map, { frame, layout,
+      colors: new Map([...colors].map(([id, state]) => [id, state.value])) });
+    options.onProjectionInvalidate?.();
+    map.triggerRepaint?.();
+  }
   function spritesFor(id) {
     const variant = variantFor(id);
     if (!spritePairs.has(variant)) spritePairs.set(variant,
       Object.fromEntries(Object.keys(IMAGES).map(state => [state,
-        (options.imageFactory || shelterSymbolImage)(state === "red" ? NLI_VISUAL_TOKENS.incidentRed : NLI_VISUAL_TOKENS.annotationInk, variant),
+        vectorProjection ? { width: 1, height: 1, data: new Uint8Array(4) }
+          : (options.imageFactory || shelterSymbolImage)(state === "red" ? NLI_VISUAL_TOKENS.incidentRed : NLI_VISUAL_TOKENS.annotationInk, variant),
       ])));
     return spritePairs.get(variant);
   }
@@ -80,6 +100,7 @@ export function createShelterRenderer(map, options = {}) {
     colors.clear();
   }
   function paintColor(id, value) {
+    if (vectorProjection) return;
     const sprites = spritesFor(id);
     const data = new Uint8Array(sprites.neutral.data.length);
     for (let i = 0; i < data.length; i++)
@@ -98,6 +119,7 @@ export function createShelterRenderer(map, options = {}) {
       pending ||= progress < 1;
     }
     options.onColorFrame?.([...colors].map(([id, state]) => ({ id, value: state.value, target: state.target })));
+    publishProjection();
     if (pending) animation = requestFrame(tickColors);
   }
   function updateColors(frame) {
@@ -181,6 +203,10 @@ export function createShelterRenderer(map, options = {}) {
       else map.addLayer(layer);
       ensureShelterLayerOrder(map);
     }
+    if (vectorProjection && options.vectorLayer && !map.getLayer(SHELTER_VECTOR_LAYER_ID)) {
+      map.addLayer(options.vectorLayer);
+      ensureShelterLayerOrder(map);
+    }
   }
   function announce(value) {
     if (available.get(map) === value) return;
@@ -195,6 +221,8 @@ export function createShelterRenderer(map, options = {}) {
       if (generation === hideGeneration) reset();
     })) return;
     stopColors();
+    projectionFrames.delete(map);
+    if (vectorProjection) options.onProjectionInvalidate?.();
     signature = null;
     focusKey = null;
     lastFrame = null;
@@ -212,6 +240,8 @@ export function createShelterRenderer(map, options = {}) {
     hideGeneration++;
     if (!frame.visible || !frame.shelters?.length) {
       stopColors();
+      projectionFrames.delete(map);
+      if (vectorProjection) options.onProjectionInvalidate?.();
       if (map.getLayer?.(SHELTER_LAYER_ID))
         map.setLayoutProperty(SHELTER_LAYER_ID, "visibility", "none");
       announce(false);
@@ -227,6 +257,8 @@ export function createShelterRenderer(map, options = {}) {
       // The map canvas/warp may not yet exist. Retain the frame for its resize or
       // presentation event; the staged GeoJSON layer remains a valid scene member.
       layoutKey = null;
+      projectionFrames.delete(map);
+      if (vectorProjection) options.onProjectionInvalidate?.();
       if (map.getLayer?.(SHELTER_LAYER_ID)) map.setLayoutProperty(SHELTER_LAYER_ID, "visibility", "none");
       announce(false);
       return;
@@ -314,6 +346,7 @@ export function createShelterRenderer(map, options = {}) {
         ensureShelterLayerOrder(map);
       }
       announce(true);
+      publishProjection(frame);
       if (options.getSceneManaged?.()) completeInvestigationOverlayMount(map, SHELTER_SCENE_ID);
     } catch (error) {
       reset();
@@ -343,6 +376,7 @@ export function createShelterRenderer(map, options = {}) {
       map.off?.("move", reposition);
       map.off?.("resize", reposition);
       map.off?.("nli-shelter-presentation-change", reposition);
+      if (map.getLayer?.(SHELTER_VECTOR_LAYER_ID)) map.removeLayer(SHELTER_VECTOR_LAYER_ID);
       if (map.getLayer?.(SHELTER_LAYER_ID)) map.removeLayer(SHELTER_LAYER_ID);
       if (map.getSource?.(SHELTER_SOURCE_ID))
         map.removeSource(SHELTER_SOURCE_ID);

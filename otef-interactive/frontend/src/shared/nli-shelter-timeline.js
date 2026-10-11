@@ -46,6 +46,9 @@ export function createShelterTimeline(map, getDeps) {
     renderer?.dispose();
     const deps = getDeps();
     renderer = createShelterRenderer(map, {
+      vectorProjection: deps.shelterVectorProjection === true,
+      vectorLayer: deps.shelterVectorLayer,
+      onProjectionInvalidate: () => getDeps().onShelterProjectionInvalidate?.(),
       getDisplayProfile: () => getDeps().displayProfile || "gis",
       getMotionMode: () => getDeps().motionMode || "full",
       getSceneManaged: () => getDeps().joinBatch === true ||
