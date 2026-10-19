@@ -22,7 +22,8 @@ import {
   PINK_LINE_ROUTE_FULL_LAYER_ID,
   PINK_LINE_ROUTE_LAYER_ID,
 } from "../map-utils/curated-pink-axis-state.js";
-import { renderLayerWorkspace, renderLegendChoices, renderVisibilityTile } from "./layer-sheet-view.js";
+import { renderLayerWorkspace, renderVisibilityTile } from "./layer-sheet-view.js";
+import { bindLayerScrollCue } from "./layer-scroll-cue.js";
 
 function groupLayersByNameForSheet(layers, groupId) {
   const groups = new Map();
@@ -155,40 +156,6 @@ function escapeHtmlSafe(value) {
 
 function encAttrId(id) {
   return encodeURIComponent(String(id));
-}
-
-function isLegendSummaryEligible(group) {
-  return !!(
-    group &&
-    group.id !== "nli" &&
-    group.legend &&
-    group.legend.summary &&
-    group.legend.summary.label
-  );
-}
-
-function mergeLegendMetadataFromRegistry(groups = [], registryGroups = []) {
-  const registryById = new Map(
-    registryGroups.map((group) => [String(group.id), group]),
-  );
-  return groups.map((group) => {
-    const registryGroup = registryById.get(String(group.id));
-    if (!registryGroup?.legend) return group;
-    return {
-      ...group,
-      legend: {
-        ...registryGroup.legend,
-        ...(group.legend || {}),
-      },
-    };
-  });
-}
-
-function renderLegendSummaryControl(group, summarizedGroupIds = []) {
-  if (!isLegendSummaryEligible(group)) return "";
-  const groupId = String(group.id);
-  const checked = summarizedGroupIds.map(String).includes(groupId);
-  return renderLegendChoices(groupId, checked);
 }
 
 function fullLayerIdsForGroup(group) {
@@ -374,7 +341,6 @@ class LayerSheetController {
     if (typeof OTEFDataContext !== "undefined") {
       this._subscribeDataContext("layerGroups", () => this.render());
       this._subscribeDataContext("animations", () => this.render());
-      this._subscribeDataContext("legendSettings", () => this.render());
     }
 
     if (typeof window !== "undefined") {
@@ -394,6 +360,7 @@ class LayerSheetController {
   }
 
   destroy() {
+    this._unbindScrollCue?.();
     for (const unsubscribe of this._subscriptions.splice(0)) unsubscribe();
     if (typeof window !== "undefined" && this._remoteLocaleHandler) {
       window.removeEventListener(LOCALE_EVENT, this._remoteLocaleHandler);
@@ -427,15 +394,6 @@ class LayerSheetController {
           .finally(() => this.render());
         return;
       }
-      const legendButton = e.target.closest("button[data-legend-summary-group]");
-      if (legendButton) {
-        void this.setLegendGroupSummarized(
-          legendButton.getAttribute("data-legend-summary-group"),
-          legendButton.getAttribute("data-summary-enabled") === "true",
-        ).finally(() => this.render());
-        return;
-      }
-
       const animBtn = e.target.closest("[data-animation-toggle]");
       if (animBtn) {
         e.preventDefault();
@@ -581,18 +539,6 @@ class LayerSheetController {
     }
   }
 
-  async setLegendGroupSummarized(groupId, summarized) {
-    if (
-      typeof OTEFDataContext === "undefined" ||
-      typeof OTEFDataContext.setLegendSettings !== "function"
-    ) return;
-    const current = OTEFDataContext.getLegendSettings?.()?.summarizedGroupIds || [];
-    const ids = new Set(current.map(String));
-    if (summarized) ids.add(String(groupId));
-    else ids.delete(String(groupId));
-    await OTEFDataContext.setLegendSettings({ summarizedGroupIds: [...ids] });
-  }
-
   async toggleLayerRow(fullLayerIds, enabled, options = {}) {
     if (!Array.isArray(fullLayerIds) || fullLayerIds.length === 0) {
       return { ok: false };
@@ -696,12 +642,7 @@ class LayerSheetController {
         }
       }
     }
-    const registryGroups =
-      typeof layerRegistry !== "undefined" &&
-      typeof layerRegistry.getGroups === "function"
-        ? layerRegistry.getGroups()
-        : [];
-    return mergeLegendMetadataFromRegistry(groups, registryGroups);
+    return groups;
   }
 
   buildLayerRowsHtml(group, animations) {
@@ -769,8 +710,6 @@ class LayerSheetController {
       totalCount: layers.length,
       allLayersOn: layers.length > 0 && layers.every((layer) => layer.enabled),
       rowsHtml: this.buildLayerRowsHtml(selected, animations),
-      legendHtml: renderLegendSummaryControl(selected,
-        typeof OTEFDataContext !== "undefined" ? OTEFDataContext.getLegendSettings?.()?.summarizedGroupIds || [] : []),
     });
   }
 
@@ -789,6 +728,10 @@ class LayerSheetController {
   render() {
     const content = this.sheet && this.sheet.querySelector(".sheet-content");
     if (!content) return;
+    const previousPackId = this._renderedPackId;
+    const scrollTop = content.querySelector(".group-layers")?.scrollTop || 0;
+    const hadScrollCue = content.querySelector("[data-layers-more]")?.hidden === false;
+    this._unbindScrollCue?.();
 
     const groups = this._regularGroups();
     if (groups.length === 0) {
@@ -823,6 +766,13 @@ class LayerSheetController {
 
     this.updatePanelChrome(groups);
     applyRemoteChromeI18n();
+    const port = content.querySelector(".group-layers");
+    if (port && previousPackId === this.focusedGroupId) {
+      content.querySelector("[data-layers-more]").hidden = !hadScrollCue;
+      port.scrollTop = scrollTop;
+    }
+    this._renderedPackId = this.focusedGroupId;
+    this._unbindScrollCue = bindLayerScrollCue(content);
   }
 }
 
@@ -838,8 +788,5 @@ export {
   isLayerAnimatable,
   isPinkLineRouteSheetRow,
   orderMoreshetWorkshopSheetRows,
-  isLegendSummaryEligible,
-  mergeLegendMetadataFromRegistry,
   renderLayerRow,
-  renderLegendSummaryControl,
 };

@@ -31,17 +31,7 @@ export function renderVisibilityTile({ label, enabled, layerIds, animationIds, a
   </div>`;
 }
 
-export function renderLegendChoices(groupId, summarized) {
-  return `<details class="layer-legend-settings">
-    <summary>${escapeLayerHtml(t("legendDisplay"))}</summary>
-    <div class="layer-legend-options" role="group" aria-label="${escapeLayerHtml(t("legendDisplay"))}">
-      ${[false, true].map((enabled) => `<button type="button" data-legend-summary-group="${escapeLayerHtml(groupId)}" data-summary-enabled="${enabled}" aria-pressed="${summarized === enabled}">${escapeLayerHtml(t(enabled ? "legendDisplaySummary" : "legendDisplayStandard"))}</button>`).join("")}
-    </div>
-    <p class="remote-meta">${escapeLayerHtml(t("legendDisplayHint"))}</p>
-  </details>`;
-}
-
-export function renderLayerWorkspace({ packs, selectedId, selectedTitle, enabledCount, totalCount, allLayersOn, rowsHtml, legendHtml }) {
+export function renderLayerWorkspace({ packs, selectedId, selectedTitle, enabledCount, totalCount, allLayersOn, rowsHtml }) {
   return `<div class="layers-workspace">
     <aside class="layers-pack-pane">
       <h2 class="layers-pack-heading">${escapeLayerHtml(t("layersPackList"))}</h2>
@@ -56,8 +46,8 @@ export function renderLayerWorkspace({ packs, selectedId, selectedTitle, enabled
         <div><h2>${escapeLayerHtml(selectedTitle)}</h2><p class="remote-meta">${escapeLayerHtml(t("layersPackSummary", { e: enabledCount, t: totalCount }))}</p></div>
         <button type="button" class="layers-bulk-action" data-layers-bulk-visibility data-layers-enc-gid="${encodeURIComponent(selectedId)}" data-enabled="${!allLayersOn}">${layerIcon(allLayersOn ? "hidden" : "eye")}<span>${escapeLayerHtml(t(allLayersOn ? "layersHideAll" : "layersShowAll"))}</span></button>
       </div>
-      <div class="group-layers group-layers--expanded group-layers--tiles"><div class="layer-tile-grid">${rowsHtml}</div></div>
-      ${legendHtml}
+      <div id="layerPackScroll" class="group-layers group-layers--expanded group-layers--tiles" tabindex="0" role="region" aria-label="${escapeLayerHtml(selectedTitle)}"><div class="layer-tile-grid">${rowsHtml}</div></div>
+      <button type="button" class="layers-more" data-layers-more aria-controls="layerPackScroll" hidden>${escapeLayerHtml(t("layersMore"))}</button>
     </section>
   </div>`;
 }

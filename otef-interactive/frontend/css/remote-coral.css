@@ -1,0 +1,314 @@
+/* Coral Studio belongs to the regular tablet remote only. */
+body.otef-remote-shell {
+  --color-canvas: #141719;
+  --color-surface: #303b3e;
+  --color-surface-raised: #465757;
+  --color-ink: #fff4dd;
+  --color-ink-muted: #d5ded5;
+  --color-ink-subtle: #d5ded5;
+  --color-border: #6b8283;
+  --color-border-strong: #91a2a0;
+  --color-primary: #ff987e;
+  --color-primary-hover: #ffb39c;
+  --color-on-primary: #302322;
+  --color-success: #bce3c6;
+  --remote-header: #101415;
+  --remote-rail: #303b3e;
+  --remote-workspace: #1d2426;
+  --remote-active: #444d47;
+  --remote-pack-focus: #485652;
+  --remote-brand: #d5ded5;
+  --remote-basemap: #303b3e;
+  --remote-input: #101415;
+  --remote-control: #1c2426;
+  --remote-control-raised: #465757;
+  --remote-control-line: #91a2a0;
+  --remote-divider: #586b68;
+  --remote-hidden-layer: #263135;
+  --remote-shown-state: #352d2a;
+  --remote-key: #f5ecd8;
+  --remote-key-hover: #fff7e5;
+  --remote-soft-shadow: 0 4px 0 #080b0c, 0 7px 14px #080b0c50, inset 0 1px 0 #ffffff28;
+  --remote-key-shadow: 0 5px 0 #6b7771, 0 8px 14px #0005, inset 0 2px 0 #fff9;
+  --remote-pressed-shadow: inset 0 3px 5px #1b112950;
+  --font-body-md: 400 18px/1.5 "NLI Content Hadassah Friedlaender", "Segoe UI", sans-serif;
+  --font-title-sm: 400 24px/1.4 "NLI Content Hadassah Friedlaender", "Segoe UI", sans-serif;
+  --font-label-sm: 400 15px/1.45 "NLI Content Hadassah Friedlaender", "Segoe UI", sans-serif;
+  font-synthesis: none;
+}
+
+body.otef-remote-shell .place-search-label { font-size: 24px; }
+body.otef-remote-shell .layers-pack-heading { font-size: 20px; }
+body.otef-remote-shell .pack-chip__name { font-size: 17px; }
+body.otef-remote-shell .pack-chip {
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+}
+
+body.otef-remote-shell .layer-tile__state,
+body.otef-remote-shell .group-count,
+body.otef-remote-shell .remote-meta {
+  font-family: "NLI Content Narkiss Block", Arial, sans-serif;
+}
+
+body.otef-remote-shell .layer-tile__state,
+body.otef-remote-shell .group-count,
+body.otef-remote-shell .basemap-gallery-action {
+  font-size: 15px;
+}
+
+body.otef-remote-shell .remote-header,
+body.otef-remote-shell .remote-bottom-nav {
+  border-color: var(--remote-divider);
+}
+
+body.otef-remote-shell .layers-focused-pack,
+body.otef-remote-shell .navigation-movement,
+body.otef-remote-shell #placeSearchGroup,
+body.otef-remote-shell .slideshow-player {
+  box-shadow: inset 0 1px 0 #ffffff0d;
+}
+
+body.otef-remote-shell .layers-focused-pack {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 16px;
+}
+
+body.otef-remote-shell .focused-pack-toolbar {
+  flex: none;
+  margin-bottom: 12px;
+}
+
+body.otef-remote-shell .group-layers {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  touch-action: pan-y;
+  scrollbar-gutter: stable;
+  scrollbar-width: auto;
+  scrollbar-color: var(--color-border-strong) var(--remote-workspace);
+  scroll-padding-block: 12px;
+  padding: 6px 6px 12px;
+}
+
+body.otef-remote-shell .group-layers.is-scrolled {
+  box-shadow: inset 0 9px 9px -9px #0009;
+}
+
+body.otef-remote-shell .layer-tile-grid {
+  align-items: start;
+  gap: 10px;
+}
+
+body.otef-remote-shell .layer-tile-wrap { scroll-margin-block: 12px; }
+
+body.otef-remote-shell .layer-tile {
+  min-height: 96px;
+  padding: 10px;
+  gap: 6px;
+  border: 0;
+  border-radius: 16px;
+}
+
+body.otef-remote-shell .layer-tile__label {
+  font-size: 18px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+body.otef-remote-shell .layer-tile.is-off {
+  background: var(--remote-hidden-layer);
+  color: var(--color-ink);
+  border: 0;
+  box-shadow: none;
+}
+
+body.otef-remote-shell .layer-tile.is-on,
+body.otef-remote-shell .layer-tile.is-on:hover {
+  background: var(--color-primary);
+  color: var(--color-on-primary);
+  border: 0;
+  box-shadow: inset 0 1px 0 #ffffff50;
+}
+
+body.otef-remote-shell .layer-tile.is-on .layer-tile__label {
+  color: var(--color-on-primary);
+}
+
+body.otef-remote-shell .layer-tile__state {
+  align-self: end;
+  margin: 0;
+  margin-block-start: auto;
+  min-height: 26px;
+  line-height: 20px;
+  padding: 3px 6px;
+  color: var(--color-ink-muted);
+}
+
+body.otef-remote-shell .layer-tile.is-on .layer-tile__state {
+  background: var(--remote-shown-state);
+  color: var(--color-ink);
+}
+
+body.otef-remote-shell .layer-tile.is-off .layer-tile__state {
+  padding: 3px;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+
+body.otef-remote-shell .layer-tile.is-off .layer-tile__state > span {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+body.otef-remote-shell .layers-bulk-action {
+  background: var(--color-surface-raised);
+  color: var(--color-ink);
+  border-color: var(--color-border-strong);
+}
+
+body.otef-remote-shell .layers-more {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  margin-top: 8px;
+  padding: 8px 12px;
+  background: var(--remote-key);
+  color: var(--color-on-primary);
+  border: 1px solid var(--remote-key-hover);
+  border-radius: 12px;
+  font: 400 16px/1.4 "NLI Content Narkiss Block", sans-serif;
+  box-shadow: 0 2px 0 #6b7771;
+}
+
+body.otef-remote-shell .layers-more.is-at-end { visibility: hidden; }
+body.otef-remote-shell .layers-more[hidden] { display: none; }
+
+body.otef-remote-shell :is(.dpad-button, .zoom-button, .slideshow-actions__btn, .slideshow-pack-row__btn) {
+  background: var(--remote-control-raised);
+  color: var(--color-ink);
+  box-shadow: var(--remote-soft-shadow);
+  transition: background-color 120ms cubic-bezier(.2, 0, 0, 1), color 120ms cubic-bezier(.2, 0, 0, 1), box-shadow 120ms cubic-bezier(.2, 0, 0, 1), scale 120ms cubic-bezier(.2, 0, 0, 1);
+}
+
+body.otef-remote-shell :is(.dpad-button, .zoom-button) {
+  background: var(--remote-key);
+  color: var(--color-on-primary);
+  border-color: var(--remote-key-hover);
+  box-shadow: var(--remote-key-shadow);
+}
+
+body.otef-remote-shell .dpad-button { font-size: 28px; }
+body.otef-remote-shell .zoom-button { font-size: 26px; }
+body.otef-remote-shell .slideshow-pack-row__btn { font-size: 23px; }
+
+body.otef-remote-shell .slideshow-actions__btn[data-slideshow-start] {
+  background: var(--color-primary);
+  color: var(--color-on-primary);
+}
+
+body.otef-remote-shell .slideshow-control-section,
+body.otef-remote-shell .slideshow-player,
+body.otef-remote-shell .slideshow-pack-row,
+body.otef-remote-shell .slideshow-settings,
+body.otef-remote-shell .slideshow-actions__btn,
+body.otef-remote-shell .slideshow-pack-row__btn {
+  border: 0;
+}
+
+body.otef-remote-shell .slideshow-pack-row { background: var(--color-surface); }
+body.otef-remote-shell .slideshow-pack-row__label { font-size: 18px; }
+body.otef-remote-shell .slideshow-pack-row__number { color: var(--color-ink-muted); }
+
+body.otef-remote-shell .slideshow-field input {
+  border: 0;
+  box-shadow: inset 0 2px 4px #080b0c55;
+}
+
+body.otef-remote-shell .group-count,
+body.otef-remote-shell .zoom-value,
+body.otef-remote-shell .slideshow-pack-row__number {
+  font-variant-numeric: tabular-nums;
+}
+
+body.otef-remote-shell .remote-bottom-nav__tab.is-active {
+  background: #4b5d55;
+  color: var(--color-ink);
+  border: 0;
+  box-shadow: none;
+}
+
+body.otef-remote-shell .status-indicator.connected {
+  background: var(--color-success);
+  box-shadow: none;
+}
+
+body.otef-remote-shell button:disabled {
+  opacity: 1;
+  color: #a9bab4;
+  background: #242e30;
+  box-shadow: none;
+  border-color: var(--remote-divider);
+}
+
+body.otef-remote-shell .layer-tile:disabled .layer-tile__label { color: #a9bab4; }
+
+@media (min-width: 740px) {
+  body.otef-remote-shell .layers-workspace { grid-template-columns: 164px minmax(0, 1fr); gap: 16px; }
+  body.otef-remote-shell .layers-pack-pane { padding-inline: 8px; }
+  body.otef-remote-shell .layer-tile-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+@media (min-width: 1100px) and (orientation: landscape) {
+  body.otef-remote-shell .layers-workspace { grid-template-columns: 184px minmax(0, 1fr); }
+  body.otef-remote-shell .layer-tile-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+
+@media (max-width: 430px) {
+  body.otef-remote-shell .layers-focused-pack { padding: 12px 8px; }
+}
+
+@media (hover: hover) {
+  body.otef-remote-shell .layer-tile.is-off:hover,
+  body.otef-remote-shell .pack-chip:not(.pack-chip--selected):hover {
+    background: var(--color-surface-raised);
+  }
+  body.otef-remote-shell :is(.dpad-button, .zoom-button, .layers-more):hover:not(:disabled) {
+    background: var(--remote-key-hover);
+    color: var(--color-on-primary);
+  }
+  body.otef-remote-shell .slideshow-actions__btn[data-slideshow-start]:hover:not(:disabled) {
+    background: var(--color-primary-hover);
+    color: var(--color-on-primary);
+  }
+}
+
+body.otef-remote-shell :is(.dpad-button, .zoom-button, .slideshow-actions__btn, .slideshow-pack-row__btn):is(:active, .active):not(:disabled) {
+  background: var(--color-primary);
+  color: var(--color-on-primary);
+  box-shadow: var(--remote-pressed-shadow);
+  scale: .96;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body.otef-remote-shell button { transition: none; }
+  body.otef-remote-shell :is(.dpad-button, .zoom-button, .slideshow-actions__btn, .slideshow-pack-row__btn):is(:active, .active):not(:disabled) {
+    scale: 1;
+  }
+}

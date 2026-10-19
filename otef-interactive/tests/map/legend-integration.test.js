@@ -4,12 +4,6 @@ import {
   createLegendStyleLoadRefresh,
   installMapLegendLifecycle,
 } from "../../frontend/src/map/legend-integration.js";
-import {
-  isLegendSummaryEligible,
-  LayerSheetController,
-  mergeLegendMetadataFromRegistry,
-  renderLegendSummaryControl,
-} from "../../frontend/src/remote/layer-sheet-controller.js";
 
 const flushMicrotasks = async () => {
   await Promise.resolve();
@@ -145,61 +139,5 @@ describe("computeGisLegendPlacement", () => {
     });
 
     expect(placement.maxWidth).toBe(1164);
-  });
-});
-
-describe("remote legend summary control", () => {
-  const authoredGroup = {
-    id: "authored",
-    legend: {
-      summary: {
-        label: { he: "סיכום", en: "Summary" },
-      },
-    },
-  };
-
-  it("offers summary only for explicit non-NLI authored groups", () => {
-    expect(isLegendSummaryEligible(authoredGroup)).toBe(true);
-    expect(isLegendSummaryEligible({ ...authoredGroup, id: "nli" })).toBe(false);
-    expect(isLegendSummaryEligible({ id: "plain" })).toBe(false);
-  });
-
-  it("renders persisted summary selection for an eligible group", () => {
-    const html = renderLegendSummaryControl(authoredGroup, ["authored"]);
-
-    expect(html).toContain("data-legend-summary-group");
-    expect(html).toContain('data-legend-summary-group="authored"');
-    expect(html).toContain('data-summary-enabled="true" aria-pressed="true"');
-  });
-
-  it("makes registry-only summary metadata available to the remote sheet", () => {
-    const [merged] = mergeLegendMetadataFromRegistry(
-      [{ id: "authored", name: "Runtime group", layers: [] }],
-      [authoredGroup],
-    );
-
-    expect(isLegendSummaryEligible(merged)).toBe(true);
-    expect(renderLegendSummaryControl(merged, [])).toContain(
-      "data-legend-summary-group",
-    );
-  });
-
-  it("persists the selected authored group without dropping existing summaries", async () => {
-    const setLegendSettings = vi.fn(() => Promise.resolve({ ok: true }));
-    globalThis.OTEFDataContext = {
-      getLegendSettings: () => ({ summarizedGroupIds: ["existing"] }),
-      setLegendSettings,
-    };
-
-    await LayerSheetController.prototype.setLegendGroupSummarized.call(
-      {},
-      authoredGroup.id,
-      true,
-    );
-
-    expect(setLegendSettings).toHaveBeenCalledWith({
-      summarizedGroupIds: ["existing", "authored"],
-    });
-    delete globalThis.OTEFDataContext;
   });
 });

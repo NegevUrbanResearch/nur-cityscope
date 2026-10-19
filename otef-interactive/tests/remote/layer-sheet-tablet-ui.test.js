@@ -47,17 +47,45 @@ beforeEach(() => {
   });
   controller = Object.assign(Object.create(LayerSheetController.prototype), {
     sheet: document.getElementById("layerSheet"), focusedGroupId: "land_use", primaryTileIdsJson: null,
+    _subscriptions: [],
   });
   controller.setupEventListeners();
   controller.render();
 });
 
 afterEach(() => {
+  controller.destroy();
   document.body.innerHTML = "";
   vi.unstubAllGlobals();
 });
 
 describe("tablet layer controls", () => {
+  test("a lower layer toggle keeps the current pack scroll position, while another pack starts at the top", async () => {
+    document.querySelector(".group-layers").scrollTop = 280;
+    document.querySelector("[data-layers-more]").hidden = false;
+    document.querySelector("button.layer-tile").click();
+    await settle();
+    expect(document.querySelector(".group-layers").scrollTop).toBe(280);
+    expect(document.querySelector("[data-layers-more]").hidden).toBe(false);
+    controller.render();
+    expect(document.querySelector(".group-layers").scrollTop).toBe(280);
+    controller.focusOnGroup("greens");
+    expect(document.querySelector(".group-layers").scrollTop).toBe(0);
+    expect(document.querySelector("[data-layers-more]").hidden).toBe(true);
+  });
+
+  test("the regular remote omits legend controls even when the pack supports a summary", () => {
+    groups[0].legend = { summary: { label: "Land use" } };
+    controller.render();
+    expect(document.querySelector(".layer-legend-settings")).toBeNull();
+    const port = document.querySelector(".group-layers");
+    expect(port.tabIndex).toBe(0);
+    const more = document.querySelector("[data-layers-more]");
+    expect(more.tagName).toBe("BUTTON");
+    expect(more.getAttribute("aria-controls")).toBe(port.id);
+    expect(port.contains(more)).toBe(false);
+    expect(writes).toEqual([]);
+  });
   test("browsing a persistent pack list changes its layer controls without changing the display", () => {
     const packs = document.querySelector(".layers-pack-list");
     expect(packs).not.toBeNull();
