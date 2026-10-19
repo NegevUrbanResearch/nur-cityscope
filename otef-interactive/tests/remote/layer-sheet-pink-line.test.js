@@ -63,7 +63,8 @@ describe("layer sheet workshop pink-line control", () => {
       groupId: "curated_moresht_axis",
     });
     expect(html).toContain("layer-tile--pink-line");
-    expect(html).toContain("layer-tile__swatch--pink-line");
+    expect(html).not.toContain("layer-tile__swatch");
+    expect(html).toContain("layer-tile__state");
     expect(html).toContain(PINK_LINE_ROUTE_FULL_LAYER_ID);
     expect(html).toMatch(/קו ורוד|Pink line/);
   });

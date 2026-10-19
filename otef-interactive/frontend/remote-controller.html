@@ -1,554 +1,98 @@
 <!doctype html>
-<html lang="he">
-  <head>
-    <meta charset="UTF-8" />
-    <meta
-      name="viewport"
-      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
-    />
-    <meta name="mobile-web-app-capable" content="yes" />
-    <link rel="icon" href="./favicon.ico" sizes="any" />
-    <meta
-      name="apple-mobile-web-app-status-bar-style"
-      content="black-translucent"
-    />
-    <title>OTEF</title>
-    <link rel="stylesheet" href="css/remote-styles.css" />
-  </head>
-  <body class="otef-remote-shell">
-    <header class="remote-header">
-      <div class="header-top">
-        <div class="header-locale-control">
-          <div
-            class="remote-locale-toggle"
-            role="group"
-            data-i18n-aria="localeGroupAria"
-            aria-label="בחירת שפה"
-            id="remoteLocaleToggle"
-          >
-            <button
-              type="button"
-              class="remote-locale-btn is-active"
-              id="remoteLocaleHe"
-              data-locale="he"
-              aria-pressed="true"
-            >
-              עברית
-            </button>
-            <button
-              type="button"
-              class="remote-locale-btn"
-              id="remoteLocaleEn"
-              data-locale="en"
-              aria-pressed="false"
-            >
-              English
-            </button>
-          </div>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="theme-color" content="#20232a">
+  <meta name="color-scheme" content="dark">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>OTEF</title>
+  <link rel="icon" href="./favicon.ico" sizes="any">
+  <link rel="stylesheet" href="css/nli-content-fonts.css">
+  <link rel="stylesheet" href="css/remote-styles.css">
+  <link rel="stylesheet" href="css/remote-tablet.css">
+</head>
+<body class="otef-remote-shell">
+  <header class="remote-header">
+    <div class="header-top">
+      <div class="remote-header-controls">
+        <div class="remote-locale-toggle" role="group" data-i18n-aria="localeGroupAria" aria-label="בחירת שפה" id="remoteLocaleToggle">
+          <button type="button" class="remote-locale-btn" id="remoteLocaleEn" data-locale="en" lang="en" aria-pressed="false">EN</button>
+          <button type="button" class="remote-locale-btn is-active" id="remoteLocaleHe" data-locale="he" lang="he" aria-pressed="true">עב</button>
         </div>
-        <div class="header-end">
-          <div
-            class="connection-status"
-            id="connectionStatus"
-            dir="ltr"
-          >
-            <span class="status-indicator" id="statusIndicator"></span>
-            <span class="status-text" id="statusText">מתחבר…</span>
-          </div>
-        </div>
+        <button type="button" class="remote-fullscreen-btn" id="remoteFullscreenBtn" aria-pressed="false" data-i18n-aria="fullscreenEnter" aria-label="מסך מלא"><span data-fullscreen-label data-i18n="fullscreenEnter">מסך מלא</span><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H3v5M16 3h5v5M3 16v5h5M21 16v5h-5"/></svg></button>
+        <span id="remoteFullscreenStatus" class="remote-meta" role="status" hidden></span>
       </div>
-      <!--
-        Table switcher mount: #table-switcher stays in the DOM (table-switcher.js,
-        redirect/query, curation embed). Deliberately hidden in CSS for this controller
-        shell (Task 4) — not a broken layout; show later by overriding #table-switcher
-        display without removing or renaming the node.
-      -->
-      <div id="table-switcher" aria-hidden="true"></div>
-    </header>
-
-    <main class="remote-main" id="remoteMain" dir="rtl">
-      <div class="remote-tab-panels" id="remoteTabPanels">
-        <!-- Tab: Slideshow (projection) -->
-        <section
-          class="remote-tab-panel"
-          data-remote-tab="slideshow"
-          id="remote-panel-slideshow"
-          role="tabpanel"
-          aria-labelledby="remote-tab-slideshow"
-          hidden
-        >
-          <div class="remote-slideshow-host" id="remoteSlideshowHost"></div>
-        </section>
-
-        <!--
-          Tab: National Library staff remote — data-remote-tab=curation keeps the
-          embed panel contract; the tab itself launches nli-staff-remote.html.
-        -->
-        <section
-          class="remote-tab-panel"
-          data-remote-tab="curation"
-          id="remote-panel-curation"
-          role="tabpanel"
-          aria-labelledby="remote-tab-curation"
-          hidden
-        >
-          <div
-            class="remote-curation-surface"
-            id="remoteCurationSurface"
-            data-embed-surface="curation"
-          >
-            <!--
-              Embed contract: curated Supabase sync runs only from workshop refresh (see curation.js).
-              Iframe src MUST include ?embed=1 (see frontend/src/curation/curation-embed.js).
-            -->
-            <iframe
-              id="remoteCurationFrame"
-              class="remote-curation-frame"
-              title="סדנה"
-              data-i18n-title="curationIframeTitle"
-              src="curation.html?embed=1"
-              loading="lazy"
-            ></iframe>
-          </div>
-        </section>
-
-        <!-- Tab: Layers — layer sheet host; Task 6 will align panel + sheet UX -->
-        <section
-          class="remote-tab-panel"
-          data-remote-tab="layers"
-          id="remote-panel-layers"
-          role="tabpanel"
-          aria-labelledby="remote-tab-layers"
-          hidden
-        >
-          <div class="remote-layer-host" id="remoteLayerHost">
-            <!-- #layerSheet — panel root; LayerSheetController (Task 6) -->
-            <div class="layer-panel" id="layerSheet">
-              <div class="layers-basemap-control">
-                <div
-                  class="basemap-control-title"
-                  id="basemapControlTitle"
-                  data-i18n="basemapControlTitle"
-                >
-                  מפת רקע
-                </div>
-                <div
-                  class="basemap-segmented"
-                  id="basemapControl"
-                  role="group"
-                  data-i18n-aria="basemapControlAria"
-                  aria-label="בחירת מפת רקע"
-                  aria-labelledby="basemapControlTitle"
-                >
-                  <div class="basemap-satellite-wrapper">
-                    <div class="basemap-primary-row">
-                    <button
-                      type="button"
-                      class="basemap-button is-active"
-                      id="basemapOsm"
-                      data-basemap="osm"
-                      data-i18n="basemapOsm"
-                      aria-pressed="true"
-                    >
-                      רגילה
-                    </button>
-                    <div class="basemap-satellite-wrapper">
-                      <button
-                        type="button"
-                        class="basemap-button basemap-satellite-parent"
-                      id="basemapSatellite"
-                      data-basemap="satellite"
-                      aria-expanded="false"
-                      aria-controls="basemapSatelliteVariants"
-                      aria-pressed="false"
-                    >
-                      <span data-i18n="basemapSatellite">לוויין</span>
-                      <span class="basemap-disclosure-indicator" aria-hidden="true"></span>
-                      </button>
-                    </div>
-                    <button
-                      type="button"
-                      class="basemap-button"
-                      id="basemapDark"
-                      data-basemap="dark"
-                      data-i18n="basemapDark"
-                      aria-pressed="false"
-                    >
-                      כהה
-                    </button>
-                    </div>
-                    <div
-                    class="basemap-satellite-variants"
-                    id="basemapSatelliteVariants"
-                    role="group"
-                    data-i18n-aria="basemapSatelliteVariantsAria"
-                    aria-label="סוג תצלום לוויין"
-                    hidden
-                  >
-                    <button
-                      type="button"
-                      class="basemap-button basemap-variant-button"
-                      data-basemap="satellite"
-                      data-i18n="basemapSatelliteColor"
-                      aria-pressed="false"
-                    >צבע</button>
-                    <button
-                      type="button"
-                      class="basemap-button basemap-variant-button"
-                      data-basemap="satellite_bw"
-                      data-i18n="basemapSatelliteBw"
-                      aria-pressed="false"
-                    >שחור־לבן</button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-              <div class="sheet-content" id="layerPanelContent">
-                <!-- Populated by LayerSheetController -->
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <!-- Tab: Navigation — map controls (ids preserved for remote-controller.js) -->
-        <section
-          class="remote-tab-panel"
-          data-remote-tab="navigation"
-          id="remote-panel-navigation"
-          role="tabpanel"
-          aria-labelledby="remote-tab-navigation"
-        >
-          <section class="control-section" id="navigationSection">
-            <div class="navigation-panel-stack">
-              <div
-                class="navigation-group navigation-group--place-search"
-                id="placeSearchGroup"
-              >
-                <div class="place-search-modes" role="group" data-i18n-aria="peopleModeAria">
-                  <button type="button" class="place-search-mode is-active" data-search-mode="settlements" aria-pressed="true" data-i18n="settlementsMode"></button>
-                  <button type="button" class="place-search-mode" data-search-mode="people" aria-pressed="false" data-i18n="peopleMode"></button>
-                </div>
-                <label
-                  class="place-search-label visually-hidden"
-                  for="placeSearchInput"
-                  data-i18n="placeSearchLabel"
-                ></label>
-                <div class="place-search-shell">
-                  <span class="place-search-icon" aria-hidden="true">
-                    <svg
-                      viewBox="0 0 24 24"
-                      width="18"
-                      height="18"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="2"
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                    >
-                      <circle cx="11" cy="11" r="8"></circle>
-                      <path d="m21 21-4.35-4.35"></path>
-                    </svg>
-                  </span>
-                  <input
-                    id="placeSearchInput"
-                    class="place-search-input"
-                    type="search"
-                    role="combobox"
-                    autocomplete="off"
-                    autocapitalize="off"
-                    spellcheck="false"
-                    aria-autocomplete="list"
-                    aria-expanded="false"
-                    aria-controls="placeSuggestions"
-                    data-i18n-aria="placeSearchAria"
-                    data-i18n-placeholder="placeSearchPlaceholder"
-                    dir="auto"
-                  />
-                  <button
-                    type="button"
-                    id="placeSearchClear"
-                    class="place-search-clear"
-                    data-i18n-aria="placeSearchClearAria"
-                    aria-label="Clear search"
-                    hidden
-                  >
-                    <svg
-                      viewBox="0 0 24 24"
-                      width="16"
-                      height="16"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="2"
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      aria-hidden="true"
-                    >
-                      <path d="M18 6 6 18"></path>
-                      <path d="m6 6 12 12"></path>
-                    </svg>
-                  </button>
-                  <div
-                    id="placeSuggestions"
-                    class="place-suggestions"
-                    role="listbox"
-                    data-i18n-aria="placeSuggestionsAria"
-                    aria-label=""
-                    hidden
-                  ></div>
-                </div>
-                <div
-                  id="placeSearchStatus"
-                  class="place-search-status"
-                  role="status"
-                  aria-live="polite"
-                ></div>
-              </div>
-              <div class="navigation-group navigation-group--pan">
-                <div
-                  class="navigation-group-label"
-                  data-i18n="navPanGroupLabel"
-                ></div>
-                <div class="dpad-container">
-                  <div class="dpad">
-                    <button
-                      class="dpad-button dpad-up"
-                      id="panNorth"
-                      data-i18n-aria="ariaPanNorth"
-                      aria-label="הזזה צפונה"
-                    >
-                      <svg
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="2"
-                      >
-                        <polyline points="18 15 12 9 6 15"></polyline>
-                      </svg>
-                    </button>
-                    <button
-                      class="dpad-button dpad-left"
-                      id="panWest"
-                      data-i18n-aria="ariaPanWest"
-                      aria-label="הזזה מערבה"
-                    >
-                      <svg
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="2"
-                      >
-                        <polyline points="15 18 9 12 15 6"></polyline>
-                      </svg>
-                    </button>
-                    <button
-                      class="dpad-button dpad-right"
-                      id="panEast"
-                      data-i18n-aria="ariaPanEast"
-                      aria-label="הזזה מזרחה"
-                    >
-                      <svg
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="2"
-                      >
-                        <polyline points="9 18 15 12 9 6"></polyline>
-                      </svg>
-                    </button>
-                    <button
-                      class="dpad-button dpad-down"
-                      id="panSouth"
-                      data-i18n-aria="ariaPanSouth"
-                      aria-label="הזזה דרומה"
-                    >
-                      <svg
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="2"
-                      >
-                        <polyline points="6 9 12 15 18 9"></polyline>
-                      </svg>
-                    </button>
-                    <div
-                      class="joystick-container"
-                      id="joystickZone"
-                      data-i18n-aria="joystickAria"
-                      aria-label="מוט כיוון לגרירת המפה"
-                    >
-                      <div class="joystick-base"></div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div class="navigation-group navigation-group--zoom">
-                <div class="zoom-controls">
-                  <div class="zoom-display">
-                    <span class="zoom-label" data-i18n="zoomLabel">זום:</span>
-                    <span class="zoom-value" id="zoomValue">--</span>
-                  </div>
-                  <div class="zoom-slider-container">
-                    <input
-                      type="range"
-                      id="zoomSlider"
-                      class="zoom-slider"
-                      min="10"
-                      max="19"
-                      value="15"
-                      step="1"
-                      data-i18n-aria="ariaZoomLevel"
-                      aria-label="רמת מיקוד"
-                    />
-                    <div class="zoom-buttons">
-                      <button
-                        class="zoom-button zoom-out"
-                        id="zoomOut"
-                        data-i18n-aria="ariaZoomOut"
-                        aria-label="התרחקות"
-                      >
-                        −
-                      </button>
-                      <button
-                        class="zoom-button zoom-in"
-                        id="zoomIn"
-                        data-i18n-aria="ariaZoomIn"
-                        aria-label="התקרבות"
-                      >
-                        +
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </section>
-
-          <section
-            class="control-section"
-            id="layersSection"
-            hidden
-            aria-hidden="true"
-          >
-            <h2 class="section-title">Layers</h2>
-            <div class="layer-controls">
-              <!-- Legacy layer toggles — compatibility -->
-            </div>
-          </section>
-        </section>
-      </div>
-    </main>
-
-    <nav
-      class="remote-bottom-nav"
-      id="remoteBottomNav"
-      role="tablist"
-      data-i18n-aria="navTablistAria"
-      aria-label="אזורי בקרה"
-    >
-      <!-- LTR visual order: Workshop (disabled) | Presentation (slideshow) | Layers | Navigation -->
-      <button
-        type="button"
-        class="remote-bottom-nav__tab"
-        id="remote-tab-slideshow"
-        role="tab"
-        aria-selected="false"
-        aria-controls="remote-panel-slideshow"
-        tabindex="-1"
-        data-remote-tab="slideshow"
-      >
-        <span class="remote-bottom-nav__icon" aria-hidden="true">
-          <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="3" y="5" width="18" height="14" rx="2" />
-            <path d="M10 9l5 3-5 3V9z" />
-          </svg>
-        </span>
-        <span class="remote-bottom-nav__label" data-i18n="navSlideshow">מצגת</span>
-      </button>
-      <button
-        type="button"
-        class="remote-bottom-nav__tab"
-        id="remote-tab-curation"
-        role="tab"
-        aria-selected="false"
-        aria-controls="remote-panel-curation"
-        tabindex="0"
-        data-remote-tab="curation"
-        data-nli-remote-launch="true"
-      >
-        <span class="remote-bottom-nav__icon" aria-hidden="true">
-          <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
-            <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
-            <path d="M8 7h8M8 11h6" />
-          </svg>
-        </span>
-        <span
-          class="remote-bottom-nav__label"
-          data-nli-surface="library"
-          data-i18n="navCuration"
-        >הספרייה</span>
-      </button>
-      <button
-        type="button"
-        class="remote-bottom-nav__tab"
-        id="remote-tab-layers"
-        role="tab"
-        aria-selected="false"
-        aria-controls="remote-panel-layers"
-        tabindex="-1"
-        data-remote-tab="layers"
-      >
-        <span class="remote-bottom-nav__icon" aria-hidden="true">
-          <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M12 2L2 7l10 5 10-5-10-5z" />
-            <path d="M2 17l10 5 10-5" />
-            <path d="M2 12l10 5 10-5" />
-          </svg>
-        </span>
-        <span class="remote-bottom-nav__label" data-i18n="navLayers">שכבות</span>
-      </button>
-      <button
-        type="button"
-        class="remote-bottom-nav__tab is-active"
-        id="remote-tab-navigation"
-        role="tab"
-        aria-selected="true"
-        aria-controls="remote-panel-navigation"
-        tabindex="0"
-        data-remote-tab="navigation"
-      >
-        <span class="remote-bottom-nav__icon" aria-hidden="true">
-          <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polygon points="3 11 22 2 13 22 11 13 3 11" />
-          </svg>
-        </span>
-        <span class="remote-bottom-nav__label" data-i18n="navNavigation">ניווט</span>
-      </button>
-    </nav>
-
-    <div class="warning-overlay hidden" id="warningOverlay">
-      <div class="warning-content">
-        <svg
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          class="warning-icon"
-        >
-          <path
-            d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"
-          ></path>
-          <line x1="12" y1="9" x2="12" y2="13"></line>
-          <line x1="12" y1="17" x2="12.01" y2="17"></line>
-        </svg>
-        <p class="warning-text" role="status" aria-live="polite" data-i18n="warningControlsDisabled">
-          המפה אינה מחוברת. הבקרות אינן פעילות.
-        </p>
-      </div>
+      <div class="connection-status" id="connectionStatus" role="status"><span class="status-indicator" id="statusIndicator"></span><span class="status-text visually-hidden" id="statusText">מתחבר…</span></div>
     </div>
-
-    <script src="https://cdn.jsdelivr.net/npm/nipplejs@0.10.2/dist/nipplejs.min.js"></script>
-    <script type="module" src="./src/entries/remote-main.js"></script>
-  </body>
+    <div id="table-switcher" aria-hidden="true"></div>
+  </header>
+  <main class="remote-main" id="remoteMain" dir="rtl">
+    <div class="remote-tab-panels" id="remoteTabPanels">
+      <section class="remote-tab-panel" data-remote-tab="slideshow" id="remote-panel-slideshow" role="tabpanel" aria-labelledby="remote-tab-slideshow" hidden><div class="remote-slideshow-host" id="remoteSlideshowHost"></div></section>
+      <section class="remote-tab-panel" data-remote-tab="layers" id="remote-panel-layers" role="tabpanel" aria-labelledby="remote-tab-layers" hidden>
+        <div class="remote-layer-host" id="remoteLayerHost">
+          <div class="layer-panel" id="layerSheet">
+            <div class="layers-basemap-control" id="basemapControl">
+              <button type="button" class="basemap-gallery-toggle" id="basemapGalleryToggle" aria-expanded="false" aria-controls="basemapGallery">
+                <img id="basemapCurrentImage" src="images/basemaps/streets.png" alt="">
+                <span class="basemap-current"><span class="remote-meta" data-i18n="basemapControlTitle">מפת רקע</span><span id="basemapCurrentLabel" data-i18n="basemapOsm">רגילה</span></span>
+                <span class="basemap-gallery-action"><span data-i18n="basemapChange">שינוי</span><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></span>
+              </button>
+              <div class="basemap-gallery" id="basemapGallery" hidden>
+                <div class="basemap-gallery-grid" role="group" data-i18n-aria="basemapControlAria" aria-label="בחירת מפת רקע"><button type="button" class="basemap-button" id="basemapOsm" data-basemap="osm" aria-pressed="false"><img src="images/basemaps/streets.png" alt="" class=""><span data-i18n="basemapOsm">רגילה</span></button>
+<button type="button" class="basemap-button" id="basemapSatellite" data-basemap="satellite" aria-pressed="false"><img src="images/basemaps/aerial.png" alt="" class=""><span data-i18n="basemapSatelliteColor">לוויין צבע</span></button>
+<button type="button" class="basemap-button" id="basemapSatelliteBw" data-basemap="satellite_bw" aria-pressed="false"><img src="images/basemaps/aerial.png" alt="" class="is-monochrome"><span data-i18n="basemapSatelliteBw">לוויין שחור־לבן</span></button>
+<button type="button" class="basemap-button" id="basemapDark" data-basemap="dark" aria-pressed="false"><img src="images/basemaps/dark.jpg" alt="" class=""><span data-i18n="basemapDark">כהה</span></button></div>
+                <p class="basemap-attribution" dir="ltr">© OpenStreetMap contributors · Esri and its licensors</p>
+              </div>
+            </div>
+            <div class="sheet-content" id="layerPanelContent"></div>
+          </div>
+        </div>
+      </section>
+      <section class="remote-tab-panel" data-remote-tab="navigation" id="remote-panel-navigation" role="tabpanel" aria-labelledby="remote-tab-navigation">
+        <section class="control-section" id="navigationSection">
+          <div class="navigation-panel-stack">
+            <section class="navigation-group navigation-group--place-search" id="placeSearchGroup">
+              <label class="place-search-label" for="placeSearchInput" data-i18n="placeSearchLabel">חיפוש יישוב</label>
+              <div class="place-search-shell"><span class="place-search-icon"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="10" cy="10" r="7"/><path d="m15 15 6 6"/></svg></span>
+                <input id="placeSearchInput" class="place-search-input" type="search" role="combobox" autocomplete="off" autocapitalize="off" spellcheck="false" aria-autocomplete="list" aria-expanded="false" aria-controls="placeSuggestions" data-i18n-aria="placeSearchAria" data-i18n-placeholder="placeSearchPlaceholder" dir="auto">
+                <button type="button" id="placeSearchClear" class="place-search-clear" data-i18n-aria="placeSearchClearAria" aria-label="ניקוי חיפוש" hidden><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
+                <div id="placeSuggestions" class="place-suggestions" role="listbox" data-i18n-aria="placeSuggestionsAria" aria-label="הצעות יישובים" hidden></div>
+              </div>
+              <p class="remote-meta place-search-help" data-i18n="placeSearchHelp">הקלידו שם יישוב כדי להגיע אליו במפה.</p>
+              <div id="placeSearchStatus" class="place-search-status" role="status" aria-live="polite"></div>
+            </section>
+            <section class="navigation-movement">
+              <h2 data-i18n="navMoveMap">תנועה במפה</h2>
+              <div class="navigation-group navigation-group--pan"><div class="dpad-container"><div class="dpad"><button type="button" class="dpad-button dpad-up" id="panNorth" data-i18n-aria="ariaPanNorth" aria-label="הזזה צפונה">↑</button>
+<button type="button" class="dpad-button dpad-left" id="panWest" data-i18n-aria="ariaPanWest" aria-label="הזזה מערבה">←</button>
+<button type="button" class="dpad-button dpad-right" id="panEast" data-i18n-aria="ariaPanEast" aria-label="הזזה מזרחה">→</button>
+<button type="button" class="dpad-button dpad-down" id="panSouth" data-i18n-aria="ariaPanSouth" aria-label="הזזה דרומה">↓</button><div class="joystick-container" id="joystickZone" data-i18n-aria="joystickAria" aria-label="מוט כיוון לגרירת המפה"><div class="joystick-base"></div></div></div></div></div>
+              <div class="navigation-group navigation-group--zoom"><div class="zoom-controls"><button type="button" class="zoom-button zoom-out" id="zoomOut" data-i18n-aria="ariaZoomOut" aria-label="התרחקות">−</button><div class="zoom-display"><span class="zoom-label" data-i18n="zoomLabel">זום:</span><output class="zoom-value" id="zoomValue">--</output></div><button type="button" class="zoom-button zoom-in" id="zoomIn" data-i18n-aria="ariaZoomIn" aria-label="התקרבות">+</button></div></div>
+            </section>
+          </div>
+        </section>
+        <section class="control-section" id="layersSection" hidden aria-hidden="true"><div class="layer-controls"></div></section>
+      </section>
+    </div>
+  </main>
+  <nav class="remote-bottom-nav" id="remoteBottomNav" role="tablist" data-i18n-aria="navTablistAria" aria-label="אזורי בקרה"><button type="button" class="remote-bottom-nav__tab" id="remote-tab-curation" role="tab" aria-selected="false" tabindex="0" data-remote-tab="curation" data-nli-remote-launch="true">
+ <span class="remote-bottom-nav__icon"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5c-3-2-7-2-10-1v15c3-1 7-1 10 1 3-2 7-2 10-1V4c-3-1-7-1-10 1ZM12 5v15"/></svg></span><span class="remote-bottom-nav__label" data-i18n="navCuration">הספרייה הלאומית</span>
+</button>
+<button type="button" class="remote-bottom-nav__tab" id="remote-tab-slideshow" role="tab" aria-selected="false" aria-controls="remote-panel-slideshow" tabindex="-1" data-remote-tab="slideshow">
+ <span class="remote-bottom-nav__icon"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="m8 22 4-4 4 4M9 8l6 3-6 3V8Z"/></svg></span><span class="remote-bottom-nav__label" data-i18n="navSlideshow">מצגת</span>
+</button>
+<button type="button" class="remote-bottom-nav__tab" id="remote-tab-layers" role="tab" aria-selected="false" aria-controls="remote-panel-layers" tabindex="-1" data-remote-tab="layers">
+ <span class="remote-bottom-nav__icon"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3 10 5-10 5L2 8l10-5ZM2 12l10 5 10-5M2 16l10 5 10-5"/></svg></span><span class="remote-bottom-nav__label" data-i18n="navLayers">שכבות</span>
+</button>
+<button type="button" class="remote-bottom-nav__tab is-active" id="remote-tab-navigation" role="tab" aria-selected="true" aria-controls="remote-panel-navigation" tabindex="0" data-remote-tab="navigation">
+ <span class="remote-bottom-nav__icon"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 11 19-9-9 19-2-8-8-2Z"/></svg></span><span class="remote-bottom-nav__label" data-i18n="navNavigation">ניווט</span>
+</button></nav>
+  <div class="warning-overlay hidden" id="warningOverlay"><div class="warning-content"><p class="warning-text" role="status" aria-live="polite" data-i18n="warningControlsDisabled">המפה אינה מחוברת. הבקרות אינן פעילות.</p></div></div>
+  <script src="https://cdn.jsdelivr.net/npm/nipplejs@0.10.2/dist/nipplejs.min.js"></script>
+  <script type="module" src="./src/entries/remote-main.js"></script>
+</body>
 </html>

@@ -107,7 +107,7 @@ describe("remote people search", () => {
   });
 
   test("supports acknowledged selection and clears before returning to settlements", async () => {
-    const { initRemotePlaceNavigation } = await import("../../frontend/src/remote/remote-place-navigation.js");
+    const { initPeopleSearchFixture } = await import("./nli-people-search-fixture.js");
     const listeners = new Map();
     const make = (id) => {
       const handlers = new Map();
@@ -150,7 +150,7 @@ describe("remote people search", () => {
         return { acknowledged: true };
       }) };
     const runtime = { load: () => Promise.resolve(), search: () => [person, otherPerson], resolve: (pid, version) => version === "v1" && (pid === "2" ? otherPerson : pid === "1" ? person : null) };
-    initRemotePlaceNavigation({ root, dataContext, peopleRuntime: runtime, searchPlaces: () => [] });
+    initPeopleSearchFixture({ root, dataContext, peopleRuntime: runtime, searchPlaces: () => [] });
     peopleButton.dispatchEvent({ type: "click" });
     input.value = "d";
     input.dispatchEvent({ type: "input" });
@@ -262,7 +262,7 @@ describe("remote people search", () => {
   });
 
   test("keeps a newer acknowledged clear ahead of an older valid hydration", async () => {
-    const { initRemotePlaceNavigation } = await import("../../frontend/src/remote/remote-place-navigation.js");
+    const { initPeopleSearchFixture } = await import("./nli-people-search-fixture.js");
     const el = (id) => { const handlers = {}; return { id, value: "", children: [], dataset: {}, attributes: {}, hidden: false, classList: { toggle() {}, contains: () => false }, focus: vi.fn(), setAttribute(k, v) { this.attributes[k] = String(v); }, removeAttribute(k) { delete this.attributes[k]; }, addEventListener(k, f) { handlers[k] = f; }, dispatchEvent(e) { handlers[e.type]?.(e); }, append(c) { this.children.push(c); }, replaceChildren(...c) { this.children = c; } }; };
     const root = el("placeSearchGroup"), input = el("placeSearchInput"), clear = el("placeSearchClear"), list = el("placeSuggestions"), status = el("placeSearchStatus"), settlement = el("settlement"), people = el("people");
     settlement.dataset.searchMode = "settlements"; people.dataset.searchMode = "people";
@@ -270,7 +270,7 @@ describe("remote people search", () => {
     vi.stubGlobal("document", { createElement: () => el("child"), addEventListener: vi.fn(), removeEventListener: vi.fn(), getElementById: () => null }); vi.stubGlobal("window", { addEventListener: vi.fn(), removeEventListener: vi.fn() });
     const person = { pid: "3", name: "Rina", location: "Be'eri", datasetVersion: "v1" }; let notify; const context = { getPersonSelection: () => ({ personId: "3", datasetVersion: "v1", revision: 3 }), subscribe: (key, fn) => { if (key === "personSelection") { notify = fn; fn({ personId: "3", datasetVersion: "v1", revision: 3 }); } return () => {}; } };
     const runtime = { load: () => Promise.resolve(), search: () => [], resolve: () => person };
-    initRemotePlaceNavigation({ root, dataContext: context, peopleRuntime: runtime, searchPlaces: () => [] }); people.dispatchEvent({ type: "click" }); await Promise.resolve(); await Promise.resolve();
+    initPeopleSearchFixture({ root, dataContext: context, peopleRuntime: runtime, searchPlaces: () => [] }); people.dispatchEvent({ type: "click" }); await Promise.resolve(); await Promise.resolve();
     expect(input.value).toBe("Rina"); notify({ personId: null, datasetVersion: null, revision: 5 }); await Promise.resolve(); expect(input.value).toBe(""); notify({ personId: "3", datasetVersion: "v1", revision: 4 }); await Promise.resolve(); expect(input.value).toBe("");
   });
 });

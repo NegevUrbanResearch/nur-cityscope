@@ -52,13 +52,13 @@ test("projection/remote/curation pages load single module entrypoints", () => {
   expect(curation.includes('src="js/curation/curation.js"')).toBe(false);
 });
 
-test("remote-controller embeds curation workshop iframe with embed heartbeat contract flag", () => {
+test("remote-controller offers the National Library without loading a hidden workshop iframe", () => {
   const remote = fs.readFileSync(
     path.resolve(__dirname, "../../frontend/remote-controller.html"),
     "utf8",
   );
-  expect(remote.includes('src="curation.html?embed=1"')).toBe(true);
-  expect(/<iframe\b[^>]*\bid="remoteCurationFrame"/i.test(remote)).toBe(true);
+  expect(remote.includes('src="curation.html?embed=1"')).toBe(false);
+  expect(/<iframe\b[^>]*\bid="remoteCurationFrame"/i.test(remote)).toBe(false);
 });
 
 test("remote-controller shell: Hebrew default, tab regions, and stable mount ids", () => {
@@ -79,11 +79,9 @@ test("remote-controller shell: Hebrew default, tab regions, and stable mount ids
     /data-remote-tab="navigation"[^>]*\bid="remote-panel-navigation"/i,
   );
   expect(remote).toMatch(/data-remote-tab="layers"[^>]*\bid="remote-panel-layers"/i);
-  expect(remote).toMatch(/data-remote-tab="curation"[^>]*\bid="remote-panel-curation"/i);
 
   expect(remote).toMatch(/\bid="remote-tab-navigation"[^>]*\baria-controls="remote-panel-navigation"/i);
   expect(remote).toMatch(/\bid="remote-tab-layers"[^>]*\baria-controls="remote-panel-layers"/i);
-  expect(remote).toMatch(/\bid="remote-tab-curation"[^>]*\baria-controls="remote-panel-curation"/i);
   expect(remote).toMatch(/\bid="remote-tab-curation"[^>]*\bdata-nli-remote-launch="true"/i);
   expect(remote).not.toMatch(
     /\bid="remote-tab-curation"[^>]*\bdisabled\b/i,
@@ -101,22 +99,19 @@ test("remote-controller shell: Hebrew default, tab regions, and stable mount ids
   expect(remote).toMatch(/\bdata-i18n="basemapControlTitle"/);
   expect(remote).toMatch(/\bdata-i18n-aria="basemapControlAria"/);
   expect(remote).toMatch(/\bdata-i18n="basemapOsm"/);
-  expect(remote).toMatch(/\bdata-i18n="basemapSatellite"/);
-  expect(remote).toMatch(/\bclass="basemap-disclosure-indicator"[^>]*\baria-hidden="true"/);
   expect(remote).toMatch(/\bdata-i18n="basemapDark"/);
   expect(remote).toMatch(/\bdata-basemap="osm"/);
   expect(remote).toMatch(/\bdata-basemap="satellite"/);
-  expect(remote).toMatch(/\bid="basemapSatelliteVariants"/);
   expect(remote).toMatch(/\bdata-basemap="satellite_bw"/);
   expect(remote).toMatch(/\bdata-i18n="basemapSatelliteColor"/);
   expect(remote).toMatch(/\bdata-i18n="basemapSatelliteBw"/);
   expect(remote).toMatch(/\bdata-basemap="dark"/);
   expect(remote).toMatch(/\bid="basemapDark"/);
   expect(remote.indexOf('data-basemap="satellite"')).toBeLessThan(
-    remote.indexOf('data-basemap="dark"'),
-  );
-  expect(remote.indexOf('data-basemap="dark"')).toBeLessThan(
     remote.indexOf('data-basemap="satellite_bw"'),
+  );
+  expect(remote.indexOf('data-basemap="satellite_bw"')).toBeLessThan(
+    remote.indexOf('data-basemap="dark"'),
   );
   expect(remote.indexOf('id="layerSheet"')).toBeLessThan(
     remote.indexOf('id="basemapControl"'),
@@ -124,7 +119,10 @@ test("remote-controller shell: Hebrew default, tab regions, and stable mount ids
   expect(remote.indexOf('id="basemapControl"')).toBeLessThan(
     remote.indexOf('id="layerPanelContent"'),
   );
-  expect(remote).toMatch(/\bid="zoomSlider"/);
+  expect(remote).not.toMatch(/\bid="zoomSlider"/);
+  expect(remote).toMatch(/\bid="remoteFullscreenBtn"/);
+  expect(remote).toMatch(/\bid="basemapGalleryToggle"/);
+  expect(remote).toMatch(/\bid="basemapGallery"/);
   expect(remote).toMatch(/\bid="joystickZone"/);
 });
 
@@ -141,6 +139,6 @@ test("remote-controller locale toggle contract (delta)", () => {
   expect(toggleRegion[0]).toMatch(/role="group"/);
   expect(toggleRegion[0]).toMatch(/data-i18n-aria="localeGroupAria"/);
 
-  expect(remote).toMatch(/id="remoteLocaleHe"[^>]*>[\s\S]*?עברית/);
-  expect(remote).toMatch(/id="remoteLocaleEn"[^>]*>[\s\S]*?English/);
+  expect(remote).toMatch(/id="remoteLocaleHe"[^>]*>עב/);
+  expect(remote).toMatch(/id="remoteLocaleEn"[^>]*>EN/);
 });

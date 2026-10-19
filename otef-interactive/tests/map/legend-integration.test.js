@@ -168,8 +168,8 @@ describe("remote legend summary control", () => {
     const html = renderLegendSummaryControl(authoredGroup, ["authored"]);
 
     expect(html).toContain("data-legend-summary-group");
-    expect(html).toContain('value="authored"');
-    expect(html).toContain("checked");
+    expect(html).toContain('data-legend-summary-group="authored"');
+    expect(html).toContain('data-summary-enabled="true" aria-pressed="true"');
   });
 
   it("makes registry-only summary metadata available to the remote sheet", () => {

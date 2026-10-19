@@ -1,7 +1,5 @@
 import { searchPlaces as defaultSearchPlaces } from "../shared/place-navigation/place-catalog.js";
 import { LOCALE_EVENT, getLocale, t } from "./remote-locale.js";
-import { createPeopleSearchRuntime } from "./remote-people-search.js";
-import { createRemotePeopleArchiveController } from "./remote-people-archive-controller.js";
 
 export function labelForPlace(place) {
   const locale = getLocale();
@@ -49,20 +47,12 @@ export function initRemotePlaceNavigation(options = {}) {
   const isConnected = options.isConnected || (() => true);
   const canNavigateToPlace =
     typeof options.canNavigateToPlace === "function" ? options.canNavigateToPlace : () => true;
-  const modeButtons = Array.from(root.querySelectorAll?.("[data-search-mode]") || []);
-  const navigationSection = root.closest?.("#navigationSection") || root;
-  const isNarrativeActive = typeof options.narrativeActive === "function"
-    ? options.narrativeActive
-    : () => options.narrativeActive === true;
 
   if (!input || !clear || !list || !status) return null;
 
   let suggestions = [];
   let activeIndex = -1;
-  let mode = "settlements";
-  let peopleSearchRequest = 0;
   let cancelRequest = 0;
-  const peopleRuntime = options.peopleRuntime || createPeopleSearchRuntime(options.peopleRuntimeOptions);
 
   function setStatus(message = "") {
     status.textContent = message;
@@ -87,7 +77,7 @@ export function initRemotePlaceNavigation(options = {}) {
 
     const activePlace = suggestions[activeIndex];
     if (activePlace) {
-      input.setAttribute("aria-activedescendant", mode === "people" ? `person-option-${activePlace.pid}` : `place-option-${activePlace.id}`);
+      input.setAttribute("aria-activedescendant", `place-option-${activePlace.id}`);
     }
   }
 
@@ -101,15 +91,12 @@ export function initRemotePlaceNavigation(options = {}) {
     suggestions.forEach((place, index) => {
       const option = document.createElement("button");
       option.type = "button";
-      option.className = mode === "people" ? "place-suggestion person-suggestion" : "place-suggestion";
-      option.id = mode === "people" ? `person-option-${place.pid}` : `place-option-${place.id}`;
+      option.className = "place-suggestion";
+      option.id = `place-option-${place.id}`;
       option.setAttribute("role", "option");
       option.setAttribute("aria-selected", "false");
-      if (mode === "people") {
-        const name = document.createElement("span"); name.textContent = place.name; name.dir = "auto"; option.append(name);
-        if (place.location) { const location = document.createElement("span"); location.textContent = place.location; location.dir = "auto"; location.className = "person-suggestion__location"; option.append(location); }
-      } else { option.textContent = labelForPlace(place); option.addEventListener("click", () => { void selectPlace(place); }); }
-      if (mode === "people") option.addEventListener("click", () => { void peopleController.selectPerson(place); });
+      option.textContent = labelForPlace(place);
+      option.addEventListener("click", () => { void selectPlace(place); });
       list.append(option);
 
       if (index === 0) {
@@ -122,20 +109,14 @@ export function initRemotePlaceNavigation(options = {}) {
     }
   }
 
-  function syncModeUi() {
-    const placeholderKey = mode === "people" ? "peopleSearchPlaceholder" : "placeSearchPlaceholder";
-    const inputAriaKey = mode === "people" ? "peopleSearchAria" : "placeSearchAria";
-    const listAriaKey = mode === "people" ? "peopleSuggestionsAria" : "placeSuggestionsAria";
-    modeButtons.forEach((button) => { const active = button.dataset.searchMode === mode;
-      button.classList?.toggle?.("is-active", active); button.setAttribute("aria-pressed", active ? "true" : "false");
-      button.disabled = button.dataset.searchMode === "people" && isNarrativeActive(); });
-    input.setAttribute("data-i18n-placeholder", placeholderKey);
-    input.setAttribute("data-i18n-aria", inputAriaKey);
-    list.setAttribute("data-i18n-aria", listAriaKey);
-    input.placeholder = t(placeholderKey);
-    input.setAttribute("aria-label", t(inputAriaKey));
-    list.setAttribute("aria-label", t(listAriaKey));
-    input.disabled = mode === "people" && isNarrativeActive();
+  function syncSearchUi() {
+    input.setAttribute("data-i18n-placeholder", "placeSearchPlaceholder");
+    input.setAttribute("data-i18n-aria", "placeSearchAria");
+    list.setAttribute("data-i18n-aria", "placeSuggestionsAria");
+    input.placeholder = t("placeSearchPlaceholder");
+    input.setAttribute("aria-label", t("placeSearchAria"));
+    list.setAttribute("aria-label", t("placeSuggestionsAria"));
+    input.disabled = !isConnected();
   }
 
   function closeSuggestions() {
@@ -169,52 +150,24 @@ export function initRemotePlaceNavigation(options = {}) {
     const query = input.value.trim();
     syncInputDirection(input);
     setHidden(clear, query.length === 0);
-    list.setAttribute("aria-label", t(mode === "people" ? "peopleSuggestionsAria" : "placeSuggestionsAria"));
-    const narrativeConflict = mode === "people" && isNarrativeActive();
-    input.setAttribute(
-      "aria-disabled",
-      isConnected() && !narrativeConflict ? "false" : "true",
-    );
+    list.setAttribute("aria-label", t("placeSuggestionsAria"));
+    input.setAttribute("aria-disabled", isConnected() ? "false" : "true");
     setRootClass("is-disconnected", !isConnected());
-
-    if (narrativeConflict) {
-      peopleSearchRequest += 1;
-      input.disabled = true;
-      render([]);
-      setStatus(t("peopleNarrativeDisabled"));
-      return;
-    }
 
     if (!isConnected()) {
       render([]);
-      setStatus(t(mode === "people" ? "peopleSearchDisconnected" : "placeSearchDisconnected"));
+      setStatus(t("placeSearchDisconnected"));
       return;
     }
 
-    if (!query && reason !== "focus") {
+    if (!query) {
       render([]);
       setStatus("");
       return;
     }
 
-    if (mode === "people") {
-      const request = ++peopleSearchRequest;
-      setStatus(t("peopleSearchLoading"));
-      void peopleRuntime.load().then(() => {
-        if (
-          request !== peopleSearchRequest ||
-          mode !== "people" ||
-          isNarrativeActive()
-        ) return;
-        const results = peopleRuntime.search(query, getLocale(), 8);
-        render(results);
-        setStatus(results.length ? "" : t("peopleSearchEmpty"));
-      }).catch(() => { if (request === peopleSearchRequest) { render([]); setStatus(t("peopleSearchUnavailable")); } });
-      return;
-    }
-
     const results = searchPlaces(query, {
-      includeStarter: reason === "focus" && !query,
+      includeStarter: false,
       limit: 8,
       canNavigateToPlace,
     });
@@ -251,48 +204,21 @@ export function initRemotePlaceNavigation(options = {}) {
     }
   }
 
-  const peopleController = createRemotePeopleArchiveController({
-    ...options,
-    root,
-    input,
-    clear,
-    list,
-    status,
-    navigationSection,
-    dataContext,
-    peopleRuntime,
-    getMode: () => mode,
-    setMode: (nextMode) => { mode = nextMode; },
-    renderSuggestions: render,
-    setStatus,
-    setRootClass,
-    setHidden,
-    syncInputDirection: () => syncInputDirection(input),
-    onModeUiChange: syncModeUi,
-    onRefresh: refresh,
-    isNarrativeActive,
-  });
-
   input.setAttribute("role", "combobox");
   input.setAttribute("aria-autocomplete", "list");
   input.setAttribute("aria-controls", "placeSuggestions");
   input.setAttribute("aria-expanded", "false");
   list.setAttribute("role", "listbox");
   list.setAttribute("aria-label", t("placeSuggestionsAria"));
-  syncModeUi();
+  syncSearchUi();
   syncInputDirection(input);
   const unsubscribeConnection = dataContext?.subscribe?.("connection", () => {
-    syncModeUi();
+    syncSearchUi();
     refresh("connection");
   });
   refresh("connection");
 
   input.addEventListener("focus", () => {
-    if (peopleController.shouldSuppressFocus()) {
-      closeSuggestions();
-      setStatus("");
-      return;
-    }
     refresh("focus");
   });
   input.addEventListener("input", () => {
@@ -316,7 +242,7 @@ export function initRemotePlaceNavigation(options = {}) {
 
     if (event.key === "Enter" && suggestions[activeIndex]) {
       event.preventDefault?.();
-      void (mode === "people" ? peopleController.selectPerson(suggestions[activeIndex]) : selectPlace(suggestions[activeIndex]));
+      void selectPlace(suggestions[activeIndex]);
       return;
     }
 
@@ -329,28 +255,24 @@ export function initRemotePlaceNavigation(options = {}) {
   clear.addEventListener("click", async () => {
     const request = ++cancelRequest;
     const previousValue = input.value;
-    const previousMode = mode;
     input.value = "";
     syncInputDirection(input);
     setHidden(clear, true);
     closeSuggestions();
-    syncModeUi();
+    syncSearchUi();
     setStatus("");
     try {
       const response = await dataContext?.cancelNavigationFocus?.();
       if (response?.ok === false) throw new Error("Navigation focus cancel was not acknowledged");
     } catch (_) {
-      if (request !== cancelRequest || input.value || mode !== previousMode) return;
-      if (!peopleController.restoreAcknowledgedQuery()) {
-        input.value = previousValue;
-        syncInputDirection(input);
-        setHidden(clear, !input.value);
-      }
+      if (request !== cancelRequest || input.value) return;
+      input.value = previousValue;
+      syncInputDirection(input);
+      setHidden(clear, !input.value);
       setStatus(t("placeSearchFailed"));
     }
   });
 
-  modeButtons.forEach((button) => { button.addEventListener("click", () => { void peopleController.switchMode(button.dataset.searchMode); }); });
 
   const handleDocumentPointerDown = (event) => {
     if (!suggestions.length || isEventInsideRoot(event)) {
@@ -362,9 +284,8 @@ export function initRemotePlaceNavigation(options = {}) {
   document.addEventListener?.("pointerdown", handleDocumentPointerDown);
 
   const handleLocaleChange = () => {
-    syncModeUi();
-    peopleController.handleLocaleChange();
-    list.setAttribute("aria-label", t(mode === "people" ? "peopleSuggestionsAria" : "placeSuggestionsAria"));
+    syncSearchUi();
+    list.setAttribute("aria-label", t("placeSuggestionsAria"));
     refresh("locale");
   };
   window.addEventListener?.(LOCALE_EVENT, handleLocaleChange);
@@ -375,7 +296,6 @@ export function initRemotePlaceNavigation(options = {}) {
       document.removeEventListener?.("pointerdown", handleDocumentPointerDown);
       window.removeEventListener?.(LOCALE_EVENT, handleLocaleChange);
       unsubscribeConnection?.();
-      peopleController.destroy();
     },
   };
 }

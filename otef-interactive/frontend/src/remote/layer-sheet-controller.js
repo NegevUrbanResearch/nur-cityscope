@@ -15,7 +15,6 @@ import {
   t,
 } from "./remote-locale.js";
 import { getPackDisplayLabel } from "../shared/legend-copy.js";
-import { buildCurationColorSwatchHtml } from "../curation/curation-submissions.js";
 import { generateTraceId, recordTraceEvent } from "../shared/otef-trace.js";
 import { usesRouteProgressOverlay } from "../shared/maplibre-flow-animation.js";
 import {
@@ -23,10 +22,7 @@ import {
   PINK_LINE_ROUTE_FULL_LAYER_ID,
   PINK_LINE_ROUTE_LAYER_ID,
 } from "../map-utils/curated-pink-axis-state.js";
-import {
-  ensureWorkshopSubmissionColorsLoaded,
-  pickWorkshopRowSwatchCssColor,
-} from "./layer-sheet-workshop-swatches.js";
+import { renderLayerWorkspace, renderLegendChoices, renderVisibilityTile } from "./layer-sheet-view.js";
 
 function groupLayersByNameForSheet(layers, groupId) {
   const groups = new Map();
@@ -192,16 +188,7 @@ function renderLegendSummaryControl(group, summarizedGroupIds = []) {
   if (!isLegendSummaryEligible(group)) return "";
   const groupId = String(group.id);
   const checked = summarizedGroupIds.map(String).includes(groupId);
-  return `<label class="group-toggle legend-summary-toggle">
-    <input
-      type="checkbox"
-      data-legend-summary-group
-      value="${escapeHtmlSafe(groupId)}"
-      ${checked ? "checked" : ""}
-    />
-    <span class="toggle-indicator"></span>
-    <span>${escapeHtmlSafe(t("legendSummaryToggle"))}</span>
-  </label>`;
+  return renderLegendChoices(groupId, checked);
 }
 
 function fullLayerIdsForGroup(group) {
@@ -310,18 +297,14 @@ function getRowDisplayLabelForSort(row) {
 }
 
 function layerIdsToPrimaryKey(fullLayerIds) {
-  if (!Array.isArray(fullLayerIds) || fullLayerIds.length === 0) return null;
-  return JSON.stringify([...fullLayerIds].map(String).sort());
+  return Array.isArray(fullLayerIds) && fullLayerIds.length
+    ? JSON.stringify([...fullLayerIds].map(String).sort()) : null;
 }
 
 function renderLayerRow(row, options = {}) {
   const groupId = options.groupId || "";
   const checked =
     row.enabled !== undefined ? row.enabled : row.layers.every((l) => l.enabled);
-  const layerIdsAttr = JSON.stringify(row.fullLayerIds || []).replace(
-    /"/g,
-    "&quot;",
-  );
   const isPinkLineRow = isPinkLineRouteSheetRow(row, groupId);
   const rawLabel = pickRawLabelForRow(row, getLocale());
   const label = isPinkLineRow
@@ -336,71 +319,20 @@ function renderLayerRow(row, options = {}) {
       );
   const animatableIds = getRowAnimatableFullLayerIds(row, groupId);
   const hasAnimationToggle = groupId !== "nli" && animatableIds.length > 0;
-  const animIdsAttr = JSON.stringify(animatableIds).replace(/"/g, "&quot;");
-  const visibilityIdsAttr = JSON.stringify(row.fullLayerIds || []).replace(
-    /"/g,
-    "&quot;",
-  );
   const animations = options.animations || {};
   const enabledAnimationCount = hasAnimationToggle
     ? animatableIds.filter((id) => !!animations[id]).length
     : 0;
-  const animationEnabled = hasAnimationToggle && enabledAnimationCount > 0;
-  const animationMixed =
-    hasAnimationToggle &&
-    enabledAnimationCount > 0 &&
-    enabledAnimationCount < animatableIds.length;
-
-  const stateClass = checked ? "is-on" : "is-off";
-  const rowKey = layerIdsToPrimaryKey(row.fullLayerIds);
-  const isPrimary =
-    checked &&
-    options.primaryTileIdsJson != null &&
-    rowKey === options.primaryTileIdsJson;
-  const primaryClass = isPrimary ? " layer-tile--primary" : "";
-  const visibleClass =
-    checked && !isPrimary ? " is-visible" : "";
-  const animTileClass = hasAnimationToggle ? " layer-tile--anim" : "";
-  const pinkLineClass = isPinkLineRow ? " layer-tile--pink-line" : "";
-  const animStateClass = `${animationEnabled ? "active" : ""} ${
-    animationMixed ? "mixed" : ""
-  }`.trim();
-  const playIcon = `<svg class="anim-btn__glyph" width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M8 5v14l11-7z"/></svg>`;
-  const animControl = hasAnimationToggle
-    ? `<button
-        type="button"
-        class="anim-btn ${animStateClass}"
-        data-animation-toggle
-        data-animation-layer-ids="${animIdsAttr}"
-        data-animation-visibility-ids="${visibilityIdsAttr}"
-        data-i18n-aria="ariaLayerAnimationToggle"
-      >${playIcon}</button>`
-    : "";
-  let workshopSwatch = "";
-  if (isPinkLineRow) {
-    workshopSwatch = `<span class="layer-tile__swatch layer-tile__swatch--pink-line" aria-hidden="true"></span>`;
-  } else if (groupId === "curated_moresht_axis") {
-    const swatchCss = pickWorkshopRowSwatchCssColor(row, groupId);
-    if (swatchCss) {
-      workshopSwatch = buildCurationColorSwatchHtml(
-        swatchCss,
-        "layer-tile__swatch curation-published-layer-swatch",
-      );
-    }
-  }
-  return `
-    <div
-      class="layer-tile ${stateClass}${visibleClass}${primaryClass}${animTileClass}${pinkLineClass}"
-      role="button"
-      tabindex="0"
-      aria-pressed="${checked ? "true" : "false"}"
-      aria-label="${escapeHtmlSafe(label)}"
-      data-layer-ids="${layerIdsAttr}"
-    >
-      ${workshopSwatch}<span class="layer-tile__label">${escapeHtmlSafe(label)}</span>
-      ${animControl}
-    </div>
-  `;
+  return renderVisibilityTile({
+    label,
+    enabled: checked,
+    layerIds: row.fullLayerIds || [],
+    animationIds: hasAnimationToggle ? animatableIds : [],
+    animationVisibilityIds: row.fullLayerIds || [],
+    animationEnabled: enabledAnimationCount > 0,
+    animationMixed: enabledAnimationCount > 0 && enabledAnimationCount < animatableIds.length,
+    pinkLine: isPinkLineRow,
+  });
 }
 
 class LayerSheetController {
@@ -409,7 +341,6 @@ class LayerSheetController {
     this.sheet = null;
     this.isOpen = false;
     this.focusedGroupId = null;
-    this.primaryTileIdsJson = null;
     this._subscriptions = [];
     this._remoteLocaleHandler = null;
 
@@ -436,9 +367,6 @@ class LayerSheetController {
     if (typeof layerRegistry !== "undefined") {
       await layerRegistry.init();
     }
-    void ensureWorkshopSubmissionColorsLoaded().then(() => {
-      this.render();
-    });
 
     this.setupEventListeners();
     this.render();
@@ -476,15 +404,6 @@ class LayerSheetController {
     const content = this.sheet.querySelector(".sheet-content");
     if (!content) return;
 
-    content.addEventListener("keydown", (e) => {
-      if (e.key !== "Enter" && e.key !== " ") return;
-      if (!(e.target instanceof Element) || !e.target.matches(".layer-tile")) {
-        return;
-      }
-      e.preventDefault();
-      void this.runLayerTileToggleFromElement(e.target);
-    });
-
     content.addEventListener("click", (e) => {
       const selectPack = e.target.closest("[data-layers-select-pack]");
       if (selectPack) {
@@ -497,6 +416,23 @@ class LayerSheetController {
         } catch {
           // ignore malformed
         }
+        return;
+      }
+
+      const bulkButton = e.target.closest("button[data-layers-bulk-visibility]");
+      if (bulkButton) {
+        const groupId = decodeURIComponent(bulkButton.getAttribute("data-layers-enc-gid") || "");
+        bulkButton.disabled = true;
+        void this.toggleGroupEnabled(groupId, bulkButton.getAttribute("data-enabled") === "true")
+          .finally(() => this.render());
+        return;
+      }
+      const legendButton = e.target.closest("button[data-legend-summary-group]");
+      if (legendButton) {
+        void this.setLegendGroupSummarized(
+          legendButton.getAttribute("data-legend-summary-group"),
+          legendButton.getAttribute("data-summary-enabled") === "true",
+        ).finally(() => this.render());
         return;
       }
 
@@ -532,25 +468,6 @@ class LayerSheetController {
       }
     });
 
-    content.addEventListener("change", (e) => {
-      const t = e.target;
-      if (!(t instanceof HTMLInputElement)) return;
-      if (t.matches("input[data-layers-bulk-visibility]")) {
-        e.stopPropagation();
-        const enc = t.getAttribute("data-layers-enc-gid");
-        if (enc == null) return;
-        let gid = "";
-        try {
-          gid = decodeURIComponent(enc);
-        } catch {
-          return;
-        }
-        this.toggleGroupEnabled(gid, t.checked);
-      } else if (t.matches("input[data-legend-summary-group]")) {
-        e.stopPropagation();
-        void this.setLegendGroupSummarized(t.value, t.checked);
-      }
-    });
   }
 
   onLayersTabHidden() {
@@ -567,13 +484,11 @@ class LayerSheetController {
   }
 
   focusOnGroup(groupId) {
-    this.primaryTileIdsJson = null;
     this.focusedGroupId = String(groupId);
     this.render();
   }
 
   clearLayerFocus() {
-    this.primaryTileIdsJson = null;
     this.render();
   }
 
@@ -603,12 +518,6 @@ class LayerSheetController {
     });
     const result = await this.toggleLayerRow(fullLayerIds, !isOn, { traceId });
     if (!result || !result.ok) return;
-    const key = layerIdsToPrimaryKey(fullLayerIds);
-    if (!isOn) {
-      this.primaryTileIdsJson = key;
-    } else if (this.primaryTileIdsJson === key) {
-      this.primaryTileIdsJson = null;
-    }
     this.render();
   }
 
@@ -820,7 +729,6 @@ class LayerSheetController {
         renderLayerRow(row, {
           groupId: group.id,
           animations: anims,
-          primaryTileIdsJson: this.primaryTileIdsJson,
         }),
       )
       .join("");
@@ -838,87 +746,26 @@ class LayerSheetController {
   }
 
   renderLayersTabContent(groups, animations) {
-    const selectedId = this.focusedGroupId;
-    const selected = groups.find((g) => g.id === selectedId);
-    if (!selected) {
-      return `<div class="sheet-empty">${escapeHtmlSafe(t("layerEmpty"))}</div>`;
-    }
-    const encGid = encAttrId(selected.id);
-    const allLayersOn =
-      (selected.layers || []).length > 0 &&
-      (selected.layers || []).every((l) => l.enabled);
-
-    const chipForGroup = (g) => {
-      const enc = encAttrId(g.id);
-      const isSel = g.id === selectedId;
-      const currentAttr = isSel ? ' aria-current="true"' : "";
-      const en = (g.layers || []).filter((l) => l.enabled).length;
-      const to = (g.layers || []).length;
-      const countStr = t("layersPackActiveCount", { e: en, t: to });
-      const title = layerGroupTitle(g);
-      return `<button
-          type="button"
-          class="pack-chip${isSel ? " pack-chip--selected" : ""}"
-          data-layers-select-pack="${enc}"${currentAttr}
-        >${escapeHtmlSafe(title)}<span class="group-count">${escapeHtmlSafe(countStr)}</span></button>`;
-    };
-    const mid = Math.ceil(groups.length / 2);
-    const row1 = groups.slice(0, mid).map(chipForGroup).join("");
-    const row2 = groups.slice(mid).map(chipForGroup).join("");
-
-    const variantClass = "layers-variant-c";
-    const bulkAndTiles = `<div class="focused-pack-toolbar">
-        <span class="focused-pack-toolbar__label" data-i18n="layersBulkVisibility">${escapeHtmlSafe(t("layersBulkVisibility"))}</span>
-        <label class="group-toggle layer-bulk-visibility">
-          <input
-            type="checkbox"
-            data-layers-bulk-visibility
-            data-layers-enc-gid="${encGid}"
-            data-i18n-aria="ariaLayersBulkVisibility"
-            ${allLayersOn ? "checked" : ""}
-          />
-          <span class="toggle-indicator"></span>
-        </label>
-        ${renderLegendSummaryControl(
-          selected,
-          (typeof OTEFDataContext !== "undefined" &&
-            OTEFDataContext.getLegendSettings?.()?.summarizedGroupIds) ||
-            [],
-        )}
-      </div>
-      <div class="group-layers group-layers--expanded group-layers--tiles">
-        <div class="layer-tile-grid">
-        ${this.buildLayerRowsHtml(selected, animations)}
-        </div>
-      </div>`;
-
-    return `
-    <div class="${variantClass}">
-      <div class="layers-pack-strip-wrap" role="region">
-        <div class="layers-pack-strip">
-          <div class="layers-pack-strip__viewport">
-            <div class="layers-pack-strip__edge layers-pack-strip__edge--start" aria-hidden="true"></div>
-            <div class="layers-pack-strip__edge layers-pack-strip__edge--end" aria-hidden="true"></div>
-            <div class="layers-pack-strip__scroller">
-              <div class="layers-pack-strip__band">
-                <div class="layers-pack-strip__row">${row1}</div>
-                <div class="layers-pack-strip__row">${row2}</div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-      <div class="layers-active-summary" role="status">
-        <span
-          class="layer-count"
-          data-i18n="layersActiveCount"
-          data-i18n-n="0"
-          id="layerPanelCount"
-        ></span>
-      </div>
-      ${bulkAndTiles}
-    </div>
-  `;
+    const selected = groups.find((group) => String(group.id) === this.focusedGroupId);
+    if (!selected) return `<div class="sheet-empty">${escapeHtmlSafe(t("layerEmpty"))}</div>`;
+    const layers = selected.layers || [];
+    const packs = groups.map((group) => ({
+      id: String(group.id),
+      title: layerGroupTitle(group),
+      enabled: (group.layers || []).filter((layer) => layer.enabled).length,
+      total: (group.layers || []).length,
+    }));
+    return renderLayerWorkspace({
+      packs,
+      selectedId: String(selected.id),
+      selectedTitle: layerGroupTitle(selected),
+      enabledCount: layers.filter((layer) => layer.enabled).length,
+      totalCount: layers.length,
+      allLayersOn: layers.length > 0 && layers.every((layer) => layer.enabled),
+      rowsHtml: this.buildLayerRowsHtml(selected, animations),
+      legendHtml: renderLegendSummaryControl(selected,
+        typeof OTEFDataContext !== "undefined" ? OTEFDataContext.getLegendSettings?.()?.summarizedGroupIds || [] : []),
+    });
   }
 
   updatePanelChrome(groups) {
@@ -965,20 +812,7 @@ class LayerSheetController {
     </div>`;
     } else {
       content.innerHTML = this.renderLayersTabContent(groups, animations);
-      const selectedId = this.focusedGroupId;
-      const selected = groups.find((g) => g.id === selectedId);
-      if (selected) {
-        const layers = selected.layers || [];
-        const anyOn = layers.some((l) => l.enabled);
-        const anyOff = layers.some((l) => !l.enabled);
-        const bulkInput = content.querySelector("input[data-layers-bulk-visibility]");
-        if (
-          typeof HTMLInputElement !== "undefined" &&
-          bulkInput instanceof HTMLInputElement
-        ) {
-          bulkInput.indeterminate = anyOn && anyOff;
-        }
-      }
+
     }
 
     this.updatePanelChrome(groups);

@@ -108,7 +108,7 @@ describe('layer sheet animation controls', () => {
     expect(html).toContain('class="anim-btn active mixed"');
   });
 
-  test('workshop pack row renders swatch when sanitized color metadata exists', () => {
+  test('workshop pack row keeps text and visibility without drawing a color legend', () => {
     const row = {
       baseName: 'workshop-layer',
       displayLabel: 'Workshop Layer',
@@ -124,11 +124,11 @@ describe('layer sheet animation controls', () => {
       enabled: true,
     };
     const html = renderLayerRow(row, { groupId: 'curated_moresht_axis', animations: {} });
-    expect(html).toContain('layer-tile__swatch');
-    expect(html).toContain('background-color:#aabbcc');
+    expect(html).not.toContain('layer-tile__swatch');
+    expect(html).toContain('layer-tile__state');
   });
 
-  test('workshop pack row renders split-dot swatch for allowlisted submission color', () => {
+  test('workshop pack row does not draw a split-dot legend from submission color', () => {
     const html = renderLayerRow(
       {
         baseName: 'styled',
@@ -146,9 +146,9 @@ describe('layer sheet animation controls', () => {
       },
       { groupId: 'curated_moresht_axis', animations: {} },
     );
-    expect(html).toContain('layer-tile__swatch');
-    expect(html).toContain('curation-submission-swatch-dot');
-    expect(html).toContain('--swatch-primary:#DC2626');
+    expect(html).not.toContain('layer-tile__swatch');
+    expect(html).not.toContain('curation-submission-swatch-dot');
+    expect(html).toContain('curated_moresht_axis.styled');
   });
 
   test('workshop pack row omits swatch when no color source exists', () => {

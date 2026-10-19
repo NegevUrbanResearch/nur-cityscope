@@ -12,8 +12,8 @@ describe("remote People selection controller", () => {
   });
 
   test("stops an active investigation and waits for idle before selecting a person", async () => {
-    const { initRemotePlaceNavigation } = await import(
-      "../../frontend/src/remote/remote-place-navigation.js"
+    const { initPeopleSearchFixture } = await import(
+      "./nli-people-search-fixture.js"
     );
     const modeButton = createElement("peopleMode");
     modeButton.dataset = { searchMode: "people" };
@@ -47,7 +47,7 @@ describe("remote People selection controller", () => {
         return { person_selection: { personId: "11", datasetVersion: "v1", revision: 5 } };
       }),
     };
-    initRemotePlaceNavigation({ dataContext, peopleRuntime, isConnected: () => true });
+    initPeopleSearchFixture({ dataContext, peopleRuntime, isConnected: () => true });
 
     modeButton.dispatchEvent({ type: "click" });
     const input = document.getElementById("placeSearchInput");
@@ -64,8 +64,8 @@ describe("remote People selection controller", () => {
   });
 
   test("active narrative disables person search, selection, and archive affordances", async () => {
-    const { initRemotePlaceNavigation } = await import(
-      "../../frontend/src/remote/remote-place-navigation.js"
+    const { initPeopleSearchFixture } = await import(
+      "./nli-people-search-fixture.js"
     );
     const modeButton = createElement("peopleMode");
     modeButton.dataset = { searchMode: "people" };
@@ -87,7 +87,7 @@ describe("remote People selection controller", () => {
       search: vi.fn(() => [person]),
       resolve: vi.fn(() => person),
     };
-    initRemotePlaceNavigation({
+    initPeopleSearchFixture({
       dataContext,
       peopleRuntime,
       isConnected: () => true,
@@ -107,8 +107,8 @@ describe("remote People selection controller", () => {
   });
 
   test("narrative activation disables an open People search accessibly", async () => {
-    const { initRemotePlaceNavigation } = await import(
-      "../../frontend/src/remote/remote-place-navigation.js"
+    const { initPeopleSearchFixture } = await import(
+      "./nli-people-search-fixture.js"
     );
     const modeButton = createElement("peopleMode");
     modeButton.dataset = { searchMode: "people" };
@@ -127,7 +127,7 @@ describe("remote People selection controller", () => {
       load: vi.fn().mockResolvedValue(undefined),
       search: vi.fn(() => [{ pid: "11", name: "Ada", datasetVersion: "v1" }]),
     };
-    initRemotePlaceNavigation({
+    initPeopleSearchFixture({
       dataContext,
       peopleRuntime,
       isConnected: () => true,
@@ -150,8 +150,8 @@ describe("remote People selection controller", () => {
   });
 
   test("narrative activation invalidates a deferred People search fulfillment", async () => {
-    const { initRemotePlaceNavigation } = await import(
-      "../../frontend/src/remote/remote-place-navigation.js"
+    const { initPeopleSearchFixture } = await import(
+      "./nli-people-search-fixture.js"
     );
     const modeButton = createElement("peopleMode");
     modeButton.dataset = { searchMode: "people" };
@@ -170,7 +170,7 @@ describe("remote People selection controller", () => {
       load: vi.fn(() => new Promise((resolve) => { resolveLoad = resolve; })),
       search: vi.fn(() => [{ pid: "11", name: "Ada", datasetVersion: "v1" }]),
     };
-    initRemotePlaceNavigation({
+    initPeopleSearchFixture({
       dataContext,
       peopleRuntime,
       isConnected: () => true,
@@ -194,8 +194,8 @@ describe("remote People selection controller", () => {
   });
 
   test("keeps the acknowledged person and shows a specific stop failure", async () => {
-    const { initRemotePlaceNavigation } = await import(
-      "../../frontend/src/remote/remote-place-navigation.js"
+    const { initPeopleSearchFixture } = await import(
+      "./nli-people-search-fixture.js"
     );
     const modeButton = createElement("peopleMode");
     modeButton.dataset = { searchMode: "people" };
@@ -220,7 +220,7 @@ describe("remote People selection controller", () => {
       selectPerson: vi.fn().mockResolvedValue({ person_selection: { personId: "11", datasetVersion: "v1", revision: 2 } }),
       patchInvestigationClock: vi.fn().mockRejectedValue(new Error("stop failed")),
     };
-    initRemotePlaceNavigation({ dataContext, peopleRuntime, isConnected: () => true });
+    initPeopleSearchFixture({ dataContext, peopleRuntime, isConnected: () => true });
     modeButton.dispatchEvent({ type: "click" });
     const input = document.getElementById("placeSearchInput");
     input.value = "Ada";
@@ -243,8 +243,8 @@ describe("remote People selection controller", () => {
   });
 
   test("recovers one server-reported clock_active conflict with Stop before retrying", async () => {
-    const { initRemotePlaceNavigation } = await import(
-      "../../frontend/src/remote/remote-place-navigation.js"
+    const { initPeopleSearchFixture } = await import(
+      "./nli-people-search-fixture.js"
     );
     const modeButton = createElement("peopleMode");
     modeButton.dataset = { searchMode: "people" };
@@ -271,7 +271,7 @@ describe("remote People selection controller", () => {
         return { person_selection: { personId: "11", datasetVersion: "v1", revision: 5 } };
       }),
     };
-    initRemotePlaceNavigation({ dataContext, peopleRuntime, isConnected: () => true });
+    initPeopleSearchFixture({ dataContext, peopleRuntime, isConnected: () => true });
     modeButton.dispatchEvent({ type: "click" });
     const input = document.getElementById("placeSearchInput");
     input.value = "Ada";
@@ -288,8 +288,8 @@ describe("remote People selection controller", () => {
   test("times out a Stop wait, unsubscribes, and reports a usable failure", async () => {
     vi.useFakeTimers();
     try {
-      const { initRemotePlaceNavigation } = await import(
-        "../../frontend/src/remote/remote-place-navigation.js"
+      const { initPeopleSearchFixture } = await import(
+        "./nli-people-search-fixture.js"
       );
       const modeButton = createElement("peopleMode");
       modeButton.dataset = { searchMode: "people" };
@@ -307,7 +307,7 @@ describe("remote People selection controller", () => {
         patchInvestigationClock: vi.fn().mockResolvedValue(undefined),
         selectPerson: vi.fn(),
       };
-      initRemotePlaceNavigation({ dataContext, peopleRuntime, personSelectionClockTimeoutMs: 10, isConnected: () => true });
+      initPeopleSearchFixture({ dataContext, peopleRuntime, personSelectionClockTimeoutMs: 10, isConnected: () => true });
       modeButton.dispatchEvent({ type: "click" });
       const input = document.getElementById("placeSearchInput");
       input.value = "Ada";
@@ -328,8 +328,8 @@ describe("remote People selection controller", () => {
   });
 
   test("keeps selection failure visible when stale hydration notifies personSelection", async () => {
-    const { initRemotePlaceNavigation } = await import(
-      "../../frontend/src/remote/remote-place-navigation.js"
+    const { initPeopleSearchFixture } = await import(
+      "./nli-people-search-fixture.js"
     );
     const modeButton = createElement("peopleMode");
     modeButton.dataset = { searchMode: "people" };
@@ -356,7 +356,7 @@ describe("remote People selection controller", () => {
         throw Object.assign(new Error("stale"), { status: 409, details: { error: "stale person selection revision", person_selection: { personId: "p-2", datasetVersion: "v2", revision: 5 } } });
       }),
     };
-    initRemotePlaceNavigation({ dataContext, peopleRuntime, isConnected: () => true });
+    initPeopleSearchFixture({ dataContext, peopleRuntime, isConnected: () => true });
     modeButton.dispatchEvent({ type: "click" });
     const input = document.getElementById("placeSearchInput");
     input.value = "Ada";
@@ -371,8 +371,8 @@ describe("remote People selection controller", () => {
   });
 
   test("a slower first selection cannot overwrite the newer selection", async () => {
-    const { initRemotePlaceNavigation } = await import(
-      "../../frontend/src/remote/remote-place-navigation.js"
+    const { initPeopleSearchFixture } = await import(
+      "./nli-people-search-fixture.js"
     );
     const modeButton = createElement("peopleMode");
     modeButton.dataset = { searchMode: "people" };
@@ -391,7 +391,7 @@ describe("remote People selection controller", () => {
       subscribe: vi.fn(() => vi.fn()),
       selectPerson: vi.fn((pid) => new Promise((resolve) => gates.push({ pid, resolve }))),
     };
-    initRemotePlaceNavigation({ dataContext, peopleRuntime, isConnected: () => true });
+    initPeopleSearchFixture({ dataContext, peopleRuntime, isConnected: () => true });
     modeButton.dispatchEvent({ type: "click" });
     const input = document.getElementById("placeSearchInput");
     input.value = "a";
@@ -412,8 +412,8 @@ describe("remote People selection controller", () => {
   });
 
   test("does not let an older HTTP acknowledgement regress a newer context selection", async () => {
-    const { initRemotePlaceNavigation } = await import(
-      "../../frontend/src/remote/remote-place-navigation.js"
+    const { initPeopleSearchFixture } = await import(
+      "./nli-people-search-fixture.js"
     );
     const modeButton = createElement("peopleMode");
     modeButton.dataset = { searchMode: "people" };
@@ -440,7 +440,7 @@ describe("remote People selection controller", () => {
         person_selection: { personId: "11", datasetVersion: "v1", revision: 8 },
       }),
     };
-    initRemotePlaceNavigation({ dataContext, peopleRuntime, isConnected: () => true });
+    initPeopleSearchFixture({ dataContext, peopleRuntime, isConnected: () => true });
     modeButton.dispatchEvent({ type: "click" });
     const input = document.getElementById("placeSearchInput");
     input.value = "Ada";
@@ -455,8 +455,8 @@ describe("remote People selection controller", () => {
   });
 
   test("authoritative newer selection supersedes a different pending local selection", async () => {
-    const { initRemotePlaceNavigation } = await import(
-      "../../frontend/src/remote/remote-place-navigation.js"
+    const { initPeopleSearchFixture } = await import(
+      "./nli-people-search-fixture.js"
     );
     const modeButton = createElement("peopleMode");
     modeButton.dataset = { searchMode: "people" };
@@ -483,7 +483,7 @@ describe("remote People selection controller", () => {
       }),
       selectPerson: vi.fn(() => new Promise((resolve) => { resolveSelection = resolve; })),
     };
-    initRemotePlaceNavigation({ dataContext, peopleRuntime, isConnected: () => true });
+    initPeopleSearchFixture({ dataContext, peopleRuntime, isConnected: () => true });
 
     modeButton.dispatchEvent({ type: "click" });
     const input = document.getElementById("placeSearchInput");
@@ -504,8 +504,8 @@ describe("remote People selection controller", () => {
   test("destroy invalidates People and archive continuations and clears archive timeout", async () => {
     vi.useFakeTimers();
     try {
-      const { initRemotePlaceNavigation } = await import(
-        "../../frontend/src/remote/remote-place-navigation.js"
+      const { initPeopleSearchFixture } = await import(
+        "./nli-people-search-fixture.js"
       );
       const modeButton = createElement("peopleMode");
       modeButton.dataset = { searchMode: "people" };
@@ -531,7 +531,7 @@ describe("remote People selection controller", () => {
         selectPerson: vi.fn(() => new Promise((resolve) => { resolveSelection = resolve; })),
         archiveWindowCommand: vi.fn(() => new Promise((resolve) => { resolveArchive = resolve; })),
       };
-      const controller = initRemotePlaceNavigation({
+      const controller = initPeopleSearchFixture({
         dataContext,
         peopleRuntime,
         archiveResultTimeoutMs: 10,
@@ -567,7 +567,7 @@ describe("remote People selection controller", () => {
         subscribe: vi.fn((topic, handler) => { subscriptions[topic] = handler; return vi.fn(); }),
         archiveWindowCommand: vi.fn(() => new Promise((resolve) => { resolveArchive = resolve; })),
       };
-      const archiveController = initRemotePlaceNavigation({
+      const archiveController = initPeopleSearchFixture({
         dataContext: archiveContext,
         peopleRuntime,
         archiveResultTimeoutMs: 10,
@@ -595,8 +595,8 @@ describe("remote People selection controller", () => {
   });
 
   test("reports selection failure after a successful Stop", async () => {
-    const { initRemotePlaceNavigation } = await import(
-      "../../frontend/src/remote/remote-place-navigation.js"
+    const { initPeopleSearchFixture } = await import(
+      "./nli-people-search-fixture.js"
     );
     const modeButton = createElement("peopleMode");
     modeButton.dataset = { searchMode: "people" };
@@ -614,7 +614,7 @@ describe("remote People selection controller", () => {
       patchInvestigationClock: vi.fn(async (next) => clockListener?.({ ...next, revision: 4 })),
       selectPerson: vi.fn().mockRejectedValue(new Error("selection failed")),
     };
-    initRemotePlaceNavigation({ dataContext, peopleRuntime, isConnected: () => true });
+    initPeopleSearchFixture({ dataContext, peopleRuntime, isConnected: () => true });
     modeButton.dispatchEvent({ type: "click" });
     const input = document.getElementById("placeSearchInput");
     input.value = "Ada";

@@ -30,7 +30,7 @@ describe("remote place navigation", () => {
     ).toBe(true);
   });
 
-  test("focus shows starter suggestions and selection calls dataContext.navigateToPlace", async () => {
+  test("empty focus stays empty; typing offers settlements and selection navigates", async () => {
     const { initRemotePlaceNavigation } = await import(
       "../../frontend/src/remote/remote-place-navigation.js"
     );
@@ -43,6 +43,10 @@ describe("remote place navigation", () => {
     });
 
     document.getElementById("placeSearchInput").dispatchEvent({ type: "focus" });
+    expect(document.querySelectorAll(".place-suggestion")).toHaveLength(0);
+    const input = document.getElementById("placeSearchInput");
+    input.value = "אור";
+    input.dispatchEvent({ type: "input" });
     expect(document.querySelectorAll(".place-suggestion")).toHaveLength(1);
     expect(document.getElementById("placeSearchInput").getAttribute("aria-activedescendant")).toBe("place-option-yeshuv-0067");
 
@@ -112,7 +116,8 @@ describe("remote place navigation", () => {
       isConnected: () => true,
     });
 
-    document.getElementById("placeSearchInput").dispatchEvent({ type: "focus" });
+    document.getElementById("placeSearchInput").value = "אור";
+    document.getElementById("placeSearchInput").dispatchEvent({ type: "input" });
     document.querySelector(".place-suggestion").dispatchEvent({ type: "click" });
     await Promise.resolve();
 
@@ -165,7 +170,8 @@ describe("remote place navigation", () => {
     });
 
     const input = document.getElementById("placeSearchInput");
-    input.dispatchEvent({ type: "focus" });
+    input.value = "אור";
+    input.dispatchEvent({ type: "input" });
 
     expect(document.querySelectorAll(".place-suggestion")).toHaveLength(2);
     expect(input.getAttribute("aria-expanded")).toBe("true");
@@ -193,7 +199,8 @@ describe("remote place navigation", () => {
     });
 
     const input = document.getElementById("placeSearchInput");
-    input.dispatchEvent({ type: "focus" });
+    input.value = "אור";
+    input.dispatchEvent({ type: "input" });
     expect(document.querySelectorAll(".place-suggestion")).toHaveLength(2);
 
     controller.destroy();

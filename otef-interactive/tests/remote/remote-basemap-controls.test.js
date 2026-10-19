@@ -22,7 +22,7 @@ function fakeButton(id, basemap) {
 function fakeBasemapRoot() {
   const buttons = [
     fakeButton("basemapOsm", "osm"),
-    fakeButton("basemapSatellite", "satellite"),
+    fakeButton("basemapGalleryToggle", "unused"),
     fakeButton("satelliteColor", "satellite"),
     fakeButton("satelliteBw", "satellite_bw"),
     fakeButton("basemapDark", "dark"),
@@ -38,8 +38,8 @@ function fakeBasemapRoot() {
     }),
     querySelectorAll(selector) { return selector === ".basemap-button[data-basemap]" ? buttons : []; },
     querySelector(selector) {
-      if (selector === "#basemapSatellite") return buttons[1];
-      if (selector === "#basemapSatelliteVariants") return variants;
+      if (selector === "#basemapGalleryToggle") return buttons[1];
+      if (selector === "#basemapGallery") return variants;
       return null;
     },
     contains(element) { return buttons.includes(element); },
@@ -70,7 +70,7 @@ function deferred() {
 }
 
 describe("remote basemap controller", () => {
-  test("Satellite parent toggles an ephemeral menu without selecting a basemap", async () => {
+  test("The gallery trigger toggles an ephemeral menu without selecting a basemap", async () => {
     const root = fakeBasemapRoot();
     const document = fakeDocument();
     const setBasemap = vi.fn().mockResolvedValue(undefined);
@@ -206,7 +206,7 @@ describe("remote basemap controller", () => {
     });
     expect(root.buttons.every((button) => button.style.pointerEvents === "auto")).toBe(true);
     expect(root.buttons.every((button) => button.style.opacity === "1")).toBe(true);
-    expect(root.buttons[1].classList.contains("is-active")).toBe(true);
+    expect(root.buttons[2].classList.contains("is-active")).toBe(true);
   });
 
   test("an optimistic basemap state echo keeps writes serialized until transport settles", async () => {
@@ -232,7 +232,7 @@ describe("remote basemap controller", () => {
 
     await vi.waitFor(() => expect(setBasemap).toHaveBeenCalledWith("satellite"));
     expect(root.buttons.every((button) => button.disabled)).toBe(true);
-    expect(root.buttons[1].classList.contains("is-active")).toBe(true);
+    expect(root.buttons[2].classList.contains("is-active")).toBe(true);
 
     transport.resolve({ ok: true });
     await vi.waitFor(() => {
