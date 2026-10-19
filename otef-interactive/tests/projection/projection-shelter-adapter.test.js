@@ -68,3 +68,31 @@ test("follows lifecycle focus expressions, color frames, and visibility", () => 
   h.snapshot.frame.visible = false;
   expect(h.adapter.descriptor(h.descriptor)).toBeNull();
 });
+
+test("skips a missing shelter layer without emitting map errors and resumes after remount", () => {
+  const h = harness();
+  const errors = [];
+  const getLayer = h.map.getLayer;
+  h.map.getLayoutProperty = (id, property) => {
+    const layer = h.map.getLayer(id);
+    if (!layer) {
+      errors.push(new Error(`Cannot get style of non-existing layer "${id}".`));
+      return;
+    }
+    return layer.layout[property];
+  };
+  expect(h.adapter.descriptor(h.descriptor)).not.toBeNull();
+  h.map.getLayer = () => undefined;
+  expect(h.adapter.descriptor(h.descriptor)).toBeNull();
+  expect(errors).toEqual([]);
+  h.map.getLayer = getLayer;
+  expect(h.adapter.descriptor(h.descriptor)).not.toBeNull();
+});
+
+test("respects map layout visibility while the shelter layer exists", () => {
+  const h = harness();
+  h.map.getLayoutProperty = () => "none";
+  expect(h.adapter.descriptor(h.descriptor)).toBeNull();
+  h.map.getLayoutProperty = () => "visible";
+  expect(h.adapter.descriptor(h.descriptor)).not.toBeNull();
+});

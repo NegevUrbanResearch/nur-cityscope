@@ -21,8 +21,9 @@ export function createProjectionShelterAdapter({ map, document = globalThis.docu
       const snapshot = getSnapshot();
       const source = mapDescriptor?.source;
       const layer = map.getLayer?.(SHELTER_LAYER_ID);
+      if (disposed || !source || !snapshot?.frame?.visible || !layer) return null;
       const visibility = map.getLayoutProperty?.(SHELTER_LAYER_ID, "visibility") ?? layer?.layout?.visibility;
-      if (disposed || !source || !snapshot?.frame?.visible || !layer || visibility === "none") return null;
+      if (visibility === "none") return null;
       const width = source.width, height = source.height;
       const logicalWidth = source.clientWidth || map.getContainer?.()?.clientWidth || width;
       const logicalHeight = source.clientHeight || map.getContainer?.()?.clientHeight || height;
