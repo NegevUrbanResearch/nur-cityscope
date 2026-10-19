@@ -13,6 +13,22 @@
 
 import { GAZA_BORDER_LAYER, GAZA_BORDER_STYLE } from "./gaza-border-style.js";
 
+function fallbackStyle(geometryType) {
+  const stroke = { type: "stroke", color: "#000000", width: 1, opacity: 1 };
+  const fill = { type: "fill", fillType: "solid", color: "#808080", opacity: 0.7 };
+  const geometry = String(geometryType || "").toLowerCase();
+  const symbolLayers = geometry.includes("point")
+    ? [{ type: "markerPoint", marker: { shape: "circle", size: 8,
+        fillColor: "#808080", fillOpacity: 0.7, strokeColor: "#000000", strokeWidth: 1, strokeOpacity: 1 } }]
+    : geometry.includes("line") ? [stroke] : [fill, stroke];
+  return {
+    type: geometryType,
+    renderer: "simple",
+    defaultSymbol: { symbolLayers },
+    defaultStyle: { fillColor: "#808080", fillOpacity: 0.7, strokeColor: "#000000", strokeWidth: 1 },
+  };
+}
+
 export class LayerRegistry {
   constructor({ fetchImpl = globalThis.fetch?.bind(globalThis) } = {}) {
     this._fetch = fetchImpl;
@@ -204,16 +220,7 @@ export class LayerRegistry {
 
     return {
       ...layer,
-      style: style || {
-        type: layer.geometryType,
-        renderer: "simple",
-        defaultStyle: {
-          fillColor: "#808080",
-          fillOpacity: 0.7,
-          strokeColor: "#000000",
-          strokeWidth: 1.0,
-        },
-      },
+      style: style || fallbackStyle(layer.geometryType),
       fullId: layerId,
       groupId: groupId,
     };
