@@ -132,8 +132,8 @@ export function createProjectionConfigRuntime({
     notifyNamesWaiters();
   };
   const reportNames = (state = namesState, request = null, error = "", correlationTarget = null) => {
+    if (!error && state === "failed") error = namesError || datasetIdentityError || "";
     if (!correlationTarget) { namesState = state; namesError = error || null; }
-    if (!error && state === "failed") error = datasetIdentityError || "";
     const target = correlationTarget || namesTarget;
     const message = { type: "otef_projection_names_status", table, output: spanId, instanceId,
       requestId: request?.requestId ?? null, revision: target?.revision ?? Math.max(0, appliedRevision),

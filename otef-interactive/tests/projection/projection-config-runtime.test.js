@@ -540,6 +540,34 @@ describe("projection config runtime", () => {
     h.runtime.stop();
   });
 
+  test('names failure detail survives status polling and clears after a successful retry', async () => {
+    const prepare = vi.fn().mockRejectedValueOnce(new Error('Maximum call stack size exceeded'))
+      .mockResolvedValue({ wall: { datasetVersion: 'v1', digest: 'a'.repeat(64), diagnostics: { expected: 2, placed: 2 } } });
+    const h = makeHarness('left', '11111111-1111-4111-8111-111111111111', {
+      prepareCandidate: prepare, drawCompletion: () => true, getDatasetVersion: () => 'v1',
+    });
+    try {
+      await h.runtime.start(); h.state(4); h.frame(); h.render();
+      await vi.waitFor(() => expect(h.sent()).toContainEqual(expect.objectContaining({
+        type: 'otef_projection_names_status', state: 'failed', error: 'Maximum call stack size exceeded',
+      })));
+      for (let poll = 0; poll < 2; poll++) {
+        h.runtime.requestStatus(); h.render();
+        expect(h.sent().filter(item => item.type === 'otef_projection_names_status').at(-1))
+          .toMatchObject({ state: 'failed', error: 'Maximum call stack size exceeded' });
+      }
+      const requestId = '33333333-3333-4333-8333-333333333333';
+      await h.socketListeners.get('otef_projection_names_run')({ table: 'otef', requestId, revision: 4,
+        datasetVersion: 'v1', placementIdentity: await projectionPlacementInputIdentity(DEFAULT_PROJECTION_CONFIG) });
+      await vi.waitFor(() => {
+        h.render();
+        const status = h.sent().filter(item => item.type === 'otef_projection_names_status').at(-1);
+        expect(status).toMatchObject({ state: 'current', requestId });
+        expect(status).not.toHaveProperty('error');
+      });
+    } finally { h.runtime.stop(); }
+  });
+
   test('dataset changes stale installed names without rebuilding until Run uses the new dataset', async () => {
     let version = 'v1';
     const prepare = vi.fn(async () => ({ wall: { datasetVersion: version, digest: (version === 'v1' ? 'a' : 'b').repeat(64), diagnostics: { expected: 2, placed: 2 } } }));
