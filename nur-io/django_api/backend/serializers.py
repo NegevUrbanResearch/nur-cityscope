@@ -223,6 +223,8 @@ class OTEFModelConfigSerializer(serializers.ModelSerializer):
 
 class OTEFViewportStateSerializer(serializers.ModelSerializer):
     table_name = serializers.CharField(source="table.name", read_only=True)
+    experience_state = serializers.SerializerMethodField()
+    projection_slideshow = serializers.SerializerMethodField()
     person_selection = serializers.SerializerMethodField()
     narrative_state = serializers.SerializerMethodField()
     escape_overlay = serializers.SerializerMethodField()
@@ -257,12 +259,14 @@ class OTEFViewportStateSerializer(serializers.ModelSerializer):
             "workshop_auto_publish",
             "workshop_autopublish_started_at",
             "exhibit_mode",
+            "experience_state",
             "updated_at",
         ]
         read_only_fields = [
             "id",
             "updated_at",
             "table_name",
+            "experience_state",
             "person_selection",
             "narrative_state",
             "escape_overlay",
@@ -279,6 +283,14 @@ class OTEFViewportStateSerializer(serializers.ModelSerializer):
 
     def get_person_selection(self, obj):
         return normalize_person_selection(obj.person_selection)
+
+    def get_experience_state(self, obj):
+        from .otef_experience import experience_state
+        return experience_state(obj)
+
+    def get_projection_slideshow(self, obj):
+        from .otef_experience import slideshow_command_for_response
+        return slideshow_command_for_response(obj)
 
     def get_narrative_state(self, obj):
         return normalize_narrative_state(obj.narrative_state)

@@ -14,6 +14,8 @@ import re
 import uuid
 import math
 from .nli_video_playback import valid_nli_video_playback
+from django.db import transaction
+from backend.otef_experience import ExperienceError, experience_state, require_experience
 
 
 _PROJECTION_OUTPUTS = {"left", "right"}
@@ -306,6 +308,33 @@ class GeneralConsumer(AsyncWebsocketConsumer):
             print(f"Invalid JSON received: {text_data}")
 
     async def handle_otef_message(self, data):
+        try:
+            scoped = data.get("type") in {
+                "otef_viewport_control", "otef_layer_update", "otef_animation_toggle",
+                "otef_viewport_update", "otef_velocity_update",
+                "otef_nli_video_playback_state", "otef_nli_video_playback_query",
+            }
+            if scoped:
+                stamp = await sync_to_async(self._accept_experience)(data)
+                data = {**data, **stamp}
+            await self._handle_otef_message(data)
+        except ExperienceError as error:
+            await self.send(text_data=json.dumps({"type": "otef_experience_rejected", "table": data.get("table", "otef"),
+                "reason": error.reason, "error": str(error)}))
+
+    @transaction.atomic
+    def _accept_experience(self, data):
+        from backend.models import OTEFViewportState
+        state = OTEFViewportState.objects.select_for_update().filter(table__name=data.get("table", "otef")).first()
+        if state is None:
+            if data.get("experience") is not None or data.get("experience_revision") is not None:
+                raise ExperienceError("experience_stale", "Experience state is unavailable")
+            return {}
+        cleanup = data.get("type") == "otef_nli_video_playback_state" and data.get("active") is False
+        require_experience(state, data, cleanup=cleanup, required="nli" if str(data.get("type", "")).startswith("otef_nli_video") else None)
+        return {"experience": state.active_experience, "experience_revision": state.experience_revision}
+
+    async def _handle_otef_message(self, data):
         """
         Handle OTEF-specific WebSocket messages.
 
@@ -329,7 +358,9 @@ class GeneralConsumer(AsyncWebsocketConsumer):
             await handle_projection_trace(self, data)
 
         elif message_type in {'otef_nli_video_playback_state', 'otef_nli_video_playback_query'}:
-            payload = valid_nli_video_playback(data, self.channel_type)
+            payload = valid_nli_video_playback({key: value for key, value in data.items() if key not in ('experience', 'experience_revision')}, self.channel_type)
+            if payload is not None:
+                payload.update({key: data[key] for key in ('experience', 'experience_revision') if key in data})
             if payload is not None:
                 await self.channel_layer.group_send(
                     self.room_group_name,
@@ -349,11 +380,11 @@ class GeneralConsumer(AsyncWebsocketConsumer):
 
         elif message_type == 'otef_layer_update':
             # Layer visibility change
-            await self._save_layers(table_name, data.get('layers', {}))
+            await self._save_layers(table_name, data)
 
         elif message_type == 'otef_animation_toggle':
             # Animation state change
-            await self._save_animation(table_name, data.get('layerId'), data.get('enabled', False))
+            await self._save_animation(table_name, data)
 
         elif message_type == 'otef_viewport_update':
             # Search-travel frames are display-only. Relaying them without a
@@ -377,7 +408,9 @@ class GeneralConsumer(AsyncWebsocketConsumer):
                         'vx': data.get('vx', 0),
                         'vy': data.get('vy', 0),
                         'sourceId': data.get('sourceId'),
-                        'timestamp': data.get('timestamp')
+                        'timestamp': data.get('timestamp'),
+                        'experience': data.get('experience'),
+                        'experience_revision': data.get('experience_revision'),
                     }
                 }
             )
@@ -425,6 +458,7 @@ class GeneralConsumer(AsyncWebsocketConsumer):
         direction = data.get('direction', 'north')
         delta = float(data.get('delta', 0.15))
 
+        @transaction.atomic
         def _sync():
             table = Table.objects.filter(name=table_name).first()
             if not table:
@@ -438,6 +472,8 @@ class GeneralConsumer(AsyncWebsocketConsumer):
                     'animations': {}
                 }
             )
+            state = OTEFViewportState.objects.select_for_update().get(pk=state.pk)
+            require_experience(state, data)
 
             base_viewport = data.get('base_viewport')
             if base_viewport:
@@ -452,7 +488,7 @@ class GeneralConsumer(AsyncWebsocketConsumer):
 
         if viewport:
             # Broadcast viewport change notification
-            await self._broadcast_change(table_name, 'viewport', viewport)
+            await self._broadcast_change(table_name, 'viewport', {**viewport, **{key: data[key] for key in ('experience', 'experience_revision') if key in data}})
 
     async def _execute_zoom_command(self, table_name, data):
         """Execute zoom command server-side and broadcast result"""
@@ -461,6 +497,7 @@ class GeneralConsumer(AsyncWebsocketConsumer):
         level = int(data.get('zoom', data.get('level', 15)))
         level = max(10, min(19, level))
 
+        @transaction.atomic
         def _sync():
             table = Table.objects.filter(name=table_name).first()
             if not table:
@@ -474,6 +511,8 @@ class GeneralConsumer(AsyncWebsocketConsumer):
                     'animations': {}
                 }
             )
+            state = OTEFViewportState.objects.select_for_update().get(pk=state.pk)
+            require_experience(state, data)
 
             base_viewport = data.get('base_viewport')
             if base_viewport:
@@ -486,20 +525,16 @@ class GeneralConsumer(AsyncWebsocketConsumer):
         viewport = await sync_to_async(_sync)()
 
         if viewport:
-            await self._broadcast_change(table_name, 'viewport', viewport)
+            await self._broadcast_change(table_name, 'viewport', {**viewport, **{key: data[key] for key in ('experience', 'experience_revision') if key in data}})
 
     async def _save_viewport(self, table_name, data):
         """Save viewport to DB and broadcast notification"""
         from backend.models import OTEFViewportState, Table
 
-        viewport_data = {}
-        if 'bbox' in data:
-            viewport_data['bbox'] = data['bbox']
-        if 'corners' in data:
-            viewport_data['corners'] = data['corners']
-        if 'zoom' in data:
-            viewport_data['zoom'] = data['zoom']
+        raw_viewport = data.get('viewport', data)
+        viewport_data = {key: raw_viewport[key] for key in ('bbox', 'corners', 'zoom') if key in raw_viewport}
 
+        @transaction.atomic
         def _sync():
             table = Table.objects.filter(name=table_name).first()
             if not table:
@@ -514,6 +549,8 @@ class GeneralConsumer(AsyncWebsocketConsumer):
                 }
             )
 
+            state = OTEFViewportState.objects.select_for_update().get(pk=state.pk)
+            require_experience(state, data)
             # Merge with existing viewport
             current = state.viewport or {}
             state.viewport = {**current, **viewport_data}
@@ -521,12 +558,13 @@ class GeneralConsumer(AsyncWebsocketConsumer):
 
         await sync_to_async(_sync)()
         # Include the viewport data in the broadcast to eliminate HTTP GET round-trip
-        await self._broadcast_change(table_name, 'viewport', data.get('viewport', viewport_data))
+        await self._broadcast_change(table_name, 'viewport', {**data.get('viewport', viewport_data), **{key: data[key] for key in ('experience', 'experience_revision') if key in data}})
 
-    async def _save_layers(self, table_name, layers):
+    async def _save_layers(self, table_name, data):
         """Save layers to DB and broadcast notification"""
         from backend.models import OTEFViewportState, Table
 
+        @transaction.atomic
         def _sync():
             table = Table.objects.filter(name=table_name).first()
             if not table:
@@ -540,16 +578,19 @@ class GeneralConsumer(AsyncWebsocketConsumer):
                     'animations': {}
                 }
             )
-            state.layers = layers
+            state = OTEFViewportState.objects.select_for_update().get(pk=state.pk)
+            require_experience(state, data)
+            state.layers = data.get("layers", {})
             state.save()
 
         await sync_to_async(_sync)()
-        await self._broadcast_change(table_name, 'layers')
+        await self._broadcast_change(table_name, 'layers', {key: data[key] for key in ('experience', 'experience_revision') if key in data})
 
-    async def _save_animation(self, table_name, layer_id, enabled):
+    async def _save_animation(self, table_name, data):
         """Save animation state to DB and broadcast notification"""
         from backend.models import OTEFViewportState, Table
 
+        @transaction.atomic
         def _sync():
             table = Table.objects.filter(name=table_name).first()
             if not table:
@@ -563,8 +604,10 @@ class GeneralConsumer(AsyncWebsocketConsumer):
                     'animations': {}
                 }
             )
+            state = OTEFViewportState.objects.select_for_update().get(pk=state.pk)
+            require_experience(state, data)
             animations = state.animations or {}
-            animations[layer_id] = enabled
+            animations[data.get("layerId")] = data.get("enabled", False)
             state.animations = animations
             state.save()
 
@@ -578,8 +621,10 @@ class GeneralConsumer(AsyncWebsocketConsumer):
                 'message': {
                     'type': 'otef_animation_changed',
                     'table': table_name,
-                    'layerId': layer_id,
-                    'enabled': enabled
+                    'layerId': data.get('layerId'),
+                    'enabled': data.get('enabled', False),
+                    'experience': data.get('experience'),
+                    'experience_revision': data.get('experience_revision')
                 }
             }
         )
@@ -590,7 +635,8 @@ class GeneralConsumer(AsyncWebsocketConsumer):
             'type': f'otef_{field}_changed',
             'table': table_name,
             'sourceId': data.get('sourceId') if isinstance(data, dict) else None,
-            'timestamp': data.get('timestamp') if isinstance(data, dict) else None
+            'timestamp': data.get('timestamp') if isinstance(data, dict) else None,
+            **{key: data[key] for key in ('experience', 'experience_revision') if isinstance(data, dict) and key in data},
         }
         if data:
             if isinstance(data, dict) and field in data:

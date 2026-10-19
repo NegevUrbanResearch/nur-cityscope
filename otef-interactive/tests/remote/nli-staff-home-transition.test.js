@@ -212,7 +212,7 @@ describe("NLI staff Home transitions", () => {
     expect(COPY.en.disconnected).toBe("Map is disconnected");
   });
 
-  test("refresh readiness waits for successful startup Home and a current connection", async () => {
+  test("refresh readiness waits for a successful deliberate Home and a current connection", async () => {
     setLocale("en", { persist: false });
     session = mount({ connected: true });
     await bootRemote(session);
@@ -221,6 +221,7 @@ describe("NLI staff Home transitions", () => {
     session.h.emit("connection", true);
     session.h.emit("narrativeState", session.h.narrative);
     expect(session.remote.getRefreshState()).toEqual({ ready: false, refreshBlockReason: "not_ready" });
+    el("homeBtn").click();
     await vi.waitFor(() => expect(session.remote.getRefreshState().ready).toBe(true));
     expect(session.remote.getRefreshState().refreshBlockReason).toBeNull();
 
@@ -230,10 +231,11 @@ describe("NLI staff Home transitions", () => {
     expect(session.remote.getRefreshState()).toEqual({ ready: false, refreshBlockReason: "not_ready" });
   });
 
-  test("refresh-state subscribers are notified when startup Home becomes ready and on disconnect", async () => {
+  test("refresh-state subscribers are notified when deliberate Home becomes ready and on disconnect", async () => {
     session = mount({ connected: true });
     const states = [];
     await bootRemote(session, { onRefreshStateChange: value => states.push(value) });
+    el("homeBtn").click();
     session.h.emit("connection", true);
     session.h.emit("narrativeState", session.h.narrative);
     await vi.waitFor(() => expect(states.some(value => value.ready && value.refreshBlockReason === null)).toBe(true));
@@ -245,6 +247,7 @@ describe("NLI staff Home transitions", () => {
     setLocale("en", { persist: false });
     session = mount({ connected: true });
     await bootRemote(session);
+    el("homeBtn").click();
     session.h.emit("connection", true);
     session.h.emit("narrativeState", session.h.narrative);
     await vi.waitFor(() => expect(session.remote.getRefreshState().refreshBlockReason).toBeNull());
@@ -263,8 +266,7 @@ describe("NLI staff Home transitions", () => {
     session = mount();
     await bootRemote(session);
     const { h } = session;
-    expect(session.dataContext.setExhibitMode).toHaveBeenCalledWith(true);
-    const trueCallsAfterInit = session.dataContext.setExhibitMode.mock.calls.filter(([value]) => value === true).length;
+    expect(session.dataContext.setExhibitMode).not.toHaveBeenCalled();
 
     await h.openCard('[data-open="segev"]');
     h.clock = { phase: "playing", revision: 4 };
@@ -280,8 +282,7 @@ describe("NLI staff Home transitions", () => {
     expect(h.clearPerson).toHaveBeenCalled();
     expect(el("cueStatus").textContent).toBe("Scene sent");
     expect(el("staffConnection").textContent).toBe("Map is disconnected");
-    expect(session.dataContext.setExhibitMode.mock.calls.filter(([value]) => value === true).length)
-      .toBeGreaterThan(trueCallsAfterInit);
+    expect(session.dataContext.setExhibitMode).not.toHaveBeenCalled();
 
     await h.openCard('[data-open="segev"]');
     const layersBeforeFinish = h.layers.length;
@@ -623,6 +624,7 @@ describe("NLI staff Home transitions", () => {
     session.h.layerGate = new Promise((resolve) => { releaseCue = resolve; });
     session.h.emit("narrativeState", session.h.narrative);
     session.h.emit("connection", true);
+    el("homeBtn").click();
     await vi.waitFor(() => expect(el("cueStatus").dataset.status).toBe("applying"));
     await vi.waitFor(() => expect(el("narrativeList").querySelector('[data-open="nova"]').disabled).toBe(false));
     el("narrativeList").querySelector('[data-open="nova"]').click();
@@ -653,13 +655,14 @@ describe("NLI staff Home transitions", () => {
     expect(disabled).toEqual({ next: true, prev: true });
   });
 
-  test("failed initial Home person cleanup shows failure and Retry", async () => {
+  test("failed deliberate Home person cleanup shows failure and Retry", async () => {
     setLocale("en", { persist: false });
     session = mount({ person: { personId: "ada", revision: 1, datasetVersion: "v", name: "Ada" } });
     await bootRemote(session);
     session.h.clearPerson = vi.fn(async () => session.h.person);
     session.h.emit("narrativeState", session.h.narrative);
     session.h.emit("connection", true);
+    el("homeBtn").click();
     await vi.waitFor(() => expect(session.h.clearPerson).toHaveBeenCalled());
     await vi.waitFor(() => expect(el("homeCueStatus").hidden).toBe(false));
     expect(el("homeCueStatus").textContent).toBe(COPY.en.searchClearFailed);
@@ -673,7 +676,7 @@ describe("NLI staff Home transitions", () => {
     await vi.waitFor(() => expect(el("homeCueStatus").hidden).toBe(true));
     await vi.waitFor(() => expect(session.h.layers.at(-1)).toEqual([...HOME_LAYER_IDS]));
   });
-  test("initial Home failure is visible and Retry applies the Home cue", async () => {
+  test("deliberate Home failure is visible and Retry applies the Home cue", async () => {
     setLocale("en", { persist: false });
     session = mount({ connected: true });
     const onHomeSuccess = vi.fn();
@@ -683,6 +686,7 @@ describe("NLI staff Home transitions", () => {
     expect(session.remote.getRefreshState()).toEqual({ ready: false, refreshBlockReason: "not_ready" });
     session.h.emit("narrativeState", session.h.narrative);
     session.h.emit("connection", true);
+    el("homeBtn").click();
     await vi.waitFor(() => expect(session.h.narratives).toContain(null));
     await vi.waitFor(() => expect(el("homeCueStatus")?.hidden).toBe(false));
     expect(el("homeCueStatus").textContent).toBe("Could not apply this scene");
@@ -723,6 +727,7 @@ describe("NLI staff Home transitions", () => {
     setLocale("en", { persist: false });
     session = mount({ connected: true });
     await bootRemote(session);
+    el("homeBtn").click();
     session.h.emit("connection", true);
     session.h.emit("narrativeState", session.h.narrative);
     await vi.waitFor(() => expect(session.remote.getRefreshState().ready).toBe(true));
@@ -748,6 +753,7 @@ describe("NLI staff Home transitions", () => {
     setLocale("en", { persist: false });
     session = mount({ connected: true });
     await bootRemote(session);
+    el("homeBtn").click();
     session.h.emit("connection", true);
     session.h.emit("narrativeState", session.h.narrative);
     await vi.waitFor(() => expect(session.remote.getRefreshState().ready).toBe(true));
@@ -771,7 +777,7 @@ describe("NLI staff Home transitions", () => {
       vi.useRealTimers();
     }
   });
-  test("sessionless hydrated Home exits once, including over a null narrative, and reconnect or locale does not reset", async () => {
+  test("sessionless Home hydration and reconnect or locale changes never reset the exhibit", async () => {
     setLocale("en", { persist: false });
     session = mount({ narrative: { id: null, revision: 4, transition: "steady" } });
     await bootRemote(session);
@@ -781,10 +787,11 @@ describe("NLI staff Home transitions", () => {
     h.emit("narrativeState", h.narrative);
     expect(h.narratives).toEqual([]);
     h.emit("connection", true);
-    await vi.waitFor(() => expect(h.layers.at(-1)).toEqual([...HOME_LAYER_IDS]));
-    expect(h.narratives).toEqual([null]);
+    await Promise.resolve();
+    expect(h.layers).toEqual([]);
+    expect(h.narratives).toEqual([]);
     expect(h.commands).toEqual([]);
-    expect(el("cueStatus").textContent).toBe("Scene sent");
+    expect(el("cueStatus").textContent).toBe("");
     expect(el("staffConnection").textContent).toBe("Connected");
 
     const exit = { id: null, transition: "exit", revision: h.narrative.revision };
@@ -807,8 +814,8 @@ describe("NLI staff Home transitions", () => {
     h.emit("investigationClock", h.clock);
     setLocale("he", { persist: false });
     await Promise.resolve();
-    expect(h.narratives).toEqual([null]);
-    expect(h.layers).toHaveLength(1);
+    expect(h.narratives).toEqual([]);
+    expect(h.layers).toHaveLength(0);
   });
 
   test("leaving Home before the hydrated connection suppresses the boot reset", async () => {
@@ -902,7 +909,7 @@ describe("NLI staff Home transitions", () => {
       people: [{ pid: "11", nameForms: ["עדה", "Ada"], hasArchiveRecord: true }],
     };
     const indexBytes = new TextEncoder().encode(JSON.stringify(peopleIndex));
-    const digest = await sha256Hex(indexBytes);
+    const digest = await sha256Hex(Uint8Array.from(indexBytes));
     const metadata = {
       datasetVersion: "v1",
       runtimeArtifactHashes: { "people-search-index.json": digest },

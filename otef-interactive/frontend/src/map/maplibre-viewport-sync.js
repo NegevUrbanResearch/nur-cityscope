@@ -113,6 +113,18 @@ export function setupViewportSync(map, dataContext) {
   /** If resize settle wanted a context report but remote apply was active, flush on unlock. */
   let pendingPostResizeContextReport = false;
   let postResizeIdleHandler = null;
+  let experienceState = dataContext.getExperienceState?.() || null;
+  let transitionPending = !!experienceState?.pending_transition;
+  let awaitingExperienceViewport = transitionPending;
+  let experienceGeneration = 0;
+  let navigationExperienceScope = null;
+  let blockedReportScope = null;
+  let pendingPostResizeScope = null;
+  const captureScope = () => dataContext.captureExperienceScope?.();
+  const reportingAllowed = (scope) => syncActive && !transitionPending &&
+    !dataContext.getExperienceState?.()?.pending_transition && !awaitingExperienceViewport &&
+    (!scope || dataContext.isExperienceScopeCurrent?.(scope) !== false);
+
 
   const clearRemoteUnlockTimer = () => {
     if (!remoteUnlockTimer) return;
@@ -171,7 +183,8 @@ export function setupViewportSync(map, dataContext) {
   };
 
   const reportToContext = (onInteractionGuard, options = {}) => {
-    if (!syncActive) return;
+    const scope = options.experienceScope || captureScope();
+    if (!reportingAllowed(scope)) return;
     if (!map || !dataContext || typeof dataContext.updateViewportFromUI !== "function") return;
 
     const bounds = map.getBounds();
@@ -215,8 +228,8 @@ export function setupViewportSync(map, dataContext) {
     };
     const result =
       options &&
-      (options.sharedUpdate === "immediate" || options.sharedUpdate === "transient")
-        ? dataContext.updateViewportFromUI(viewportPayload, "gis", options)
+      (options.sharedUpdate === "immediate" || options.sharedUpdate === "transient" || scope)
+        ? dataContext.updateViewportFromUI(viewportPayload, "gis", { ...options, ...(scope ? { experienceScope: scope } : {}) })
         : dataContext.updateViewportFromUI(viewportPayload, "gis");
 
     if (
@@ -226,7 +239,7 @@ export function setupViewportSync(map, dataContext) {
       result.accepted === false &&
       result.reason === "interaction_guard"
     ) {
-      onInteractionGuard();
+      onInteractionGuard(scope);
     }
   };
 
@@ -236,38 +249,42 @@ export function setupViewportSync(map, dataContext) {
     if (isApplyingRemote) return;
     gisReportBlockedPending = false;
     clearDeferredGuardFlushTimer();
-    reportToContext(
-      null,
-      navigationTravelActive
-        ? { sharedUpdate: "transient", traceId: activeNavigationTraceId }
-        : undefined,
-    );
+    const scope = blockedReportScope;
+    blockedReportScope = null;
+    reportToContext(null, {
+      ...(navigationTravelActive ? { sharedUpdate: "transient", traceId: activeNavigationTraceId } : {}),
+      ...(scope ? { experienceScope: scope } : {}),
+    });
   };
 
   const scheduleGISRetryFlush = () => {
     if (deferredGuardFlushTimer) return;
+    const generation = experienceGeneration;
     deferredGuardFlushTimer = setTimeout(() => {
       deferredGuardFlushTimer = null;
+      if (generation !== experienceGeneration) return;
       flushGISReportRetry();
     }, 0);
   };
 
-  const onGISReportInteractionGuard = () => {
+  const onGISReportInteractionGuard = (scope) => {
     if (gisReportBlockedPending) return;
     gisReportBlockedPending = true;
+    blockedReportScope = scope;
     if (!isApplyingRemote) {
       scheduleGISRetryFlush();
     }
   };
 
-  const runPostResizeContextReport = () => {
-    if (!syncActive) return;
+  const runPostResizeContextReport = (scope) => {
+    if (!reportingAllowed(scope)) return;
     if (isApplyingRemote) {
       pendingPostResizeContextReport = true;
+      pendingPostResizeScope = scope;
       return;
     }
     suppressNextGisMapChange = true;
-    reportToContext(null);
+    reportToContext(null, scope ? { experienceScope: scope } : {});
   };
 
   const finishRemoteApplyUnlock = () => {
@@ -276,7 +293,9 @@ export function setupViewportSync(map, dataContext) {
       flushGISReportRetry();
       if (pendingPostResizeContextReport) {
         pendingPostResizeContextReport = false;
-        runPostResizeContextReport();
+        const scope = pendingPostResizeScope;
+        pendingPostResizeScope = null;
+        runPostResizeContextReport(scope);
       }
     }
   };
@@ -285,8 +304,9 @@ export function setupViewportSync(map, dataContext) {
     clearRemoteApplyLockOnly();
     isApplyingRemote = true;
 
+    const generation = experienceGeneration;
     const handleUnlockEvent = () => {
-      finishRemoteApplyUnlock();
+      if (generation === experienceGeneration) finishRemoteApplyUnlock();
     };
 
     remoteUnlockHandlers = [["idle", handleUnlockEvent]];
@@ -296,18 +316,21 @@ export function setupViewportSync(map, dataContext) {
     }
 
     remoteUnlockTimer = setTimeout(() => {
-      finishRemoteApplyUnlock();
+      if (generation === experienceGeneration) finishRemoteApplyUnlock();
     }, 500);
   };
 
   const reportNavigationTravelViewport = () => {
     if (!navigationTravelActive || navigationReportTimer) return;
+    const generation = experienceGeneration;
+    const scope = navigationExperienceScope;
     navigationReportTimer = setTimeout(() => {
       navigationReportTimer = null;
-      if (!navigationTravelActive || !syncActive) return;
+      if (!navigationTravelActive || !syncActive || generation !== experienceGeneration) return;
       reportToContext(onGISReportInteractionGuard, {
         sharedUpdate: "transient",
         traceId: activeNavigationTraceId,
+        ...(scope ? { experienceScope: scope } : {}),
       });
     }, PLACE_NAVIGATION_REPORT_INTERVAL_MS);
   };
@@ -317,8 +340,10 @@ export function setupViewportSync(map, dataContext) {
     reportToContext(onGISReportInteractionGuard, {
       sharedUpdate: "immediate",
       traceId,
+      ...(navigationExperienceScope ? { experienceScope: navigationExperienceScope } : {}),
     });
     navigationTravelActive = false;
+    navigationExperienceScope = null;
     activeNavigationTraceId = null;
     clearNavigationReportTimer();
   };
@@ -326,11 +351,13 @@ export function setupViewportSync(map, dataContext) {
   const armNavigationTravelEnd = (traceId) => {
     clearNavigationIdleHandler();
     if (!navigationTravelActive || !syncActive) return;
-    navigationIdleHandler = () => {
-      if (navigationIdleHandler === null) return;
+    const generation = experienceGeneration;
+    const handler = () => {
+      if (navigationIdleHandler !== handler || generation !== experienceGeneration) return;
       clearNavigationIdleHandler();
       finishNavigationTravel(traceId);
     };
+    navigationIdleHandler = handler;
     if (typeof map.once === "function") {
       map.once("moveend", navigationIdleHandler);
     }
@@ -338,12 +365,14 @@ export function setupViewportSync(map, dataContext) {
 
   const startNavigationTravel = (traceId) => {
     activeNavigationTraceId = traceId || null;
+    navigationExperienceScope = captureScope();
     navigationTravelActive = true;
     clearNavigationReportTimer();
     clearNavigationIdleHandler();
   };
 
   const applyNavigationCommand = (command) => {
+    if (!syncActive || transitionPending || awaitingExperienceViewport) return;
     const traceId = command?.traceId || command?.id || null;
     if (!command || command.id === lastNavigationCommandId) {
       return;
@@ -376,6 +405,7 @@ export function setupViewportSync(map, dataContext) {
     void options;
     const seq = viewport && viewport.seq;
     const handled = applyViewportToMap(map, viewport, startRemoteApplyLock);
+    if (handled) awaitingExperienceViewport = false;
     if (handled && Number.isFinite(seq)) {
       lastAppliedViewportSeq = seq;
     }
@@ -391,20 +421,19 @@ export function setupViewportSync(map, dataContext) {
   const schedulePostResizeGisContextSync = () => {
     clearPostResizeIdleRegistration();
     postResizeGisSyncPending = true;
+    const generation = experienceGeneration;
+    const scope = captureScope();
     const onIdle = () => {
+      if (generation !== experienceGeneration || postResizeIdleHandler !== onIdle) return;
       postResizeIdleHandler = null;
       postResizeGisSyncPending = false;
-      runPostResizeContextReport();
+      runPostResizeContextReport(scope);
     };
     postResizeIdleHandler = onIdle;
     if (typeof map.once === "function") {
       map.once("idle", onIdle);
     } else {
-      requestAnimationFrame(() => {
-        postResizeIdleHandler = null;
-        postResizeGisSyncPending = false;
-        onIdle();
-      });
+      requestAnimationFrame(onIdle);
     }
     if (typeof map.resize === "function") {
       map.resize();
@@ -413,15 +442,16 @@ export function setupViewportSync(map, dataContext) {
 
   const markResizeActivity = (origin) => {
     void origin;
-    if (!syncActive) return;
+    if (!syncActive || transitionPending || awaitingExperienceViewport) return;
     if (!isResizeActive) {
       isResizeActive = true;
     }
 
     clearResizeSettleTimer();
+    const generation = experienceGeneration;
     resizeSettleTimer = setTimeout(() => {
       resizeSettleTimer = null;
-      if (!syncActive) return;
+      if (!syncActive || generation !== experienceGeneration) return;
       isResizeActive = false;
       maybeApplyQueuedViewportAfterResize();
       schedulePostResizeGisContextSync();
@@ -459,7 +489,57 @@ export function setupViewportSync(map, dataContext) {
       viewport && Number.isFinite(viewport.seq) ? viewport.seq : null;
   };
 
+  const cancelExperienceCameraWork = () => {
+    experienceGeneration += 1;
+    awaitingExperienceViewport = true;
+    clearNavigationReportTimer();
+    clearNavigationIdleHandler();
+    clearResizeSettleTimer();
+    clearPostResizeIdleRegistration();
+    clearDeferredGuardFlushTimer();
+    clearRemoteApplyLockOnly();
+    if (pendingReportTimer) clearTimeout(pendingReportTimer);
+    pendingReportTimer = null;
+    navigationTravelActive = false;
+    activeNavigationTraceId = null;
+    navigationExperienceScope = null;
+    lastNavigationCommandId = null;
+    lastAppliedViewportSeq = -1;
+    gisReportBlockedPending = false;
+    blockedReportScope = null;
+    pendingPostResizeContextReport = false;
+    pendingPostResizeScope = null;
+    postResizeGisSyncPending = false;
+    suppressNextGisMapChange = false;
+    isResizeActive = false;
+    resetResizeQueue();
+    // stop() emits moveend synchronously. Reporting is already suppressed above.
+    map.stop?.();
+  };
+  const unsubscribeExperience = dataContext.subscribe("experienceState", (next) => {
+    if (!next) return;
+    const changedActivation = experienceState && (
+      next.revision !== experienceState.revision || next.active_experience !== experienceState.active_experience
+    );
+    const preparing = next.pending_transition && !experienceState?.pending_transition;
+    experienceState = next;
+    transitionPending = !!next.pending_transition;
+    if (changedActivation || preparing) cancelExperienceCameraWork();
+    if (!transitionPending && awaitingExperienceViewport) {
+      const generation = experienceGeneration;
+      // An abort or same-camera activation may deduplicate the viewport topic.
+      // Reconcile after the complete authoritative snapshot has been adopted.
+      const reconcile = () => {
+        if (!syncActive || generation !== experienceGeneration || transitionPending || !awaitingExperienceViewport) return;
+        applyAcceptedViewport(dataContext.getViewport?.());
+      };
+      if (typeof queueMicrotask === "function") queueMicrotask(reconcile);
+      else Promise.resolve().then(reconcile);
+    }
+  });
+
   const unsubscribeViewport = dataContext.subscribe("viewport", (viewport) => {
+    if (!syncActive || transitionPending) return;
     if (navigationTravelActive) {
       const seq = viewport && viewport.seq;
       if (Number.isFinite(seq) && seq > lastAppliedViewportSeq) {
@@ -485,6 +565,7 @@ export function setupViewportSync(map, dataContext) {
   );
 
   const handleMapChange = () => {
+    if (!reportingAllowed()) return;
     if (suppressNextGisMapChange) {
       suppressNextGisMapChange = false;
       return;
@@ -493,14 +574,16 @@ export function setupViewportSync(map, dataContext) {
       return;
     }
     if (pendingReportTimer) return;
+    const scope = captureScope();
+    const generation = experienceGeneration;
     pendingReportTimer = setTimeout(() => {
       pendingReportTimer = null;
-      if (!syncActive) return;
+      if (!syncActive || generation !== experienceGeneration) return;
       if (isApplyingRemote) return;
       if (isResizeActive) {
         return;
       }
-      reportToContext(onGISReportInteractionGuard);
+      reportToContext(onGISReportInteractionGuard, scope ? { experienceScope: scope } : {});
     }, 0);
   };
 
@@ -525,6 +608,7 @@ export function setupViewportSync(map, dataContext) {
   const dispose = () => {
     syncActive = false;
     clearPostResizeIdleRegistration();
+    if (typeof unsubscribeExperience === "function") unsubscribeExperience();
     if (typeof unsubscribeViewport === "function") unsubscribeViewport();
     if (typeof unsubscribeNavigationCommand === "function") unsubscribeNavigationCommand();
     map.off("move", reportNavigationTravelViewport);
@@ -556,9 +640,12 @@ export function setupViewportSync(map, dataContext) {
     }
   };
   dispose.beginCameraTravel = (traceId = "person-fly") => {
+    if (!syncActive || transitionPending || awaitingExperienceViewport) return;
     startNavigationTravel(traceId);
+    const generation = experienceGeneration;
+    const scope = navigationExperienceScope;
     const arm = () => {
-      if (!syncActive || !navigationTravelActive) return;
+      if (!syncActive || !navigationTravelActive || generation !== experienceGeneration || scope !== navigationExperienceScope) return;
       armNavigationTravelEnd(traceId);
     };
     if (typeof queueMicrotask === "function") {

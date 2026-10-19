@@ -26,6 +26,23 @@ function makeChannelPair() {
 }
 
 describe("NLI archive window controller", () => {
+  test("canceling pending archive resolution preserves the command activation on its result", async () => {
+    let resolvePerson;
+    const emitResult = vi.fn().mockResolvedValue(undefined);
+    const bridge = createNliArchiveCommandBridge({
+      windowController: { close: vi.fn() },
+      resolvePerson: () => new Promise(resolve => { resolvePerson = resolve; }),
+      getPersonSelection: () => null,
+      emitResult,
+    });
+    const scope = { experience: "nli", experience_revision: 1 };
+    const pending = bridge.handleCommand({ action: "open", personId: "1", datasetVersion: "v1", requestId: "r", ...scope });
+    bridge.handlePersonSelection(null);
+    await Promise.resolve();
+    expect(emitResult.mock.calls[0][0]).toMatchObject(scope);
+    resolvePerson(null);
+    await pending;
+  });
   test("owns archive commands only with the dedicated pager query flag", () => {
     expect(ownsArchiveWindowCommands("?archivePager=1")).toBe(true);
     expect(ownsArchiveWindowCommands("?archivePager=0")).toBe(false);

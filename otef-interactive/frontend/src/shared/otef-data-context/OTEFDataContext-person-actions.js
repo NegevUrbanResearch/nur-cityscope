@@ -1,5 +1,7 @@
 import { OTEF_API } from "../api-client.js";
 import { normalizePersonSelection } from "../person-selection.js";
+import { experienceConflict } from "./OTEFDataContext-experience.js";
+import { explicitExperienceScope } from "../experience-state.js";
 
 function validPersonSelectionSnapshot(raw) {
   if (!raw || typeof raw !== "object" || !Number.isInteger(raw.revision) || raw.revision < 0) {
@@ -17,13 +19,19 @@ function validPersonSelectionSnapshot(raw) {
 
 async function personSelectionCommand(ctx, action, args) {
   if (!ctx._tableName) return { ok: false, reason: "missing_table" };
+  const scope = ctx.captureExperienceScope?.() || OTEF_API.captureExperienceScope(ctx._tableName);
+  const requireCurrentScope = () => {
+    if (ctx.isExperienceScopeCurrent?.(scope) === false) throw experienceConflict();
+  };
   const requestRevision = ctx._personSelection?.revision || 0;
   let expectedRevision = requestRevision;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
+      requireCurrentScope();
       const result = await OTEF_API[action](...args, expectedRevision, {
-        tableName: ctx._tableName, sourceId: ctx._clientId, timestamp: Date.now(),
+        ...scope, tableName: ctx._tableName, sourceId: ctx._clientId, timestamp: Date.now(),
       });
+      requireCurrentScope();
       const snapshot = result?.person_selection || result?.personSelection;
       const acknowledged = snapshot && normalizePersonSelection(snapshot);
       if (acknowledged && acknowledged.revision >= (ctx._personSelection?.revision || 0)) {
@@ -31,6 +39,7 @@ async function personSelectionCommand(ctx, action, args) {
       }
       return result;
     } catch (error) {
+      requireCurrentScope();
       const authoritative = error?.details?.person_selection;
       const stale = error?.status === 409 &&
         (error?.details?.reason === "stale" ||
@@ -67,12 +76,14 @@ async function archiveWindowCommand(ctx, action, personId, datasetVersion, reque
   });
 }
 
-async function archiveWindowResult(ctx, outcome, personId, datasetVersion, requestId, sourceId = ctx._clientId) {
+async function archiveWindowResult(ctx, outcome, personId, datasetVersion, requestId, sourceId = ctx._clientId, originalScope = null) {
   if (!ctx._tableName || !outcome || !personId || !datasetVersion || !requestId) {
     return { ok: false, reason: "invalid_archive_result" };
   }
+  const scope = explicitExperienceScope(originalScope);
+  if (scope.experience && ctx.isExperienceScopeCurrent?.(scope) === false) return { ok: false, stale: true };
   return OTEF_API.archiveWindowResult(ctx._tableName, {
-    outcome, personId, datasetVersion, requestId, sourceId,
+    outcome, personId, datasetVersion, requestId, sourceId, ...scope,
   });
 }
 

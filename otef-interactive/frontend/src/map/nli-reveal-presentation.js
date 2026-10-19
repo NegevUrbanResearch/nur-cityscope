@@ -1,5 +1,6 @@
 import Reveal from "../../vendor/reveal.js/reveal.esm.js";
 import { resolveMotionMode } from "../shared/reduced-motion.js";
+import { explicitExperienceScope } from "../shared/experience-state.js";
 
 const REVEAL_OPTIONS = Object.freeze({
   embedded: true,
@@ -93,6 +94,7 @@ export function createNliRevealPresentation(container, {
   const emit = (command, outcome, state = active, message = undefined) => {
     const segment = state?.segment;
     emitResult({
+      ...explicitExperienceScope(command),
       segmentId: command.segmentId,
       presentationSessionId: command.presentationSessionId,
       presentationGeneration: command.presentationGeneration,

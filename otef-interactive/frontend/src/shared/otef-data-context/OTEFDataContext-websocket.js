@@ -1,3 +1,4 @@
+import { explicitExperienceScope, isExperienceStateCurrentOrNewer } from "../experience-state.js";
 import { OTEF_API } from "../api-client.js";
 import { isGisBasemapId, normalizeGisBasemap } from "../gis-basemap.js";
 import { OTEF_MESSAGE_TYPES } from "../message-protocol.js";
@@ -79,6 +80,15 @@ function canonicalRestNarrativeScene(state) {
 
 function applyStateFromApi(ctx, state, options = {}) {
   if (!state || typeof state !== "object") return;
+  if (state.experience_state && typeof ctx._setExperienceState === "function") {
+    if (!isExperienceStateCurrentOrNewer(state.experience_state, ctx.getExperienceState())) return;
+    if (!options.experienceBatch) return ctx._batchNotifications(() => applyStateFromApi(ctx, state, { ...options, experienceBatch: true }));
+    const previousRevision = ctx.getExperienceState()?.revision;
+    ctx._setExperienceState(state.experience_state);
+    if (previousRevision !== state.experience_state.revision) {
+      options = { ...options, layerGroupsReceipt: undefined, animationsReceipt: undefined, coupledBaseline: undefined, visibilityReceipt: undefined };
+    }
+  }
   const notify = options.notify !== false;
 
   const hasNarrativeSnapshot = Object.prototype.hasOwnProperty.call(state, "narrative_state");
@@ -217,11 +227,36 @@ function setupWebSocket(ctx) {
   let archiveCommandsDisabled = false;
   let queuedArchiveCommands = [];
 
+  const acceptsScope = (message, type = message?.type) => {
+    const state = ctx.getExperienceState?.();
+    if (!state) return true;
+    if (state.pending_transition) {
+      const cleanup = [OTEF_MESSAGE_TYPES.ARCHIVE_WINDOW_RESULT, OTEF_MESSAGE_TYPES.NARRATIVE_PRESENTATION_RESULT].includes(type)
+        || (type === OTEF_MESSAGE_TYPES.ARCHIVE_WINDOW_COMMAND && message?.archiveAction === "close")
+        || (type === OTEF_MESSAGE_TYPES.NARRATIVE_PRESENTATION_COMMAND && message?.presentationAction === "close");
+      if (!cleanup) return false;
+    }
+    const stamped = typeof message?.experience === "string" && Number.isSafeInteger(message?.experience_revision);
+    if (!stamped) return state.revision === 0 && !state.pending_transition;
+    return message.experience === state.active_experience && message.experience_revision === state.revision;
+  };
+  const currentState = async () => {
+    const scope = ctx.captureExperienceScope?.();
+    const state = await OTEF_API.getState(ctx._tableName, { forceFresh: true });
+    if (scope && ctx.isExperienceScopeCurrent?.(scope) === false) return {};
+    return state;
+  };
+  const onScoped = (type, handler) => ctx._wsClient.on(type, message => {
+    if (acceptsScope(message, type)) return handler(message);
+  });
+
   const flushArchiveCommands = () => {
     if (hydrationPromise || !archiveBridgeReady || archiveCommandsDisabled) return;
     const commands = queuedArchiveCommands;
     queuedArchiveCommands = [];
-    for (const command of commands) ctx._notify("archiveWindow", command);
+    for (const command of commands) {
+      if (acceptsScope(command)) ctx._notify("archiveWindow", command);
+    }
   };
 
   ctx._markArchiveWindowBridgeReady = (ownsCommands = true) => {
@@ -240,17 +275,24 @@ function setupWebSocket(ctx) {
       const layerGroupsReceipt = ctx._beginLayerGroupsSnapshot();
       const animationsReceipt = ctx._animationsReceipt;
       hydrationPromise = (async () => {
+        let hydrated = false;
         try {
           const state = await OTEF_API.getState(ctx._tableName, { forceFresh: true });
           if (generation !== connectionGeneration) return;
           applyStateFromApi(ctx, state, { notify: true, coupledBaseline, visibilityReceipt, layerGroupsReceipt, animationsReceipt });
+          hydrated = true;
         } catch (err) {
           getLogger().error("[OTEFDataContext] Failed to refresh state after WebSocket connect:", err);
         } finally {
           if (generation !== connectionGeneration) return;
           hydrationPromise = null;
-          ctx._setConnection(true);
-          flushArchiveCommands();
+          if (hydrated) {
+            ctx._setConnection(true);
+            flushArchiveCommands();
+          } else {
+            ctx._setConnection(false, "error");
+            queuedArchiveCommands = [];
+          }
         }
       })();
       await hydrationPromise;
@@ -265,8 +307,11 @@ function setupWebSocket(ctx) {
     },
   });
   ctx._wsClient.on("connecting", () => ctx._setConnection(false, "connecting"));
+  ctx._wsClient.on("otef_experience_changed", (message) => {
+    if (message?.state) ctx.adoptAuthoritativeSnapshot(message.state);
+  });
 
-  ctx._wsClient.on(OTEF_MESSAGE_TYPES.VIEWPORT_CHANGED, async (msg) => {
+  onScoped(OTEF_MESSAGE_TYPES.VIEWPORT_CHANGED, async (msg) => {
     try {
       const traceId = msg && typeof msg.traceId === "string" ? msg.traceId : null;
       if (traceId) {
@@ -285,7 +330,7 @@ function setupWebSocket(ctx) {
         return;
       }
 
-      const state = await OTEF_API.getState(ctx._tableName, { forceFresh: true });
+      const state = await currentState();
       if (state.viewport) ctx._setViewport(state.viewport);
       if (traceId) {
         recordTraceEvent(traceId, "context.viewport_from_api_fallback", {});
@@ -295,7 +340,7 @@ function setupWebSocket(ctx) {
     }
   });
 
-  ctx._wsClient.on(OTEF_MESSAGE_TYPES.VELOCITY_SYNC, (msg) => {
+  onScoped(OTEF_MESSAGE_TYPES.VELOCITY_SYNC, (msg) => {
     ctx._velocity = { vx: msg.vx || 0, vy: msg.vy || 0 };
     ctx._lastVelocityUpdate = Date.now();
     if (ctx._velocity.vx !== 0 || ctx._velocity.vy !== 0) {
@@ -303,7 +348,7 @@ function setupWebSocket(ctx) {
     }
   });
 
-  ctx._wsClient.on(OTEF_MESSAGE_TYPES.LAYERS_CHANGED, async (msg = {}) => {
+  onScoped(OTEF_MESSAGE_TYPES.LAYERS_CHANGED, async (msg = {}) => {
     const traceId = msg && typeof msg.traceId === "string" ? msg.traceId : null;
     if (traceId) {
       recordTraceEvent(traceId, "ws.layers.received", {
@@ -329,7 +374,12 @@ function setupWebSocket(ctx) {
       : [];
     try {
       if (Array.isArray(msg.layerGroups)) {
-        ctx._applyLayerGroupsSnapshot(msg.layerGroups, undefined, { bypassEquality: true });
+        const apply = () => {
+          if (typeof msg.gazaBorderVisible === "boolean") ctx._setGazaBorderVisible?.(msg.gazaBorderVisible);
+          ctx._applyLayerGroupsSnapshot(msg.layerGroups, undefined, { bypassEquality: true });
+        };
+        if (ctx._batchNotifications) ctx._batchNotifications(apply);
+        else apply();
         if (traceId) {
           recordTraceEvent(traceId, "context.layers_from_ws_payload", {
             groupCount: msg.layerGroups.length,
@@ -338,10 +388,17 @@ function setupWebSocket(ctx) {
       } else {
         const generation = connectionGeneration;
         const receipt = ctx._beginLayerGroupsSnapshot();
-        const state = await OTEF_API.getState(ctx._tableName, { forceFresh: true });
+        const visibilityReceipt = ctx._gazaBorderVisibilityReceipt;
+        const state = await currentState();
         if (generation !== connectionGeneration) return;
         if (state.layerGroups) {
-          const applied = ctx._applyLayerGroupsSnapshot(state.layerGroups, receipt, { bypassEquality: true });
+          let applied;
+          const apply = () => {
+            applied = ctx._applyLayerGroupsSnapshot(state.layerGroups, receipt, { bypassEquality: true });
+            if (applied && visibilityReceipt === ctx._gazaBorderVisibilityReceipt && typeof state.gaza_border_visible === "boolean") ctx._setGazaBorderVisible?.(state.gaza_border_visible);
+          };
+          if (ctx._batchNotifications) ctx._batchNotifications(apply);
+          else apply();
           if (traceId && applied) {
             recordTraceEvent(traceId, "context.layers_from_api_fallback", {
               groupCount: state.layerGroups.length,
@@ -367,7 +424,7 @@ function setupWebSocket(ctx) {
     }
   });
 
-  ctx._wsClient.on(OTEF_MESSAGE_TYPES.ANIMATION_CHANGED, async (msg) => {
+  onScoped(OTEF_MESSAGE_TYPES.ANIMATION_CHANGED, async (msg) => {
     if (msg?.table && msg.table !== ctx._tableName) return;
     if (ctx._pendingAnimationOps > 0) {
       getLogger().debug("[OTEFDataContext] Suppressing ANIMATION_CHANGED echo (pending local op)");
@@ -377,7 +434,7 @@ function setupWebSocket(ctx) {
     const layerGroupsReceipt = ctx._beginLayerGroupsSnapshot();
     const generation = connectionGeneration;
     try {
-      const state = await OTEF_API.getState(ctx._tableName, { forceFresh: true });
+      const state = await currentState();
       if (generation !== connectionGeneration || animationsReceipt !== ctx._animationsReceipt || ctx._pendingAnimationOps > 0) return;
       // Apply layerGroups first so followers (GIS / projection) do not run route overlay sync
       // with animation=true while merged-row siblings are still disabled in context.
@@ -414,14 +471,14 @@ function setupWebSocket(ctx) {
     }
   });
 
-  ctx._wsClient.on(OTEF_MESSAGE_TYPES.BASEMAP_CHANGED, async (msg = {}) => {
+  onScoped(OTEF_MESSAGE_TYPES.BASEMAP_CHANGED, async (msg = {}) => {
     if (msg && msg.sourceId === ctx._clientId) return;
     if (isGisBasemapId(msg.basemap)) {
       ctx._setConfirmedBasemap(msg.basemap);
       return;
     }
     try {
-      const state = await OTEF_API.getState(ctx._tableName, { forceFresh: true });
+      const state = await currentState();
       if (state && Object.prototype.hasOwnProperty.call(state, "basemap")) {
         ctx._setConfirmedBasemap(state.basemap);
       }
@@ -430,7 +487,7 @@ function setupWebSocket(ctx) {
     }
   });
 
-  ctx._wsClient.on(OTEF_MESSAGE_TYPES.EXHIBIT_MODE_CHANGED, (msg = {}) => {
+  onScoped(OTEF_MESSAGE_TYPES.EXHIBIT_MODE_CHANGED, (msg = {}) => {
     if (msg && msg.sourceId === ctx._clientId) return;
     if (typeof ctx._setExhibitMode === "function") {
       ctx._setExhibitMode(msg.exhibitMode === true);
@@ -439,12 +496,12 @@ function setupWebSocket(ctx) {
     }
   });
 
-  ctx._wsClient.on(OTEF_MESSAGE_TYPES.GAZA_BORDER_VISIBILITY_CHANGED, (msg = {}) => {
+  onScoped(OTEF_MESSAGE_TYPES.GAZA_BORDER_VISIBILITY_CHANGED, (msg = {}) => {
     if (msg.table !== ctx._tableName || typeof msg.gazaBorderVisible !== "boolean") return;
     ctx._setGazaBorderVisible(msg.gazaBorderVisible);
   });
 
-  ctx._wsClient.on(OTEF_MESSAGE_TYPES.PROJECTION_SLIDESHOW_CHANGED, async (msg = {}) => {
+  onScoped(OTEF_MESSAGE_TYPES.PROJECTION_SLIDESHOW_CHANGED, async (msg = {}) => {
     if (msg && msg.sourceId === ctx._clientId) return;
     try {
       const raw = msg && msg.projectionSlideshow;
@@ -452,7 +509,7 @@ function setupWebSocket(ctx) {
         ctx._setProjectionSlideshow(raw);
         return;
       }
-      const state = await OTEF_API.getState(ctx._tableName, { forceFresh: true });
+      const state = await currentState();
       if (state?.projection_slideshow && typeof state.projection_slideshow === "object") {
         ctx._setProjectionSlideshow(state.projection_slideshow);
       }
@@ -464,14 +521,14 @@ function setupWebSocket(ctx) {
     }
   });
 
-  ctx._wsClient.on(OTEF_MESSAGE_TYPES.INVESTIGATION_CLOCK_CHANGED, async (msg = {}) => {
+  onScoped(OTEF_MESSAGE_TYPES.INVESTIGATION_CLOCK_CHANGED, async (msg = {}) => {
     try {
       const raw = msg && msg.investigationClock;
       if (raw && typeof raw === "object") {
         applyInvestigationClockIfNewer(ctx, raw);
         return;
       }
-      const state = await OTEF_API.getState(ctx._tableName, { forceFresh: true });
+      const state = await currentState();
       if (state?.investigation_clock && typeof state.investigation_clock === "object") {
         applyInvestigationClockIfNewer(ctx, state.investigation_clock);
       }
@@ -483,13 +540,13 @@ function setupWebSocket(ctx) {
     }
   });
 
-  ctx._wsClient.on(PERSON_SELECTION_CHANGED, (msg = {}) => {
+  onScoped(PERSON_SELECTION_CHANGED, (msg = {}) => {
     if (msg && msg.personSelection) {
       applyPersonSelectionIfNewer(ctx, msg.personSelection);
     }
   });
 
-  ctx._wsClient.on(OTEF_MESSAGE_TYPES.NARRATIVE_SCENE_CHANGED, (msg = {}) => {
+  onScoped(OTEF_MESSAGE_TYPES.NARRATIVE_SCENE_CHANGED, (msg = {}) => {
     if (msg.table && msg.table !== ctx._tableName) return;
     if (msg.sourceId && msg.sourceId === ctx._clientId) return;
     if (msg.scene && typeof ctx._applyNarrativeScene === "function") {
@@ -497,7 +554,7 @@ function setupWebSocket(ctx) {
     }
   });
 
-  ctx._wsClient.on(OTEF_MESSAGE_TYPES.ESCAPE_OVERLAY_CHANGED, (msg = {}) => {
+  onScoped(OTEF_MESSAGE_TYPES.ESCAPE_OVERLAY_CHANGED, (msg = {}) => {
     if (msg.table && msg.table !== ctx._tableName) return;
     if (typeof ctx._applyEscapeOverlay !== "function") return;
     ctx._applyEscapeOverlay(msg.escapeOverlay, ctx.getNarrativeState().id);
@@ -526,6 +583,7 @@ function setupWebSocket(ctx) {
   });
   ctx._wsClient.on(OTEF_MESSAGE_TYPES.LEGEND_SETTINGS_CHANGED, (msg = {}) => {
     if (msg.table && msg.table !== ctx._tableName) return;
+    if (msg.changeKind !== "layout" && !acceptsScope(msg, OTEF_MESSAGE_TYPES.LEGEND_SETTINGS_CHANGED)) return;
     if (msg.changeKind === "layout" && typeof ctx._applyLegendProjectionVersioned === "function") {
       ctx._applyLegendProjectionVersioned(msg.legendProjection, msg.legendLayoutRevision);
     } else if (msg.changeKind === "metadata" && typeof ctx._applyLegendMetadataPatch === "function") {
@@ -535,7 +593,7 @@ function setupWebSocket(ctx) {
     }
   });
 
-  ctx._wsClient.on(OTEF_MESSAGE_TYPES.NARRATIVE_PRESENTATION_COMMAND, (msg = {}) => {
+  onScoped(OTEF_MESSAGE_TYPES.NARRATIVE_PRESENTATION_COMMAND, (msg = {}) => {
     if (msg.table && msg.table !== ctx._tableName) return;
     if (msg.sourceId && msg.sourceId === ctx._clientId) return;
     if (!["open", "next", "previous", "close"].includes(msg.presentationAction)) return;
@@ -545,6 +603,7 @@ function setupWebSocket(ctx) {
     if (!Number.isInteger(msg.sequence) || msg.sequence <= 0) return;
     if (typeof msg.requestId !== "string" || !msg.requestId.trim()) return;
     ctx._notify("narrativePresentation", {
+      ...explicitExperienceScope(msg),
       presentationAction: msg.presentationAction,
       segmentId: msg.segmentId,
       presentationSessionId: msg.presentationSessionId,
@@ -556,7 +615,7 @@ function setupWebSocket(ctx) {
     });
   });
 
-  ctx._wsClient.on(OTEF_MESSAGE_TYPES.NARRATIVE_PRESENTATION_RESULT, (msg = {}) => {
+  onScoped(OTEF_MESSAGE_TYPES.NARRATIVE_PRESENTATION_RESULT, (msg = {}) => {
     if (msg.table && msg.table !== ctx._tableName) return;
     if (msg.sourceId && msg.sourceId === ctx._clientId) return;
     if (typeof msg.segmentId !== "string" || !msg.segmentId.trim()) return;
@@ -566,6 +625,7 @@ function setupWebSocket(ctx) {
     if (!["opened", "ready", "closed", "unavailable", "ignored"].includes(msg.outcome)) return;
     if (typeof msg.requestId !== "string" || !msg.requestId.trim()) return;
     const result = {
+      ...explicitExperienceScope(msg),
       outcome: msg.outcome,
       segmentId: msg.segmentId,
       presentationSessionId: msg.presentationSessionId,
@@ -583,13 +643,13 @@ function setupWebSocket(ctx) {
     ctx._notify("narrativePresentationResult", result);
   });
 
-  ctx._wsClient.on(OTEF_MESSAGE_TYPES.PLACE_NAVIGATION_COMMAND, (msg = {}) => {
+  onScoped(OTEF_MESSAGE_TYPES.PLACE_NAVIGATION_COMMAND, (msg = {}) => {
     const command = msg.command && typeof msg.command === "object" ? msg.command : null;
     if (!command) return;
     if (command.sourceId && command.sourceId === ctx._clientId) return;
     ctx._emitNavigationCommand(command);
   });
-  ctx._wsClient.on(OTEF_MESSAGE_TYPES.ARCHIVE_WINDOW_COMMAND, (msg = {}) => {
+  onScoped(OTEF_MESSAGE_TYPES.ARCHIVE_WINDOW_COMMAND, (msg = {}) => {
     if (msg.table && msg.table !== ctx._tableName) return;
     if (archiveCommandsDisabled) return;
     if (hydrationPromise || !archiveBridgeReady) {
@@ -599,7 +659,7 @@ function setupWebSocket(ctx) {
     }
     ctx._notify("archiveWindow", msg);
   });
-  ctx._wsClient.on(OTEF_MESSAGE_TYPES.ARCHIVE_WINDOW_RESULT, (msg = {}) => {
+  onScoped(OTEF_MESSAGE_TYPES.ARCHIVE_WINDOW_RESULT, (msg = {}) => {
     if (msg.table && msg.table !== ctx._tableName) return;
     if (msg.sourceId && msg.sourceId === ctx._clientId) return;
     ctx._notify("archiveWindowResult", msg);

@@ -2,6 +2,7 @@ import TableSwitcher from "../shared/table-switcher.js";
 import { initLocale } from "../remote/remote-locale.js";
 import { bindRemoteConnectionRecovery } from "../remote/remote-connection-recovery.js";
 import { initNliStaffRemote } from "../remote/nli-staff-remote.js";
+import { installSharedExperienceNavigation } from "../remote/remote-experience-navigation.js";
 import { createStaffRemoteManagement, createStaffRemoteDocumentIdentity } from "../remote/staff-remote-management.js";
 import { createStaffRemoteReload } from "../remote/staff-remote-reload.js";
 import { createStaffRemoteUpdates } from "../remote/staff-remote-updates.js";
@@ -67,6 +68,7 @@ async function boot() {
     import("../shared/OTEFDataContext.js"),
   ]);
   await layerRegistry.init();
+  OTEFDataContext.configureCommandExperience("nli");
   await OTEFDataContext.init("otef");
   const stopRecovery = bindRemoteConnectionRecovery(() => OTEFDataContext.reconnect());
   let publishedNliFontChoices = { ...NLI_FONT_DEFAULTS };
@@ -113,13 +115,15 @@ async function boot() {
     reportBinding: management.reportDeviceBinding, getRefreshState, localStorage, document, window });
   staffRemote = initNliStaffRemote(OTEFDataContext, {
     getNliFontChoices,
-    onHomeSuccess: () => { management.noteHomeSuccess(); updates.refreshStateChanged(); window.otefStaffStartupReady?.(); },
+    onHomeSuccess: () => { queueMicrotask(() => { management.noteHomeSuccess(); updates.refreshStateChanged(); window.otefStaffStartupReady?.(); }); },
     onRefreshStateChange: () => updates.refreshStateChanged(),
   });
+  const stopNavigation = installSharedExperienceNavigation({ dataContext: OTEFDataContext, staffRemote, kind: "nli" });
+  window.otefStaffStartupReady?.();
   const view = createStaffRemoteUpdateView({ document, updates });
   window.addEventListener("pagehide", event => {
     if (event.persisted) return;
-    view.dispose(); updates.dispose(); management.dispose(); reloadController.dispose(); stopRecovery();
+    stopNavigation?.(); staffRemote.dispose(); view.dispose(); updates.dispose(); management.dispose(); reloadController.dispose(); stopRecovery();
   }, { once: true });
 }
 

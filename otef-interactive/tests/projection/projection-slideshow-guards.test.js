@@ -97,9 +97,9 @@ describe("projection slideshow live-update guards (mirrors projection-main)", ()
     const overlays = [];
     const restoreFailure = new Error("live restoration failed");
     const runtime = createSlideshowPackRuntime({
-      config: { intervalMs: 100, packOrder: ["nli"] },
+      config: { intervalMs: 100, packOrder: ["pack_a"] },
       getEffectiveLayerGroups: () => [
-        { id: "nli", layers: [{ id: "lines", enabled: true }] },
+        { id: "pack_a", layers: [{ id: "lines", enabled: true }] },
       ],
       syncProjectionLayers: vi.fn(),
       applyProjectionRefresh: vi.fn((options) => {

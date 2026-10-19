@@ -392,6 +392,13 @@ class OTEFViewportState(models.Model):
     workshop_auto_publish = models.BooleanField(default=False)
     workshop_autopublish_started_at = models.DateTimeField(null=True, blank=True)
     exhibit_mode = models.BooleanField(default=False)
+    active_experience = models.CharField(max_length=16, default="regular")
+    experience_revision = models.PositiveBigIntegerField(default=0)
+    saved_regular_context = models.JSONField(default=dict, blank=True)
+    saved_nli_context = models.JSONField(default=dict, blank=True)
+    experience_pending = models.JSONField(default=dict, blank=True)
+    experience_receipt = models.JSONField(default=dict, blank=True)
+    nli_bookmark = models.JSONField(default=dict, blank=True)
     gaza_border_visible = models.BooleanField(default=False)
 
     # Last projection slideshow command (start/stop + payload), replicated over otef WebSocket

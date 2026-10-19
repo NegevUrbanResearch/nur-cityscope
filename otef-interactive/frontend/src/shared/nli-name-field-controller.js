@@ -668,7 +668,17 @@ export function createNliNameFieldController({
       hideLegacyLabels(map); suppressCanvasSymbols();
       applySelection(snapshot.personSelection);
       if (canvasAdapter) {
-        if (fresh) startReveal({ restart: fadeOpacity <= 0, startAtMs: namesEntry?.startAtMs });
+        if (fresh) {
+          const restart = fadeOpacity <= 0;
+          if (namesEntry?.revealReady) {
+            if (restart) clearReveal(); else freezeReveal();
+            namesEntry.revealReady.then(({ startAtMs }) => {
+              if (disposed || !enabled || !sceneWanted || signal?.aborted || namesEntry.signal?.aborted ||
+                  prepared && prepared.token !== sceneGeneration) return;
+              startReveal({ restart, startAtMs });
+            }, () => {});
+          } else startReveal({ restart, startAtMs: namesEntry?.startAtMs });
+        }
         runtime.markMemberReady("nli.people_names");
       } else {
         animation?.show({ restart: fresh });

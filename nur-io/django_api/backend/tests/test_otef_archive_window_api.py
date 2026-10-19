@@ -45,6 +45,8 @@ class OTEFArchiveWindowCommandTests(TestCase):
         self.assertEqual(group, "otef_channel")
         self.assertEqual(envelope["message"], {
             "type": "otef_archive_window_command",
+            "experience": "regular",
+            "experience_revision": 0,
             "table": "otef",
             "action": "open",
             "personId": "11",
@@ -92,6 +94,8 @@ class OTEFArchiveWindowCommandTests(TestCase):
         self.assertEqual(group, "otef_channel")
         self.assertEqual(envelope["message"], {
             "type": "otef_archive_window_command",
+            "experience": "regular",
+            "experience_revision": 0,
             "table": "otef",
             "action": "page_down",
             "personId": "11",
@@ -165,6 +169,8 @@ class OTEFArchiveWindowCommandTests(TestCase):
         envelope = get_layer.return_value.group_send.call_args.args[1]
         self.assertEqual(envelope["message"], {
             "type": "otef_archive_window_result",
+            "experience": "regular",
+            "experience_revision": 0,
             "table": "otef",
             "outcome": "navigation_attempted",
             "personId": "11",

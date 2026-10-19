@@ -1,5 +1,6 @@
 import { captureNliDisplaySnapshot, createNliSceneDisplayBinding } from "../shared/nli-scene-display-binding.js";
 import { getLayerLifecycleRuntime } from "../shared/layer-lifecycle-fade.js";
+import { explicitExperienceScope } from "../shared/experience-state.js";
 import { transitionGisBasemap, getDisplayedGisBasemap, adoptDisplayedGisBasemap, deferDisplayedGisBasemapAdoption } from "../map/gis-basemap-transition.js";
 import TableSwitcher from "../shared/table-switcher.js";
 import { mountGisDisplayResolution } from '../map/gis-display-resolution.js';
@@ -16,6 +17,7 @@ import {
   ownsArchiveWindowCommands,
 } from "../map/nli-archive-window.js";
 import { createNliArchivePagerClient } from "../map/nli-archive-pager-client.js";
+import { installNliExperienceCleanup } from "../map/nli-experience-cleanup.js";
 import { createGisPersonController } from "../map/maplibre-gis-person-controller.js";
 import { createGisNarrativeController } from "../map/nli-narrative-controller.js";
 import { loadNliPresentationManifest } from "../shared/nli-presentation-manifest.js";
@@ -234,6 +236,8 @@ async function bootstrapMapRuntime() {
     const videoPlaybackPublisher = createNliVideoPlaybackPublisher({
       table: OTEFDataContext._tableName || "otef",
       socket: OTEFDataContext._wsClient,
+      captureExperienceScope: () => OTEFDataContext.captureExperienceScope(),
+      isExperienceScopeCurrent: scope => OTEFDataContext.isExperienceScopeCurrent(scope),
     });
     let presentationManifest = null;
     let activePresentationSegmentId = null;
@@ -244,6 +248,7 @@ async function bootstrapMapRuntime() {
     const emitUnavailablePresentation = (command, message = "Presentation is unavailable") => {
       if (!command || typeof command !== "object") return;
       void OTEFDataContext.narrativePresentationResult({
+        ...explicitExperienceScope(command),
         segmentId: command.segmentId,
         presentationSessionId: command.presentationSessionId,
         presentationGeneration: command.presentationGeneration,
@@ -596,10 +601,23 @@ async function bootstrapMapRuntime() {
         result.personId,
         result.datasetVersion,
         result.requestId,
+        explicitExperienceScope(result),
       ),
       pageArchive: (direction, requestId) => archivePager.page(direction, requestId),
     });
     const ownsArchiveCommands = ownsArchiveWindowCommands(window.location.search);
+    registerDisposer(installNliExperienceCleanup({
+      dataContext: OTEFDataContext, archiveWindow, ownsArchiveCommands,
+      getPresentationViewer: () => presentationViewer,
+      cancelPendingArchive: () => archiveBridge.handlePersonSelection({ personId: null, datasetVersion: null }),
+      hasPresentation: () => Boolean(map.getContainer?.()?.querySelector(".nli-reveal-overlay,.nli-reveal-outgoing")),
+      onClosed: () => {
+        activePresentationSegmentId = null;
+        activePresentationSessionId = null;
+        activePresentationGeneration = 0;
+        videoPlaybackPublisher.setActive(false);
+      },
+    }));
     if (ownsArchiveCommands) {
       registerDisposer(OTEFDataContext.subscribe("archiveWindow", (command) => {
         void archiveBridge.handleCommand(command);
@@ -740,6 +758,7 @@ async function bootstrapMapRuntime() {
         const onCuratedRefresh = (ev) => {
           void syncCuratedMapLayersAfterSupabasePull({
             pullPayload: ev?.detail || {},
+            getSceneBinding: () => sceneBinding,
             reloadCuratedOnMap: (options = {}) => refreshCuratedLayers({
               ...options,
             }),

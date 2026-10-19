@@ -191,6 +191,7 @@ describe("selected staff scene handoff through the public clock API", () => {
     else {
       h.dataContext._notify("narrativeState", h.dataContext.getNarrativeState());
       h.dataContext._notify("connection", true);
+      document.getElementById("homeBtn").click();
     }
     await vi.waitFor(() => expect(h.clears).toHaveLength(1));
     expect(h.clears[0]).toBeGreaterThan(1000);

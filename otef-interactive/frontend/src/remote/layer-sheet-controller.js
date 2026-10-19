@@ -607,6 +607,11 @@ class LayerSheetController {
   }
 
   async toggleLayerRowAnimations(animatableFullLayerIds, rowVisibilityFullLayerIds, enabled) {
+    const context = typeof OTEFDataContext === "undefined" ? null : OTEFDataContext;
+    const scope = context?.captureExperienceScope?.();
+    const current = () => context?.isExperienceActive?.() !== false &&
+      (!scope || context?.isExperienceScopeCurrent?.(scope) !== false);
+    if (!current()) return;
     if (!Array.isArray(animatableFullLayerIds) || animatableFullLayerIds.length === 0) return;
     const allowed = this._allowedRegularLayerIds();
     const animIds = animatableFullLayerIds.map(String).filter((id) => allowed.has(id));
@@ -619,8 +624,9 @@ class LayerSheetController {
     if (typeof OTEFDataContext !== "undefined") {
       if (enabled && visibility.length > 0) {
         const vis = await OTEFDataContext.setLayersEnabled(visibility, true);
-        if (!vis || vis.ok === false) return;
+        if (!vis || vis.ok === false || !current()) return;
       }
+      if (!current()) return;
       await OTEFDataContext.setLayerAnimations(animIds, enabled);
       this.render();
     }

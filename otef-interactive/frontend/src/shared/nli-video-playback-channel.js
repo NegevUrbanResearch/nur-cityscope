@@ -9,6 +9,20 @@ function usableTable(table) {
   return typeof table === "string" && table.length > 0 && table.length <= 128;
 }
 
+function capturedScope(capture) {
+  if (typeof capture !== "function") return null;
+  const scope = capture();
+  return { experience: scope?.experience, experience_revision: scope?.experience_revision };
+}
+
+function matchingScope(scope, capture, isCurrent) {
+  if (!capture) return true;
+  if (scope?.experience !== "nli" || !Number.isSafeInteger(scope.experience_revision)) return false;
+  if (typeof isCurrent === "function") return isCurrent(scope) === true;
+  const current = capturedScope(capture);
+  return scope.experience === current?.experience && scope.experience_revision === current?.experience_revision;
+}
+
 function openChannel(BroadcastChannelImpl, warn) {
   if (typeof BroadcastChannelImpl !== "function") {
     warn?.("NLI video playback BroadcastChannel is unavailable; using the backend transport when available");
@@ -33,6 +47,8 @@ export function createNliVideoPlaybackPublisher({
   sourceId = createUuid(),
   websocketClientFactory,
   socket = null,
+  captureExperienceScope = null,
+  isExperienceScopeCurrent = null,
 } = {}) {
   if (!usableTable(table)) throw new TypeError("table must be a nonempty string");
   const channel = openChannel(BroadcastChannelImpl, warn);
@@ -42,11 +58,19 @@ export function createNliVideoPlaybackPublisher({
   let disposed = false;
   let heartbeat = null;
   let pageHidden = false;
+  let playbackScope = null;
 
   const send = (nextActive = active) => {
     if ((!channel && !websocket) || disposed) return false;
+    const scope = playbackScope || capturedScope(captureExperienceScope);
+    if (captureExperienceScope && scope?.experience !== "nli") return false;
+    if (nextActive && !matchingScope(scope, captureExperienceScope, isExperienceScopeCurrent)) {
+      active = false;
+      nextActive = false;
+      stopHeartbeat();
+    }
     sequence += 1;
-    const message = { type: "state", table, sourceId, sequence, active: nextActive && !pageHidden };
+    const message = { type: "state", table, sourceId, sequence, active: nextActive && !pageHidden, ...scope };
     let sent = false;
     try {
       if (channel) { channel.postMessage(message); sent = true; }
@@ -66,6 +90,11 @@ export function createNliVideoPlaybackPublisher({
   };
   const setActive = (value) => {
     if (typeof value !== "boolean" || disposed || value === active) return;
+    if (value) {
+      const scope = capturedScope(captureExperienceScope);
+      if (!matchingScope(scope, captureExperienceScope, isExperienceScopeCurrent)) return;
+      playbackScope = scope;
+    }
     active = value;
     send(active);
     if (active) startHeartbeat();
@@ -131,6 +160,9 @@ export function subscribeNliVideoPlayback({
   requesterId = createUuid(),
   websocketClientFactory,
   socket = null,
+  captureExperienceScope = null,
+  isExperienceScopeCurrent = null,
+  subscribeExperience = null,
 } = {}) {
   if (!usableTable(table)) throw new TypeError("table must be a nonempty string");
   if (typeof onChange !== "function") throw new TypeError("onChange must be a function");
@@ -141,6 +173,7 @@ export function subscribeNliVideoPlayback({
   let disposed = false;
   let expiryTimer = null;
   let wasActive = false;
+  let experienceBlocked = false;
   const isActive = () => {
     const currentTime = now();
     for (const state of sources.values()) {
@@ -177,6 +210,7 @@ export function subscribeNliVideoPlayback({
     const message = event?.data;
     if (!message || typeof message !== "object" || Array.isArray(message) || message.table !== table) return;
     if (message.type === "state") {
+      if ((experienceBlocked && message.active) || !matchingScope(message, captureExperienceScope, isExperienceScopeCurrent)) return;
       if (typeof message.sourceId !== "string" || !message.sourceId || message.sourceId.length > 128 ||
           !Number.isSafeInteger(message.sequence) || message.sequence <= 0 || typeof message.active !== "boolean") return;
       const prior = sources.get(message.sourceId);
@@ -185,6 +219,7 @@ export function subscribeNliVideoPlayback({
         sequence: message.sequence,
         active: message.active,
         expiresAt: message.active ? now() + LEASE_MS : 0,
+        scope: { experience: message.experience, experience_revision: message.experience_revision },
       });
       reportChange();
       scheduleExpiry();
@@ -194,16 +229,29 @@ export function subscribeNliVideoPlayback({
 
   if (typeof channel?.addEventListener === "function") channel.addEventListener("message", onMessage);
   else if (channel) channel.onmessage = onMessage;
-  const query = { type: "query", table, requesterId };
+  const query = () => {
+    const scope = capturedScope(captureExperienceScope);
+    if (experienceBlocked || (captureExperienceScope && scope?.experience !== "nli")) return null;
+    return { type: "query", table, requesterId, ...scope };
+  };
   websocket = openNliVideoPlaybackWebSocket({
-    table, onMessage, onConnect: () => websocket?.postMessage(query), warn, clientFactory: websocketClientFactory, socket,
+    table, onMessage, onConnect: () => { const message = query(); if (message) websocket?.postMessage(message); }, warn, clientFactory: websocketClientFactory, socket,
   });
-  try { channel?.postMessage(query); }
+  const stopExperience = subscribeExperience?.(state => {
+    experienceBlocked = state?.active_experience !== "nli" || Boolean(state?.pending_transition);
+    for (const [source, value] of sources) {
+      if (experienceBlocked || !matchingScope(value.scope, captureExperienceScope, isExperienceScopeCurrent)) sources.delete(source);
+    }
+    reportChange();
+    scheduleExpiry();
+  });
+  try { const message = query(); if (message) channel?.postMessage(message); }
   catch (error) { warn?.("NLI video playback query could not be published", error); }
   websocket?.connect();
   return () => {
     if (disposed) return;
     disposed = true;
+    stopExperience?.();
     if (expiryTimer !== null) clearTimeoutImpl(expiryTimer);
     if (typeof channel?.removeEventListener === "function") channel.removeEventListener("message", onMessage);
     else if (channel) channel.onmessage = null;

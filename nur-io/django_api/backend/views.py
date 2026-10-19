@@ -669,6 +669,7 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
         }
         channel_layer = get_channel_layer()
         if channel_layer:
+            message["message"].update(getattr(self, "_accepted_experience", {}))
             async_to_sync(channel_layer.group_send)("otef_channel", message)
 
     def _schedule_person_selection_broadcast(self, table_name, snapshot, metadata):
@@ -689,6 +690,7 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
             "type": "broadcast_message",
             "message": {
                 "type": "otef_narrative_scene_changed",
+                    **getattr(self, "_accepted_experience", {}),
                 "table": table_name,
                 "scene": scene,
                 "sourceId": meta.get("sourceId"),
@@ -715,7 +717,7 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
             return
         async_to_sync(channel_layer.group_send)("otef_channel", {
             "type": "broadcast_message",
-            "message": {"type": event_type, "table": table_name, **payload},
+            "message": {"type": event_type, "table": table_name, **payload, **getattr(self, "_accepted_experience", {})},
         })
 
     def _bounded_optional_string(self, payload, field):
@@ -830,6 +832,7 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
             "type": "broadcast_message",
             "message": {
                 "type": "otef_escape_overlay_changed",
+                    **getattr(self, "_accepted_experience", {}),
                 "table": table_name,
                 "escapeOverlay": overlay,
                 "sourceId": meta.get("sourceId"),
@@ -1019,6 +1022,7 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
             "type": "broadcast_message",
             "message": {
                 "type": "otef_legend_settings_changed",
+                **getattr(self, "_accepted_experience", {}),
                 "table": table_name,
                 **change,
                 "sourceId": meta.get("sourceId"),
@@ -1398,7 +1402,7 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
             return
         async_to_sync(channel_layer.group_send)("otef_channel", {
             "type": "broadcast_message",
-            "message": {"type": "otef_archive_window_command", "table": table_name, **command},
+            "message": {"type": "otef_archive_window_command", "table": table_name, **command, **getattr(self, "_accepted_experience", {})},
         })
 
     def _broadcast_archive_window_result(self, table_name, result):
@@ -1410,7 +1414,7 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
             return
         async_to_sync(channel_layer.group_send)("otef_channel", {
             "type": "broadcast_message",
-            "message": {"type": "otef_archive_window_result", "table": table_name, **result},
+            "message": {"type": "otef_archive_window_result", "table": table_name, **result, **getattr(self, "_accepted_experience", {})},
         })
 
     def _archive_window_result(self, table, request):
@@ -1538,6 +1542,9 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
 
         for field in changed_fields:
 
+            if field in ('nli_bookmark', 'regular_slideshow_settings'):
+                self._broadcast_experience_snapshot(table_name)
+                continue
             if field == 'viewport':
                 message = {
                     'type': 'broadcast_message',
@@ -1587,6 +1594,7 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                     "type": "otef_layers_changed",
                     "table": table_name,
                     "layerGroups": layer_groups_payload,
+                    "gazaBorderVisible": bool(state.gaza_border_visible) if state else False,
                     "affected_curated_full_layer_ids": affected_curated_full_layer_ids,
                     "sourceId": source_id,
                     "timestamp": int(timestamp),
@@ -1693,6 +1701,7 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
 
             try:
                 if channel_layer:
+                    message["message"].update(getattr(self, "_accepted_experience", {}))
                     async_to_sync(channel_layer.group_send)(group_name, message)
                     self._emit_trace_event(
                         trace_id,
@@ -1716,6 +1725,7 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                 "type": "broadcast_message",
                 "message": {
                     "type": "otef_place_navigation_command",
+                    **getattr(self, "_accepted_experience", {}),
                     "table": table_name,
                     "command": command,
                     "sourceId": command.get("sourceId"),
@@ -1762,6 +1772,30 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
             state = OTEFViewportState.objects.select_for_update().get(pk=state.pk)
+            from .otef_experience import SCOPED_PATCH_FIELDS, ExperienceError, require_experience, validate_bookmark, validate_slideshow_settings, regular_slideshow_settings
+            if {"active_experience", "saved_regular_context", "saved_nli_context", "experience_pending", "experience_receipt", "experience_state"}.intersection(request.data):
+                return Response({"error": "Experience authority is read-only"}, status=400)
+            if SCOPED_PATCH_FIELDS.intersection(request.data):
+                try:
+                    required = "nli" if {"nli_bookmark", "investigation_clock"}.intersection(request.data) else None
+                    stamped = require_experience(state, request.data, required=required)
+                    if isinstance(request.data.get("projection_slideshow"), dict) and request.data["projection_slideshow"].get("type") == "start":
+                        require_experience(state, request.data, required="regular")
+                        payload = request.data["projection_slideshow"].get("payload")
+                        if isinstance(payload, dict) and isinstance(payload.get("packOrder"), list) and "nli" in payload["packOrder"]:
+                            raise ExperienceError("invalid_slideshow_settings", "NLI is unavailable in the regular slideshow", 400)
+                    if "regular_slideshow_settings" in request.data:
+                        require_experience(state, request.data, required="regular")
+                        if state.active_experience != "regular":
+                            raise ExperienceError("experience_unavailable", "Slideshow settings belong to the regular workspace")
+                        slideshow_settings = validate_slideshow_settings(request.data["regular_slideshow_settings"], regular_slideshow_settings(state))
+                    self._accepted_experience = {"experience": state.active_experience, "experience_revision": state.experience_revision}
+                    if stamped and "exhibit_mode" in request.data:
+                        raise ExperienceError("experience_derived", "Exhibit styling is derived from the active experience")
+                    if "nli_bookmark" in request.data:
+                        bookmark = validate_bookmark(request.data["nli_bookmark"])
+                except ExperienceError as error:
+                    return self._experience_error_response(state, error)
             request_viewport = (
                 request.data.get('viewport')
                 if isinstance(request.data.get('viewport'), dict)
@@ -1830,6 +1864,17 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                     )
             changed_fields = []
             clock_persisted = False
+            if "nli_bookmark" in request.data:
+                from .otef_experience import advance_experience_sequence
+                state.nli_bookmark = bookmark
+                advance_experience_sequence(state)
+                changed_fields.append("nli_bookmark")
+                changed_fields.append("experience_receipt")
+            if "regular_slideshow_settings" in request.data:
+                from .otef_experience import advance_experience_sequence
+                state.saved_regular_context = {**(state.saved_regular_context or {}), "slideshow_settings": slideshow_settings}
+                advance_experience_sequence(state)
+                changed_fields.extend(["saved_regular_context", "regular_slideshow_settings", "experience_receipt"])
 
             # Partial updates for each field
             if 'viewport' in request.data:
@@ -1843,11 +1888,6 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
             if 'layers' in request.data:
                 state.layers = request.data['layers']
                 changed_fields.append('layers')
-
-            # Handle new layerGroups structure
-            if 'layerGroups' in request.data:
-                self._update_layer_groups(table, request.data['layerGroups'])
-                changed_fields.append('layerGroups')
 
             if 'animations' in request.data:
                 state.animations = request.data['animations']
@@ -1914,6 +1954,24 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                 normalized['revision'] = rev + 1
                 state.projection_slideshow = normalized
                 changed_fields.append('projection_slideshow')
+                if normalized.get("type") == "start" and state.active_experience == "regular":
+                    state.saved_regular_context = {**(state.saved_regular_context or {}), "slideshow_settings": copy.deepcopy(normalized.get("payload", {}))}
+                    changed_fields.append("saved_regular_context")
+
+            # Validate scalar fields before writing fallback layer rows.
+            if 'layerGroups' in request.data:
+                groups_patch = request.data['layerGroups']
+                border_toggle = next((row.get('enabled') is True
+                    for group in reversed(groups_patch) if group.get('id') == 'gaza'
+                    for row in reversed(group.get('layers', [])) if row.get('id') == 'gaza_border'), None)
+                if state.active_experience == 'regular' and border_toggle is not None:
+                    if 'gaza_border_visible' in request.data and state.gaza_border_visible != border_toggle:
+                        return Response({'error': 'Border layer and visibility must agree'}, status=status.HTTP_400_BAD_REQUEST)
+                    state.gaza_border_visible = border_toggle
+                    if 'gaza_border_visible' not in changed_fields:
+                        changed_fields.append('gaza_border_visible')
+                self._update_layer_groups(table, groups_patch)
+                changed_fields.append('layerGroups')
 
             if 'investigation_clock' in request.data:
                 normalized = validated_clock
@@ -1973,7 +2031,11 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                 )
             )
 
-        # Return state with defaults applied (for both GET and PATCH)
+        return Response(self._state_snapshot(state, table))
+
+    def _state_snapshot(self, state, table):
+        from .otef_experience import experience_state, slideshow_command_for_response
+        table_name = table.name
         response_data = {
             'id': state.id,
             'table': table.id,
@@ -1986,15 +2048,14 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
             'bounds_polygon': state.get_bounds_polygon(),
             'viewer_angle_deg': state.viewer_angle_deg,
             'workshop_auto_publish': state.workshop_auto_publish,
-            'exhibit_mode': state.exhibit_mode,
+            'exhibit_mode': state.active_experience == 'nli' if state.experience_revision else state.exhibit_mode,
+            'experience_state': experience_state(state),
             'workshop_autopublish_started_at': (
                 state.workshop_autopublish_started_at.isoformat()
                 if state.workshop_autopublish_started_at
                 else None
             ),
-            'projection_slideshow': state.projection_slideshow
-            if isinstance(state.projection_slideshow, dict)
-            else {},
+            'projection_slideshow': slideshow_command_for_response(state),
             'investigation_clock': _investigation_clock_for_response(
                 state.investigation_clock
             ),
@@ -2016,7 +2077,36 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
             'updated_at': state.updated_at.isoformat() if state.updated_at else None,
         }
 
-        return Response(response_data)
+        return response_data
+
+    def _experience_error_response(self, state, error):
+        from .otef_experience import experience_state
+        return Response({"error": str(error), "reason": error.reason,
+            "experience_state": experience_state(state)}, status=error.status)
+
+    def _broadcast_experience_snapshot(self, table_name):
+        from asgiref.sync import async_to_sync
+        from channels.layers import get_channel_layer
+        state = OTEFViewportState.objects.select_related("table").get(table__name=table_name)
+        channel_layer = get_channel_layer()
+        if channel_layer:
+            async_to_sync(channel_layer.group_send)("otef_channel", {"type": "broadcast_message",
+                "message": {"type": "otef_experience_changed", "table": table_name,
+                    "state": self._state_snapshot(state, state.table)}})
+
+    def _switch_experience_command(self, table, state, request):
+        from .otef_experience import ExperienceError, switch_experience
+        try:
+            with transaction.atomic():
+                changed = switch_experience(state, request.data,
+                    lambda: self._get_layer_groups(table),
+                    lambda groups: self._update_layer_groups(table, groups))
+        except ExperienceError as error:
+            state.refresh_from_db()
+            return self._experience_error_response(state, error)
+        if changed:
+            transaction.on_commit(lambda: self._broadcast_experience_snapshot(table.name))
+        return Response(self._state_snapshot(state, table))
 
     def _update_layer_groups(self, table, layer_groups_data):
         """Update layer groups and layer states from request data."""
@@ -2524,7 +2614,11 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
         self._recompute_group_enabled_from_states_bulk(table, affected_group_ids)
 
         if state and state.pk is not None:
-            state.save(update_fields=["updated_at"])
+            fields = ["updated_at"]
+            if state.active_experience == "regular" and "gaza.gaza_border" in merged:
+                state.gaza_border_visible = merged["gaza.gaza_border"]
+                fields.append("gaza_border_visible")
+            state.save(update_fields=fields)
 
         affected_full = list(merged.keys())
         return layer_groups, affected_group_ids, affected_full
@@ -2605,6 +2699,7 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
         return None, None
 
     @action(detail=False, methods=['post'], url_path='by-table/(?P<table_name>[^/.]+)/command')
+    @transaction.atomic
     def command(self, request, table_name=None):
         """
         Execute a command (pan/zoom) server-side without requiring GIS map.
@@ -2634,7 +2729,28 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
             }
         )
 
+        state = OTEFViewportState.objects.select_for_update().get(pk=state.pk)
         action = request.data.get('action')
+        if action == "switch_experience":
+            return self._switch_experience_command(table, state, request)
+        from .otef_experience import ExperienceError, INSTALLATION_ACTIONS, NLI_ACTIONS, is_cleanup, require_experience
+        legend_layout_edit = action == "set_legend_settings" and any(
+            field in request.data for field in ("span", "layout", "baseRevision")
+        )
+        if action not in INSTALLATION_ACTIONS and not legend_layout_edit:
+            try:
+                require_experience(state, request.data, cleanup=is_cleanup(request.data), required="nli" if action in NLI_ACTIONS else None)
+                self._accepted_experience = {"experience": state.active_experience, "experience_revision": state.experience_revision}
+            except ExperienceError as error:
+                return self._experience_error_response(state, error)
+        if action == "experience_cleanup_result":
+            from .otef_experience import record_cleanup_result
+            try:
+                record_cleanup_result(state, request.data)
+            except ExperienceError as error:
+                return self._experience_error_response(state, error)
+            transaction.on_commit(lambda: self._broadcast_experience_snapshot(table.name))
+            return Response(self._state_snapshot(state, table))
         trace_id = request.data.get('traceId')
         self._emit_trace_event(
             trace_id,
@@ -2712,7 +2828,7 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
             }
             self._broadcast_state_change(
                 table_name,
-                ["layerGroups"],
+                ["layerGroups", *(["gaza_border_visible"] if state.active_experience == "regular" and "gaza.gaza_border" in affected_full_ids else [])],
                 {
                     "sourceId": request.data.get("sourceId"),
                     "timestamp": request.data.get("timestamp"),
@@ -2726,6 +2842,7 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                     "status": "ok",
                     "action": action,
                     "layerGroups": layer_groups,
+                    "gaza_border_visible": bool(state.gaza_border_visible),
                     "affected_group_ids": layer_change_meta["affected_group_ids"],
                     "affected_full_layer_ids": affected_full_ids,
                 }

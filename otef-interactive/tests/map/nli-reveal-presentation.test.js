@@ -112,6 +112,13 @@ beforeEach(() => {
 });
 
 describe("GIS Reveal presentation", () => {
+  test("asynchronous presentation results retain the command activation", async () => {
+    const h = makeHarness();
+    const scope = { experience: "nli", experience_revision: 1 };
+    await h.send("open", scope);
+    expect(h.results.length).toBeGreaterThan(0);
+    for (const result of h.results) expect(result).toMatchObject(scope);
+  });
   test("uses the rendered asset version so a 4K upgrade bypasses cached slides", async () => {
     const h = makeHarness({ ...manifest, deck: { ...manifest.deck, assetVersion: "4k-photo-release" } });
     await h.send("open");

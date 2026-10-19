@@ -97,26 +97,42 @@ function createMapMock({ bounds, zoom, fitBoundsZoom }) {
       map.emit("idle");
     }, 0);
   });
+  map.stop = vi.fn(() => { map.emit("moveend"); map.emit("zoomend"); });
   return map;
 }
 
-function createDataContextMock() {
+function createDataContextMock({ experienceState = null, initialViewport = null } = {}) {
   const subscriptions = new Map();
   const unsubscribeSpy = vi.fn();
+  let state = experienceState;
+  let viewport = initialViewport;
+  const subscriptionOrder = [];
   const context = {
     _clientId: "test-client",
     updateViewportFromUI: vi.fn(),
     subscribe: (topic, handler) => {
+      subscriptionOrder.push(topic);
       subscriptions.set(topic, handler);
+      if (topic === "experienceState" && state) handler(state);
+      if (topic === "viewport" && initialViewport) handler(initialViewport);
       return () => {
         subscriptions.delete(topic);
         unsubscribeSpy(topic);
       };
     },
+    subscriptionOrder,
+    getExperienceState: () => state,
+    getViewport: () => viewport,
+    captureExperienceScope: () => state ? Object.freeze({ experience: state.active_experience, experience_revision: state.revision }) : undefined,
+    isExperienceScopeCurrent: (scope) => !state || (scope?.experience === state.active_experience && scope?.experience_revision === state.revision),
+    emitExperienceState: (next) => { state = next; subscriptions.get("experienceState")?.(state); },
+    setExperienceStateSilently: (next) => { state = next; },
     emitViewport: (viewport) => {
+      context.setViewportForTest(viewport);
       const handler = subscriptions.get("viewport");
       if (handler) handler(viewport);
     },
+    setViewportForTest: (next) => { viewport = next; },
     emitNavigationCommand: (command) => {
       const handler = subscriptions.get("navigationCommand");
       if (handler) handler(command);
@@ -167,6 +183,115 @@ describe("maplibre-viewport-sync", () => {
     vi.useRealTimers();
     delete globalThis.proj4;
     delete globalThis.ResizeObserver;
+  });
+
+  it("subscribes to experience authority before replaying a restored viewport", () => {
+    const map = createMapMock({ bounds: [0, 0, 10, 10], zoom: 6 });
+    const context = createDataContextMock({ experienceState: { active_experience: "regular", revision: 2 }, initialViewport: { bbox: [2, 2, 12, 12], zoom: 8, seq: 5 } });
+    const cleanup = setupViewportSync(map, context);
+    expect(context.subscriptionOrder[0]).toBe("experienceState");
+    expect(map.getBounds().getWest()).toBe(2);
+    cleanup();
+  });
+
+  it("prepare cancels place travel and its delayed reports before the destination activation", () => {
+    const map = createMapMock({ bounds: [0, 0, 10, 10], zoom: 6 });
+    const context = createDataContextMock({ experienceState: { active_experience: "regular", revision: 4 } });
+    const cleanup = setupViewportSync(map, context);
+    context.emitNavigationCommand({ id: "old-travel", cameraHint: { center: { lng: 5, lat: 5 }, zoom: 15 } });
+    map.emit("move");
+    context.emitExperienceState({ active_experience: "regular", revision: 4, pending_transition: { request_id: "switch" } });
+    expect(map.stop).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(1000);
+    expect(context.updateViewportFromUI).not.toHaveBeenCalled();
+    context.emitExperienceState({ active_experience: "nli", revision: 5, pending_transition: null });
+    context.emitViewport({ bbox: [20, 20, 30, 30], zoom: 9, seq: 1 });
+    map.emit("moveend");
+    map.emit("zoomend");
+    vi.advanceTimersByTime(500);
+    expect(map.getBounds().getWest()).toBe(20);
+    expect(map.getZoom()).toBe(9);
+    expect(context.updateViewportFromUI).not.toHaveBeenCalled();
+    cleanup();
+  });
+
+  it("activation drops an old resize queue and accepts a smaller destination sequence", () => {
+    const resize = installResizeObserverMock();
+    const map = createMapMock({ bounds: [0, 0, 10, 10], zoom: 6 });
+    const context = createDataContextMock({ experienceState: { active_experience: "regular", revision: 4 } });
+    const cleanup = setupViewportSync(map, context);
+    context.emitViewport({ bbox: [1, 1, 11, 11], zoom: 7, seq: 8 });
+    resize.triggerAll();
+    context.emitViewport({ bbox: [2, 2, 12, 12], zoom: 8, seq: 9 });
+    context.emitExperienceState({ active_experience: "nli", revision: 5 });
+    context.emitViewport({ bbox: [20, 20, 30, 30], zoom: 9, seq: 7 });
+    vi.advanceTimersByTime(1000);
+    expect(map.getBounds().getWest()).toBe(20);
+    expect(map.getZoom()).toBe(9);
+    expect(context.updateViewportFromUI).not.toHaveBeenCalled();
+    cleanup();
+  });
+
+  it("navigation reports carry the scope captured when travel began", () => {
+    const map = createMapMock({ bounds: [0, 0, 10, 10], zoom: 6 });
+    const context = createDataContextMock({ experienceState: { active_experience: "regular", revision: 4 } });
+    const cleanup = setupViewportSync(map, context);
+    context.emitNavigationCommand({ id: "travel", cameraHint: { center: { lng: 5, lat: 5 }, zoom: 15 } });
+    map.emit("move");
+    vi.advanceTimersByTime(100);
+    expect(context.updateViewportFromUI).toHaveBeenCalledWith(expect.any(Object), "gis", expect.objectContaining({ experienceScope: { experience: "regular", experience_revision: 4 } }));
+    context.updateViewportFromUI.mockClear();
+    map.emit("move");
+    context.setExperienceStateSilently({ active_experience: "nli", revision: 5 });
+    vi.advanceTimersByTime(100);
+    expect(context.updateViewportFromUI).not.toHaveBeenCalled();
+    cleanup();
+  });
+
+  it("prepare invalidates an already queued person-camera arm callback", async () => {
+    const map = createMapMock({ bounds: [0, 0, 10, 10], zoom: 6 });
+    const context = createDataContextMock({ experienceState: { active_experience: "nli", revision: 4 } });
+    const cleanup = setupViewportSync(map, context);
+    cleanup.beginCameraTravel("old-person");
+    context.emitExperienceState({ active_experience: "nli", revision: 4, pending_transition: { request_id: "switch" } });
+    await Promise.resolve();
+    expect(map.listenerCount("moveend")).toBe(1);
+    map.emit("moveend");
+    vi.advanceTimersByTime(1000);
+    expect(context.updateViewportFromUI).not.toHaveBeenCalled();
+    cleanup();
+  });
+
+  it("an aborted prepare resumes from the confirmed viewport even when geometry is not re-notified", async () => {
+    const map = createMapMock({ bounds: [0, 0, 10, 10], zoom: 6 });
+    const context = createDataContextMock({ experienceState: { active_experience: "regular", revision: 4 } });
+    const cleanup = setupViewportSync(map, context);
+    context.emitViewport({ bbox: [2, 2, 12, 12], zoom: 8, seq: 6 });
+    map.setBoundsForTest([5, 5, 15, 15]);
+    context.emitExperienceState({ active_experience: "regular", revision: 4, pending_transition: { request_id: "switch" } });
+    context.emitExperienceState({ active_experience: "regular", revision: 4, pending_transition: null });
+    await Promise.resolve();
+    expect(map.getBounds().getWest()).toBe(2);
+    map.emit("idle");
+    map.setBoundsForTest([3, 3, 13, 13]);
+    map.emit("moveend");
+    vi.advanceTimersByTime(1);
+    expect(context.updateViewportFromUI).toHaveBeenCalledTimes(1);
+    cleanup();
+  });
+
+  it("a viewer mounted during prepare applies the confirmed camera when prepare is aborted", async () => {
+    const map = createMapMock({ bounds: [0, 0, 10, 10], zoom: 6 });
+    const context = createDataContextMock({
+      experienceState: { active_experience: "regular", revision: 4, pending_transition: { request_id: "switch" } },
+      initialViewport: { bbox: [2, 2, 12, 12], zoom: 8, seq: 6 },
+    });
+    const cleanup = setupViewportSync(map, context);
+    context.emitExperienceState({ active_experience: "regular", revision: 4, pending_transition: null });
+    await Promise.resolve();
+    expect(map.getBounds().getWest()).toBe(2);
+    expect(context.updateViewportFromUI).not.toHaveBeenCalled();
+    cleanup();
   });
 
   it("applies remote zoom when bounds are unchanged", () => {

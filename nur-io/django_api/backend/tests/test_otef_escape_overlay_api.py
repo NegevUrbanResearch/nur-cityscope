@@ -168,6 +168,8 @@ class EscapeOverlaySceneTests(TestCase):
             overlay_messages[0],
             {
                 "type": "otef_escape_overlay_changed",
+                "experience": "regular",
+                "experience_revision": 0,
                 "table": "otef",
                 "escapeOverlay": {
                     "individual": False,

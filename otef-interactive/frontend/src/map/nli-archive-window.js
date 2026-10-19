@@ -1,3 +1,5 @@
+import { explicitExperienceScope } from "../shared/experience-state.js";
+
 export const NLI_ARCHIVE_CHANNEL_NAME = "otef-nli-archive";
 const ARCHIVE_WINDOW_NAME = NLI_ARCHIVE_CHANNEL_NAME;
 
@@ -124,6 +126,7 @@ export function createNliArchiveCommandBridge({ windowController, resolvePerson,
     const flight = (async () => {
       try {
         await emitResult({
+          ...explicitExperienceScope(command),
           requestId,
           sourceId: command.sourceId || null,
           personId: command.personId || null,
@@ -166,7 +169,7 @@ export function createNliArchiveCommandBridge({ windowController, resolvePerson,
     if (command.action !== "open") return false;
     if (typeof command.requestId === "string" && canceledRequestIds.includes(command.requestId)) return false;
     const requestToken = ++token;
-    pendingPerson = { personId: command.personId, datasetVersion: command.datasetVersion, requestId: command.requestId, sourceId: command.sourceId };
+    pendingPerson = { personId: command.personId, datasetVersion: command.datasetVersion, requestId: command.requestId, sourceId: command.sourceId, ...explicitExperienceScope(command) };
     let person;
     try { person = await resolvePerson(command.personId, command.datasetVersion); } catch (_error) { person = null; }
     if (requestToken !== token || !samePerson(getPersonSelection?.(), pendingPerson)) {

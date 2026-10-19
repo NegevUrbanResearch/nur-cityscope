@@ -316,6 +316,7 @@ async function boot(session, options) {
   session.remote = initNliStaffRemote(session.dataContext, { ...options, navigationSession: session.navigation });
   session.h.emit("narrativeState", session.h.narrative);
   session.h.emit("connection", true);
+  el("homeBtn").click();
   await vi.waitFor(() => {
     expect(session.h.layers.at(-1)).toEqual([...HOME_LAYER_IDS]);
     for (const view of session.h.followers.map(readFollower)) expectHome(view);
@@ -324,7 +325,7 @@ async function boot(session, options) {
 
 async function syntheticPresenterManifest() {
   const features = storyCollection().features;
-  const hash = await sha256Hex(new TextEncoder().encode(JSON.stringify(features)));
+  const hash = await sha256Hex(Uint8Array.from(new TextEncoder().encode(JSON.stringify(features))));
   const membership = PLAYABLE_LAYER_IDS.map((id) => `nli.${id}`);
   const records = Object.fromEntries(STORY_MINUTES.map((minute) => [
     presenterCopyKey(null, membership, minute),
@@ -491,8 +492,7 @@ describe("NLI staff scene integration", () => {
     setLocale("en", { persist: false });
     session = mount();
     await boot(session);
-    expect(session.dataContext.setExhibitMode).toHaveBeenCalledWith(true);
-    const trueCallsAfterBoot = session.dataContext.setExhibitMode.mock.calls.filter(([value]) => value === true).length;
+    expect(session.dataContext.setExhibitMode).not.toHaveBeenCalled();
 
     await openCard('[data-open="show"]');
     expect(el("stepTitle").textContent).toBe("The opening minutes");
@@ -522,8 +522,7 @@ describe("NLI staff scene integration", () => {
     }
 
     await clickNextReady("The rest of the day");
-    expect(session.dataContext.setExhibitMode.mock.calls.filter(([value]) => value === true).length)
-      .toBeGreaterThan(trueCallsAfterBoot);
+    expect(session.dataContext.setExhibitMode).not.toHaveBeenCalled();
     for (const view of views(session)) {
       expect(view.narrativeId).toBeNull();
       expect(view.clock.phase).toBe("playing");
@@ -953,7 +952,7 @@ describe("NLI staff scene integration", () => {
     });
   });
 
-  test("a show replacing gated boot Home restores the real presenter Play control", async () => {
+  test("a show replacing a gated explicit Home restores the real presenter Play control", async () => {
     setLocale("en", { persist: false }); session = mount();
     const layers = session.dataContext.setEnabledLayerIds;
     let release;
@@ -962,6 +961,7 @@ describe("NLI staff scene integration", () => {
     const { initNliStaffRemote } = await import("../../frontend/src/remote/nli-staff-remote.js");
     session.remote = initNliStaffRemote(session.dataContext, { presenterManifest: await syntheticPresenterManifest() });
     session.h.emit("narrativeState", session.h.narrative); session.h.emit("connection", true);
+    el("homeBtn").click();
     await vi.waitFor(() => expect(el("cueStatus").dataset.status).toBe("applying"));
     await vi.waitFor(() => expect(el("narrativeList").querySelector('[data-open="show"]').disabled).toBe(false));
     el("narrativeList").querySelector('[data-open="show"]').click();

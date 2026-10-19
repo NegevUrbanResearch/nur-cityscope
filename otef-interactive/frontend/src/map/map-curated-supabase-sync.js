@@ -9,6 +9,7 @@
  *   pullPayload?: { affected_curated_full_layer_ids?: string[] } | null,
  *   applyLayerGroupsState?: (layerGroups: unknown, mapDeps: object) => void,
  *   mapDeps?: object,
+ *   getSceneBinding?: () => { refreshContent: (options: object) => Promise<unknown> } | null,
  * }} options
  */
 
@@ -57,6 +58,7 @@ function mergePendingSyncCuratedCalls(calls) {
   const reloadCuratedOnMap = latest.reloadCuratedOnMap;
   const applyLayerGroupsState = latest.applyLayerGroupsState;
   const mapDeps = latest.mapDeps;
+  const getSceneBinding = latest.getSceneBinding;
 
   /** @type {Set<string>} */
   const idSet = new Set();
@@ -77,6 +79,7 @@ function mergePendingSyncCuratedCalls(calls) {
       reloadCuratedOnMap,
       applyLayerGroupsState,
       mapDeps,
+      getSceneBinding,
       pullPayload: null,
     };
   }
@@ -84,6 +87,7 @@ function mergePendingSyncCuratedCalls(calls) {
     reloadCuratedOnMap,
     applyLayerGroupsState,
     mapDeps,
+    getSceneBinding,
     pullPayload: {
       affected_curated_full_layer_ids: [...idSet],
     },
@@ -99,6 +103,7 @@ async function runSyncCuratedMapLayersAfterSupabasePull(options) {
     pullPayload,
     applyLayerGroupsState,
     mapDeps,
+    getSceneBinding,
   } = options || {};
   if (
     typeof OTEFDataContext !== "undefined" &&
@@ -112,6 +117,15 @@ async function runSyncCuratedMapLayersAfterSupabasePull(options) {
     pullPayload.affected_curated_full_layer_ids.length > 0
       ? pullPayload.affected_curated_full_layer_ids
       : null;
+  // A mounted scene owns membership, readiness and basemap channels together.
+  // Route content invalidation through it instead of starting a second batch.
+  const sceneBinding = getSceneBinding?.();
+  if (sceneBinding) {
+    await sceneBinding.refreshContent(affected
+      ? { affectedCuratedFullLayerIds: affected }
+      : { reopenGate: true });
+    return;
+  }
   if (affected) {
     reloadCuratedOnMap({ affectedCuratedFullLayerIds: affected });
   } else {
@@ -133,6 +147,7 @@ async function runSyncCuratedMapLayersAfterSupabasePull(options) {
  *   pullPayload?: { affected_curated_full_layer_ids?: string[] } | null,
  *   applyLayerGroupsState?: (layerGroups: unknown, mapDeps: object) => void,
  *   mapDeps?: object,
+ *   getSceneBinding?: () => { refreshContent: (options: object) => Promise<unknown> } | null,
  * }} options
  * @returns {Promise<void>}
  */

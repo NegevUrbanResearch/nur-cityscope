@@ -46,17 +46,22 @@ export async function createNliSceneDisplayBinding({ map, dataContext, filterGro
   coordinateEntry = (_snapshot, options, produce) => produce(options.signal), waitForEntry = async () => {},
   onSceneFailed = () => {},
 } = {}) {
+  const curatedContentRevisions = new Map();
+  const changedCuratedIds = (previous, next) => Object.keys(next.curatedContentRevisions || {})
+    .filter(id => next.curatedContentRevisions[id] !== previous?.curatedContentRevisions?.[id]);
+  const structuralKey = snapshot => JSON.stringify([nliSceneStructuralKey(snapshot), snapshot.curatedContentRevisions || {}]);
   const readSnapshot = () => {
     const command = getPresentationCommand();
     const snapshot = { ...captureNliDisplaySnapshot(dataContext, filterGroups),
-      presentationCommand: command?.presentationAction === "close" ? null : capture(command) };
+      presentationCommand: command?.presentationAction === "close" ? null : capture(command),
+      curatedContentRevisions: Object.fromEntries(curatedContentRevisions) };
     return escapeCoordinator?.captureSceneInput?.(snapshot) || snapshot;
   };
   let renderSnapshot = readSnapshot();
   let coordinator, disposed = false, styleEpoch = 0, heldBasemap = false, sceneInFlight = false, requestSerial = 0;
   const subscribers = new Set();
   let mountedBasemap = null, styleController = null, suspended = false, normalResume = null, waitingNormalHold = false, normalGateCoordinator = null, normalPreparingSnapshot = null;
-  const withoutBasemap = snapshot => nliSceneStructuralKey({ ...snapshot, basemapId: null });
+  const withoutBasemap = snapshot => structuralKey({ ...snapshot, basemapId: null });
   const sceneIds = snapshot => [...new Set([...snapshot.enabledIds,
     ...shelterSceneIds(snapshot.enabledIds, snapshot.narrativeState?.id ?? null),
     ...getTimelineSceneIds(snapshot), ...getDisplaySceneIds(snapshot),
@@ -67,7 +72,7 @@ export async function createNliSceneDisplayBinding({ map, dataContext, filterGro
   ])];
   const contentKeys = (snapshot, id) => [narrativeController?.getSceneContentKey?.(snapshot, id),
     escapeCoordinator?.getSceneContentKey?.(snapshot, id), morCoordinator?.getSceneContentKey?.(snapshot, id),
-    getTimelineSceneContentKey(snapshot, id)];
+    getTimelineSceneContentKey(snapshot, id), snapshot.curatedContentRevisions?.[id] || 0];
   const changedContent = (previous, next, ids = sceneIds(previous)) => {
     const desired = new Set(sceneIds(next));
     return ids.filter(id => desired.has(id) && contentKeys(previous, id).some((key, index) => key !== contentKeys(next, id)[index]));
@@ -104,6 +109,7 @@ export async function createNliSceneDisplayBinding({ map, dataContext, filterGro
     if (!options.semanticOnly && (!prepared?.sceneReconcile || JSON.stringify(mounted.layerGroups) !== JSON.stringify(snapshot.layerGroups) ||
         prepared.replaceIds?.some(id => snapshot.enabledIds.includes(id)))) {
       await refreshLayers({ groupsOverride: snapshot.layerGroups, syncFlow: false,
+        affectedCuratedFullLayerIds: prepared?.affectedCuratedFullLayerIds,
         layerStyleOptions: { lifecycle: { joinBatch: true } }, isCurrent: valid });
       if (!valid()) return;
     }
@@ -146,7 +152,7 @@ export async function createNliSceneDisplayBinding({ map, dataContext, filterGro
         if (preparationSignal.aborted) throw new Error("Scene cancelled");
         basemap = receive(await prepareBasemap?.(snapshot.basemapId, { signal: preparationSignal }), discardBasemap);
         display = receive(await prepareDisplay(snapshot, { signal: preparationSignal }), discardDisplay);
-        return { basemap, display };
+        return { basemap, display, affectedCuratedFullLayerIds: changedCuratedIds(previousSnapshot, snapshot) };
       }), { controller });
     } catch (error) { discard(); throw error; }
   }
@@ -200,7 +206,8 @@ export async function createNliSceneDisplayBinding({ map, dataContext, filterGro
       if (producerChanges(narrativeController, mounted, snapshot)) narrativeController?.holdForScene?.();
       if (escapeChanged) escapeCoordinator?.holdForScene?.({ changedIds: producerChangedIds(escapeCoordinator, mounted, snapshot) });
       if (morChanged) morCoordinator?.holdForScene?.();
-      return { desiredIds, replaceIds: [...new Set([...replaceIds, ...(basemap?.replaceIds || []), ...(display?.replaceIds || [])])], basemap, display, escapeChanged, morChanged, sceneReconcile: true };
+      return { desiredIds, replaceIds: [...new Set([...replaceIds, ...(basemap?.replaceIds || []), ...(display?.replaceIds || [])])], basemap, display, escapeChanged, morChanged, sceneReconcile: true,
+        affectedCuratedFullLayerIds: changedCuratedIds(mounted, snapshot) };
     } catch (error) { discardResources({ basemap, display }); throw error; }
   }
   const makeCoordinator = () => createNliSceneTransition({ runtime,
@@ -246,7 +253,7 @@ export async function createNliSceneDisplayBinding({ map, dataContext, filterGro
     if (normalResume) {
       if (waitingNormalHold) { void coordinator.waitForHold(); return normalResume; }
       const next = readSnapshot();
-      if (normalPreparingSnapshot && nliSceneStructuralKey(normalPreparingSnapshot) === nliSceneStructuralKey(next) &&
+      if (normalPreparingSnapshot && structuralKey(normalPreparingSnapshot) === structuralKey(next) &&
           normalPreparingSnapshot.investigationClock?.presentationPendingUntilMs === next.investigationClock?.presentationPendingUntilMs) return normalResume;
       styleController?.abort(); normalResume = null;
       return resumeNormal();
@@ -286,7 +293,7 @@ export async function createNliSceneDisplayBinding({ map, dataContext, filterGro
       styleController?.abort();
       const controller = new AbortController(); styleController = controller;
       const signal = controller.signal; const epoch = ++styleEpoch;
-      let established = false, basemap, display, namesEntry;
+      let established = false, basemap, display, namesEntry, affectedCuratedFullLayerIds;
       const reportFailure = details => reportNliSceneFailure({ ...diagnosticContext, phase: "normal-return", ...details,
         requested: { enabledIds: normalPreparingSnapshot?.enabledIds || [], narrativeId: normalPreparingSnapshot?.narrativeState?.id ?? null },
         retained: { enabledIds: retained.enabledIds, narrativeId: retained.narrativeState?.id ?? null } });
@@ -318,11 +325,11 @@ export async function createNliSceneDisplayBinding({ map, dataContext, filterGro
           for (;;) {
             snapshot = readSnapshot();
             normalPreparingSnapshot = snapshot;
-            ({ basemap, display, namesEntry } = await prepareResources(snapshot, controller, { previousSnapshot: retained }));
+            ({ basemap, display, namesEntry, affectedCuratedFullLayerIds } = await prepareResources(snapshot, controller, { previousSnapshot: retained }));
             // A newly acknowledged hold during preparation also blocks activation.
             if (!await waitForRelease()) return { status: "cancelled" };
             const latest = readSnapshot();
-            if (nliSceneStructuralKey(snapshot) === nliSceneStructuralKey(latest)) { snapshot = latest; break; }
+            if (structuralKey(snapshot) === structuralKey(latest)) { snapshot = latest; break; }
             discardBasemap(basemap); discardDisplay(display); basemap = null; display = null;
           }
           if (!current(signal, epoch) || !isManaged() || !isCurrent()) return { status: "cancelled" };
@@ -332,7 +339,7 @@ export async function createNliSceneDisplayBinding({ map, dataContext, filterGro
             readinessTimeoutMs: NLI_SCENE_READY_TIMEOUT_MS });
           const completion = runtime.waitForBatch(handle, { signal });
           suspended = false;
-          await apply(snapshot, { signal, joinBatch: true, isCurrent }, { basemap, display, namesEntry });
+          await apply(snapshot, { signal, joinBatch: true, isCurrent }, { basemap, display, namesEntry, affectedCuratedFullLayerIds });
           if (!current(signal, epoch) || !isManaged() || !isCurrent()) return { status: "cancelled" };
           runtime.commitBatch(); const result = await completion;
           if (!current(signal, epoch) || !isManaged() || !isCurrent()) return { status: "cancelled" };
@@ -383,6 +390,20 @@ export async function createNliSceneDisplayBinding({ map, dataContext, filterGro
   void request();
   return {
     request, suspend, resumeNormal, isManaging: () => !disposed && !suspended && isManaged(),
+    refreshContent({ affectedCuratedFullLayerIds, reopenGate = false } = {}) {
+      const requested = new Set(affectedCuratedFullLayerIds || []);
+      const groups = readSnapshot().layerGroups;
+      for (const group of Array.isArray(groups) ? groups : Object.values(groups || {})) {
+        if (!String(group.id).startsWith("curated")) continue;
+        for (const layer of group.layers || []) {
+          if (!layer.enabled) continue;
+          const ids = [...new Set([`${group.id}.${layer.id}`, ...(layer.fullLayerIds || [])])];
+          if (!reopenGate && !ids.some(id => requested.has(id))) continue;
+          for (const id of ids) curatedContentRevisions.set(id, (curatedContentRevisions.get(id) || 0) + 1);
+        }
+      }
+      return request();
+    },
     adoptManualBasemap(basemapId, adopt) {
       if (disposed || suspended || !isManaged() || sceneInFlight || heldBasemap || runtime.getPendingBatch() ||
           typeof adopt !== "function" || getDisplayedBasemap?.() !== basemapId) return false;

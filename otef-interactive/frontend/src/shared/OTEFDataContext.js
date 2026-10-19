@@ -10,6 +10,7 @@ import { normalizeNarrativeState } from "./nli-narratives.js";
 import { normalizePersonSelection } from "./person-selection.js";
 import { OTEFDataContextInternals } from "./otef-data-context/index.js";
 import { recordTraceEvent } from "./otef-trace.js";
+import { experienceMethods, experienceConflict } from "./otef-data-context/OTEFDataContext-experience.js";
 import {
   normalizeSlideshowProjectionMessage,
   postSlideshowBroadcastOnly,
@@ -99,6 +100,11 @@ function isAuthoritativeHttpFailure(error) {
 class OTEFDataContextClass {
   constructor() {
     this._tableName = null;
+    this._experienceState = null;
+    this._commandExperience = null;
+    this._notificationBatch = null;
+    this._bookmarkGeneration = 0;
+    this._bookmarkQueue = null;
     this._viewport = null;
     this._layerGroups = null;
     this._layerGroupsReceipt = 0;
@@ -116,6 +122,7 @@ class OTEFDataContextClass {
 
     this._subscribers = {
       viewport: new Set(),
+      experienceState: new Set(),
       layerGroups: new Set(),
       animations: new Set(),
       basemap: new Set(),
@@ -209,6 +216,7 @@ class OTEFDataContextClass {
 
   async _doInit(tableName) {
     this._tableName = tableName;
+    this._installExperienceScope();
     const coupledBaseline = this._captureNarrativeSceneBaseline();
     const visibilityReceipt = this._gazaBorderVisibilityReceipt;
     const layerGroupsReceipt = this._beginLayerGroupsSnapshot();
@@ -478,18 +486,23 @@ class OTEFDataContextClass {
    */
   async patchProjectionSlideshow(message) {
     const normalized = normalizeSlideshowProjectionMessage(message);
+    const scope = this.captureExperienceScope();
+    if (!this.isExperienceActive()) throw experienceConflict();
     if (this._tableName) {
       try {
         const state = await OTEF_API.updateState(this._tableName, {
           projection_slideshow: normalized,
           sourceId: this._clientId,
           timestamp: Date.now(),
+          ...scope,
         });
         if (state?.projection_slideshow && typeof state.projection_slideshow === "object") {
           this._setProjectionSlideshow(state.projection_slideshow);
         }
         return;
       } catch (err) {
+        // A confirmed activation contract cannot be bypassed by local broadcast.
+        if (this._experienceState || !this.isExperienceScopeCurrent(scope)) throw err;
         if (isAuthoritativeHttpFailure(err)) {
           getLogger().warn(
             "[OTEFDataContext] projection slideshow command rejected by the server",
@@ -866,10 +879,10 @@ class OTEFDataContextClass {
     return typeof helper === "function" ? helper(this, action, personId, datasetVersion, requestId) : Promise.resolve({ ok: false, reason: "missing_action" });
   }
 
-  archiveWindowResult(outcome, personId, datasetVersion, requestId) {
+  archiveWindowResult(outcome, personId, datasetVersion, requestId, originalScope = null) {
     const helper = OTEFDataContextInternals.actions?.archiveWindowResult;
     return typeof helper === "function"
-      ? helper(this, outcome, personId, datasetVersion, requestId)
+      ? helper(this, outcome, personId, datasetVersion, requestId, this._clientId, originalScope)
       : Promise.resolve({ ok: false, reason: "missing_action" });
   }
 
@@ -939,6 +952,7 @@ class OTEFDataContextClass {
   }
 
   _notify(key, value) {
+    if (this._notificationBatch) { this._notificationBatch.set(key, value); return; }
     const subs = this._subscribers[key];
     if (!subs || subs.size === 0) return;
     if (
@@ -1175,6 +1189,9 @@ class OTEFDataContextClass {
 
     let current = null;
     switch (key) {
+      case "experienceState":
+        current = this.getExperienceState();
+        break;
       case "viewport":
         current = this._viewport;
         break;
@@ -1268,6 +1285,8 @@ class OTEFDataContextClass {
     subs.delete(callback);
   }
 }
+
+Object.assign(OTEFDataContextClass.prototype, experienceMethods);
 
 export const OTEFDataContext = new OTEFDataContextClass();
 

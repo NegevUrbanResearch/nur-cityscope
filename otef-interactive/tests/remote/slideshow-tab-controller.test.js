@@ -69,6 +69,10 @@ describe("filterExcludedPresentationPacks", () => {
     const packs = [{ id: "a", label: "A" }];
     expect(filterExcludedPresentationPacks(packs, undefined)).toEqual(packs);
   });
+
+  it("always excludes the Library pack from regular presentation sources", () => {
+    expect(filterExcludedPresentationPacks([{ id: "greens" }, { id: "nli" }], [])).toEqual([{ id: "greens" }]);
+  });
 });
 
 describe("ensurePackOrder", () => {
@@ -209,6 +213,14 @@ describe("slideshow start stops NLI clock", () => {
     expectIdleClockPatchedBeforeStart();
   });
 
+  it("regular experience starts its slideshow without writing an NLI clock", async () => {
+    vi.spyOn(OTEFDataContext, "getExperienceState").mockReturnValue({ active: "regular", revision: 5 });
+    const c = controllerWithPacks();
+    await c.handleStart();
+    expect(patchClock).not.toHaveBeenCalled();
+    expect(patchSlideshow).toHaveBeenCalledWith(expect.objectContaining({ type: "start" }));
+  });
+
   it("does not mark the slideshow running when its authoritative start command is rejected", async () => {
     patchSlideshow.mockRejectedValueOnce(Object.assign(
       new Error("narrative is active"),
@@ -304,5 +316,104 @@ describe("slideshow start stops NLI clock", () => {
     await c.handleStop();
     expect(patchSlideshow).toHaveBeenCalledWith({ type: "stop", payload: {} });
     expect(patchClock).not.toHaveBeenCalled();
+  });
+});
+
+describe("saved regular slideshow settings", () => {
+  beforeEach(() => {
+    vi.spyOn(OTEFDataContext, "getExperienceState").mockReturnValue({ active_experience: "regular", revision: 2 });
+    vi.spyOn(OTEFDataContext, "captureExperienceScope").mockReturnValue({ experience: "regular", experience_revision: 2 });
+    vi.spyOn(OTEFDataContext, "saveRegularSlideshowSettings").mockResolvedValue({ ok: true });
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it("removes the Library pack from a restored order even when legacy sources contain it", () => {
+    const c = new SlideshowTabControllerWithFakeSources([{ id: "greens" }, { id: "nli" }, { id: "land_use" }]);
+    c.hydrateSettings({ regular_slideshow_settings: { packOrder: ["nli", "land_use", "greens"] } });
+    expect(c.buildStartPayload().packOrder).toEqual(["land_use", "greens"]);
+    c.root = { innerHTML: "" };
+    c.render();
+    expect(c.root.innerHTML).not.toContain("הספרייה הלאומית");
+  });
+
+  it("persists stopped order, timing, and names edits without starting playback", async () => {
+    const save = vi.spyOn(OTEFDataContext, "saveRegularSlideshowSettings").mockResolvedValue({ ok: true });
+    const play = vi.spyOn(OTEFDataContext, "patchProjectionSlideshow").mockResolvedValue(undefined);
+    const c = new SlideshowTabControllerWithFakeSources([{ id: "greens" }, { id: "land_use" }]);
+    c.ensurePackOrder();
+    c.movePack(0, 1);
+    c.savedTimings.intervalMs = 17000;
+    c.scheduleSettingsSave();
+    c.keepSettlementNames = false;
+    await c.handleKeepSettlementNamesChange();
+    await c.flushSettings();
+    expect(save.mock.calls.at(-1)[0]).toEqual(expect.objectContaining({
+      packOrder: ["land_use", "greens"], intervalMs: 17000, keepSettlementNames: false,
+    }));
+    expect(play).not.toHaveBeenCalled();
+  });
+
+  it("does not let an earlier save acknowledgement overwrite a newer unsaved draft", async () => {
+    let release;
+    const save = vi.spyOn(OTEFDataContext, "saveRegularSlideshowSettings").mockImplementation(() => new Promise(resolve => { release = resolve; }));
+    const c = new SlideshowTabControllerWithFakeSources([{ id: "greens" }, { id: "land_use" }]);
+    c.ensurePackOrder();
+    c.movePack(0, 1);
+    await Promise.resolve();
+    c.savedTimings.intervalMs = 17000;
+    c.scheduleSettingsSave();
+    c.hydrateSettings({ regular_slideshow_settings: { packOrder: ["land_use", "greens"], intervalMs: 1000 } });
+    expect(c.savedTimings.intervalMs).toBe(17000);
+    release();
+    await vi.waitFor(() => expect(save).toHaveBeenCalledTimes(2));
+    release();
+    await c.flushSettings();
+  });
+
+  it("keeps a failed settings save visible and blocks deliberate Play until retry succeeds", async () => {
+    const failure = new Error("offline");
+    const save = vi.spyOn(OTEFDataContext, "saveRegularSlideshowSettings").mockRejectedValueOnce(failure).mockResolvedValue({ ok: true });
+    const play = vi.spyOn(OTEFDataContext, "patchProjectionSlideshow").mockResolvedValue(undefined);
+    const c = new SlideshowTabControllerWithFakeSources([{ id: "greens" }]);
+    const status = { hidden: true };
+    c.root = { querySelector: selector => selector === "[data-slideshow-settings-status]" ? status : null };
+    c.ensurePackOrder();
+    c.scheduleSettingsSave();
+    await expect(c.flushSettings()).rejects.toBe(failure);
+    expect(status.hidden).toBe(false);
+    await c.handleStart();
+    expect(play).not.toHaveBeenCalled();
+    await c.settingsPersistence.retry();
+    expect(save).toHaveBeenCalledTimes(2);
+    expect(status.hidden).toBe(true);
+  });
+
+  it("restores order and timing for a later deliberate start without autoplay", () => {
+    const patch = vi.spyOn(OTEFDataContext, "patchProjectionSlideshow").mockResolvedValue(undefined);
+    const c = new SlideshowTabControllerWithFakeSources([
+      { id: "greens", label: "Greens" }, { id: "land_use", label: "Land" },
+    ]);
+    c.hydrateSettings({ regular_slideshow_settings: {
+      packOrder: ["land_use", "greens"], intervalMs: 14000, crossfadeMs: 2500,
+      warmupLeadMs: 900, keepSettlementNames: false,
+    } });
+    expect(c.buildStartPayload()).toEqual({
+      packOrder: ["land_use", "greens"], intervalMs: 14000, crossfadeMs: 2500,
+      warmupLeadMs: 900, keepSettlementNames: false,
+    });
+    expect(c.running).toBe(false);
+    expect(patch).not.toHaveBeenCalled();
+  });
+
+  it("ignores repeated settings snapshots so local order edits survive unrelated updates", () => {
+    const c = new SlideshowTabControllerWithFakeSources([
+      { id: "greens", label: "Greens" }, { id: "land_use", label: "Land" },
+    ]);
+    const snapshot = { regular_slideshow_settings: { packOrder: ["greens", "land_use"], intervalMs: 9000 } };
+    c.hydrateSettings(snapshot);
+    c.movePack(0, 1);
+    c.hydrateSettings(snapshot);
+    expect(c.packOrder).toEqual(["land_use", "greens"]);
+    expect(c.buildStartPayload().intervalMs).toBe(9000);
   });
 });

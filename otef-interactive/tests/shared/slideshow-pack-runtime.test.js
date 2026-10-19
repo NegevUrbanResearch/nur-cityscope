@@ -121,6 +121,39 @@ afterEach(() => {
 });
 
 describe("slideshow pack runtime", () => {
+  it.each([
+    { packOrder: ["pack_b", "pack_a"] },
+    { packOrder: ["nli", "pack_b", "pack_a"], excludedPresentationPackIds: [] },
+    { packOrder: ["nli", "pack_b", "pack_a"], excludedPresentationPackIds: ["gaza"] },
+  ])("never selects NLI despite omitted ordering or payload exclusion overrides: %j", async (payload) => {
+    vi.useFakeTimers();
+    const sync = vi.fn();
+    const runtime = createSlideshowPackRuntime({
+      config: { ...baseConfig(), packOrder: ["pack_b", "pack_a"] },
+      getEffectiveLayerGroups: () => makeLiveGroupsWithNliOn(),
+      syncProjectionLayers: sync,
+      map: null,
+    });
+    await runtime.start(payload);
+    await flushStart(runtime);
+    await vi.advanceTimersByTimeAsync(300);
+    expect(sync).toHaveBeenCalled();
+    for (const [, groups] of sync.mock.calls) expectNliFullyOff(groups);
+    await runtime.dispose();
+  });
+
+  it("does not activate when NLI is the only available pack", async () => {
+    const runtime = createSlideshowPackRuntime({
+      config: { ...baseConfig(), packOrder: ["nli"], excludedPresentationPackIds: [] },
+      getEffectiveLayerGroups: () => [{ id: "nli", layers: NLI_LAYERS }],
+      syncProjectionLayers: vi.fn(),
+    });
+    await runtime.start({ excludedPresentationPackIds: [] });
+    expect(runtime.isActive()).toBe(false);
+    expect(runtime.getCommittedGroups()).toBeNull();
+    await runtime.dispose();
+  });
+
   it("cycles packs in order over interval", async () => {
     vi.useFakeTimers();
     const sync = vi.fn();
@@ -582,12 +615,6 @@ function expectNliFullyOff(groups) {
   }
 }
 
-function expectNliSlideshowLayers(groups) {
-  for (const layer of NLI_LAYERS) {
-    expect(packLayerEnabled(groups, "nli", layer.id)).toBe(layer.id !== "people_names");
-  }
-}
-
 describe("slideshow incoming groups vs live NLI", () => {
   it("forces live-enabled nli layers off when the current pack is not nli", () => {
     const incoming = buildSlideshowIncomingGroups("pack_b", makeLiveGroupsWithNliOn(), {
@@ -600,15 +627,13 @@ describe("slideshow incoming groups vs live NLI", () => {
     expect(packLayerEnabled(incoming, "pack_a", "a")).toBe(false);
   });
 
-  it("enables the full nli pack on the nli tick and keeps other packs off", () => {
+  it("rejects an explicit NLI tick even when custom exclusions omit it", () => {
     const incoming = buildSlideshowIncomingGroups("nli", makeLiveGroupsWithNliOn(), {
       excludedPresentationPackIds: ["gaza", "projector_base", "curated_moresht_axis"],
       keepSettlementNames: true,
     });
-    expect(enabledPackId(incoming)).toBe("nli");
-    expectNliSlideshowLayers(incoming);
-    expect(packLayerEnabled(incoming, "nli", "people")).toBe(true);
-    expect(packLayerEnabled(incoming, "nli", "people_names")).toBe(false);
+    expect(enabledPackId(incoming)).toBeNull();
+    expectNliFullyOff(incoming);
     expect(packLayerEnabled(incoming, "pack_b", "b")).toBe(false);
     expect(packLayerEnabled(incoming, "gaza", "g1")).toBe(false);
   });
@@ -641,7 +666,7 @@ describe("slideshow incoming groups vs live NLI", () => {
     expect(nliOverlay).toBe(nliIncoming);
     expect(packLayerEnabled(live, "nli", "people_names")).toBe(true);
     expect(packLayerEnabled(nliIncoming, "nli", "people_names")).toBe(false);
-    expect(packLayerEnabled(nliIncoming, "nli", "people")).toBe(true);
+    expectNliFullyOff(nliOverlay);
   });
 
   it("clears nli overlays before the first incoming tick when presentation is starting", () => {
@@ -658,7 +683,7 @@ describe("slideshow incoming groups vs live NLI", () => {
     expect(packLayerEnabled(overlayGroups, "pack_b", "b")).toBe(false);
   });
 
-  it("suppresses investigation timeline playback during presentation (nli final/idle state)", () => {
+  it("suppresses investigation timeline playback during regular presentation", () => {
     const liveAnim = {
       [INVESTIGATION_POLYGONS_FULL_ID]: true,
       [INVESTIGATION_LINES_FULL_ID]: true,
@@ -674,8 +699,8 @@ describe("slideshow incoming groups vs live NLI", () => {
   });
 });
 
-describe("slideshow runtime nli rotation", () => {
-  it("turns off live-enabled nli on non-nli ticks and shows nli as a later pack", async () => {
+describe("slideshow runtime NLI exclusion", () => {
+  it("keeps live-enabled NLI off throughout rotation despite explicit ordering", async () => {
     vi.useFakeTimers();
     const sync = vi.fn();
     const groups = makeLiveGroupsWithNliOn();
@@ -700,11 +725,8 @@ describe("slideshow runtime nli rotation", () => {
     expectNliFullyOff(sync.mock.calls[1][1]);
     await vi.advanceTimersByTimeAsync(100);
     await flushMicrotasks();
-    expect(enabledPackId(sync.mock.calls[2][1])).toBe("nli");
-    expectNliSlideshowLayers(sync.mock.calls[2][1]);
-    expect(packLayerEnabled(sync.mock.calls[2][1], "nli", "people")).toBe(true);
-    expect(packLayerEnabled(sync.mock.calls[2][1], "nli", "people_names")).toBe(false);
-    expect(packLayerEnabled(sync.mock.calls[2][1], "pack_b", "b")).toBe(false);
+    expect(enabledPackId(sync.mock.calls[2][1])).toBe("pack_b");
+    expectNliFullyOff(sync.mock.calls[2][1]);
     await runtime.stop();
     expect(runtime.getCommittedGroups()).toBeNull();
   });
@@ -739,7 +761,7 @@ describe("slideshow runtime nli rotation", () => {
     await runtime.stop();
   });
 
-  it("keeps host investigation polygons hidden during NLI→other-slide warmup/crossfade", async () => {
+  it("keeps host investigation polygons hidden throughout regular-slide warmup/crossfade", async () => {
     vi.useFakeTimers();
     const fillId = "nli__investigation_polygons__fill__0";
     const lineId = "nli__investigation_polygons__line__1";
@@ -796,7 +818,7 @@ describe("slideshow runtime nli rotation", () => {
     const runtime = createSlideshowPackRuntime({
       config: {
         ...baseConfig(),
-        packOrder: ["nli", "pack_b"],
+        packOrder: ["pack_a", "pack_b"],
         excludedPresentationPackIds: ["gaza"],
         warmupLeadMs: 50,
         crossfadeMs: 80,
@@ -811,7 +833,9 @@ describe("slideshow runtime nli rotation", () => {
     await flushMicrotasks();
     await vi.advanceTimersByTimeAsync(50);
     await flushStart(runtime);
-    expect(map.setLayoutProperty).toHaveBeenCalledWith(fillId, "visibility", "none");
+    expectNliFullyOff(runtime.getCommittedGroups());
+    expect(map.setLayoutProperty).not.toHaveBeenCalledWith(fillId, "visibility", "visible");
+    expect(map.setLayoutProperty).not.toHaveBeenCalledWith(lineId, "visibility", "visible");
     map.setLayoutProperty.mockClear();
 
     await vi.advanceTimersByTimeAsync(10_000);
@@ -845,7 +869,7 @@ describe("slideshow committed reveal lifecycle", () => {
     const runtime = createSlideshowPackRuntime({
       config: {
         ...baseConfig(),
-        packOrder: ["nli"],
+        packOrder: ["pack_a"],
         warmupLeadMs: 50,
       },
       getEffectiveLayerGroups: () => makeLiveGroupsWithNliOn(),
@@ -874,13 +898,14 @@ describe("slideshow committed reveal lifecycle", () => {
     await flushMicrotasks();
     expect(commitSlideshowReveal).toHaveBeenCalledTimes(1);
     expect(overlays).toHaveLength(2);
-    expectNliSlideshowLayers(overlays[1].groups);
+    expect(enabledPackId(overlays[1].groups)).toBe("pack_a");
+    expectNliFullyOff(overlays[1].groups);
     expect(overlays[1].getter).toBe(overlays[1].groups);
     expect(runtime.getCommittedGroups?.()).toBe(overlays[1].groups);
     await runtime.stop();
   });
 
-  it("keeps the committed NLI pack through reverse warmup, fade, and staging", async () => {
+  it("keeps the committed regular pack through reverse warmup, fade, and staging", async () => {
     vi.useFakeTimers();
     const overlays = [];
     const stagedRefresh = deferred();
@@ -892,7 +917,7 @@ describe("slideshow committed reveal lifecycle", () => {
     const runtime = createSlideshowPackRuntime({
       config: {
         ...baseConfig(),
-        packOrder: ["nli", "pack_b"],
+        packOrder: ["pack_a", "pack_b"],
         intervalMs: 100,
         warmupLeadMs: 50,
         crossfadeMs: 40,
@@ -907,12 +932,12 @@ describe("slideshow committed reveal lifecycle", () => {
     runtime.start();
     await flushStart(runtime);
     expect(overlays).toHaveLength(2);
-    expectNliSlideshowLayers(overlays[1]);
+    expect(enabledPackId(overlays[1])).toBe("pack_a");
 
     await vi.advanceTimersByTimeAsync(100);
     await flushMicrotasks();
     expect(overlays).toHaveLength(2);
-    expectNliSlideshowLayers(runtime.getCommittedGroups?.());
+    expect(enabledPackId(runtime.getCommittedGroups?.())).toBe("pack_a");
     expect(beginSlideshowStage).toHaveBeenCalledTimes(2);
 
     stagedRefresh.resolve();
@@ -1044,7 +1069,7 @@ describe("slideshow committed reveal lifecycle", () => {
       return Promise.resolve();
     });
     const runtime = createSlideshowPackRuntime({
-      config: { ...baseConfig(), packOrder: ["nli"] },
+      config: { ...baseConfig(), packOrder: ["pack_a"] },
       getEffectiveLayerGroups: () => liveGroups,
       syncProjectionLayers: vi.fn(),
       applyProjectionRefresh,
@@ -1176,20 +1201,20 @@ describe("slideshow committed reveal lifecycle", () => {
     const overlays = [];
     let refreshSawLiveState = false;
     const runtime = createSlideshowPackRuntime({
-      config: { ...baseConfig(), packOrder: ["nli"] },
+      config: { ...baseConfig(), packOrder: ["pack_a"] },
       getEffectiveLayerGroups: () => startGroups.promise,
       syncProjectionLayers: vi.fn(),
       applyProjectionRefresh: vi.fn(() => {
         refreshSawLiveState =
           runtime.shouldSuppressProjectionHighlight() === false &&
-          packLayerEnabled(liveGroups, "nli", "lines") === true;
+          packLayerEnabled(liveGroups, "pack_a", "a") === true;
         return Promise.resolve();
       }),
       syncPresentationOverlays: (groups) => overlays.push(groups),
       map: null,
     });
 
-    runtime.start({ packOrder: ["nli"] });
+    runtime.start({ packOrder: ["pack_a"] });
     await flushMicrotasks();
     expect(runtime.isActive()).toBe(false);
     expect(runtime.shouldSuppressProjectionHighlight()).toBe(true);
@@ -1226,7 +1251,7 @@ describe("slideshow committed reveal lifecycle", () => {
       return Promise.resolve();
     });
     const runtime = createSlideshowPackRuntime({
-      config: { ...baseConfig(), packOrder: ["nli"] },
+      config: { ...baseConfig(), packOrder: ["pack_a"] },
       getEffectiveLayerGroups,
       syncProjectionLayers: vi.fn(),
       applyProjectionRefresh,
@@ -1234,7 +1259,7 @@ describe("slideshow committed reveal lifecycle", () => {
       map: null,
     });
 
-    runtime.start({ packOrder: ["nli"] });
+    runtime.start({ packOrder: ["pack_a"] });
     await flushMicrotasks();
     const stopPromise = runtime.stop();
     runtime.start({ packOrder: ["pack_b"] });
@@ -1266,7 +1291,7 @@ describe("slideshow committed reveal lifecycle", () => {
       return Promise.resolve();
     });
     const runtime = createSlideshowPackRuntime({
-      config: { ...baseConfig(), packOrder: ["nli"] },
+      config: { ...baseConfig(), packOrder: ["pack_a"] },
       getEffectiveLayerGroups,
       syncProjectionLayers: vi.fn(),
       applyProjectionRefresh,

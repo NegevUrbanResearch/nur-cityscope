@@ -1,4 +1,6 @@
 import { OTEF_API } from "../api-client.js";
+import { explicitExperienceScope, isExperienceWriteError } from "../experience-state.js";
+import { experienceConflict } from "./OTEFDataContext-experience.js";
 import { GAZA_BORDER_FULL_ID } from "../gaza-border-style.js";
 import { isGisBasemapId } from "../gis-basemap.js";
 import { OTEF_MESSAGE_TYPES } from "../message-protocol.js";
@@ -30,6 +32,9 @@ function fallbackLogger() {
 
 const getLogger = OTEFDataContextInternals.getLogger || fallbackLogger;
 const VELOCITY_STOP_EPSILON = 1e-3;
+const captureScope = ctx => ctx.captureExperienceScope?.() || OTEF_API.captureExperienceScope?.(ctx._tableName) || {};
+const scopeCurrent = (ctx, scope) => ctx.isExperienceScopeCurrent?.(scope) !== false;
+function assertScope(ctx, scope) { if (!scopeCurrent(ctx, scope)) throw experienceConflict(); }
 
 function layerGroupsEqual(a, b) {
   if (a === b) return true;
@@ -95,15 +100,28 @@ async function withLayerPatchMutex(ctx, fn) {
   }
 }
 
+function applyLayerCommandAcknowledgement(ctx, updated, visibilityReceipt) {
+  if (!Array.isArray(updated?.layerGroups)) return false;
+  const apply = () => {
+    if (visibilityReceipt === ctx._gazaBorderVisibilityReceipt && typeof updated.gaza_border_visible === "boolean") ctx._setGazaBorderVisible?.(updated.gaza_border_visible);
+    ctx._setLayerGroups(updated.layerGroups);
+    ctx._layerPatchLastAcked = JSON.parse(JSON.stringify(updated.layerGroups));
+  };
+  if (ctx._batchNotifications) ctx._batchNotifications(apply);
+  else apply();
+  return true;
+}
+
 /**
  * Sends at most one PATCH at a time; loops while optimistic ctx._layerGroups differs from last ack.
  * Drops stale HTTP results when ctx._layerOpGeneration advanced during the request.
  * If a response is stale, forces another round so we never skip sending the latest intent when the
  * client snapshot happens to shallow-match lastAcked while server state may differ.
  */
-async function flushLayerGroupsPatchQueue(ctx) {
+async function flushLayerGroupsPatchQueue(ctx, scope) {
   let forceAnotherRound = false;
   while (!layerGroupsEqual(ctx._layerGroups, ctx._layerPatchLastAcked) || forceAnotherRound) {
+    assertScope(ctx, scope);
     forceAnotherRound = false;
     const payload = JSON.parse(JSON.stringify(ctx._layerGroups));
     const changes = buildLayerToggleChanges(ctx._layerPatchLastAcked, payload);
@@ -114,7 +132,9 @@ async function flushLayerGroupsPatchQueue(ctx) {
       continue;
     }
     try {
+      const visibilityReceipt = ctx._gazaBorderVisibilityReceipt;
       const updated = await OTEF_API.setLayerToggles(ctx._tableName, changes, {
+        ...scope,
         sourceId: ctx._clientId,
         timestamp: Date.now(),
         traceId,
@@ -123,19 +143,19 @@ async function flushLayerGroupsPatchQueue(ctx) {
         forceAnotherRound = true;
         continue;
       }
-      if (updated && Array.isArray(updated.layerGroups)) {
-        ctx._setLayerGroups(updated.layerGroups);
-        ctx._layerPatchLastAcked = JSON.parse(JSON.stringify(updated.layerGroups));
-      } else {
+      if (!applyLayerCommandAcknowledgement(ctx, updated, visibilityReceipt)) {
         ctx._layerPatchLastAcked = JSON.parse(JSON.stringify(payload));
       }
     } catch (err) {
+      if (isExperienceWriteError(err) || !scopeCurrent(ctx, scope)) throw err;
       getLogger().warn(
         "[OTEFDataContext] Layer command failed; falling back to full layerGroups PATCH",
         err,
       );
       try {
+        const visibilityReceipt = ctx._gazaBorderVisibilityReceipt;
         const updated = await OTEF_API.updateLayerGroups(ctx._tableName, payload, {
+          ...scope,
           sourceId: ctx._clientId,
           timestamp: Date.now(),
           traceId,
@@ -144,10 +164,7 @@ async function flushLayerGroupsPatchQueue(ctx) {
           forceAnotherRound = true;
           continue;
         }
-        if (updated && Array.isArray(updated.layerGroups)) {
-          ctx._setLayerGroups(updated.layerGroups);
-          ctx._layerPatchLastAcked = JSON.parse(JSON.stringify(updated.layerGroups));
-        } else {
+        if (!applyLayerCommandAcknowledgement(ctx, updated, visibilityReceipt)) {
           ctx._layerPatchLastAcked = JSON.parse(JSON.stringify(payload));
         }
       } catch (fallbackErr) {
@@ -161,7 +178,8 @@ async function flushLayerGroupsPatchQueue(ctx) {
 }
 
 async function enqueueLayerGroupsCoalescedFlush(ctx) {
-  return withLayerPatchMutex(ctx, () => flushLayerGroupsPatchQueue(ctx));
+  const scope = captureScope(ctx);
+  return withLayerPatchMutex(ctx, () => flushLayerGroupsPatchQueue(ctx, scope));
 }
 
 /**
@@ -172,10 +190,14 @@ async function enqueueLayerGroupsCoalescedFlush(ctx) {
  * the bulk checkbox after the first request returned.
  */
 async function flushGroupEnabledCommand(ctx, groupId, enabled, traceId) {
+  const scope = captureScope(ctx);
   return withLayerPatchMutex(ctx, async () => {
+    assertScope(ctx, scope);
     const sendGen = ctx._layerOpGeneration;
     try {
+      let visibilityReceipt = ctx._gazaBorderVisibilityReceipt;
       let updated = await OTEF_API.setGroupEnabled(ctx._tableName, groupId, enabled, {
+        ...scope,
         sourceId: ctx._clientId,
         timestamp: Date.now(),
         traceId,
@@ -186,25 +208,28 @@ async function flushGroupEnabledCommand(ctx, groupId, enabled, traceId) {
       // Older servers cannot include the frontend-authored border in the first group expansion.
       if (groupId === "gaza" && Array.isArray(updated?.layerGroups)
         && !updated.layerGroups.some(group => (group.layers || []).some(layer => `${group.id}.${layer.id}` === GAZA_BORDER_FULL_ID))) {
+        visibilityReceipt = ctx._gazaBorderVisibilityReceipt;
         updated = await OTEF_API.setLayerToggles(ctx._tableName, [{ full_layer_id: GAZA_BORDER_FULL_ID, enabled: !!enabled }], {
+          ...scope,
           sourceId: ctx._clientId, timestamp: Date.now(), traceId,
         });
         if (sendGen !== ctx._layerOpGeneration) return;
       }
-      if (updated && Array.isArray(updated.layerGroups)) {
-        ctx._setLayerGroups(updated.layerGroups);
-        ctx._layerPatchLastAcked = JSON.parse(JSON.stringify(updated.layerGroups));
+      if (applyLayerCommandAcknowledgement(ctx, updated, visibilityReceipt)) {
         return;
       }
       const payload = JSON.parse(JSON.stringify(ctx._layerGroups));
       ctx._layerPatchLastAcked = JSON.parse(JSON.stringify(payload));
     } catch (err) {
+      if (isExperienceWriteError(err) || !scopeCurrent(ctx, scope)) throw err;
       getLogger().warn(
         "[OTEFDataContext] set_group_enabled failed; falling back to full layerGroups PATCH",
         err,
       );
       try {
+        const visibilityReceipt = ctx._gazaBorderVisibilityReceipt;
         const updated = await OTEF_API.updateLayerGroups(ctx._tableName, ctx._layerGroups, {
+          ...scope,
           sourceId: ctx._clientId,
           timestamp: Date.now(),
           traceId,
@@ -212,10 +237,7 @@ async function flushGroupEnabledCommand(ctx, groupId, enabled, traceId) {
         if (sendGen !== ctx._layerOpGeneration) {
           return;
         }
-        if (updated && Array.isArray(updated.layerGroups)) {
-          ctx._setLayerGroups(updated.layerGroups);
-          ctx._layerPatchLastAcked = JSON.parse(JSON.stringify(updated.layerGroups));
-        } else {
+        if (!applyLayerCommandAcknowledgement(ctx, updated, visibilityReceipt)) {
           const payload = JSON.parse(JSON.stringify(ctx._layerGroups));
           ctx._layerPatchLastAcked = JSON.parse(JSON.stringify(payload));
         }
@@ -252,6 +274,8 @@ function isVelocityEffectivelyMoving(ctx) {
 
 // Step 2b: Overlapping rapid remote pan/zoom can interleave awaits; a future mutex may serialize.
 async function pan(ctx, direction, delta = 0.15) {
+  const scope = captureScope(ctx);
+  if (ctx?.isExperienceActive?.() === false) return;
   if (!ctx._tableName || !ctx._isConnected || !direction) return;
 
   const currentViewport = ctx._viewport;
@@ -286,6 +310,7 @@ async function pan(ctx, direction, delta = 0.15) {
       base_viewport: previousViewport,
       traceId,
     });
+    if (!scopeCurrent(ctx, scope)) return;
     if (result && result.viewport && result.viewport.bbox && result.viewport.bbox.length === 4) {
       ctx._setViewport({
         ...result.viewport,
@@ -296,6 +321,7 @@ async function pan(ctx, direction, delta = 0.15) {
       ctx._setViewport(previousViewport);
     }
   } catch (err) {
+    if (!scopeCurrent(ctx, scope)) return;
     getLogger().error("[OTEFDataContext] Pan command failed:", err);
     if (previousViewport) ctx._setViewport(previousViewport);
   } finally {
@@ -304,6 +330,7 @@ async function pan(ctx, direction, delta = 0.15) {
 }
 
 function sendVelocity(ctx, vx, vy) {
+  if (ctx?.isExperienceActive?.() === false) { ctx._velocity = { vx: 0, vy: 0 }; return; }
   if (!ctx._tableName || !ctx._wsClient || !ctx._wsClient.getConnected()) return;
 
   const wasMoving = ctx._velocity && (ctx._velocity.vx !== 0 || ctx._velocity.vy !== 0);
@@ -319,6 +346,7 @@ function sendVelocity(ctx, vx, vy) {
   try {
     ctx._wsClient.send({
       type: OTEF_MESSAGE_TYPES.VELOCITY_UPDATE,
+      ...captureScope(ctx),
       vx,
       vy,
       sourceId: ctx._clientId,
@@ -332,10 +360,13 @@ function sendVelocity(ctx, vx, vy) {
 function startVelocityLoop(ctx) {
   if (ctx._velocityLoopActive) return;
   ctx._velocityLoopActive = true;
+  const generation = ctx._velocityGeneration = (ctx._velocityGeneration || 0) + 1;
+  const scope = captureScope(ctx);
 
   const raf = typeof requestAnimationFrame === "function" ? requestAnimationFrame : (fn) => setTimeout(fn, 16);
 
   const step = () => {
+    if (generation !== ctx._velocityGeneration || !scopeCurrent(ctx, scope) || ctx.isExperienceActive?.() === false) return;
     if (!ctx._velocity || (ctx._velocity.vx === 0 && ctx._velocity.vy === 0)) {
       ctx._velocityLoopActive = false;
       return;
@@ -397,6 +428,8 @@ function startVelocityLoop(ctx) {
 }
 
 async function zoom(ctx, newZoom) {
+  const scope = captureScope(ctx);
+  if (ctx?.isExperienceActive?.() === false) return;
   if (!ctx._tableName || !ctx._isConnected || typeof newZoom !== "number") return;
 
   const clampedZoom = Math.max(10, Math.min(19, newZoom));
@@ -431,6 +464,7 @@ async function zoom(ctx, newZoom) {
       base_viewport: previousViewport,
       traceId,
     });
+    if (!scopeCurrent(ctx, scope)) return;
     if (result && result.viewport && result.viewport.bbox && result.viewport.bbox.length === 4) {
       ctx._setViewport({
         ...result.viewport,
@@ -441,6 +475,7 @@ async function zoom(ctx, newZoom) {
       ctx._setViewport(previousViewport);
     }
   } catch (err) {
+    if (!scopeCurrent(ctx, scope)) return;
     getLogger().error("[OTEFDataContext] Zoom command failed:", err);
     if (previousViewport) ctx._setViewport(previousViewport);
   } finally {
@@ -449,6 +484,8 @@ async function zoom(ctx, newZoom) {
 }
 
 function updateViewportFromUI(ctx, viewport, source = "gis", options = {}) {
+  const scope = options.experienceScope || captureScope(ctx);
+  if (!scopeCurrent(ctx, scope) || ctx?.isExperienceActive?.() === false) return { accepted: false, reason: "experience_changed" };
   if (!ctx._tableName || !viewport || !viewport.bbox || viewport.bbox.length !== 4) {
     return false;
   }
@@ -477,6 +514,7 @@ function updateViewportFromUI(ctx, viewport, source = "gis", options = {}) {
       if (ctx._wsClient?.getConnected?.()) {
         ctx._wsClient.send({
           type: OTEF_MESSAGE_TYPES.VIEWPORT_UPDATE,
+          ...scope,
           table: ctx._tableName,
           viewport: payload,
           sourceId: ctx._clientId,
@@ -490,13 +528,13 @@ function updateViewportFromUI(ctx, viewport, source = "gis", options = {}) {
       options.sharedUpdate === "immediate" &&
       typeof OTEF_API.updateViewportImmediate === "function"
     ) {
-      void OTEF_API.updateViewportImmediate(ctx._tableName, payload).catch((err) => {
+      void OTEF_API.updateViewportImmediate(ctx._tableName, payload, scope).catch((err) => {
         getLogger().error("[OTEFDataContext] Failed to send viewport update:", err);
       });
     } else if (typeof OTEF_API.updateViewportDebounced === "function") {
-      OTEF_API.updateViewportDebounced(ctx._tableName, payload);
+      OTEF_API.updateViewportDebounced(ctx._tableName, payload, scope);
     } else {
-      void OTEF_API.updateViewport(ctx._tableName, payload).catch((err) => {
+      void OTEF_API.updateViewport(ctx._tableName, payload, scope).catch((err) => {
         getLogger().error("[OTEFDataContext] Failed to send viewport update:", err);
       });
     }
@@ -516,6 +554,7 @@ async function toggleLayer(ctx, layerId, enabled) {
 }
 
 async function toggleLayerInGroups(ctx, layerId, enabled, options = {}) {
+  if (ctx?.isExperienceActive?.() === false) return { ok: false, stale: true };
   ensureLayerPatchBaseline(ctx);
   const previous = ensureMoreshetAxisCompanionRows(
     JSON.parse(JSON.stringify(ctx._layerGroups || [])),
@@ -573,6 +612,7 @@ async function toggleLayerInGroups(ctx, layerId, enabled, options = {}) {
  * @param {string[]} fullLayerIds
  */
 async function clearAnimationsForDisabledLayerIds(ctx, fullLayerIds) {
+  const scope = captureScope(ctx);
   const prevAnims = ctx._animations || {};
   let changed = false;
   const nextAnims = Object.assign({}, prevAnims);
@@ -586,16 +626,17 @@ async function clearAnimationsForDisabledLayerIds(ctx, fullLayerIds) {
   ctx._setAnimations(nextAnims);
   ctx._pendingAnimationOps++;
   try {
-    await OTEF_API.updateAnimations(ctx._tableName, nextAnims);
+    await OTEF_API.updateAnimations(ctx._tableName, nextAnims, scope);
   } catch (err) {
     getLogger().error("[OTEFDataContext] Failed to clear animations after layer hide:", err);
-    ctx._setAnimations(prevAnims);
+    if (scopeCurrent(ctx, scope)) ctx._setAnimations(prevAnims);
   } finally {
     ctx._pendingAnimationOps--;
   }
 }
 
 async function setLayersEnabled(ctx, fullLayerIds, enabled, options = {}) {
+  if (ctx?.isExperienceActive?.() === false) return { ok: false, stale: true };
   if (!ctx._tableName || !Array.isArray(fullLayerIds) || fullLayerIds.length === 0) {
     return { ok: true };
   }
@@ -655,6 +696,7 @@ async function setLayersEnabled(ctx, fullLayerIds, enabled, options = {}) {
 }
 
 async function setEnabledLayerIds(ctx, fullLayerIds, options = {}) {
+  if (ctx?.isExperienceActive?.() === false) return { ok: false, stale: true };
   if (!ctx || !ctx._tableName) {
     return { ok: false, error: "Missing table" };
   }
@@ -726,6 +768,7 @@ async function setEnabledLayerIds(ctx, fullLayerIds, options = {}) {
 }
 
 async function toggleGroup(ctx, groupId, enabled) {
+  if (ctx?.isExperienceActive?.() === false) return { ok: false, stale: true };
   if (!ctx._tableName || !groupId) return { ok: false, error: "Missing groupId" };
   if (!ctx._layerGroups) return { ok: false, error: "Layer groups not available" };
 
@@ -774,6 +817,8 @@ async function toggleGroup(ctx, groupId, enabled) {
 }
 
 async function toggleAnimation(ctx, layerId, enabled) {
+  const scope = captureScope(ctx);
+  if (ctx?.isExperienceActive?.() === false) return { ok: false, stale: true };
   if (!ctx._tableName || !layerId) return { ok: false, error: "Missing layerId" };
   if (isNliPlayableFullId(layerId)) return { ok: true };
 
@@ -783,11 +828,11 @@ async function toggleAnimation(ctx, layerId, enabled) {
 
   ctx._pendingAnimationOps++;
   try {
-    await OTEF_API.updateAnimations(ctx._tableName, next);
+    await OTEF_API.updateAnimations(ctx._tableName, next, scope);
     return { ok: true };
   } catch (err) {
     getLogger().error("[OTEFDataContext] Failed to update animations:", err);
-    ctx._setAnimations(previous);
+    if (scopeCurrent(ctx, scope)) ctx._setAnimations(previous);
     return { ok: false, error: err };
   } finally {
     ctx._pendingAnimationOps--;
@@ -795,6 +840,8 @@ async function toggleAnimation(ctx, layerId, enabled) {
 }
 
 async function setLayerAnimations(ctx, fullLayerIds, enabled) {
+  const scope = captureScope(ctx);
+  if (ctx?.isExperienceActive?.() === false) return { ok: false, stale: true };
   if (!ctx._tableName || !Array.isArray(fullLayerIds) || fullLayerIds.length === 0) {
     return { ok: true };
   }
@@ -809,11 +856,11 @@ async function setLayerAnimations(ctx, fullLayerIds, enabled) {
 
   ctx._pendingAnimationOps++;
   try {
-    await OTEF_API.updateAnimations(ctx._tableName, next);
+    await OTEF_API.updateAnimations(ctx._tableName, next, scope);
     return { ok: true };
   } catch (err) {
     getLogger().error("[OTEFDataContext] Failed to update animations:", err);
-    ctx._setAnimations(previous);
+    if (scopeCurrent(ctx, scope)) ctx._setAnimations(previous);
     return { ok: false, error: err };
   } finally {
     ctx._pendingAnimationOps--;
@@ -886,7 +933,8 @@ async function patchInvestigationClock(ctx, next, {
   isCurrent = () => true, claimPresentationHold = false, releasePresentationHold,
 } = {}) {
   if (!ctx?._tableName) return { ok: false, error: "Missing table" };
-  const predicate = typeof isCurrent === "function" ? isCurrent : () => true;
+  const scope = captureScope(ctx);
+  const predicate = () => scopeCurrent(ctx, scope) && (typeof isCurrent !== "function" || isCurrent());
   const run = async () => {
     if (!ctx._tableName) return { ok: false, error: "Missing table" };
     if (!predicate()) return { ok: false, stale: true, error: "Superseded" };
@@ -909,6 +957,7 @@ async function patchInvestigationClock(ctx, next, {
     let state;
     try {
       state = await OTEF_API.updateInvestigationClock(ctx._tableName, writeClock, {
+        ...scope,
         sourceId: ctx._clientId,
         timestamp: Date.now(),
       });
@@ -1025,6 +1074,8 @@ async function setNarrative(ctx, id, options = {}) {
 
 async function setEscapeOverlay(ctx, overlay) {
   if (!ctx._tableName) return { ok: false, reason: "missing_table" };
+  const scope = captureScope(ctx);
+  assertScope(ctx, scope);
   const current = ctx.getEscapeOverlay?.() || {};
   const patch = overlay && typeof overlay === "object" ? overlay : {};
   const flag = (key) => (
@@ -1039,8 +1090,9 @@ async function setEscapeOverlay(ctx, overlay) {
   const response = await OTEF_API.setEscapeOverlay(
     ctx._tableName,
     nextOverlay,
-    { sourceId: ctx._clientId, timestamp: Date.now() },
+    { ...scope, sourceId: ctx._clientId, timestamp: Date.now() },
   );
+  assertScope(ctx, scope);
   if (response?.escapeOverlay) {
     ctx._applyEscapeOverlay(response.escapeOverlay, ctx.getNarrativeState().id);
   }
@@ -1093,13 +1145,14 @@ async function setLegendSettings(ctx, patch = {}, options = {}) {
   if (keys.includes("layout") && !Number.isInteger(options.baseRevision)) {
     return { ok: false, reason: "invalid_legend_settings" };
   }
+  const scope = captureScope(ctx);
   const response = await OTEF_API.setLegendSettings(ctx._tableName, patch, {
     ...(Number.isInteger(options.baseRevision) ? { baseRevision: options.baseRevision } : {}),
-    sourceId: ctx._clientId, timestamp: Date.now(),
+    sourceId: ctx._clientId, timestamp: Date.now(), ...scope,
   });
   if (response?.changeKind === "layout" && Number.isInteger(response.legendLayoutRevision)) {
     ctx._applyLegendProjectionVersioned(response.legendProjection, response.legendLayoutRevision);
-  } else if (response?.changeKind === "metadata" && response.legendSettingsPatch) {
+  } else if (response?.changeKind === "metadata" && response.legendSettingsPatch && scopeCurrent(ctx, scope)) {
     ctx._applyLegendMetadataPatch(response.legendSettingsPatch);
   }
   return response;
@@ -1130,6 +1183,8 @@ async function narrativePresentationCommand(ctx, command, options) {
 
 async function narrativePresentationResult(ctx, result) {
   if (!ctx._tableName) return { ok: false, reason: "missing_table" };
+  const scope = explicitExperienceScope(result);
+  if (scope.experience && !scopeCurrent(ctx, scope)) return { ok: false, stale: true };
   const correlation = normalizePresentationCorrelation(result);
   if (!correlation || !["opened", "ready", "closed", "unavailable", "ignored"].includes(result.outcome)) {
     return { ok: false, reason: "invalid_presentation_result" };
@@ -1140,6 +1195,7 @@ async function narrativePresentationResult(ctx, result) {
   }
   return OTEF_API.narrativePresentationResult(ctx._tableName, {
     ...normalized,
+    ...scope,
     sourceId: ctx._clientId,
     timestamp: Date.now(),
   });

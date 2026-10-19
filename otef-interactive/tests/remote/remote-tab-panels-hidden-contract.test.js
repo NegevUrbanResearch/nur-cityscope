@@ -76,12 +76,8 @@ test("remote teardown destroys the LayerSheet-owned narrative lifecycle", () => 
   expect(source).toMatch(/beforeunload[\s\S]*layerSheetController[\s\S]*\.destroy/);
 });
 
-test("National Library tab launches the staff remote page", () => {
-  const source = fs.readFileSync(
-    path.resolve(__dirname, "../../frontend/src/remote/remote-controller.js"),
-    "utf8",
-  );
-  expect(source).toMatch(/NLI_STAFF_REMOTE_HREF = "nli-staff-remote\.html"/);
-  expect(source).toMatch(/LAUNCHER_REMOTE_TAB_KEYS = new Set\(\["curation"\]\)/);
-  expect(source).toMatch(/searchParams\.set\("from", "remote"\)/);
+test("National Library uses server-confirmed shared navigation", () => {
+  const source = fs.readFileSync(path.resolve(__dirname, "../../frontend/src/remote/remote-experience-navigation.js"), "utf8");
+  expect(source).toContain('await switcher.activate(target)');
+  expect(source).toContain('"nli-staff-remote.html"');
 });

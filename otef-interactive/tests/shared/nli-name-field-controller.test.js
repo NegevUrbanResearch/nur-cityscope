@@ -290,6 +290,31 @@ describe("createNliNameFieldController", () => {
     expect(adapter.prepare).toHaveBeenCalledOnce();
     d.controller.dispose();
   });
+
+  it.each([false, true])('paired entry holds reveal at zero through a slow final draw and cancels retired starts (cancel=%s)', async cancel => {
+    vi.useFakeTimers(); vi.setSystemTime(10000);
+    const d = setup({ managedScene: true, applyProjectionConfig: false, projectionSpan: 'left', motionMode: 'full' });
+    const adapter = canvasAdapter(); d.controller.installProjectionCanvas(adapter);
+    await d.controller.prepareProjectionCandidate({ generation: 1, config: DEFAULTS, field: canvasField(), revision: 1 });
+    d.controller.commitProjectionCandidate(1); d.controller.finalizeProjectionCandidate(1);
+    const snapshot = { layerGroups: [{ id: 'nli', layers: [{ id: 'people_names', enabled: true }] }] };
+    const scene = await d.controller.prepareScene(snapshot);
+    const ready = deferred(), abort = new AbortController();
+    const runtime = { registerOpacityTarget() {}, markMemberReady() {}, stageMapLayer() {} };
+    try {
+      await vi.advanceTimersByTimeAsync(3000);
+      d.controller.applyScene(scene, { snapshot, runtime,
+        namesEntry: { startAtMs: 10000, revealReady: ready.promise, signal: abort.signal } });
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(adapter.getRevealSeconds()).toBe(0);
+      if (cancel) abort.abort();
+      ready.resolve({ startAtMs: Date.now() + 100 });
+      await vi.advanceTimersByTimeAsync(50);
+      expect(adapter.getRevealSeconds()).toBe(0);
+      await vi.advanceTimersByTimeAsync(850);
+      expect(adapter.getRevealSeconds()).toBeCloseTo(cancel ? 0 : 0.8, 1);
+    } finally { d.controller.dispose(); }
+  });
   it('fadeOut resolves after hideMs even while the stagger reveal is still running', async () => {
     vi.useFakeTimers();
     const d = setup({ applyProjectionConfig: false, projectionSpan: 'left', motionMode: 'full' });

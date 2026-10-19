@@ -36,7 +36,7 @@ export function createProjectionNamesEntry({ output, instanceId = createUuid(), 
       onFailure(state.key, reason, state.attempt);
     }
     const error = cancelled ? abortError() : new Error(reason);
-    state.reject(error); state.displayReject?.(error);
+    state.reject(error); state.displayReject?.(error); state.revealReject?.(error);
   };
   const announce = state => send(state, state.ready ? 'ready' : 'preparing', { wall: state.wall });
   const propose = state => {
@@ -48,11 +48,14 @@ export function createProjectionNamesEntry({ output, instanceId = createUuid(), 
   const accept = state => {
     if (state.failed || state.settled) return;
     state.settled = true; clearTimer(state.timer);
-    state.resolve({ ...state.prepared, namesEntry: { key: state.key, startAtMs: state.startAtMs, signal: state.cancel.signal } });
+    const revealReady = new Promise((resolve, reject) => { state.revealResolve = resolve; state.revealReject = reject; });
+    revealReady.catch(() => {});
+    state.resolve({ ...state.prepared, namesEntry: { key: state.key, startAtMs: state.startAtMs, revealReady, signal: state.cancel.signal } });
   };
   const show = (state, showAtMs) => {
     if (state.shown || state.failed) return;
     state.shown = true; clearTimer(state.timer);
+    state.revealResolve?.({ startAtMs: showAtMs });
     waitForProjectionNamesStart({ namesEntry: { startAtMs: showAtMs, signal: state.cancel.signal } })
       .then(() => state.displayResolve?.(true), error => state.displayReject?.(error));
   };
@@ -104,7 +107,7 @@ export function createProjectionNamesEntry({ output, instanceId = createUuid(), 
     prepare(key, produce, { signal, discard = () => {} } = {}) {
       if (disposed || signal?.aborted) return Promise.reject(abortError());
       if (failed.has(key)) return Promise.reject(new Error(failed.get(key)));
-      if (active?.settled) { clean(active); active.cancel.abort(); active.displayReject?.(abortError()); }
+      if (active?.settled) { clean(active); active.cancel.abort(); active.displayReject?.(abortError()); active.revealReject?.(abortError()); }
       else if (active && !active.failed) fail(active, 'Names entry superseded', true, true);
       return new Promise((resolve, reject) => {
         const state = { key, nonce: createUuid(), resolve, reject, signal, discard, attempt: typeof attempt === 'function' ? attempt(key) : attempt, cancel: new AbortController() };

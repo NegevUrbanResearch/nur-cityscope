@@ -1,0 +1,9 @@
+/* Only the shared footer is added to the existing NLI application. */
+.experience-nav { display:flex; direction:ltr; flex:none; gap:6px; padding:10px max(16px,env(safe-area-inset-right)) max(10px,env(safe-area-inset-bottom)); border-top:1px solid #555b67; background:#191c22; }
+.experience-nav__tab { flex:1; min-width:0; display:flex; align-items:center; justify-content:center; flex-direction:column; gap:6px; min-height:64px; padding:8px 4px; border:1px solid transparent; border-radius:12px; background:transparent; color:#c6cbd4; font:400 14px/1.4 "NLI Content Hadassah Friedlaender",sans-serif; cursor:pointer; }
+.experience-nav__tab.is-active { background:#3d3546; color:#fff8e8; border-color:#7d8391; }
+.experience-nav__tab:focus-visible { outline:3px solid #f3b4ae; outline-offset:2px; }
+.experience-nav__tab:disabled { opacity:.6; cursor:wait; }
+.experience-status { flex:none; margin:0; padding:10px 20px; background:#30343d; color:#fff8e8; font:400 16px/1.5 "NLI Content Hadassah Friedlaender",sans-serif; text-align:center; }
+.experience-status[hidden] { display:none; }
+.experience-status__cancel { margin-inline-start:16px; min-height:44px; padding:8px 16px; border:1px solid #7d8391; border-radius:10px; background:#20232a; color:#fff8e8; font:inherit; cursor:pointer; }

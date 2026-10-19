@@ -21,13 +21,55 @@ function httpFetch(input, init) {
   return f.call(globalThis, input, init);
 }
 
+function copyPayload(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+async function httpError(response, message) {
+  const error = new Error(`${message}: ${response.status}`);
+  error.status = response.status;
+  try { error.details = await response.json(); } catch (_error) {}
+  return error;
+}
+
+function scopeFields(value) {
+  const fields = {};
+  for (const key of ["experience", "experience_revision"]) {
+    if (Object.prototype.hasOwnProperty.call(value || {}, key)) fields[key] = value[key];
+  }
+  return fields;
+}
+
 export const OTEF_API = {
   baseUrl: APP_CONFIG.api.viewportBase,
   defaultTable: APP_CONFIG.defaultTable,
   _viewportDebounce: null,
+  _viewportDebounces: new Map(),
   _viewportImmediateQueues: new Map(),
+  _experienceScopes: new Map(),
   _stateInFlight: new Map(),
   _stateCache: new Map(),
+
+  setExperienceScope(tableName = this.defaultTable, scopeOrProvider = null) {
+    if (scopeOrProvider == null) this._experienceScopes.delete(tableName);
+    else this._experienceScopes.set(tableName, typeof scopeOrProvider === "function" ? scopeOrProvider : copyPayload(scopeFields(scopeOrProvider)));
+  },
+
+  captureExperienceScope(tableName = this.defaultTable) {
+    const source = this._experienceScopes.get(tableName);
+    return Object.freeze(copyPayload(scopeFields(typeof source === "function" ? source() : source)));
+  },
+
+  _scopedPayload(tableName, payload) {
+    return copyPayload({ ...this.captureExperienceScope(tableName), ...payload });
+  },
+
+  _viewportMetadata(tableName, viewport, meta) {
+    return copyPayload({
+      experience: "regular", experience_revision: 0,
+      ...this.captureExperienceScope(tableName), ...scopeFields(viewport), ...meta,
+    });
+  },
 
   async getState(tableName = this.defaultTable, options = {}) {
     const forceFresh = !!(options && options.forceFresh);
@@ -63,6 +105,7 @@ export const OTEF_API = {
   },
 
   async updateState(tableName = this.defaultTable, updates) {
+    updates = this._scopedPayload(tableName, updates);
     const traceId = updates && typeof updates.traceId === "string" ? updates.traceId : null;
     if (traceId) {
       recordTraceEvent(traceId, "api.patch.start", {
@@ -75,7 +118,7 @@ export const OTEF_API = {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(updates),
       });
-      if (!response.ok) throw new Error(`Failed to update state: ${response.status}`);
+      if (!response.ok) throw await httpError(response, "Failed to update state");
       const value = await response.json();
       this._stateCache.delete(tableName);
       if (traceId) {
@@ -98,6 +141,7 @@ export const OTEF_API = {
   },
 
   async executeCommand(tableName = this.defaultTable, command, options = {}) {
+    command = this._scopedPayload(tableName, command);
     const traceId = command && typeof command.traceId === "string" ? command.traceId : null;
     if (traceId) {
       recordTraceEvent(traceId, "api.command.start", {
@@ -113,10 +157,7 @@ export const OTEF_API = {
         ...(options.signal ? { signal: options.signal } : {}),
       });
       if (!response.ok) {
-        const error = new Error(`Failed to execute command: ${response.status}`);
-        error.status = response.status;
-        try { error.details = await response.json(); } catch (_error) {}
-        throw error;
+        throw await httpError(response, "Failed to execute command");
       }
       const value = await response.json();
       this._stateCache.delete(tableName);
@@ -231,6 +272,7 @@ export const OTEF_API = {
       ...(Number.isInteger(baseRevision) ? { baseRevision } : {}),
       sourceId,
       timestamp,
+      ...scopeFields(requestMeta),
     });
   },
 
@@ -246,6 +288,7 @@ export const OTEF_API = {
       ...(Number.isSafeInteger(requestMeta.baseRevision) ? { baseRevision: requestMeta.baseRevision } : {}),
       sourceId,
       timestamp,
+      ...scopeFields(requestMeta),
     });
   },
 
@@ -302,8 +345,8 @@ export const OTEF_API = {
     });
   },
 
-  async updateAnimations(tableName = this.defaultTable, animations) {
-    return this.updateState(tableName, { animations });
+  async updateAnimations(tableName = this.defaultTable, animations, meta = {}) {
+    return this.updateState(tableName, { animations, ...meta });
   },
 
   async updateBasemap(tableName = this.defaultTable, basemap, meta = {}) {
@@ -316,34 +359,46 @@ export const OTEF_API = {
     return this.updateState(tableName, { investigation_clock: writeClock, ...meta });
   },
 
-  async updateViewport(tableName = this.defaultTable, viewport) {
-    const meta = {};
+  async updateViewport(tableName = this.defaultTable, viewport, meta = {}) {
+    const metadata = { ...scopeFields(viewport), ...meta };
     if (viewport && typeof viewport === "object") {
-      if (viewport.sourceId) meta.sourceId = viewport.sourceId;
-      if (viewport.timestamp) meta.timestamp = viewport.timestamp;
-      if (viewport.traceId) meta.traceId = viewport.traceId;
+      if (viewport.sourceId) metadata.sourceId = viewport.sourceId;
+      if (viewport.timestamp) metadata.timestamp = viewport.timestamp;
+      if (viewport.traceId) metadata.traceId = viewport.traceId;
     }
-    return this.updateState(tableName, { viewport, ...meta });
+    return this.updateState(tableName, { viewport, ...metadata });
   },
 
-  async updateViewportImmediate(tableName = this.defaultTable, viewport) {
-    clearTimeout(this._viewportDebounce);
-    this._viewportDebounce = null;
+  _cancelViewportDebounce(tableName) {
+    const timer = this._viewportDebounces.get(tableName);
+    if (timer != null) {
+      clearTimeout(timer);
+      this._viewportDebounces.delete(tableName);
+      if (this._viewportDebounce === timer) this._viewportDebounce = null;
+    }
+  },
+
+  async updateViewportImmediate(tableName = this.defaultTable, viewport, meta = {}) {
+    this._cancelViewportDebounce(tableName);
+    const captured = this._viewportMetadata(tableName, viewport, meta);
+    viewport = copyPayload(viewport);
 
     let queue = this._viewportImmediateQueues.get(tableName);
     if (!queue) {
-      queue = { inFlight: false, pending: null };
+      queue = { inFlight: false, pending: [] };
       this._viewportImmediateQueues.set(tableName, queue);
     }
 
     const result = new Promise((resolve, reject) => {
-      if (queue.pending) {
+      const pending = queue.pending.at(-1);
+      if (pending && pending.meta.experience === captured.experience && pending.meta.experience_revision === captured.experience_revision) {
         // While one PATCH is in flight, only the newest camera snapshot matters.
         // Keep every caller attached to that newest write so promises still settle.
-        queue.pending.viewport = viewport;
-        queue.pending.waiters.push({ resolve, reject });
+        pending.viewport = viewport;
+        pending.meta = captured;
+        pending.waiters.push({ resolve, reject });
       } else {
-        queue.pending = { viewport, waiters: [{ resolve, reject }] };
+        queue.pending.push({ viewport, meta: captured, waiters: [{ resolve, reject }] });
       }
     });
 
@@ -352,12 +407,11 @@ export const OTEF_API = {
   },
 
   _drainViewportImmediateQueue(tableName, queue) {
-    if (!queue || queue.inFlight || !queue.pending) return;
+    if (!queue || queue.inFlight || !queue.pending.length) return;
 
-    const item = queue.pending;
-    queue.pending = null;
+    const item = queue.pending.shift();
     queue.inFlight = true;
-    Promise.resolve(this.updateViewport(tableName, item.viewport))
+    Promise.resolve(this.updateViewport(tableName, item.viewport, item.meta))
       .then((value) => {
         item.waiters.forEach(({ resolve }) => resolve(value));
       })
@@ -366,7 +420,7 @@ export const OTEF_API = {
       })
       .finally(() => {
         queue.inFlight = false;
-        if (queue.pending) {
+        if (queue.pending.length) {
           this._drainViewportImmediateQueue(tableName, queue);
         } else {
           this._viewportImmediateQueues.delete(tableName);
@@ -374,13 +428,19 @@ export const OTEF_API = {
       });
   },
 
-  updateViewportDebounced(tableName = this.defaultTable, viewport) {
-    clearTimeout(this._viewportDebounce);
-    this._viewportDebounce = setTimeout(() => {
+  updateViewportDebounced(tableName = this.defaultTable, viewport, meta = {}) {
+    this._cancelViewportDebounce(tableName);
+    const captured = this._viewportMetadata(tableName, viewport, meta);
+    const snapshot = copyPayload(viewport);
+    const timer = setTimeout(() => {
+      this._viewportDebounces.delete(tableName);
+      if (this._viewportDebounce === timer) this._viewportDebounce = null;
       // updateState reports transport failures; this timer owns the rejection
       // because there is no caller awaiting a debounced write.
-      this.updateViewportImmediate(tableName, viewport).catch(() => null);
+      this.updateViewportImmediate(tableName, snapshot, captured).catch(() => null);
     }, 120);
+    this._viewportDebounces.set(tableName, timer);
+    this._viewportDebounce = timer;
   },
 
   async saveBounds(tableName = this.defaultTable, polygon, viewerAngleDeg) {

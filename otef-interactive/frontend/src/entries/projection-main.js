@@ -1168,6 +1168,9 @@ async function bootstrapProjectionRuntime() {
         }
         registerDisposer(disposeProjectionNameWallPreparation);
         const unsubscribeVideoPlayback = subscribeNliVideoPlayback({
+          captureExperienceScope: () => OTEFDataContext.captureExperienceScope(),
+          isExperienceScopeCurrent: scope => OTEFDataContext.isExperienceScopeCurrent(scope),
+          subscribeExperience: listener => OTEFDataContext.subscribe("experienceState", listener),
           table: OTEFDataContext._tableName || "otef",
           socket: OTEFDataContext._wsClient,
           onChange: (active) => browserSurface?.setVideoPlaybackActive?.(active),
@@ -1811,6 +1814,7 @@ async function bootstrapProjectionRuntime() {
           }
           void syncCuratedMapLayersAfterSupabasePull({
             pullPayload: ev?.detail || {},
+            getSceneBinding: () => calibrationActive() ? null : sceneBinding,
             reloadCuratedOnMap: refreshProjectionCuratedLayers,
             applyLayerGroupsState: (groups) => {
               if (shouldSkipLiveProjectionRefresh()) {

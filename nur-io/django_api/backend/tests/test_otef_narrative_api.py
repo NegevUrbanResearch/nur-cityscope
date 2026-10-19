@@ -351,6 +351,8 @@ class OTEFNarrativeApiTests(TestCase):
                 "type": "broadcast_message",
                 "message": {
                     "type": "otef_narrative_scene_changed",
+                    "experience": "regular",
+                    "experience_revision": 0,
                     "table": "otef",
                     "scene": scene,
                     "sourceId": "remote-a",

@@ -3,6 +3,7 @@ import { stopNliClock } from "../shared/nli-investigation-clock.js";
 import OTEFDataContext from "../shared/OTEFDataContext.js";
 import { getPackDisplayLabel } from "../shared/legend-copy.js";
 import { LOCALE_EVENT, applyRemoteChromeI18n, getLocale, t } from "./remote-locale.js";
+import { createSlideshowSettingsPersistence } from "./slideshow-settings-persistence.js";
 
 function escapeHtml(value) {
   return String(value)
@@ -49,7 +50,7 @@ function toPackList(groups) {
  */
 function filterExcludedPresentationPacks(packs, excludedPresentationPackIds) {
   const excluded = new Set(
-    Array.isArray(excludedPresentationPackIds) ? excludedPresentationPackIds : []
+    ["nli", ...(Array.isArray(excludedPresentationPackIds) ? excludedPresentationPackIds : [])]
   );
   return packs.filter((p) => p?.id && !excluded.has(String(p.id)));
 }
@@ -78,6 +79,16 @@ class SlideshowTabController {
     this.packOrder = [];
     this.availablePacks = [];
     this.bound = false;
+    this.settingsKey = null;
+    this.savedTimings = {};
+    this.settingsError = false;
+    this.settingsPersistence = createSlideshowSettingsPersistence({
+      save: (settings, scope) => OTEFDataContext.saveRegularSlideshowSettings(settings, { experienceScope: scope }),
+      captureScope: () => OTEFDataContext.captureExperienceScope?.(),
+      isCurrent: scope => OTEFDataContext.isExperienceActive?.() !== false && OTEFDataContext.isExperienceScopeCurrent?.(scope) !== false,
+      onError: () => { this.settingsError = true; this.renderSettingsStatus(); },
+      onSaved: settings => { this.settingsError = false; this.settingsKey = JSON.stringify(settings); this.renderSettingsStatus(); },
+    });
     this.keepSettlementNames =
       MapProjectionConfig?.PROJECTION_SLIDESHOW?.keepSettlementNames !== false;
   }
@@ -131,7 +142,9 @@ class SlideshowTabController {
   }
 
   ensurePackOrder() {
-    this.availablePacks = this.resolvePackSources();
+    this.availablePacks = filterExcludedPresentationPacks(
+      this.resolvePackSources(), MapProjectionConfig?.PROJECTION_SLIDESHOW?.excludedPresentationPackIds,
+    );
     const availableIds = this.availablePacks.map((pack) => pack.id);
     const excluded = new Set(
       Array.isArray(MapProjectionConfig?.PROJECTION_SLIDESHOW?.excludedPresentationPackIds)
@@ -155,6 +168,22 @@ class SlideshowTabController {
     this.packOrder = [...deduped, ...remaining];
   }
 
+  hydrateSettings(snapshot) {
+    if (this.settingsPersistence.hasPending()) return;
+    const settings = snapshot?.regular_slideshow_settings;
+    if (!settings || typeof settings !== "object") return;
+    const key = JSON.stringify(settings);
+    if (key === this.settingsKey) return;
+    this.settingsKey = key;
+    if (Array.isArray(settings.packOrder)) this.packOrder = settings.packOrder.map(String);
+    for (const name of ["intervalMs", "crossfadeMs", "warmupLeadMs"]) {
+      const value = parseOptionalNonNegativeNumber(settings[name]);
+      if (value !== null) this.savedTimings[name] = value;
+    }
+    if (typeof settings.keepSettlementNames === "boolean") this.keepSettlementNames = settings.keepSettlementNames;
+    this.ensurePackOrder();
+  }
+
   movePack(fromIndex, direction) {
     const toIndex = fromIndex + direction;
     if (toIndex < 0 || toIndex >= this.packOrder.length) return;
@@ -162,7 +191,22 @@ class SlideshowTabController {
     const [item] = next.splice(fromIndex, 1);
     next.splice(toIndex, 0, item);
     this.packOrder = next;
+    this.scheduleSettingsSave();
     this.render();
+  }
+
+  scheduleSettingsSave() {
+    if (!OTEFDataContext.getExperienceState?.()) return;
+    this.settingsError = false;
+    this.settingsPersistence.schedule(this.buildStartPayload());
+    this.renderSettingsStatus();
+  }
+
+  flushSettings() { return this.settingsPersistence.flush(); }
+
+  renderSettingsStatus() {
+    const status = this.root?.querySelector?.("[data-slideshow-settings-status]");
+    if (status) status.hidden = !this.settingsError;
   }
 
   readKeepSettlementNames() {
@@ -177,15 +221,15 @@ class SlideshowTabController {
     const cfg = MapProjectionConfig?.PROJECTION_SLIDESHOW || {};
     const intervalSec = this.readNumberInput(
       "slideshowIntervalSec",
-      (cfg.intervalMs ?? 10000) / 1000,
+      (this.savedTimings.intervalMs ?? cfg.intervalMs ?? 10000) / 1000,
     );
     const crossfadeSec = this.readNumberInput(
       "slideshowCrossfadeSec",
-      (cfg.crossfadeMs ?? 1200) / 1000,
+      (this.savedTimings.crossfadeMs ?? cfg.crossfadeMs ?? 1200) / 1000,
     );
     const warmupSec = this.readNumberInput(
       "slideshowWarmupLeadSec",
-      (cfg.warmupLeadMs ?? 2500) / 1000,
+      (this.savedTimings.warmupLeadMs ?? cfg.warmupLeadMs ?? 2500) / 1000,
     );
     return {
       packOrder: [...this.packOrder],
@@ -217,9 +261,12 @@ class SlideshowTabController {
       return false;
     }
     try {
-      await OTEFDataContext.patchInvestigationClock(
-        stopNliClock(OTEFDataContext.getInvestigationClock()),
-      );
+      // Legacy servers have no experience activation to clear their NLI transport.
+      if (!OTEFDataContext.getExperienceState?.()) {
+        await OTEFDataContext.patchInvestigationClock(
+          stopNliClock(OTEFDataContext.getInvestigationClock()),
+        );
+      }
       if (this.isNarrativeActive()) {
         this.setStatus("slideshowNarrativeDisabled");
         return false;
@@ -245,6 +292,7 @@ class SlideshowTabController {
       }
       return;
     }
+    try { await this.flushSettings(); } catch { return; }
     const started = await this.startSlideshow(this.buildStartPayload());
     if (!started) return;
     this.running = true;
@@ -253,6 +301,7 @@ class SlideshowTabController {
 
   async handleKeepSettlementNamesChange() {
     const keepOn = this.readKeepSettlementNames();
+    this.scheduleSettingsSave();
     if (!this.running) {
       return;
     }
@@ -275,6 +324,17 @@ class SlideshowTabController {
     status.textContent = this.running
       ? t("slideshowStatusRunning")
       : t("slideshowStatusIdle");
+    const action = this.root?.querySelector("[data-slideshow-toggle]");
+    if (action) {
+      action.removeAttribute(this.running ? "data-slideshow-start" : "data-slideshow-stop");
+      action.setAttribute(this.running ? "data-slideshow-stop" : "data-slideshow-start", "");
+      action.textContent = t(this.running ? "slideshowStop" : "slideshowStart");
+      action.disabled = !this.running && this.isNarrativeActive();
+    }
+    this.root?.querySelectorAll?.("[data-pack-move]").forEach((button) => {
+      const index = Number(button.getAttribute("data-pack-index"));
+      button.disabled = this.running || (button.getAttribute("data-pack-move") === "up" ? index === 0 : index === this.packOrder.length - 1);
+    });
   }
 
   bindEvents() {
@@ -293,6 +353,11 @@ class SlideshowTabController {
         return;
       }
 
+      if (target.closest("[data-slideshow-settings-retry]")) {
+        void this.settingsPersistence.retry().catch(() => {});
+        return;
+      }
+
       if (target.closest("[data-slideshow-start]")) {
         void this.handleStart();
         return;
@@ -305,6 +370,13 @@ class SlideshowTabController {
 
     this.root.addEventListener("change", (event) => {
       const target = event.target instanceof Element ? event.target : null;
+      const timingKey = { slideshowIntervalSec: "intervalMs", slideshowCrossfadeSec: "crossfadeMs", slideshowWarmupLeadSec: "warmupLeadMs" }[target?.id];
+      if (timingKey) {
+        const value = parseOptionalNonNegativeNumber(target.value);
+        if (value !== null) this.savedTimings[timingKey] = Math.round(value * 1000);
+        this.scheduleSettingsSave();
+        return;
+      }
       if (!target?.closest?.("[data-slideshow-keep-settlement-names]")) {
         return;
       }
@@ -334,63 +406,39 @@ class SlideshowTabController {
         : `<ul class="slideshow-pack-list" aria-labelledby="${packListHeadingId}">${this.packOrder
             .map((packId, index) => {
               const label = resolveSlideshowPackLabel(packId, packNameById.get(packId));
-              const disableUp = index === 0 ? "disabled" : "";
-              const disableDown = index === this.packOrder.length - 1 ? "disabled" : "";
+              const disableUp = this.running || index === 0 ? "disabled" : "";
+              const disableDown = this.running || index === this.packOrder.length - 1 ? "disabled" : "";
               return `<li class="slideshow-pack-row">
+                <span class="slideshow-pack-row__number">${index + 1}</span>
                 <span class="slideshow-pack-row__label">${escapeHtml(label)}</span>
                 <div class="slideshow-pack-row__actions">
-                  <button type="button" class="slideshow-pack-row__btn" data-pack-move="up" data-pack-index="${index}" data-i18n-aria="ariaSlideshowMoveUp" ${disableUp}>${escapeHtml(t("slideshowMoveUp"))}</button>
-                  <button type="button" class="slideshow-pack-row__btn" data-pack-move="down" data-pack-index="${index}" data-i18n-aria="ariaSlideshowMoveDown" ${disableDown}>${escapeHtml(t("slideshowMoveDown"))}</button>
+                  <button type="button" class="slideshow-pack-row__btn" data-pack-move="up" data-pack-index="${index}" data-i18n-aria="ariaSlideshowMoveUp" aria-label="${escapeHtml(t("ariaSlideshowMoveUp"))}" ${disableUp}>↑</button>
+                  <button type="button" class="slideshow-pack-row__btn" data-pack-move="down" data-pack-index="${index}" data-i18n-aria="ariaSlideshowMoveDown" aria-label="${escapeHtml(t("ariaSlideshowMoveDown"))}" ${disableDown}>↓</button>
                 </div>
               </li>`;
             })
             .join("")}</ul>`;
 
+    const timingFields = [
+      ["slideshowIntervalSec", "slideshowIntervalSecLabel", "slideshowIntervalSecShort", this.savedTimings.intervalMs ?? cfg.intervalMs ?? 10000],
+      ["slideshowCrossfadeSec", "slideshowCrossfadeSecLabel", "slideshowCrossfadeSecShort", this.savedTimings.crossfadeMs ?? cfg.crossfadeMs ?? 1200],
+      ["slideshowWarmupLeadSec", "slideshowWarmupLeadSecLabel", "slideshowWarmupLeadSecShort", this.savedTimings.warmupLeadMs ?? cfg.warmupLeadMs ?? 2500],
+    ];
     this.root.innerHTML = `
       <section class="control-section slideshow-control-section">
-        <h2 class="section-title" id="${packListHeadingId}">${escapeHtml(t("slideshowTitle"))}</h2>
-        <p class="slideshow-hint">${escapeHtml(t("slideshowPackOrderHint"))}</p>
-        <p class="slideshow-status" data-slideshow-status role="status" aria-live="polite">${
-          narrativeActive
-            ? escapeHtml(t("slideshowNarrativeDisabled"))
-            : this.running
-            ? escapeHtml(t("slideshowStatusRunning"))
-            : escapeHtml(t("slideshowStatusIdle"))
-        }</p>
+        <div class="slideshow-player">
+          <div><h2>${escapeHtml(t(this.running ? "slideshowStatusRunning" : "slideshowReady"))}</h2>
+          <p class="slideshow-status" data-slideshow-status role="status" aria-live="polite">${escapeHtml(t(narrativeActive ? "slideshowNarrativeDisabled" : this.running ? "slideshowStatusRunning" : "slideshowStatusIdle"))}</p></div>
+          <div class="slideshow-actions"><button type="button" class="slideshow-actions__btn" data-slideshow-toggle ${this.running ? "data-slideshow-stop" : "data-slideshow-start"}${narrativeActive && !this.running ? " disabled" : ""}>${escapeHtml(t(this.running ? "slideshowStop" : "slideshowStart"))}</button></div>
+        </div>
+        <div data-slideshow-settings-status role="alert"${this.settingsError ? "" : " hidden"}>${escapeHtml(t("slideshowSettingsSaveFailed"))} <button type="button" data-slideshow-settings-retry>${escapeHtml(t("slideshowSettingsRetry"))}</button></div>
+        <h2 id="${packListHeadingId}">${escapeHtml(t("slideshowOrder"))}</h2>
         ${packListMarkup}
-
-        <label class="layer-toggle slideshow-keep-names">
-          <input
-            type="checkbox"
-            data-slideshow-keep-settlement-names
-            data-i18n-aria="ariaSlideshowKeepSettlementNames"
-            ${this.keepSettlementNames !== false ? "checked" : ""}
-          />
-          <span class="toggle-indicator"></span>
-          <span class="toggle-label">${escapeHtml(t("slideshowKeepSettlementNames"))}</span>
-        </label>
-
-        <div class="slideshow-input-grid">
-          <label class="slideshow-field" title="${escapeHtml(t("slideshowIntervalSecLabel"))}">
-            <span class="slideshow-field__label">${escapeHtml(t("slideshowIntervalSecShort"))}</span>
-            <input id="slideshowIntervalSec" type="number" min="0" step="0.1" placeholder="${(cfg.intervalMs ?? 10000) / 1000}" data-i18n-aria="slideshowIntervalSecLabel" data-i18n-title="slideshowIntervalSecLabel" />
-          </label>
-          <label class="slideshow-field" title="${escapeHtml(t("slideshowCrossfadeSecLabel"))}">
-            <span class="slideshow-field__label">${escapeHtml(t("slideshowCrossfadeSecShort"))}</span>
-            <input id="slideshowCrossfadeSec" type="number" min="0" step="0.1" placeholder="${(cfg.crossfadeMs ?? 1200) / 1000}" data-i18n-aria="slideshowCrossfadeSecLabel" data-i18n-title="slideshowCrossfadeSecLabel" />
-          </label>
-          <label class="slideshow-field" title="${escapeHtml(t("slideshowWarmupLeadSecLabel"))}">
-            <span class="slideshow-field__label">${escapeHtml(t("slideshowWarmupLeadSecShort"))}</span>
-            <input id="slideshowWarmupLeadSec" type="number" min="0" step="0.1" placeholder="${(cfg.warmupLeadMs ?? 2500) / 1000}" data-i18n-aria="slideshowWarmupLeadSecLabel" data-i18n-title="slideshowWarmupLeadSecLabel" />
-          </label>
-        </div>
-
-        <div class="slideshow-actions">
-          <button type="button" class="slideshow-actions__btn" data-slideshow-start${narrativeActive ? " disabled" : ""}>${escapeHtml(t("slideshowStart"))}</button>
-          <button type="button" class="slideshow-actions__btn" data-slideshow-stop>${escapeHtml(t("slideshowStop"))}</button>
-        </div>
-      </section>
-    `;
+        <details class="slideshow-settings"><summary>${escapeHtml(t("slideshowSettings"))}</summary>
+          <div class="slideshow-input-grid">${timingFields.map(([id, label, shortLabel, value]) => `<label class="slideshow-field" title="${escapeHtml(t(label))}"><span class="slideshow-field__label">${escapeHtml(t(shortLabel))}</span><input id="${id}" type="number" min="0" step="0.1" value="${value / 1000}" data-i18n-aria="${label}" data-i18n-title="${label}" /></label>`).join("")}</div>
+          <label class="slideshow-keep-names"><input type="checkbox" data-slideshow-keep-settlement-names data-i18n-aria="ariaSlideshowKeepSettlementNames" ${this.keepSettlementNames !== false ? "checked" : ""}><span class="toggle-label">${escapeHtml(t("slideshowKeepSettlementNames"))}</span></label>
+        </details>
+      </section>`;
 
     applyRemoteChromeI18n();
   }
@@ -399,6 +447,16 @@ class SlideshowTabController {
     this.root = document.getElementById(this.rootId);
     if (!this.root) return;
     this.bindEvents();
+    this.hydrateSettings(OTEFDataContext.getExperienceState?.());
+    this.running = OTEFDataContext.getProjectionSlideshow?.()?.type === "start";
+    OTEFDataContext.subscribe?.("experienceState", (snapshot) => {
+      this.hydrateSettings(snapshot);
+      this.render();
+    });
+    OTEFDataContext.subscribe?.("projectionSlideshow", (slideshow) => {
+      this.running = slideshow?.type === "start";
+      this.render();
+    });
     OTEFDataContext.subscribe?.("narrativeState", () => this.render());
     this.render();
   }

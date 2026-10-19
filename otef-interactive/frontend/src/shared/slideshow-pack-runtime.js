@@ -66,10 +66,9 @@ function mergeSlideshowConfig(config, payload) {
  * @returns {Set<string>}
  */
 function excludedPresentationPackIdSet(value) {
-  if (!Array.isArray(value)) {
-    return new Set();
-  }
-  return new Set(value.map((id) => String(id)).filter(Boolean));
+  // This runtime belongs to the regular remote. NLI uses authored scene transport.
+  // Keep the exclusion even when an older client replaces the configurable list.
+  return new Set(["nli", ...(Array.isArray(value) ? value.map((id) => String(id)).filter(Boolean) : [])]);
 }
 
 /**
@@ -112,11 +111,6 @@ function buildSinglePackGroups(packId, baseGroups) {
         // Presentation mode: show the whole pack even if API state had rows off.
         for (const layer of layers) {
           if (layer) layer.enabled = true;
-        }
-        for (const layer of layers) {
-          if (layer && `${g.id}.${layer.id}` === "nli.people_names") {
-            layer.enabled = false;
-          }
         }
       }
       return { ...g, layers };
@@ -244,7 +238,7 @@ export function resolvePresentationOverlayVisibility({
 }
 
 /**
- * Presentation shows NLI as a static/idle pack. Timeline playback stays off for every tick.
+ * Regular presentation keeps NLI timeline playback off for every tick.
  *
  * @param {Record<string, unknown> | null | undefined} animState
  * @param {boolean} shouldSuppress

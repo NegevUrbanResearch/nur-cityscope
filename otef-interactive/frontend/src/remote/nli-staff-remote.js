@@ -27,6 +27,7 @@ import { navigationButtonContent } from "./nli-staff-icons.js";
 import { COPY, HOME_CUE, NARRATIVES, SCRIPTS, SHOW } from "./nli-staff-script.js";
 import { isCanonicalHome } from "./staff-remote-refresh-guard.js";
 import { createNliStaffNavigationSession } from "./nli-staff-navigation-session.js";
+import { closeNliArchiveForExperienceSwitch, createNliBookmarkPersistence } from "./nli-staff-experience.js";
 import { hasSceneStrip, navigationLabel, optionalStoryActions, optionalStoryContext, storyChooserHtml } from "./nli-staff-navigation-view.js";
 import { nextAction, showStepIndex, slideIndexes } from "./nli-staff-flow.js";
 import { searchPlaces } from "../shared/place-navigation/place-catalog.js";
@@ -149,7 +150,7 @@ export function createNliStaffSearchEventHandlers({
         cueResult = await applyDestinationCue(item, index);
       }
       if (!transition.isCurrent(token)) return false;
-      afterDestinationCue(item, index, cueResult, operationContext);
+      if (await afterDestinationCue(item, index, cueResult, operationContext) === false) return false;
       if (!prepared) return false;
       return true;
     } finally {
@@ -213,12 +214,6 @@ export function initNliStaffRemote(dataContext, {
       if (signature !== lastRefreshSignature) { lastRefreshSignature = signature; onRefreshStateChange(value); }
     } catch { /* early construction may not have initialized owned sessions yet */ }
   }
-  dataContext.setExhibitMode(true);
-  const releaseExhibitMode = () => {
-    dataContext.setExhibitMode(false);
-  };
-  window.addEventListener("pagehide", releaseExhibitMode);
-  window.addEventListener("beforeunload", releaseExhibitMode);
   const peopleSearch = createPeopleSearchRuntime();
   const staffFonts = createNliStaffFontController({ document, getLocale, onError: onNliFontError });
   const placeFocusOwnership = createNliStaffPlaceFocusOwnership();
@@ -268,6 +263,19 @@ export function initNliStaffRemote(dataContext, {
   let presenterCommands;
   let presenterView;
   let disposed = false;
+  let experienceSuspended = false;
+  let hydratedRevision = null;
+  let homeHydrationNotified = false;
+  let failedBookmarkAttempt = null;
+  let suspendPromise = null;
+  let navigationWork = Promise.resolve(true);
+  const bookmarks = createNliBookmarkPersistence({ dataContext });
+
+  function trackNavigation(work) {
+    navigationWork = work;
+    void work.catch(() => {});
+    return work;
+  }
   let paintingTimeline = false;
   let storyChooserOpen = false;
   let chooserOpenerKey = "navigation-choose";
@@ -373,7 +381,7 @@ export function initNliStaffRemote(dataContext, {
     },
   });
   const applyCue = (cue, narrativeId, beforeApply = null) => {
-    dataContext.setExhibitMode(true);
+    if (experienceSuspended || dataContext.isExperienceActive?.() === false) return Promise.resolve({ status: "failed" });
     const attempt = { cue, narrativeId, beforeApply };
     state.cueAttempt = attempt;
     return cues.apply(cue, narrativeId, beforeApply).then((result) => {
@@ -383,7 +391,7 @@ export function initNliStaffRemote(dataContext, {
   };
 
   function manualMutationsOpen() {
-    return timelineHost.isManualMutationAllowed?.() !== false;
+    return !disposed && !experienceSuspended && dataContext.isExperienceActive?.() !== false && timelineHost.isManualMutationAllowed?.() !== false;
   }
 
   function chooserManualMutationsOpen() {
@@ -391,6 +399,7 @@ export function initNliStaffRemote(dataContext, {
   }
 
   function rearmTransport() {
+    if (experienceSuspended || dataContext.isExperienceActive?.() === false) return timelineHost.invalidateTransport();
     const clock = dataContext?.getInvestigationClock?.() || null;
     timelineHost._syncNliPlayheadTicker?.(clock);
     timelineHost._syncNliEndedTimer?.(clock);
@@ -434,7 +443,6 @@ export function initNliStaffRemote(dataContext, {
   }
 
   function showScreen(name) {
-    dataContext.setExhibitMode(true);
     state.screen = name;
     if (name !== "player") presenterView?.setVisible(false);
     document.querySelectorAll(".screen").forEach((el) => {
@@ -447,7 +455,7 @@ export function initNliStaffRemote(dataContext, {
 
   function renderHome() {
     notifyRefreshState();
-    $("narrativeList").innerHTML = homeListHtml({ locale: getLocale(), pending: state.searchPending });
+    $("narrativeList").innerHTML = homeListHtml({ locale: getLocale(), pending: state.searchPending || experienceSuspended || dataContext.isExperienceActive?.() === false });
   }
 
   function sceneCue() {
@@ -461,10 +469,10 @@ export function initNliStaffRemote(dataContext, {
     groups: timelineHost.getEffectiveGroupsForView(),
     manualFree: false,
   });
-  timelineHost.isManualMutationAllowed = () => state.cueStatus !== "applying" && !state.searchPending;
+  timelineHost.isManualMutationAllowed = () => !experienceSuspended && dataContext.isExperienceActive?.() !== false && state.cueStatus !== "applying" && !state.searchPending;
 
   function canReplaceNavigation() {
-    return !state.searchPending || state.navigationPending || state.presentationClosePending;
+    return !experienceSuspended && dataContext.isExperienceActive?.() !== false && (!state.searchPending || state.navigationPending || state.presentationClosePending);
   }
 
   function currentPresenterSnapshot() {
@@ -497,8 +505,11 @@ export function initNliStaffRemote(dataContext, {
     try {
       presenterView.update(currentPresenterSnapshot());
       const clock = dataContext?.getInvestigationClock?.() || null;
-      timelineHost._syncNliPlayheadTicker?.(clock);
-      timelineHost._syncNliEndedTimer?.(clock);
+      if (experienceSuspended || dataContext.isExperienceActive?.() === false) timelineHost.invalidateTransport();
+      else {
+        timelineHost._syncNliPlayheadTicker?.(clock);
+        timelineHost._syncNliEndedTimer?.(clock);
+      }
     } finally {
       paintingTimeline = false;
     }
@@ -922,13 +933,28 @@ export function initNliStaffRemote(dataContext, {
     return attempt;
   }
 
-  function settleNavigationAttempt(attempt, result) {
+  async function settleNavigationAttempt(attempt, result) {
     if (disposed || !attempt || activeNavigationAttempt !== attempt ||
       attempt.generation !== navigationGeneration) return false;
     const ready = attempt.kind === "fixed-presentation"
       ? result === true
       : result?.status === "ready";
+    if (ready) {
+      try {
+        await bookmarks.save(attempt.destination || { scriptId: null, step: 0, returnTo: null });
+      } catch {
+        if (disposed || activeNavigationAttempt !== attempt || attempt.generation !== navigationGeneration) return false;
+        failedBookmarkAttempt = attempt;
+        failedNavigationAttempt = attempt;
+        state.navigationFailure = true;
+        state.homeFailure = attempt.kind === "home";
+        renderCueStatus();
+        return false;
+      }
+      if (disposed || activeNavigationAttempt !== attempt || attempt.generation !== navigationGeneration) return false;
+    }
     if (ready && navigationSession.complete(attempt.ticket)) {
+      failedBookmarkAttempt = null;
       activeNavigationAttempt = null;
       failedNavigationAttempt = null;
       state.navigationFailure = false;
@@ -943,10 +969,15 @@ export function initNliStaffRemote(dataContext, {
     return false;
   }
 
-  async function transitionToStep(item, index, {
+  function transitionToStep(item, index, options) {
+    return trackNavigation(performTransitionToStep(item, index, options));
+  }
+
+  async function performTransitionToStep(item, index, {
     returnTo = state.returnTo,
     navigationIntent = "forward",
   } = {}) {
+    if (experienceSuspended || dataContext.isExperienceActive?.() === false) return false;
     if (storyChooserOpen) closeStoryChooser({ restoreFocus: false });
     const nextIndex = Math.max(0, Math.min(index, item.steps.length - 1));
     const destination = item.steps[nextIndex];
@@ -989,8 +1020,7 @@ export function initNliStaffRemote(dataContext, {
         state.returnTo = returnTo;
         renderPlayer();
         const replaced = await presentation.replace(destination.presentation.segmentId);
-        settleNavigationAttempt(operationContext, replaced);
-        return replaced;
+        return await settleNavigationAttempt(operationContext, replaced) && replaced;
       }
       return await searchActions.transitionToStep(item, index, returnTo, operationContext);
     } finally {
@@ -1080,24 +1110,12 @@ export function initNliStaffRemote(dataContext, {
     });
   }
 
-  let bootArmed = true;
-  let hydrated = false;
-  function maybeBootHome() {
-    if (!bootArmed || !hydrated || !state.connected) return;
-    if (state.screen !== "home" || state.scriptId) {
-      bootArmed = false;
-      return;
-    }
-    bootArmed = false;
-    void exitToHome();
-  }
-
   function exitToHome() {
+    if (experienceSuspended || dataContext.isExperienceActive?.() === false) return Promise.resolve(false);
     if (storyChooserOpen) closeStoryChooser({ restoreFocus: false });
-    bootArmed = false;
     state.homeFailure = false;
     renderCueStatus();
-    return performHomeExit();
+    return trackNavigation(performHomeExit());
   }
 
   async function performHomeExit(replayAttempt = null) {
@@ -1173,13 +1191,15 @@ export function initNliStaffRemote(dataContext, {
         else renderHome();
         return false;
       }
-      state.homeReady = true;
-      navigationSettled = settleNavigationAttempt(attempt, { status: "ready" });
-      try { onHomeSuccess?.(); } catch { /* completion notification must not change Home behavior */ }
-      return true;
+      navigationSettled = await settleNavigationAttempt(attempt, { status: "ready" });
+      state.homeReady = navigationSettled;
+      if (navigationSettled) {
+        try { onHomeSuccess?.(); } catch { /* completion notification must not change Home behavior */ }
+      }
+      return navigationSettled;
     } finally {
       if (!navigationSettled && attempt.generation === navigationGeneration) {
-        settleNavigationAttempt(attempt, { status: "failed" });
+        await settleNavigationAttempt(attempt, { status: "failed" });
       }
       if (searchTransition.isCurrent(token)) {
         state.presentationClosePending = false;
@@ -1196,10 +1216,24 @@ export function initNliStaffRemote(dataContext, {
     }
   }
 
-  async function retrySceneNavigation() {
+  function retrySceneNavigation() {
+    return trackNavigation(performRetrySceneNavigation());
+  }
+
+  async function performRetrySceneNavigation() {
     const failed = failedNavigationAttempt;
     if (!failed || activeNavigationAttempt !== failed || disposed) return false;
     state.navigationFailure = false;
+    if (failedBookmarkAttempt === failed) {
+      const saved = await settleNavigationAttempt(failed, failed.kind === "fixed-presentation" ? true : { status: "ready" });
+      if (saved && failed.kind === "home") {
+        state.homeReady = true;
+        state.homeFailure = false;
+        try { onHomeSuccess?.(); } catch { /* readiness notification is advisory */ }
+      }
+      render();
+      return saved;
+    }
     if (failed.kind === "home") {
       state.homeFailure = false;
       return performHomeExit(failed);
@@ -1210,8 +1244,7 @@ export function initNliStaffRemote(dataContext, {
       state.navigationPending = true;
       try {
         const result = await presentation.replace(step?.presentation?.segmentId);
-        settleNavigationAttempt(failed, result);
-        return result;
+        return await settleNavigationAttempt(failed, result) && result;
       } finally {
         if (failed.generation === navigationGeneration) {
           state.navigationPending = false;
@@ -1223,7 +1256,7 @@ export function initNliStaffRemote(dataContext, {
     const failedCue = state.failedCue;
     if (!failedCue || state.cueStatus !== "failed") return false;
     const result = await applyCue(failedCue.cue, failedCue.narrativeId, failedCue.beforeApply);
-    settleNavigationAttempt(failed, result);
+    await settleNavigationAttempt(failed, result);
     rearmTransport();
     if (state.screen === "player") renderPlayer();
     if (result?.status === "ready" && !failedCue.beforeApply) {
@@ -1242,6 +1275,7 @@ export function initNliStaffRemote(dataContext, {
   }
 
   async function selectAndOpenArchive(query) {
+    const generation = navigationGeneration;
     try {
       await peopleSearch.load();
     } catch {
@@ -1249,6 +1283,7 @@ export function initNliStaffRemote(dataContext, {
       renderKit();
       return;
     }
+    if (disposed || experienceSuspended || generation !== navigationGeneration || dataContext.isExperienceActive?.() === false) return;
     const person = findPerson(query);
     if (!person) {
       state.searchError = txt("archiveMissing");
@@ -1278,7 +1313,7 @@ export function initNliStaffRemote(dataContext, {
     syncInputDirection: () => {},
     isNarrativeActive: () => false,
     isConnected: () => state.connected,
-    onArchiveClosed: () => { void clearSearchFocus(); },
+    onArchiveClosed: () => { if (!experienceSuspended) void clearSearchFocus(); },
     onStateChange: () => {
       if (!archiveUiReady) return;
       renderKit();
@@ -1371,8 +1406,8 @@ export function initNliStaffRemote(dataContext, {
         if (generation === navigationGeneration) rearmTransport();
       }
     },
-    afterDestinationCue: (item, index, cueResult, operationContext) => {
-      settleNavigationAttempt(operationContext, cueResult);
+    afterDestinationCue: async (item, index, cueResult, operationContext) => {
+      if (operationContext && !await settleNavigationAttempt(operationContext, cueResult)) return false;
       if (cueResult?.status !== "ready") return;
       const nextIndex = Math.max(0, Math.min(index, item.steps.length - 1));
       if (state.scriptId !== item.id || state.step !== nextIndex) return;
@@ -1389,7 +1424,7 @@ export function initNliStaffRemote(dataContext, {
   archiveUiReady = true;
 
   $("narrativeList").addEventListener("click", (event) => {
-    if (state.searchPending) return;
+    if (state.searchPending || experienceSuspended || dataContext.isExperienceActive?.() === false) return;
     const shortcut = event.target.closest("[data-show-step]");
     if (shortcut) {
       enterScript(SHOW.id, { step: showStepIndex(shortcut.dataset.showStep) });
@@ -1547,7 +1582,7 @@ export function initNliStaffRemote(dataContext, {
   }
 
   function onArchiveClick(event) {
-    if (storyChooserOpen) return;
+    if (storyChooserOpen || !manualMutationsOpen()) return;
     const { button, action } = archiveActionFrom(event);
     if (!button || (action !== "open" && action !== "close")) return;
     if (action === "close") {
@@ -1563,7 +1598,7 @@ export function initNliStaffRemote(dataContext, {
   }
 
   function onArchivePointerDown(event) {
-    if (storyChooserOpen) return;
+    if (storyChooserOpen || !manualMutationsOpen()) return;
     const { action } = archiveActionFrom(event);
     if (action !== "page_up" && action !== "page_down") return;
     archivePageHold?.start(event);
@@ -1574,9 +1609,11 @@ export function initNliStaffRemote(dataContext, {
   $("kitArchive")?.addEventListener("pointerdown", onArchivePointerDown);
   $("searchArchiveMount")?.addEventListener("pointerdown", onArchivePointerDown);
 
-  $("searchReset")?.addEventListener("click", () => { void clearSearchFocus(); });
+  $("searchReset")?.addEventListener("click", () => {
+    if (!experienceSuspended && dataContext.isExperienceActive?.() !== false) void clearSearchFocus();
+  });
   $("searchInput").addEventListener("input", (event) => {
-    if (storyChooserOpen || state.searchPending) return;
+    if (storyChooserOpen || state.searchPending || experienceSuspended || dataContext.isExperienceActive?.() === false) return;
     if (!event.target.value.trim()) {
       renderResults("");
       void clearSearchFocus();
@@ -1586,7 +1623,7 @@ export function initNliStaffRemote(dataContext, {
   });
 
   $("searchResults").addEventListener("click", (event) => {
-    if (storyChooserOpen || state.searchPending) return;
+    if (storyChooserOpen || state.searchPending || experienceSuspended || dataContext.isExperienceActive?.() === false) return;
     const placeBtn = event.target.closest("[data-kind='place']");
     if (placeBtn) {
       const place = lastPlaces.find((item) => item.id === placeBtn.dataset.placeId);
@@ -1647,7 +1684,7 @@ export function initNliStaffRemote(dataContext, {
     renderConnection();
     peopleArchive.syncArchiveButton();
     renderKit();
-    maybeBootHome();
+    noteHydratedHome();
   });
   subscribe("connectionStatus", (status) => {
     state.connectionStatus = status;
@@ -1658,10 +1695,9 @@ export function initNliStaffRemote(dataContext, {
     notifyRefreshState();
   });
   subscribe("narrativeState", () => {
-    hydrated = true;
     timelineHost._clearNliScrubOnNarrativeChange?.();
     renderKit();
-    maybeBootHome();
+    noteHydratedHome();
   });
   subscribe("escapeOverlay", () => {
     renderKit();
@@ -1673,7 +1709,7 @@ export function initNliStaffRemote(dataContext, {
     notifyRefreshState();
   });
   state.connected = dataContext?.isConnected?.() !== false;
-  render();
+  hydrateExperience();
   void applyNliFontChoices(getNliFontChoices());
   void timelineHost._ensureNliFeatureCache?.();
   function getRefreshState() {
@@ -1711,10 +1747,116 @@ export function initNliStaffRemote(dataContext, {
     return { ready, refreshBlockReason };
   }
 
-  return { render, applyNliFontChoices, getRefreshState, dispose() {
+  function noteHydratedHome() {
+    if (state.screen !== "home" || experienceSuspended || dataContext.isExperienceActive?.() === false || !state.connected) return;
+    state.homeReady = isCanonicalHome({
+      narrativeState: dataContext.getNarrativeState?.(), investigationClock: dataContext.getInvestigationClock?.(),
+      layerGroups: dataContext.getLayerGroups?.(), personSelection: dataContext.getPersonSelection?.(),
+      escapeOverlay: dataContext.getEscapeOverlay?.(), nowMs: dataContext.correctedNow?.() ?? Date.now(),
+    });
+    if (state.homeReady && !homeHydrationNotified) {
+      homeHydrationNotified = true;
+      try { onHomeSuccess?.(); } catch { /* management readiness does not mutate the scene */ }
+    }
+    notifyRefreshState();
+  }
+
+  function invalidateExperienceWork() {
+    navigationGeneration += 1;
+    if (activeNavigationAttempt) navigationSession.abandon(activeNavigationAttempt.ticket);
+    activeNavigationAttempt = null;
+    failedNavigationAttempt = null;
+    failedBookmarkAttempt = null;
+    searchTransition.begin();
+    cues.cancel();
+    timelineHost.invalidateTransport();
+    presenterCommands.invalidate();
+    presenterView.setVisible(false);
+    archivePageHold.clear();
+    if (storyChooserOpen) closeStoryChooser({ restoreFocus: false });
+  }
+
+  function hydrateExperience(experience = dataContext.getExperienceState?.()) {
+    if (disposed) return false;
+    invalidateExperienceWork();
+    const bookmark = bookmarks.hydrate(experience?.nli_bookmark);
+    if (hydratedRevision !== (experience?.revision ?? null)) homeHydrationNotified = false;
+    hydratedRevision = experience?.revision ?? null;
+    experienceSuspended = false;
+    state.scriptId = bookmark.scriptId;
+    state.step = bookmark.step;
+    state.returnTo = bookmark.returnTo;
+    state.searchPending = false;
+    state.navigationPending = false;
+    state.presentationClosePending = false;
+    state.navigationFailure = false;
+    state.homeFailure = false;
+    state.homeReady = false;
+    state.cueStatus = bookmark.scriptId ? "ready" : null;
+    state.cueAttempt = null;
+    state.failedCue = null;
+    navigationSession.complete(navigationSession.begin(null, "home"));
+    if (bookmark.scriptId) navigationSession.complete(navigationSession.begin(bookmark, "entry"));
+    showScreen(bookmark.scriptId ? "player" : "home");
+    render();
+    noteHydratedHome();
+    return true;
+  }
+
+  subscribe("experienceState", experience => {
+    if (experience?.revision !== hydratedRevision) hydrateExperience(experience);
+    else if (experience?.pending_transition) {
+      timelineHost.invalidateTransport();
+      render();
+    }
+  });
+
+  async function suspendForExperienceSwitch() {
+    if (suspendPromise) return suspendPromise;
+    experienceSuspended = true;
+    invalidateExperienceWork();
+    state.presentationClosePending = true;
+    render();
+    suspendPromise = (async () => {
+      try {
+        await bookmarks.flush();
+        const [presentationClosed, archiveClosed] = await Promise.all([
+          presentation.closeForStepChange(), closeNliArchiveForExperienceSwitch(peopleArchive, dataContext),
+        ]);
+        return presentationClosed === true && archiveClosed === true;
+      } catch { return false; }
+      finally { state.presentationClosePending = false; suspendPromise = null; if (!disposed) render(); }
+    })();
+    return suspendPromise;
+  }
+
+  function resumeAfterSwitchFailure() {
+    if (disposed) return;
+    experienceSuspended = false;
+    state.presentationClosePending = false;
+    render();
+    rearmTransport();
+  }
+
+  async function flushBookmark() {
+    let current;
+    do {
+      current = navigationWork;
+      await current;
+    } while (current !== navigationWork);
+    await bookmarks.flush();
+    if (activeNavigationAttempt || state.navigationPending || state.searchPending) {
+      throw new Error("NLI navigation has not completed successfully");
+    }
+    return bookmarks.get();
+  }
+
+  return { render, applyNliFontChoices, getRefreshState, hydrateExperience, suspendForExperienceSwitch,
+    resumeAfterSwitchFailure, getExperienceBookmark: bookmarks.get, flushBookmark, dispose() {
     if (disposed) return;
     disposed = true;
     staffFonts.dispose();
+    bookmarks.dispose();
     archiveUiReady = false;
     navigationGeneration += 1;
     if (activeNavigationAttempt) navigationSession.abandon(activeNavigationAttempt.ticket);
@@ -1728,8 +1870,6 @@ export function initNliStaffRemote(dataContext, {
     document.removeEventListener("click", onChooserDocumentClick, true);
     document.removeEventListener("focusin", onChooserFocusIn);
     document.removeEventListener("keydown", onChooserKeydown);
-    window.removeEventListener("pagehide", releaseExhibitMode);
-    window.removeEventListener("beforeunload", releaseExhibitMode);
     timelineHost.invalidateTransport();
     presenterCommands.dispose();
     presenterGate.dispose();

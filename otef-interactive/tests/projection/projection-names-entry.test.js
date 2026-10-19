@@ -99,6 +99,35 @@ test('a replacement is promoted only after both final renders succeed', async ()
   await Promise.resolve(); expect(shown).toBe(false);
   const b = h.right.displayed('cue-1'); await Promise.all([a, b]); expect(shown).toBe(true);
 });
+
+test('reveal time is chosen after both final draws rather than before a slow scene mount', async () => {
+  vi.useFakeTimers(); const h = pair();
+  const [left, right] = await Promise.all([h.left.prepare('cue-1', prepared), h.right.prepare('cue-1', prepared)]);
+  let revealStarted = false;
+  const reveal = Promise.all([left.namesEntry.revealReady, right.namesEntry.revealReady]);
+  reveal.then(() => { revealStarted = true; }, () => {});
+  const shownLeft = h.left.displayed('cue-1');
+  shownLeft.catch(() => {});
+  await vi.advanceTimersByTimeAsync(500);
+  expect(revealStarted).toBe(false);
+  const shownRight = h.right.displayed('cue-1');
+  const [a, b] = await reveal;
+  expect(a.startAtMs).toBe(b.startAtMs);
+  expect(a.startAtMs).toBeGreaterThan(Date.now());
+  expect(a.startAtMs).toBeGreaterThan(left.namesEntry.startAtMs);
+  await vi.advanceTimersByTimeAsync(100);
+  await Promise.all([shownLeft, shownRight]);
+});
+
+test.each(['failure', 'superseded'])('a %s entry cannot later release its pending reveal', async reason => {
+  const h = pair();
+  const pairReady = await Promise.all([h.left.prepare('cue-1', prepared), h.right.prepare('cue-1', prepared)]);
+  const reveals = pairReady.map(value => value.namesEntry.revealReady.catch(error => error));
+  if (reason === 'failure') h.right.fail('cue-1', 'Final draw failed');
+  else await Promise.all([h.left.prepare('cue-2', prepared), h.right.prepare('cue-2', prepared)]);
+  const results = await Promise.all(reveals);
+  expect(results.every(value => value instanceof Error)).toBe(true);
+});
 test('a late rendering failure prevents promotion on both replacements', async () => {
   const h = pair(), left = h.make('left', 1), right = h.make('right', 1);
   await Promise.all([left.prepare('cue-1', prepared), right.prepare('cue-1', prepared)]);

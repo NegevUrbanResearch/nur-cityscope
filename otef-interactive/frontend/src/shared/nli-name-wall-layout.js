@@ -14,9 +14,12 @@ const compare = (a, b, language) => a.orderKey.localeCompare(b.orderKey, languag
 const keySort = (value) => Array.isArray(value) ? value.map(keySort) : value && typeof value === 'object'
   ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, keySort(value[key])])) : value;
 const boxOf = (pieces) => {
-  const points = pieces.flatMap((piece) => piece.polygon);
-  return { x0: Math.min(...points.map((p) => p[0])), x1: Math.max(...points.map((p) => p[0])),
-    y0: Math.min(...points.map((p) => p[1])), y1: Math.max(...points.map((p) => p[1])) };
+  const bounds = { x0: Infinity, x1: -Infinity, y0: Infinity, y1: -Infinity };
+  for (const piece of pieces) for (const [x, y] of piece.polygon) {
+    bounds.x0 = Math.min(bounds.x0, x); bounds.x1 = Math.max(bounds.x1, x);
+    bounds.y0 = Math.min(bounds.y0, y); bounds.y1 = Math.max(bounds.y1, y);
+  }
+  return bounds;
 };
 
 function metricRectangle(metric, size) {

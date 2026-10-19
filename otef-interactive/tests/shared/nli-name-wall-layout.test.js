@@ -1,4 +1,4 @@
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
 import { buildNamesWallLayout } from '../../frontend/src/shared/nli-name-wall-layout.js';
 import { rectCoveredByPieces, ringContainsGuardedRect } from '../../frontend/src/shared/nli-name-wall-coverage.js';
 import { DEFAULT_PROJECTION_CONFIG } from '../../frontend/src/shared/projection-config-schema.js';
@@ -19,6 +19,33 @@ const namesWall = { activeMode: 'wall', innerEdgeInsetPx: { left: 0, right: 0 },
 const payload = (overrides = {}) => ({ records: records(), metrics: metrics(), coverage, datasetVersion: 'v1',
   logicalPlane: { heading: 0, planeScale: 1 }, referenceZoom: 10, overviewBounds: [[34,31],[35,32]],
   configRevision: 4, namesWall: structuredClone(namesWall), ...overrides });
+
+test('model placement handles dense calibrated coverage without exceeding the call argument limit', async () => {
+  const triangles = [];
+  for (let row = 0; row < 10; row++) for (let column = 0; column < 25; column++) {
+    const x0 = column / 25, x1 = (column + 1) / 25;
+    const y0 = row / 10, y1 = (row + 1) / 10;
+    triangles.push({ polygon: [[x0, y0], [x1, y0], [x1, y1]] },
+      { polygon: [[x0, y0], [x1, y1], [x0, y1]] });
+  }
+  const dense = { pieces: { left: [...triangles, rectPiece(0, 50, 1, 80)],
+    right: [rectPiece(128, 178)] }, outputIdentities: coverage.outputIdentities };
+  const wall = structuredClone(namesWall); wall.activeMode = 'model';
+  // Worker argument limits vary by engine; exercise the same boundary with a small mesh.
+  const bounded = operation => (...values) => {
+    if (values.length > 1024) throw new RangeError('Maximum call stack size exceeded');
+    return operation(...values);
+  };
+  const originalMin = Math.min, originalMax = Math.max;
+  const min = vi.spyOn(Math, 'min').mockImplementation(bounded(originalMin));
+  const max = vi.spyOn(Math, 'max').mockImplementation(bounded(originalMax));
+  try {
+    const result = await buildNamesWallLayout(payload({ coverage: dense, namesWall: wall,
+      ring: [[0,0],[178,0],[178,80],[0,80],[0,0]], ringHash: 'dense' }));
+    expect(result.diagnostics).toMatchObject({ state: 'valid', placed: 3, missing: 0, overlap: 0, invalidCoverage: 0 });
+    expect(new Set(result.placements.map(item => item.id))).toEqual(new Set(['a', 'b', 'c']));
+  } finally { min.mockRestore(); max.mockRestore(); }
+});
 
 test('English model visits disjoint spans and names left to right without changing coverage or ownership', async () => {
   const rows = ['Alpha', 'Beta', 'Gamma', 'Zeta'].map((name, i) => ({ pid: String(i), name, orderKey: name, location: "Be'eri", sourceCoordinates: [34.5, 31.4] }));

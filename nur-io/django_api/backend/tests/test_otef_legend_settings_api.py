@@ -57,6 +57,42 @@ class LegendSettingsApiTests(TestCase):
         self.assertEqual(projection["right"]["dwellSeconds"], 30)
         self.assertEqual(response.json()["legendLayoutRevision"], 2)
 
+    def test_layout_edits_remain_available_after_experience_switches(self):
+        layout = {"leftPct": 10, "topPct": 10, "widthPct": 20, "heightPct": 20,
+                  "fontPx": 22, "rotateDeg": 0, "dwellSeconds": 8, "columns": 0}
+        for experience in ("regular", "nli"):
+            with self.subTest(experience=experience):
+                self.state.active_experience = experience
+                self.state.experience_revision = 18
+                self.state.save(update_fields=["active_experience", "experience_revision"])
+                revision = self.state.legend_layout_revision
+                with patch("backend.views.OTEFViewportStateViewSet._broadcast_legend_settings"):
+                    response = self.command(span="left", baseRevision=revision, layout=layout)
+                self.assertEqual(response.status_code, 200, response.json())
+                self.assertEqual(response.json()["legendProjection"]["left"], layout)
+                self.assertEqual(response.json()["legendLayoutRevision"], revision + 1)
+                stale = self.command(span="left", baseRevision=revision, layout={**layout, "leftPct": 15})
+                self.assertEqual(stale.status_code, 409)
+                self.assertEqual(stale.json()["error"], "conflict")
+                self.state.refresh_from_db()
+                self.assertEqual(self.state.legend_settings["projection"]["left"], layout)
+                self.assertEqual(self.state.active_experience, experience)
+                self.assertEqual(self.state.experience_revision, 18)
+
+    def test_legend_metadata_still_requires_the_current_experience(self):
+        self.state.active_experience = "nli"
+        self.state.experience_revision = 18
+        self.state.save(update_fields=["active_experience", "experience_revision"])
+        for patch_payload in ({"language": "en"}, {"summarizedGroupIds": ["roads"]}):
+            with self.subTest(patch=patch_payload):
+                response = self.command(**patch_payload)
+                self.assertEqual(response.status_code, 409)
+                self.assertEqual(response.json()["reason"], "experience_stale")
+                with patch("backend.views.OTEFViewportStateViewSet._broadcast_legend_settings"):
+                    accepted = self.command(**patch_payload, experience="nli", experience_revision=18)
+                self.assertEqual(accepted.status_code, 200, accepted.json())
+                self.assertEqual(accepted.json()["changeKind"], "metadata")
+
     def test_columns_values_round_trip_and_legacy_layout_keeps_seven_fields(self):
         base = {"leftPct": 10, "topPct": 10, "widthPct": 20, "heightPct": 20, "fontPx": 22, "rotateDeg": 0, "dwellSeconds": 8}
         for columns in range(4):

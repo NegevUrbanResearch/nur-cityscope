@@ -5,6 +5,7 @@
 import { normalizeGisBasemap } from "../shared/gis-basemap.js";
 import { createRemoteBasemapController } from "./remote-basemap-controls.js";
 export { createRemoteBasemapController, deriveBasemapControlState } from "./remote-basemap-controls.js";
+import { installSharedExperienceNavigation } from "./remote-experience-navigation.js";
 import { createStaffFullscreenControl } from "./nli-staff-fullscreen.js";
 import { normalizeNarrativeState } from "../shared/nli-narratives.js";
 import {
@@ -46,10 +47,8 @@ let zoomController = null;
 // Table name for this controller
 const TABLE_NAME = "otef";
 
-/** Bottom shell tabs: LTR bar order (Library launcher | Presentation | Layers | Navigation). */
+/** Shared destinations are arranged left to right in the footer. */
 const REMOTE_TAB_KEYS = ["curation", "slideshow", "layers", "navigation"];
-const LAUNCHER_REMOTE_TAB_KEYS = new Set(["curation"]);
-const NLI_STAFF_REMOTE_HREF = "nli-staff-remote.html";
 
 /*
  * Legacy `#toggleModel` wiring was removed: that checkbox is not part of the remote shell
@@ -80,8 +79,8 @@ async function initialize() {
   }
 
   // Initialize shared DataContext (single WS + API state)
+  OTEFDataContext.configureCommandExperience("regular");
   await OTEFDataContext.init(TABLE_NAME);
-  OTEFDataContext.setExhibitMode(false);
 
   zoomController = createRemoteZoomController({
     slider: document.getElementById("zoomSlider"),
@@ -192,7 +191,7 @@ async function initialize() {
     color: "#c6cbd4",
   });
   joystickController.init();
-  initRemoteShellTabs();
+  unsubscribeFunctions.push(installSharedExperienceNavigation({ dataContext: OTEFDataContext, kind: "regular", onRegularTab: setRemoteTab }));
   const labels = { get enter() { return t("fullscreenEnter"); }, get exit() { return t("fullscreenExit"); }, get unavailable() { return t("fullscreenUnavailable"); } };
   const fullscreen = createStaffFullscreenControl({ root: document.documentElement, button: document.getElementById("remoteFullscreenBtn"), status: document.getElementById("remoteFullscreenStatus"), labels });
   const refreshLocale = () => { fullscreen.render(); basemapControlController?.render(currentState.basemap); };
@@ -204,21 +203,15 @@ async function initialize() {
   updateUI();
 }
 
-function openNliStaffRemote() {
-  const url = new URL(NLI_STAFF_REMOTE_HREF, window.location.href);
-  url.searchParams.set("from", "remote");
-  window.location.assign(`${url.pathname}${url.search}`);
-}
-
 /**
- * Tab shell: show one `data-remote-tab` panel, sync `role="tab"` (Task 4; locale in Task 5).
+ * Show the selected regular workspace without changing live output.
  */
 function setRemoteTab(activeKey) {
-  if (!REMOTE_TAB_KEYS.includes(activeKey) || LAUNCHER_REMOTE_TAB_KEYS.has(activeKey)) return;
+  if (!REMOTE_TAB_KEYS.includes(activeKey) || activeKey === "curation") return;
   const nav = document.getElementById("remoteBottomNav");
   const previousActiveKey =
     nav
-      ?.querySelector('[role="tab"][data-remote-tab][aria-selected="true"]')
+      ?.querySelector('[data-remote-tab][aria-current="page"]')
       ?.getAttribute("data-remote-tab") || null;
 
   const panels = document.querySelectorAll(".remote-tab-panel[data-remote-tab]");
@@ -230,12 +223,13 @@ function setRemoteTab(activeKey) {
 
   if (!nav) return;
 
-  nav.querySelectorAll('[role="tab"][data-remote-tab]').forEach((tab) => {
+  nav.querySelectorAll('[data-remote-tab]').forEach((tab) => {
     const key = tab.getAttribute("data-remote-tab");
     const isActive = key === activeKey;
-    tab.setAttribute("aria-selected", isActive ? "true" : "false");
+    if (isActive) tab.setAttribute("aria-current", "page");
+    else tab.removeAttribute("aria-current");
     tab.classList.toggle("is-active", isActive);
-    tab.tabIndex = LAUNCHER_REMOTE_TAB_KEYS.has(key) || isActive ? 0 : -1;
+    tab.tabIndex = 0;
   });
 
   if (
@@ -306,44 +300,6 @@ export function initRemoteLocaleControls(dataContext = globalThis.OTEFDataContex
   }
 
   updateConnectionStatus(lastConnectionUiStatus);
-}
-
-function initRemoteShellTabs() {
-  const nav = document.getElementById("remoteBottomNav");
-  if (!nav) return;
-
-  nav.addEventListener("click", (e) => {
-    const tab = e.target.closest('[role="tab"][data-remote-tab]');
-    if (!tab || !nav.contains(tab)) return;
-    const k = tab.getAttribute("data-remote-tab");
-    if (LAUNCHER_REMOTE_TAB_KEYS.has(k) || tab.getAttribute("data-nli-remote-launch") === "true") {
-      openNliStaffRemote();
-      return;
-    }
-    if (tab.getAttribute("aria-disabled") === "true") return;
-    if (k) setRemoteTab(k);
-  });
-
-  nav.addEventListener("keydown", (e) => {
-    const el = e.target;
-    if (!el || el.getAttribute("role") !== "tab" || !nav.contains(el)) return;
-    if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
-    e.preventDefault();
-    const key = el.getAttribute("data-remote-tab");
-    const i = REMOTE_TAB_KEYS.indexOf(key);
-    if (i < 0) return;
-    const delta = e.key === "ArrowRight" ? 1 : -1;
-    const enabledTabKeys = REMOTE_TAB_KEYS.filter((tabKey) => !LAUNCHER_REMOTE_TAB_KEYS.has(tabKey));
-    const enabledIndex = enabledTabKeys.indexOf(key);
-    if (enabledIndex < 0) return;
-    const next = (enabledIndex + delta + enabledTabKeys.length) % enabledTabKeys.length;
-    const nextKey = enabledTabKeys[next];
-    setRemoteTab(nextKey);
-    document.getElementById(`remote-tab-${nextKey}`)?.focus();
-  });
-
-  // Single source of truth on load: panels + tablist aria (HTML may omit `hidden` on nav tab)
-  setRemoteTab("navigation");
 }
 
 /**
