@@ -124,7 +124,7 @@ test("uses sign-specific renderField limits and preserves decimal size and signe
   expect(settingsClient.writes.at(-1).settings.outputs.left[0]).toMatchObject({ x: 123.4, y: 456.7 });
   rotation.value = "-17.3"; rotation.dispatchEvent(new Event("input", { bubbles: true })); rotation.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
   expect(settingsClient.writes.at(-1).settings.outputs.left[0].rotateDeg).toBe(-17.3);
-  click(dialog.querySelector('[data-action="numeric-sign"]'));
+  rotation.value = '17.3'; rotation.dispatchEvent(new Event('input', { bubbles: true }));
   dialog.querySelector('input[data-field="rotateDeg"][data-input="number"]').dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
   expect(settingsClient.writes.at(-1).settings.outputs.left[0].rotateDeg).toBe(17.3);
   click(dialog.querySelector('[data-action="road-sign-visible"]'));

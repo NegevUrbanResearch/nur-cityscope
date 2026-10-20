@@ -2,6 +2,14 @@
 import { expect, test, vi } from "vitest";
 import { createStaffRemotePanel } from "../../frontend/src/projection-config/staff-remote-panel.js";
 
+test('does not report a registered tablet offline when its status connection is unavailable', () => {
+  const manager = { getState: () => ({ connectionStatus: 'Connection unavailable', registration: { deviceId: 'tablet' }, remotes: [] }), subscribe: () => () => {} };
+  const panel = createStaffRemotePanel({ document, manager });
+  expect(panel.summary.textContent).toContain('Connection unavailable');
+  expect(panel.element.textContent).not.toContain('tablet is offline');
+  panel.dispose();
+});
+
 test("renders an always-visible summary and no-action empty state using text nodes", () => {
   const manager = { getState: () => ({ connectionStatus: "Connected", remotes: [] }), subscribe: () => () => {}, refresh: vi.fn() };
   const panel = createStaffRemotePanel({ document, manager });
@@ -24,7 +32,7 @@ test("shows each targeted row, Home-first guidance, disabled reasons, and versio
   const panel = createStaffRemotePanel({ document, manager });
   document.body.append(panel.element);
   expect(panel.element.textContent).toContain("Version unavailable");
-  expect(panel.element.textContent).toContain("Return GIS/projection to Home, then reload this tablet.");
+  expect(panel.element.textContent).toContain("Finish active actions and close any archive or presentation before refreshing.");
   expect(panel.element.textContent).toContain("The tablet may need a local tap to return to fullscreen.");
   expect(panel.element.textContent).toContain("Return GIS/projection to Home before refreshing");
   expect(panel.element.textContent).toContain("If an archive request is still settling, wait before refreshing.");

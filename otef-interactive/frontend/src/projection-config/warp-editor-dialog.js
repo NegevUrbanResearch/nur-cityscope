@@ -31,8 +31,23 @@ export function createWarpEditorDialog({ document: doc, host, editorPanel, overl
   viewport.appendChild(dimensions);
   const finePanel = doc.createElement("aside"); finePanel.className = "warp-editor-fine-panel";
   const controlsColumn = doc.createElement("div"); controlsColumn.className = "warp-editor-controls-column";
+  const pageTabs = doc.createElement('nav'); pageTabs.className = 'warp-editor-pages'; pageTabs.setAttribute('aria-label', 'Warp settings pages');
+  const topologyPage = doc.createElement('div'); topologyPage.className = 'warp-editor-layout-page';
+  const pageButtons = new Map();
+  const selectPage = (page) => {
+    if (!pageButtons.has(page) || onIsAdjusting() || onBeforeSwitch() === false) return false;
+    modal.dataset.page = page;
+    pageButtons.forEach((button, name) => button.setAttribute('aria-pressed', String(name === page)));
+    return true;
+  };
+  for (const [page, label] of [['adjust', 'Adjust'], ['layout', 'Grid layout'], ['options', 'Options']]) {
+    const button = doc.createElement('button'); button.type = 'button'; button.textContent = label; button.dataset.warpPage = page;
+    button.addEventListener('click', () => selectPage(page)); pageButtons.set(page, button); pageTabs.appendChild(button);
+  }
+  modal.dataset.page = 'adjust'; pageButtons.get('adjust').setAttribute('aria-pressed', 'true');
+  controlsColumn.appendChild(pageTabs);
   controlsColumn.appendChild(finePanel);
-  if (topologyControls) controlsColumn.appendChild(topologyControls);
+  if (topologyControls) { topologyPage.appendChild(topologyControls); controlsColumn.appendChild(topologyPage); }
   body.append(viewport, controlsColumn);
   const footer = doc.createElement("footer"); footer.className = "warp-editor-footer";
   const reconciliationHome = reconciliationControls?.parentElement || null;
@@ -50,7 +65,7 @@ export function createWarpEditorDialog({ document: doc, host, editorPanel, overl
   const calibrationNote = doc.createElement('p'); calibrationNote.className = 'calibration-view-note';
   calibrationNote.textContent = 'Temporary landmarks only. Assisted capture requires an idle narrative and a stopped slideshow; the names wall is hidden locally.';
   const calibrationTools = doc.createElement('div'); calibrationTools.className = 'calibration-view-tools';
-  calibrationTools.append(blackoutLabel, calibrationStatus, calibrationNote); controlsColumn.prepend(calibrationTools);
+  calibrationTools.append(blackoutLabel, calibrationStatus, calibrationNote, retry); controlsColumn.appendChild(calibrationTools);
   const traceUi = trace?.enabled ? createProjectionTraceUi({ document: doc, trace }) : null;
   if (traceUi) footer.appendChild(traceUi.element);
   modal.append(header, body, footer); host.appendChild(modal);
@@ -206,6 +221,7 @@ export function createWarpEditorDialog({ document: doc, host, editorPanel, overl
     if (fullViewport) {
       fullViewport = false;
       modal.dataset.fullViewport = "false";
+      if (appRoot.dataset) appRoot.dataset.warpFullViewport = 'false';
       if (appRoot.dataset) appRoot.dataset.warpFullViewport = "false";
       fullViewportButton.textContent = "Full-screen";
       fullViewportButton.setAttribute("aria-label", "Full-screen");
@@ -236,6 +252,8 @@ export function createWarpEditorDialog({ document: doc, host, editorPanel, overl
     if (!modal.hidden && session?.side === side) {
       if (modal.dataset.mode !== mode && onBeforeSwitch() === false) return false;
       modal.dataset.mode = mode; title.textContent = `${side === "left" ? "Left" : "Right"} · ${mode === "grid" ? "Grid Warp" : "Keystone"}`;
+      pageButtons.get('layout').hidden = mode !== 'grid';
+      if (mode !== 'grid' && modal.dataset.page === 'layout') selectPage('adjust');
       return;
     }
     if (!modal.hidden) { if (onBeforeSwitch() === false) return false; calibration.switchOutput(side); clearFrame(); }
@@ -266,10 +284,11 @@ export function createWarpEditorDialog({ document: doc, host, editorPanel, overl
       blackoutInput.checked = false;
       void calibration.enter({ output: side });
       modal.dataset.fullViewport = "false";
-      const coarsePointer = Boolean(win?.matchMedia?.("(pointer: coarse)")?.matches);
-      setFullViewport(isPanel && (Number(win?.innerWidth) <= 1100 || coarsePointer));
+      modal.dataset.page = 'adjust';
+      pageButtons.forEach((button, page) => button.setAttribute('aria-pressed', String(page === 'adjust')));
     }
-    closeButton.focus?.();
+    pageButtons.get('layout').hidden = mode !== 'grid';
+    closeButton.focus?.({ preventScroll: true });
     onVisibilityChange(true);
   };
   if (isPanel) closeButton.addEventListener("pointerdown", (event) => event.preventDefault?.());
@@ -284,6 +303,7 @@ export function createWarpEditorDialog({ document: doc, host, editorPanel, overl
     isOpen() { return !modal.hidden; },
     isFullViewport() { return fullViewport; },
     setFullViewport,
+    selectPage,
     update(config, { live, appliedSummary, reconciliation = null } = {}) {
       if (live !== undefined) liveInput.checked = Boolean(live);
       if (appliedSummary !== undefined) applied.textContent = appliedSummary;
@@ -296,6 +316,8 @@ export function createWarpEditorDialog({ document: doc, host, editorPanel, overl
     setPointMatchPreview(config) { localPreviewConfig = config; return preview.update(config || ordinaryConfig); },
     updatePointMatch({ active = false, canApply = false } = {}) {
       pointMatchActive = active;
+      modal.dataset.matching = String(active);
+      if (active) { modal.dataset.page = 'adjust'; pageButtons.forEach((button, page) => button.setAttribute('aria-pressed', String(page === 'adjust'))); }
       pointMatchCanApply = canApply;
       updatePublicationGuards();
     },

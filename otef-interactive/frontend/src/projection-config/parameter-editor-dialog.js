@@ -33,12 +33,25 @@ export function createParameterEditorDialog({ document: doc, host, presentation 
   header.append(title, titleContext, status, undo, redo, closeButton);
   const body = doc.createElement("div"); body.className = "parameter-editor-body";
   const fields = doc.createElement("div"); fields.className = "parameter-editor-fields";
+  const pageTabs = doc.createElement('nav'); pageTabs.className = 'parameter-editor-pages'; pageTabs.setAttribute('aria-label', 'Parameter settings pages');
+  const sensitivity = doc.createElement('div'); sensitivity.className = 'parameter-editor-sensitivity'; sensitivity.setAttribute('role', 'group'); sensitivity.setAttribute('aria-label', 'Adjustment sensitivity');
+  const sensitivityButtons = ['fine', 'coarse'].map(mode => {
+    const button = doc.createElement('button'); button.type = 'button'; button.dataset.sensitivity = mode; button.textContent = mode === 'fine' ? 'Fine' : 'Coarse';
+    button.setAttribute('aria-pressed', String(mode === 'fine'));
+    button.addEventListener('click', () => {
+      if ([...fieldControls.values()].some(control => control.isHeld())) return;
+      for (const control of fieldControls.values()) control.setSensitivity(mode);
+      sensitivityButtons.forEach(item => item.setAttribute('aria-pressed', String(item === button)));
+    }); return button;
+  });
+  sensitivity.append(...sensitivityButtons);
+  const controlsColumn = doc.createElement('section'); controlsColumn.className = 'parameter-editor-controls-column'; controlsColumn.append(pageTabs, sensitivity, fields);
   const previewColumn = doc.createElement("section"); previewColumn.className = "parameter-editor-preview-column";
   const previewHost = doc.createElement("div"); previewHost.className = "parameter-editor-previews";
   const previewStatus = doc.createElement("p"); previewStatus.className = "parameter-editor-preview-status"; previewStatus.setAttribute("role", "status"); previewStatus.setAttribute("aria-live", "polite");
   const previewRetry = doc.createElement("button"); previewRetry.type = "button"; previewRetry.textContent = "Retry preview"; previewRetry.className = "parameter-preview-retry"; previewRetry.hidden = true;
   previewColumn.append(previewHost, previewStatus, previewRetry);
-  body.append(fields, previewColumn); modal.append(header, body); host.appendChild(modal);
+  body.append(controlsColumn, previewColumn); modal.append(header, body); host.appendChild(modal);
   const preview = createPreview?.(previewHost, (message, canRetry) => { previewStatus.textContent = message; previewRetry.hidden = !canRetry; }) || null;
   let opener = null;
   let fieldControls = new Map();
@@ -47,12 +60,31 @@ export function createParameterEditorDialog({ document: doc, host, presentation 
   let disposed = false;
   let latestConfig = null;
   let latestHistory = { undo: 0, redo: 0 };
+  let currentPage = 'adjust';
+  const pageForDescriptor = descriptor => modal.dataset.node === 'names-wall'
+    ? /spacing|Inset|inwardShift/i.test(descriptor.path) ? 'spacing' : 'text'
+    : 'adjust';
+  const showPage = () => {
+    modal.dataset.page = currentPage;
+    for (const control of fieldControls.values()) control.wrap.hidden = !control.isPending() && (Boolean(control.profileHidden) || pageForDescriptor(control.descriptor) !== currentPage);
+    for (const button of pageTabs.children) button.setAttribute('aria-pressed', String(button.dataset.page === currentPage));
+  };
+  const selectPage = (page) => {
+    if (![...pageTabs.children].some(button => button.dataset.page === page)) return false;
+    if (currentPage !== page) {
+      if ([...fieldControls.values()].some(control => control.isHeld())) return false;
+      const results = [...fieldControls.values()].map(control => control.finish());
+      if (!results.every(result => ['commit', 'unchanged'].includes(result.kind))) return false;
+    }
+    currentPage = page; showPage(); return true;
+  };
 
   const focusables = () => [...modal.querySelectorAll("button:not([hidden]), input:not([hidden]), select:not([hidden]), [tabindex]:not([tabindex='-1'])")]
     .filter((item) => !item.disabled && !item.closest("[hidden]"));
   const onKeyDown = (event) => {
     if (modal.hidden) return;
     if (event.key === "Escape") {
+      if (event.defaultPrevented) return;
       event.preventDefault();
       if ([...fieldControls.values()].some((control) => control.isPending())) {
         for (const control of fieldControls.values()) control.cancel({ clearControllerError: true });
@@ -82,7 +114,8 @@ export function createParameterEditorDialog({ document: doc, host, presentation 
       const resolvedPath = resolveFieldPath(descriptor, config) || path;
       const profileVisible = isFieldVisible(descriptor, config);
       const retainPending = !profileVisible && control.isPending();
-      control.wrap.hidden = !profileVisible && !retainPending;
+      control.profileHidden = !profileVisible && !retainPending;
+      control.wrap.hidden = !control.isPending() && (control.profileHidden || pageForDescriptor(descriptor) !== currentPage);
       const targetNote = control.pendingTargetNote;
       if (targetNote) {
         targetNote.hidden = !retainPending;
@@ -110,6 +143,14 @@ export function createParameterEditorDialog({ document: doc, host, presentation 
     title.textContent = heading || "Adjust parameters";
     for (const control of fieldControls.values()) control.dispose();
     fields.replaceChildren(); fieldControls = new Map();
+    currentPage = nodeId === 'names-wall' ? 'text' : 'adjust';
+    pageTabs.replaceChildren();
+    for (const [page, label] of nodeId === 'names-wall' ? [['text', 'Text'], ['spacing', 'Spacing'], ['preview', 'Preview']] : [['adjust', 'Adjust']]) {
+      const button = doc.createElement('button'); button.type = 'button'; button.dataset.page = page; button.textContent = label;
+      button.addEventListener('click', () => selectPage(page)); pageTabs.appendChild(button);
+    }
+    pageTabs.hidden = nodeId !== 'names-wall';
+    sensitivityButtons.forEach(button => button.setAttribute('aria-pressed', String(button.dataset.sensitivity === 'fine')));
     for (const descriptor of descriptors) {
       const control = renderField(doc, descriptor, onField, onNudge, false, true, onCancelField);
       control.wrap.classList.add("parameter-editor-field");
@@ -125,7 +166,7 @@ export function createParameterEditorDialog({ document: doc, host, presentation 
     preview?.open?.(nodeId);
     preview?.update?.(latestConfig);
     renderValues({ config: latestConfig });
-    closeButton.focus();
+    showPage(); closeButton.focus({ preventScroll: true });
   };
   const close = ({ force = false } = {}) => {
     if (modal.hidden) return true;
@@ -155,6 +196,14 @@ export function createParameterEditorDialog({ document: doc, host, presentation 
     bodyElement: body,
     titleContext,
     fieldsElement: fields,
+    controlsElement: controlsColumn,
+    pageTabsElement: pageTabs,
+    selectPage,
+    syncNamesTools() {
+      const tools = fields.querySelector('.names-wall-editor-tools');
+      if (tools) for (const child of tools.children) child.dataset.parameterPage = child.matches('[data-action="reset-page-spacing"]') ? 'spacing' : child.matches('.names-wall-mode-label') ? 'all' : 'preview';
+      const notes = fields.querySelector('.names-wall-editor-notes'); if (notes) notes.dataset.parameterPage = 'preview';
+    },
     presentation,
     update: renderValues,
     close,

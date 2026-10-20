@@ -15,7 +15,22 @@ export function createGridLayoutControls(doc, onAction = () => {}) {
   section.className = "warp-grid-layout-section";
   section.setAttribute("aria-label", "Grid layout");
   const heading = doc.createElement("h3"); heading.textContent = "Grid layout"; section.appendChild(heading);
-  const hint = doc.createElement("p"); hint.className = "warp-grid-layout-hint"; hint.textContent = "Counts: 2–16. Boundary lines stay at 0% and 100%. Select a row or column, then click the viewer to place a line."; section.appendChild(hint);
+  const hint = doc.createElement("p"); hint.className = "warp-grid-layout-hint"; hint.textContent = "2–16 lines per axis. Add a line, then click the viewer or enter its source percentage."; section.appendChild(hint);
+  const tabs = doc.createElement('nav'); tabs.className = 'warp-grid-layout-pages'; tabs.setAttribute('aria-label', 'Grid layout settings');
+  const pages = new Map(); const pageButtons = new Map(); let activePage = 'create';
+  const selectPage = page => {
+    if (!pages.has(page) || page !== activePage && !finishPendingEdit()) return false;
+    activePage = page;
+    pages.forEach((element, name) => element.hidden = name !== page);
+    pageButtons.forEach((button, name) => button.setAttribute('aria-pressed', String(name === page)));
+    return true;
+  };
+  section.appendChild(tabs);
+  for (const [page, label] of [['create', 'Create'], ['source', 'Source lines'], ['reset', 'Rebuild']]) {
+    const button = doc.createElement('button'); button.type = 'button'; button.textContent = label; button.dataset.gridPage = page;
+    button.addEventListener('click', () => selectPage(page)); tabs.appendChild(button); pageButtons.set(page, button);
+    const body = doc.createElement('div'); body.className = 'warp-grid-layout-page'; body.hidden = page !== activePage; pages.set(page, body); section.appendChild(body);
+  }
   const fields = new Map();
   const actions = new Map();
   const committed = new WeakMap();
@@ -133,14 +148,14 @@ export function createGridLayoutControls(doc, onAction = () => {}) {
   };
   const rows = makeField("rows", "Rows", { min: 2, max: 16 });
   const columns = makeField("columns", "Columns", { min: 2, max: 16 });
-  const sourceY = makeField("source-y", "Source Y (%)", { min: 0, max: 100, step: "any" });
-  const sourceX = makeField("source-x", "Source X (%)", { min: 0, max: 100, step: "any" });
+  const sourceY = makeField("source-y", "Row Y (%)", { min: 0, max: 100, step: "any" });
+  const sourceX = makeField("source-x", "Column X (%)", { min: 0, max: 100, step: "any" });
   const addRowPosition = makeField("addRowPosition", "Add row at Y (%)", { min: 0, max: 100, step: "any" });
   const addColumnPosition = makeField("addColumnPosition", "Add column at X (%)", { min: 0, max: 100, step: "any" });
   const makeAction = (label, name) => {
     const button = doc.createElement("button"); button.type = "button"; button.textContent = label; button.dataset.gridLayoutAction = name;
     button.addEventListener("click", () => {
-      onAction(name, undefined);
+      onAction(name, name === 'even' ? { axis: spacingAxis.value } : undefined);
     });
     section.appendChild(button); actions.set(name, button); return button;
   };
@@ -148,8 +163,20 @@ export function createGridLayoutControls(doc, onAction = () => {}) {
   makeAction("Add column", "add-column");
   makeAction("Remove row", "remove-row");
   makeAction("Remove column", "remove-column");
-  makeAction("Evenly space selected axis", "even");
+  const spacingLabel = doc.createElement('label'); spacingLabel.className = 'warp-grid-layout-field'; spacingLabel.textContent = 'Even spacing';
+  const spacingAxis = doc.createElement('select'); spacingAxis.setAttribute('aria-label', 'Even spacing axis');
+  for (const [value, text] of [['row', 'Rows'], ['column', 'Columns']]) { const option = doc.createElement('option'); option.value = value; option.textContent = text; spacingAxis.appendChild(option); }
+  spacingLabel.appendChild(spacingAxis);
+  makeAction("Space evenly", "even");
   makeAction("Rebuild uniform grid", "rebuild");
+  const sourceScope = doc.createElement('p'); sourceScope.className = 'warp-grid-source-scope'; pages.get('source').appendChild(sourceScope);
+  for (const name of ['rows', 'columns', 'addRowPosition', 'addColumnPosition']) pages.get('create').appendChild(fields.get(name).parentElement);
+  for (const name of ['add-row', 'add-column']) pages.get('create').appendChild(actions.get(name));
+  for (const name of ['source-x', 'source-y']) pages.get('source').appendChild(fields.get(name).parentElement);
+  for (const name of ['remove-row', 'remove-column']) pages.get('source').appendChild(actions.get(name));
+  pages.get('source').append(spacingLabel, actions.get('even'));
+  const resetNote = doc.createElement('p'); resetNote.textContent = 'Replace source spacing with a uniform grid. Review the preview before confirming.';
+  pages.get('reset').append(resetNote, actions.get('rebuild'));
   function sync(input, value, signature = value, force = false) {
     const text = String(value);
     committed.set(input, String(signature));
@@ -163,6 +190,7 @@ export function createGridLayoutControls(doc, onAction = () => {}) {
     if (!grid) return;
     const columnsCount = grid.columns, rowsCount = grid.rows;
     const { rowIndex, columnIndex } = deriveGridSelectionIndices(grid, selection);
+    sourceScope.textContent = `Selected point: column ${columnIndex + 1}, row ${rowIndex + 1}. These fields move the entire source line.`;
     const rowAxis = grid.rowPositions || Array.from({ length: rowsCount }, (_, index) => index / (rowsCount - 1));
     const columnAxis = grid.columnPositions || Array.from({ length: columnsCount }, (_, index) => index / (columnsCount - 1));
     const rowPosition = rowAxis[clamp(rowIndex, 0, rowsCount - 1)];
@@ -197,5 +225,5 @@ export function createGridLayoutControls(doc, onAction = () => {}) {
   };
   const pendingPlacementInputs = () => [addRowPosition, addColumnPosition].filter(input => edited.has(input));
   const finishPendingEdit = () => pendingPlacementInputs().every(commitPlacement);
-  return { element: section, fields, actions, update, cancel, finishPendingEdit, hasPendingEdit: () => pendingPlacementInputs().length > 0 };
+  return { element: section, fields, actions, update, cancel, selectPage, finishPendingEdit, hasPendingEdit: () => pendingPlacementInputs().length > 0 };
 }

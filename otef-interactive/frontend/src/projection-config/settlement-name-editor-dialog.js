@@ -5,6 +5,7 @@ import { createSettlementNameControls, shownSettlementPosition } from "./settlem
 import { mapSettlementPosition } from '../projection/settlement-name-framing.js';
 import { mapSourceUvToOutput } from './clock-layout-geometry.js';
 import { snapSettlementOrigin } from './settlement-origin-geometry.js';
+import { mountContentEditor } from './content-editor-layout.js';
 
 function make(doc, tag, props = {}, text = "") {
   const node = doc.createElement(tag);
@@ -45,6 +46,8 @@ export function openSettlementNameEditor({
   catalogStatus = { status: "ready" },
   onRetryCatalog = () => {},
   document = globalThis.document,
+  host,
+  presentation = 'dialog',
   onSelection = () => {},
   onClose = () => {},
   restoreFocus,
@@ -87,6 +90,7 @@ export function openSettlementNameEditor({
   const retry = make(doc, "button", { type: "button", className: "settlement-preview-retry", hidden: true }, "Retry preview");
   stage.append(mapping, retry);
   const controls = createSettlementNameControls(doc, {
+    presentation,
     catalog,
     onOutput: (next) => { if (setSelection({ output: next, citycode: activeCitycode })) onSelection({ output: activeOutput, citycode: activeCitycode }); else controls.output.value = activeOutput; },
     onCitycode: (next) => { if (setSelection({ output: activeOutput, citycode: next })) onSelection({ output: activeOutput, citycode: activeCitycode }); else controls.city.value = activeCitycode; },
@@ -121,8 +125,8 @@ export function openSettlementNameEditor({
   controls.element.appendChild(warning);
   body.append(stage, controls.element);
   dialog.append(header, body);
-  doc.body?.appendChild(dialog);
-  closeButton.focus?.();
+  const embedded = mountContentEditor({ dialog, header, panel: controls.element, host, presentation, document: doc });
+  if (!embedded) closeButton.focus?.();
 
   function snapshot() { return settingsClient.getSnapshot()?.settings || null; }
   function setCatalog(nextCatalog, nextCatalogStatus = catalogStatus) {
@@ -371,6 +375,6 @@ export function openSettlementNameEditor({
     onClose();
     return true;
   }
-  return { close, setSelection, setCatalog, finishPendingEdit, hasPendingEdit: controls.hasPending, isHeld: controls.isHeld, cancelPendingEdit: controls.cancel,
+  return { element: dialog, close, setSelection, setCatalog, finishPendingEdit, hasPendingEdit: controls.hasPending, isHeld: controls.isHeld, cancelPendingEdit: controls.cancel,
     dispose() { close({ force: true }); }, calibrationChanged() { invalidate(); } };
 }

@@ -109,6 +109,7 @@ test("active compact warp, focused warp, and scalar editors expose independent o
    expect(hydrateSettlement).toHaveBeenCalledWith({forceFresh:true});
    expect(retrySettlementCatalog).toHaveBeenCalledOnce();
    app.root.querySelector("[data-action='warp-full-viewport']").click();
+   expect(app.root.querySelector(".warp-editor-dialog").dataset.presentation).toBe("panel");
    expect(app.root.querySelector(".warp-editor-dialog").dataset.fullViewport).toBe("true");
    expect(route.textContent).toContain("clock offline"); expect(route.textContent).toContain("settings offline"); expect(route.textContent).toContain("catalog offline");
    route.querySelector("[data-action='retry-clock-settings']").click();
@@ -146,7 +147,8 @@ test("reopening focused warp restores the shared optional recovery surface", asy
   expect(health).not.toBeNull();
   app.root.querySelector("[data-action='warp-editor-close']").click();
   app.root.querySelector("[data-action='warp-editor-open']").click();
-  expect(app.root.querySelector(".warp-editor-dialog").dataset.fullViewport).toBe("true");
+  expect(app.root.querySelector(".warp-editor-dialog").dataset.presentation).toBe("panel");
+  expect(app.root.querySelector(".warp-editor-dialog").dataset.fullViewport).toBe("false");
   expect(app.root.querySelector(".warp-editor-dialog .projection-optional-health")).toBe(health);
   expect(health.textContent).toContain("catalog offline");
   health.querySelector("[data-action='retry-settlement-catalog']").click();

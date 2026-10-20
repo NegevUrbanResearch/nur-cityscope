@@ -161,10 +161,10 @@ test("a matching receipt from a not-ready document does not complete or retire u
   const receipt = { sourceId, requestId: request.requestId, previousInstanceId: instanceId };
   h.report({ instanceId: nextInstanceId, leaseSeq: 2, ready: false, refreshBlockReason: "not_ready", reloadReceipt: receipt });
   expect(h.manager.getState().remotes.map((row) => row.instanceId)).toEqual([instanceId, nextInstanceId, thirdInstanceId]);
-  expect(h.manager.getState().remotes[1].actionStatus).not.toBe("Tablet reloaded to Home");
+  expect(h.manager.getState().remotes[1].actionStatus).not.toBe("Tablet reloaded");
   h.report({ instanceId: nextInstanceId, leaseSeq: 3, ready: true, refreshBlockReason: null, reloadReceipt: receipt });
   expect(h.manager.getState().remotes.map((row) => row.instanceId)).toEqual([nextInstanceId, thirdInstanceId]);
-  expect(h.manager.getState().remotes[0].actionStatus).toBe("Tablet reloaded to Home");
+  expect(h.manager.getState().remotes[0].actionStatus).toBe("Tablet reloaded");
   h.manager.dispose();
 });
 
@@ -273,7 +273,7 @@ test("sends one targeted refresh per click and distinguishes accepted acknowledg
   expect(h.manager.getState().remotes).toHaveLength(1);
   h.report({ instanceId: nextInstanceId, connectionSeq: 1, leaseSeq: 1,
     reloadReceipt: { sourceId, requestId: request.requestId, previousInstanceId: instanceId } });
-  expect(h.manager.getState().remotes[0].actionStatus).toBe("Tablet reloaded to Home");
+  expect(h.manager.getState().remotes[0].actionStatus).toBe("Tablet reloaded");
   h.manager.dispose();
 });
 
@@ -288,10 +288,10 @@ test("receipt before ACK completes the request while an unrelated cloned tab rem
   h.report({ instanceId: nextInstanceId, connectionSeq: 1, leaseSeq: 2,
     reloadReceipt: { sourceId, requestId: request.requestId, previousInstanceId: instanceId } });
   expect(h.manager.getState().remotes.map((item) => item.instanceId)).toEqual([nextInstanceId, thirdInstanceId]);
-  expect(h.manager.getState().remotes[0].actionStatus).toBe("Tablet reloaded to Home");
+  expect(h.manager.getState().remotes[0].actionStatus).toBe("Tablet reloaded");
   h.listeners.get("otef_staff_remote_refresh_ack")?.({ type: "otef_staff_remote_refresh_ack", table: "otef", sourceId,
     requestId: request.requestId, remoteId, instanceId, connectionSeq: 1, result: "accepted", reason: null });
-  expect(h.manager.getState().remotes[0].actionStatus).toBe("Tablet reloaded to Home");
+  expect(h.manager.getState().remotes[0].actionStatus).toBe("Tablet reloaded");
   h.manager.dispose();
 });
 
@@ -332,7 +332,7 @@ test("a timed-out request can complete from its late same-version receipt withou
   expect(h.manager.getState().remotes[0].actionStatus).toBe("Refresh not confirmed");
   h.report({ instanceId: nextInstanceId, connectionSeq: 1, leaseSeq: 1, buildId: "frontend-0123456789abcdef",
     reloadReceipt: { sourceId, requestId: request.requestId, previousInstanceId: instanceId } });
-  expect(h.manager.getState().remotes[0].actionStatus).toBe("Tablet reloaded to Home");
+  expect(h.manager.getState().remotes[0].actionStatus).toBe("Tablet reloaded");
   expect(h.sent.filter((message) => message.type === "otef_staff_remote_refresh")).toHaveLength(1);
   h.manager.dispose();
   vi.useRealTimers();

@@ -7,6 +7,7 @@ import { renderQr } from "../shared/qr-code.js";
 import { OTEFWebSocketClient } from "../shared/websocket-client.js";
 import { mountProjectionConfig } from "../projection-config/config-controller.js";
 import { createOutputWindowController } from "../projection-config/output-window-controller.js";
+import { createOutputControlBridge } from '../projection-config/output-control-bridge.js';
 import { createProjectionBaselineCatalogLoader } from '../projection/projection-captured-baseline.js';
 import { createProjectionGeometryValidator, readProjectionCandidateInputs } from '../projection/projection-candidate-validation.js';
 import { OTEF_API } from "../shared/api-client.js";
@@ -57,6 +58,36 @@ export async function shareConfigUrl({ location = globalThis.location, fetchImpl
   let qrRendered = false;
   if (qrHost) { try { renderQr(qrHost, url, { size: 240 }); qrRendered = true; } catch { qrHost.replaceChildren(); } }
   return { href: url, copied, qrRendered };
+}
+
+function bindProjectionConfigResumeRecovery(document, socket) {
+  const win = document.defaultView || globalThis.window;
+  let wasHidden = document.visibilityState === 'hidden';
+  let timer = null;
+  const cancel = () => { clearTimeout(timer); timer = null; };
+  const recover = () => {
+    if (document.visibilityState !== 'visible') return;
+    cancel();
+    timer = setTimeout(() => {
+      timer = null;
+      // A tablet can retain an OPEN socket after its transport stopped working.
+      if (document.visibilityState === 'visible') socket.restart?.();
+    }, 100);
+  };
+  const onVisibility = () => {
+    if (document.visibilityState === 'hidden') { wasHidden = true; cancel(); }
+    else if (wasHidden) { wasHidden = false; recover(); }
+  };
+  const onPageShow = event => { if (event.persisted) recover(); };
+  document.addEventListener?.('visibilitychange', onVisibility);
+  win?.addEventListener?.('online', recover);
+  win?.addEventListener?.('pageshow', onPageShow);
+  return () => {
+    cancel();
+    document.removeEventListener?.('visibilitychange', onVisibility);
+    win?.removeEventListener?.('online', recover);
+    win?.removeEventListener?.('pageshow', onPageShow);
+  };
 }
 
 export async function bootProjectionConfig({ document = globalThis.document, location = globalThis.location, fetchImpl = globalThis.fetch, socket } = {}) {
@@ -168,7 +199,7 @@ export async function bootProjectionConfig({ document = globalThis.document, loc
       });
       client = createProjectionConfigClient({ fetchImpl, socket: ws, sourceId: createUuid(), onConflict: (message) => mounted?.setConflict?.(message) });
       const outputLocation = location?.href ? new URL("./projection.html", location.href).href : "projection.html";
-      outputController = createOutputWindowController({ location: outputLocation, open: globalThis.open, screenApi: globalThis, navigatorApi: globalThis.navigator, storage: (() => { try { return globalThis.localStorage; } catch { return null; } })() });
+      outputController = createOutputControlBridge({ socket: ws, document, localController: createOutputWindowController({ location: outputLocation, open: globalThis.open, screenApi: globalThis, navigatorApi: globalThis.navigator, storage: (() => { try { return globalThis.localStorage; } catch { return null; } })() }) });
       const baselineCatalogLoader = createProjectionBaselineCatalogLoader({ fetchImpl });
       candidateValidator = createProjectionGeometryValidator({ baselineCatalogLoader });
       mounted = mountProjectionConfig(root, { client, socket: ws, layoutClient, settlementClient, roadSignClient, visibilityClient, staffRemoteManager, catalog: { entries: [] }, catalogStatus: { status: "loading" }, retrySettlementCatalog: () => { void startCatalog(); }, outputController, candidateValidator, baselineCatalogLoader,
@@ -199,9 +230,11 @@ export async function bootProjectionConfig({ document = globalThis.document, loc
   }
 
   mountCore();
+  const stopResumeRecovery = bindProjectionConfigResumeRecovery(document, ws);
   return () => {
     if (disposed) return;
     disposed = true;
+    stopResumeRecovery();
     catalogGeneration += 1;
     catalogAbort?.abort();
     bootAbort.abort();

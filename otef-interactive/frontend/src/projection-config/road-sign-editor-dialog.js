@@ -3,6 +3,7 @@ import { createRoadSign, emptyRoadSignSettings } from "../shared/road-sign-setti
 import { renderField } from "./config-field-control.js";
 import { mountRoadSignPreview } from "./road-sign-preview.js";
 import { mapOutputToSourceUv, mapSourceUvToOutput, copyProjectionMesh, mapOverlayOutline } from "./clock-layout-geometry.js";
+import { mountContentEditor, createContentEditorPages } from './content-editor-layout.js';
 
 const clone = (value) => structuredClone(value);
 const same = (left, right) => JSON.stringify(left) === JSON.stringify(right);
@@ -65,7 +66,7 @@ function fieldDescriptors() {
   ];
 }
 
-export function openRoadSignEditor({ document = globalThis.document, settingsClient, getAppliedCalibration, restoreFocus, onClose = () => {}, onPendingState = () => {}, manageBeforeUnload = false } = {}) {
+export function openRoadSignEditor({ document = globalThis.document, host, presentation = 'dialog', settingsClient, getAppliedCalibration, restoreFocus, onClose = () => {}, onPendingState = () => {}, manageBeforeUnload = false } = {}) {
   const doc = document, win = doc?.defaultView || globalThis.window;
   if (!doc?.createElement || !settingsClient || typeof getAppliedCalibration !== "function") throw new Error("Road 232 editor requires its document, settings client, and applied calibration");
   let active = true, activeOutput = "left", selectedId = null, placing = false, gesture = null, mesh = null, receipt = null, handlesEnabled = false;
@@ -73,6 +74,8 @@ export function openRoadSignEditor({ document = globalThis.document, settingsCli
   let resizeObserver = null, observedFit = null, hasObservedFit = false;
   const rangeBases = new Map(), nudgeBases = new Map();
   const opener = restoreFocus ? null : doc.activeElement;
+  const panelMode = presentation === 'panel' && Boolean(host?.appendChild);
+  let selectedPage = 'placement';
   const dialog = make(doc, "section", { className: "road-sign-editor-dialog", role: "dialog", ariaLabel: "Road 232 signs editor", tabIndex: -1 });
   dialog.setAttribute("aria-modal", "true");
   const header = make(doc, "header", { className: "road-sign-editor-header" });
@@ -101,14 +104,21 @@ export function openRoadSignEditor({ document = globalThis.document, settingsCli
   const removeButton = make(doc, "button", { type: "button", dataset: { action: "road-sign-remove" } }, "Remove");
   const capacityNote = make(doc, "p", { className: "road-sign-capacity-limit", hidden: true }, "At most 64 signs per source output. Remove a sign before adding or duplicating another.");
   actions.append(addButton, duplicateButton, removeButton);
-  const list = make(doc, "div", { className: "road-sign-instance-list", role: "list", ariaLabel: "Road 232 sign instances" });
+  const list = make(doc, panelMode ? 'select' : 'div', { className: "road-sign-instance-list", ...(panelMode ? {} : { role: 'list' }), ariaLabel: "Road 232 sign instances" });
+  if (panelMode) list.addEventListener('change', () => { if (!setSelection(list.value)) list.value = selectedId || ''; });
   const fields = make(doc, "div", { className: "road-sign-numeric-fields" });
   const warnings = make(doc, "p", { className: "road-sign-editor-warning", role: "status", hidden: true });
-  panel.append(outputLabel, appliedNote, actions, capacityNote, list, fields, warnings);
-  body.append(stage, panel); dialog.append(header, body); doc.body?.appendChild(dialog);
-  const siblings = [...(doc.body?.children || [])].filter((node) => node !== dialog).map((node) => [node, node.inert]);
+  if (panelMode) {
+    const selection = make(doc, 'div', { className: 'content-editor-selection' });
+    const signLabel = make(doc, 'label', { className: 'road-sign-selection-label' }, 'Sign'); signLabel.appendChild(list);
+    selection.append(outputLabel, signLabel);
+    panel.append(selection, actions, capacityNote, fields, warnings, appliedNote);
+  } else panel.append(outputLabel, appliedNote, actions, capacityNote, list, fields, warnings);
+  body.append(stage, panel); dialog.append(header, body);
+  const embedded = mountContentEditor({ dialog, header, panel, status, host, presentation, document: doc });
+  const siblings = embedded ? [] : [...(doc.body?.children || [])].filter((node) => node !== dialog).map((node) => [node, node.inert]);
   siblings.forEach(([node]) => { node.inert = true; });
-  closeButton.focus?.();
+  if (!embedded) closeButton.focus?.();
 
   function clientState() { return settingsClient.getState?.() || {}; }
   function currentDocument() {
@@ -242,10 +252,11 @@ export function openRoadSignEditor({ document = globalThis.document, settingsCli
     if (!outputSigns.some((sign) => sign.id === selectedId)) selectedId = outputSigns[0]?.id || null;
     list.replaceChildren();
     outputSigns.forEach((sign, index) => {
-      const item = make(doc, "button", { type: "button", role: "listitem", dataset: { signId: sign.id }, "aria-current": String(sign.id === selectedId) }, "Sign " + (index + 1));
+      const item = make(doc, panelMode ? 'option' : 'button', { ...(panelMode ? { value: sign.id } : { type: 'button', role: 'listitem' }), dataset: { signId: sign.id }, "aria-current": String(sign.id === selectedId) }, "Sign " + (index + 1));
       item.setAttribute("data-sign-id", sign.id); item.setAttribute("aria-current", String(sign.id === selectedId));
       item.addEventListener("click", () => setSelection(sign.id)); list.appendChild(item);
     });
+    if (panelMode) list.value = selectedId || '';
     const sign = selected();
     const conflictActive = isConflict(), atCapacity = outputSigns.length >= 64;
     addButton.disabled = conflictActive || atCapacity;
@@ -259,15 +270,19 @@ export function openRoadSignEditor({ document = globalThis.document, settingsCli
     }
     const visible = make(doc, "input", { type: "checkbox", checked: sign.visible, disabled: conflictActive, ariaLabel: "Show this sign", dataset: { action: "road-sign-visible" } });
     visible.addEventListener("change", () => { if (finishPendingEdit()) patchSelected((item) => { item.visible = visible.checked; }, true); });
-    const visibleLabel = make(doc, "label", {}, "Visible"); visibleLabel.appendChild(visible); fields.appendChild(visibleLabel);
+    const visibleLabel = make(doc, "label", { className: 'content-editor-check' }, "Show sign"); visibleLabel.appendChild(visible);
+    const placementFields = [], styleFields = panelMode ? [visibleLabel] : [], adjustmentFields = [];
+    if (!panelMode) fields.appendChild(visibleLabel);
     for (const theme of ["dark", "original"]) {
       const radio = make(doc, "input", { type: "radio", name: "road-sign-theme", value: theme, checked: sign.theme === theme, disabled: conflictActive, ariaLabel: (theme === "dark" ? "Dark" : "Original") + " appearance", dataset: { action: "road-sign-theme-" + theme } });
       radio.addEventListener("change", () => { if (radio.checked && finishPendingEdit()) patchSelected((item) => { item.theme = theme; }, true); });
-      const label = make(doc, "label", {}, theme === "dark" ? "Dark" : "Original"); label.appendChild(radio); fields.appendChild(label);
+      const label = make(doc, "label", { className: 'content-editor-check' }, theme === "dark" ? "Dark" : "Original"); label.appendChild(radio);
+      if (panelMode) styleFields.push(label); else fields.appendChild(label);
     }
     const connector = make(doc, "input", { type: "checkbox", checked: sign.leader.enabled, disabled: conflictActive, ariaLabel: "Show connector", dataset: { action: "road-sign-leader" } });
     connector.addEventListener("change", () => { if (finishPendingEdit()) patchSelected((item) => { item.leader.enabled = connector.checked; }, true); });
-    const connectorLabel = make(doc, "label", {}, "Connector"); connectorLabel.appendChild(connector); fields.appendChild(connectorLabel);
+    const connectorLabel = make(doc, "label", { className: 'content-editor-check' }, "Connector"); connectorLabel.appendChild(connector);
+    if (panelMode) styleFields.push(connectorLabel); else fields.appendChild(connectorLabel);
     for (const descriptor of fieldDescriptors()) {
       const control = renderField(doc, descriptor, (path, raw, inputKind, meta) => onNumericField(path, raw, inputKind, meta, descriptor),
         (path, direction, meta) => onNudge(path, direction, meta, descriptor), false, true, () => {});
@@ -277,9 +292,26 @@ export function openRoadSignEditor({ document = globalThis.document, settingsCli
         control.wrap.querySelector(".numeric-sensitivity-group")?.setAttribute("hidden", "");
         control.wrap.querySelectorAll(".nudge").forEach((buttonNode) => buttonNode.setAttribute("hidden", ""));
       }
-      fields.appendChild(control.wrap); controls.set(descriptor.path, control);
+      if (panelMode && descriptor.range) {
+        const adjustment = make(doc, 'div', { className: 'road-sign-slider-adjustment' });
+        adjustment.appendChild(make(doc, 'span', { className: 'config-field-label' }, descriptor.label));
+        for (const item of control.wrap.querySelectorAll('.config-field-range-row,.numeric-sensitivity-group,.numeric-step')) adjustment.appendChild(item);
+        adjustmentFields.push(adjustment);
+      }
+      if (panelMode) (descriptor.path === 'x' || descriptor.path === 'y' ? placementFields : styleFields).push(control.wrap);
+      else fields.appendChild(control.wrap);
+      controls.set(descriptor.path, control);
       control.update({ value: sign[descriptor.path] });
       if (conflictActive) control.wrap.querySelectorAll("input, button, select").forEach((node) => { node.disabled = true; });
+    }
+    if (panelMode) {
+      const pages = createContentEditorPages(doc, [
+        { id: 'placement', label: 'Placement', nodes: placementFields },
+        { id: 'style', label: 'Style', nodes: styleFields },
+        { id: 'adjust', label: 'Adjust', nodes: adjustmentFields },
+      ], { beforeChange: finishPendingEdit, onSelect: id => { selectedPage = id; } });
+      fields.appendChild(pages.element);
+      pages.select(selectedPage);
     }
     drawOverlay(); renderStatus();
   }
@@ -496,7 +528,7 @@ export function openRoadSignEditor({ document = globalThis.document, settingsCli
       if (hasPendingEdit()) { event.preventDefault(); cancelPendingEdit(); return; }
       if (placing) { event.preventDefault(); placing = false; previewStatus.hidden = true; return; }
       close();
-    } else if (event.key === "Tab") {
+    } else if (!embedded && event.key === "Tab") {
       const focusable = [...dialog.querySelectorAll("button:not([disabled]):not([hidden]), input:not([disabled]):not([hidden]), select:not([disabled]):not([hidden])")];
       if (!focusable.length) return;
       if (event.shiftKey && doc.activeElement === focusable[0]) { event.preventDefault(); focusable.at(-1).focus(); }
@@ -537,6 +569,7 @@ export function openRoadSignEditor({ document = globalThis.document, settingsCli
   observedFit = fitIdentity(stage.getBoundingClientRect()); hasObservedFit = true;
   if (typeof ResizeObserver === "function") { resizeObserver = new ResizeObserver(onStageResize); resizeObserver.observe(stage); }
   return {
+    element: dialog,
     close, dispose() { close({ force: true }); }, sync() { renderControls(); publish(); }, calibrationChanged() { invalidate(); },
     finishPendingEdit, hasPendingEdit, isHeld, cancelPendingEdit,
   };

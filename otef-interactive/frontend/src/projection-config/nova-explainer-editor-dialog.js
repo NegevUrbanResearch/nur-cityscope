@@ -2,6 +2,7 @@ import { createUuid } from "../shared/uuid.js";
 import { normalizeNovaExplainerMaps } from "../shared/nli-nova-explainer-layout.js";
 import { mountClockLayoutPreview } from "./clock-layout-preview.js";
 import { createClockLayoutStatus, layoutFor, resourceFor } from "./clock-layout-controls.js";
+import { mountContentEditor } from './content-editor-layout.js';
 
 const CLOCK_KEYS = ["leftPct", "topPct", "widthPct", "heightPct", "fontPx", "rotateDeg"];
 
@@ -35,7 +36,7 @@ function svgElement(doc, tag, props = {}) {
   return item;
 }
 
-export function openNovaExplainerEditor({ layoutClient, document = globalThis.document, onPendingState = () => {}, restoreFocus, manageBeforeUnload = true, onClose = () => {} } = {}) {
+export function openNovaExplainerEditor({ layoutClient, document = globalThis.document, host, presentation = 'dialog', onPendingState = () => {}, restoreFocus, manageBeforeUnload = true, onClose = () => {} } = {}) {
   const doc = document;
   if (!doc?.createElement || !layoutClient) throw new Error("Nova explainer editor requires a document and layout client");
   const win = doc.defaultView || globalThis.window;
@@ -90,10 +91,11 @@ export function openNovaExplainerEditor({ layoutClient, document = globalThis.do
   panel.append(cameras, nameLabel, xInput.label, yInput.label, resetButton, note);
   body.append(stage, panel);
   dialog.append(header, body);
-  doc.body?.appendChild(dialog);
-  let inertSiblings = [...(doc.body?.children || [])].filter((node) => node !== dialog).map((node) => ({ node, inert: node.inert }));
+  const embedded = mountContentEditor({ dialog, header, panel, status: statusControls.element, host, presentation, document: doc });
+  if (embedded) note.textContent = 'Position changes save automatically for this camera';
+  let inertSiblings = embedded ? [] : [...(doc.body?.children || [])].filter((node) => node !== dialog).map((node) => ({ node, inert: node.inert }));
   inertSiblings.forEach(({ node }) => { node.inert = true; });
-  closeButton.focus?.();
+  if (!embedded) closeButton.focus?.();
 
   function axisField(label, field) {
     const wrap = make(doc, "label", { className: "clock-layout-field" }, label);
@@ -434,7 +436,7 @@ export function openNovaExplainerEditor({ layoutClient, document = globalThis.do
   closeButton.addEventListener("click", close);
   dialog.addEventListener("keydown", (event) => {
     if (event.key === "Escape") { event.preventDefault?.(); close(); return; }
-    if (event.key !== "Tab") return;
+    if (embedded || event.key !== "Tab") return;
     const available = (node) => {
       if (node.disabled) return false;
       for (let parent = node; parent && parent !== dialog; parent = parent.parentElement) if (parent.hidden) return false;
@@ -450,5 +452,5 @@ export function openNovaExplainerEditor({ layoutClient, document = globalThis.do
   renderChrome();
   createPreview();
   publish();
-  return { close, dispose() { close(); } };
+  return { element: dialog, close, dispose() { close(); } };
 }

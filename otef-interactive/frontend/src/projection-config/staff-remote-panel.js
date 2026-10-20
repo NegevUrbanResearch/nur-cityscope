@@ -20,7 +20,7 @@ export function createStaffRemotePanel({ document: doc, manager } = {}) {
 
   const element = node(doc, "section", "staff-remote-panel");
   element.setAttribute("aria-label", "Tablet remote management");
-  const guidance = node(doc, "p", "staff-remote-guidance", "Return GIS/projection to Home, then reload this tablet.");
+  const guidance = node(doc, "p", "staff-remote-guidance", "Finish active actions and close any archive or presentation before refreshing.");
   const fullscreenNote = node(doc, "small", "staff-remote-fullscreen-note", "The tablet may need a local tap to return to fullscreen.");
   const liveStatus = node(doc, "span", "staff-remote-live-status");
   liveStatus.setAttribute("role", "status");
@@ -50,7 +50,7 @@ export function createStaffRemotePanel({ document: doc, manager } = {}) {
   const rowNodes = new Map();
   function createRow() {
     const row = node(doc, "article", "staff-remote-row");
-    const heading = node(doc, "h3", "staff-remote-row-heading", "NLI staff remote");
+    const heading = node(doc, "h3", "staff-remote-row-heading", "Tablet session");
     const details = node(doc, "dl", "staff-remote-row-details");
     const values = [];
     for (const label of ["Session", "Status", "Loaded version", "Last contact"]) {
@@ -70,7 +70,8 @@ export function createStaffRemotePanel({ document: doc, manager } = {}) {
     const remotes = state?.remotes || [];
     updateNoticeActions(state || {});
     const statuses = remotes.map((remote) => remote.status);
-    const summaryText = !remotes.length && state?.registration?.deviceId ? "Exhibit tablet · Offline" : !remotes.length ? (state?.connectionStatus === "Connection unavailable" ? "Connection unavailable" : "No tablet remote detected") :
+    const connectionUnavailable = state?.connectionStatus === "Connection unavailable";
+    const summaryText = !remotes.length && connectionUnavailable ? "Connection unavailable" : !remotes.length && state?.registration?.deviceId ? "Exhibit tablet · Offline" : !remotes.length ? "No tablet remote detected" :
       statuses.includes("Online") ? `${remotes.length} tablet remote${remotes.length === 1 ? "" : "s"} · Online` : statuses[0];
     summaryStatus.textContent = summaryText;
     const signature = `${state?.connectionStatus || ""}|${remotes.map((remote) => `${remote.remoteId}:${remote.instanceId}:${remote.status}:${remote.actionStatus || ""}`).join("|")}`;
@@ -80,7 +81,7 @@ export function createStaffRemotePanel({ document: doc, manager } = {}) {
     }
     if (!remotes.length) {
       rowNodes.clear();
-      rows.replaceChildren(node(doc, "p", "staff-remote-empty", state?.registration?.deviceId ? "Exhibit tablet is offline. Loaded version unavailable until it connects." : "No tablet remote detected"));
+      rows.replaceChildren(node(doc, "p", "staff-remote-empty", connectionUnavailable ? "Tablet status unavailable until the connection returns." : state?.registration?.deviceId ? "Exhibit tablet is offline. Loaded version unavailable until it connects." : "No tablet remote detected"));
       return;
     }
     const activeKeys = new Set();

@@ -97,10 +97,11 @@ test('settlement sign and dirty updates use exact sessions with associated error
   const state={output:'left',citycode:'0067',position:{x:0,y:2.34567},style:{fontPx:14,rotateDeg:0},hydration:{status:'Saved'}};
   controls.render(state);
   const x=find(controls.element,node=>node.dataset?.field==='x');
-  const sign=find(x.parentElement.parentElement,node=>node.dataset?.action==='numeric-sign');
+  const field=find(controls.element,node=>node.dataset?.path==='x');
+  const sign=find(field,node=>node.dataset?.action==='numeric-sign');
   sign.dispatch('click'); x.value='2,5'; x.dispatch('input'); x.dispatch('change');
   expect(onPosition).toHaveBeenCalledWith({x:-2.5,y:2.34567});
   onPosition.mockClear(); x.value='10'; x.dispatch('input'); controls.render({...state,position:{x:30,y:2.34567}}); x.dispatch('blur');
   expect(onPosition).not.toHaveBeenCalled();
-  expect(find(x.parentElement.parentElement,node=>node.className==='config-field-error').textContent).toMatch(/changed while editing/i);
+  expect(find(field,node=>node.className==='config-field-error').textContent).toMatch(/changed while editing/i);
 });

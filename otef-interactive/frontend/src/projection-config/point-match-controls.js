@@ -7,6 +7,13 @@ export function createPointMatchControls({ document: doc, onAction = () => {} })
   const note = doc.createElement('p'); note.textContent = captureNote;
   const status = doc.createElement('p'); status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite');
   const slots = doc.createElement('div'); slots.className = 'point-match-slots';
+  const localTabs = doc.createElement('nav'); localTabs.className = 'point-match-pages'; localTabs.setAttribute('aria-label', 'Match settings');
+  const selectPage = page => { cancelMotion(); element.dataset.page = page; for (const button of localTabs.children) button.setAttribute('aria-pressed', String(button.dataset.page === page)); };
+  for (const [page, text] of [['adjust', 'Match'], ['markers', 'Markers & help']]) {
+    const tab = doc.createElement('button'); tab.type = 'button'; tab.dataset.page = page; tab.textContent = text; tab.setAttribute('aria-pressed', String(page === 'adjust'));
+    tab.addEventListener('click', () => selectPage(page)); localTabs.appendChild(tab);
+  }
+  element.dataset.page = 'adjust';
   const buttons = new Map();
   function button(label, action, value) {
     const node = doc.createElement('button'); node.type = 'button'; node.textContent = label; node.dataset.matchAction = action;
@@ -17,7 +24,8 @@ export function createPointMatchControls({ document: doc, onAction = () => {} })
     const select = button(String(id), 'select', id); select.setAttribute('aria-label', `Select ${id > 4 ? 'checkpoint' : 'fit point'} ${id}`);
     const detail = doc.createElement('span'); detail.className = 'point-match-slot-status';
     const replace = button('Replace', 'replace', id), remove = button('Delete', 'remove', id);
-    row.append(select, detail, replace, remove); slots.append(row);
+    const detailRow = doc.createElement('div'); detailRow.className = 'point-match-selected-detail'; detailRow.append(detail, replace, remove);
+    row.append(select, detailRow); slots.append(row);
   }
   const step = doc.createElement('select'); step.setAttribute('aria-label', 'Target movement speed');
   for (const [value, label] of [['fast', 'Fast · 10 px'], ['normal', 'Normal · 1 px'], ['fine', 'Fine · 0.25 px']]) {
@@ -51,6 +59,7 @@ export function createPointMatchControls({ document: doc, onAction = () => {} })
     arrow.addEventListener('click', event => { if (event.detail === 0 && !arrow.disabled) onAction('nudge', direction); }); arrows.append(arrow);
   }
   const pad = doc.createElement('div'); pad.className = 'point-match-pad'; pad.tabIndex = 0; pad.setAttribute('role', 'application'); pad.setAttribute('aria-label', 'Drag to move target'); pad.textContent = 'Drag to move target';
+  const adjustment = doc.createElement('div'); adjustment.className = 'point-match-adjustment'; adjustment.append(arrows, pad);
   pad.addEventListener('pointerdown', event => { if (event.pointerType === 'touch') touches.add(event.pointerId); if (touches.size > 1 || !state?.anchors?.some(p=>p.id===state.selectedId)) { cancelMotion(); return; } event.preventDefault(); padPointer = { id:event.pointerId,x:event.clientX,y:event.clientY }; pad.setPointerCapture?.(event.pointerId); });
   pad.addEventListener('pointermove', event => { if (padPointer?.id !== event.pointerId) return; onAction('pad-delta', [event.clientX-padPointer.x,event.clientY-padPointer.y]);padPointer.x=event.clientX;padPointer.y=event.clientY; });
   const end = event => { touches.delete(event.pointerId); if (held === event.pointerId || padPointer?.id === event.pointerId) cancelMotion(); };
@@ -61,7 +70,8 @@ export function createPointMatchControls({ document: doc, onAction = () => {} })
   listeners.forEach(([target,type,handler])=>target?.addEventListener?.(type,handler));
   const actions = doc.createElement('div'); actions.className = 'point-match-actions';
   actions.append(button('Confirm output identification', 'identify'), button('Record target','record'),button('Fit preview','fit'),button('Cancel','cancel'),button('Retry output','retry'));
-  element.append(heading,note,status,sizes,slots,step,arrows,pad,actions);
+  const movement = doc.createElement('label'); movement.className = 'point-match-movement'; movement.textContent = 'Move by'; movement.appendChild(step);
+  element.append(heading,localTabs,status,note,sizes,slots,movement,adjustment,actions);
   return {
     element,
     update(next) {
@@ -83,6 +93,8 @@ export function createPointMatchControls({ document: doc, onAction = () => {} })
       const editing=['capture','checking'].includes(next.phase) && next.identified !== false;
       for (const row of slots.children) {
         const id=Number(row.dataset.matchSlot), anchor=next.anchors?.find(p=>p.id===id); row.hidden=id>4 && next.phase!=='checking';
+        row.dataset.selected = String(next.selectedId === id);
+        row.querySelector('.point-match-selected-detail').hidden = next.selectedId !== id;
         const measured = next.checkpointErrors?.find(point => point.id === id);
         row.querySelector('span').textContent = (anchor ? `${anchor.recorded ? 'Recorded' : 'Unrecorded'} · ${anchor.targetPx.map(n=>n.toFixed(2)).join(', ')}` : 'Pick an image feature') +
           (measured ? ` · ${measured.errorPx.toFixed(2)} px displacement` : '');
@@ -95,6 +107,7 @@ export function createPointMatchControls({ document: doc, onAction = () => {} })
       pad.inert=!editing; step.disabled=!editing;
     },
     cancelMotion,
+    selectPage,
     dispose() { cancelMotion(); listeners.forEach(([target,type,handler])=>target?.removeEventListener?.(type,handler)); element.remove(); },
   };
 }

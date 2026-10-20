@@ -396,12 +396,14 @@ test("panel presentation stays nonmodal and exposes header actions while editing
   Object.defineProperty(window, "innerWidth", { configurable: true, value: oldWidth });
 });
 
-test("focused viewport toggles in place, preserves field focus, and only defaults when opened", () => {
+test("tablet viewport starts fitted and explicit full-screen toggles preserve field focus", () => {
   const oldWidth = window.innerWidth;
   Object.defineProperty(window, "innerWidth", { configurable: true, value: 820 });
   const { dialog, opener, panel, host } = setup({ presentation: "panel" });
   const text = document.createElement("input"); text.value = "-3.5"; panel.append(text);
   dialog.open({ side: "right", mode: "grid", opener });
+  expect(dialog.isFullViewport()).toBe(false);
+  dialog.setFullViewport(true);
   expect(dialog.isFullViewport()).toBe(true);
   expect(host.querySelector('[data-action="warp-full-viewport"]').getAttribute("aria-label")).toBe("Exit full-screen");
   text.focus();
@@ -423,7 +425,7 @@ test("focused viewport toggles in place, preserves field focus, and only default
   dialog.close();
   Object.defineProperty(window, "innerWidth", { configurable: true, value: 820 });
   dialog.open({ side: "left", mode: "keystone", opener });
-  expect(dialog.isFullViewport()).toBe(true);
+  expect(dialog.isFullViewport()).toBe(false);
   dialog.dispose();
   Object.defineProperty(window, "innerWidth", { configurable: true, value: oldWidth });
 });
@@ -500,15 +502,14 @@ test("active adjustment guard blocks entering full viewport and native fullscree
   dialog.dispose();
 });
 
-test("coarse landscape tablets over 1100px start with the panel editor in full viewport", () => {
+test("coarse landscape tablets retain the fitted panel without entering fullscreen", () => {
   const oldWidth = window.innerWidth;
   const oldMatchMedia = window.matchMedia;
   Object.defineProperty(window, "innerWidth", { configurable: true, value: 1180 });
   window.matchMedia = vi.fn(query => ({ matches: query.includes("pointer: coarse"), media: query, addEventListener() {}, removeEventListener() {} }));
   const { dialog, opener, host } = setup({ presentation: "panel" });
   dialog.open({ side: "right", mode: "keystone", opener });
-  expect(dialog.isFullViewport()).toBe(true);
-  expect(host.dataset.warpFullViewport).toBe("true");
+  expect(dialog.isFullViewport()).toBe(false);
   dialog.dispose();
   Object.defineProperty(window, "innerWidth", { configurable: true, value: oldWidth });
   window.matchMedia = oldMatchMedia;

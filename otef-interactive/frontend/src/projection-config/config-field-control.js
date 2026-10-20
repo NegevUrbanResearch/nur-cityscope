@@ -30,6 +30,7 @@ export function displayValue(descriptor, value) {
 export function renderField(doc, descriptor, onField, onNudge, compact = false, editorLayout = false, onCancelEdit = () => {}) {
   const id = `numeric-field-${++nextControlId}`;
   const signed = descriptor.min < 0;
+  const directSigned = (editorLayout || descriptor.directSigned) && signed;
   const toDisplay = descriptor.display === 'percentage' ? v => v * 100 : v => v;
   const fromDisplay = descriptor.display === 'percentage' ? v => v / 100 : v => v;
   let latest = { value: undefined, resolvedPath: descriptor.path };
@@ -46,6 +47,7 @@ export function renderField(doc, descriptor, onField, onNudge, compact = false, 
   let heldPointer = null;
   let retiredPointer = null;
   let fineMode = !descriptor.integer && descriptor.range !== false && Number.isFinite(descriptor.fine);
+  let coarseNudges = false;
   let rangeGesture = null;
   let hold = null;
   let suppressNudgeClick = false;
@@ -66,7 +68,7 @@ export function renderField(doc, descriptor, onField, onNudge, compact = false, 
   const row = make(doc, "div", { className: "config-field-row" });
   const range = make(doc, "input", { id: `${id}-range`, type: "range", min: descriptor.displayMin ?? descriptor.min, max: descriptor.displayMax ?? descriptor.max, step: descriptor.displayStep ?? descriptor.step, ariaLabel: `${descriptor.label} slider`, dataset: { field: descriptor.path, input: "range" } });
   const number = compact ? null : make(doc, "input", { id: `${id}-magnitude`, type: "text", min: descriptor.displayMin ?? descriptor.min, max: descriptor.displayMax ?? descriptor.max, step: descriptor.integer ? descriptor.displayStep : "any", inputMode: descriptor.integer ? "numeric" : "decimal", ariaLabel: descriptor.label, dataset: { field: descriptor.path, input: "number" } });
-  const signButton = signed && number ? button(doc, '+', 'numeric-sign', 'numeric-sign') : null;
+  const signButton = signed && !directSigned && number ? button(doc, '+', 'numeric-sign', 'numeric-sign') : null;
   signButton?.setAttribute('aria-label', `${descriptor.label} sign: positive. Change to negative`);
   const useLatest = button(doc, 'Use latest', 'numeric-use-latest');
   const useMine = button(doc, 'Use my value', 'numeric-use-mine');
@@ -118,6 +120,11 @@ export function renderField(doc, descriptor, onField, onNudge, compact = false, 
     controlsRow = make(doc, "div", { className: "config-field-row config-field-controls-row" });
     controlsRow.append(value, ...(signButton ? [signButton] : []), number, unit, ...(descriptor.nudges === false ? [] : [fineMinus, finePlus]));
   } else row.append(...(descriptor.range === false ? [] : [range]), ...(signButton ? [signButton] : []), number, unit, ...(descriptor.nudges === false ? [] : [fineMinus, finePlus]), ...(descriptor.commitOnChange ? [value] : []));
+  if (!compact && number) {
+    const joined = make(doc, 'div', { className: 'numeric-value-group' });
+    for (const item of [signButton, number, unit, ...(descriptor.nudges === false ? [] : [fineMinus, finePlus])]) if (item) joined.appendChild(item);
+    controlsRow.appendChild(joined);
+  }
   if (editorLayout) wrap.appendChild(controlsRow);
   else wrap.appendChild(row);
   if (descriptor.range !== false && Number.isFinite(descriptor.fine)) { wrap.append(sensitivityGroup, stepLabel); showStep(); }
@@ -144,7 +151,7 @@ export function renderField(doc, descriptor, onField, onNudge, compact = false, 
     const shown = displayValue(descriptor, latest.value);
     if (resetSign || Number(latest.value) !== 0) sign = Number(latest.value) < 0 ? -1 : 1;
     if (!rangeGesture) configureRange();
-    if (number) number.value = signed && shown ? formatInputValue(Math.abs(Number(shown))) : shown;
+    if (number) number.value = signed && !directSigned && shown ? formatInputValue(Math.abs(Number(shown))) : shown;
     value.textContent = `${shown}${descriptor.unit ? ` ${descriptor.unit}` : ''}`;
     showSign(); renderResult();
   };
@@ -167,14 +174,14 @@ export function renderField(doc, descriptor, onField, onNudge, compact = false, 
   function previewRange(candidate) {
     rangeGesture.last = candidate;
     const shown = toDisplay(candidate); displayOutput(shown);
-    if (number) number.value = formatInputValue(signed ? Math.abs(shown) : shown);
+    if (number) number.value = formatInputValue(signed && !directSigned ? Math.abs(shown) : shown);
   }
   function sendRange(phase, candidate = rangeGesture?.last) {
     if (!rangeGesture) return true;
     const active = rangeGesture;
     if (phase !== 'cancel') {
       const shown = toDisplay(candidate); displayOutput(shown);
-      if (number) number.value = formatInputValue(signed ? Math.abs(shown) : shown);
+      if (number) number.value = formatInputValue(signed && !directSigned ? Math.abs(shown) : shown);
     }
     const accepted = onField(descriptor.path, String(toDisplay(candidate)), 'range', {
       canonicalValue: candidate, baseValue: active.last, resolvedPath: active.path, phase, gestureId: active.id,
@@ -220,12 +227,13 @@ export function renderField(doc, descriptor, onField, onNudge, compact = false, 
     active.button.releasePointerCapture?.(active.pointer);
   }
   function sendNudge(direction, meta) {
+    if (coarseNudges && Number.isFinite(descriptor.step)) meta = { ...meta, step: descriptor.step, sensitivity: 'coarse' };
     const accepted = meta ? onNudge(descriptor.path, direction, meta) : onNudge(descriptor.path, direction);
     rangeRejected = accepted === false;
     rejectionError = rangeRejected ? externalError || boundsError() : '';
     renderResult(); return accepted !== false;
   }
-  const markInput = (raw, inputSign = sign) => {
+  const markInput = (raw, inputSign = directSigned ? 1 : sign) => {
     rangeRejected = false;
     pendingText = raw; pendingSign = inputSign;
     session.input(raw, inputSign);
@@ -250,7 +258,7 @@ export function renderField(doc, descriptor, onField, onNudge, compact = false, 
       else {
         const meta = { baseValue: result.baseValue, resolvedPath: result.resolvedPath, override };
         const enteredText = number?.value;
-        if (number) number.value = formatInputValue(signed ? Math.abs(shown) : shown);
+        if (number) number.value = formatInputValue(signed && !directSigned ? Math.abs(shown) : shown);
         const accepted = onField(descriptor.path, String(shown), inputKind, meta);
         if (accepted === false) {
           if (number) number.value = enteredText;
@@ -312,7 +320,7 @@ export function renderField(doc, descriptor, onField, onNudge, compact = false, 
       if (rangeGesture.releaseOnly) { previewRange(candidate); return; }
       sendRange(starting ? 'start' : 'update', candidate); return;
     }
-    markInput(range.value, 1); if (number && !descriptor.commitOnChange) number.value = signed ? String(Math.abs(Number(range.value))) : range.value;
+    markInput(range.value, 1); if (number && !descriptor.commitOnChange) number.value = signed && !directSigned ? String(Math.abs(Number(range.value))) : range.value;
     if (!descriptor.commitOnChange) finish('range');
   });
   listen(range, 'change', () => { if (retiredPointer === null && heldPointer === null) { if (rangeGesture) endRange(); else finish('range'); } });
@@ -323,6 +331,7 @@ export function renderField(doc, descriptor, onField, onNudge, compact = false, 
   });
   const selectSensitivity = (nextFineMode) => {
     if (heldPointer !== null || hold) return;
+    coarseNudges = !nextFineMode;
     if (fineMode === nextFineMode) return;
     endRange(); fineMode = nextFineMode; renderSensitivity(); configureRange(); showStep();
     onNudge(descriptor.path, 0, { phase: 'sensitivity' });
@@ -362,6 +371,8 @@ export function renderField(doc, descriptor, onField, onNudge, compact = false, 
     listen(nudge, 'keydown', event => { if (event.key === 'Escape') { event.preventDefault?.(); stopHold(true); } });
   }
   return { wrap, range, number, signButton, value, error,
+    setSensitivity(mode) { selectSensitivity(mode === 'fine'); },
+    getSensitivity() { return fineMode ? 'fine' : 'coarse'; },
     update({ value: nextValue, resolvedPath = descriptor.path, error: nextError = '' }) {
       if (disposed) return;
       const resolvedChanged = latest.resolvedPath !== resolvedPath;

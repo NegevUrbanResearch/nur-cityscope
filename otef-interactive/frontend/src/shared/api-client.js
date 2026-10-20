@@ -49,6 +49,13 @@ export const OTEF_API = {
   _experienceScopes: new Map(),
   _stateInFlight: new Map(),
   _stateCache: new Map(),
+  _pendingWrites: new Map(),
+
+  hasPendingWrites(tableName = this.defaultTable) {
+    const viewport = this._viewportImmediateQueues.get(tableName);
+    return (this._pendingWrites.get(tableName) || 0) > 0 || this._viewportDebounces.has(tableName) ||
+      !!viewport?.inFlight || (viewport?.pending?.length || 0) > 0;
+  },
 
   setExperienceScope(tableName = this.defaultTable, scopeOrProvider = null) {
     if (scopeOrProvider == null) this._experienceScopes.delete(tableName);
@@ -112,6 +119,7 @@ export const OTEF_API = {
         tableName,
       });
     }
+    this._pendingWrites.set(tableName, (this._pendingWrites.get(tableName) || 0) + 1);
     try {
       const response = await httpFetch(`${this.baseUrl}/${tableName}/`, {
         method: "PATCH",
@@ -137,6 +145,10 @@ export const OTEF_API = {
       }
       getLogger().error("[OTEF API] Error updating state:", error);
       throw error;
+    } finally {
+      const remaining = this._pendingWrites.get(tableName) - 1;
+      if (remaining) this._pendingWrites.set(tableName, remaining);
+      else this._pendingWrites.delete(tableName);
     }
   },
 
@@ -149,6 +161,7 @@ export const OTEF_API = {
         action: command && command.action,
       });
     }
+    this._pendingWrites.set(tableName, (this._pendingWrites.get(tableName) || 0) + 1);
     try {
       const response = await httpFetch(`${this.baseUrl}/${tableName}/command/`, {
         method: "POST",
@@ -181,6 +194,10 @@ export const OTEF_API = {
         getLogger().error("[OTEF API] Error executing command:", error);
       }
       throw error;
+    } finally {
+      const remaining = this._pendingWrites.get(tableName) - 1;
+      if (remaining) this._pendingWrites.set(tableName, remaining);
+      else this._pendingWrites.delete(tableName);
     }
   },
 

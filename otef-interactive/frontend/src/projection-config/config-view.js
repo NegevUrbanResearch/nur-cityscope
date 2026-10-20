@@ -1,7 +1,7 @@
 import { createConfigCommandBar } from './config-command-bar.js';
 import { createGazaBorderVisibilityControls } from './gaza-border-visibility-controls.js';
 import { DEFAULT_PROJECTION_CONFIG } from "../shared/projection-config-schema.js";
-import { createNodeCanvas } from "./node-canvas.js";
+import { createConfigNavigation } from "./config-navigation.js";
 import { createWarpEditorDialog } from "./warp-editor-dialog.js";
 import { createPointMatchControls } from './point-match-controls.js';
 import { measureProjectionLandmarks } from '../shared/projection-point-fit.js';
@@ -104,6 +104,7 @@ export function createProjectionConfigView(root, {
   onGazaBorderVisibility = () => {},
   onGazaBorderReload = () => {},
   onNode = () => {},
+  onNavigateBack = () => true,
   onOpenClockEditor = () => {},
   onOpenNovaExplainerEditor = () => {},
   onOpenSettlementEditor = () => {},
@@ -198,19 +199,6 @@ export function createProjectionConfigView(root, {
     ["left-grid", "Left Grid Warp", "7 × 7 residual grid"], ["right-grid", "Right Grid Warp", "8 × 7 residual grid"],
     ["left-output", "Left Output", "Left projector"], ["right-output", "Right Output", "Right projector"],
   ];
-  const categoryGroups = {
-    Content: ["content"],
-    Geometry: ["pre", "left-crop", "right-crop", "left-fit", "right-fit", "left-keystone", "right-keystone", "left-grid", "right-grid", "left-output", "right-output"],
-    Overlays: ["clock-gis", "nova-explainers", "clock-projection", "road-signs"],
-    Names: ["names-wall", "settlement-names"],
-  };
-  const categoryActions = controls.workspaceNav;
-  for (const [category, nodeIds] of Object.entries(categoryGroups)) {
-    const shortcut = button(doc, category, `focus-${category.toLowerCase()}`, "config-category-action");
-    shortcut.dataset.focusNodes = nodeIds.join(" ");
-    shortcut.addEventListener("click", () => canvas.focusNodes(nodeIds));
-    categoryActions.appendChild(shortcut);
-  }
   if (traceUi) controls.toolsContent.appendChild(traceUi.element);
   app.append(commandBar.element);
   const nodeMap = new Map();
@@ -426,7 +414,7 @@ export function createProjectionConfigView(root, {
         event.stopPropagation?.(); if (onNode(id) === false) return;
         activeParameterNode = id;
         parameterDialog?.open({ nodeId: id, title: label, descriptors: nodeFields, opener: adjust });
-        if (id === "names-wall") { parameterDialog?.fieldsElement.prepend(namesEditorTools); parameterDialog?.fieldsElement.appendChild(namesEditorNotes); }
+        if (id === "names-wall") { parameterDialog?.fieldsElement.prepend(namesEditorTools); parameterDialog?.fieldsElement.appendChild(namesEditorNotes); parameterDialog?.syncNamesTools?.(); }
         parameterDialog?.update({ config: currentDraft, fieldErrors: currentFieldErrors, status: currentStatus });
       });
       card.appendChild(adjust);
@@ -506,7 +494,7 @@ export function createProjectionConfigView(root, {
     if (parameterEditorNodes.has(id) && selectedFields.length) {
       activeParameterNode = id;
       parameterDialog?.open({ nodeId: id, title: graphNodes.find(([nodeId]) => nodeId === id)?.[1], descriptors: selectedFields, opener: enlargeEdit });
-      if (id === "names-wall") { parameterDialog?.fieldsElement.prepend(namesEditorTools); parameterDialog?.fieldsElement.appendChild(namesEditorNotes); }
+      if (id === "names-wall") { parameterDialog?.fieldsElement.prepend(namesEditorTools); parameterDialog?.fieldsElement.appendChild(namesEditorNotes); parameterDialog?.syncNamesTools?.(); }
       parameterDialog?.update({ config: currentDraft, fieldErrors: currentFieldErrors, status: currentStatus });
     } else if (id.endsWith("-keystone") || id.endsWith("-grid")) {
       dialog.open({ side: id.startsWith("right-") ? "right" : "left", mode: id.endsWith("-grid") ? "grid" : "keystone", opener: enlargeEdit });
@@ -532,7 +520,7 @@ export function createProjectionConfigView(root, {
       if (action === "start" && accepted) { activeWarpAdjusting = true; warpPanelView.setAdjusting(true); dialog?.updateAdjustmentGuard?.(); }
       return accepted;
     },
-    onNudgeFocus: () => controls.warpSurface.focus?.(),
+    onNudgeFocus: () => controls.warpSurface.focus?.({ preventScroll: true }),
   });
   Object.assign(controls, warpPanelView.controls);
   controls.warpPanel = warpPanelView.element;
@@ -617,7 +605,7 @@ export function createProjectionConfigView(root, {
     }
     else if (name === "place-row" || name === "place-column") { operation = "add"; payload = { axis: name === "place-row" ? "row" : "column", position: value }; }
     else if (name === "remove-row" || name === "remove-column") { operation = "remove"; payload = { axis: name === "remove-row" ? "row" : "column", index: name === "remove-row" ? rowIndex : columnIndex }; }
-    else if (name === "even") { operation = "even"; payload = { axis: selection.kind === "column" ? "column" : "row" }; }
+    else if (name === "even") { operation = "even"; payload = { axis: value?.axis === "column" ? "column" : "row" }; }
     else if (name === "rebuild") { operation = "rebuild"; payload = { rows: grid?.rows, columns: grid?.columns }; }
     if (operation) return onWarpAction("warp-grid-layout", { output, operation, ...payload });
   });
@@ -671,7 +659,7 @@ export function createProjectionConfigView(root, {
     controls.warpSurface.appendChild(pointMatchMarkers);
   }
   function updatePointMatch(next) {
-    const wasActive=pointMatchActive;pointMatchState=next;pointMatchActive=Boolean(next && !['closed','invalid'].includes(next.phase));
+    const wasActive=pointMatchActive;pointMatchState=next;pointMatchActive=Boolean(next && next.phase !== 'closed');
     if (wasActive!==pointMatchActive) cancelActiveDrag({reason:'match-mode'});
     pointMatchControls.update(next);
     controls.warpSurface.dataset.pointMatchActive=String(pointMatchActive);
@@ -693,6 +681,17 @@ export function createProjectionConfigView(root, {
   const warpOutput = () => selectedGraphNode.startsWith("right-") ? "right" : "left";
   const finishCoordinates = () => [...controls.warpCoordinateFields.values()].filter(control => control.isPending()).every(control => ['commit', 'unchanged'].includes(control.finish().kind));
   const onKeyDown = (event) => {
+    if (event.key === 'Escape' && !event.defaultPrevented && workspace.dataset.editing === 'true' && !dialog.isOpen() && !parameterDialog?.isOpen()) {
+      const embedded = editorRegion.querySelector('.config-content-editor:not([hidden])');
+      if (embedded && !embedded.contains(event.target)) {
+        event.preventDefault();
+        embedded.dispatchEvent(new doc.defaultView.KeyboardEvent('keydown', { key: 'Escape', cancelable: true }));
+      } else if (!embedded) {
+        event.preventDefault();
+        returnToDiagram();
+      }
+      return;
+    }
     if (!dialog.isOpen() || !(selectedGraphNode.endsWith("-keystone") || selectedGraphNode.endsWith("-grid"))) return;
     if (event.target !== controls.warpSurface && !controls.warpSurface.contains?.(event.target)) return;
     if (event.key === "Escape" && pointerInput?.isActive()) { event.preventDefault?.(); pointerInput.cancel({ reason: "escape" }); return; }
@@ -764,7 +763,7 @@ export function createProjectionConfigView(root, {
   root.appendChild(app);
   const dialog = createWarpEditorDialog({ document: doc, host: editorRegion, editorPanel: controls.warpPanel, overlay: controls.warpSurface, topologyControls: controls.gridLayout.element, navigationControls, optionalHealthElement: optionalHealthPanel, presentation: "panel", trace, socket,
     onPreviewInvalidated:onWarpPreviewInvalidated,onPreviewStateChange:onWarpPreviewStateChange,
-    onVisibilityChange: (visible) => { workspace.dataset.editing = String(visible); if (!visible) editorRegion.appendChild(optionalHealthPanel); onWarpEditorVisibility(visible); },
+    onVisibilityChange: (visible) => { workspace.dataset.editing = String(visible); if (!visible) { editorRegion.appendChild(optionalHealthPanel); showDiagram(); } onWarpEditorVisibility(visible); },
     onPresentationChange: (focused) => {
       root.dataset.warpFullViewport = String(focused);
       commandBar.element.inert = Boolean(focused);
@@ -806,7 +805,7 @@ export function createProjectionConfigView(root, {
     onVisibilityChange: (visible) => {
       workspace.dataset.editing = String(visible);
       if (visible) parameterDialog.bodyElement?.prepend(optionalHealthPanel);
-      else editorRegion.appendChild(optionalHealthPanel);
+      else { editorRegion.appendChild(optionalHealthPanel); showDiagram(); }
       const showNamesTools = visible && activeParameterNode === "names-wall";
       namesEditorTools.hidden = !showNamesTools; namesEditorNotes.hidden = !showNamesTools;
     },
@@ -827,8 +826,23 @@ export function createProjectionConfigView(root, {
   });
   const disposeWarpTrace = bindProjectionTraceInput({ surface: controls.warpSurface, surfaceName: 'warp', trace, readGeometry: () => ({ viewBox: effectiveWarpViewBox || warpViewBox, selection: currentSelection, mode: selectedGraphNode.endsWith('-grid') ? 'grid' : 'keystone', side: selectedGraphNode.startsWith('right-') ? 'right' : 'left' }) });
   const disposeGraphTrace = bindProjectionTraceInput({ surface: graphViewport, surfaceName: 'graph', trace });
-  const canvas = createNodeCanvas({ document: doc, viewport: graphViewport, graph, svg, wire: wirePath, nodeMap, controls: { zoomIn, zoomOut, zoomReset, zoomOne }, trace });
-  canvas.mount();
+  const navigation = createConfigNavigation({ document: doc, onSelect: activateNode, onBack: returnToDiagram });
+  workspace.insertBefore(navigation.element, editorRegion);
+  graphColumn.hidden = true;
+  function showDiagram() { navigation.showDiagram(); workspace.dataset.editing = 'false'; }
+  function returnToDiagram() {
+    if (parameterDialog.close() === false || dialog.close() === false || onNavigateBack() === false) return false;
+    activeParameterNode = null;
+    showDiagram();
+    return true;
+  }
+  function activateNode(id) {
+    if (onNode(id) === false) return false;
+    navigation.select(id);
+    workspace.dataset.editing = 'true';
+    if (id !== 'content') enlargeEdit.click();
+    return true;
+  }
 
   const setNode = (node) => {
     const selected = node || "pre";
@@ -841,12 +855,13 @@ export function createProjectionConfigView(root, {
     }
     selectedGraphNode = selected;
     workspace.dataset.selectedNode = selected;
+    editorRegion.dataset.node = selected;
     editorNodeHeading.textContent = graphNodes.find(([id]) => id === selected)?.[1] || "Selected node";
     const editable = (parameterEditorNodes.has(selected) && descriptors.some((item) => item.node === selected)) || selected.endsWith("-keystone") || selected.endsWith("-grid") || ["clock-gis", "clock-projection", "nova-explainers", "settlement-names", "road-signs"].includes(selected);
     enlargeEdit.disabled = !editable;
     editorEmptyState.hidden = editable || selected === "content";
     if (parameterDialog?.isOpen() && parameterDialog.element.dataset.node !== selected) parameterDialog.close();
-    canvas.setSelected(selected);
+    navigation.update(selected);
     for (const [id, card] of nodeMap) card.classList?.toggle("selected", id === selected);
   };
   const warpSurfaceTopologyKeyFor = ({ output, mode, rows, columns, warp, warpState, handles }) => {
@@ -891,14 +906,14 @@ export function createProjectionConfigView(root, {
           event.preventDefault?.();
           if (pointerInput?.isActive() || !finishCoordinates()) return;
           cancelActiveDrag({ reason: "selection" });
-          const selection = currentWarpMode === "keystone" ? { mode: currentWarpMode, kind: "corner", index } : gridSelectionForHandle(currentWarpState?.selection, index, currentWarpGrid?.columns || 7);
+          const selection = currentWarpMode === "keystone" ? { mode: currentWarpMode, kind: "corner", index } : gridSelectionForHandle(null, index, currentWarpGrid?.columns || 7);
           onWarpAction("warp-select", { output: currentWarpOutput, selection });
         });
         return marker;
       });
       controls.warpSurface.replaceChildren(rect, ...mainPaths, ...previewPaths, ...markers);
       warpSurfaceRenderState = { topologyKey, rect, mainPaths, previewPaths, markers };
-      if (focusedHandleIndex !== null) warpSurfaceRenderState.markers[focusedHandleIndex]?.focus?.();
+      if (focusedHandleIndex !== null) warpSurfaceRenderState.markers[focusedHandleIndex]?.focus?.({ preventScroll: true });
     }
     const render = warpSurfaceRenderState;
     const pathFor = (points) => points.map((point, index) => `${index ? "L" : "M"}${point.x * WARP_OUTPUT_WIDTH} ${point.y * WARP_OUTPUT_HEIGHT}`).join(" ");
@@ -993,7 +1008,7 @@ export function createProjectionConfigView(root, {
     for (const input of controls.gridLayout.fields.values()) input.disabled = adjusting || !correctionEnabled;
     controls.gridLayout.update({ grid: warp?.grid, selection: warpState.selection, placement: currentGridPlacement, errorMessage: warpState.validationMessage || "", visible: mode === "grid" });
     for (const input of [...controls.gridLayout.fields.values(), ...controls.gridLayout.actions.values()]) input.disabled ||= adjusting || !correctionEnabled;
-    controls.warpSelectionControls.hidden = false;
+    controls.warpSelectionControls.hidden = true;
     for (const control of controls.warpSelectionButtons) control.setAttribute("aria-pressed", String(control.dataset.warpSelectionKind === selectionKind));
     controls.warpPositionLabels[0].textContent = selectionKind === "point" || mode === "keystone" ? "X px" : "Mean X px";
     controls.warpPositionLabels[1].textContent = selectionKind === "point" || mode === "keystone" ? "Y px" : "Mean Y px";
@@ -1173,9 +1188,12 @@ export function createProjectionConfigView(root, {
       control.update({value, resolvedPath: errorPath, error: presentationError(errorPath, fieldError)});
     }
     const selectedDescriptors = descriptors.filter((descriptor) => descriptor.node === selectedNode && !fields.get(`${descriptor.node}:${descriptor.path}`)?.wrap.hidden);
-    selectedContext.replaceChildren();
+    if (selectedNode !== 'content') selectedContext.replaceChildren();
     selectedContext.setAttribute("aria-label", `Current parameters for ${editorNodeHeading.textContent}`);
-    if (selectedNode === "content") selectedContext.append(borderEditorVisibility.element, ...selectedFontChoices.elements);
+    if (selectedNode === "content") {
+      const contentControls = [borderEditorVisibility.element, ...selectedFontChoices.elements];
+      if (selectedContext.children.length !== contentControls.length || contentControls.some((control, index) => selectedContext.children[index] !== control)) selectedContext.replaceChildren(...contentControls);
+    }
     else if (selectedDescriptors.length) {
       const list = make(doc, "dl", { className: "config-selected-parameters" });
       for (const descriptor of selectedDescriptors) {
@@ -1195,7 +1213,7 @@ export function createProjectionConfigView(root, {
   };
   setNode("pre");
   return {
-    update, controls: { ...controls, enlargeEdit, editorRegion, editorNodeHeading }, fields, nodeMap, parameterDialog, setPresetName, canManageDisplays: true,
+    update, showDiagram, activateNode, controls: { ...controls, enlargeEdit, editorRegion, editorNodeHeading }, fields, nodeMap, parameterDialog, setPresetName, canManageDisplays: true,
     updateGazaBorderVisibility(state) { borderVisibility.render(state); borderEditorVisibility.render(state); },
     getClockEditorOpener(node) {
       return nodeMap.get(node)?.querySelector?.('[data-action="clock-editor-open"]') || null;
@@ -1231,7 +1249,7 @@ export function createProjectionConfigView(root, {
     setPointMatchPreview:config=>dialog.setPointMatchPreview(config),
     confirmDiscard:message=>doc.defaultView?.confirm?.(message),
     mapPointMatchPadDelta:delta=>{const rect=controls.warpSurface.getBoundingClientRect?.() || {width:1920,height:1080};const box=effectiveWarpViewBox || warpViewBox;const a=warpPointFromClient({clientX:0,clientY:0},{left:0,top:0,width:rect.width,height:rect.height},box);const b=warpPointFromClient({clientX:delta[0],clientY:delta[1]},{left:0,top:0,width:rect.width,height:rect.height},box);return [b.x-a.x,b.y-a.y];},
-    dispose() { if (disposed) return; disposed = true; cancelPendingWarpPaint(); pointMatchControls.dispose(); for (const control of fields.values()) control.dispose(); warpPanelView.dispose(); settlementControls.dispose(); disposePageTrace(); disposeWarpTrace(); disposeGraphTrace(); traceUi?.dispose(); staffRemotePanel?.dispose(); commandBar.dispose(); doc.removeEventListener?.("keydown", onKeyDown); parameterDialog.dispose(); dialog.dispose(); pointerInput.dispose(); canvas.dispose(); },
+    dispose() { if (disposed) return; disposed = true; cancelPendingWarpPaint(); pointMatchControls.dispose(); for (const control of fields.values()) control.dispose(); warpPanelView.dispose(); settlementControls.dispose(); disposePageTrace(); disposeWarpTrace(); disposeGraphTrace(); traceUi?.dispose(); staffRemotePanel?.dispose(); commandBar.dispose(); doc.removeEventListener?.("keydown", onKeyDown); parameterDialog.dispose(); dialog.dispose(); pointerInput.dispose(); navigation.dispose(); },
   };
 }
 

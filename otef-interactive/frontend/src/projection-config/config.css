@@ -157,7 +157,6 @@ button:hover { background: var(--config-surface-hover); }
 .names-wall-editor-tools > button { width: 100%; }
 .names-wall-editor-notes { margin-top: 12px; padding: 8px 10px 0; border-top: 1px solid var(--config-divider); }
 .names-wall-editor-notes > :first-child { margin-top: 0; }
-.config-workspace[data-editing="true"] .config-editor-region > :not(.parameter-editor-dialog):not(.warp-editor-dialog) { display: none; }
 @media (max-width: 1100px) {
   .config-workspace { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(220px, 1fr) auto; }
   .config-editor-region { grid-column: 1; grid-row: 2; }

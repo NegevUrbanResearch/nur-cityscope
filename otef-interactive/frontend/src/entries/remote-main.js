@@ -1,6 +1,11 @@
 import TableSwitcher from "../shared/table-switcher.js";
 import { initLocale } from "../remote/remote-locale.js";
 import { bindRemoteConnectionRecovery } from "../remote/remote-connection-recovery.js";
+import { installRegularRemoteManagement } from "../remote/regular-remote-management.js";
+import { FRONTEND_BUILD_ID } from "../../runtime/frontend-version.js";
+
+export { FRONTEND_BUILD_ID };
+if (typeof document !== "undefined") document.documentElement.dataset.frontendBuildId = FRONTEND_BUILD_ID;
 
 async function bootstrapRemoteRuntime() {
   const modules = [
@@ -57,6 +62,8 @@ async function boot() {
   const shouldContinue = initializeTableSwitcher();
   if (!shouldContinue) return;
   await bootstrapRemoteRuntime();
+  const { remoteReady } = await import("../remote/remote-controller.js");
+  await remoteReady;
   const [{ initRemotePlaceNavigation, placeIsWithinRemoteBounds }, { default: OTEFDataContext }] = await Promise.all(
     [
       import("../remote/remote-place-navigation.js"),
@@ -64,13 +71,20 @@ async function boot() {
     ],
   );
 
-  bindRemoteConnectionRecovery(() => OTEFDataContext.reconnect());
-  initRemotePlaceNavigation({
+  const stopRecovery = bindRemoteConnectionRecovery(() => OTEFDataContext.reconnect());
+  const navigation = initRemotePlaceNavigation({
     dataContext: OTEFDataContext,
     isConnected: () => OTEFDataContext.isConnected?.() !== false,
     narrativeActive: () => !!OTEFDataContext.getNarrativeState?.()?.id,
     canNavigateToPlace: (place) => placeIsWithinRemoteBounds(place, OTEFDataContext),
   });
+  const management = installRegularRemoteManagement({ dataContext: OTEFDataContext, loadedBuildId: FRONTEND_BUILD_ID });
+  const dispose = event => {
+    if (event.persisted) return;
+    management.dispose(); navigation?.destroy(); stopRecovery();
+    window.removeEventListener("pagehide", dispose);
+  };
+  window.addEventListener("pagehide", dispose);
 }
 
 boot().catch((error) => console.error("[frontend-b] remote bootstrap failed", error));

@@ -8,6 +8,7 @@ import {
 import { equalProjectionConfig } from "../shared/projection-config-client.js";
 import { createUuid } from "../shared/uuid.js";
 import { createProjectionConfigView } from "./config-view.js";
+import { singlePointSelection } from './config-selection.js';
 import { deriveGridSelectionIndices } from "./grid-layout-controls.js";
 import { createParameterHistory } from './parameter-history.js';
 import { createWarpEditor } from "./warp-editor.js";
@@ -220,6 +221,10 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     onWarpFieldCancel: (output) => { warpEditors[output].clearValidation(); refresh(); },
     onWarpEditorVisibility: (visible) => setGridTopologyContext(Boolean(visible)),
     onNamesMode: handleNamesMode,
+    onNavigateBack: () => {
+      if (!finishPendingEdit() || (pointMatch && !pointMatch.close())) return false;
+      return closeRoadSignEditor() && closeClockEditor() && closeSettlementEditor() && closeNovaExplainerEditor();
+    },
     onNode: (node) => { if (!finishPendingEdit() || (node !== selectedNode && pointMatch && !pointMatch.close())) return false; if (node !== selectedNode && !closeRoadSignEditor()) return false; if (node === "clock-gis" || node === "clock-projection") { if (!closeSettlementEditor()) return false; closeNovaExplainerEditor(); syncClockEditor(node); } else if (!closeClockEditor()) return false; if (node !== "nova-explainers") closeNovaExplainerEditor(); if (node === "settlement-names") syncSettlementEditor(); else if (!closeSettlementEditor()) return false; view.cancelWarpPointer(); setGridTopologyContext(false); selectedNode = node; if (node.endsWith("-keystone") || node.endsWith("-grid")) warpEditors[node.startsWith("right-") ? "right" : "left"].setMode(node.endsWith("-grid") ? "grid" : "keystone"); if (view.isWarpEditorOpen?.()) setGridTopologyContext(true); refresh(); return true; },
     onOpenClockEditor: openClockEditor,
     onOpenNovaExplainerEditor: openNovaEditor,
@@ -422,6 +427,9 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     const rows = [...statusRows.values()].map((row) => ({ ...row, text: rowText(row) }));
     const warpStates = Object.fromEntries(["left", "right"].map((output) => {
       const editor = warpEditors[output];
+      const selection = editor.getState().selection;
+      const single = singlePointSelection(selection, editor.getConfig().outputs[output].warp.grid);
+      if (selection.kind !== single.kind) editor.select(single);
       const pendingPreview = gridPreviews[output];
       let evaluatedMesh = null;
       try { evaluatedMesh = editor.getEvaluatedMesh(); } catch {}
@@ -436,7 +444,9 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
       ...(!editorBaselineReady ? { baselineAvailable: false, historyDepth: 0, redoDepth: 0 } : {}),
       config: editor.getConfig(), baselineMesh: editorBaselineReady ? editorBaselineMeshes[output] : null, evaluatedMesh, handles: editor.getControlPoints() }];
     }));
-    view.update({ state: { ...state, selectedPresetId }, errors: fieldErrors, parameterHistory: parameterHistory.state(),
+    const warpHistory = /-(grid|keystone)$/.test(selectedNode) ? warpEditors[activeWarpOutput()].getState() : null;
+    const independentEditor = ['settlement-names', 'clock-gis', 'clock-projection', 'road-signs', 'nova-explainers'].includes(selectedNode);
+    view.update({ state: { ...state, selectedPresetId }, errors: fieldErrors, parameterHistory: independentEditor ? { undo: 0, redo: 0 } : warpHistory ? { undo: warpHistory.historyDepth, redo: warpHistory.redoDepth } : parameterHistory.state(),
       conflict: conflict || state.migrationWarnings?.join(' ') || '',
       statusText: pendingAction
         ? ({ save: "Saving preset", rename: "Renaming preset", apply: "Applying changes", load: "Loading preset", revert: "Reverting settings" }[pendingAction.kind])
@@ -540,9 +550,10 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     const editor = novaExplainerEditorFactory({
       layoutClient,
       manageBeforeUnload: false,
+      host: view.controls.editorRegion, presentation: "panel",
       document: root?.ownerDocument || globalThis.document,
       restoreFocus: () => view.getNovaExplainerEditorOpener(),
-      onClose: () => { if (activeNovaEditor === editor) activeNovaEditor = null; },
+      onClose: () => { if (activeNovaEditor === editor) activeNovaEditor = null; view.showDiagram(); },
     });
     activeNovaEditor = editor;
     refresh();
@@ -565,10 +576,11 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
       catalogStatus,
       onRetryCatalog: retrySettlementCatalog,
       manageBeforeUnload: false,
+      host: view.controls.editorRegion, presentation: "panel",
       document: root?.ownerDocument || globalThis.document,
       onSelection: ({ output, citycode }) => { settlementOutput = output; settlementCitycode = citycode; refresh(); },
       restoreFocus: () => view.getSettlementEditorOpener(),
-      onClose: () => { if (activeSettlementEditor === editor) activeSettlementEditor = null; },
+      onClose: () => { if (activeSettlementEditor === editor) activeSettlementEditor = null; view.showDiagram(); },
     });
     activeSettlementEditor = editor;
     refresh();
@@ -587,10 +599,11 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
         return { config: structuredClone(snapshot.config), revision: snapshot.revision };
       },
       manageBeforeUnload: false,
+      host: view.controls.editorRegion, presentation: "panel",
       document: root?.ownerDocument || globalThis.document,
       restoreFocus: () => view.getRoadSignEditorOpener(),
       onPendingState: syncLayoutUnload,
-      onClose: () => { if (activeRoadSignEditor === editor) activeRoadSignEditor = null; syncLayoutUnload(); refresh(); },
+      onClose: () => { if (activeRoadSignEditor === editor) activeRoadSignEditor = null; syncLayoutUnload(); view.showDiagram(); refresh(); },
     });
     activeRoadSignEditor = editor;
     syncLayoutUnload();
@@ -605,6 +618,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     if (activeClockEditor) { syncClockEditor(nodeId); refresh(); return; }
     const editor = clockEditorFactory({ nodeId, sceneId: clockSceneId, element: clockElement, layoutClient,
       manageBeforeUnload: false,
+      host: view.controls.editorRegion, presentation: "panel",
       document: root?.ownerDocument || globalThis.document,
       onShowOnExhibit: async (sceneId) => {
         const action = createClockExhibitCueAction({ api: OTEF_API, tableName: "otef", sourceId: createUuid() });
@@ -613,7 +627,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
       },
       onSelection: ({ nodeId: nextNode, sceneId, element }) => { selectedNode = nextNode; clockSceneId = sceneId; clockElement = element; refresh(); },
       restoreFocus: () => view.getClockEditorOpener(selectedNode),
-      onClose: () => { if (activeClockEditor === editor) { activeClockEditor = null; activeClockEditorNode = null; } },
+      onClose: () => { if (activeClockEditor === editor) { activeClockEditor = null; activeClockEditorNode = null; } view.showDiagram(); },
     });
     activeClockEditor = editor; activeClockEditorNode = nodeId; clockEditors.add(editor);
     refresh();
@@ -697,16 +711,16 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     try {
       if (action === "identify") await outputController.identifyDisplays();
       if (action === "refresh") await outputController.refreshDisplays();
-      if (action === "assign") outputController.assignDisplays(value);
-      if (action === "reverse-model") outputController.setReverseModel(value);
-      if (action === 'resolution') outputController.setResolution(value.side, value.resolution);
+      if (action === "assign") await outputController.assignDisplays(value);
+      if (action === "reverse-model") await outputController.setReverseModel(value);
+      if (action === 'resolution') await outputController.setResolution(value.side, value.resolution);
       if (action === "open") await outputController.openBoth();
       if (action === "open-left") await outputController.openSide("left");
       if (action === "open-right") await outputController.openSide("right");
-      if (action === "close") outputController.closeBoth();
+      if (action === "close") await outputController.closeBoth();
       outputState = outputController.getState?.() || outputState;
     } catch (error) {
-      outputState = outputController.getState?.() || { ...outputState, error: error?.message || String(error) };
+      outputState = { ...(outputController.getState?.() || outputState), error: error?.message || String(error) };
     }
     refresh();
   }
@@ -981,10 +995,11 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     const descriptor = descriptorFor(path); if (!descriptor || !state.draft) return false;
     const resolvedPath = resolvedFieldPath(state.draft, path); const current = readPath(state.draft, resolvedPath);
     if (meta.phase === 'sensitivity') { nudgeAnchors.delete(resolvedPath); return true; }
+    const step = meta.sensitivity === 'coarse' ? descriptor.step : descriptor.fine;
     let anchor = nudgeAnchors.get(resolvedPath);
-    if (!anchor || !Object.is(anchor.last, current) || anchor.step !== descriptor.fine || meta.phase === 'start') anchor = { base: current, count: 0, last: current, step: descriptor.fine };
+    if (!anchor || !Object.is(anchor.last, current) || anchor.step !== step || meta.phase === 'start') anchor = { base: current, count: 0, last: current, step };
     const count = meta.count !== undefined ? meta.count * direction : anchor.count + direction;
-    const value = count === 0 ? anchor.base : anchor.base + count * descriptor.fine;
+    const value = count === 0 ? anchor.base : anchor.base + count * step;
     const accepted = commitScalar({ path, resolvedPath, value, baseValue: current, ...meta });
     if (accepted && meta.phase !== 'cancel') { anchor.count = count; anchor.last = value; nudgeAnchors.set(resolvedPath, anchor); }
     return accepted;
@@ -1178,7 +1193,11 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
       if (action==='apply') return pointMatch.handleAction('apply');
       if (['save','save-new','load','revert','import','preset-select','parameter-undo','parameter-redo'].includes(action) && !pointMatch.close()) return false;
     }
-    if (action === 'parameter-undo' || action === 'parameter-redo') return restoreParameter(action === 'parameter-undo' ? 'undo' : 'redo');
+    if (action === 'parameter-undo' || action === 'parameter-redo') {
+      if (['settlement-names', 'clock-gis', 'clock-projection', 'road-signs', 'nova-explainers'].includes(selectedNode)) return false;
+      if (/-(grid|keystone)$/.test(selectedNode)) return handleWarpAction(action === 'parameter-undo' ? 'warp-undo' : 'warp-redo', { output: activeWarpOutput() });
+      return restoreParameter(action === 'parameter-undo' ? 'undo' : 'redo');
+    }
     if ((["apply", "save", "save-new", "preset-select"].includes(action) || (action === "live" && Boolean(value))) && !finishPendingEdit()) return false;
     if (["load", "revert", "import"].includes(action) && !discardPendingEdit()) return false;
     let actionToken = null;

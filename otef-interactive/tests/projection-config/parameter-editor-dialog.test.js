@@ -8,6 +8,16 @@ const descriptors = [
 ];
 const makeConfig = () => ({ pre: { scale: 1.25 }, outputs: { left: { crop: { x0: 0.1 } } } });
 afterEach(() => { document.body.replaceChildren(); vi.restoreAllMocks(); });
+
+test('Escape consumed by a header menu keeps the scalar editor open', () => {
+  const host = document.createElement('main'); document.body.append(host);
+  const panel = createParameterEditorDialog({ document, host, presentation: 'panel' });
+  panel.open({ nodeId: 'pre', descriptors: [descriptors[0]] });
+  const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+  event.preventDefault(); document.dispatchEvent(event);
+  expect(panel.isOpen()).toBe(true);
+  panel.dispose();
+});
 test('opening retains current parameter history controls and forwards undo', () => {
   const host=document.createElement('main'); document.body.append(host); const onAction=vi.fn();
   const dialog=createParameterEditorDialog({document,host,onAction});

@@ -1,6 +1,6 @@
 import { getLocale, t, LOCALE_EVENT } from "./remote-locale.js";
 
-export function createStaffRemoteUpdateView({ document: doc = globalThis.document, updates }) {
+export function createStaffRemoteUpdateView({ document: doc = globalThis.document, updates, busyReminderKey = "updateBusyReminder" }) {
   const element = doc.createElement("aside");
   element.className = "staff-updates";
   const controls = doc.createElement("div"); controls.className = "staff-update-controls";
@@ -33,7 +33,7 @@ export function createStaffRemoteUpdateView({ document: doc = globalThis.documen
     element.lang = getLocale();
     reminder.hidden = state.mode !== "reminder";
     reminder.disabled = !state.canRefresh;
-    reminder.textContent = t(state.canRefresh ? "updateReminder" : "updateBusyReminder");
+    reminder.textContent = t(state.canRefresh ? "updateReminder" : busyReminderKey);
     setup.hidden = state.registration === "registered";
     setup.disabled = state.setupPending;
     setup.textContent = t(state.setupPending ? "updateRegistering" : "updateRegister");

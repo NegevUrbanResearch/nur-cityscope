@@ -5,7 +5,24 @@ import { mountProjectionConfig } from '../../frontend/src/projection-config/conf
 import { DEFAULT_PROJECTION_CONFIG } from '../../frontend/src/shared/projection-config-schema.js';
 
 import * as module from '../../frontend/src/projection-config/config-command-bar.js';
+import { createStaffRemotePanel } from '../../frontend/src/projection-config/staff-remote-panel.js';
 const snapshot = { presets: [{ id: 'original', name: 'Original', readOnly: true }, { id: 'desk', name: 'Desk' }, { id: 'other', name: 'Other' }], selectedPresetId: 'other' };
+
+test.each([
+  ['Samsung Android tablet', 'Mozilla/5.0 (Linux; Android 13; SM-X200)', 'Linux armv8l', 5, true, true],
+  ['iPad desktop user agent', 'Mozilla/5.0 (Macintosh; Intel Mac OS X)', 'MacIntel', 5, false, true],
+  ['touch-only desktop-site tablet', 'Mozilla/5.0 (X11; Linux x86_64)', 'Linux x86_64', 5, true, true],
+  ['Windows touch desktop', 'Mozilla/5.0 (Windows NT 10.0)', 'Win32', 10, false, false],
+])('Tablet management visibility follows %s capabilities', (_label, userAgent, platform, maxTouchPoints, coarse, hidden) => {
+  const { window: dom } = new JSDOM('<main></main>', { url: 'http://localhost' });
+  for (const [key, value] of Object.entries({ userAgent, platform, maxTouchPoints })) Object.defineProperty(dom.navigator, key, { value, configurable: true });
+  dom.innerWidth = 600;
+  dom.matchMedia = query => ({ matches: query.includes('coarse') || query.includes('hover: none') ? coarse : !coarse, addEventListener() {}, removeEventListener() {} });
+  const staffRemotePanel = { summary: dom.document.createElement('section'), element: dom.document.createElement('section') };
+  const bar = module.createConfigCommandBar({ document: dom.document, staffRemotePanel });
+  expect(bar.controls.tabletDisclosure.hidden).toBe(hidden);
+  bar.dispose(); dom.close();
+});
 
 test('rename targets the loaded preset and refreshes Save without replacing a typed copy name', () => {
   const { window: dom } = new JSDOM('<main></main>', { url: 'http://localhost' });
@@ -112,7 +129,8 @@ test('jsdom view keeps direct commands visible while controller saves loaded ID 
   const api = mountProjectionConfig(root, { client });
   try {
     const select = root.querySelector('select[aria-label="Preset"]'); select.value = 'other'; select.dispatchEvent(new dom.Event('change'));
-    for (const action of ['load', 'save']) expect(root.querySelector(`[data-action="${action}"]`).closest('details')).toBeNull();
+    expect(root.querySelector('[data-action="save"]').closest('details')).toBeNull();
+    expect(root.querySelector('[data-action="load"]').closest('[data-menu="presets"]')).toBeTruthy();
     for (const action of ['revert', 'save-new']) expect(root.querySelector(`[data-action="${action}"]`).closest('[data-menu="presets"]')).toBeTruthy();
     for (const action of ['output-assign', 'output-open-both', 'output-close-both']) expect(root.querySelector(`[data-action="${action}"]`).closest(`[data-menu="displays"]`)).toBeTruthy();
     root.querySelector('[data-action="save"]').click();
@@ -124,22 +142,28 @@ test('command bar exposes the extracted construction and state interface', () =>
   expect(module.createConfigCommandBar).toBeTypeOf('function');
 });
 
-test('two-row commands keep Load, Save, Live, Apply and categories direct while setup actions are disclosed', () => {
+test('one-row commands keep commits direct and place pending selection inside Presets', () => {
   const { window } = new JSDOM('<main></main>', { url: 'http://localhost' });
   const onAction = vi.fn(), onOutputAction = vi.fn();
   const bar = module.createConfigCommandBar({ document: window.document, onAction, onOutputAction });
   window.document.querySelector('main').append(bar.element);
   const presets = bar.element.querySelector('[data-menu="presets"]');
   const displays = bar.element.querySelector('[data-menu="displays"]');
-  const tools = bar.element.querySelector('[data-menu="tools"]');
-  for (const control of [bar.controls.presets, bar.controls.load, bar.controls.save, bar.controls.live, bar.controls.apply, bar.controls.workspaceNav]) {
+  expect(bar.element.querySelector('[data-menu="tools"]')).toBeNull();
+  expect(bar.element.querySelectorAll('.config-command-row')).toHaveLength(1);
+  for (const control of [bar.controls.save, bar.controls.live, bar.controls.apply, bar.controls.parameterUndo, bar.controls.parameterRedo]) {
     expect(control.closest('[data-menu]')).toBeNull();
+    expect(control.closest('.config-command-row')).not.toBeNull();
   }
-  for (const name of ['revert', 'saveNew', 'loadedPresetIdentity']) expect(bar.controls[name].closest('[data-menu="presets"]')).toBe(presets);
+  expect(bar.controls.workspaceNav.isConnected).toBe(false);
+  for (const name of ['presets', 'load', 'revert', 'saveNew', 'loadedPresetIdentity']) expect(bar.controls[name].closest('[data-menu="presets"]')).toBe(presets);
   for (const name of ['outputRefresh', 'outputIdentify', 'outputLeftDisplay', 'outputRightDisplay', 'outputAssign', 'outputOpenBoth', 'outputCloseBoth']) {
     expect(bar.controls[name].closest('[data-menu="displays"]')).toBe(displays);
   }
-  expect(bar.controls.tools.closest('[data-menu="tools"]')).toBe(tools);
+  expect(bar.controls.parameterUndo.textContent).toBe('Undo');
+  expect(bar.controls.parameterRedo.textContent).toBe('Redo');
+  expect(bar.controls.outputOpenBoth.textContent).toBe('Open both');
+  expect(bar.controls.outputCloseBoth.textContent).toBe('Close both');
   bar.update({ state: { snapshot, live: true }, loadedPresetId: 'desk' });
   expect(bar.controls.saveStatus.hidden).toBe(false);
   expect(bar.controls.shortStatus.getAttribute('role')).toBe('status');
@@ -222,7 +246,8 @@ test('direct commands preserve loaded identity and open one accessible Save copy
   const bar = module.createConfigCommandBar({ document: window.document, onAction });
   window.document.querySelector('main').append(bar.element);
   bar.update({ state: { snapshot, live: true }, loadedPresetId: 'desk' });
-  for (const name of ['load', 'save', 'live', 'apply', 'presets']) expect(bar.controls[name].closest('details')).toBeNull();
+  for (const name of ['save', 'live', 'apply']) expect(bar.controls[name].closest('details')).toBeNull();
+  for (const name of ['load', 'presets']) expect(bar.controls[name].closest('details')).toBe(bar.controls.presetsDisclosure);
   for (const name of ['revert', 'saveNew', 'loadedPresetIdentity']) expect(bar.controls[name].closest('[data-menu="presets"]')).toBe(bar.controls.presetsDisclosure);
   for (const name of ['outputLeftDisplay', 'outputRightDisplay', 'outputAssign', 'outputOpenBoth', 'outputCloseBoth']) expect(bar.controls[name].closest('[data-menu="displays"]')).toBe(bar.controls.displaysDisclosure);
   expect(bar.controls.presets.value).toBe('other');
@@ -256,7 +281,7 @@ test('direct commands preserve loaded identity and open one accessible Save copy
 
 test('display selection stays local until Assign and unsupported status is outside Tools', () => {
   expect(module.createConfigCommandBar).toBeTypeOf('function');
-  const { window } = new JSDOM('<main></main>');
+  const { window } = new JSDOM('<main></main>', { url: 'http://localhost' });
   const onOutputAction = vi.fn();
   const bar = module.createConfigCommandBar({ document: window.document, onOutputAction });
   const outputState = { supported: true, screens: [{ key: 'a', displayNumber: 1, label: 'A long projector display name' }, { key: 'b', displayNumber: 2 }] };
@@ -277,26 +302,79 @@ test('display selection stays local until Assign and unsupported status is outsi
   expect(bar.controls.operationStatus.hidden).toBe(false);
   expect(bar.controls.alerts.hidden).toBe(false);
   expect(bar.controls.outputCapabilityNotice.hidden).toBe(false);
-  expect(bar.controls.outputCapabilityNotice.closest('details')).toBeNull();
+  expect(bar.controls.outputCapabilityNotice.closest('details')).toBe(bar.controls.displaysDisclosure);
   expect(bar.controls.actionError.hidden).toBe(false);
   expect(bar.controls.outputAssign.disabled).toBe(true);
   bar.dispose(); window.close();
 });
 
-test('Tablet remote summary stays beside Tools while remote rows are inside Tools', () => {
-  const { window } = new JSDOM('<main></main>');
-  const staffRemotePanel = {
-    summary: window.document.createElement('section'),
-    element: window.document.createElement('section'),
-    dispose: vi.fn(),
+test('Tablet keeps remote status, version, refresh and update actions reachable without diagnostic Tools', async () => {
+  const { window } = new JSDOM('<main></main>', { url: 'http://localhost' });
+  const remote = { remoteId: 'tablet', instanceId: 'tab', sessionId: 'Lab tablet', status: 'Online', version: 'frontend-current', ageMs: 1200, actionEnabled: true };
+  const manager = {
+    getState: () => ({ connectionStatus: 'Connected', remotes: [remote], sendEnabled: true }),
+    subscribe: () => () => {}, refresh: vi.fn(), sendNotice: vi.fn(), reconcileUpdates: vi.fn(),
   };
-  staffRemotePanel.summary.textContent = 'Tablet remote: Connected';
-  staffRemotePanel.element.textContent = 'NLI staff remote';
+  const staffRemotePanel = createStaffRemotePanel({ document: window.document, manager });
   const bar = module.createConfigCommandBar({ document: window.document, staffRemotePanel });
   window.document.querySelector('main').append(bar.element);
-  expect(staffRemotePanel.summary.parentElement).toBe(bar.element.querySelector('.config-command-row-primary'));
-  expect(staffRemotePanel.summary.closest('details')).toBeNull();
-  expect(staffRemotePanel.element.parentElement).toBe(bar.controls.toolsContent);
+  const menu = bar.element.querySelector('[data-menu="tablet"]');
+  expect(menu).not.toBeNull();
+  expect(menu.contains(staffRemotePanel.summary)).toBe(true);
+  expect(menu.contains(staffRemotePanel.element)).toBe(true);
+  expect(menu.textContent).toContain('Online');
+  expect(menu.textContent).toContain('frontend-current');
+  expect(bar.element.querySelector('[data-menu="tools"]')).toBeNull();
+  menu.querySelector('summary').click();
+  await new Promise(resolve => window.setTimeout(resolve, 0));
+  staffRemotePanel.element.querySelector('[aria-label="Refresh tablet Lab tablet"]').click();
+  expect(manager.refresh).toHaveBeenCalledWith(remote);
+  for (const [label, action] of [['Send update notice', 'sendNotice'], ['Reload tablet status', 'reconcileUpdates']]) {
+    [...menu.querySelectorAll('button')].find(button => button.textContent === label).click();
+    expect(manager[action]).toHaveBeenCalledOnce();
+  }
+  bar.controls.presetsSummary.click();
+  await vi.waitFor(() => expect(menu.open).toBe(false));
+  menu.open = true; menu.querySelector('summary').focus();
+  window.document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  expect(menu.open).toBe(false);
   expect(bar.controls.outputRefresh.closest('[data-menu="displays"]')).toBe(bar.controls.displaysDisclosure);
+  staffRemotePanel.dispose(); bar.dispose(); window.close();
+});
+
+test('tablet can retry workstation discovery while display commands are unavailable', () => {
+  const { window } = new JSDOM('<main></main>');
+  const bar = module.createConfigCommandBar({ document: window.document });
+  bar.update({ outputState: { supported: false, remoteControl: true, message: 'Keep config open on the workstation, then Refresh.' } });
+  expect(bar.controls.outputRefresh.disabled).toBe(false);
+  expect(bar.controls.outputOpenBoth.disabled).toBe(true);
+  expect(bar.controls.outputCapabilityNotice.textContent).toBe('Keep config open on the workstation, then Refresh.');
+  bar.dispose(); window.close();
+});
+
+test('routine Live-off draft and save status stay inside Presets while real failures remain actionable', () => {
+  const { window } = new JSDOM('<main></main>');
+  const bar = module.createConfigCommandBar({ document: window.document });
+  window.document.querySelector('main').append(bar.element);
+  const draft = { state: { snapshot, live: false, hasLocalDraft: true }, loadedPresetId: 'desk', draftDiffersFromAccepted: true, statusText: 'Local draft' };
+  bar.update(draft);
+  expect(bar.controls.operationStatus.hidden).toBe(true);
+  expect(bar.controls.status.closest('[data-menu="presets"]')).toBe(bar.controls.presetsDisclosure);
+  expect(bar.controls.status.textContent).toContain('Apply or save before reload');
+  expect(bar.controls.presetsSummary.dataset.dirty).toBe('true');
+  bar.update({ ...draft, savePending: true, statusText: 'Saving preset' });
+  expect(bar.controls.operationStatus.hidden).toBe(true);
+  bar.update({ ...draft, outputState: { supported: false, remoteControl: true } });
+  expect(bar.controls.operationStatus.hidden).toBe(true);
+  bar.update({ ...draft, errors: { action: 'Write rejected' } });
+  expect(bar.controls.operationStatus.hidden).toBe(false);
+  expect(bar.controls.actionError.hidden).toBe(false);
+  bar.update({ ...draft, conflict: 'Settings changed elsewhere' });
+  expect(bar.controls.operationStatus.hidden).toBe(false);
+  expect(bar.controls.conflict.hidden).toBe(false);
+  bar.update({ ...draft, state: { ...draft.state, reconciliation: { status: 'needs-choice', message: 'Review uncertain write' } } });
+  expect(bar.controls.operationStatus.hidden).toBe(false);
+  expect(bar.controls.reconciliationKeepLocal.hidden).toBe(false);
+  expect(bar.controls.reconciliationUseAccepted.hidden).toBe(false);
   bar.dispose(); window.close();
 });

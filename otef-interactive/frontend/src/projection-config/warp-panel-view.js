@@ -43,7 +43,7 @@ export function createWarpPanelView({ document: doc, onAction = () => {}, onPoin
   const position = make(doc, "div", "warp-numeric");
   const coordinateFields = new Map();
   for (const axis of ["x", "y"]) {
-    const control = renderField(doc, { path: `warp.position.${axis}`, label: `Selected warp ${axis.toUpperCase()} position`, unit: "px", min: -Infinity, max: Infinity, range: false, nudges: false, decimals: 2, captureOnFocus: true },
+    const control = renderField(doc, { path: `warp.position.${axis}`, label: `Selected warp ${axis.toUpperCase()} position`, unit: "px", min: -Infinity, max: Infinity, range: false, nudges: false, decimals: 2, captureOnFocus: true, directSigned: true },
       (_path, raw, _inputKind, meta) => {
         let coordinateTarget;
         try { coordinateTarget = JSON.parse(meta?.resolvedPath || "{}"); } catch {}
@@ -51,11 +51,12 @@ export function createWarpPanelView({ document: doc, onAction = () => {}, onPoin
       }, null, false, false,
       (_path, _value, meta) => onAction("warp-field-cancel", { axis, ...meta }));
     coordinateFields.set(axis, control); position.appendChild(control.wrap);
+    control.wrap.querySelector('label').textContent = `${axis.toUpperCase()} position`;
   }
   const warpStep = doc.createElement("select"); warpStep.className = "warp-step"; warpStep.setAttribute("aria-label", "Warp nudge step");
   for (const [value, text] of [["fine", "Fine · 0.25 px"], ["coarse", "Coarse · 1 px"]]) { const option = doc.createElement("option"); option.value = value; option.textContent = text; warpStep.appendChild(option); }
   warpStep.addEventListener("change", () => onAction("warp-step", { mode: warpStep.value }));
-  const stepLabel = make(doc, "label", "warp-step-label", "Step"); stepLabel.htmlFor = "warp-nudge-step"; warpStep.id = "warp-nudge-step";
+  const stepLabel = make(doc, "label", "warp-step-label", "Move by"); stepLabel.htmlFor = "warp-nudge-step"; warpStep.id = "warp-nudge-step";
   const nudgePad = make(doc, "div", "warp-arrows"); nudgePad.setAttribute("role", "group"); nudgePad.setAttribute("aria-label", "Warp nudge controls");
   let hold = null; let suppressClick = false;
   const stopHold = (cancel) => {
@@ -66,6 +67,7 @@ export function createWarpPanelView({ document: doc, onAction = () => {}, onPoin
   };
   for (const [label, direction] of [["↑", "up"], ["↓", "down"], ["←", "left"], ["→", "right"]]) {
     const item = make(doc, "button", "warp-action", label); item.type = "button"; item.dataset.action = "warp-nudge"; item.dataset.direction = direction;
+    item.setAttribute('aria-label', `Move selected point ${direction}`);
     item.addEventListener("click", (event) => { if (suppressClick && event.detail > 0) { suppressClick = false; return; } onAction("warp-nudge", { direction }); onNudgeFocus(); });
     item.addEventListener("pointerdown", (event) => {
       suppressClick = false; if (event.button !== undefined && event.button !== 0) return;
@@ -137,6 +139,7 @@ export function createWarpPanelView({ document: doc, onAction = () => {}, onPoin
   history.append(warpUndo, warpRedo, warpReset, warpResetAll, warpStartFresh);
   selectionRow.append(selectionStatus, selectionControls, selectionPicker);
   positionRow.appendChild(position);
+  positionRow.appendChild(warpReset);
   stepRow.append(stepLabel, warpStep);
   adjustmentRow.append(nudgePad, relativePad);
   element.append(selectionRow, positionRow, stepRow, adjustmentRow, gridPreviewRow, historyRow);
@@ -145,9 +148,11 @@ export function createWarpPanelView({ document: doc, onAction = () => {}, onPoin
   let state = null;
   let pickerTopologyKey = null;
   selectionPicker.addEventListener("change", () => {
-    if (!state || !canChangeSelection()) return;
+    if (!state) return;
+    const restoreSelection = () => { selectionPicker.value = String(state.selection?.index || 0); };
+    if (!canChangeSelection()) { restoreSelection(); return; }
     const selection = state.selection || {};
-    onAction("warp-select", { output: element.dataset.output, selection: { mode: selection.mode, kind: selection.kind, index: Number(selectionPicker.value) || 0 } });
+    if (onAction("warp-select", { output: element.dataset.output, selection: { mode: selection.mode, kind: selection.kind, index: Number(selectionPicker.value) || 0 } }) === false) restoreSelection();
   });
   selectionButtons.forEach((button) => button.addEventListener("click", () => {
     if (!state || !canChangeSelection()) return;
@@ -188,8 +193,8 @@ export function createWarpPanelView({ document: doc, onAction = () => {}, onPoin
         pickerTopologyKey = nextPickerTopology;
       }
       selectionPicker.hidden = selection.kind === "all"; if (pickerCount) selectionPicker.value = String(Math.min(pickerCount - 1, selection.index || 0));
-      selectionControls.hidden = false;
-      selectionButtons.forEach((button) => { const kind = button.dataset.warpSelectionKind; button.hidden = mode === "grid" ? !["point", "row", "column", "edge", "all"].includes(kind) : !["corner", "edge", "all"].includes(kind); button.setAttribute("aria-pressed", String(kind === selection.kind)); });
+      selectionControls.hidden = true;
+      selectionButtons.forEach(button => { button.hidden = true; });
       const points = state.handles || [];
       const selected = indices.map((index) => points[index]).filter(Boolean);
       for (const [axis, control] of coordinateFields) {

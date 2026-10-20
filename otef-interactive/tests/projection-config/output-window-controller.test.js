@@ -1,6 +1,28 @@
 import { expect, test, vi } from "vitest";
 import { createOutputWindowController, FULLSCREEN_TIMEOUT_MS, browserUrl } from "../../frontend/src/projection-config/output-window-controller.js";
 
+test('a reloaded workstation tab does not claim to close windows it no longer owns', async () => {
+  const storage = storageStub();
+  const open = vi.fn(url => popupFor(url));
+  const previous = createOutputWindowController({ storage, open, screenApi: screenApi() });
+  const screens = await previous.refreshDisplays();
+  previous.assignDisplays({ left: screens[0].key, right: screens[1].key });
+  await previous.openBoth();
+  const windows = open.mock.results.map(result => result.value);
+  previous.dispose();
+
+  const reloaded = createOutputWindowController({ storage, open, screenApi: screenApi() });
+  const result = reloaded.closeBoth();
+  expect(result.ownedSpans).toEqual([]);
+  expect(result.message).toMatch(/no browser output windows are owned/i);
+  expect(result.message).toMatch(/before a reload must be closed on the workstation/i);
+  expect(result.message).not.toMatch(/windows closed\./i);
+  expect(windows.every(win => !win.closed)).toBe(true);
+  expect(windows.every(win => win.close.mock.calls.length === 0)).toBe(true);
+  reloaded.dispose();
+  windows.forEach(win => win.close());
+});
+
 test('per-output resolution persists and reopening one output leaves the other running', async () => {
   const values = new Map();
   const storage = { getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value) };

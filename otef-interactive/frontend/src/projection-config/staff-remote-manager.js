@@ -147,7 +147,7 @@ export function createStaffRemoteManager({ socket, sourceId, monotonicNow = () =
             receipt.sourceId === sourceId && receipt.requestId === record.request.requestId && value.instanceId !== receipt.previousInstanceId) {
           record.state = "complete";
           if (!row.pending || row.pending === record.request.requestId) {
-            row.actionStatus = "Tablet reloaded to Home";
+            row.actionStatus = "Tablet reloaded";
             row.pending = null;
           }
           if (record.timer !== null) timers.clearTimeout(record.timer);

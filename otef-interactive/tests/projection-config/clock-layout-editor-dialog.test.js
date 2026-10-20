@@ -126,7 +126,7 @@ test("legacy legend opens as Auto without changing its acknowledged record and h
   expect(select.value).toBe("0");
   expect(select.hidden).toBe(false);
   expect(rig.find((node) => node.dataset?.field === "dwellSeconds").hidden).toBe(true);
-  const fontLabel = rig.find((node) => node.dataset?.field === "fontPx").parentElement.parentElement;
+  const fontLabel = rig.find((node) => node.dataset?.path === "fontPx");
   expect(fontLabel.children[0].textContent).toBe("Font size (maximum)");
   expect(rig.client.getSlot("projectionLegend", "left").acknowledged).not.toHaveProperty("columns");
   expect(rig.client.getSlot("projectionLegend", "left").draft).toBeNull();
@@ -136,7 +136,7 @@ test("legacy legend opens as Auto without changing its acknowledged record and h
 test.each([["clock-projection", "clock"], ["clock-gis", "clock"]])("column select is hidden for %s/%s", async (nodeId, element) => {
   const rig = await editorFixture(nodeId, element); rig.rendered();
   expect(rig.find((node) => node.dataset?.field === "columns").hidden).toBe(true);
-  expect(rig.find((node) => node.dataset?.field === "fontPx").parentElement.parentElement.children[0].textContent).toBe("Font size");
+  expect(rig.find((node) => node.dataset?.path === "fontPx").children[0].textContent).toBe("Font size");
 });
 
 test("clock editor identifies its output or selected GIS scene and explains autosave", async () => {

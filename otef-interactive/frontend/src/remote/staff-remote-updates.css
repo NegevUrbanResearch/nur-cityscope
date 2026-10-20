@@ -1,4 +1,14 @@
 .staff-updates { flex-shrink: 0; }
+.otef-remote-shell .staff-updates {
+  --text: var(--color-ink);
+  --text-2: var(--color-ink-muted);
+  --surface: var(--color-surface);
+  --surface-2: var(--color-surface-raised);
+  --line-strong: var(--color-border-strong);
+  --accent: var(--color-primary);
+  --accent-ink: var(--color-on-primary);
+  --focus: var(--color-primary);
+}
 .staff-update-controls { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; padding: 6px 12px; }
 .staff-update-controls[hidden] { display: none; }
 .staff-update-controls p { margin: 0; font-size: 14px; color: var(--text-2); }

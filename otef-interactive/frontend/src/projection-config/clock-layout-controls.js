@@ -3,6 +3,7 @@ import { NLI_GIS_CLOCK_DEFAULT_LAYOUT } from "../projection/nli-explainer-overla
 import { LEGEND_LAYOUT_DEFAULT } from "../projection/legend-layout.js";
 import { normalizeEditableLayout } from "./clock-layout-geometry.js";
 import { renderField } from './config-field-control.js';
+import { createContentEditorPages } from './content-editor-layout.js';
 
 export const GIS_SLOT = Object.freeze({ home: "start", timeline: "start", segev: "segev", nova: "nova", sderot: "sderot", hostages: "hostages", hostages_all: "hostages_all" });
 export const GIS_LABEL = Object.freeze({ home: "Home", timeline: "Timeline", segev: "Segev", nova: "Nova", sderot: "Sderot", hostages: "Peri Family", hostages_all: "All Hostages" });
@@ -60,8 +61,11 @@ export function createClockLayoutStatus(doc, { onRetry = () => {}, onLoad = () =
   } };
 }
 
-export function createClockLayoutParameters(doc, { onField = () => {} } = {}) {
+export function createClockLayoutParameters(doc, { onField = () => {}, presentation = 'dialog', beforePageChange = () => true } = {}) {
   const element = make(doc, "div", { className: "clock-layout-fields" });
+  const embedded = presentation === 'panel';
+  const mainFields = [];
+  const dimensionFields = [];
   const advanced = make(doc, "details", { className: "clock-layout-advanced" });
   advanced.appendChild(make(doc, "summary", {}, "Advanced"));
   const controls = new Map();
@@ -79,7 +83,9 @@ export function createClockLayoutParameters(doc, { onField = () => {} } = {}) {
     const label = control.wrap; label.className += ' clock-layout-field';
     const caption = label.children[0]; const input = control.number;
     sessions.set(key,control);
-    (extra ? advanced : element).appendChild(label); controls.set(key, input);
+    if (embedded) (extra ? dimensionFields : mainFields).push(label);
+    else (extra ? advanced : element).appendChild(label);
+    controls.set(key, input);
     input.addEventListener("click", (event) => event.stopPropagation?.());
     if (key === "dwellSeconds") dwellLabel = label;
     if (key === "fontPx") fontCaption = caption;
@@ -87,8 +93,16 @@ export function createClockLayoutParameters(doc, { onField = () => {} } = {}) {
   }
   const { label: columnsLabel, select: columnsSelect } = columnsControl(doc, onField);
   controls.set("columns", columnsSelect);
-  element.appendChild(advanced);
-  element.insertBefore(columnsLabel, advanced);
+  if (embedded) {
+    const pages = createContentEditorPages(doc, [
+      { id: 'layout', label: 'Layout', nodes: [...mainFields, columnsLabel] },
+      { id: 'dimensions', label: 'Dimensions', nodes: dimensionFields },
+    ], { beforeChange: beforePageChange });
+    element.appendChild(pages.element);
+  } else {
+    element.appendChild(advanced);
+    element.insertBefore(columnsLabel, advanced);
+  }
   return { element, controls, advanced,
     finish: () => [...sessions.values()].map(control=>control.finish()),
     hasPending: () => [...sessions.values()].some(control => control.isPending()),

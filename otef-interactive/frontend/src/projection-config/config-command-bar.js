@@ -1,3 +1,5 @@
+import { bindTabletManagementVisibility } from './tablet-management-visibility.js';
+
 function make(doc, tag, props = {}, text = '') {
   const node = doc.createElement(tag);
   for (const [key, value] of Object.entries(props)) {
@@ -20,11 +22,14 @@ export function createConfigCommandBar({ document: doc, onAction = () => {}, onO
   const pending = make(doc, 'div', { className: 'config-pending-preset' });
   const presetLabel = make(doc, 'label', { className: 'config-preset-select-label' });
   controls.presets = make(doc, 'select', { ariaLabel: 'Preset', title: 'Selection is pending until you choose Load' });
-  presetLabel.append(make(doc, 'span', { className: 'config-preset-field-label' }, 'Pending preset'), controls.presets);
+  presetLabel.append(make(doc, 'span', { className: 'config-preset-field-label' }, 'Preset to load'), controls.presets);
   controls.presets.setAttribute('aria-describedby', 'projection-loaded-preset-identity');
-  pending.append(presetLabel, button('load', 'Load'), button('save', 'Save preset'));
+  pending.append(presetLabel, button('load', 'Load'));
+  button('save', 'Save');
   controls.presetsDisclosure = make(doc, 'details', { className: 'config-menu config-presets-menu', dataset: { menu: 'presets' } });
-  controls.presetsSummary = make(doc, 'summary', {}, 'Presets');
+  controls.presetsSummary = make(doc, 'summary', { ariaLabel: 'Presets', title: 'Presets' });
+  controls.presetsSummaryName = make(doc, 'span', { className: 'config-preset-summary-name' }, 'Presets');
+  controls.presetsSummary.append(controls.presetsSummaryName);
   const presets = make(doc, 'div', { className: 'config-menu-content', ariaLabel: 'Preset actions' });
   controls.loadedPresetIdentity = make(doc, 'span', { id: 'projection-loaded-preset-identity', className: 'loaded-preset-identity' }, 'Loaded: unknown');
   const presetActions = make(doc, 'div', { className: 'config-preset-actions' });
@@ -42,7 +47,7 @@ export function createConfigCommandBar({ document: doc, onAction = () => {}, onO
   controls.renamePanel.append(make(doc, 'label', { htmlFor: controls.renameName.id }, 'New name'), controls.renameName, button('renameConfirm', 'Rename preset', 'rename-confirm'), button('renameCancel', 'Cancel', 'rename-cancel'));
   controls.rename.setAttribute('aria-controls', controls.renamePanel.id);
   controls.rename.setAttribute('aria-expanded', 'false');
-  presets.append(controls.loadedPresetIdentity, presetActions, controls.saveCopyPanel, controls.renamePanel, controls.toolsPresetContext, controls.originalCheckpointGuidance);
+  presets.append(controls.loadedPresetIdentity, pending, presetActions, controls.saveCopyPanel, controls.renamePanel, controls.toolsPresetContext, controls.originalCheckpointGuidance);
   controls.presetsDisclosure.append(controls.presetsSummary, presets);
   controls.displaysDisclosure = make(doc, 'details', { className: 'config-menu config-displays-menu', dataset: { menu: 'displays' } });
   controls.displaysSummary = make(doc, 'summary', {}, 'Displays');
@@ -50,31 +55,30 @@ export function createConfigCommandBar({ document: doc, onAction = () => {}, onO
   const displayHeading = make(doc, 'div', { className: 'config-display-menu-heading' });
   displayHeading.append(make(doc, 'strong', {}, 'Display setup'), button('outputRefresh', 'Refresh', 'output-refresh'), button('outputIdentify', 'Identify', 'output-identify'));
   const displayActions = make(doc, 'div', { className: 'config-display-actions' });
+  const displayCards = {};
   for (const [side, name] of [['Left', 'outputLeftDisplay'], ['Right', 'outputRightDisplay']]) {
-    const label = make(doc, 'label', { className: 'output-display-label' }, side);
+    const card = displayCards[side.toLowerCase()] = make(doc, 'section', { className: 'config-display-card', ariaLabel: `${side} projector` });
+    const label = make(doc, 'label', { className: 'output-display-label' }, 'Assigned display');
     controls[name] = make(doc, 'select', { ariaLabel: `${side} projector display`, dataset: { action: `output-${side.toLowerCase()}-display` } });
-    label.appendChild(controls[name]); displayActions.appendChild(label);
+    label.appendChild(controls[name]); card.append(make(doc, 'h3', {}, `${side} projector`), label); displayActions.appendChild(card);
   }
   const displayButtons = make(doc, 'div', { className: 'output-command-actions' });
-  displayButtons.append(button('outputAssign', 'Assign', 'output-assign'), button('outputOpenBoth', 'Open', 'output-open-both'), button('outputCloseBoth', 'Close', 'output-close-both'));
+  displayButtons.append(button('outputAssign', 'Assign displays', 'output-assign'), button('outputOpenBoth', 'Open both', 'output-open-both'), button('outputCloseBoth', 'Close both', 'output-close-both'));
   controls.outputOpenBoth.setAttribute('aria-label', 'Open both outputs');
   controls.outputCloseBoth.setAttribute('aria-label', 'Close both outputs');
-  displayActions.appendChild(displayButtons);
   controls.outputStatus = make(doc, 'span', { className: 'output-launch-status' });
-  displayActions.appendChild(controls.outputStatus);
   const orientationLabel = make(doc, 'label', { className: 'output-reverse-toggle' });
-  const resolutions = make(doc, 'div', { className: 'config-display-actions' });
   for (const side of ['left', 'right']) {
     const title = side === 'left' ? 'Left' : 'Right';
     const select = controls[`output${title}Resolution`] = make(doc, 'select', { ariaLabel: `${title} output resolution` });
     select.append(make(doc, 'option', { value: '1080p' }, '1080p · 1920 × 1080'), make(doc, 'option', { value: '4k' }, '4K · 3840 × 2160'));
-    const label = make(doc, 'label', { className: 'output-display-label' }, `${title} resolution`);
-    label.append(select); resolutions.append(label);
+    const label = make(doc, 'label', { className: 'output-display-label' }, 'Resolution');
+    label.append(select); displayCards[side].append(label);
     listen(select, 'change', () => onOutputAction('resolution', { side, resolution: select.value }));
   }
   controls.outputReverseModel = make(doc, 'input', { type: 'checkbox', ariaLabel: 'Reverse model 180°', dataset: { action: 'output-reverse-model' } });
   orientationLabel.append(controls.outputReverseModel, make(doc, 'span', {}, 'Reverse model 180°'));
-  displays.append(displayHeading, displayActions, resolutions, make(doc, 'small', {}, 'Resolution is saved on this workstation and applies on the next Open. Calibration stays the same.'), orientationLabel, make(doc, 'small', { className: 'output-orientation-help' }, 'Swap the halves and rotate both complete images 180°. Saved on this workstation; applies on the next Open.'));
+  displays.append(displayHeading, displayActions, orientationLabel, make(doc, 'small', { className: 'output-orientation-help' }, 'Swap the halves and rotate both complete images 180°. Resolution and reversal are saved on this workstation and apply on the next Open both.'), displayButtons, controls.outputStatus);
   controls.displaysDisclosure.append(controls.displaysSummary, displays);
   controls.tools = make(doc, 'details', { className: 'config-menu config-tools', dataset: { menu: 'tools' } });
   controls.toolsSummary = make(doc, 'summary', {}, 'Tools');
@@ -87,13 +91,16 @@ export function createConfigCommandBar({ document: doc, onAction = () => {}, onO
   controls.toolsContent.append(controls.toolsAppliedSummary, controls.applied, controls.outputHandoff, make(doc, 'small', { className: 'preset-scope-help' }, 'Presets include geometry and people-wall settings. Clock and settlement layouts save independently.'));
   if (staffRemotePanel) {
     controls.staffRemoteSummary = staffRemotePanel.summary;
-    controls.toolsContent.appendChild(staffRemotePanel.element);
+    controls.tabletDisclosure = make(doc, 'details', { className: 'config-menu config-tablet-menu', dataset: { menu: 'tablet' } });
+    controls.tabletSummary = make(doc, 'summary', { ariaLabel: 'Tablet', title: 'Tablet connection, version, refresh and updates' }, 'Tablet');
+    const tabletContent = make(doc, 'div', { className: 'config-menu-content config-tablet-content', ariaLabel: 'Tablet management' });
+    tabletContent.append(staffRemotePanel.summary, staffRemotePanel.element);
+    controls.tabletDisclosure.append(controls.tabletSummary, tabletContent);
+    listeners.push(bindTabletManagementVisibility(controls.tabletDisclosure, win));
   }
   controls.tools.append(controls.toolsSummary, controls.toolsContent);
-  primaryRow.append(pending, controls.presetsDisclosure, controls.displaysDisclosure);
-  if (staffRemotePanel) primaryRow.appendChild(staffRemotePanel.summary);
-  primaryRow.appendChild(controls.tools);
-  const band = make(doc, 'div', { className: 'config-workspace-band' });
+  primaryRow.append(controls.presetsDisclosure, controls.displaysDisclosure);
+  if (controls.tabletDisclosure) primaryRow.appendChild(controls.tabletDisclosure);
   controls.workspaceNav = make(doc, 'nav', { className: 'config-category-actions', ariaLabel: 'Workspace' });
   const commits = make(doc, 'div', { className: 'calibration-commit-controls' });
   controls.live = make(doc, 'input', { type: 'checkbox', id: 'projection-live', checked: true, ariaLabel: 'Live', dataset: { action: 'live' } });
@@ -101,20 +108,23 @@ export function createConfigCommandBar({ document: doc, onAction = () => {}, onO
   liveLabel.prepend(controls.live);
   controls.applyLiveDescription = make(doc, 'span', { id: 'projection-apply-live-description', className: 'visually-hidden' });
   controls.live.setAttribute('aria-describedby', controls.applyLiveDescription.id);
-  button('apply', 'Apply once'); controls.apply.setAttribute('aria-describedby', controls.applyLiveDescription.id);
+  button('apply', 'Apply'); controls.apply.setAttribute('aria-describedby', controls.applyLiveDescription.id);
   button('parameterUndo', 'Undo', 'parameter-undo').setAttribute('aria-label', 'Undo parameter');
   button('parameterRedo', 'Redo', 'parameter-redo').setAttribute('aria-label', 'Redo parameter');
   commits.append(controls.parameterUndo, controls.parameterRedo, liveLabel, controls.apply, controls.applyLiveDescription);
-  band.append(controls.workspaceNav, commits);
+  commits.append(controls.save);
+  primaryRow.append(commits);
   controls.operationStatus = make(doc, 'div', { className: 'config-operation-status', role: 'status' });
   controls.status = make(doc, 'span', { className: 'draft-status' });
   controls.saveStatus = make(doc, 'span', { className: 'config-save-status', hidden: true });
   controls.appliedSummary = make(doc, 'span', { className: 'applied-summary' }, 'Outputs: pending');
   controls.alerts = make(doc, 'section', { className: 'config-alerts', ariaLabel: 'Calibration warnings and errors' });
-  for (const [name, className, role] of [['liveWarning', 'live-draft-warning', 'alert'], ['conflict', 'conflict-banner', 'alert'], ['actionError', 'action-error', 'alert'], ['connectionStatus', 'connection-status', 'status'], ['outputCapabilityNotice', 'output-capability-notice', 'status'], ['appliedFailure', 'applied-failure', 'alert']]) {
+  for (const [name, className, role] of [['conflict', 'conflict-banner', 'alert'], ['actionError', 'action-error', 'alert'], ['connectionStatus', 'connection-status', 'status'], ['outputCapabilityNotice', 'output-capability-notice', 'status'], ['appliedFailure', 'applied-failure', 'alert']]) {
     controls[name] = make(doc, 'p', { className, role, hidden: true }); controls.alerts.appendChild(controls[name]);
   }
   controls.alerts.appendChild(button('retryHydration', 'Retry settings check', 'retry-hydration'));
+  displays.appendChild(controls.outputCapabilityNotice);
+  displays.appendChild(make(doc, 'small', { className: 'output-session-guidance' }, 'Keep this workstation tab open while controlling displays from the tablet. After reloading it, close old projection windows before opening again.'));
   controls.reconciliation = make(doc, 'section', { className: 'warp-editor-reconciliation', dataset: { role: 'reconciliation-recovery' }, ariaLabel: 'Uncertain settings recovery', hidden: true });
   controls.reconciliationMessage = make(doc, 'p', { className: 'warp-editor-reconciliation-message', role: 'status', ariaLive: 'polite' });
   controls.reconciliationRetry = button('reconciliationRetry', 'Retry settings check', 'reconciliation-retry');
@@ -124,23 +134,24 @@ export function createConfigCommandBar({ document: doc, onAction = () => {}, onO
   controls.shortStatus = make(doc, 'div', { className: 'config-short-status', role: 'status', ariaLive: 'polite' });
   controls.shortStatus.setAttribute('aria-live', 'polite');
   controls.shortStatus.append(controls.saveStatus, controls.appliedSummary);
-  controls.operationStatus.append(controls.status, controls.alerts, controls.reconciliation);
-  band.append(controls.shortStatus);
-  element.append(primaryRow, band, controls.operationStatus);
+  presets.appendChild(controls.status);
+  controls.operationStatus.append(controls.alerts, controls.reconciliation);
+  controls.shortStatus.classList.add('visually-hidden');
+  element.append(primaryRow, controls.shortStatus, controls.operationStatus);
   listen(doc, 'keydown', event => {
     if (event.key !== 'Escape') return;
     const activeMenu = doc.activeElement?.closest?.('[data-menu]');
-    const openMenu = activeMenu?.open ? activeMenu : [controls.presetsDisclosure, controls.displaysDisclosure, controls.tools].find(menu => menu.open);
+    const openMenu = activeMenu?.open ? activeMenu : menus.find(menu => menu.open);
     if (!openMenu) return;
     event.preventDefault(); openMenu.open = false; openMenu.querySelector('summary')?.focus?.();
   });
-  const menus = [controls.presetsDisclosure, controls.displaysDisclosure, controls.tools];
+  const menus = [controls.presetsDisclosure, controls.displaysDisclosure, controls.tabletDisclosure].filter(Boolean);
   const placeMenu = menu => {
     const content = menu.querySelector('.config-menu-content');
     if (!content) return;
-    if (!menu.open || winWidth() > 700) { content.style.position = ''; content.style.left = ''; content.style.right = ''; content.style.top = ''; content.style.width = ''; content.style.maxHeight = ''; content.style.overflowY = ''; return; }
+    if (!menu.open) { content.style.position = ''; content.style.left = ''; content.style.right = ''; content.style.top = ''; content.style.width = ''; content.style.maxHeight = ''; content.style.overflowY = ''; return; }
     const rect = menu.querySelector('summary')?.getBoundingClientRect?.();
-    const width = Math.max(0, Math.min(320, winWidth() - 24));
+    const width = Math.max(0, Math.min(menu === controls.displaysDisclosure ? 620 : 420, winWidth() - 24));
     const left = Math.max(12, Math.min(rect?.left || 12, winWidth() - width - 12));
     const top = Math.max(8, (rect?.bottom || 100) + 4);
     Object.assign(content.style, { position: 'fixed', left: `${left}px`, right: 'auto', top: `${top}px`, width: `${width}px`, maxHeight: `calc(100dvh - ${top + 12}px)`, overflowY: 'auto' });
@@ -194,16 +205,14 @@ export function createConfigCommandBar({ document: doc, onAction = () => {}, onO
     controls.applyLiveDescription.textContent = state.live ? 'Live on. Changes update automatically.' : 'Live off. Use Apply once, or Apply & save.';
     const dirtyLocalDraft = Boolean(state.hasLocalDraft || draftDiffersFromAccepted);
     controls.status.textContent = dirtyLocalDraft && !state.live ? `${statusText}. Changes have not reached the outputs. Apply or save before reload. Reloading discards this local draft.` : statusText;
-    controls.save.textContent = draftDiffersFromAccepted ? 'Apply & save' : 'Save preset';
+    controls.save.textContent = draftDiffersFromAccepted ? 'Apply & save' : 'Save';
     controls.save.setAttribute('aria-label', draftDiffersFromAccepted ? 'Apply and save preset' : 'Save preset');
     controls.save.title = draftDiffersFromAccepted ? 'Apply & save preset' : 'Save preset';
     controls.saveStatus.textContent = statusText || (dirtyLocalDraft ? 'Unsaved changes' : 'Saved');
     controls.saveStatus.hidden = false;
-    controls.liveWarning.textContent = dirtyLocalDraft && !state.live ? controls.status.textContent : '';
-    controls.liveWarning.hidden = !(dirtyLocalDraft && !state.live);
     controls.conflict.textContent = conflict; controls.conflict.hidden = !conflict;
     const visibleErrors = new Map();
-    for (const [section, message] of [['Preset management', errors.preset || errors.name], ['Display setup', outputState.error || errors.outputs || errors.output], ['Calibration action', errors.action], ['Output preview', state.previewError]]) {
+    for (const [section, message] of [['Preset management', errors.preset || errors.name], ['Calibration action', errors.action], ['Output preview', state.previewError]]) {
       if (message && !visibleErrors.has(String(message))) visibleErrors.set(String(message), `${section}: ${message}`);
     }
     controls.actionError.textContent = [...visibleErrors.values()].join(' · '); controls.actionError.hidden = !visibleErrors.size;
@@ -229,6 +238,7 @@ export function createConfigCommandBar({ document: doc, onAction = () => {}, onO
     controls.outputReverseModel.disabled = unsupported;
     controls.outputIdentify.disabled = unsupported || screens.length === 0;
     for (const name of ['outputRefresh', 'outputAssign', 'outputLeftDisplay', 'outputRightDisplay', 'outputOpenBoth', 'outputCloseBoth']) controls[name].disabled = unsupported;
+    controls.outputRefresh.disabled = unsupported && !outputState.remoteControl;
     const selectedKey = assignment => screens.find(screen => assignment?.key === screen.key || (assignment?.label === screen.label && ['left', 'top', 'width', 'height'].every(key => Number(assignment?.bounds?.[key]) === Number(screen[key]))))?.key || '';
     const screensSignature = screens.map(screen => screen.key).join('|'), assignmentsSignature = JSON.stringify(assignments);
     if (screensSignature !== outputScreensSignature || assignmentsSignature !== outputAssignmentsSignature) outputSelection = { left: selectedKey(assignments.left), right: selectedKey(assignments.right) };
@@ -237,12 +247,16 @@ export function createConfigCommandBar({ document: doc, onAction = () => {}, onO
       controls[name].replaceChildren(...screens.map(screen => make(doc, 'option', { value: screen.key }, `Display ${screen.displayNumber}${screen.label ? ` · ${screen.label}` : ''}`)));
       controls[name].value = outputSelection[side]; controls[name].title = screens.find(screen => screen.key === controls[name].value)?.label || '';
     }
-    const capabilityMessage = 'Open/close outputs on the workstation; this browser does not support display management.';
+    const capabilityMessage = outputState.message || 'Open projection config on the workstation to manage its displays.';
     controls.outputCapabilityNotice.textContent = capabilityMessage; controls.outputCapabilityNotice.hidden = !unsupported;
-    controls.outputStatus.textContent = unsupported ? '' : outputState.message || 'Identify displays on the workstation.';
+    controls.outputStatus.textContent = outputState.error || errors.outputs || errors.output || (unsupported ? '' : outputState.message || 'Identify displays on the workstation.');
     const availablePresets = state.snapshot?.presets || [], selectedPreset = state.selectedPresetId || state.snapshot?.selectedPresetId || 'original';
     controls.presets.replaceChildren(...availablePresets.map(preset => make(doc, 'option', { value: preset.id }, preset.name))); controls.presets.value = selectedPreset;
     const loadedPreset = availablePresets.find(preset => preset.id === loadedPresetId);
+    controls.presetsSummaryName.textContent = loadedPreset?.name || 'Presets';
+    controls.presetsSummary.title = `Presets · Loaded: ${loadedPreset?.name || 'unknown'}`;
+    controls.presetsSummary.setAttribute('aria-label', controls.presetsSummary.title);
+    controls.presetsSummary.dataset.dirty = String(dirtyLocalDraft);
     controls.loadedPresetIdentity.textContent = `Loaded: ${loadedPreset?.name || 'unknown'}`; controls.loadedPresetIdentity.title = controls.loadedPresetIdentity.textContent;
     const selectedPresetName = availablePresets.find(preset => preset.id === selectedPreset)?.name || 'unknown';
     controls.presets.title = `${selectedPresetName}. Choose Load to apply this preset.`;
@@ -269,8 +283,8 @@ export function createConfigCommandBar({ document: doc, onAction = () => {}, onO
     const failures = statusRows.filter(row => row.success === false && row.instanceId).map(row => `${row.output[0].toUpperCase() + row.output.slice(1)} output: ${row.error || 'Application not confirmed'}`);
     controls.appliedFailure.textContent = failures.join(' · '); controls.appliedFailure.hidden = failures.length === 0;
     controls.appliedRows.replaceChildren(...statusRows.map(row => make(doc, 'p', { className: row.success ? 'applied' : 'not-confirmed' }, row.text)));
-    controls.alerts.hidden = !(controls.liveWarning.hidden === false || conflict || visibleErrors.size || !controls.connectionStatus.hidden || unsupported || failures.length);
-    controls.operationStatus.hidden = controls.status.hidden && controls.alerts.hidden && controls.reconciliation.hidden;
+    controls.alerts.hidden = !(conflict || visibleErrors.size || !controls.connectionStatus.hidden || failures.length);
+    controls.operationStatus.hidden = controls.alerts.hidden && controls.reconciliation.hidden;
   };
   return { element, controls, update, setPresetName(value) { overwriteName = controls.saveName.value = String(value || ''); copyNameEdited = true; }, dispose() { listeners.forEach(remove => remove()); } };
 }

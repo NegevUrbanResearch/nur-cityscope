@@ -6,6 +6,18 @@ import { DEFAULT_PROJECTION_CONFIG } from "../../frontend/src/shared/projection-
 
 afterEach(() => { document.body.replaceChildren(); vi.useRealTimers(); });
 
+test.each(['guarded', 'rejected'])('a %s point change restores the actual selected target', reason => {
+  const onAction = vi.fn(() => false);
+  const panel = createWarpPanelView({ document, onAction, canChangeSelection: () => reason !== 'guarded' });
+  const editor = createWarpEditor({ config: structuredClone(DEFAULT_PROJECTION_CONFIG) });
+  panel.update({ output: 'left', nodeId: 'left-grid', editorState: { ...editor.getState(), selection: gridSelection('point', 8), config: editor.getConfig(), handles: editor.getControlPoints() } });
+  const picker = panel.controls.warpSelectionPicker;
+  picker.value = '15'; picker.dispatchEvent(new Event('change'));
+  expect(picker.value).toBe('8');
+  expect(onAction).toHaveBeenCalledTimes(reason === 'guarded' ? 0 : 1);
+  panel.dispose();
+});
+
 test("Start fresh targets the displayed output and stays available while correction is bypassed", () => {
   const onAction = vi.fn();
   const config = structuredClone(DEFAULT_PROJECTION_CONFIG); config.outputs.right.warp.enabled = false;
@@ -43,7 +55,8 @@ test("Keystone and Grid expose the same shared adjustment rows and the picker se
   expect(panel.element.querySelector('[aria-label="Warp Undo"]')).toBeTruthy();
   update("left-grid", gridSelection("point", 15));
   expect([...panel.element.children].map((row) => row.className)).toEqual(rowNames);
-  expect(panel.controls.warpSelectionControls.hidden).toBe(false);
+  expect(panel.controls.warpSelectionControls.hidden).toBe(true);
+  expect(panel.controls.warpSelectionButtons.every(button => button.hidden)).toBe(true);
   panel.controls.warpSelectionPicker.value = "1";
   panel.controls.warpSelectionPicker.dispatchEvent(new Event("change", { bubbles: true }));
   expect(onAction).toHaveBeenCalledWith("warp-select", { output: "left", selection: { mode: "grid", kind: "point", index: 1 } });

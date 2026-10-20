@@ -64,13 +64,10 @@ let unsubscribeFunctions = [];
 let lastConnectionUiStatus = "connecting";
 
 // Initialize on DOM ready
-if (typeof document !== "undefined") {
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", initialize);
-  } else {
-    initialize();
-  }
-}
+export const remoteReady = typeof document === "undefined" ? Promise.resolve() :
+  document.readyState === "loading"
+    ? new Promise((resolve, reject) => document.addEventListener("DOMContentLoaded", () => initialize().then(resolve, reject), { once: true }))
+    : initialize();
 
 async function initialize() {
   // Initialize layer registry if available

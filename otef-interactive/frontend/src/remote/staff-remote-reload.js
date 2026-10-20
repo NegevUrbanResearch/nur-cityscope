@@ -22,7 +22,8 @@ function parseReceipt(raw, remoteId, now) {
 }
 
 export function createStaffRemoteReload({ getRefreshState = () => ({ ready: false, refreshBlockReason: "not_ready" }),
-  readCanonicalState, isConnected = () => false, storage, remoteId, wallNow = Date.now,
+  readCanonicalState, isCanonicalRefreshSafe = isCanonicalHome, canonicalBlockReason = "not_home",
+  isConnected = () => false, storage, remoteId, wallNow = Date.now,
   monotonicNow = () => globalThis.performance?.now?.() ?? Date.now(), reload = () => globalThis.window?.location?.reload() } = {}) {
   let pending = null, issued = false, disposed = false, receipt = null, homeAt = null;
   try { receipt = parseReceipt(storage?.getItem(RECEIPT_KEY), remoteId, wallNow()); storage?.removeItem(RECEIPT_KEY); } catch { /* unavailable storage prevents a later attempt */ }
@@ -53,7 +54,7 @@ export function createStaffRemoteReload({ getRefreshState = () => ({ ready: fals
       if (!current()) return cancelled();
       const after = blockReason();
       if (after) return rejected(after);
-      if (!isCanonicalHome(snapshot)) return rejected("not_home");
+      if (!isCanonicalRefreshSafe(snapshot)) return rejected(canonicalBlockReason);
       const encoded = JSON.stringify({ ...metadata, savedAtMs: wallNow() });
       if (!parseReceipt(encoded, remoteId, wallNow())) return rejected("storage_unavailable");
       if (!current()) return cancelled();

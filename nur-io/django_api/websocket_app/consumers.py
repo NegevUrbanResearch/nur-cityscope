@@ -14,6 +14,7 @@ import re
 import uuid
 import math
 from .nli_video_playback import valid_nli_video_playback
+from .projection_output_control import disconnect_projection_output_control, handle_projection_output_control
 from django.db import transaction
 from backend.otef_experience import ExperienceError, experience_state, require_experience
 
@@ -275,6 +276,7 @@ class GeneralConsumer(AsyncWebsocketConsumer):
         print(f"✓ WebSocket connected: {self.channel_type} ({self.channel_name[:8]}...)")
 
     async def disconnect(self, close_code):
+        await disconnect_projection_output_control(self)
         from .staff_remote_management import disconnect_staff_remote_management
         await disconnect_staff_remote_management(self)
         # Leave the channel group
@@ -349,6 +351,8 @@ class GeneralConsumer(AsyncWebsocketConsumer):
 
         from .staff_remote_management import handle_staff_remote_management
         if await handle_staff_remote_management(self, data):
+            return
+        if await handle_projection_output_control(self, data):
             return
 
         if message_type == 'otef_projection_trace':
@@ -657,6 +661,9 @@ class GeneralConsumer(AsyncWebsocketConsumer):
     async def staff_remote_management_event(self, event):
         from .staff_remote_management import send_staff_remote_management
         await send_staff_remote_management(self, event['message'])
+
+    async def projection_output_event(self, event):
+        await self.send(text_data=json.dumps(event['message']))
 
     async def presentation_update(self, event):
         """Handle presentation state updates from backend"""

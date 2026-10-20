@@ -2,6 +2,7 @@ import { createUuid } from "../shared/uuid.js";
 import { mapOverlayOutline, mapOutputToSourceUv, mapSourceUvToOutput, moveLayout, resizeClockLayout, resizeLegendLayout, copyProjectionMesh } from "./clock-layout-geometry.js";
 import { mountClockLayoutPreview } from "./clock-layout-preview.js";
 import { GIS_SLOT, GIS_LABEL, resourceFor, layoutFor, layoutFieldEdit, createClockLayoutParameters, createClockLayoutStatus } from "./clock-layout-controls.js";
+import { mountContentEditor } from './content-editor-layout.js';
 
 function make(doc, tag, props = {}, text = "") {
   const node = doc.createElement(tag);
@@ -30,7 +31,7 @@ function referencePoint(surface, point) {
   return surface === "projection" ? { x: point.x * 1920, y: point.y * 1080 } : point;
 }
 
-export function openClockLayoutEditor({ nodeId, sceneId = "home", element = "clock", layoutClient, document = globalThis.document, onShowOnExhibit = null, onPendingState = () => {}, onSelection = () => {}, restoreFocus, manageBeforeUnload = true, onClose = () => {} } = {}) {
+export function openClockLayoutEditor({ nodeId, sceneId = "home", element = "clock", layoutClient, document = globalThis.document, host, presentation = 'dialog', onShowOnExhibit = null, onPendingState = () => {}, onSelection = () => {}, restoreFocus, manageBeforeUnload = true, onClose = () => {} } = {}) {
   const doc = document;
   if (!doc?.createElement || !layoutClient) throw new Error("Clock layout editor requires a document and layout client");
   let activeScene = GIS_SLOT[sceneId] ? sceneId : "home";
@@ -97,7 +98,7 @@ export function openClockLayoutEditor({ nodeId, sceneId = "home", element = "clo
   elementSelect.addEventListener("click", (event) => event.stopPropagation?.());
   sceneSelect.addEventListener("change", () => { if (setSelection({ nodeId: "clock-gis", sceneId: sceneSelect.value, element: activeElement })) onSelection({ nodeId: activeNode, sceneId: activeScene, element: activeElement }); else renderControls(); });
   elementSelect.addEventListener("change", () => { if (setSelection({ nodeId: "clock-projection", sceneId: activeScene, element: elementSelect.value })) onSelection({ nodeId: activeNode, sceneId: activeScene, element: activeElement }); else renderControls(); });
-  const parameters = createClockLayoutParameters(doc, { onField: commitField });
+  const parameters = createClockLayoutParameters(doc, { onField: commitField, presentation, beforePageChange: () => !parameters.isHeld() && parameters.finish().every(result => result.kind === 'commit' || result.kind === 'unchanged') });
   const { controls, advanced } = parameters;
   const pages = make(doc, "label", { className: "clock-layout-page-label" }, "Legend page");
   const pageSelect = make(doc, "select", { className: "clock-layout-pages", ariaLabel: "Legend preview page" });
@@ -118,10 +119,11 @@ export function openClockLayoutEditor({ nodeId, sceneId = "home", element = "clo
   panel.append(exhibitButton, exhibitStatus);
   body.append(stage, panel);
   dialog.append(header, body);
-  doc.body?.appendChild(dialog);
-  inertSiblings = [...(doc.body?.children || [])].filter((node) => node !== dialog).map((node) => ({ node, inert: node.inert }));
+  const embedded = mountContentEditor({ dialog, header, panel, status: statusControls.element, host, presentation, document: doc });
+  if (embedded) autosaveNote.textContent = 'Changes save automatically';
+  inertSiblings = embedded ? [] : [...(doc.body?.children || [])].filter((node) => node !== dialog).map((node) => ({ node, inert: node.inert }));
   inertSiblings.forEach(({ node }) => { node.inert = true; });
-  closeButton.focus?.();
+  if (!embedded) closeButton.focus?.();
   const svgElement = (tag, props = {}) => {
     const item = doc.createElementNS?.("http://www.w3.org/2000/svg", tag) || make(doc, tag);
     for (const [key, value] of Object.entries(props)) item.setAttribute?.(key, String(value));
@@ -348,7 +350,7 @@ export function openClockLayoutEditor({ nodeId, sceneId = "home", element = "clo
   closeButton.addEventListener("click", close);
   dialog.addEventListener("keydown", (event) => {
     if (event.key === "Escape") { event.preventDefault?.(); if (parameters.hasPending()) parameters.cancel(); else close(); return; }
-    if (event.key !== "Tab") return;
+    if (embedded || event.key !== "Tab") return;
     const available = (node) => {
       if (node.disabled) return false;
       for (let parent = node; parent && parent !== dialog; parent = parent.parentElement) {
@@ -397,6 +399,7 @@ export function openClockLayoutEditor({ nodeId, sceneId = "home", element = "clo
   win?.addEventListener?.("orientationchange", onResize);
   renderControls(); createPreview(); publishState();
   return {
+    element: dialog,
     close,
     setSelection,
     finishPendingEdit,

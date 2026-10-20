@@ -6,6 +6,7 @@ import { FIELD_DESCRIPTORS, NAMES_WALL_DESCRIPTORS } from "../../frontend/src/pr
 import { fitWarpViewport, warpPointFromClient } from "../../frontend/src/projection-config/warp-viewport.js";
 import { createWarpEditor } from "../../frontend/src/projection-config/warp-editor.js";
 
+const mountedViews = [];
 const presets = [
   { id: "original", name: "Original", readOnly: true },
   { id: "td", name: "TD" },
@@ -30,6 +31,7 @@ const makeView = ({ coarse = true, small = false, onField = vi.fn(), onNudge = v
     descriptors: [...FIELD_DESCRIPTORS, ...NAMES_WALL_DESCRIPTORS], onAction, onOutputAction, onNode,
     onWarpAction, onWarpPointer, onOpenClockEditor: vi.fn(), onField, onNudge,
   });
+  mountedViews.push(view);
   const update = (extra = {}) => view.update({
     state: { draft: structuredClone(DEFAULT_PROJECTION_CONFIG), snapshot: { config: structuredClone(DEFAULT_PROJECTION_CONFIG), presets, selectedPresetId: "original" }, selectedPresetId: "original" },
     selectedNode: "pre", loadedPresetId: "original", loadedPresetLoadToken: 1, ...extra,
@@ -37,7 +39,7 @@ const makeView = ({ coarse = true, small = false, onField = vi.fn(), onNudge = v
   update();
   return { root, view, onAction, onOutputAction, onNode, onWarpAction, onWarpPointer, onField, onNudge, update, setSmallWidth(value) { small = value; if (smallMediaQuery) smallMediaQuery.matches = value; for (const listener of mediaListeners) listener({ matches: value }); } };
 };
-afterEach(() => { document.body.replaceChildren(); vi.restoreAllMocks(); });
+afterEach(() => { mountedViews.splice(0).reverse().forEach(view => view.dispose()); document.body.replaceChildren(); vi.restoreAllMocks(); });
 
 test("warp editor keeps Undo and Redo visible with point, step, nudge, and reset controls", () => {
   const { root, view, onWarpAction, update } = makeView();
@@ -175,29 +177,15 @@ test("rendered warp handles keep navigation and CSS radii through draft refresh,
   expect([onAction, onWarpAction, onWarpPointer].map((callback) => callback.mock.calls.length)).toEqual(noWrites);
 });
 
-test("category shortcuts call actual graph node groups and leave every node mounted", () => {
-  const { root, view, onNode } = makeView({ coarse: false });
-  const categories = [...root.querySelectorAll(".config-category-actions button")];
-  expect(categories.map((item) => item.textContent)).toEqual(["Content", "Geometry", "Overlays", "Names"]);
-  expect(categories.map((item) => item.dataset.focusNodes.split(" "))).toEqual([
-    ["content"],
-    ["pre", "left-crop", "right-crop", "left-fit", "right-fit", "left-keystone", "right-keystone", "left-grid", "right-grid", "left-output", "right-output"],
-    ["clock-gis", "nova-explainers", "clock-projection"],
-    ["names-wall", "settlement-names"],
-  ]);
-  categories.find((item) => item.textContent === "Overlays").click();
-  expect(onNode).not.toHaveBeenCalled();
-  expect(root.querySelectorAll(".config-node")).toHaveLength(17);
-  expect(root.querySelector(".node-selector")).toBeNull();
-  expect(root.querySelector('[data-action="warp-editor-open-mobile"]')).toBeNull();
-  expect(root.querySelectorAll("nav[aria-label='Workspace'] button")).toHaveLength(4);
-  expect(root.querySelectorAll(".output-command-actions button")).toHaveLength(3);
-  expect(root.querySelector('[data-action="export"]')).toBeNull();
-  expect(root.querySelector('[data-action="share"]')).toBeNull();
+test("two diagram categories combine content and omit output nodes", () => {
+  const { root } = makeView();
+  expect([...root.querySelectorAll('[data-config-tab]')].map(item => item.textContent)).toEqual(['Image calibration', 'Content, names & overlays']);
+  root.querySelector('[data-config-tab="content"]').click();
+  expect(root.querySelector('.config-diagram-content').querySelectorAll('[data-config-node]')).toHaveLength(7);
+  expect(root.querySelector('[data-config-node="left-output"]')).toBeNull();
+  expect(root.querySelector('[data-config-node="right-output"]')).toBeNull();
   expect(root.querySelector('[data-action="output-open-left"]')).toBeNull();
   expect(root.querySelector('[data-action="output-open-right"]')).toBeNull();
-  expect(root.querySelector(".inspector")).toBeNull();
-  expect(view.nodeMap.has("settlement-names")).toBe(true);
 });
 
 test("changing Grid Warp mode or picker waits for an active pointer drag", () => {
@@ -524,23 +512,18 @@ test("preset selection remains pending until explicit Load", () => {
   expect(loaded.textContent).toContain("TD");
 });
 
-test("one flat Tools panel retains independent error access", () => {
+test("utility menus are hidden while actual preset errors remain actionable", () => {
   const { root, update } = makeView();
-  update({ errors: { action: "Preset load failed" } });
-  const panels = [...root.querySelectorAll("details.config-tools")];
-  expect(panels.map((panel) => panel.querySelector("summary").textContent.trim())).toEqual(["Tools"]);
-  for (const panel of panels) {
-    panel.querySelector("summary").click();
-    expect(panel.open).toBe(true);
-    expect(panels.filter((other) => other !== panel && other.open)).toHaveLength(0);
-  }
-  expect(root.querySelector(".action-error").textContent).toContain("Preset load failed");
-  expect(root.querySelector(".action-error").hidden).toBe(false);
+  expect(root.querySelector('.config-tools')).toBeNull();
+  expect(root.querySelectorAll('.config-command-bar details')).toHaveLength(2);
+  update({ errors: { action: 'Preset load failed' } });
+  expect(root.querySelector('.action-error').textContent).toContain('Preset load failed');
+  expect(root.querySelector('.action-error').hidden).toBe(false);
 });
 
-test("Tools dismissal preserves drafts and the correct focus owner", () => {
+test("Presets dismissal preserves drafts and the correct focus owner", () => {
   const { root } = makeView({ coarse: false });
-  const presetPanel = root.querySelector(".config-tools");
+  const presetPanel = root.querySelector(".config-presets-menu");
   const trigger = presetPanel.querySelector("summary");
   trigger.click();
   trigger.focus();
@@ -653,20 +636,15 @@ test.each(["mouse", "coarse-pointer landscape", "portrait"])("%s workspace keeps
   expect(root.querySelector(".node-selector")).toBeNull();
 });
 
-test("preset and display errors remain visible independently of Tools", () => {
-  const { root, update, onAction } = makeView();
-  update({ errors: { name: "Preset save failed" }, outputState: { error: "Display assignment failed" } });
-  const tools = root.querySelector(".config-tools");
-  const error = root.querySelector(".action-error");
-  expect(error.hidden).toBe(false);
-  expect(error.closest(".config-operation-status")).not.toBeNull();
-  expect(tools.contains(error)).toBe(false);
-  expect(error.textContent).toContain("Preset save failed");
-  expect(error.textContent).toContain("Display assignment failed");
-  tools.querySelector("summary").click();
-  expect(error.hidden).toBe(false);
-  expect(onAction).not.toHaveBeenCalled();
+test("preset and display errors stay in their corresponding controls", () => {
+  const { root, view, update } = makeView();
+  update({ errors: { name: 'Preset save failed' }, outputState: { error: 'Display assignment failed' } });
+  expect(root.querySelector('.action-error').hidden).toBe(false);
+  expect(root.querySelector('.action-error').textContent).toContain('Preset save failed');
+  expect(view.controls.outputStatus.textContent).toContain('Display assignment failed');
+  expect(view.controls.displaysDisclosure.contains(view.controls.outputStatus)).toBe(true);
 });
+
 test("preset creation remains available alongside preset selection and save", () => {
   const { root, view } = makeView();
   expect(root.contains(view.controls.save)).toBe(true);
@@ -674,11 +652,9 @@ test("preset creation remains available alongside preset selection and save", ()
   expect(root.contains(view.controls.load)).toBe(true);
   expect(root.contains(view.controls.saveName)).toBe(true);
   expect(root.contains(view.controls.saveNew)).toBe(true);
-  const presetHelp = root.querySelector(".preset-scope-help").textContent;
-  expect(presetHelp).toContain("geometry");
-  expect(presetHelp).toContain("people-wall");
-  expect(presetHelp).toContain("Clock");
-  expect(presetHelp).toContain("settlement");
+  expect(root.querySelector('.config-presets-menu').contains(view.controls.saveNew)).toBe(true);
+  expect(root.querySelector('[data-action="import"]')).toBeNull();
+  expect(root.querySelector('[data-action="export"]')).toBeNull();
 });
 
 test("touch-capable workstation output actions dispatch only both-window commands", () => {
@@ -692,18 +668,15 @@ test("touch-capable workstation output actions dispatch only both-window command
   expect(onOutputAction.mock.calls.map(([action]) => action)).toEqual(["open", "close"]);
 });
 
-test("unsupported browser shows output guidance outside the collapsed Tools disclosure", () => {
+test("unsupported browser gives output guidance in the Displays panel", () => {
   const { root, view, update } = makeView();
-  const displaySetup = root.querySelector(".config-tools");
-  expect(displaySetup.open).toBe(false);
-  update({ outputState: { supported: false, message: "Display management unavailable in this browser." } });
+  update({ outputState: { supported: false, message: 'Display management unavailable in this browser.' } });
   expect(view.controls.outputOpenBoth.disabled).toBe(true);
   expect(view.controls.outputCloseBoth.disabled).toBe(true);
-  const notice = root.querySelector(".output-capability-notice");
+  const notice = root.querySelector('.output-capability-notice');
   expect(notice.hidden).toBe(false);
-  expect(notice.closest(".config-alerts")).not.toBeNull();
-  expect(displaySetup.contains(notice)).toBe(false);
-  expect(notice.textContent).toMatch(/open\/close outputs on the workstation/i);
+  expect(view.controls.displaysDisclosure.contains(notice)).toBe(true);
+  expect(notice.textContent).toContain('Display management unavailable');
 });
 
 test("supported browser hides the workstation-only output capability notice", () => {
@@ -775,21 +748,15 @@ test("compact command rows keep primary actions direct and group setup actions i
   const { root, view, onAction, onOutputAction, update } = makeView({ coarse: false });
   const header = root.querySelector(".config-command-bar");
   expect(header.children).toHaveLength(3);
-  expect(header.querySelectorAll("details")).toHaveLength(3);
-  const tools = header.querySelector("details.config-tools");
+  expect(header.querySelectorAll("details")).toHaveLength(2);
   const presets = header.querySelector("details.config-presets-menu");
   const displays = header.querySelector("details.config-displays-menu");
-  expect(tools.querySelector("summary").textContent).toContain("Tools");
-  expect(tools.contains(view.controls.apply)).toBe(false);
-  expect(tools.contains(view.controls.load)).toBe(false);
-  expect(tools.contains(view.controls.saveNew)).toBe(false);
-  expect(tools.contains(view.controls.outputRefresh)).toBe(false);
   expect(presets.contains(view.controls.revert)).toBe(true);
   expect(presets.contains(view.controls.saveNew)).toBe(true);
   expect(displays.contains(view.controls.outputOpenBoth)).toBe(true);
   expect(displays.contains(view.controls.outputCloseBoth)).toBe(true);
-  expect(view.controls.outputOpenBoth.textContent).toBe("Open");
-  expect(view.controls.outputCloseBoth.textContent).toBe("Close");
+  expect(view.controls.outputOpenBoth.textContent).toBe("Open both");
+  expect(view.controls.outputCloseBoth.textContent).toBe("Close both");
   expect(view.controls.live.parentElement.parentElement.className).toBe("calibration-commit-controls");
   expect(view.controls.live.getAttribute("aria-label")).toBe("Live");
   expect(view.controls.live.parentElement.textContent).toBe("Live");
@@ -815,11 +782,9 @@ test("compact command rows keep primary actions direct and group setup actions i
   expect(onAction.mock.calls).toEqual([["preset-select", "td"], ["load", "td"], ["apply"], ["save", "TD"]]);
   expect(onOutputAction.mock.calls).toEqual([["open"], ["close"]]);
 
-  const trigger = tools.querySelector("summary");
+  const trigger = presets.querySelector("summary");
   trigger.click();
-  expect(tools.open).toBe(true);
   document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-  expect(tools.open).toBe(false);
   expect(document.activeElement).toBe(trigger);
   update({ statusText: "Saving preset", state: { dirty: true } });
   expect(view.controls.status.textContent).toBe("Saving preset");
@@ -833,21 +798,17 @@ test("narrow width keeps display setup controls grouped in the Displays disclosu
   const displays = view.controls.displaysDisclosure;
   setSmallWidth(true);
   expect(displays.open).toBe(false);
-  expect(open.parentElement.parentElement.parentElement.parentElement).toBe(displays);
+  expect(displays.contains(open)).toBe(true);
   setSmallWidth(false);
   expect(root.querySelector(".output-command-actions").contains(open)).toBe(true);
   view.dispose();
 });
 
-test("Tools repeats the controller output acknowledgement when the compact summary is omitted", () => {
-  const { root, view, update } = makeView({ coarse: false });
-  update({
-    appliedSummary: "Unconfirmed",
-    statusRows: [{ output: "left", instanceId: "left-1", success: true, text: "Left output applied" }],
-  });
-  expect(view.controls.appliedSummary.textContent).toBe("Outputs: unconfirmed");
-  expect(root.querySelector(".tools-applied-summary").textContent).toBe("Outputs: unconfirmed");
-  expect(root.querySelector(".tools-applied-summary").parentElement.querySelector(".applied-details").textContent).toContain("Left output applied");
+test("output acknowledgements remain available without restoring the hidden utility menu", () => {
+  const { root, view, update } = makeView();
+  update({ appliedSummary: 'Unconfirmed', statusRows: [{ output: 'left', instanceId: 'left-1', success: true, text: 'Left output applied' }] });
+  expect(view.controls.appliedSummary.textContent).toBe('Outputs: unconfirmed');
+  expect(root.querySelector('.config-tools')).toBeNull();
   view.dispose();
 });
 
@@ -859,7 +820,7 @@ test("actionable banner includes simultaneous preset, display, and action errors
   });
   const banner = root.querySelector(".action-error");
   expect(banner.textContent).toContain("Preset management: Shared failure");
-  expect(banner.textContent).toContain("Display setup: Display assignment failed");
+  expect(root.querySelector(".output-launch-status").textContent).toContain("Display assignment failed");
   expect(banner.textContent).not.toMatch(/Shared failure.*Shared failure/);
   expect(banner.hidden).toBe(false);
 });
@@ -885,4 +846,36 @@ test("Save follows the acknowledged checkpoint and explicit pending state", () =
   expect(view.controls.save.disabled).toBe(true);
   expect(view.controls.saveNew.disabled).toBe(true);
   view.dispose();
+});
+
+test('warp arrow focuses the preview without scrolling the configuration page', () => {
+  const { root, view, update } = makeView();
+  const editor = createWarpEditor({ config: DEFAULT_PROJECTION_CONFIG, output: 'left' });
+  update({ selectedNode: 'left-keystone', warpStates: { left: { ...editor.getState(), config: editor.getConfig(), handles: editor.getControlPoints() } } });
+  root.querySelector('.config-node[data-node="left-keystone"] .warp-open-button').click();
+  const focus = vi.spyOn(view.controls.warpSurface, 'focus');
+  root.querySelector('[data-action="warp-nudge"][data-direction="right"]').click();
+  expect(focus).toHaveBeenCalledWith({ preventScroll: true });
+});
+test('invalid matching keeps retry controls separate from ordinary point controls', () => {
+  const { root, view, update } = makeView();
+  update({ selectedNode: 'left-keystone' });
+  root.querySelector('.config-node[data-node="left-keystone"] .warp-open-button').click();
+  view.updatePointMatch({ phase: 'invalid', error: 'Preview unavailable', anchors: [], canApply: false });
+  expect(view.controls.warpSurface.dataset.pointMatchActive).toBe('true');
+  expect(root.querySelector('.warp-selection-row').hidden).toBe(true);
+  expect(root.querySelector('.warp-selection-row').inert).toBe(true);
+  view.updatePointMatch({ phase: 'closed', anchors: [] });
+  expect(root.querySelector('.warp-selection-row').inert).toBe(false);
+});
+
+test.each(['pre', 'left-keystone'])('Escape returns the %s editor to diagram navigation', node => {
+  const { root, view, update } = makeView();
+  update({ selectedNode: node });
+  view.activateNode(node);
+  expect(root.querySelector('.config-navigation').dataset.view).toBe('editor');
+  const editor = root.querySelector(node === 'pre' ? '.parameter-editor-dialog' : '.warp-editor-dialog');
+  editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  expect(root.querySelector('.config-navigation').dataset.view).toBe('diagram');
+  expect(root.querySelector('.config-workspace').dataset.editing).toBe('false');
 });

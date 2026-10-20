@@ -44,12 +44,12 @@ async function mountSettlementConfigFixture(options = {}) {
     root, writeOperation, settlementClient,
     selectNode(id) { root.querySelector(`[data-node="${id}"]`).click(); },
     setOutput(output) {
-      const select = root.querySelector(".settlement-name-controls [data-field='output']");
+      const select = (root.querySelector(".config-content-editor .settlement-name-controls") || root.querySelector(".settlement-name-controls")).querySelector("[data-field='output']");
       select.value = output;
       select.dispatchEvent(new Event("change"));
     },
     setCitycode(citycode) {
-      const select = root.querySelector(".settlement-name-controls [data-field='citycode']");
+      const select = (root.querySelector(".config-content-editor .settlement-name-controls") || root.querySelector(".settlement-name-controls")).querySelector("[data-field='citycode']");
       select.value = citycode;
       select.dispatchEvent(new Event("change"));
     },
@@ -178,7 +178,7 @@ test("catalog publication updates settlement choices without changing saved sett
   expect(retrySettlementCatalog).toHaveBeenCalledOnce();
   await app.openEditor();
   mounted.setSettlementCatalog({ entries: [{ citycode: "9999", text: "New", lng: 1, lat: 2 }] }, { status: "ready" });
-  expect([...app.root.querySelectorAll(".settlement-name-controls [data-field='citycode'] option")].map((option) => option.value)).toEqual(["9999"]);
+  expect([...app.root.querySelectorAll(".config-content-editor .settlement-name-controls [data-field='citycode'] option")].map((option) => option.value)).toEqual(["9999"]);
   expect([...document.querySelectorAll(".settlement-name-dialog [data-field='citycode'] option")].map((option) => option.value)).toEqual(["9999"]);
   expect(retryButton.hidden).toBe(true);
   expect(app.settlementClient.getSnapshot()).toEqual(before);

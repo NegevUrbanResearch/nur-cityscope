@@ -196,8 +196,10 @@ export function createOutputWindowController({
   function closeBoth() {
     identifier.close();
     operationToken += 1;
+    const hadOwnedWindows = owned.size > 0;
     const failed = closeOwnedWindows();
     if (failed.length) return setState({ error: `Could not close ${failed.map(({ span }) => span).join(" and ")} browser output window${failed.length === 1 ? "" : "s"}.`, message: "Some browser output windows remain open; manually close them before reopening." });
+    if (!hadOwnedWindows) return setState({ error: "", message: "No browser output windows are owned by this workstation tab. Existing windows from before a reload must be closed on the workstation." });
     return setState({ error: "", message: "Browser projection windows closed." });
   }
   function fullscreenTracker(span, win, assignment, token, currentGeneration) {

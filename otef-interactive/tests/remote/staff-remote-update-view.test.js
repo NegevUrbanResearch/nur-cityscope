@@ -5,14 +5,14 @@ import { setLocale } from "../../frontend/src/remote/remote-locale.js";
 
 let view;
 afterEach(() => { view?.dispose(); view = null; document.body.innerHTML = ""; setLocale("he", { persist: false, force: true }); });
-function setup() {
+function setup(options = {}) {
   document.body.innerHTML = '<div class="app"><button id="homeBtn">Home</button></div>';
   let listener;
   let state = { mode: "ready", registration: "registered", canRefresh: true, setupPending: false, error: null };
   const updates = { subscribe: fn => { listener = fn; fn(state); return () => {}; },
     getState: () => state, dismiss: vi.fn(() => { state = { ...state, mode: "reminder" }; listener(state); }),
     refresh: vi.fn(), reopen: vi.fn(), register: vi.fn() };
-  view = createStaffRemoteUpdateView({ document, updates });
+  view = createStaffRemoteUpdateView({ document, updates, ...options });
   return { updates, show(value) { state = { ...state, ...value }; listener(state); }, dialog: document.querySelector("dialog") };
 }
 test("ready dialog has no extra footer, focuses Later and Escape dismisses to a reachable reminder", () => {
@@ -41,4 +41,12 @@ test("Checking leaves Continue focused and locale changes update the same dialog
 test("a disabled busy reminder cannot receive focus after the dialog closes", () => {
   const s = setup(); s.show({ mode: "reminder", canRefresh: false });
   expect(document.activeElement).toBe(document.getElementById("homeBtn"));
+});
+
+test("regular remote reminder describes finishing active work without an NLI Home requirement", () => {
+  setLocale("en", { persist: false, force: true });
+  const s = setup({ busyReminderKey: "updateRegularBusyReminder" });
+  s.show({ mode: "reminder", canRefresh: false });
+  expect(document.querySelector("[data-update-reminder]").textContent).toContain("Finish active actions");
+  expect(document.querySelector("[data-update-reminder]").textContent).not.toContain("Home");
 });

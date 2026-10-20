@@ -1,6 +1,7 @@
 import { effectiveSettlementPosition } from "../shared/settlement-name-settings.js";
 import { renderField } from './config-field-control.js';
 import { DEFAULT_SETTLEMENT_LEADER_STYLE, EXCLUDED_SETTLEMENT_CODES } from '../shared/settlement-label-presentation.js';
+import { createContentEditorPages } from './content-editor-layout.js';
 
 function make(doc, tag, props = {}, text = "") {
   const node = doc.createElement(tag);
@@ -30,6 +31,7 @@ function statusText(positionRecord, styleRecord, hydration, extraRecords = []) {
 }
 
 export function createSettlementNameControls(doc, {
+  presentation = 'dialog',
   catalog = { entries: [] },
   onOutput = () => {},
   onCitycode = () => {},
@@ -97,7 +99,18 @@ export function createSettlementNameControls(doc, {
   const load = make(doc, "button", { type: "button", className: "settlement-name-load" }, "Load saved");
   const actions = make(doc, "div", { className: "settlement-name-status-actions" });
   actions.append(status, retry, load);
-  element.append(note, catalogStatus, catalogRetry, outputLabel, cityLabel, connectorNote, breakLabel, ...leaderLabels, originHelp, resetOrigin, ...fieldLabels, actions);
+  if (presentation === 'panel') {
+    note.textContent = 'Changes save automatically · Text and connectors apply to both projectors';
+    originHelp.textContent = 'Drag the blue handle to change the line origin.';
+    const selection = make(doc, 'div', { className: 'content-editor-selection' });
+    selection.append(outputLabel, cityLabel);
+    const pages = createContentEditorPages(doc, [
+      { id: 'position', label: 'Position', nodes: fieldLabels.slice(2) },
+      { id: 'text', label: 'Text', nodes: [...fieldLabels.slice(0, 2), breakLabel] },
+      { id: 'connector', label: 'Connector', nodes: [...leaderLabels, connectorNote, originHelp, resetOrigin] },
+    ], { beforeChange: () => ![...sessions.values()].some(control => control.isHeld()) && [...sessions.values()].map(control => control.finish()).every(result => result.kind === 'commit' || result.kind === 'unchanged') });
+    element.append(selection, catalogStatus, catalogRetry, pages.element, note, actions);
+  } else element.append(note, catalogStatus, catalogRetry, outputLabel, cityLabel, connectorNote, breakLabel, ...leaderLabels, originHelp, resetOrigin, ...fieldLabels, actions);
   let current = { position: null, style: null };
   const stop = (event) => event.stopPropagation?.();
   for (const node of [output, city, lineBreak, ...fields.values(), ...colors.values()]) node.addEventListener("click", stop);
