@@ -42,56 +42,6 @@ sleep 10
 echo "Ensuring logo is accessible in nginx container..."
 docker cp "$SCRIPT_DIR/nur-front/frontend/public/Nur-Logo_3x-_1_.svg" nginx-front:/usr/share/nginx/html/media/
 
-# Setup OTEF Interactive - process layer packs (process_layers.py)
-VENV_PATH="$SCRIPT_DIR/otef-interactive/scripts/.venv"
-if [ ! -d "$VENV_PATH" ]; then
-    echo "Creating Python virtual environment for layer processing..."
-    python3 -m venv "$VENV_PATH"
-fi
-
-# Ensure dependencies are installed
-echo "Ensuring dependencies are installed..."
-"$VENV_PATH/bin/python" -m pip install -q -r "$SCRIPT_DIR/otef-interactive/scripts/requirements.txt"
-
-# Install the latest matching source and processed layer release.
-echo "Checking for the latest layer release..."
-"$VENV_PATH/bin/python" "$SCRIPT_DIR/otef-interactive/scripts/fetch_data.py" --output "$SCRIPT_DIR/otef-interactive/public/source"
-if [ $? -ne 0 ]; then
-    echo "Layer release download failed" >&2
-    exit 1
-fi
-
-
-if docker info >/dev/null 2>&1; then
-    MANIFEST_PATH="$SCRIPT_DIR/otef-interactive/public/processed/layers/layers-manifest.json"
-    if [ -f "$MANIFEST_PATH" ]; then
-        echo "Processed layer release is present; skipping layer processing."
-    else
-        echo "Processing layer packs (process_layers.py)..."
-        "$VENV_PATH/bin/python" "$SCRIPT_DIR/otef-interactive/scripts/process_layers.py" \
-            --source "$SCRIPT_DIR/otef-interactive/public/source/layers" \
-            --output "$SCRIPT_DIR/otef-interactive/public/processed/layers" || exit 1
-    fi
-else
-    echo "Warning: Docker not running, skipping layer pack processing"
-fi
-
-# Ensure OTEF frontend dependencies (for tests and dev)
-echo "Ensuring OTEF frontend dependencies..."
-if command -v npm >/dev/null 2>&1; then
-    echo "   Installing OTEF frontend dependencies (npm install)..."
-    npm install --prefix "$SCRIPT_DIR/otef-interactive"
-else
-    echo "   Warning: npm not found, skipping otef-interactive deps (run 'npm install' in otef-interactive manually)"
-fi
-
-# Copy model-bounds.json if it doesn't exist in Django API directory
-if [ ! -f "$SCRIPT_DIR/nur-io/django_api/public/processed/otef/model-bounds.json" ] && [ -f "$SCRIPT_DIR/otef-interactive/frontend/data/model-bounds.json" ]; then
-    echo "Copying model-bounds.json to Django API directory..."
-    mkdir -p "$SCRIPT_DIR/nur-io/django_api/public/processed/otef"
-    cp "$SCRIPT_DIR/otef-interactive/frontend/data/model-bounds.json" "$SCRIPT_DIR/nur-io/django_api/public/processed/otef/"
-fi
-
 # Run migrations and seed database (tables, indicators, states, indicator data)
 echo "Running database migrations..."
 docker exec nur-api python manage.py migrate
@@ -99,16 +49,8 @@ docker exec nur-api python manage.py migrate
 echo "Creating data structure (states, indicator data, images from public/processed)..."
 docker exec nur-api python manage.py create_data
 
-echo "Importing OTEF data (layer groups, model bounds)..."
-docker exec nur-api python manage.py import_otef_data || echo "   (OTEF import skipped if files not present)"
-
-echo "✅ All services have been successfully configured and data has been loaded."
+echo "All services have been successfully configured and data has been loaded."
 echo ""
-
-# Same as setup.ps1: write hostname/Tailscale share.json and open the launcher.
-# Compose is already up; start-otef.sh's `docker compose up -d` is a no-op then.
-echo "Writing OTEF share origins and opening the launcher..."
-"$SCRIPT_DIR/otef-interactive/scripts/start-otef.sh"
 
 # Get local IP address
 get_local_ip() {
@@ -148,8 +90,6 @@ echo "📍 Local access (localhost):"
 echo "- Dashboard: http://localhost/dashboard/"
 echo "- Projection: http://localhost/projection/"
 echo "- Remote Controller: http://localhost/remote/"
-echo "- OTEF Interactive: http://localhost/otef-interactive/"
-echo "- OTEF Projection: http://localhost/otef-interactive/projection.html"
 echo "- Admin Interface: http://localhost:9900/admin"
 
 if [ -n "$LOCAL_IP" ]; then
@@ -158,8 +98,6 @@ if [ -n "$LOCAL_IP" ]; then
     echo "- Dashboard: http://$LOCAL_IP/dashboard/"
     echo "- Projection: http://$LOCAL_IP/projection/"
     echo "- Remote Controller: http://$LOCAL_IP/remote/"
-    echo "- OTEF Interactive: http://$LOCAL_IP/otef-interactive/"
-    echo "- OTEF Projection: http://$LOCAL_IP/otef-interactive/projection.html"
     echo "- Admin Interface: http://$LOCAL_IP:9900/admin"
 else
     echo ""

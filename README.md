@@ -11,6 +11,8 @@ Multi-service application for interactive urban data visualization:
 - **nur-projection**: Projection mapping display (Maptastic.js)
 - **nur-remote-controller**: Mobile-friendly presentation remote
 - **nginx**: Reverse proxy
+
+OTEF Interactive is a separate repository, [Otef_interactive](https://github.com/NegevUrbanResearch/Otef_interactive). This repository serves the iDistrict dashboard, projection, and remote.
 - **PostgreSQL + Redis**: Database and WebSocket support
 
 ## Architecture
@@ -48,23 +50,6 @@ docker-compose ps
 docker-compose logs -f nur-api
 ```
 
-### Normal OTEF launch
-
-Phone remotes and the launcher QR need a one-shot host file at `otef-interactive/frontend/runtime/share.json`. That file is **not** written when containers start. After nginx is ready, `start-otef` writes it once from this machine:
-
-- **Local:** `http://{hostname}.local` (plus `:{port}` if nginx is not on 80)
-- **Tailnet:** `http://{tailscale-ipv4}` when `tailscale ip -4` succeeds; if Tailscale is missing, Tailnet is hidden and Local still works
-
-GIS and other workstation Open links stay on `http://localhost`. `setup.ps1` / `setup.sh` call the same helper at the end of first-time setup. `docker compose up` alone does not write the file.
-
-```powershell
-.\otef-interactive\scripts\start-otef.ps1
-```
-
-```bash
-./otef-interactive/scripts/start-otef.sh
-```
-
 ### Environment Variables
 
 Create a `.env` file in the project root:
@@ -89,34 +74,18 @@ CORS_ALLOW_ALL_ORIGINS=True
 
 # Mapbox (required for maps)
 REACT_APP_MAPBOX_ACCESS_TOKEN=your-mapbox-token
-
-# Supabase (required for Curation page)
-SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_SECRET_KEY=your-secret-key
-# SUPABASE_PROJECTS_TABLE=projects
 ```
 
-Copy from `.env.example` and fill in your values. Supabase URL and **service role** key are in the Supabase project under Settings ? API. The API expects a `projects` table and a `geo_features` table (with `project_id`, `submission_id`, `geom`, etc.). Without these, the Curation page and `/api/supabase/*` endpoints will return 502.
-
-### Curation (Supabase)
-
-The **Curation** page (linked from the OTEF launcher) lets you manage curated layers. The Django API proxies Supabase: it reads projects and submission features from your Supabase project and can publish GeoJSON as new curated layers. Set `SUPABASE_URL` and `SUPABASE_SECRET_KEY` in `.env` (service role key; never expose it in the frontend).
+Copy from `.env.example` and fill in your values.
 
 ## Access Points
 
 | Service | URL |
 |---------|-----|
-| OTEF Launcher | http://localhost/otef-interactive/launcher.html (also http://localhost/) |
+| Site root | http://localhost/ redirects to the dashboard |
 | Dashboard | http://localhost/dashboard/ |
-| OTEF Interactive (GIS) | http://localhost/otef-interactive/ |
-| OTEF Projection | http://localhost/otef-interactive/projection.html (`?span=left` / `?span=right`) |
-| OTEF Projection configuration | http://localhost/otef-interactive/projection-config.html |
-| OTEF Remote Controller | http://localhost/otef-interactive/remote-controller.html |
-| NLI Staff Remote | http://localhost/otef-interactive/nli-staff-remote.html (installable web app) |
-| OTEF Printable QR | http://localhost/otef-interactive/qr.html |
-| Curation | http://localhost/otef-interactive/curation.html |
-| Projection Display (nur-projection) | http://localhost/projection/ |
-| Remote Controller (nur-remote-controller) | http://localhost/remote-controller/ |
+| Projection Display | http://localhost/projection/ |
+| Remote Controller | http://localhost/remote-controller/ |
 | API | http://localhost:9900/api/ |
 | Admin | http://localhost:9900/admin (admin/admin123) |
 
@@ -133,9 +102,6 @@ processed/
 ?   ??? present/     # Current state visualizations
 ?   ??? survey/      # Survey data
 ?   ??? future/      # Future scenarios
-??? otef/            # OTEF GIS layers
-    ??? layers/       # Simplified GeoJSON for import
-    ??? model-bounds.json
 ```
 
 The system automatically loads this data into the database on first startup.
@@ -195,13 +161,12 @@ nur-cityscope/
 ??? nur-front/frontend/       # React dashboard
 ??? nur-projection/frontend/  # Projection display
 ??? nur-remote-controller/   # Presentation remote
-??? otef-interactive/         # OTEF interactive module
 ```
 
 ## How It Works
 
 1. **Initialization**: `nur-io/django_api/init.sh` runs on container start:
-   - Creates database tables (`otef`, `idistrict`)
+   - Creates the `idistrict` table
    - Loads data from `nur-io/django_api/public/processed/` into database
    - Creates default admin user (admin/admin123)
 

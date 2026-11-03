@@ -1,8 +1,9 @@
 # nginx/default.conf.template
 
 server {
+    absolute_redirect off;
     location = / {
-        return 302 /otef-interactive/launcher.html;
+        return 302 /dashboard/;
     }
     listen 80;
     server_name _;  # Replace with your actual domain
@@ -13,7 +14,6 @@ server {
     add_header Expires "0";
     
     # --- Serve Static Frontend ---
-    # Projection page - supports both idistrict and otef tables
     location /projection/ {
         alias /usr/share/nginx/html/nur-projection/frontend/;
         index index.html;
@@ -26,15 +26,6 @@ server {
         }
     }
     
-    # OTEF projection page - also accessible via /projection/?table=otef
-    location = /otef-interactive/projection.html {
-        alias /usr/share/nginx/html/otef-interactive/frontend/projection.html;
-        add_header Cache-Control "no-store, no-cache, must-revalidate";
-        expires -1;
-    }
-
-    # Dashboard application with client-side routing
-    # Serves both idistrict (default) and otef tables
     location /dashboard/ {
         alias /usr/share/nginx/html/nur-front/frontend/;
         index index.html;
@@ -54,41 +45,6 @@ server {
         }
     }
     
-    # OTEF Interactive - also accessible at /dashboard/?table=otef
-    # Keep /otef-interactive/ for backward compatibility
-    location ^~ /otef-interactive/runtime/ {
-        alias /usr/share/nginx/html/otef-interactive/frontend/runtime/;
-        add_header Cache-Control "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0";
-        expires -1;
-    }
-    location /otef-interactive/ {
-        alias /usr/share/nginx/html/otef-interactive/frontend/;
-        index index.html;
-        try_files $uri $uri/ =404;
-        
-        # Cache static assets only — NOT app source .js / .css: OTEF serves native ES modules
-        # from ./src/*.js with no content hashes; immutable 7d caching makes browsers keep
-        # stale bundles forever after code changes or container restarts.
-        location ~* \.(png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
-            expires 7d;
-            add_header Cache-Control "public, immutable";
-        }
-        
-        # PMTiles special handling
-        location ~* \.pmtiles$ {
-            add_header Access-Control-Allow-Origin *;
-            add_header Access-Control-Allow-Methods "GET, HEAD, OPTIONS";
-            add_header Accept-Ranges bytes;
-            expires 7d;
-        }
-        
-        # Disable cache for HTML files
-        location ~* \.(?:html)$ {
-            add_header Cache-Control "no-store, no-cache, must-revalidate";
-            expires -1;
-        }
-    }
-
     # Fallback for SPA routing - serve index.html for any unmatched dashboard routes
     location @dashboard_fallback {
         root /usr/share/nginx/html/nur-front/frontend;
@@ -106,7 +62,6 @@ server {
         return 301 /dashboard/;
     }
 
-    # Remote controller - supports both idistrict and otef tables
     location /remote-controller/ {
         alias /usr/share/nginx/html/nur-remote-controller/frontend/;
         index index.html;
@@ -119,19 +74,6 @@ server {
         }
     }
     
-    # OTEF remote controller - also accessible via /remote-controller/?table=otef
-    location = /otef-interactive/remote-controller.html {
-        alias /usr/share/nginx/html/otef-interactive/frontend/remote-controller.html;
-        add_header Cache-Control "no-store, no-cache, must-revalidate";
-        expires -1;
-    }
-
-    location = /otef-interactive/nli-staff-remote.html {
-        alias /usr/share/nginx/html/otef-interactive/frontend/nli-staff-remote.html;
-        add_header Cache-Control "no-store, no-cache, must-revalidate";
-        expires -1;
-    }
-
     # Redirect /remote/ to /remote-controller/
     location = /remote {
         return 301 /remote-controller/;
@@ -140,14 +82,6 @@ server {
     # Also redirect /remote/ with trailing slash
     location = /remote/ {
         return 301 /remote-controller/;
-    }
-
-    # OTEF Public Data (MUST come BEFORE /otef-interactive/ - more specific match)
-    location ^~ /otef-interactive/public/ {
-        alias /usr/share/nginx/html/otef-interactive/public/;
-        add_header Access-Control-Allow-Origin *;
-        # Do not force Content-Type: GeoJSON, PMTiles, fonts, etc. need correct MIME from nginx.types
-        expires 1h;
     }
 
     # Static files for dashboard

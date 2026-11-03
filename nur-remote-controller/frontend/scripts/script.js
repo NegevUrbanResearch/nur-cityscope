@@ -1,8 +1,3 @@
-/**
- * Nur Presentation Remote Controller
- * Mobile-friendly remote for controlling the presentation mode
- */
-
 const API_BASE = window.location.origin;
 
 // Configuration matching the frontend
@@ -119,21 +114,15 @@ class PresentationRemote {
         try {
             const response = await this.apiGet('/api/tables/?is_active=true');
             if (response && Array.isArray(response)) {
-                this.availableTables = response;
+                this.availableTables = response.filter((table) => table.name !== 'otef');
                 // Get table from URL or default to idistrict
                 const urlParams = new URLSearchParams(window.location.search);
                 const urlTable = urlParams.get('table');
-                if (urlTable && response.find(t => t.name === urlTable)) {
+                if (urlTable && this.availableTables.find(t => t.name === urlTable)) {
                     this.currentTable = urlTable;
                 } else {
-                    // Set current table to idistrict if available, otherwise first table
-                    const idistrictTable = response.find(t => t.name === 'idistrict');
-                    this.currentTable = idistrictTable ? 'idistrict' : (response[0]?.name || 'idistrict');
-                }
-                // If table is OTEF, redirect to OTEF remote-controller
-                if (this.currentTable === 'otef') {
-                    window.location.href = `/otef-interactive/remote-controller.html?table=otef`;
-                    return;
+                    const idistrictTable = this.availableTables.find(t => t.name === 'idistrict');
+                    this.currentTable = idistrictTable ? 'idistrict' : (this.availableTables[0]?.name || 'idistrict');
                 }
                 this.updateTableSelector();
                 // Fetch indicators and states for initial table
@@ -285,12 +274,6 @@ class PresentationRemote {
     
     async changeTable(tableName) {
         if (tableName !== this.currentTable) {
-            // If switching to OTEF, redirect to OTEF remote-controller
-            if (tableName === 'otef') {
-                window.location.href = `/otef-interactive/remote-controller.html?table=otef`;
-                return;
-            }
-            // If switching from OTEF to another table, stay on this page
             this.currentTable = tableName;
             // Update URL
             const url = new URL(window.location.href);

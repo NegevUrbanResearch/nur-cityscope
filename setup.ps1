@@ -81,70 +81,6 @@ if (Test-Path $logoSource) {
     }
 }
 
-# Setup OTEF Interactive - process layer packs (process_layers.py)
-$pythonCmd = Get-Command python -ErrorAction SilentlyContinue
-if (-not $pythonCmd) {
-    $pythonCmd = Get-Command python3 -ErrorAction SilentlyContinue
-}
-
-    if ($pythonCmd) {
-    $venvPath = "$SCRIPT_DIR\otef-interactive\scripts\.venv"
-    if (-not (Test-Path $venvPath)) {
-        Write-Host "Creating Python virtual environment for layer processing..." -ForegroundColor Gray
-        & $pythonCmd.Name -m venv "$venvPath"
-    }
-
-    # Ensure dependencies are installed
-    Write-Host "Ensuring dependencies are installed..." -ForegroundColor Gray
-    & "$venvPath\Scripts\python" -m pip install -q -r "$SCRIPT_DIR\otef-interactive\scripts\requirements.txt"
-
-    # Install the latest matching source and processed layer release.
-    Write-Host "Checking for the latest layer release..." -ForegroundColor Cyan
-    & "$venvPath\Scripts\python" "$SCRIPT_DIR\otef-interactive\scripts\fetch_data.py" --output "$SCRIPT_DIR\otef-interactive\public\source"
-    if ($LASTEXITCODE -ne 0) {
-        throw "Layer release download failed."
-    }
-
-    $dockerRunning = docker info 2>$null
-    if ($LASTEXITCODE -eq 0) {
-        $manifestPath = "$SCRIPT_DIR\otef-interactive\public\processed\layers\layers-manifest.json"
-        if (Test-Path $manifestPath) {
-            Write-Host "Processed layer release is present; skipping layer processing." -ForegroundColor Gray
-        } else {
-            Write-Host "Processing layer packs (process_layers.py)..." -ForegroundColor Cyan
-            & "$venvPath\Scripts\python" "$SCRIPT_DIR\otef-interactive\scripts\process_layers.py" `
-                --source "$SCRIPT_DIR\otef-interactive\public\source\layers" `
-                --output "$SCRIPT_DIR\otef-interactive\public\processed\layers"
-            if ($LASTEXITCODE -ne 0) {
-                throw "Layer processing failed."
-            }
-        }
-    } else {
-        Write-Host "Warning: Docker not running, skipping layer pack processing" -ForegroundColor Yellow
-    }
-} else {
-    Write-Host "Warning: Python not found, skipping layer pack processing" -ForegroundColor Yellow
-}
-
-# Ensure OTEF frontend dependencies (for tests and dev)
-Write-Host "Ensuring OTEF frontend dependencies..." -ForegroundColor Cyan
-$npmCmd = Get-Command npm -ErrorAction SilentlyContinue
-if ($npmCmd) {
-    Write-Host "   Installing OTEF frontend dependencies (npm install)..." -ForegroundColor Gray
-    npm install --prefix "$SCRIPT_DIR\otef-interactive"
-} else {
-    Write-Host "   Warning: npm not found, skipping otef-interactive deps (run 'npm install' in otef-interactive manually)" -ForegroundColor Yellow
-}
-
-# Copy model-bounds.json if it doesn't exist in Django API directory
-$modelBoundsSource = "$SCRIPT_DIR\otef-interactive\frontend\data\model-bounds.json"
-$modelBoundsDest = "$SCRIPT_DIR\nur-io\django_api\public\processed\otef\model-bounds.json"
-if (-not (Test-Path $modelBoundsDest) -and (Test-Path $modelBoundsSource)) {
-    Write-Host "Copying model-bounds.json to Django API directory..." -ForegroundColor Cyan
-    New-Item -ItemType Directory -Force -Path "$SCRIPT_DIR\nur-io\django_api\public\processed\otef" | Out-Null
-    Copy-Item -Path $modelBoundsSource -Destination $modelBoundsDest -Force
-}
-
 # Run migrations (only if container is running)
 Write-Host "Running database migrations..." -ForegroundColor Cyan
 $apiRunning = docker ps --filter "name=nur-api" --format "{{.Status}}" 2>$null
@@ -166,19 +102,9 @@ if ($LASTEXITCODE -ne 0) {
     Write-Host "Warning: Data creation may have failed. Check logs with: docker-compose logs nur-api" -ForegroundColor Yellow
 }
 
-Write-Host "Refreshing OTEF layer groups from processed manifests..." -ForegroundColor Cyan
-docker exec nur-api python manage.py import_otef_data
-if ($LASTEXITCODE -ne 0) {
-    throw "OTEF layer import failed."
-}
-
 Write-Host ""
 Write-Host "All services have been successfully configured and data has been loaded." -ForegroundColor Green
 Write-Host ""
-
-# Hand setup off to the same readiness, share-origin, and launcher helper used
-# for normal starts. Containers are already running, so avoid a second Compose
-# startup here.
-Write-Host "Opening OTEF launcher after setup..." -ForegroundColor Cyan
-$startHelper = Join-Path $SCRIPT_DIR 'otef-interactive\scripts\start-otef.ps1'
-& $startHelper -AlreadyStarted -RepositoryRoot $SCRIPT_DIR
+Write-Host "Dashboard: http://localhost/dashboard/" -ForegroundColor Cyan
+Write-Host "Projection: http://localhost/projection/" -ForegroundColor Cyan
+Write-Host "Remote Controller: http://localhost/remote-controller/" -ForegroundColor Cyan

@@ -2,7 +2,7 @@
 
 ## Core Models
 
-- **Table**: Higher-level container for organizing indicators by data source (e.g., 'otef', 'idistrict')
+- **Table**: Higher-level container for organizing indicators by data source (for example, `idistrict`)
 - **Indicator**: Measurable urban metrics (Mobility, Climate) - belongs to a Table
 - **State**: Different scenarios/time periods for indicators
 - **IndicatorData**: Links indicators with states
@@ -10,7 +10,7 @@
 
 ### Table Parameter
 
-**Important**: All API endpoints that query indicators by `indicator_id` require a `table` parameter to be specified. The table parameter identifies which data source/table the indicator belongs to (e.g., 'idistrict', 'otef'). All existing data and indicators are associated with the `idistrict` table.
+**Important**: All API endpoints that query indicators by `indicator_id` require a `table` parameter. The table parameter identifies which data source the indicator belongs to. Existing data and indicators are associated with the `idistrict` table.
 
 ## API Endpoints
 
