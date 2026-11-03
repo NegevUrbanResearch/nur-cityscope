@@ -1,0 +1,974 @@
+import { describe, expect, it } from "vitest";
+import {
+  NLI_DISPLAY_PROFILES,
+  NLI_VISUAL_TOKENS,
+} from "../../frontend/src/shared/nli-investigation-theme.js";
+import {
+  deriveInvestigationFrame,
+} from "../../frontend/src/shared/nli-investigation-visual-state.js";
+import {
+  INVESTIGATION_ALARMS_FULL_ID,
+  INVESTIGATION_LINES_FULL_ID,
+  INVESTIGATION_POLYGONS_FULL_ID,
+  TIMELINE_HOLD_MS,
+  clockStoryDurationMs,
+  timelineBeatDurationMs,
+  timelineSpanMs,
+} from "../../frontend/src/shared/nli-investigation-beats.js";
+import {
+  endNliClock,
+  evaluateClock,
+  idleNliClock,
+  pauseNliClock,
+  playNliClock,
+  replayNliClock,
+  normalizeNliClock,
+  resumeNliClock,
+  rewindNliClock,
+  seekNliClock,
+  setNliLoop,
+  stopNliClock,
+} from "../../frontend/src/shared/nli-investigation-clock.js";
+import { NLI_NOVA_STORY } from "../../frontend/src/shared/nli-nova-story.js";
+
+const enabled = [
+  INVESTIGATION_POLYGONS_FULL_ID,
+  INVESTIGATION_LINES_FULL_ID,
+  INVESTIGATION_ALARMS_FULL_ID,
+];
+const membership = enabled;
+const beats = [400, 420, 440];
+
+describe("nli-investigation-theme", () => {
+  it("owns the fixed semantic tokens and distinct display multipliers", () => {
+    expect(NLI_VISUAL_TOKENS).toMatchObject({
+      polygonOrange: "#f79009",
+      routeFuture: "#c31f4f",
+      routeRestingOpacity: 0.42,
+      routeReveal: "#c31f4f",
+      incidentRed: "#c31f4f",
+      settlementImpactOutline: "#c31f4f",
+      narrativeSettlementOutline: "#ffffff",
+      annotationHalo: "#000000",
+      routeFlowColor: "#000000",
+      alarmYellow: "#f5c542",
+      annotationInk: "#fff7ed",
+      revealDurationMs: 3200,
+      alarmRippleDurationMs: 900,
+      alarmChorusLoopMs: 2600,
+      alarmChorusExpansionPx: 30,
+      alarmChorusOpacity: 0.2,
+      alarmEventDurationMs: 1800,
+      completedFlowStepMs: 66,
+      routeCarrierWidth: 2.4,
+      routeFlowWidth: 1.35,
+      routeFlowPeriodPx: 24,
+      routeFlowDensity: 8,
+      routeFlowDutyCycle: 0.45,
+      routeFlowSpeed: 0.00072,
+      alarmRadiusStops: [[1, 4], [7, 8], [26, 14], [77, 19]],
+      personZoom: 16,
+      highlightMinZoom: 13,
+      dimOpacity: 0.08,
+      dimTextOpacity: 0.18,
+      highlightOpacityTransitionMs: 400,
+      highlightFillOpacity: 0.05,
+      highlightLineColor: "rgba(255,255,255,0.35)",
+      personGlowFillOpacity: 0.25,
+      personGlowFillColor: "#ffffff",
+      personGlowRadius: 14,
+      personGlowStrokeWidth: 2.5,
+      personGlowPulseMs: 2400,
+      settlementGlowAuraOpacity: 0.16,
+      settlementGlowCoreOpacity: 0.12,
+      settlementGlowAuraBlur: 1.65,
+      settlementGlowCoreBlur: 1.15,
+      settlementGlowAuraPad: 2.5,
+      settlementGlowCorePad: 1.85,
+      settlementGlowBreathMs: 8000,
+      settlementGlowBreathMin: 0.78,
+      settlementGlowBreathMax: 1.22,
+    });
+    expect(NLI_VISUAL_TOKENS.settlementGlowBreathMax).toBeLessThanOrEqual(1.25);
+    expect(
+      NLI_VISUAL_TOKENS.settlementGlowAuraOpacity * NLI_VISUAL_TOKENS.settlementGlowBreathMax,
+    ).toBeLessThan(0.22);
+    expect(NLI_VISUAL_TOKENS).not.toHaveProperty("polygonCategories");
+    expect(NLI_VISUAL_TOKENS).not.toHaveProperty("polygonFallbackFill");
+    expect(NLI_DISPLAY_PROFILES.gis).toHaveProperty("lineWidthMultiplier");
+    expect(NLI_DISPLAY_PROFILES.gis).toHaveProperty("routeScale", 1);
+    expect(NLI_DISPLAY_PROFILES.projection.routeScale).toBeGreaterThan(1);
+    expect(NLI_DISPLAY_PROFILES.projection).toHaveProperty("lineWidthMultiplier");
+    expect(NLI_DISPLAY_PROFILES.gis.lineWidthMultiplier).not.toBe(
+      NLI_DISPLAY_PROFILES.projection.lineWidthMultiplier,
+    );
+  });
+});
+
+describe("deriveInvestigationFrame", () => {
+  it("derives Nova polygon OBJECTIDs on its eight-second beats and 320ms manual jumps", () => {
+    const novaOptions = { narrativeId: "nova" };
+    const novaClock = playNliClock(
+      idleNliClock(),
+      enabled,
+      NLI_NOVA_STORY.representativeMinutes,
+      0,
+      novaOptions,
+    );
+    const idle = deriveInvestigationFrame(idleNliClock(), 0, enabled, novaOptions);
+    const midBeat = deriveInvestigationFrame(novaClock, 4000, enabled, novaOptions);
+    const secondBeat = deriveInvestigationFrame(novaClock, 8000, enabled, novaOptions);
+    const jumped = seekNliClock(novaClock, 2, 5000, undefined, novaOptions);
+    const jumpBefore = deriveInvestigationFrame(jumped, 5319, enabled, novaOptions);
+    const jumpSettled = deriveInvestigationFrame(jumped, 5320, enabled, novaOptions);
+    const ended = deriveInvestigationFrame(endNliClock(novaClock), 40000, enabled, novaOptions);
+
+    expect(idle.achievedPolygonObjectIds).toEqual([]);
+    expect(midBeat.achievedPolygonObjectIds).toEqual([97, 100, 104]);
+    expect(midBeat.polygonObjectEntries).toEqual([
+      { objectIds: [97, 100, 104], progress: 0.5 },
+    ]);
+    expect(midBeat.completedBeats).toEqual([]);
+    expect(midBeat.activeBeat).toBeNull();
+    expect(midBeat.alarmOnset).toBeNull();
+    expect(midBeat.completedRouteFlow.active).toBe(false);
+    expect(midBeat.rippleNeedsFrames).toBe(false);
+    expect(secondBeat.achievedPolygonObjectIds).toEqual([97, 100, 104, 98, 99, 186]);
+    expect(jumpBefore.activeProgress).toBeLessThan(1);
+    expect(jumpSettled.activeProgress).toBe(1);
+    expect(ended.achievedPolygonObjectIds).toHaveLength(14);
+    expect(ended.activeProgress).toBe(1);
+    expect(ended.completedBeats).toEqual([]);
+    expect(ended.activeBeat).toBeNull();
+
+    const naturallyEnded = deriveInvestigationFrame(novaClock, 40_000, enabled, novaOptions);
+    expect(naturallyEnded.achievedPolygonObjectIds).toHaveLength(14);
+    expect(naturallyEnded.activeProgress).toBe(1);
+    expect(naturallyEnded.completedBeats).toEqual([]);
+  });
+
+  it("derives a polygon-only current entry from beat elapsed time", () => {
+    const clock = playNliClock(idleNliClock(), membership, [400], 0);
+    const frame = deriveInvestigationFrame(clock, timelineBeatDurationMs(400) / 2, enabled, {
+      routeBeats: [420],
+    });
+
+    expect(frame.polygonEntries).toEqual([{ beat: 400, progress: 0.5 }]);
+  });
+
+  it("does not enter a route-sharing current beat before route completion", () => {
+    const clock = playNliClock(idleNliClock(), membership, [400, 420], 0);
+    const frame = deriveInvestigationFrame(clock, timelineBeatDurationMs(400) - 1, enabled, {
+      routeBeats: [400, 420],
+    });
+
+    expect(frame.polygonEntries).toEqual([]);
+    expect(frame.achievedPolygonBeats).toEqual([]);
+  });
+
+  it("enters the completed route beat on the next beat using new elapsed time", () => {
+    const clock = playNliClock(idleNliClock(), membership, [400, 420], 0);
+    const frame = deriveInvestigationFrame(clock, timelineBeatDurationMs(400), enabled, {
+      routeBeats: [400, 420],
+    });
+
+    expect(frame.polygonEntries).toEqual([{ beat: 400, progress: 0 }]);
+    expect(frame.achievedPolygonBeats).toEqual([400]);
+  });
+
+  it("allows simultaneous previous route and current polygon entries", () => {
+    const clock = playNliClock(idleNliClock(), membership, [400, 420], 0);
+    const frame = deriveInvestigationFrame(
+      clock,
+      timelineBeatDurationMs(400) + timelineBeatDurationMs(420) / 2,
+      enabled,
+      { routeBeats: [400] },
+    );
+
+    expect(frame.polygonEntries).toEqual([
+      { beat: 420, progress: 0.5 },
+      { beat: 400, progress: 0.5 },
+    ]);
+  });
+
+  it("compresses the final route entry to the existing hold duration", () => {
+    const clock = playNliClock(idleNliClock(), membership, [400], 0);
+    const frame = deriveInvestigationFrame(
+      clock,
+      timelineBeatDurationMs(400) + TIMELINE_HOLD_MS - 1,
+      enabled,
+      { routeBeats: [400] },
+    );
+
+    expect(frame.narrative.mode).toBe("hold");
+    expect(frame.polygonEntries).toEqual([
+      { beat: 400, progress: (TIMELINE_HOLD_MS - 1) / TIMELINE_HOLD_MS },
+    ]);
+  });
+
+  it("freezes ordinary paused polygon entries across corrected wall timestamps", () => {
+    const playing = playNliClock(idleNliClock(), membership, [400], 0);
+    const halfway = timelineBeatDurationMs(400) / 2;
+    const paused = pauseNliClock(playing, halfway);
+    const first = deriveInvestigationFrame(paused, halfway, enabled, {
+      routeBeats: [420],
+    });
+    const later = deriveInvestigationFrame(paused, 90_000, enabled, {
+      routeBeats: [420],
+    });
+
+    expect(first.polygonEntries).toEqual([{ beat: 400, progress: 0.5 }]);
+    expect(later.polygonEntries).toEqual(first.polygonEntries);
+  });
+
+  it("freezes a paused jump polygon entry and does not add a previous route entry", () => {
+    const jumped = seekNliClock(idleNliClock(), 1, 10_000, {
+      visibleMembership: membership,
+      beats: [400, 420],
+    });
+    const first = deriveInvestigationFrame(jumped, 10_000, enabled, {
+      routeBeats: [400],
+    });
+    const later = deriveInvestigationFrame(jumped, 90_000, enabled, {
+      routeBeats: [400],
+    });
+
+    expect(first.polygonEntries).toEqual([{ beat: 420, progress: 0 }]);
+    expect(later.polygonEntries).toEqual(first.polygonEntries);
+  });
+
+  it("does not start a second polygon reveal after a route-sharing jump", () => {
+    const jumped = seekNliClock(idleNliClock(), 1, 10_000, {
+      visibleMembership: membership,
+      beats: [400, 420],
+    });
+    const before = deriveInvestigationFrame(jumped, 10_000 + 100, enabled, {
+      routeBeats: [420],
+    });
+    const after = deriveInvestigationFrame(
+      jumped,
+      10_000 + NLI_VISUAL_TOKENS.revealDurationMs,
+      enabled,
+      { routeBeats: [420] },
+    );
+
+    expect(before.polygonEntries).toEqual([]);
+    expect(after.achievedPolygonBeats).toEqual([400, 420]);
+    expect(after.polygonEntries).toEqual([]);
+  });
+
+  it("reconstructs a normalized mid-beat seek from clock position", () => {
+    const clock = normalizeNliClock({
+      phase: "paused",
+      membership,
+      beats: [400, 420],
+      beatIndex: 1,
+      beatElapsedMs: timelineBeatDurationMs(420) / 2,
+      seekKind: "none",
+    });
+    const frame = deriveInvestigationFrame(clock, 90_000, enabled, {
+      routeBeats: [400],
+    });
+
+    expect(frame.polygonEntries).toEqual([
+      { beat: 420, progress: 0.5 },
+      { beat: 400, progress: 0.5 },
+    ]);
+  });
+
+  it("returns no unfinished polygon entries during lead-in, idle, or ended phases", () => {
+    const leadInClock = playNliClock(idleNliClock(), membership, [400, 492], 0, {
+      leadInMinutes: 483,
+    });
+    const leadIn = deriveInvestigationFrame(leadInClock, 100, enabled, {
+      narrativeId: "nova",
+      routeBeats: [400, 492],
+    });
+    const idle = deriveInvestigationFrame(idleNliClock(), 100, enabled, {
+      routeBeats: [400],
+    });
+    const ended = deriveInvestigationFrame(
+      endNliClock(playNliClock(idleNliClock(), membership, [400], 0)),
+      100,
+      enabled,
+      { routeBeats: [400] },
+    );
+
+    expect(leadIn.polygonEntries).toEqual([]);
+    expect(idle.polygonEntries).toEqual([]);
+    expect(ended.polygonEntries).toEqual([]);
+  });
+
+  it("requests polygon ambient frames only for completed eligible polygons", () => {
+    const paused = pauseNliClock(
+      playNliClock(idleNliClock(), membership, [400, 420], 0),
+      timelineSpanMs([400, 420], 0, 1),
+    );
+    const completed = deriveInvestigationFrame(paused, 90_000, enabled, {
+      motionMode: "full",
+      polygonMotionActive: true,
+      routeBeats: [420],
+    });
+    const soleEntry = deriveInvestigationFrame(
+      pauseNliClock(playNliClock(idleNliClock(), membership, [400], 0), 800),
+      90_000,
+      enabled,
+      { motionMode: "full", polygonMotionActive: true, routeBeats: [420] },
+    );
+    const none = deriveInvestigationFrame(idleNliClock(), 90_000, enabled, {
+      motionMode: "full",
+      polygonMotionActive: true,
+    });
+    const reduced = deriveInvestigationFrame(paused, 90_000, enabled, {
+      motionMode: "reduced",
+      polygonMotionActive: true,
+      routeBeats: [420],
+    });
+    const ended = deriveInvestigationFrame(
+      endNliClock(playNliClock(idleNliClock(), membership, [400], 0)),
+      90_000,
+      enabled,
+      { motionMode: "full", polygonMotionActive: true, routeBeats: [400] },
+    );
+
+    expect(completed.completedPolygonAmbientActive).toBe(true);
+    expect(completed.polygonMotionNeedsFrames).toBe(true);
+    expect(soleEntry.completedPolygonAmbientActive).toBe(false);
+    expect(soleEntry.polygonMotionNeedsFrames).toBe(false);
+    expect(none.completedPolygonAmbientActive).toBe(false);
+    expect(reduced.completedPolygonAmbientActive).toBe(false);
+    expect(reduced.polygonMotionNeedsFrames).toBe(false);
+    expect(ended.completedPolygonAmbientActive).toBe(true);
+    expect(ended.polygonMotionNeedsFrames).toBe(true);
+  });
+
+  it("requests ambient frames for idle story achievements but not Nova idle", () => {
+    const idle = deriveInvestigationFrame(idleNliClock(), 90_000, enabled, {
+      motionMode: "full",
+      polygonMotionActive: true,
+      storyBeats: [400, 420],
+    });
+    const nova = deriveInvestigationFrame(idleNliClock(), 90_000, enabled, {
+      motionMode: "full",
+      polygonMotionActive: true,
+      storyBeats: [400, 420],
+      narrativeId: "nova",
+    });
+
+    expect(idle.completedPolygonAmbientActive).toBe(true);
+    expect(nova.completedPolygonAmbientActive).toBe(false);
+    expect(nova.polygonMotionNeedsFrames).toBe(false);
+  });
+
+  it.each([
+    [null, false],
+    [undefined, false],
+    [NaN, false],
+    [Infinity, false],
+    [-1, false],
+    [0, true],
+  ])("preserves correctedNowValid for %s", (correctedNowMs, expected) => {
+    const frame = deriveInvestigationFrame(idleNliClock(), correctedNowMs, [], {});
+    expect(frame.correctedNowValid).toBe(expected);
+  });
+
+  it("activates a polygon-only beat immediately", () => {
+    const clock = playNliClock(idleNliClock(), membership, beats, 0);
+    const frame = deriveInvestigationFrame(clock, 0, enabled, {
+      motionMode: "full",
+      routeBeats: [420],
+    });
+
+    expect(frame.achievedPolygonBeats).toEqual([400]);
+  });
+
+  it("delays a same-beat polygon until its route reveal completes", () => {
+    const sameBeat = [400];
+    const clock = playNliClock(idleNliClock(), membership, sameBeat, 0);
+    const beatMs = timelineBeatDurationMs(400);
+    const revealing = deriveInvestigationFrame(clock, beatMs - 1, enabled, {
+      motionMode: "full",
+      routeBeats: [400],
+    });
+    const completed = deriveInvestigationFrame(clock, beatMs, enabled, {
+      motionMode: "full",
+      routeBeats: [400],
+    });
+
+    expect(revealing.achievedPolygonBeats).toEqual([]);
+    expect(completed.achievedPolygonBeats).toEqual([400]);
+  });
+
+  it("delays a same-beat polygon when the route layer is hidden", () => {
+    const sameBeat = [400];
+    const clock = playNliClock(
+      idleNliClock(),
+      [INVESTIGATION_POLYGONS_FULL_ID],
+      sameBeat,
+      0,
+    );
+    const beatMs = timelineBeatDurationMs(400);
+    const revealing = deriveInvestigationFrame(clock, beatMs - 1, [INVESTIGATION_POLYGONS_FULL_ID], {
+      routeBeats: [400],
+    });
+    const completed = deriveInvestigationFrame(clock, beatMs, [INVESTIGATION_POLYGONS_FULL_ID], {
+      routeBeats: [400],
+    });
+
+    expect(revealing.achievedPolygonBeats).toEqual([]);
+    expect(completed.achievedPolygonBeats).toEqual([400]);
+    expect(revealing.completedRouteFlow.active).toBe(false);
+  });
+
+  it("derives a playing beat and advances the shared corrected-time flow", () => {
+    const clock = playNliClock(
+      idleNliClock(),
+      membership,
+      beats,
+      1000,
+    );
+    const frame = deriveInvestigationFrame(clock, 1000, enabled, {
+      motionMode: "full",
+    });
+    expect(frame.narrative).toMatchObject({
+      phase: "playing",
+      mode: "beat",
+      activeBeat: 400,
+      activeProgress: 0,
+      completedBeats: [],
+    });
+    expect(frame.achievedPolygonBeats).toEqual([400]);
+    expect(frame.completedRouteFlow).toMatchObject({
+      active: false,
+      phase: Math.floor(1000 / 66) % frame.completedRouteFlow.patternSteps,
+    });
+    expect(frame.nowMs).toBe(1000);
+    expect(frame.motionMode).toBe("full");
+    expect(frame.narrativeAdvances).toBe(true);
+  });
+
+  it("keeps completed route flow active while an ordinary pause freezes narrative time", () => {
+    let clock = playNliClock(idleNliClock(), membership, beats, 0);
+    clock = pauseNliClock(clock, timelineSpanMs(beats, 0, 1) + 400);
+    const frame = deriveInvestigationFrame(clock, 99_000, enabled, {
+      motionMode: "full",
+    });
+    expect(frame.narrative.phase).toBe("paused");
+    expect(frame.narrative.completedBeats).toEqual([400]);
+    expect(frame.completedRouteFlow.active).toBe(true);
+    expect(frame.completedRouteFlow.progress).toBeGreaterThanOrEqual(0);
+    expect(frame.completedRouteFlow.progress).toBeLessThan(1);
+    expect(frame.narrativeAdvances).toBe(false);
+    expect(frame.completedFlowNeedsFrames).toBe(true);
+    expect(frame.needsNextFrame).toBe(true);
+  });
+
+  it("keeps a paused reveal without routes static when there is no ambient consumer", () => {
+    const clock = pauseNliClock(
+      playNliClock(idleNliClock(), membership, beats, 0),
+      800,
+    );
+    const frame = deriveInvestigationFrame(
+      clock,
+      99_000,
+      [INVESTIGATION_POLYGONS_FULL_ID],
+      { motionMode: "full" },
+    );
+    expect(frame.narrative.activeProgress).toBe(800 / timelineBeatDurationMs(400));
+    expect(frame.completedRouteFlow.active).toBe(false);
+    expect(frame.completedFlowNeedsFrames).toBe(false);
+    expect(frame.narrativeAdvances).toBe(false);
+    expect(frame.needsNextFrame).toBe(false);
+  });
+
+  it("includes every beat and polygon achievement at the final reveal boundary", () => {
+    const clock = playNliClock(idleNliClock(), membership, beats, 0);
+    const frame = deriveInvestigationFrame(
+      clock,
+      timelineSpanMs(beats),
+      enabled,
+      { motionMode: "full" },
+    );
+    expect(frame.narrative.mode).toBe("hold");
+    expect(frame.narrative.completedBeats).toEqual(beats);
+    expect(frame.achievedPolygonBeats).toEqual(beats);
+    expect(frame.completedRouteFlow.active).toBe(true);
+  });
+
+  it("preserves every achievement through a paused final hold and ended state", () => {
+    const playing = playNliClock(idleNliClock(), membership, beats, 0);
+    const paused = pauseNliClock(
+      playing,
+      timelineSpanMs(beats) + 500,
+    );
+    const pausedFrame = deriveInvestigationFrame(paused, 90_000, enabled, {});
+    expect(pausedFrame.narrative.mode).toBe("hold");
+    expect(pausedFrame.narrative.completedBeats).toEqual(beats);
+    expect(pausedFrame.achievedPolygonBeats).toEqual(beats);
+    expect(pausedFrame.completedRouteFlow.active).toBe(true);
+
+    const endedFrame = deriveInvestigationFrame(endNliClock(playing), 90_000, enabled, {});
+    expect(endedFrame.narrative.completedBeats).toEqual(beats);
+    expect(endedFrame.achievedPolygonBeats).toEqual(beats);
+    expect(endedFrame.completedRouteFlow.active).toBe(true);
+  });
+
+  it("completes a paused jump one-shot without resuming the narrative clock", () => {
+    const jumped = seekNliClock(idleNliClock(), 1, 10_000, {
+      visibleMembership: membership,
+      beats,
+    });
+    const frame = deriveInvestigationFrame(
+      jumped,
+      10_000 + NLI_VISUAL_TOKENS.revealDurationMs,
+      [INVESTIGATION_LINES_FULL_ID],
+      { motionMode: "full" },
+    );
+    expect(frame.narrative.phase).toBe("paused");
+    expect(frame.narrative.activeBeat).toBe(420);
+    expect(frame.narrative.activeProgress).toBe(1);
+    expect(frame.narrative.completedBeats).toEqual([400, 420]);
+    expect(frame.completedRouteFlow.active).toBe(true);
+    expect(frame.rippleNeedsFrames).toBe(false);
+  });
+
+  it("preserves all completion at end, but reduced motion does not schedule flow frames", () => {
+    const ended = endNliClock(
+      playNliClock(idleNliClock(), membership, beats, 0),
+    );
+    const full = deriveInvestigationFrame(ended, 99_000, enabled, {
+      motionMode: "full",
+    });
+    const reduced = deriveInvestigationFrame(ended, 99_000, enabled, {
+      motionMode: "reduced",
+    });
+    expect(full.narrative.completedBeats).toEqual(beats);
+    expect(full.narrativeAdvances).toBe(false);
+    expect(full.completedRouteFlow.active).toBe(true);
+    expect(full.completedFlowNeedsFrames).toBe(true);
+    expect(reduced.narrative.completedBeats).toEqual(beats);
+    expect(reduced.completedRouteFlow.active).toBe(false);
+    expect(reduced.completedFlowNeedsFrames).toBe(false);
+    expect(reduced.needsNextFrame).toBe(false);
+  });
+
+  it("resets cycle on stop/replay and recalculates completion after backward seek and loop wrap", () => {
+    const playing = playNliClock(idleNliClock(), membership, beats, 0);
+    const replayed = {
+      ...replayNliClock(endNliClock(playing), 20_000),
+      revision: 1,
+    };
+    const fresh = deriveInvestigationFrame(replayed, 20_000, enabled, {});
+    expect(fresh.narrative.completedBeats).toEqual([]);
+
+    const backward = { ...seekNliClock(playing, 0, 30_000), revision: 2 };
+    const rewound = deriveInvestigationFrame(backward, 30_000, enabled, {});
+    expect(rewound.narrative.completedBeats).toEqual([]);
+
+    const looping = setNliLoop(playing, true);
+    const wrapped = deriveInvestigationFrame(
+      looping,
+      clockStoryDurationMs(beats),
+      enabled,
+      {},
+    );
+    expect(wrapped.narrative.activeBeat).toBe(400);
+    expect(wrapped.narrative.completedBeats).toEqual([]);
+  });
+
+  it("is idle and does not request frames without narrative or ambient consumers", () => {
+    const frame = deriveInvestigationFrame(
+      idleNliClock(),
+      99_000,
+      [INVESTIGATION_POLYGONS_FULL_ID, INVESTIGATION_LINES_FULL_ID],
+      {},
+    );
+    expect(frame.narrative).toMatchObject({
+      phase: "idle",
+      mode: "hold",
+      activeBeat: null,
+      activeProgress: 0,
+      completedBeats: [],
+    });
+    expect(frame.completedRouteFlow.active).toBe(false);
+    expect(frame.narrativeAdvances).toBe(false);
+    expect(frame.needsNextFrame).toBe(false);
+  });
+
+  it("idle with alarms requests ambient ripple frames", () => {
+    const frame = deriveInvestigationFrame(idleNliClock(), 99_000, [INVESTIGATION_ALARMS_FULL_ID], {});
+    expect(frame.rippleNeedsFrames).toBe(true);
+    expect(frame.needsNextFrame).toBe(true);
+    const reduced = deriveInvestigationFrame(idleNliClock(), 99_000, [INVESTIGATION_ALARMS_FULL_ID], {
+      motionMode: "reduced",
+    });
+    expect(reduced.rippleNeedsFrames).toBe(false);
+    expect(reduced.needsNextFrame).toBe(false);
+  });
+
+  it("returns to the idle complete-story visual state", () => {
+    const playing = playNliClock(idleNliClock(), membership, beats, 0);
+    const frame = deriveInvestigationFrame(
+      stopNliClock(playing),
+      99_000,
+      enabled,
+      { motionMode: "full", storyBeats: beats, polygonMotionActive: true },
+    );
+    expect(frame.cycleKey).toBe("idle");
+    expect(frame.narrative.completedBeats).toEqual([]);
+    expect(frame.achievedPolygonBeats).toEqual(beats);
+    expect(frame.completedRouteFlow.active).toBe(false);
+    expect(frame.completedRouteFlow.progress).toBe(0);
+    expect(frame.needsNextFrame).toBe(true);
+  });
+
+  it("idle with storyBeats achieves every loaded polygon beat", () => {
+    const frame = deriveInvestigationFrame(idleNliClock(), 99_000, enabled, {
+      motionMode: "full",
+      storyBeats: [400, 420, 440],
+      polygonMotionActive: true,
+    });
+    expect(frame.achievedPolygonBeats).toEqual([400, 420, 440]);
+    expect(frame.needsNextFrame).toBe(true);
+  });
+
+  it("idle nova does not apply complete-story storyBeats", () => {
+    const frame = deriveInvestigationFrame(idleNliClock(), 99_000, enabled, {
+      motionMode: "full",
+      storyBeats: [400, 420, 440],
+      polygonMotionActive: true,
+      narrativeId: "nova",
+    });
+    expect(frame.achievedPolygonBeats).toEqual([]);
+  });
+
+  it("idle non-nova with storyBeats still achieves every loaded polygon beat", () => {
+    const frame = deriveInvestigationFrame(idleNliClock(), 99_000, enabled, {
+      motionMode: "full",
+      storyBeats: [400, 420, 440],
+      polygonMotionActive: true,
+      narrativeId: null,
+    });
+    expect(frame.achievedPolygonBeats).toEqual([400, 420, 440]);
+  });
+
+
+  it("idle without storyBeats does not invent beats", () => {
+    const frame = deriveInvestigationFrame(stopNliClock(playNliClock(idleNliClock(), membership, beats, 0)), 99_000, enabled, {
+      motionMode: "full",
+    });
+    expect(frame.achievedPolygonBeats).toEqual([]);
+  });
+
+  it("ended still achieves clock.beats when storyBeats omitted", () => {
+    const playing = playNliClock(idleNliClock(), membership, beats, 0);
+    const frame = deriveInvestigationFrame(endNliClock(playing), 99_000, enabled, {});
+    expect(frame.achievedPolygonBeats).toEqual(beats);
+  });
+
+  it("ended windowed playback holds clock.beats instead of the full storyBeats catalog", () => {
+    const windowBeats = [400, 420];
+    const catalogBeats = [400, 420, 440, 500];
+    const playing = playNliClock(idleNliClock(), membership, windowBeats, 0);
+    const ended = deriveInvestigationFrame(endNliClock(playing), 99_000, enabled, {
+      motionMode: "full",
+      storyBeats: catalogBeats,
+      polygonMotionActive: true,
+    });
+    expect(ended.narrative.completedBeats).toEqual(windowBeats);
+    expect(ended.achievedPolygonBeats).toEqual(windowBeats);
+
+    const localEnd = deriveInvestigationFrame(playing, clockStoryDurationMs(windowBeats), enabled, {
+      motionMode: "full",
+      storyBeats: catalogBeats,
+      polygonMotionActive: true,
+    });
+    expect(localEnd.narrative.phase).toBe("ended");
+    expect(localEnd.achievedPolygonBeats).toEqual(windowBeats);
+  });
+
+  it("idle complete-story still uses the full storyBeats catalog", () => {
+    const windowBeats = [400, 420];
+    const catalogBeats = [400, 420, 440, 500];
+    const playing = playNliClock(idleNliClock(), membership, windowBeats, 0);
+    const frame = deriveInvestigationFrame(stopNliClock(playing), 99_000, enabled, {
+      motionMode: "full",
+      storyBeats: catalogBeats,
+      polygonMotionActive: true,
+    });
+    expect(frame.narrative.phase).toBe("idle");
+    expect(frame.achievedPolygonBeats).toEqual(catalogBeats);
+  });
+
+  it("rewind paints the window start instead of the loaded catalog", () => {
+    const playing = playNliClock(idleNliClock(), membership, [400, 420], 0);
+    const frame = deriveInvestigationFrame(rewindNliClock(playing), 99000, enabled, {
+      motionMode: "full", storyBeats: [400, 420, 440, 500], polygonMotionActive: true,
+    });
+    expect(frame.narrative.phase).toBe("paused");
+    expect(frame.achievedPolygonBeats).toEqual([400]);
+    expect(frame.completedRouteFlow.active).toBe(false);
+  });
+
+  it("personGlowActive does not keep needsNextFrame true without a halo overlay", () => {
+    const frame = deriveInvestigationFrame(idleNliClock(), 99_000, [], {
+      motionMode: "full",
+      personGlowActive: true,
+    });
+    expect(frame.needsNextFrame).toBe(false);
+  });
+
+  it("finishes an alarm ripple from corrected wall time at its shared onset", () => {
+    const clock = playNliClock(
+      idleNliClock(),
+      [INVESTIGATION_ALARMS_FULL_ID],
+      beats,
+      1000,
+    );
+    const active = deriveInvestigationFrame(clock, 1800, [INVESTIGATION_ALARMS_FULL_ID], {});
+    expect(active.alarmOnsetId).toBe("1000:0:0:400");
+    expect(active.rippleNeedsFrames).toBe(true);
+    const finished = deriveInvestigationFrame(clock, 1000 + 900, [INVESTIGATION_ALARMS_FULL_ID], {});
+    expect(finished.rippleNeedsFrames).toBe(true);
+  });
+
+  it("keeps a paused alarm ripple origin stable across ordinary clock patches", () => {
+    const playing = playNliClock(
+      idleNliClock(),
+      [INVESTIGATION_ALARMS_FULL_ID],
+      beats,
+      1000,
+    );
+    const paused = pauseNliClock(playing, 1400);
+    const first = deriveInvestigationFrame(
+      paused,
+      1500,
+      [INVESTIGATION_ALARMS_FULL_ID],
+      {},
+    );
+    const patched = { ...paused, revision: paused.revision + 1 };
+    const second = deriveInvestigationFrame(
+      patched,
+      1900,
+      [INVESTIGATION_ALARMS_FULL_ID],
+      {},
+    );
+    expect(first.alarmOnsetOriginMs).toBe(1000);
+    expect(second.alarmOnsetOriginMs).toBe(1000);
+    expect(second.alarmOnsetId).toBe(first.alarmOnsetId);
+    expect(second.rippleNeedsFrames).toBe(true);
+  });
+
+  it("does not reactivate a completed alarm ripple after ordinary pause and resume", () => {
+    const playing = playNliClock(
+      idleNliClock(),
+      [INVESTIGATION_ALARMS_FULL_ID],
+      beats,
+      1000,
+    );
+    const paused = pauseNliClock(playing, 1400);
+    const resumed = resumeNliClock(paused, 5000);
+    const pausedAgain = pauseNliClock(resumed, 6000);
+    const before = deriveInvestigationFrame(
+      paused,
+      2000,
+      [INVESTIGATION_ALARMS_FULL_ID],
+      {},
+    );
+    const after = deriveInvestigationFrame(
+      resumed,
+      5000,
+      [INVESTIGATION_ALARMS_FULL_ID],
+      {},
+    );
+    expect(after.alarmOnsetOriginMs).toBe(before.alarmOnsetOriginMs);
+    expect(after.alarmOnsetId).toBe(before.alarmOnsetId);
+    expect(before.rippleNeedsFrames).toBe(true);
+    expect(after.rippleNeedsFrames).toBe(true);
+    expect(pausedAgain.alarmOnsetOriginMs).toBe(paused.alarmOnsetOriginMs);
+    expect(pausedAgain).not.toHaveProperty("alarmOnsetBeat");
+  });
+
+  it("gives a later-beat paused jump its selected-beat onset", () => {
+    const jumped = seekNliClock(idleNliClock(), 1, 10_000, {
+      visibleMembership: [INVESTIGATION_ALARMS_FULL_ID],
+      beats,
+    });
+    const frame = deriveInvestigationFrame(
+      jumped,
+      10_000 + 100,
+      [INVESTIGATION_ALARMS_FULL_ID],
+      {},
+    );
+    expect(frame.alarmOnsetOriginMs).toBe(10_000);
+    expect(frame.alarmOnsetId).toBe("10000:0:1:420");
+  });
+
+  it("keeps a loop jump's half-reveal onset through pause and resume", () => {
+    const jumpAt = 10_000;
+    const halfReveal = timelineBeatDurationMs(420) / 2;
+    const jumped = seekNliClock(
+      setNliLoop(idleNliClock(), true),
+      1,
+      jumpAt,
+      { visibleMembership: [INVESTIGATION_ALARMS_FULL_ID], beats },
+    );
+    const resumed = resumeNliClock(jumped, jumpAt + halfReveal);
+    const before = deriveInvestigationFrame(
+      jumped,
+      jumpAt + halfReveal,
+      [INVESTIGATION_ALARMS_FULL_ID],
+      {},
+    );
+    const after = deriveInvestigationFrame(
+      resumed,
+      jumpAt + halfReveal,
+      [INVESTIGATION_ALARMS_FULL_ID],
+      {},
+    );
+    expect(before.activeProgress).toBe(0.5);
+    expect(after.activeProgress).toBe(0);
+    expect(resumed.positionMs).toBe(jumped.positionMs);
+    expect(after.alarmOnsetId).toBe(before.alarmOnsetId);
+    expect(after.alarmOnsetOriginMs).toBe(jumpAt);
+    expect(after.rippleNeedsFrames).toBe(true);
+  });
+
+  it("changes alarm identity and origin once per loop cycle", () => {
+    const looping = setNliLoop(
+      playNliClock(idleNliClock(), [INVESTIGATION_ALARMS_FULL_ID], beats, 0),
+      true,
+    );
+    const first = deriveInvestigationFrame(looping, 100, [INVESTIGATION_ALARMS_FULL_ID], {});
+    const wrapped = deriveInvestigationFrame(
+      looping,
+      clockStoryDurationMs(beats) + 100,
+      [INVESTIGATION_ALARMS_FULL_ID],
+      {},
+    );
+    expect(wrapped.alarmOnsetId).not.toBe(first.alarmOnsetId);
+    expect(wrapped.alarmOnsetOriginMs).toBe(clockStoryDurationMs(beats));
+    expect(wrapped.rippleNeedsFrames).toBe(true);
+  });
+
+  it("preserves a loop-cycle alarm onset through pause and resume", () => {
+    const looping = setNliLoop(
+      playNliClock(idleNliClock(), [INVESTIGATION_ALARMS_FULL_ID], beats, 0),
+      true,
+    );
+    const cycleStart = clockStoryDurationMs(beats);
+    const paused = pauseNliClock(looping, cycleStart + 100);
+    const resumed = resumeNliClock(paused, 50_000);
+    const before = deriveInvestigationFrame(
+      paused,
+      cycleStart + 1000,
+      [INVESTIGATION_ALARMS_FULL_ID],
+      {},
+    );
+    const after = deriveInvestigationFrame(
+      resumed,
+      50_000,
+      [INVESTIGATION_ALARMS_FULL_ID],
+      {},
+    );
+    expect(after.alarmOnsetOriginMs).toBe(before.alarmOnsetOriginMs);
+    expect(after.alarmOnsetId).toBe(before.alarmOnsetId);
+    expect(after.rippleNeedsFrames).toBe(true);
+  });
+
+  it("starts a fresh ripple identity after a resumed loop crosses its next wrap", () => {
+    const looping = setNliLoop(
+      playNliClock(idleNliClock(), [INVESTIGATION_ALARMS_FULL_ID], beats, 0),
+      true,
+    );
+    const duration = clockStoryDurationMs(beats);
+    const paused = pauseNliClock(looping, duration + 100);
+    const resumed = resumeNliClock(paused, 50_000);
+    const afterWrap = pauseNliClock(resumed, 50_000 + duration + 100);
+    const frame = deriveInvestigationFrame(
+      afterWrap,
+      50_000 + duration + 100,
+      [INVESTIGATION_ALARMS_FULL_ID],
+      {},
+    );
+    expect(frame.alarmOnsetOriginMs).toBe(50_000 + duration - 100);
+    expect(frame.alarmOnsetId).not.toBe(
+      deriveInvestigationFrame(paused, duration + 1000, [INVESTIGATION_ALARMS_FULL_ID], {}).alarmOnsetId,
+    );
+    expect(frame.rippleNeedsFrames).toBe(true);
+  });
+
+  it("derives the same completed-flow phase for two clients at one corrected time", () => {
+    const clock = pauseNliClock(
+      playNliClock(idleNliClock(), membership, beats, 0),
+      timelineSpanMs(beats, 0, 1) + 10,
+    );
+    const a = deriveInvestigationFrame(clock, 123_456, enabled, {});
+    const b = deriveInvestigationFrame({ ...clock }, 123_456, enabled, {});
+    expect(a.completedRouteFlow.phase).toBe(b.completedRouteFlow.phase);
+    expect(a.narrative.completedBeats).toEqual(b.narrative.completedBeats);
+  });
+
+  it("rest-of-day lead-in keeps the opening-minutes end state", () => {
+    const clock = playNliClock(
+      idleNliClock(),
+      membership,
+      [389, 401, 402, 740],
+      0,
+      { leadInMinutes: 402, playLeadIn: true },
+    );
+    const frame = deriveInvestigationFrame(clock, 100, enabled, {
+      routeBeats: [389, 401, 402, 740],
+    });
+    expect(evaluateClock(clock, 100)).toMatchObject({ leadIn: true, clock: 402 });
+    expect(frame.achievedPolygonBeats).toEqual([389, 401]);
+    expect(frame.polygonEntries).toEqual([]);
+  });
+
+  it("Nova lead-in achieves every polygon/line minute strictly less than 483", () => {
+    const clock = playNliClock(
+      idleNliClock(),
+      [INVESTIGATION_POLYGONS_FULL_ID, INVESTIGATION_LINES_FULL_ID],
+      [400, 480, 492],
+      0,
+      { leadInMinutes: 483 },
+    );
+    const frame = deriveInvestigationFrame(clock, 100, [
+      INVESTIGATION_POLYGONS_FULL_ID,
+      INVESTIGATION_LINES_FULL_ID,
+    ], { narrativeId: "nova" });
+    expect(frame.achievedPolygonBeats).toEqual([400, 480]);
+    expect(frame.narrative.activeBeat).toBe(483);
+  });
+
+  it("lead-in pause/resume does not start alarms until the first beat >= 483", () => {
+    const clock = playNliClock(
+      idleNliClock(),
+      [INVESTIGATION_ALARMS_FULL_ID, INVESTIGATION_POLYGONS_FULL_ID],
+      [400, 480, 492, 500],
+      0,
+      { leadInMinutes: 483 },
+    );
+    const during = deriveInvestigationFrame(clock, 100, [
+      INVESTIGATION_ALARMS_FULL_ID,
+      INVESTIGATION_POLYGONS_FULL_ID,
+    ], { narrativeId: "nova" });
+    expect(during.alarmOnset).toBeFalsy();
+    const paused = pauseNliClock(clock, 800);
+    const pausedFrame = deriveInvestigationFrame(paused, 99_000, [
+      INVESTIGATION_ALARMS_FULL_ID,
+      INVESTIGATION_POLYGONS_FULL_ID,
+    ], { narrativeId: "nova" });
+    expect(pausedFrame.alarmOnset).toBeFalsy();
+    const resumed = resumeNliClock(paused, 5_000);
+    const afterLeadIn = deriveInvestigationFrame(
+      resumed,
+      5_000 + timelineBeatDurationMs(483) - 800,
+      [INVESTIGATION_ALARMS_FULL_ID, INVESTIGATION_POLYGONS_FULL_ID],
+      { narrativeId: "nova" },
+    );
+    expect(afterLeadIn.narrative.activeBeat).toBe(492);
+    expect(afterLeadIn.alarmOnset).toBeTruthy();
+  });
+});
+

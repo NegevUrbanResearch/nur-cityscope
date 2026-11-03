@@ -1,0 +1,341 @@
+import { fitWarpViewport } from "./warp-viewport.js";
+import { createProjectionPreviewFrame } from "./projection-preview-frame.js";
+import { createProjectionTraceUi } from './projection-trace-ui.js';
+import { recordProjectionTrace } from './projection-trace-input.js';
+import { createCalibrationViewController } from './calibration-view-controller.js';
+
+/** Owns one disposable projection frame. The config controller retains all draft and edit state. */
+export function createWarpEditorDialog({ document: doc, host, editorPanel, overlay, topologyControls, navigationControls, reconciliationControls = null, optionalHealthElement = null, presentation = "dialog", onVisibilityChange = () => {}, onPresentationChange = () => {}, onPreviewInvalidated = () => {}, onPreviewStateChange = () => {}, onIsAdjusting = () => false, onEscape = () => false, onBeforeClose = () => {}, onBeforeSwitch = () => {}, onBeforeResize = () => {}, onViewportChange = () => {}, onOrientationChange = () => {}, onApply = () => {}, onLive = () => {}, socket, calibrationControllerFactory = createCalibrationViewController, trace }) {
+  const win = doc.defaultView;
+  const home = editorPanel.parentElement;
+  const overlayHome = overlay.parentElement;
+  const modal = doc.createElement("section");
+  modal.className = "warp-editor-dialog";
+  modal.hidden = true;
+  const isPanel = presentation === "panel";
+  modal.dataset.presentation = isPanel ? "panel" : "dialog";
+  modal.setAttribute("role", isPanel ? "region" : "dialog");
+  if (!isPanel) modal.setAttribute("aria-modal", "true");
+  modal.setAttribute("aria-label", "Warp editor");
+  const header = doc.createElement("header"); header.className = "warp-editor-header";
+  const title = doc.createElement("h2"); title.className = "warp-editor-title";
+  const status = doc.createElement("span"); status.className = "warp-editor-message"; status.setAttribute("role", "status");
+  const closeButton = doc.createElement("button"); closeButton.type = "button"; closeButton.dataset.action = "warp-editor-close"; closeButton.textContent = isPanel ? "Back to nodes" : "Close";
+  const fullViewportButton = doc.createElement("button"); fullViewportButton.type = "button"; fullViewportButton.dataset.action = "warp-full-viewport"; fullViewportButton.textContent = "Full-screen"; fullViewportButton.setAttribute("aria-label", "Full-screen"); fullViewportButton.setAttribute("aria-pressed", "false");
+  header.append(title, status);
+  if (navigationControls) header.appendChild(navigationControls);
+  header.append(fullViewportButton, closeButton);
+  const body = doc.createElement("div"); body.className = "warp-editor-body";
+  const viewport = doc.createElement("div"); viewport.className = "warp-editor-viewport";
+  const dimensions = doc.createElement("span"); dimensions.className = "warp-editor-dimensions";
+  viewport.appendChild(dimensions);
+  const finePanel = doc.createElement("aside"); finePanel.className = "warp-editor-fine-panel";
+  const controlsColumn = doc.createElement("div"); controlsColumn.className = "warp-editor-controls-column";
+  const pageTabs = doc.createElement('nav'); pageTabs.className = 'warp-editor-pages'; pageTabs.setAttribute('aria-label', 'Warp settings pages');
+  const topologyPage = doc.createElement('div'); topologyPage.className = 'warp-editor-layout-page';
+  const pageButtons = new Map();
+  const selectPage = (page) => {
+    if (!pageButtons.has(page) || onIsAdjusting() || onBeforeSwitch() === false) return false;
+    modal.dataset.page = page;
+    pageButtons.forEach((button, name) => button.setAttribute('aria-pressed', String(name === page)));
+    return true;
+  };
+  for (const [page, label] of [['adjust', 'Adjust'], ['layout', 'Grid layout'], ['options', 'Options']]) {
+    const button = doc.createElement('button'); button.type = 'button'; button.textContent = label; button.dataset.warpPage = page;
+    button.addEventListener('click', () => selectPage(page)); pageButtons.set(page, button); pageTabs.appendChild(button);
+  }
+  modal.dataset.page = 'adjust'; pageButtons.get('adjust').setAttribute('aria-pressed', 'true');
+  controlsColumn.appendChild(pageTabs);
+  controlsColumn.appendChild(finePanel);
+  if (topologyControls) { topologyPage.appendChild(topologyControls); controlsColumn.appendChild(topologyPage); }
+  body.append(viewport, controlsColumn);
+  const footer = doc.createElement("footer"); footer.className = "warp-editor-footer";
+  const reconciliationHome = reconciliationControls?.parentElement || null;
+  const liveLabel = doc.createElement("label"); liveLabel.className = "live-toggle"; liveLabel.textContent = "Live";
+  const liveInput = doc.createElement("input"); liveInput.type = "checkbox"; liveInput.setAttribute("aria-label", "Editor Live"); liveLabel.prepend(liveInput);
+  const applyButton = doc.createElement("button"); applyButton.type = "button"; applyButton.textContent = "Apply once";
+  const applied = doc.createElement("span"); applied.className = "warp-editor-applied";
+  const retry = doc.createElement("button"); retry.type = "button"; retry.dataset.action = "warp-editor-retry"; retry.textContent = "Retry"; retry.hidden = true;
+  if (optionalHealthElement) footer.appendChild(optionalHealthElement);
+  footer.append(liveLabel, applyButton, applied, retry);
+  const blackoutLabel = doc.createElement('label'); blackoutLabel.className = 'calibration-blackout-toggle';
+  const blackoutInput = doc.createElement('input'); blackoutInput.type = 'checkbox'; blackoutInput.setAttribute('aria-label', 'Black out other projector');
+  blackoutLabel.append(blackoutInput, doc.createTextNode('Black out other projector'));
+  const calibrationStatus = doc.createElement('span'); calibrationStatus.className = 'calibration-view-status'; calibrationStatus.setAttribute('role', 'status');
+  const calibrationNote = doc.createElement('p'); calibrationNote.className = 'calibration-view-note';
+  calibrationNote.textContent = 'Temporary landmarks only. Assisted capture requires an idle narrative and a stopped slideshow; the names wall is hidden locally.';
+  const calibrationTools = doc.createElement('div'); calibrationTools.className = 'calibration-view-tools';
+  calibrationTools.append(blackoutLabel, calibrationStatus, calibrationNote, retry); controlsColumn.appendChild(calibrationTools);
+  const traceUi = trace?.enabled ? createProjectionTraceUi({ document: doc, trace }) : null;
+  if (traceUi) footer.appendChild(traceUi.element);
+  modal.append(header, body, footer); host.appendChild(modal);
+
+  let session = null;
+  let opener = null;
+  let oldOverflow = null;
+  let inertSiblings = [];
+  let ownFullscreen = false;
+  let fullscreenPending = false;
+  let disposed = false;
+  let listenersAttached = false;
+  let focusEpoch = 0;
+  let closedFocus = null;
+  let fullViewport = false;
+  let pointMatchActive = false, pointMatchCanApply = false, localPreviewConfig = null, ordinaryConfig = null;
+  let recoveryActive = false;
+  function updatePublicationGuards() {
+    liveInput.disabled = recoveryActive || pointMatchActive;
+    applyButton.disabled = recoveryActive || (pointMatchActive && !pointMatchCanApply);
+  }
+  const appRoot = host.closest?.(".projection-config-app") || host;
+  const setFullViewport = (next) => {
+    if (!session || Boolean(next) === fullViewport) return false;
+    if (onIsAdjusting()) { setMessage("Finish or cancel the active adjustment before changing the editor layout."); return false; }
+    fullViewport = Boolean(next);
+    modal.dataset.fullViewport = String(fullViewport);
+    if (appRoot.dataset) appRoot.dataset.warpFullViewport = String(fullViewport);
+    fullViewportButton.textContent = fullViewport ? "Exit full-screen" : "Full-screen";
+    fullViewportButton.setAttribute("aria-label", fullViewport ? "Exit full-screen" : "Full-screen");
+    fullViewportButton.setAttribute("aria-pressed", String(fullViewport));
+    onPresentationChange(fullViewport);
+    if (isPanel) {
+      if (fullViewport) {
+        if (doc.body?.style && oldOverflow === null) { oldOverflow = doc.body.style.overflow; doc.body.style.overflow = "hidden"; }
+        requestFullscreen();
+      } else {
+        if (oldOverflow !== null && doc.body?.style) { doc.body.style.overflow = oldOverflow; oldOverflow = null; }
+        if (ownFullscreen && doc.fullscreenElement === modal) exitOwnedFullscreen();
+        ownFullscreen = false;
+      }
+    }
+    refreshViewportGeometry();
+    return true;
+  };
+  let viewBox = { x: -72, y: -72, width: 2064, height: 1224 };
+  const setMessage = (message) => { status.textContent = message; };
+  const preview = createProjectionPreviewFrame({ document: doc, host: viewport, trace, onInvalidate: onPreviewInvalidated, onStateChange: onPreviewStateChange, onStatus: (message, canRetry) => { setMessage(message); retry.hidden = !canRetry; } });
+  const calibration = calibrationControllerFactory({ socket, preview, onState: state => {
+    const scene = state.phase === 'active' ? 'Landmarks ready' : state.phase === 'starting' ? 'Preparing landmarks…' : state.phase === 'closed' ? '' : 'Landmarks unavailable';
+    const cover = state.blackout === 'active' ? 'Other projector blacked out' : state.blackout === 'pending' ? 'Blackout pending…' : state.blackout === 'failed' ? 'Blackout failed' : '';
+    calibrationStatus.textContent = [scene, cover, state.missingIds?.length ? `Missing: ${state.missingIds.join(', ')}` : '', state.error].filter(Boolean).join(' · ');
+    onPreviewStateChange();
+  } });
+  blackoutInput.addEventListener('change', () => calibration.setBlackout(blackoutInput.checked));
+  const fit = () => {
+    if (!session || !viewport.clientWidth || !viewport.clientHeight) return;
+    const mapping = fitWarpViewport(viewBox, viewport.clientWidth, viewport.clientHeight);
+    const frame = session.frame;
+    frame.style.transform = `translate(${mapping.image.left}px, ${mapping.image.top}px) scale(${mapping.scale})`;
+    overlay.setAttribute("viewBox", `${viewBox.x} ${viewBox.y} ${viewBox.width} ${viewBox.height}`);
+    onViewportChange();
+  };
+  const readViewportMapping = () => {
+    const rect = viewport.getBoundingClientRect?.();
+    if (!rect) return null;
+    return { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
+  };
+  const rememberViewportMapping = (current) => {
+    if (current && current === session && viewport.clientWidth && viewport.clientHeight) current.mapping = readViewportMapping();
+  };
+  const refreshViewportGeometry = (current = session) => {
+    if (!current || current !== session) return;
+    const next = readViewportMapping();
+    const previous = current.mapping;
+    if (previous && next && (previous.left !== next.left || previous.top !== next.top || previous.width !== next.width || previous.height !== next.height)) onBeforeResize();
+    fit();
+    rememberViewportMapping(current);
+  };
+  const clearFrame = () => {
+    if (!session) return;
+    session.observer?.disconnect();
+    preview.clear();
+    session = null;
+  };
+  const restoreFocus = (returnTo) => {
+    if (returnTo && focusEpoch === returnTo.epoch && modal.hidden) returnTo.element?.focus?.();
+  };
+  const exitOwnedFullscreen = (returnTo) => {
+    if (doc.fullscreenElement !== modal || typeof doc.exitFullscreen !== "function") return;
+    let exit;
+    try { exit = doc.exitFullscreen(); }
+    catch { restoreFocus(returnTo); return; }
+    Promise.resolve(exit).then(() => restoreFocus(returnTo), () => restoreFocus(returnTo));
+  };
+  const makeFrame = (side) => {
+    clearFrame();
+    const frame = preview.mount(side);
+    const current = { frame, side, observer: null };
+    session = current;
+    const ResizeObserverType = win?.ResizeObserver || globalThis.ResizeObserver;
+    if (ResizeObserverType) { current.observer = new ResizeObserverType(() => { if (current !== session) return; recordProjectionTrace(trace, 'viewport', { surface: 'dialog', phase: 'resize_observer', output: side }); refreshViewportGeometry(current); }); current.observer.observe(viewport); }
+    fit();
+    rememberViewportMapping(current);
+  };
+  const requestFullscreen = () => {
+    if (fullscreenPending || doc.fullscreenElement === modal || typeof modal.requestFullscreen !== "function") return;
+    fullscreenPending = true;
+    let request;
+    try { request = modal.requestFullscreen(); }
+    catch { fullscreenPending = false; return; }
+    Promise.resolve(request).then(() => {
+      fullscreenPending = false;
+      if (disposed || !session) { exitOwnedFullscreen(closedFocus); ownFullscreen = false; }
+      else if (isPanel && !fullViewport && doc.fullscreenElement === modal) { ownFullscreen = true; exitOwnedFullscreen(); ownFullscreen = false; }
+      else { ownFullscreen = doc.fullscreenElement === modal; refreshViewportGeometry(); }
+    }).catch(() => { fullscreenPending = false; if (isPanel && fullViewport) setMessage("Browser fullscreen is unavailable. The full-viewport editor remains active."); });
+  };
+  const onKeyDown = (event) => {
+    if (modal.hidden) return;
+    if (event.key === "Escape") { if (event.defaultPrevented) return; event.preventDefault(); if (!onEscape()) close(); return; }
+    if (isPanel || event.key !== "Tab") return;
+    const focusables = [...modal.querySelectorAll("button:not([hidden]), input:not([hidden]), select:not([hidden])")].filter((item) => !item.disabled && !item.closest("[hidden]"));
+    if (!focusables.length) return;
+    const first = focusables[0]; const last = focusables.at(-1);
+    if (event.shiftKey && doc.activeElement === first) { event.preventDefault(); last.focus(); }
+    else if (!event.shiftKey && doc.activeElement === last) { event.preventDefault(); first.focus(); }
+  };
+  const onResize = () => refreshViewportGeometry();
+  const onOrientation = () => { onOrientationChange(); fit(); rememberViewportMapping(session); };
+  const onFullscreenChange = () => refreshViewportGeometry();
+  const attachListeners = () => {
+    if (listenersAttached) return;
+    listenersAttached = true;
+    win?.addEventListener?.("resize", onResize);
+    win?.addEventListener?.("orientationchange", onOrientation);
+    doc.addEventListener?.("fullscreenchange", onFullscreenChange);
+    doc.addEventListener?.("keydown", onKeyDown);
+  };
+  const detachListeners = () => {
+    if (!listenersAttached) return;
+    listenersAttached = false;
+    win?.removeEventListener?.("resize", onResize);
+    win?.removeEventListener?.("orientationchange", onOrientation);
+    doc.removeEventListener?.("fullscreenchange", onFullscreenChange);
+    doc.removeEventListener?.("keydown", onKeyDown);
+  };
+  const close = (force = false) => {
+    if (modal.hidden) return;
+    const returnTo = { element: opener, epoch: ++focusEpoch };
+    closedFocus = returnTo;
+    if (force !== true && onBeforeClose() === false) return false;
+    if (fullViewport) {
+      fullViewport = false;
+      modal.dataset.fullViewport = "false";
+      if (appRoot.dataset) appRoot.dataset.warpFullViewport = 'false';
+      if (appRoot.dataset) appRoot.dataset.warpFullViewport = "false";
+      fullViewportButton.textContent = "Full-screen";
+      fullViewportButton.setAttribute("aria-label", "Full-screen");
+      fullViewportButton.setAttribute("aria-pressed", "false");
+      onPresentationChange(false);
+      refreshViewportGeometry();
+    }
+    calibration.close();
+    detachListeners(); clearFrame();
+    overlay.classList?.remove?.("warp-preview-overlay");
+    overlay.removeAttribute?.("tabindex");
+    if (overlayHome?.appendChild) overlayHome.appendChild(overlay);
+    if (home?.appendChild) home.appendChild(editorPanel);
+    if (reconciliationHome?.appendChild && reconciliationControls?.parentElement !== reconciliationHome) reconciliationHome.appendChild(reconciliationControls);
+    modal.hidden = true;
+    for (const [element, wasInert] of inertSiblings) element.inert = wasInert;
+    inertSiblings = [];
+    if (oldOverflow !== null) { doc.body.style.overflow = oldOverflow; oldOverflow = null; }
+    if (ownFullscreen && doc.fullscreenElement === modal) exitOwnedFullscreen(returnTo);
+    onVisibilityChange(false);
+    if (!ownFullscreen || doc.fullscreenElement !== modal) restoreFocus(returnTo);
+    ownFullscreen = false;
+    opener = null;
+  };
+  const open = ({ side, mode, opener: activatingElement } = {}) => {
+    if (disposed || !["left", "right"].includes(side) || !["keystone", "grid"].includes(mode)) return;
+    const openingNewSession = modal.hidden;
+    if (!modal.hidden && session?.side === side) {
+      if (modal.dataset.mode !== mode && onBeforeSwitch() === false) return false;
+      modal.dataset.mode = mode; title.textContent = `${side === "left" ? "Left" : "Right"} · ${mode === "grid" ? "Grid Warp" : "Keystone"}`;
+      pageButtons.get('layout').hidden = mode !== 'grid';
+      if (mode !== 'grid' && modal.dataset.page === 'layout') selectPage('adjust');
+      return;
+    }
+    if (!modal.hidden) { if (onBeforeSwitch() === false) return false; calibration.switchOutput(side); clearFrame(); }
+    else {
+      focusEpoch += 1; closedFocus = null;
+      opener = activatingElement || doc.activeElement;
+      if (reconciliationControls) footer.appendChild(reconciliationControls);
+      if (optionalHealthElement) footer.appendChild(optionalHealthElement);
+      if (!isPanel) {
+        if (doc.body?.style) { oldOverflow = doc.body.style.overflow; doc.body.style.overflow = "hidden"; }
+        inertSiblings = [...host.children].filter((child) => child !== modal).map((child) => [child, child.inert]);
+        for (const [child] of inertSiblings) child.inert = true;
+      }
+      modal.hidden = false;
+      attachListeners();
+      if (!isPanel) requestFullscreen();
+    }
+    modal.dataset.mode = mode;
+    title.textContent = `${side === "left" ? "Left" : "Right"} · ${mode === "grid" ? "Grid Warp" : "Keystone"}`;
+    dimensions.textContent = `${side === "left" ? "Left" : "Right"} output · 1920 × 1080 px`;
+    viewport.setAttribute("aria-label", `${side === "left" ? "Left" : "Right"} output preview, 1920 by 1080 pixels`);
+    finePanel.appendChild(editorPanel); viewport.appendChild(overlay);
+    overlay.classList?.add?.("warp-preview-overlay");
+    overlay.setAttribute("preserveAspectRatio", "xMidYMid meet");
+    overlay.setAttribute("tabindex", "0");
+    makeFrame(side);
+    if (openingNewSession) {
+      blackoutInput.checked = false;
+      void calibration.enter({ output: side });
+      modal.dataset.fullViewport = "false";
+      modal.dataset.page = 'adjust';
+      pageButtons.forEach((button, page) => button.setAttribute('aria-pressed', String(page === 'adjust')));
+    }
+    pageButtons.get('layout').hidden = mode !== 'grid';
+    closeButton.focus?.({ preventScroll: true });
+    onVisibilityChange(true);
+  };
+  if (isPanel) closeButton.addEventListener("pointerdown", (event) => event.preventDefault?.());
+  fullViewportButton.addEventListener("pointerdown", (event) => event.preventDefault?.());
+  fullViewportButton.addEventListener("click", () => setFullViewport(!fullViewport));
+  closeButton.addEventListener("click", close);
+  retry.addEventListener("click", () => { if (session) { preview.retry(); session.frame = preview.frame(); fit(); } });
+  applyButton.addEventListener("click", onApply);
+  liveInput.addEventListener("change", () => onLive(liveInput.checked));
+  return {
+    open,
+    isOpen() { return !modal.hidden; },
+    isFullViewport() { return fullViewport; },
+    setFullViewport,
+    selectPage,
+    update(config, { live, appliedSummary, reconciliation = null } = {}) {
+      if (live !== undefined) liveInput.checked = Boolean(live);
+      if (appliedSummary !== undefined) applied.textContent = appliedSummary;
+      recoveryActive = Boolean(reconciliation);
+      updatePublicationGuards();
+      fullViewportButton.disabled = Boolean(onIsAdjusting());
+      ordinaryConfig = config;
+      preview.update(localPreviewConfig || config);
+    },
+    setPointMatchPreview(config) { localPreviewConfig = config; return preview.update(config || ordinaryConfig); },
+    updatePointMatch({ active = false, canApply = false } = {}) {
+      pointMatchActive = active;
+      modal.dataset.matching = String(active);
+      if (active) { modal.dataset.page = 'adjust'; pageButtons.forEach((button, page) => button.setAttribute('aria-pressed', String(page === 'adjust'))); }
+      pointMatchCanApply = canApply;
+      updatePublicationGuards();
+    },
+    updateAdjustmentGuard() { fullViewportButton.disabled = Boolean(onIsAdjusting()); },
+    sendRunNamesPreview(config) { return preview.sendRunNamesPreview(config); },
+    getCalibrationState() { return calibration.getState?.(); },
+    getPreviewCalibrationState() { return preview.getCalibrationState(); },
+    getWarpPreviewAppliedState() { return preview.getAppliedState(); },
+    setViewBox(next) { if (!next) return; viewBox = { ...next }; fit(); },
+    close,
+    dispose() {
+      if (disposed) return;
+      close(true); disposed = true;
+      detachListeners();
+      preview.dispose();
+      calibration.dispose();
+      traceUi?.dispose();
+      modal.remove();
+    },
+  };
+}

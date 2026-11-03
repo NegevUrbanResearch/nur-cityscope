@@ -1,0 +1,524 @@
+import { readFileSync } from "node:fs";
+import { describe, expect, test, vi } from "vitest";
+import {
+  createNliArchiveCommandBridge,
+  createNliArchiveWindowController,
+  NLI_ARCHIVE_CHANNEL_NAME,
+  ownsArchiveWindowCommands,
+} from "../../frontend/src/map/nli-archive-window.js";
+
+function makeChannelPair() {
+  const listenersA = [];
+  const listenersB = [];
+  const a = {
+    name: NLI_ARCHIVE_CHANNEL_NAME,
+    postMessage(msg) { listenersB.forEach((fn) => fn({ data: msg })); },
+    addEventListener(_type, fn) { listenersA.push(fn); },
+    close() {},
+  };
+  const b = {
+    name: NLI_ARCHIVE_CHANNEL_NAME,
+    postMessage(msg) { listenersA.forEach((fn) => fn({ data: msg })); },
+    addEventListener(_type, fn) { listenersB.push(fn); },
+    close() {},
+  };
+  return { a, b };
+}
+
+describe("NLI archive window controller", () => {
+  test("canceling pending archive resolution preserves the command activation on its result", async () => {
+    let resolvePerson;
+    const emitResult = vi.fn().mockResolvedValue(undefined);
+    const bridge = createNliArchiveCommandBridge({
+      windowController: { close: vi.fn() },
+      resolvePerson: () => new Promise(resolve => { resolvePerson = resolve; }),
+      getPersonSelection: () => null,
+      emitResult,
+    });
+    const scope = { experience: "nli", experience_revision: 1 };
+    const pending = bridge.handleCommand({ action: "open", personId: "1", datasetVersion: "v1", requestId: "r", ...scope });
+    bridge.handlePersonSelection(null);
+    await Promise.resolve();
+    expect(emitResult.mock.calls[0][0]).toMatchObject(scope);
+    resolvePerson(null);
+    await pending;
+  });
+  test("owns archive commands only with the dedicated pager query flag", () => {
+    expect(ownsArchiveWindowCommands("?archivePager=1")).toBe(true);
+    expect(ownsArchiveWindowCommands("?archivePager=0")).toBe(false);
+    expect(ownsArchiveWindowCommands("?other=1")).toBe(false);
+    expect(ownsArchiveWindowCommands("")).toBe(false);
+  });
+
+  test("GIS subscribes to archive commands only for the dedicated pager owner", () => {
+    const mapMain = readFileSync(new URL("../../frontend/src/entries/map-main.js", import.meta.url), "utf8");
+    expect(mapMain).toContain("ownsArchiveWindowCommands");
+    expect(mapMain).toMatch(
+      /const ownsArchiveCommands = ownsArchiveWindowCommands\(window\.location\.search\);[^]*if\s*\(ownsArchiveCommands\)\s*\{[^}]*subscribe\("archiveWindow"/s,
+    );
+  });
+
+  test("opens the final validated NLI URL on demand in the named top-level window", () => {
+    const handle = { closed: false, location: {} };
+    const open = vi.fn(() => handle);
+    const c = createNliArchiveWindowController({ windowOpen: open });
+    const url = "https://www.nli.org.il/he/authorities/11";
+    expect(c.navigate(url)).toEqual({ ok: true });
+    expect(open).toHaveBeenCalledWith(url, "otef-nli-archive");
+    expect(c.getHandle()).toBe(handle);
+  });
+
+  test("reports unavailable when the browser denies the on-demand popup", () => {
+    const open = vi.fn(() => null);
+    const c = createNliArchiveWindowController({ windowOpen: open });
+    const url = "https://www.nli.org.il/he/authorities/11";
+    expect(c.navigate(url)).toEqual({ ok: false, reason: "unavailable" });
+    expect(open).toHaveBeenCalledWith(url, "otef-nli-archive");
+    expect(c.getHandle()).toBeNull();
+  });
+
+  test("reuses an existing named window for a later validated URL", () => {
+    const handle = { closed: false, location: {} };
+    const open = vi.fn(() => handle);
+    const c = createNliArchiveWindowController({ windowOpen: open });
+    c.navigate("https://www.nli.org.il/he/authorities/11");
+    expect(c.navigate("https://www.nli.org.il/he/authorities/12")).toEqual({ ok: true });
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(handle.location.href).toBe("https://www.nli.org.il/he/authorities/12");
+  });
+
+  test("does not reactivate an archive after close cancels a pending navigation result", async () => {
+    let releaseNavigationResult;
+    const controller = {
+      navigate: vi.fn(() => ({ ok: true })),
+      close: vi.fn(() => ({ ok: true })),
+    };
+    const emitResult = vi.fn()
+      .mockImplementationOnce(() => new Promise((resolve) => { releaseNavigationResult = resolve; }))
+      .mockResolvedValue(undefined);
+    const bridge = createNliArchiveCommandBridge({
+      windowController: controller,
+      resolvePerson: async () => ({ nliUrl: "https://www.nli.org.il/he/authorities/1" }),
+      getPersonSelection: () => ({ personId: "1", datasetVersion: "v1" }),
+      emitResult,
+    });
+
+    const opening = bridge.handleCommand({ action: "open", personId: "1", datasetVersion: "v1", requestId: "r-open", sourceId: "remote" });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(emitResult).toHaveBeenCalledWith(expect.objectContaining({ requestId: "r-open", outcome: "navigation_attempted" }));
+
+    await bridge.handleCommand({ action: "close", personId: "1", datasetVersion: "v1", requestId: "r-close", sourceId: "remote" });
+    releaseNavigationResult();
+    await opening;
+
+    bridge.handlePersonSelection({ personId: "2", datasetVersion: "v1" });
+    expect(controller.close).toHaveBeenCalledTimes(1);
+  });
+
+  test("reopens the named window when the retained handle is closed", () => {
+    const firstHandle = { closed: false, location: {} };
+    const secondHandle = { closed: false, location: {} };
+    const open = vi.fn()
+      .mockReturnValueOnce(firstHandle)
+      .mockReturnValueOnce(secondHandle);
+    const c = createNliArchiveWindowController({ windowOpen: open });
+    const url = "https://www.nli.org.il/he/authorities/11";
+    expect(c.navigate(url)).toEqual({ ok: true });
+    firstHandle.closed = true;
+    expect(c.navigate(url)).toEqual({ ok: true });
+    expect(open).toHaveBeenLastCalledWith(url, "otef-nli-archive");
+    expect(open).toHaveBeenCalledTimes(2);
+  });
+
+  test("closes the retained named window and is safe when no window exists", () => {
+    const handle = { closed: false, close: vi.fn(() => { handle.closed = true; }), location: { replace: vi.fn() } };
+    const focus = vi.fn();
+    const open = vi.fn(() => handle);
+    const c = createNliArchiveWindowController({ windowOpen: open, focus });
+    expect(c.close()).toEqual({ ok: false, reason: "silent" });
+    expect(open).not.toHaveBeenCalledWith("", "otef-nli-archive");
+    c.navigate("https://www.nli.org.il/he/authorities/11");
+    expect(c.close()).toEqual({ ok: true });
+    expect(handle.close).toHaveBeenCalled();
+    expect(c.getHandle()).toBeNull();
+    expect(c.close()).toEqual({ ok: false, reason: "silent" });
+    expect(open).not.toHaveBeenCalledWith("", "otef-nli-archive");
+    expect(focus).toHaveBeenCalledTimes(1);
+  });
+
+  test("does not report closed when close is a no-op", () => {
+    const handle = { closed: false, close: vi.fn(), location: { replace: vi.fn() } };
+    const c = createNliArchiveWindowController({ windowOpen: () => handle });
+    c.navigate("https://www.nli.org.il/he/authorities/11");
+    handle.close.mockImplementation(() => {});
+    expect(c.close()).toEqual({ ok: false, reason: "unavailable" });
+    expect(c.getHandle()).toBe(handle);
+  });
+
+  test("retries about:blank then close when the first close is a no-op", () => {
+    const handle = { closed: false, close: vi.fn(), location: { replace: vi.fn() } };
+    const c = createNliArchiveWindowController({ windowOpen: () => handle });
+    c.navigate("https://www.nli.org.il/he/authorities/11");
+    handle.close
+      .mockImplementationOnce(() => {})
+      .mockImplementationOnce(() => { handle.closed = true; });
+    expect(c.close()).toEqual({ ok: true });
+    expect(handle.location.replace).toHaveBeenCalledWith("about:blank");
+    expect(handle.close).toHaveBeenCalledTimes(2);
+    expect(c.getHandle()).toBeNull();
+  });
+
+  test("reports closed only when handle.closed is true", () => {
+    const handle = { closed: false, close: vi.fn(() => { handle.closed = true; }), location: { replace: vi.fn() } };
+    const c = createNliArchiveWindowController({ windowOpen: () => handle });
+    c.navigate("https://www.nli.org.il/he/authorities/11");
+    expect(c.close()).toEqual({ ok: true });
+    expect(c.getHandle()).toBeNull();
+  });
+
+  test("keeps the handle when navigate hits a cross-origin location throw", () => {
+    const handle = { closed: false, location: { href: "https://www.nli.org.il/he/authorities/11" } };
+    Object.defineProperty(handle.location, "href", {
+      set() { throw new Error("cross-origin"); },
+      get() { return "https://www.nli.org.il/he/authorities/11"; },
+    });
+    const c = createNliArchiveWindowController({ windowOpen: () => handle });
+    c.navigate("https://www.nli.org.il/he/authorities/11");
+    expect(c.navigate("https://www.nli.org.il/he/authorities/12").ok).toBe(true);
+    expect(c.getHandle()).toBe(handle);
+  });
+
+  test("emits unavailable when controller close returns ok false", async () => {
+    const handle = { closed: false, close: vi.fn(), location: { replace: vi.fn() } };
+    const results = vi.fn();
+    const bridge = createNliArchiveCommandBridge({
+      windowController: createNliArchiveWindowController({ windowOpen: () => handle }),
+      resolvePerson: async () => ({ nliUrl: "https://www.nli.org.il/he/authorities/11" }),
+      getPersonSelection: () => ({ personId: "11", datasetVersion: "v1" }),
+      emitResult: results,
+    });
+    await bridge.handleCommand({ action: "open", personId: "11", datasetVersion: "v1", requestId: "r-open", sourceId: "remote" });
+    await bridge.handleCommand({ action: "close", personId: "11", datasetVersion: "v1", requestId: "r-close", sourceId: "remote" });
+    expect(results).toHaveBeenCalledWith(expect.objectContaining({ requestId: "r-close", outcome: "unavailable" }));
+  });
+
+  test("focuses the archive window after navigation and restores the opener only on close", () => {
+    const handle = { closed: false, location: {}, focus: vi.fn(), close: vi.fn() };
+    const openerFocus = vi.fn();
+    const c = createNliArchiveWindowController({ windowOpen: vi.fn(() => handle), focus: openerFocus });
+
+    c.navigate("https://www.nli.org.il/he/authorities/11");
+    expect(handle.focus).toHaveBeenCalledTimes(1);
+    expect(openerFocus).not.toHaveBeenCalled();
+
+    c.close();
+    expect(openerFocus).toHaveBeenCalledTimes(1);
+  });
+
+  test("rejects non-NLI and non-HTTPS URLs", () => {
+    const open = vi.fn();
+    const c = createNliArchiveWindowController({ windowOpen: open });
+    expect(c.open("https://example.test/record")).toMatchObject({ ok: false, reason: "invalid_url" });
+    expect(c.open("http://www.nli.org.il/he/authorities/11")).toMatchObject({ ok: false, reason: "invalid_url" });
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  test("removes the GIS archive setup control and status", () => {
+    const html = readFileSync(new URL("../../frontend/index.html", import.meta.url), "utf8");
+    const mapMain = readFileSync(new URL("../../frontend/src/entries/map-main.js", import.meta.url), "utf8");
+    const styles = readFileSync(new URL("../../frontend/css/styles.css", import.meta.url), "utf8");
+    expect(html).not.toContain("enableNliArchive");
+    expect(html).not.toContain("nliArchiveSetupStatus");
+    expect(mapMain).not.toContain("enableNliArchive");
+    expect(mapMain).not.toContain("nliArchiveSetupStatus");
+    expect(styles).not.toContain("#enableNliArchive");
+    expect(styles).not.toContain("#nliArchiveSetup");
+  });
+
+  test("closes on selection change and ignores a delayed close for another person", async () => {
+    const controller = { navigate: vi.fn(() => ({ ok: true })), close: vi.fn(() => ({ ok: true })) };
+    const results = vi.fn();
+    let selection = { personId: "1", datasetVersion: "v1" };
+    const bridge = createNliArchiveCommandBridge({
+      windowController: controller,
+      resolvePerson: async (personId) => ({ pid: personId, nliUrl: `https://www.nli.org.il/he/authorities/${personId}` }),
+      getPersonSelection: () => selection,
+      emitResult: results,
+    });
+    await bridge.handleCommand({ action: "open", personId: "1", datasetVersion: "v1", requestId: "r1", sourceId: "remote" });
+    expect(results).toHaveBeenCalledWith(expect.objectContaining({ requestId: "r1", outcome: "navigation_attempted" }));
+    await bridge.handleCommand({ action: "close", personId: "2", datasetVersion: "v1" });
+    expect(controller.close).not.toHaveBeenCalled();
+    selection = { personId: "2", datasetVersion: "v1" };
+    bridge.handlePersonSelection(selection);
+    expect(controller.close).toHaveBeenCalledTimes(1);
+  });
+
+  test("opens the selected person's archive from the GIS bubble and closes it on selection change", () => {
+    const controller = { navigate: vi.fn(() => ({ ok: true })), close: vi.fn(() => ({ ok: true })) };
+    let selection = { personId: "1", datasetVersion: "v1" };
+    const bridge = createNliArchiveCommandBridge({
+      windowController: controller,
+      resolvePerson: async () => null,
+      getPersonSelection: () => selection,
+    });
+    const url = "https://www.nli.org.il/he/authorities/1";
+    expect(bridge.openSelected({ pid: "2", nliUrl: url })).toBe(false);
+    expect(bridge.openSelected({ pid: "1" })).toBe(false);
+    expect(controller.navigate).not.toHaveBeenCalled();
+    expect(bridge.openSelected({ pid: "1", nliUrl: url })).toBe(true);
+    expect(controller.navigate).toHaveBeenCalledWith(url);
+    selection = { personId: "2", datasetVersion: "v1" };
+    bridge.handlePersonSelection(selection);
+    expect(controller.close).toHaveBeenCalledTimes(1);
+  });
+
+  test("does not open after selection changes during asynchronous resolution", async () => {
+    let resolvePerson;
+    let selection = { personId: "1", datasetVersion: "v1" };
+    const controller = { navigate: vi.fn(), close: vi.fn(() => ({ ok: true })) };
+    const results = vi.fn();
+    const bridge = createNliArchiveCommandBridge({
+      windowController: controller,
+      resolvePerson: () => new Promise((resolve) => { resolvePerson = resolve; }),
+      getPersonSelection: () => selection,
+      emitResult: results,
+    });
+    const pending = bridge.handleCommand({ action: "open", personId: "1", datasetVersion: "v1", requestId: "r1", sourceId: "remote" });
+    selection = { personId: "2", datasetVersion: "v1" };
+    bridge.handlePersonSelection(selection);
+    resolvePerson({ nliUrl: "https://www.nli.org.il/he/authorities/1" });
+    await pending;
+    expect(controller.navigate).not.toHaveBeenCalled();
+    expect(results).toHaveBeenCalledWith(expect.objectContaining({ requestId: "r1", outcome: "unavailable" }));
+  });
+
+  test("reports closed and unavailable outcomes exactly once", async () => {
+    const results = vi.fn();
+    const bridge = createNliArchiveCommandBridge({
+      windowController: {
+        navigate: vi.fn(() => ({ ok: false, reason: "closed" })),
+        close: vi.fn(() => ({ ok: true })),
+      },
+      resolvePerson: async () => ({ nliUrl: "https://www.nli.org.il/he/authorities/1" }),
+      getPersonSelection: () => ({ personId: "1", datasetVersion: "v1" }),
+      emitResult: results,
+    });
+    await bridge.handleCommand({ action: "open", personId: "1", datasetVersion: "v1", requestId: "r1", sourceId: "remote" });
+    await bridge.handleCommand({ action: "close", personId: "1", datasetVersion: "v1", requestId: "r2", sourceId: "remote" });
+    expect(results.mock.calls.map(([result]) => result.outcome)).toEqual(["closed", "closed"]);
+    expect(results).toHaveBeenCalledTimes(2);
+  });
+
+  test("does not permanently dedupe a result when emission fails", async () => {
+    const emitResult = vi.fn()
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValueOnce(undefined);
+    const bridge = createNliArchiveCommandBridge({
+      windowController: { navigate: vi.fn(() => ({ ok: false, reason: "closed" })), close: vi.fn(() => ({ ok: true })) },
+      resolvePerson: async () => ({ nliUrl: "https://www.nli.org.il/he/authorities/1" }),
+      getPersonSelection: () => ({ personId: "1", datasetVersion: "v1" }),
+      emitResult,
+    });
+    await bridge.handleCommand({ action: "open", personId: "1", datasetVersion: "v1", requestId: "r1", sourceId: "remote" });
+    await bridge.handleCommand({ action: "open", personId: "1", datasetVersion: "v1", requestId: "r1", sourceId: "remote" });
+    expect(emitResult).toHaveBeenCalledTimes(2);
+  });
+
+  test("BroadcastChannel close fans out to a sibling live handle", () => {
+    const { a, b } = makeChannelPair();
+    const handleB = { closed: false, close: vi.fn(() => { handleB.closed = true; }), location: { replace: vi.fn() } };
+    const gisA = createNliArchiveWindowController({ windowOpen: () => null, broadcastChannel: a });
+    const gisB = createNliArchiveWindowController({ windowOpen: () => handleB, broadcastChannel: b });
+    expect(gisB.navigate("https://www.nli.org.il/he/authorities/11")).toEqual({ ok: true });
+    expect(gisA.close()).toEqual({ ok: false, reason: "silent" });
+    expect(handleB.close).toHaveBeenCalled();
+    expect(handleB.closed).toBe(true);
+  });
+
+  test("emits closed after a silent fan-out when the sibling later receives close", async () => {
+    const { a, b } = makeChannelPair();
+    const handleB = { closed: false, close: vi.fn(() => { handleB.closed = true; }), location: { replace: vi.fn() } };
+    const gisA = createNliArchiveWindowController({ windowOpen: () => null, broadcastChannel: a });
+    const gisB = createNliArchiveWindowController({ windowOpen: () => handleB, broadcastChannel: b });
+    const results = vi.fn();
+    const bridgeB = createNliArchiveCommandBridge({
+      windowController: gisB,
+      resolvePerson: async () => ({ nliUrl: "https://www.nli.org.il/he/authorities/11" }),
+      getPersonSelection: () => ({ personId: "11", datasetVersion: "v1" }),
+      emitResult: results,
+    });
+    expect(gisB.navigate("https://www.nli.org.il/he/authorities/11")).toEqual({ ok: true });
+    expect(gisA.close()).toEqual({ ok: false, reason: "silent" });
+    expect(handleB.closed).toBe(true);
+    expect(gisB.getHandle()).toBeNull();
+    await bridgeB.handleCommand({
+      action: "close",
+      personId: "11",
+      datasetVersion: "v1",
+      requestId: "r-close",
+      sourceId: "remote",
+    });
+    expect(results).toHaveBeenCalledWith(expect.objectContaining({ requestId: "r-close", outcome: "closed" }));
+  });
+
+  test("does not invent closed after a failed fan-out close", async () => {
+    const { a, b } = makeChannelPair();
+    const handleB = { closed: false, close: vi.fn(), location: { replace: vi.fn() } };
+    const gisA = createNliArchiveWindowController({ windowOpen: () => null, broadcastChannel: a });
+    const gisB = createNliArchiveWindowController({ windowOpen: () => handleB, broadcastChannel: b });
+    const results = vi.fn();
+    const bridgeB = createNliArchiveCommandBridge({
+      windowController: gisB,
+      resolvePerson: async () => ({ nliUrl: "https://www.nli.org.il/he/authorities/11" }),
+      getPersonSelection: () => ({ personId: "11", datasetVersion: "v1" }),
+      emitResult: results,
+    });
+    expect(gisB.navigate("https://www.nli.org.il/he/authorities/11")).toEqual({ ok: true });
+    expect(gisA.close()).toEqual({ ok: false, reason: "silent" });
+    expect(handleB.closed).toBe(false);
+    expect(gisB.getHandle()).toBe(handleB);
+    await bridgeB.handleCommand({
+      action: "close",
+      personId: "11",
+      datasetVersion: "v1",
+      requestId: "r-close",
+      sourceId: "remote",
+    });
+    expect(results).toHaveBeenCalledWith(expect.objectContaining({ requestId: "r-close", outcome: "unavailable" }));
+    expect(gisB.getHandle()).toBe(handleB);
+  });
+
+  test("bridge stays silent when close has no handle", async () => {
+    const results = vi.fn();
+    const bridge = createNliArchiveCommandBridge({
+      windowController: createNliArchiveWindowController({ windowOpen: () => null }),
+      resolvePerson: async () => ({ nliUrl: "https://www.nli.org.il/he/authorities/11" }),
+      getPersonSelection: () => ({ personId: "11", datasetVersion: "v1" }),
+      emitResult: results,
+    });
+    await bridge.handleCommand({ action: "close", personId: "11", datasetVersion: "v1", requestId: "r-close", sourceId: "remote" });
+    expect(results).not.toHaveBeenCalled();
+  });
+
+  test("tombstones a timed-out open when close with the same request arrives first", async () => {
+    let resolvePerson;
+    const navigate = vi.fn(() => ({ ok: true }));
+    const results = vi.fn();
+    const bridge = createNliArchiveCommandBridge({
+      windowController: { navigate, close: vi.fn(() => ({ ok: true })) },
+      resolvePerson: () => new Promise((resolve) => { resolvePerson = resolve; }),
+      getPersonSelection: () => ({ personId: "1", datasetVersion: "v1" }),
+      emitResult: results,
+    });
+    await bridge.handleCommand({ action: "close", personId: "1", datasetVersion: "v1", requestId: "r-timeout", sourceId: "remote" });
+    const opening = bridge.handleCommand({ action: "open", personId: "1", datasetVersion: "v1", requestId: "r-timeout", sourceId: "remote" });
+    await opening;
+    expect(navigate).not.toHaveBeenCalled();
+    expect(results.mock.calls.map(([result]) => result.outcome)).toEqual(["closed"]);
+  });
+
+  test("pages the open archive without emitting a result", async () => {
+    const pageArchive = vi.fn();
+    const emitResult = vi.fn();
+    const bridge = createNliArchiveCommandBridge({
+      windowController: { navigate: vi.fn(() => ({ ok: true })), close: vi.fn(() => ({ ok: true })) },
+      resolvePerson: async () => ({ nliUrl: "https://www.nli.org.il/he/authorities/1" }),
+      getPersonSelection: () => ({ personId: "1", datasetVersion: "v1" }),
+      emitResult,
+      pageArchive,
+    });
+
+    await bridge.handleCommand({ action: "open", personId: "1", datasetVersion: "v1", requestId: "r-open", sourceId: "remote" });
+    expect(emitResult).toHaveBeenCalledWith(expect.objectContaining({ requestId: "r-open", outcome: "navigation_attempted" }));
+    emitResult.mockClear();
+
+    await expect(bridge.handleCommand({
+      action: "page_down",
+      personId: "1",
+      datasetVersion: "v1",
+      requestId: "r-page",
+      sourceId: "remote",
+    })).resolves.toBe(true);
+    expect(pageArchive).toHaveBeenCalledTimes(1);
+    expect(pageArchive).toHaveBeenCalledWith("down", "r-page");
+    expect(emitResult).not.toHaveBeenCalled();
+  });
+
+  test("does not page before the archive is open", async () => {
+    const pageArchive = vi.fn();
+    const emitResult = vi.fn();
+    const bridge = createNliArchiveCommandBridge({
+      windowController: { navigate: vi.fn(), close: vi.fn() },
+      resolvePerson: async () => null,
+      getPersonSelection: () => ({ personId: "1", datasetVersion: "v1" }),
+      emitResult,
+      pageArchive,
+    });
+
+    await expect(bridge.handleCommand({
+      action: "page_down",
+      personId: "1",
+      datasetVersion: "v1",
+      requestId: "r-page",
+      sourceId: "remote",
+    })).resolves.toBe(false);
+    expect(pageArchive).not.toHaveBeenCalled();
+    expect(emitResult).not.toHaveBeenCalled();
+  });
+
+  test("does not page a different person", async () => {
+    const pageArchive = vi.fn();
+    const emitResult = vi.fn();
+    const bridge = createNliArchiveCommandBridge({
+      windowController: { navigate: vi.fn(() => ({ ok: true })), close: vi.fn(() => ({ ok: true })) },
+      resolvePerson: async () => ({ nliUrl: "https://www.nli.org.il/he/authorities/1" }),
+      getPersonSelection: () => ({ personId: "1", datasetVersion: "v1" }),
+      emitResult,
+      pageArchive,
+    });
+
+    await bridge.handleCommand({ action: "open", personId: "1", datasetVersion: "v1", requestId: "r-open", sourceId: "remote" });
+    emitResult.mockClear();
+
+    await expect(bridge.handleCommand({
+      action: "page_up",
+      personId: "2",
+      datasetVersion: "v1",
+      requestId: "r-other",
+      sourceId: "remote",
+    })).resolves.toBe(false);
+    expect(pageArchive).not.toHaveBeenCalled();
+    expect(emitResult).not.toHaveBeenCalled();
+  });
+
+  test("still resolves when pageArchive throws synchronously", async () => {
+    const pageArchive = vi.fn(() => {
+      throw new Error("pager boom");
+    });
+    const bridge = createNliArchiveCommandBridge({
+      windowController: { navigate: vi.fn(() => ({ ok: true })), close: vi.fn(() => ({ ok: true })) },
+      resolvePerson: async () => ({ nliUrl: "https://www.nli.org.il/he/authorities/1" }),
+      getPersonSelection: () => ({ personId: "1", datasetVersion: "v1" }),
+      emitResult: vi.fn(),
+      pageArchive,
+    });
+
+    await bridge.handleCommand({ action: "open", personId: "1", datasetVersion: "v1", requestId: "r-open", sourceId: "remote" });
+    await expect(bridge.handleCommand({
+      action: "page_down",
+      personId: "1",
+      datasetVersion: "v1",
+      requestId: "r-page",
+      sourceId: "remote",
+    })).resolves.toBe(true);
+  });
+
+  test("GIS map passes the pager client into the archive bridge", () => {
+    const mapMain = readFileSync(new URL("../../frontend/src/entries/map-main.js", import.meta.url), "utf8");
+    expect(mapMain).toContain('from "../map/nli-archive-pager-client.js"');
+    expect(mapMain).toContain("createNliArchivePagerClient()");
+    expect(mapMain).toMatch(/pageArchive:\s*\(direction,\s*requestId\)\s*=>\s*\w+\.page\(direction,\s*requestId\)/);
+  });
+});

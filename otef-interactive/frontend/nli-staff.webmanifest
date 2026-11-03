@@ -1,0 +1,20 @@
+{
+  "id": "./nli-staff-remote.html",
+  "name": "הקרנה · הספרייה הלאומית / Projection · National Library",
+  "short_name": "הקרנה / Projection",
+  "description": "Staff remote for the National Library projection",
+  "start_url": "./nli-staff-remote.html",
+  "scope": "./nli-staff-remote.html",
+  "display": "fullscreen",
+  "display_override": ["fullscreen", "standalone", "minimal-ui", "browser"],
+  "background_color": "#08080a",
+  "theme_color": "#0f0f10",
+  "icons": [
+    {
+      "src": "./nli-staff-icon.webp",
+      "sizes": "100x100",
+      "type": "image/webp",
+      "purpose": "any"
+    }
+  ]
+}

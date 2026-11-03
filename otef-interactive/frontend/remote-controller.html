@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="theme-color" content="#141719">
+  <meta name="color-scheme" content="dark">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>OTEF</title>
+  <link rel="icon" href="./favicon.ico" sizes="any">
+  <link rel="stylesheet" href="css/nli-content-fonts.css">
+  <link rel="stylesheet" href="css/remote-styles.css">
+  <link rel="stylesheet" href="css/remote-tablet.css">
+  <link rel="stylesheet" href="./src/remote/remote-experience-navigation.css">
+  <link rel="stylesheet" href="./src/remote/staff-remote-updates.css">
+  <link rel="stylesheet" href="css/remote-coral.css">
+</head>
+<body class="otef-remote-shell">
+  <header class="remote-header">
+    <div class="header-top">
+      <div class="remote-header-controls">
+        <div class="remote-locale-toggle" role="group" data-i18n-aria="localeGroupAria" aria-label="בחירת שפה" id="remoteLocaleToggle">
+          <button type="button" class="remote-locale-btn" id="remoteLocaleEn" data-locale="en" lang="en" aria-pressed="false">EN</button>
+          <button type="button" class="remote-locale-btn is-active" id="remoteLocaleHe" data-locale="he" lang="he" aria-pressed="true">עב</button>
+        </div>
+        <button type="button" class="remote-fullscreen-btn" id="remoteFullscreenBtn" aria-pressed="false" data-i18n-aria="fullscreenEnter" aria-label="מסך מלא"><span data-fullscreen-label data-i18n="fullscreenEnter">מסך מלא</span><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H3v5M16 3h5v5M3 16v5h5M21 16v5h-5"/></svg></button>
+        <span id="remoteFullscreenStatus" class="remote-meta" role="status" hidden></span>
+      </div>
+      <div class="connection-status" id="connectionStatus" role="status"><span class="status-indicator" id="statusIndicator"></span><span class="status-text visually-hidden" id="statusText">מתחבר…</span></div>
+    </div>
+    <div id="table-switcher" aria-hidden="true"></div>
+  </header>
+  <main class="remote-main" id="remoteMain" dir="rtl">
+    <div class="remote-tab-panels" id="remoteTabPanels">
+      <section class="remote-tab-panel" data-remote-tab="slideshow" id="remote-panel-slideshow" role="tabpanel" aria-labelledby="remote-tab-slideshow" hidden><div class="remote-slideshow-host" id="remoteSlideshowHost"></div></section>
+      <section class="remote-tab-panel" data-remote-tab="layers" id="remote-panel-layers" role="tabpanel" aria-labelledby="remote-tab-layers" hidden>
+        <div class="remote-layer-host" id="remoteLayerHost">
+          <div class="layer-panel" id="layerSheet">
+            <div class="layers-basemap-control" id="basemapControl">
+              <button type="button" class="basemap-gallery-toggle" id="basemapGalleryToggle" aria-expanded="false" aria-controls="basemapGallery">
+                <img id="basemapCurrentImage" src="images/basemaps/streets.png" alt="">
+                <span class="basemap-current"><span class="remote-meta" data-i18n="basemapControlTitle">מפת רקע</span><span id="basemapCurrentLabel" data-i18n="basemapOsm">רגילה</span></span>
+                <span class="basemap-gallery-action"><span data-i18n="basemapChange">שינוי</span><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></span>
+              </button>
+              <div class="basemap-gallery" id="basemapGallery" hidden>
+                <div class="basemap-gallery-grid" role="group" data-i18n-aria="basemapControlAria" aria-label="בחירת מפת רקע"><button type="button" class="basemap-button" id="basemapOsm" data-basemap="osm" aria-pressed="false"><img src="images/basemaps/streets.png" alt="" class=""><span data-i18n="basemapOsm">רגילה</span></button>
+<button type="button" class="basemap-button" id="basemapSatellite" data-basemap="satellite" aria-pressed="false"><img src="images/basemaps/aerial.png" alt="" class=""><span data-i18n="basemapSatelliteColor">לוויין צבע</span></button>
+<button type="button" class="basemap-button" id="basemapSatelliteBw" data-basemap="satellite_bw" aria-pressed="false"><img src="images/basemaps/aerial.png" alt="" class="is-monochrome"><span data-i18n="basemapSatelliteBw">לוויין שחור־לבן</span></button>
+<button type="button" class="basemap-button" id="basemapDark" data-basemap="dark" aria-pressed="false"><img src="images/basemaps/dark.jpg" alt="" class=""><span data-i18n="basemapDark">כהה</span></button></div>
+                <p class="basemap-attribution" dir="ltr">© OpenStreetMap contributors · Esri and its licensors</p>
+              </div>
+            </div>
+            <div class="sheet-content" id="layerPanelContent"></div>
+          </div>
+        </div>
+      </section>
+      <section class="remote-tab-panel" data-remote-tab="navigation" id="remote-panel-navigation" role="tabpanel" aria-labelledby="remote-tab-navigation">
+        <section class="control-section" id="navigationSection">
+          <div class="navigation-panel-stack">
+            <section class="navigation-group navigation-group--place-search" id="placeSearchGroup">
+              <label class="place-search-label" for="placeSearchInput" data-i18n="placeSearchLabel">חיפוש יישוב</label>
+              <div class="place-search-shell"><span class="place-search-icon"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="10" cy="10" r="7"/><path d="m15 15 6 6"/></svg></span>
+                <input id="placeSearchInput" class="place-search-input" type="search" role="combobox" autocomplete="off" autocapitalize="off" spellcheck="false" aria-autocomplete="list" aria-expanded="false" aria-controls="placeSuggestions" data-i18n-aria="placeSearchAria" data-i18n-placeholder="placeSearchPlaceholder" dir="auto">
+                <button type="button" id="placeSearchClear" class="place-search-clear" data-i18n-aria="placeSearchClearAria" aria-label="ניקוי חיפוש" hidden><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
+                <div id="placeSuggestions" class="place-suggestions" role="listbox" data-i18n-aria="placeSuggestionsAria" aria-label="הצעות יישובים" hidden></div>
+              </div>
+              <p class="remote-meta place-search-help" data-i18n="placeSearchHelp">הקלידו שם יישוב כדי להגיע אליו במפה.</p>
+              <div id="placeSearchStatus" class="place-search-status" role="status" aria-live="polite"></div>
+            </section>
+            <section class="navigation-movement">
+              <h2 data-i18n="navMoveMap">תנועה במפה</h2>
+              <div class="navigation-group navigation-group--pan"><div class="dpad-container"><div class="dpad"><button type="button" class="dpad-button dpad-up" id="panNorth" data-i18n-aria="ariaPanNorth" aria-label="הזזה צפונה">↑</button>
+<button type="button" class="dpad-button dpad-left" id="panWest" data-i18n-aria="ariaPanWest" aria-label="הזזה מערבה">←</button>
+<button type="button" class="dpad-button dpad-right" id="panEast" data-i18n-aria="ariaPanEast" aria-label="הזזה מזרחה">→</button>
+<button type="button" class="dpad-button dpad-down" id="panSouth" data-i18n-aria="ariaPanSouth" aria-label="הזזה דרומה">↓</button><div class="joystick-container" id="joystickZone" data-i18n-aria="joystickAria" aria-label="מוט כיוון לגרירת המפה"><div class="joystick-base"></div></div></div></div></div>
+              <div class="navigation-group navigation-group--zoom"><div class="zoom-controls"><button type="button" class="zoom-button zoom-out" id="zoomOut" data-i18n-aria="ariaZoomOut" aria-label="התרחקות">−</button><div class="zoom-display"><span class="zoom-label" data-i18n="zoomLabel">זום:</span><output class="zoom-value" id="zoomValue">--</output></div><button type="button" class="zoom-button zoom-in" id="zoomIn" data-i18n-aria="ariaZoomIn" aria-label="התקרבות">+</button></div></div>
+            </section>
+          </div>
+        </section>
+        <section class="control-section" id="layersSection" hidden aria-hidden="true"><div class="layer-controls"></div></section>
+      </section>
+    </div>
+  </main>
+  <nav class="remote-bottom-nav" id="remoteBottomNav" role="tablist" data-i18n-aria="navTablistAria" aria-label="אזורי בקרה"><button type="button" class="remote-bottom-nav__tab" id="remote-tab-curation" role="tab" aria-selected="false" tabindex="0" data-remote-tab="curation" data-nli-remote-launch="true">
+ <span class="remote-bottom-nav__icon"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5c-3-2-7-2-10-1v15c3-1 7-1 10 1 3-2 7-2 10-1V4c-3-1-7-1-10 1ZM12 5v15"/></svg></span><span class="remote-bottom-nav__label" data-i18n="navCuration">הספרייה הלאומית</span>
+</button>
+<button type="button" class="remote-bottom-nav__tab" id="remote-tab-slideshow" role="tab" aria-selected="false" aria-controls="remote-panel-slideshow" tabindex="-1" data-remote-tab="slideshow">
+ <span class="remote-bottom-nav__icon"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="m8 22 4-4 4 4M9 8l6 3-6 3V8Z"/></svg></span><span class="remote-bottom-nav__label" data-i18n="navSlideshow">מצגת</span>
+</button>
+<button type="button" class="remote-bottom-nav__tab" id="remote-tab-layers" role="tab" aria-selected="false" aria-controls="remote-panel-layers" tabindex="-1" data-remote-tab="layers">
+ <span class="remote-bottom-nav__icon"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3 10 5-10 5L2 8l10-5ZM2 12l10 5 10-5M2 16l10 5 10-5"/></svg></span><span class="remote-bottom-nav__label" data-i18n="navLayers">שכבות</span>
+</button>
+<button type="button" class="remote-bottom-nav__tab is-active" id="remote-tab-navigation" role="tab" aria-selected="true" aria-controls="remote-panel-navigation" tabindex="0" data-remote-tab="navigation">
+ <span class="remote-bottom-nav__icon"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 11 19-9-9 19-2-8-8-2Z"/></svg></span><span class="remote-bottom-nav__label" data-i18n="navNavigation">ניווט</span>
+</button></nav>
+  <div class="warning-overlay hidden" id="warningOverlay"><div class="warning-content"><p class="warning-text" role="status" aria-live="polite" data-i18n="warningControlsDisabled">המפה אינה מחוברת. הבקרות אינן פעילות.</p></div></div>
+  <script src="https://cdn.jsdelivr.net/npm/nipplejs@0.10.2/dist/nipplejs.min.js"></script>
+  <script type="module" src="./src/entries/remote-main.js"></script>
+</body>
+</html>

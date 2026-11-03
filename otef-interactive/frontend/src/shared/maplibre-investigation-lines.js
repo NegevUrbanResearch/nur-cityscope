@@ -1,0 +1,793 @@
+import { orientInvestigationLineFeature } from "./nli-investigation-route-geometry.js";
+export { orientInvestigationLineFeature } from "./nli-investigation-route-geometry.js";
+/**
+ * Shared MapLibre renderer for the NLI investigation routes.
+ *
+ * The coordinator owns the clock and partitions route features by narrative
+ * state. This module owns only route sources, route layers, geometry
+ * orientation, and the small amount of paint/data reconciliation required by
+ * each frame.
+ */
+
+import { NLI_DISPLAY_PROFILES, NLI_VISUAL_TOKENS } from "./nli-investigation-theme.js";
+import { INVESTIGATION_LINES_FULL_ID, timelineBeatDurationMs } from "./nli-investigation-beats.js";
+import { maplibreLineDashFromLeafletPx } from "./maplibre-line-dash.js";
+import {
+  buildLinePathMetrics,
+  buildLineProgressGradient,
+  pointAtLineProgress,
+} from "./maplibre-line-progress-primitives.js";
+import {
+  NOVA_PARALLEL_DIM_OPACITY,
+  NOVA_PARALLEL_IMPACT_KIND_LINE,
+  novaParallelImpactObjectIds,
+} from "./nli-nova-escape-impact.js";
+import {
+  clipFeatureToProgress,
+  splitCompositeLineFrame,
+} from "./nli-unconfirmed-route-progress.js";
+import {
+  addInvestigationOverlayLayer,
+  completeInvestigationOverlayMount,
+  fadeInvestigationOverlayLayer,
+  deferInvestigationOverlaySceneExit,
+  isOverlayOpacityProperty,
+  publishInvestigationOverlayOpacity,
+} from "./investigation-overlay-lifecycle.js";
+
+export const INVESTIGATION_LINE_SOURCE_IDS = Object.freeze({
+  future: "nli-investigation-line-future",
+  unconfirmedCompleted: "nli-investigation-line-unconfirmed-completed",
+  unconfirmedActive: "nli-investigation-line-unconfirmed-active",
+  completedCarrier: "nli-investigation-line-completed-carrier",
+  completedMotion: "nli-investigation-line-completed-motion",
+  compositeActive: "nli-investigation-line-composite-active",
+  active: "nli-investigation-line-active",
+  head: "nli-investigation-line-head",
+});
+
+export const INVESTIGATION_LINE_LAYER_IDS = Object.freeze({
+  future: "nli-investigation-line-future-line",
+  unconfirmedCompleted: "nli-investigation-line-unconfirmed-completed-line",
+  unconfirmedActive: "nli-investigation-line-unconfirmed-active-line",
+  completedCarrier: "nli-investigation-line-completed-carrier-line",
+  completedMotion: "nli-investigation-line-completed-motion-line",
+  compositeActive: "nli-investigation-line-composite-active-line",
+  active: "nli-investigation-line-active-line",
+  head: "nli-investigation-line-head-circle",
+});
+
+// Keep the old active/head IDs as aliases for existing MapLibre consumers.
+export const LINE_ACTIVE_SOURCE_ID = INVESTIGATION_LINE_SOURCE_IDS.active;
+export const LINE_ACTIVE_LAYER_ID = INVESTIGATION_LINE_LAYER_IDS.active;
+export const LINE_HEAD_SOURCE_ID = INVESTIGATION_LINE_SOURCE_IDS.head;
+export const LINE_HEAD_LAYER_ID = INVESTIGATION_LINE_LAYER_IDS.head;
+
+const OWNED = Object.freeze([
+  [INVESTIGATION_LINE_LAYER_IDS.head, INVESTIGATION_LINE_SOURCE_IDS.head],
+  [INVESTIGATION_LINE_LAYER_IDS.active, INVESTIGATION_LINE_SOURCE_IDS.active],
+  [INVESTIGATION_LINE_LAYER_IDS.compositeActive, INVESTIGATION_LINE_SOURCE_IDS.compositeActive],
+  [INVESTIGATION_LINE_LAYER_IDS.unconfirmedActive, INVESTIGATION_LINE_SOURCE_IDS.unconfirmedActive],
+  [INVESTIGATION_LINE_LAYER_IDS.completedMotion, INVESTIGATION_LINE_SOURCE_IDS.completedMotion],
+  [INVESTIGATION_LINE_LAYER_IDS.completedCarrier, INVESTIGATION_LINE_SOURCE_IDS.completedCarrier],
+  [INVESTIGATION_LINE_LAYER_IDS.unconfirmedCompleted, INVESTIGATION_LINE_SOURCE_IDS.unconfirmedCompleted],
+  [INVESTIGATION_LINE_LAYER_IDS.future, INVESTIGATION_LINE_SOURCE_IDS.future],
+]);
+
+const OVERLAY = new Set([
+  INVESTIGATION_LINE_LAYER_IDS.head,
+  INVESTIGATION_LINE_LAYER_IDS.active,
+  INVESTIGATION_LINE_LAYER_IDS.compositeActive,
+  INVESTIGATION_LINE_LAYER_IDS.unconfirmedActive,
+  INVESTIGATION_LINE_LAYER_IDS.completedMotion,
+  INVESTIGATION_LINE_LAYER_IDS.completedCarrier,
+  INVESTIGATION_LINE_LAYER_IDS.unconfirmedCompleted,
+]);
+
+const COMPLETED_OPACITY = 1;
+const ACTIVE_OPACITY = 1;
+const HEAD_RADIUS = 3.2;
+const HEAD_HIDE_AT = 0.999;
+
+export function orientLineCoordinatesTowardIsrael(coords) {
+  if (!Array.isArray(coords) || coords.length < 2) return coords;
+  const start = coords[0];
+  const end = coords[coords.length - 1];
+  if (!Array.isArray(start) || !Array.isArray(end) || !(end[0] < start[0])) return coords;
+  return [...coords].reverse();
+}
+
+function finiteCoordinate(coord) {
+  return Array.isArray(coord) && Number.isFinite(Number(coord[0])) && Number.isFinite(Number(coord[1]));
+}
+
+function validLineCoordinates(geometry) {
+  if (!geometry || !Array.isArray(geometry.coordinates)) return [];
+  if (geometry.type === "LineString") return geometry.coordinates.filter(finiteCoordinate);
+  if (geometry.type === "MultiLineString") {
+    return geometry.coordinates
+      .filter((part) => Array.isArray(part))
+      .map((part) => part.filter(finiteCoordinate))
+      .filter((part) => part.length > 1);
+  }
+  return [];
+}
+
+function featureId(feature, index) {
+  const value = feature?.properties?.OBJECTID ?? feature?.id;
+  return value == null ? `route-${index}` : String(value);
+}
+
+function normalizeFeature(feature, index) {
+  const oriented = orientInvestigationLineFeature(feature);
+  if (!oriented || typeof oriented !== "object") return null;
+  return {
+    type: "Feature",
+    id: featureId(oriented, index),
+    properties: oriented.properties && typeof oriented.properties === "object" ? oriented.properties : {},
+    geometry: oriented.geometry || null,
+  };
+}
+
+function normalizeFeatures(features) {
+  return (Array.isArray(features) ? features : [])
+    .map(normalizeFeature)
+    .filter((feature) => feature?.geometry && validLineCoordinates(feature.geometry).length > 0);
+}
+
+function featureCollection(features) {
+  return { type: "FeatureCollection", features: normalizeFeatures(features) };
+}
+
+function pointsFeatureCollection(points) {
+  return {
+    type: "FeatureCollection",
+    features: (Array.isArray(points) ? points : [])
+      .map((item, index) => {
+        if (finiteCoordinate(item)) {
+          return {
+            type: "Feature",
+            id: `head-${index}`,
+            properties: {},
+            geometry: { type: "Point", coordinates: item },
+          };
+        }
+        const coordinates = item?.coordinates;
+        if (!finiteCoordinate(coordinates)) return null;
+        const objectId = item?.properties?.OBJECTID ?? item?.OBJECTID;
+        const headKind = item?.properties?.headKind;
+        const properties = {};
+        if (objectId != null) properties.OBJECTID = objectId;
+        if (typeof headKind === "string") properties.headKind = headKind;
+        return {
+          type: "Feature",
+          id: `head-${index}`,
+          properties,
+          geometry: { type: "Point", coordinates },
+        };
+      })
+      .filter(Boolean),
+  };
+}
+
+function lineCoordinates(feature) {
+  const coordinates = validLineCoordinates(feature?.geometry);
+  if (feature?.geometry?.type === "MultiLineString") {
+    return coordinates.reduce((best, part) => {
+      if (best.length === 0) return part;
+      return buildLinePathMetrics(part).total > buildLinePathMetrics(best).total ? part : best;
+    }, []);
+  }
+  return coordinates;
+}
+
+function legacyLineCoordinates(feature) {
+  const geometry = feature?.geometry;
+  const parts = geometry?.type === "LineString" ? [geometry.coordinates] : geometry?.type === "MultiLineString" && Array.isArray(geometry.coordinates) ? geometry.coordinates : [];
+  return parts.reduce((best, part) => {
+    const coordinates = Array.isArray(part) ? part.filter((coord) => Array.isArray(coord) && Number.isFinite(coord[0]) && Number.isFinite(coord[1])) : [];
+    return coordinates.length > best.length ? coordinates : best;
+  }, []);
+}
+
+export function lineHeadCoordinatesAt(features, clock, beatElapsedMs) {
+  if (clock == null) return [];
+  const progress = Math.min(1, Math.max(0, Number(beatElapsedMs) / timelineBeatDurationMs(clock) || 0));
+  if (progress >= HEAD_HIDE_AT) return [];
+  const points = [];
+  for (const feature of Array.isArray(features) ? features : []) {
+    if (Number(feature?.properties?.timeline_minutes) !== clock) continue;
+    const path = orientLineCoordinatesTowardIsrael(legacyLineCoordinates(feature));
+    if (path.length < 2) continue;
+    const point = pointAtLineProgress(path, buildLinePathMetrics(path), progress);
+    if (point) points.push(point);
+  }
+  return points;
+}
+
+function profileValue(profile, key, fallback) {
+  const value = Number(profile?.[key]);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function unconfirmedRoutePaint(profile, width, routeScale, carrierWidth) {
+  const widthScale = profileValue(profile, "unconfirmedWidthScale", NLI_VISUAL_TOKENS.routeUnconfirmedWidthScale || 1);
+  const lineWidth = carrierWidth * width * routeScale * widthScale;
+  return {
+    lineWidth,
+    opacity: NLI_VISUAL_TOKENS.routeUnconfirmedOpacity * profileValue(profile, "unconfirmedOpacityMultiplier", 1),
+  };
+}
+
+function safelyGetSource(map, id) {
+  try {
+    return typeof map?.getSource === "function" ? map.getSource(id) : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function safelyGetLayer(map, id) {
+  try {
+    return typeof map?.getLayer === "function" ? map.getLayer(id) : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function removeLayerAndSource(map, layerId, sourceId) {
+  try {
+    if (safelyGetLayer(map, layerId) && typeof map.removeLayer === "function") map.removeLayer(layerId);
+  } catch (_) {
+    // Style reload can remove a handle between getLayer and removeLayer.
+  }
+  try {
+    if (safelyGetSource(map, sourceId) && typeof map.removeSource === "function") map.removeSource(sourceId);
+  } catch (_) {
+    // Style reload can remove a handle between getSource and removeSource.
+  }
+}
+
+function addSourceAndLayer(map, sourceId, layer, sourceSpec, beforeId) {
+  if (typeof map?.addSource !== "function" || typeof map?.addLayer !== "function") return;
+  if (!safelyGetSource(map, sourceId)) map.addSource(sourceId, sourceSpec);
+  addInvestigationOverlayLayer(map, INVESTIGATION_LINES_FULL_ID, layer, beforeId);
+}
+
+function sourceData(map, sourceId, data) {
+  const source = safelyGetSource(map, sourceId);
+  if (source && typeof source.setData === "function") source.setData(data);
+}
+
+function setOwnedPaint(map, layerId, property, value) {
+  if (isOverlayOpacityProperty(property)) {
+    publishInvestigationOverlayOpacity(map, INVESTIGATION_LINES_FULL_ID, layerId, property, value);
+    return;
+  }
+  if (typeof map?.setPaintProperty !== "function") return;
+  try {
+    map.setPaintProperty(layerId, property, value);
+  } catch (_) {
+    // Style reload can invalidate an individual layer handle.
+  }
+}
+
+function lightFeatureSignature(features) {
+  return (Array.isArray(features) ? features : []).map((feature) => {
+    const coords = feature?.geometry?.type === "LineString"
+      ? feature.geometry.coordinates
+      : feature?.geometry?.type === "MultiLineString"
+        ? feature.geometry.coordinates?.[0]
+        : [];
+    const last = Array.isArray(coords) && coords.length ? coords[coords.length - 1] : [];
+    return `${feature?.id}:${feature?.properties?.OBJECTID}:${Array.isArray(coords) ? coords.length : 0}:${last?.[0]},${last?.[1]}`;
+  }).join("|");
+}
+
+function sameFeatureList(previous, next) {
+  if (!Array.isArray(previous) || !Array.isArray(next) || previous.length !== next.length) return false;
+  return previous.every((feature, index) => feature === next[index]);
+}
+
+function dataFor(data, key, fallback = []) {
+  if (!data || typeof data !== "object") return fallback;
+  const aliases = {
+    futureFeatures: ["futureFeatures", "future", "futureBaseFeatures", "features"],
+    completedFeatures: ["completedFeatures", "completed", "completedRouteFeatures", "pastFeatures"],
+    activeFeatures: ["activeFeatures", "active", "revealingFeatures"],
+  }[key] || [key];
+  for (const alias of aliases) {
+    if (Array.isArray(data[alias])) return data[alias];
+  }
+  return fallback;
+}
+
+function dataInvalidationKey(data) {
+  const version = data?.dataVersion;
+  const revision = data?.dataRevision ?? data?.revision;
+  if (version == null && revision == null) return null;
+  return `${typeof version}:${String(version)}|${typeof revision}:${String(revision)}`;
+}
+
+function flowProgress(flow, motionMode) {
+  if (motionMode === "reduced") return 0;
+  const progress = Number(flow?.progress);
+  if (Number.isFinite(progress)) return ((progress % 1) + 1) % 1;
+  const phase = Number(flow?.phase);
+  const steps = Number(flow?.patternSteps) || NLI_VISUAL_TOKENS.flowPatternSteps;
+  return Number.isFinite(phase) && steps > 0 ? ((phase / steps) % 1 + 1) % 1 : 0;
+}
+
+export function buildCompletedRouteFlowDasharray(flow, motionMode, lineWidthPx) {
+  const periodPx = NLI_VISUAL_TOKENS.routeFlowPeriodPx;
+  const dutyCycle = Math.min(
+    0.99,
+    Math.max(0.01, NLI_VISUAL_TOKENS.routeFlowDutyCycle),
+  );
+  const dashPx = periodPx * dutyCycle;
+  const gapPx = periodPx - dashPx;
+  const progress = flowProgress(flow, motionMode);
+  // Integer pixel offsets only. MapLibre LineAtlas stores one row per unique
+  // dasharray and never evicts; a new float pattern every tick overflows it.
+  const pixelStep = motionMode === "reduced"
+    ? 0
+    : ((Math.round(progress * periodPx) % periodPx) + periodPx) % periodPx;
+  return maplibreLineDashFromLeafletPx(lineWidthPx, [dashPx, gapPx], -pixelStep);
+}
+
+// Confidence is encoded by stationary gaps, independently of the narrative reveal.
+export function buildUnconfirmedRouteDasharray(_flow, _motionMode, lineWidthPx) {
+  return maplibreLineDashFromLeafletPx(lineWidthPx, NLI_VISUAL_TOKENS.routeUnconfirmedDashPx);
+}
+
+export function buildDirectionalFlowGradient(
+  flow,
+  motionMode,
+  profile,
+  onColor = NLI_VISUAL_TOKENS.routeFlowColor,
+) {
+  const phase = flowProgress(flow, motionMode);
+  const density = profileValue(profile, "routeFlowDensity", NLI_VISUAL_TOKENS.routeFlowDensity);
+  const dutyCycle = Math.min(
+    0.99,
+    Math.max(0.01, profileValue(profile, "routeFlowDutyCycle", NLI_VISUAL_TOKENS.routeFlowDutyCycle)),
+  );
+  const phaseExpression = [
+    "%",
+    ["+", ["*", ["line-progress"], density], ["-", 1, phase]],
+    1,
+  ];
+  return [
+    "case",
+    ["<", phaseExpression, dutyCycle],
+    onColor,
+    "rgba(0, 0, 0, 0)",
+  ];
+}
+
+/**
+ * Create a renderer. `profile` can be a display-profile object or a profile
+ * name (`gis`/`projection`); only presentation multipliers are read here.
+ */
+export function createInvestigationLineRenderer(map, profile = NLI_DISPLAY_PROFILES.gis) {
+  const resolvedProfile = typeof profile === "string" ? NLI_DISPLAY_PROFILES[profile] || NLI_DISPLAY_PROFILES.gis : profile || NLI_DISPLAY_PROFILES.gis;
+  const signatures = new Map();
+  const collectionCache = new Map();
+  let normalizedFeatureCache = new WeakMap();
+  let mounted = false;
+  let disposed = false;
+  let lastData = null;
+  let lastFrame = null;
+  let lastHeadSignature = null;
+  let lastMotionMode = null;
+  let lastParallelDimKey = null;
+  let paintInitialized = false;
+  let overlaysSuppressed = false;
+  let lastDataInvalidationKey;
+  let hideGeneration = 0;
+
+  const width = profileValue(resolvedProfile, "lineWidthMultiplier", 1);
+  const routeScale = profileValue(resolvedProfile, "routeScale", 1);
+  const carrierWidth = profileValue(resolvedProfile, "routeCarrierWidth", NLI_VISUAL_TOKENS.routeCarrierWidth);
+  const motionWidth = NLI_VISUAL_TOKENS.routeFlowWidth * width * routeScale;
+  const beforeId = resolvedProfile.beforeId || resolvedProfile.beforeLayerId;
+
+  function ownedLineLayersMissing() {
+    if (!safelyGetLayer(map, INVESTIGATION_LINE_LAYER_IDS.future)) return true;
+    for (const layerId of OVERLAY) {
+      if (!safelyGetLayer(map, layerId)) return true;
+    }
+    return false;
+  }
+
+  function mount() {
+    if (disposed) return;
+    hideGeneration += 1;
+    addSourceAndLayer(map, INVESTIGATION_LINE_SOURCE_IDS.future, {
+      id: INVESTIGATION_LINE_LAYER_IDS.future,
+      type: "line",
+      source: INVESTIGATION_LINE_SOURCE_IDS.future,
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: { "line-color": NLI_VISUAL_TOKENS.incidentRed, "line-width": 1.2 * width },
+    }, { type: "geojson", data: featureCollection([]) }, beforeId);
+    if (overlaysSuppressed) {
+      mounted = true;
+      return;
+    }
+    const unconfirmed = unconfirmedRoutePaint(resolvedProfile, width, routeScale, carrierWidth);
+    const unconfirmedDash = buildUnconfirmedRouteDasharray({}, "full", unconfirmed.lineWidth);
+    addSourceAndLayer(map, INVESTIGATION_LINE_SOURCE_IDS.unconfirmedCompleted, {
+      id: INVESTIGATION_LINE_LAYER_IDS.unconfirmedCompleted,
+      type: "line",
+      source: INVESTIGATION_LINE_SOURCE_IDS.unconfirmedCompleted,
+      layout: { "line-cap": "butt", "line-join": "round" },
+      paint: {
+        "line-color": NLI_VISUAL_TOKENS.incidentRed,
+        "line-opacity": unconfirmed.opacity,
+        "line-width": unconfirmed.lineWidth,
+        "line-dasharray": unconfirmedDash,
+        "line-dasharray-transition": { duration: 0, delay: 0 },
+      },
+    }, { type: "geojson", data: featureCollection([]) }, beforeId);
+    addSourceAndLayer(map, INVESTIGATION_LINE_SOURCE_IDS.unconfirmedActive, {
+      id: INVESTIGATION_LINE_LAYER_IDS.unconfirmedActive,
+      type: "line",
+      source: INVESTIGATION_LINE_SOURCE_IDS.unconfirmedActive,
+      layout: { "line-cap": "butt", "line-join": "round" },
+      paint: {
+        "line-color": NLI_VISUAL_TOKENS.incidentRed,
+        "line-opacity": unconfirmed.opacity,
+        "line-width": unconfirmed.lineWidth,
+        "line-dasharray": unconfirmedDash,
+        "line-dasharray-transition": { duration: 0, delay: 0 },
+      },
+    }, { type: "geojson", data: featureCollection([]) }, beforeId);
+    addSourceAndLayer(map, INVESTIGATION_LINE_SOURCE_IDS.completedCarrier, {
+      id: INVESTIGATION_LINE_LAYER_IDS.completedCarrier,
+      type: "line",
+      source: INVESTIGATION_LINE_SOURCE_IDS.completedCarrier,
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: { "line-color": NLI_VISUAL_TOKENS.incidentRed, "line-opacity": COMPLETED_OPACITY, "line-width": carrierWidth * width * routeScale },
+    }, { type: "geojson", data: featureCollection([]) }, beforeId);
+    addSourceAndLayer(map, INVESTIGATION_LINE_SOURCE_IDS.completedMotion, {
+      id: INVESTIGATION_LINE_LAYER_IDS.completedMotion,
+      type: "line",
+      source: INVESTIGATION_LINE_SOURCE_IDS.completedMotion,
+      paint: {
+        "line-color": NLI_VISUAL_TOKENS.routeFlowColor,
+        "line-opacity": 1,
+        "line-width": motionWidth,
+        "line-dasharray": buildCompletedRouteFlowDasharray({}, "full", motionWidth),
+        "line-dasharray-transition": { duration: 0, delay: 0 },
+      },
+    }, { type: "geojson", data: featureCollection([]) }, beforeId);
+    addSourceAndLayer(map, INVESTIGATION_LINE_SOURCE_IDS.compositeActive, {
+      id: INVESTIGATION_LINE_LAYER_IDS.compositeActive,
+      type: "line",
+      source: INVESTIGATION_LINE_SOURCE_IDS.compositeActive,
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: {
+        "line-color": NLI_VISUAL_TOKENS.incidentRed,
+        "line-opacity": ACTIVE_OPACITY,
+        "line-width": carrierWidth * width * routeScale,
+      },
+    }, { type: "geojson", data: featureCollection([]) }, beforeId);
+    addSourceAndLayer(map, INVESTIGATION_LINE_SOURCE_IDS.active, {
+      id: INVESTIGATION_LINE_LAYER_IDS.active,
+      type: "line",
+      source: INVESTIGATION_LINE_SOURCE_IDS.active,
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: { "line-color": NLI_VISUAL_TOKENS.incidentRed, "line-width": 2.6 * width, "line-opacity": ACTIVE_OPACITY, "line-gradient": buildLineProgressGradient(0, NLI_VISUAL_TOKENS.incidentRed, "rgba(195,31,79,0)") },
+    }, { type: "geojson", lineMetrics: true, tolerance: 0, data: featureCollection([]) }, beforeId);
+    addSourceAndLayer(map, INVESTIGATION_LINE_SOURCE_IDS.head, {
+      id: INVESTIGATION_LINE_LAYER_IDS.head,
+      type: "circle",
+      source: INVESTIGATION_LINE_SOURCE_IDS.head,
+      paint: {
+        "circle-color": ["case", ["==", ["get", "headKind"], "comet"], "rgba(0, 0, 0, 0)", NLI_VISUAL_TOKENS.routeReveal],
+        "circle-radius": Math.max(2.25, HEAD_RADIUS * width),
+        "circle-opacity": 0.95,
+        "circle-stroke-color": ["case", ["==", ["get", "headKind"], "comet"], NLI_VISUAL_TOKENS.incidentRed, NLI_VISUAL_TOKENS.annotationInk],
+        "circle-stroke-width": ["case", ["==", ["get", "headKind"], "comet"], 2, 1.1],
+      },
+    }, { type: "geojson", data: pointsFeatureCollection([]) }, beforeId);
+    mounted = true;
+    completeInvestigationOverlayMount(map, INVESTIGATION_LINES_FULL_ID);
+  }
+
+  function render(frame = {}, data = {}) {
+    if (disposed) return;
+    const nextDataInvalidationKey = dataInvalidationKey(data);
+    if (lastDataInvalidationKey !== undefined && nextDataInvalidationKey !== lastDataInvalidationKey) {
+      signatures.clear();
+      collectionCache.clear();
+      normalizedFeatureCache = new WeakMap();
+      lastHeadSignature = null;
+    }
+    lastDataInvalidationKey = nextDataInvalidationKey;
+    const wasSuppressed = overlaysSuppressed;
+    overlaysSuppressed = false;
+    if (!mounted || wasSuppressed || ownedLineLayersMissing()) {
+      mounted = false;
+      mount();
+    }
+    const previousFrame = lastFrame;
+    lastFrame = frame || {};
+    lastData = data || {};
+    const future = [];
+    const completed = dataFor(lastData, "completedFeatures");
+    const active = dataFor(lastData, "activeFeatures");
+    function normalizeCollection(key, sourceFeatures) {
+      const prior = collectionCache.get(key);
+      if (prior?.raw === sourceFeatures || sameFeatureList(prior?.raw, sourceFeatures)) return prior.features;
+      const features = (Array.isArray(sourceFeatures) ? sourceFeatures : [])
+        .map((feature, index) => {
+          const hasStableId = feature && typeof feature === "object" &&
+            (feature.properties?.OBJECTID != null || feature.id != null);
+          if (hasStableId && normalizedFeatureCache.has(feature)) return normalizedFeatureCache.get(feature);
+          const normalized = normalizeFeature(feature, index);
+          if (hasStableId && normalized) normalizedFeatureCache.set(feature, normalized);
+          return normalized;
+        })
+        .filter((feature) => feature?.geometry && validLineCoordinates(feature.geometry).length > 0);
+      collectionCache.set(key, { raw: sourceFeatures, features, signature: lightFeatureSignature(features) });
+      return features;
+    }
+    const normalized = {
+      future: normalizeCollection("future", future),
+      completed: normalizeCollection("completed", completed),
+      active: normalizeCollection("active", active),
+    };
+    const split = splitCompositeLineFrame({
+      activeFeatures: normalized.active,
+      completedFeatures: normalized.completed,
+      activeProgress: Number(frame.activeProgress) || 0,
+    });
+    const gradientActive = split.confirmedActive
+      .filter((item) => !item.clipGeometry)
+      .map((item) => item.feature);
+    const clippedConfirmed = split.confirmedActive
+      .filter((item) => item.clipGeometry)
+      .map((item) => clipFeatureToProgress(item.feature, item.progress))
+      .filter(Boolean);
+    const clippedUnconfirmed = split.unconfirmedActive
+      .map((item) => clipFeatureToProgress(item.feature, item.progress))
+      .filter(Boolean);
+    const bags = {
+      future: normalized.future,
+      completed: split.confirmedCompleted,
+      active: gradientActive,
+      unconfirmedCompleted: split.unconfirmedCompleted,
+      unconfirmedActive: clippedUnconfirmed,
+      compositeActive: clippedConfirmed,
+    };
+    const sourceByKey = {
+      future: INVESTIGATION_LINE_SOURCE_IDS.future,
+      completed: INVESTIGATION_LINE_SOURCE_IDS.completedCarrier,
+      active: INVESTIGATION_LINE_SOURCE_IDS.active,
+      unconfirmedCompleted: INVESTIGATION_LINE_SOURCE_IDS.unconfirmedCompleted,
+      unconfirmedActive: INVESTIGATION_LINE_SOURCE_IDS.unconfirmedActive,
+      compositeActive: INVESTIGATION_LINE_SOURCE_IDS.compositeActive,
+    };
+    const changed = {};
+    for (const [key, features] of Object.entries(bags)) {
+      const signature = lightFeatureSignature(features);
+      changed[key] = signatures.get(key) !== signature;
+      if (!changed[key]) continue;
+      const collection = { type: "FeatureCollection", features };
+      sourceData(map, sourceByKey[key], collection);
+      if (key === "completed") sourceData(map, INVESTIGATION_LINE_SOURCE_IDS.completedMotion, collection);
+      signatures.set(key, signature);
+    }
+    const motion = frame.completedRouteFlow || {};
+    const motionMode = frame.motionMode || "full";
+    const motionModeChanged = lastMotionMode !== motionMode;
+    const impactIds = novaParallelImpactObjectIds(
+      frame.parallelImpactIds,
+      NOVA_PARALLEL_IMPACT_KIND_LINE,
+    );
+    const projectionNovaDim = frame.projectionNovaDim === true;
+    const parallelDimKey = `${projectionNovaDim}|${impactIds.join(",")}`;
+    const parallelDimChanged = lastParallelDimKey !== parallelDimKey;
+    const staticPaintChanged = !paintInitialized || changed.future || changed.completed || motionModeChanged;
+    const flowPaintChanged = staticPaintChanged || (
+      motionMode === "full" &&
+      flowProgress(motion, motionMode) !== flowProgress(previousFrame?.completedRouteFlow, previousFrame?.motionMode || motionMode)
+    );
+    const unconfirmed = unconfirmedRoutePaint(resolvedProfile, width, routeScale, carrierWidth);
+    const parallelOpacity = projectionNovaDim
+      ? ["case", ["in", ["to-string", ["get", "OBJECTID"]], ["literal", impactIds]], 1, NOVA_PARALLEL_DIM_OPACITY]
+      : null;
+    const unconfirmedImpactMatch = [
+      "in",
+      ["coalesce", ["to-string", ["get", "parent_objectid"]], ["to-string", ["get", "OBJECTID"]]],
+      ["literal", impactIds],
+    ];
+    const unconfirmedOpacity = projectionNovaDim
+      ? ["case", unconfirmedImpactMatch, unconfirmed.opacity, NOVA_PARALLEL_DIM_OPACITY]
+      : unconfirmed.opacity;
+    try {
+      if (staticPaintChanged && safelyGetLayer(map, INVESTIGATION_LINE_LAYER_IDS.future) && typeof map.setPaintProperty === "function") {
+        setOwnedPaint(map, INVESTIGATION_LINE_LAYER_IDS.future, "line-color", NLI_VISUAL_TOKENS.incidentRed);
+      }
+      if (staticPaintChanged && safelyGetLayer(map, INVESTIGATION_LINE_LAYER_IDS.completedCarrier) && typeof map.setPaintProperty === "function") {
+        setOwnedPaint(map, INVESTIGATION_LINE_LAYER_IDS.completedCarrier, "line-color", NLI_VISUAL_TOKENS.incidentRed);
+        setOwnedPaint(map, INVESTIGATION_LINE_LAYER_IDS.completedCarrier, "line-width", carrierWidth * width * routeScale);
+      }
+      if (safelyGetLayer(map, INVESTIGATION_LINE_LAYER_IDS.completedMotion) && typeof map.setPaintProperty === "function") {
+        if (staticPaintChanged) {
+          setOwnedPaint(map, INVESTIGATION_LINE_LAYER_IDS.completedMotion, "line-color", NLI_VISUAL_TOKENS.routeFlowColor);
+          setOwnedPaint(map, INVESTIGATION_LINE_LAYER_IDS.completedMotion, "line-width", motionWidth);
+        }
+        if (flowPaintChanged) {
+          setOwnedPaint(map, 
+            INVESTIGATION_LINE_LAYER_IDS.completedMotion,
+            "line-dasharray",
+            buildCompletedRouteFlowDasharray(motion, motionMode, motionWidth),
+          );
+        }
+      }
+      if (staticPaintChanged && typeof map.setPaintProperty === "function") {
+        for (const lineId of [INVESTIGATION_LINE_LAYER_IDS.unconfirmedCompleted, INVESTIGATION_LINE_LAYER_IDS.unconfirmedActive]) {
+          if (!safelyGetLayer(map, lineId)) continue;
+          setOwnedPaint(map, lineId, "line-color", NLI_VISUAL_TOKENS.incidentRed);
+          setOwnedPaint(map, lineId, "line-width", unconfirmed.lineWidth);
+          setOwnedPaint(map, lineId, "line-dasharray", buildUnconfirmedRouteDasharray(null, null, unconfirmed.lineWidth));
+        }
+      }
+      if (staticPaintChanged && safelyGetLayer(map, INVESTIGATION_LINE_LAYER_IDS.compositeActive) && typeof map.setPaintProperty === "function") {
+        setOwnedPaint(map, INVESTIGATION_LINE_LAYER_IDS.compositeActive, "line-color", NLI_VISUAL_TOKENS.incidentRed);
+        setOwnedPaint(map, INVESTIGATION_LINE_LAYER_IDS.compositeActive, "line-width", carrierWidth * width * routeScale);
+      }
+      if ((!paintInitialized || changed.active || Number(frame.activeProgress) !== Number(previousFrame?.activeProgress)) && safelyGetLayer(map, INVESTIGATION_LINE_LAYER_IDS.active) && typeof map.setPaintProperty === "function") {
+        setOwnedPaint(map, INVESTIGATION_LINE_LAYER_IDS.active, "line-color", NLI_VISUAL_TOKENS.incidentRed);
+        setOwnedPaint(map, INVESTIGATION_LINE_LAYER_IDS.active, "line-gradient", buildLineProgressGradient(frame.activeProgress, NLI_VISUAL_TOKENS.incidentRed, "rgba(195,31,79,0)"));
+      }
+      if ((staticPaintChanged || parallelDimChanged) && typeof map.setPaintProperty === "function") {
+        if (safelyGetLayer(map, INVESTIGATION_LINE_LAYER_IDS.completedCarrier)) {
+          setOwnedPaint(map,
+            INVESTIGATION_LINE_LAYER_IDS.completedCarrier,
+            "line-opacity",
+            parallelOpacity ?? COMPLETED_OPACITY,
+          );
+        }
+        if (safelyGetLayer(map, INVESTIGATION_LINE_LAYER_IDS.completedMotion)) {
+          setOwnedPaint(map,
+            INVESTIGATION_LINE_LAYER_IDS.completedMotion,
+            "line-opacity",
+            parallelOpacity ?? 1,
+          );
+        }
+        if (safelyGetLayer(map, INVESTIGATION_LINE_LAYER_IDS.compositeActive)) {
+          setOwnedPaint(map,
+            INVESTIGATION_LINE_LAYER_IDS.compositeActive,
+            "line-opacity",
+            parallelOpacity ?? ACTIVE_OPACITY,
+          );
+        }
+        if (safelyGetLayer(map, INVESTIGATION_LINE_LAYER_IDS.unconfirmedCompleted)) {
+          setOwnedPaint(map,
+            INVESTIGATION_LINE_LAYER_IDS.unconfirmedCompleted,
+            "line-opacity",
+            unconfirmedOpacity,
+          );
+        }
+        if (safelyGetLayer(map, INVESTIGATION_LINE_LAYER_IDS.unconfirmedActive)) {
+          setOwnedPaint(map,
+            INVESTIGATION_LINE_LAYER_IDS.unconfirmedActive,
+            "line-opacity",
+            unconfirmedOpacity,
+          );
+        }
+        if (safelyGetLayer(map, INVESTIGATION_LINE_LAYER_IDS.active)) {
+          setOwnedPaint(map,
+            INVESTIGATION_LINE_LAYER_IDS.active,
+            "line-opacity",
+            parallelOpacity ?? ACTIVE_OPACITY,
+          );
+        }
+        if (safelyGetLayer(map, INVESTIGATION_LINE_LAYER_IDS.head)) {
+          setOwnedPaint(map,
+            INVESTIGATION_LINE_LAYER_IDS.head,
+            "circle-opacity",
+            parallelOpacity ?? 0.95,
+          );
+          setOwnedPaint(map,
+            INVESTIGATION_LINE_LAYER_IDS.head,
+            "circle-stroke-opacity",
+            ["case", ["==", ["get", "headKind"], "comet"], parallelOpacity ?? 1, 1],
+          );
+        }
+      }
+    } catch (_) {
+      // Style reload can invalidate an individual layer handle.
+    }
+    const headPoints = Number(frame.activeProgress) >= HEAD_HIDE_AT ? [] : split.headPoints;
+    const headData = pointsFeatureCollection(headPoints);
+    const headSignature = headPoints.map((point) => {
+      const coords = finiteCoordinate(point) ? point : point?.coordinates;
+      const objectId = point?.properties?.OBJECTID ?? "";
+      return `${coords?.[0]},${coords?.[1]}:${objectId}`;
+    }).join("|");
+    if (headSignature !== lastHeadSignature) {
+      sourceData(map, INVESTIGATION_LINE_SOURCE_IDS.head, headData);
+      lastHeadSignature = headSignature;
+    }
+    lastMotionMode = motionMode;
+    lastParallelDimKey = parallelDimKey;
+    paintInitialized = true;
+  }
+
+  function reset({ preserveBasePaints = false, immediate = false, sceneDeparture = false } = {}) {
+    if (disposed) return;
+    if (sceneDeparture) {
+      const generation = ++hideGeneration;
+      if (deferInvestigationOverlaySceneExit(map, INVESTIGATION_LINES_FULL_ID, () => {
+        if (generation !== hideGeneration) return;
+        reset({ preserveBasePaints: true, immediate: true });
+        for (const [layerId, sourceId] of OWNED) removeLayerAndSource(map, layerId, sourceId);
+      })) return;
+    }
+    const overlayPairs = OWNED.filter(([layerId]) => OVERLAY.has(layerId));
+    const generation = ++hideGeneration;
+    const finish = () => {
+      if (generation !== hideGeneration) return;
+      for (const [layerId, sourceId] of overlayPairs) removeLayerAndSource(map, layerId, sourceId);
+    };
+    const present = overlayPairs.filter(([layerId]) => safelyGetLayer(map, layerId));
+    if (immediate || !present.length) {
+      finish();
+    } else {
+      let remaining = present.length;
+      let started = false;
+      for (const [layerId] of present) {
+        started = fadeInvestigationOverlayLayer(map, INVESTIGATION_LINES_FULL_ID, layerId, () => {
+          remaining -= 1;
+          if (remaining <= 0) finish();
+        }) || started;
+      }
+      if (!started) finish();
+    }
+    signatures.clear();
+    collectionCache.clear();
+    normalizedFeatureCache = new WeakMap();
+    lastHeadSignature = null;
+    lastMotionMode = null;
+    lastParallelDimKey = null;
+    paintInitialized = false;
+    overlaysSuppressed = true;
+    lastData = null;
+    lastFrame = null;
+    lastDataInvalidationKey = undefined;
+    try {
+      if (preserveBasePaints) return;
+      if (safelyGetLayer(map, INVESTIGATION_LINE_LAYER_IDS.future) && typeof map.setPaintProperty === "function") {
+        setOwnedPaint(map, INVESTIGATION_LINE_LAYER_IDS.future, "line-color", NLI_VISUAL_TOKENS.incidentRed);
+        // The application's canonical base line layer becomes visible again
+        // after reset. Keep this owned source mounted for a cheap remount but
+        // hide it so reset cannot double-paint routes.
+        setOwnedPaint(map, INVESTIGATION_LINE_LAYER_IDS.future, "line-opacity", 0);
+      }
+    } catch (_) {
+      // Ignore a style that is already gone.
+    }
+    mounted = !!safelyGetSource(map, INVESTIGATION_LINE_SOURCE_IDS.future);
+  }
+
+  function dispose() {
+    if (disposed) return;
+    disposed = true;
+    hideGeneration += 1;
+    for (const [layerId, sourceId] of OWNED) removeLayerAndSource(map, layerId, sourceId);
+    signatures.clear();
+    collectionCache.clear();
+    lastHeadSignature = null;
+    paintInitialized = false;
+    lastData = null;
+    lastFrame = null;
+    lastDataInvalidationKey = undefined;
+    mounted = false;
+  }
+
+  return { mount, render, reset, dispose };
+}

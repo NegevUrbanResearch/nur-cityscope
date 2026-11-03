@@ -9,11 +9,18 @@ import {
   Box,
   useTheme,
   useMediaQuery,
-  Button
+  Button,
+  Typography,
+  ButtonBase,
 } from "@mui/material";
 import CloseIcon from "@mui/icons-material/Close";
 import InfoOutlineIcon from "@mui/icons-material/InfoOutline";
 import SlideshowIcon from "@mui/icons-material/Slideshow";
+import CloudUploadIcon from "@mui/icons-material/CloudUpload";
+import PauseIcon from "@mui/icons-material/Pause";
+import PlayArrowIcon from "@mui/icons-material/PlayArrow";
+import buttonStyles from "../../style/buttonStyles";
+
 
 import { useAppData } from "../../DataContext";
 import { chartsDrawerWidth } from "../../style/drawersStyles";
@@ -28,8 +35,16 @@ import ClimateMapTypeSelector from "./ClimateMapTypeSelector";
 
 const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
   const navigate = useNavigate();
-  const { visualizationMode, handleVisualizationModeChange, currentIndicator } =
-    useAppData();
+  const { 
+    visualizationMode, 
+    handleVisualizationModeChange, 
+    currentIndicator,
+    isPresentationMode,
+    exitPresentationAndResume,
+    currentTable,
+    availableTables,
+    changeTable,
+  } = useAppData();
 
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down("md"));
@@ -42,7 +57,11 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
   };
 
   const handleOpenPresentation = () => {
-    navigate('/presentation');
+    window.location.href = '/remote-controller/';
+  };
+
+  const handleOpenUserUploads = () => {
+    navigate('/user-uploads');
   };
 
   let disableInteractiveMode = false;
@@ -122,6 +141,8 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
           >
             <InfoOutlineIcon fontSize="small" />
           </IconButton>
+
+
         </Box>
 
         {/* Center: Navigation Menu */}
@@ -150,7 +171,7 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
       {currentIndicator === "climate" ? (
         <ClimateMapTypeSelector />
       ) : (
-        <Box
+      <Box
           sx={{
             px: { xs: 1.5, sm: 2 },
             pt: { xs: 1.5, sm: 2 },
@@ -249,21 +270,113 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
           overflowX: "hidden",
           overflowY: "auto",
           flexGrow: 1,
-          minHeight: 0
+          minHeight: 0,
+          position: 'relative',
         }}
       >
-        {currentIndicator === "climate" ? (
-          <ClimateGraphs />
-        ) : (
-          <IndicatorGraphs />
+        {/* Pause Overlay - Clickable button to resume dashboard */}
+        {isPresentationMode && (
+          <ButtonBase
+            onClick={exitPresentationAndResume}
+            sx={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              bgcolor: 'rgba(0, 0, 0, 0.85)',
+              zIndex: 10,
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 2,
+              px: 3,
+              cursor: 'pointer',
+              transition: 'background-color 0.2s ease',
+              '&:hover': {
+                bgcolor: 'rgba(0, 0, 0, 0.9)',
+              },
+            }}
+          >
+            <PauseIcon sx={{ color: '#ff9800', fontSize: 48 }} />
+            <Typography 
+              variant="h6" 
+              sx={{ 
+                color: 'white', 
+                fontWeight: 600, 
+                textAlign: 'center' 
+              }}
+            >
+              Presentation Mode Active
+            </Typography>
+            
+            <Box 
+              sx={{ 
+                display: 'flex',
+                alignItems: 'center',
+                gap: 1,
+                bgcolor: 'rgba(76, 175, 80, 0.2)',
+                px: 3,
+                py: 1.5,
+                borderRadius: 2,
+                border: '2px solid #4CAF50',
+                mt: 2,
+                transition: 'all 0.2s ease',
+                '&:hover': {
+                  bgcolor: 'rgba(76, 175, 80, 0.3)',
+                  transform: 'scale(1.02)',
+                },
+              }}
+            >
+              <PlayArrowIcon sx={{ color: '#4CAF50', fontSize: 24 }} />
+              <Typography 
+                variant="body1" 
+                sx={{ 
+                  color: '#4CAF50', 
+                  fontWeight: 700,
+                }}
+              >
+                Click to Resume Dashboard
+              </Typography>
+            </Box>
+            
+            <Typography 
+              variant="caption" 
+              sx={{ 
+                color: 'rgba(255,255,255,0.5)', 
+                textAlign: 'center',
+                mt: 1,
+              }}
+            >
+              Returns to Mobility Dashboard
+            </Typography>
+          </ButtonBase>
         )}
+        
+        <Box
+          sx={{
+            opacity: isPresentationMode ? 0.3 : 1,
+            pointerEvents: isPresentationMode ? 'none' : 'auto',
+            transition: 'opacity 0.3s ease',
+          }}
+        >
+          {currentIndicator === "climate" ? (
+            <ClimateGraphs />
+          ) : (
+            <IndicatorGraphs />
+          )}
+        </Box>
       </Box>
 
-      {/* Presentation Mode Link */}
+
+      {/* Presentation Mode and UGC Management Links */}
       <Box
         sx={{
           p: 2,
           display: 'flex',
+          flexDirection: 'row',
+          gap: 1.5,
           justifyContent: 'center',
           flexShrink: 0,
           borderTop: '1px solid rgba(255, 255, 255, 0.08)',
@@ -275,8 +388,8 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
           onClick={handleOpenPresentation}
           startIcon={<SlideshowIcon />}
           sx={{
-            width: '80%',
-            maxWidth: '300px',
+            flex: 1,
+            maxWidth: '200px',
             fontWeight: 600,
             fontSize: '0.9rem',
             color: 'rgba(255,255,255,0.8)',
@@ -293,9 +406,36 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
         >
           Presentation Mode
         </Button>
+        <Button
+          variant="outlined"
+          onClick={handleOpenUserUploads}
+          startIcon={<CloudUploadIcon />}
+          sx={{
+            flex: 1,
+            maxWidth: '200px',
+            fontWeight: 600,
+            fontSize: '0.9rem',
+            color: 'rgba(255,255,255,0.8)',
+            borderColor: 'rgba(255,255,255,0.2)',
+            padding: '10px 20px',
+            borderRadius: '6px',
+            '&:hover': {
+              borderColor: '#4CAF50',
+              color: '#4CAF50',
+              backgroundColor: 'rgba(76, 175, 80, 0.08)',
+            },
+            transition: 'all 0.2s ease',
+          }}
+        >
+          Manage UGC
+        </Button>
       </Box>
     </Drawer>
   );
 };
 
 export default ChartsDrawer;
+
+
+
+

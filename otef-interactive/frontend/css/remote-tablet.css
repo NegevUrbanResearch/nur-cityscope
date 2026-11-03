@@ -1,0 +1,361 @@
+/* Approved NUR Soft Ink remote. Scoped so QR and workshop retain their styles. */
+body.otef-remote-shell {
+  --color-canvas: #20232a;
+  --color-surface: #2d323b;
+  --color-surface-raised: #3e444e;
+  --color-ink: #fff8e8;
+  --color-ink-muted: #c6cbd4;
+  --color-ink-subtle: #c6cbd4;
+  --color-border: #747d8b;
+  --color-border-strong: #7d8391;
+  --color-primary: #f3b4ae;
+  --color-primary-hover: #f7c5bf;
+  --color-on-primary: #30242f;
+  --color-success: #bed6c7;
+  --remote-header: #191c22;
+  --remote-rail: #343942;
+  --remote-workspace: #262b33;
+  --remote-active: #3d3546;
+  --remote-pack-focus: #3d3e4b;
+  --remote-brand: #f3776b;
+  --remote-basemap: #32343d;
+  --remote-input: #16191f;
+  --remote-control: #2e333c;
+  --remote-control-raised: #414651;
+  --remote-control-line: #808695;
+  --font-body-md: 400 16px/1.5 "NLI Content Hadassah Friedlaender", "Segoe UI", sans-serif;
+  --font-title-sm: 400 20px/1.4 "NLI Content Hadassah Friedlaender", "Segoe UI", sans-serif;
+  --font-label-sm: 400 14px/1.45 "NLI Content Hadassah Friedlaender", "Segoe UI", sans-serif;
+  --font-tab-label: var(--font-label-sm);
+  color-scheme: dark;
+  font: var(--font-body-md);
+  font-synthesis: none;
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+body.otef-remote-shell button,
+body.otef-remote-shell input {
+  font: inherit;
+  color: inherit;
+}
+
+body.otef-remote-shell button {
+  min-height: 52px;
+  padding: 12px 16px;
+  border-radius: 12px;
+  border: 1px solid transparent;
+  background: var(--color-surface);
+  touch-action: manipulation;
+  cursor: pointer;
+}
+
+body.otef-remote-shell button:disabled { opacity: .45; cursor: default; }
+body.otef-remote-shell button:hover:not(:disabled) { background: var(--color-surface-raised); }
+body.otef-remote-shell button:focus-visible,
+body.otef-remote-shell input:focus-visible,
+body.otef-remote-shell summary:focus-visible {
+  outline: 3px solid var(--color-primary);
+  outline-offset: 3px;
+  box-shadow: none;
+}
+
+body.otef-remote-shell [hidden] { display: none !important; }
+body.otef-remote-shell h2 { font: var(--font-title-sm); margin: 0; }
+body.otef-remote-shell .remote-meta { font: var(--font-label-sm); color: var(--color-ink-muted); }
+
+body.otef-remote-shell .remote-header {
+  padding: max(12px, env(safe-area-inset-top)) max(24px, env(safe-area-inset-right)) 12px max(24px, env(safe-area-inset-left));
+  background: var(--remote-header);
+  border-bottom: 1px solid var(--color-border);
+  flex-shrink: 0;
+}
+
+body.otef-remote-shell .header-top,
+body.otef-remote-shell .remote-header-controls {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
+body.otef-remote-shell .header-top { justify-content: space-between; }
+body.otef-remote-shell .remote-header-controls { flex-wrap: wrap; gap: 12px; }
+body.otef-remote-shell .remote-locale-toggle {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-surface);
+}
+
+body.otef-remote-shell .remote-locale-btn {
+  min-height: 44px;
+  min-width: 48px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  color: var(--color-ink-muted);
+  background: transparent;
+}
+
+body.otef-remote-shell .remote-locale-btn.is-active {
+  background: var(--color-ink);
+  color: var(--remote-input);
+  box-shadow: none;
+}
+
+body.otef-remote-shell .remote-fullscreen-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 6px;
+  background: transparent;
+  min-height: 48px;
+}
+
+body.otef-remote-shell .connection-status {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
+body.otef-remote-shell .status-indicator { width: 9px; height: 9px; flex-shrink: 0; }
+body.otef-remote-shell .status-indicator.connected { background: #7edba0; box-shadow: 0 0 8px #7edba044; }
+
+body.otef-remote-shell .remote-main {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 24px;
+  display: flex;
+  overflow: hidden;
+}
+
+body.otef-remote-shell .remote-tab-panels { width: 100%; min-height: 0; display: flex; flex: 1; }
+body.otef-remote-shell .remote-tab-panel { min-height: 0; padding: 0; width: 100%; flex: 1; }
+body.otef-remote-shell .remote-tab-panel[hidden] { display: none; }
+body.otef-remote-shell .remote-layer-host,
+body.otef-remote-shell #layerSheet { display: flex; flex-direction: column; flex: 1; min-height: 0; width: 100%; padding: 0; overflow: hidden; background: transparent; border: 0; border-radius: 0; }
+
+body.otef-remote-shell .layers-basemap-control { display: block; flex-shrink: 0; padding: 0; margin: 0 0 20px; background: transparent; border: 0; }
+body.otef-remote-shell .basemap-gallery-toggle {
+  width: 100%;
+  min-height: 72px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 16px;
+  border-radius: 18px;
+  background: var(--remote-basemap);
+  text-align: start;
+}
+
+body.otef-remote-shell #basemapCurrentImage { width: 56px; height: 46px; object-fit: cover; border-radius: 7px; flex-shrink: 0; }
+body.otef-remote-shell .basemap-current { display: flex; flex: 1; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+body.otef-remote-shell .basemap-gallery-action { display: flex; align-items: center; gap: 6px; font-size: 14px; color: var(--color-primary); }
+body.otef-remote-shell .basemap-gallery { padding: 14px; margin-top: 10px; border-radius: 14px; background: var(--remote-basemap); max-height: min(390px, 43dvh); overflow-y: auto; }
+body.otef-remote-shell .basemap-gallery-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+body.otef-remote-shell .basemap-button { min-width: 0; padding: 6px; border-radius: 12px; text-align: start; background: var(--color-canvas); border: 2px solid transparent; }
+body.otef-remote-shell .basemap-button img { display: block; width: 100%; height: 88px; border-radius: 7px; object-fit: cover; margin-bottom: 10px; }
+body.otef-remote-shell .basemap-button span { display: block; padding: 0 5px 5px; }
+body.otef-remote-shell .basemap-button[aria-pressed="true"] { border-color: var(--color-primary); background: var(--color-canvas); }
+body.otef-remote-shell .is-monochrome { filter: grayscale(1); }
+body.otef-remote-shell .basemap-attribution { font-size: 14px; color: var(--color-ink-muted); margin-top: 12px; }
+
+body.otef-remote-shell #layerPanelContent { flex: 1; min-height: 0; overflow: hidden; padding: 0; display: flex; }
+body.otef-remote-shell .layers-workspace { display: grid; grid-template-columns: 184px minmax(0, 1fr); gap: 22px; flex: 1; min-height: 0; width: 100%; }
+body.otef-remote-shell .layers-pack-pane { min-height: 0; padding: 20px 10px; overflow-y: auto; border-radius: 16px; background: var(--remote-rail); }
+body.otef-remote-shell .layers-pack-heading { padding: 0 10px; margin-bottom: 16px; }
+body.otef-remote-shell .layers-pack-list { display: flex; flex-direction: column; gap: 4px; }
+body.otef-remote-shell .pack-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 3px;
+  width: 100%;
+  min-height: 64px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 0;
+  border-inline-start: 3px solid transparent;
+  border-radius: 9px 22px 22px 9px;
+  background: transparent;
+  text-align: start;
+  white-space: normal;
+  flex: 0 0 auto;
+  box-shadow: none;
+}
+
+body.otef-remote-shell .pack-chip--selected { background: var(--remote-pack-focus); border-inline-start-color: var(--remote-brand); color: var(--color-ink); }
+body.otef-remote-shell .pack-chip__name { overflow-wrap: anywhere; }
+body.otef-remote-shell .group-count { font-size: 14px; color: var(--color-ink-muted); margin: 0; padding: 0; background: transparent; min-width: 0; border-radius: 0; }
+body.otef-remote-shell .layers-focused-pack { min-width: 0; min-height: 0; overflow-y: auto; padding: 20px; border-radius: 16px; background: var(--remote-workspace); }
+body.otef-remote-shell .focused-pack-toolbar { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 12px; padding: 0; margin-bottom: 22px; border: 0; background: transparent; }
+body.otef-remote-shell .focused-pack-toolbar p { margin-top: 5px; }
+body.otef-remote-shell .layers-bulk-action { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 10px 12px; min-height: 48px; border: 1px solid var(--color-border); border-radius: 999px; background: var(--color-surface-raised); max-width: 100%; }
+body.otef-remote-shell .group-layers { padding: 0; margin: 0; overflow: visible; }
+body.otef-remote-shell .layer-tile-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; padding: 0; margin: 0; overflow: visible; }
+body.otef-remote-shell .layer-tile-wrap { min-width: 0; }
+body.otef-remote-shell .layer-tile {
+  width: 100%;
+  min-height: 142px;
+  height: auto;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  border: 1px solid transparent;
+  border-radius: 15px;
+  background: var(--color-surface);
+  color: var(--color-ink);
+  text-align: start;
+  box-shadow: none;
+}
+
+body.otef-remote-shell .layer-tile.is-on,
+body.otef-remote-shell .layer-tile.is-on:hover { background: var(--remote-active); border-color: color-mix(in srgb, var(--remote-brand) 50%, var(--remote-active)); color: var(--color-ink); box-shadow: none; }
+body.otef-remote-shell .layer-tile.is-off { background: var(--color-surface); color: var(--color-ink); box-shadow: none; }
+body.otef-remote-shell .layer-tile__label { font: var(--font-body-md); display: block; text-align: start; flex: 0 1 auto; min-width: 0; padding: 0; line-height: 1.5; overflow-wrap: anywhere; }
+body.otef-remote-shell .layer-tile__state { display: inline-flex; align-items: center; gap: 7px; font-size: 14px; color: var(--color-ink-muted); min-height: 30px; padding: 4px 8px; border-radius: 999px; }
+body.otef-remote-shell .layer-tile.is-on .layer-tile__state { background: var(--color-primary); color: var(--color-on-primary); }
+body.otef-remote-shell .anim-btn { position: static; width: 100%; height: auto; min-height: 48px; padding: 10px; margin-top: 7px; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 14px; border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-ink); }
+body.otef-remote-shell .anim-btn.active { background: var(--remote-active); border-color: var(--color-primary); color: var(--color-ink); }
+body.otef-remote-shell .anim-btn.mixed { border-style: dashed; }
+body.otef-remote-shell .layer-legend-settings { margin-top: 20px; border-top: 1px solid var(--color-border); }
+body.otef-remote-shell summary { min-height: 52px; padding: 14px 0; cursor: pointer; }
+body.otef-remote-shell .layer-legend-options { display: flex; flex-wrap: wrap; gap: 8px; }
+body.otef-remote-shell .layer-legend-options button { min-height: 48px; }
+body.otef-remote-shell .layer-legend-options button[aria-pressed="true"] { background: var(--remote-active); border-color: var(--color-primary); }
+body.otef-remote-shell .layer-legend-settings p { margin-top: 12px; }
+
+body.otef-remote-shell #remote-panel-navigation { overflow-y: auto; }
+body.otef-remote-shell #navigationSection { display: block; padding: 0; margin: 0; background: transparent; width: 100%; max-width: none; border: 0; border-radius: 0; }
+body.otef-remote-shell #remote-panel-navigation .navigation-panel-stack { display: flex; flex-direction: column; gap: 20px; flex: 1; min-height: 0; justify-content: flex-start; }
+body.otef-remote-shell #placeSearchGroup { display: block; padding: 24px; border-radius: 16px; background: var(--remote-rail); border: 0; width: 100%; max-width: none; margin: 0; align-self: stretch; }
+body.otef-remote-shell .place-search-label { display: block; font-size: 20px; margin-bottom: 18px; position: static; width: auto; height: auto; clip: auto; }
+body.otef-remote-shell .place-search-shell { position: relative; width: 100%; }
+body.otef-remote-shell .place-search-input { width: 100%; min-height: 60px; border: 1px solid var(--color-border); border-radius: 12px; background: var(--remote-input); color: var(--color-ink); padding: 16px 48px; }
+body.otef-remote-shell .place-search-input::placeholder { color: var(--color-ink-muted); opacity: 1; }
+body.otef-remote-shell .place-search-icon { position: absolute; inset-inline-start: 16px; top: 19px; color: var(--color-ink-muted); pointer-events: none; }
+body.otef-remote-shell .place-search-clear { position: absolute; inset-inline-end: 6px; inset-inline-start: auto; top: 6px; width: 48px; height: 48px; min-height: 48px; padding: 12px; background: transparent; transform: none; display: flex; align-items: center; justify-content: center; }
+body.otef-remote-shell .place-suggestions { position: static; width: 100%; max-height: 300px; overflow-y: auto; margin-top: 8px; background: var(--remote-input); border: 1px solid var(--color-border); border-radius: 12px; box-shadow: none; }
+body.otef-remote-shell .place-suggestion { min-height: 56px; width: 100%; display: flex; align-items: center; padding: 12px 16px; border: 0; border-bottom: 1px solid var(--color-border); border-radius: 0; background: transparent; text-align: start; }
+body.otef-remote-shell .place-suggestion[aria-selected="true"] { background: var(--remote-active); }
+body.otef-remote-shell .place-search-help { margin-top: 14px; }
+body.otef-remote-shell .place-search-status { font: var(--font-label-sm); color: var(--color-ink-muted); min-height: 0; padding: 0; margin-top: 8px; }
+body.otef-remote-shell .navigation-movement { padding: 26px; border-radius: 16px; background: var(--remote-control); }
+body.otef-remote-shell #remote-panel-navigation .navigation-group--pan { display: block; flex: 0 0 auto; margin: 0; min-height: 0; }
+body.otef-remote-shell #navigationSection .dpad-container { display: flex; justify-content: center; padding: 0; margin: 30px auto; width: 100%; }
+body.otef-remote-shell #remote-panel-navigation #navigationSection .dpad { display: grid; grid-template: repeat(3, 76px) / repeat(3, 76px); gap: 10px; width: auto; height: auto; direction: ltr; }
+body.otef-remote-shell .dpad-button { width: 76px; height: 76px; min-height: 76px; padding: 10px; background: var(--remote-control-raised); border: 1px solid var(--remote-control-line); font-size: 20px; border-radius: 18px; position: static; transform: none; box-shadow: none; }
+body.otef-remote-shell .dpad-up { grid-area: 1 / 2; }
+body.otef-remote-shell .dpad-left { grid-area: 2 / 1; }
+body.otef-remote-shell .dpad-right { grid-area: 2 / 3; }
+body.otef-remote-shell .dpad-down { grid-area: 3 / 2; }
+body.otef-remote-shell #remote-panel-navigation .joystick-container { grid-area: 2 / 2; position: relative; inset: auto; transform: none; width: 76px; height: 76px; border-radius: 50%; background: var(--remote-control-raised); border: 1px solid var(--remote-control-line); overflow: visible; touch-action: none; }
+body.otef-remote-shell .joystick-base { position: absolute; inset: 15px; width: auto; height: auto; transform: none; border: 1px solid var(--color-ink-muted); background: transparent; opacity: .55; }
+body.otef-remote-shell #joystickZone .back { background: var(--remote-control-raised) !important; }
+body.otef-remote-shell #joystickZone .front { background: var(--color-ink-muted) !important; }
+body.otef-remote-shell #navigationSection .zoom-controls { display: flex; flex-direction: row; direction: ltr; justify-content: center; align-items: center; gap: 18px; padding: 12px; border-top: 1px solid var(--remote-control-line); border-radius: 0; margin: 0; width: 100%; background: transparent; }
+body.otef-remote-shell .zoom-display { display: flex; align-items: center; justify-content: center; gap: 8px; margin: 0; min-width: 92px; }
+body.otef-remote-shell .zoom-value { font: var(--font-body-md); color: var(--color-ink); font-variant-numeric: tabular-nums; }
+body.otef-remote-shell .zoom-button { width: 64px; min-height: 56px; height: 56px; background: var(--remote-control-raised); border: 1px solid var(--remote-control-line); border-radius: 999px; font-size: 20px; }
+
+body.otef-remote-shell #remote-panel-slideshow { overflow-y: auto; }
+body.otef-remote-shell .remote-slideshow-host { width: 100%; }
+body.otef-remote-shell .slideshow-control-section { width: 100%; padding: 0; margin: 0; background: transparent; }
+body.otef-remote-shell .slideshow-player { display: flex; align-items: center; justify-content: space-between; gap: 18px; flex-wrap: wrap; padding: 28px; min-height: 140px; background: var(--remote-rail); border-radius: 16px; margin-bottom: 26px; }
+body.otef-remote-shell .slideshow-status { margin-top: 7px; font: var(--font-label-sm); color: var(--color-ink-muted); }
+body.otef-remote-shell .slideshow-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+body.otef-remote-shell .slideshow-actions__btn { border: 1px solid var(--color-border); padding: 14px 24px; min-height: 56px; background: var(--color-surface); color: var(--color-ink); }
+body.otef-remote-shell .slideshow-actions__btn[data-slideshow-start] { background: var(--color-primary); color: var(--color-on-primary); border: 0; border-radius: 999px; }
+body.otef-remote-shell .slideshow-pack-list { list-style: none; margin: 16px 0 24px; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+body.otef-remote-shell .slideshow-pack-row { display: flex; align-items: center; gap: 16px; margin: 0; padding: 14px 18px; background: var(--remote-workspace); border: 1px solid var(--color-border); border-radius: 12px; }
+body.otef-remote-shell .slideshow-pack-row__number { font-size: 20px; color: var(--color-ink-muted); min-width: 22px; }
+body.otef-remote-shell .slideshow-pack-row__label { font: var(--font-body-md); flex: 1; min-width: 0; overflow-wrap: anywhere; }
+body.otef-remote-shell .slideshow-pack-row__actions { display: flex; gap: 8px; }
+body.otef-remote-shell .slideshow-pack-row__btn { min-height: 48px; min-width: 48px; padding: 8px; font-size: 20px; background: var(--color-surface-raised); }
+body.otef-remote-shell .slideshow-settings { padding: 4px 20px 18px; border: 1px solid var(--color-border); border-radius: 14px; background: var(--remote-basemap); }
+body.otef-remote-shell .slideshow-input-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; margin-top: 14px; }
+body.otef-remote-shell .slideshow-field { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+body.otef-remote-shell .slideshow-field__label { font: var(--font-label-sm); }
+body.otef-remote-shell .slideshow-field input { width: 100%; min-height: 48px; padding: 8px; border: 1px solid var(--color-border); border-radius: 10px; background: var(--remote-input); color: var(--color-ink); }
+body.otef-remote-shell .slideshow-keep-names { margin-top: 18px; padding: 10px; display: flex; align-items: center; gap: 10px; min-height: 52px; background: transparent; }
+body.otef-remote-shell .slideshow-keep-names input { width: 22px; height: 22px; accent-color: var(--color-primary); }
+body.otef-remote-shell .slideshow-keep-names .toggle-label { font: var(--font-body-md); }
+body.otef-remote-shell [data-slideshow-settings-status] { padding: 14px 18px; border: 1px solid var(--color-primary); border-radius: 14px; font: var(--font-body-md); }
+body.otef-remote-shell [data-slideshow-settings-retry] { min-height: 44px; padding: 8px 16px; margin-inline-start: 8px; border: 1px solid var(--color-border); border-radius: 12px; background: var(--color-surface); color: var(--color-ink); font: inherit; }
+
+body.otef-remote-shell .remote-bottom-nav { flex-shrink: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; padding: 12px max(18px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left)); background: var(--remote-header); border-top: 1px solid var(--color-border); box-shadow: none; }
+body.otef-remote-shell .remote-bottom-nav__tab { display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 7px; width: 100%; max-width: none; min-height: 76px; padding: 8px 5px; border: 0; border-radius: 18px; background: transparent; font: var(--font-label-sm); color: var(--color-ink-muted); }
+body.otef-remote-shell .remote-bottom-nav__tab[data-remote-tab="curation"] { order: -1; }
+body.otef-remote-shell .remote-bottom-nav__tab.is-active { background: var(--remote-active); color: var(--color-ink); border: 0; box-shadow: none; }
+body.otef-remote-shell .remote-bottom-nav__label { font: var(--font-label-sm); white-space: normal; overflow: visible; text-overflow: clip; max-width: 140px; }
+body.otef-remote-shell .warning-overlay { z-index: 100; background: #191c22e8; }
+body.otef-remote-shell .warning-content { border-color: var(--color-border); background: var(--remote-rail); font: var(--font-body-md); }
+
+@media (orientation: landscape) and (min-width: 850px) {
+  body.otef-remote-shell .layers-workspace { grid-template-columns: 220px minmax(0, 1fr); gap: 20px; }
+  body.otef-remote-shell .pack-chip { min-height: 54px; flex-direction: row; justify-content: space-between; align-items: center; }
+  body.otef-remote-shell .layer-tile-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  body.otef-remote-shell .layer-tile { min-height: 160px; }
+  body.otef-remote-shell #remote-panel-navigation .navigation-panel-stack { display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 1fr); align-items: start; gap: 20px; }
+}
+
+@media (max-width: 650px) {
+  body.otef-remote-shell .remote-header { padding-inline: 16px; }
+  body.otef-remote-shell .remote-main { padding: 16px; }
+  body.otef-remote-shell .layers-workspace { grid-template-columns: 146px minmax(0, 1fr); gap: 12px; }
+  body.otef-remote-shell .layers-pack-pane { padding: 18px 8px; }
+  body.otef-remote-shell .layers-focused-pack { padding: 16px 12px; }
+  body.otef-remote-shell .layer-tile { padding: 14px; }
+  body.otef-remote-shell .basemap-gallery-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  body.otef-remote-shell .remote-bottom-nav { padding-inline: 10px; gap: 4px; }
+}
+
+@media (max-width: 430px) {
+  body.otef-remote-shell .remote-header { padding: 12px 14px; }
+  body.otef-remote-shell .remote-header-controls { gap: 8px; }
+  body.otef-remote-shell .remote-locale-btn { min-width: 44px; padding: 8px 10px; }
+  body.otef-remote-shell .remote-fullscreen-btn { gap: 6px; font-size: 14px; }
+  body.otef-remote-shell .remote-main { padding: 14px 10px; }
+  body.otef-remote-shell .layers-workspace { grid-template-columns: 110px minmax(0, 1fr); gap: 8px; }
+  body.otef-remote-shell .layers-pack-pane { padding: 14px 5px; }
+  body.otef-remote-shell .layers-pack-heading { font-size: 16px; padding-inline: 5px; }
+  body.otef-remote-shell .pack-chip { padding: 10px 7px; }
+  body.otef-remote-shell .layers-focused-pack { padding: 14px 9px; }
+  body.otef-remote-shell .layer-tile-grid { grid-template-columns: 1fr; gap: 8px; }
+  body.otef-remote-shell .layer-tile { min-height: 112px; padding: 12px; }
+  body.otef-remote-shell .basemap-current { flex-direction: column; gap: 2px; }
+  body.otef-remote-shell .basemap-gallery-action { gap: 2px; }
+  body.otef-remote-shell #placeSearchGroup { padding: 18px; }
+  body.otef-remote-shell .navigation-movement { padding: 20px 12px; }
+  body.otef-remote-shell #remote-panel-navigation #navigationSection .dpad { grid-template: repeat(3, 60px) / repeat(3, 60px); gap: 8px; }
+  body.otef-remote-shell .dpad-button,
+  body.otef-remote-shell #remote-panel-navigation .joystick-container { width: 60px; height: 60px; min-height: 60px; }
+  body.otef-remote-shell .slideshow-player { padding: 20px; }
+  body.otef-remote-shell .slideshow-input-grid { grid-template-columns: 1fr; }
+  body.otef-remote-shell .slideshow-pack-row { padding: 12px; gap: 10px; }
+  body.otef-remote-shell .remote-bottom-nav { padding-inline: 5px; gap: 2px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body.otef-remote-shell button { transition: none; }
+}

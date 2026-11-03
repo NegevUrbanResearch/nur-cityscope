@@ -1,0 +1,91 @@
+:root { font-family:'Segoe UI',Arial,sans-serif; background:#141719; color:#fff4dd; }
+.projection-config-app, .projection-config-app :is(.warp-editor-dialog,.parameter-editor-dialog,.clock-layout-dialog,.settlement-name-dialog,.road-sign-editor-dialog) { --config-canvas:#141719; --config-surface:#303b3e; --config-surface-raised:#465757; --config-surface-hover:#465757; --config-text:#fff4dd; --config-muted:#bdcac6; --config-divider:#425052; --config-border:#617677; --config-accent:#ff987e; --config-accent-ink:#302322; --config-accent-contrast:#302322; --config-control-height:44px; height:100dvh; overflow:hidden; }
+.projection-config-app [hidden] { display:none!important; }
+.projection-config-app .config-shell { display:flex; flex-direction:column; height:100%; min-height:0; overflow:hidden; background:var(--config-canvas); }
+.projection-config-app button,.projection-config-app input,.projection-config-app select { font-family:inherit; border-radius:7px; }
+.projection-config-app button { min-height:44px; padding:7px 12px; color:var(--config-text); background:var(--config-surface); border:1px solid var(--config-border); cursor:pointer; font-size:14px; touch-action:manipulation; }
+.projection-config-app button:hover { background:var(--config-surface-hover); }
+.projection-config-app :is(button,input,select):focus-visible { outline:2px solid var(--config-accent); outline-offset:2px; }
+.projection-config-app :is(input,select) { min-height:44px; min-width:0; font-size:16px; color:var(--config-text); background:#1e292c; border:1px solid var(--config-border); padding:8px 10px; }
+.projection-config-app input[type=checkbox] { min-height:18px; width:18px; height:18px; accent-color:var(--config-accent); }
+.projection-config-app button:disabled { opacity:.55; cursor:default; }
+.projection-config-app .config-command-bar { flex:none; }
+.projection-config-app .config-workspace { display:flex!important; flex-direction:column; grid-template-columns:none; grid-template-rows:none; gap:0; min-height:0; flex:1; overflow:hidden; padding:0; }
+.projection-config-app .graph-column { display:none!important; }
+.config-navigation { min-height:0; display:flex; flex-direction:column; background:#1d2426; flex:1; overflow:hidden; }
+.config-navigation[data-view=editor] { height:52px; min-height:52px; flex:none; }
+.config-diagram-tabs { display:flex; flex:none; height:52px; align-items:center; gap:6px; padding:4px 16px; border-bottom:1px solid var(--config-divider); }
+.config-brand { margin-inline-end:auto; font-size:15px; font-weight:600; }
+.projection-config-app .config-diagram-tab { border-color:transparent; background:transparent; color:var(--config-muted); }
+.projection-config-app .config-diagram-tab[aria-pressed=true] { border-color:#766056; background:#3d3935; color:var(--config-accent); }
+.config-diagram { padding:20px 24px; min-height:0; flex:1; overflow:hidden; }
+.config-diagram-panel { max-width:1000px; margin:auto; }
+.config-diagram-title { margin:0 0 24px; font-size:20px; line-height:1.3; font-weight:600; }
+.config-shared-stage { width:50%; margin-inline:auto; }
+.config-diagram-card { display:flex; gap:14px; align-items:center; text-align:start; width:100%; height:82px; white-space:normal; background:#2c3739!important; border-color:var(--config-divider)!important; padding:12px 16px!important; border-radius:9px!important; }
+.config-diagram-card:hover { border-color:var(--config-accent)!important; background:#364143!important; }
+.config-shared-stage .config-diagram-card { border-color:#8b6d5d!important; background:#3c3832!important; }
+.config-diagram-icon { display:grid; place-items:center; width:38px; height:38px; flex:none; background:#41403a; color:var(--config-accent); border-radius:9px; font-size:23px; }
+.config-diagram-label { display:flex; flex-direction:column; gap:5px; min-width:0; }
+.config-diagram-label strong { font-size:15px; font-weight:600; }
+.config-diagram-label small { color:var(--config-muted); font-size:12px; line-height:1.3; }
+.config-diagram-chevron { margin-inline-start:auto; color:var(--config-muted); font-size:24px; }
+.config-diagram-split { position:relative; height:36px; width:50%; margin:auto; border-bottom:1px solid #778980; }
+.config-diagram-split:before { content:''; position:absolute; left:50%; height:36px; border-left:1px solid #778980; }
+.config-diagram-branches { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
+.config-diagram-branch h2 { margin:0; height:44px; display:flex; align-items:center; font-size:14px; font-weight:600; }
+.config-diagram-branch>.config-diagram-card+.config-diagram-card { margin-top:14px; position:relative; }
+.config-diagram-branch>.config-diagram-card+.config-diagram-card:before { content:''; position:absolute; bottom:100%; left:50%; height:14px; border-left:1px solid #778980; }
+.config-content-cards { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:28px; }
+.config-content-cards .config-diagram-card { height:100px; }
+.config-editor-navigation { height:52px; min-height:52px; display:flex; align-items:center; gap:16px; padding:3px 12px; border-bottom:1px solid var(--config-divider); }
+.projection-config-app .config-diagram-back { border-color:transparent; background:transparent; padding:6px; }
+.config-editor-title { margin:0; font-size:17px; font-weight:600; }
+.config-projector-switch { display:flex; margin-inline-start:auto; border:1px solid var(--config-border); border-radius:8px; background:#111b1e; overflow:hidden; }
+.projection-config-app .config-projector-switch button { width:76px; border:0; border-radius:0; background:transparent; color:var(--config-muted); }
+.projection-config-app .config-projector-switch button+button { border-inline-start:1px solid var(--config-border); }
+.projection-config-app .config-projector-switch button[aria-pressed=true] { background:#d9c3a6; color:#202829; font-weight:650; }
+.config-both-projectors { margin-inline-start:auto; font-size:13px; color:var(--config-muted); }
+.projection-config-app .config-editor-region { display:flex; flex-direction:column; min-height:0; flex:1; width:100%; overflow:hidden; border:0; padding:12px; gap:0; background:#1d2426; }
+.config-workspace:has(.config-navigation[data-view=diagram])>.config-editor-region { display:none; }
+.config-editor-region>h2,.config-editor-region>.config-editor-node-heading,.config-editor-help,.config-enlarge-edit,.config-editor-empty { display:none!important; }
+.config-editor-region>.config-selected-context { display:none; }
+.config-editor-region[data-node=content]>.config-selected-context { display:flex; flex-direction:column; gap:16px; padding:20px; max-width:700px; width:100%; margin:0 auto; background:var(--config-surface); border:1px solid var(--config-divider); border-radius:9px; }
+.config-editor-region[data-node=content] .nli-font-control { font-size:13px; display:flex; flex-direction:column; gap:5px; }
+.config-editor-region[data-node=content] :is(.parameter-editor-dialog,.config-content-editor,.warp-editor-dialog) { display:none; }
+.projection-config-app .parameter-editor-dialog[data-presentation=panel],.projection-config-app .warp-editor-dialog[data-presentation=panel] { position:relative; display:flex; flex-direction:column; min-height:0; height:100%; width:100%; max-height:none; padding:0; margin:0; border:0; border-radius:0; background:transparent; box-shadow:none; overflow:hidden; }
+.projection-config-app .parameter-editor-dialog[data-presentation=panel]>.parameter-editor-header { display:none; }
+.projection-config-app .parameter-editor-dialog[data-presentation=panel]>.parameter-editor-body { flex:1; height:100%; padding:0; }
+.projection-config-app .parameter-editor-controls-column,.projection-config-app .warp-editor-controls-column { background:#2b373a; border:1px solid var(--config-divider); border-radius:9px; padding:12px; }
+.projection-config-app .parameter-editor-preview-column { border:1px solid var(--config-divider); border-radius:9px; background:var(--config-canvas); }
+.projection-config-app .warp-editor-dialog[data-presentation=panel]>.warp-editor-header { display:flex; min-height:44px; height:44px; flex:none; gap:8px; padding:0 8px; border:1px solid var(--config-divider); border-radius:9px 9px 0 0; background:var(--config-canvas); }
+.warp-editor-dialog[data-presentation=panel] .warp-editor-header :is(.warp-editor-title,.warp-editor-message,[data-action=warp-editor-close]) { display:none; }
+.projection-config-app .warp-editor-dialog[data-presentation=panel]>.warp-editor-body { flex:1; padding:0; }
+.projection-config-app .warp-editor-dialog[data-presentation=panel]>.warp-editor-footer>.live-toggle,.projection-config-app .warp-editor-footer>.warp-editor-applied { display:none; }
+.projection-config-app .warp-editor-footer>button:not([data-action=warp-editor-retry]) { display:none; }
+.projection-config-app .warp-editor-footer { min-height:0; border:0; padding:0; gap:4px; }
+.projection-config-app .config-editor-region>.projection-optional-health { position:absolute; z-index:5; background:var(--config-surface); }
+.projection-config-app .numeric-value-group { background:#1e292c; }
+.projection-config-app .parameter-editor-previews { display:flex; gap:8px; height:100%; }
+.projection-config-app .parameter-preview-slot { min-width:0; width:100%; flex:1; }
+.projection-config-app .parameter-preview-slot iframe { width:100%; height:100%; min-height:0; border:0; }
+.projection-config-app :is(.parameter-editor-pages,.parameter-editor-sensitivity,.warp-editor-pages,.warp-grid-layout-pages,.content-editor-tabs) button[aria-pressed=true],.projection-config-app .content-editor-tabs button[aria-selected=true] { color:var(--config-text); background:#485653; border-color:#82968b; }
+@media(min-width:1001px) {
+ .config-diagram-panel { max-width:860px; }
+ .config-diagram-branch>.config-diagram-card { height:70px; }
+ .config-content-cards { grid-template-columns:repeat(3,minmax(0,1fr)); }
+ .config-diagram-content { max-width:1000px; }
+ .config-diagram-content>.config-shared-stage { width:33.333%; }
+}
+@media(max-width:1000px) {
+ .projection-config-app .parameter-editor-dialog[data-presentation=panel] .parameter-editor-body { grid-template-rows:minmax(180px,1fr) 300px; }
+ .projection-config-app .warp-editor-dialog[data-presentation=panel] .warp-editor-body { grid-template-rows:minmax(180px,1fr) 330px; }
+ .projection-config-app .parameter-editor-dialog[data-node=names-wall] .parameter-editor-body { grid-template-rows:minmax(180px,1fr) 350px; }
+}
+@media(max-width:650px) {
+ .config-brand { display:none; }.config-diagram-tabs { justify-content:center; padding-inline:8px; }
+ .config-diagram { padding:16px 12px; }.config-shared-stage { width:70%; }
+ .config-diagram-card { padding:8px!important; gap:8px; }.config-diagram-icon { width:30px; height:30px; }
+ .config-diagram-label strong { font-size:14px; }.config-diagram-label small { font-size:11px; }
+ .config-editor-navigation { gap:8px; }.config-editor-title { font-size:15px; }.config-projector-switch button { width:60px; padding:6px; }
+}

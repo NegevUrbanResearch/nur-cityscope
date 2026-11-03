@@ -1,0 +1,321 @@
+import { validateProjectionConfig } from "../shared/projection-config-schema.js";
+import { withRequestDeadline } from "../shared/request-deadline.js";
+import { validSettlementOriginGeometry } from '../projection-config/settlement-origin-geometry.js';
+import { validateRoadSignSettings } from '../shared/road-sign-settings.js';
+import { copyProjectionMesh } from '../projection-config/clock-layout-geometry.js';
+
+function runBoundedPreviewOperation(operation, parentSignal) {
+  let completedSynchronously = false;
+  let value;
+  const task = withRequestDeadline((signal) => {
+    value = operation({ signal, requestSignal: parentSignal });
+    completedSynchronously = true;
+    return value;
+  }, { timeoutMs: 30000, signal: parentSignal });
+  if (completedSynchronously && !(value && typeof value.then === "function")) {
+    task.catch(() => {});
+    return { synchronous: true, value };
+  }
+  return { synchronous: false, task };
+}
+
+const CLOCK_LAYOUT_KEYS = ["leftPct", "topPct", "widthPct", "heightPct", "fontPx", "rotateDeg"];
+const finiteLayout = (value) => value && typeof value === "object" && !Array.isArray(value) &&
+  CLOCK_LAYOUT_KEYS.every((key) => Number.isFinite(value[key])) && value.widthPct > 0 && value.heightPct > 0 && value.fontPx > 0 &&
+  (!Object.hasOwn(value, "columns") || (Number.isInteger(value.columns) && value.columns >= 0 && value.columns <= 3));
+
+/** Separate child-only protocol; the ordinary warp preview keeps its existing messages. */
+export function installProjectionClockPreviewBridge({ win, sessionId, renderState }) {
+  if (!win?.parent || win.parent === win || !sessionId || typeof renderState !== "function") {
+    throw new Error("Projection clock preview requires its parent and session");
+  }
+  const parent = win.parent;
+  const origin = win.location.origin;
+  let lastRequestId = 0;
+  let disposed = false;
+  let activeAbort = null;
+  const reply = (payload) => parent.postMessage({ ...payload, sessionId }, origin);
+  const onMessage = (event) => {
+    const state = event.data;
+    if (disposed || event.source !== parent || event.origin !== origin || state?.type !== "otef_clock_preview_state" ||
+      state.sessionId !== sessionId || !Number.isSafeInteger(state.requestId) || state.requestId <= lastRequestId) return;
+    if (state.surface !== "projection" || state.sceneId !== "home" || state.output !== "left" ||
+      !["clock", "legend"].includes(state.element) || !finiteLayout(state.clockLayout) || !finiteLayout(state.legendLayout) ||
+      !Number.isSafeInteger(state.pageIndex) || state.pageIndex < 0 ||
+      (state.legendLayout.dwellSeconds != null && !Number.isFinite(state.legendLayout.dwellSeconds))) {
+      reply({ type: "otef_clock_preview_error", requestId: state.requestId, message: "Invalid projection clock preview state" });
+      return;
+    }
+    lastRequestId = state.requestId;
+    activeAbort?.abort();
+    const controller = new AbortController();
+    activeAbort = controller;
+    const isCurrent = () => !disposed && !controller.signal.aborted && lastRequestId === state.requestId;
+    const fail = (error) => {
+      if (isCurrent()) reply({ type: "otef_clock_preview_error", requestId: state.requestId, message: error?.message || "Projection preview failed" });
+    };
+    try {
+      const local = { ...state, clockLayout: { ...state.clockLayout }, legendLayout: { ...state.legendLayout } };
+      Promise.resolve(renderState(local, { signal: controller.signal, isCurrent })).then((result) => {
+        if (!isCurrent()) return;
+        reply({ type: "otef_clock_preview_rendered", requestId: state.requestId, surface: "projection", sceneId: "home", output: "left",
+          meshIdentity: result.meshIdentity, mesh: result.mesh, pageIndex: result.pageIndex, pageCount: result.pageCount,
+          ...(result.warnings == null ? {} : { warnings: result.warnings }) });
+      }).catch(fail);
+    } catch (error) { fail(error); }
+  };
+  win.addEventListener("message", onMessage);
+  reply({ type: "otef_clock_preview_ready", surface: "projection", output: "left" });
+  return () => { disposed = true; activeAbort?.abort(); win.removeEventListener("message", onMessage); };
+}
+
+const MAX_SETTLEMENT_LABELS = 512;
+
+function finiteSettlementLabel(label) {
+  return label && typeof label.citycode === "string" && typeof label.text === "string"
+    && [label.x, label.y, label.rotateDeg].every(Number.isFinite);
+}
+
+/** Child protocol for the settlement editor. It never writes settings or changes the exhibit. */
+export function installProjectionSettlementPreviewBridge({ win, sessionId, output, renderState }) {
+  if (!win?.parent || win.parent === win || !sessionId || !["left", "right"].includes(output) || typeof renderState !== "function") {
+    throw new Error("Settlement preview requires its parent, output, and session");
+  }
+  const parent = win.parent;
+  const origin = win.location.origin;
+  let lastRequestId = 0;
+  let disposed = false;
+  let activeAbort = null;
+  const reply = (payload) => parent.postMessage({ ...payload, sessionId, output }, origin);
+  const onMessage = (event) => {
+    const state = event.data;
+    if (disposed || event.source !== parent || event.origin !== origin || state?.type !== "otef_settlement_preview_state"
+      || state.sessionId !== sessionId || state.output !== output || !Number.isSafeInteger(state.requestId) || state.requestId <= lastRequestId) return;
+    if (state.language != null && !['he', 'en'].includes(state.language)) return;
+    lastRequestId = state.requestId;
+    activeAbort?.abort();
+    const controller = new AbortController();
+    activeAbort = controller;
+    const isCurrent = () => !disposed && !controller.signal.aborted && lastRequestId === state.requestId;
+    const fail = (error) => { if (isCurrent()) reply({ type: "otef_settlement_preview_error", requestId: state.requestId, message: error?.message || "Settlement preview failed" }); };
+    Promise.resolve(renderState(state, { signal: controller.signal, isCurrent })).then((result) => {
+      if (!isCurrent() || !result) return;
+      if (!Array.isArray(result.labels) || result.labels.length > MAX_SETTLEMENT_LABELS || !result.labels.every(finiteSettlementLabel)) {
+        fail(new Error("Settlement preview labels are invalid"));
+        return;
+      }
+      if (!validSettlementOriginGeometry(result.originGeometry)) { fail(new Error('Settlement origin geometry is invalid')); return; }
+      reply({ type: "otef_settlement_preview_rendered", requestId: state.requestId, calibrationRevision: result.calibrationRevision,
+        language: state.language || 'he',
+        meshIdentity: result.meshIdentity, mesh: result.mesh, labels: result.labels, warnings: result.warnings, originGeometry: result.originGeometry || null,
+        ...(result.positionMatrix == null ? {} : {positionMatrix:result.positionMatrix}) });
+    }).catch(fail);
+  };
+  win.addEventListener("message", onMessage);
+  reply({ type: "otef_settlement_preview_ready" });
+  return () => { disposed = true; activeAbort?.abort(); win.removeEventListener("message", onMessage); };
+}
+
+/** Read-only, request-scoped bridge for the Road 232 placement preview. */
+export function installProjectionRoadSignPreviewBridge({ win, sessionId, output, renderState }) {
+  if (!win?.parent || win.parent === win || !sessionId || !["left", "right"].includes(output) || typeof renderState !== "function") {
+    throw new Error("Road 232 preview requires its parent, session, output, and renderer");
+  }
+  const parent = win.parent, origin = win.location.origin;
+  let latestRequestId = 0, disposed = false, activeAbort = null;
+  const reply = (payload) => parent.postMessage({ ...payload, sessionId, output }, origin);
+  const onMessage = (event) => {
+    const state = event.data;
+    if (disposed || event.source !== parent || event.origin !== origin || state?.type !== "otef_road_sign_preview_state"
+      || state.sessionId !== sessionId || state.output !== output || !Number.isSafeInteger(state.requestId) || state.requestId <= latestRequestId) return;
+    const checked = validateRoadSignSettings(state.settings);
+    if (!checked.valid || !state.config || typeof state.config !== "object" || Array.isArray(state.config)
+      || Object.keys(validateProjectionConfig(state.config)).length || !Number.isSafeInteger(state.calibrationRevision) || state.calibrationRevision < 0
+      || Object.keys(state).sort().join(",") !== "calibrationRevision,config,output,requestId,sessionId,settings,type") {
+      reply({ type: "otef_road_sign_preview_error", requestId: state.requestId, calibrationRevision: state.calibrationRevision,
+        message: "Invalid Road 232 preview state" });
+      return;
+    }
+    latestRequestId = state.requestId;
+    activeAbort?.abort();
+    const controller = new AbortController(); activeAbort = controller;
+    const isCurrent = () => !disposed && !controller.signal.aborted && latestRequestId === state.requestId;
+    const fail = (error) => { if (isCurrent()) reply({ type: "otef_road_sign_preview_error", requestId: state.requestId,
+      calibrationRevision: state.calibrationRevision, message: error?.message || "Road 232 preview failed" }); };
+    const local = { settings: checked.settings, config: structuredClone(state.config), calibrationRevision: state.calibrationRevision,
+      output, sessionId, requestId: state.requestId };
+    Promise.resolve().then(() => renderState(local, { signal: controller.signal, isCurrent })).then((result) => {
+      if (!isCurrent() || !result) return;
+      const mesh = copyProjectionMesh(result.mesh);
+      if (!mesh?.triangles.length || mesh.triangles.length % 3 || typeof result.meshIdentity !== "string" || !result.meshIdentity.trim()) {
+        fail(new Error("Invalid Road 232 preview mesh")); return;
+      }
+      reply({ type: "otef_road_sign_preview_rendered", requestId: state.requestId, calibrationRevision: state.calibrationRevision,
+        meshIdentity: result.meshIdentity, mesh });
+    }).catch(fail);
+  };
+  win.addEventListener("message", onMessage);
+  reply({ type: "otef_road_sign_preview_ready" });
+  return () => { disposed = true; activeAbort?.abort(); win.removeEventListener("message", onMessage); };
+}
+
+function boundedWallDiagnostics(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value) || !["valid", "invalid"].includes(value.state) ||
+    typeof value.datasetVersion !== "string" || value.datasetVersion.length > 128 || !["wall", "model"].includes(value.mode) ||
+    !Number.isSafeInteger(value.requestedFontPx) ||
+    !(value.effectiveFontPx === null || Number.isSafeInteger(value.effectiveFontPx)) ||
+    !Number.isSafeInteger(value.expected) || value.expected < 1 || !Number.isSafeInteger(value.placed) || value.placed < 0 || value.placed > value.expected) return null;
+  return { state: value.state, datasetVersion: value.datasetVersion, mode: value.mode,
+    requestedFontPx: value.requestedFontPx, effectiveFontPx: value.effectiveFontPx,
+    expected: value.expected, placed: value.placed,
+    left: Number.isSafeInteger(value.left) ? value.left : null,
+    right: Number.isSafeInteger(value.right) ? value.right : null,
+    ...(typeof value.reason === "string" ? { reason: value.reason.slice(0, 240) } : {}) };
+}
+
+export function installProjectionPreviewBridge({ win, output, map, nameFieldController, syncContextInvestigation, applyProjectionConfig, validateWall, setCalibrationView, readSourceState, subscribeSourceState, onGeometryState = () => {} }) {
+  if (!win?.parent || win.parent === win || !["left", "right"].includes(output)) return () => {};
+  const origin = win.location.origin;
+  const reply = (message) => win.parent.postMessage({ ...message, output }, origin);
+  let validationGeneration = 0;
+  let validationAbort = null;
+  let applyGeneration = 0;
+  let applyAbort = null;
+  let namesGeneration = 0;
+  let namesAbort = null;
+  let lastConfigRequestId = 0;
+  let calibrationRequestId = 0, calibrationAbort = null, disposed = false;
+  let geometryPending = false, geometryFailed = false, sourceMessageIdentity = null, appliedConfigIdentity = null;
+  let appliedRevision = -1;
+  const getAppliedGeometryState = () => ({ revision: appliedRevision, configIdentity: appliedConfigIdentity,
+    pending: geometryPending, failed: geometryFailed, suspended: disposed, stopped: disposed });
+  const notifySourceState = () => {
+    if (disposed || !lastConfigRequestId || typeof readSourceState !== 'function') return;
+    const state = readSourceState();
+    const sourceFrameIdentity = typeof state?.sourceFrameIdentity === 'string' && state.sourceFrameIdentity.length <= 4096 ? state.sourceFrameIdentity : null;
+    const message = { type: 'otef_projection_preview_source_state', requestId: lastConfigRequestId, sourceFrameIdentity,
+      stable: Boolean(sourceFrameIdentity && state?.stable && !geometryPending && !geometryFailed),
+      error: geometryPending ? 'Preview geometry is pending' : geometryFailed ? 'Preview geometry failed; retry before point capture.' : state?.error ? String(state.error).slice(0, 240) : null };
+    const identity = JSON.stringify(message);
+    if (identity === sourceMessageIdentity) return;
+    sourceMessageIdentity = identity; reply(message);
+  };
+  const offSource = subscribeSourceState?.(notifySourceState);
+  const onMessage = (event) => {
+    const message = event.data;
+    if (disposed || event.source !== win.parent || event.origin !== origin || !['otef_projection_preview_config', 'otef_projection_preview_validate', 'otef_projection_preview_calibration'].includes(message?.type) || message.output !== output || !Number.isSafeInteger(message.requestId)) return;
+    if (message.type === 'otef_projection_preview_calibration') {
+      if (message.requestId <= calibrationRequestId || typeof message.enabled !== 'boolean' || Object.keys(message).length !== 4 || typeof setCalibrationView !== 'function') return;
+      calibrationRequestId = message.requestId; calibrationAbort?.abort(); calibrationAbort = new AbortController();
+      const signal = calibrationAbort.signal, requestId = message.requestId;
+      const current = () => !disposed && !signal.aborted && requestId === calibrationRequestId;
+      Promise.resolve().then(() => setCalibrationView(message.enabled, {signal})).then(result => {
+        if (!current()) return;
+        reply({type:'otef_projection_preview_calibration_rendered',requestId,sceneIdentity:result.sceneIdentity ?? null,
+          ready:result.ready === true,missingIds:result.missingIds || [],error:result.error || null});
+      }).catch(error => { if (current()) reply({type:'otef_projection_preview_calibration_rendered',requestId,sceneIdentity:null,ready:false,missingIds:[],error:String(error.message || error).slice(0,240)}); });
+      return;
+    }
+    if (message.type === 'otef_projection_preview_validate') {
+      const identity = message.identity;
+      const requestId = message.requestId;
+      validationAbort?.abort();
+      validationAbort = new AbortController();
+      const signal = validationAbort.signal;
+      const generation = ++validationGeneration;
+      const result = (valid, wall, error, diagnostics) => reply({ type: 'otef_projection_preview_validated', requestId, identity, valid,
+        ...(wall ? { wall } : {}), ...(diagnostics ? { diagnostics } : {}), ...(error ? { error: String(error).slice(0, 240) } : {}) });
+      if (typeof identity !== 'string' || identity !== JSON.stringify(message.config) || Object.keys(validateProjectionConfig(message.config)).length || typeof validateWall !== 'function') {
+        result(false, null, 'Invalid wall preview candidate'); return;
+      }
+      Promise.resolve().then(() => validateWall(message.config, { generation, identity, revision: message.revision, signal })).then((wall) => {
+        if (generation !== validationGeneration) return;
+        const diagnostics = boundedWallDiagnostics(wall?.diagnostics || (wall?.state ? wall : null));
+        const core = wall?.wall || wall;
+        if (!Number.isFinite(core?.heading) || core.heading !== message.config.namesWall?.rotateDeg) {
+          result(false, null, 'Name wall heading disagrees with candidate rotation');
+          return;
+        }
+        const complete = core?.expected === core?.placed && Number.isSafeInteger(core?.expected) && core.expected > 0 && /^[a-f0-9]{64}$/i.test(core?.digest || '');
+        const valid = diagnostics ? diagnostics.state === 'valid' && diagnostics.mode === message.config.namesWall.activeMode &&
+          diagnostics.expected === core?.expected && diagnostics.placed === core?.placed && complete : complete;
+        if (valid) {
+          const { diagnostics: _diagnostics, state: _state, reason: _reason, heading: _heading, ...safeWall } = core;
+          result(true, safeWall, null, diagnostics);
+        } else {
+          result(false, null, diagnostics?.reason || wall?.reason || 'Incomplete names wall', diagnostics);
+        }
+      }).catch((error) => { if (generation === validationGeneration) result(false, null, error?.message || 'Wall preview failed'); });
+      return;
+    }
+    if (Object.keys(validateProjectionConfig(message.config)).length) {
+      reply({ type: "otef_projection_preview_applied", requestId: message.requestId, success: false, error: "Invalid calibration draft" });
+      return;
+    }
+    if (message.requestId <= lastConfigRequestId) return;
+    lastConfigRequestId = message.requestId;
+    geometryPending = true; geometryFailed = false; notifySourceState();
+    onGeometryState(getAppliedGeometryState());
+    const runNames = message.runNames === true;
+    if (runNames) {
+      namesAbort?.abort();
+      namesAbort = new AbortController();
+      const generation = ++namesGeneration;
+      const signal = namesAbort.signal;
+      const finishNames = (prepared) => {
+        if (generation !== namesGeneration || signal.aborted) return;
+        if (prepared === false) throw new Error("Projection names rejected applied calibration");
+        syncContextInvestigation();
+        reply({ type: "otef_projection_preview_applied", requestId: message.requestId, success: true });
+        geometryPending = false; notifySourceState();
+        onGeometryState(getAppliedGeometryState());
+      };
+      const failNames = (error) => {
+        if (generation === namesGeneration && !signal.aborted) {
+          reply({ type: "otef_projection_preview_applied", requestId: message.requestId, success: false, error: error.message || "Names preview failed" });
+          geometryPending = false; geometryFailed = true; notifySourceState();
+          onGeometryState(getAppliedGeometryState());
+        }
+      };
+      try {
+        const bounded = runBoundedPreviewOperation((operationContext) => applyProjectionConfig?.(message.config, { generation, ...operationContext, runNames: true }), signal);
+        if (bounded.synchronous) finishNames(bounded.value);
+        else bounded.task.then(finishNames).catch(failNames);
+      } catch (error) { failNames(error); }
+      return;
+    }
+    namesGeneration++;
+    namesAbort?.abort();
+    namesAbort = null;
+    applyAbort?.abort();
+    applyAbort = new AbortController();
+    const generation = ++applyGeneration;
+    const finish = (prepared) => {
+      if (generation !== applyGeneration || applyAbort.signal.aborted) return;
+      if (prepared === false) throw new Error("Projection output rejected draft");
+      if (prepared?.committed !== true) {
+        if (map.setEffectiveProjectionConfig(message.config) === false) throw new Error("Projection camera rejected draft");
+        if (nameFieldController.setProjectionConfig(message.config) === false) throw new Error("Projection labels rejected draft");
+      }
+      syncContextInvestigation();
+      reply({ type: "otef_projection_preview_applied", requestId: message.requestId, success: true });
+      appliedConfigIdentity = JSON.stringify(message.config); appliedRevision = message.requestId;
+      geometryPending = false; onGeometryState(getAppliedGeometryState()); notifySourceState();
+    };
+    const fail = (error) => { if (generation === applyGeneration && !applyAbort.signal.aborted) {
+      reply({ type: "otef_projection_preview_applied", requestId: message.requestId, success: false, error: error.message || "Preview failed" });
+      geometryPending = false; geometryFailed = true; notifySourceState();
+      onGeometryState(getAppliedGeometryState());
+    } };
+    try {
+      const bounded = runBoundedPreviewOperation((operationContext) => applyProjectionConfig?.(message.config, { generation, ...operationContext, runNames: false }), applyAbort.signal);
+      if (bounded.synchronous) finish(bounded.value);
+      else bounded.task.then(finish).catch(fail);
+    } catch (error) { fail(error); }
+  };
+  win.addEventListener("message", onMessage);
+  reply({ type: "otef_projection_preview_ready" });
+  const dispose = () => { disposed = true; offSource?.(); calibrationAbort?.abort(); validationGeneration++; validationAbort?.abort(); applyGeneration++; applyAbort?.abort(); namesGeneration++; namesAbort?.abort(); win.removeEventListener("message", onMessage); };
+  dispose.getAppliedGeometryState = getAppliedGeometryState;
+  return dispose;
+}

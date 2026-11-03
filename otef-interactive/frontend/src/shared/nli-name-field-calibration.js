@@ -1,0 +1,77 @@
+// Name-only safe source polygons from the current exhibition PC TouchDesigner warp, 2026-09-16.
+// UV origin is top-left. Includes 16 final-output pixels of inset; map calibration is unchanged.
+// Regenerate when the TouchDesigner warp changes. Each polygon is a verified inner approximation.
+export const NLI_NAME_FIELD_SOURCE_UV = {
+  "left": [
+    [
+      0.83352141,
+      0.10923704
+    ],
+    [
+      0.66990719,
+      0.13936889
+    ],
+    [
+      0.22515193,
+      0.22875065
+    ],
+    [
+      0.27407906,
+      0.87726426
+    ],
+    [
+      0.3251575,
+      0.8680488
+    ],
+    [
+      0.59459344,
+      0.81169472
+    ],
+    [
+      0.6981674,
+      0.78926407
+    ],
+    [
+      0.87092604,
+      0.74871657
+    ],
+    [
+      0.85821781,
+      0.51207231
+    ]
+  ],
+  "right": [
+    [
+      0.67938172,
+      0.02109278
+    ],
+    [
+      0.43292953,
+      0.05525167
+    ],
+    [
+      0.15779667,
+      0.10838676
+    ],
+    [
+      0.05003214,
+      0.13302222
+    ],
+    [
+      0.08607052,
+      0.76588417
+    ],
+    [
+      0.55056661,
+      0.67459593
+    ],
+    [
+      0.71351161,
+      0.64127639
+    ],
+    [
+      0.68619724,
+      0.13277361
+    ]
+  ]
+};

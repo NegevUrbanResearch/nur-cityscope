@@ -1,0 +1,148 @@
+.config-command-bar .config-command-row-primary {
+  height: 56px;
+  min-height: 56px;
+  padding: 6px 12px;
+  gap: 7px;
+  flex-wrap: nowrap;
+}
+.config-command-bar .calibration-commit-controls {
+  flex: 1 1 auto;
+  flex-wrap: nowrap;
+  gap: 7px;
+}
+.config-command-bar .config-command-row-primary :is(button, summary) {
+  min-height: 44px;
+  height: 44px;
+  padding: 0 10px;
+  border: 1px solid var(--config-border);
+  border-radius: 7px;
+  background: var(--config-surface-raised);
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 20px;
+}
+.config-command-bar .config-command-row-primary :is(button, summary):hover {
+  background: var(--config-surface-hover);
+}
+.config-command-bar :is(button, summary, select, input):focus-visible {
+  outline: 2px solid var(--config-accent);
+  outline-offset: 2px;
+}
+.config-command-bar .config-presets-menu { flex: 0 1 180px; }
+.config-command-bar .config-presets-menu > summary {
+  width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  gap: 8px;
+}
+.config-command-bar .config-presets-menu > summary[data-dirty='true']::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  flex: none;
+  background: var(--config-accent);
+  border-radius: 50%;
+}
+.config-command-bar .config-presets-menu > summary::after { flex: none; }
+.config-command-bar .config-preset-summary-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.config-command-bar .config-command-row-primary summary { gap: 8px; }
+.config-command-bar .config-command-row-primary summary::after {
+  content: '';
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(45deg);
+  margin-inline-start: auto;
+  margin-block-start: -3px;
+}
+.config-command-bar .config-command-row-primary .config-menu[open] > summary::after { transform: rotate(225deg); margin-block-start: 3px; }
+.config-command-bar [data-action='parameter-undo'],
+.config-command-bar [data-action='parameter-redo'] { min-width: 70px; }
+.config-command-bar .live-toggle { gap: 5px; padding: 0 2px; font-size: 16px; }
+.config-command-bar .config-command-row-primary [data-action='apply'] { margin-inline-start: auto; color: var(--config-text); }
+.config-command-bar .config-command-row-primary [data-action='save'] {
+  background: var(--config-accent);
+  border-color: var(--config-accent);
+  color: var(--config-accent-ink);
+}
+.config-command-bar .config-menu-content {
+  display: flex;
+  align-items: stretch;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  max-width: calc(100vw - 24px);
+  padding: 16px;
+  border-radius: 12px;
+}
+.config-command-bar .config-tablet-content { position:absolute; top:calc(100% + 4px); right:0; z-index:40; }
+.config-command-bar .config-tablet-menu[hidden] { display:none; }
+.config-command-bar .config-tablet-content .staff-remote-summary { font-size:14px; gap:4px; }
+.config-command-bar .config-tablet-content .staff-remote-panel { gap:12px; }
+.config-command-bar .config-tablet-content .staff-remote-notice-actions { display:flex; flex-wrap:wrap; gap:8px; }
+.config-command-bar .config-tablet-content .staff-remote-action-status { flex-basis:100%; margin:0; }
+.config-command-bar .config-tablet-content .staff-remote-row { grid-template-columns:minmax(0,1fr) auto; gap:8px; padding:12px; }
+.config-command-bar .config-tablet-content .staff-remote-row-heading { grid-column:1; grid-row:1; font-size:14px; }
+.config-command-bar .config-tablet-content .staff-remote-row > button { grid-column:2; grid-row:1; }
+.config-command-bar .config-tablet-content .staff-remote-row-details { grid-column:1/-1; grid-row:2; font-size:13px; gap:6px 12px; }
+.config-command-bar .config-tablet-content .staff-remote-row > p { grid-column:1/-1; font-size:13px; }
+.config-command-bar .config-tablet-content :is(.staff-remote-guidance,.staff-remote-live-status) { font-size:13px; line-height:19px; }
+.config-command-bar .loaded-preset-identity { font-size: 16px; color: var(--config-text); }
+.config-command-bar .config-pending-preset { flex: none; align-items: end; gap: 8px; }
+.config-command-bar .config-preset-select-label {
+  flex: 1;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 5px;
+  margin: 0;
+}
+.config-command-bar .config-preset-field-label { display: block; font-size: 13px; }
+.config-command-bar .config-preset-actions { gap: 8px; }
+.config-command-bar .config-menu-content :is(select, input[type='text']) {
+  width: 100%;
+  max-width: 100%;
+  min-height: 44px;
+  font-size: 16px;
+}
+.config-command-bar .config-display-menu-heading { gap: 8px; flex-wrap: nowrap; }
+.config-command-bar .config-display-menu-heading strong { font-size: 18px; }
+.config-command-bar .config-display-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.config-command-bar .config-display-card {
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--config-divider);
+  border-radius: 8px;
+}
+.config-command-bar .config-display-card h3 { font-size: 16px; margin: 0; }
+.config-command-bar .config-display-actions .output-display-label {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  font-size: 13px;
+}
+.config-command-bar .output-command-actions { gap: 8px; }
+.config-command-bar .output-reverse-toggle { width: auto; margin: 0; }
+.config-command-bar .output-reverse-toggle input { min-width: 22px; width: 22px; min-height: 22px; height: 22px; }
+.config-command-bar .output-orientation-help { font-size: 13px; line-height: 19px; }
+.config-command-bar .output-launch-status:empty { display: none; }
+.config-command-bar .config-save-copy { margin: 0; }
+.config-command-bar .config-save-copy label { flex-basis: 100%; }
+.config-command-bar .config-save-copy input { flex-basis: 100%; }
+.config-command-bar .tools-preset-context,
+.config-command-bar .original-checkpoint-guidance { margin: 0; }
+.config-command-bar .config-presets-menu .draft-status { font-size: 13px; line-height: 19px; color: var(--config-muted); }
+.config-command-bar .config-operation-status { padding: 8px 12px; }
+@media (max-width: 850px) {
+  .config-command-bar .config-presets-menu { flex-basis: 150px; }
+  .config-command-bar .config-command-row-primary :is(button, summary) { padding-inline: 8px; }
+}
+@media (max-width: 680px) {
+  .config-command-bar .config-command-row-primary { height: auto; flex-wrap: wrap; }
+  .config-command-bar .calibration-commit-controls { flex-basis: 100%; }
+  .config-command-bar .config-presets-menu { flex: 1; }
+}

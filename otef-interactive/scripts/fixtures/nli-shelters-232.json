@@ -1,0 +1,281 @@
+{
+  "schemaVersion": 1,
+  "sourceUrls": {
+    "csv": "https://raw.githubusercontent.com/yuval-harpaz/alarms/refs/heads/master/data/oct7database.csv",
+    "map": "https://info.oct7database.com/iron_swords_locations.html"
+  },
+  "sourceSnapshotHashes": {
+    "oct7database.csv": "5bda48b4f5d85eb7dba9acd3bd1788ffd022dfa66be26153638e2db36046e44b",
+    "oct7database-map.html": "d5f3febc3112becb00205550d40f718db505b340cc3ab0492067fc711f7900ba"
+  },
+  "nearbyPersonPids": [
+    "1036",
+    "1051",
+    "1517",
+    "1520",
+    "1521",
+    "1572",
+    "695",
+    "793",
+    "800",
+    "867",
+    "868",
+    "953"
+  ],
+  "shelters": [
+    {
+      "id": "nli-shelter-mefalsim",
+      "nameHe": "מיגונית מפלסים",
+      "sourceEventLocation": "Mefalsim Bomb Shelter",
+      "coordinates": [
+        34.56414,
+        31.50438
+      ],
+      "personPids": [
+        "1498",
+        "703",
+        "873",
+        "874"
+      ],
+      "coordinateChoice": "Reviewed original Oct7Database event marker; do not average or relocate",
+      "publishedMarkers": [
+        {
+          "latitude": 31.50438,
+          "longitude": 34.56414
+        }
+      ]
+    },
+    {
+      "id": "nli-shelter-alumim-west",
+      "nameHe": "מיגונית בכניסה לעלומים",
+      "sourceEventLocation": "Alumim Bomb Shelter (West)",
+      "coordinates": [
+        34.51639,
+        31.450432
+      ],
+      "personPids": [
+        "1618",
+        "689",
+        "723",
+        "730",
+        "752",
+        "955",
+        "961"
+      ],
+      "coordinateChoice": "Reviewed original Oct7Database event marker; do not average or relocate",
+      "publishedMarkers": [
+        {
+          "latitude": 31.45033,
+          "longitude": 34.51646
+        },
+        {
+          "latitude": 31.450432,
+          "longitude": 34.51639
+        }
+      ]
+    },
+    {
+      "id": "nli-shelter-beeri",
+      "nameHe": "מיגונית בצומת בארי",
+      "sourceEventLocation": "Be'eri Bomb Shelter",
+      "coordinates": [
+        34.49694,
+        31.4288
+      ],
+      "personPids": [
+        "1303",
+        "1421",
+        "1454",
+        "1499",
+        "1548",
+        "1569",
+        "705",
+        "782",
+        "812",
+        "814",
+        "847",
+        "863",
+        "894",
+        "913"
+      ],
+      "coordinateChoice": "Reviewed original Oct7Database event marker; do not average or relocate",
+      "publishedMarkers": [
+        {
+          "latitude": 31.4288,
+          "longitude": 34.49694
+        }
+      ]
+    },
+    {
+      "id": "nli-shelter-nova-entrance",
+      "nameHe": "פסטיבל נובה; מיגונית חניון רעים",
+      "sourceEventLocation": "Nova Entrance Bomb Shelter",
+      "coordinates": [
+        34.473757,
+        31.39998
+      ],
+      "personPids": [
+        "675",
+        "702",
+        "735"
+      ],
+      "coordinateChoice": "Reviewed original Oct7Database event marker; do not average or relocate",
+      "publishedMarkers": [
+        {
+          "latitude": 31.39998,
+          "longitude": 34.473757
+        }
+      ]
+    },
+    {
+      "id": "nli-shelter-reim-west",
+      "nameHe": "מיגונית בכניסה לרעים (מערב)",
+      "sourceEventLocation": "Re'im Bomb Shelter (West)",
+      "coordinates": [
+        34.457993,
+        31.389735
+      ],
+      "personPids": [
+        "1318",
+        "1383",
+        "1446",
+        "1470",
+        "1535",
+        "1536",
+        "677",
+        "722",
+        "744",
+        "745",
+        "773",
+        "778",
+        "787",
+        "796",
+        "822",
+        "830",
+        "844",
+        "850",
+        "915",
+        "922"
+      ],
+      "coordinateChoice": "Reviewed original Oct7Database event marker; do not average or relocate",
+      "publishedMarkers": [
+        {
+          "latitude": 31.389735,
+          "longitude": 34.457993
+        },
+        {
+          "latitude": 31.389926,
+          "longitude": 34.458001
+        }
+      ]
+    },
+    {
+      "id": "nli-shelter-reim-east",
+      "nameHe": "מיגונית בכניסה לרעים (מזרח)",
+      "sourceEventLocation": "Re'im Bomb Shelter (East)",
+      "coordinates": [
+        34.459024,
+        31.389705
+      ],
+      "personPids": [
+        "1301",
+        "1334",
+        "1424",
+        "1426",
+        "1427",
+        "1428",
+        "1455",
+        "1471",
+        "1507",
+        "1570",
+        "1619",
+        "1631",
+        "692",
+        "693",
+        "700",
+        "720",
+        "724",
+        "739",
+        "774",
+        "806",
+        "807",
+        "808",
+        "811",
+        "813",
+        "869",
+        "890",
+        "951",
+        "962"
+      ],
+      "coordinateChoice": "Reviewed original Oct7Database event marker; do not average or relocate",
+      "publishedMarkers": [
+        {
+          "latitude": 31.389705,
+          "longitude": 34.459024
+        }
+      ]
+    },
+    {
+      "id": "nli-shelter-gama-north",
+      "nameHe": "מיגונית בצומת גמה (צפון)",
+      "sourceEventLocation": "Gama Junction Bomb Shelter (North)",
+      "coordinates": [
+        34.447506,
+        31.381383
+      ],
+      "personPids": [
+        "1476",
+        "1477",
+        "740"
+      ],
+      "coordinateChoice": "Reviewed original Oct7Database event marker; do not average or relocate",
+      "publishedMarkers": [
+        {
+          "latitude": 31.381383,
+          "longitude": 34.447506
+        }
+      ]
+    },
+    {
+      "id": "nli-shelter-gama-west",
+      "nameHe": "מיגונית בצומת גמה (מערב)",
+      "sourceEventLocation": "Gama Junction Bomb Shelter (West)",
+      "coordinates": [
+        34.446617,
+        31.380941
+      ],
+      "personPids": [
+        "681",
+        "907"
+      ],
+      "coordinateChoice": "Reviewed original Oct7Database event marker; do not average or relocate",
+      "publishedMarkers": [
+        {
+          "latitude": 31.380941,
+          "longitude": 34.446617
+        }
+      ]
+    },
+    {
+      "id": "nli-shelter-gama-south",
+      "nameHe": "מיגונית בצומת גמה (דרום)",
+      "sourceEventLocation": "Gama Junction Bomb Shelter (South)",
+      "coordinates": [
+        34.44717,
+        31.38013
+      ],
+      "personPids": [
+        "1358",
+        "1440",
+        "1441"
+      ],
+      "coordinateChoice": "Reviewed original Oct7Database event marker; do not average or relocate",
+      "publishedMarkers": [
+        {
+          "latitude": 31.38013,
+          "longitude": 34.44717
+        }
+      ]
+    }
+  ]
+}

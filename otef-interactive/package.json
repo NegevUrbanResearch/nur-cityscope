@@ -1,0 +1,33 @@
+{
+  "name": "otef-interactive",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Tests and tooling for the OTEF interactive frontend (Leaflet map, projection, remote controller).",
+  "scripts": {
+    "publish:frontend-version": "node scripts/write-frontend-version.mjs",
+    "pretest": "npm run publish:frontend-version",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "test:name-wall-exhibit": "node scripts/require-name-wall-exhibit-gate.mjs",
+    "prebuild:frontend": "npm run publish:frontend-version",
+    "build:frontend": "vite build",
+    "predev:frontend": "npm run publish:frontend-version",
+    "dev:frontend": "vite",
+    "generate:place-catalog": "node scripts/place-navigation/generate-place-catalog.mjs",
+    "check:place-catalog": "node scripts/place-navigation/generate-place-catalog.mjs --check",
+    "generate:nova-escape-index": "node --experimental-detect-module scripts/generate-nova-escape-index.mjs public/processed/layers/nli/fleeing_route.geojson public/source/layers/nli/gis/investigation_polygons.geojson public/source/layers/nli/gis/lines.geojson public/processed/layers/nli/investigation_settlements.geojson public/processed/layers/nli/fleeing_route_impacts.json"
+  },
+  "devDependencies": {
+    "@vitest/coverage-v8": "^4.0.18",
+    "jsdom": "^29.1.1",
+    "vite": "^5.4.19",
+    "vitest": "^4.0.18"
+  },
+  "dependencies": {
+    "maplibre-gl": "5.24.0",
+    "pmtiles": "^4.4.1",
+    "proj4": "^2.20.9",
+    "reveal.js": "5.2.1"
+  }
+}

@@ -1,0 +1,525 @@
+import { describe, expect, it } from "vitest";
+import {
+  DARK_BASEMAP_GUTTMAN_FONT_FACE_URL,
+  DARK_BASEMAP_KNOWN_PLACE_TEXT_SIZE,
+  DARK_BASEMAP_PLACE_TEXT_FONT,
+  DARK_BASEMAP_TEXT_COLOR,
+  DARK_BASEMAP_TEXT_FIELD,
+  DARK_BASEMAP_UNKNOWN_PLACE_SIZE_SCALE,
+  DARK_BASEMAP_UNKNOWN_PLACE_TEXT_OPACITY,
+  applyDarkBasemapLabelPolicy,
+  collectKnownBasemapPlaceNames,
+  ensureGisNovaPlaceLabel,
+  GIS_NOVA_PLACE_LABEL_LAYER_ID,
+  raiseDarkBasemapPlaceLabels,
+} from "../../frontend/src/map/dark-basemap-labels.js";
+import { createFakeMapLibreMap } from "../helpers/fake-maplibre-map.js";
+import openFreeMapDarkStyle from "../../frontend/src/map/basemaps/openfreemap-dark.js";
+import * as labelsPolicy from '../../frontend/src/map/dark-basemap-labels.js';
+
+it('installs every canonical settlement independently of basemap tiles and zoom', () => {
+  const map = createFakeMapLibreMap();
+  labelsPolicy.ensureGisSettlementPlaceLabels(map);
+  const source = map.getSource('gis-settlement-place-labels');
+  const data = source._data || source.data;
+  const names = data.features.map(f => f.properties.cityname);
+  expect(names).toContain('עין הבשור');
+  expect(names).toContain('ניר עוז');
+  expect(names).not.toContain('מועצה אזורית אשכול');
+  expect(names).not.toContain('מכללת ספיר');
+  expect(names).not.toContain('איבים');
+  expect(names).not.toContain('שדי אברהם');
+  expect(names).not.toContain('פרי גן');
+  expect(names).not.toContain('נתיבות');
+  const layer = map.getLayer('gis-settlement-place-labels');
+  expect(layer.minzoom ?? 0).toBe(0);
+  expect(layer.layout['text-allow-overlap']).toBe(true);
+});
+
+const BILINGUAL_NAME_FIELD = [
+  "case",
+  ["has", "name:nonlatin"],
+  ["concat", ["get", "name:latin"], "\n", ["get", "name:nonlatin"]],
+  ["coalesce", ["get", "name_en"], ["get", "name"]],
+];
+
+function layer(id, extras) {
+  return {
+    id,
+    type: "symbol",
+    source: "openmaptiles",
+    ...extras,
+  };
+}
+
+function evaluateExpression(expression, properties) {
+  if (!Array.isArray(expression)) return expression;
+  switch (expression[0]) {
+    case "get": return properties[expression[1]];
+    case "literal": return expression[1];
+    case "coalesce": return expression.slice(1).map(value => evaluateExpression(value, properties)).find(value => value != null);
+    case "in": return evaluateExpression(expression[2], properties).includes(evaluateExpression(expression[1], properties));
+    case "case": return evaluateExpression(expression[1], properties)
+      ? evaluateExpression(expression[2], properties) : evaluateExpression(expression[3], properties);
+    default: throw new Error(`Unsupported test expression: ${expression[0]}`);
+  }
+}
+
+describe("applyDarkBasemapLabelPolicy", () => {
+  it("emphasizes Ashkelon, Netivot, and Ofakim without hiding their Hebrew or English labels", () => {
+    const towns = [
+      { he: "אשקלון", en: "Ashkelon" },
+      { he: "נתיבות", en: "Netivot" },
+      { he: "אופקים", en: "Ofakim" },
+    ];
+    const baseStyle = { version: 8, layers: [layer("place_city", {
+      "source-layer": "place",
+      layout: { "text-field": BILINGUAL_NAME_FIELD, "text-size": 10 },
+      paint: { "text-color": "white" },
+    })] };
+
+    for (const language of ["he", "en"]) {
+      const result = applyDarkBasemapLabelPolicy(baseStyle, { language }).layers[0];
+      const nameProperty = language === "he" ? "name:he" : "name:en";
+      for (const town of towns) {
+        const knownProperties = { [nameProperty]: town[language] };
+        const unknownProperties = { [nameProperty]: "Unknown place" };
+        expect(evaluateExpression(result.layout["text-size"], knownProperties)).toBe(DARK_BASEMAP_KNOWN_PLACE_TEXT_SIZE);
+        expect(evaluateExpression(result.paint["text-opacity"], knownProperties)).toBe(DARK_BASEMAP_UNKNOWN_PLACE_TEXT_OPACITY);
+        expect(evaluateExpression(result.layout["text-size"], unknownProperties)).toBe(10 * DARK_BASEMAP_UNKNOWN_PLACE_SIZE_SCALE);
+        expect(evaluateExpression(result.paint["text-opacity"], unknownProperties)).toBe(DARK_BASEMAP_UNKNOWN_PLACE_TEXT_OPACITY);
+      }
+    }
+
+    const defaultHebrewLayer = applyDarkBasemapLabelPolicy(baseStyle).layers[0];
+    const overlayBackedProperties = { "name:he": "בארי" };
+    expect(evaluateExpression(defaultHebrewLayer.layout["text-size"], overlayBackedProperties)).toBe(DARK_BASEMAP_KNOWN_PLACE_TEXT_SIZE);
+    expect(evaluateExpression(defaultHebrewLayer.paint["text-opacity"], overlayBackedProperties)).toBe(0);
+  });
+
+  it('uses only English or Latin names for all named basemap layers in English mode', () => {
+    const layers = ['place', 'transportation_name', 'water_name', 'poi'].map((sourceLayer, i) => layer(`label-${i}`, {
+      'source-layer': sourceLayer, layout: { 'text-field': BILINGUAL_NAME_FIELD },
+    }));
+    const result = applyDarkBasemapLabelPolicy({ version: 8, layers }, { language: 'en' });
+    for (const item of result.layers) {
+      expect(item.layout['text-field']).toEqual(['coalesce', ['get', 'name:en'], ['get', 'name_en'], ['get', 'name:latin'], '']);
+      expect(item.layout['text-font']).toEqual(item['source-layer'] === 'place'
+        ? ['NLI Content Hadassah Friedlaender'] : ['Arial']);
+    }
+  });
+  it('updates live basemap labels and restores Hebrew without changing shields or opacity', () => {
+    const baseline = applyDarkBasemapLabelPolicy(openFreeMapDarkStyle);
+    const map = createFakeMapLibreMap({ layers: baseline.layers });
+    const named = baseline.layers.filter(item => item.type === 'symbol' && item.layout?.['text-field'] != null && !JSON.stringify(item.layout['text-field']).includes('"ref"'));
+    raiseDarkBasemapPlaceLabels(map, { language: 'en' });
+    for (const item of named) expect(map.getLayoutProperty(item.id, 'text-field')).toEqual(['coalesce', ['get', 'name:en'], ['get', 'name_en'], ['get', 'name:latin'], '']);
+    raiseDarkBasemapPlaceLabels(map);
+    expect(map.getLayoutProperty(named[0].id, 'text-font')).toEqual(['Arial']);
+    raiseDarkBasemapPlaceLabels(map, { language: 'he' });
+    for (const item of named) {
+      expect(map.getLayoutProperty(item.id, 'text-field')).toEqual(item.layout['text-field']);
+      expect(map.getLayoutProperty(item.id, 'text-font')).toEqual(item.layout['text-font']);
+    }
+    expect(map.calls.filter(call => call.method === 'setPaintProperty')).toHaveLength(0);
+  });
+  it("shows Hebrew then English then local names on place layers, in white, without uppercase", () => {
+    const style = {
+      version: 8,
+      layers: [
+        layer("place_city", {
+          "source-layer": "place",
+          layout: {
+            "text-field": BILINGUAL_NAME_FIELD,
+            "text-transform": "uppercase",
+          },
+          paint: {
+            "text-color": "rgb(101,101,101)",
+            "text-halo-color": "rgba(0,0,0,0.7)",
+          },
+        }),
+      ],
+    };
+
+    const next = applyDarkBasemapLabelPolicy(style);
+
+    expect(next.layers[0].layout["text-field"]).toEqual(DARK_BASEMAP_TEXT_FIELD);
+    expect(DARK_BASEMAP_TEXT_FIELD).toEqual([
+      "coalesce",
+      ["get", "name:he"],
+      ["get", "name:en"],
+      ["get", "name"],
+    ]);
+    expect(next.layers[0].paint["text-color"]).toBe(DARK_BASEMAP_TEXT_COLOR);
+    expect(DARK_BASEMAP_TEXT_COLOR).toBe("#ffffff");
+    expect(next.layers[0].layout["text-transform"]).toBeUndefined();
+    expect(next.layers[0].paint["text-halo-color"]).toBe("rgba(0,0,0,0.7)");
+    expect(style.layers[0].layout["text-field"]).toEqual(BILINGUAL_NAME_FIELD);
+  });
+
+  it("sets place labels to the resolved content font stack without a style font registry", () => {
+    const style = {
+      version: 8,
+      glyphs: "https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf",
+      layers: [
+        layer("place_city", {
+          "source-layer": "place",
+          layout: { "text-field": BILINGUAL_NAME_FIELD, "text-font": ["Noto Sans Regular"], "text-size": 10 },
+          paint: { "text-color": "rgb(101,101,101)" },
+        }),
+      ],
+    };
+
+    const next = applyDarkBasemapLabelPolicy(style, { knownPlaceNames: ["בארי"] });
+
+    expect(DARK_BASEMAP_PLACE_TEXT_FONT).toEqual(["Guttman Hatzvi", "Arial"]);
+    expect(next.layers[0].layout["text-font"]).toEqual(DARK_BASEMAP_PLACE_TEXT_FONT);
+    expect(next["font-faces"]).toBeUndefined();
+    expect(DARK_BASEMAP_GUTTMAN_FONT_FACE_URL).toBe("./fonts/Guttman-Hatzvi.ttf");
+    expect(style["font-faces"]).toBeUndefined();
+  });
+
+  it("uses the local Arial stack for road-name labels", () => {
+    const style = {
+      version: 8,
+      layers: [
+        layer("highway_name_other", {
+          "source-layer": "transportation_name",
+          layout: {
+            "text-field": BILINGUAL_NAME_FIELD,
+            "text-font": ["Noto Sans Regular"],
+            "text-size": 10,
+          },
+          paint: { "text-color": "rgba(80, 78, 78, 1)" },
+        }),
+      ],
+    };
+
+    const next = applyDarkBasemapLabelPolicy(style, { knownPlaceNames: ["בארי"] });
+
+    expect(next.layers[0].layout["text-font"]).toEqual(["Arial"]);
+    expect(next.layers[0].layout["text-size"]).toBe(10);
+    expect(next.layers[0].paint["text-opacity"]).toBeUndefined();
+  });
+
+  it("makes known settlement names larger and other place names quieter", () => {
+    const style = {
+      version: 8,
+      layers: [
+        layer("place_village", {
+          "source-layer": "place",
+          layout: { "text-field": BILINGUAL_NAME_FIELD, "text-size": 10 },
+          paint: { "text-color": "rgb(101,101,101)" },
+        }),
+      ],
+    };
+
+    const next = applyDarkBasemapLabelPolicy(style, { knownPlaceNames: ["בארי", "Be'eri"] });
+    const knownMatch = ["in", DARK_BASEMAP_TEXT_FIELD, ["literal", ["בארי", "Be'eri"]]];
+
+    expect(DARK_BASEMAP_KNOWN_PLACE_TEXT_SIZE).toBe(14);
+    expect(next.layers[0].layout["text-size"]).toEqual([
+      "case",
+      knownMatch,
+      DARK_BASEMAP_KNOWN_PLACE_TEXT_SIZE,
+      10 * DARK_BASEMAP_UNKNOWN_PLACE_SIZE_SCALE,
+    ]);
+    expect(next.layers[0].paint["text-opacity"]).toEqual([
+        "case",
+        knownMatch,
+        0,
+      DARK_BASEMAP_UNKNOWN_PLACE_TEXT_OPACITY,
+    ]);
+    expect(DARK_BASEMAP_UNKNOWN_PLACE_TEXT_OPACITY).toBeGreaterThan(0.6);
+    expect(DARK_BASEMAP_UNKNOWN_PLACE_TEXT_OPACITY).toBeLessThan(1);
+    expect(DARK_BASEMAP_UNKNOWN_PLACE_SIZE_SCALE).toBeLessThan(1);
+  });
+
+  it("keeps zoom interpolations as the top-level text-size expression", () => {
+    const interpolateSize = [
+      "interpolate",
+      ["linear"],
+      ["zoom"],
+      0,
+      9,
+      1,
+      11,
+    ];
+    const style = {
+      version: 8,
+      layers: [
+        layer("place_country_other", {
+          "source-layer": "place",
+          layout: { "text-field": BILINGUAL_NAME_FIELD, "text-size": interpolateSize },
+          paint: { "text-color": "rgb(101,101,101)" },
+        }),
+      ],
+    };
+
+    const next = applyDarkBasemapLabelPolicy(style, { knownPlaceNames: ["בארי"] });
+    const size = next.layers[0].layout["text-size"];
+    const knownMatch = ["in", DARK_BASEMAP_TEXT_FIELD, ["literal", ["בארי"]]];
+
+    expect(size[0]).toBe("interpolate");
+    expect(size[2]).toEqual(["zoom"]);
+    expect(size[4]).toEqual([
+      "case",
+      knownMatch,
+      DARK_BASEMAP_KNOWN_PLACE_TEXT_SIZE,
+      9 * DARK_BASEMAP_UNKNOWN_PLACE_SIZE_SCALE,
+    ]);
+    expect(size[6]).toEqual([
+      "case",
+      knownMatch,
+      DARK_BASEMAP_KNOWN_PLACE_TEXT_SIZE,
+      11 * DARK_BASEMAP_UNKNOWN_PLACE_SIZE_SCALE,
+    ]);
+  });
+
+  it("collects selectable yeshuv and custom catalog names, including a קיבוץ prefix", () => {
+    const names = collectKnownBasemapPlaceNames({
+      entries: [
+        {
+          type: "yeshuv",
+          selectable: true,
+          name: { he: "בארי", en: "Be'eri" },
+          aliases: { he: ["בארי"], en: ["Beeri"] },
+        },
+        {
+          type: "custom",
+          selectable: true,
+          name: { he: "נובה", en: "Nova" },
+          aliases: { he: ["נובה"] },
+        },
+        { type: "yeshuv", selectable: false, name: { he: "מוסתר" } },
+        { type: "poi", selectable: true, name: { he: "צומת" } },
+      ],
+    });
+
+    expect(names).toEqual(
+      expect.arrayContaining(["בארי", "Be'eri", "Beeri", "קיבוץ בארי", "נובה", "Nova"]),
+    );
+    expect(names).not.toContain("מוסתר");
+    expect(names).not.toContain("צומת");
+  });
+
+  it("does not emphasize nearby cities absent from the projection settlement catalog", () => {
+    const names = collectKnownBasemapPlaceNames({ entries: [] });
+
+    expect(names).toEqual([]);
+    expect(names).not.toContain("קיבוץ נתיבות");
+    expect(names).not.toContain("קיבוץ אופקים");
+    expect(names).not.toContain("קיבוץ אשקלון");
+  });
+
+  it("applies the same name and color policy to named road labels", () => {
+    const style = {
+      version: 8,
+      layers: [
+        layer("highway_name_other", {
+          "source-layer": "transportation_name",
+          layout: {
+            "text-field": BILINGUAL_NAME_FIELD,
+            "text-transform": "uppercase",
+          },
+          paint: { "text-color": "rgba(80, 78, 78, 1)" },
+        }),
+      ],
+    };
+
+    const next = applyDarkBasemapLabelPolicy(style);
+
+    expect(next.layers[0].layout["text-field"]).toEqual(DARK_BASEMAP_TEXT_FIELD);
+    expect(next.layers[0].paint["text-color"]).toBe("#ffffff");
+    expect(next.layers[0].layout["text-transform"]).toBeUndefined();
+  });
+
+  it("uses local fonts for every text-bearing symbol, including references and water names", () => {
+    const motorway = layer("highway_name_motorway", {
+      "source-layer": "transportation_name",
+      layout: { "text-field": ["to-string", ["get", "ref"]] },
+      paint: { "text-color": "hsl(0,0%,37%)" },
+    });
+    const water = layer("water_name", {
+      "source-layer": "water_name",
+      layout: { "text-field": BILINGUAL_NAME_FIELD },
+      paint: { "text-color": "hsla(0,0%,0%,0.7)" },
+    });
+    const fill = {
+      id: "building",
+      type: "fill",
+      source: "openmaptiles",
+      paint: { "fill-color": "rgb(10,10,10)" },
+    };
+    const iconOnly = layer("icon_only", { layout: { "icon-image": "station" } });
+    const style = {
+      version: 8,
+      glyphs: "https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf",
+      layers: [motorway, water, fill, iconOnly],
+    };
+
+    const next = applyDarkBasemapLabelPolicy(style);
+
+    expect(next.glyphs).toBeUndefined();
+    expect(next.layers[0].layout["text-field"]).toEqual(motorway.layout["text-field"]);
+    expect(next.layers[0].layout["text-font"]).toEqual(["Arial"]);
+    expect(next.layers[1].layout["text-font"]).toEqual(["Arial"]);
+    expect(next.layers[1].layout["text-field"]).toEqual(water.layout["text-field"]);
+    expect(next.layers[2]).toEqual(fill);
+    expect(next.layers[3]).toEqual(iconOnly);
+  });
+
+  it("uses local glyph generation and explicit local stacks on the actual dark style", async () => {
+    globalThis.maplibregl = {
+      addProtocol: () => {},
+      Map: function Map() {},
+      getRTLTextPluginStatus: () => "unavailable",
+      setRTLTextPlugin: () => {},
+    };
+    globalThis.pmtiles = {
+      Protocol: function Protocol() {
+        this.tile = () => {};
+      },
+    };
+    const { BASEMAP_STYLES } = await import("../../frontend/src/map/maplibre-map.js");
+
+    expect(BASEMAP_STYLES.dark.glyphs).toBeUndefined();
+    expect(BASEMAP_STYLES.dark["font-faces"]).toBeUndefined();
+    const textLayers = BASEMAP_STYLES.dark.layers.filter(
+      (candidate) => candidate.type === "symbol" && candidate.layout?.["text-field"] != null,
+    );
+    expect(textLayers.length).toBeGreaterThan(0);
+    for (const candidate of textLayers) {
+      expect(candidate.layout["text-font"]).toEqual(
+        candidate["source-layer"] === "place" ? ["Guttman Hatzvi", "Arial"] : ["Arial"],
+      );
+      expect(JSON.stringify(candidate.layout["text-font"])).not.toContain("Noto");
+    }
+  });
+});
+
+describe("raiseDarkBasemapPlaceLabels", () => {
+  it("reinstalls the current ready NLI alias after style reload without changing road fonts", () => {
+    const roadId = openFreeMapDarkStyle.layers.find(item => item['source-layer'] === 'transportation_name' && item.type === 'symbol').id;
+    const placeId = openFreeMapDarkStyle.layers.find(item => item['source-layer'] === 'place' && item.type === 'symbol').id;
+    const map = createFakeMapLibreMap({ layers: [
+      { id: placeId, type: "symbol", "source-layer": "place", layout: { "text-font": ["Arial"] } },
+      { id: roadId, type: "symbol", "source-layer": "transportation_name", layout: { "text-font": ["Arial"] } },
+    ] });
+    raiseDarkBasemapPlaceLabels(map, { language: "en", fontChoices: { he: "default", en: "marcellus" } });
+    expect(map.getLayoutProperty(placeId, "text-font")).toEqual(["NLI Content Marcellus"]);
+    expect(map.getLayoutProperty(roadId, "text-font")).toEqual(["Arial"]);
+    const nextStyle = createFakeMapLibreMap({ layers: [
+      { id: placeId, type: "symbol", "source-layer": "place", layout: { "text-font": ["Arial"] } },
+      { id: roadId, type: "symbol", "source-layer": "transportation_name", layout: { "text-font": ["Arial"] } },
+    ] });
+    raiseDarkBasemapPlaceLabels(nextStyle, { language: "en", fontChoices: { he: "default", en: "marcellus" } });
+    expect(nextStyle.getLayoutProperty(placeId, "text-font")).toEqual(["NLI Content Marcellus"]);
+    expect(nextStyle.getLayoutProperty(roadId, "text-font")).toEqual(["Arial"]);
+  });
+  it("moves basemap place labels above later fill overlays and keeps people names on top", () => {
+    const map = createFakeMapLibreMap({
+      layers: [
+        { id: "place_village", type: "symbol", "source-layer": "place" },
+        { id: "place_city", type: "symbol", "source-layer": "place" },
+        { id: "highway_name_other", type: "symbol", "source-layer": "transportation_name" },
+        { id: "land_use__שטחים_פתוחים__fill__0", type: "fill" },
+        { id: "projector_base__ישובים__0", type: "line" },
+        { id: "nli__people_names__labels", type: "symbol" },
+        { id: "otef-person-selection-halo", type: "circle" },
+      ],
+    });
+
+    raiseDarkBasemapPlaceLabels(map);
+
+    expect(map.getStyle().layers.map((layer) => layer.id)).toEqual([
+      "highway_name_other",
+      "land_use__שטחים_פתוחים__fill__0",
+      "projector_base__ישובים__0",
+      "place_village",
+      "place_city",
+      "gis-settlement-place-labels",
+      GIS_NOVA_PLACE_LABEL_LAYER_ID,
+      "nli__people_names__labels",
+      "otef-person-selection-halo",
+    ]);
+  });
+
+  it("suppresses only dark place labels while a raster basemap is also present", () => {
+    const darkPlaceId = openFreeMapDarkStyle.layers.find(
+      (layer) => layer.type === "symbol" && layer["source-layer"] === "place",
+    ).id;
+    expect(openFreeMapDarkStyle.layers.some((layer) => layer.id === "custom-memorial-place")).toBe(false);
+
+    const map = createFakeMapLibreMap({
+      layers: [
+        { id: darkPlaceId, type: "symbol", source: "openmaptiles", "source-layer": "place" },
+        { id: "custom-memorial-place", type: "symbol", source: "memorial", "source-layer": "place" },
+        { id: "nli__people_names__labels", type: "symbol" },
+        { id: "otef-person-selection-halo", type: "circle" },
+        { id: "osm-tiles", type: "raster", source: "osm" },
+        { id: "investigation-fill", type: "fill", paint: { "fill-opacity": 1 } },
+      ],
+    });
+
+    raiseDarkBasemapPlaceLabels(map);
+
+    expect(map.getStyle().layers.map((layer) => layer.id)).toEqual([
+      darkPlaceId,
+      "osm-tiles",
+      "investigation-fill",
+      "custom-memorial-place",
+      "gis-settlement-place-labels",
+      GIS_NOVA_PLACE_LABEL_LAYER_ID,
+      "nli__people_names__labels",
+      "otef-person-selection-halo",
+    ]);
+    expect(map.getLayer(GIS_NOVA_PLACE_LABEL_LAYER_ID)).toBeTruthy();
+  });
+});
+
+describe("ensureGisNovaPlaceLabel", () => {
+  it("paints Nova on GIS like known settlement names, between Re'im and Be'eri", () => {
+    const map = createFakeMapLibreMap();
+    ensureGisNovaPlaceLabel(map);
+
+    const layer = map.getLayer(GIS_NOVA_PLACE_LABEL_LAYER_ID);
+    expect(layer?.type).toBe("symbol");
+    expect(map.getLayoutProperty(GIS_NOVA_PLACE_LABEL_LAYER_ID, "text-field")).toBe("נובה");
+    expect(map.getLayoutProperty(GIS_NOVA_PLACE_LABEL_LAYER_ID, "text-font")).toEqual(DARK_BASEMAP_PLACE_TEXT_FONT);
+    expect(map.getLayoutProperty(GIS_NOVA_PLACE_LABEL_LAYER_ID, "text-size")).toBe(DARK_BASEMAP_KNOWN_PLACE_TEXT_SIZE);
+    expect(map.getPaintProperty(GIS_NOVA_PLACE_LABEL_LAYER_ID, "text-color")).toBe(DARK_BASEMAP_TEXT_COLOR);
+
+    const coords = map.getSource(GIS_NOVA_PLACE_LABEL_LAYER_ID)?.data?.features?.[0]?.geometry?.coordinates;
+    expect(coords[0]).toBeCloseTo(34.46982, 4);
+    expect(coords[1]).toBeCloseTo(31.39722, 4);
+  });
+
+  it("does not add a second Nova layer when GIS restacks", () => {
+    const map = createFakeMapLibreMap();
+    ensureGisNovaPlaceLabel(map);
+    ensureGisNovaPlaceLabel(map);
+    expect(map.getStyle().layers.filter((layer) => layer.id === GIS_NOVA_PLACE_LABEL_LAYER_ID)).toHaveLength(1);
+  });
+
+  it("hides the white GIS Nova label during the nova narrative", () => {
+    const map = createFakeMapLibreMap();
+    raiseDarkBasemapPlaceLabels(map, { narrativeId: "nova" });
+    expect(map.getLayer(GIS_NOVA_PLACE_LABEL_LAYER_ID)).toBeTruthy();
+    expect(map.getLayoutProperty(GIS_NOVA_PLACE_LABEL_LAYER_ID, "visibility")).toBe("none");
+  });
+
+  it("shows the white GIS Nova label again after nova ends", () => {
+    const map = createFakeMapLibreMap();
+    raiseDarkBasemapPlaceLabels(map, { narrativeId: "nova" });
+    raiseDarkBasemapPlaceLabels(map, { narrativeId: null });
+    expect(map.getLayoutProperty(GIS_NOVA_PLACE_LABEL_LAYER_ID, "visibility")).toBe("visible");
+  });
+
+  it("keeps the last nova hide preference when restacking without a narrative id", () => {
+    const map = createFakeMapLibreMap();
+    raiseDarkBasemapPlaceLabels(map, { narrativeId: "nova" });
+    raiseDarkBasemapPlaceLabels(map);
+    expect(map.getLayoutProperty(GIS_NOVA_PLACE_LABEL_LAYER_ID, "visibility")).toBe("none");
+  });
+});

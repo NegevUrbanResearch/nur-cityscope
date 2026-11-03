@@ -2,30 +2,83 @@ from django.db import models
 import os
 from django.utils import timezone
 
+from .projection_config_schema import legacy_projection_config_defaults
 
-def indicator_image_path(instance, filename):
+
+def indicator_media_path(instance, filename):
     """
-    Organize uploaded images by category/indicator name/state year
+    Organize uploaded media (images, videos, HTML, etc.) by category/indicator name/state
+    Supports UGC separation via is_user_generated flag
     """
     # Get indicator name and category
     indicator_name = instance.indicatorData.indicator.name.replace(" ", "_").lower()
     category = instance.indicatorData.indicator.category
+    is_ugc = instance.indicatorData.indicator.is_user_generated
 
-    # Try to get year from state, default to 2023
+    # Try to get state identifier from state_values
     try:
-        state_year = instance.indicatorData.state.state_values.get("year", 2023)
+        state_values = instance.indicatorData.state.state_values or {}
+        state_year = state_values.get("year", "")
+        scenario = state_values.get("scenario", "")
+        state_id = (
+            f"{state_year}_{scenario}".strip("_")
+            if (state_year or scenario)
+            else "default"
+        )
     except (AttributeError, KeyError, TypeError):
-        state_year = 2023
+        state_id = "default"
 
     # Get file extension
     ext = os.path.splitext(filename)[1].lower()
 
-    # Generate path: indicators/category/indicator_name_year.ext
-    return f"indicators/{category}/{indicator_name}_{state_year}{ext}"
+    # Separate folder for UGC content
+    prefix = "ugc_indicators" if is_ugc else "indicators"
+    return f"{prefix}/{category}/{indicator_name}_{state_id}{ext}"
+
+
+class Table(models.Model):
+    """
+    Higher-level container for organizing indicators by data source/table.
+    Examples: 'otef', 'idistrict'
+    """
+
+    id = models.AutoField(primary_key=True)
+    name = models.CharField(
+        max_length=100,
+        unique=True,
+        help_text="Internal name (e.g., 'otef', 'idistrict')",
+    )
+    display_name = models.CharField(
+        max_length=255, help_text="Human-readable display name"
+    )
+    description = models.TextField(
+        blank=True, null=True, help_text="Description of the table/data source"
+    )
+    is_active = models.BooleanField(
+        default=True, help_text="Whether this table is currently active"
+    )
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["name"]
+        verbose_name = "Table"
+        verbose_name_plural = "Tables"
+
+    def __str__(self):
+        return self.display_name or self.name
 
 
 class Indicator(models.Model):
     id = models.AutoField(primary_key=True)
+    table = models.ForeignKey(
+        Table,
+        on_delete=models.CASCADE,
+        related_name="indicators",
+        null=True,
+        blank=True,
+        help_text="The table/data source this indicator belongs to",
+    )
     indicator_id = models.IntegerField()
     name = models.CharField(max_length=100)
     has_states = models.BooleanField(default=False)
@@ -38,9 +91,19 @@ class Indicator(models.Model):
         ],
         default="mobility",
     )
+    is_user_generated = models.BooleanField(
+        default=False,
+        help_text="Whether this indicator was created by a user (vs preloaded system data)",
+    )
+
+    class Meta:
+        unique_together = [["table", "indicator_id"]]
+        indexes = [
+            models.Index(fields=["table", "indicator_id"]),
+        ]
 
     def __str__(self):
-        return self.name
+        return f"{self.table.name}/{self.name}"
 
 
 class State(models.Model):
@@ -59,6 +122,10 @@ class State(models.Model):
         blank=True,
         null=True,
         help_text="Human-readable name for the scenario",
+    )
+    is_user_generated = models.BooleanField(
+        default=False,
+        help_text="Whether this state was created by a user (vs preloaded system data)",
     )
 
     class Meta:
@@ -86,16 +153,37 @@ class IndicatorData(models.Model):
 
 
 class IndicatorImage(models.Model):
+    """
+    Stores media files (images, videos, HTML maps, etc.) for indicator data.
+    Note: Model name kept as IndicatorImage for backward compatibility,
+    but now supports all media types via FileField and media_type field.
+    """
+
+    MEDIA_TYPE_CHOICES = [
+        ("image", "Image"),
+        ("video", "Video"),
+        ("html_map", "HTML Map"),
+        ("deckgl_layer", "Deck.GL Layer"),
+    ]
+
     id = models.AutoField(primary_key=True)
     indicatorData = models.ForeignKey(
         IndicatorData, on_delete=models.CASCADE, related_name="images"
     )
-    image = models.ImageField(upload_to=indicator_image_path)
+    image = models.FileField(
+        upload_to=indicator_media_path
+    )  # Changed from ImageField to FileField
+    media_type = models.CharField(
+        max_length=20,
+        choices=MEDIA_TYPE_CHOICES,
+        default="image",
+        help_text="Type of media file (image, video, html_map, deckgl_layer)",
+    )
     uploaded_at = models.DateTimeField(default=timezone.now)
 
     def __str__(self):
         indicator_name = self.indicatorData.indicator.name
-        return f"Image for {indicator_name}"
+        return f"{self.media_type.title()} for {indicator_name}"
 
     class Meta:
         ordering = ["-uploaded_at"]
@@ -129,3 +217,510 @@ class LayerConfig(models.Model):
 
     def __str__(self):
         return f"LayerConfig {self.id}"
+
+
+class GISLayer(models.Model):
+    """
+    Stores GIS layer definitions (GeoJSON, vector tiles, etc.)
+    Each curated layer belongs to a Supabase project, allowing same-named
+    layers across different projects while preventing duplicates within one.
+    """
+
+    id = models.AutoField(primary_key=True)
+    table = models.ForeignKey(
+        Table, on_delete=models.CASCADE, related_name="gis_layers"
+    )
+    name = models.CharField(max_length=100)
+    display_name = models.CharField(max_length=255)
+    project_name = models.CharField(
+        max_length=255,
+        blank=True,
+        default="",
+    )
+    layer_type = models.CharField(
+        max_length=50,
+        choices=[
+            ("geojson", "GeoJSON"),
+            ("vector_tiles", "Vector Tiles"),
+            ("raster", "Raster"),
+        ],
+        default="geojson",
+    )
+    data = models.JSONField(default=dict)
+    file_path = models.CharField(max_length=500, blank=True, null=True)
+    style_config = models.JSONField(default=dict)
+    is_active = models.BooleanField(default=True)
+    order = models.IntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = [["table", "name", "project_name"]]
+        ordering = ["order", "name"]
+
+    def __str__(self):
+        project_part = (
+            f"/{self.project_name}" if getattr(self, "project_name", "") else ""
+        )
+        return f"{self.table.name}{project_part}/{self.display_name}"
+
+
+class WorkshopAutopublishSuppression(models.Model):
+    """
+    Records manual unpublish of a curated workshop layer so autopublish can skip
+    re-publishing until an explicit publish clears the row.
+    submission_id is stored normalized (see supabase_proxy._norm_submission_id_key).
+    """
+
+    table = models.ForeignKey(
+        Table,
+        on_delete=models.CASCADE,
+        related_name="workshop_autopublish_suppressions",
+    )
+    submission_id = models.CharField(max_length=64)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["table", "submission_id"],
+                name="uniq_workshop_suppression_per_submission",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.table.name}/{self.submission_id}"
+
+
+class CurationEditRevision(models.Model):
+    """
+    Append-only history of curation geometry edits.
+    Stores before/after geometry for immutable audit and comparison.
+    """
+
+    id = models.AutoField(primary_key=True)
+    table = models.ForeignKey(
+        Table, on_delete=models.CASCADE, related_name="curation_edit_revisions"
+    )
+    project_name = models.CharField(max_length=255, blank=True, default="")
+    submission_id = models.CharField(max_length=100, blank=True, default="")
+    feature_id = models.CharField(max_length=100)
+    edit_type = models.CharField(max_length=50, default="move_geometry")
+    before_geom = models.JSONField(default=dict)
+    after_geom = models.JSONField(default=dict)
+    edited_by = models.CharField(max_length=255, blank=True, default="")
+    reason = models.CharField(max_length=255, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["table", "feature_id", "-created_at"]),
+            models.Index(fields=["table", "submission_id", "-created_at"]),
+        ]
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.table.name}/{self.feature_id}@{self.created_at.isoformat() if self.created_at else 'n/a'}"
+
+
+class OTEFModelConfig(models.Model):
+    """
+    Stores OTEF physical model configuration (bounds, calibration, etc.)
+    """
+
+    id = models.AutoField(primary_key=True)
+    table = models.OneToOneField(
+        Table, on_delete=models.CASCADE, related_name="otef_config"
+    )
+    model_bounds = models.JSONField(default=dict)
+    model_image = models.FileField(upload_to="otef/models/", blank=True, null=True)
+    model_image_transparent = models.FileField(
+        upload_to="otef/models/", blank=True, null=True
+    )
+    calibration_data = models.JSONField(default=dict)
+    coordinate_system = models.CharField(max_length=50, default="EPSG:2039")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"OTEF Config for {self.table.name}"
+
+
+class OTEFViewportState(models.Model):
+    """
+    Stores complete OTEF interactive state - single source of truth.
+    All controllers read from and write to this model.
+    """
+
+    # Default layer visibility states
+    DEFAULT_LAYERS = {
+        "roads": True,
+        "parcels": False,
+        "majorRoads": False,
+        "smallRoads": False,
+        "projector_base.SEA": False,
+        "projector_base.רקע_שחור": False,
+    }
+
+    # Default viewport (EPSG:2039 ITM coordinates for Otef area)
+    DEFAULT_VIEWPORT = {
+        "bbox": [165000, 595000, 175000, 605000],  # [minX, minY, maxX, maxY]
+        "corners": None,
+        "zoom": 15,
+    }
+
+    id = models.AutoField(primary_key=True)
+    table = models.OneToOneField(
+        Table, on_delete=models.CASCADE, related_name="otef_viewport"
+    )
+
+    # Viewport state (written by GIS map, or calculated server-side)
+    viewport = models.JSONField(default=dict)
+
+    # Layer visibility (written by remote controller)
+    layers = models.JSONField(default=dict)
+
+    # Animation state (written by remote controller)
+    animations = models.JSONField(default=dict)
+
+    # Optional hard-wall navigation bounds (polygon in EPSG:2039)
+    # Stored as an ordered list of {"x": number, "y": number} vertices
+    bounds_polygon = models.JSONField(default=list, blank=True)
+
+    viewer_angle_deg = models.FloatField(default=0.0)
+
+    workshop_auto_publish = models.BooleanField(default=False)
+    workshop_autopublish_started_at = models.DateTimeField(null=True, blank=True)
+    exhibit_mode = models.BooleanField(default=False)
+    active_experience = models.CharField(max_length=16, default="regular")
+    experience_revision = models.PositiveBigIntegerField(default=0)
+    saved_regular_context = models.JSONField(default=dict, blank=True)
+    saved_nli_context = models.JSONField(default=dict, blank=True)
+    experience_pending = models.JSONField(default=dict, blank=True)
+    experience_receipt = models.JSONField(default=dict, blank=True)
+    nli_bookmark = models.JSONField(default=dict, blank=True)
+    gaza_border_visible = models.BooleanField(default=False)
+
+    # Last projection slideshow command (start/stop + payload), replicated over otef WebSocket
+    projection_slideshow = models.JSONField(default=dict, blank=True)
+
+    # Shared NLI investigation clock (play/pause/seek), replicated over otef WebSocket
+    investigation_clock = models.JSONField(default=dict, blank=True)
+
+    person_selection = models.JSONField(default=dict, blank=True)
+
+    narrative_state = models.JSONField(default=dict, blank=True)
+
+    escape_overlay = models.JSONField(default=dict, blank=True)
+
+    nli_clock_layout = models.JSONField(default=dict, blank=True)
+
+    legend_settings = models.JSONField(default=dict, blank=True)
+
+    nli_clock_layout_revision = models.PositiveBigIntegerField(default=0)
+
+    legend_layout_revision = models.PositiveBigIntegerField(default=0)
+
+    settlement_name_settings = models.JSONField(default=dict, blank=True)
+
+    settlement_name_revision = models.PositiveBigIntegerField(default=0)
+
+    road_sign_settings = models.JSONField(default=dict, blank=True)
+
+    road_sign_revision = models.PositiveBigIntegerField(default=0)
+
+    basemap = models.CharField(max_length=16, default="osm")
+
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def save(self, *args, **kwargs):
+        """
+        When workshop_auto_publish turns on, record the transition time.
+        Covers ModelViewSet PATCH/partial_update as well as by_table and admin.
+        """
+        update_fields = kwargs.get("update_fields")
+        if update_fields is not None:
+            update_fields = set(update_fields)
+
+        set_started_at = False
+        if self.pk:
+            prev_wap = (
+                self.__class__.objects.filter(pk=self.pk)
+                .values_list("workshop_auto_publish", flat=True)
+                .first()
+            )
+            if prev_wap is not None and not prev_wap and self.workshop_auto_publish:
+                self.workshop_autopublish_started_at = timezone.now()
+                set_started_at = True
+        elif self.workshop_auto_publish:
+            self.workshop_autopublish_started_at = timezone.now()
+            set_started_at = True
+
+        if update_fields is not None and set_started_at:
+            update_fields.add("workshop_autopublish_started_at")
+            kwargs["update_fields"] = list(update_fields)
+
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"State for {self.table.name}"
+
+    def get_viewport_with_defaults(self):
+        """Return viewport with defaults for missing fields"""
+        viewport = self.viewport or {}
+        return {
+            "bbox": viewport.get("bbox", self.DEFAULT_VIEWPORT["bbox"]),
+            "corners": viewport.get("corners", self.DEFAULT_VIEWPORT["corners"]),
+            "zoom": viewport.get("zoom", self.DEFAULT_VIEWPORT["zoom"]),
+        }
+
+    def get_layers_with_defaults(self):
+        """Return layers with defaults for missing fields"""
+        layers = self.layers or {}
+        return {**self.DEFAULT_LAYERS, **layers}
+
+    def get_animations_with_defaults(self):
+        """Return animations with defaults"""
+        return self.animations or {}
+
+    def get_bounds_polygon(self):
+        """
+        Return bounds polygon as a list of vertices.
+        Always returns a list (possibly empty).
+        """
+        polygon = self.bounds_polygon or []
+        # Ensure it's a list to keep JSONField usages consistent
+        if isinstance(polygon, list):
+            return polygon
+        return []
+
+    def _extract_coord_value(self, coord):
+        """
+        Extract x, y from corner coordinate, handling multiple formats:
+        - Dict: {'x': val, 'y': val}
+        - List: [x, y]
+        """
+        if isinstance(coord, dict):
+            return coord.get("x", 0), coord.get("y", 0)
+        elif isinstance(coord, (list, tuple)) and len(coord) >= 2:
+            return coord[0], coord[1]
+        return 0, 0
+
+    def _has_valid_viewport_corners(self, corners):
+        if not isinstance(corners, dict):
+            return False
+        for key in ("sw", "se", "nw", "ne"):
+            point = corners.get(key)
+            if not isinstance(point, dict):
+                return False
+            x = point.get("x")
+            y = point.get("y")
+            if not isinstance(x, (int, float)) or not isinstance(y, (int, float)):
+                return False
+        return True
+
+    def _bbox_corners(self, bbox):
+        return {
+            "sw": {"x": bbox[0], "y": bbox[1]},
+            "se": {"x": bbox[2], "y": bbox[1]},
+            "nw": {"x": bbox[0], "y": bbox[3]},
+            "ne": {"x": bbox[2], "y": bbox[3]},
+        }
+
+    def apply_pan_command(self, direction, delta=0.15):
+        """
+        Apply a pan command server-side without requiring GIS map.
+        Modifies bbox based on direction and delta percentage.
+
+        Args:
+            direction: 'north', 'south', 'east', 'west', etc.
+            delta: Percentage of viewport size to pan (0.0-1.0)
+
+        Returns:
+            Updated viewport dict
+        """
+        viewport = self.get_viewport_with_defaults()
+        bbox = viewport["bbox"]
+
+        if not bbox or len(bbox) != 4:
+            return viewport
+
+        min_x, min_y, max_x, max_y = bbox
+        width = max_x - min_x
+        height = max_y - min_y
+
+        dx, dy = 0, 0
+
+        # Handle 8-way directions
+        if "north" in direction:
+            dy = height * delta
+        if "south" in direction:
+            dy = -height * delta
+        if "east" in direction:
+            dx = width * delta
+        if "west" in direction:
+            dx = -width * delta
+
+        new_bbox = [min_x + dx, min_y + dy, max_x + dx, max_y + dy]
+
+        if self._has_valid_viewport_corners(viewport.get("corners")):
+            viewport["corners"] = {
+                key: {
+                    "x": viewport["corners"][key]["x"] + dx,
+                    "y": viewport["corners"][key]["y"] + dy,
+                }
+                for key in ("sw", "se", "nw", "ne")
+            }
+        else:
+            viewport["corners"] = self._bbox_corners(new_bbox)
+
+        viewport["bbox"] = new_bbox
+        return viewport
+
+    def apply_zoom_command(self, new_zoom):
+        """
+        Apply a zoom command server-side without requiring GIS map.
+        Scales bbox around center based on zoom level change.
+
+        Args:
+            new_zoom: Target zoom level (10-19)
+
+        Returns:
+            Updated viewport dict
+        """
+        viewport = self.get_viewport_with_defaults()
+        bbox = viewport["bbox"]
+        current_zoom = viewport.get("zoom", 15)
+
+        if not bbox or len(bbox) != 4:
+            viewport["zoom"] = new_zoom
+            return viewport
+
+        min_x, min_y, max_x, max_y = bbox
+        center_x = (min_x + max_x) / 2
+        center_y = (min_y + max_y) / 2
+
+        # Each zoom level doubles/halves the scale
+        zoom_diff = new_zoom - current_zoom
+        scale_factor = 2 ** (-zoom_diff)  # Zoom in = smaller bbox
+
+        half_width = (max_x - min_x) / 2 * scale_factor
+        half_height = (max_y - min_y) / 2 * scale_factor
+
+        new_bbox = [
+            center_x - half_width,
+            center_y - half_height,
+            center_x + half_width,
+            center_y + half_height,
+        ]
+
+        viewport["bbox"] = new_bbox
+        viewport["zoom"] = new_zoom
+
+        if self._has_valid_viewport_corners(viewport.get("corners")):
+            viewport["corners"] = {
+                key: {
+                    "x": center_x + (viewport["corners"][key]["x"] - center_x) * scale_factor,
+                    "y": center_y + (viewport["corners"][key]["y"] - center_y) * scale_factor,
+                }
+                for key in ("sw", "se", "nw", "ne")
+            }
+        else:
+            viewport["corners"] = self._bbox_corners(new_bbox)
+
+        return viewport
+
+
+class LayerGroup(models.Model):
+    """
+    Represents a group of layers (e.g., "map_3_future", "_legacy").
+    Groups can be toggled on/off as a unit.
+    """
+
+    id = models.AutoField(primary_key=True)
+    table = models.ForeignKey(
+        Table, on_delete=models.CASCADE, related_name="layer_groups"
+    )
+    group_id = models.CharField(
+        max_length=100, help_text="Layer pack ID (e.g., 'map_3_future', '_legacy')"
+    )
+    enabled = models.BooleanField(
+        default=False, help_text="Whether the entire group is enabled"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = [["table", "group_id"]]
+        indexes = [
+            models.Index(fields=["table", "group_id"]),
+        ]
+        ordering = ["group_id"]
+
+    def __str__(self):
+        return f"{self.table.name}/{self.group_id}"
+
+
+class LayerState(models.Model):
+    """
+    Represents the visibility state of an individual layer within a group.
+    Layer ID format: "{group_id}.{layer_id}" (e.g., "map_3_future.mimushim")
+    """
+
+    id = models.AutoField(primary_key=True)
+    table = models.ForeignKey(
+        Table, on_delete=models.CASCADE, related_name="layer_states"
+    )
+    layer_id = models.CharField(
+        max_length=200, help_text="Full layer ID: group_id.layer_id"
+    )
+    enabled = models.BooleanField(
+        default=False, help_text="Whether this specific layer is visible"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = [["table", "layer_id"]]
+        indexes = [
+            models.Index(fields=["table", "layer_id"]),
+        ]
+        ordering = ["layer_id"]
+
+    def __str__(self):
+        return f"{self.table.name}/{self.layer_id}"
+
+
+def projection_config_defaults():
+    from .projection_warp_schema import migrate_projection_config_to_v8
+    return migrate_projection_config_to_v8(legacy_projection_config_defaults(), 35)
+
+
+def projection_presets_defaults():
+    return [{
+        "id": "original",
+        "name": "Original calibration",
+        "config": projection_config_defaults(),
+        "readOnly": True,
+    }]
+
+
+class OTEFStaffRemoteUpdates(models.Model):
+    table = models.OneToOneField(Table, on_delete=models.CASCADE, related_name="staff_remote_updates")
+    device_id = models.UUIDField(null=True, blank=True)
+    revision = models.PositiveBigIntegerField(default=0)
+    notice_build_id = models.CharField(max_length=25, null=True, blank=True)
+    notice_created_at = models.DateTimeField(null=True, blank=True)
+
+
+class OTEFProjectionCalibration(models.Model):
+    table = models.OneToOneField(Table, on_delete=models.CASCADE, related_name="projection_calibration")
+    working_config = models.JSONField(default=projection_config_defaults)
+    revision = models.PositiveBigIntegerField(default=0)
+    presets = models.JSONField(default=projection_presets_defaults)
+    selected_preset_id = models.CharField(max_length=64, default="original")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Projection calibration for {self.table.name}"

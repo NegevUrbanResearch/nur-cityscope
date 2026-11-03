@@ -1,0 +1,156 @@
+/* Geometry inspectors share one compact field and fitted page system. */
+.projection-config-app .config-field-row:has(.numeric-value-group) { display:block; }
+.numeric-value-group { display:flex; align-items:stretch; min-width:0; min-height:44px; border:1px solid var(--config-border); border-radius:8px; overflow:hidden; background:var(--config-surface); }
+.projection-config-app .numeric-value-group input[data-input=number] { width:100%; min-width:0; min-height:44px; padding:8px; border:0; border-radius:0; background:transparent; font-size:16px; font-variant-numeric:tabular-nums; }
+.projection-config-app .numeric-value-group :is(.numeric-sign,.nudge) { flex:0 0 44px; min-width:44px; min-height:44px; margin:0; border:0; border-radius:0; border-inline-start:1px solid var(--config-divider); background:var(--config-surface-raised); }
+.projection-config-app .numeric-value-group .numeric-sign { border-inline-start:0; border-inline-end:1px solid var(--config-divider); }
+.numeric-value-group .config-field-unit { align-self:center; padding-inline:4px 8px; white-space:nowrap; font-size:12px; }
+.projection-config-app .config-field-error:empty { display:none; }
+.projection-config-app .config-field-error:not(:empty) { min-height:0; margin-block:4px 0; font-size:12px; line-height:16px; }
+.projection-config-app :is(.parameter-editor-pages,.parameter-editor-sensitivity,.warp-editor-pages,.warp-grid-layout-pages,.point-match-pages) { display:flex; gap:4px; min-width:0; }
+.projection-config-app :is(.parameter-editor-pages,.parameter-editor-sensitivity,.warp-editor-pages,.warp-grid-layout-pages,.point-match-pages) button { flex:1; min-height:44px; min-width:0; padding:6px 8px; border:1px solid var(--config-border); border-radius:7px; font-size:13px; white-space:nowrap; }
+.projection-config-app :is(.parameter-editor-pages,.parameter-editor-sensitivity,.warp-editor-pages,.warp-grid-layout-pages,.point-match-pages) button[aria-pressed=true] { background:var(--config-accent); color:var(--config-accent-contrast,#fff); border-color:var(--config-accent); }
+.projection-config-app :is(.parameter-editor-pages,.parameter-editor-sensitivity,.warp-editor-pages,.warp-grid-layout-pages,.point-match-pages)[hidden] { display:none; }
+.projection-config-app .parameter-editor-dialog[data-presentation=panel] .parameter-editor-body { display:grid; grid-template-columns:minmax(0,1fr) 400px; gap:12px; overflow:visible; min-height:0; }
+.projection-config-app .parameter-editor-controls-column { display:flex; flex-direction:column; gap:8px; grid-column:2; grid-row:1; min-width:0; min-height:0; }
+.projection-config-app .parameter-editor-dialog[data-presentation=panel] .parameter-editor-fields { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); align-content:start; gap:10px; overflow:visible; padding:0; margin:0; border:0; background:transparent; }
+.projection-config-app .parameter-editor-dialog .parameter-editor-field { min-width:0; margin:0; padding:0; border:0; }
+.projection-config-app .parameter-editor-dialog .parameter-editor-field[hidden] { display:none; }
+.projection-config-app .parameter-editor-dialog .config-field-label { font-size:13px; line-height:18px; margin-block:0 4px; }
+.projection-config-app .parameter-editor-dialog :is(.config-field-range-row,.config-field-value,.numeric-sensitivity-group,.numeric-step) { display:none; }
+.projection-config-app .parameter-editor-dialog[data-presentation=panel] .parameter-editor-preview-column { display:flex; min-height:0; min-width:0; overflow:hidden; grid-column:1; grid-row:1; }
+.projection-config-app .parameter-editor-dialog .parameter-editor-previews { flex:1; min-height:0; align-content:center; }
+.projection-config-app .parameter-editor-dialog .parameter-preview-slot { min-height:0; max-height:100%; }
+.projection-config-app .parameter-editor-dialog .parameter-editor-preview-status:empty { display:none; }
+.projection-config-app .parameter-editor-dialog[data-page=preview] .parameter-editor-sensitivity { display:none; }
+.projection-config-app .warp-editor-dialog[data-presentation=panel] .warp-editor-body { display:grid; grid-template-columns:minmax(0,1fr) 400px; gap:12px; min-height:0; overflow:visible; }
+.projection-config-app .warp-editor-dialog[data-presentation=panel] .warp-editor-viewport { min-height:0; width:auto; height:auto; max-height:none; aspect-ratio:auto; }
+.projection-config-app .warp-editor-controls-column { grid-column:2; grid-row:1; display:flex; gap:8px; min-height:0; min-width:0; overflow:visible; }
+.projection-config-app .warp-editor-fine-panel { flex:0 0 auto; min-height:0; overflow:visible; }
+.projection-config-app .warp-editor-dialog .warp-precision-panel { display:grid; align-content:start; padding:0; border:0; gap:8px; background:transparent; }
+.projection-config-app .warp-precision-panel .warp-selection-status { margin:0; min-height:0; font-size:12px; line-height:16px; }
+.projection-config-app .warp-selection-picker { height:44px; min-height:44px; margin:0; font-size:14px; }
+.projection-config-app .warp-numeric { gap:8px; }
+.projection-config-app .warp-numeric .config-field-label { font-size:13px; line-height:18px; margin:0 0 4px; }
+.projection-config-app .warp-numeric .config-field-row { display:block; }
+.projection-config-app .warp-precision-panel .warp-step-row { display:grid; grid-template-columns:auto minmax(0,1fr); gap:8px; align-items:center; }
+.projection-config-app .warp-step-row .warp-step-label { margin:0; }
+.projection-config-app .warp-editor-fine-panel .warp-step { margin:0; min-height:44px; font-size:14px; }
+.projection-config-app .warp-precision-panel .warp-adjustment-row { display:grid; grid-template-columns:140px minmax(80px,1fr); align-items:stretch; gap:12px; }
+.projection-config-app .warp-adjustment-row .warp-arrows, .projection-config-app .point-match-arrows { display:grid; grid-template-columns:repeat(3,44px); grid-template-rows:repeat(3,44px); gap:4px; margin:0; align-content:center; }
+.projection-config-app .warp-arrows [data-direction=up], .point-match-arrows [data-match-direction=up] { grid-column:2; grid-row:1; }
+.projection-config-app .warp-arrows [data-direction=left], .point-match-arrows [data-match-direction=left] { grid-column:1; grid-row:2; }
+.projection-config-app .warp-arrows [data-direction=right], .point-match-arrows [data-match-direction=right] { grid-column:3; grid-row:2; }
+.projection-config-app .warp-arrows [data-direction=down], .point-match-arrows [data-match-direction=down] { grid-column:2; grid-row:3; }
+.projection-config-app .warp-relative-pad, .projection-config-app .point-match-pad { min-height:140px; border:1px dashed var(--config-border); border-radius:9px; background:var(--config-canvas); text-align:center; padding:8px; font-size:12px; }
+.projection-config-app .warp-editor-dialog .warp-action { min-height:44px; min-width:44px; padding:6px 8px; }
+.projection-config-app .warp-editor-dialog .warp-position-row .numeric-sensitivity-group { display:none; }
+.projection-config-app .warp-editor-dialog[data-page=adjust] :is(.warp-history-row,.calibration-view-tools,.warp-editor-layout-page),
+.projection-config-app .warp-editor-dialog[data-page=options] :is(.warp-selection-row,.warp-position-row,.warp-step-row,.warp-adjustment-row,.warp-grid-layout-preview,.warp-editor-layout-page,[data-action=point-match-start]),
+.projection-config-app .warp-editor-dialog[data-page=layout] :is(.warp-selection-row,.warp-position-row,.warp-step-row,.warp-adjustment-row,.warp-history-row,.calibration-view-tools,[data-action=point-match-start]) { display:none; }
+.projection-config-app .warp-editor-dialog[data-page=layout] .warp-editor-layout-page { order:1; }
+.projection-config-app .warp-editor-dialog[data-page=layout] .warp-editor-fine-panel { order:2; }
+.projection-config-app .warp-editor-dialog[data-page=adjust] .warp-grid-layout-preview:not([hidden]) { display:grid; grid-template-columns:1fr 1fr; gap:4px; }
+.projection-config-app .warp-grid-layout-preview-status { grid-column:1/-1; margin:0; font-size:12px; line-height:16px; }
+.projection-config-app .warp-grid-layout-preview:not([hidden]) { display:grid; grid-template-columns:1fr 1fr; gap:4px; }
+.projection-config-app .warp-history-controls { grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
+.projection-config-app .warp-history-controls :is([data-action=warp-undo],[data-action=warp-redo]) { display:none; }
+.projection-config-app .calibration-view-tools { display:grid; gap:8px; }
+.projection-config-app .calibration-view-note { margin:0; font-size:12px; line-height:17px; }
+.projection-config-app .warp-grid-layout-section { display:grid; grid-template-columns:1fr; gap:8px; margin:0; padding:0; border:0; }
+.projection-config-app .warp-grid-layout-section > h3 { display:none; }
+.projection-config-app .warp-grid-layout-hint,.projection-config-app .warp-grid-source-scope { margin:0; font-size:12px; line-height:16px; }
+.projection-config-app .warp-grid-layout-page { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; align-content:start; }
+.projection-config-app .warp-grid-layout-page > p { grid-column:1/-1; margin:0; }
+.projection-config-app .warp-grid-layout-field { display:grid; gap:4px; font-size:13px; line-height:18px; }
+.projection-config-app .warp-grid-layout-field :is(input,select) { width:100%; min-width:0; min-height:44px; font-size:16px; }
+.projection-config-app .warp-grid-layout-error:empty { display:none; }
+.projection-config-app .warp-grid-layout-error { margin:0; font-size:12px; line-height:16px; }
+.projection-config-app .warp-grid-layout-page[hidden] { display:none; }
+.projection-config-app .point-match-controls { display:grid; gap:8px; }
+.projection-config-app .point-match-controls > h3 { display:none; }
+.projection-config-app .point-match-controls > p { font-size:12px; line-height:16px; }
+.projection-config-app .point-match-controls[data-page=adjust] > :is(p:not([role=status]),.point-match-sizes),
+.projection-config-app .point-match-controls[data-page=markers] > :is(.point-match-slots,.point-match-movement,.point-match-adjustment) { display:none; }
+.projection-config-app .point-match-slots { display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); grid-template-rows:44px auto; gap:6px; }
+.projection-config-app .point-match-slots > div { display:contents; }
+.projection-config-app .point-match-slots > div[hidden] { display:none; }
+.projection-config-app .point-match-slots [data-match-action=select] { grid-row:1; padding:4px; }
+.projection-config-app .point-match-selected-detail { grid-column:1/-1; grid-row:2; display:flex; align-items:center; gap:6px; min-width:0; }
+.projection-config-app .point-match-selected-detail[hidden] { display:none; }
+.projection-config-app .point-match-selected-detail span { flex:1; min-width:0; font-size:12px; line-height:16px; }
+.projection-config-app .point-match-movement { display:grid; grid-template-columns:auto 1fr; align-items:center; gap:8px; font-size:13px; }
+.projection-config-app .point-match-adjustment { display:grid; grid-template-columns:140px minmax(80px,1fr); gap:12px; }
+.projection-config-app .point-match-actions { display:flex; flex-wrap:wrap; gap:6px; }
+.projection-config-app .point-match-actions button { flex:1; padding:6px; font-size:12px; }
+.projection-config-app .warp-editor-dialog[data-matching=true] :is(.warp-editor-pages,.calibration-view-tools,.warp-editor-layout-page) { display:none; }
+@media (max-width:1100px) {
+ .projection-config-app .parameter-editor-dialog[data-presentation=panel] .parameter-editor-body { grid-template-columns:minmax(0,1fr); grid-template-rows:minmax(180px,1fr) auto; }
+ .projection-config-app .parameter-editor-controls-column { grid-column:1; grid-row:2; }
+ .projection-config-app .parameter-editor-dialog[data-presentation=panel] .parameter-editor-preview-column { grid-column:1; grid-row:1; }
+ .projection-config-app .parameter-editor-dialog[data-presentation=panel] .parameter-editor-fields { grid-template-columns:repeat(2,minmax(0,1fr)); }
+ .projection-config-app .warp-editor-dialog[data-presentation=panel] .warp-editor-body { grid-template-columns:minmax(0,1fr); grid-template-rows:minmax(180px,1fr) auto; }
+ .projection-config-app .warp-editor-controls-column { grid-column:1; grid-row:2; }
+ .projection-config-app .warp-editor-dialog[data-page=adjust]:not([data-matching=true]) .warp-precision-panel { grid-template-columns:minmax(0,1fr) minmax(0,1fr); grid-template-rows:auto auto auto; gap:8px 16px; }
+ .projection-config-app .warp-editor-dialog[data-page=adjust] .warp-selection-row { grid-column:1; grid-row:1; }
+ .projection-config-app .warp-editor-dialog[data-page=adjust] .warp-position-row { grid-column:1; grid-row:2; }
+ .projection-config-app .warp-editor-dialog[data-page=adjust] .warp-step-row { grid-column:2; grid-row:1; }
+ .projection-config-app .warp-editor-dialog[data-page=adjust] .warp-adjustment-row { grid-column:2; grid-row:2/4; }
+ .projection-config-app .warp-editor-dialog[data-page=adjust] [data-action=point-match-start] { grid-column:1; grid-row:3; }
+ .projection-config-app .warp-editor-dialog[data-page=adjust] .warp-grid-layout-preview { grid-column:1/-1; }
+ .projection-config-app .point-match-controls[data-page=adjust] { grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:8px 16px; }
+ .projection-config-app .point-match-controls > :is(nav,[role=status]) { grid-column:1/-1; }
+ .projection-config-app .point-match-slots { grid-column:1; grid-row:3; }
+ .projection-config-app .point-match-movement { grid-column:2; grid-row:3; align-self:start; }
+ .projection-config-app .point-match-adjustment { grid-column:2; grid-row:4/6; }
+ .projection-config-app .point-match-actions { grid-column:1; grid-row:4/6; align-content:start; }
+ .projection-config-app .warp-grid-layout-page { grid-template-columns:repeat(4,minmax(0,1fr)); }
+}
+@media (max-width:620px) {
+ .projection-config-app .warp-editor-dialog[data-page=adjust]:not([data-matching=true]) .warp-precision-panel { display:grid; grid-template-columns:1fr; }
+ .projection-config-app .warp-editor-dialog[data-page=adjust] :is(.warp-selection-row,.warp-position-row,.warp-step-row,.warp-adjustment-row,[data-action=point-match-start]) { grid-column:auto; grid-row:auto; }
+ .projection-config-app .parameter-editor-dialog[data-presentation=panel] .parameter-editor-fields { grid-template-columns:1fr; }
+}
+.projection-config-app .parameter-editor-fields > .names-wall-editor-tools { display:contents; }
+.projection-config-app .parameter-editor-fields > .names-wall-editor-tools > .names-wall-mode-label { grid-column:1/-1; display:flex; align-items:center; gap:8px; margin:0; }
+.projection-config-app .names-wall-mode-label select { flex:1; width:100%; min-height:44px; margin:0; }
+.projection-config-app .parameter-editor-dialog[data-page=text] :is([data-parameter-page=spacing],[data-parameter-page=preview]),
+.projection-config-app .parameter-editor-dialog[data-page=spacing] [data-parameter-page=preview],
+.projection-config-app .parameter-editor-dialog[data-page=preview] [data-parameter-page=spacing] { display:none; }
+.projection-config-app .parameter-editor-fields > .names-wall-editor-notes,
+.projection-config-app .names-wall-editor-tools > .names-wall-status { grid-column:1/-1; font-size:12px; line-height:17px; margin:0; }
+.projection-config-app .parameter-editor-fields .names-wall-units { font-size:12px; line-height:17px; margin:4px 0; }
+.projection-config-app .warp-position-row > [data-action=warp-reset-selection] { margin-block-start:6px; min-height:44px; width:100%; }
+.projection-config-app .parameter-editor-dialog[data-node=names-wall] .parameter-editor-sensitivity { display:none; }
+@media (min-width:651px) and (max-width:1100px) {
+ .projection-config-app .parameter-editor-dialog[data-node=names-wall] .parameter-editor-fields { grid-template-columns:repeat(3,minmax(0,1fr)); }
+ .projection-config-app .parameter-editor-dialog[data-node=names-wall] .names-wall-editor-tools > [data-action=reset-page-spacing] { grid-column:1/-1; }
+}
+/* Replace the legacy graph-panel container layouts, including their named areas. */
+.projection-config-app .warp-editor-dialog[data-presentation=panel][data-full-viewport] .warp-editor-body { display:grid; grid-template-columns:minmax(0,1fr) 400px; grid-template-rows:minmax(0,1fr); align-items:stretch; align-content:stretch; overflow:visible; }
+.projection-config-app .warp-editor-dialog[data-presentation=panel][data-full-viewport] .warp-precision-panel { grid-template-columns:1fr; grid-template-areas:none; grid-template-rows:none; padding:0; gap:8px; }
+.projection-config-app .warp-editor-dialog[data-presentation=panel][data-full-viewport] .warp-precision-panel > :is(.warp-selection-row,.warp-position-row,.warp-step-row,.warp-adjustment-row,.warp-grid-layout-preview,.warp-history-row) { grid-area:auto; }
+.projection-config-app .warp-editor-dialog[data-presentation=panel][data-full-viewport] .warp-selection-row { display:block; min-width:0; grid-template-columns:none; }
+.projection-config-app .warp-editor-dialog[data-presentation=panel][data-full-viewport] .warp-numeric { grid-template-columns:repeat(2,minmax(0,1fr)); }
+.projection-config-app .warp-editor-dialog[data-presentation=panel][data-full-viewport] .warp-numeric > .config-field { grid-column:auto; min-width:0; }
+.projection-config-app .warp-editor-dialog[data-presentation=panel][data-full-viewport] .warp-numeric .config-field-row input[data-input=number] { min-width:0; min-height:44px; }
+.projection-config-app .warp-editor-dialog[data-presentation=panel][data-full-viewport] .warp-editor-controls-column { grid-column:2; grid-row:1; align-self:stretch; height:auto; }
+.projection-config-app .warp-editor-dialog[data-presentation=panel][data-full-viewport] .warp-editor-viewport { grid-column:1; grid-row:1; min-height:0; width:auto; height:auto; max-height:none; align-self:stretch; aspect-ratio:auto; }
+.projection-config-app .warp-editor-dialog[data-presentation=panel][data-full-viewport] .warp-adjustment-row { grid-template-columns:140px minmax(80px,1fr); align-items:stretch; }
+.projection-config-app .warp-editor-dialog[data-presentation=panel][data-full-viewport] .warp-relative-pad { min-height:140px; height:140px; }
+@media (max-width:1100px) {
+ .projection-config-app .warp-editor-dialog[data-presentation=panel][data-full-viewport] .warp-editor-body { grid-template-columns:minmax(0,1fr); grid-template-rows:minmax(180px,1fr) auto; }
+ .projection-config-app .warp-editor-dialog[data-presentation=panel][data-full-viewport] .warp-editor-controls-column { grid-column:1; grid-row:2; }
+ .projection-config-app .warp-editor-dialog[data-presentation=panel][data-full-viewport][data-page=adjust]:not([data-matching=true]) .warp-precision-panel { grid-template-columns:minmax(0,1fr) minmax(0,1fr); grid-template-rows:auto auto auto; }
+ .projection-config-app .warp-editor-dialog[data-presentation=panel][data-full-viewport][data-page=adjust] .warp-selection-row { grid-column:1; grid-row:1; }
+ .projection-config-app .warp-editor-dialog[data-presentation=panel][data-full-viewport][data-page=adjust] .warp-position-row { grid-column:1; grid-row:2; }
+ .projection-config-app .warp-editor-dialog[data-presentation=panel][data-full-viewport][data-page=adjust] .warp-step-row { grid-column:2; grid-row:1; }
+ .projection-config-app .warp-editor-dialog[data-presentation=panel][data-full-viewport][data-page=adjust] .warp-adjustment-row { grid-column:2; grid-row:2/4; }
+ .projection-config-app .warp-editor-dialog[data-presentation=panel][data-full-viewport][data-page=adjust] .warp-grid-layout-preview { grid-column:1/-1; grid-row:auto; }
+}
+.projection-config-app .warp-editor-dialog[data-presentation=panel][data-full-viewport] .warp-selection-controls { display:none; }
+.projection-config-app .warp-editor-dialog[data-presentation=panel][data-full-viewport] .warp-grid-layout-section { display:grid; grid-template-columns:minmax(0,1fr); grid-template-rows:none; gap:8px; padding:0; margin:0; }
+.projection-config-app .warp-editor-dialog[data-presentation=panel][data-full-viewport][data-page=options] .warp-selection-row,
+.projection-config-app .warp-editor-dialog[data-presentation=panel][data-full-viewport][data-page=layout] .warp-selection-row { display:none; }
+/* Adjustment feedback must not change the viewport mapping during a held gesture. */
+.projection-config-app .warp-editor-dialog[data-presentation=panel][data-full-viewport] .warp-selection-status { min-height:32px; }

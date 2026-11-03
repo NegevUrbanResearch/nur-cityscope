@@ -1,0 +1,1364 @@
+/**
+ * @vitest-environment jsdom
+ */
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { createFakeMapLibreMap } from "../helpers/fake-maplibre-map.js";
+import { createRenderedFollower } from "../helpers/nli-rendered-follower.js";
+import { setupWebSocket } from "../../frontend/src/shared/otef-data-context/OTEFDataContext-websocket.js";
+import OTEFDataContext from "../../frontend/src/shared/OTEFDataContext.js";
+import { OTEF_MESSAGE_TYPES } from "../../frontend/src/shared/message-protocol.js";
+import {
+  INVESTIGATION_LINES_FULL_ID,
+  INVESTIGATION_POLYGONS_FULL_ID,
+  timelineBeatDurationMs,
+} from "../../frontend/src/shared/nli-investigation-beats.js";
+import { nliPlayableIdsFromGroups } from "../../frontend/src/shared/nli-investigation-clock.js";
+import { deriveInvestigationFrame } from "../../frontend/src/shared/nli-investigation-visual-state.js";
+import { novaVirtualMembership } from "../../frontend/src/shared/nli-nova-virtual-membership.js";
+import {
+  createNovaEscapeCoordinator,
+  NOVA_ESCAPE_IMPACT_LAYER_ID,
+  NOVA_ESCAPE_INDIVIDUAL_LAYER_ID,
+  NOVA_FLEEING_IMPACT_INDEX_URL,
+  NOVA_FLEEING_INDIVIDUAL_URL,
+} from "../../frontend/src/shared/nli-nova-escape-coordinator.js";
+import { DEFAULT_INVESTIGATION_SETTLEMENTS_URL } from "../../frontend/src/shared/nli-investigation-timeline-data.js";
+import { HOME_LAYER_IDS, NARRATIVES, SCRIPTS, TIMELINE_LAYER_IDS } from "../../frontend/src/remote/nli-staff-script.js";
+import { setLocale } from "../../frontend/src/remote/remote-locale.js";
+import { sha256Hex } from "../../frontend/src/shared/sha256-hex.js";
+import { presenterCopyKey } from "../../frontend/src/remote/nli-presenter-content.js";
+import { createNliStaffNavigationSession } from "../../frontend/src/remote/nli-staff-navigation-session.js";
+
+const STORY_MINUTES = [389, 401, 402, 780];
+const ESCAPE_URLS = new Set([
+  NOVA_FLEEING_INDIVIDUAL_URL,
+  NOVA_FLEEING_IMPACT_INDEX_URL,
+  DEFAULT_INVESTIGATION_SETTLEMENTS_URL,
+]);
+const NO_ESCAPE = { individual: false, overlap: false, mor: false, settled: false };
+const PLAYABLE_LAYER_IDS = ["investigation_polygons", "lines", "alarms"];
+
+const FIXTURE = `
+  <div class="app">
+    <button type="button" id="homeBtn" hidden></button>
+    <button type="button" id="localeHe"></button>
+    <button type="button" id="localeEn"></button>
+    <span id="staffConnection"><span id="staffConnectionLabel"></span></span>
+    <section class="screen is-active" data-screen="home">
+      <div id="narrativeList"></div>
+    </section>
+    <section class="screen" data-screen="player" hidden>
+      <span id="playerScript"></span>
+      <span id="stepCount"></span>
+      <div id="ticks"></div>
+      <div id="stepClock"></div>
+      <h1 id="stepTitle"></h1>
+      <p id="stepNote"></p>
+      <div id="playerCueFailure" hidden role="alert"><span id="playerCueFailureText"></span><button id="playerCueRetry">Retry</button></div>
+      <div id="playerKit">
+        <p id="cueStatus"></p>
+        <div id="kitSearch">
+          <div id="searchKit">
+            <input id="searchInput" />
+            <ul id="searchResults"></ul>
+            <p id="searchStatus" hidden></p>
+            <div id="searchArchiveMount"></div>
+          </div>
+        </div>
+        <div id="kitEscape"></div>
+        <div id="kitPresentation"></div>
+        <div id="kitTimeline"></div>
+        <div id="kitArchive"></div>
+        <p id="kitIdle" hidden></p>
+      </div>
+      <div class="dock">
+        <button type="button" id="prevBtn"></button>
+        <button type="button" id="nextBtn"></button>
+        <div id="nextChoices" hidden></div>
+        <div id="storyChooserMount"></div>
+      </div>
+    </section>
+  </div>
+`;
+
+const el = (id) => document.getElementById(id);
+
+function storyCollection() {
+  return {
+    type: "FeatureCollection",
+    features: STORY_MINUTES.map((timeline_minutes) => ({
+      type: "Feature",
+      properties: { timeline_minutes },
+      geometry: { type: "LineString", coordinates: [[34.4, 31.4], [34.5, 31.5]] },
+    })),
+  };
+}
+
+function layerGroupsFor(enabledIds) {
+  const enabled = new Set(enabledIds);
+  const buckets = new Map();
+  for (const fullId of enabledIds) {
+    const dot = fullId.indexOf(".");
+    const groupId = fullId.slice(0, dot);
+    const layerId = fullId.slice(dot + 1);
+    if (groupId === "nli" && PLAYABLE_LAYER_IDS.includes(layerId)) continue;
+    const rows = buckets.get(groupId) || [];
+    rows.push({ id: layerId, enabled: true });
+    buckets.set(groupId, rows);
+  }
+  const nli = buckets.get("nli") || [];
+  buckets.set("nli", [
+    ...PLAYABLE_LAYER_IDS.map((id) => ({ id, enabled: enabled.has(`nli.${id}`) })),
+    ...nli,
+  ]);
+  return [...buckets.entries()].map(([id, layers]) => ({ id, layers }));
+}
+
+function enabledFullIds(groups) {
+  const ids = [];
+  for (const group of groups || []) {
+    for (const layer of group.layers || []) {
+      if (layer?.enabled) ids.push(`${group.id}.${layer.id}`);
+    }
+  }
+  return ids;
+}
+
+function createFollower(name) {
+  const follower = new OTEFDataContext.constructor();
+  follower._tableName = "otef";
+  follower._clientId = `follower-${name}`;
+  setupWebSocket(follower);
+  follower._wsClient.disconnect();
+  return follower;
+}
+
+function readFollower(follower) {
+  const narrativeId = follower.getNarrativeState().id;
+  const clock = follower.getInvestigationClock();
+  const groups = follower.getLayerGroups();
+  const chips = nliPlayableIdsFromGroups(groups);
+  return {
+    narrativeId,
+    clock,
+    chips,
+    layers: enabledFullIds(groups),
+    escape: follower.getEscapeOverlay(),
+    virtual: novaVirtualMembership(chips, narrativeId, clock),
+    viewport: follower._viewport ?? null,
+  };
+}
+
+function sameMembers(actual, expected) {
+  expect([...actual].sort()).toEqual([...expected].sort());
+}
+
+function expectHome(view) {
+  sameMembers(view.layers, HOME_LAYER_IDS);
+  expect(view.narrativeId).toBeNull();
+  expect(view.clock.phase).toBe("idle");
+  expect(view.escape).toEqual(NO_ESCAPE);
+  expect(view.chips).toEqual([]);
+  expect(view.virtual).toEqual([]);
+  expect(view.viewport).toBeNull();
+}
+
+function expectNamesWall(view) {
+  expect(view.layers).toEqual(["nli.people_names"]);
+  expect(view.narrativeId).toBeNull();
+  expect(view.clock.phase).toBe("idle");
+  expect(view.escape).toEqual(NO_ESCAPE);
+}
+
+function mount() {
+  const added = [];
+  const realAdd = window.addEventListener.bind(window);
+  const realRemove = window.removeEventListener.bind(window);
+  window.addEventListener = (type, fn, opts) => {
+    added.push([type, fn, opts]);
+    realAdd(type, fn, opts);
+  };
+  document.body.innerHTML = FIXTURE;
+  const listeners = new Map();
+  const followers = [createFollower("gis"), createFollower("projection")];
+  const h = {
+    layers: [],
+    commands: [],
+    failNull: false,
+    groups: [],
+    narrative: { id: null, revision: 1, transition: "steady" },
+    clock: { phase: "idle", membership: [], beats: [], loop: false, positionMs: 0, anchorMs: null, seekKind: "none", revision: 0 },
+    escape: { ...NO_ESCAPE },
+    person: { personId: null, datasetVersion: null, revision: 1 },
+    followers,
+    dispose() {
+      for (const follower of followers) follower._wsClient?.disconnect();
+      for (const [type, fn, opts] of added) realRemove(type, fn, opts);
+      window.addEventListener = realAdd;
+      document.body.innerHTML = "";
+    },
+    emit(topic, value) {
+      for (const listener of listeners.get(topic) || []) listener(value);
+    },
+    publish(message) {
+      for (const follower of followers) follower._wsClient.handleMessage(message);
+    },
+  };
+
+  function sceneMessage() {
+    return {
+      type: OTEF_MESSAGE_TYPES.NARRATIVE_SCENE_CHANGED,
+      table: "otef",
+      sourceId: "staff-scene",
+      scene: {
+        sceneRevision: h.narrative.revision,
+        narrativeState: h.narrative,
+        basemap: h.narrative.id ? "satellite_bw" : "dark",
+        investigationClock: h.clock,
+        personSelection: h.person,
+        escapeOverlay: h.escape,
+      },
+    };
+  }
+
+  const dataContext = {
+    isConnected: () => false,
+    correctedNow: () => 50_000,
+    getNarrativeState: () => h.narrative,
+    getPersonSelection: () => h.person,
+    getInvestigationClock: () => h.clock,
+    getEscapeOverlay: () => h.escape,
+    getLayerGroups: () => h.groups,
+    getLegendSettings: () => ({ language: "en" }),
+    getProjectionSlideshow: () => null,
+    setNarrative: async (id) => {
+      if (id === null && h.failNull) {
+        h.failNull = false;
+        return { ok: false, error: new Error("narrative rejected") };
+      }
+      h.narrative = {
+        id,
+        revision: h.narrative.revision + 1,
+        transition: id === null ? "exit" : "enter",
+      };
+      h.publish(sceneMessage());
+      h.emit("narrativeState", h.narrative);
+      return { ok: true };
+    },
+    setEnabledLayerIds: async (ids) => {
+      h.layers.push([...ids]);
+      h.groups = layerGroupsFor(ids);
+      h.publish({
+        type: OTEF_MESSAGE_TYPES.LAYERS_CHANGED,
+        layerGroups: h.groups,
+      });
+      h.emit("layerGroups", h.groups);
+      return { ok: true };
+    },
+    setEscapeOverlay: async (overlay) => {
+      h.escape = { ...NO_ESCAPE, ...overlay };
+      h.publish({
+        type: OTEF_MESSAGE_TYPES.ESCAPE_OVERLAY_CHANGED,
+        table: "otef",
+        escapeOverlay: h.escape,
+      });
+      h.emit("escapeOverlay", h.escape);
+      return { ok: true };
+    },
+    patchInvestigationClock: async (next, options = {}) => {
+      if (typeof options.isCurrent === "function" && !options.isCurrent()) {
+        return { ok: false, stale: true };
+      }
+      h.clock = { ...next, revision: (Number(h.clock.revision) || 0) + 1, serverNowMs: 50_000 };
+      h.publish({
+        type: OTEF_MESSAGE_TYPES.INVESTIGATION_CLOCK_CHANGED,
+        investigationClock: h.clock,
+      });
+      h.emit("investigationClock", h.clock);
+      return { ok: true, clock: h.clock };
+    },
+    clearPerson: async () => {
+      h.person = { personId: null, datasetVersion: null, revision: h.person.revision + 1 };
+      return h.person;
+    },
+    narrativePresentationCommand: async (command) => {
+      h.commands.push(command);
+      const outcome = command.presentationAction === "open"
+        ? "opened"
+        : command.presentationAction === "close"
+          ? "closed"
+          : "ready";
+      h.emit("narrativePresentationResult", {
+        ...command,
+        outcome,
+        slide: 1,
+        range: [1, 8],
+      });
+      return { status: "ok" };
+    },
+    subscribe(topic, listener) {
+      const list = listeners.get(topic) || [];
+      list.push(listener);
+      listeners.set(topic, list);
+      return () => {};
+    },
+    setExhibitMode: vi.fn(),
+  };
+
+  globalThis.OTEFDataContext = dataContext;
+  globalThis.layerRegistry = { getLayerDataUrl: () => "/nli-story.json" };
+  return { h, dataContext };
+}
+
+async function boot(session, options) {
+  const { initNliStaffRemote } = await import("../../frontend/src/remote/nli-staff-remote.js");
+  session.navigation = options?.navigationSession || session.navigation || createNliStaffNavigationSession();
+  session.remote = initNliStaffRemote(session.dataContext, { ...options, navigationSession: session.navigation });
+  session.h.emit("narrativeState", session.h.narrative);
+  session.h.emit("connection", true);
+  el("homeBtn").click();
+  await vi.waitFor(() => {
+    expect(session.h.layers.at(-1)).toEqual([...HOME_LAYER_IDS]);
+    for (const view of session.h.followers.map(readFollower)) expectHome(view);
+  });
+}
+
+async function syntheticPresenterManifest() {
+  const features = storyCollection().features;
+  const hash = await sha256Hex(Uint8Array.from(new TextEncoder().encode(JSON.stringify(features))));
+  const membership = PLAYABLE_LAYER_IDS.map((id) => `nli.${id}`);
+  const records = Object.fromEntries(STORY_MINUTES.map((minute) => [
+    presenterCopyKey(null, membership, minute),
+    { en: { timeLabel: String(minute), title: `Event ${minute}` },
+      he: { timeLabel: String(minute), title: `אירוע ${minute}` } },
+  ]));
+  return { schemaVersion: 1, datasetVersion: "synthetic-v1", acceptedSourceSha256: "test-source",
+    requiredArtifacts: Object.fromEntries(membership.map((id) => [id, hash])), records };
+}
+
+async function openCard(selector) {
+  el("narrativeList").querySelector(selector).click();
+  await vi.waitFor(() => expect(el("cueStatus").dataset.status).toBe("ready"));
+}
+
+async function clickNextReady(title) {
+  el("nextBtn").click();
+  await vi.waitFor(() => {
+    expect(el("stepTitle").textContent).toBe(title);
+    expect(el("cueStatus").dataset.status).toBe("ready");
+  });
+}
+
+function views(session) {
+  return session.h.followers.map(readFollower);
+}
+
+describe("NLI staff scene integration", () => {
+  let session;
+  let coordinators = [];
+  let escapePending = null;
+
+  beforeEach(() => {
+    escapePending = null;
+    vi.stubGlobal("fetch", vi.fn(async (url) => {
+      if (escapePending && ESCAPE_URLS.has(String(url))) await escapePending;
+      if (String(url) === NOVA_FLEEING_IMPACT_INDEX_URL) {
+        return {
+          ok: true,
+          json: async () => ({ schemaVersion: 1, routeIds: ["1"], parallelCrossings: [], settlementCrossings: [] }),
+        };
+      }
+      return { ok: true, json: async () => storyCollection() };
+    }));
+  });
+
+  afterEach(() => {
+    for (const coordinator of coordinators) coordinator.dispose();
+    coordinators = [];
+    session?.remote?.dispose();
+    session?.h.dispose();
+    session = null;
+    globalThis.OTEFDataContext = OTEFDataContext;
+    delete globalThis.layerRegistry;
+    vi.unstubAllGlobals();
+    setLocale("he", { force: true, persist: false });
+  });
+
+  test("names-wall layers wait until the GIS identity slide has finished opening", async () => {
+    setLocale("en", { persist: false });
+    session = mount();
+    await boot(session);
+    const layerWrites = session.h.layers.length;
+    const sceneRevision = session.h.narrative.revision;
+    const clockRevision = session.h.clock.revision;
+    let opening;
+    session.dataContext.narrativePresentationCommand = async (command) => {
+      opening = command;
+      session.h.commands.push(command);
+      return { status: "ok" };
+    };
+    el("narrativeList").querySelector('[data-show-step="names-wall"]').click();
+    await vi.waitFor(() => expect(opening).toMatchObject({ presentationAction: "open", segmentId: "names_wall" }));
+    expect(session.h.layers).toHaveLength(layerWrites);
+    expect(session.h.narrative.revision).toBe(sceneRevision);
+    expect(session.h.clock.revision).toBe(clockRevision + 1);
+    expect(session.h.clock.presentationPendingUntilMs).toBeGreaterThan(session.dataContext.correctedNow());
+    for (const view of views(session)) expectHome(view);
+    session.h.emit("narrativePresentationResult", { ...opening, outcome: "opened", slide: 0, range: [0, 0] });
+    await vi.waitFor(() => expect(el("cueStatus").dataset.status).toBe("ready"));
+    for (const view of views(session)) expectNamesWall(view);
+    expect(session.h.commands).toHaveLength(1);
+  });
+
+  test("Credits keeps the names wall until Finish and automatically opens the GIS slide", async () => {
+    setLocale("en", { persist: false });
+    session = mount();
+    await boot(session);
+    await openCard('[data-show-step="names-wall"]');
+    await vi.waitFor(() => expect(session.h.commands.at(-1)).toMatchObject({
+      presentationAction: "open", segmentId: "names_wall",
+    }));
+    const open = session.dataContext.narrativePresentationCommand;
+    const wallAtOpen = [];
+    const wallLayerIndex = session.h.layers.length;
+    const narrativeRevision = session.h.narrative.revision;
+    const clockRevision = session.h.clock.revision;
+    session.dataContext.narrativePresentationCommand = async (command) => {
+      if (command.presentationAction === "open" && command.segmentId === "credits") {
+        for (const view of views(session)) expectNamesWall(view);
+        wallAtOpen.push(true);
+      }
+      return open(command);
+    };
+    await clickNextReady("Credits");
+    await vi.waitFor(() => expect(wallAtOpen).toEqual([true]));
+    expect(session.h.commands.slice(-2).map(({ presentationAction, segmentId }) =>
+      [presentationAction, segmentId])).toEqual([["open", "names_wall"], ["open", "credits"]]);
+    for (const view of views(session)) expectNamesWall(view);
+    expect(session.h.layers.slice(wallLayerIndex)).toEqual([]);
+    expect(session.h.narrative.revision).toBe(narrativeRevision);
+    expect(session.h.clock.revision).toBe(clockRevision);
+    expect(el("kitPresentation").hidden).toBe(true);
+    expect(el("kitPresentation").querySelector("button")).toBeNull();
+
+    session.remote.render();
+    expect(wallAtOpen).toEqual([true]);
+    const closeSnapshots = [];
+    const send = session.dataContext.narrativePresentationCommand;
+    session.dataContext.narrativePresentationCommand = async (command) => {
+      if (command.presentationAction === "close") closeSnapshots.push(...views(session));
+      return send(command);
+    };
+    el("nextBtn").click();
+    await vi.waitFor(() => expect(document.querySelector(".screen.is-active")?.dataset.screen).toBe("home"));
+    expect(session.h.commands.at(-1)).toMatchObject({ presentationAction: "close", segmentId: "credits" });
+    expect(closeSnapshots).toHaveLength(2);
+    for (const view of closeSnapshots) expectNamesWall(view);
+    for (const view of views(session)) expectHome(view);
+  });
+
+  test("Back from Credits does not wait for its opening acknowledgement", async () => {
+    setLocale("en", { persist: false });
+    session = mount();
+    await boot(session);
+    await openCard('[data-show-step="names-wall"]');
+    const send = session.dataContext.narrativePresentationCommand;
+    let pendingCredits;
+    session.dataContext.narrativePresentationCommand = async (command) => {
+      if (command.presentationAction === "open" && command.segmentId === "credits") {
+        pendingCredits = command;
+        session.h.commands.push(command);
+        return { status: "ok" };
+      }
+      return send(command);
+    };
+    el("nextBtn").click();
+    await vi.waitFor(() => expect(pendingCredits).toBeTruthy());
+    expect(el("stepTitle").textContent).toBe("Credits");
+    for (const view of views(session)) expectNamesWall(view);
+    el("prevBtn").click();
+    await vi.waitFor(() => expect(el("stepTitle").textContent).toBe("Wall of names"));
+    expect(session.h.commands.slice(-2).map(({ presentationAction, segmentId }) =>
+      [presentationAction, segmentId])).toEqual([["open", "credits"], ["open", "names_wall"]]);
+    session.h.emit("narrativePresentationResult", { ...pendingCredits, outcome: "opened", slide: 37, range: [37, 37] });
+    expect(el("stepTitle").textContent).toBe("Wall of names");
+    for (const view of views(session)) expectNamesWall(view);
+    el("homeBtn").click();
+    await vi.waitFor(() => expect(document.querySelector(".screen.is-active")?.dataset.screen).toBe("home"));
+    for (const view of views(session)) expectHome(view);
+  });
+
+  test("Home, first minutes, Segev, and the rest of the day settle on both followers", async () => {
+    setLocale("en", { persist: false });
+    session = mount();
+    await boot(session);
+    expect(session.dataContext.setExhibitMode).not.toHaveBeenCalled();
+
+    await openCard('[data-open="show"]');
+    expect(el("stepTitle").textContent).toBe("The opening minutes");
+    for (const view of views(session)) {
+      expect(view.narrativeId).toBeNull();
+      expect(view.clock.phase).toBe("playing");
+      expect(view.clock.beats.length).toBeGreaterThan(0);
+      expect(view.clock.beats.every((beat) => beat <= 401)).toBe(true);
+      sameMembers(view.layers, TIMELINE_LAYER_IDS);
+      expect(view.viewport).toBeNull();
+    }
+
+    el("nextChoices").querySelector('[data-branch="segev"]').click();
+    await vi.waitFor(() => {
+      expect(el("stepTitle").textContent).toBe("The house in Be'eri");
+      expect(el("cueStatus").dataset.status).toBe("ready");
+    });
+    const segevLayers = NARRATIVES.find((item) => item.id === "segev").steps[0].cue.layers;
+    for (const view of views(session)) {
+      expect(view.narrativeId).toBe("segev");
+      expect(view.clock.phase).toBe("idle");
+      sameMembers(view.layers, segevLayers);
+      expect(view.layers).toContain("nli.narrative_polygon");
+      expect(view.chips).toEqual([]);
+      expect(view.virtual).toEqual([]);
+      expect(view.viewport).toBeNull();
+    }
+
+    await clickNextReady("The rest of the day");
+    expect(session.dataContext.setExhibitMode).not.toHaveBeenCalled();
+    for (const view of views(session)) {
+      expect(view.narrativeId).toBeNull();
+      expect(view.clock.phase).toBe("playing");
+      expect(view.clock.leadInMinutes).toBe(402);
+      expect(view.clock.beats.some((beat) => beat > 401)).toBe(true);
+      sameMembers(view.layers, TIMELINE_LAYER_IDS);
+      expect(view.escape).toEqual(NO_ESCAPE);
+      expect(view.viewport).toBeNull();
+    }
+    const timelineBeats = [...views(session)[0].clock.beats];
+    el("nextChoices").querySelector('[data-branch="nova"]').click();
+    await vi.waitFor(() => {
+      expect(el("stepTitle").textContent).toBe("The Nova site");
+      expect(el("cueStatus").dataset.status).toBe("ready");
+    });
+    el("prevBtn").click();
+    await vi.waitFor(() => {
+      expect(el("stepTitle").textContent).toBe("The rest of the day");
+      expect(el("cueStatus").dataset.status).toBe("ready");
+    });
+    for (const view of views(session)) {
+      expect(view.narrativeId).toBeNull();
+      expect(view.clock.phase).toBe("playing");
+      expect(view.clock.beats).toEqual(timelineBeats);
+      expect(view.clock.leadInMinutes).toBe(402);
+      sameMembers(view.layers, TIMELINE_LAYER_IDS);
+      expect(view.escape).toEqual(NO_ESCAPE);
+    }
+  });
+
+  test("Nova Memorial to Shura exits the required narrative before requesting its presentation", async () => {
+    setLocale("en", { persist: false }); session = mount(); await boot(session);
+    await openCard('[data-open="show"]');
+    el("nextChoices").querySelector('[data-branch="segev"]').click();
+    await vi.waitFor(() => expect(el("cueStatus").dataset.status).toBe("ready"));
+    await clickNextReady("The rest of the day");
+    el("nextChoices").querySelector('[data-branch="nova"]').click();
+    await vi.waitFor(() => expect(el("stepTitle").textContent).toBe("The Nova site"));
+    await vi.waitFor(() => expect(el("cueStatus").dataset.status).toBe("ready"));
+    for (const step of NARRATIVES.find(item => item.id === "nova").steps.slice(1)) await clickNextReady(step.title.en);
+    const send = session.dataContext.narrativePresentationCommand;
+    const novaRevision = session.h.narrative.revision;
+    let shuraOpened = false;
+    session.dataContext.narrativePresentationCommand = async command => {
+      if (command.segmentId === "shura" && command.presentationAction === "open") {
+        if (session.h.narrative.id !== null) throw new Error("409: narrative presentation requires the active narrative");
+        expect(session.h.clock.presentationPendingUntilMs).toBeGreaterThan(0);
+        shuraOpened = true;
+      }
+      return send(command);
+    };
+    el("nextBtn").click();
+    el("storyChooser").querySelector('[data-story-id="shura"]').click();
+    await vi.waitFor(() => expect(el("cueStatus").dataset.status).toBe("ready"));
+    expect(shuraOpened).toBe(true);
+    expect(session.h.narrative.revision).toBe(novaRevision + 1);
+    expect(el("stepTitle").textContent).toBe("Shura Camp");
+    for (const view of views(session)) {
+      expect(view.narrativeId).toBeNull(); expect(view.clock.phase).toBe("idle");
+      expect(view.escape).toEqual(NO_ESCAPE); sameMembers(view.layers, TIMELINE_LAYER_IDS);
+    }
+  });
+
+  test("the direct timeline ends on the idle complete story", async () => {
+    setLocale("en", { persist: false });
+    session = mount();
+    await boot(session);
+    await openCard('[data-open="timeline"]');
+    await clickNextReady("The rest of the day");
+    await clickNextReady("The full timeline");
+    const writes = vi.spyOn(session.dataContext, "patchInvestigationClock");
+    session.remote.render();
+    expect(writes).not.toHaveBeenCalled();
+    for (const view of views(session)) {
+      expect(view.narrativeId).toBeNull();
+      expect(view.clock.phase).toBe("idle");
+      expect(view.escape).toEqual(NO_ESCAPE);
+      sameMembers(view.layers, TIMELINE_LAYER_IDS);
+      expect(view.chips).toEqual(expect.arrayContaining([
+        INVESTIGATION_POLYGONS_FULL_ID,
+        INVESTIGATION_LINES_FULL_ID,
+      ]));
+      const frame = deriveInvestigationFrame(view.clock, 99_000, view.layers, {
+        motionMode: "full",
+        storyBeats: STORY_MINUTES,
+        polygonMotionActive: true,
+        narrativeId: null,
+      });
+      expect(frame.narrative).toMatchObject({ phase: "idle", advances: false });
+      expect(view.viewport).toBeNull();
+    }
+  });
+
+  test("staff timeline mounts the presenter controls without legacy transport controls", async () => {
+    setLocale("en", { persist: false });
+    session = mount();
+    await boot(session);
+    await openCard('[data-open="timeline"]');
+    const root = el("kitTimeline");
+    expect(root.querySelector("[data-presenter-list]")).not.toBeNull();
+    expect(root.querySelector("[data-presenter-play]")).not.toBeNull();
+    expect(root.querySelector(".nli-transport-scrub, [data-nli-action='stop'], [data-nli-action='loop']")).toBeNull();
+    const list = root.querySelector("[data-presenter-list]");
+    session.h.emit("investigationClock", session.h.clock);
+    expect(root.querySelector("[data-presenter-list]")).toBe(list);
+    expect(el("kitSearch")).not.toBeNull();
+    expect(el("nextBtn")).not.toBeNull();
+  });
+
+  test("verified staff event rows retain identity through clock updates and browsing does not write", async () => {
+    setLocale("en", { persist: false });
+    session = mount();
+    const writes = vi.spyOn(session.dataContext, "patchInvestigationClock");
+    await boot(session, { presenterManifest: await syntheticPresenterManifest() });
+    await openCard('[data-open="timeline"]');
+    await vi.waitFor(() => expect(el("kitTimeline").querySelectorAll("[data-presenter-event]")).toHaveLength(2));
+    const root = el("kitTimeline").firstElementChild;
+    const list = el("kitTimeline").querySelector("[data-presenter-list]");
+    const row = list.querySelector("[data-presenter-event]");
+    const writesBeforeBrowse = writes.mock.calls.length;
+    row.focus();
+    list.scrollTop = 32;
+    list.dispatchEvent(new Event("scroll"));
+    expect(writes).toHaveBeenCalledTimes(writesBeforeBrowse);
+    session.h.emit("investigationClock", session.h.clock);
+    expect(el("kitTimeline").firstElementChild).toBe(root);
+    expect(el("kitTimeline").querySelector("[data-presenter-list]")).toBe(list);
+    expect(list.querySelector("[data-presenter-event]")).toBe(row);
+    expect(list.scrollTop).toBe(32);
+    expect(writes).toHaveBeenCalledTimes(writesBeforeBrowse);
+    await clickNextReady("The rest of the day");
+    await vi.waitFor(() => expect(el("kitTimeline").querySelectorAll("[data-presenter-event]")).toHaveLength(2));
+    await clickNextReady("The full timeline");
+    await vi.waitFor(() => expect(el("kitTimeline").querySelectorAll("[data-presenter-event]")).toHaveLength(4));
+  });
+
+  test("rejected presenter event keeps its applied state and Retry only refetches", async () => {
+    setLocale("en", { persist: false });
+    session = mount();
+    await boot(session, { presenterManifest: await syntheticPresenterManifest() });
+    await openCard('[data-open="timeline"]');
+    await vi.waitFor(() => expect(el("kitTimeline").querySelectorAll("[data-presenter-event]")).toHaveLength(2));
+    const before = session.h.clock;
+    const originalPatch = session.dataContext.patchInvestigationClock;
+    const rejectedPatch = vi.fn(async () => ({ ok: false, error: new Error("rejected") }));
+    session.dataContext.patchInvestigationClock = rejectedPatch;
+    el("kitTimeline").querySelectorAll("[data-presenter-event]")[1].click();
+    await vi.waitFor(() => expect(el("cueStatus").dataset.status).toBe("presenter-failed"));
+    expect(rejectedPatch).toHaveBeenCalledTimes(1);
+    expect(session.h.clock).toBe(before);
+    const writes = rejectedPatch.mock.calls.length;
+    el("kitTimeline").querySelector("[data-presenter-retry]").click();
+    await vi.waitFor(() => expect(el("cueStatus").dataset.status).toBe("ready"));
+    expect(rejectedPatch).toHaveBeenCalledTimes(writes);
+    session.dataContext.patchInvestigationClock = originalPatch;
+  });
+
+  test("a presenter failure clears at the next scene boundary", async () => {
+    setLocale("en", { persist: false });
+    session = mount();
+    await boot(session, { presenterManifest: await syntheticPresenterManifest() });
+    await openCard('[data-open="timeline"]');
+    await vi.waitFor(() => expect(el("kitTimeline").querySelectorAll("[data-presenter-event]")).toHaveLength(2));
+    const originalPatch = session.dataContext.patchInvestigationClock;
+    session.dataContext.patchInvestigationClock = vi.fn(async () => ({ ok: false, error: new Error("rejected") }));
+    el("kitTimeline").querySelectorAll("[data-presenter-event]")[1].click();
+    await vi.waitFor(() => expect(el("cueStatus").dataset.status).toBe("presenter-failed"));
+    session.dataContext.patchInvestigationClock = originalPatch;
+    await clickNextReady("The rest of the day");
+    expect(el("cueStatus").dataset.status).toBe("ready");
+    expect(el("cueStatus").textContent).not.toMatch(/Timeline action failed/);
+    session.dataContext.patchInvestigationClock = vi.fn(async () => ({ ok: false, error: new Error("rejected again") }));
+    await vi.waitFor(() => expect(el("kitTimeline").querySelectorAll("[data-presenter-event]")).toHaveLength(2));
+    el("kitTimeline").querySelectorAll("[data-presenter-event]")[0].click();
+    await vi.waitFor(() => expect(el("cueStatus").dataset.status).toBe("presenter-failed"));
+    session.dataContext.patchInvestigationClock = originalPatch;
+    el("homeBtn").click();
+    await vi.waitFor(() => expect(document.querySelector(".screen.is-active")?.dataset.screen).toBe("home"));
+    expect(el("cueStatus").dataset.status).toBe("ready");
+  });
+
+  test("a published advancing beat changes the applied card and current row without a staff clock write", async () => {
+    setLocale("en", { persist: false });
+    session = mount();
+    await boot(session, { presenterManifest: await syntheticPresenterManifest() });
+    await openCard('[data-open="timeline"]');
+    await vi.waitFor(() => expect(el("kitTimeline").querySelectorAll("[data-presenter-event]")).toHaveLength(2));
+    const rows = [...el("kitTimeline").querySelectorAll("[data-presenter-event]")];
+    const clock = session.h.clock;
+    const writes = vi.spyOn(session.dataContext, "patchInvestigationClock");
+    session.h.clock = { ...clock, positionMs: timelineBeatDurationMs(clock.beats[0]) + 1,
+      anchorMs: session.dataContext.correctedNow(), revision: clock.revision + 1 };
+    session.h.emit("investigationClock", session.h.clock);
+    expect(el("kitTimeline").querySelector("[data-presenter-title]").textContent).toBe("Event 401");
+    expect(rows[0].hasAttribute("aria-current")).toBe(false);
+    expect(rows[1].getAttribute("aria-current")).toBe("true");
+    expect(writes).not.toHaveBeenCalled();
+  });
+
+  test("hash mismatch Retry refetches corrected features without writing the clock", async () => {
+    setLocale("en", { persist: false });
+    session = mount();
+    const normalFetch = globalThis.fetch;
+    let corrected = false;
+    vi.stubGlobal("fetch", vi.fn(async (url) => {
+      const response = await normalFetch(url);
+      if (corrected || ESCAPE_URLS.has(String(url))) return response;
+      const json = await response.json();
+      return { ok: true, json: async () => ({ ...json,
+        features: json.features?.map((feature) => ({ ...feature, properties: { ...feature.properties, extra: "wrong" } })) }) };
+    }));
+    const writes = vi.spyOn(session.dataContext, "patchInvestigationClock");
+    await boot(session, { presenterManifest: await syntheticPresenterManifest() });
+    await openCard('[data-open="timeline"]');
+    await vi.waitFor(() => expect(el("kitTimeline").querySelector("[data-presenter-retry]").hidden).toBe(false));
+    expect(el("kitTimeline").querySelectorAll("[data-presenter-event]")).toHaveLength(0);
+    corrected = true;
+    const before = writes.mock.calls.length;
+    el("kitTimeline").querySelector("[data-presenter-retry]").click();
+    await vi.waitFor(() => expect(el("kitTimeline").querySelectorAll("[data-presenter-event]")).toHaveLength(2));
+    expect(writes).toHaveBeenCalledTimes(before);
+  });
+
+  test("Home invalidates a delayed event acknowledgement before it repaints", async () => {
+    setLocale("en", { persist: false });
+    session = mount();
+    await boot(session, { presenterManifest: await syntheticPresenterManifest() });
+    await openCard('[data-open="timeline"]');
+    await vi.waitFor(() => expect(el("kitTimeline").querySelectorAll("[data-presenter-event]")).toHaveLength(2));
+    const originalPatch = session.dataContext.patchInvestigationClock;
+    let acknowledge;
+    session.dataContext.patchInvestigationClock = vi.fn(() => new Promise((resolve) => { acknowledge = resolve; }));
+    el("kitTimeline").querySelectorAll("[data-presenter-event]")[1].click();
+    await vi.waitFor(() => expect(acknowledge).toBeTypeOf("function"));
+    session.dataContext.patchInvestigationClock = originalPatch;
+    el("homeBtn").click();
+    await vi.waitFor(() => expect(document.querySelector(".screen.is-active")?.dataset.screen).toBe("home"));
+    acknowledge({ ok: true });
+    await Promise.resolve();
+    expect(document.querySelector(".screen.is-active")?.dataset.screen).toBe("home");
+    expect(el("kitTimeline").querySelector("[data-presenter-list]")).not.toBeNull();
+    expect(el("cueStatus").dataset.status).not.toBe("presenter-failed");
+  });
+
+  test("Nova partial play, routes, Mor, memorial, routes, and Home keep follower virtual membership", async () => {
+    setLocale("en", { persist: false });
+    session = mount();
+    await boot(session);
+    await openCard('[data-open="nova"]');
+    expect(el("stepTitle").textContent).toBe("The Nova site");
+
+    await clickNextReady("The compounds");
+    for (const view of views(session)) {
+      expect(view.narrativeId).toBe("nova");
+      expect(view.clock.phase).toBe("playing");
+      expect(view.virtual).toEqual(expect.arrayContaining([
+        INVESTIGATION_POLYGONS_FULL_ID,
+        INVESTIGATION_LINES_FULL_ID,
+      ]));
+    }
+
+    await clickNextReady("Escape routes");
+    for (const view of views(session)) {
+      expect(view.clock.phase).toBe("ended");
+      expect(view.escape.individual).toBe(true);
+      expect(view.escape.settled).toBe(false);
+    }
+
+    await clickNextReady("Mor Levy");
+    expect(el("stepNote").textContent).toBe("");
+    expect(el("stepNote").hidden).toBe(true);
+    expect(el("stepCount").textContent).toBe("");
+    expect(el("stepCount").hidden).toBe(true);
+    for (const view of views(session)) {
+      expect(view.clock.phase).toBe("ended");
+      expect(view.escape.mor).toBe(true);
+      expect(view.escape.individual).toBe(false);
+    }
+
+    await clickNextReady("Memorial");
+    await vi.waitFor(() => expect(session.h.commands.at(-1)?.presentationAction).toBe("open"));
+    const memorialLayers = NARRATIVES.find((item) => item.id === "nova").steps
+      .find((step) => step.title.en === "Memorial").cue.layers;
+    for (const view of views(session)) {
+      expect(view.narrativeId).toBe("nova");
+      expect(view.clock.phase).toBe("ended");
+      expect(view.escape).toEqual({ individual: false, overlap: false, mor: false, settled: true });
+      sameMembers(view.layers, memorialLayers);
+      expect(view.chips).toEqual([]);
+      expect(view.virtual).toEqual([
+        INVESTIGATION_POLYGONS_FULL_ID,
+        INVESTIGATION_LINES_FULL_ID,
+      ]);
+    }
+
+    expect(el("kitEscape").hidden).toBe(false);
+    expect(el("kitEscape").querySelectorAll("[data-nli-nova-escape]")).toHaveLength(1);
+    const routeButton = () => el("kitEscape").querySelector('[data-nli-nova-escape="individual"]');
+    expect(routeButton().getAttribute("aria-pressed")).toBe("false");
+    routeButton().click();
+    await vi.waitFor(() => {
+      expect(routeButton().getAttribute("aria-pressed")).toBe("true");
+      for (const view of views(session)) {
+        expect(view.escape).toEqual({ individual: true, overlap: false, mor: false, settled: false });
+        sameMembers(view.layers, memorialLayers);
+      }
+    });
+    routeButton().click();
+    await vi.waitFor(() => {
+      expect(routeButton().getAttribute("aria-pressed")).toBe("false");
+      for (const view of views(session)) {
+        expect(view.escape).toEqual({ individual: false, overlap: false, mor: false, settled: true });
+      }
+    });
+
+    el("prevBtn").click();
+    await vi.waitFor(() => {
+      expect(el("stepTitle").textContent).toBe("Mor Levy");
+      expect(el("cueStatus").dataset.status).toBe("ready");
+    });
+    el("prevBtn").click();
+    await vi.waitFor(() => {
+      expect(el("stepTitle").textContent).toBe("Escape routes");
+      expect(el("cueStatus").dataset.status).toBe("ready");
+    });
+    for (const view of views(session)) {
+      expect(view.clock.phase).toBe("ended");
+      expect(view.escape.individual).toBe(true);
+      expect(view.escape.settled).toBe(false);
+      expect(view.virtual).toEqual(expect.arrayContaining([
+        INVESTIGATION_POLYGONS_FULL_ID,
+        INVESTIGATION_LINES_FULL_ID,
+      ]));
+    }
+
+    el("homeBtn").click();
+    await vi.waitFor(() => {
+      expect(el("cueStatus").dataset.status).toBe("ready");
+      for (const view of views(session)) expectHome(view);
+    });
+  });
+
+  test("Hostages presentation prepares under the cue hold, and manual Close stays on the scene", async () => {
+    setLocale("en", { persist: false });
+    session = mount();
+    await boot(session);
+    await openCard('[data-open="hostages"]');
+    expect(session.h.commands).toHaveLength(0);
+
+    let releaseCue;
+    const originalSetEscapeOverlay = session.dataContext.setEscapeOverlay;
+    session.dataContext.setEscapeOverlay = vi.fn(async (...args) => {
+      await new Promise((resolve) => { releaseCue = resolve; });
+      return originalSetEscapeOverlay(...args);
+    });
+    el("nextBtn").click();
+    await vi.waitFor(() => expect(releaseCue).toBeTypeOf("function"));
+    expect(el("stepTitle").textContent).toBe("Presentation");
+    expect(session.h.commands).toEqual([expect.objectContaining({ segmentId: "hostages", presentationAction: "open" })]);
+    expect(session.h.clock.presentationPendingUntilMs).toBeGreaterThan(session.dataContext.correctedNow());
+    releaseCue();
+    await vi.waitFor(() => {
+      expect(el("cueStatus").dataset.status).toBe("ready");
+      expect(session.h.commands).toEqual([expect.objectContaining({ segmentId: "hostages", presentationAction: "open" })]);
+    });
+    expect(views(session).every((view) => view.narrativeId === "hostages")).toBe(true);
+    el("kitPresentation").querySelector('[data-presentation-action="close"]').click();
+    await vi.waitFor(() => expect(el("kitPresentation").querySelector('[data-presentation-action="open"]')).not.toBeNull());
+    expect(el("stepTitle").textContent).toBe("Presentation");
+    expect(session.h.commands.at(-1)).toMatchObject({ segmentId: "hostages", presentationAction: "close" });
+  });
+
+  test("Mor stages slides under the cue hold, keeps its route active, and can reopen", async () => {
+    setLocale("en", { persist: false });
+    session = mount();
+    await boot(session);
+    await openCard('[data-open="nova"]');
+    await clickNextReady("The compounds");
+    await clickNextReady("Escape routes");
+    expect(session.h.commands.filter((command) => command.segmentId === "nova_mor")).toHaveLength(0);
+
+    let releaseMorCue;
+    const originalSetEscapeOverlay = session.dataContext.setEscapeOverlay;
+    session.dataContext.setEscapeOverlay = vi.fn(async (...args) => {
+      await new Promise((resolve) => { releaseMorCue = resolve; });
+      return originalSetEscapeOverlay(...args);
+    });
+    el("nextBtn").click();
+    await vi.waitFor(() => expect(releaseMorCue).toBeTypeOf("function"));
+    expect(el("stepTitle").textContent).toBe("Mor Levy");
+    expect(el("cueStatus").dataset.status).not.toBe("ready");
+    expect(session.h.commands.filter((command) => command.segmentId === "nova_mor")).toHaveLength(1);
+    expect(session.h.clock.presentationPendingUntilMs).toBeGreaterThan(session.dataContext.correctedNow());
+
+    releaseMorCue();
+    await vi.waitFor(() => {
+      expect(el("cueStatus").dataset.status).toBe("ready");
+      expect(session.h.commands.filter((command) => command.segmentId === "nova_mor" && command.presentationAction === "open")).toHaveLength(1);
+    });
+    expect(views(session).every((view) => view.escape.mor)).toBe(true);
+
+    el("kitPresentation").querySelector('[data-presentation-action="close"]').click();
+    await vi.waitFor(() => expect(session.h.commands.at(-1)).toMatchObject({ segmentId: "nova_mor", presentationAction: "close" }));
+    await vi.waitFor(() => expect(el("kitPresentation").querySelector('[data-presentation-action="open"]')).not.toBeNull());
+    el("kitPresentation").querySelector('[data-presentation-action="open"]').click();
+    await vi.waitFor(() => expect(session.h.commands.filter((command) => command.segmentId === "nova_mor" && command.presentationAction === "open")).toHaveLength(2));
+    expect(views(session).every((view) => view.escape.mor)).toBe(true);
+  });
+
+  test("a failed Home reset stays retryable and followers ignore the rejected narrative", async () => {
+    setLocale("en", { persist: false });
+    session = mount();
+    await boot(session);
+    await openCard('[data-open="segev"]');
+    expect(el("ticks").hidden).toBe(true);
+    expect(getComputedStyle(el("ticks")).display).toBe("none");
+    session.h.failNull = true;
+    el("homeBtn").click();
+    await vi.waitFor(() => expect(el("playerCueFailure").hidden).toBe(false));
+    expect(document.querySelector(".screen.is-active")?.dataset.screen).toBe("player");
+    for (const view of views(session)) expect(view.narrativeId).toBe("segev");
+
+    el("playerCueRetry").click();
+    await vi.waitFor(() => {
+      expect(el("cueStatus").dataset.status).toBe("ready");
+      for (const view of views(session)) expectHome(view);
+    });
+  });
+
+  test("a show replacing a gated explicit Home restores the real presenter Play control", async () => {
+    setLocale("en", { persist: false }); session = mount();
+    const layers = session.dataContext.setEnabledLayerIds;
+    let release;
+    const gate = new Promise(resolve => { release = resolve; }); let first = true;
+    session.dataContext.setEnabledLayerIds = async ids => { if (first) { first = false; await gate; } return layers(ids); };
+    const { initNliStaffRemote } = await import("../../frontend/src/remote/nli-staff-remote.js");
+    session.remote = initNliStaffRemote(session.dataContext, { presenterManifest: await syntheticPresenterManifest() });
+    session.h.emit("narrativeState", session.h.narrative); session.h.emit("connection", true);
+    el("homeBtn").click();
+    await vi.waitFor(() => expect(el("cueStatus").dataset.status).toBe("applying"));
+    await vi.waitFor(() => expect(el("narrativeList").querySelector('[data-open="show"]').disabled).toBe(false));
+    el("narrativeList").querySelector('[data-open="show"]').click();
+    expect(el("cueStatus").dataset.status).toBe("applying");
+    expect(el("stepTitle").textContent).not.toBe("The opening minutes");
+    release();
+    await vi.waitFor(() => expect(el("stepTitle").textContent).toBe("The opening minutes"));
+    await vi.waitFor(() => expect(el("cueStatus").dataset.status).toBe("ready"));
+    await vi.waitFor(() => expect(el("kitTimeline").querySelectorAll("[data-presenter-event]")).toHaveLength(2));
+    expect(el("kitTimeline").querySelector("[data-presenter-play]").disabled).toBe(false);
+  });
+
+  test("rapid Next, Back, and Home leave both followers on the Home cue", async () => {
+    setLocale("en", { persist: false });
+    session = mount();
+    await boot(session);
+    await openCard('[data-open="timeline"]');
+    expect(views(session).every((view) => view.clock.phase === "playing")).toBe(true);
+    el("nextBtn").click();
+    el("prevBtn").click();
+    el("homeBtn").click();
+    await vi.waitFor(() => {
+      expect(document.querySelector(".screen.is-active")?.dataset.screen).toBe("home");
+      expect(el("cueStatus").dataset.status).toBe("ready");
+      for (const view of views(session)) expectHome(view);
+    });
+  });
+
+  test("a style reload does not apply an escape fetch that was already pending", async () => {
+    setLocale("en", { persist: false });
+    session = mount();
+    await boot(session);
+    await openCard('[data-open="nova"]');
+    await clickNextReady("The compounds");
+    await clickNextReady("Escape routes");
+    await clickNextReady("Mor Levy");
+    await clickNextReady("Memorial");
+    await vi.waitFor(() => expect(session.h.commands.at(-1)?.presentationAction).toBe("open"));
+
+    let releaseEscape;
+    escapePending = new Promise((resolve) => { releaseEscape = resolve; });
+
+    const maps = [];
+    for (const [follower, surface] of [
+      [session.h.followers[0], "gis"],
+      [session.h.followers[1], "projection"],
+    ]) {
+      const map = createFakeMapLibreMap();
+      maps.push(map);
+      coordinators.push(createNovaEscapeCoordinator({
+        map,
+        dataContext: follower,
+        profile: surface,
+        surface,
+      }));
+    }
+    await vi.waitFor(() => expect(globalThis.fetch).toHaveBeenCalled());
+
+    el("homeBtn").click();
+    await vi.waitFor(() => {
+      for (const view of views(session)) expectHome(view);
+    });
+    await Promise.all(coordinators.map((coordinator) => coordinator.onStyleLoad({ styleLoss: true })));
+    const pendingFetches = globalThis.fetch.mock.results.map((result) => result.value);
+    releaseEscape();
+    await Promise.all(pendingFetches);
+    for (const map of maps) {
+      expect(map.getLayer(NOVA_ESCAPE_IMPACT_LAYER_ID)).toBeNull();
+      expect(map.getLayer(NOVA_ESCAPE_INDIVIDUAL_LAYER_ID)).toBeNull();
+    }
+    for (const view of views(session)) expectHome(view);
+  });
+
+  describe("rendered display followers", () => {
+    let displays = [], decodeDescriptor, originalMatchMedia;
+    const flush = async () => { for (let i = 0; i < 60; i++) await Promise.resolve(); };
+    async function advance(ms) {
+      await vi.advanceTimersByTimeAsync(ms);
+      for (const display of displays) display.drive();
+      await flush();
+    }
+    async function settle(expectedTitle = null) {
+      for (let i = 0; i < 200; i++) {
+        await advance(20);
+        const back = el("prevBtn");
+        const backSettled = !session.navigation?.backTarget?.() || !back.disabled;
+        const currentRef = session.navigation?.getState?.().current;
+        const committedTitle = currentRef && SCRIPTS.find(script => script.id === currentRef.scriptId)?.steps[currentRef.step]?.title?.en;
+        const activeScreen = document.querySelector(".screen.is-active")?.dataset.screen;
+        const navigationCommitted = activeScreen === "home" ? currentRef == null : committedTitle === el("stepTitle").textContent;
+        const observedTitle = expectedTitle || el("stepTitle").textContent;
+        const presentationStep = SCRIPTS.flatMap(script => script.steps).find(step => step.title?.en === observedTitle);
+        const expectedPresentation = presentationStep?.presentation?.open === "auto" ? presentationStep.presentation : null;
+        const displayedCommand = displays[0].binding.getDisplayedSnapshot().presentationCommand;
+        const presentationAcknowledged = !expectedPresentation || (
+          displayedCommand?.segmentId === expectedPresentation.segmentId &&
+          displays[0].results.some(result => result.requestId === displayedCommand.requestId && result.outcome === "opened"));
+        if ((!expectedTitle || el("stepTitle").textContent === expectedTitle) &&
+          !el("nextBtn").disabled && backSettled && el("cueStatus").dataset.status === "ready" &&
+          navigationCommitted &&
+          presentationAcknowledged &&
+          displays.every(d => d.runtime.getRenderedReadiness().ready)) return;
+      }
+      throw new Error("rendered cue did not settle: " + JSON.stringify({ title: el("stepTitle").textContent, cue: el("cueStatus").dataset.status, results: displays[0].results, displays: displays.map(d => d.runtime.getRenderedReadiness()) }));
+    }
+    async function settleHome() {
+      for (let i = 0; i < 300; i++) {
+        await advance(20);
+        if (document.querySelector(".screen.is-active")?.dataset.screen === "home" &&
+          session.navigation.getState().current == null &&
+          el("cueStatus").dataset.status === "ready" && displays.every(display =>
+            display.runtime.getRenderedReadiness().ready &&
+            display.binding.getDisplayedSnapshot().narrativeState.id == null &&
+            display.root.querySelector(".nli-reveal-overlay") == null)) return;
+      }
+      throw new Error("Home did not remove the fixed GIS overlays: " + JSON.stringify({
+        screen: document.querySelector(".screen.is-active")?.dataset.screen,
+        overlays: displays.map(display => display.root.querySelector(".nli-reveal-overlay")?.outerHTML || null),
+        snapshots: displays.map(display => display.binding.getDisplayedSnapshot()),
+      }));
+    }
+    async function start(reduced = false) {
+      vi.useFakeTimers(); vi.setSystemTime(50_000);
+      originalMatchMedia = window.matchMedia;
+      window.matchMedia = () => ({ matches: reduced });
+      decodeDescriptor = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, "decode");
+      Object.defineProperty(HTMLImageElement.prototype, "decode", { configurable: true, value: async () => {} });
+      vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue();
+      vi.spyOn(HTMLMediaElement.prototype, "readyState", "get").mockReturnValue(4);
+      vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
+      vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => {});
+      setLocale("en", { persist: false }); session = mount();
+      session.dataContext.correctedNow = () => Date.now();
+      for (const follower of session.h.followers) follower.correctedNow = () => Date.now();
+      for (const [index, surface] of ["gis", "projection"].entries()) {
+        displays.push(await createRenderedFollower(session.h.followers[index], surface, result => session.h.emit("narrativePresentationResult", result)));
+      }
+      session.dataContext.narrativePresentationCommand = async command => {
+        session.h.commands.push(command);
+        await displays[0].command(command);
+        return { status: "ok" };
+      };
+      await boot(session); await settle();
+    }
+    function expectRenderedHome() {
+      for (const display of displays) {
+        expect(display.binding.getDisplayedSnapshot().narrativeState.id).toBeNull();
+        expect(display.runtime.getRenderedReadiness().ready).toBe(true);
+        expect(display.map.getLayer("nli__people")).toBeNull();
+        expect(display.map.getSource("nli-name-field")).toBeNull();
+        expect(display.root.querySelector(".nli-reveal-overlay")).toBeNull();
+      }
+    }
+    afterEach(() => {
+      displays.forEach(display => display.dispose()); displays = [];
+      if (decodeDescriptor) Object.defineProperty(HTMLImageElement.prototype, "decode", decodeDescriptor);
+      else delete HTMLImageElement.prototype.decode;
+      if (originalMatchMedia === undefined) delete window.matchMedia;
+      else window.matchMedia = originalMatchMedia;
+      vi.restoreAllMocks(); vi.useRealTimers();
+    });
+
+    async function reachCredits() {
+      await start();
+      el("narrativeList").querySelector('[data-open="show"]').click(); await settle("The opening minutes");
+      for (let i = 0; i < 20 && el("stepTitle").textContent !== "Credits"; i++) {
+        if (el("nextBtn").dataset.navigationAction === "choose-story") {
+          el("nextBtn").click();
+          el("storyChooser").querySelector('[data-chooser-action="continue-identity"]').click();
+        }
+        else if (!el("nextChoices").hidden) el("nextChoices").querySelector('[data-branch]').click();
+        else el("nextBtn").click();
+        await settle();
+      }
+      expect(el("stepTitle").textContent).toBe("Credits");
+    }
+
+    test("Hostages strip jumps preserve follower scenes, visit only endpoints, and Back does not create forward history", async () => {
+      await start();
+      el("narrativeList").querySelector('[data-open="hostages"]').click();
+      await settle("Nir Oz");
+      const tick = step => el("ticks").querySelector(`[data-step="${step}"]`);
+      tick(3).click();
+      await settle("All hostages");
+      expect(tick(0).classList.contains("is-visited")).toBe(true);
+      expect(tick(1).classList.contains("is-visited")).toBe(false);
+      expect(tick(2).classList.contains("is-visited")).toBe(false);
+      expect(tick(3).classList.contains("is-current")).toBe(true);
+      for (const display of displays) {
+        expect(display.binding.getDisplayedSnapshot().narrativeState.id).toBe("hostages_all");
+        expect(display.runtime.getRenderedReadiness().ready).toBe(true);
+      }
+
+      el("prevBtn").click();
+      await settle("Nir Oz");
+      expect(tick(0).classList.contains("is-current")).toBe(true);
+      expect(tick(3).classList.contains("is-visited")).toBe(true);
+      for (const display of displays) {
+        expect(display.binding.getDisplayedSnapshot().narrativeState.id).toBe("hostages");
+        expect(display.runtime.getRenderedReadiness().ready).toBe(true);
+      }
+
+      el("nextBtn").click();
+      await settle("Presentation");
+      expect(tick(1).classList.contains("is-current")).toBe(true);
+      el("prevBtn").click();
+      await settle("Nir Oz");
+      expect(tick(0).classList.contains("is-current")).toBe(true);
+      expect(tick(3).classList.contains("is-visited")).toBe(true);
+      for (const display of displays) {
+        expect(display.binding.getDisplayedSnapshot().narrativeState.id).toBe("hostages");
+        expect(display.runtime.getRenderedReadiness().ready).toBe(true);
+      }
+    }, 15_000);
+
+    test("a Home intent supersedes a pending failed-cue Retry on both followers", async () => {
+      await start();
+      el("narrativeList").querySelector('[data-open="segev"]').click();
+      await settle("The house in Be'eri");
+      session.h.failNull = true;
+      el("homeBtn").click();
+      await flush();
+      expect(el("playerCueFailure").hidden).toBe(false);
+      for (const display of displays) {
+        expect(display.binding.getDisplayedSnapshot().narrativeState.id).toBe("segev");
+      }
+
+      const setLayers = session.dataContext.setEnabledLayerIds;
+      let releaseLayers;
+      const heldLayers = new Promise(resolve => { releaseLayers = resolve; });
+      let holdNext = true;
+      session.dataContext.setEnabledLayerIds = async ids => {
+        if (holdNext) { holdNext = false; await heldLayers; }
+        return setLayers(ids);
+      };
+      el("playerCueRetry").click();
+      await vi.waitFor(() => expect(el("cueStatus").dataset.status).toBe("applying"));
+      await flush();
+      el("homeBtn").click();
+      releaseLayers();
+      await settleHome();
+      expect(session.navigation.getState().current).toBeNull();
+      expect(el("playerCueFailure").hidden).toBe(true);
+      expectRenderedHome();
+    }, 15_000);
+
+    test("full staff show, optional Identity, Wall, Credits, Back history and Home settle followers", async () => {
+      await start();
+      el("narrativeList").querySelector('[data-open="show"]').click(); await settle("The opening minutes");
+      expect(el("ticks").hidden).toBe(true);
+      expect(getComputedStyle(el("ticks")).display).toBe("none");
+      const visited = [];
+      for (let i = 0; i < 20; i++) {
+        const title = el("stepTitle").textContent; visited.push(title);
+        if (title === "Identity database") {
+          expect(el("ticks").hidden).toBe(true);
+          expect(getComputedStyle(el("ticks")).display).toBe("none");
+        }
+        for (const display of displays) {
+          expect(display.binding.getDisplayedSnapshot().narrativeState.id).toBe(session.h.narrative.id);
+          expect(display.runtime.getRenderedReadiness().ready).toBe(true);
+        }
+        if (title === "Credits") break;
+        if (title === "Memorial") {
+          el("nextBtn").click();
+          const focusedStory = document.querySelector('#storyChooser [data-story-id="shura"]');
+          focusedStory.focus();
+          const commandCount = session.h.commands.length;
+          const beforeClock = session.h.clock;
+          const playingClock = { ...beforeClock, phase: "playing", membership: PLAYABLE_LAYER_IDS.map(id => `nli.${id}`),
+            beats: STORY_MINUTES, loop: false, positionMs: 0, anchorMs: Date.now(), serverNowMs: Date.now(), revision: beforeClock.revision + 1 };
+          session.h.clock = playingClock;
+          session.h.publish({ type: OTEF_MESSAGE_TYPES.INVESTIGATION_CLOCK_CHANGED, investigationClock: playingClock });
+          session.h.emit("investigationClock", playingClock);
+          await advance(500);
+          const clockAtStart = displays[0].binding.getDisplayedSnapshot().investigationClock;
+          const frameAtStart = deriveInvestigationFrame(clockAtStart, Date.now(), displays[0].binding.getDisplayedSnapshot().enabledIds,
+            { motionMode: "full", storyBeats: STORY_MINUTES, polygonMotionActive: true, narrativeId: null });
+          await advance(5_000);
+          const displayedClock = displays[0].binding.getDisplayedSnapshot().investigationClock;
+          const frameAfterProgress = deriveInvestigationFrame(displayedClock, Date.now(), displays[0].binding.getDisplayedSnapshot().enabledIds,
+            { motionMode: "full", storyBeats: STORY_MINUTES, polygonMotionActive: true, narrativeId: null });
+          expect(frameAfterProgress.activeProgress).toBeGreaterThan(frameAtStart.activeProgress);
+          expect(displays.every(display => display.runtime.getRenderedReadiness().ready)).toBe(true);
+          expect(el("storyChooser").hidden).toBe(false);
+          expect(document.activeElement.dataset.focusKey).toBe("story-shura");
+          setLocale("he", { persist: false });
+          expect(document.activeElement.dataset.focusKey).toBe("story-shura");
+          setLocale("en", { persist: false });
+          expect(document.activeElement.dataset.focusKey).toBe("story-shura");
+          expect(session.h.commands).toHaveLength(commandCount);
+          document.querySelector('#storyChooser [data-chooser-action="cancel"]').click();
+        }
+        const branch = !el("nextChoices").hidden && el("nextChoices").querySelector('[data-branch]');
+        if (branch) branch.click();
+        else if (el("nextBtn").dataset.navigationAction === "choose-story") {
+          el("nextBtn").click();
+          const identity = el("storyChooser").querySelector('[data-chooser-action="continue-identity"]');
+          if (identity) identity.click();
+        } else el("nextBtn").click();
+        await settle();
+      }
+      expect(visited).toEqual(expect.arrayContaining(["The opening minutes", "The house in Be'eri", "The rest of the day", "The compounds", "Escape routes", "Mor Levy", "Memorial", "Identity database", "Wall of names", "Credits"]));
+      expect(displays[1].map.getSource("nli-name-field")).toBeTruthy();
+      expect(displays[0].map.getSource("nli-name-field")).toBeNull();
+      expect(displays[0].root.querySelector("section.present")?.dataset.slide).toBe("37");
+      const results = displays[0].results;
+      for (const opened of results.filter(result => result.outcome === "opened")) {
+        const dispatch = displays[0].dispatchedCommands.find(entry => entry.command.requestId === opened.requestId);
+        expect(dispatch, `opened ${opened.segmentId} must have a correlated dispatch`).toBeDefined();
+        expect(dispatch.command.segmentId).toBe(opened.segmentId);
+        const ready = results.find(result => result.requestId === opened.requestId && result.outcome === "ready");
+        if (dispatch.managedScene) {
+          expect(ready, `managed open ${opened.segmentId} must acknowledge preparation`).toBeDefined();
+          expect(ready.time).toBeLessThan(opened.time);
+          expect(opened.time - ready.time).toBeGreaterThanOrEqual(600);
+        } else {
+          expect(opened.time - dispatch.time).toBeGreaterThanOrEqual(600);
+        }
+        expect(opened.opacity).toBe(1);
+        if (opened.slide > 0) expect(opened.displayedSlide).toBe(String(opened.slide));
+        else expect(opened.displayedSlide).toBeNull();
+      }
+      const backwards = [];
+      for (let i = 0; i < 24 && el("stepTitle").textContent !== "The opening minutes"; i++) {
+        const target = session.navigation.backTarget();
+        const targetTitle = SCRIPTS.find(script => script.id === target?.scriptId)?.steps[target?.step]?.title?.en;
+        const back = el("prevBtn");
+        back.click(); await settle(targetTitle); backwards.push(el("stepTitle").textContent);
+      }
+      expect(backwards).toContain("Wall of names");
+      expect(backwards, JSON.stringify({ backwards, navigation: session.navigation.getState() })).toContain("Identity database");
+      expect(backwards).toContain("Memorial");
+      expect(backwards.at(-1)).toBe("The opening minutes");
+      el("homeBtn").click(); await settleHome(); expectRenderedHome();
+      for (const display of displays) {
+        expect(display.removals.length).toBeGreaterThan(0);
+        expect(display.removals.filter(removal => removal.opacity > 0)).toEqual([]);
+      }
+    }, 15_000);
+
+    test("Credits Back to Wall then Home removes the Identity blackout", async () => {
+      await reachCredits();
+      el("prevBtn").click(); await settle("Wall of names");
+      expect(displays[1].map.getSource("nli-name-field")).toBeTruthy();
+      el("homeBtn").click(); await settleHome(); expectRenderedHome();
+    }, 15_000);
+
+    test("Identity people stay mounted at the common half factor and remove only at zero on Home", async () => {
+      await start();
+      el("narrativeList").querySelector('[data-show-step="identity-database"]').click(); await settle();
+      el("homeBtn").click(); await flush();
+      await advance(300);
+      for (const display of displays) {
+        expect(display.map.getLayer("nli__people")).toBeTruthy();
+        expect(display.map.getPaintProperty("nli__people", "circle-opacity")).toBeCloseTo(.4);
+      }
+      await advance(300); await settle(); expectRenderedHome();
+    });
+
+    test("a failed held Home cue retains its outgoing narrative and explicit retry settles", async () => {
+      await start();
+      el("narrativeList").querySelector('[data-open="segev"]').click(); await settle();
+      const outgoing = displays.map(d => d.binding.getDisplayedSnapshot());
+      session.h.failNull = true; el("homeBtn").click(); await flush();
+      expect(el("playerCueFailure").hidden).toBe(false);
+      for (const [i, display] of displays.entries()) {
+        expect(display.binding.getDisplayedSnapshot().narrativeState.id).toBe(outgoing[i].narrativeState.id);
+        expect(display.binding.getRenderSnapshot().narrativeState.id).toBe(outgoing[i].narrativeState.id);
+      }
+      el("playerCueRetry").click(); await settle(); expectRenderedHome();
+    });
+
+    test("lost staff hold expires once and late cancelled preparation cannot replace Home", async () => {
+      await start();
+      for (const follower of session.h.followers) follower._setInvestigationClock({ ...follower.getInvestigationClock(), presentationPendingUntilMs: Date.now() + 1000 });
+      session.h.publish({ type: OTEF_MESSAGE_TYPES.LAYERS_CHANGED, layerGroups: layerGroupsFor(["nli.people"]) }); await flush();
+      await advance(999);
+      for (const display of displays) expect(display.map.getLayer("nli__people")).toBeNull();
+      await advance(2); await advance(600);
+      for (const display of displays) expect(display.map.getPaintProperty("nli__people", "circle-opacity")).toBe(.8);
+      let release; const gate = new Promise(resolve => { release = resolve; }); displays.forEach(d => d.gate(gate));
+      session.h.publish({ type: OTEF_MESSAGE_TYPES.LAYERS_CHANGED, layerGroups: layerGroupsFor(["nli.people_names"]) }); await flush();
+      displays.forEach(d => d.gate(null));
+      session.h.publish({ type: OTEF_MESSAGE_TYPES.LAYERS_CHANGED, layerGroups: layerGroupsFor(HOME_LAYER_IDS) }); await flush();
+      release(); await settle(); expectRenderedHome();
+      await advance(16000); expectRenderedHome();
+    });
+
+    test("reduced motion still waits for readiness and never reveals a required subset", async () => {
+      await start(true);
+      let release; const gate = new Promise(resolve => { release = resolve; }); displays.forEach(d => d.gate(gate));
+      el("narrativeList").querySelector('[data-show-step="identity-database"]').click(); await flush();
+      for (const display of displays) expect(display.map.getLayer("nli__people")).toBeNull();
+      displays.forEach(d => d.gate(null)); release(); await settle();
+      for (const display of displays) expect(display.map.getPaintProperty("nli__people", "circle-opacity")).toBe(.8);
+      el("homeBtn").click(); await settle(); expectRenderedHome();
+    });
+  });
+});

@@ -1,0 +1,32 @@
+[
+  {
+    "citycode": "1240",
+    "cityname": "עין הבשור",
+    "outlineObjectId": 12,
+    "coordinates": [34.44292366245287, 31.281243812916806]
+  },
+  {
+    "citycode": "1237",
+    "cityname": "תלמי יוסף",
+    "outlineObjectId": 9,
+    "coordinates": [34.36193314035466, 31.198775610482357]
+  },
+  {
+    "citycode": "0415",
+    "cityname": "שוקדה",
+    "outlineObjectId": 22,
+    "coordinates": [34.524039482602795, 31.42185288863517]
+  },
+  {
+    "citycode": "1095",
+    "cityname": "כפר מימון",
+    "outlineObjectId": 23,
+    "coordinates": [34.53719317580883, 31.43259564948454]
+  },
+  {
+    "citycode": "0342",
+    "cityname": "גברעם",
+    "outlineObjectId": 33,
+    "coordinates": [34.61188171927665, 31.59203151393057]
+  }
+]

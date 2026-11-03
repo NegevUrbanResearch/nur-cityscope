@@ -1,0 +1,84 @@
+{
+  "packagePath": "otef-interactive/public/release-build/nli-impress-approved-2/processed.zip",
+  "packageSha256": "8bd4b7b2bb603803fdbd28923a6087b19f7bb2a51f4d9586c3de99c3395a7651",
+  "acceptedSourceSha256": "431b9e853e1fc4719125da7a96135c7d1a0b854c3395389b45d0212e1bdf0ebe",
+  "datasetVersion": "sha256:0A3B59AA4B2F6925357EFF129C79DCC2316D0C0A1A26EB9D78647AD4CB2EC1CC",
+  "existingReview": {
+    "decisionIds": [
+      "import-contract-2026-08-30",
+      "owner-approval-2026-08-31"
+    ],
+    "reviewedAt": "2026-08-31T00:00:00Z",
+    "reviewedBy": "Tuval",
+    "sourceSha256": "431B9E853E1FC4719125DA7A96135C7D1A0B854C3395389B45D0212E1BDF0EBE",
+    "status": "approved"
+  },
+  "artifacts": {
+    "nli.investigation_polygons": {
+      "captionFields": [
+        "OBJECTID",
+        "Name",
+        "Notes",
+        "מיקום",
+        "timeline",
+        "timeline_minutes"
+      ],
+      "acceptedCaptionSha256": "bf8d3f6c48f0f6cf912e0b7ce69270059306bdc45c4e97cb9e0478e8699143da",
+      "currentCaptionSha256": "bf8d3f6c48f0f6cf912e0b7ce69270059306bdc45c4e97cb9e0478e8699143da",
+      "acceptedRecordCount": 223,
+      "runtimeFeatureCount": 223,
+      "packagedByteSha256": "1ea19c33ffc98d094df295ce4a7bae3851381b07b0f65b79ab2d78bc15daa49e",
+      "runtimeByteSha256": "1ea19c33ffc98d094df295ce4a7bae3851381b07b0f65b79ab2d78bc15daa49e"
+    },
+    "nli.lines": {
+      "captionFields": [
+        "OBJECTID",
+        "Name",
+        "Notes",
+        "timeline",
+        "timeline_minutes"
+      ],
+      "acceptedCaptionSha256": "817593e2ad32eadd30ca2e04cf75d0911dc70fa5ceadc5dd11f9663b56127d08",
+      "currentCaptionSha256": "817593e2ad32eadd30ca2e04cf75d0911dc70fa5ceadc5dd11f9663b56127d08",
+      "acceptedRecordCount": 68,
+      "runtimeFeatureCount": 80,
+      "packagedByteSha256": "b44f19bca5292468a10eb967a56576789de5cd8fffbaf037feb4e35521f1c502",
+      "runtimeByteSha256": "934bd4be7a1d6a4f1b6a0f62337384d06624e571a6efe44da366ab6062afa3c1"
+    },
+    "nli.alarms": {
+      "captionFields": [
+        "city",
+        "alarm_minutes"
+      ],
+      "acceptedCaptionSha256": "f84ef49be1737fd0a9c26f3109f6ed3fdcbf4e9fc94e5b078130fa5abfb91d0d",
+      "currentCaptionSha256": "f84ef49be1737fd0a9c26f3109f6ed3fdcbf4e9fc94e5b078130fa5abfb91d0d",
+      "acceptedRecordCount": 190,
+      "runtimeFeatureCount": 190,
+      "packagedByteSha256": "850ffd4cb89b62fef0a85b1c0562969bf0d829e2172f61ccc7bb2e54297b4189",
+      "runtimeByteSha256": "850ffd4cb89b62fef0a85b1c0562969bf0d829e2172f61ccc7bb2e54297b4189"
+    }
+  },
+  "visualRouteAugmentation": {
+    "excludedConfidence": "unconfirmed",
+    "excludedObjectIds": [
+      1001,
+      1002,
+      1003,
+      1004,
+      1005,
+      1006,
+      1007,
+      1008,
+      1009,
+      1010,
+      1011,
+      1012
+    ],
+    "directionOnlyObjectIds": [
+      63
+    ],
+    "featureImplementationCommit": "0545bf91dd3cc72d24c957e34087ecdee5b1f9aa",
+    "addsBeatMinutes": false,
+    "captionFieldsChanged": false
+  }
+}

@@ -1,43 +1,504 @@
+from django.core.exceptions import RequestDataTooBig
 from django.shortcuts import render
-from django.db import models
+from django.db import models, transaction
+from django.db.models import Q
 from django.http import JsonResponse
 from rest_framework import viewsets, status
 from rest_framework.response import Response
 from rest_framework.decorators import action
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 import json
+import copy
+import math
 import os
+import re
+import time
 from django.conf import settings
 from datetime import datetime
+from asgiref.sync import async_to_sync
+from channels.layers import get_channel_layer
 
 from .models import (
+    Table,
     Indicator,
     IndicatorData,
     IndicatorImage,
     State,
     DashboardFeedState,
     LayerConfig,
+    GISLayer,
+    OTEFModelConfig,
+    OTEFViewportState,
+    LayerGroup,
+    LayerState,
 )
 
 from .serializers import (
+    TableSerializer,
     IndicatorSerializer,
     IndicatorDataSerializer,
     IndicatorImageSerializer,
     StateSerializer,
     DashboardFeedStateSerializer,
     LayerConfigSerializer,
+    GISLayerSerializer,
+    OTEFModelConfigSerializer,
+    OTEFViewportStateSerializer,
+    LayerGroupSerializer,
+    LayerStateSerializer,
 )
+from .otef_person_selection import (
+    build_person_selection_event,
+    lock_person_selection_state,
+    normalize_person_selection,
+    parse_person_selection_command,
+    transition_person_selection,
+)
+from .otef_escape_overlay import normalize_escape_overlay
+from .otef_nli_clock_layout import (
+    CLOCK_LAYOUT_FIELDS,
+    GIS_SLOT_KEYS,
+    is_flat_gis_clock_layout,
+    normalize_nli_clock_layout,
+    validate_clock_slot_layout,
+    validate_nova_explainer_layout,
+)
+from .otef_legend_settings import (
+    LEGEND_SPANS,
+    normalize_legend_settings,
+    validate_legend_slot_layout,
+)
+from .otef_settlement_names import (
+    SettlementNameConflict,
+    SettlementNameInitializationRequired,
+    SettlementNameRejected,
+    normalize_settlement_name_settings,
+    write_settlement_name_settings,
+)
+from .otef_road_signs import (
+    RoadSignConflict,
+    RoadSignRejected,
+    normalize_road_sign_settings,
+    write_road_sign_settings,
+)
+from .projection_name_initialization import (
+    InitializationConflict,
+    InitializationRejected,
+    initialize_projection_name_settings,
+)
+from .otef_narrative import (
+    NARRATIVE_IDS,
+    StaleNarrativeRevision,
+    normalize_narrative_state,
+    presentation_segment,
+    transition_narrative_scene,
+)
+from .otef_investigation_clock import idle_investigation_clock
+
+
+def _normalize_projection_slideshow_patch(raw):
+    """
+    Validate and normalize projection_slideshow PATCH body (mirrors frontend sanitizer).
+    Returns (normalized_dict, None) or (None, error Response).
+    """
+    if not isinstance(raw, dict):
+        return None, Response(
+            {"error": "projection_slideshow must be an object"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    cmd_type = raw.get("type")
+    if cmd_type not in ("start", "stop"):
+        return None, Response(
+            {"error": 'projection_slideshow.type must be "start" or "stop"'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    payload = raw.get("payload")
+    if payload is not None and not isinstance(payload, dict):
+        return None, Response(
+            {"error": "projection_slideshow.payload must be an object"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    payload = dict(payload or {})
+
+    if cmd_type == "stop":
+        return {"type": "stop", "payload": {}}, None
+
+    out_payload = {}
+    if "packOrder" in payload:
+        po = payload["packOrder"]
+        if not isinstance(po, list):
+            return None, Response(
+                {"error": "packOrder must be an array"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        out_payload["packOrder"] = [str(x) for x in po]
+
+    for key in ("intervalMs", "crossfadeMs", "warmupLeadMs"):
+        if key not in payload:
+            continue
+        try:
+            v = float(payload[key])
+        except (TypeError, ValueError):
+            return None, Response(
+                {"error": f"{key} must be a finite number"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not math.isfinite(v):
+            return None, Response(
+                {"error": f"{key} must be a finite number"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        iv = int(round(v))
+        if key == "intervalMs":
+            out_payload[key] = max(1, iv)
+        else:
+            out_payload[key] = max(0, iv)
+
+    if "keepSettlementNames" in payload:
+        out_payload["keepSettlementNames"] = payload["keepSettlementNames"] is True
+
+    return {"type": "start", "payload": out_payload}, None
+
+
+# Keep in sync with otef-interactive/frontend/src/shared/nli-investigation-beats.js NLI_PLAYABLE_IDS
+_NLI_PLAYABLE_IDS = frozenset(
+    (
+        "nli.investigation_polygons",
+        "nli.lines",
+        "nli.alarms",
+    )
+)
+_INVESTIGATION_CLOCK_PHASES = ("idle", "playing", "paused", "ended")
+_INVESTIGATION_CLOCK_SEEK_KINDS = ("none", "jump")
+_NOVA_STORY_BEATS = (492, 506, 540, 630, 720)
+_NOVA_STORY_DURATION_MS = 20_000
+
+
+def _stamp_investigation_clock_server_now(clock):
+    stamped = dict(clock) if isinstance(clock, dict) else idle_investigation_clock()
+    stamped["serverNowMs"] = int(time.time() * 1000)
+    return stamped
+
+
+def _investigation_clock_for_response(raw):
+    if not isinstance(raw, dict) or raw.get("phase") not in _INVESTIGATION_CLOCK_PHASES:
+        return _stamp_investigation_clock_server_now(idle_investigation_clock())
+    return _stamp_investigation_clock_server_now(raw)
+
+
+def _clock_patch_error(message):
+    return Response({"error": message}, status=status.HTTP_400_BAD_REQUEST)
+
+
+def _normalize_investigation_clock_patch(raw):
+    """
+    Validate and normalize investigation_clock PATCH body.
+    Returns (normalized_dict, None) or (None, error Response).
+    revision and serverNowMs are assigned by the caller.
+    """
+    if not isinstance(raw, dict):
+        return None, _clock_patch_error("investigation_clock must be an object")
+    phase = raw.get("phase")
+    if phase not in _INVESTIGATION_CLOCK_PHASES:
+        return None, _clock_patch_error(
+            'investigation_clock.phase must be "idle", "playing", "paused", or "ended"'
+        )
+
+    allowed = {
+        "phase",
+        "membership",
+        "beats",
+        "loop",
+        "positionMs",
+        "anchorMs",
+        "seekKind",
+        "alarmOnsetOriginMs",
+        "leadInMinutes",
+        "hiddenDisplays",
+        "presentationPendingUntilMs",
+        "revision",
+        "serverNowMs",
+    }
+    unknown = sorted(set(raw) - allowed)
+    if unknown:
+        return None, _clock_patch_error(
+            f"investigation_clock contains unsupported fields: {', '.join(unknown)}"
+        )
+
+    if not isinstance(raw.get("loop"), bool):
+        return None, _clock_patch_error("investigation_clock.loop must be a boolean")
+    visibility = {}
+    if "hiddenDisplays" in raw:
+        hidden = raw["hiddenDisplays"]
+        if (
+            not isinstance(hidden, list)
+            or any(not isinstance(item, str) or item not in ("gis", "projection") for item in hidden)
+            or len(set(hidden)) != len(hidden)
+        ):
+            return None, _clock_patch_error(
+                "investigation_clock.hiddenDisplays must contain unique GIS/projection display ids"
+            )
+        visibility["hiddenDisplays"] = [item for item in ("gis", "projection") if item in hidden]
+    if "presentationPendingUntilMs" in raw:
+        deadline = raw["presentationPendingUntilMs"]
+        if (
+            isinstance(deadline, bool)
+            or not isinstance(deadline, (int, float))
+            or not math.isfinite(deadline)
+            or deadline < 0
+        ):
+            return None, _clock_patch_error(
+                "investigation_clock.presentationPendingUntilMs must be a non-negative finite number"
+            )
+        visibility["presentationPendingUntilMs"] = deadline
+    if phase == "idle":
+        return idle_investigation_clock(loop=raw["loop"]) | visibility, None
+
+    required = {
+        "membership",
+        "beats",
+        "loop",
+        "positionMs",
+        "anchorMs",
+        "seekKind",
+    }
+    missing = sorted(required - set(raw))
+    if missing:
+        return None, _clock_patch_error(
+            f"investigation_clock is missing required fields: {', '.join(missing)}"
+        )
+
+    membership = raw["membership"]
+    if not isinstance(membership, list) or not membership:
+        return None, _clock_patch_error(
+            "investigation_clock.membership must be a non-empty array"
+        )
+    if any(
+        not isinstance(item, str) or item not in _NLI_PLAYABLE_IDS
+        for item in membership
+    ) or len(set(membership)) != len(membership):
+        return None, _clock_patch_error(
+            "investigation_clock.membership must contain unique playable NLI ids"
+        )
+
+    beats = raw["beats"]
+    if not isinstance(beats, list) or not beats:
+        return None, _clock_patch_error(
+            "investigation_clock.beats must be a non-empty array"
+        )
+    if any(
+        isinstance(item, bool)
+        or not isinstance(item, (int, float))
+        or not math.isfinite(item)
+        for item in beats
+    ):
+        return None, _clock_patch_error(
+            "investigation_clock.beats must contain finite numbers"
+        )
+    if any(current <= previous for previous, current in zip(beats, beats[1:])):
+        return None, _clock_patch_error(
+            "investigation_clock.beats must be strictly increasing"
+        )
+
+    position = raw["positionMs"]
+    if (
+        isinstance(position, bool)
+        or not isinstance(position, (int, float))
+        or not math.isfinite(position)
+        or position < 0
+    ):
+        return None, _clock_patch_error(
+            "investigation_clock.positionMs must be a non-negative finite number"
+        )
+
+    anchor = raw["anchorMs"]
+    if phase == "ended":
+        if anchor is not None:
+            return None, _clock_patch_error(
+                "investigation_clock.anchorMs must be null when ended"
+            )
+    elif (
+        isinstance(anchor, bool)
+        or not isinstance(anchor, (int, float))
+        or not math.isfinite(anchor)
+    ):
+        return None, _clock_patch_error(
+            "investigation_clock.anchorMs must be a finite number"
+        )
+
+    seek_kind = raw["seekKind"]
+    if seek_kind not in _INVESTIGATION_CLOCK_SEEK_KINDS:
+        return None, _clock_patch_error(
+            'investigation_clock.seekKind must be "none" or "jump"'
+        )
+    if phase != "paused" and seek_kind != "none":
+        return None, _clock_patch_error(
+            'investigation_clock.seekKind must be "none" unless paused'
+        )
+
+    normalized = {key: raw[key] for key in (
+        "phase",
+        "membership",
+        "beats",
+        "loop",
+        "positionMs",
+        "anchorMs",
+        "seekKind",
+    )}
+    if "alarmOnsetOriginMs" in raw:
+        origin = raw["alarmOnsetOriginMs"]
+        if (
+            isinstance(origin, bool)
+            or not isinstance(origin, (int, float))
+            or not math.isfinite(origin)
+        ):
+            return None, _clock_patch_error(
+                "investigation_clock.alarmOnsetOriginMs must be a finite number"
+            )
+        normalized["alarmOnsetOriginMs"] = origin
+    if "leadInMinutes" in raw:
+        lead = raw["leadInMinutes"]
+        if (
+            isinstance(lead, bool)
+            or not isinstance(lead, (int, float))
+            or not math.isfinite(lead)
+        ):
+            return None, _clock_patch_error(
+                "investigation_clock.leadInMinutes must be a finite number"
+            )
+        if phase != "idle":
+            normalized["leadInMinutes"] = lead
+    return normalized | visibility, None
+
+def _finite_number(value):
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(number):
+        return None
+    return number
+
+
+def _is_stale_viewport_patch(current_viewport, incoming_viewport):
+    if not isinstance(current_viewport, dict) or not isinstance(incoming_viewport, dict):
+        return False
+    current_ts = _finite_number(current_viewport.get("timestamp"))
+    incoming_ts = _finite_number(incoming_viewport.get("timestamp"))
+    if current_ts is None or incoming_ts is None:
+        return False
+    return incoming_ts < current_ts
+
+
+class TableViewSet(viewsets.ModelViewSet):
+    serializer_class = TableSerializer
+    queryset = Table.objects.all()
+
+    def get_queryset(self):
+        queryset = Table.objects.all()
+        is_active = self.request.query_params.get("is_active", None)
+        if is_active is not None:
+            queryset = queryset.filter(is_active=is_active.lower() == "true")
+        return queryset
 
 
 class IndicatorViewSet(viewsets.ModelViewSet):
     serializer_class = IndicatorSerializer
 
     def get_queryset(self):
-        return Indicator.objects.all()
+        queryset = Indicator.objects.all()
+        table_name = self.request.query_params.get("table", None)
+        include_ugc = self.request.query_params.get("include_ugc", "true")
+
+        if table_name:
+            queryset = queryset.filter(table__name=table_name)
+
+        # Filter out UGC indicators if requested
+        if include_ugc.lower() == "false":
+            queryset = queryset.filter(is_user_generated=False)
+
+        return queryset
+
+    def create(self, request, *args, **kwargs):
+        """Create a new UGC indicator - automatically marks as user-generated"""
+        table_name = request.data.get('table')
+        if not table_name and not request.data.get('table_id'):
+            return Response(
+                {"error": "Table name or table_id is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            if table_name:
+                table = Table.objects.get(name=table_name)
+            else:
+                table = Table.objects.get(id=request.data.get('table_id'))
+        except Table.DoesNotExist:
+            return Response(
+                {"error": f"Table not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # Copy data and force is_user_generated=True
+        data = request.data.copy()
+        data['is_user_generated'] = True
+        data['table'] = table.id
+
+        # Auto-generate indicator_id if not provided
+        if 'indicator_id' not in data:
+            max_id = Indicator.objects.filter(table=table).aggregate(
+                max_id=models.Max('indicator_id')
+            )['max_id'] or 0
+            data['indicator_id'] = max_id + 1
+
+        serializer = self.get_serializer(data=data)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+    def destroy(self, request, *args, **kwargs):
+        """Only allow deletion of UGC indicators"""
+        instance = self.get_object()
+        if not instance.is_user_generated:
+            return Response(
+                {"error": "Cannot delete preloaded indicators. Only user-generated indicators can be deleted."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        return super().destroy(request, *args, **kwargs)
 
 
 class StateViewSet(viewsets.ModelViewSet):
-    queryset = State.objects.all()
     serializer_class = StateSerializer
+
+    def get_queryset(self):
+        queryset = State.objects.all()
+        include_ugc = self.request.query_params.get("include_ugc", "true")
+
+        # Filter out UGC states if requested
+        if include_ugc.lower() == "false":
+            queryset = queryset.filter(is_user_generated=False)
+
+        return queryset
+
+    def create(self, request, *args, **kwargs):
+        """Create a new UGC state - automatically marks as user-generated"""
+        data = request.data.copy()
+        data['is_user_generated'] = True
+
+        serializer = self.get_serializer(data=data)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+    def destroy(self, request, *args, **kwargs):
+        """Only allow deletion of UGC states"""
+        instance = self.get_object()
+        if not instance.is_user_generated:
+            return Response(
+                {"error": "Cannot delete preloaded states. Only user-generated states can be deleted."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        return super().destroy(request, *args, **kwargs)
 
 
 class IndicatorDataViewSet(viewsets.ModelViewSet):
@@ -73,45 +534,2568 @@ class LayerConfigViewSet(viewsets.ModelViewSet):
     serializer_class = LayerConfigSerializer
 
 
+class GISLayerViewSet(viewsets.ModelViewSet):
+    """CRUD operations for GIS layers"""
+    serializer_class = GISLayerSerializer
+
+    def get_queryset(self):
+        queryset = GISLayer.objects.all()
+        table_name = self.request.query_params.get('table')
+        if table_name:
+            queryset = queryset.filter(table__name=table_name)
+        return queryset.filter(is_active=True)
+
+    @action(detail=True, methods=['get'])
+    def get_layer_geojson(self, request, pk=None):
+        """Serve GeoJSON data for a layer (for large files)"""
+        layer = self.get_object()
+        if layer.layer_type != 'geojson':
+            return Response({'error': 'Not a GeoJSON layer'}, status=400)
+
+        if layer.data:
+            response = JsonResponse(layer.data, safe=False)
+            response['Content-Type'] = 'application/json'
+            return response
+        elif layer.file_path:
+            # Serve file from storage
+            import os
+            from django.conf import settings
+            file_path = os.path.join(settings.MEDIA_ROOT, layer.file_path) if not os.path.isabs(layer.file_path) else layer.file_path
+            if os.path.exists(file_path):
+                response = FileResponse(open(file_path, 'rb'), content_type='application/json')
+                response["Cache-Control"] = "public, max-age=86400"
+                return response
+            else:
+                return Response({'error': 'File not found'}, status=404)
+
+        return Response({'error': 'No data available'}, status=404)
+
+
+class OTEFModelConfigViewSet(viewsets.ReadOnlyModelViewSet):
+    """Read-only access to OTEF model configuration"""
+    serializer_class = OTEFModelConfigSerializer
+
+    def get_queryset(self):
+        queryset = OTEFModelConfig.objects.all()
+        table_name = self.request.query_params.get('table')
+        if table_name:
+            queryset = queryset.filter(table__name=table_name)
+        return queryset
+
+
+class OTEFViewportStateViewSet(viewsets.ModelViewSet):
+    """
+    Manage OTEF interactive state - single source of truth.
+
+    GET /api/otef_viewport/by-table/{table_name}/ - Get full state
+    PATCH /api/otef_viewport/by-table/{table_name}/ - Update state partially
+    POST /api/otef_viewport/by-table/{table_name}/command/ - Execute command (pan/zoom)
+
+    Synthetic Moreshet companions (`pink_line_parking`, `pink_line_route`) are not GISLayer
+    rows. `_get_layer_groups` must still emit them or remote toggles never reach the maps.
+    """
+
+    serializer_class = OTEFViewportStateSerializer
+    _MORESHET_COMPANION_LAYER_IDS = frozenset({"pink_line_parking", "pink_line_route"})
+
+    def _is_moreshet_companion_layer_id(self, layer_id):
+        return str(layer_id or "") in self._MORESHET_COMPANION_LAYER_IDS
+
+    def _is_moreshet_published_content_layer_id(self, layer_id):
+        s = str(layer_id or "")
+        if self._is_moreshet_companion_layer_id(s):
+            return False
+        try:
+            int(s)
+            return True
+        except (ValueError, TypeError):
+            return False
+
+    def get_queryset(self):
+        queryset = OTEFViewportState.objects.all()
+        table_name = self.request.query_params.get('table')
+        if table_name:
+            queryset = queryset.filter(table__name=table_name)
+        return queryset
+
+    def update(self, request, *args, **kwargs):
+        data = request.data if isinstance(request.data, dict) else {}
+        if (
+            {"settlement_name_settings", "settlement_name_revision", "road_sign_settings", "road_sign_revision"}
+            & set(data)
+        ):
+            serializer = self.get_serializer(self.get_object(), data=data, partial=kwargs.get("partial", False))
+            serializer.is_valid(raise_exception=True)
+        return Response(
+            {"error": "Use the by-table endpoint for viewport state updates"},
+            status=status.HTTP_405_METHOD_NOT_ALLOWED,
+        )
+
+    def create(self, request, *args, **kwargs):
+        return Response(
+            {"error": "Use the by-table endpoint for viewport state updates"},
+            status=status.HTTP_405_METHOD_NOT_ALLOWED,
+        )
+
+    def destroy(self, request, *args, **kwargs):
+        return Response(
+            {"error": "Viewport state cannot be deleted"},
+            status=status.HTTP_405_METHOD_NOT_ALLOWED,
+        )
+
+    def _emit_trace_event(self, trace_id, stage, table_name=None, extra=None):
+        if not isinstance(trace_id, str) or not trace_id.strip():
+            return
+        import json
+        import time
+
+        payload = {
+            "traceId": trace_id,
+            "stage": stage,
+            "table": table_name,
+            "ts_ms": int(time.time() * 1000),
+        }
+        if isinstance(extra, dict):
+            payload.update(extra)
+        print("[OTEF TRACE] " + json.dumps(payload, ensure_ascii=False))
+
+    def _broadcast_person_selection(self, table_name, snapshot, metadata=None):
+        from channels.layers import get_channel_layer
+        from asgiref.sync import async_to_sync
+
+        message = {
+            "type": "broadcast_message",
+            "message": build_person_selection_event(table_name, snapshot, metadata),
+        }
+        channel_layer = get_channel_layer()
+        if channel_layer:
+            message["message"].update(getattr(self, "_accepted_experience", {}))
+            async_to_sync(channel_layer.group_send)("otef_channel", message)
+
+    def _schedule_person_selection_broadcast(self, table_name, snapshot, metadata):
+        captured = dict(snapshot)
+        transaction.on_commit(
+            lambda: self._broadcast_person_selection(table_name, captured, dict(metadata or {}))
+        )
+
+    def _broadcast_narrative_scene(self, table_name, scene, metadata):
+        from asgiref.sync import async_to_sync
+        from channels.layers import get_channel_layer
+
+        channel_layer = get_channel_layer()
+        if not channel_layer:
+            return
+        meta = metadata or {}
+        async_to_sync(channel_layer.group_send)("otef_channel", {
+            "type": "broadcast_message",
+            "message": {
+                "type": "otef_narrative_scene_changed",
+                    **getattr(self, "_accepted_experience", {}),
+                "table": table_name,
+                "scene": scene,
+                "sourceId": meta.get("sourceId"),
+                "timestamp": meta.get("timestamp"),
+                "traceId": meta.get("traceId"),
+            },
+        })
+
+    def _schedule_narrative_scene_broadcast(self, table_name, scene, metadata):
+        captured_scene = copy.deepcopy(scene)
+        captured_metadata = dict(metadata or {})
+        transaction.on_commit(
+            lambda: self._broadcast_narrative_scene(
+                table_name, captured_scene, captured_metadata
+            )
+        )
+
+    def _broadcast_narrative_presentation(self, table_name, event_type, payload):
+        from asgiref.sync import async_to_sync
+        from channels.layers import get_channel_layer
+
+        channel_layer = get_channel_layer()
+        if not channel_layer:
+            return
+        async_to_sync(channel_layer.group_send)("otef_channel", {
+            "type": "broadcast_message",
+            "message": {"type": event_type, "table": table_name, **payload, **getattr(self, "_accepted_experience", {})},
+        })
+
+    def _bounded_optional_string(self, payload, field):
+        value = payload.get(field)
+        if value is None:
+            return None, None
+        if not isinstance(value, str) or not value.strip() or len(value.strip()) > 128:
+            return None, f"{field} must be a bounded nonempty string"
+        return value.strip(), None
+
+    def _set_narrative_command(self, table, request):
+        payload = request.data if isinstance(request.data, dict) else {}
+        hidden_displays = None
+        if "hiddenDisplays" in payload:
+            visibility_clock, error = _normalize_investigation_clock_patch({
+                "phase": "idle", "loop": False, "hiddenDisplays": payload["hiddenDisplays"],
+            })
+            if error:
+                return error
+            hidden_displays = visibility_clock["hiddenDisplays"]
+        if "narrativeId" not in payload:
+            return Response(
+                {"error": "narrativeId is required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        narrative_id = payload.get("narrativeId")
+        if narrative_id is not None and (
+            not isinstance(narrative_id, str) or narrative_id not in NARRATIVE_IDS
+        ):
+            return Response(
+                {"error": "unsupported narrativeId"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        expected_revision = payload.get("expectedRevision")
+        if (
+            isinstance(expected_revision, bool)
+            or not isinstance(expected_revision, int)
+            or expected_revision < 0
+        ):
+            return Response(
+                {"error": "expectedRevision must be a nonnegative integer"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        with transaction.atomic():
+            locked = OTEFViewportState.objects.select_for_update().get(table=table)
+            current = normalize_narrative_state(locked.narrative_state)
+            if current["revision"] != expected_revision:
+                return Response(
+                    {
+                        "error": "stale narrative revision",
+                        "reason": "stale",
+                        "narrative_state": current,
+                    },
+                    status=status.HTTP_409_CONFLICT,
+                )
+            if narrative_id is not None:
+                slideshow = locked.projection_slideshow
+                if isinstance(slideshow, dict) and slideshow.get("type") == "start":
+                    return Response(
+                        {
+                            "error": "narrative unavailable while projection slideshow is active",
+                            "reason": "projection_active",
+                        },
+                        status=status.HTTP_409_CONFLICT,
+                    )
+
+            try:
+                scene = transition_narrative_scene(
+                    locked, narrative_id, expected_revision, hidden_displays=hidden_displays
+                )
+            except StaleNarrativeRevision as exc:
+                return Response(
+                    {
+                        "error": str(exc),
+                        "reason": "stale",
+                        "narrative_state": exc.current,
+                    },
+                    status=status.HTTP_409_CONFLICT,
+                )
+
+            update_fields = [
+                "narrative_state",
+                "basemap",
+                "escape_overlay",
+                "updated_at",
+            ]
+            if narrative_id is not None:
+                update_fields.extend(["investigation_clock", "person_selection"])
+
+            locked.save(update_fields=list(dict.fromkeys(update_fields)))
+            self._schedule_narrative_scene_broadcast(
+                table.name,
+                scene,
+                {
+                    "sourceId": payload.get("sourceId"),
+                    "timestamp": payload.get("timestamp"),
+                    "traceId": payload.get("traceId"),
+                },
+            )
+        return Response({"status": "ok", "action": "set_narrative", "scene": scene})
+
+    def _broadcast_escape_overlay(self, table_name, overlay, metadata):
+        from asgiref.sync import async_to_sync
+        from channels.layers import get_channel_layer
+
+        channel_layer = get_channel_layer()
+        if not channel_layer:
+            return
+        meta = metadata or {}
+        async_to_sync(channel_layer.group_send)("otef_channel", {
+            "type": "broadcast_message",
+            "message": {
+                "type": "otef_escape_overlay_changed",
+                    **getattr(self, "_accepted_experience", {}),
+                "table": table_name,
+                "escapeOverlay": overlay,
+                "sourceId": meta.get("sourceId"),
+                "timestamp": meta.get("timestamp"),
+            },
+        })
+
+    def _set_escape_overlay_command(self, table, request):
+        payload = request.data if isinstance(request.data, dict) else {}
+        individual = payload.get("individual")
+        overlap = payload.get("overlap")
+        mor = payload.get("mor", False)
+        settled = payload.get("settled", False)
+        if (
+            not isinstance(individual, bool)
+            or not isinstance(overlap, bool)
+            or not isinstance(mor, bool)
+            or not isinstance(settled, bool)
+        ):
+            return Response(
+                {"error": "individual, overlap, mor, and settled must be booleans"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        with transaction.atomic():
+            locked = OTEFViewportState.objects.select_for_update().get(table=table)
+            narrative_id = normalize_narrative_state(locked.narrative_state)["id"]
+            if narrative_id == "nova":
+                overlay = normalize_escape_overlay(
+                    {
+                        "individual": individual,
+                        "overlap": overlap,
+                        "mor": mor,
+                        "settled": settled,
+                    },
+                    "nova",
+                )
+            else:
+                overlay = normalize_escape_overlay(None, narrative_id)
+            locked.escape_overlay = overlay
+            locked.save(update_fields=["escape_overlay", "updated_at"])
+            captured_overlay = dict(overlay)
+            captured_metadata = {
+                "sourceId": payload.get("sourceId"),
+                "timestamp": payload.get("timestamp"),
+            }
+            transaction.on_commit(
+                lambda: self._broadcast_escape_overlay(
+                    table.name, captured_overlay, captured_metadata
+                )
+            )
+        return Response(
+            {
+                "status": "ok",
+                "action": "set_escape_overlay",
+                "escapeOverlay": captured_overlay,
+            }
+        )
+
+    def _broadcast_nli_clock_layout(self, table_name, layout, metadata):
+        from asgiref.sync import async_to_sync
+        from channels.layers import get_channel_layer
+
+        channel_layer = get_channel_layer()
+        if not channel_layer:
+            return
+        meta = metadata or {}
+        async_to_sync(channel_layer.group_send)("otef_channel", {
+            "type": "broadcast_message",
+            "message": {
+                "type": "otef_nli_clock_layout_changed",
+                "table": table_name,
+                "nliClockLayout": layout,
+                "nliClockLayoutRevision": meta.get("nliClockLayoutRevision"),
+                "sourceId": meta.get("sourceId"),
+                "timestamp": meta.get("timestamp"),
+            },
+        })
+
+    def _set_nli_clock_layout_command(self, table, request):
+        payload = request.data if isinstance(request.data, dict) else {}
+        surface = payload.get("surface")
+        slot = payload.get("slot")
+        base_revision = payload.get("baseRevision")
+        layout_raw = payload.get("layout")
+        if surface == "gisOverlays" and slot == "novaExplainers":
+            layout = validate_nova_explainer_layout(layout_raw)
+            target = "overlay"
+        elif surface == "gis" and slot in GIS_SLOT_KEYS:
+            layout = validate_clock_slot_layout(layout_raw)
+            target = "gis"
+        elif surface == "projection" and slot == "left":
+            layout = validate_clock_slot_layout(layout_raw)
+            target = "projection"
+        else:
+            layout = None
+            target = None
+        if (
+            target is None
+            or layout is None
+            or type(base_revision) is not int
+            or base_revision < 0
+            or base_revision > 9007199254740991
+        ):
+            return Response(
+                {"error": "invalid clock layout slot, revision, or layout"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        with transaction.atomic():
+            locked = OTEFViewportState.objects.select_for_update().get(table=table)
+            revision = locked.nli_clock_layout_revision
+            captured = normalize_nli_clock_layout(locked.nli_clock_layout)
+            if revision != base_revision or revision >= 9007199254740991:
+                return Response(
+                    {
+                        "error": "conflict",
+                        "nliClockLayout": captured,
+                        "nliClockLayoutRevision": revision,
+                    },
+                    status=status.HTTP_409_CONFLICT,
+                )
+
+            raw = copy.deepcopy(locked.nli_clock_layout)
+            if not isinstance(raw, dict):
+                raw = {}
+            if target == "gis":
+                gis = raw.get("gis")
+                if not isinstance(gis, dict):
+                    gis = {}
+                else:
+                    gis = copy.deepcopy(gis)
+                if "gis" not in raw and any(field in raw for field in CLOCK_LAYOUT_FIELDS):
+                    legacy = {field: raw.pop(field) for field in CLOCK_LAYOUT_FIELDS if field in raw}
+                    gis["start"] = normalize_nli_clock_layout({"gis": {"start": legacy}})["gis"]["start"]
+                if is_flat_gis_clock_layout(gis):
+                    legacy = {field: gis.pop(field) for field in CLOCK_LAYOUT_FIELDS if field in gis}
+                    gis["start"] = normalize_nli_clock_layout({"gis": {"start": legacy}})["gis"]["start"]
+                gis[slot] = layout
+                raw["gis"] = gis
+            elif target == "projection":
+                projection = raw.get("projection")
+                if not isinstance(projection, dict):
+                    projection = {}
+                else:
+                    projection = copy.deepcopy(projection)
+                projection[slot] = layout
+                raw["projection"] = projection
+            else:
+                gis_overlays = raw.get("gisOverlays")
+                if not isinstance(gis_overlays, dict):
+                    gis_overlays = {}
+                else:
+                    gis_overlays = copy.deepcopy(gis_overlays)
+                gis_overlays["novaExplainers"] = layout
+                raw["gisOverlays"] = gis_overlays
+
+            locked.nli_clock_layout = raw
+            locked.nli_clock_layout_revision = revision + 1
+            locked.save(update_fields=["nli_clock_layout", "nli_clock_layout_revision", "updated_at"])
+            captured = normalize_nli_clock_layout(raw)
+            captured_metadata = {
+                "sourceId": payload.get("sourceId"),
+                "timestamp": payload.get("timestamp"),
+                "nliClockLayoutRevision": locked.nli_clock_layout_revision,
+            }
+            transaction.on_commit(
+                lambda: self._broadcast_nli_clock_layout(
+                    table.name, captured, captured_metadata
+                )
+            )
+        return Response(
+            {
+                "status": "ok",
+                "action": "set_nli_clock_layout",
+                "nliClockLayout": captured,
+                "nliClockLayoutRevision": locked.nli_clock_layout_revision,
+            }
+        )
+
+    def _broadcast_legend_settings(self, table_name, change, metadata):
+        channel_layer = get_channel_layer()
+        if not channel_layer:
+            return
+        meta = metadata or {}
+        async_to_sync(channel_layer.group_send)("otef_channel", {
+            "type": "broadcast_message",
+            "message": {
+                "type": "otef_legend_settings_changed",
+                **getattr(self, "_accepted_experience", {}),
+                "table": table_name,
+                **change,
+                "sourceId": meta.get("sourceId"),
+                "timestamp": meta.get("timestamp"),
+            },
+        })
+
+    def _set_legend_settings_command(self, table, request):
+        payload = request.data if isinstance(request.data, dict) else {}
+        is_layout = "span" in payload or "layout" in payload or "baseRevision" in payload
+        if is_layout:
+            span = payload.get("span")
+            layout = validate_legend_slot_layout(payload.get("layout"))
+            base_revision = payload.get("baseRevision")
+            if (
+                span not in LEGEND_SPANS
+                or layout is None
+                or type(base_revision) is not int
+                or base_revision < 0
+                or base_revision > 9007199254740991
+                or "language" in payload
+                or "summarizedGroupIds" in payload
+            ):
+                return Response({"error": "invalid legend layout slot, revision, or layout"}, status=status.HTTP_400_BAD_REQUEST)
+            metadata_field = None
+        elif "language" in payload and "summarizedGroupIds" not in payload:
+            if payload.get("language") not in ("he", "en"):
+                return Response({"error": "language must be he or en"}, status=status.HTTP_400_BAD_REQUEST)
+            metadata_field = "language"
+        elif "summarizedGroupIds" in payload and "language" not in payload:
+            values = payload.get("summarizedGroupIds")
+            if not isinstance(values, list) or any(not isinstance(value, str) or not value for value in values):
+                return Response({"error": "summarizedGroupIds must be an array of nonempty strings"}, status=status.HTTP_400_BAD_REQUEST)
+            metadata_field = "summarizedGroupIds"
+        else:
+            return Response({"error": "provide one legend metadata field or a versioned span layout"}, status=status.HTTP_400_BAD_REQUEST)
+
+        with transaction.atomic():
+            locked = OTEFViewportState.objects.select_for_update().get(table=table)
+            raw = copy.deepcopy(locked.legend_settings)
+            if not isinstance(raw, dict):
+                raw = {}
+            revision = locked.legend_layout_revision
+            if is_layout:
+                projection = raw.get("projection")
+                if not isinstance(projection, dict):
+                    projection = {}
+                else:
+                    projection = copy.deepcopy(projection)
+                captured_projection = normalize_legend_settings({"projection": projection})["projection"]
+                if revision != base_revision or revision >= 9007199254740991:
+                    return Response({
+                        "error": "conflict", "changeKind": "layout",
+                        "legendProjection": captured_projection,
+                        "legendLayoutRevision": revision,
+                    }, status=status.HTTP_409_CONFLICT)
+                projection[span] = layout
+                raw["projection"] = projection
+                locked.legend_settings = raw
+                locked.legend_layout_revision = revision + 1
+                locked.save(update_fields=["legend_settings", "legend_layout_revision", "updated_at"])
+                change = {
+                    "changeKind": "layout",
+                    "legendProjection": normalize_legend_settings({"projection": projection})["projection"],
+                    "legendLayoutRevision": locked.legend_layout_revision,
+                }
+            else:
+                value = payload[metadata_field]
+                if metadata_field == "summarizedGroupIds":
+                    value = list(dict.fromkeys(value))
+                raw[metadata_field] = value
+                locked.legend_settings = raw
+                locked.save(update_fields=["legend_settings", "updated_at"])
+                change = {
+                    "changeKind": "metadata",
+                    "legendSettingsPatch": {metadata_field: value},
+                    "legendLayoutRevision": revision,
+                }
+            metadata = {"sourceId": payload.get("sourceId"), "timestamp": payload.get("timestamp")}
+            transaction.on_commit(lambda: self._broadcast_legend_settings(table.name, dict(change), metadata))
+        return Response({"status": "ok", "action": "set_legend_settings", **change})
+
+    def _broadcast_settlement_names(self, table_name, settings, revision, metadata):
+        channel_layer = get_channel_layer()
+        if not channel_layer:
+            return
+        meta = metadata or {}
+        async_to_sync(channel_layer.group_send)("otef_channel", {
+            "type": "broadcast_message",
+            "message": {
+                "type": "otef_settlement_names_changed",
+                "table": table_name,
+                "sourceId": meta.get("sourceId"),
+                "timestamp": meta.get("timestamp"),
+                "settlementNameSettings": settings,
+                "settlementNameRevision": revision,
+            },
+        })
+
+    def _read_bounded(self, reader, limit):
+        if not callable(reader):
+            return b""
+        chunks = []
+        total = 0
+        while total <= limit:
+            want = min(65536, limit + 1 - total)
+            try:
+                piece = reader(want)
+            except AssertionError:
+                owner = getattr(reader, "__self__", None)
+                try:
+                    available = len(owner)
+                except TypeError:
+                    break
+                if not isinstance(available, int) or available <= 0:
+                    break
+                piece = reader(min(available, want))
+            if not piece:
+                break
+            if isinstance(piece, str):
+                piece = piece.encode("utf-8")
+            chunks.append(piece)
+            total += len(piece)
+        return b"".join(chunks)
+
+    def _json_body_bytes(self, request):
+        django_request = getattr(request, "_request", request)
+        cached = getattr(django_request, "_json_body_bytes_cache", None)
+        if cached is not None:
+            return cached
+        header = django_request.META.get("CONTENT_LENGTH")
+        try:
+            declared = int(header) if header not in (None, "") else None
+        except (TypeError, ValueError):
+            declared = None
+        if declared not in (None, 0):
+            try:
+                raw = django_request.body
+            except RequestDataTooBig:
+                raw = b"\0" * (256 * 1024 + 1)
+        elif getattr(django_request, "_read_started", False):
+            raw = getattr(django_request, "_body", b"") or b""
+        else:
+            reader = getattr(getattr(django_request, "_stream", None), "_read", None)
+            raw = self._read_bounded(reader, 256 * 1024)
+        if not isinstance(raw, (bytes, bytearray)):
+            raw = b""
+        django_request._json_body_bytes_cache = bytes(raw)
+        return django_request._json_body_bytes_cache
+
+    def _body_too_large(self, request):
+        return len(self._json_body_bytes(request)) > 256 * 1024
+
+    def _set_settlement_names_command(self, table, request):
+        if self._body_too_large(request):
+            return Response({"error": "body too large"}, status=status.HTTP_400_BAD_REQUEST)
+        payload = request.data if isinstance(request.data, dict) else {}
+        try:
+            with transaction.atomic():
+                settings, revision = write_settlement_name_settings(
+                    table.name,
+                    payload,
+                    payload.get("baseRevision"),
+                    payload.get("sourceId"),
+                    payload.get("timestamp"),
+                )
+                metadata = {"sourceId": payload.get("sourceId"), "timestamp": payload.get("timestamp")}
+                transaction.on_commit(lambda: self._broadcast_settlement_names(table.name, settings, revision, metadata))
+        except SettlementNameInitializationRequired:
+            return Response({
+                "error": "initialization_required",
+                "settlementNameSettings": {},
+                "settlementNameRevision": 0,
+            }, status=status.HTTP_409_CONFLICT)
+        except SettlementNameConflict as exc:
+            return Response({
+                "error": "conflict",
+                "settlementNameSettings": exc.settings,
+                "settlementNameRevision": exc.revision,
+            }, status=status.HTTP_409_CONFLICT)
+        except SettlementNameRejected as exc:
+            return Response({"error": exc.error}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({
+            "status": "ok",
+            "action": "set_settlement_names",
+            "settlementNameSettings": settings,
+            "settlementNameRevision": revision,
+        })
+
+    def _broadcast_road_signs(self, table_name, settings, revision, metadata):
+        channel_layer = get_channel_layer()
+        if not channel_layer:
+            return
+        meta = metadata or {}
+        async_to_sync(channel_layer.group_send)("otef_channel", {
+            "type": "broadcast_message",
+            "message": {
+                "type": "otef_road_signs_changed",
+                "table": table_name,
+                "roadSignSettings": settings,
+                "roadSignRevision": revision,
+                "sourceId": meta.get("sourceId"),
+                "timestamp": meta.get("timestamp"),
+            },
+        })
+
+    def _set_road_signs_command(self, table, request):
+        payload = request.data if isinstance(request.data, dict) else {}
+        if set(payload) - {"action", "settings", "baseRevision", "sourceId", "timestamp", "traceId"}:
+            return Response({"error": "unknown Road 232 command fields"}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            settings, revision = write_road_sign_settings(
+                table.name, payload.get("settings"), payload.get("baseRevision")
+            )
+        except RoadSignConflict as exc:
+            return Response({
+                "error": "conflict",
+                "roadSignSettings": exc.settings,
+                "roadSignRevision": exc.revision,
+            }, status=status.HTTP_409_CONFLICT)
+        except RoadSignRejected as exc:
+            return Response({"error": exc.error}, status=status.HTTP_400_BAD_REQUEST)
+        metadata = {"sourceId": payload.get("sourceId"), "timestamp": payload.get("timestamp")}
+        transaction.on_commit(
+            lambda: self._broadcast_road_signs(table.name, settings, revision, metadata)
+        )
+        return Response({
+            "status": "ok",
+            "action": "set_road_signs",
+            "roadSignSettings": settings,
+            "roadSignRevision": revision,
+        })
+
+    def _initialize_projection_name_settings_command(self, table, request):
+        if self._body_too_large(request):
+            return Response({"error": "body too large"}, status=status.HTTP_400_BAD_REQUEST)
+        payload = request.data if isinstance(request.data, dict) else {}
+        try:
+            result = initialize_projection_name_settings(table.name, payload)
+        except InitializationConflict as exc:
+            return Response({"error": "conflict", **exc.snapshots}, status=status.HTTP_409_CONFLICT)
+        except InitializationRejected as exc:
+            return Response({"error": exc.error}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(result)
+
+    def _narrative_presentation_command(self, table, request):
+        payload = request.data if isinstance(request.data, dict) else {}
+        presentation_action = payload.get("presentationAction")
+        segment_id = payload.get("segmentId")
+        segment = presentation_segment(segment_id) if isinstance(segment_id, str) else None
+        if presentation_action not in ("open", "next", "previous", "close"):
+            return Response(
+                {"error": "invalid presentationAction"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if segment is None:
+            return Response(
+                {"error": "unsupported segmentId"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        for field in ("presentationSessionId", "requestId", "sourceId"):
+            value = payload.get(field)
+            if not isinstance(value, str) or not value.strip() or len(value) > 128:
+                return Response({"error": f"{field} must be a bounded nonempty string"}, status=status.HTTP_400_BAD_REQUEST)
+        for field in ("presentationGeneration", "sequence"):
+            value = payload.get(field)
+            if type(value) is not int or value <= 0:
+                return Response({"error": f"{field} must be a positive integer"}, status=status.HTTP_400_BAD_REQUEST)
+
+        command = {
+            "presentationAction": presentation_action,
+            "segmentId": segment_id,
+            "presentationSessionId": payload["presentationSessionId"],
+            "presentationGeneration": payload["presentationGeneration"],
+            "sequence": payload["sequence"],
+            "requestId": payload["requestId"],
+            "sourceId": payload["sourceId"],
+            "acknowledged": True,
+        }
+        if presentation_action != "close":
+            with transaction.atomic():
+                locked = OTEFViewportState.objects.select_for_update().get(table=table)
+                active = normalize_narrative_state(locked.narrative_state)
+                if active["id"] != segment["requiredNarrative"]:
+                    return Response(
+                        {"error": "narrative presentation requires the active narrative"},
+                        status=status.HTTP_409_CONFLICT,
+                    )
+                transaction.on_commit(
+                    lambda: self._broadcast_narrative_presentation(
+                        table.name,
+                        "otef_narrative_presentation_command",
+                        dict(command),
+                    )
+                )
+        else:
+            transaction.on_commit(
+                lambda: self._broadcast_narrative_presentation(
+                    table.name,
+                    "otef_narrative_presentation_command",
+                    dict(command),
+                )
+            )
+        return Response(
+            {
+                "status": "ok",
+                "action": "narrative_presentation",
+                "requestId": payload["requestId"],
+                "acknowledged": True,
+            }
+        )
+
+    def _narrative_presentation_result(self, table, request):
+        payload = request.data if isinstance(request.data, dict) else {}
+        outcome = payload.get("outcome")
+        if outcome not in ("opened", "ready", "closed", "unavailable", "ignored"):
+            return Response(
+                {"error": "invalid narrative presentation outcome"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        segment_id = payload.get("segmentId")
+        if not isinstance(segment_id, str) or presentation_segment(segment_id) is None:
+            return Response({"error": "unsupported segmentId"}, status=status.HTTP_400_BAD_REQUEST)
+        for field in ("presentationSessionId", "requestId", "sourceId"):
+            value = payload.get(field)
+            if not isinstance(value, str) or not value.strip() or len(value) > 128:
+                return Response({"error": f"{field} must be a bounded nonempty string"}, status=status.HTTP_400_BAD_REQUEST)
+        for field in ("presentationGeneration", "sequence"):
+            value = payload.get(field)
+            if type(value) is not int or value <= 0:
+                return Response({"error": f"{field} must be a positive integer"}, status=status.HTTP_400_BAD_REQUEST)
+        if "slide" in payload and payload["slide"] is not None and type(payload["slide"]) is not int:
+            return Response({"error": "slide must be an integer"}, status=status.HTTP_400_BAD_REQUEST)
+        if "range" in payload and payload["range"] is not None:
+            value = payload["range"]
+            if not isinstance(value, list) or len(value) != 2 or any(type(item) is not int for item in value):
+                return Response({"error": "range must contain two integers"}, status=status.HTTP_400_BAD_REQUEST)
+        if "message" in payload and payload["message"] is not None:
+            value = payload["message"]
+            if not isinstance(value, str) or len(value) > 512:
+                return Response({"error": "message must be a bounded string"}, status=status.HTTP_400_BAD_REQUEST)
+        result = {
+            "outcome": outcome,
+            "segmentId": segment_id,
+            "presentationSessionId": payload["presentationSessionId"],
+            "presentationGeneration": payload["presentationGeneration"],
+            "sequence": payload["sequence"],
+            "requestId": payload["requestId"],
+            "sourceId": payload["sourceId"],
+            "acknowledged": True,
+        }
+        for field in ("slide", "range", "message"):
+            if field in payload:
+                result[field] = payload[field]
+        transaction.on_commit(
+            lambda: self._broadcast_narrative_presentation(
+                table.name,
+                "otef_narrative_presentation_result",
+                dict(result),
+            )
+        )
+        return Response(
+            {
+                "status": "ok",
+                "action": "narrative_presentation_result",
+                "requestId": payload["requestId"],
+                "acknowledged": True,
+            }
+        )
+
+    def _broadcast_archive_window_command(self, table_name, command):
+        from asgiref.sync import async_to_sync
+        from channels.layers import get_channel_layer
+
+        channel_layer = get_channel_layer()
+        if not channel_layer:
+            return
+        async_to_sync(channel_layer.group_send)("otef_channel", {
+            "type": "broadcast_message",
+            "message": {"type": "otef_archive_window_command", "table": table_name, **command, **getattr(self, "_accepted_experience", {})},
+        })
+
+    def _broadcast_archive_window_result(self, table_name, result):
+        from asgiref.sync import async_to_sync
+        from channels.layers import get_channel_layer
+
+        channel_layer = get_channel_layer()
+        if not channel_layer:
+            return
+        async_to_sync(channel_layer.group_send)("otef_channel", {
+            "type": "broadcast_message",
+            "message": {"type": "otef_archive_window_result", "table": table_name, **result, **getattr(self, "_accepted_experience", {})},
+        })
+
+    def _archive_window_result(self, table, request):
+        payload = request.data if isinstance(request.data, dict) else {}
+        raw_values = {key: payload.get(key) for key in ("outcome", "personId", "datasetVersion", "requestId", "sourceId")}
+        if any(not isinstance(value, str) or not value.strip() or len(value.strip()) > 128 for value in raw_values.values()):
+            return Response({"error": "archive result fields must be bounded strings"}, status=status.HTTP_400_BAD_REQUEST)
+        outcome, person_id, version, request_id, source_id = (raw_values[key].strip() for key in ("outcome", "personId", "datasetVersion", "requestId", "sourceId"))
+        if outcome not in ("navigation_attempted", "unavailable", "closed"):
+            return Response({"error": "invalid archive result outcome"}, status=status.HTTP_400_BAD_REQUEST)
+        if not all((person_id, version, request_id, source_id)) or any(len(value) > 128 for value in (person_id, version, request_id, source_id)):
+            return Response({"error": "personId, datasetVersion, requestId, and sourceId are required"}, status=status.HTTP_400_BAD_REQUEST)
+        result = {
+            "outcome": outcome,
+            "personId": person_id, "datasetVersion": version, "requestId": request_id,
+            "sourceId": source_id, "acknowledged": True,
+        }
+        transaction.on_commit(lambda: self._broadcast_archive_window_result(table.name, dict(result)))
+        return Response({"status": "ok", "action": "archive_window_result", "requestId": request_id, "acknowledged": True})
+
+    def _archive_window_command(self, table, request):
+        payload = request.data if isinstance(request.data, dict) else {}
+        action = payload.get("archiveAction")
+        if action not in ("open", "close", "page_up", "page_down"):
+            return Response({"error": "archive action must be open or close"}, status=status.HTTP_400_BAD_REQUEST)
+        raw_values = {key: payload.get(key) for key in ("personId", "datasetVersion", "requestId", "sourceId")}
+        if any(not isinstance(value, str) or not value.strip() or len(value.strip()) > 128 for value in raw_values.values()):
+            return Response({"error": "personId, datasetVersion, requestId, and sourceId must be bounded strings"}, status=status.HTTP_400_BAD_REQUEST)
+        person_id, version, request_id, source_id = (raw_values[key].strip() for key in ("personId", "datasetVersion", "requestId", "sourceId"))
+        command = {
+            "action": action,
+            "personId": person_id, "datasetVersion": version, "requestId": request_id,
+            "sourceId": source_id, "acknowledged": True,
+        }
+        if action in ("open", "page_up", "page_down"):
+            with transaction.atomic():
+                state = OTEFViewportState.objects.select_for_update().filter(table=table).first()
+                selection = normalize_person_selection(state.person_selection if state else {})
+                clock = state.investigation_clock if state else {}
+                if selection.get("personId") != person_id or selection.get("datasetVersion") != version:
+                    return Response({"error": "archive person selection mismatch"}, status=status.HTTP_409_CONFLICT)
+                if isinstance(clock, dict) and clock.get("phase") not in (None, "idle"):
+                    return Response({"error": "archive unavailable while timeline is active"}, status=status.HTTP_409_CONFLICT)
+                transaction.on_commit(lambda: self._broadcast_archive_window_command(table.name, dict(command)))
+        else:
+            transaction.on_commit(lambda: self._broadcast_archive_window_command(table.name, dict(command)))
+        return Response({"status": "ok", "action": action, "requestId": request_id, "acknowledged": True})
+
+    def _selection_command(self, table, action, request):
+        command, error = parse_person_selection_command(action, request.data)
+        if error:
+            return Response(
+                {"error": error},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        with transaction.atomic():
+            locked = lock_person_selection_state(table.otef_viewport)
+            snapshot, changed, error, reason = transition_person_selection(
+                locked,
+                command["target"],
+                expected_revision=command["expected_revision"],
+            )
+            if error:
+                conflict = reason in ("stale", "clock_active")
+                payload = {"error": error}
+                if conflict:
+                    payload["reason"] = reason
+                    payload["person_selection"] = snapshot
+                return Response(
+                    payload,
+                    status=status.HTTP_409_CONFLICT if conflict else status.HTTP_400_BAD_REQUEST,
+                )
+            if changed:
+                self._schedule_person_selection_broadcast(
+                    table.name,
+                    snapshot,
+                    {
+                        "sourceId": request.data.get("sourceId"),
+                        "timestamp": request.data.get("timestamp"),
+                        "traceId": request.data.get("traceId"),
+                    },
+                )
+        return Response({"status": "ok", "action": action, "person_selection": snapshot})
+
+    def _broadcast_state_change(
+        self,
+        table_name,
+        changed_fields,
+        metadata=None,
+        layer_groups_cache=None,
+        layer_change_meta=None,
+    ):
+        """Broadcast WebSocket notifications for state changes.
+
+        layer_groups_cache: optional pre-built layer group list to avoid a redundant
+        _get_layer_groups() when the caller already computed it (e.g. command hot path).
+
+        layer_change_meta: optional dict with affected_group_ids, affected_full_layer_ids
+        to annotate the WebSocket message without scanning the full payload.
+        """
+        import time
+        from channels.layers import get_channel_layer
+        from asgiref.sync import async_to_sync
+
+        channel_layer = get_channel_layer()
+        # Must match consumer's room_group_name: f'{channel_type}_channel'
+        group_name = 'otef_channel'
+        state = OTEFViewportState.objects.filter(table__name=table_name).first()
+        table = state.table if state else None
+        meta = metadata or {}
+        source_id = meta.get('sourceId')
+        timestamp = meta.get('timestamp')
+        trace_id = meta.get('traceId')
+        self._emit_trace_event(
+            trace_id,
+            "django.broadcast.start",
+            table_name=table_name,
+            extra={"fields": list(changed_fields or [])},
+        )
+        if not isinstance(timestamp, (int, float)):
+            timestamp = int(time.time() * 1000)
+
+        lmeta = layer_change_meta if isinstance(layer_change_meta, dict) else None
+
+        for field in changed_fields:
+
+            if field in ('nli_bookmark', 'regular_slideshow_settings'):
+                self._broadcast_experience_snapshot(table_name)
+                continue
+            if field == 'viewport':
+                message = {
+                    'type': 'broadcast_message',
+                    'message': {
+                        'type': 'otef_viewport_changed',
+                        'table': table_name,
+                        'viewport': state.get_viewport_with_defaults() if state else None,
+                        'sourceId': source_id,
+                        'timestamp': int(timestamp),
+                        'traceId': trace_id,
+                    }
+                }
+            elif (
+                field == 'layers'
+                or field == 'layerGroups'
+                or field == 'workshop_auto_publish'
+            ):
+                if isinstance(layer_groups_cache, list) and layer_groups_cache:
+                    layer_groups_payload = layer_groups_cache
+                else:
+                    layer_groups_payload = self._get_layer_groups(table) if table else []
+
+                if lmeta and isinstance(lmeta.get("affected_full_layer_ids"), list):
+                    affected_full = [
+                        x for x in lmeta["affected_full_layer_ids"] if isinstance(x, str)
+                    ]
+                    affected_curated_full_layer_ids = [
+                        fid
+                        for fid in affected_full
+                        if fid.split(".", 1)[0].startswith("curated")
+                    ]
+                else:
+                    affected_curated_full_layer_ids = []
+                    for group in layer_groups_payload:
+                        group_id = str(group.get("id", "")) if isinstance(group, dict) else ""
+                        if not group_id.startswith("curated"):
+                            continue
+                        for layer in (group.get("layers", []) if isinstance(group, dict) else []):
+                            if not isinstance(layer, dict):
+                                continue
+                            layer_id = str(layer.get("id", "")).strip()
+                            if not layer_id:
+                                continue
+                            affected_curated_full_layer_ids.append(f"{group_id}.{layer_id}")
+
+                msg_body = {
+                    "type": "otef_layers_changed",
+                    "table": table_name,
+                    "layerGroups": layer_groups_payload,
+                    "gazaBorderVisible": bool(state.gaza_border_visible) if state else False,
+                    "affected_curated_full_layer_ids": affected_curated_full_layer_ids,
+                    "sourceId": source_id,
+                    "timestamp": int(timestamp),
+                    "traceId": trace_id,
+                }
+                if lmeta:
+                    ag = lmeta.get("affected_group_ids")
+                    af = lmeta.get("affected_full_layer_ids")
+                    if isinstance(ag, (list, tuple)):
+                        msg_body["affected_group_ids"] = list(ag)
+                    if isinstance(af, (list, tuple)):
+                        msg_body["affected_full_layer_ids"] = list(af)
+                message = {"type": "broadcast_message", "message": msg_body}
+            elif field == 'animations':
+                # Get current animation state to include in notification
+                try:
+                    state = OTEFViewportState.objects.filter(table__name=table_name).first()
+                    animations = state.animations if state else {}
+                except:
+                    animations = {}
+
+                message = {
+                    'type': 'broadcast_message',
+                    'message': {
+                        'type': 'otef_animation_changed',
+                        'table': table_name,
+                        'animations': animations or {},
+                    }
+                }
+            elif field == 'bounds' or field == 'viewer_angle_deg':
+                message = {
+                    'type': 'broadcast_message',
+                    'message': {
+                        'type': 'otef_bounds_changed',
+                        'table': table_name,
+                    }
+                }
+            elif field == 'basemap':
+                message = {
+                    'type': 'broadcast_message',
+                    'message': {
+                        'type': 'otef_basemap_changed',
+                        'table': table_name,
+                        'basemap': state.basemap if state else 'osm',
+                        'sourceId': source_id,
+                        'timestamp': int(timestamp),
+                        'traceId': trace_id,
+                    },
+                }
+            elif field == 'projection_slideshow':
+                ps = state.projection_slideshow if state else {}
+                if not isinstance(ps, dict):
+                    ps = {}
+                message = {
+                    'type': 'broadcast_message',
+                    'message': {
+                        'type': 'otef_projection_slideshow_changed',
+                        'table': table_name,
+                        'projectionSlideshow': ps,
+                        'sourceId': source_id,
+                        'timestamp': int(timestamp),
+                        'traceId': trace_id,
+                    },
+                }
+            elif field == 'investigation_clock':
+                clock = state.investigation_clock if state else {}
+                if not isinstance(clock, dict):
+                    clock = {}
+                message = {
+                    'type': 'broadcast_message',
+                    'message': {
+                        'type': 'otef_investigation_clock_changed',
+                        'table': table_name,
+                        'investigationClock': _investigation_clock_for_response(clock),
+                        'sourceId': source_id,
+                        'timestamp': int(timestamp),
+                        'traceId': trace_id,
+                    },
+                }
+            elif field == 'gaza_border_visible':
+                message = {
+                    'type': 'broadcast_message',
+                    'message': {
+                        'type': 'otef_gaza_border_visibility_changed',
+                        'gazaBorderVisible': bool(state.gaza_border_visible) if state else False,
+                        'table': table_name, 'sourceId': source_id,
+                        'timestamp': int(timestamp), 'traceId': trace_id,
+                    },
+                }
+            elif field == 'exhibit_mode':
+                message = {
+                    'type': 'broadcast_message',
+                    'message': {
+                        'type': 'otef_exhibit_mode_changed',
+                        'exhibitMode': bool(state.exhibit_mode) if state else False,
+                        'table': table_name,
+                        'sourceId': source_id,
+                        'timestamp': int(timestamp),
+                        'traceId': trace_id,
+                    },
+                }
+            else:
+                continue
+
+            try:
+                if channel_layer:
+                    message["message"].update(getattr(self, "_accepted_experience", {}))
+                    async_to_sync(channel_layer.group_send)(group_name, message)
+                    self._emit_trace_event(
+                        trace_id,
+                        "django.broadcast.sent",
+                        table_name=table_name,
+                        extra={"field": field},
+                    )
+            except Exception as e:
+                print(f"[WARN] Broadcast skipped for {field} ({table_name}): {e}")
+
+    def _broadcast_place_navigation_command(self, table_name, command):
+        from asgiref.sync import async_to_sync
+        from channels.layers import get_channel_layer
+
+        channel_layer = get_channel_layer()
+        if not channel_layer:
+            return
+        async_to_sync(channel_layer.group_send)(
+            "otef_channel",
+            {
+                "type": "broadcast_message",
+                "message": {
+                    "type": "otef_place_navigation_command",
+                    **getattr(self, "_accepted_experience", {}),
+                    "table": table_name,
+                    "command": command,
+                    "sourceId": command.get("sourceId"),
+                    "timestamp": command.get("timestamp"),
+                    "traceId": command.get("traceId"),
+                },
+            },
+        )
+
+
+    @action(detail=False, methods=['get', 'patch'], url_path='by-table/(?P<table_name>[^/.]+)')
+    @transaction.atomic
+    def by_table(self, request, table_name=None):
+        """
+        GET/PATCH state by table name.
+
+        GET: Returns full state with defaults applied
+        PATCH: Partial update of viewport, layers, or animations
+        """
+        from django.shortcuts import get_object_or_404
+
+        table = get_object_or_404(Table, name=table_name)
+        state, created = OTEFViewportState.objects.get_or_create(
+            table=table,
+            defaults={
+                'viewport': OTEFViewportState.DEFAULT_VIEWPORT.copy(),
+                'layers': OTEFViewportState.DEFAULT_LAYERS.copy(),
+                'animations': {},
+                'nli_clock_layout_revision': 0,
+                'legend_layout_revision': 0,
+            }
+        )
+
+        if request.method == 'PATCH':
+            protected_layout_fields = {
+                "nli_clock_layout", "nli_clock_layout_revision",
+                "legend_settings", "legend_layout_revision",
+                "settlement_name_settings", "settlement_name_revision",
+                "road_sign_settings", "road_sign_revision",
+            }
+            if protected_layout_fields.intersection(request.data.keys()):
+                return Response(
+                    {"error": "Clock and legend layouts must use their versioned commands"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            state = OTEFViewportState.objects.select_for_update().get(pk=state.pk)
+            from .otef_experience import SCOPED_PATCH_FIELDS, ExperienceError, require_experience, validate_bookmark, validate_slideshow_settings, regular_slideshow_settings
+            if {"active_experience", "saved_regular_context", "saved_nli_context", "experience_pending", "experience_receipt", "experience_state"}.intersection(request.data):
+                return Response({"error": "Experience authority is read-only"}, status=400)
+            if SCOPED_PATCH_FIELDS.intersection(request.data):
+                try:
+                    required = "nli" if {"nli_bookmark", "investigation_clock"}.intersection(request.data) else None
+                    stamped = require_experience(state, request.data, required=required)
+                    if isinstance(request.data.get("projection_slideshow"), dict) and request.data["projection_slideshow"].get("type") == "start":
+                        require_experience(state, request.data, required="regular")
+                        payload = request.data["projection_slideshow"].get("payload")
+                        if isinstance(payload, dict) and isinstance(payload.get("packOrder"), list) and "nli" in payload["packOrder"]:
+                            raise ExperienceError("invalid_slideshow_settings", "NLI is unavailable in the regular slideshow", 400)
+                    if "regular_slideshow_settings" in request.data:
+                        require_experience(state, request.data, required="regular")
+                        if state.active_experience != "regular":
+                            raise ExperienceError("experience_unavailable", "Slideshow settings belong to the regular workspace")
+                        slideshow_settings = validate_slideshow_settings(request.data["regular_slideshow_settings"], regular_slideshow_settings(state))
+                    self._accepted_experience = {"experience": state.active_experience, "experience_revision": state.experience_revision}
+                    if stamped and "exhibit_mode" in request.data:
+                        raise ExperienceError("experience_derived", "Exhibit styling is derived from the active experience")
+                    if "nli_bookmark" in request.data:
+                        bookmark = validate_bookmark(request.data["nli_bookmark"])
+                except ExperienceError as error:
+                    return self._experience_error_response(state, error)
+            request_viewport = (
+                request.data.get('viewport')
+                if isinstance(request.data.get('viewport'), dict)
+                else {}
+            )
+            trace_id = request.data.get('traceId') or request_viewport.get('traceId')
+            self._emit_trace_event(
+                trace_id,
+                "django.patch.received",
+                table_name=table_name,
+            )
+            validated_projection = None
+            validated_clock = None
+            if 'basemap' in request.data:
+                basemap = request.data['basemap']
+                if basemap not in ('osm', 'satellite', 'satellite_bw', 'dark'):
+                    return Response(
+                        {
+                            'error': (
+                                'basemap must be "osm", "satellite", '
+                                '"satellite_bw", or "dark"'
+                            )
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+            if 'projection_slideshow' in request.data:
+                validated_projection, err = _normalize_projection_slideshow_patch(
+                    request.data['projection_slideshow']
+                )
+                if err is not None:
+                    return err
+            if 'investigation_clock' in request.data:
+                validated_clock, err = _normalize_investigation_clock_patch(
+                    request.data['investigation_clock']
+                )
+                if err is not None:
+                    return err
+
+            narrative = normalize_narrative_state(state.narrative_state)
+            if (
+                narrative["id"] == "nova"
+                and validated_clock is not None
+                and validated_clock.get("phase") == "ended"
+                and validated_clock.get("beats") == list(_NOVA_STORY_BEATS)
+                and validated_clock.get("positionMs", 0) < _NOVA_STORY_DURATION_MS
+            ):
+                return _clock_patch_error(
+                    "Nova clock cannot end before its final beat has completed"
+                )
+            if narrative["id"] is not None:
+                conflict = (
+                    'basemap' in request.data
+                    or (
+                        validated_projection is not None
+                        and validated_projection.get("type") == "start"
+                    )
+                )
+                if conflict:
+                    return Response(
+                        {
+                            "error": "state mutation is unavailable while a narrative is active",
+                            "reason": "narrative_active",
+                            "narrative_state": narrative,
+                        },
+                        status=status.HTTP_409_CONFLICT,
+                    )
+            changed_fields = []
+            clock_persisted = False
+            if "nli_bookmark" in request.data:
+                from .otef_experience import advance_experience_sequence
+                state.nli_bookmark = bookmark
+                advance_experience_sequence(state)
+                changed_fields.append("nli_bookmark")
+                changed_fields.append("experience_receipt")
+            if "regular_slideshow_settings" in request.data:
+                from .otef_experience import advance_experience_sequence
+                state.saved_regular_context = {**(state.saved_regular_context or {}), "slideshow_settings": slideshow_settings}
+                advance_experience_sequence(state)
+                changed_fields.extend(["saved_regular_context", "regular_slideshow_settings", "experience_receipt"])
+
+            # Partial updates for each field
+            if 'viewport' in request.data:
+                # Merge with existing viewport (preserve unset fields)
+                current = state.viewport or {}
+                new_viewport = request.data['viewport']
+                if not _is_stale_viewport_patch(current, new_viewport):
+                    state.viewport = {**current, **new_viewport}
+                    changed_fields.append('viewport')
+
+            if 'layers' in request.data:
+                state.layers = request.data['layers']
+                changed_fields.append('layers')
+
+            if 'animations' in request.data:
+                state.animations = request.data['animations']
+                changed_fields.append('animations')
+
+            if 'basemap' in request.data:
+                basemap = request.data['basemap']
+                state.basemap = basemap
+                changed_fields.append('basemap')
+
+            # Optional bounds polygon updates (used by bounds editor / apply endpoint)
+            # Accept both "bounds_polygon" and legacy "bounds" keys.
+            if 'bounds_polygon' in request.data or 'bounds' in request.data:
+                polygon = request.data.get('bounds_polygon') or request.data.get('bounds')
+                state.bounds_polygon = polygon or []
+                changed_fields.append('bounds')
+
+            if 'viewer_angle_deg' in request.data:
+                try:
+                    state.viewer_angle_deg = float(request.data['viewer_angle_deg'])
+                except (TypeError, ValueError):
+                    return Response(
+                        {'error': 'viewer_angle_deg must be a valid number'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                changed_fields.append('viewer_angle_deg')
+
+            if 'workshop_auto_publish' in request.data:
+                wap = request.data['workshop_auto_publish']
+                if not isinstance(wap, bool):
+                    return Response(
+                        {'error': 'workshop_auto_publish must be a boolean'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                state.workshop_auto_publish = wap
+                changed_fields.append('workshop_auto_publish')
+
+            if 'gaza_border_visible' in request.data:
+                visible = request.data['gaza_border_visible']
+                if not isinstance(visible, bool):
+                    return Response({'error': 'gaza_border_visible must be a boolean'}, status=status.HTTP_400_BAD_REQUEST)
+                state.gaza_border_visible = visible
+                changed_fields.append('gaza_border_visible')
+
+            if 'exhibit_mode' in request.data:
+                exhibit_mode = request.data['exhibit_mode']
+                if not isinstance(exhibit_mode, bool):
+                    return Response(
+                        {'error': 'exhibit_mode must be a boolean'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                state.exhibit_mode = exhibit_mode
+                changed_fields.append('exhibit_mode')
+
+            if 'projection_slideshow' in request.data:
+                normalized = validated_projection
+                prev = state.projection_slideshow or {}
+                rev = 0
+                if isinstance(prev, dict):
+                    try:
+                        rev = int(prev.get('revision') or 0)
+                    except (TypeError, ValueError):
+                        rev = 0
+                normalized['revision'] = rev + 1
+                state.projection_slideshow = normalized
+                changed_fields.append('projection_slideshow')
+                if normalized.get("type") == "start" and state.active_experience == "regular":
+                    state.saved_regular_context = {**(state.saved_regular_context or {}), "slideshow_settings": copy.deepcopy(normalized.get("payload", {}))}
+                    changed_fields.append("saved_regular_context")
+
+            # Validate scalar fields before writing fallback layer rows.
+            if 'layerGroups' in request.data:
+                groups_patch = request.data['layerGroups']
+                border_toggle = next((row.get('enabled') is True
+                    for group in reversed(groups_patch) if group.get('id') == 'gaza'
+                    for row in reversed(group.get('layers', [])) if row.get('id') == 'gaza_border'), None)
+                if state.active_experience == 'regular' and border_toggle is not None:
+                    if 'gaza_border_visible' in request.data and state.gaza_border_visible != border_toggle:
+                        return Response({'error': 'Border layer and visibility must agree'}, status=status.HTTP_400_BAD_REQUEST)
+                    state.gaza_border_visible = border_toggle
+                    if 'gaza_border_visible' not in changed_fields:
+                        changed_fields.append('gaza_border_visible')
+                self._update_layer_groups(table, groups_patch)
+                changed_fields.append('layerGroups')
+
+            if 'investigation_clock' in request.data:
+                normalized = validated_clock
+                with transaction.atomic():
+                    locked = lock_person_selection_state(state)
+                    for field in changed_fields:
+                        attr = "bounds_polygon" if field == "bounds" else field
+                        if hasattr(locked, attr):
+                            setattr(locked, attr, getattr(state, attr))
+                    if normalized.get("phase") != "idle":
+                        cleared, selection_changed, _error, _reason = transition_person_selection(
+                            locked,
+                            {"personId": None, "datasetVersion": None},
+                            normalizer=normalize_person_selection,
+                        )
+                        if selection_changed:
+                            self._schedule_person_selection_broadcast(table_name, cleared, {"sourceId": request.data.get("sourceId"), "timestamp": request.data.get("timestamp"), "traceId": trace_id})
+                    prev_clock = locked.investigation_clock or {}
+                    try:
+                        rev = int(prev_clock.get('revision') or 0) if isinstance(prev_clock, dict) else 0
+                    except (TypeError, ValueError):
+                        rev = 0
+                    normalized['revision'] = rev + 1
+                    locked.investigation_clock = normalized
+                    update_fields = [
+                        "investigation_clock",
+                        "updated_at",
+                        *[
+                            "bounds_polygon" if field == "bounds" else field
+                            for field in changed_fields
+                            if hasattr(locked, "bounds_polygon" if field == "bounds" else field)
+                        ],
+                    ]
+                    locked.save(update_fields=list(dict.fromkeys(update_fields)))
+                    state = locked
+                    clock_persisted = True
+                changed_fields.append('investigation_clock')
+
+            if not clock_persisted:
+                state.save()
+            self._emit_trace_event(
+                trace_id,
+                "django.patch.saved",
+                table_name=table_name,
+                extra={"fields": list(changed_fields)},
+            )
+
+            # Broadcast notifications for each changed field
+            broadcast_metadata = {
+                'sourceId': request.data.get('sourceId') or request_viewport.get('sourceId'),
+                'timestamp': request.data.get('timestamp') or request_viewport.get('timestamp'),
+                'traceId': trace_id,
+            }
+            transaction.on_commit(
+                lambda: self._broadcast_state_change(
+                    table_name, list(changed_fields), dict(broadcast_metadata)
+                )
+            )
+
+        return Response(self._state_snapshot(state, table))
+
+    def _state_snapshot(self, state, table):
+        from .otef_experience import experience_state, slideshow_command_for_response
+        table_name = table.name
+        response_data = {
+            'id': state.id,
+            'table': table.id,
+            'table_name': table_name,
+            'viewport': state.get_viewport_with_defaults(),
+            'layers': state.get_layers_with_defaults(),  # Keep for backward compatibility
+            'layerGroups': self._get_layer_groups(table),
+            'animations': state.get_animations_with_defaults(),
+            'basemap': state.basemap or 'osm',
+            'bounds_polygon': state.get_bounds_polygon(),
+            'viewer_angle_deg': state.viewer_angle_deg,
+            'workshop_auto_publish': state.workshop_auto_publish,
+            'exhibit_mode': state.active_experience == 'nli' if state.experience_revision else state.exhibit_mode,
+            'experience_state': experience_state(state),
+            'workshop_autopublish_started_at': (
+                state.workshop_autopublish_started_at.isoformat()
+                if state.workshop_autopublish_started_at
+                else None
+            ),
+            'projection_slideshow': slideshow_command_for_response(state),
+            'investigation_clock': _investigation_clock_for_response(
+                state.investigation_clock
+            ),
+            'person_selection': normalize_person_selection(state.person_selection),
+            'narrative_state': normalize_narrative_state(state.narrative_state),
+            'escape_overlay': normalize_escape_overlay(
+                state.escape_overlay,
+                normalize_narrative_state(state.narrative_state)["id"],
+            ),
+            'nli_clock_layout': normalize_nli_clock_layout(state.nli_clock_layout),
+            'nli_clock_layout_revision': state.nli_clock_layout_revision,
+            'gaza_border_visible': bool(state.gaza_border_visible),
+            'legend_settings': normalize_legend_settings(state.legend_settings),
+            'legend_layout_revision': state.legend_layout_revision,
+            'settlement_name_settings': normalize_settlement_name_settings(state.settlement_name_settings),
+            'settlement_name_revision': state.settlement_name_revision,
+            'road_sign_settings': normalize_road_sign_settings(state.road_sign_settings),
+            'road_sign_revision': state.road_sign_revision,
+            'updated_at': state.updated_at.isoformat() if state.updated_at else None,
+        }
+
+        return response_data
+
+    def _experience_error_response(self, state, error):
+        from .otef_experience import experience_state
+        return Response({"error": str(error), "reason": error.reason,
+            "experience_state": experience_state(state)}, status=error.status)
+
+    def _broadcast_experience_snapshot(self, table_name):
+        from asgiref.sync import async_to_sync
+        from channels.layers import get_channel_layer
+        state = OTEFViewportState.objects.select_related("table").get(table__name=table_name)
+        channel_layer = get_channel_layer()
+        if channel_layer:
+            async_to_sync(channel_layer.group_send)("otef_channel", {"type": "broadcast_message",
+                "message": {"type": "otef_experience_changed", "table": table_name,
+                    "state": self._state_snapshot(state, state.table)}})
+
+    def _switch_experience_command(self, table, state, request):
+        from .otef_experience import ExperienceError, switch_experience
+        try:
+            with transaction.atomic():
+                changed = switch_experience(state, request.data,
+                    lambda: self._get_layer_groups(table),
+                    lambda groups: self._update_layer_groups(table, groups))
+        except ExperienceError as error:
+            state.refresh_from_db()
+            return self._experience_error_response(state, error)
+        if changed:
+            transaction.on_commit(lambda: self._broadcast_experience_snapshot(table.name))
+        return Response(self._state_snapshot(state, table))
+
+    def _update_layer_groups(self, table, layer_groups_data):
+        """Update layer groups and layer states from request data."""
+        for group_data in layer_groups_data:
+            group_id = group_data.get('id')
+            if not group_id:
+                continue
+
+            # Get or create group
+            group, _ = LayerGroup.objects.get_or_create(
+                table=table,
+                group_id=group_id,
+                defaults={'enabled': group_data.get('enabled', False)}
+            )
+            group.enabled = group_data.get('enabled', False)
+            group.save()
+
+            # Update layer states
+            layers = group_data.get('layers', [])
+            for layer_data in layers:
+                layer_id = layer_data.get('id')
+                if not layer_id:
+                    continue
+
+                full_layer_id = f"{group_id}.{layer_id}"
+                layer_state, _ = LayerState.objects.get_or_create(
+                    table=table,
+                    layer_id=full_layer_id,
+                    defaults={'enabled': layer_data.get('enabled', False)}
+                )
+                layer_state.enabled = layer_data.get('enabled', False)
+                layer_state.save()
+
+    def _get_layer_groups(self, table):
+        """Get hierarchical layer groups structure for a table.
+        When no LayerGroup rows exist, builds curated groups from GISLayer so layers
+        appear in the remote. Curated groups are project-scoped when project_name
+        is available on GISLayer.
+        """
+        groups = LayerGroup.objects.filter(table=table).order_by("group_id")
+        result = []
+
+        # Precompute mapping from project slug -> human project name for this table.
+        gis_layers = GISLayer.objects.filter(table=table, is_active=True)
+        slug_to_project_name = {}
+        for gl in gis_layers:
+            pname = (getattr(gl, "project_name", "") or "").strip()
+            if not pname:
+                continue
+            slug = _slugify_project(pname)
+            if slug and slug not in slug_to_project_name:
+                slug_to_project_name[slug] = pname
+
+        for group in groups:
+            layer_states = LayerState.objects.filter(
+                table=table,
+                layer_id__startswith=f"{group.group_id}.",
+            ).order_by("layer_id")
+
+            layers = []
+            group_display_name = None
+            for layer_state in layer_states:
+                layer_id = layer_state.layer_id.replace(f"{group.group_id}.", "", 1)
+                layer_item = {"id": layer_id, "enabled": layer_state.enabled}
+
+                # For curated groups (project-scoped), attach displayName to layers
+                # by looking up the corresponding GISLayer row.
+                if str(group.group_id).startswith("curated"):
+                    if layer_id == "pink_line_parking":
+                        layer_item["displayName"] = "Parking lots"
+                        layers.append(layer_item)
+                        continue
+                    if layer_id == "pink_line_route":
+                        layer_item["displayName"] = "Pink line"
+                        layers.append(layer_item)
+                        continue
+                    try:
+                        gid = int(layer_id)
+                    except (ValueError, TypeError):
+                        # Non-numeric ids are ignored for curated GIS layers.
+                        continue
+                    gis_layer = GISLayer.objects.filter(
+                        table=table, id=gid
+                    ).first()
+                    if not gis_layer or not gis_layer.is_active:
+                        # Unpublished / deleted layers must not appear as remote toggles.
+                        continue
+                    layer_item["displayName"] = (
+                        gis_layer.display_name or gis_layer.name
+                    )
+                    layer_item["project_name"] = (
+                        getattr(gis_layer, "project_name", "") or ""
+                    )
+                layers.append(layer_item)
+
+            group_name = group.group_id
+            if group.group_id == "curated":
+                group_name = "Curated"
+            elif str(group.group_id).startswith("curated_"):
+                slug = str(group.group_id)[len("curated_") :]
+                human_name = slug_to_project_name.get(slug)
+                if human_name:
+                    group_name = human_name
+
+            result.append(
+                {
+                    "id": group.group_id,
+                    "name": group_name,
+                    "enabled": group.enabled,
+                    "layers": layers,
+                }
+            )
+
+        if not result:
+            gis_layers = GISLayer.objects.filter(
+                table=table, is_active=True
+            ).order_by("order")
+            if gis_layers.exists():
+                grouped = {}
+                for layer in gis_layers:
+                    pname = (getattr(layer, "project_name", "") or "").strip()
+                    if pname:
+                        slug = _slugify_project(pname)
+                        group_id = f"curated_{slug}"
+                        group_name = pname
+                    else:
+                        group_id = "curated"
+                        group_name = "Curated"
+
+                    group = grouped.setdefault(
+                        group_id,
+                        {
+                            "id": group_id,
+                            "name": group_name,
+                            "enabled": True,
+                            "layers": [],
+                        },
+                    )
+                    group["layers"].append(
+                        {
+                            "id": str(layer.id),
+                            "enabled": True,
+                            "displayName": layer.display_name or layer.name,
+                            "project_name": pname,
+                        }
+                    )
+                result = list(grouped.values())
+
+        coalesced = self._coalesce_curated_groups(result)
+        self._ensure_pink_line_parking_toggle_in_moreshet_group(table, coalesced)
+        self._ensure_pink_line_route_toggle_in_moreshet_group(table, coalesced)
+        return coalesced
+
+    def _ensure_pink_line_parking_toggle_in_moreshet_group(self, table, groups):
+        """
+        When the merged Moreshet axis pack lists published content but no parking
+        LayerState row exists yet, expose an explicit pink_line_parking layer so
+        clients never infer default-ON from a missing row (fixes toggle snap-back).
+        """
+        if not isinstance(groups, list):
+            return
+        for g in groups:
+            if not isinstance(g, dict) or g.get("id") != "curated_moresht_axis":
+                continue
+            layers = list(g.get("layers") or [])
+            has_published_content = any(
+                isinstance(x, dict)
+                and self._is_moreshet_published_content_layer_id(x.get("id", ""))
+                for x in layers
+            )
+            if not has_published_content:
+                continue
+            if any(
+                isinstance(x, dict) and str(x.get("id", "")) == "pink_line_parking"
+                for x in layers
+            ):
+                continue
+            st = LayerState.objects.filter(
+                table=table, layer_id="curated_moresht_axis.pink_line_parking"
+            ).first()
+            layers.append(
+                {
+                    "id": "pink_line_parking",
+                    "enabled": bool(st.enabled) if st else True,
+                    "displayName": "Parking lots",
+                }
+            )
+            g["layers"] = layers
+            g["enabled"] = layers and all(
+                isinstance(x, dict) and x.get("enabled", False) is True for x in layers
+            )
+
+    def _ensure_pink_line_route_toggle_in_moreshet_group(self, table, groups):
+        """
+        Emit an explicit pink_line_route row so the dedicated axis toggle survives
+        GET/PATCH/WS. Default off (workshop-layer coupling still shows the axis).
+        """
+        if not isinstance(groups, list):
+            return
+        for g in groups:
+            if not isinstance(g, dict) or g.get("id") != "curated_moresht_axis":
+                continue
+            layers = list(g.get("layers") or [])
+            has_published_content = any(
+                isinstance(x, dict)
+                and self._is_moreshet_published_content_layer_id(x.get("id", ""))
+                for x in layers
+            )
+            if not has_published_content:
+                continue
+            if any(
+                isinstance(x, dict) and str(x.get("id", "")) == "pink_line_route"
+                for x in layers
+            ):
+                continue
+            st = LayerState.objects.filter(
+                table=table, layer_id="curated_moresht_axis.pink_line_route"
+            ).first()
+            layers.insert(
+                0,
+                {
+                    "id": "pink_line_route",
+                    "enabled": bool(st.enabled) if st else False,
+                    "displayName": "Pink line",
+                },
+            )
+            g["layers"] = layers
+            g["enabled"] = layers and all(
+                isinstance(x, dict) and x.get("enabled", False) is True for x in layers
+            )
+
+    def _coalesce_curated_groups(self, groups):
+        """
+        Merge any curated* groups into a single combined curated group for UI/state.
+        """
+        if not isinstance(groups, list) or not groups:
+            return []
+
+        curated_groups = [
+            g
+            for g in groups
+            if isinstance(g, dict)
+            and isinstance(g.get("id"), str)
+            and g.get("id", "").startswith("curated")
+        ]
+        if len(curated_groups) <= 1:
+            if curated_groups:
+                curated = curated_groups[0]
+                curated["id"] = "curated_moresht_axis"
+                curated["name"] = "Moreshet Axis"
+            return groups
+
+        non_curated_groups = [
+            g
+            for g in groups
+            if not (
+                isinstance(g, dict)
+                and isinstance(g.get("id"), str)
+                and g.get("id", "").startswith("curated")
+            )
+        ]
+
+        merged_layers_map = {}
+        all_enabled = True
+        sorted_curated_groups = sorted(
+            curated_groups,
+            key=lambda g: (0 if g.get("id") == "curated_moresht_axis" else 1, g.get("id", "")),
+        )
+        for group in sorted_curated_groups:
+            group_enabled = group.get("enabled", False) is True
+            if not group_enabled:
+                all_enabled = False
+            for layer in group.get("layers", []) or []:
+                layer_id = str(layer.get("id", "")).strip()
+                if not layer_id:
+                    continue
+                layer_enabled = layer.get("enabled", False) is True
+                if not layer_enabled:
+                    all_enabled = False
+                candidate = {
+                    "id": layer_id,
+                    "enabled": layer_enabled,
+                    "displayName": layer.get("displayName", layer_id),
+                    "project_name": layer.get("project_name", ""),
+                }
+                existing = merged_layers_map.get(layer_id)
+                # Prefer canonical moresht-axis rows when duplicates exist.
+                if existing is None or group.get("id") == "curated_moresht_axis":
+                    merged_layers_map[layer_id] = candidate
+                elif layer_id in ("pink_line_parking", "pink_line_route"):
+                    # Synthetic companions: any curated group turning it OFF must win
+                    # over another group's stale ON (legacy multi-group LayerGroup rows).
+                    merged_layers_map[layer_id] = {
+                        "id": layer_id,
+                        "enabled": bool(existing.get("enabled"))
+                        and bool(candidate.get("enabled")),
+                        "displayName": existing.get("displayName")
+                        or candidate.get("displayName", layer_id),
+                        "project_name": existing.get("project_name")
+                        or candidate.get("project_name", ""),
+                    }
+
+        merged_layers = list(merged_layers_map.values())
+
+        merged_curated = {
+            "id": "curated_moresht_axis",
+            "name": "Moreshet Axis",
+            "enabled": all_enabled,
+            "layers": merged_layers,
+        }
+        return non_curated_groups + [merged_curated]
+
+    def _split_full_layer_id(self, full_layer_id):
+        if not full_layer_id or not isinstance(full_layer_id, str):
+            return None, None
+        if "." not in full_layer_id:
+            return None, None
+        return full_layer_id.split(".", 1)
+
+    def _recompute_group_enabled_from_states(self, table, group_id):
+        """Sync LayerGroup.enabled with LayerState rows for this table/group_id."""
+        if not group_id:
+            return
+        group = LayerGroup.objects.filter(table=table, group_id=group_id).first()
+        if not group:
+            return
+        states = list(
+            LayerState.objects.filter(
+                table=table, layer_id__startswith=f"{group_id}."
+            )
+        )
+        if not states:
+            return
+        all_on = all(s.enabled for s in states)
+        if group.enabled != all_on:
+            group.enabled = all_on
+            group.save()
+
+    def _moreshet_parking_coherence_table(self, table, layer_groups=None):
+        """
+        If no Moreshet *content* layer is on, ensure pink_line_parking is off in the DB
+        (mirrors frontend applyMoreshetParkingCoherenceToLayerGroups).
+
+        Returns True if callers should re-fetch layer groups (parking and/or group.enabled may
+        have changed in the database).
+        """
+        moreshet = "curated_moresht_axis"
+        parking = "pink_line_parking"
+        parking_fid = f"{moreshet}.{parking}"
+        groups = layer_groups if layer_groups is not None else self._get_layer_groups(table)
+        g = next((x for x in (groups or []) if isinstance(x, dict) and x.get("id") == moreshet), None)
+        if not g:
+            return False
+        layers = g.get("layers") or []
+        has_content = False
+        for layer in layers:
+            if not isinstance(layer, dict):
+                continue
+            if self._is_moreshet_companion_layer_id(layer.get("id", "")):
+                continue
+            if layer.get("enabled", False) is True:
+                has_content = True
+                break
+        if has_content:
+            return False
+        st = LayerState.objects.filter(table=table, layer_id=parking_fid).first()
+        if st and st.enabled is True:
+            st.enabled = False
+            st.save()
+        self._recompute_group_enabled_from_states(table, moreshet)
+        return True
+
+    def _merge_layer_toggle_changes_last_wins(self, change_dicts):
+        """Last entry for a full_layer_id wins (matches last-intent semantics)."""
+        merged = {}
+        for ch in change_dicts:
+            if not isinstance(ch, dict):
+                continue
+            full_id = ch.get("full_layer_id")
+            if not full_id and ch.get("fullLayerId"):
+                full_id = ch.get("fullLayerId")
+            if not full_id or not isinstance(full_id, str):
+                continue
+            en = ch.get("enabled")
+            if not isinstance(en, bool):
+                en = en is True or str(en).lower() in ("1", "true", "yes")
+            group_id, _tail = self._split_full_layer_id(full_id)
+            if not group_id:
+                continue
+            merged[full_id] = en
+        return merged
+
+    def _ensure_layer_groups_for_merge(self, table, merged):
+        """Create missing LayerGroup rows in bulk; does not update existing group flags."""
+        group_last_en = {}
+        for full_id, en in merged.items():
+            gid, _ = self._split_full_layer_id(full_id)
+            if gid:
+                group_last_en[gid] = en
+        if not group_last_en:
+            return
+        want = set(group_last_en.keys())
+        have = set(
+            LayerGroup.objects.filter(table=table, group_id__in=want).values_list(
+                "group_id", flat=True
+            )
+        )
+        missing = want - have
+        if not missing:
+            return
+        LayerGroup.objects.bulk_create(
+            [
+                LayerGroup(table=table, group_id=gid, enabled=group_last_en[gid])
+                for gid in missing
+            ]
+        )
+
+    def _recompute_group_enabled_from_states_bulk(self, table, group_ids):
+        """Sync LayerGroup.enabled with LayerState rows; batched queries."""
+        if not group_ids:
+            return
+        q = Q()
+        for gid in group_ids:
+            q |= Q(layer_id__startswith=f"{gid}.")
+        states = list(LayerState.objects.filter(table=table).filter(q))
+        by_group = {gid: [] for gid in group_ids}
+        prefix_by_gid = {gid: f"{gid}." for gid in group_ids}
+        for st in states:
+            for gid, pref in prefix_by_gid.items():
+                if st.layer_id.startswith(pref):
+                    by_group[gid].append(st)
+                    break
+        groups = {
+            lg.group_id: lg
+            for lg in LayerGroup.objects.filter(table=table, group_id__in=group_ids)
+        }
+        to_save = []
+        for gid in group_ids:
+            layer_group = groups.get(gid)
+            if not layer_group:
+                continue
+            slist = by_group.get(gid) or []
+            if not slist:
+                continue
+            all_on = all(s.enabled for s in slist)
+            if layer_group.enabled != all_on:
+                layer_group.enabled = all_on
+                to_save.append(layer_group)
+        if to_save:
+            LayerGroup.objects.bulk_update(to_save, ["enabled"])
+
+    def _apply_layer_toggle_change_dicts(self, table, change_dicts, state):
+        """
+        change_dicts: list of {full_layer_id, enabled} (enabled bool).
+        Persists to LayerState / LayerGroup and bumps OTEFViewportState.updated_at.
+
+        Returns:
+            (layer_groups, affected_group_ids, affected_full_layer_ids) for reuse
+            in HTTP response and WebSocket broadcast (avoids repeated _get_layer_groups).
+        """
+        merged = self._merge_layer_toggle_changes_last_wins(change_dicts)
+        if not merged:
+            layer_groups = self._get_layer_groups(table)
+            if self._moreshet_parking_coherence_table(table, layer_groups=layer_groups):
+                layer_groups = self._get_layer_groups(table)
+            if state and state.pk is not None:
+                state.save(update_fields=["updated_at"])
+            return layer_groups, set(), []
+
+        self._ensure_layer_groups_for_merge(table, merged)
+
+        full_ids = list(merged.keys())
+        existing = {
+            ls.layer_id: ls
+            for ls in LayerState.objects.filter(table=table, layer_id__in=full_ids)
+        }
+
+        to_create = []
+        to_update = []
+        affected_group_ids = set()
+
+        for full_id, en in merged.items():
+            group_id, _tail = self._split_full_layer_id(full_id)
+            if not group_id:
+                continue
+            affected_group_ids.add(group_id)
+            if full_id in existing:
+                ls = existing[full_id]
+                if ls.enabled != en:
+                    ls.enabled = en
+                    to_update.append(ls)
+            else:
+                to_create.append(LayerState(table=table, layer_id=full_id, enabled=en))
+
+        if to_create:
+            LayerState.objects.bulk_create(to_create)
+        if to_update:
+            LayerState.objects.bulk_update(to_update, ["enabled"])
+
+        layer_groups = self._get_layer_groups(table)
+        if self._moreshet_parking_coherence_table(table, layer_groups=layer_groups):
+            # Parking row and/or merged group enabled may have been updated; refresh once.
+            layer_groups = self._get_layer_groups(table)
+
+        self._recompute_group_enabled_from_states_bulk(table, affected_group_ids)
+
+        if state and state.pk is not None:
+            fields = ["updated_at"]
+            if state.active_experience == "regular" and "gaza.gaza_border" in merged:
+                state.gaza_border_visible = merged["gaza.gaza_border"]
+                fields.append("gaza_border_visible")
+            state.save(update_fields=fields)
+
+        affected_full = list(merged.keys())
+        return layer_groups, affected_group_ids, affected_full
+
+    def _expand_request_layer_toggle_change_dicts(self, table, request, layer_groups_cache=None):
+        action = request.data.get("action")
+        if action == "set_layer_toggles":
+            raw = request.data.get("changes")
+            if not isinstance(raw, list) or not raw:
+                return None, "changes must be a non-empty list for set_layer_toggles"
+            out = []
+            for it in raw:
+                if not isinstance(it, dict):
+                    continue
+                full_id = it.get("full_layer_id") or it.get("fullLayerId")
+                if not full_id or not isinstance(full_id, str):
+                    continue
+                en = it.get("enabled")
+                if not isinstance(en, bool):
+                    en = en is True or str(en).lower() in ("1", "true", "yes")
+                out.append({"full_layer_id": full_id, "enabled": en})
+            if not out:
+                return None, "no valid entries in changes"
+            return out, None
+
+        if action == "set_layers_enabled":
+            fids = request.data.get("full_layer_ids") or request.data.get("fullLayerIds", [])
+            if not isinstance(fids, list) or not fids:
+                return None, "full_layer_ids must be a non-empty list for set_layers_enabled"
+            en = request.data.get("enabled")
+            if not isinstance(en, bool):
+                en = en is True or str(en).lower() in ("1", "true", "yes")
+            out = []
+            for full_id in fids:
+                if not isinstance(full_id, str) or not full_id.strip():
+                    continue
+                out.append(
+                    {
+                        "full_layer_id": full_id,
+                        "enabled": en,
+                    }
+                )
+            if not out:
+                return None, "no valid full_layer_ids in set_layers_enabled"
+            return out, None
+
+        if action == "set_group_enabled":
+            group_id = request.data.get("group_id") or request.data.get("groupId")
+            if not group_id or not isinstance(group_id, str):
+                return None, "group_id is required for set_group_enabled"
+            en = request.data.get("enabled")
+            if not isinstance(en, bool):
+                en = en is True or str(en).lower() in ("1", "true", "yes")
+            groups = (
+                layer_groups_cache
+                if isinstance(layer_groups_cache, list)
+                else self._get_layer_groups(table)
+            )
+            g = next(
+                (x for x in (groups or []) if isinstance(x, dict) and x.get("id") == group_id),
+                None,
+            )
+            if not g or not isinstance(g.get("layers"), list):
+                return None, f"unknown or empty group_id: {group_id}"
+            out = []
+            for layer in g["layers"]:
+                if not isinstance(layer, dict):
+                    continue
+                lid = layer.get("id")
+                if not lid and lid != 0:
+                    continue
+                full_id = f"{group_id}.{str(lid).strip()}"
+                out.append({"full_layer_id": full_id, "enabled": en})
+            if not out:
+                return None, f"no layers to toggle for group {group_id}"
+            return out, None
+
+        return None, None
+
+    @action(detail=False, methods=['post'], url_path='by-table/(?P<table_name>[^/.]+)/command')
+    @transaction.atomic
+    def command(self, request, table_name=None):
+        """
+        Execute a command (pan/zoom) server-side without requiring GIS map.
+
+        POST body:
+        - Pan: {"action": "pan", "direction": "north", "delta": 0.15}
+        - Zoom: {"action": "zoom", "level": 16}
+        - Layer compact toggles:
+          - {"action": "set_layer_toggles", "changes": [{"full_layer_id": "g.l", "enabled": true}, ...]}
+          - {"action": "set_layers_enabled", "full_layer_ids": ["g.l"], "enabled": true}
+          - {"action": "set_group_enabled", "group_id": "g", "enabled": true}
+        """
+        from django.shortcuts import get_object_or_404
+
+        if self._body_too_large(request):
+            return Response({"error": "body too large"}, status=status.HTTP_400_BAD_REQUEST)
+
+        table = get_object_or_404(Table, name=table_name)
+        state, created = OTEFViewportState.objects.get_or_create(
+            table=table,
+            defaults={
+                'viewport': OTEFViewportState.DEFAULT_VIEWPORT.copy(),
+                'layers': OTEFViewportState.DEFAULT_LAYERS.copy(),
+                'animations': {},
+                'nli_clock_layout_revision': 0,
+                'legend_layout_revision': 0,
+            }
+        )
+
+        state = OTEFViewportState.objects.select_for_update().get(pk=state.pk)
+        action = request.data.get('action')
+        if action == "switch_experience":
+            return self._switch_experience_command(table, state, request)
+        from .otef_experience import ExperienceError, INSTALLATION_ACTIONS, NLI_ACTIONS, is_cleanup, require_experience
+        legend_layout_edit = action == "set_legend_settings" and any(
+            field in request.data for field in ("span", "layout", "baseRevision")
+        )
+        if action not in INSTALLATION_ACTIONS and not legend_layout_edit:
+            try:
+                require_experience(state, request.data, cleanup=is_cleanup(request.data), required="nli" if action in NLI_ACTIONS else None)
+                self._accepted_experience = {"experience": state.active_experience, "experience_revision": state.experience_revision}
+            except ExperienceError as error:
+                return self._experience_error_response(state, error)
+        if action == "experience_cleanup_result":
+            from .otef_experience import record_cleanup_result
+            try:
+                record_cleanup_result(state, request.data)
+            except ExperienceError as error:
+                return self._experience_error_response(state, error)
+            transaction.on_commit(lambda: self._broadcast_experience_snapshot(table.name))
+            return Response(self._state_snapshot(state, table))
+        trace_id = request.data.get('traceId')
+        self._emit_trace_event(
+            trace_id,
+            "django.command.received",
+            table_name=table_name,
+            extra={"action": action},
+        )
+
+        if action == "set_narrative":
+            return self._set_narrative_command(table, request)
+
+        if action == "set_escape_overlay":
+            return self._set_escape_overlay_command(table, request)
+
+        if action == "set_nli_clock_layout":
+            return self._set_nli_clock_layout_command(table, request)
+
+        if action == "set_legend_settings":
+            return self._set_legend_settings_command(table, request)
+
+        if action == "set_settlement_names":
+            return self._set_settlement_names_command(table, request)
+
+        if action == "set_road_signs":
+            return self._set_road_signs_command(table, request)
+
+        if action == "initialize_projection_name_settings":
+            return self._initialize_projection_name_settings_command(table, request)
+
+        if action == "narrative_presentation":
+            return self._narrative_presentation_command(table, request)
+
+        if action == "narrative_presentation_result":
+            return self._narrative_presentation_result(table, request)
+
+        if action in ("select_person", "clear_person"):
+            return self._selection_command(table, action, request)
+
+        if action == "archive_window":
+            return self._archive_window_command(table, request)
+
+        if action == "archive_window_result":
+            return self._archive_window_result(table, request)
+
+        if action in (
+            "set_layer_toggles",
+            "set_layers_enabled",
+            "set_group_enabled",
+        ):
+            layer_groups_expand_cache = (
+                self._get_layer_groups(table) if action == "set_group_enabled" else None
+            )
+            change_dicts, err = self._expand_request_layer_toggle_change_dicts(
+                table,
+                request,
+                layer_groups_cache=layer_groups_expand_cache,
+            )
+            if err:
+                return Response(
+                    {"error": err, "action": action},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            layer_groups, affected_group_ids, affected_full_ids = (
+                self._apply_layer_toggle_change_dicts(table, change_dicts, state)
+            )
+            self._emit_trace_event(
+                trace_id,
+                "django.command.saved",
+                table_name=table_name,
+                extra={"action": action},
+            )
+            layer_change_meta = {
+                "affected_group_ids": sorted(affected_group_ids),
+                "affected_full_layer_ids": affected_full_ids,
+            }
+            self._broadcast_state_change(
+                table_name,
+                ["layerGroups", *(["gaza_border_visible"] if state.active_experience == "regular" and "gaza.gaza_border" in affected_full_ids else [])],
+                {
+                    "sourceId": request.data.get("sourceId"),
+                    "timestamp": request.data.get("timestamp"),
+                    "traceId": trace_id,
+                },
+                layer_groups_cache=layer_groups,
+                layer_change_meta=layer_change_meta,
+            )
+            return Response(
+                {
+                    "status": "ok",
+                    "action": action,
+                    "layerGroups": layer_groups,
+                    "gaza_border_visible": bool(state.gaza_border_visible),
+                    "affected_group_ids": layer_change_meta["affected_group_ids"],
+                    "affected_full_layer_ids": affected_full_ids,
+                }
+            )
+
+        if action == "cancel_navigation_focus":
+            import time
+
+            timestamp = request.data.get("timestamp")
+            if not isinstance(timestamp, (int, float)):
+                timestamp = int(time.time() * 1000)
+            command_payload = {
+                "id": f"nav-cancel-{int(timestamp)}",
+                "cancelFocus": True,
+                "sourceId": request.data.get("sourceId"),
+                "timestamp": int(timestamp),
+                "traceId": trace_id,
+            }
+            with transaction.atomic():
+                locked = lock_person_selection_state(state)
+                cleared, selection_changed, _error, _reason = transition_person_selection(
+                    locked,
+                    {"personId": None, "datasetVersion": None},
+                    normalizer=normalize_person_selection,
+                )
+                if selection_changed:
+                    self._schedule_person_selection_broadcast(
+                        table_name,
+                        cleared,
+                        {"sourceId": command_payload["sourceId"], "timestamp": command_payload["timestamp"], "traceId": trace_id},
+                    )
+                transaction.on_commit(
+                    lambda: self._broadcast_place_navigation_command(table_name, dict(command_payload))
+                )
+            return Response({"status": "ok", "action": action, "command": command_payload})
+
+        if action == "navigate_to_place":
+            import time
+
+            place_id = request.data.get("placeId")
+            camera_hint = request.data.get("cameraHint")
+            if not isinstance(place_id, str) or not place_id.strip():
+                return Response(
+                    {"error": "placeId is required"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if not isinstance(camera_hint, dict):
+                return Response(
+                    {"error": "cameraHint is required"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            center = camera_hint.get("center")
+            zoom = camera_hint.get("zoom")
+            if (
+                not isinstance(center, dict)
+                or not isinstance(center.get("lng"), (int, float))
+                or not isinstance(center.get("lat"), (int, float))
+                or not isinstance(zoom, (int, float))
+            ):
+                return Response(
+                    {"error": "cameraHint.center.lng/lat and zoom are required"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            timestamp = request.data.get("timestamp")
+            if not isinstance(timestamp, (int, float)):
+                timestamp = int(time.time() * 1000)
+
+            command_payload = {
+                "id": f"nav-{int(timestamp)}",
+                "placeId": place_id.strip(),
+                "cameraHint": {
+                    "center": {
+                        "lng": float(center["lng"]),
+                        "lat": float(center["lat"]),
+                    },
+                    "zoom": max(10, min(19, int(round(float(zoom))))),
+                },
+                "transition": request.data.get("transition") or {},
+                "sourceId": request.data.get("sourceId"),
+                "timestamp": int(timestamp),
+                "traceId": trace_id,
+            }
+            with transaction.atomic():
+                locked = lock_person_selection_state(state)
+                cleared, selection_changed, _error, _reason = transition_person_selection(
+                    locked,
+                    {"personId": None, "datasetVersion": None},
+                    normalizer=normalize_person_selection,
+                )
+                if selection_changed:
+                    self._schedule_person_selection_broadcast(
+                        table_name,
+                        cleared,
+                        {
+                            "sourceId": command_payload.get("sourceId"),
+                            "timestamp": command_payload.get("timestamp"),
+                            "traceId": trace_id,
+                        },
+                    )
+                state = locked
+                transaction.on_commit(
+                    lambda: self._broadcast_place_navigation_command(
+                        table_name, dict(command_payload)
+                    )
+                )
+            return Response(
+                {
+                    "status": "ok",
+                    "action": action,
+                    "command": command_payload,
+                    "viewport": state.get_viewport_with_defaults(),
+                }
+            )
+
+        # Support base_viewport to prevent snapback during rapid movements
+        base_viewport = request.data.get('base_viewport')
+        if base_viewport:
+            state.viewport = base_viewport
+
+        if action == 'pan':
+            direction = request.data.get('direction', 'north')
+            delta = float(request.data.get('delta', 0.15))
+            state.viewport = state.apply_pan_command(direction, delta)
+            state.save(update_fields=["viewport", "updated_at"])
+            self._emit_trace_event(
+                trace_id,
+                "django.command.saved",
+                table_name=table_name,
+                extra={"action": action},
+            )
+            self._broadcast_state_change(
+                table_name,
+                ['viewport'],
+                {
+                    'sourceId': request.data.get('sourceId'),
+                    'timestamp': request.data.get('timestamp'),
+                    'traceId': trace_id,
+                },
+            )
+
+        elif action == 'zoom':
+            level = int(request.data.get('level', 15))
+            level = max(10, min(19, level))  # Clamp to valid range
+            state.viewport = state.apply_zoom_command(level)
+            state.save(update_fields=["viewport", "updated_at"])
+            self._emit_trace_event(
+                trace_id,
+                "django.command.saved",
+                table_name=table_name,
+                extra={"action": action},
+            )
+            self._broadcast_state_change(
+                table_name,
+                ['viewport'],
+                {
+                    'sourceId': request.data.get('sourceId'),
+                    'timestamp': request.data.get('timestamp'),
+                    'traceId': trace_id,
+                },
+            )
+
+        else:
+            return Response(
+                {
+                    'error': (
+                        f'Unknown action: {action}. '
+                        'Use "pan", "zoom", "set_layer_toggles", '
+                        '"set_layers_enabled", "set_group_enabled", or '
+                        '"navigate_to_place".'
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Return updated state
+        return Response({
+            'status': 'ok',
+            'action': action,
+            'viewport': state.get_viewport_with_defaults(),
+        })
+
+
+
 # Now lets program the views for the API as an interactive platform
 
 from . import globals
-from channels.layers import get_channel_layer
-from asgiref.sync import async_to_sync
 
-def broadcast_presentation_update():
+def broadcast_presentation_update(table_name=None):
     """Broadcast presentation state to all connected WebSocket clients"""
     channel_layer = get_channel_layer()
     if channel_layer:
         try:
-            async_to_sync(channel_layer.group_send)(
-                'presentation_channel',
-                {
-                    'type': 'presentation_update',
-                    'data': {
-                        'is_playing': globals.PRESENTATION_PLAYING,
-                        'sequence': globals.PRESENTATION_SEQUENCE,
-                        'sequence_index': globals.PRESENTATION_SEQUENCE_INDEX,
-                        'duration': globals.PRESENTATION_DURATION,
+            # If table_name is specified, broadcast only that table's state
+            # Otherwise, broadcast all table states
+            if table_name:
+                state = globals.get_presentation_state(table_name)
+                async_to_sync(channel_layer.group_send)(
+                    'presentation_channel',
+                    {
+                        'type': 'presentation_update',
+                        'data': {
+                            'table': table_name,
+                            'is_playing': state["is_playing"],
+                            'sequence': state["sequence"],
+                            'sequence_index': state["sequence_index"],
+                            'duration': state["duration"],
+                        }
                     }
-                }
-            )
+                )
+            else:
+                # Broadcast all table states for backward compatibility and multi-table support
+                all_states = {}
+                for table in globals.PRESENTATION_STATE_BY_TABLE.keys():
+                    all_states[table] = globals.get_presentation_state(table)
+                # Also include default table state for legacy clients
+                default_state = globals.get_presentation_state(globals.DEFAULT_TABLE_NAME)
+                async_to_sync(channel_layer.group_send)(
+                    'presentation_channel',
+                    {
+                        'type': 'presentation_update',
+                        'data': {
+                            'table': globals.DEFAULT_TABLE_NAME,
+                            'is_playing': default_state["is_playing"],
+                            'sequence': default_state["sequence"],
+                            'sequence_index': default_state["sequence_index"],
+                            'duration': default_state["duration"],
+                            'all_tables': all_states,  # Include all table states
+                        }
+                    }
+                )
         except Exception as e:
             print(f"WebSocket broadcast error: {e}")
 
-def broadcast_indicator_update():
-    """Broadcast indicator state to all connected WebSocket clients"""
+def broadcast_indicator_update(table_name=None):
+    """Broadcast indicator state update notification for a specific table
+
+    Note: This sends a lightweight notification. Clients should fetch their
+    table-specific state via get_global_variables endpoint rather than
+    relying on broadcasted values to avoid cross-tab interference.
+    """
     channel_layer = get_channel_layer()
     if channel_layer:
         try:
+            # Send notification with table name so clients can filter
             async_to_sync(channel_layer.group_send)(
                 'presentation_channel',
                 {
                     'type': 'indicator_update',
                     'data': {
-                        'indicator_id': globals.INDICATOR_ID,
-                        'indicator_state': globals.INDICATOR_STATE,
-                        'visualization_mode': globals.VISUALIZATION_MODE,
+                        'table': table_name,
+                        'message': 'Indicator state updated - fetch table-specific state'
                     }
                 }
             )
@@ -236,10 +3220,108 @@ class CustomActionsViewSet(viewsets.ViewSet):
         self._add_no_cache_headers(response)
         return response
 
+    @action(detail=False, methods=["get"])
+    def get_file_hierarchy(self, request):
+        """
+        Get complete table > indicator > state > media hierarchy for file management.
+        Returns a tree structure of all data organized by table.
+        """
+        table_name = request.query_params.get("table")
+
+        tables_query = Table.objects.filter(is_active=True)
+        if table_name:
+            tables_query = tables_query.filter(name=table_name)
+
+        hierarchy = []
+        for table in tables_query.prefetch_related('indicators'):
+            table_data = {
+                'id': table.id,
+                'name': table.name,
+                'display_name': table.display_name,
+                'description': table.description,
+                'indicators': []
+            }
+
+            for indicator in table.indicators.all():
+                indicator_data = {
+                    'id': indicator.id,
+                    'indicator_id': indicator.indicator_id,
+                    'name': indicator.name,
+                    'category': indicator.category,
+                    'description': indicator.description,
+                    'is_user_generated': indicator.is_user_generated,
+                    'has_states': indicator.has_states,
+                    'states': []
+                }
+
+                # Get states through IndicatorData
+                indicator_data_qs = indicator.data.all().select_related('state').prefetch_related('images')
+                seen_states = {}
+
+                for ind_data in indicator_data_qs:
+                    state = ind_data.state
+                    state_id = state.id
+
+                    if state_id not in seen_states:
+                        seen_states[state_id] = {
+                            'id': state_id,
+                            'state_values': state.state_values,
+                            'scenario_type': state.scenario_type,
+                            'scenario_name': state.scenario_name,
+                            'is_user_generated': state.is_user_generated,
+                            'indicator_data_id': ind_data.id,
+                            'media': []
+                        }
+
+                    # Add media for this indicator data
+                    for img in ind_data.images.all():
+                        # Determine media type from extension if not set
+                        media_type = getattr(img, 'media_type', 'image')
+                        image_path = None
+                        if img.image:
+                            image_path = img.image.name
+
+                            # Determine correct URL path based on stored path:
+                            # - indicators/, ugc_indicators/ - use as-is
+                            # - processed/... (legacy system data) - add indicators/ prefix
+                            # - plain filename (no /) - use as-is (stored in media root)
+                            valid_prefixes = ('indicators/', 'ugc_indicators/')
+                            has_valid_prefix = any(image_path.startswith(p) for p in valid_prefixes)
+                            is_plain_filename = '/' not in image_path
+
+                            if not has_valid_prefix and not is_plain_filename:
+                                # Legacy system data with path like processed/... - add indicators/ prefix
+                                image_path = f"indicators/{image_path}"
+
+                            ext = image_path.split('.')[-1].lower() if '.' in image_path else ''
+                            if ext in ['mp4', 'webm', 'ogg', 'avi', 'mov']:
+                                media_type = 'video'
+                            elif ext in ['html', 'htm']:
+                                media_type = 'html_map'
+                            elif ext == 'json':
+                                media_type = 'deckgl_layer'
+
+                        seen_states[state_id]['media'].append({
+                            'id': img.id,
+                            'url': image_path,  # Return path without /media/ prefix
+                            'media_type': media_type,
+                            'uploaded_at': img.uploaded_at.isoformat() if img.uploaded_at else None
+                        })
+
+                indicator_data['states'] = list(seen_states.values())
+                table_data['indicators'].append(indicator_data)
+
+            hierarchy.append(table_data)
+
+        response = JsonResponse(hierarchy, safe=False)
+        self._add_no_cache_headers(response)
+        return response
+
     @action(detail=False, methods=["post"])
     def set_visualization_mode(self, request):
-        """Set the visualization mode (image or map)"""
+        """Set the visualization mode (image or map) for a specific table"""
         mode = request.data.get("mode", "image")
+        table_name = request.data.get("table", globals.DEFAULT_TABLE_NAME)
 
         if mode not in ["image", "map"]:
             return JsonResponse(
@@ -250,91 +3332,259 @@ class CustomActionsViewSet(viewsets.ViewSet):
                 status=400,
             )
 
-        globals.VISUALIZATION_MODE = mode
-        broadcast_indicator_update()
-        print(f"✓ Visualization mode set to: {mode}")
+        indicator_state = globals.get_indicator_state(table_name)
+        indicator_state["visualization_mode"] = mode
 
-        return JsonResponse({"status": "ok", "visualization_mode": mode})
+        # Update legacy global for default table (backward compatibility)
+        if table_name == globals.DEFAULT_TABLE_NAME:
+            globals.VISUALIZATION_MODE = mode
+
+        broadcast_indicator_update(table_name)
+        print(f"✓ Visualization mode set to: {mode} for table '{table_name}'")
+
+        return JsonResponse({"status": "ok", "visualization_mode": mode, "table": table_name})
 
     @action(detail=False, methods=["get"])
     def get_presentation_state(self, request):
-        """Get current presentation state (playing, sequence, index, duration)"""
+        """Get current presentation state (playing, sequence, index, duration) for a specific table"""
+        # Get table name from query params, default to idistrict for backward compatibility
+        table_name = request.query_params.get("table", globals.DEFAULT_TABLE_NAME)
+        state = globals.get_presentation_state(table_name)
+
         response = JsonResponse({
-            "is_playing": globals.PRESENTATION_PLAYING,
-            "sequence": globals.PRESENTATION_SEQUENCE,
-            "sequence_index": globals.PRESENTATION_SEQUENCE_INDEX,
-            "duration": globals.PRESENTATION_DURATION,
+            "table": table_name,
+            "is_playing": state["is_playing"],
+            "sequence": state["sequence"],
+            "sequence_index": state["sequence_index"],
+            "duration": state["duration"],
         })
         self._add_no_cache_headers(response)
         return response
 
     @action(detail=False, methods=["post"])
     def set_presentation_state(self, request):
-        """Set presentation state (play/pause, sequence, index, duration)"""
+        """Set presentation state (play/pause, sequence, index, duration) for a specific table"""
+        index_changed = False
+        sequence_changed = False
+
+        # Get table name from request, default to idistrict for backward compatibility
+        table_name = request.data.get("table", globals.DEFAULT_TABLE_NAME)
+
+        # Get presentation state for this table
+        state = globals.get_presentation_state(table_name)
+
         # Update playing state if provided
         if "is_playing" in request.data:
-            globals.PRESENTATION_PLAYING = bool(request.data.get("is_playing"))
-            print(f"✓ Presentation playing: {globals.PRESENTATION_PLAYING}")
-        
+            was_playing = state["is_playing"]
+            state["is_playing"] = bool(request.data.get("is_playing"))
+            print(f"✓ Presentation playing for table '{table_name}': {state['is_playing']}")
+            # If presentation just started playing, sync indicator from current slide
+            if state["is_playing"] and not was_playing:
+                index_changed = True
+
         # Update sequence if provided
         if "sequence" in request.data:
             sequence = request.data.get("sequence")
             if isinstance(sequence, list):
-                globals.PRESENTATION_SEQUENCE = sequence
-                print(f"✓ Presentation sequence updated: {len(sequence)} slides")
-        
+                state["sequence"] = sequence
+                sequence_changed = True
+                print(f"✓ Presentation sequence updated for table '{table_name}': {len(sequence)} slides")
+
         # Update sequence index if provided
         if "sequence_index" in request.data:
             index = request.data.get("sequence_index")
             if isinstance(index, int):
                 # Clamp index to valid range instead of silently ignoring out-of-bounds values
-                sequence_length = len(globals.PRESENTATION_SEQUENCE)
+                sequence_length = len(state["sequence"])
                 if sequence_length > 0:
                     clamped_index = max(0, min(index, sequence_length - 1))
                     if clamped_index != index:
-                        print(f"⚠️ Presentation index {index} out of bounds, clamped to {clamped_index}")
-                    globals.PRESENTATION_SEQUENCE_INDEX = clamped_index
-                    print(f"✓ Presentation index: {clamped_index}")
+                        print(f"⚠️ Presentation index {index} out of bounds for table '{table_name}', clamped to {clamped_index}")
+                    old_index = state["sequence_index"]
+                    state["sequence_index"] = clamped_index
+                    index_changed = (clamped_index != old_index)
+                    print(f"✓ Presentation index for table '{table_name}': {clamped_index}")
                 else:
-                    globals.PRESENTATION_SEQUENCE_INDEX = 0
-                    print(f"⚠️ Empty sequence, index reset to 0")
-        
+                    state["sequence_index"] = 0
+                    print(f"⚠️ Empty sequence for table '{table_name}', index reset to 0")
+
         # Update duration if provided
         if "duration" in request.data:
             duration = request.data.get("duration")
             if isinstance(duration, (int, float)) and duration >= 1:
-                globals.PRESENTATION_DURATION = int(duration)
-                print(f"✓ Presentation duration: {duration}s")
-        
+                state["duration"] = int(duration)
+                print(f"✓ Presentation duration for table '{table_name}': {duration}s")
+
+        # Update legacy globals for default table (backward compatibility)
+        if table_name == globals.DEFAULT_TABLE_NAME:
+            globals.PRESENTATION_PLAYING = state["is_playing"]
+            globals.PRESENTATION_SEQUENCE = state["sequence"]
+            globals.PRESENTATION_SEQUENCE_INDEX = state["sequence_index"]
+            globals.PRESENTATION_DURATION = state["duration"]
+
+        # If presentation is playing and (index/sequence changed or just started), update indicator/state from current slide
+        if state["is_playing"] and (index_changed or sequence_changed) and state["sequence"]:
+            self._sync_indicator_from_presentation_slide(table_name, state)
+
         # Broadcast to all connected clients via WebSocket
-        broadcast_presentation_update()
-        
+        broadcast_presentation_update(table_name)
+
         return JsonResponse({
             "status": "ok",
-            "is_playing": globals.PRESENTATION_PLAYING,
-            "sequence": globals.PRESENTATION_SEQUENCE,
-            "sequence_index": globals.PRESENTATION_SEQUENCE_INDEX,
-            "duration": globals.PRESENTATION_DURATION,
+            "table": table_name,
+            "is_playing": state["is_playing"],
+            "sequence": state["sequence"],
+            "sequence_index": state["sequence_index"],
+            "duration": state["duration"],
         })
+
+    def _sync_indicator_from_presentation_slide(self, table_name=None, presentation_state=None):
+        """Update global indicator and state from current presentation slide for a specific table"""
+        try:
+            if presentation_state is None:
+                if table_name is None:
+                    table_name = globals.DEFAULT_TABLE_NAME
+                presentation_state = globals.get_presentation_state(table_name)
+
+            if not presentation_state["sequence"] or len(presentation_state["sequence"]) == 0:
+                return
+
+            current_index = max(
+                0, min(presentation_state["sequence_index"], len(presentation_state["sequence"]) - 1)
+            )
+            current_slide = presentation_state["sequence"][current_index]
+
+            if not current_slide or not current_slide.get("indicator"):
+                return
+
+            indicator_name = current_slide.get("indicator")
+            state_name = current_slide.get("state")
+            slide_type = current_slide.get("type")
+
+            # Map indicator name to ID
+            indicator_mapping = {"mobility": 1, "climate": 2, "land_use": 3}
+            indicator_id = indicator_mapping.get(indicator_name)
+
+            if not indicator_id:
+                print(f"⚠️ Invalid indicator in presentation slide: {indicator_name}")
+                return
+
+            # Get table-specific indicator state
+            indicator_state = globals.get_indicator_state(table_name)
+
+            # Update table-specific indicator ID
+            indicator_state["indicator_id"] = indicator_id
+            print(f"🎬 Synced indicator from presentation (table: {table_name}): {indicator_name} (ID: {indicator_id})")
+
+            # Update table-specific state based on indicator type
+            if indicator_name == "climate" and state_name and slide_type:
+                # For climate, map display name to scenario key
+                from backend.climate_scenarios import CLIMATE_SCENARIO_MAPPING
+                scenario_key = None
+                for key, config in CLIMATE_SCENARIO_MAPPING.items():
+                    if config["display_name"] == state_name:
+                        scenario_key = key
+                        break
+
+                if scenario_key:
+                    # Find the state object to get full state values
+                    state_obj = State.objects.filter(
+                        scenario_name=scenario_key, scenario_type=slide_type
+                    ).first()
+                    if state_obj:
+                        indicator_state["indicator_state"] = state_obj.state_values.copy()
+                        print(f"✓ Synced climate state: {scenario_key} ({slide_type})")
+                    else:
+                        # Fallback: create minimal state
+                        indicator_state["indicator_state"] = {
+                            "scenario": scenario_key,
+                            "type": slide_type,
+                            "label": state_name
+                        }
+                else:
+                    # Fallback: use state name as scenario
+                    indicator_state["indicator_state"] = {
+                        "scenario": state_name.lower().replace(" ", "_"),
+                        "type": slide_type or "utci",
+                        "label": state_name
+                    }
+            else:
+                # For mobility and other indicators, find state by scenario name
+                if state_name:
+                    scenario_key = state_name.lower()
+                    states = State.objects.filter(scenario_type="general")
+                    state_obj = None
+                    for s in states:
+                        if s.state_values.get("scenario") == scenario_key:
+                            state_obj = s
+                            break
+
+                    if state_obj:
+                        indicator_state["indicator_state"] = state_obj.state_values.copy()
+                        print(f"✓ Synced {indicator_name} state: {scenario_key}")
+                    else:
+                        # Fallback: create minimal state
+                        indicator_state["indicator_state"] = {
+                            "scenario": scenario_key,
+                            "label": state_name
+                        }
+
+            # Update legacy global for default table (backward compatibility)
+            if table_name == globals.DEFAULT_TABLE_NAME:
+                globals.INDICATOR_ID = indicator_state["indicator_id"]
+                globals.INDICATOR_STATE = indicator_state["indicator_state"]
+
+            # Broadcast indicator update for this table only
+            broadcast_indicator_update(table_name)
+            print(f"✓ Broadcasted indicator update for presentation slide (table: {table_name})")
+
+        except Exception as e:
+            print(f"❌ Error syncing indicator from presentation slide: {e}")
 
     @action(detail=False, methods=["post"])
     def set_current_indicator(self, request):
         indicator_id = request.data.get("indicator_id", "")
-        if self._set_current_indicator(indicator_id):
+        table_name = request.data.get("table")
+
+        if not table_name:
+            return JsonResponse(
+                {"status": "error", "message": "Table parameter is required"},
+                status=400
+            )
+
+        if self._set_current_indicator(indicator_id, table_name):
             return JsonResponse({"status": "ok", "indicator_id": indicator_id})
         else:
             return JsonResponse(
-                {"status": "error", "message": "Failed to set current indicator"}
+                {"status": "error", "message": "Failed to set current indicator"},
+                status=404
             )
 
-    def _set_current_indicator(self, indicator_id):
+    def _set_current_indicator(self, indicator_id, table_name):
         try:
+            # Pause presentation for this table when dashboard is actively using it
+            presentation_state = globals.get_presentation_state(table_name)
+            if presentation_state["is_playing"]:
+                presentation_state["is_playing"] = False
+                print(f"⏸️ Paused presentation for table '{table_name}' (dashboard is using it)")
+                # Broadcast the pause
+                broadcast_presentation_update(table_name)
+
+            table = Table.objects.filter(name=table_name).first()
+            if not table:
+                print(f"❌ Table '{table_name}' not found")
+                return False
+
+            indicator = Indicator.objects.filter(table=table, indicator_id=indicator_id).first()
+            if not indicator:
+                print(f"❌ Indicator with ID {indicator_id} not found in table '{table_name}'")
+                return False
+
             globals.INDICATOR_ID = indicator_id
-            print(f"✓ Indicator set to ID: {indicator_id}")
-            
+            print(f"✓ Indicator set to ID: {indicator_id} (table: {table_name})")
+
             # Update INDICATOR_STATE to match the new indicator's default state
-            indicator = Indicator.objects.filter(indicator_id=indicator_id).first()
-            if indicator and indicator.category == "climate":
+            if indicator.category == "climate":
                 # Set default climate state
                 globals.INDICATOR_STATE = globals.DEFAULT_CLIMATE_STATE.copy()
                 print(f"✓ Set default climate state: {globals.INDICATOR_STATE}")
@@ -342,7 +3592,7 @@ class CustomActionsViewSet(viewsets.ViewSet):
                 # Set default mobility/other state
                 globals.INDICATOR_STATE = globals.DEFAULT_STATES.copy()
                 print(f"✓ Set default mobility state: {globals.INDICATOR_STATE}")
-            
+
             broadcast_indicator_update()
             return True
         except Exception as e:
@@ -352,10 +3602,11 @@ class CustomActionsViewSet(viewsets.ViewSet):
     @action(detail=False, methods=["post"])
     def set_current_state(self, request):
         state_id = request.data.get("state_id")
+        table_name = request.data.get("table", globals.DEFAULT_TABLE_NAME)
         try:
             state = State.objects.get(id=state_id)
-            if self._set_current_state(state.state_values):
-                return JsonResponse({"status": "ok", "state": state.state_values})
+            if self._set_current_state(state.state_values, table_name):
+                return JsonResponse({"status": "ok", "state": state.state_values, "table": table_name})
             else:
                 return JsonResponse(
                     {"status": "error", "message": "Failed to set current state"}
@@ -409,17 +3660,20 @@ class CustomActionsViewSet(viewsets.ViewSet):
                 ),
             }
 
-            if self._set_current_state(new_state):
+            table_name = request.data.get("table", globals.DEFAULT_TABLE_NAME)
+            if self._set_current_state(new_state, table_name):
+                indicator_state = globals.get_indicator_state(table_name)
                 print(
-                    f"✓ Climate scenario set successfully: {scenario_name} ({scenario_type})"
+                    f"✓ Climate scenario set successfully: {scenario_name} ({scenario_type}) for table '{table_name}'"
                 )
-                print(f"✓ globals.INDICATOR_STATE is now: {globals.INDICATOR_STATE}")
+                print(f"✓ Indicator state is now: {indicator_state['indicator_state']}")
                 return JsonResponse(
                     {
                         "status": "ok",
                         "scenario": scenario_name,
                         "type": scenario_type,
                         "state": new_state,
+                        "table": table_name,
                     }
                 )
             else:
@@ -430,12 +3684,21 @@ class CustomActionsViewSet(viewsets.ViewSet):
             print(f"Error setting climate scenario: {e}")
             return JsonResponse({"status": "error", "message": str(e)}, status=500)
 
-    def _set_current_state(self, state):
-        """Set the current indicator state globally"""
+    def _set_current_state(self, state, table_name=None):
+        """Set the current indicator state for a specific table"""
         try:
-            globals.INDICATOR_STATE = state
-            print(f"✓ State updated to: {state}")
-            broadcast_indicator_update()
+            if table_name is None:
+                table_name = globals.DEFAULT_TABLE_NAME
+
+            indicator_state = globals.get_indicator_state(table_name)
+            indicator_state["indicator_state"] = state
+            print(f"✓ State updated to: {state} (table: {table_name})")
+
+            # Update legacy global for default table (backward compatibility)
+            if table_name == globals.DEFAULT_TABLE_NAME:
+                globals.INDICATOR_STATE = state
+
+            broadcast_indicator_update(table_name)
             return True
         except Exception as e:
             print(f"❌ Error setting state: {e}")
@@ -448,32 +3711,48 @@ class CustomActionsViewSet(viewsets.ViewSet):
 
         # Check if query parameters were provided for PREFETCH mode
         # This allows fetching specific images without modifying globals
-        indicator_param = request.query_params.get("indicator")
+        indicator_param = request.query_params.get("indicator")  # Indicator name from request
         scenario_param = request.query_params.get("scenario")  # For prefetching specific states
         type_param = request.query_params.get("type")  # For climate type (utci/plan)
         prefetch_mode = scenario_param is not None  # If scenario is specified, don't use globals
 
+        # Get table name (required parameter)
+        table_name = request.query_params.get("table")
+        if not table_name:
+            response = JsonResponse(
+                {"error": "Table parameter is required"},
+                status=400
+            )
+            self._add_no_cache_headers(response)
+            return response
+
+        # Get presentation state for this table
+        presentation_state = globals.get_presentation_state(table_name)
+
         # Indicator name to ID mapping
         indicator_mapping = {"mobility": 1, "climate": 2, "land_use": 3}
-        
+
         # Initialize effective_indicator_id (will be set based on mode)
         effective_indicator_id = None
+        is_ugc = False
+        indicator_db_id = None
+        slide_state_id = None
 
         # Check if presentation mode is active and should override normal behavior
         # Only use presentation mode if NOT in prefetch mode (prefetch has explicit params)
         use_presentation_mode = (
             not prefetch_mode
-            and globals.PRESENTATION_PLAYING
-            and globals.PRESENTATION_SEQUENCE
-            and len(globals.PRESENTATION_SEQUENCE) > 0
+            and presentation_state["is_playing"]
+            and presentation_state["sequence"]
+            and len(presentation_state["sequence"]) > 0
         )
 
         if use_presentation_mode:
-            # Get current slide from presentation sequence
+            # Get current slide from presentation sequence for this table
             current_index = max(
-                0, min(globals.PRESENTATION_SEQUENCE_INDEX, len(globals.PRESENTATION_SEQUENCE) - 1)
+                0, min(presentation_state["sequence_index"], len(presentation_state["sequence"]) - 1)
             )
-            current_slide = globals.PRESENTATION_SEQUENCE[current_index]
+            current_slide = presentation_state["sequence"][current_index]
 
             if current_slide and current_slide.get("indicator") and current_slide.get("state"):
                 # Extract indicator and state from current slide
@@ -481,96 +3760,168 @@ class CustomActionsViewSet(viewsets.ViewSet):
                 slide_state = current_slide.get("state")
                 slide_type = current_slide.get("type")  # For climate slides
 
-                # Map indicator name to ID
-                effective_indicator_id = indicator_mapping.get(slide_indicator)
-                
-                if effective_indicator_id:
-                    print(f"🎬 Presentation mode active - using slide {current_index + 1}/{len(globals.PRESENTATION_SEQUENCE)}")
-                    print(f"   Indicator: {slide_indicator}, State: {slide_state}" + (f", Type: {slide_type}" if slide_type else ""))
-                    
-                    # Override indicator_param and scenario_param to use presentation slide data
-                    # This ensures the rest of the function uses the presentation slide values
-                    indicator_param = slide_indicator
-                    if slide_indicator == "climate" and slide_type:
-                        # For climate, we need to map state name to scenario key
-                        # The state name in the slide is the display name (e.g., "Existing")
-                        # We need to find the corresponding scenario key (e.g., "existing")
-                        from backend.climate_scenarios import CLIMATE_SCENARIO_MAPPING
-                        scenario_key = None
-                        for key, config in CLIMATE_SCENARIO_MAPPING.items():
-                            if config["display_name"] == slide_state:
-                                scenario_key = key
-                                break
-                        
-                        if scenario_key:
-                            scenario_param = scenario_key
-                            type_param = slide_type or "utci"
-                        else:
-                            # Fallback: try lowercase state name
-                            scenario_param = slide_state.lower().replace(" ", "_")
-                            type_param = slide_type or "utci"
-                    else:
-                        # For mobility and other indicators, use state name as scenario
-                        scenario_param = slide_state.lower()
-                    
-                    # Set prefetch_mode to True so we use the params instead of globals
-                    prefetch_mode = True
+                # Check if this is a UGC indicator
+                is_ugc = slide_indicator.startswith('ugc_')
+                if is_ugc:
+                    # Extract database ID from "ugc_123" format
+                    try:
+                        indicator_db_id = int(slide_indicator.replace('ugc_', ''))
+                        slide_state_id = current_slide.get('stateId')
+                        print(f"🎬 Presentation mode active (UGC) - using slide {current_index + 1}/{len(presentation_state['sequence'])} for table '{table_name}'")
+                        print(f"   UGC Indicator ID: {indicator_db_id}, State ID: {slide_state_id}, State: {slide_state}")
+                        # Set prefetch_mode to True so we use the params instead of globals
+                        prefetch_mode = True
+                        indicator_param = slide_indicator
+                    except (ValueError, AttributeError) as e:
+                        print(f"⚠️ Error parsing UGC indicator ID from '{slide_indicator}': {e}")
+                        use_presentation_mode = False
+                        is_ugc = False
                 else:
-                    print(f"⚠️ Invalid indicator in presentation slide: {slide_indicator}")
-                    use_presentation_mode = False
-                    effective_indicator_id = None  # Reset since presentation mode failed
+                    # Map indicator name to ID for standard indicators
+                    effective_indicator_id = indicator_mapping.get(slide_indicator)
+
+                    if effective_indicator_id:
+                        print(f"🎬 Presentation mode active - using slide {current_index + 1}/{len(presentation_state['sequence'])} for table '{table_name}'")
+                        print(f"   Indicator: {slide_indicator}, State: {slide_state}" + (f", Type: {slide_type}" if slide_type else ""))
+
+                        # Override indicator_param and scenario_param to use presentation slide data
+                        # This ensures the rest of the function uses the presentation slide values
+                        indicator_param = slide_indicator
+                        if slide_indicator == "climate" and slide_type:
+                            # For climate, we need to map state name to scenario key
+                            # The state name in the slide is the display name (e.g., "Existing")
+                            # We need to find the corresponding scenario key (e.g., "existing")
+                            from backend.climate_scenarios import CLIMATE_SCENARIO_MAPPING
+                            scenario_key = None
+                            for key, config in CLIMATE_SCENARIO_MAPPING.items():
+                                if config["display_name"] == slide_state:
+                                    scenario_key = key
+                                    break
+
+                            if scenario_key:
+                                scenario_param = scenario_key
+                                type_param = slide_type or "utci"
+                            else:
+                                # Fallback: try lowercase state name
+                                scenario_param = slide_state.lower().replace(" ", "_")
+                                type_param = slide_type or "utci"
+                        else:
+                            # For mobility and other indicators, use state name as scenario
+                            scenario_param = slide_state.lower()
+
+                        # Set prefetch_mode to True so we use the params instead of globals
+                        prefetch_mode = True
+                    else:
+                        print(f"⚠️ Invalid indicator in presentation slide: {slide_indicator}")
+                        use_presentation_mode = False
+                        effective_indicator_id = None  # Reset since presentation mode failed
             else:
                 print(f"⚠️ Invalid presentation slide at index {current_index}")
                 use_presentation_mode = False
                 effective_indicator_id = None  # Reset since presentation mode failed
+
+        # Get table-specific indicator state
+        indicator_state = globals.get_indicator_state(table_name)
 
         # Determine which indicator to use (if not already set by presentation mode)
         if not use_presentation_mode or effective_indicator_id is None:
             if indicator_param:
                 indicator_id = indicator_mapping.get(indicator_param)
                 if indicator_id and not prefetch_mode:
-                    # Only modify globals if NOT in prefetch mode
-                    globals.INDICATOR_ID = indicator_id
+                    # Only modify table-specific state if NOT in prefetch mode
+                    indicator_state["indicator_id"] = indicator_id
+                    # Update legacy global for default table (backward compatibility)
+                    if table_name == globals.DEFAULT_TABLE_NAME:
+                        globals.INDICATOR_ID = indicator_id
             else:
-                indicator_id = globals.INDICATOR_ID
+                indicator_id = indicator_state["indicator_id"]
 
-            # Use the indicator_id we determined (either from param or globals)
-            effective_indicator_id = indicator_mapping.get(indicator_param) if indicator_param else globals.INDICATOR_ID
+            # Use the indicator_id we determined (either from param or table-specific state)
+            effective_indicator_id = indicator_mapping.get(indicator_param) if indicator_param else indicator_state["indicator_id"]
         # else: effective_indicator_id was already set above from presentation slide
 
         # Debug (reduced logging in prefetch mode, but show presentation mode info)
         if not prefetch_mode or use_presentation_mode:
             if use_presentation_mode:
-                print(f"Current indicator_id (from presentation): {effective_indicator_id}")
+                print(f"Current indicator_id (from presentation): {effective_indicator_id} (table: {table_name})")
             else:
-                print(f"Current indicator_id: {globals.INDICATOR_ID}")
-                print(f"Current state: {globals.INDICATOR_STATE}")
-                print(f"Visualization mode: {globals.VISUALIZATION_MODE}")
+                print(f"Current indicator_id: {indicator_state['indicator_id']} (table: {table_name})")
+                print(f"Current state: {indicator_state['indicator_state']}")
+                print(f"Visualization mode: {indicator_state['visualization_mode']}")
 
-        indicator = Indicator.objects.filter(indicator_id=effective_indicator_id)
-        if not indicator.exists() or not indicator.first():
-            indicator = Indicator.objects.first()
-            if indicator:
-                if not prefetch_mode:
-                    globals.INDICATOR_ID = indicator.indicator_id
-            else:
-                response = JsonResponse({"error": "No indicators found"}, status=404)
+        # Table name already retrieved above for presentation mode check
+        exclude_ugc = request.query_params.get("exclude_ugc", "false").lower() == "true"
+
+        table = Table.objects.filter(name=table_name).first()
+        if not table:
+            response = JsonResponse(
+                {"error": f"Table '{table_name}' not found", "code": "table_not_found"},
+                status=404
+            )
+            self._add_no_cache_headers(response)
+            return response
+
+        # Handle UGC indicators differently - look up by database ID instead of indicator_id
+        if is_ugc and indicator_db_id:
+            indicator = Indicator.objects.filter(id=indicator_db_id, table=table).first()
+            if not indicator:
+                response = JsonResponse(
+                    {"error": f"UGC Indicator with database ID {indicator_db_id} not found in table '{table_name}'"},
+                    status=404
+                )
+                self._add_no_cache_headers(response)
+                return response
+            indicator_obj = indicator
+        else:
+            # Standard indicator lookup by indicator_id
+            indicator = Indicator.objects.filter(table=table, indicator_id=effective_indicator_id)
+
+            if not indicator.exists() or not indicator.first():
+                response = JsonResponse(
+                    {
+                        "error": f"Indicator with ID {effective_indicator_id} not found in table '{table_name}'",
+                        "code": "indicator_not_found",
+                        "indicator_id": effective_indicator_id,
+                    },
+                    status=404,
+                )
                 self._add_no_cache_headers(response)
                 return response
 
-        indicator_obj = indicator.first()
+            indicator_obj = indicator.first()
 
+        # Check if UGC should be excluded (for dashboard use)
+        if exclude_ugc and indicator_obj.is_user_generated:
+            response = JsonResponse(
+                {"error": "UGC indicators not available on dashboard", "code": "ugc_excluded", "is_ugc": True},
+                status=404
+            )
+            self._add_no_cache_headers(response)
+            return response
+
+        # Handle UGC indicators - use stateId directly from presentation slide
+        if is_ugc and slide_state_id:
+            state = State.objects.filter(id=slide_state_id).first()
+            if not state:
+                print(f"⚠️ UGC state with ID {slide_state_id} not found")
+                response = JsonResponse(
+                    {"error": f"State with ID {slide_state_id} not found"},
+                    status=404
+                )
+                self._add_no_cache_headers(response)
+                return response
+            print(f"✓ Found UGC state by ID: {slide_state_id}")
         # Special handling for climate scenarios
-        if indicator_obj.category == "climate":
-            # Use query params if in prefetch mode, otherwise use globals
+        elif indicator_obj.category == "climate":
+            # Use query params if in prefetch mode, otherwise use table-specific state
             if prefetch_mode and scenario_param:
                 scenario_name = scenario_param
                 scenario_type = type_param or "utci"
-                print(f"🌡️ PREFETCH mode - climate scenario: {scenario_name}, type: {scenario_type}")
+                print(f"🌡️ PREFETCH mode - climate scenario: {scenario_name}, type: {scenario_type} (table: {table_name})")
             else:
-                scenario_name = globals.INDICATOR_STATE.get("scenario")
-                scenario_type = globals.INDICATOR_STATE.get("type", "utci")
-                print(f"🌡️ get_image_data for climate - scenario: {scenario_name}, type: {scenario_type}")
+                scenario_name = indicator_state["indicator_state"].get("scenario")
+                scenario_type = indicator_state["indicator_state"].get("type", "utci")
+                print(f"🌡️ get_image_data for climate - scenario: {scenario_name}, type: {scenario_type} (table: {table_name})")
 
             if scenario_name:
                 state = State.objects.filter(
@@ -615,41 +3966,40 @@ class CustomActionsViewSet(viewsets.ViewSet):
                     # Fallback to first state
                     state = State.objects.first()
             elif indicator_obj.has_states == False:
-                state = State.objects.filter(state_values={})
+                state = State.objects.filter(state_values={}).first()
             else:
-                state = State.objects.filter(state_values=globals.INDICATOR_STATE)
-                if not state.exists():
+                state = State.objects.filter(state_values=globals.INDICATOR_STATE).first()
+                if not state:
                     print(f"No exact state match for {globals.INDICATOR_STATE}, trying year match...")
                     year = globals.INDICATOR_STATE.get("year")
                     if year:
                         states = State.objects.all()
                         for s in states:
                             if s.state_values.get("year") == year:
-                                state = State.objects.filter(id=s.id)
+                                state = s
                                 print(f"Found state with matching year: {s.state_values}")
                                 break
 
-        if not state or (hasattr(state, "exists") and not state.exists()) or not state:
+        if not state:
             # Default to the first available state
-            # WARNING: Do NOT modify globals.INDICATOR_STATE here - GET endpoints should not have side effects
+            # WARNING: Do NOT modify indicator_state here - GET endpoints should not have side effects
             state = State.objects.first()
             if state:
-                print(f"⚠️ No matching state found for {globals.INDICATOR_STATE}")
+                print(f"⚠️ No matching state found for {indicator_state['indicator_state']} (table: {table_name})")
                 print(
                     f"   Using first available state for image lookup: {state.state_values}"
                 )
             else:
-                response = JsonResponse({"error": "No states found"}, status=404)
+                response = JsonResponse({"error": "No states found", "code": "no_states"}, status=404)
                 self._add_no_cache_headers(response)
                 return response
 
-        state_obj = state if not hasattr(state, "first") else state.first()
+        state_obj = state
         indicator_data = IndicatorData.objects.filter(
             indicator=indicator_obj, state=state_obj
         )
 
         if not indicator_data.exists() or not indicator_data.first():
-            # Try to find any indicator data for this indicator
             indicator_data = IndicatorData.objects.filter(indicator=indicator_obj)
             if indicator_data.exists():
                 print(
@@ -658,7 +4008,7 @@ class CustomActionsViewSet(viewsets.ViewSet):
             else:
                 print(f"No indicator data found for {indicator_obj.name}")
                 response = JsonResponse(
-                    {"error": "No indicator data found"}, status=404
+                    {"error": "No indicator data found", "code": "no_indicator_data"}, status=404
                 )
                 self._add_no_cache_headers(response)
                 return response
@@ -671,9 +4021,19 @@ class CustomActionsViewSet(viewsets.ViewSet):
         if image_data.exists() and image_data.first():
             try:
                 image_path = image_data.first().image.name
-                # Ensure the path has the indicators/ prefix if not already present
-                if not image_path.startswith("indicators/"):
-                    image_path = f"indicators/{image_path}"
+                # UGC indicators already have ugc_indicators/ prefix from upload_to function
+                # Standard indicators may need indicators/ prefix added
+                # Don't modify paths that already have a valid prefix
+                valid_prefixes = ('indicators/', 'ugc_indicators/')
+                has_valid_prefix = any(image_path.startswith(p) for p in valid_prefixes)
+
+                if not has_valid_prefix:
+                    # Only add indicators/ prefix for non-UGC indicators
+                    if is_ugc:
+                        # UGC indicators should already have ugc_indicators/ prefix, but handle edge case
+                        image_path = f"ugc_indicators/{image_path}"
+                    else:
+                        image_path = f"indicators/{image_path}"
 
                 # Determine if this is a video file
                 file_extension = os.path.splitext(image_path)[1].lower()
@@ -687,10 +4047,10 @@ class CustomActionsViewSet(viewsets.ViewSet):
             except (AttributeError, ValueError) as e:
                 print(f"Error with image data: {e}")
 
-        # If no static image is found, return an error
         response = JsonResponse(
             {
                 "error": "No static image found for this indicator and state",
+                "code": "no_image",
                 "indicator": indicator_obj.name,
                 "state": (
                     state_obj.state_values
@@ -719,6 +4079,26 @@ class CustomActionsViewSet(viewsets.ViewSet):
         # Ensure we have a default state and initialize variables
         self._initialize_default_state()
 
+        # Get the indicator and state - table parameter is required
+        table_name = request.query_params.get("table")
+        if not table_name:
+            response = JsonResponse(
+                {"error": "Table parameter is required"},
+                status=400,
+            )
+            return response
+
+        table = Table.objects.filter(name=table_name).first()
+        if not table:
+            response = JsonResponse(
+                {"error": f"Table '{table_name}' not found"},
+                status=404,
+            )
+            return response
+
+        # Get table-specific indicator state
+        indicator_state = globals.get_indicator_state(table_name)
+
         # Check if an indicator parameter was provided
         indicator_param = request.query_params.get("indicator")
         if indicator_param:
@@ -726,22 +4106,24 @@ class CustomActionsViewSet(viewsets.ViewSet):
             indicator_mapping = {"mobility": 1, "climate": 2, "land_use": 3}
             indicator_id = indicator_mapping.get(indicator_param)
             if indicator_id:
-                globals.INDICATOR_ID = indicator_id
+                indicator_state["indicator_id"] = indicator_id
+                # Update legacy global for default table (backward compatibility)
+                if table_name == globals.DEFAULT_TABLE_NAME:
+                    globals.INDICATOR_ID = indicator_id
                 print(
-                    f"Using indicator from query parameter: {indicator_param} (ID: {indicator_id})"
+                    f"Using indicator from query parameter: {indicator_param} (ID: {indicator_id}) (table: {table_name})"
                 )
 
-        # Get year from state or query param
-        year = globals.INDICATOR_STATE.get("year", 2023)
+        # Get year from table-specific state or query param
+        year = indicator_state["indicator_state"].get("year", 2023)
         year_param = request.query_params.get("year")
         if year_param and year_param.isdigit():
             year = int(year_param)
 
-        # Get the indicator and state
-        indicator = Indicator.objects.filter(indicator_id=globals.INDICATOR_ID).first()
+        indicator = Indicator.objects.filter(table=table, indicator_id=indicator_state["indicator_id"]).first()
         if not indicator:
             response = JsonResponse(
-                {"error": "Indicator not found", "indicator_id": globals.INDICATOR_ID},
+                {"error": f"Indicator with ID {indicator_state['indicator_id']} not found in table '{table_name}'"},
                 status=404,
             )
             return response
@@ -750,17 +4132,17 @@ class CustomActionsViewSet(viewsets.ViewSet):
         if indicator.has_states == False:
             state = State.objects.filter(state_values={}).first()
         else:
-            # Try to find a state that matches the current indicator state (year + scenario)
+            # Try to find a state that matches the current table-specific indicator state (year + scenario)
             state = State.objects.filter(
-                state_values=globals.INDICATOR_STATE
+                state_values=indicator_state["indicator_state"]
             ).first()
-            
+
             # If no exact match found, try to find a state with the specified year and scenario
             if not state:
-                current_scenario = globals.INDICATOR_STATE.get("scenario")
+                current_scenario = indicator_state["indicator_state"].get("scenario")
                 states = State.objects.all()
                 for s in states:
-                    if (s.state_values.get("year") == year and 
+                    if (s.state_values.get("year") == year and
                         s.state_values.get("scenario") == current_scenario):
                         state = s
                         break
@@ -919,15 +4301,100 @@ class CustomActionsViewSet(viewsets.ViewSet):
             self._add_no_cache_headers(response)
             return response
 
+    @action(detail=False, methods=['get'])
+    def get_otef_layers(self, request):
+        """Get all active GIS layers for a table"""
+        table_name = request.query_params.get('table', 'otef')
+        table = Table.objects.filter(name=table_name).first()
+        if not table:
+            return Response({'error': 'Table not found'}, status=404)
 
-# Custom view to serve map files directly
-from django.http import FileResponse, HttpResponse
+        layers = GISLayer.objects.filter(table=table, is_active=True).order_by('order')
+        data = []
+        for layer in layers:
+            layer_data = {
+                'id': layer.id,
+                'name': layer.name,
+                'display_name': layer.display_name,
+                'project_name': getattr(layer, "project_name", "") or "",
+                'layer_type': layer.layer_type,
+                'style_config': layer.style_config,
+            }
+
+            if layer.layer_type == 'geojson':
+                if layer.data:
+                    layer_data['geojson'] = layer.data
+                elif layer.file_path:
+                    layer_data['url'] = f'/api/gis_layers/{layer.id}/get_layer_geojson/'
+
+            data.append(layer_data)
+
+        response = JsonResponse(data, safe=False)
+        response["Cache-Control"] = "no-cache, no-store, must-revalidate, max-age=0"
+        return response
+
+
+from django.http import FileResponse, HttpResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.http import require_GET
+import json
 import os
 from django.conf import settings
-from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.views import APIView
 from pathlib import Path
+
+from backend.calibration_io import normalize_calibration_payload, write_model_bounds_to_storage
+
+
+def _slugify_project(name):
+    """
+    Slugify a human project name for curated group IDs.
+
+    - Lowercase, trim
+    - Replace whitespace with underscore
+    - Strip non [a-z0-9_]
+    - Fallback to 'default' when empty
+    """
+    if not isinstance(name, str):
+        return "default"
+    slug = str(name).strip().lower()
+    slug = re.sub(r"\s+", "_", slug)
+    slug = re.sub(r"[^a-z0-9_]", "", slug)
+    return slug or "default"
+
+
+_PINK_LINE_PACK_CANDIDATES = [
+    # OTEF processed layer pack (Docker: ./otef-interactive/public -> /app/public)
+    Path(
+        "/app/public/processed/layers/future_development/"
+        "הציר_הורוד_חדש.geojson",
+    ),
+    Path(
+        "/app/public/processed/layers/future_development/"
+        "הקו_הורוד.geojson",
+    ),
+]
+
+
+@require_GET
+def pink_line_geojson(request):
+    """Serve pink-line GeoJSON (WGS84) from the OTEF processed layer pack only.
+
+    Same files as nginx under ``/otef-interactive/public/processed/layers/``.
+    Returns 404 if neither pack asset exists on disk.
+    """
+    path = next((p for p in _PINK_LINE_PACK_CANDIDATES if p.exists()), None)
+    if not path:
+        return HttpResponse("Pink line data not found", status=404)
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        response = JsonResponse(data, safe=False)
+        response["Content-Type"] = "application/geo+json"
+        response["Cache-Control"] = "public, max-age=86400"
+        return response
+    except (json.JSONDecodeError, OSError):
+        return HttpResponse("Error reading pink line data", status=500)
 
 
 @csrf_exempt
@@ -957,9 +4424,23 @@ class ImageUploadView(APIView):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-            # Find or create the indicator data entry
+            # Find or create the indicator data entry - table parameter is required
+            table_name = request.data.get("table")
+            if not table_name:
+                return Response(
+                    {"error": "Table parameter is required"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
             try:
-                indicator = Indicator.objects.get(indicator_id=indicator_id)
+                table = Table.objects.filter(name=table_name).first()
+                if not table:
+                    return Response(
+                        {"error": f"Table '{table_name}' not found"},
+                        status=status.HTTP_404_NOT_FOUND,
+                    )
+
+                indicator = Indicator.objects.get(table=table, indicator_id=indicator_id)
                 state = State.objects.get(id=state_id)
 
                 indicator_data, created = IndicatorData.objects.get_or_create(
@@ -1033,3 +4514,116 @@ class ImageUploadView(APIView):
                 {"error": f"Failed to upload image: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
+
+
+class OTEFBoundsApplyView(APIView):
+    """
+    Apply bounds polygon for a given OTEF table and persist it to:
+    - OTEFViewportState.bounds_polygon in the database
+    - ot ef-interactive/frontend/data/model-bounds.json on disk
+    """
+
+    def post(self, request, *args, **kwargs):
+        table_name = request.data.get("table", "otef")
+        polygon = request.data.get("polygon")
+        raw_angle = request.data.get("viewer_angle_deg", None)
+
+        if not isinstance(polygon, list) or len(polygon) < 3:
+            return Response(
+                {
+                    "error": "Invalid polygon. Must be a list of at least 3 vertices.",
+                    "expected_format": [{"x": 0, "y": 0}],
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Basic vertex shape validation
+        cleaned_vertices = []
+        for vertex in polygon:
+            if not isinstance(vertex, dict):
+                return Response(
+                    {"error": "Each vertex must be an object with x and y properties."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            try:
+                x = float(vertex.get("x"))
+                y = float(vertex.get("y"))
+            except (TypeError, ValueError):
+                return Response(
+                    {"error": "Vertex x and y must be numeric."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            cleaned_vertices.append({"x": x, "y": y})
+
+        # Optional orientation validation
+        angle = None
+        if "viewer_angle_deg" in request.data:
+            try:
+                angle = float(raw_angle)
+            except (TypeError, ValueError):
+                return Response(
+                    {"error": "viewer_angle_deg must be a valid number"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        # Persist to DB
+        table = Table.objects.filter(name=table_name).first()
+        if not table:
+            return Response(
+                {"error": f"Table '{table_name}' not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        state, _ = OTEFViewportState.objects.get_or_create(
+            table=table,
+            defaults={
+                "viewport": OTEFViewportState.DEFAULT_VIEWPORT.copy(),
+                "layers": OTEFViewportState.DEFAULT_LAYERS.copy(),
+                "animations": {},
+            },
+        )
+        raw_payload = {
+            "bounds_polygon": cleaned_vertices,
+            "viewer_angle_deg": angle if angle is not None else getattr(state, "viewer_angle_deg", 0.0),
+        }
+        normalized = normalize_calibration_payload(raw_payload)
+        state.bounds_polygon = normalized["bounds_polygon"]
+        state.viewer_angle_deg = normalized["viewer_angle_deg"]
+        state.save()
+
+        # Resolve model-bounds.json path using candidate paths that work in
+        # both Docker and local dev (same pattern as import_otef_data.py).
+        base = Path(settings.BASE_DIR)
+        bounds_candidates = [
+            Path("/app/otef-interactive/frontend/data/model-bounds.json"),       # Docker mount
+            base.resolve().parent.parent / "otef-interactive" / "frontend" / "data" / "model-bounds.json",  # Local dev
+        ]
+        bounds_path = str(next((p for p in bounds_candidates if p.parent.exists()), bounds_candidates[-1]))
+        config = OTEFModelConfig.objects.filter(table=table).first()
+        write_model_bounds_to_storage(normalized, config, bounds_path)
+
+        # Broadcast bounds change over WebSocket (optional, lightweight notification)
+        try:
+            channel_layer = get_channel_layer()
+            if channel_layer:
+                async_to_sync(channel_layer.group_send)(
+                    "otef_channel",
+                    {
+                        "type": "broadcast_message",
+                        "message": {
+                            "type": "otef_bounds_changed",
+                            "table": table_name,
+                        },
+                    },
+                )
+        except Exception as e:
+            print(f"Warning: failed to broadcast bounds change: {e}")
+
+        return Response(
+            {
+                "status": "ok",
+                "table": table_name,
+                "bounds_polygon": cleaned_vertices,
+                "viewer_angle_deg": angle if angle is not None else state.viewer_angle_deg,
+            }
+        )

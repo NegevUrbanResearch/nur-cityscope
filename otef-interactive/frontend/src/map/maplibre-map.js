@@ -1,0 +1,161 @@
+import { isGisBasemapId, normalizeGisBasemap } from "../shared/gis-basemap.js";
+import { applyDarkBasemapLabelPolicy, raiseDarkBasemapPlaceLabels } from "./dark-basemap-labels.js";
+import { transitionGisBasemap } from "./gis-basemap-transition.js";
+import { installMapLibreRasterAbortFix } from "./maplibre-raster-abort-fix.js";
+import openFreeMapDarkStyle from "./basemaps/openfreemap-dark.js";
+
+const maplibregl =
+  (typeof globalThis !== "undefined" && globalThis.maplibregl) ||
+  (typeof window !== "undefined" && window.maplibregl);
+const Protocol =
+  (typeof globalThis !== "undefined" &&
+    globalThis.pmtiles &&
+    globalThis.pmtiles.Protocol) ||
+  (typeof window !== "undefined" &&
+    window.pmtiles &&
+    window.pmtiles.Protocol);
+
+if (!maplibregl || !Protocol) {
+  throw new Error(
+    "[maplibre-map] Missing maplibregl/pmtiles globals. Ensure CDN scripts are loaded before map-main.js.",
+  );
+}
+
+installMapLibreRasterAbortFix(maplibregl);
+
+const MAPLIBRE_RTL_TEXT_PLUGIN_URL =
+  "https://unpkg.com/@mapbox/mapbox-gl-rtl-text@0.2.3/mapbox-gl-rtl-text.js";
+const ESRI_WORLD_IMAGERY_TILES = Object.freeze([
+  "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+]);
+
+const DARK_BASEMAP_SPRITE = openFreeMapDarkStyle.sprite;
+
+function createEsriRasterStyle(paint) {
+  return {
+    version: 8,
+    sprite: DARK_BASEMAP_SPRITE,
+    sources: {
+      esri: {
+        type: "raster",
+        tiles: ESRI_WORLD_IMAGERY_TILES,
+        tileSize: 256,
+        attribution: "Esri, Maxar, Earthstar Geographics",
+      },
+    },
+    layers: [
+      {
+        id: "esri-tiles",
+        type: "raster",
+        source: "esri",
+        paint: { "raster-fade-duration": 500, ...paint },
+      },
+    ],
+  };
+}
+
+function ensureMapLibreRTLTextPlugin() {
+  if (!maplibregl || typeof maplibregl.setRTLTextPlugin !== "function") {
+    return;
+  }
+  if (typeof maplibregl.getRTLTextPluginStatus === "function") {
+    const status = maplibregl.getRTLTextPluginStatus();
+    if (status === "loaded" || status === "loading") {
+      return;
+    }
+  }
+  try {
+    // The third argument defers loading until MapLibre first needs RTL shaping.
+    maplibregl.setRTLTextPlugin(MAPLIBRE_RTL_TEXT_PLUGIN_URL, null, true);
+  } catch (err) {
+    console.warn(
+      "[maplibre-map] setRTLTextPlugin failed; Hebrew labels may render incorrectly",
+      err,
+    );
+  }
+}
+
+ensureMapLibreRTLTextPlugin();
+
+const pmtilesProtocol = new Protocol();
+maplibregl.addProtocol("pmtiles", pmtilesProtocol.tile);
+
+const BASEMAP_STYLES = {
+  osm: {
+    version: 8,
+    sprite: DARK_BASEMAP_SPRITE,
+    sources: {
+      osm: {
+        type: "raster",
+        tiles: [
+          "https://a.tile.openstreetmap.org/{z}/{x}/{y}.png",
+          "https://b.tile.openstreetmap.org/{z}/{x}/{y}.png",
+          "https://c.tile.openstreetmap.org/{z}/{x}/{y}.png",
+        ],
+        tileSize: 256,
+        attribution: "&copy; OpenStreetMap contributors",
+      },
+    },
+    layers: [{ id: "osm-tiles", type: "raster", source: "osm", paint: { "raster-fade-duration": 500 } }],
+  },
+  satellite: createEsriRasterStyle(),
+  satellite_bw: createEsriRasterStyle({ "raster-saturation": -1 }),
+  dark: applyDarkBasemapLabelPolicy(openFreeMapDarkStyle),
+};
+
+function ensureBasemapSprite(map) {
+  if (!DARK_BASEMAP_SPRITE || typeof map?.getStyle !== "function" || typeof map.setSprite !== "function") {
+    return;
+  }
+  let sprite;
+  try {
+    sprite = map.getStyle()?.sprite;
+  } catch {
+    return;
+  }
+  if (sprite) return;
+  map.setSprite(DARK_BASEMAP_SPRITE);
+}
+
+export function setGISBasemap(map, basemapId, { onSettled } = {}) {
+  if (!isGisBasemapId(basemapId)) return false;
+  ensureBasemapSprite(map);
+  return transitionGisBasemap(map, basemapId, {
+    styles: BASEMAP_STYLES,
+    onSettled(result) {
+      raiseDarkBasemapPlaceLabels(map);
+      onSettled?.(result);
+    },
+  });
+}
+
+export function createGISMap(containerId, options = {}) {
+  const {
+    center = [34.5, 31.4],
+    zoom = 11,
+    minZoom = 10,
+    maxZoom = 19,
+    basemap = "osm",
+    pixelRatio,
+  } = options;
+
+  const map = new maplibregl.Map({
+    container: containerId,
+    style: BASEMAP_STYLES[normalizeGisBasemap(basemap)],
+    center,
+    zoom,
+    minZoom,
+    maxZoom,
+    ...(Number.isFinite(pixelRatio) && pixelRatio > 0 ? { pixelRatio } : {}),
+    // Integer-step zoom: align with remote/OTEF (zoomSnap:1; Map ctor has no roundZoom—see style “roundZoom” on sources).
+    zoomSnap: 1,
+    attributionControl: false,
+    dragRotate: false,
+  });
+
+  map.touchZoomRotate.disableRotation();
+
+  return map;
+}
+
+export { maplibregl, pmtilesProtocol, BASEMAP_STYLES };

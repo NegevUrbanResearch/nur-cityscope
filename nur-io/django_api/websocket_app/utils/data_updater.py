@@ -9,8 +9,16 @@ class DataUpdater:
 
     # Método para realizar la consulta sincrónica de manera asíncrona
     @sync_to_async
-    def get_indicator(self, indicator_id):
-        return list(models.Indicator.objects.filter(indicator_id=indicator_id))
+    def get_indicator(self, indicator_id, table_name):
+        # Table parameter is required
+        if not table_name:
+            raise ValueError("Table parameter is required")
+        
+        table = models.Table.objects.filter(name=table_name).first()
+        if not table:
+            raise ValueError(f"Table '{table_name}' not found")
+        
+        return list(models.Indicator.objects.filter(table=table, indicator_id=indicator_id))
 
     # Método para realizar la consulta de los datos del indicador
     @sync_to_async

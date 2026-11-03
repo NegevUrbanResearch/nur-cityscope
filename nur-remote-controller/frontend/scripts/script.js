@@ -28,6 +28,11 @@ class PresentationRemote {
         this.slides = [];
         this.connected = false;
         this.thumbnailUrl = null;
+        this.currentTable = 'idistrict';
+        this.availableTables = [];
+        this.tableIndicators = [];
+        this.tableStates = [];
+        this.tableHierarchy = [];
 
         // WebSocket
         this.ws = null;
@@ -81,8 +86,22 @@ class PresentationRemote {
             stateName: document.querySelector('.state-name'),
             previewContainer: document.getElementById('previewContainer'),
             dropdownMenu: document.getElementById('dropdownMenu'),
-            dropdownContent: document.getElementById('dropdownContent')
+            dropdownContent: document.getElementById('dropdownContent'),
+            tableSelector: document.getElementById('tableSelector'),
+            backToDashboardBtn: document.getElementById('backToDashboardBtn')
         };
+
+        // Detect if desktop (screen width >= 1024px)
+        this.isDesktop = window.innerWidth >= 1024;
+        
+        // Update desktop detection on resize
+        window.addEventListener('resize', () => {
+            const wasDesktop = this.isDesktop;
+            this.isDesktop = window.innerWidth >= 1024;
+            if (wasDesktop !== this.isDesktop) {
+                this.updateDesktopLayout();
+            }
+        });
 
         this.init();
     }
@@ -90,9 +109,40 @@ class PresentationRemote {
     async init() {
         this.showLoading();
         this.bindEvents();
+        await this.fetchTables();
         await this.fetchInitialState();
         this.connectWebSocket();
         this.startPolling(); // Fallback polling at reduced frequency
+    }
+    
+    async fetchTables() {
+        try {
+            const response = await this.apiGet('/api/tables/?is_active=true');
+            if (response && Array.isArray(response)) {
+                this.availableTables = response;
+                // Get table from URL or default to idistrict
+                const urlParams = new URLSearchParams(window.location.search);
+                const urlTable = urlParams.get('table');
+                if (urlTable && response.find(t => t.name === urlTable)) {
+                    this.currentTable = urlTable;
+                } else {
+                    // Set current table to idistrict if available, otherwise first table
+                    const idistrictTable = response.find(t => t.name === 'idistrict');
+                    this.currentTable = idistrictTable ? 'idistrict' : (response[0]?.name || 'idistrict');
+                }
+                // If table is OTEF, redirect to OTEF remote-controller
+                if (this.currentTable === 'otef') {
+                    window.location.href = `/otef-interactive/remote-controller.html?table=otef`;
+                    return;
+                }
+                this.updateTableSelector();
+                // Fetch indicators and states for initial table
+                await this.fetchTableData();
+            }
+        } catch (error) {
+            console.error('Error fetching tables:', error);
+            this.currentTable = 'idistrict'; // Fallback
+        }
     }
     
     connectWebSocket() {
@@ -206,12 +256,129 @@ class PresentationRemote {
         this.elements.durationMinus.addEventListener('click', () => this.adjustDuration(-1));
         this.elements.durationPlus.addEventListener('click', () => this.adjustDuration(1));
         this.elements.addSlideBtn.addEventListener('click', () => this.addSlide());
+        this.elements.tableSelector.addEventListener('change', (e) => this.changeTable(e.target.value));
+        
+        // Back to dashboard button (desktop only)
+        if (this.elements.backToDashboardBtn) {
+            this.elements.backToDashboardBtn.addEventListener('click', () => {
+                window.location.href = '/dashboard/mobility';
+            });
+        }
         
         // Close dropdown when clicking backdrop
         this.elements.dropdownMenu.addEventListener('click', (e) => {
             if (e.target === this.elements.dropdownMenu) {
                 this.closeDropdown();
             }
+        });
+        
+        // Update desktop layout on init
+        this.updateDesktopLayout();
+    }
+    
+    updateDesktopLayout() {
+        // Show/hide back button based on device
+        if (this.elements.backToDashboardBtn) {
+            this.elements.backToDashboardBtn.style.display = this.isDesktop ? 'flex' : 'none';
+        }
+    }
+    
+    async changeTable(tableName) {
+        if (tableName !== this.currentTable) {
+            // If switching to OTEF, redirect to OTEF remote-controller
+            if (tableName === 'otef') {
+                window.location.href = `/otef-interactive/remote-controller.html?table=otef`;
+                return;
+            }
+            // If switching from OTEF to another table, stay on this page
+            this.currentTable = tableName;
+            // Update URL
+            const url = new URL(window.location.href);
+            url.searchParams.set('table', tableName);
+            window.history.replaceState({}, '', url);
+            // Clear cache to force refresh with new table
+            this.imageCache.clear();
+            // Clear slides when table changes
+            this.slides = [];
+            this.currentIndex = 0;
+            // Fetch indicators and states for new table
+            await this.fetchTableData();
+            // Sync empty sequence to backend
+            try {
+                await this.apiPost('/api/actions/set_presentation_state/', {
+                    table: tableName,
+                    sequence: [],
+                    sequence_index: 0
+                });
+            } catch (error) {
+                console.error('Error syncing empty sequence:', error);
+            }
+            // Update UI
+            this.updateUI();
+            // Refresh thumbnail
+            await this.fetchThumbnail();
+        }
+    }
+    
+    async fetchTableData() {
+        try {
+            // Fetch indicators for current table (include UGC indicators)
+            const indicatorsResponse = await this.apiGet(`/api/indicators/?table=${this.currentTable}&include_ugc=true`);
+            this.tableIndicators = indicatorsResponse || [];
+            
+            // Fetch file hierarchy for current table to get states
+            const hierarchyResponse = await this.apiGet(`/api/actions/get_file_hierarchy/?table=${this.currentTable}`);
+            const hierarchy = Array.isArray(hierarchyResponse) ? hierarchyResponse : [];
+            
+            // Store hierarchy for state lookup
+            this.tableHierarchy = hierarchy;
+            
+            // Extract states from hierarchy
+            const states = new Set();
+            hierarchy.forEach(table => {
+                if (table.indicators) {
+                    table.indicators.forEach(indicator => {
+                        if (indicator.states) {
+                            indicator.states.forEach(state => {
+                                if (indicator.category === 'climate') {
+                                    if (state.scenario_name) {
+                                        states.add(JSON.stringify({
+                                            scenario_name: state.scenario_name,
+                                            scenario_type: state.scenario_type || 'utci'
+                                        }));
+                                    }
+                                } else {
+                                    if (state.state_values?.scenario) {
+                                        states.add(state.state_values.scenario);
+                                    }
+                                }
+                            });
+                        }
+                    });
+                }
+            });
+            this.tableStates = Array.from(states);
+        } catch (err) {
+            console.error('Error fetching table data:', err);
+            this.tableIndicators = [];
+            this.tableStates = [];
+            this.tableHierarchy = [];
+        }
+    }
+    
+    updateTableSelector() {
+        if (!this.elements.tableSelector) return;
+        
+        // Clear existing options
+        this.elements.tableSelector.innerHTML = '';
+        
+        // Add options from available tables
+        this.availableTables.forEach(table => {
+            const option = document.createElement('option');
+            option.value = table.name;
+            option.textContent = table.display_name || table.name;
+            option.selected = table.name === this.currentTable;
+            this.elements.tableSelector.appendChild(option);
         });
     }
     
@@ -226,13 +393,13 @@ class PresentationRemote {
     
     async fetchInitialState() {
         try {
-            const response = await this.apiGet('/api/actions/get_global_variables/');
+            const response = await this.apiGet(`/api/actions/get_global_variables/?table=${this.currentTable}`);
             
             if (response) {
                 this.connected = true;
                 this.updateConnectionStatus(true);
                 
-                const presState = await this.apiGet('/api/actions/get_presentation_state/');
+                const presState = await this.apiGet(`/api/actions/get_presentation_state/?table=${this.currentTable}`);
                 if (presState) {
                     // If backend is actively playing, sync with it
                     // Otherwise, default to paused to avoid interfering with dashboard users
@@ -247,7 +414,7 @@ class PresentationRemote {
                     
                     this.currentIndex = presState.sequence_index || 0;
                     this.duration = presState.duration || 10;
-                    this.slides = presState.sequence || this.getDefaultSlides();
+                    this.slides = presState.sequence || [];
                 }
                 
                 this.updateUI();
@@ -260,11 +427,6 @@ class PresentationRemote {
         }
     }
     
-    getDefaultSlides() {
-        return [
-            { indicator: 'mobility', state: 'Present' }
-        ];
-    }
     
     startPolling() {
         // Emergency fallback only - WebSocket handles real-time updates
@@ -279,7 +441,7 @@ class PresentationRemote {
         }
 
         try {
-            const presState = await this.apiGet('/api/actions/get_presentation_state/');
+            const presState = await this.apiGet(`/api/actions/get_presentation_state/?table=${this.currentTable}`);
             
             if (presState) {
                 this.connected = true;
@@ -323,7 +485,7 @@ class PresentationRemote {
             }
             
             // Always update the current display info for visibility
-            const globalState = await this.apiGet('/api/actions/get_global_variables/');
+            const globalState = await this.apiGet(`/api/actions/get_global_variables/?table=${this.currentTable}`);
             if (globalState) {
                 this.updateCurrentDisplay(globalState);
             }
@@ -353,8 +515,13 @@ class PresentationRemote {
         this.fetchThumbnail();
     }
 
-    // Generate cache key for a slide
-    getCacheKey(indicator, state, type) {
+    // Generate cache key for a slide (include type for climate, stateId for UGC)
+    getCacheKey(indicator, state, type, uploadId, stateId) {
+        // User-generated indicators (UGC)
+        if (indicator.startsWith('ugc_') && stateId) {
+            return `ugc:${stateId}`;
+        }
+        // Regular indicators
         if (indicator === 'climate' && type) {
             return `${indicator}:${state}:${type}`;
         }
@@ -362,12 +529,53 @@ class PresentationRemote {
     }
 
     // Fetch and cache a specific slide's image using PREFETCH API
-    async fetchSlideImage(indicator, state, type = null, priority = 'normal') {
-        const cacheKey = this.getCacheKey(indicator, state, type);
+    async fetchSlideImage(indicator, state, type = null, priority = 'normal', uploadId = null, imageUrl = null, stateId = null) {
+        const cacheKey = this.getCacheKey(indicator, state, type, uploadId, stateId);
 
         // Return cached URL immediately if available
         if (this.imageCache.has(cacheKey)) {
             return this.imageCache.get(cacheKey);
+        }
+
+        // For UGC indicators, get media from file hierarchy
+        if (indicator.startsWith('ugc_') && stateId) {
+            // Find the media from file hierarchy
+            const indicatorId = parseInt(indicator.replace('ugc_', ''));
+            const tableData = this.tableHierarchy.find(t => t.name === this.currentTable);
+            const tableIndicator = tableData?.indicators?.find(ind => ind.id === indicatorId && ind.is_user_generated);
+            
+            if (tableIndicator && tableIndicator.states) {
+                const matchingState = tableIndicator.states.find(s => s.id === stateId);
+                if (matchingState && matchingState.media && matchingState.media.length > 0) {
+                    // Get first image/video media
+                    const mediaItem = matchingState.media.find(m => m.media_type === 'image' || m.media_type === 'video');
+                    if (mediaItem) {
+                        const mediaUrl = mediaItem.url;
+                        const fullUrl = mediaUrl.startsWith("http") 
+                            ? mediaUrl 
+                            : mediaUrl.startsWith("/")
+                                ? `${API_BASE}${mediaUrl}`
+                                : `${API_BASE}/media/${mediaUrl}`;
+                        
+                        // Preload the image in browser cache
+                        const img = new Image();
+                        img.src = fullUrl;
+                        if (priority === 'high') {
+                            await new Promise((resolve) => {
+                                img.onload = resolve;
+                                img.onerror = resolve;
+                                setTimeout(resolve, 1500); // 1.5s timeout
+                            });
+                        }
+
+                        this.imageCache.set(cacheKey, fullUrl);
+                        return fullUrl;
+                    }
+                }
+            }
+            
+            console.error(`❌ No media found for UGC indicator ${indicator}, stateId ${stateId}`);
+            return null;
         }
 
         // Prevent duplicate requests
@@ -380,8 +588,13 @@ class PresentationRemote {
         try {
             const timestamp = Date.now();
 
-            // Build URL with PREFETCH mode params
-            let url = `/api/actions/get_image_data/?_=${timestamp}&indicator=${indicator}`;
+            // Build URL with PREFETCH mode params - only for standard indicators
+            if (indicator !== 'mobility' && indicator !== 'climate') {
+                console.error(`❌ Attempted to fetch non-standard indicator via API: ${indicator}`);
+                return null;
+            }
+
+            let url = `/api/actions/get_image_data/?_=${timestamp}&indicator=${indicator}&table=${this.currentTable}`;
 
             if (indicator === 'climate') {
                 const scenarioKey = this.CLIMATE_SCENARIO_KEYS[state] || state.toLowerCase().replace(/ /g, '_');
@@ -418,7 +631,7 @@ class PresentationRemote {
                 return imageUrl;
             }
         } catch (error) {
-            console.error(`❌ Prefetch error ${indicator}:${state}`);
+            console.error(`❌ Prefetch error ${indicator}:${state}`, error);
             return null;
         } finally {
             this.inFlightRequests.delete(cacheKey);
@@ -435,7 +648,15 @@ class PresentationRemote {
             const idx = (this.currentIndex + i) % this.slides.length;
             const slide = this.slides[idx];
             if (slide) {
-                await this.fetchSlideImage(slide.indicator, slide.state, slide.type, 'high');
+                await this.fetchSlideImage(
+                    slide.indicator, 
+                    slide.state, 
+                    slide.type, 
+                    'high',
+                    slide.uploadId || null,
+                    slide.imageUrl || null,
+                    slide.stateId || null
+                );
             }
         }
 
@@ -444,7 +665,15 @@ class PresentationRemote {
             if (i < priorityCount) continue;
             const slide = this.slides[i];
             if (slide) {
-                this.fetchSlideImage(slide.indicator, slide.state, slide.type, 'normal');
+                this.fetchSlideImage(
+                    slide.indicator, 
+                    slide.state, 
+                    slide.type, 
+                    'normal',
+                    slide.uploadId || null,
+                    slide.imageUrl || null,
+                    slide.stateId || null
+                );
             }
         }
     }
@@ -455,7 +684,13 @@ class PresentationRemote {
             if (!currentSlide) return;
 
             // Try cache first for instant display
-            const cacheKey = this.getCacheKey(currentSlide.indicator, currentSlide.state, currentSlide.type);
+            const cacheKey = this.getCacheKey(
+                currentSlide.indicator, 
+                currentSlide.state, 
+                currentSlide.type,
+                currentSlide.uploadId || null,
+                currentSlide.stateId || null
+            );
             if (this.imageCache.has(cacheKey)) {
                 this.thumbnailUrl = this.imageCache.get(cacheKey);
                 this.renderPreview();
@@ -464,7 +699,15 @@ class PresentationRemote {
                 const nextIdx = (this.currentIndex + 1) % this.slides.length;
                 const nextSlide = this.slides[nextIdx];
                 if (nextSlide) {
-                    this.fetchSlideImage(nextSlide.indicator, nextSlide.state, nextSlide.type, 'high');
+                    this.fetchSlideImage(
+                        nextSlide.indicator, 
+                        nextSlide.state, 
+                        nextSlide.type, 
+                        'high',
+                        nextSlide.uploadId || null,
+                        nextSlide.imageUrl || null,
+                        nextSlide.stateId || null
+                    );
                 }
                 return;
             }
@@ -474,7 +717,10 @@ class PresentationRemote {
                 currentSlide.indicator,
                 currentSlide.state,
                 currentSlide.type,
-                'high'
+                'high',
+                currentSlide.uploadId || null,
+                currentSlide.imageUrl || null,
+                currentSlide.stateId || null
             );
 
             if (url) {
@@ -528,12 +774,12 @@ class PresentationRemote {
         if (!stateName) return;
 
         // Invalidate cache for this state (image may have changed)
-        const cacheKey = this.getCacheKey(indicator, stateName, type);
+        const cacheKey = this.getCacheKey(indicator, stateName, type, null, null);
         this.imageCache.delete(cacheKey);
 
         // Fetch the new image with high priority
         console.log(`📡 Fetching updated image for ${indicator}:${stateName}${type ? ':' + type : ''}`);
-        const url = await this.fetchSlideImage(indicator, stateName, type, 'high');
+        const url = await this.fetchSlideImage(indicator, stateName, type, 'high', null, null, null);
 
         // When PAUSED: always show the live dashboard state in preview
         // When PLAYING: only update if it matches the current slide in sequence
@@ -677,7 +923,13 @@ class PresentationRemote {
 
         const html = this.slides.map((slide, index) => {
             const isActive = index === this.currentIndex;
-            const indicatorName = INDICATOR_CONFIG[slide.indicator]?.name || slide.indicator;
+            // Handle UGC indicators - use indicatorName if available, otherwise fall back to config or indicator key
+            let indicatorName;
+            if (slide.indicator.startsWith('ugc_')) {
+                indicatorName = slide.indicatorName || slide.indicator;
+            } else {
+                indicatorName = INDICATOR_CONFIG[slide.indicator]?.name || slide.indicator;
+            }
             const canDelete = this.slides.length > 1;
 
             // For climate, show state + type; for others, just state
@@ -738,8 +990,8 @@ class PresentationRemote {
         return validStates.includes(state);
     }
     
-    // Check if a slide combo is already in use (includes type for climate)
-    isSlideUsed(indicator, state, type = null, excludeIndex = -1) {
+    // Check if a slide combo is already in use (includes type for climate, stateId for UGC)
+    isSlideUsed(indicator, state, type = null, excludeIndex = -1, uploadId = null, stateId = null) {
         return this.slides.some((slide, idx) => {
             if (idx === excludeIndex) return false;
             if (slide.indicator !== indicator || slide.state !== state) return false;
@@ -747,35 +999,90 @@ class PresentationRemote {
             if (indicator === 'climate') {
                 return slide.type === type;
             }
+            // For UGC indicators, check stateId
+            if (indicator.startsWith('ugc_')) {
+                return slide.stateId === stateId;
+            }
             return true;
         });
     }
     
-    // Get all valid slides (includes type variants for climate)
+    // Get all valid slides filtered by current table
     getAllValidSlides() {
         const slides = [];
-        Object.keys(INDICATOR_CONFIG).forEach(indicator => {
-            const states = STATE_CONFIG[indicator] || [];
+        
+        // Only include indicators that exist in the current table
+        const availableIndicatorNames = new Set(this.tableIndicators.map(ind => {
+            if (ind.indicator_id === 1) return 'mobility';
+            if (ind.indicator_id === 2) return 'climate';
+            return null;
+        }).filter(Boolean));
+        
+        // Build slides from available indicators in current table
+        availableIndicatorNames.forEach(indicatorName => {
+            if (!INDICATOR_CONFIG[indicatorName]) return;
+            
+            // Get states for this indicator from table data
+            // We need to fetch from hierarchy or use a simpler approach
+            // For now, use the tableStates we extracted
+            const indicator = this.tableIndicators.find(ind => {
+                if (indicatorName === 'mobility') return ind.indicator_id === 1;
+                if (indicatorName === 'climate') return ind.indicator_id === 2;
+                return false;
+            });
+            
+            if (!indicator) return;
+            
+            // For now, use STATE_CONFIG but filter by what exists in table
+            // This is a simplified approach - ideally we'd use the hierarchy
+            const states = STATE_CONFIG[indicatorName] || [];
             states.forEach(state => {
-                if (this.isValidSlide(indicator, state)) {
-                    if (indicator === 'climate') {
+                if (this.isValidSlide(indicatorName, state)) {
+                    if (indicatorName === 'climate') {
                         // Climate has two types: utci and plan
                         CLIMATE_TYPES.forEach(type => {
-                            slides.push({ indicator, state, type });
+                            slides.push({ indicator: indicatorName, state, type });
                         });
                     } else {
-                        slides.push({ indicator, state });
+                        slides.push({ indicator: indicatorName, state });
                     }
                 }
             });
         });
+        
+        // Add UGC indicators from file hierarchy (filtered by current table)
+        if (this.tableHierarchy && Array.isArray(this.tableHierarchy)) {
+            const currentTableData = this.tableHierarchy.find(t => t.name === this.currentTable);
+            if (currentTableData && currentTableData.indicators) {
+                currentTableData.indicators
+                    .filter(ind => ind.is_user_generated)
+                    .forEach(indicator => {
+                        if (indicator.states) {
+                            indicator.states.forEach(state => {
+                                slides.push({
+                                    indicator: `ugc_${indicator.id}`,
+                                    state: state.scenario_name || JSON.stringify(state.state_values),
+                                    indicatorId: indicator.id,
+                                    stateId: state.id,
+                                    indicatorDataId: state.indicator_data_id,
+                                    indicatorName: indicator.name,
+                                    tableName: currentTableData.display_name || currentTableData.name,
+                                    isUGC: true,
+                                    media: state.media || []
+                                });
+                            });
+                        }
+                    });
+            }
+        }
+        
         return slides;
     }
     
     // Check if all slides are used
     allSlidesUsed() {
         return this.getAllValidSlides().every(slide =>
-            this.isSlideUsed(slide.indicator, slide.state, slide.type)
+            this.isSlideUsed(slide.indicator, slide.state, slide.type, -1, slide.uploadId || null, slide.stateId || null)
         );
     }
     
@@ -786,50 +1093,194 @@ class PresentationRemote {
         let options = '';
 
         if (dropdownType === 'indicator') {
-            Object.entries(INDICATOR_CONFIG).forEach(([key, config]) => {
-                const hasValidStates = (STATE_CONFIG[key] || []).some(s => this.isValidSlide(key, s));
-                if (!hasValidStates) return;
-
-                const isSelected = currentSlide.indicator === key;
+            if (this.tableIndicators.length === 0 && (!this.tableHierarchy || this.tableHierarchy.length === 0)) {
                 options += `
-                    <div class="dropdown-option ${isSelected ? 'selected' : ''}" data-value="${key}">
-                        ${config.name}
+                    <div class="dropdown-option disabled">
+                        No indicators available for this table
                     </div>
                 `;
-            });
+            } else {
+                // Add standard indicators (mobility, climate)
+                this.tableIndicators
+                    .map(ind => {
+                        if (ind.indicator_id === 1) return { key: 'mobility', indicator: ind };
+                        if (ind.indicator_id === 2) return { key: 'climate', indicator: ind };
+                        return null;
+                    })
+                    .filter(Boolean)
+                    .forEach(({ key, indicator }) => {
+                        const config = INDICATOR_CONFIG[key];
+                        if (!config) return;
+                        
+                        // Check if this indicator has states in the current table
+                        const hasStates = this.tableHierarchy
+                            .filter(table => table.name === this.currentTable)
+                            .some(table => 
+                                table.indicators?.some(ind => 
+                                    ind.indicator_id === indicator.indicator_id && 
+                                    ind.states && 
+                                    ind.states.length > 0
+                                )
+                            );
+                        
+                        if (!hasStates) return;
+                        
+                        const isSelected = currentSlide.indicator === key;
+                        options += `
+                            <div class="dropdown-option ${isSelected ? 'selected' : ''}" data-value="${key}">
+                                ${config.name}
+                            </div>
+                        `;
+                    });
+                
+                // Add UGC indicators from file hierarchy
+                const currentTableData = this.tableHierarchy.find(table => table.name === this.currentTable);
+                if (currentTableData && currentTableData.indicators) {
+                    currentTableData.indicators
+                        .filter(ind => ind.is_user_generated)
+                        .forEach(indicator => {
+                            const hasStates = indicator.states && indicator.states.length > 0;
+                            if (!hasStates) return;
+                            
+                            const key = `ugc_${indicator.id}`;
+                            const isSelected = currentSlide.indicator === key;
+                            options += `
+                                <div class="dropdown-option ${isSelected ? 'selected' : ''}" data-value="${key}">
+                                    ${indicator.name}
+                                </div>
+                            `;
+                        });
+                }
+            }
         } else {
-            const states = STATE_CONFIG[currentSlide.indicator] || [];
+            // Get states from table hierarchy
+            const getTableStates = () => {
+                const states = [];
+                
+                // If no table indicators, return empty
+                if (this.tableIndicators.length === 0 || !this.tableHierarchy || this.tableHierarchy.length === 0) {
+                    return [];
+                }
+                
+                // Find the current table in hierarchy
+                const currentTableData = this.tableHierarchy.find(table => table.name === this.currentTable);
+                if (!currentTableData || !currentTableData.indicators) {
+                    return [];
+                }
+                
+                // Find the indicator in the table
+                const tableIndicator = currentTableData.indicators.find(ind => {
+                    if (currentSlide.indicator === 'mobility') return ind.indicator_id === 1;
+                    if (currentSlide.indicator === 'climate') return ind.indicator_id === 2;
+                    return false;
+                });
+                
+                if (!tableIndicator || !tableIndicator.states) {
+                    return [];
+                }
+                
+                // Extract states from table indicator
+                tableIndicator.states.forEach(state => {
+                    if (currentSlide.indicator === 'climate') {
+                        if (state.scenario_name) {
+                            const scenarioDisplayNames = {
+                                'dense_highrise': 'Dense Highrise',
+                                'existing': 'Existing',
+                                'high_rises': 'High Rises',
+                                'lowrise': 'Low Rise Dense',
+                                'mass_tree_planting': 'Mass Tree Planting',
+                                'open_public_space': 'Open Public Space',
+                                'placemaking': 'Placemaking'
+                            };
+                            const displayName = scenarioDisplayNames[state.scenario_name] || state.scenario_name;
+                            states.push({ 
+                                name: displayName, 
+                                type: state.scenario_type || 'utci',
+                                scenario_name: state.scenario_name
+                            });
+                        }
+                    } else {
+                        if (state.state_values?.scenario) {
+                            const scenario = state.state_values.scenario;
+                            const displayName = scenario.charAt(0).toUpperCase() + scenario.slice(1);
+                            states.push({ name: displayName, scenario });
+                        }
+                    }
+                });
+                
+                return states;
+            };
+            
+            const tableStates = getTableStates();
 
-            if (currentSlide.indicator === 'climate') {
-                // For climate, show state + type combinations
-                states.forEach(state => {
-                    if (!this.isValidSlide(currentSlide.indicator, state)) return;
-
-                    CLIMATE_TYPES.forEach(type => {
-                        const isSelected = currentSlide.state === state && currentSlide.type === type;
-                        const isUsed = this.isSlideUsed('climate', state, type, slideIndex);
-                        const typeLabel = type.toUpperCase();
-
+            // Handle UGC indicators
+            if (currentSlide.indicator.startsWith('ugc_')) {
+                const indicatorId = parseInt(currentSlide.indicator.replace('ugc_', ''));
+                const currentTableData = this.tableHierarchy.find(table => table.name === this.currentTable);
+                const tableIndicator = currentTableData?.indicators?.find(ind => ind.id === indicatorId && ind.is_user_generated);
+                
+                if (!tableIndicator || !tableIndicator.states || tableIndicator.states.length === 0) {
+                    options += `
+                        <div class="dropdown-option disabled">
+                            No states available for this indicator
+                        </div>
+                    `;
+                } else {
+                    tableIndicator.states.forEach(state => {
+                        const stateName = state.scenario_name || JSON.stringify(state.state_values);
+                        const isSelected = currentSlide.stateId === state.id;
+                        const isUsed = this.isSlideUsed(currentSlide.indicator, stateName, null, slideIndex, null, state.id);
+                        
                         options += `
                             <div class="dropdown-option ${isSelected ? 'selected' : ''} ${isUsed && !isSelected ? 'disabled' : ''}"
-                                 data-value="${state}" data-type="${type}">
-                                ${state} (${typeLabel})
+                                 data-value="${stateName}" data-state-id="${state.id}" data-indicator-name="${tableIndicator.name}" data-table-name="${currentTableData?.display_name || currentTableData?.name}">
+                                ${stateName}
                                 ${isUsed && !isSelected ? '<span class="dropdown-option-note">(in use)</span>' : ''}
                             </div>
                         `;
                     });
+                }
+            } else if (tableStates.length === 0) {
+                options += `
+                    <div class="dropdown-option disabled">
+                        No states available for this indicator
+                    </div>
+                `;
+            } else if (currentSlide.indicator === 'climate') {
+                // For climate, show state + type combinations from table
+                const uniqueStates = new Map();
+                tableStates.forEach(state => {
+                    const key = `${state.name}-${state.type}`;
+                    if (!uniqueStates.has(key)) {
+                        uniqueStates.set(key, state);
+                    }
                 });
-            } else {
-                // For mobility, show just states
-                states.forEach(state => {
-                    if (!this.isValidSlide(currentSlide.indicator, state)) return;
-
-                    const isSelected = currentSlide.state === state;
-                    const isUsed = this.isSlideUsed(currentSlide.indicator, state, null, slideIndex);
+                
+                Array.from(uniqueStates.values()).forEach(state => {
+                    if (!this.isValidSlide(currentSlide.indicator, state.name)) return;
+                    const isSelected = currentSlide.state === state.name && currentSlide.type === state.type;
+                    const isUsed = this.isSlideUsed('climate', state.name, state.type, slideIndex, null, null);
+                    const typeLabel = state.type.toUpperCase();
 
                     options += `
-                        <div class="dropdown-option ${isSelected ? 'selected' : ''} ${isUsed && !isSelected ? 'disabled' : ''}" data-value="${state}">
-                            ${state}
+                        <div class="dropdown-option ${isSelected ? 'selected' : ''} ${isUsed && !isSelected ? 'disabled' : ''}"
+                             data-value="${state.name}" data-type="${state.type}">
+                            ${state.name} (${typeLabel})
+                            ${isUsed && !isSelected ? '<span class="dropdown-option-note">(in use)</span>' : ''}
+                        </div>
+                    `;
+                });
+            } else {
+                // For mobility, show just states from table
+                tableStates.forEach(state => {
+                    if (!this.isValidSlide(currentSlide.indicator, state.name)) return;
+
+                    const isSelected = currentSlide.state === state.name;
+                    const isUsed = this.isSlideUsed(currentSlide.indicator, state.name, null, slideIndex, null, null);
+
+                    options += `
+                        <div class="dropdown-option ${isSelected ? 'selected' : ''} ${isUsed && !isSelected ? 'disabled' : ''}" data-value="${state.name}">
+                            ${state.name}
                             ${isUsed && !isSelected ? '<span class="dropdown-option-note">(in use)</span>' : ''}
                         </div>
                     `;
@@ -848,7 +1299,10 @@ class PresentationRemote {
                 if (opt.classList.contains('disabled')) return;
                 const value = opt.dataset.value;
                 const climateType = opt.dataset.type || null;
-                this.handleDropdownSelection(value, climateType);
+                const stateId = opt.dataset.stateId || null;
+                const indicatorName = opt.dataset.indicatorName || null;
+                const tableName = opt.dataset.tableName || null;
+                this.handleDropdownSelection(value, climateType, stateId, indicatorName, tableName);
             });
         });
 
@@ -862,7 +1316,7 @@ class PresentationRemote {
         this.activeDropdown = null;
     }
     
-    async handleDropdownSelection(value, climateType = null) {
+    async handleDropdownSelection(value, climateType = null, stateId = null, indicatorName = null, tableName = null) {
         if (!this.activeDropdown) return;
 
         const { slideIndex, dropdownType } = this.activeDropdown;
@@ -870,14 +1324,52 @@ class PresentationRemote {
 
         if (dropdownType === 'indicator') {
             // When changing indicator, find first available state+type combo
-            if (value === 'climate') {
+            if (value.startsWith('ugc_')) {
+                // For UGC indicators, find first unused state from file hierarchy
+                const indicatorId = parseInt(value.replace('ugc_', ''));
+                const currentTableData = this.tableHierarchy.find(table => table.name === this.currentTable);
+                const tableIndicator = currentTableData?.indicators?.find(ind => ind.id === indicatorId && ind.is_user_generated);
+                
+                if (tableIndicator && tableIndicator.states) {
+                    const availableState = tableIndicator.states.find(s => 
+                        !this.isSlideUsed(value, s.scenario_name || JSON.stringify(s.state_values), null, slideIndex, null, s.id)
+                    );
+                    if (availableState) {
+                        newSlides[slideIndex] = {
+                            indicator: value,
+                            state: availableState.scenario_name || JSON.stringify(availableState.state_values),
+                            indicatorId: indicatorId,
+                            stateId: availableState.id,
+                            indicatorDataId: availableState.indicator_data_id,
+                            indicatorName: tableIndicator.name,
+                            tableName: currentTableData?.display_name || currentTableData?.name,
+                            isUGC: true,
+                            media: availableState.media || []
+                        };
+                    } else if (tableIndicator.states.length > 0) {
+                        // Fallback to first state
+                        const firstState = tableIndicator.states[0];
+                        newSlides[slideIndex] = {
+                            indicator: value,
+                            state: firstState.scenario_name || JSON.stringify(firstState.state_values),
+                            indicatorId: indicatorId,
+                            stateId: firstState.id,
+                            indicatorDataId: firstState.indicator_data_id,
+                            indicatorName: tableIndicator.name,
+                            tableName: currentTableData?.display_name || currentTableData?.name,
+                            isUGC: true,
+                            media: firstState.media || []
+                        };
+                    }
+                }
+            } else if (value === 'climate') {
                 // Find first unused climate state+type combo
                 const states = STATE_CONFIG[value] || [];
                 let foundSlide = null;
                 for (const state of states) {
                     if (!this.isValidSlide(value, state)) continue;
                     for (const type of CLIMATE_TYPES) {
-                        if (!this.isSlideUsed(value, state, type, slideIndex)) {
+                        if (!this.isSlideUsed(value, state, type, slideIndex, null, null)) {
                             foundSlide = { indicator: value, state, type };
                             break;
                         }
@@ -888,14 +1380,32 @@ class PresentationRemote {
             } else {
                 // For mobility, find first available state
                 const availableStates = (STATE_CONFIG[value] || []).filter(s =>
-                    this.isValidSlide(value, s) && !this.isSlideUsed(value, s, null, slideIndex)
+                    this.isValidSlide(value, s) && !this.isSlideUsed(value, s, null, slideIndex, null, null)
                 );
                 const firstState = availableStates[0] || STATE_CONFIG[value]?.[0];
                 newSlides[slideIndex] = { indicator: value, state: firstState };
             }
         } else {
             // State selection - for climate, climateType is provided
-            if (newSlides[slideIndex].indicator === 'climate' && climateType) {
+            // For UGC, stateId, indicatorName, and tableName are provided
+            if (newSlides[slideIndex].indicator.startsWith('ugc_') && stateId && indicatorName) {
+                const indicatorId = parseInt(newSlides[slideIndex].indicator.replace('ugc_', ''));
+                const currentTableData = this.tableHierarchy.find(table => table.name === this.currentTable);
+                const tableIndicator = currentTableData?.indicators?.find(ind => ind.id === indicatorId && ind.is_user_generated);
+                const selectedState = tableIndicator?.states?.find(s => s.id === stateId);
+                
+                newSlides[slideIndex] = {
+                    indicator: newSlides[slideIndex].indicator,
+                    state: value,
+                    indicatorId: indicatorId,
+                    stateId: stateId,
+                    indicatorDataId: selectedState?.indicator_data_id,
+                    indicatorName: indicatorName,
+                    tableName: tableName,
+                    isUGC: true,
+                    media: selectedState?.media || []
+                };
+            } else if (newSlides[slideIndex].indicator === 'climate' && climateType) {
                 newSlides[slideIndex] = { indicator: 'climate', state: value, type: climateType };
             } else {
                 newSlides[slideIndex] = { ...newSlides[slideIndex], state: value };
@@ -913,7 +1423,7 @@ class PresentationRemote {
     async addSlide() {
         // Find first unused valid slide (including type for climate)
         const unusedSlide = this.getAllValidSlides().find(slide =>
-            !this.isSlideUsed(slide.indicator, slide.state, slide.type)
+            !this.isSlideUsed(slide.indicator, slide.state, slide.type, -1, slide.uploadId || null, slide.stateId || null)
         );
 
         if (unusedSlide) {

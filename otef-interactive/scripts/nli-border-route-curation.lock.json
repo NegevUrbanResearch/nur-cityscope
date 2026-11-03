@@ -1,0 +1,41 @@
+{
+  "curation": {
+    "schemaVersion": 1,
+    "recipeSha256": "2117831f5c392a92db26d59d1a415f21c8da622d8354f4d3018b9f9dc7955b6c",
+    "baseSourceSha256": "18b0e3445c771da9c3e7995270601f7a1187501bd3bfdf6b3e0fa2c6cedc6462",
+    "baseRuntimeSha256": "934bd4be7a1d6a4f1b6a0f62337384d06624e571a6efe44da366ab6062afa3c1",
+    "confirmedFeaturesSha256": "c2d3ec3f50f0c016e6665b39ed93ed758020cf0c2a8339153cb1f51326039358",
+    "borderSha256": "eaa77f9e0e3572487efc3b3d597530c885cbf86baf6ce1ee51b04b378da8e23b",
+    "roadSha256": "db6a72f9b5361089f75564de8a198cf5df2514023588aacb5d6dbe0a6ed1a8af",
+    "derivedSourceSha256": "2b1a2d1dc4c4a19e4c153e4c42ac0b170d2d560e623563b9f6e36f1cefbc96a2",
+    "runtimeByteSha256": "b631e63fa6d3eaeb889a0efd88c6229f446ab7b2a3a75bf1c98da810b7b7a2c1",
+    "runtimeFeatureSha256": "f31c9ae3b323454829a43f030b13c74751ff62f2fb414fafc5d9708aac5e86a5",
+    "counts": {
+      "features": 89,
+      "confirmed": 68,
+      "unconfirmed": 21
+    },
+    "addedObjectIds": [
+      1013,
+      1014,
+      1015,
+      1016,
+      1017,
+      1018,
+      1019,
+      1020,
+      1021
+    ],
+    "editedObjectIds": [
+      1001,
+      1002,
+      1005,
+      1006,
+      1008,
+      1009,
+      1010,
+      1011,
+      1012
+    ]
+  }
+}

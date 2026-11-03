@@ -1,0 +1,1323 @@
+{
+  "schemaVersion": 1,
+  "novaRoutesSHA256": "1050c46bee3aba80c62b3b2dce502e0090e125cbcc321b24ab84c51d096f0ac3",
+  "constructionProvenance": "Owner confirms Nova fleeing paths were constructed from victim markers. Shelter membership is the accepted original-event fixture, not proximity.",
+  "unmappedPersonPids": [
+    "1383",
+    "1498"
+  ],
+  "bindings": [
+    {
+      "routeObjectId": 13,
+      "personPid": "675",
+      "shelterId": "nli-shelter-nova-entrance",
+      "personName": "Hanan Amar",
+      "routeLabel": "Hanan Amar - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.473695133000035,
+        31.40015965500004
+      ],
+      "destinationCoordinates": [
+        34.47373348236591,
+        31.400123320462342
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 15,
+      "personPid": "677",
+      "shelterId": "nli-shelter-reim-west",
+      "personName": "Antonio Macías",
+      "routeLabel": "Yaniv Macias Montano Antonio - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.45797860300007,
+        31.389732077000076
+      ],
+      "destinationCoordinates": [
+        34.45800480369949,
+        31.389627263470057
+      ],
+      "joinEvidence": "Reviewed name variant and original marker destination"
+    },
+    {
+      "routeObjectId": 19,
+      "personPid": "681",
+      "shelterId": "nli-shelter-gama-west",
+      "personName": "Dan Ariel",
+      "routeLabel": "Dan Ariel - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.44664456900006,
+        31.380931967000038
+      ],
+      "destinationCoordinates": [
+        34.44664124291613,
+        31.380827774341324
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 27,
+      "personPid": "689",
+      "shelterId": "nli-shelter-alumim-west",
+      "personName": "Yonatan Hai Azulay",
+      "routeLabel": "Yonatan Chai Azulay - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.516345097000055,
+        31.450423555000043
+      ],
+      "destinationCoordinates": [
+        34.516478993202256,
+        31.45031612641624
+      ],
+      "joinEvidence": "Reviewed name variant and original marker destination"
+    },
+    {
+      "routeObjectId": 30,
+      "personPid": "692",
+      "shelterId": "nli-shelter-reim-east",
+      "personName": "Din Bar",
+      "routeLabel": "Din Bar - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.459451364000074,
+        31.389765209000075
+      ],
+      "destinationCoordinates": [
+        34.45942426401927,
+        31.389879892472486
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 31,
+      "personPid": "693",
+      "shelterId": "nli-shelter-reim-east",
+      "personName": "Shoham Bar",
+      "routeLabel": "Shoham Bar - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.45941047200006,
+        31.389759543000025
+      ],
+      "destinationCoordinates": [
+        34.45938368442292,
+        31.389872905022646
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 36,
+      "personPid": "700",
+      "shelterId": "nli-shelter-reim-east",
+      "personName": "Tal Bartik",
+      "routeLabel": "Tal Bartik - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.45944588800006,
+        31.389743365000072
+      ],
+      "destinationCoordinates": [
+        34.45941404119133,
+        31.38987813257377
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 38,
+      "personPid": "702",
+      "shelterId": "nli-shelter-nova-entrance",
+      "personName": "Shani Ben Ami",
+      "routeLabel": "Shani Ben-Ami - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.473687108000036,
+        31.40012328000006
+      ],
+      "destinationCoordinates": [
+        34.473707860617395,
+        31.400103618646366
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 39,
+      "personPid": "703",
+      "shelterId": "nli-shelter-mefalsim",
+      "personName": "Celine Ben David Nagar",
+      "routeLabel": "Celine Ben-David Nagar - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.56418367100002,
+        31.504640470000027
+      ],
+      "destinationCoordinates": [
+        34.56413302900673,
+        31.504653332119016
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 41,
+      "personPid": "705",
+      "shelterId": "nli-shelter-beeri",
+      "personName": "Eden Ben-Rubi",
+      "routeLabel": "Eden Ben-Rubi - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.49690991600005,
+        31.42881371900006
+      ],
+      "destinationCoordinates": [
+        34.496950056405055,
+        31.428812738566208
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 53,
+      "personPid": "720",
+      "shelterId": "nli-shelter-reim-east",
+      "personName": "Amit Cohen",
+      "routeLabel": "Amit Cohen - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.45943148300006,
+        31.38978197600005
+      ],
+      "destinationCoordinates": [
+        34.459408966608294,
+        31.389877258375698
+      ],
+      "joinEvidence": "Reviewed name variant and original marker destination"
+    },
+    {
+      "routeObjectId": 55,
+      "personPid": "722",
+      "shelterId": "nli-shelter-reim-west",
+      "personName": "Eliya Cohen",
+      "routeLabel": "Eliya Cohen - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.45799583300004,
+        31.389731607000044
+      ],
+      "destinationCoordinates": [
+        34.458021171003935,
+        31.389630244953466
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 56,
+      "personPid": "723",
+      "shelterId": "nli-shelter-alumim-west",
+      "personName": "Yitzhak Dahan",
+      "routeLabel": "Itzik Dahan - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.51641399400006,
+        31.450466625000047
+      ],
+      "destinationCoordinates": [
+        34.51653733698334,
+        31.450369075574137
+      ],
+      "joinEvidence": "Reviewed name variant and original marker destination"
+    },
+    {
+      "routeObjectId": 57,
+      "personPid": "724",
+      "shelterId": "nli-shelter-reim-east",
+      "personName": "Kim Damti",
+      "routeLabel": "Kim Damti - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.459417330000065,
+        31.38974686800003
+      ],
+      "destinationCoordinates": [
+        34.45938739626169,
+        31.389873543800718
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 63,
+      "personPid": "730",
+      "shelterId": "nli-shelter-alumim-west",
+      "personName": "Barak Davidi",
+      "routeLabel": "Barak Davidi - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.51644633500007,
+        31.45047936800006
+      ],
+      "destinationCoordinates": [
+        34.51655973288168,
+        31.450389683381626
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 67,
+      "personPid": "735",
+      "shelterId": "nli-shelter-nova-entrance",
+      "personName": "Eden Abdulayev",
+      "routeLabel": "Eden Abdulayev - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.47371626100005,
+        31.400134773000048
+      ],
+      "destinationCoordinates": [
+        34.47373064907953,
+        31.400121141339728
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 71,
+      "personPid": "739",
+      "shelterId": "nli-shelter-reim-east",
+      "personName": "Sigal Eitach",
+      "routeLabel": "Sigal Itah - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.45940361100003,
+        31.38978021400004
+      ],
+      "destinationCoordinates": [
+        34.45938178448609,
+        31.38987257758177
+      ],
+      "joinEvidence": "Reviewed name variant and original marker destination"
+    },
+    {
+      "routeObjectId": 72,
+      "personPid": "740",
+      "shelterId": "nli-shelter-gama-north",
+      "personName": "Matan Ekstein",
+      "routeLabel": "Matan Ekstein - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.44748982300007,
+        31.38137379300008
+      ],
+      "destinationCoordinates": [
+        34.447322901621725,
+        31.381382836892943
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 75,
+      "personPid": "744",
+      "shelterId": "nli-shelter-reim-west",
+      "personName": "Aner Elyakim Shapira",
+      "routeLabel": "Aner Elyakim Shapira - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.45801693100003,
+        31.38973069800005
+      ],
+      "destinationCoordinates": [
+        34.45804113246787,
+        31.389633880553262
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 76,
+      "personPid": "745",
+      "shelterId": "nli-shelter-reim-west",
+      "personName": "Einav Elkayam-Levy",
+      "routeLabel": "Einav Elkayam-Levy - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.458014570000046,
+        31.389745050000045
+      ],
+      "destinationCoordinates": [
+        34.458042304769315,
+        31.389634094502306
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 83,
+      "personPid": "752",
+      "shelterId": "nli-shelter-alumim-west",
+      "personName": "Izabella Gandlin",
+      "routeLabel": "Izabella Gandlin - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.51638759300005,
+        31.450435107000033
+      ],
+      "destinationCoordinates": [
+        34.51650569652241,
+        31.450340348324197
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 102,
+      "personPid": "773",
+      "shelterId": "nli-shelter-reim-west",
+      "personName": "Hersh Goldberg-Polin",
+      "routeLabel": "Hersh Goldberg Polin - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.45799432800004,
+        31.389746874000025
+      ],
+      "destinationCoordinates": [
+        34.45802338085956,
+        31.389630647545687
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 103,
+      "personPid": "774",
+      "shelterId": "nli-shelter-reim-east",
+      "personName": "Hadar Hoshen",
+      "routeLabel": "Hadar Hoshen - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.45938853700005,
+        31.389768119000053
+      ],
+      "destinationCoordinates": [
+        34.459364553900635,
+        31.389869610676037
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 107,
+      "personPid": "778",
+      "shelterId": "nli-shelter-reim-west",
+      "personName": "Ivonne Patricia Rubio Vargas Eden",
+      "routeLabel": "Ivonne Patricia Rubio Vargas Eden - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.45797622900005,
+        31.389747235000073
+      ],
+      "destinationCoordinates": [
+        34.45800615656228,
+        31.389627509626493
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 111,
+      "personPid": "782",
+      "shelterId": "nli-shelter-beeri",
+      "personName": "Linor Keinan",
+      "routeLabel": "Linor Keinan - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.49690755800003,
+        31.42869052800006
+      ],
+      "destinationCoordinates": [
+        34.49694592505307,
+        31.428689590550825
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 116,
+      "personPid": "787",
+      "shelterId": "nli-shelter-reim-west",
+      "personName": "Shani Kupervaser",
+      "routeLabel": "Shani Kupervaser - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.45801360200005,
+        31.389759952000077
+      ],
+      "destinationCoordinates": [
+        34.458044942223,
+        31.38963457454566
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 125,
+      "personPid": "796",
+      "shelterId": "nli-shelter-reim-west",
+      "personName": "Or Levy",
+      "routeLabel": "Or Levy - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.457976331000054,
+        31.389761406000048
+      ],
+      "destinationCoordinates": [
+        34.45800964292392,
+        31.389628144572022
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 135,
+      "personPid": "806",
+      "shelterId": "nli-shelter-reim-east",
+      "personName": "Norelle Manzuri",
+      "routeLabel": "Norelle Manzuri - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.45937735100006,
+        31.389742178000063
+      ],
+      "destinationCoordinates": [
+        34.45934791530496,
+        31.389866745760035
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 136,
+      "personPid": "807",
+      "shelterId": "nli-shelter-reim-east",
+      "personName": "Roya Manzuri",
+      "routeLabel": "Roya Manzuri - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.459359981000034,
+        31.389763627000036
+      ],
+      "destinationCoordinates": [
+        34.45933609347583,
+        31.389864709798488
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 137,
+      "personPid": "808",
+      "shelterId": "nli-shelter-reim-east",
+      "personName": "Maya Puder",
+      "routeLabel": "Maya Puder - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.459349479000025,
+        31.389740416000052
+      ],
+      "destinationCoordinates": [
+        34.45932073228445,
+        31.389862064965573
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 140,
+      "personPid": "811",
+      "shelterId": "nli-shelter-reim-east",
+      "personName": "Eden Naftali",
+      "routeLabel": "Eden Naftali - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.45932845500005,
+        31.38975796300008
+      ],
+      "destinationCoordinates": [
+        34.45930451499862,
+        31.389859272132288
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 141,
+      "personPid": "812",
+      "shelterId": "nli-shelter-beeri",
+      "personName": "May Naim",
+      "routeLabel": "May Naim - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.49693544300004,
+        31.42869143000007
+      ],
+      "destinationCoordinates": [
+        34.49694597805367,
+        31.42869117265485
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 142,
+      "personPid": "813",
+      "shelterId": "nli-shelter-reim-east",
+      "personName": "Ranani Nidejelski Glazer",
+      "routeLabel": "Ranani Nidejelski Glazer - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.45932869200004,
+        31.38973222000004
+      ],
+      "destinationCoordinates": [
+        34.45929889783317,
+        31.38985830437952
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 143,
+      "personPid": "814",
+      "shelterId": "nli-shelter-beeri",
+      "personName": "Liraz Nissan",
+      "routeLabel": "Liraz Nissan - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.496907100000044,
+        31.428714961000026
+      ],
+      "destinationCoordinates": [
+        34.49694674341829,
+        31.428713992049563
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 151,
+      "personPid": "822",
+      "shelterId": "nli-shelter-reim-west",
+      "personName": "Yoad Peer",
+      "routeLabel": "Yoad Peer - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.45796209800005,
+        31.389728399000035
+      ],
+      "destinationCoordinates": [
+        34.45798813725601,
+        31.389624227540747
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 159,
+      "personPid": "830",
+      "shelterId": "nli-shelter-reim-west",
+      "personName": "Nitzan Rahum",
+      "routeLabel": "Nitzan Rahum - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.457959094000046,
+        31.389743940000074
+      ],
+      "destinationCoordinates": [
+        34.45798897987574,
+        31.389624380909254
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 173,
+      "personPid": "844",
+      "shelterId": "nli-shelter-reim-west",
+      "personName": "Tamar Samat",
+      "routeLabel": "Tamar Samet - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.457957054000076,
+        31.38975957300005
+      ],
+      "destinationCoordinates": [
+        34.457990766624846,
+        31.38962470605049
+      ],
+      "joinEvidence": "Reviewed name variant and original marker destination"
+    },
+    {
+      "routeObjectId": 176,
+      "personPid": "847",
+      "shelterId": "nli-shelter-beeri",
+      "personName": "Avi Sasi",
+      "routeLabel": "Avi Sasi - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.49693483500005,
+        31.428717015000075
+      ],
+      "destinationCoordinates": [
+        34.49694683504643,
+        31.428716722404744
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 179,
+      "personPid": "850",
+      "shelterId": "nli-shelter-reim-west",
+      "personName": "Karin Shwarchman",
+      "routeLabel": "Karin Schwartzman - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.457944749000035,
+        31.389726749000033
+      ],
+      "destinationCoordinates": [
+        34.45797114921566,
+        31.389621133331328
+      ],
+      "joinEvidence": "Reviewed name variant and original marker destination"
+    },
+    {
+      "routeObjectId": 191,
+      "personPid": "863",
+      "shelterId": "nli-shelter-beeri",
+      "personName": "Roni Shitrit",
+      "routeLabel": "Roni Shitrit - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.49690844100007,
+        31.428741314000035
+      ],
+      "destinationCoordinates": [
+        34.49694762825883,
+        31.428740356607083
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 197,
+      "personPid": "869",
+      "shelterId": "nli-shelter-reim-east",
+      "personName": "Eitan Snir",
+      "routeLabel": "Eitan Snir - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.45929830100005,
+        31.389749765000033
+      ],
+      "destinationCoordinates": [
+        34.45927367763156,
+        31.389853961761375
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 201,
+      "personPid": "873",
+      "shelterId": "nli-shelter-mefalsim",
+      "personName": "Adir Tamam",
+      "routeLabel": "Adir Tamam - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.56431778100006,
+        31.504695354000035
+      ],
+      "destinationCoordinates": [
+        34.5643307733536,
+        31.50476741232219
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 202,
+      "personPid": "874",
+      "shelterId": "nli-shelter-mefalsim",
+      "personName": "Shiraz-Shiran Tamam",
+      "routeLabel": "Shiraz-Shiran Tamam - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.56437410800004,
+        31.50472508300004
+      ],
+      "destinationCoordinates": [
+        34.56438056337656,
+        31.504760886082654
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 215,
+      "personPid": "890",
+      "shelterId": "nli-shelter-reim-east",
+      "personName": "Noy Aviv",
+      "routeLabel": "Noy Aviv - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.45930503900007,
+        31.389733378000074
+      ],
+      "destinationCoordinates": [
+        34.459276432764526,
+        31.389854436435677
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 219,
+      "personPid": "894",
+      "shelterId": "nli-shelter-beeri",
+      "personName": "Alexandre Look",
+      "routeLabel": "Alexandre look - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.49693362700003,
+        31.428741959000035
+      ],
+      "destinationCoordinates": [
+        34.49694767047966,
+        31.428741615237605
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 228,
+      "personPid": "907",
+      "shelterId": "nli-shelter-gama-west",
+      "personName": "Ron Shemer",
+      "routeLabel": "Ron Shemer - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.44660497600006,
+        31.380937422000045
+      ],
+      "destinationCoordinates": [
+        34.446601505939526,
+        31.38082869847309
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 234,
+      "personPid": "913",
+      "shelterId": "nli-shelter-beeri",
+      "personName": "Ariel Ben Mordechai Bitton",
+      "routeLabel": "Ariel Ben Mordechai Bitton - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.496908733000055,
+        31.42876523600006
+      ],
+      "destinationCoordinates": [
+        34.496948430454374,
+        31.42876426598506
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 235,
+      "personPid": "915",
+      "shelterId": "nli-shelter-reim-west",
+      "personName": "Raz Bokovza",
+      "routeLabel": "Raz Bokovza - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.45870283700003,
+        31.389870392000034
+      ],
+      "destinationCoordinates": [
+        34.45870845136657,
+        31.389871714886283
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 241,
+      "personPid": "922",
+      "shelterId": "nli-shelter-reim-west",
+      "personName": "Amit (Yehuda) Ben Avida",
+      "routeLabel": "Amit (Yehuda) Ben Avida - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.45794332600008,
+        31.389741370000024
+      ],
+      "destinationCoordinates": [
+        34.45797328451109,
+        31.389621522120503
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 242,
+      "personPid": "951",
+      "shelterId": "nli-shelter-reim-east",
+      "personName": "Daniel Vadai",
+      "routeLabel": "Daniel Vadai - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.459317949000024,
+        31.389745524000034
+      ],
+      "destinationCoordinates": [
+        34.459291595428205,
+        31.38985704752782
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 246,
+      "personPid": "955",
+      "shelterId": "nli-shelter-alumim-west",
+      "personName": "Laurie Vardi",
+      "routeLabel": "Laurie Vardi - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.51651444500004,
+        31.450552040000048
+      ],
+      "destinationCoordinates": [
+        34.51663368578913,
+        31.450457734865154
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 252,
+      "personPid": "961",
+      "shelterId": "nli-shelter-alumim-west",
+      "personName": "Sun Amnon Yabokov",
+      "routeLabel": "San-Amnon Yaacobov - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.51647808400003,
+        31.450543378000077
+      ],
+      "destinationCoordinates": [
+        34.51661181720186,
+        31.45043761140291
+      ],
+      "joinEvidence": "Reviewed name variant and original marker destination"
+    },
+    {
+      "routeObjectId": 253,
+      "personPid": "962",
+      "shelterId": "nli-shelter-reim-east",
+      "personName": "Shoham Yaakov Gherafi",
+      "routeLabel": "Shoham Yaakov Gherafi - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.45927363800007,
+        31.38974786800003
+      ],
+      "destinationCoordinates": [
+        34.45924954888302,
+        31.389849807018926
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 278,
+      "personPid": "1301",
+      "shelterId": "nli-shelter-reim-east",
+      "personName": "Livnat Levy",
+      "routeLabel": "Livnat Levy - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.459278453000024,
+        31.389728337000065
+      ],
+      "destinationCoordinates": [
+        34.459249741122505,
+        31.38984983999306
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 280,
+      "personPid": "1303",
+      "shelterId": "nli-shelter-beeri",
+      "personName": "Eldad (Angel) Bergman",
+      "routeLabel": "Eldad (Angel) Bergman - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.49693616800005,
+        31.428764347000026
+      ],
+      "destinationCoordinates": [
+        34.49694842326787,
+        31.428764047526116
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 289,
+      "personPid": "1318",
+      "shelterId": "nli-shelter-reim-west",
+      "personName": "Alon Ohel",
+      "routeLabel": "Alon Ohel - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.45794226800007,
+        31.389755163000075
+      ],
+      "destinationCoordinates": [
+        34.45797556982517,
+        31.389621938515972
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 294,
+      "personPid": "1334",
+      "shelterId": "nli-shelter-reim-east",
+      "personName": "Omer Wenkert",
+      "routeLabel": "Omer Wenkert - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.459259014000054,
+        31.38976774300005
+      ],
+      "destinationCoordinates": [
+        34.45924000967301,
+        31.389848164446246
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 300,
+      "personPid": "1358",
+      "shelterId": "nli-shelter-gama-south",
+      "personName": "Limor Vaknin Permuter",
+      "routeLabel": "Limor Vaknin Permuter - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.44713660700006,
+        31.380142144000047
+      ],
+      "destinationCoordinates": [
+        34.44726889939841,
+        31.38013958741252
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 311,
+      "personPid": "1440",
+      "shelterId": "nli-shelter-gama-south",
+      "personName": "Sefi (Yossef) Genis",
+      "routeLabel": "Sefi (Yossef) Genis - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.44714662400003,
+        31.380248171000062
+      ],
+      "destinationCoordinates": [
+        34.44727171471851,
+        31.38024575284313
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 312,
+      "personPid": "1441",
+      "shelterId": "nli-shelter-gama-south",
+      "personName": "Gad Navon",
+      "routeLabel": "Gal Navon - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.44714726400008,
+        31.380214022000075
+      ],
+      "destinationCoordinates": [
+        34.447270810115,
+        31.380211634142377
+      ],
+      "joinEvidence": "Reviewed name variant and original marker destination"
+    },
+    {
+      "routeObjectId": 314,
+      "personPid": "1446",
+      "shelterId": "nli-shelter-reim-west",
+      "personName": "Itay Benjo",
+      "routeLabel": "Itay Banjo - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.457992330000025,
+        31.389776004000055
+      ],
+      "destinationCoordinates": [
+        34.45794237168555,
+        31.389911023119463
+      ],
+      "joinEvidence": "Reviewed name variant and original marker destination"
+    },
+    {
+      "routeObjectId": 317,
+      "personPid": "1454",
+      "shelterId": "nli-shelter-beeri",
+      "personName": "Raz Mizrahi",
+      "routeLabel": "Raz Mizrahi - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.49693704900005,
+        31.428843716000074
+      ],
+      "destinationCoordinates": [
+        34.49695220787017,
+        31.428842081034052
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 318,
+      "personPid": "1455",
+      "shelterId": "nli-shelter-reim-east",
+      "personName": "Noa Farage",
+      "routeLabel": "Noa Farage - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.459137877000046,
+        31.389746917000025
+      ],
+      "destinationCoordinates": [
+        34.45911887994179,
+        31.38982730561162
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 323,
+      "personPid": "1476",
+      "shelterId": "nli-shelter-gama-north",
+      "personName": "Addir Mesika",
+      "routeLabel": "Addir Mesika - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.44750759900006,
+        31.381386548000023
+      ],
+      "destinationCoordinates": [
+        34.44732391671798,
+        31.381396498622458
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 324,
+      "personPid": "1477",
+      "shelterId": "nli-shelter-gama-north",
+      "personName": "Ilay Nachman",
+      "routeLabel": "Ilay Nahman - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.44748507500003,
+        31.381393626000033
+      ],
+      "destinationCoordinates": [
+        34.44732435060427,
+        31.38140233327094
+      ],
+      "joinEvidence": "Reviewed name variant and original marker destination"
+    },
+    {
+      "routeObjectId": 337,
+      "personPid": "1548",
+      "shelterId": "nli-shelter-beeri",
+      "personName": "Adi Margalit",
+      "routeLabel": "Adi Margalit - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.49693645200006,
+        31.42881449300006
+      ],
+      "destinationCoordinates": [
+        34.49695010401577,
+        31.428814158931957
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 343,
+      "personPid": "1570",
+      "shelterId": "nli-shelter-reim-east",
+      "personName": "Haim (Hai) Tzfati",
+      "routeLabel": "Haim (Hai) Tzfati - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.45922327900007,
+        31.389761776000057
+      ],
+      "destinationCoordinates": [
+        34.45920431781013,
+        31.38984201821831
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 354,
+      "personPid": "1421",
+      "shelterId": "nli-shelter-beeri",
+      "personName": "Lotan Abir",
+      "routeLabel": "Lotan Abir - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.49691022400003,
+        31.428790437000032
+      ],
+      "destinationCoordinates": [
+        34.49694927666737,
+        31.42878948227776
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 357,
+      "personPid": "1424",
+      "shelterId": "nli-shelter-reim-east",
+      "personName": "Idan Herman",
+      "routeLabel": "Idan Herman - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.45924396000004,
+        31.38974375600003
+      ],
+      "destinationCoordinates": [
+        34.45922009851474,
+        31.38984473590168
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 359,
+      "personPid": "1426",
+      "shelterId": "nli-shelter-reim-east",
+      "personName": "Noa Zender",
+      "routeLabel": "Noa Zander - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.45921015400006,
+        31.389726370000062
+      ],
+      "destinationCoordinates": [
+        34.45918366464347,
+        31.38983846161113
+      ],
+      "joinEvidence": "Reviewed name variant and original marker destination"
+    },
+    {
+      "routeObjectId": 360,
+      "personPid": "1427",
+      "shelterId": "nli-shelter-reim-east",
+      "personName": "Shenhav Yaakov Gherafi",
+      "routeLabel": "Shenhav Yaakov Gherafi - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.45918487900008,
+        31.389755957000034
+      ],
+      "destinationCoordinates": [
+        34.459166097189765,
+        31.389835436424406
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 361,
+      "personPid": "1428",
+      "shelterId": "nli-shelter-reim-east",
+      "personName": "Liel Gherafi",
+      "routeLabel": "Liel Gherafi - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.45916432700005,
+        31.389718585000026
+      ],
+      "destinationCoordinates": [
+        34.45913786224206,
+        31.389830574653992
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 367,
+      "personPid": "1470",
+      "shelterId": "nli-shelter-reim-west",
+      "personName": "Laor Abramov",
+      "routeLabel": "Laor Abramov - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.45797304700005,
+        31.38977655800005
+      ],
+      "destinationCoordinates": [
+        34.457925024319096,
+        31.389906346161435
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 368,
+      "personPid": "1471",
+      "shelterId": "nli-shelter-reim-east",
+      "personName": "Rotem Neumann",
+      "routeLabel": "Rotem Neumann - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.459128487000044,
+        31.38971631900006
+      ],
+      "destinationCoordinates": [
+        34.45910291059099,
+        31.389824555720455
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 371,
+      "personPid": "1499",
+      "shelterId": "nli-shelter-beeri",
+      "personName": "Sofia Bongrat",
+      "routeLabel": "Sofia Bongrat - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.496936909000055,
+        31.42879006000004
+      ],
+      "destinationCoordinates": [
+        34.496949285650544,
+        31.42878975822584
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 377,
+      "personPid": "1507",
+      "shelterId": "nli-shelter-reim-east",
+      "personName": "Liel Vainshtein",
+      "routeLabel": "Liel Vainshtein - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.45909058500007,
+        31.389729853000063
+      ],
+      "destinationCoordinates": [
+        34.45906956243271,
+        31.38981881361609
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 388,
+      "personPid": "1535",
+      "shelterId": "nli-shelter-reim-west",
+      "personName": "Segev Israel Kishner",
+      "routeLabel": "Segev Israel Kishner - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.457953479000025,
+        31.389775016000044
+      ],
+      "destinationCoordinates": [
+        34.45790671216203,
+        31.389901408477463
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 389,
+      "personPid": "1536",
+      "shelterId": "nli-shelter-reim-west",
+      "personName": "Ayelet Arnin",
+      "routeLabel": "Ayelet Arnin - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.45793808700006,
+        31.38977148200007
+      ],
+      "destinationCoordinates": [
+        34.45789152704046,
+        31.38989731431751
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 392,
+      "personPid": "1569",
+      "shelterId": "nli-shelter-beeri",
+      "personName": "Kim Dukarker",
+      "routeLabel": "Kim Dukarker - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.49690540900008,
+        31.428843012000073
+      ],
+      "destinationCoordinates": [
+        34.496951607795545,
+        31.428838029198523
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 406,
+      "personPid": "1618",
+      "shelterId": "nli-shelter-alumim-west",
+      "personName": "Sharon Gordani",
+      "routeLabel": "Sharon Gordani - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.515764226000044,
+        31.449951138000074
+      ],
+      "destinationCoordinates": [
+        34.515929989613014,
+        31.449818140930653
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 407,
+      "personPid": "1619",
+      "shelterId": "nli-shelter-reim-east",
+      "personName": "Ronen Deitchman",
+      "routeLabel": "Ronen Deitchman - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.45909243600005,
+        31.38969833300007
+      ],
+      "destinationCoordinates": [
+        34.45906418421909,
+        31.38981788727231
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    },
+    {
+      "routeObjectId": 414,
+      "personPid": "1631",
+      "shelterId": "nli-shelter-reim-east",
+      "personName": "Orel Pesso",
+      "routeLabel": "Orel Pesso - מוקד לחימה 4 - מתחם הנובה",
+      "originalMarkerCoordinates": [
+        34.459056942000075,
+        31.38972919300005
+      ],
+      "destinationCoordinates": [
+        34.45903708564022,
+        31.389813221045376
+      ],
+      "joinEvidence": "Normalized current name and original marker destination"
+    }
+  ]
+}

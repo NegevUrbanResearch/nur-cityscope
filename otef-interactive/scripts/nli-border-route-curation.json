@@ -1,0 +1,226 @@
+{
+  "schema_version": 1,
+  "expected_inputs": {
+    "source_lines_sha256": "18b0e3445c771da9c3e7995270601f7a1187501bd3bfdf6b3e0fa2c6cedc6462",
+    "runtime_lines_sha256": "934bd4be7a1d6a4f1b6a0f62337384d06624e571a6efe44da366ab6062afa3c1",
+    "border_module_sha256_lf": "eaa77f9e0e3572487efc3b3d597530c885cbf86baf6ce1ee51b04b378da8e23b",
+    "confirmed_features_sha256": "c2d3ec3f50f0c016e6665b39ed93ed758020cf0c2a8339153cb1f51326039358"
+  },
+  "base_feature_count": 80,
+  "confirmed_directions": {
+    "1": "forward",
+    "2": "forward",
+    "3": "forward",
+    "4": "reverse",
+    "5": "forward",
+    "6": "forward",
+    "7": "forward",
+    "8": "forward",
+    "9": "forward",
+    "10": "forward",
+    "11": "forward",
+    "12": "forward",
+    "13": "forward",
+    "14": "forward",
+    "15": "forward",
+    "16": "reverse",
+    "17": "forward",
+    "18": "forward",
+    "19": "forward",
+    "20": "forward",
+    "21": "forward",
+    "22": "forward",
+    "23": "forward",
+    "24": "forward",
+    "25": "forward",
+    "26": "forward",
+    "27": "forward",
+    "28": "forward",
+    "29": "forward",
+    "30": "forward",
+    "31": "forward",
+    "32": "forward",
+    "33": "forward",
+    "34": "forward",
+    "35": "forward",
+    "36": "forward",
+    "37": "forward",
+    "38": "forward",
+    "39": "forward",
+    "40": "forward",
+    "41": "forward",
+    "42": "forward",
+    "43": "forward",
+    "44": "forward",
+    "45": "forward",
+    "46": "forward",
+    "47": "forward",
+    "48": "forward",
+    "49": "forward",
+    "50": "forward",
+    "51": "forward",
+    "52": "forward",
+    "53": "forward",
+    "54": "forward",
+    "55": "forward",
+    "56": "forward",
+    "57": "forward",
+    "58": "forward",
+    "59": "forward",
+    "60": "forward",
+    "61": "forward",
+    "62": "forward",
+    "63": "forward",
+    "64": "forward",
+    "65": "forward",
+    "66": "forward",
+    "67": "forward",
+    "68": "forward"
+  },
+  "construction_crs": "+proj=tmerc +lat_0=31.73439361111111 +lon_0=35.20451694444445 +k=1.0000067 +x_0=219529.584 +y_0=626907.39 +ellps=GRS80 +towgs84=-48,55,52,0,0,0,0 +units=m +no_defs",
+  "output_crs": "EPSG:4326",
+  "operations": [
+    {
+      "kind": "new_approach",
+      "feature_id": 1013,
+      "parent_id": 23,
+      "shape": "origin_direction",
+      "direction": "forward",
+      "source_feature_sha256": "0fd3c69cccaca5225397278cce7f178bc261f97bb7f083f2dd422646fe3177eb"
+    },
+    {
+      "kind": "new_approach",
+      "feature_id": 1014,
+      "parent_id": 29,
+      "shape": "origin_direction",
+      "direction": "forward",
+      "source_feature_sha256": "08693157a13c5b693bcf093c5e881bb303ce98b769695fa659509cfc82f86dff"
+    },
+    {
+      "kind": "new_approach",
+      "feature_id": 1015,
+      "parent_id": 40,
+      "shape": "origin_direction",
+      "direction": "forward",
+      "source_feature_sha256": "31d54fb383f6c533c6f4c837f36b2735c5f18d6e576829627da2187982f9d766"
+    },
+    {
+      "kind": "new_approach",
+      "feature_id": 1016,
+      "parent_id": 42,
+      "shape": "origin_direction",
+      "direction": "forward",
+      "source_feature_sha256": "88d1242a9e5239b4e4a132f7f671cd7379b18444d06e87c4e114a0bbbc97f830"
+    },
+    {
+      "kind": "new_approach",
+      "feature_id": 1017,
+      "parent_id": 44,
+      "shape": "origin_direction",
+      "direction": "forward",
+      "source_feature_sha256": "66324c8aca92cecbe0a4f054752640fa4766bc494a0651407384556d11ec8cd4"
+    },
+    {
+      "kind": "new_approach",
+      "feature_id": 1018,
+      "parent_id": 51,
+      "shape": "origin_direction",
+      "direction": "forward",
+      "source_feature_sha256": "3dbe1b886dbc3fefbfbf1a18f5035d56bad2ca4a109b27b75d6ee3fd6dc3f542"
+    },
+    {
+      "kind": "new_approach",
+      "feature_id": 1019,
+      "parent_id": 61,
+      "shape": "origin_direction",
+      "direction": "forward",
+      "source_feature_sha256": "5ff13534709d8ac8aad58cd285e4850ef191e7a66127755d901304c93deec2d0"
+    },
+    {
+      "kind": "new_approach",
+      "feature_id": 1020,
+      "parent_id": 30,
+      "shape": "origin_direction",
+      "direction": "forward",
+      "source_feature_sha256": "8d0c2791e57f9575cdeded28ebd0aedfdf0ce10dcd1f2a210fd9c3c5a64c918f"
+    },
+    {
+      "kind": "new_approach",
+      "feature_id": 1021,
+      "parent_id": 32,
+      "shape": "road_polyline",
+      "direction": "forward",
+      "source_feature_sha256": "4e49edcbe7299a424006a6d92821cdd1e88d49cf2242298719adadb6bb1fbcbc"
+    },
+    {
+      "kind": "trim_first_crossing",
+      "feature_id": 1001,
+      "parent_id": 64,
+      "direction": "forward",
+      "source_feature_sha256": "ca0589013c68cb2dc7b6b9f40d92eff388d8cf795f84561a28ba4112170b2c29"
+    },
+    {
+      "kind": "trim_first_crossing",
+      "feature_id": 1002,
+      "parent_id": 66,
+      "direction": "forward",
+      "source_feature_sha256": "402f1d96cd58fc6995689031a5f48f2f59dad1b8a821a657c0d197d52054fbe3"
+    },
+    {
+      "kind": "trim_first_crossing",
+      "feature_id": 1005,
+      "parent_id": 59,
+      "direction": "forward",
+      "source_feature_sha256": "ba8d6c8b23ac62beb7011e76c95c870a927ef2cab63181df95c5d6dd18206380"
+    },
+    {
+      "kind": "trim_first_crossing",
+      "feature_id": 1006,
+      "parent_id": 57,
+      "direction": "forward",
+      "source_feature_sha256": "b2d85b25736b91b7db1f385ce6ca6c6c932f4fb8790c7b8073a9b33d63cdfee2"
+    },
+    {
+      "kind": "trim_first_crossing",
+      "feature_id": 1008,
+      "parent_id": 7,
+      "direction": "forward",
+      "source_feature_sha256": "323e9e3d09aa1333258695e76c971e28827b862c89031205d4e44f553109ea46"
+    },
+    {
+      "kind": "trim_first_crossing",
+      "feature_id": 1009,
+      "parent_id": 1,
+      "direction": "forward",
+      "source_feature_sha256": "df4ae97a0140e28ee5d6176f21b6fd6424d395a4b226aa6fdfd1002859712df7"
+    },
+    {
+      "kind": "trim_first_crossing",
+      "feature_id": 1010,
+      "parent_id": 10,
+      "direction": "forward",
+      "source_feature_sha256": "ec37d9f955f4e4e6bfb54a3a05e8ec25df22f655150438ea211c9789470bd002"
+    },
+    {
+      "kind": "extend_origin_direction",
+      "feature_id": 1011,
+      "parent_id": 43,
+      "direction": "forward",
+      "source_feature_sha256": "ad19c3cc5d0ea2dc5e755c9ff7f4972c5e300810d59516bcd02da971bdd9315f"
+    },
+    {
+      "kind": "extend_origin_direction",
+      "feature_id": 1012,
+      "parent_id": 34,
+      "direction": "forward",
+      "source_feature_sha256": "18718ae298bd477629419295163a1ab00b35e0b8bc754fffc077407c9e820270"
+    }
+  ],
+  "road_operation": {
+    "sha256": "db6a72f9b5361089f75564de8a198cf5df2514023588aacb5d6dbe0a6ed1a8af",
+    "feature_fid": 0,
+    "road_num": "4",
+    "start_vertex": 0,
+    "direction": "forward"
+  }
+}

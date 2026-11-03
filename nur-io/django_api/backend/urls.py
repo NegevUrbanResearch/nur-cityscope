@@ -3,7 +3,21 @@ from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from rest_framework import routers
 from . import views
+from .supabase_proxy import (
+    SupabaseProjectsView,
+    SupabaseProjectSubmissionsView,
+    SupabaseSubmissionsView,
+    SupabaseSubmissionFeaturesView,
+    CurationRouteComputeProxyView,
+    CuratedLayerPublishView,
+    CuratedLayerEditView,
+    CuratedLayerBatchEditView,
+    CuratedLayerUnpublishView,
+    CuratedLayerUnpublishAllView,
+    CuratedSupabasePullView,
+)
 from .views import (
+    TableViewSet,
     DashboardFeedStateViewSet,
     CustomActionsViewSet,
     IndicatorViewSet,
@@ -11,9 +25,16 @@ from .views import (
     IndicatorDataViewSet,
     IndicatorImageViewSet,
     LayerConfigViewSet,
+    GISLayerViewSet,
+    OTEFModelConfigViewSet,
+    OTEFViewportStateViewSet,
     ImageUploadView,
     serve_map_file,
+    pink_line_geojson,
+    OTEFBoundsApplyView,
 )
+from .projection_config_views import ProjectionConfigView
+from .staff_remote_update_views import StaffRemoteUpdatesView
 
 from rest_framework import permissions
 from drf_yasg.views import get_schema_view
@@ -31,6 +52,7 @@ schema_view = get_schema_view(
 
 router = DefaultRouter()
 
+router.register(r"tables", TableViewSet, basename="table")
 router.register(
     r"dashboard_feed_state", DashboardFeedStateViewSet, basename="dashboard-feed-state"
 )
@@ -39,9 +61,14 @@ router.register(r"states", StateViewSet, basename="state")
 router.register(r"indicator_data", IndicatorDataViewSet, basename="indicator-data")
 router.register(r"indicator_images", IndicatorImageViewSet, basename="indicator-image")
 router.register(r"layer_config", LayerConfigViewSet, basename="layer-config")
+router.register(r"gis_layers", GISLayerViewSet, basename="gis-layer")
+router.register(r"otef_model_config", OTEFModelConfigViewSet, basename="otef-model-config")
+router.register(r"otef_viewport", OTEFViewportStateViewSet, basename="otef-viewport")
 router.register(r"actions", CustomActionsViewSet, basename="actions")
 
 urlpatterns = [
+    path("otef/staff-remote-management/", StaffRemoteUpdatesView.as_view(), name="otef_staff_remote_management"),
+    path("otef/projection-config/", ProjectionConfigView.as_view(), name="otef_projection_config"),
     path("admin/", admin.site.urls),
     path("", include((router.urls, "api"))),
     # API Documentation endpoints
@@ -55,8 +82,62 @@ urlpatterns = [
     ),
     path("redoc/", schema_view.with_ui("redoc", cache_timeout=0), name="schema-redoc"),
     path("swagger.json", schema_view.without_ui(cache_timeout=0), name="schema-json"),
-    # Add the new image upload endpoint
+    # Image upload endpoint
     path("upload_image/", ImageUploadView.as_view(), name="upload_image"),
-    # For serving map files directly
+    # Bounds apply endpoint for OTEF interactive
+    path("otef/bounds/apply/", OTEFBoundsApplyView.as_view(), name="otef_bounds_apply"),
+    # Supabase proxy (backend-only; no Supabase client on frontend)
+    path("supabase/projects/", SupabaseProjectsView.as_view(), name="supabase_projects"),
+    path(
+        "supabase/projects/<uuid:project_id>/submissions/",
+        SupabaseProjectSubmissionsView.as_view(),
+        name="supabase_project_submissions",
+    ),
+    path(
+        "supabase/submissions/",
+        SupabaseSubmissionsView.as_view(),
+        name="supabase_submissions",
+    ),
+    path(
+        "supabase/submissions/<uuid:submission_id>/features/",
+        SupabaseSubmissionFeaturesView.as_view(),
+        name="supabase_submission_features",
+    ),
+    path(
+        "supabase/curated/compute-route/",
+        CurationRouteComputeProxyView.as_view(),
+        name="supabase_curated_compute_route",
+    ),
+    path(
+        "supabase/curated/publish/",
+        CuratedLayerPublishView.as_view(),
+        name="supabase_curated_publish",
+    ),
+    path(
+        "supabase/curated/edit/",
+        CuratedLayerEditView.as_view(),
+        name="supabase_curated_edit",
+    ),
+    path(
+        "supabase/curated/edit-batch/",
+        CuratedLayerBatchEditView.as_view(),
+        name="supabase_curated_edit_batch",
+    ),
+    path(
+        "supabase/curated/unpublish/",
+        CuratedLayerUnpublishView.as_view(),
+        name="supabase_curated_unpublish",
+    ),
+    path(
+        "supabase/curated/unpublish-all/",
+        CuratedLayerUnpublishAllView.as_view(),
+        name="supabase_curated_unpublish_all",
+    ),
+    path(
+        "supabase/curated/pull-from-supabase/",
+        CuratedSupabasePullView.as_view(),
+        name="supabase_curated_pull_from_supabase",
+    ),
+    path("pink-line/", pink_line_geojson, name="pink_line_geojson"),
     path("maps/<path:path>", serve_map_file, name="serve_map_file"),
 ]

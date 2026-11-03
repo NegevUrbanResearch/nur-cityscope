@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+    />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <link rel="icon" href="./favicon.ico" sizes="any" />
+    <link rel="stylesheet" href="./vendor/reveal.js/reveal.css" />
+    <title>OTEF Interactive Map</title>
+
+    <!-- MapLibre GL JS -->
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css"
+    />
+    <script src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js"></script>
+    <script src="https://unpkg.com/pmtiles@4.4.1/dist/pmtiles.js"></script>
+
+    <!-- Proj4 for coordinate transformations -->
+    <script src="https://unpkg.com/proj4@2.9.0/dist/proj4.js"></script>
+    <script>
+      proj4.defs(
+        "EPSG:2039",
+        "+proj=tmerc +lat_0=31.73439361111111 +lon_0=35.20451694444445 +k=1.0000067 +x_0=219529.584 +y_0=626907.39 +ellps=GRS80 +towgs84=-24.0024,-17.1032,-17.8444,0.33077,-1.85269,1.66969,5.4248 +units=m +no_defs"
+      );
+    </script>
+
+    <link rel="stylesheet" href="css/styles.css" />
+    <link rel="stylesheet" href="css/nli-content-fonts.css" />
+    <style>
+      /* Same face as projection שמות_יישובים so nli.people_names can match that look on GIS. */
+      @font-face {
+        font-family: "Guttman Hatzvi";
+        src: url("./fonts/Guttman-Hatzvi.ttf") format("truetype");
+        font-weight: normal;
+        font-style: normal;
+        font-display: block;
+      }
+      @font-face {
+        font-family: "Hadassah Friedlaender";
+        src: url("./fonts/HadassahFriedlaender-Regular.otf") format("opentype");
+        font-weight: 400;
+        font-style: normal;
+        font-display: block;
+      }
+      @font-face {
+        font-family: "Narkiss Block";
+        src: url("./fonts/NarkissBlock-Regular.otf") format("opentype");
+        font-weight: 400;
+        font-style: normal;
+        font-display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="map"></div>
+
+    <!-- Floating controls -->
+    <div id="controls">
+      <div id="connectionStatus" class="status-disconnected">●</div>
+    </div>
+
+    <!-- Cartographic legend for active layers -->
+    <div id="mapLegend" class="map-legend"></div>
+    <script type="module" src="./src/entries/map-main.js"></script>
+  </body>
+</html>
+
+

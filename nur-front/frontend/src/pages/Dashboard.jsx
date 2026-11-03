@@ -9,7 +9,6 @@ import { Box, Alert, Typography } from "@mui/material";
 import api from "../api";
 import { useAppData } from "../DataContext";
 import config from "../config";
-//import MetricDisplay from "../components/MetricDisplay";
 import DeckGLMap from "../components/maps/DeckGLMap";
 import { chartsDrawerWidth } from "../style/drawersStyles";
 import globals from "../globals";
@@ -19,6 +18,7 @@ const Dashboard = ({ openCharts}) => {
     dashboardData: data,
     currentIndicator,
     visualizationMode,
+    currentTable,
   } = useAppData();
   // Simple function to check if URL is HTML animation
   const isHtmlAnimation = (url) => url && url.includes(".html");
@@ -141,6 +141,7 @@ const Dashboard = ({ openCharts}) => {
 
   // Fetch map data from API when indicator changes
   useEffect(() => {
+
     // Clear any existing loading timer
     if (loadingTimerRef.current) {
       clearTimeout(loadingTimerRef.current);
@@ -170,7 +171,7 @@ const Dashboard = ({ openCharts}) => {
         const timestamp = Date.now();
         // Use our pre-configured api instance with relative URL
         const response = await api.get(
-          `/api/actions/get_image_data/?_=${timestamp}&indicator=${currentIndicator}`
+          `/api/actions/get_image_data/?_=${timestamp}&indicator=${currentIndicator}&table=${currentTable}&exclude_ugc=true`
         );
 
         if (response.data && response.data.image_data) {
@@ -206,11 +207,13 @@ const Dashboard = ({ openCharts}) => {
             preloadImage(url);
           }
         }
-      } catch (err) {
-        // Check if it's a 404 and we have retries left
+        } catch (err) {
         const is404 = err.response?.status === 404;
-        
-        if (is404 && retryCount < maxRetries) {
+        const code = err.response?.data?.code;
+        const serverError = err.response?.data?.error;
+        const permanent404 = code === "table_not_found" || code === "indicator_not_found";
+
+        if (is404 && !permanent404 && retryCount < maxRetries) {
           const delay = baseDelay * Math.pow(2, retryCount);
           console.log(`Dashboard - 404 error, retrying in ${delay}ms (attempt ${retryCount + 1}/${maxRetries})`);
           setTimeout(() => fetchMapData(retryCount + 1), delay);
@@ -218,6 +221,21 @@ const Dashboard = ({ openCharts}) => {
         }
 
         console.error("Error fetching map data:", err);
+
+        if (is404) {
+          const message =
+            serverError ||
+            `No data available for ${currentIndicator} in the selected table. Please select a different table or indicator.`;
+          setMapData({
+            url: null,
+            type: null,
+            loading: false,
+            error: true,
+            errorMessage: message,
+          });
+          setShowLoadingMessage(false);
+          return;
+        }
 
         // Fallback to default map based on indicator if API fails
         // Don't add cache-busting to HTML fallback URLs either
@@ -247,7 +265,7 @@ const Dashboard = ({ openCharts}) => {
         clearTimeout(currentLoadingTimer);
       }
     };
-  }, [currentIndicator, visualizationMode, preloadImage]);
+  }, [currentIndicator, visualizationMode, preloadImage, currentTable]);
 
   // State for tracking current indicator state
   const [currentState, setCurrentState] = useState({
@@ -319,7 +337,7 @@ const Dashboard = ({ openCharts}) => {
         try {
           const timestamp = Date.now();
           const response = await api.get(
-            `/api/actions/get_image_data/?_=${timestamp}&indicator=${indicator}`
+            `/api/actions/get_image_data/?_=${timestamp}&indicator=${indicator}&table=${currentTable}&exclude_ugc=true`
           );
 
           if (response.data && response.data.image_data) {
@@ -346,7 +364,13 @@ const Dashboard = ({ openCharts}) => {
             }
           }
         } catch (err) {
-          console.error(`❌ Error refreshing ${indicator} image:`, err);
+          const is404 = err.response?.status === 404;
+          if (is404) {
+            console.log(`No data available for ${indicator} in current table`);
+            // Don't show error for 404s during state changes - just log
+          } else {
+            console.error(`❌ Error refreshing ${indicator} image:`, err);
+          }
         }
       }, 100); // 100ms debounce
     };
@@ -369,7 +393,7 @@ const Dashboard = ({ openCharts}) => {
         clearTimeout(refreshDebounceRef.current);
       }
     };
-  }, []); // Empty deps - listeners registered ONCE, use refs for current values
+  }, [currentTable]); // Include currentTable to skip when table changes
 
   // Memoize state object to prevent unnecessary re-renders and iframe reloads
   // Must be called before any early returns (Rules of Hooks)
@@ -421,28 +445,100 @@ const Dashboard = ({ openCharts}) => {
   }, []);
 
   if (mapData.error) {
-    return (
-      <>
-        <Box sx={{ height: "100%", width: "100%" }}>
-          <Alert severity="warning" sx={{ mb: 2 }}>
-            Error loading visualization: Using fallback map
+    // If no URL, show error message only (404 case)
+    if (!mapData.url) {
+      return (
+        <Box
+          sx={{
+            width: openCharts
+              ? {
+                  xs: "100vw",
+                  sm: `calc(100vw - ${chartsDrawerWidth.sm})`,
+                  md: `calc(100vw - ${chartsDrawerWidth.md})`,
+                  lg: `calc(100vw - ${chartsDrawerWidth.lg})`,
+                  xl: `calc(100vw - ${chartsDrawerWidth.xl})`,
+                }
+              : "100vw",
+            marginLeft: {
+              xs: 0,
+              sm: openCharts ? `-${chartsDrawerWidth.sm}` : 0,
+              md: openCharts ? `-${chartsDrawerWidth.md}` : 0,
+              lg: openCharts ? `-${chartsDrawerWidth.lg}` : 0,
+              xl: openCharts ? `-${chartsDrawerWidth.xl}` : 0,
+            },
+            height: "100vh",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            p: 3,
+            transition: (theme) =>
+              theme.transitions.create(["width", "marginLeft"], {
+                duration: theme.transitions.duration.standard,
+                easing: theme.transitions.easing.easeInOut,
+              }),
+          }}
+        >
+          <Alert severity="info" sx={{ maxWidth: 600 }}>
+            <Typography variant="h6" gutterBottom>
+              No Data Available
+            </Typography>
+            <Typography variant="body2">
+              {mapData.errorMessage || `No visualization data is available for ${currentIndicator} in the selected table.`}
+            </Typography>
+            <Typography variant="body2" sx={{ mt: 1 }}>
+              Please try selecting a different table or indicator.
+            </Typography>
           </Alert>
-          <iframe
-            key={mapData.url} // Stable key to prevent recreation
-            src={mapData.url}
-            style={{
-              width: "100%",
-              height: "90%",
-              border: "none",
-            }}
-            title={`${currentIndicator} map visualization`}
-            sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
-            onError={(e) => {
-              console.error("Failed to load fallback map:", e);
-            }}
-          />
         </Box>
-      </>
+      );
+    }
+    
+    // If URL exists, show fallback map
+    return (
+      <Box
+        sx={{
+          width: openCharts
+            ? {
+                xs: "100vw",
+                sm: `calc(100vw - ${chartsDrawerWidth.sm})`,
+                md: `calc(100vw - ${chartsDrawerWidth.md})`,
+                lg: `calc(100vw - ${chartsDrawerWidth.lg})`,
+                xl: `calc(100vw - ${chartsDrawerWidth.xl})`,
+              }
+            : "100vw",
+          marginLeft: {
+            xs: 0,
+            sm: openCharts ? `-${chartsDrawerWidth.sm}` : 0,
+            md: openCharts ? `-${chartsDrawerWidth.md}` : 0,
+            lg: openCharts ? `-${chartsDrawerWidth.lg}` : 0,
+            xl: openCharts ? `-${chartsDrawerWidth.xl}` : 0,
+          },
+          height: "100vh",
+          transition: (theme) =>
+            theme.transitions.create(["width", "marginLeft"], {
+              duration: theme.transitions.duration.standard,
+              easing: theme.transitions.easing.easeInOut,
+            }),
+        }}
+      >
+        <Alert severity="warning" sx={{ mb: 2 }}>
+          Error loading visualization: Using fallback map
+        </Alert>
+        <iframe
+          key={mapData.url} // Stable key to prevent recreation
+          src={mapData.url}
+          style={{
+            width: "100%",
+            height: "90%",
+            border: "none",
+          }}
+          title={`${currentIndicator} map visualization`}
+          sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+          onError={(e) => {
+            console.error("Failed to load fallback map:", e);
+          }}
+        />
+      </Box>
     );
   }
 
@@ -471,6 +567,7 @@ const Dashboard = ({ openCharts}) => {
             duration: theme.transitions.duration.standard,
             easing: theme.transitions.easing.easeInOut,
           }),
+        position: "relative",
       }}
     >
 

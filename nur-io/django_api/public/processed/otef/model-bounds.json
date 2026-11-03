@@ -1,0 +1,10 @@
+{
+  "west": 101441.29,
+  "south": 557910.55,
+  "east": 194602.27,
+  "north": 621434.92,
+  "crs": "EPSG:2039",
+  "pixel_size": 60.73,
+  "image_width": 1534,
+  "image_height": 1046
+}

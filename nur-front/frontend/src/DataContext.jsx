@@ -15,6 +15,9 @@ import globals from "./globals";
 
 const DataContext = createContext();
 
+// Default table name for indicators
+const DEFAULT_TABLE = "idistrict";
+
 // Define indicator configurations for easy addition of new indicators
 const INDICATOR_CONFIG = {
   mobility: {
@@ -63,6 +66,11 @@ const STATE_CONFIG = {
   climate: Object.values(CLIMATE_SCENARIOS),
 };
 
+const APP_ROUTES_CONFIG = {
+  default:{displayName:"Default", url:"http://localhost/dashboard/mobility"},
+ // app_a: {displayName:"App A", url:"http://localhost/dashboard/mobility"},
+}
+
 // Reverse mapping from ID to indicator type
 const ID_TO_INDICATOR = Object.fromEntries(
   Object.entries(INDICATOR_CONFIG).map(([key, config]) => [config.id, key])
@@ -80,6 +88,10 @@ const getInitialIndicator = () => {
 };
 
 export const DataProvider = ({ children }) => {
+  // Store the current table name (idistrict, otef, etc.)
+  const [currentTable, setCurrentTable] = useState(DEFAULT_TABLE);
+  const [availableTables, setAvailableTables] = useState([]);
+
   // Store the current indicator type (mobility, climate, land_use)
   const [currentIndicator, setCurrentIndicator] = useState(
     getInitialIndicator()
@@ -96,13 +108,12 @@ export const DataProvider = ({ children }) => {
   // presentation mode state
   const [isPresentationMode, setIsPresentationMode] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
+  
+  const [pausedIndicatorState, setPausedIndicatorState] = useState(null); // Store state before pause to restore later
 
   // Use refs to prevent unnecessary re-renders during frequent polling
-  const defaultInd = Object.keys(INDICATOR_CONFIG)[0];
-  const defaultSt = STATE_CONFIG[defaultInd]?.[0];
-  const [presentationSequence, setPresentationSequenceInternal] = useState([
-    { indicator: defaultInd, state: defaultSt }
-  ]);
+  // Start with empty sequence - user must add slides manually
+  const [presentationSequence, setPresentationSequenceInternal] = useState([]);
   
   // Wrapper to sync sequence with backend when changed
   const setPresentationSequence = useCallback((newSequence) => {
@@ -112,19 +123,14 @@ export const DataProvider = ({ children }) => {
     if (isPresentationModeRef.current) {
       setTimeout(() => {
         api.post("/api/actions/set_presentation_state/", {
+          table: currentTable,
           sequence: newSequence
         }).then(() => {
-          console.log(`✓ Synced sequence to backend: ${newSequence.length} slides`);
+          console.log(`✓ Synced sequence to backend for table '${currentTable}': ${newSequence.length} slides`);
         }).catch(err => console.error("Error syncing sequence:", err));
       }, 0);
     }
-    // Sync with backend if in presentation mode
-    if (isPresentationModeRef.current) {
-      api.post("/api/actions/set_presentation_state/", { 
-        sequence: newSequence 
-      }).catch(err => console.error("Error syncing sequence:", err));
-    }
-  }, []);
+  }, [currentTable]);
 
   const [sequenceIndex, setSequenceIndexInternal] = useState(0);
   const [globalDuration, setGlobalDurationInternal] = useState(10);
@@ -138,15 +144,16 @@ export const DataProvider = ({ children }) => {
         // Use setTimeout to ensure state update happens first, then sync
         setTimeout(() => {
           api.post("/api/actions/set_presentation_state/", { 
+            table: currentTable,
             sequence_index: newIndex 
           }).then(() => {
-            console.log(`✓ Synced sequence index to backend: ${newIndex}`);
+            console.log(`✓ Synced sequence index to backend for table '${currentTable}': ${newIndex}`);
           }).catch(err => console.error("Error syncing index:", err));
         }, 0);
       }
       return newIndex;
     });
-  }, []);
+  }, [currentTable]);
   
   // Wrapper to sync duration with backend
   const setGlobalDuration = useCallback((newDuration) => {
@@ -156,13 +163,14 @@ export const DataProvider = ({ children }) => {
     if (isPresentationModeRef.current) {
       setTimeout(() => {
         api.post("/api/actions/set_presentation_state/", { 
+          table: currentTable,
           duration: newDuration 
         }).then(() => {
-          console.log(`✓ Synced duration to backend: ${newDuration}s`);
+          console.log(`✓ Synced duration to backend for table '${currentTable}': ${newDuration}s`);
         }).catch(err => console.error("Error syncing duration:", err));
       }, 0);
     }
-  }, []);
+  }, [currentTable]);
 
   const presentationTimerRef = useRef(null);
   const indicatorRef = useRef(currentIndicator);
@@ -175,15 +183,19 @@ export const DataProvider = ({ children }) => {
   const isPlayingRef = useRef(isPlaying);
   const presentationSequenceRef = useRef(presentationSequence);
   const globalDurationRef = useRef(globalDuration);
+  const currentTableRef = useRef(currentTable);
 
-  const [prevIndicator, setPrevIndicator] = useState(null);
-  const [prevVisualizationMode, setPrevVisualizationMode] = useState(null);
+  
+  // Refs for functions to avoid circular dependencies
+  const changeIndicatorRef = useRef(null);
+  const handleVisualizationModeChangeRef = useRef(null);
   
   // WebSocket connection ref
   const wsRef = useRef(null);
   const wsReconnectTimeoutRef = useRef(null);
   const wsConnectedRef = useRef(false); // Track WebSocket connection state
   const lastWsUpdateRef = useRef(0); // Track last WebSocket update timestamp
+  
 
   // Update refs when state changes
   useEffect(() => {
@@ -192,7 +204,8 @@ export const DataProvider = ({ children }) => {
     isPlayingRef.current = isPlaying;
     presentationSequenceRef.current = presentationSequence;
     globalDurationRef.current = globalDuration;
-  }, [currentIndicator]);
+    currentTableRef.current = currentTable;
+  }, [currentIndicator, currentTable, isPresentationMode, isPlaying, presentationSequence, globalDuration]);
 
   useEffect(() => {
     visualizationModeRef.current = visualizationMode;
@@ -213,6 +226,7 @@ export const DataProvider = ({ children }) => {
   useEffect(() => {
     globalDurationRef.current = globalDuration;
   }, [globalDuration]);
+
 
   // WebSocket connection for real-time sync
   useEffect(() => {
@@ -243,7 +257,14 @@ export const DataProvider = ({ children }) => {
                 return;
               }
 
-              console.log('📡 WS: presentation update');
+              // Filter by table - only process updates for the current table
+              const messageTable = data.table || globals.DEFAULT_TABLE_NAME;
+              if (messageTable !== currentTableRef.current) {
+                // This update is for a different table, ignore it
+                return;
+              }
+
+              console.log(`📡 WS: presentation update for table '${messageTable}'`);
 
               // Update presentation state from WebSocket (use internal setters to avoid loops)
               if (data.is_playing !== undefined) {
@@ -272,8 +293,63 @@ export const DataProvider = ({ children }) => {
 
             if (message.type === 'indicator_update' && message.data) {
               const data = message.data;
-              console.log('📡 WS: indicator update');
-
+              
+              // Filter by table - only process updates for the current table
+              const messageTable = data.table;
+              if (messageTable && messageTable !== currentTableRef.current) {
+                // This update is for a different table, ignore it
+                console.log(`📡 WS: indicator update ignored (for table '${messageTable}', current is '${currentTableRef.current}')`);
+                return;
+              }
+              
+              console.log(`📡 WS: indicator update (table: ${messageTable || 'default'})`);
+              
+              // For table-specific updates, fetch state from API instead of using broadcasted values
+              // This ensures we get the correct table-specific state
+              if (messageTable) {
+                // Fetch table-specific state from API
+                api.get(`/api/actions/get_global_variables/?table=${messageTable}`)
+                  .then(response => {
+                    if (response.data) {
+                      if (response.data.indicator_state) {
+                        const state = { ...response.data.indicator_state };
+                        if (state.scenario === "current") {
+                          state.scenario = "present";
+                        }
+                        globals.INDICATOR_STATE = state;
+                        window.dispatchEvent(new CustomEvent("indicatorStateChanged"));
+                        if (indicatorRef.current === 'climate') {
+                          window.dispatchEvent(new CustomEvent("climateStateChanged"));
+                        }
+                      }
+                      
+                      if (response.data.indicator_id !== undefined) {
+                        const newIndicator = ID_TO_INDICATOR[response.data.indicator_id];
+                        if (indicatorChangeInProgressRef.current) {
+                          if (newIndicator !== indicatorChangeInProgressRef.current) {
+                            return;
+                          }
+                        }
+                        if (newIndicator && newIndicator !== indicatorRef.current) {
+                          setCurrentIndicator(newIndicator);
+                        }
+                      }
+                      
+                      if (response.data.visualization_mode) {
+                        const newMode = response.data.visualization_mode === "map" ? "deck" : "image";
+                        if (newMode !== visualizationModeRef.current) {
+                          setVisualizationMode(newMode);
+                        }
+                      }
+                    }
+                  })
+                  .catch(err => {
+                    console.error("Error fetching table-specific state:", err);
+                  });
+                return; // Don't process broadcasted values
+              }
+              
+              // Legacy: process broadcasted values if no table specified (backward compatibility)
               if (data.indicator_id !== undefined) {
                 const newIndicator = ID_TO_INDICATOR[data.indicator_id];
 
@@ -429,7 +505,8 @@ export const DataProvider = ({ children }) => {
     }
 
     try {
-      const response = await api.get("/api/actions/get_global_variables/");
+      // Fetch table-specific state
+      const response = await api.get(`/api/actions/get_global_variables/?table=${currentTableRef.current}`);
       if (!response.data) return;
 
       // Update globals state
@@ -514,6 +591,87 @@ export const DataProvider = ({ children }) => {
     }
   }, []);
 
+  // Fetch available tables on mount and detect table from URL
+  useEffect(() => {
+    const fetchTables = async () => {
+      try {
+        const response = await api.get("/api/tables/?is_active=true");
+        if (response.data && Array.isArray(response.data)) {
+          setAvailableTables(response.data);
+          
+          // Get table from URL parameter
+          const urlParams = new URLSearchParams(window.location.search);
+          const urlTable = urlParams.get('table');
+          
+          // If table is in URL and available, use it
+          if (urlTable && response.data.some(t => t.name === urlTable)) {
+            if (urlTable === 'otef') {
+              // Redirect to OTEF interactive page
+              window.location.href = `/otef-interactive/?table=otef`;
+              return;
+            }
+            setCurrentTable(urlTable);
+          } else {
+            // If current table is not in available tables, switch to default
+            const tableExists = response.data.some(t => t.name === currentTable);
+            if (!tableExists && response.data.length > 0) {
+              setCurrentTable(DEFAULT_TABLE);
+            }
+          }
+        }
+      } catch (err) {
+        console.error("Error fetching tables:", err);
+      }
+    };
+    fetchTables();
+  }, []);
+
+  // Function to change table
+  const changeTable = useCallback(async (tableName) => {
+    if (tableName !== currentTable) {
+      // If switching to OTEF, redirect to OTEF interactive page
+      if (tableName === 'otef') {
+        window.location.href = `/otef-interactive/?table=otef`;
+        return;
+      }
+      
+      // If switching from OTEF to another table, update URL and continue
+      const url = new URL(window.location.href);
+      url.searchParams.set('table', tableName);
+      window.history.replaceState({}, '', url);
+      
+      setCurrentTable(tableName);
+      // Clear dashboard data to force refresh with new table
+      setDashboardData(null);
+      
+      // Pause presentation for the new table when dashboard is actively using it
+      try {
+        await api.post("/api/actions/set_presentation_state/", {
+          table: tableName,
+          is_playing: false,
+        });
+        console.log(`⏸️ Paused presentation for table '${tableName}' (dashboard is using it)`);
+      } catch (err) {
+        console.error("Error pausing presentation for table:", err);
+      }
+      
+      // Refresh current indicator with new table
+      if (currentIndicator) {
+        const indicatorId = INDICATOR_CONFIG[currentIndicator]?.id;
+        if (indicatorId) {
+          try {
+            await api.post("/api/actions/set_current_indicator/", {
+              indicator_id: indicatorId,
+              table: tableName,
+            });
+          } catch (err) {
+            console.error("Error updating indicator with new table:", err);
+          }
+        }
+      }
+    }
+  }, [currentTable, currentIndicator]);
+
   // Initialize data and polling
   useEffect(() => {
     let isMounted = true;
@@ -556,9 +714,12 @@ export const DataProvider = ({ children }) => {
   const pausePresentationMode = useCallback(async () => {
     // Always try to pause via backend, even if local state thinks we're not playing
     // This ensures cross-tab sync works
-    console.log("📌 Manual override: pausing presentation mode via backend");
+    console.log(`📌 Manual override: pausing presentation mode via backend for table '${currentTable}'`);
     try {
-      const response = await api.post("/api/actions/set_presentation_state/", { is_playing: false });
+      const response = await api.post("/api/actions/set_presentation_state/", { 
+        table: currentTable,
+        is_playing: false 
+      });
       if (response.data?.status === "ok") {
         setIsPlaying(false);
       }
@@ -567,7 +728,7 @@ export const DataProvider = ({ children }) => {
       // Still set local state to false to be safe
       setIsPlaying(false);
     }
-  }, []);
+  }, [currentTable]);
 
   // Resume presentation mode via backend API
   const resumePresentationMode = useCallback(async () => {
@@ -577,16 +738,78 @@ export const DataProvider = ({ children }) => {
       return;
     }
     
-    console.log("▶️ Resuming presentation mode via backend");
+    console.log(`▶️ Resuming presentation mode via backend for table '${currentTable}'`);
     try {
-      const response = await api.post("/api/actions/set_presentation_state/", { is_playing: true });
+      const response = await api.post("/api/actions/set_presentation_state/", { 
+        table: currentTable,
+        is_playing: true 
+      });
       if (response.data?.status === "ok") {
         setIsPlaying(true);
       }
     } catch (err) {
       console.error("Error resuming presentation:", err);
     }
-  }, []);
+  }, [currentTable]);
+
+  // Enter pause mode
+  const enterPauseMode = useCallback(async () => {
+    console.log("⏸️ Entering pause mode");
+    
+    // Save current state before pausing
+    setPausedIndicatorState({
+      indicator: currentIndicator,
+      indicatorState: { ...globals.INDICATOR_STATE },
+      visualizationMode: visualizationModeRef.current
+    });
+    
+  }, [currentIndicator]);
+
+  // Exit pause mode and resume dashboard control
+  const exitPauseMode = useCallback(async () => {
+    console.log("▶️ Exiting pause mode, resuming dashboard control");
+    
+    
+    // Restore previous state if available
+    if (pausedIndicatorState) {
+      const { indicator, indicatorState, visualizationMode } = pausedIndicatorState;
+      
+      // Restore indicator if it changed
+      if (indicator !== indicatorRef.current) {
+        changeIndicatorRef.current?.(indicator);
+      }
+      
+      // Restore visualization mode if it changed
+      if (visualizationMode && visualizationMode !== visualizationModeRef.current) {
+        handleVisualizationModeChangeRef.current?.(null, visualizationMode);
+      }
+      
+      // Restore indicator state
+      if (indicatorState) {
+        globals.INDICATOR_STATE = indicatorState;
+        window.dispatchEvent(new CustomEvent("indicatorStateChanged"));
+        if (indicator === 'climate') {
+          window.dispatchEvent(new CustomEvent("climateStateChanged"));
+        }
+      }
+      
+      setPausedIndicatorState(null);
+    }
+    
+    // Resume presentation mode if it was active
+    if (isPresentationModeRef.current) {
+      api.post("/api/actions/set_presentation_state/", { 
+        table: currentTable,
+        is_playing: true 
+      })
+        .then(response => {
+          if (response.data?.status === "ok") {
+            setIsPlaying(true);
+          }
+        })
+        .catch(err => console.error("Error resuming presentation:", err));
+    }
+  }, [pausedIndicatorState]);
 
   // Toggle play/pause via backend API
   const togglePlayPause = useCallback(async () => {
@@ -598,16 +821,19 @@ export const DataProvider = ({ children }) => {
     
     const newState = !isPlayingRef.current;
     try {
-      const response = await api.post("/api/actions/set_presentation_state/", { is_playing: newState });
+      const response = await api.post("/api/actions/set_presentation_state/", { 
+        table: currentTable,
+        is_playing: newState 
+      });
       if (response.data?.status === "ok") {
         setIsPlaying(newState);
-        console.log(`✓ Presentation ${newState ? 'resumed' : 'paused'}`);
+        console.log(`✓ Presentation ${newState ? 'resumed' : 'paused'} for table '${currentTable}'`);
       }
     } catch (err) {
       console.error("Error toggling presentation:", err);
       // Attempt to sync state from backend on error
       try {
-        const syncResponse = await api.get("/api/actions/get_presentation_state/");
+        const syncResponse = await api.get(`/api/actions/get_presentation_state/?table=${currentTable}`);
         if (syncResponse.data?.is_playing !== undefined) {
           setIsPlaying(syncResponse.data.is_playing);
         }
@@ -615,7 +841,7 @@ export const DataProvider = ({ children }) => {
         console.error("Error syncing presentation state:", syncErr);
       }
     }
-  }, []);
+  }, [currentTable]);
 
   // Function to change state (climate scenario or mobility state)
   // For climate, type can be 'utci' or 'plan'
@@ -773,6 +999,7 @@ export const DataProvider = ({ children }) => {
             // First set the indicator
             await api.post("/api/actions/set_current_indicator/", {
               indicator_id: indicatorId,
+              table: currentTable,
             });
             console.log(`Updated indicator to ${newIndicator} (ID: ${indicatorId})`);
 
@@ -831,6 +1058,15 @@ export const DataProvider = ({ children }) => {
     },
     [currentIndicator, fetchDashboardData]
   );
+
+  // Update refs to avoid circular dependencies
+  useEffect(() => {
+    changeIndicatorRef.current = changeIndicator;
+  }, [changeIndicator]);
+
+  useEffect(() => {
+    handleVisualizationModeChangeRef.current = handleVisualizationModeChange;
+  }, [handleVisualizationModeChange]);
 
     // presentation timer logic
     useEffect(() => {
@@ -891,78 +1127,8 @@ export const DataProvider = ({ children }) => {
         presentationSequence, 
         globalDuration, 
         changeIndicator, 
-        changeState 
+        changeState
     ]);
-  
-    const togglePresentationMode = useCallback(async (isEntering, autoPlay = false) => {
-        if (isEntering) {
-            console.log("✓ Starting Presentation Mode");
-            // Save current state
-            setPrevIndicator(indicatorRef.current);
-            setPrevVisualizationMode(visualizationModeRef.current);
-
-            // Force 'image' mode for presentation
-            if (visualizationModeRef.current !== 'image') {
-                 handleVisualizationModeChange(null, 'image');
-            }
-
-            // First, try to fetch existing presentation state from backend
-            // This ensures we sync with any existing remote controller session
-            try {
-                const existingState = await api.get("/api/actions/get_presentation_state/");
-                if (existingState.data && existingState.data.sequence && existingState.data.sequence.length > 0) {
-                    // Backend has existing state - sync with it
-                    console.log("📡 Syncing with existing presentation state from backend");
-                    setPresentationSequence(existingState.data.sequence);
-                    setSequenceIndex(existingState.data.sequence_index || 0);
-                    setGlobalDuration(existingState.data.duration || 10);
-                    setIsPresentationMode(true);
-                    // Don't auto-play if backend isn't playing (respect remote controller state)
-                    setIsPlaying(existingState.data.is_playing || autoPlay);
-                    return;
-                }
-            } catch (err) {
-                console.log("No existing presentation state, starting fresh");
-            }
-
-            // No existing state - start fresh
-            setIsPresentationMode(true);
-            // Update ref immediately so togglePlayPause works
-            isPresentationModeRef.current = true;
-            setSequenceIndex(0);
-            setIsPlaying(autoPlay);
-            isPlayingRef.current = autoPlay;
-
-            // Sync our state to backend for remote controller
-            try {
-                await api.post("/api/actions/set_presentation_state/", {
-                    is_playing: autoPlay,
-                    sequence: presentationSequenceRef.current || [],
-                    sequence_index: 0,
-                    duration: globalDurationRef.current
-                });
-                console.log("✓ Presentation state synced to backend");
-            } catch (err) {
-                console.error("Error syncing presentation state:", err);
-            }
-        } else {
-            console.log("✓ Stopping Presentation Mode");
-            setIsPlaying(false);
-            setIsPresentationMode(false);
-            // Sync with backend
-            try {
-                await api.post("/api/actions/set_presentation_state/", { is_playing: false });
-            } catch (err) {
-                console.error("Error syncing presentation state:", err);
-            }
-            
-            // Restore state
-            setTimeout(() => {
-                if (prevIndicator) changeIndicator(prevIndicator);
-                if (prevVisualizationMode) handleVisualizationModeChange(null, prevVisualizationMode);
-            }, 100);
-        }
-    }, [prevIndicator, prevVisualizationMode, changeIndicator, handleVisualizationModeChange]);
   
     const skipToNextStep = useCallback(() => {
       // Guard: only allow skipping when playing
@@ -1003,10 +1169,40 @@ export const DataProvider = ({ children }) => {
   }, [presentationSequence]);
   
 
+  // Exit presentation mode completely and return to mobility present
+  const exitPresentationAndResume = useCallback(async () => {
+    console.log("🔄 Exiting presentation mode and returning to default dashboard");
+    
+    // Stop presentation mode
+    setIsPlaying(false);
+    setIsPresentationMode(false);
+    
+    // Sync with backend
+    try {
+      await api.post("/api/actions/set_presentation_state/", { 
+        table: currentTable,
+        is_playing: false 
+      });
+    } catch (err) {
+      console.error("Error stopping presentation:", err);
+    }
+    
+    // Clear saved state
+    setPausedIndicatorState(null);
+    
+    // Return to mobility present
+    setTimeout(() => {
+      changeIndicatorRef.current?.("mobility", "Present");
+    }, 100);
+  }, []);
+
   // Value object with additional helpers for the new indicator system
   const contextValue = {
     dashboardData,
     currentIndicator,
+    currentTable,
+    availableTables,
+    changeTable,
     changeIndicator,
     changeState,
     pausePresentationMode,
@@ -1031,7 +1227,6 @@ export const DataProvider = ({ children }) => {
     visualizationMode,
     handleVisualizationModeChange,
     isPresentationMode, 
-    togglePresentationMode, 
     presentationSequence, 
     setPresentationSequence,
     isPlaying, 
@@ -1041,7 +1236,11 @@ export const DataProvider = ({ children }) => {
     globalDuration, 
     setGlobalDuration,
     skipToNextStep,
-    skipToPrevStep
+    skipToPrevStep,
+    enterPauseMode,
+    exitPauseMode,
+    exitPresentationAndResume,
+    APP_ROUTES_CONFIG
   };
 
   return (

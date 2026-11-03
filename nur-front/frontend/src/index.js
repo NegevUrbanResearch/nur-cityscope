@@ -19,21 +19,16 @@ reportWebVitals();
 */
 
 import React from "react";
-import { createRoot } from 'react-dom/client';
+import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 
 import App from "./App";
-import { DataProvider } from './DataContext';
+import { DataProvider } from "./DataContext";
 
-
-
-createRoot(document.getElementById("root")).render(  
+createRoot(document.getElementById("root")).render(
   <BrowserRouter basename="/dashboard">
     <DataProvider>
       <App />
     </DataProvider>
-  </BrowserRouter>);
-
-
-
-
+  </BrowserRouter>
+);

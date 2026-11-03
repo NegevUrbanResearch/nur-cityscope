@@ -1,0 +1,5570 @@
+{
+  "features": [
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.509269103169565,
+            31.45009134986166
+          ],
+          [
+            34.50993869740479,
+            31.449462828491175
+          ],
+          [
+            34.511025231170215,
+            31.45083701548167
+          ],
+          [
+            34.51130195684608,
+            31.450738437948328
+          ],
+          [
+            34.51183883557968,
+            31.45114106955238
+          ],
+          [
+            34.51371493077833,
+            31.451235820242026
+          ],
+          [
+            34.51557561653448,
+            31.451502141912343
+          ],
+          [
+            34.51606849085333,
+            31.451743704810408
+          ],
+          [
+            34.516276216792825,
+            31.451502801090747
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 1,
+      "properties": {
+        "Name": "עלומים - ציר חדירה ראשון",
+        "NoteType": 0,
+        "Notes": "חדירה ראשונה מהשער האחורי, השלכת רימונים למיגונית והתקדמות לכניסת היישוב",
+        "OBJECTID": 1,
+        "Shape_Length": 961.6192888699431,
+        "created_date": 1787051739000,
+        "created_user": "LINKERR",
+        "flow_direction": "forward",
+        "last_edited_date": 1787052003000,
+        "last_edited_user": "LINKERR",
+        "timeline": "local 07:00",
+        "timeline_minutes": 420
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.51112374209646,
+            31.45185913405402
+          ],
+          [
+            34.51154715791754,
+            31.45257559603061
+          ],
+          [
+            34.51185130769274,
+            31.452489835062185
+          ],
+          [
+            34.512119837187015,
+            31.452597675823284
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 2,
+      "properties": {
+        "Name": "עלומים - ציר חדירה שני",
+        "NoteType": 0,
+        "Notes": null,
+        "OBJECTID": 2,
+        "Shape_Length": 173.4007141146867,
+        "created_date": 1787052023000,
+        "created_user": "LINKERR",
+        "flow_direction": "forward",
+        "last_edited_date": 1787052121000,
+        "last_edited_user": "LINKERR",
+        "timeline": "local 09:20",
+        "timeline_minutes": 560
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.51131231375788,
+            31.452178216868425
+          ],
+          [
+            34.51160191884779,
+            31.45206966249419
+          ],
+          [
+            34.51198024906308,
+            31.452001308405947
+          ],
+          [
+            34.51236579873027,
+            31.45202697824979
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 3,
+      "properties": {
+        "Name": "עלומים - ציר חדירה שני",
+        "NoteType": 0,
+        "Notes": null,
+        "OBJECTID": 3,
+        "Shape_Length": 121.31296089968316,
+        "created_date": 1787052033000,
+        "created_user": "LINKERR",
+        "flow_direction": "forward",
+        "last_edited_date": 1787052122000,
+        "last_edited_user": "LINKERR",
+        "timeline": "local 09:20",
+        "timeline_minutes": 560
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.51112374209646,
+            31.45185913405402
+          ],
+          [
+            34.510875417799134,
+            31.451559790162765
+          ],
+          [
+            34.5107453695255,
+            31.45141409402452
+          ],
+          [
+            34.51106056182245,
+            31.451214366307582
+          ],
+          [
+            34.51128469415786,
+            31.451140689871426
+          ],
+          [
+            34.51110758539389,
+            31.45091491564325
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 4,
+      "properties": {
+        "Name": "עלומים - ציר חדירה שני",
+        "NoteType": 0,
+        "Notes": null,
+        "OBJECTID": 4,
+        "Shape_Length": 177.64590415342735,
+        "created_date": 1787052053000,
+        "created_user": "LINKERR",
+        "flow_direction": "reverse",
+        "last_edited_date": 1787052164000,
+        "last_edited_user": "LINKERR",
+        "timeline": "local 09:20",
+        "timeline_minutes": 560
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.51250414484714,
+            31.455190223240248
+          ],
+          [
+            34.512612036998036,
+            31.45476456413863
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 5,
+      "properties": {
+        "Name": "עלומים - חדירה מהשער האבוקדו",
+        "NoteType": 0,
+        "Notes": null,
+        "OBJECTID": 5,
+        "Shape_Length": 56.83036157988218,
+        "created_date": 1787054088000,
+        "created_user": "LINKERR",
+        "flow_direction": "forward",
+        "last_edited_date": 1787055746000,
+        "last_edited_user": "LINKERR",
+        "timeline": "local 12:20",
+        "timeline_minutes": 740
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.51188288573483,
+            31.44623763612751
+          ],
+          [
+            34.514484744215856,
+            31.448580025534294
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 6,
+      "properties": {
+        "Name": "עלומים - ציר חדירה מהכביש, לכיוון בית האריזה",
+        "NoteType": 0,
+        "Notes": null,
+        "OBJECTID": 6,
+        "Shape_Length": 421.08212540429355,
+        "created_date": 1787055468000,
+        "created_user": "LINKERR",
+        "flow_direction": "forward",
+        "last_edited_date": 1787055530000,
+        "last_edited_user": "LINKERR",
+        "timeline": "local 10:44",
+        "timeline_minutes": 644
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.497407415504846,
+            31.468156755731663
+          ],
+          [
+            34.499282661968145,
+            31.46990442716557
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 7,
+      "properties": {
+        "Name": "נחל עוז - ציר חדירה מהשער האחורי",
+        "NoteType": 0,
+        "Notes": null,
+        "OBJECTID": 7,
+        "Shape_Length": 309.2019915527894,
+        "created_date": 1787057286000,
+        "created_user": "LINKERR",
+        "flow_direction": "forward",
+        "last_edited_date": 1787057344000,
+        "last_edited_user": "LINKERR",
+        "timeline": "local 07:00",
+        "timeline_minutes": 420
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.50266621500485,
+            31.47766951267976
+          ],
+          [
+            34.502456913463575,
+            31.477321961177893
+          ],
+          [
+            34.50034260537459,
+            31.475199243809463
+          ],
+          [
+            34.5001049135991,
+            31.474738533094406
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 8,
+      "properties": {
+        "Name": "נחל עוז - ציר חדירה מהשער הקדמי מכיוון מוצב נחל עוז",
+        "NoteType": 0,
+        "Notes": null,
+        "OBJECTID": 8,
+        "Shape_Length": 480.23840331994296,
+        "created_date": 1787057385000,
+        "created_user": "LINKERR",
+        "flow_direction": "forward",
+        "last_edited_date": 1787057417000,
+        "last_edited_user": "LINKERR",
+        "timeline": "local 09:30",
+        "timeline_minutes": 570
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.524205962356106,
+            31.487411306452035
+          ],
+          [
+            34.52896597541441,
+            31.48413100841623
+          ],
+          [
+            34.530259723946266,
+            31.484285461045825
+          ],
+          [
+            34.531021881619665,
+            31.484599162169477
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 9,
+      "properties": {
+        "Name": "כפר עזה - חדירה ראשונה באמצעות רחפנים",
+        "NoteType": 0,
+        "Notes": null,
+        "OBJECTID": 9,
+        "Shape_Length": 920.9070105070058,
+        "created_date": 1787062074000,
+        "created_user": "LINKERR",
+        "flow_direction": "forward",
+        "last_edited_date": 1787063643000,
+        "last_edited_user": "LINKERR",
+        "timeline": "local 06:40",
+        "timeline_minutes": 400
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.52499016469732,
+            31.485708097043585
+          ],
+          [
+            34.528157668907035,
+            31.48332279448656
+          ],
+          [
+            34.5287400461357,
+            31.48295853787563
+          ],
+          [
+            34.5289919005452,
+            31.48270270986881
+          ],
+          [
+            34.529188440384615,
+            31.482367303849223
+          ],
+          [
+            34.52966613874735,
+            31.48190812068153
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 10,
+      "properties": {
+        "Name": "כפר עזה - חדירה ממערב, לכיוון שכונת ההרחבה",
+        "NoteType": 0,
+        "Notes": null,
+        "OBJECTID": 10,
+        "Shape_Length": 723.4784035675218,
+        "created_date": 1787062210000,
+        "created_user": "LINKERR",
+        "flow_direction": "forward",
+        "last_edited_date": 1787063313000,
+        "last_edited_user": "LINKERR",
+        "timeline": "local 06:50",
+        "timeline_minutes": 410
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.530731778198046,
+            31.487279471986966
+          ],
+          [
+            34.531009367439516,
+            31.486401602362726
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 11,
+      "properties": {
+        "Name": "כפר עזה - חדירה לשכונת \"דור צעיר\"",
+        "NoteType": 0,
+        "Notes": null,
+        "OBJECTID": 11,
+        "Shape_Length": 118.6904199864252,
+        "created_date": 1787062581000,
+        "created_user": "LINKERR",
+        "flow_direction": "forward",
+        "last_edited_date": 1787066347000,
+        "last_edited_user": "LINKERR",
+        "timeline": "local 07:30",
+        "timeline_minutes": 450
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.53528179347833,
+            31.48731044159269
+          ],
+          [
+            34.535368013348716,
+            31.486823060602322
+          ],
+          [
+            34.535719969461766,
+            31.486540762102692
+          ],
+          [
+            34.53628431850357,
+            31.484442661225824
+          ],
+          [
+            34.536181323270334,
+            31.483957639158593
+          ],
+          [
+            34.534459638884606,
+            31.482650744388515
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 12,
+      "properties": {
+        "Name": "כפר עזה - חדירה משער סולרי לכיוון המזכירות",
+        "NoteType": 0,
+        "Notes": null,
+        "OBJECTID": 12,
+        "Shape_Length": 720.052245183258,
+        "created_date": 1787062999000,
+        "created_user": "LINKERR",
+        "flow_direction": "forward",
+        "last_edited_date": 1787063382000,
+        "last_edited_user": "LINKERR",
+        "timeline": "local 06:50",
+        "timeline_minutes": 410
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.53528179347833,
+            31.48731044159269
+          ],
+          [
+            34.5339169556047,
+            31.4874205719949
+          ],
+          [
+            34.53233009104536,
+            31.486816645790846
+          ],
+          [
+            34.53270673416186,
+            31.486155506124632
+          ],
+          [
+            34.532768733172404,
+            31.485122868134308
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 13,
+      "properties": {
+        "Name": "כפר עזה - חדירה משער סולרי לכיוון הנשקייה",
+        "NoteType": 0,
+        "Notes": null,
+        "OBJECTID": 13,
+        "Shape_Length": 576.9805469741306,
+        "created_date": 1787063055000,
+        "created_user": "LINKERR",
+        "flow_direction": "forward",
+        "last_edited_date": 1787063639000,
+        "last_edited_user": "LINKERR",
+        "timeline": "local 06:50",
+        "timeline_minutes": 410
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.50352503563123,
+            31.618817413360098
+          ],
+          [
+            34.5068470146941,
+            31.616971208515892
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 14,
+      "properties": {
+        "Name": "חוף זיקים - הסירות הרביעית והחמישית מגיעות לחוף עם מחבלים",
+        "NoteType": 0,
+        "Notes": null,
+        "OBJECTID": 14,
+        "Shape_Length": 441.5870214967873,
+        "created_date": 1787068591000,
+        "created_user": "LINKERR",
+        "flow_direction": "forward",
+        "last_edited_date": 1787070492000,
+        "last_edited_user": "LINKERR",
+        "timeline": "local 06:45",
+        "timeline_minutes": 405
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.50073801826365,
+            31.614536911131403
+          ],
+          [
+            34.50421465606631,
+            31.61265759568409
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 15,
+      "properties": {
+        "Name": "חוף זיקים - סירת המחבלים השישית מגיעה לחוף",
+        "NoteType": 0,
+        "Notes": null,
+        "OBJECTID": 15,
+        "Shape_Length": 458.40078262770663,
+        "created_date": 1787068634000,
+        "created_user": "LINKERR",
+        "flow_direction": "forward",
+        "last_edited_date": 1787070497000,
+        "last_edited_user": "LINKERR",
+        "timeline": "local 06:48",
+        "timeline_minutes": 408
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.50539956762067,
+            31.614521898945597
+          ],
+          [
+            34.50205779140146,
+            31.616333703525232
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 16,
+      "properties": {
+        "Name": "חוף זיקים - סירת גומי ראשונה חוצה את הגבול ומושמדת",
+        "NoteType": 0,
+        "Notes": null,
+        "OBJECTID": 16,
+        "Shape_Length": 440.9994819901161,
+        "created_date": 1787069049000,
+        "created_user": "LINKERR",
+        "flow_direction": "reverse",
+        "last_edited_date": 1787070501000,
+        "last_edited_user": "LINKERR",
+        "timeline": "local 06:36",
+        "timeline_minutes": 396
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.50683240503594,
+            31.62389725324035
+          ],
+          [
+            34.51029968735009,
+            31.621996152642577
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 17,
+      "properties": {
+        "Name": "חוף זיקים - הסירות הרביעית והחמישית מגיעות לחוף עם מחבלים",
+        "NoteType": 0,
+        "Notes": null,
+        "OBJECTID": 17,
+        "Shape_Length": 459.07068682675515,
+        "created_date": 1787069124000,
+        "created_user": "LINKERR",
+        "flow_direction": "forward",
+        "last_edited_date": 1787070506000,
+        "last_edited_user": "LINKERR",
+        "timeline": "local 06:45",
+        "timeline_minutes": 405
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.49176166820692,
+            31.60263390627147
+          ],
+          [
+            34.49499194615751,
+            31.600863126822247
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 18,
+      "properties": {
+        "Name": "חוף זיקים - הסירה השנייה חודרת. הכרזה נוספת על החדירה בתדר פלוגת החוף לא מגיעה ללוחמים. ",
+        "NoteType": 0,
+        "Notes": null,
+        "OBJECTID": 18,
+        "Shape_Length": 427.6362557382814,
+        "created_date": 1787069259000,
+        "created_user": "LINKERR",
+        "flow_direction": "forward",
+        "last_edited_date": 1787070516000,
+        "last_edited_user": "LINKERR",
+        "timeline": "local 06:36",
+        "timeline_minutes": 396
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.495204830384246,
+            31.60733628289135
+          ],
+          [
+            34.49878940009124,
+            31.605155588841324
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 19,
+      "properties": {
+        "Name": "חוף זיקים - סירת המחבלים השביעית מגיעה לחוף",
+        "NoteType": 0,
+        "Notes": null,
+        "OBJECTID": 19,
+        "Shape_Length": 490.37797665255977,
+        "created_date": 1787069411000,
+        "created_user": "LINKERR",
+        "flow_direction": "forward",
+        "last_edited_date": 1787070519000,
+        "last_edited_user": "LINKERR",
+        "timeline": "local 06:52",
+        "timeline_minutes": 412
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.50879491253878,
+            31.627529358495703
+          ],
+          [
+            34.51317257028717,
+            31.625238960880523
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 20,
+      "properties": {
+        "Name": "חוף זיקים - הסירה השלישית שעושה את דרכה לישראל מושמדת",
+        "NoteType": 0,
+        "Notes": null,
+        "OBJECTID": 20,
+        "Shape_Length": 571.9630196647646,
+        "created_date": 1787069567000,
+        "created_user": "LINKERR",
+        "flow_direction": "forward",
+        "last_edited_date": 1787070521000,
+        "last_edited_user": "LINKERR",
+        "timeline": "local 06:43",
+        "timeline_minutes": 403
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.49515799677315,
+            31.593249048342287
+          ],
+          [
+            34.50400673292064,
+            31.60239712845424
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 21,
+      "properties": {
+        "Name": "ב-7:14 דיווח עבודי על תשעה מחבלים שרצים מגדר המערכת לש\"ג",
+        "NoteType": 0,
+        "Notes": null,
+        "OBJECTID": 21,
+        "Shape_Length": 1549.124919629521,
+        "created_date": 1787124935000,
+        "created_user": "LINKERR",
+        "flow_direction": "forward",
+        "last_edited_date": 1787124978000,
+        "last_edited_user": "LINKERR",
+        "timeline": "local 07:14",
+        "timeline_minutes": 434
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.50082482214894,
+            31.60203088185757
+          ],
+          [
+            34.501761996034276,
+            31.602014614578447
+          ],
+          [
+            34.5031816129878,
+            31.601074927331574
+          ],
+          [
+            34.50504850834965,
+            31.600155128015082
+          ],
+          [
+            34.506259460833405,
+            31.599558499859995
+          ],
+          [
+            34.50816432926404,
+            31.599196037511888
+          ],
+          [
+            34.50961408679979,
+            31.598548928181174
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 22,
+      "properties": {
+        "Name": "התקדמות מחבלים מכיוון הים למוצב",
+        "NoteType": 0,
+        "Notes": null,
+        "OBJECTID": 22,
+        "Shape_Length": 1099.7926080715524,
+        "created_date": 1787128365000,
+        "created_user": "LINKERR",
+        "flow_direction": "forward",
+        "last_edited_date": 1787128757000,
+        "last_edited_user": "LINKERR",
+        "timeline": "local 06:50",
+        "timeline_minutes": 410
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.50151527320435,
+            31.589481913691586
+          ],
+          [
+            34.503343171097306,
+            31.591993046275277
+          ],
+          [
+            34.5064891239403,
+            31.593606472902938
+          ],
+          [
+            34.508354767317286,
+            31.5958288812793
+          ],
+          [
+            34.50908430849545,
+            31.5979028406265
+          ],
+          [
+            34.509464890884786,
+            31.598234389515287
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 23,
+      "properties": {
+        "Name": "התקדמות מחבלים מכיוון הגבול למוצב",
+        "NoteType": 0,
+        "Notes": null,
+        "OBJECTID": 23,
+        "Shape_Length": 1495.5398457218062,
+        "created_date": 1787128433000,
+        "created_user": "LINKERR",
+        "flow_direction": "forward",
+        "last_edited_date": 1787128762000,
+        "last_edited_user": "LINKERR",
+        "timeline": "local 06:50",
+        "timeline_minutes": 410
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.505527002897246,
+            31.612511667709082
+          ],
+          [
+            34.507745418115675,
+            31.610844731595662
+          ],
+          [
+            34.50984993606475,
+            31.608097855989094
+          ],
+          [
+            34.51047445069316,
+            31.607282706459852
+          ],
+          [
+            34.51033660680849,
+            31.606483849315175
+          ],
+          [
+            34.51223638331534,
+            31.60639462972971
+          ],
+          [
+            34.513450504456465,
+            31.6067097341033
+          ],
+          [
+            34.514693512960214,
+            31.607740323746995
+          ],
+          [
+            34.51532723754762,
+            31.60856207752379
+          ],
+          [
+            34.51662921925396,
+            31.61010736303427
+          ],
+          [
+            34.51893396612425,
+            31.61184259915696
+          ],
+          [
+            34.52005775617228,
+            31.61264344781361
+          ],
+          [
+            34.52125252011104,
+            31.613008269347645
+          ],
+          [
+            34.522286585427,
+            31.61317540784917
+          ],
+          [
+            34.52547876137406,
+            31.612983862796735
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 24,
+      "properties": {
+        "Name": "ניסיון חדירה לקיבוץ זיקים",
+        "NoteType": 0,
+        "Notes": null,
+        "OBJECTID": 24,
+        "Shape_Length": 3034.400791277004,
+        "created_date": 1787129764000,
+        "created_user": "LINKERR",
+        "flow_direction": "forward",
+        "last_edited_date": 1787131385000,
+        "last_edited_user": "LINKERR",
+        "timeline": "local 06:57",
+        "timeline_minutes": 417
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.50857286625842,
+            31.616078375324413
+          ],
+          [
+            34.51823646426174,
+            31.612015631255804
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 25,
+      "properties": {
+        "Name": "ניסיון חדירה רגלי לקיבוץ זיקים ",
+        "NoteType": 0,
+        "Notes": null,
+        "OBJECTID": 25,
+        "Shape_Length": 1199.6965445656294,
+        "created_date": 1787129832000,
+        "created_user": "LINKERR",
+        "flow_direction": "forward",
+        "last_edited_date": 1787131415000,
+        "last_edited_user": "LINKERR",
+        "timeline": "local 06:57",
+        "timeline_minutes": 417
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.53334636715381,
+            31.56558274402228
+          ],
+          [
+            34.53632202660929,
+            31.56862775066165
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 26,
+      "properties": {
+        "Name": "נתיב העשרה - חדירה עם מצנח רחיפה",
+        "NoteType": 0,
+        "Notes": null,
+        "OBJECTID": 26,
+        "Shape_Length": 517.6876974416458,
+        "created_date": 1787132370000,
+        "created_user": "LINKERR",
+        "flow_direction": "forward",
+        "last_edited_date": 1787132461000,
+        "last_edited_user": "LINKERR",
+        "timeline": "local 06:34",
+        "timeline_minutes": 394
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.53162980358854,
+            31.566791059741636
+          ],
+          [
+            34.53819624224284,
+            31.573450433141343
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 27,
+      "properties": {
+        "Name": "נתיב העשרה - חדירה עם מצנח רחיפה",
+        "NoteType": 0,
+        "Notes": null,
+        "OBJECTID": 27,
+        "Shape_Length": 1136.3891251111854,
+        "created_date": 1787132409000,
+        "created_user": "LINKERR",
+        "flow_direction": "forward",
+        "last_edited_date": 1787132462000,
+        "last_edited_user": "LINKERR",
+        "timeline": "local 06:34",
+        "timeline_minutes": 394
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.53402827889452,
+            31.565098974258937
+          ],
+          [
+            34.54243421443485,
+            31.57370059687393
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 28,
+      "properties": {
+        "Name": "נתיב העשרה - חדירה עם מצנח רחיפה",
+        "NoteType": 0,
+        "Notes": null,
+        "OBJECTID": 28,
+        "Shape_Length": 1462.4151317922208,
+        "created_date": 1787132429000,
+        "created_user": "LINKERR",
+        "flow_direction": "forward",
+        "last_edited_date": 1787132564000,
+        "last_edited_user": "LINKERR",
+        "timeline": "local 06:34",
+        "timeline_minutes": 394
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.543281142932976,
+            31.558571317275693
+          ],
+          [
+            34.5450914569714,
+            31.56022804948445
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 29,
+      "properties": {
+        "Name": "חדירה מחבלים דרך מעבר ארז",
+        "NoteType": 0,
+        "Notes": null,
+        "OBJECTID": 29,
+        "Shape_Length": 295.73150250221784,
+        "created_date": 1787137043000,
+        "created_user": "LINKERR",
+        "flow_direction": "forward",
+        "last_edited_date": 1787137068000,
+        "last_edited_user": "LINKERR",
+        "timeline": "local 06:32",
+        "timeline_minutes": 392
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.55013149357537,
+            31.55345109307955
+          ],
+          [
+            34.55070788000007,
+            31.554014325000086
+          ],
+          [
+            34.55023734852966,
+            31.554551878163135
+          ],
+          [
+            34.55159702186897,
+            31.55584312093031
+          ],
+          [
+            34.55211533768761,
+            31.556834065959077
+          ],
+          [
+            34.55254859457415,
+            31.55701807632668
+          ],
+          [
+            34.553339708192155,
+            31.557729653044106
+          ],
+          [
+            34.55427277306084,
+            31.559221063435015
+          ],
+          [
+            34.55447489405927,
+            31.560181959622863
+          ],
+          [
+            34.554506415218434,
+            31.56099026913914
+          ],
+          [
+            34.5548892768083,
+            31.561792953557806
+          ],
+          [
+            34.55512475047058,
+            31.56308170567434
+          ],
+          [
+            34.55546897695161,
+            31.564354785318784
+          ],
+          [
+            34.555673083686685,
+            31.564367663867877
+          ],
+          [
+            34.55908166809041,
+            31.562548074799338
+          ],
+          [
+            34.55982117183503,
+            31.562488378916157
+          ],
+          [
+            34.561967560343284,
+            31.562860960109646
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 30,
+      "properties": {
+        "Name": "טנדרים עמוסי מחבלים בדרכם ממעבר ארז",
+        "NoteType": 0,
+        "Notes": null,
+        "OBJECTID": 30,
+        "Shape_Length": 2440.8757955436345,
+        "created_date": 1787147670000,
+        "created_user": "LINKERR",
+        "flow_direction": "forward",
+        "last_edited_date": 1787147700000,
+        "last_edited_user": "LINKERR",
+        "timeline": "local 06:50",
+        "timeline_minutes": 410
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.56577275329891,
+            31.565580019445452
+          ],
+          [
+            34.566481921496155,
+            31.56358138362106
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 31,
+      "properties": {
+        "Name": "ניסיון חדירה מנחל שקמה, מכיוון השער האחורי",
+        "NoteType": 0,
+        "Notes": null,
+        "OBJECTID": 31,
+        "Shape_Length": 272.7922850950803,
+        "created_date": 1787148461000,
+        "created_user": "LINKERR",
+        "flow_direction": "forward",
+        "last_edited_date": 1787148519000,
+        "last_edited_user": "LINKERR",
+        "timeline": "local 08:20",
+        "timeline_minutes": 500
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.54663953057623,
+            31.562287906469972
+          ],
+          [
+            34.55377240076993,
+            31.576484485074012
+          ],
+          [
+            34.55706841471276,
+            31.581193045547483
+          ],
+          [
+            34.56259624466533,
+            31.587611105350824
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 32,
+      "properties": {
+        "Name": "נתיב חדירת מחבלים מכיוון מעבר ארז עד לבלימתם בצומת יד מרדכי ע\"י יס\"ם וכיתת הכוננות של יד מדרכי",
+        "NoteType": 0,
+        "Notes": null,
+        "OBJECTID": 32,
+        "Shape_Length": 3774.2539273352886,
+        "created_date": 1787148876000,
+        "created_user": "LINKERR",
+        "flow_direction": "forward",
+        "last_edited_date": 1787148914000,
+        "last_edited_user": "LINKERR",
+        "timeline": "local 07:22",
+        "timeline_minutes": 442
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.586850030792434,
+            31.507636363536474
+          ],
+          [
+            34.59359840861149,
+            31.510431500292853
+          ],
+          [
+            34.59450942712286,
+            31.51111874534166
+          ],
+          [
+            34.59536866734831,
+            31.511766925773095
+          ],
+          [
+            34.59662394064333,
+            31.5134681939905
+          ],
+          [
+            34.59734277258137,
+            31.51483101521205
+          ],
+          [
+            34.59844614149185,
+            31.516621807806942
+          ],
+          [
+            34.59951923201194,
+            31.51814064810763
+          ],
+          [
+            34.6033723785474,
+            31.522724012093978
+          ],
+          [
+            34.604702753584185,
+            31.523894643344157
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 33,
+      "properties": {
+        "Name": "טנדר לבן ובו כעשרה מחבלים נכנס לעיר מצומת שער הנגב לאזור התעשייה ספירים ומשם מתקדם לאזור התעשייה של שדרות - בנתיב שיכונה אחר כך \"ציר המוות\". בדרכם הם יורים וטובחים בכל הנקרה בדרכם",
+        "NoteType": 0,
+        "Notes": null,
+        "OBJECTID": 33,
+        "Shape_Length": 3000.748783274728,
+        "created_date": 1787152262000,
+        "created_user": "LINKERR",
+        "flow_direction": "forward",
+        "last_edited_date": 1787152334000,
+        "last_edited_user": "LINKERR",
+        "timeline": "local 06:45",
+        "timeline_minutes": 405
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.57861051563532,
+            31.535473332165616
+          ],
+          [
+            34.58051530670207,
+            31.535087581165236
+          ],
+          [
+            34.58338202195068,
+            31.534060146166254
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 34,
+      "properties": {
+        "Name": "11 דקות לאחר האזעקות בשדרות, חוליית מחבלים מגיעה ברכב אזרחי ומחנה אותו בצד כביש 34, סמוך לחלק הצפון-מערבי של העיר. שני מחבלים נשארים בקרבת הרכב כדי לבצע מארב על הכביש, וחמישה מחבלים נוספים צועדים ברגל לשכונת האחוזה, שכונה חדשה של בתי קרקע.",
+        "NoteType": 0,
+        "Notes": null,
+        "OBJECTID": 34,
+        "Shape_Length": 564.1306577144152,
+        "created_date": 1787153360000,
+        "created_user": "LINKERR",
+        "flow_direction": "forward",
+        "last_edited_date": 1787153382000,
+        "last_edited_user": "LINKERR",
+        "timeline": "local 06:40",
+        "timeline_minutes": 400
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.586184702183125,
+            31.516630540758218
+          ],
+          [
+            34.58700781217267,
+            31.516729068037858
+          ],
+          [
+            34.58970246482079,
+            31.517953125424356
+          ],
+          [
+            34.59257184400006,
+            31.51939201600001
+          ],
+          [
+            34.59277895710526,
+            31.519548920571268
+          ],
+          [
+            34.59323332035807,
+            31.52059882808377
+          ],
+          [
+            34.592705977475106,
+            31.520789869184263
+          ],
+          [
+            34.59214417534459,
+            31.521503054284675
+          ],
+          [
+            34.59178014209232,
+            31.522440778123443
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 35,
+      "properties": {
+        "Name": "עשרות מחבלים חודרים לעיר מכיוון הכניסה הדרומית. המחבלים, חמושים ומאומנים היטב, פוגעים במשפחת סוויסה בכיכר שבכניסה לעיר וממשיכים בנסיעה בשני טנדרים לכיוון תחנת המשטרה",
+        "NoteType": 0,
+        "Notes": null,
+        "OBJECTID": 35,
+        "Shape_Length": 1284.9442625667994,
+        "created_date": 1787153769000,
+        "created_user": "LINKERR",
+        "flow_direction": "forward",
+        "last_edited_date": 1787153787000,
+        "last_edited_user": "LINKERR",
+        "timeline": "local 06:45",
+        "timeline_minutes": 405
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.548178781702546,
+            31.514225308487585
+          ],
+          [
+            34.555605197551,
+            31.51195888243335
+          ],
+          [
+            34.55589261889519,
+            31.512648299233568
+          ],
+          [
+            34.55933657557413,
+            31.513910521412516
+          ],
+          [
+            34.56287709054538,
+            31.514514187220463
+          ],
+          [
+            34.56501218620732,
+            31.514987297091032
+          ],
+          [
+            34.56662145519074,
+            31.515630042740238
+          ],
+          [
+            34.566675099309315,
+            31.515941017282476
+          ],
+          [
+            34.567662151591314,
+            31.516425767612304
+          ],
+          [
+            34.56838098428519,
+            31.51654466922921
+          ],
+          [
+            34.568981799068375,
+            31.517102586993314
+          ],
+          [
+            34.568900299856715,
+            31.517919978110474
+          ],
+          [
+            34.569462801243446,
+            31.51806078338801
+          ],
+          [
+            34.570591125001684,
+            31.51765135465884
+          ],
+          [
+            34.57155671948603,
+            31.51778854632167
+          ],
+          [
+            34.57229700967952,
+            31.51767879255573
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 36,
+      "properties": {
+        "Name": "נתיב התקדמות המחבלים ממטווח ניר עם עד למדגרה",
+        "NoteType": 0,
+        "Notes": null,
+        "OBJECTID": 36,
+        "Shape_Length": 3086.035226311534,
+        "created_date": 1787161725000,
+        "created_user": "LINKERR",
+        "flow_direction": "forward",
+        "last_edited_date": 1787161792000,
+        "last_edited_user": "LINKERR",
+        "timeline": "local 07:07",
+        "timeline_minutes": 427
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.58952859124981,
+            31.5035962340921
+          ],
+          [
+            34.59302530013505,
+            31.505552028685162
+          ],
+          [
+            34.5938418967512,
+            31.50565457315172
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 37,
+      "properties": {
+        "Name": "המחבלים מנסים לפרוץ לתחנת הדלק ללא הצלחה, ואז מגיעים לש\"ג של גבים",
+        "NoteType": 0,
+        "Notes": null,
+        "OBJECTID": 37,
+        "Shape_Length": 557.4209924633986,
+        "created_date": 1787169995000,
+        "created_user": "LINKERR",
+        "flow_direction": "forward",
+        "last_edited_date": 1787170075000,
+        "last_edited_user": "LINKERR",
+        "timeline": "local 07:22",
+        "timeline_minutes": 442
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.589627769424744,
+            31.503531682580892
+          ],
+          [
+            34.590906265345154,
+            31.501627877924864
+          ],
+          [
+            34.59152309543345,
+            31.50011190421239
+          ],
+          [
+            34.591703202456586,
+            31.497734927696246
+          ],
+          [
+            34.59119746638099,
+            31.48223145580559
+          ],
+          [
+            34.591596104316935,
+            31.479210587560438
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 38,
+      "properties": {
+        "Name": "לאחר שלא הצליחו לפרוץ לתחנת דלק ולחדור לגבים, המחבלים ממשיכים לכיוון יכיני",
+        "NoteType": 0,
+        "Notes": null,
+        "OBJECTID": 38,
+        "Shape_Length": 3228.387497660275,
+        "created_date": 1787170142000,
+        "created_user": "LINKERR",
+        "flow_direction": "forward",
+        "last_edited_date": 1787170254000,
+        "last_edited_user": "LINKERR",
+        "timeline": "local 07:28",
+        "timeline_minutes": 448
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.591596104316935,
+            31.479210587560438
+          ],
+          [
+            34.59483078600008,
+            31.480301478000115
+          ],
+          [
+            34.596807046676986,
+            31.482235593075064
+          ],
+          [
+            34.59872917967393,
+            31.48328786990483
+          ],
+          [
+            34.598229005000064,
+            31.487074312000082
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 39,
+      "properties": {
+        "Name": "עם הפריצה ליכיני המחבלים מתפצלים, וטנדר אחד נוסע ישר לבית הרבש\"צ",
+        "NoteType": 0,
+        "Notes": null,
+        "OBJECTID": 39,
+        "Shape_Length": 1473.7498259476408,
+        "created_date": 1787170296000,
+        "created_user": "LINKERR",
+        "flow_direction": "forward",
+        "last_edited_date": 1787170492000,
+        "last_edited_user": "LINKERR",
+        "timeline": "local 07:39",
+        "timeline_minutes": 459
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.53541092239779,
+            31.506074588358874
+          ],
+          [
+            34.536828457948744,
+            31.503499790370604
+          ],
+          [
+            34.54518409498507,
+            31.50549446485852
+          ],
+          [
+            34.554012048931064,
+            31.50612389064873
+          ],
+          [
+            34.55706055308946,
+            31.506113976713433
+          ],
+          [
+            34.561118260150494,
+            31.505453060543342
+          ],
+          [
+            34.57438380152133,
+            31.50329234687319
+          ],
+          [
+            34.57786191075587,
+            31.503877504384384
+          ],
+          [
+            34.582895214382276,
+            31.50572422556462
+          ],
+          [
+            34.58492974300008,
+            31.507910619000093
+          ],
+          [
+            34.585947424396366,
+            31.508531738769666
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 40,
+      "properties": {
+        "Name": "כוח של כ-30 מחבלי נוח'בה החל בפשיטה לעבר קיבוץ מפלסים. במקביל, כ-50 מחבלים פשטו לעבר צומת שער הנגב ומרחב 'חץ שחור'.",
+        "NoteType": 0,
+        "Notes": null,
+        "OBJECTID": 40,
+        "Shape_Length": 6134.4507545891765,
+        "created_date": 1787172964000,
+        "created_user": "LINKERR",
+        "flow_direction": "forward",
+        "last_edited_date": 1787173210000,
+        "last_edited_user": "LINKERR",
+        "timeline": "local 06:30",
+        "timeline_minutes": 390
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.548178781702546,
+            31.514225308487585
+          ],
+          [
+            34.555605197551,
+            31.51195888243335
+          ],
+          [
+            34.55419626793991,
+            31.506452977385692
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 41,
+      "properties": {
+        "Name": "כוח של כ-30 מחבלי נוח'בה החל בפשיטה לעבר קיבוץ מפלסים. במקביל, כ-50 מחבלים פשטו לעבר צומת שער הנגב ומרחב 'חץ שחור'.",
+        "NoteType": 0,
+        "Notes": null,
+        "OBJECTID": 41,
+        "Shape_Length": 1613.902837752521,
+        "created_date": 1787174981000,
+        "created_user": "LINKERR",
+        "flow_direction": "forward",
+        "last_edited_date": 1787175151000,
+        "last_edited_user": "LINKERR",
+        "timeline": "local 06:30",
+        "timeline_minutes": 390
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.48930202443927,
+            31.482462351057606
+          ],
+          [
+            34.492281733255766,
+            31.480354237373778
+          ],
+          [
+            34.49942765437977,
+            31.47835888678172
+          ],
+          [
+            34.50092727636438,
+            31.47805564538464
+          ],
+          [
+            34.50173639049915,
+            31.47891073331794
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 42,
+      "properties": {
+        "Name": "כ40 מחבלים חודרים למוצב נחל עוז מדרום",
+        "NoteType": 0,
+        "Notes": null,
+        "OBJECTID": 42,
+        "Shape_Length": 1583.0059442594713,
+        "created_date": 1787180575000,
+        "created_user": "LINKERR",
+        "flow_direction": "forward",
+        "last_edited_date": 1787181115000,
+        "last_edited_user": "LINKERR",
+        "timeline": "local 06:30",
+        "timeline_minutes": 390
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.499165637142916,
+            31.483985270657705
+          ],
+          [
+            34.50353729657775,
+            31.479946344960993
+          ],
+          [
+            34.50291182756737,
+            31.479349251969467
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 43,
+      "properties": {
+        "Name": "כ25 מחבלים חודרים למוצב נחל עוז מצפון",
+        "NoteType": 0,
+        "Notes": null,
+        "OBJECTID": 43,
+        "Shape_Length": 821.9948255195237,
+        "created_date": 1787180739000,
+        "created_user": "LINKERR",
+        "flow_direction": "forward",
+        "last_edited_date": 1787181122000,
+        "last_edited_user": "LINKERR",
+        "timeline": "local 06:30",
+        "timeline_minutes": 390
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.451989922906,
+            31.446995734759764
+          ],
+          [
+            34.45219057936511,
+            31.446828323489516
+          ],
+          [
+            34.45239282755268,
+            31.44666266741516
+          ],
+          [
+            34.45259666746935,
+            31.446498766545457
+          ],
+          [
+            34.45280209911468,
+            31.44633662088994
+          ],
+          [
+            34.45300912248885,
+            31.44617623045762
+          ],
+          [
+            34.45321773759206,
+            31.446017595257377
+          ],
+          [
+            34.45342794442417,
+            31.445860715298192
+          ],
+          [
+            34.453639742984684,
+            31.445705590589277
+          ],
+          [
+            34.45385313327394,
+            31.445552221139106
+          ],
+          [
+            34.45406811529241,
+            31.445400606955943
+          ],
+          [
+            34.454284689039,
+            31.445250748049055
+          ],
+          [
+            34.45450285451608,
+            31.445102644425287
+          ],
+          [
+            34.45472261172217,
+            31.444956296094
+          ],
+          [
+            34.4549439606551,
+            31.44481170306481
+          ],
+          [
+            34.45516690131749,
+            31.44466886534411
+          ],
+          [
+            34.45539143370893,
+            31.44452778294019
+          ],
+          [
+            34.45576101254228,
+            31.444295122731337
+          ],
+          [
+            34.455937523804245,
+            31.44418695158442
+          ],
+          [
+            34.45611541502098,
+            31.44408380673303
+          ],
+          [
+            34.45619839219321,
+            31.44403841464336
+          ],
+          [
+            34.456278747314045,
+            31.443996391287843
+          ],
+          [
+            34.456372559774735,
+            31.443950791712272
+          ],
+          [
+            34.45647218969545,
+            31.44390680086899
+          ],
+          [
+            34.45657838356632,
+            31.443864086348384
+          ],
+          [
+            34.45669246955286,
+            31.443822112408004
+          ],
+          [
+            34.45682033084829,
+            31.443778880351868
+          ],
+          [
+            34.45696327740654,
+            31.443734108701218
+          ],
+          [
+            34.457116935794744,
+            31.443688791597168
+          ],
+          [
+            34.45755589118176,
+            31.443563157416893
+          ],
+          [
+            34.45769108150962,
+            31.443522085726496
+          ],
+          [
+            34.457810983397756,
+            31.443483309620035
+          ],
+          [
+            34.45794758782901,
+            31.443435382838988
+          ],
+          [
+            34.45807252448794,
+            31.443386944386283
+          ],
+          [
+            34.458188306589726,
+            31.443337016539537
+          ],
+          [
+            34.458296165724825,
+            31.443285061012062
+          ],
+          [
+            34.45854124679999,
+            31.44315961261038
+          ],
+          [
+            34.45871996019546,
+            31.44306616251491
+          ],
+          [
+            34.4588813433777,
+            31.4429790721932
+          ],
+          [
+            34.45902737545943,
+            31.44289712558393
+          ],
+          [
+            34.45916655613952,
+            31.442815365498443
+          ],
+          [
+            34.459295271777115,
+            31.442735703317204
+          ],
+          [
+            34.459414778066616,
+            31.44265736048992
+          ],
+          [
+            34.45952573415235,
+            31.442579902208887
+          ],
+          [
+            34.45963199394494,
+            31.44250037643319
+          ],
+          [
+            34.4597300027066,
+            31.442421157600336
+          ],
+          [
+            34.45982002928131,
+            31.442342027953234
+          ],
+          [
+            34.459902247401175,
+            31.442262834086716
+          ],
+          [
+            34.45997683329767,
+            31.442183400039593
+          ],
+          [
+            34.460043836539,
+            31.44210366605873
+          ],
+          [
+            34.46010333286855,
+            31.44202354178585
+          ],
+          [
+            34.460155374330746,
+            31.441942956810284
+          ],
+          [
+            34.46020236025197,
+            31.441858059786615
+          ],
+          [
+            34.46024479973736,
+            31.441768154932348
+          ],
+          [
+            34.4602826995033,
+            31.441673228119335
+          ],
+          [
+            34.460316068010044,
+            31.441573258242073
+          ],
+          [
+            34.46034491043081,
+            31.441468233686503
+          ],
+          [
+            34.46036924205588,
+            31.441358103201395
+          ],
+          [
+            34.46038907338301,
+            31.44124281987077
+          ],
+          [
+            34.46040441684896,
+            31.441122311933448
+          ],
+          [
+            34.46041523465485,
+            31.440997223483865
+          ],
+          [
+            34.46042163900347,
+            31.440866745053984
+          ],
+          [
+            34.46042363880713,
+            31.440730705193157
+          ],
+          [
+            34.460421238649616,
+            31.440588813051594
+          ],
+          [
+            34.46041446066529,
+            31.44044115291185
+          ],
+          [
+            34.460403272484285,
+            31.44028659910413
+          ],
+          [
+            34.46038761109627,
+            31.440124215705485
+          ],
+          [
+            34.46036725376934,
+            31.43995167318347
+          ],
+          [
+            34.46035099568799,
+            31.439839333286283
+          ],
+          [
+            34.46033050448912,
+            31.439723768999933
+          ],
+          [
+            34.460305740312165,
+            31.43960475335808
+          ],
+          [
+            34.4602766341506,
+            31.43948195345064
+          ],
+          [
+            34.46024317512943,
+            31.439355269137874
+          ],
+          [
+            34.46020513138826,
+            31.43922377653615
+          ],
+          [
+            34.46016227211625,
+            31.439086670165317
+          ],
+          [
+            34.460114118081684,
+            31.438942413265647
+          ],
+          [
+            34.46008942055666,
+            31.438874655104016
+          ],
+          [
+            34.460061644120145,
+            31.438806196044624
+          ],
+          [
+            34.46003072999468,
+            31.43873689071647
+          ],
+          [
+            34.45999659401406,
+            31.438666550082118
+          ],
+          [
+            34.459959184019986,
+            31.438595054803752
+          ],
+          [
+            34.459918302744555,
+            31.438522017263477
+          ],
+          [
+            34.4598737572058,
+            31.438447091327664
+          ],
+          [
+            34.45982523600183,
+            31.438369752395467
+          ],
+          [
+            34.45973825791239,
+            31.438239281567647
+          ],
+          [
+            34.45963628024893,
+            31.438095324268723
+          ],
+          [
+            34.4595355265097,
+            31.437958776710406
+          ],
+          [
+            34.45929209037997,
+            31.437634916236902
+          ],
+          [
+            34.459172945413684,
+            31.437471104047017
+          ],
+          [
+            34.459064957168884,
+            31.43731357268624
+          ],
+          [
+            34.459017644092086,
+            31.437240215787742
+          ],
+          [
+            34.45897407860089,
+            31.43716938340623
+          ],
+          [
+            34.45893268724383,
+            31.437098341874467
+          ],
+          [
+            34.45889470917126,
+            31.437029024940724
+          ],
+          [
+            34.45885996590608,
+            31.43696110634388
+          ],
+          [
+            34.458828338880835,
+            31.436894353514873
+          ],
+          [
+            34.45879970936984,
+            31.436828508778277
+          ],
+          [
+            34.4587740376531,
+            31.43676347281854
+          ],
+          [
+            34.45875126899049,
+            31.43669910669652
+          ],
+          [
+            34.45873136438782,
+            31.43663529980245
+          ],
+          [
+            34.45869807808838,
+            31.436511993914635
+          ],
+          [
+            34.45866889080426,
+            31.436385095060963
+          ],
+          [
+            34.458643777653286,
+            31.436254495554845
+          ],
+          [
+            34.458622712182155,
+            31.436120058290285
+          ],
+          [
+            34.45860567553926,
+            31.435981680731995
+          ],
+          [
+            34.45859263391004,
+            31.435839109894285
+          ],
+          [
+            34.45858356565608,
+            31.435692112335683
+          ],
+          [
+            34.458578450860706,
+            31.43554036856026
+          ],
+          [
+            34.458577265264154,
+            31.43538582785322
+          ],
+          [
+            34.458579901693504,
+            31.435225794637137
+          ],
+          [
+            34.45858636943895,
+            31.435059643923864
+          ],
+          [
+            34.45859670661626,
+            31.434886380520325
+          ],
+          [
+            34.45861085068065,
+            31.434706293929114
+          ],
+          [
+            34.458629050633036,
+            31.434515679986124
+          ],
+          [
+            34.45865158011093,
+            31.43431154054321
+          ],
+          [
+            34.45867939855196,
+            31.43408514598507
+          ],
+          [
+            34.45872054941052,
+            31.43377106955334
+          ],
+          [
+            34.45875358723182,
+            31.433546530347627
+          ],
+          [
+            34.45878844673931,
+            31.433343957989372
+          ],
+          [
+            34.45882594456417,
+            31.433160361240308
+          ],
+          [
+            34.45884687577428,
+            31.433070436490425
+          ],
+          [
+            34.458868914929745,
+            31.432983751786864
+          ],
+          [
+            34.45889214854502,
+            31.432899967574926
+          ],
+          [
+            34.45891664326846,
+            31.432818844465817
+          ],
+          [
+            34.45894247991658,
+            31.43274012231156
+          ],
+          [
+            34.45896969281444,
+            31.43266370375721
+          ],
+          [
+            34.45899833044032,
+            31.43258945287853
+          ],
+          [
+            34.459028433721244,
+            31.43251726381264
+          ],
+          [
+            34.45910034933346,
+            31.43235967423232
+          ],
+          [
+            34.459178708559385,
+            31.432203900532595
+          ],
+          [
+            34.45926303580546,
+            31.432050887373908
+          ],
+          [
+            34.459352860435544,
+            31.431901488071627
+          ],
+          [
+            34.45944764168059,
+            31.431756589529883
+          ],
+          [
+            34.459546978043015,
+            31.431616793704094
+          ],
+          [
+            34.459650415798464,
+            31.431482738497227
+          ],
+          [
+            34.45970354169245,
+            31.43141803483818
+          ],
+          [
+            34.459757537521625,
+            31.431354964275826
+          ],
+          [
+            34.45986098036389,
+            31.43123824817185
+          ],
+          [
+            34.459956635728304,
+            31.431133726513373
+          ],
+          [
+            34.460048182445206,
+            31.43103738420282
+          ],
+          [
+            34.46013685758375,
+            31.430947934318684
+          ],
+          [
+            34.460224267464845,
+            31.43086380319202
+          ],
+          [
+            34.46031025125616,
+            31.430785194796
+          ],
+          [
+            34.46039522244246,
+            31.430711731745195
+          ],
+          [
+            34.46047943840698,
+            31.43064319251796
+          ],
+          [
+            34.46056417186608,
+            31.430578623803182
+          ],
+          [
+            34.460648507136206,
+            31.430518806872083
+          ],
+          [
+            34.4607325774551,
+            31.430463647404707
+          ],
+          [
+            34.46081647974996,
+            31.430413082049363
+          ],
+          [
+            34.4609003240624,
+            31.43036704655867
+          ],
+          [
+            34.46098415108516,
+            31.430325520693
+          ],
+          [
+            34.46106801926094,
+            31.430288475571622
+          ],
+          [
+            34.46115197440107,
+            31.43025589104562
+          ],
+          [
+            34.461257684385814,
+            31.43022060070458
+          ],
+          [
+            34.46137045184091,
+            31.430188578139102
+          ],
+          [
+            34.46149017145005,
+            31.430159853410906
+          ],
+          [
+            34.46161670266503,
+            31.430134460357046
+          ],
+          [
+            34.46174994858741,
+            31.430112422157123
+          ],
+          [
+            34.461889620059694,
+            31.43009379012677
+          ],
+          [
+            34.46203544673449,
+            31.430078600754626
+          ],
+          [
+            34.462187031623955,
+            31.430066895673395
+          ],
+          [
+            34.46225117254539,
+            31.430063945851543
+          ],
+          [
+            34.462316480344384,
+            31.43006329492418
+          ],
+          [
+            34.46238307979108,
+            31.43006494151032
+          ],
+          [
+            34.46245113114214,
+            31.430068889466817
+          ],
+          [
+            34.462520743869185,
+            31.4300751415088
+          ],
+          [
+            34.46259223157541,
+            31.430083722309796
+          ],
+          [
+            34.46266587894649,
+            31.43009466560261
+          ],
+          [
+            34.46274210085937,
+            31.430108032740655
+          ],
+          [
+            34.462885506050895,
+            31.43013804953652
+          ],
+          [
+            34.46304430037299,
+            31.4301771972812
+          ],
+          [
+            34.463205334617015,
+            31.430221248799693
+          ],
+          [
+            34.46364172271075,
+            31.430346178133018
+          ],
+          [
+            34.46377392872359,
+            31.43038108013556
+          ],
+          [
+            34.46389286555163,
+            31.43040963251619
+          ],
+          [
+            34.46402893586855,
+            31.430437919968675
+          ],
+          [
+            34.46415640609318,
+            31.430459176047556
+          ],
+          [
+            34.46427773784035,
+            31.430473807682006
+          ],
+          [
+            34.46439418010057,
+            31.430481958086727
+          ],
+          [
+            34.46456980447082,
+            31.43048800516942
+          ],
+          [
+            34.46473975024132,
+            31.430490726965907
+          ],
+          [
+            34.46490430480806,
+            31.430490127896295
+          ],
+          [
+            34.46506363461227,
+            31.43048620706041
+          ],
+          [
+            34.465217930051566,
+            31.43047895772589
+          ],
+          [
+            34.465367211788276,
+            31.43046837676446
+          ],
+          [
+            34.46551154602587,
+            31.43045445943137
+          ],
+          [
+            34.46565097444979,
+            31.430437201632664
+          ],
+          [
+            34.465768679794756,
+            31.430419202118152
+          ],
+          [
+            34.46588796575516,
+            31.430397513548282
+          ],
+          [
+            34.466008944434925,
+            31.430372115627538
+          ],
+          [
+            34.46613175650886,
+            31.430342978891485
+          ],
+          [
+            34.46625650639441,
+            31.430310080776607
+          ],
+          [
+            34.46638344849636,
+            31.43027335633613
+          ],
+          [
+            34.466512813697385,
+            31.43023273900667
+          ],
+          [
+            34.46664491539023,
+            31.430188130558346
+          ],
+          [
+            34.46677778523892,
+            31.430140274068066
+          ],
+          [
+            34.466914151030956,
+            31.430088263122016
+          ],
+          [
+            34.46705461039914,
+            31.430031870662265
+          ],
+          [
+            34.467200119797674,
+            31.429970713224183
+          ],
+          [
+            34.46735026514992,
+            31.42990500840174
+          ],
+          [
+            34.46750878237236,
+            31.429833161818156
+          ],
+          [
+            34.467678568682466,
+            31.42975387408428
+          ],
+          [
+            34.467869075912944,
+            31.429662735060376
+          ],
+          [
+            34.46798184916775,
+            31.429605795664422
+          ],
+          [
+            34.46809658605877,
+            31.42954295363571
+          ],
+          [
+            34.46821422489695,
+            31.429473698802475
+          ],
+          [
+            34.46833640443668,
+            31.42939706845682
+          ],
+          [
+            34.46846180286752,
+            31.429314080430466
+          ],
+          [
+            34.46859841250829,
+            31.42921961446227
+          ],
+          [
+            34.468740036097394,
+            31.429118479638106
+          ],
+          [
+            34.46913562000619,
+            31.42883163956419
+          ],
+          [
+            34.46925911368999,
+            31.428744706832784
+          ],
+          [
+            34.46937113193109,
+            31.42866837414794
+          ],
+          [
+            34.46950219653973,
+            31.428582975517948
+          ],
+          [
+            34.469626839073015,
+            31.428506416555543
+          ],
+          [
+            34.46974753609911,
+            31.428437179304847
+          ],
+          [
+            34.46986556194952,
+            31.42837453936316
+          ],
+          [
+            34.47005192142302,
+            31.42828089450647
+          ],
+          [
+            34.47022099582429,
+            31.428198406659924
+          ],
+          [
+            34.470379789928444,
+            31.42812366209608
+          ],
+          [
+            34.47053083144928,
+            31.428055482328954
+          ],
+          [
+            34.470677233610694,
+            31.4279925008578
+          ],
+          [
+            34.47081883403273,
+            31.427934829100153
+          ],
+          [
+            34.47095651275563,
+            31.427882109228367
+          ],
+          [
+            34.471090836037625,
+            31.42783412535412
+          ],
+          [
+            34.47116340456719,
+            31.42781064475227
+          ],
+          [
+            34.471238653480164,
+            31.427789199136758
+          ],
+          [
+            34.47131673802179,
+            31.427769744067373
+          ],
+          [
+            34.471397864855525,
+            31.427752227908545
+          ],
+          [
+            34.47148216503609,
+            31.42773661710049
+          ],
+          [
+            34.47157007612762,
+            31.427722825645716
+          ],
+          [
+            34.47166200018636,
+            31.427710789813563
+          ],
+          [
+            34.47175855558982,
+            31.42770042822372
+          ],
+          [
+            34.471927203284245,
+            31.427686952870662
+          ],
+          [
+            34.472117246537486,
+            31.427677107974034
+          ],
+          [
+            34.47230202920173,
+            31.427671094382077
+          ],
+          [
+            34.47275446192789,
+            31.42766036993277
+          ],
+          [
+            34.47298840660283,
+            31.42765076914779
+          ],
+          [
+            34.47310665040177,
+            31.427643250962095
+          ],
+          [
+            34.47321637130371,
+            31.427634039988693
+          ],
+          [
+            34.47331949430095,
+            31.427622973258703
+          ],
+          [
+            34.47341702028088,
+            31.427609940590617
+          ],
+          [
+            34.47352295566772,
+            31.427592443118645
+          ],
+          [
+            34.47362331745642,
+            31.427572097213904
+          ],
+          [
+            34.47371869622781,
+            31.427548782548943
+          ],
+          [
+            34.473809486776425,
+            31.427522401694134
+          ],
+          [
+            34.47389611144997,
+            31.427492824473674
+          ],
+          [
+            34.473978709996494,
+            31.427459995215973
+          ],
+          [
+            34.47405748832057,
+            31.42742383184542
+          ],
+          [
+            34.47413260208448,
+            31.42738426258529
+          ],
+          [
+            34.47429947518849,
+            31.427288138080595
+          ],
+          [
+            34.4744377193681,
+            31.427203372024863
+          ],
+          [
+            34.47456007629949,
+            31.42712213992746
+          ],
+          [
+            34.47466849884737,
+            31.427043053750474
+          ],
+          [
+            34.47471879046223,
+            31.427003303764305
+          ],
+          [
+            34.47476600502966,
+            31.426963724066052
+          ],
+          [
+            34.4748102307382,
+            31.426924240616117
+          ],
+          [
+            34.47485152738127,
+            31.426884799869427
+          ],
+          [
+            34.47488995717816,
+            31.426845340899785
+          ],
+          [
+            34.474925540199735,
+            31.42680584145853
+          ],
+          [
+            34.474958305427336,
+            31.426766269320787
+          ],
+          [
+            34.47498827372867,
+            31.426726599210074
+          ],
+          [
+            34.47501809162276,
+            31.42668155176808
+          ],
+          [
+            34.47504553949954,
+            31.426632580078106
+          ],
+          [
+            34.47507089681936,
+            31.426579194945496
+          ],
+          [
+            34.47509463158848,
+            31.42652041633103
+          ],
+          [
+            34.47511368967599,
+            31.42646600731469
+          ],
+          [
+            34.47513285267702,
+            31.426404460002285
+          ],
+          [
+            34.47519369437246,
+            31.42618380595355
+          ],
+          [
+            34.47521987542316,
+            31.426096719632085
+          ],
+          [
+            34.475250944921385,
+            31.426009445024278
+          ],
+          [
+            34.47528424776344,
+            31.425933616993312
+          ],
+          [
+            34.47533242156639,
+            31.42583959185498
+          ],
+          [
+            34.475385080210835,
+            31.425745128718727
+          ],
+          [
+            34.475442287739,
+            31.425650112429636
+          ],
+          [
+            34.475504130804794,
+            31.42555439886403
+          ],
+          [
+            34.475570672906095,
+            31.425457883770175
+          ],
+          [
+            34.47564209153448,
+            31.42536030423741
+          ],
+          [
+            34.475718558804914,
+            31.425261424505674
+          ],
+          [
+            34.475800324963636,
+            31.42516092057283
+          ],
+          [
+            34.475885125436,
+            31.425061367815363
+          ],
+          [
+            34.475975654528895,
+            31.424959410371113
+          ],
+          [
+            34.47607246166116,
+            31.424854427346336
+          ],
+          [
+            34.4761765140511,
+            31.424745368659227
+          ],
+          [
+            34.47628635111088,
+            31.42463363632358
+          ],
+          [
+            34.47640704357651,
+            31.42451395706179
+          ],
+          [
+            34.476710570003526,
+            31.42422166224637
+          ],
+          [
+            34.476788351627306,
+            31.4241458955008
+          ],
+          [
+            34.476874361071246,
+            31.424058801775796
+          ],
+          [
+            34.47724021679833,
+            31.423674071166314
+          ],
+          [
+            34.477328010865584,
+            31.42358392363616
+          ],
+          [
+            34.47740769154937,
+            31.423504487047566
+          ],
+          [
+            34.477499892383086,
+            31.423416203456597
+          ],
+          [
+            34.477587270945605,
+            31.423336848468647
+          ],
+          [
+            34.477671421308834,
+            31.423264977182843
+          ],
+          [
+            34.4777531457054,
+            31.423199910217967
+          ],
+          [
+            34.477847043537025,
+            31.423131393061897
+          ],
+          [
+            34.47793911743109,
+            31.42307112037085
+          ],
+          [
+            34.47802988626802,
+            31.423018753586355
+          ],
+          [
+            34.47807489177976,
+            31.422995470846406
+          ],
+          [
+            34.478119696206775,
+            31.422974094680974
+          ],
+          [
+            34.47816438752192,
+            31.422954586413937
+          ],
+          [
+            34.4782089409872,
+            31.422936960156264
+          ],
+          [
+            34.478253384114325,
+            31.422921205039472
+          ],
+          [
+            34.47829774075601,
+            31.422907312625725
+          ],
+          [
+            34.478342036528176,
+            31.42289527509885
+          ],
+          [
+            34.47838628803883,
+            31.422885088154125
+          ],
+          [
+            34.47843051400312,
+            31.42287674749264
+          ],
+          [
+            34.47847473102675,
+            31.422870249993053
+          ],
+          [
+            34.47853361773341,
+            31.422864319888518
+          ],
+          [
+            34.47859485985223,
+            31.42286108832082
+          ],
+          [
+            34.478658556208245,
+            31.42286054991726
+          ],
+          [
+            34.4787248391767,
+            31.422862703442004
+          ],
+          [
+            34.47879379308472,
+            31.42286754748994
+          ],
+          [
+            34.478865699056215,
+            31.42287509789882
+          ],
+          [
+            34.478940815581126,
+            31.422885381308394
+          ],
+          [
+            34.47901953654784,
+            31.422898451317185
+          ],
+          [
+            34.479093082549106,
+            31.422912503493578
+          ],
+          [
+            34.47917046175751,
+            31.422928941160638
+          ],
+          [
+            34.47934043974825,
+            31.42296978526151
+          ],
+          [
+            34.47949233267917,
+            31.423010172663076
+          ],
+          [
+            34.47993208672857,
+            31.423131955876798
+          ],
+          [
+            34.480006645133344,
+            31.423152510080286
+          ],
+          [
+            34.48008348328583,
+            31.423175585867906
+          ],
+          [
+            34.48016319898633,
+            31.42320136145517
+          ],
+          [
+            34.480246835429455,
+            31.423230173430586
+          ],
+          [
+            34.480434775672094,
+            31.423300084118292
+          ],
+          [
+            34.480831042419794,
+            31.42345718120064
+          ],
+          [
+            34.48100429421179,
+            31.4235230504887
+          ],
+          [
+            34.48109966721965,
+            31.423557033938042
+          ],
+          [
+            34.48118930633934,
+            31.423587004696167
+          ],
+          [
+            34.48127500669667,
+            31.423613561583586
+          ],
+          [
+            34.48135767876956,
+            31.423636983856863
+          ],
+          [
+            34.481464281171185,
+            31.423662756895304
+          ],
+          [
+            34.4815778645709,
+            31.423684503306102
+          ],
+          [
+            34.48169955141449,
+            31.42370244426826
+          ],
+          [
+            34.4818315716841,
+            31.423716911565283
+          ],
+          [
+            34.48195139221539,
+            31.423726554330713
+          ],
+          [
+            34.48208575312655,
+            31.423734478366935
+          ],
+          [
+            34.482551720603375,
+            31.423752676013798
+          ],
+          [
+            34.482731280789885,
+            31.42376204579838
+          ],
+          [
+            34.48282479347386,
+            31.423768797684023
+          ],
+          [
+            34.48291156549923,
+            31.423776662007494
+          ],
+          [
+            34.482993202938474,
+            31.42378578536972
+          ],
+          [
+            34.48307052795222,
+            31.423796261793825
+          ],
+          [
+            34.48315893720658,
+            31.423810817993658
+          ],
+          [
+            34.48324272035776,
+            31.423827586822057
+          ],
+          [
+            34.48332242544893,
+            31.42384667850915
+          ],
+          [
+            34.483398412105046,
+            31.42386818004622
+          ],
+          [
+            34.4834710673976,
+            31.42389220758974
+          ],
+          [
+            34.48354051211623,
+            31.423918808150116
+          ],
+          [
+            34.48360693095165,
+            31.423948052671605
+          ],
+          [
+            34.483670462715864,
+            31.42398000254413
+          ],
+          [
+            34.48371945263538,
+            31.424007814376875
+          ],
+          [
+            34.48377197285293,
+            31.424040650711692
+          ],
+          [
+            34.483830505558956,
+            31.424080005862734
+          ],
+          [
+            34.48400493161849,
+            31.424201508269
+          ],
+          [
+            34.4840617702669,
+            31.4242379950223
+          ],
+          [
+            34.484113936968676,
+            31.424268498670198
+          ],
+          [
+            34.48417482000469,
+            31.424300470429163
+          ],
+          [
+            34.4842383289299,
+            31.424330502312532
+          ],
+          [
+            34.48430459502878,
+            31.424358656619393
+          ],
+          [
+            34.484373792602206,
+            31.42438500756574
+          ],
+          [
+            34.48444603579702,
+            31.424409604226188
+          ],
+          [
+            34.48452168856896,
+            31.424432575787083
+          ],
+          [
+            34.484601088359845,
+            31.42445402538885
+          ],
+          [
+            34.484684748152915,
+            31.42447409204567
+          ],
+          [
+            34.48483553122829,
+            31.42450490957859
+          ],
+          [
+            34.48500623268084,
+            31.424533582639366
+          ],
+          [
+            34.48517633576167,
+            31.42455789987844
+          ],
+          [
+            34.48561795402113,
+            31.424615996040096
+          ],
+          [
+            34.48574548818291,
+            31.42463499560866
+          ],
+          [
+            34.485859225069674,
+            31.424654080340847
+          ],
+          [
+            34.48598487579468,
+            31.424678369527076
+          ],
+          [
+            34.48610072222529,
+            31.424704609394407
+          ],
+          [
+            34.4862089038051,
+            31.424733287062253
+          ],
+          [
+            34.48631049755832,
+            31.42476469331506
+          ],
+          [
+            34.48643727856742,
+            31.42480797485065
+          ],
+          [
+            34.486566375742676,
+            31.424854089713055
+          ],
+          [
+            34.48669802866489,
+            31.42490312332825
+          ],
+          [
+            34.48683256245043,
+            31.42495519666978
+          ],
+          [
+            34.486970153875035,
+            31.425010373720944
+          ],
+          [
+            34.48711153990351,
+            31.425068945768487
+          ],
+          [
+            34.487257374854416,
+            31.425131183244797
+          ],
+          [
+            34.48740871700324,
+            31.425197537399313
+          ],
+          [
+            34.48749343068278,
+            31.42523651943447
+          ],
+          [
+            34.487576714715836,
+            31.42527761786868
+          ],
+          [
+            34.48765870603208,
+            31.425320900138725
+          ],
+          [
+            34.48773957148879,
+            31.425366454217407
+          ],
+          [
+            34.48781943143349,
+            31.425414344329177
+          ],
+          [
+            34.487898578295415,
+            31.425464742278496
+          ],
+          [
+            34.487977267750374,
+            31.42551781043682
+          ],
+          [
+            34.488055845833294,
+            31.425573781855586
+          ],
+          [
+            34.48813478606705,
+            31.42563299717194
+          ],
+          [
+            34.488214608607336,
+            31.425695850236494
+          ],
+          [
+            34.48829603184946,
+            31.4257629039634
+          ],
+          [
+            34.48838034413936,
+            31.425835217865476
+          ],
+          [
+            34.48854822663529,
+            31.425986380778205
+          ],
+          [
+            34.48887518782576,
+            31.426292885273096
+          ],
+          [
+            34.489015261084106,
+            31.42642117203493
+          ],
+          [
+            34.48916703179216,
+            31.42655343668943
+          ],
+          [
+            34.4892389802318,
+            31.42661299179559
+          ],
+          [
+            34.48930953845314,
+            31.42666919493504
+          ],
+          [
+            34.48939698713223,
+            31.42673567660229
+          ],
+          [
+            34.48948396888787,
+            31.42679822469058
+          ],
+          [
+            34.489571098445595,
+            31.42685728056051
+          ],
+          [
+            34.489658792792845,
+            31.426913125796496
+          ],
+          [
+            34.489747536444874,
+            31.426966061447292
+          ],
+          [
+            34.489837486437615,
+            31.427016173627916
+          ],
+          [
+            34.48992889021573,
+            31.427063600000032
+          ],
+          [
+            34.49002194361525,
+            31.427108441926844
+          ],
+          [
+            34.49007790019797,
+            31.42713317542384
+          ],
+          [
+            34.49014296082339,
+            31.427159686785995
+          ],
+          [
+            34.49029901053287,
+            31.42721748996449
+          ],
+          [
+            34.49048641496224,
+            31.427280476406114
+          ],
+          [
+            34.49069778709967,
+            31.427346155763384
+          ],
+          [
+            34.49092871638702,
+            31.427412960125032
+          ],
+          [
+            34.49115655116756,
+            31.42747414994714
+          ],
+          [
+            34.491361887959,
+            31.427524518038833
+          ],
+          [
+            34.49145032141813,
+            31.427544202253266
+          ],
+          [
+            34.49152679652201,
+            31.42755965947559
+          ],
+          [
+            34.491641890805674,
+            31.427578733761212
+          ],
+          [
+            34.49175842471241,
+            31.427592688331956
+          ],
+          [
+            34.49187639824213,
+            31.42760152319006
+          ],
+          [
+            34.491995811394894,
+            31.427605238337026
+          ],
+          [
+            34.49211666417066,
+            31.42760383377347
+          ],
+          [
+            34.492238956569494,
+            31.427597309499134
+          ],
+          [
+            34.49236268859143,
+            31.42758566551292
+          ],
+          [
+            34.4924878602362,
+            31.427568901813004
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 44,
+      "properties": {
+        "Name": "בארי - מחבלים חודרים לקיבוץ דרך שתי נקודות: הגדר במערב הקיבוץ והשער הצפוני",
+        "NoteType": 0,
+        "Notes": null,
+        "OBJECTID": 44,
+        "Shape_Length": 6872.266605952768,
+        "created_date": 1787183064000,
+        "created_user": "LINKERR",
+        "flow_direction": "forward",
+        "last_edited_date": 1787211678000,
+        "last_edited_user": "LINKERR",
+        "timeline": "local 06:30",
+        "timeline_minutes": 390
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.45217453512896,
+            31.38738785120112
+          ],
+          [
+            34.45670318146155,
+            31.389365675535604
+          ],
+          [
+            34.45866155561158,
+            31.389749733626267
+          ],
+          [
+            34.459647337361346,
+            31.387079295034418
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 45,
+      "properties": {
+        "Name": "כ100 מחבלים הגיעו למרחב הקיבוץ, משלושה כיוונים שונים. ציר ראשון - חדירה מהשער הראשי",
+        "NoteType": 0,
+        "Notes": null,
+        "OBJECTID": 45,
+        "Shape_Length": 1155.0706068482164,
+        "created_date": 1787647947000,
+        "created_user": "LINKERR",
+        "flow_direction": "forward",
+        "last_edited_date": 1787649111000,
+        "last_edited_user": "LINKERR",
+        "timeline": "local 07:50",
+        "timeline_minutes": 470
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.459647337361346,
+            31.387079295034418
+          ],
+          [
+            34.45948995151799,
+            31.386874484044814
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 46,
+      "properties": {
+        "Name": "חדירה לשכונת צעירים",
+        "NoteType": 0,
+        "Notes": null,
+        "OBJECTID": 46,
+        "Shape_Length": 31.94135554073209,
+        "created_date": 1787647957000,
+        "created_user": "LINKERR",
+        "flow_direction": "forward",
+        "last_edited_date": 1787648370000,
+        "last_edited_user": "LINKERR",
+        "timeline": "local 08:00",
+        "timeline_minutes": 480
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.459647337361346,
+            31.387079295034418
+          ],
+          [
+            34.460085044545146,
+            31.38657767522533
+          ],
+          [
+            34.46023791952522,
+            31.38635100033735
+          ],
+          [
+            34.460743198158134,
+            31.385168757823294
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 47,
+      "properties": {
+        "Name": "חדירה למשק ומגורים עובדים זרים",
+        "NoteType": 0,
+        "Notes": null,
+        "OBJECTID": 47,
+        "Shape_Length": 279.77686457516035,
+        "created_date": 1787647979000,
+        "created_user": "LINKERR",
+        "flow_direction": "forward",
+        "last_edited_date": 1787648512000,
+        "last_edited_user": "LINKERR",
+        "timeline": "local 08:00",
+        "timeline_minutes": 480
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.45217453512896,
+            31.38738785120112
+          ],
+          [
+            34.45422771967952,
+            31.384409656256555
+          ],
+          [
+            34.45442350722904,
+            31.384276762988268
+          ],
+          [
+            34.45469228581469,
+            31.38417627543431
+          ],
+          [
+            34.45499771114037,
+            31.384140032544035
+          ],
+          [
+            34.455296594981334,
+            31.384104565876708
+          ],
+          [
+            34.4559067366536,
+            31.384032164157073
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 48,
+      "properties": {
+        "Name": "ציר חדירה שני ברעים - שער בית הקברות",
+        "NoteType": 0,
+        "Notes": null,
+        "OBJECTID": 48,
+        "Shape_Length": 647.6213939766707,
+        "created_date": 1787648041000,
+        "created_user": "LINKERR",
+        "flow_direction": "forward",
+        "last_edited_date": 1787648522000,
+        "last_edited_user": "LINKERR",
+        "timeline": "local 07:51",
+        "timeline_minutes": 471
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.46029980493156,
+            31.37945554802666
+          ],
+          [
+            34.460395820165196,
+            31.37964927142812
+          ],
+          [
+            34.46022091050268,
+            31.379999569151664
+          ],
+          [
+            34.460133365632096,
+            31.38044821822747
+          ],
+          [
+            34.460073492837466,
+            31.381230406600135
+          ],
+          [
+            34.460298854099975,
+            31.381464706397246
+          ],
+          [
+            34.460869040424654,
+            31.382873084681627
+          ],
+          [
+            34.460744865819244,
+            31.383056835018326
+          ],
+          [
+            34.46051053957675,
+            31.383325470890867
+          ],
+          [
+            34.46010915999087,
+            31.383540101497516
+          ],
+          [
+            34.459743196250734,
+            31.383483316180712
+          ],
+          [
+            34.45950150614373,
+            31.383312827687195
+          ],
+          [
+            34.459334256073795,
+            31.383142163731637
+          ],
+          [
+            34.45921488074488,
+            31.382847305479853
+          ],
+          [
+            34.459182585719404,
+            31.382346908135887
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 49,
+      "properties": {
+        "Name": "ציר חדירה שלישי ברעים - שער אחורי",
+        "NoteType": 0,
+        "Notes": null,
+        "OBJECTID": 49,
+        "Shape_Length": 807.8420877479762,
+        "created_date": 1787648108000,
+        "created_user": "LINKERR",
+        "flow_direction": "forward",
+        "last_edited_date": 1787648523000,
+        "last_edited_user": "LINKERR",
+        "timeline": "local 07:51",
+        "timeline_minutes": 471
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.44728386968011,
+            31.38085333559416
+          ],
+          [
+            34.447222399996015,
+            31.379401879015983
+          ],
+          [
+            34.45068275755347,
+            31.365267935240215
+          ],
+          [
+            34.45077217529685,
+            31.36422732830205
+          ],
+          [
+            34.4503272292907,
+            31.362314856886492
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 50,
+      "properties": {
+        "Name": "כ-30 מחבלים שחדרו לשטח הארץ בשעה 06:40 באופן רכוב, הגיעו לחניית הכניסה למחנה 'רעים' בשעה 07:40 דרך צומת 'גמה'",
+        "NoteType": 0,
+        "Notes": null,
+        "OBJECTID": 50,
+        "Shape_Length": 2462.234423736665,
+        "created_date": 1787672262000,
+        "created_user": "LINKERR",
+        "flow_direction": "forward",
+        "last_edited_date": 1787672311000,
+        "last_edited_user": "LINKERR",
+        "timeline": "local 07:40",
+        "timeline_minutes": 460
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.37428738911205,
+            31.373592233898464
+          ],
+          [
+            34.38107892124119,
+            31.371680271511064
+          ],
+          [
+            34.38901804677042,
+            31.369407586886997
+          ],
+          [
+            34.39569443870149,
+            31.36743841459775
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 51,
+      "properties": {
+        "Name": "פריצת המכשול והתקדמות לכיסופים",
+        "NoteType": 0,
+        "Notes": null,
+        "OBJECTID": 51,
+        "Shape_Length": 2514.502348485298,
+        "created_date": 1787679613000,
+        "created_user": "LINKERR",
+        "flow_direction": "forward",
+        "last_edited_date": 1787686989000,
+        "last_edited_user": "LINKERR",
+        "timeline": "local 06:29",
+        "timeline_minutes": 389
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.39569443870149,
+            31.36743841459775
+          ],
+          [
+            34.39619916713201,
+            31.370863866049376
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 52,
+      "properties": {
+        "Name": "חדירה לכיסופים-שכונה דרומית",
+        "NoteType": 0,
+        "Notes": null,
+        "OBJECTID": 52,
+        "Shape_Length": 450.1187297828926,
+        "created_date": 1787679660000,
+        "created_user": "LINKERR",
+        "flow_direction": "forward",
+        "last_edited_date": 1787694914000,
+        "last_edited_user": "LINKERR",
+        "timeline": "local 06:55",
+        "timeline_minutes": 415
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.39572777185032,
+            31.36742858302935
+          ],
+          [
+            34.39710155263312,
+            31.367101605849047
+          ],
+          [
+            34.402054252174665,
+            31.366429926320176
+          ],
+          [
+            34.4029978914816,
+            31.37159233329454
+          ],
+          [
+            34.40299965220742,
+            31.372119123019697
+          ],
+          [
+            34.402852035411854,
+            31.372541425163273
+          ],
+          [
+            34.40257532287267,
+            31.372940162580903
+          ],
+          [
+            34.4023450856927,
+            31.373168407307446
+          ],
+          [
+            34.40211535555717,
+            31.37332523068479
+          ],
+          [
+            34.4014373257002,
+            31.373676392314515
+          ],
+          [
+            34.40157121886434,
+            31.373815137332233
+          ],
+          [
+            34.40255695226252,
+            31.374397883198526
+          ],
+          [
+            34.40235218431493,
+            31.374830843394907
+          ],
+          [
+            34.40198487310271,
+            31.375219073809234
+          ],
+          [
+            34.40186669622679,
+            31.37617757906655
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 53,
+      "properties": {
+        "Name": "כיסופים-סמל תומר נגר ז\"ל, שהוצב בעמדת הבונקר בבסיס, זיהה מחבלים שנכנסו אליו וחיסל כמה מהם. במשך 25 דקות הוא ניהל קרב עיקש ונפל רק אחרי שאזלה התחמושת שלו",
+        "NoteType": 0,
+        "Notes": null,
+        "OBJECTID": 53,
+        "Shape_Length": 2153.5979379481346,
+        "created_date": 1787686964000,
+        "created_user": "LINKERR",
+        "flow_direction": "forward",
+        "last_edited_date": 1787694841000,
+        "last_edited_user": "LINKERR",
+        "timeline": "local 06:57",
+        "timeline_minutes": 417
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.38928042387062,
+            31.35360528524483
+          ],
+          [
+            34.39507371634429,
+            31.353717246651097
+          ],
+          [
+            34.39778923491756,
+            31.35435013482507
+          ],
+          [
+            34.397695123512584,
+            31.35388807614646
+          ],
+          [
+            34.39817600552143,
+            31.35238336830049
+          ],
+          [
+            34.39859931636542,
+            31.352482028273172
+          ],
+          [
+            34.399745405848705,
+            31.353388800395003
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 54,
+      "properties": {
+        "Name": "עין השלושה - גל חדירה ראשון",
+        "NoteType": 0,
+        "Notes": null,
+        "OBJECTID": 54,
+        "Shape_Length": 1445.6402752234724,
+        "created_date": 1787692474000,
+        "created_user": "LINKERR",
+        "flow_direction": "forward",
+        "last_edited_date": 1787692723000,
+        "last_edited_user": "LINKERR",
+        "timeline": "local 06:58",
+        "timeline_minutes": 418
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.395960660374556,
+            31.358631901707902
+          ],
+          [
+            34.397804520690656,
+            31.354528052728277
+          ],
+          [
+            34.397695123512584,
+            31.35388807614646
+          ],
+          [
+            34.39820565247185,
+            31.352384421774396
+          ],
+          [
+            34.39886425824299,
+            31.352404906356103
+          ],
+          [
+            34.39960307307458,
+            31.351828778104675
+          ],
+          [
+            34.40080509879252,
+            31.352654163665157
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 55,
+      "properties": {
+        "Name": "עין השלושה - גל חדירה שני",
+        "NoteType": 0,
+        "Notes": null,
+        "OBJECTID": 55,
+        "Shape_Length": 1217.8260000305613,
+        "created_date": 1787692646000,
+        "created_user": "LINKERR",
+        "flow_direction": "forward",
+        "last_edited_date": 1787694690000,
+        "last_edited_user": "LINKERR",
+        "timeline": "local 08:03",
+        "timeline_minutes": 483
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.39481652067838,
+            31.3502013064902
+          ],
+          [
+            34.39661833870165,
+            31.35020457800821
+          ],
+          [
+            34.400231251419875,
+            31.350711247109196
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 56,
+      "properties": {
+        "Name": "עין השלושה - גל חדירה שני",
+        "NoteType": 0,
+        "Notes": null,
+        "OBJECTID": 56,
+        "Shape_Length": 608.1521531318322,
+        "created_date": 1787692707000,
+        "created_user": "LINKERR",
+        "flow_direction": "forward",
+        "last_edited_date": 1787694426000,
+        "last_edited_user": "LINKERR",
+        "timeline": "local 08:03",
+        "timeline_minutes": 483
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.390878250285226,
+            31.338211221390075
+          ],
+          [
+            34.39167786004144,
+            31.337446571334066
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 57,
+      "properties": {
+        "Name": "נירים - 11 מחבלים רכובים על 6 אופנועים מגיעים על הדרך ההקיפית הצפונית ופורצים את גדר הקיבוץ",
+        "NoteType": 0,
+        "Notes": null,
+        "OBJECTID": 57,
+        "Shape_Length": 133.6230258107888,
+        "created_date": 1787701365000,
+        "created_user": "LINKERR",
+        "flow_direction": "forward",
+        "last_edited_date": 1787701471000,
+        "last_edited_user": "LINKERR",
+        "timeline": "local 06:40",
+        "timeline_minutes": 400
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.39071812154723,
+            31.336200339654358
+          ],
+          [
+            34.391079566665795,
+            31.336298664659317
+          ],
+          [
+            34.391493628651034,
+            31.33628051982236
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 58,
+      "properties": {
+        "Name": "נירים - כוח מחבלים נוסף על טנדרים מגיעים את הכביש המערבי מול מגרשי הטניס ופורצים את הגדר.",
+        "NoteType": 0,
+        "Notes": null,
+        "OBJECTID": 58,
+        "Shape_Length": 88.38109799782544,
+        "created_date": 1787702057000,
+        "created_user": "LINKERR",
+        "flow_direction": "forward",
+        "last_edited_date": 1787708815000,
+        "last_edited_user": "LINKERR",
+        "timeline": "local 08:15",
+        "timeline_minutes": 495
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.38269396864813,
+            31.316047284625654
+          ],
+          [
+            34.40331260493007,
+            31.316070327949912
+          ],
+          [
+            34.40327928402406,
+            31.312737907071366
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 59,
+      "properties": {
+        "Name": "ניר עוז - חדירה ראשונה לשטח הקיבוץ דרך השער הצפוני",
+        "NoteType": 0,
+        "Notes": null,
+        "OBJECTID": 59,
+        "Shape_Length": 2729.4903939728583,
+        "created_date": 1787732034000,
+        "created_user": "LINKERR",
+        "flow_direction": "forward",
+        "last_edited_date": 1787732087000,
+        "last_edited_user": "LINKERR",
+        "timeline": "local 06:49",
+        "timeline_minutes": 409
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.39847590220015,
+            31.30185028314636
+          ],
+          [
+            34.398139432015846,
+            31.308875913318097
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 60,
+      "properties": {
+        "Name": "ניר עוז - חדירה לשטח הקיבוץ דרך השער הכרם",
+        "NoteType": 0,
+        "Notes": null,
+        "OBJECTID": 60,
+        "Shape_Length": 916.1220948114301,
+        "created_date": 1787732549000,
+        "created_user": "LINKERR",
+        "flow_direction": "forward",
+        "last_edited_date": 1787733100000,
+        "last_edited_user": "LINKERR",
+        "timeline": "local 06:52",
+        "timeline_minutes": 412
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.37459684760414,
+            31.30181602850873
+          ],
+          [
+            34.400189544118845,
+            31.301852741374734
+          ],
+          [
+            34.40029378600901,
+            31.301852890910293
+          ],
+          [
+            34.4004193791613,
+            31.301992344161818
+          ],
+          [
+            34.401934910625776,
+            31.30605105203107
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 61,
+      "properties": {
+        "Name": "ניר עוז - חדירה לשטח הקיבוץ דרך השער הדרומי",
+        "NoteType": 0,
+        "Notes": null,
+        "OBJECTID": 61,
+        "Shape_Length": 3438.553620274689,
+        "created_date": 1787732944000,
+        "created_user": "LINKERR",
+        "flow_direction": "forward",
+        "last_edited_date": 1787736331000,
+        "last_edited_user": "LINKERR",
+        "timeline": "local 06:49",
+        "timeline_minutes": 409
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.401934910625776,
+            31.30605105203107
+          ],
+          [
+            34.40212777916634,
+            31.306179855022783
+          ],
+          [
+            34.4041976491305,
+            31.306037029718077
+          ],
+          [
+            34.40396905981905,
+            31.306869473371364
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 62,
+      "properties": {
+        "Name": "ניר עוז - חדירה לשטח הקיבוץ דרך השער הדרומי",
+        "NoteType": 0,
+        "Notes": null,
+        "OBJECTID": 62,
+        "Shape_Length": 369.82137161802325,
+        "created_date": 1787732958000,
+        "created_user": "LINKERR",
+        "flow_direction": "forward",
+        "last_edited_date": 1787737628000,
+        "last_edited_user": "LINKERR",
+        "timeline": "local 06:50",
+        "timeline_minutes": 410
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.4232113286564,
+            31.29498466006662
+          ],
+          [
+            34.42414825866909,
+            31.29480218988371
+          ],
+          [
+            34.42509252849725,
+            31.29487473355613
+          ],
+          [
+            34.4260072166448,
+            31.29460344742053
+          ],
+          [
+            34.427707404060634,
+            31.294957828119568
+          ],
+          [
+            34.42831742463715,
+            31.295304888462574
+          ],
+          [
+            34.433124608129376,
+            31.294263315257673
+          ],
+          [
+            34.4327236314486,
+            31.292912002472868
+          ],
+          [
+            34.43286339733204,
+            31.28179898502847
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 63,
+      "properties": {
+        "Name": "המחבלים ככהנ הגיעו מכיוון מגן, בין הקיבוץ למפעלים. בצומת הם פנו דרומה ותקפו את תחנת הדלק. משם המשיכו לקיבוץ עין הבשור",
+        "NoteType": 0,
+        "Notes": null,
+        "OBJECTID": 63,
+        "Shape_Length": 2778.0673877648815,
+        "created_date": 1787740672000,
+        "created_user": "LINKERR",
+        "flow_direction": "forward",
+        "last_edited_date": 1787740815000,
+        "last_edited_user": "LINKERR",
+        "timeline": "local 06:45",
+        "timeline_minutes": 405
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.33502789311368,
+            31.23692359313537
+          ],
+          [
+            34.33831770683853,
+            31.236739288451396
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 64,
+      "properties": {
+        "Name": "חדירה לסופה מהשער הקדמי",
+        "NoteType": 0,
+        "Notes": null,
+        "OBJECTID": 64,
+        "Shape_Length": 367.00564867276364,
+        "created_date": 1787750202000,
+        "created_user": "LINKERR",
+        "flow_direction": "forward",
+        "last_edited_date": 1787750231000,
+        "last_edited_user": "LINKERR",
+        "timeline": "local 06:51",
+        "timeline_minutes": 411
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.348037268683974,
+            31.23077145505706
+          ],
+          [
+            34.35162587022604,
+            31.226930613016563
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 65,
+      "properties": {
+        "Name": "חדירה לפרי גן מהשער האחורי - צפוני",
+        "NoteType": 0,
+        "Notes": null,
+        "OBJECTID": 65,
+        "Shape_Length": 639.9966787867355,
+        "created_date": 1787753088000,
+        "created_user": "LINKERR",
+        "flow_direction": "forward",
+        "last_edited_date": 1787753114000,
+        "last_edited_user": "LINKERR",
+        "timeline": "local 07:20",
+        "timeline_minutes": 440
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.39037348707769,
+            31.274306080113305
+          ],
+          [
+            34.39333771852873,
+            31.268851406193143
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 66,
+      "properties": {
+        "Name": "חדירה למו\"פ דרום דרך הכניסה הראשית ושערים נוספים",
+        "NoteType": 0,
+        "Notes": null,
+        "OBJECTID": 66,
+        "Shape_Length": 783.3183699311553,
+        "created_date": 1787765191000,
+        "created_user": "LINKERR",
+        "flow_direction": "forward",
+        "last_edited_date": 1787765347000,
+        "last_edited_user": "LINKERR",
+        "timeline": "local 06:45",
+        "timeline_minutes": 405
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.599323719939406,
+            31.453611811000815
+          ],
+          [
+            34.6017189997489,
+            31.44605045537254
+          ],
+          [
+            34.60038895236343,
+            31.44077500099105
+          ],
+          [
+            34.59976659936357,
+            31.430007585235835
+          ],
+          [
+            34.59826433786312,
+            31.430070801184065
+          ],
+          [
+            34.58807043700424,
+            31.435564398089237
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 67,
+      "properties": {
+        "Name": "ניסיון חדירה לנתיבות מכיוון שדרות",
+        "NoteType": 0,
+        "Notes": null,
+        "OBJECTID": 67,
+        "Shape_Length": 4642.266596125244,
+        "created_date": 1787767565000,
+        "created_user": "LINKERR",
+        "flow_direction": "forward",
+        "last_edited_date": 1787767893000,
+        "last_edited_user": "LINKERR",
+        "timeline": "local 08:20",
+        "timeline_minutes": 500
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.526254212645505,
+            31.316538686023826
+          ],
+          [
+            34.536304330477236,
+            31.318604396029656
+          ],
+          [
+            34.551591005860274,
+            31.317198365426446
+          ],
+          [
+            34.56564706515353,
+            31.317368342513436
+          ],
+          [
+            34.58673917676305,
+            31.315306822686267
+          ],
+          [
+            34.60531308200432,
+            31.31798316801588
+          ],
+          [
+            34.608496328347286,
+            31.30612282783922
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 68,
+      "properties": {
+        "Name": "חדירה לאופקים של 15 מחבלים על 2 טנדרים מכיוון צומת אורים",
+        "NoteType": 0,
+        "Notes": null,
+        "OBJECTID": 68,
+        "Shape_Length": 10472.707532635573,
+        "created_date": 1787812358000,
+        "created_user": "LINKERR",
+        "flow_direction": "forward",
+        "last_edited_date": 1787812724000,
+        "last_edited_user": "LINKERR",
+        "timeline": "local 07:05",
+        "timeline_minutes": 425
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.325895263894715,
+            31.258035995252555
+          ],
+          [
+            34.326690468753895,
+            31.25625157730096
+          ],
+          [
+            34.32937428358155,
+            31.25140798700329
+          ],
+          [
+            34.333250905697994,
+            31.245629343028735
+          ],
+          [
+            34.335139515666505,
+            31.24087019463934
+          ],
+          [
+            34.33502789311368,
+            31.23692359313537
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 1001,
+      "properties": {
+        "Name": null,
+        "NoteType": null,
+        "Notes": null,
+        "OBJECTID": 1001,
+        "Shape_Length": 2982.291724334802,
+        "created_date": null,
+        "flow_direction": "forward",
+        "parent_objectid": 64,
+        "route_confidence": "unconfirmed",
+        "route_role": "approach",
+        "timeline": "local 06:51",
+        "timeline_minutes": 411
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.35238551262822,
+            31.283566471485734
+          ],
+          [
+            34.37927324701031,
+            31.274728999977356
+          ],
+          [
+            34.37918919703905,
+            31.274431389866237
+          ],
+          [
+            34.379256505108366,
+            31.27436542127905
+          ],
+          [
+            34.38894654853483,
+            31.274922192986512
+          ],
+          [
+            34.39037348707769,
+            31.274306080113305
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 1002,
+      "properties": {
+        "Name": null,
+        "NoteType": null,
+        "Notes": null,
+        "OBJECTID": 1002,
+        "Shape_Length": 4517.209795607237,
+        "created_date": null,
+        "flow_direction": "forward",
+        "parent_objectid": 66,
+        "route_confidence": "unconfirmed",
+        "route_role": "approach",
+        "timeline": "local 06:45",
+        "timeline_minutes": 405
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.33502789280593,
+            31.23692359318355
+          ],
+          [
+            34.33478612741687,
+            31.23494594422631
+          ],
+          [
+            34.33451130402538,
+            31.230696507245504
+          ],
+          [
+            34.33636635742643,
+            31.226544799512244
+          ],
+          [
+            34.348037268683974,
+            31.23077145505706
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 1003,
+      "properties": {
+        "Name": null,
+        "NoteType": null,
+        "Notes": null,
+        "OBJECTID": 1003,
+        "Shape_Length": 2802.4476615007607,
+        "created_date": null,
+        "flow_direction": "forward",
+        "parent_objectid": 65,
+        "parent_objectid_alt": 64,
+        "route_confidence": "unconfirmed",
+        "route_role": "connector",
+        "timeline": "local 07:20",
+        "timeline_minutes": 440
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.40419764955858,
+            31.306037029531883
+          ],
+          [
+            34.4050949245936,
+            31.30592436995266
+          ],
+          [
+            34.406491940506,
+            31.305904802664013
+          ],
+          [
+            34.41370603476997,
+            31.305611289776742
+          ],
+          [
+            34.413889249765454,
+            31.305415613754686
+          ],
+          [
+            34.41338540897708,
+            31.304202415342694
+          ],
+          [
+            34.415446578125135,
+            31.30318488160282
+          ],
+          [
+            34.41663747649392,
+            31.30179553903251
+          ],
+          [
+            34.417736767365,
+            31.301521581546943
+          ],
+          [
+            34.41885895988592,
+            31.301012801575315
+          ],
+          [
+            34.41995825075696,
+            31.30021048991258
+          ],
+          [
+            34.42130946157303,
+            31.298723258092217
+          ],
+          [
+            34.4232113286564,
+            31.29498466006662
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 1004,
+      "properties": {
+        "Name": null,
+        "NoteType": null,
+        "Notes": null,
+        "OBJECTID": 1004,
+        "Shape_Length": 2956.3904377702224,
+        "created_date": null,
+        "flow_direction": "forward",
+        "parent_objectid": 63,
+        "route_confidence": "unconfirmed",
+        "route_role": "approach",
+        "timeline": "local 06:45",
+        "timeline_minutes": 405
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.37316969232137,
+            31.308194171648598
+          ],
+          [
+            34.38269396864813,
+            31.316047284625654
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 1005,
+      "properties": {
+        "Name": null,
+        "NoteType": null,
+        "Notes": null,
+        "OBJECTID": 1005,
+        "Shape_Length": 1473.4738879917224,
+        "created_date": null,
+        "flow_direction": "forward",
+        "parent_objectid": 59,
+        "route_confidence": "unconfirmed",
+        "route_role": "approach",
+        "timeline": "local 06:49",
+        "timeline_minutes": 409
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.36790225805788,
+            31.339320154432848
+          ],
+          [
+            34.37992574909671,
+            31.343427780652085
+          ],
+          [
+            34.3893384260011,
+            31.33677724807551
+          ],
+          [
+            34.390878250285226,
+            31.338211221390075
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 1006,
+      "properties": {
+        "Name": null,
+        "NoteType": null,
+        "Notes": null,
+        "OBJECTID": 1006,
+        "Shape_Length": 3055.0277346492558,
+        "created_date": null,
+        "flow_direction": "forward",
+        "parent_objectid": 57,
+        "route_confidence": "unconfirmed",
+        "route_role": "approach",
+        "timeline": "local 06:40",
+        "timeline_minutes": 400
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.40205425222269,
+            31.366429925972376
+          ],
+          [
+            34.406565029234145,
+            31.365909270235143
+          ],
+          [
+            34.410199362243745,
+            31.366673135339724
+          ],
+          [
+            34.41226813652899,
+            31.368439549328897
+          ],
+          [
+            34.41534334103773,
+            31.370969759534614
+          ],
+          [
+            34.41908949992715,
+            31.37311799835086
+          ],
+          [
+            34.43631064589486,
+            31.38037390799624
+          ],
+          [
+            34.43955358922335,
+            31.38113765552132
+          ],
+          [
+            34.44728386968011,
+            31.38085333559416
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 1007,
+      "properties": {
+        "Name": null,
+        "NoteType": null,
+        "Notes": null,
+        "OBJECTID": 1007,
+        "Shape_Length": 5600.401063633757,
+        "created_date": null,
+        "flow_direction": "forward",
+        "parent_objectid": 50,
+        "route_confidence": "unconfirmed",
+        "route_role": "approach",
+        "timeline": "local 07:40",
+        "timeline_minutes": 460
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.48210324037828,
+            31.478846017483445
+          ],
+          [
+            34.497407415504846,
+            31.468156755731663
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 1008,
+      "properties": {
+        "Name": null,
+        "NoteType": null,
+        "Notes": null,
+        "OBJECTID": 1008,
+        "Shape_Length": 2202.0353450090597,
+        "created_date": null,
+        "flow_direction": "forward",
+        "parent_objectid": 7,
+        "route_confidence": "unconfirmed",
+        "route_role": "approach",
+        "timeline": "local 07:00",
+        "timeline_minutes": 420
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.46705598416051,
+            31.464572066624193
+          ],
+          [
+            34.479401533805095,
+            31.455811669853876
+          ],
+          [
+            34.48172750653598,
+            31.45816210072267
+          ],
+          [
+            34.489778951917316,
+            31.45251486266269
+          ],
+          [
+            34.49136633880474,
+            31.454226774915607
+          ],
+          [
+            34.492328217980045,
+            31.45315225416393
+          ],
+          [
+            34.492580138823364,
+            31.452468462231234
+          ],
+          [
+            34.492900765514584,
+            31.452253555032932
+          ],
+          [
+            34.49315268635791,
+            31.451120399694503
+          ],
+          [
+            34.493839743040056,
+            31.450866415170186
+          ],
+          [
+            34.49436648637656,
+            31.450377980514013
+          ],
+          [
+            34.495397071399736,
+            31.449948156032562
+          ],
+          [
+            34.496221539777636,
+            31.448131149981137
+          ],
+          [
+            34.498305611473846,
+            31.44639226093747
+          ],
+          [
+            34.49963392064005,
+            31.445415343192305
+          ],
+          [
+            34.50119124899977,
+            31.444809648354635
+          ],
+          [
+            34.501763796534306,
+            31.444282105142246
+          ],
+          [
+            34.508748872503126,
+            31.450710116541178
+          ],
+          [
+            34.509269103169565,
+            31.45009134986166
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 1009,
+      "properties": {
+        "Name": null,
+        "NoteType": null,
+        "Notes": null,
+        "OBJECTID": 1009,
+        "Shape_Length": 6699.181578753594,
+        "created_date": null,
+        "flow_direction": "forward",
+        "parent_objectid": 1,
+        "route_confidence": "unconfirmed",
+        "route_role": "approach",
+        "timeline": "local 07:00",
+        "timeline_minutes": 420
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.51048439966573,
+            31.49918459973833
+          ],
+          [
+            34.510763199898996,
+            31.498955900127328
+          ],
+          [
+            34.510904000039986,
+            31.498899399938026
+          ],
+          [
+            34.511044899893996,
+            31.498849600237598
+          ],
+          [
+            34.51139859985902,
+            31.4988220000231
+          ],
+          [
+            34.511773700389064,
+            31.498858400226588
+          ],
+          [
+            34.51234120029002,
+            31.498862000187014
+          ],
+          [
+            34.512512400318556,
+            31.498839700344778
+          ],
+          [
+            34.512656700295906,
+            31.49880819991283
+          ],
+          [
+            34.5128124996072,
+            31.49876830006531
+          ],
+          [
+            34.512940699978,
+            31.49872329973886
+          ],
+          [
+            34.5131995001198,
+            31.49863239979471
+          ],
+          [
+            34.51341459991796,
+            31.498591999706004
+          ],
+          [
+            34.51371009983233,
+            31.49855619990481
+          ],
+          [
+            34.513881500185185,
+            31.498511600069165
+          ],
+          [
+            34.51399130036404,
+            31.498464700057543
+          ],
+          [
+            34.51408750004951,
+            31.49838459979883
+          ],
+          [
+            34.51416280042988,
+            31.498297599761354
+          ],
+          [
+            34.51454799982036,
+            31.497631799851348
+          ],
+          [
+            34.514583099693446,
+            31.49753900003158
+          ],
+          [
+            34.51464240018031,
+            31.497355200125007
+          ],
+          [
+            34.51464300025491,
+            31.497233599850713
+          ],
+          [
+            34.51456929977404,
+            31.497018999932042
+          ],
+          [
+            34.51770829993935,
+            31.49648290011407
+          ],
+          [
+            34.518152000316036,
+            31.496492499996844
+          ],
+          [
+            34.51857200044061,
+            31.496580299852084
+          ],
+          [
+            34.51895150002061,
+            31.496689899808803
+          ],
+          [
+            34.51898919961813,
+            31.496572899837805
+          ],
+          [
+            34.519016999781236,
+            31.496486500165943
+          ],
+          [
+            34.519127700071984,
+            31.49560929976502
+          ],
+          [
+            34.51934569963191,
+            31.494582300006684
+          ],
+          [
+            34.51937900017948,
+            31.494339000170072
+          ],
+          [
+            34.519389799725815,
+            31.494311999923415
+          ],
+          [
+            34.51934800021734,
+            31.494266700249632
+          ],
+          [
+            34.51940759984317,
+            31.493792200186554
+          ],
+          [
+            34.51945440027285,
+            31.493419499852106
+          ],
+          [
+            34.51961620033026,
+            31.492130800202617
+          ],
+          [
+            34.519534099703165,
+            31.491682400215048
+          ],
+          [
+            34.5189433001987,
+            31.490231000230178
+          ],
+          [
+            34.51843310023644,
+            31.489190699848237
+          ],
+          [
+            34.51898550035578,
+            31.488731599619936
+          ],
+          [
+            34.520392200106954,
+            31.488131800012777
+          ],
+          [
+            34.52116579958525,
+            31.48756799975174
+          ],
+          [
+            34.524387099803604,
+            31.486164500047096
+          ],
+          [
+            34.524752900075505,
+            31.485864700124953
+          ],
+          [
+            34.5253717997804,
+            31.485600700186012
+          ],
+          [
+            34.52554023748943,
+            31.485293866791334
+          ],
+          [
+            34.52499016469732,
+            31.485708097043585
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 1010,
+      "properties": {
+        "Name": null,
+        "NoteType": null,
+        "Notes": null,
+        "OBJECTID": 1010,
+        "Shape_Length": 3167.244662171772,
+        "created_date": null,
+        "flow_direction": "forward",
+        "parent_objectid": 10,
+        "route_confidence": "unconfirmed",
+        "route_role": "approach",
+        "timeline": "local 06:50",
+        "timeline_minutes": 410
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.49729940043925,
+            31.489481099932636
+          ],
+          [
+            34.497634400175,
+            31.489194199831147
+          ],
+          [
+            34.497689299815285,
+            31.4889624001769
+          ],
+          [
+            34.49785130019701,
+            31.488802999902184
+          ],
+          [
+            34.49821269962233,
+            31.48873929977315
+          ],
+          [
+            34.4986695998438,
+            31.48840270014365
+          ],
+          [
+            34.49900400040328,
+            31.488086200123103
+          ],
+          [
+            34.49912909978975,
+            31.48798120010119
+          ],
+          [
+            34.49956490038183,
+            31.487615700378814
+          ],
+          [
+            34.50095180036585,
+            31.486452399944426
+          ],
+          [
+            34.50150110039914,
+            31.48599259989189
+          ],
+          [
+            34.5015268003011,
+            31.48578120004202
+          ],
+          [
+            34.49982589959945,
+            31.484498400349928
+          ],
+          [
+            34.499187360925795,
+            31.483965201118735
+          ],
+          [
+            34.499165637142916,
+            31.483985270657705
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 1011,
+      "properties": {
+        "Name": null,
+        "NoteType": null,
+        "Notes": null,
+        "OBJECTID": 1011,
+        "Shape_Length": 1048.5532807193845,
+        "created_date": null,
+        "flow_direction": "forward",
+        "parent_objectid": 43,
+        "route_confidence": "unconfirmed",
+        "route_role": "approach",
+        "timeline": "local 06:30",
+        "timeline_minutes": 390
+      },
+      "type": "Feature"
+    },
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            34.56579314349957,
+            31.533432623654186
+          ],
+          [
+            34.56576280020592,
+            31.53337670018185
+          ],
+          [
+            34.565758062491085,
+            31.533368287041906
+          ],
+          [
+            34.56700899976192,
+            31.532873199834178
+          ],
+          [
+            34.567131800359576,
+            31.53285169981055
+          ],
+          [
+            34.567131800359576,
+            31.532760300153658
+          ],
+          [
+            34.56720690041561,
+            31.532202500132414
+          ],
+          [
+            34.5672605001937,
+            31.53201959992016
+          ],
+          [
+            34.5673678003611,
+            31.531800099897513
+          ],
+          [
+            34.56749659990823,
+            31.53161719966273
+          ],
+          [
+            34.56766719986214,
+            31.531438599905844
+          ],
+          [
+            34.568463300341655,
+            31.53087470018677
+          ],
+          [
+            34.56900003474079,
+            31.530918293014874
+          ],
+          [
+            34.56898529967516,
+            31.5310500996923
+          ],
+          [
+            34.56914549983304,
+            31.53130560007677
+          ],
+          [
+            34.56959040035899,
+            31.531897200203474
+          ],
+          [
+            34.56992850018079,
+            31.532376400250634
+          ],
+          [
+            34.56991419989976,
+            31.53254630016968
+          ],
+          [
+            34.56991070006343,
+            31.532782899701868
+          ],
+          [
+            34.56996760025185,
+            31.53294060023215
+          ],
+          [
+            34.57024879988523,
+            31.53328040000493
+          ],
+          [
+            34.57058689970703,
+            31.533565500244464
+          ],
+          [
+            34.57089290002878,
+            31.533741500335424
+          ],
+          [
+            34.5713304002334,
+            31.533907400250495
+          ],
+          [
+            34.57172149975866,
+            31.53403940024931
+          ],
+          [
+            34.57327339959908,
+            31.53371339972799
+          ],
+          [
+            34.57466630032918,
+            31.53360419998754
+          ],
+          [
+            34.576400000318515,
+            31.533215999737326
+          ],
+          [
+            34.57662799992413,
+            31.53336230029767
+          ],
+          [
+            34.576875100407655,
+            31.533536600230036
+          ],
+          [
+            34.57704519999998,
+            31.53363060008795
+          ],
+          [
+            34.57716660012409,
+            31.533679100299356
+          ],
+          [
+            34.57733349991735,
+            31.53373410020081
+          ],
+          [
+            34.577477700181696,
+            31.53375349980748
+          ],
+          [
+            34.57783999971893,
+            31.533734900318827
+          ],
+          [
+            34.5780467002692,
+            31.533724400013107
+          ],
+          [
+            34.57819519987048,
+            31.533704299818282
+          ],
+          [
+            34.5782721001504,
+            31.535341499797124
+          ],
+          [
+            34.57825069958538,
+            31.535455799791468
+          ],
+          [
+            34.57828279998373,
+            31.535556300368285
+          ],
+          [
+            34.57845719981133,
+            31.53546490029614
+          ],
+          [
+            34.578545099961886,
+            31.53546959984965
+          ],
+          [
+            34.57871877125573,
+            31.535451408793836
+          ],
+          [
+            34.57861051563532,
+            31.535473332165616
+          ]
+        ],
+        "type": "LineString"
+      },
+      "id": 1012,
+      "properties": {
+        "Name": null,
+        "NoteType": null,
+        "Notes": null,
+        "OBJECTID": 1012,
+        "Shape_Length": 2155.6875497401606,
+        "created_date": null,
+        "flow_direction": "forward",
+        "parent_objectid": 34,
+        "route_confidence": "unconfirmed",
+        "route_role": "approach",
+        "timeline": "local 06:40",
+        "timeline_minutes": 400
+      },
+      "type": "Feature"
+    }
+  ],
+  "type": "FeatureCollection"
+}

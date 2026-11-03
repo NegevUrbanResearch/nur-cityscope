@@ -1,0 +1,38 @@
+/* NLI content faces are separate from presentation and legacy face identities. */
+@font-face {
+  font-family: "NLI Content Guttman Hatzvi";
+  src: url("../fonts/Guttman-Hatzvi.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* These local Hadassah and Narkiss files are trial editions for private evaluation. */
+@font-face {
+  font-family: "NLI Content Hadassah Friedlaender";
+  src: url("../fonts/HadassahFriedlaender-Regular.otf") format("opentype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "NLI Content Narkiss Block";
+  src: url("../fonts/NarkissBlock-Regular.otf") format("opentype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "NLI Content Belleza";
+  src: url("../fonts/nli-content/Belleza-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "NLI Content Marcellus";
+  src: url("../fonts/nli-content/Marcellus-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}

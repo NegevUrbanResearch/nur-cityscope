@@ -1,0 +1,882 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  overflow: hidden;
+}
+
+#map {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.maplibregl-canvas {
+  outline: none;
+}
+
+/* Match OSM tile background to hide subpixel seams between tiles */
+.leaflet-container {
+  background-color: #d4d4d4 !important;
+}
+
+/* Hide tile borders / seams when using raster basemaps */
+.leaflet-tile-container {
+  border: none !important;
+}
+
+.leaflet-tile {
+  border: none !important;
+  outline: none !important;
+  /* Keep native tile size and overlap slightly to hide subpixel gaps */
+  width: 256px !important;
+  height: 256px !important;
+  margin-right: -1px;
+  margin-bottom: -1px;
+}
+
+/* Hide debug grid layers */
+.leaflet-grid-layer {
+  display: none !important;
+}
+
+/* Hide Esri attribution text on model overlay - clip bottom 30px */
+.model-overlay {
+  clip-path: inset(0 0 30px 0);
+}
+
+#controls {
+  position: fixed;
+  top: 10px;
+  right: 10px;
+  z-index: 1000;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+#layerToggle {
+  background: rgba(0, 0, 0, 0.8);
+  color: white;
+  border: none;
+  padding: 12px 16px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 16px;
+  backdrop-filter: blur(10px);
+}
+
+#layerToggle:hover {
+  background: rgba(0, 0, 0, 0.9);
+}
+
+.panel {
+  position: fixed;
+  right: 10px;
+  top: 60px;
+  background: rgba(0, 0, 0, 0.85);
+  backdrop-filter: blur(10px);
+  color: white;
+  padding: 20px;
+  border-radius: 12px;
+  max-width: 300px;
+  z-index: 1000;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.panel.hidden {
+  display: none;
+}
+
+.panel h3 {
+  margin-bottom: 15px;
+  font-size: 18px;
+}
+
+.panel h4 {
+  margin-top: 15px;
+  margin-bottom: 10px;
+  font-size: 14px;
+  color: #50d2c8;
+}
+
+.panel label {
+  display: block;
+  margin: 10px 0;
+  cursor: pointer;
+}
+
+.panel input[type="checkbox"] {
+  margin-right: 8px;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  margin: 8px 0;
+}
+
+.legend-color {
+  width: 30px;
+  height: 20px;
+  border-radius: 4px;
+  margin-right: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+/* Cartographic Legend: dark fixed panels shared by GIS and projection. */
+.map-legend {
+  --legend-bg: #191c1e;
+  --legend-ink: #f2f3f4;
+  --legend-sub: #bbc2c6;
+  --legend-edge: #3b4145;
+  position: fixed;
+  z-index: 1000;
+  box-sizing: border-box;
+  overflow: hidden;
+  color: var(--legend-ink);
+  background: var(--legend-bg);
+  border: 1px solid var(--legend-edge);
+  border-radius: 7px;
+  box-shadow: 0 3px 16px #0003;
+  font-family: "Guttman Hatzvi", "Noto Sans Hebrew", Arial, sans-serif;
+  font-size: 22px;
+  line-height: 1.35;
+}
+.map-legend:empty { display: none; }
+.map-legend-content { position: relative; min-width: 0; }
+.map-legend-gis { left: 50%; bottom: 20px; width: max-content; max-width: calc(100vw - 36px); padding: 8px 16px; padding-inline-end: 12px; transform: translateX(-50%); }
+.map-legend-projection { padding: 0; background: transparent; border: 0; border-radius: 0; box-shadow: none; }
+.map-legend-group { min-width: 0; }
+.map-legend-group + .map-legend-group { margin-top: 17px; padding-top: 13px; border-top: 1px solid var(--legend-edge); }
+.map-legend-group-title { margin-bottom: .55em; color: var(--legend-sub); font-size: .55em; font-weight: 600; }
+.map-legend-layer + .map-legend-layer { margin-top: .45em; }
+.map-legend-layer-title { margin-bottom: .32em; color: var(--legend-sub); font-size: .58em; font-weight: 600; }
+.map-legend-item { display: flex; align-items: flex-start; gap: .36em; min-width: 0; min-height: 1.14em; margin: .32em 0; }
+.map-legend-item--shelter { align-items: center; }
+.map-legend-item--shelter .map-legend-symbols { margin-top: 0; }
+.map-legend-symbols { display: inline-flex; align-items: center; gap: .18em; flex: 0 0 auto; min-width: 1.23em; margin-top: .18em; }
+.map-legend-symbol { position: relative; display: inline-block; width: 1.23em; height: .68em; flex: 0 0 1.23em; box-sizing: border-box; overflow: hidden; border: var(--legend-stroke-width) solid var(--legend-stroke); border-color: color-mix(in srgb, var(--legend-stroke), transparent calc((1 - var(--legend-stroke-opacity)) * 100%)); border-radius: 1px; }
+.map-legend-symbol::before { position: absolute; inset: 0; content: ""; opacity: var(--legend-fill-opacity); background: var(--legend-fill); border-radius: inherit; }
+.map-legend-symbol--line { height: max(2px, var(--legend-stroke-width)); margin-top: .27em; overflow: visible; opacity: var(--legend-stroke-opacity); background: var(--legend-fill); border: 0; box-shadow: 0 0 var(--legend-halo-blur, 0px) 1px color-mix(in srgb, var(--legend-halo, transparent) 35%, transparent); }
+.map-legend-symbol--line::before { content: none; }
+.map-legend-symbol--point { width: .55em; height: .55em; flex-basis: .55em; margin: .09em .32em 0; border-radius: 50%; }
+.map-legend-symbol--point.map-legend-symbol--captivity-bleed { border: 0; background: transparent; }
+.map-legend-symbol--point.map-legend-symbol--captivity-bleed::before {
+  inset: 0;
+  opacity: 1;
+  background: var(--legend-swatch-image) center / contain no-repeat;
+  border-radius: 50%;
+}
+.map-legend-symbol--square { width: .55em; height: .55em; flex-basis: .55em; margin: .09em .32em 0; }
+.map-legend-symbol--diamond { width: .45em; height: .45em; flex-basis: .45em; margin: .14em .36em 0; transform: rotate(45deg); }
+.map-legend-symbol--alarm-shockwave { overflow: visible; }
+.map-legend-symbol--alarm-shockwave::after { position: absolute; inset: -.28em; border: 1.6px solid color-mix(in srgb, var(--legend-alarm-shockwave, transparent) 40%, transparent); border-radius: 50%; content: ""; pointer-events: none; }
+.map-legend-label { min-width: 0; overflow-wrap: normal; word-break: keep-all; color: var(--legend-ink); font-size: .68em; line-height: 1.35; }
+.map-legend-projection .map-legend-label { font-size: 1em; }
+.map-legend-pager { position: absolute; inset-inline-end: 5px; bottom: 3px; display: flex; align-items: center; gap: 3px; color: var(--legend-sub); font-size: 11px; line-height: 1; }
+.map-legend-page-controls { display: flex; align-items: center; gap: 8px; }
+.map-legend-pager button { color: var(--legend-ink); background: transparent; border: 0; padding: 1px 3px; font: inherit; font-size: 14px; cursor: pointer; }
+.map-legend-measurement { position: absolute; visibility: hidden; pointer-events: none; }
+.map-legend-projection .map-legend-content { position: absolute; max-width: none; margin: 0; padding: 0; border: 0; overflow: visible; }
+.map-legend-projection .map-legend-item { display: block; min-width: 0; min-height: 0; margin: 0; gap: 0; }
+.map-legend-projection .map-legend-symbols { display: block; min-width: 0; margin: 0; }
+.map-legend-projection .map-legend-symbol { box-sizing: border-box; }
+.map-legend-projection .map-legend-projection-line { margin: 0; font-size: 1em; fill: currentColor; letter-spacing: 0; }
+.map-legend-projection .map-legend-symbol--alarm-shockwave::after { content: none; }
+.map-legend-projection .map-legend-group-title,
+.map-legend-projection .map-legend-layer-title,
+.map-legend-projection .map-legend-label,
+.map-legend-projection .map-legend-pager { text-shadow: 0 2px 8px rgba(0, 0, 0, 0.85); }
+.map-legend-gis .map-legend-content { display: flex; gap: 22px; overflow: hidden; max-width: 100%; }
+.map-legend-gis .map-legend-group { flex: 0 1 max-content; min-width: 0; max-width: calc(100vw - 68px); }
+.map-legend-measurement.map-legend-gis .map-legend-group { max-width: none; }
+.map-legend-gis .map-legend-layers { display: flex; flex-flow: row wrap; align-items: center; gap: 0 18px; }
+.map-legend-gis .map-legend-layer { display: contents; }
+.map-legend-gis .map-legend-layer-title { flex: 0 0 auto; margin: 7px 0; }
+.map-legend-gis .map-legend-item { flex: 0 0 auto; }
+.map-legend-gis .map-legend-group + .map-legend-group { margin-top: 0; padding: 0; padding-inline-start: 20px; border-top: 0; border-inline-start: 1px solid var(--legend-edge); }
+@media (max-width: 720px) { .map-legend-gis { max-width: calc(100vw - 18px); } }
+
+#connectionStatus {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  animation: pulse 2s infinite;
+}
+
+.status-connected {
+  background: #4caf50;
+}
+
+.status-disconnected {
+  background: #f44336;
+  animation: blink 1s infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.6;
+  }
+}
+
+@keyframes blink {
+  0%,
+  50%,
+  100% {
+    opacity: 1;
+  }
+  25%,
+  75% {
+    opacity: 0.3;
+  }
+}
+
+/* Leaflet popup styles for layer feature popups */
+.leaflet-popup-content-wrapper,
+.maplibregl-popup-content {
+  border-radius: 8px;
+  padding: 0;
+}
+
+.leaflet-popup-content,
+.maplibregl-popup-content {
+  margin: 0;
+  padding: 12px 16px;
+  min-width: 200px;
+  max-width: 400px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.gis-feature-popup .maplibregl-popup-content {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+}
+
+.popup-content {
+  direction: rtl;
+  text-align: right;
+}
+
+.popup-category {
+  font-size: 12px;
+  font-weight: 500;
+  color: #666;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid #e0e0e0;
+}
+
+.popup-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #333;
+}
+
+/* Add spacing and border when there are fields below the title */
+.popup-title + .popup-fields {
+  margin-top: 12px;
+  padding-top: 8px;
+  border-top: 2px solid #e0e0e0;
+}
+
+.popup-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.popup-field {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+.popup-label {
+  font-weight: 600;
+  color: #555;
+  min-width: 120px;
+  flex-shrink: 0;
+}
+
+.popup-value {
+  color: #333;
+  flex: 1;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+/* Empty state */
+.popup-content p {
+  margin: 0;
+  color: #888;
+  font-style: italic;
+}
+
+/* Mobile optimization for popups */
+@media (max-width: 768px) {
+  .leaflet-popup-content,
+  .maplibregl-popup-content {
+    min-width: 180px;
+    max-width: calc(100vw - 40px);
+    padding: 10px 12px;
+    font-size: 13px;
+  }
+
+  .popup-label {
+    min-width: 100px;
+    font-size: 13px;
+  }
+}
+
+.gis-person-bubble-popup .maplibregl-popup-content {
+  border: 1px solid var(--gis-person-selection-hairline);
+  border-radius: 0;
+  background: var(--gis-person-selection-paper);
+  color: var(--gis-person-selection-ink);
+  box-shadow: none;
+  min-width: 0;
+  max-width: 280px;
+  padding: 0;
+}
+
+.gis-person-bubble-popup.maplibregl-popup-anchor-bottom .maplibregl-popup-tip,
+.gis-person-bubble-popup.maplibregl-popup-anchor-bottom-left .maplibregl-popup-tip,
+.gis-person-bubble-popup.maplibregl-popup-anchor-bottom-right .maplibregl-popup-tip {
+  border-top-color: var(--gis-person-selection-paper);
+}
+
+.gis-person-bubble-popup.maplibregl-popup-anchor-top .maplibregl-popup-tip,
+.gis-person-bubble-popup.maplibregl-popup-anchor-top-left .maplibregl-popup-tip,
+.gis-person-bubble-popup.maplibregl-popup-anchor-top-right .maplibregl-popup-tip {
+  border-bottom-color: var(--gis-person-selection-paper);
+}
+
+.gis-person-bubble-popup.maplibregl-popup-anchor-left .maplibregl-popup-tip {
+  border-right-color: var(--gis-person-selection-paper);
+}
+
+.gis-person-bubble-popup.maplibregl-popup-anchor-right .maplibregl-popup-tip {
+  border-left-color: var(--gis-person-selection-paper);
+}
+
+.gis-person-bubble { direction: auto; }
+.gis-person-bubble::before {
+  content: "";
+  display: block;
+  height: 4px;
+  background: var(--gis-person-selection-band);
+  border-bottom: 1px solid var(--gis-person-selection-hairline);
+}
+.gis-person-bubble-popup--link { cursor: pointer; }
+.gis-person-bubble__name {
+  display: -webkit-box;
+  padding: 8px 14px 9px;
+  color: var(--gis-person-selection-ink);
+  font-family: "Hadassah Friedlaender", serif;
+  font-size: var(--gis-person-selection-text-size);
+  font-weight: 400;
+  font-synthesis: none;
+  line-height: 1.25;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  text-overflow: ellipsis;
+  white-space: normal;
+}
+
+/* Pink line curated layer: node markers (no numbers), tooltip on hover */
+.pink-line-node-marker {
+  background: transparent;
+  border: none;
+}
+
+.pink-line-node {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: currentColor;
+  border: 2px solid #fff;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.3);
+}
+
+/* Colab-style off-road connector junction (GIS divIcon); color from route off-road stroke */
+.pink-offroad-junction-marker-root {
+  background: transparent;
+  border: none;
+}
+
+.pink-offroad-junction-node {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  box-sizing: border-box;
+  background: var(--pink-offroad-junction-color, #c62828);
+  border: 2px solid #fff;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.35);
+}
+
+.curated-node-tooltip {
+  font-size: 13px;
+  padding: 6px 10px;
+  white-space: nowrap;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Curated memorial markers: divIcon shell + PNG, submission-color ring when display_color validates */
+.curation-memorial-marker-root {
+  background: transparent;
+  border: none;
+}
+
+.curation-memorial-marker-shell {
+  width: 33px;
+  height: 33px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 100%;
+}
+
+.curation-memorial-marker-accent {
+  box-shadow: 0 0 0 2px var(--memorial-accent, transparent);
+}
+
+.curation-memorial-marker-img {
+  width: 38px;
+  height: 38px;
+  display: block;
+  object-fit: contain;
+  border-radius: 50%;
+}
+
+.memorial-inspect-html {
+  text-align: right;
+}
+
+/* Mobile optimization */
+@media (max-width: 768px) {
+  .panel {
+    max-width: calc(100% - 20px);
+    right: 10px;
+    left: 10px;
+  }
+
+  #controls {
+    top: 10px;
+    right: 10px;
+  }
+}
+
+/* Projection Viewport Highlight Box (Uniform Diffused Light) */
+.highlight-box {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+  will-change: transform, width, height;
+  transition: transform 0.08s linear, width 0.08s linear, height 0.08s linear;
+  /* Crisp 1px white border — not clip-path’ed; fill is the inner .highlight-box-fill */
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  background: transparent;
+  box-sizing: border-box;
+  /* Subtle outer glow and inner edge diffusion */
+  box-shadow:
+      0 0 15px rgba(255, 255, 255, 0.2),
+      inset 0 0 20px rgba(255, 255, 255, 0.1);
+  transform-origin: center center;
+  overflow: visible;
+}
+
+.highlight-box-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 0;
+  box-sizing: border-box;
+  background: rgba(255, 255, 255, 0.12);
+  transition: transform 0.08s linear, width 0.08s linear, height 0.08s linear;
+}
+
+.highlight-box::after {
+  /* Volumetric bleed that follows the box shape rather than a circle */
+  content: '';
+  position: absolute;
+  inset: -10px;
+  background: rgba(255, 255, 255, 0.1);
+  pointer-events: none;
+  z-index: 2;
+  filter: blur(15px);
+  animation: highlightPulseLight 4s ease-in-out infinite alternate;
+}
+
+@keyframes highlightPulseLight {
+  0% { opacity: 0.5; transform: scale(0.99); }
+  100% { opacity: 1; transform: scale(1.01); }
+}
+
+.nli-investigation-timeline-caption {
+  position: absolute;
+  left: 50%;
+  bottom: 28px;
+  transform: translateX(-50%);
+  z-index: 8;
+  max-width: min(72vw, 42rem);
+  padding: 6px 12px;
+  background: rgba(12, 16, 22, 0.62);
+  color: #f4f1ea;
+  font-size: 13px;
+  line-height: 1.35;
+  letter-spacing: 0.01em;
+  text-align: center;
+  pointer-events: none;
+  border-radius: 4px;
+}
+
+.nli-investigation-timeline-caption[hidden] {
+  display: none;
+}
+
+.nli-investigation-timeline-caption .nli-tl-clock {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.nli-tl-row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 0.55em;
+  text-align: start;
+}
+.nli-tl-kind { font-weight: 650; white-space: nowrap; }
+.nli-tl-row--polygons .nli-tl-kind { color: #f79009; }
+.nli-tl-row--lines .nli-tl-kind { color: #c31f4f; }
+.nli-tl-row--alarms .nli-tl-kind { color: #38bdf8; }
+.nli-tl-chips { min-width: 0; overflow-wrap: normal; word-break: keep-all; }
+.nli-tl-chip { display: inline; white-space: pre-wrap; }
+.nli-tl-sep { white-space: pre-wrap; }
+.nli-tl-clock { font-size: 1.35em; font-variant-numeric: tabular-nums; font-weight: 600; }
+.nli-tl-clock.nli-clock-motion,
+#nliGisClockHost .nli-tl-clock.nli-clock-motion,
+#nliExplainerHost .nli-tl-clock.nli-clock-motion {
+  display: inline-flex;
+  gap: .04em;
+  letter-spacing: 0;
+  text-shadow: none;
+}
+.nli-clock-digit {
+  position: relative;
+  display: inline-block;
+  flex: 0 0 .65em;
+  width: .65em;
+  height: 1.35em;
+  filter: drop-shadow(0 2px 8px rgba(0, 0, 0, .85));
+}
+.nli-clock-digit--colon { flex-basis: .26em; width: .26em; }
+.nli-clock-glyph {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 1.35em;
+  line-height: 1.35;
+  text-align: center;
+}
+.nli-clock-half {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: calc(50% + .75px);
+  overflow: hidden;
+  transform-origin: center calc(100% - .75px);
+}
+.nli-clock-half--bottom {
+  top: calc(50% - .75px);
+  transform-origin: center .75px;
+}
+.nli-clock-half--bottom .nli-clock-glyph { top: calc(-.675em + .75px); }
+#nliExplainerHost {
+  position: absolute;
+  z-index: 12;
+  box-sizing: border-box;
+  pointer-events: none;
+  overflow: visible;
+}
+#nliExplainerHost .nli-tl-clock--clock-only {
+  color: #fff;
+  font-size: inherit;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.85);
+}
+#nliExplainerHost .nli-investigation-timeline-caption {
+  position: absolute;
+  inset: 0;
+  left: auto;
+  bottom: auto;
+  transform: none;
+  max-width: none;
+  width: 100%;
+  height: 100%;
+  font-size: inherit;
+  text-align: start;
+  overflow: hidden;
+  background: transparent;
+  padding: 0;
+  pointer-events: auto;
+}
+#nliGisClockHost {
+  position: absolute;
+  z-index: 20;
+  box-sizing: border-box;
+  pointer-events: none;
+  overflow: visible;
+}
+#nliGisClockHost .nli-tl-clock--clock-only {
+  color: #fff;
+  font-size: inherit;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.85);
+}
+#nliGisClockHost .nli-investigation-timeline-caption {
+  position: absolute;
+  inset: 0;
+  left: auto;
+  bottom: auto;
+  transform: none;
+  max-width: none;
+  width: 100%;
+  height: 100%;
+  font-size: inherit;
+  text-align: start;
+  overflow: hidden;
+  background: transparent;
+  padding: 0;
+  pointer-events: auto;
+}
+
+.nli-reveal-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 11000;
+  background: #000;
+  opacity: 0;
+  transition: opacity 600ms linear;
+}
+.nli-reveal-outgoing {
+  position: absolute;
+  inset: 0;
+  z-index: 10999;
+  background: #000;
+}
+.nli-reveal-overlay--blackout {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #fffbf8 url("../img/nli-slide-background.png") center / 100% 100% no-repeat;
+}
+.nli-reveal-overlay--blackout::before {
+  content: "";
+  position: absolute;
+  inset: 12.5% 0 0;
+  background: #fffbf8;
+  pointer-events: none;
+}
+.nli-blackout-copy {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.38em;
+  max-width: 88%;
+  text-align: center;
+}
+.nli-blackout-title {
+  margin: 0;
+  color: #000;
+  font-family: "Hadassah Friedlaender", serif;
+  font-size: clamp(2.4rem, 6.6vw, 5.4rem);
+  font-weight: 400;
+  line-height: 1.12;
+}
+.nli-blackout-date {
+  margin: 0;
+  color: #333;
+  font-family: "Narkiss Block", sans-serif;
+  font-size: clamp(1rem, 3vw, 2.35rem);
+  font-weight: 400;
+  line-height: 1.2;
+}
+.nli-reveal-overlay .reveal,
+.nli-reveal-outgoing .reveal {
+  width: 100%;
+  height: 100%;
+}
+.nli-reveal-overlay .slides section,
+.nli-reveal-outgoing .slides section {
+  width: 960px;
+  height: 540px;
+}
+.nli-presentation-frame {
+  position: absolute;
+  inset: 0;
+  width: 960px;
+  height: 540px;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  background: #fffbf8;
+}
+.nli-presentation-frame > img {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.nli-presentation-frame > video {
+  position: absolute;
+  object-fit: cover;
+}
+.nli-reveal-overlay .nli-presentation-title {
+  position: absolute;
+  inset: 12.5% 2.8% auto;
+  height: 12.5%;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  margin: 0;
+  color: #000;
+  font-family: "Hadassah Friedlaender", serif;
+  font-size: 32px;
+  font-weight: 400;
+  line-height: 1.15;
+  text-align: right;
+  text-transform: none;
+}
+.nli-reveal-overlay .nli-presentation-credit {
+  position: absolute;
+  right: 2.8%;
+  bottom: 3.5%;
+  width: 12.8%;
+  margin: 0;
+  color: #000;
+  font-family: "Narkiss Block", sans-serif;
+  font-size: 28px;
+  font-weight: 400;
+  line-height: 1.12;
+  text-align: right;
+}
+.nli-presentation-credit > strong,
+.nli-presentation-credit > span {
+  display: block;
+}
+.nli-presentation-credit > strong {
+  font-weight: 700;
+}
+
+#nliNovaExplainerHost,
+.gis-person-bubble-popup {
+  --gis-person-selection-paper: #fffbf8;
+  --gis-person-selection-band: #e6ddd2;
+  --gis-person-selection-hairline: #c9bfb2;
+  --gis-person-selection-ink: #000;
+  --gis-person-selection-text-size: 24px;
+}
+
+#nliNovaExplainerHost {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  overflow: hidden;
+  pointer-events: none;
+  opacity: 1;
+  visibility: visible;
+  transition: opacity 600ms ease, visibility 0s;
+}
+
+#nliNovaExplainerHost.nli-nova-explainers--hidden {
+  opacity: 0;
+  visibility: hidden;
+  transition-delay: 0s, 600ms;
+}
+
+#nliNovaExplainerHost .nli-nova-explainer-card {
+  max-width: 280px;
+  border: 1px solid var(--gis-person-selection-hairline);
+  border-radius: 0;
+  background: var(--gis-person-selection-paper);
+  color: var(--gis-person-selection-ink);
+  box-shadow: none;
+}
+
+#nliNovaExplainerHost .nli-nova-explainer-card::before {
+  content: "";
+  display: block;
+  height: 4px;
+  background: var(--gis-person-selection-band);
+  border-bottom: 1px solid var(--gis-person-selection-hairline);
+}
+
+#nliNovaExplainerHost .nli-nova-explainer-card__name {
+  display: block;
+  padding: 8px 14px 9px;
+  font-family: "Hadassah Friedlaender", serif;
+  font-size: var(--gis-person-selection-text-size);
+  font-weight: 400;
+  font-synthesis: none;
+  line-height: 1.25;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+@keyframes nli-nova-explainer-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+#nliNovaExplainerHost .nli-nova-explainer-card--in {
+  animation: nli-nova-explainer-in 280ms linear;
+}
+
+#nliNovaExplainerHost .nli-nova-explainer-card--past,
+#nliNovaExplainerHost .nli-nova-explainer-leader--past {
+  opacity: 0.42;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #nliNovaExplainerHost {
+    transition: none;
+  }
+
+  #nliNovaExplainerHost .nli-nova-explainer-card--in {
+    animation: none;
+  }
+}
+

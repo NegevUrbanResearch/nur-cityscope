@@ -1,0 +1,1639 @@
+/**
+ * MapLibre curated layer loader.
+ * MapLibre equivalent of leaflet-curated-layer-loader.js.
+ *
+ * Reuses renderer-agnostic pipeline:
+ *   fetchCuratedLayerData, extractPointFeatures, extractPinkDetourPointFeatures,
+ *   fetchPinkLinePaths, getMemorialIconForFeature, resolvePinkLinePackStyleBundle,
+ *   buildIntegratedRoute, planPinkCuratedOverlayLayers, routeLineStylesForDisplayColor.
+ *
+ * Final materialization uses MapLibre sources + layers for polyline ops,
+ * and MapLibre Marker with custom HTML for node/memorial markers.
+ *
+ * IMPORTANT: overlay plan latLngs are [lat, lng]; MapLibre GeoJSON requires [lng, lat].
+ * Flip happens at materialization boundary via latLngToCoord().
+ */
+
+import { UI_CONFIG } from "../config/ui-config.js";
+import {
+  fetchCuratedLayerData,
+  extractPointFeatures,
+  extractPinkDetourPointFeatures,
+  fetchPinkLinePaths,
+  getMemorialIconForFeature,
+  resolvePinkLinePackStyleBundle,
+} from "../shared/curated-layer-service.js";
+import { buildIntegratedRoute } from "../map-utils/pink-line-route.js";
+import {
+  colabBundleHasDetourPaint,
+  colabBundleHasRenderableGeometry,
+  parseColabRouteGeometryBundle,
+} from "../map-utils/colab-route-geometry-bundle.js";
+import { assignPinkNodeDisplayOrders } from "../map-utils/pink-route-optimizer.js";
+import {
+  STORED_PINK_ROUTE_OFFROAD_GAP_METERS,
+  pinkProjectionFallbackLineStyle,
+  routeLineStylesForDisplayColor,
+} from "../map-utils/pink-route-map-styles.js";
+import {
+  clipProposedPathsLatLngExcludingOffroadGaps,
+  collectOffroadJunctionLatLngs,
+  findOffroadTwoPointSegments,
+  parsePinkLineRouteFromGeojson,
+  resolveFirstDisplayColorFromGeojson,
+  sanitizeDisplayColorHex,
+} from "./leaflet-curated-pink-helpers.js";
+import { planPinkCuratedOverlayLayers } from "./pink-curated-overlay-plan.js";
+import { buildMemorialInspectHtml } from "./curated-memorial-inspect-html.js";
+import { readPinkNodeOrder } from "../map-utils/pink-node-order.js";
+import {
+  computePinkLineBaseLayerVisible,
+  computePinkLineParkingOverlayVisible,
+} from "../map-utils/curated-pink-axis-state.js";
+import { createNameFieldExitGate } from "../shared/nli-name-wall-scene-exit.js";
+import {
+  PINK_LINE_PARKING_ICON_URL,
+  fetchPinkLineParkingLotsGeojson,
+  resolvePinkLineParkingAssetUrl,
+} from "../map-utils/pink-line-parking.js";
+import MapProjectionConfig from "../shared/map-projection-config.js";
+import {
+  addCuratedGeoJsonSource,
+  getEnabledMapFullLayerIds,
+  removeCuratedLayersByPrefix,
+  registerCuratedLayerIds,
+} from "./maplibre-layer-manager.js";
+import { getLayerLifecycleRuntime, resolveLayerFadeMs } from "../shared/layer-lifecycle-fade.js";
+import {
+  maplibreLineDashFromLeafletPx,
+  maplibreLineDashWithLeafletOffset,
+} from "../shared/maplibre-line-dash.js";
+
+export {
+  maplibreLineDashFromLeafletPx,
+  maplibreLineDashWithLeafletOffset,
+};
+
+const getCuratedLayerColor = UI_CONFIG.getCuratedColor;
+const getSubmissionDisplayPrimaryForCuratedLayer =
+  UI_CONFIG.getSubmissionDisplayPrimaryForCuratedLayer;
+
+/** Dev-only: avoid spamming console when published GeoJSON has no stored route. */
+const noStoredPinkRouteLoggedIds = new Set();
+
+/**
+ * Flip [lat, lng] → [lng, lat] for MapLibre GeoJSON coordinates.
+ * @param {[number, number]} latLng
+ * @returns {[number, number]}
+ */
+function latLngToCoord([lat, lng]) {
+  return [lng, lat];
+}
+
+// ---------------------------------------------------------------------------
+// HTML marker tracking
+// ---------------------------------------------------------------------------
+
+/** @type {Map<string, import("maplibre-gl").Marker[]>} */
+const htmlMarkersByLayer = new Map();
+
+/**
+ * Remove all HTML markers associated with a layer.
+ * @param {string} fullLayerId
+ */
+export function removeCuratedHtmlMarkers(fullLayerId) {
+  const markers = htmlMarkersByLayer.get(fullLayerId) || [];
+  for (const m of markers) {
+    try {
+      m.remove();
+    } catch (_) {}
+  }
+  htmlMarkersByLayer.delete(fullLayerId);
+}
+
+// ---------------------------------------------------------------------------
+// Pink-line base layer (MapLibre equivalent of ensurePinkLineBaseLayer)
+// ---------------------------------------------------------------------------
+
+/** Source/layer ids used for the shared pink-line base on this MapLibre map. */
+const PINK_BASE_SOURCE_ID = "pink_line_base";
+const PINK_BASE_LAYER_ID = "pink_line_base__line";
+
+/** Serialize pink-base attach per map (sync + curated load can call concurrently). */
+/** @type {WeakMap<object, Promise<void>>} */
+const pinkBaseEnsureChainByMap = new WeakMap();
+
+/**
+ * Ensure the pink-line base polylines are added to the MapLibre map.
+ * Mirrors leaflet-curated-layer-loader.js `ensurePinkLineBaseLayer` logic:
+ * when `removedPaths` are present, omit the base layer entirely (colab parity).
+ *
+ * @param {object} map - MapLibre map instance
+ * @param {{ removedPaths?: Array<Array<[number, number]>> }} [options]
+ */
+function ensurePinkLineBaseLayer(map, options = {}) {
+  if (!map) return Promise.resolve();
+  const prev = pinkBaseEnsureChainByMap.get(map) || Promise.resolve();
+  const work = prev.then(() => ensurePinkLineBaseLayerWork(map, options));
+  pinkBaseEnsureChainByMap.set(
+    map,
+    work.catch(() => {
+      /* errors logged inside work */
+    }),
+  );
+  return work;
+}
+
+async function ensurePinkLineBaseLayerWork(map, options = {}) {
+  const isCurrent = typeof options.isCurrent === "function" ? options.isCurrent : () => true;
+  if (!isCurrent()) return;
+  const removedPaths = options.removedPaths;
+  const clip =
+    Array.isArray(removedPaths) &&
+    removedPaths.some((p) => Array.isArray(p) && p.length >= 2);
+
+  try {
+    if (clip) {
+      // Remove base layer if present; rely on overlay solidLine for kept segments.
+      if (!isCurrent()) return;
+      if (map.getLayer(PINK_BASE_LAYER_ID)) map.removeLayer(PINK_BASE_LAYER_ID);
+      if (map.getSource(PINK_BASE_SOURCE_ID)) map.removeSource(PINK_BASE_SOURCE_ID);
+      return;
+    }
+
+    if (map.getLayer(PINK_BASE_LAYER_ID)) return; // already rendered
+
+    const [{ basePaths }, styleBundle] = await Promise.all([
+      fetchPinkLinePaths(),
+      resolvePinkLinePackStyleBundle(),
+    ]);
+    if (!isCurrent()) return;
+    if (map.getLayer(PINK_BASE_LAYER_ID)) return;
+    if (!basePaths || basePaths.length === 0) return;
+
+    const features = basePaths
+      .filter((p) => Array.isArray(p) && p.length >= 2)
+      .map((path) => ({
+        type: "Feature",
+        geometry: {
+          type: "LineString",
+          coordinates: path.map(latLngToCoord),
+        },
+        properties: {},
+      }));
+    if (features.length === 0) return;
+
+    if (map.getLayer(PINK_BASE_LAYER_ID)) return;
+
+    const geojsonData = { type: "FeatureCollection", features };
+    if (!map.getSource(PINK_BASE_SOURCE_ID)) {
+      map.addSource(PINK_BASE_SOURCE_ID, { type: "geojson", data: geojsonData });
+    }
+
+    if (map.getLayer(PINK_BASE_LAYER_ID)) return;
+
+    const opts = styleBundle.leafletPolylineOptions || {};
+    try {
+      map.addLayer({
+        id: PINK_BASE_LAYER_ID,
+        type: "line",
+        source: PINK_BASE_SOURCE_ID,
+        layout: { "line-cap": "round", "line-join": "round" },
+        paint: {
+          "line-color": opts.color || "#FF69B4",
+          "line-width": typeof opts.weight === "number" ? opts.weight : 5,
+          "line-opacity": typeof opts.opacity === "number" ? opts.opacity : 0.9,
+        },
+      });
+    } catch (addErr) {
+      if (map.getLayer(PINK_BASE_LAYER_ID)) return;
+      throw addErr;
+    }
+  } catch (err) {
+    console.warn(
+      "[maplibre-curated-layer-loader] ensurePinkLineBaseLayer failed",
+      err,
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Pink-line axis companion: base + parking (Leaflet parity; not registry layers)
+// ---------------------------------------------------------------------------
+
+/** @typedef {{ attachGeneration: number, visibleIntent: boolean, styleIdleWait?: boolean }} PinkParkingMapState */
+/** @type {WeakMap<object, PinkParkingMapState>} */
+const pinkParkingStateByMap = new WeakMap();
+
+const PINK_PARKING_SOURCE_ID = "pink_line_parking__points";
+const PINK_PARKING_LAYER_ID = "pink_line_parking__symbol";
+const PINK_PARKING_SPRITE_ID = "pink_line_parking_lot_icon";
+const PINK_PARKING_TARGET_ICON_PX = 28;
+const PINK_PARKING_ICON_SIZE_GIS = 1;
+const PINK_PARKING_ICON_SIZE_PROJECTION = 0.5;
+
+function getParkingIconSizeForMap(map) {
+  try {
+    const id = map?.getContainer?.()?.id;
+    if (id === "projectionMap") return PINK_PARKING_ICON_SIZE_PROJECTION;
+  } catch (_) {}
+  return PINK_PARKING_ICON_SIZE_GIS;
+}
+
+function getPinkParkingMapState(map) {
+  let s = pinkParkingStateByMap.get(map);
+  if (!s) {
+    s = { attachGeneration: 0, visibleIntent: false };
+    pinkParkingStateByMap.set(map, s);
+  }
+  return s;
+}
+
+function detachPinkLineParkingMapLibre(map) {
+  if (!map) return;
+  const st = getPinkParkingMapState(map);
+  st.attachGeneration += 1;
+  st.visibleIntent = false;
+  st.styleIdleWait = false;
+  try {
+    if (map.getLayer(PINK_PARKING_LAYER_ID)) map.removeLayer(PINK_PARKING_LAYER_ID);
+    if (map.getSource(PINK_PARKING_SOURCE_ID)) map.removeSource(PINK_PARKING_SOURCE_ID);
+    if (typeof map.hasImage === "function" && typeof map.removeImage === "function") {
+      if (map.hasImage(PINK_PARKING_SPRITE_ID)) {
+        map.removeImage(PINK_PARKING_SPRITE_ID);
+      }
+    }
+  } catch (_) {}
+}
+
+/**
+ * Ensure parking symbol layer on MapLibre (static GeoJSON + shared PNG).
+ * Mirrors `leaflet-curated-layer-loader.js` `ensurePinkLineParkingLayer`.
+ *
+ * @param {object} map
+ */
+function mapHasParkingSprite(map) {
+  if (typeof map.hasImage !== "function") return false;
+  try {
+    return map.hasImage(PINK_PARKING_SPRITE_ID);
+  } catch (_) {
+    return false;
+  }
+}
+
+/**
+ * Decode parking PNG the same way as successful Network-tab fetches.
+ * `map.loadImage` can still fail for WebGL (CORS/taint, worker quirks) while `fetch` returns 200.
+ *
+ * @param {string} iconUrl
+ * @returns {Promise<HTMLImageElement | ImageBitmap>}
+ */
+async function loadParkingIconRaster(iconUrl) {
+  const res = await fetch(iconUrl, { credentials: "same-origin" });
+  if (!res.ok) {
+    throw new Error(`parking icon fetch ${res.status}`);
+  }
+  const blob = await res.blob();
+  if (typeof createImageBitmap === "function") {
+    try {
+      return await createImageBitmap(blob);
+    } catch (_) {
+      // Fall through to Image + object URL (older engines / odd PNGs).
+    }
+  }
+  const objectUrl = URL.createObjectURL(blob);
+  try {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    await new Promise((resolve, reject) => {
+      img.onload = () => resolve();
+      img.onerror = () => reject(new Error("parking icon Image decode failed"));
+      img.src = objectUrl;
+    });
+    if (typeof img.decode === "function") {
+      try {
+        await img.decode();
+      } catch (_) {
+        // decode() can reject on incomplete metadata; onload already fired.
+      }
+    }
+    return img;
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
+async function ensurePinkLineParkingOnMapLibre(map) {
+  if (!map || typeof map.addLayer !== "function") return;
+  const st = getPinkParkingMapState(map);
+  if (!st.visibleIntent) return;
+  if (typeof map.isStyleLoaded === "function" && !map.isStyleLoaded()) {
+    if (!st.styleIdleWait && typeof map.once === "function") {
+      st.styleIdleWait = true;
+      map.once("idle", () => {
+        st.styleIdleWait = false;
+        if (getPinkParkingMapState(map).visibleIntent) {
+          void ensurePinkLineParkingOnMapLibre(map);
+        }
+      });
+    }
+    return;
+  }
+  if (map.getLayer(PINK_PARKING_LAYER_ID)) return;
+
+  const gen = st.attachGeneration;
+  try {
+    const geojson = await fetchPinkLineParkingLotsGeojson();
+    if (gen !== st.attachGeneration || !st.visibleIntent) return;
+    if (!geojson || !Array.isArray(geojson.features) || geojson.features.length === 0) return;
+
+    const iconUrl = resolvePinkLineParkingAssetUrl(PINK_LINE_PARKING_ICON_URL);
+
+    const addParkingSymbolLayer = () => {
+      if (gen !== st.attachGeneration || !st.visibleIntent) return;
+      if (map.getLayer(PINK_PARKING_LAYER_ID)) return;
+      if (!mapHasParkingSprite(map)) return;
+      const src = map.getSource(PINK_PARKING_SOURCE_ID);
+      if (src && typeof src.setData === "function") {
+        try {
+          src.setData(geojson);
+        } catch (_) {}
+      } else if (!map.getSource(PINK_PARKING_SOURCE_ID)) {
+        map.addSource(PINK_PARKING_SOURCE_ID, { type: "geojson", data: geojson });
+      }
+      try {
+        map.addLayer({
+          id: PINK_PARKING_LAYER_ID,
+          type: "symbol",
+          source: PINK_PARKING_SOURCE_ID,
+          layout: {
+            "icon-image": PINK_PARKING_SPRITE_ID,
+            "icon-size": getParkingIconSizeForMap(map),
+            "icon-allow-overlap": true,
+            "icon-ignore-placement": true,
+          },
+          paint: {
+            "icon-opacity": 1,
+          },
+        });
+        if (typeof map.moveLayer === "function") {
+          try {
+            map.moveLayer(PINK_PARKING_LAYER_ID);
+          } catch (_) {
+            // Non-fatal; layer still exists at default stack position.
+          }
+        }
+      } catch (e) {
+        if (map.getLayer(PINK_PARKING_LAYER_ID)) return;
+        throw e;
+      }
+    };
+
+    if (!mapHasParkingSprite(map)) {
+      try {
+        const raster = await loadParkingIconRaster(iconUrl);
+        if (gen !== st.attachGeneration || !st.visibleIntent) return;
+        if (!mapHasParkingSprite(map)) {
+          const rasterWidth =
+            raster && Number.isFinite(raster.width) ? Number(raster.width) : null;
+          const normalizedPixelRatio =
+            rasterWidth && rasterWidth > 0
+              ? Math.max(1, rasterWidth / PINK_PARKING_TARGET_ICON_PX)
+              : 1;
+          map.addImage(PINK_PARKING_SPRITE_ID, raster, {
+            pixelRatio: normalizedPixelRatio,
+          });
+        }
+      } catch (e) {
+        console.warn("[maplibre-curated-layer-loader] parking icon raster failed", e);
+        return;
+      }
+    }
+    addParkingSymbolLayer();
+  } catch (err) {
+    console.warn("[maplibre-curated-layer-loader] ensurePinkLineParkingOnMapLibre failed", err);
+  }
+}
+
+/**
+ * Parking lots overlay on GIS/projection MapLibre maps.
+ * Same contract as Leaflet `setPinkLineParkingMapVisibility` but requires the map instance.
+ *
+ * @param {object} map
+ * @param {boolean} visible
+ */
+export function setPinkLineParkingMapLibreVisibility(map, visible) {
+  if (!map) return;
+  const st = getPinkParkingMapState(map);
+  if (!visible) {
+    detachPinkLineParkingMapLibre(map);
+    return;
+  }
+  st.visibleIntent = true;
+  // After base chain settles (success or failure) — parking must still attach (Leaflet parity when base is clipped).
+  void ensurePinkLineBaseLayer(map, {}).finally(() => {
+    if (!getPinkParkingMapState(map).visibleIntent) return;
+    void ensurePinkLineParkingOnMapLibre(map);
+  });
+}
+
+/**
+ * Shared pink-line *base polylines* on MapLibre (not parking — use `setPinkLineParkingMapLibreVisibility`).
+ *
+ * @param {object} map
+ * @param {boolean} visible
+ */
+export function setPinkLineBaseMapLibreVisibility(map, visible) {
+  if (!map) return;
+  if (!visible) {
+    try {
+      if (map.getLayer(PINK_BASE_LAYER_ID)) map.removeLayer(PINK_BASE_LAYER_ID);
+      if (map.getSource(PINK_BASE_SOURCE_ID)) map.removeSource(PINK_BASE_SOURCE_ID);
+    } catch (_) {}
+    return;
+  }
+  void ensurePinkLineBaseLayer(map, {});
+}
+
+/**
+ * Apply Moreshet-axis pink base + parking companion from raw/effective layer groups
+ * (must include `pink_line_route` / `pink_line_parking` rows when present — do not
+ * pass GIS-filtered groups).
+ *
+ * @param {object} map
+ * @param {unknown} layerGroups
+ */
+export function syncPinkLineAxisCompanionForMapLibre(map, layerGroups) {
+  if (!map) return;
+  const groups = Array.isArray(layerGroups)
+    ? layerGroups
+    : layerGroups && typeof layerGroups === "object"
+      ? Object.values(layerGroups)
+      : [];
+  try {
+    setPinkLineBaseMapLibreVisibility(map, computePinkLineBaseLayerVisible(groups));
+    setPinkLineParkingMapLibreVisibility(map, computePinkLineParkingOverlayVisible(groups));
+  } catch (_) {
+    // Non-fatal; mirrors leaflet `applyLayerGroupsState` try/catch around pink helpers.
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Style translation: Leaflet-style objects → MapLibre paint/layout
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse Leaflet dash offset (px along stroke) for MapLibre phase translation.
+ * @param {unknown} value
+ * @returns {number | null}
+ */
+export function parseLeafletDashOffsetPx(value) {
+  if (value == null) return null;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    let t = String(value).trim();
+    if (t.length >= 2 && /px$/i.test(t)) {
+      t = t.slice(0, -2).trim();
+    }
+    const n = Number(t);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+/**
+ * Convert a Leaflet polyline-style object to MapLibre line paint + layout.
+ * @param {{ color?: string; weight?: number; opacity?: number; dashArray?: string; dashOffset?: string; lineCap?: string; lineJoin?: string }} leafletStyle
+ * @returns {{ paint: object; layout: object }}
+ */
+export function leafletStyleToMapLibre(leafletStyle) {
+  const s = leafletStyle || {};
+  const lineWidthPx = typeof s.weight === "number" ? s.weight : 4;
+  const paint = {
+    "line-color": s.color || "#FF69B4",
+    "line-width": lineWidthPx,
+    "line-opacity": typeof s.opacity === "number" ? s.opacity : 1,
+  };
+
+  if (s.dashArray) {
+    // Leaflet dashArray is a space-separated string like "10 8"; MapLibre expects [number, number, ...]
+    const parts = String(s.dashArray)
+      .trim()
+      .split(/[\s,]+/)
+      .map(Number)
+      .filter((n) => Number.isFinite(n));
+    if (parts.length >= 2) {
+      const o = parseLeafletDashOffsetPx(s.dashOffset);
+      paint["line-dasharray"] = maplibreLineDashFromLeafletPx(lineWidthPx, parts, o);
+    }
+  }
+
+  const layout = {
+    "line-cap": s.lineCap || "round",
+    "line-join": s.lineJoin || "round",
+  };
+
+  return { paint, layout };
+}
+
+/**
+ * Resolve MapLibre paint/layout for a pink overlay styleKey.
+ * @param {string} styleKey
+ * @param {ReturnType<typeof routeLineStylesForDisplayColor>} styles
+ * @returns {{ paint: object; layout: object }}
+ */
+function resolveMapLibrePolylineStyle(styleKey, styles) {
+  const leafletStyle =
+    styleKey === "solidLine" ? styles.solidLine
+    : styleKey === "oldHalo" ? styles.oldHalo
+    : styleKey === "oldLine" ? styles.oldLine
+    : styleKey === "proposedHalo" ? styles.proposedHalo
+    : styleKey === "proposedSecondary" ? styles.proposedSecondary
+    : styleKey === "proposedLine" ? styles.proposedLine
+    : styleKey === "offroadLine" ? styles.offroadLine
+    : styles.solidLine;
+  return leafletStyleToMapLibre(leafletStyle || styles.solidLine);
+}
+
+/**
+ * Resolve MapLibre circle paint/layout for overlay circle marker ops.
+ * Task 4 spec: circleMarker ops must materialize as GeoJSON point source + circle layer.
+ * @param {string} styleKey
+ * @param {ReturnType<typeof routeLineStylesForDisplayColor>} styles
+ * @returns {{ paint: object; layout: object }}
+ */
+function resolveMapLibreCircleStyle(styleKey, styles) {
+  if (styleKey === "offroadJunction") {
+    const color = styles.offroadLine?.color || "#c62828";
+    return {
+      layout: {},
+      paint: {
+        "circle-radius": 5,
+        "circle-color": color,
+        "circle-stroke-color": color,
+        "circle-stroke-width": 1,
+        "circle-opacity": 0.85,
+      },
+    };
+  }
+  const color = styles.proposedLine?.color || "#ff587b";
+  return {
+    layout: {},
+    paint: {
+      "circle-radius": 4,
+      "circle-color": color,
+      "circle-stroke-color": color,
+      "circle-stroke-width": 1,
+      "circle-opacity": 0.9,
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Geometry helpers
+// ---------------------------------------------------------------------------
+
+function makeLineStringFeature(latLngs) {
+  return {
+    type: "Feature",
+    geometry: {
+      type: "LineString",
+      coordinates: latLngs.map(latLngToCoord),
+    },
+    properties: {},
+  };
+}
+
+function makePointFeature(latLng) {
+  return {
+    type: "Feature",
+    geometry: {
+      type: "Point",
+      coordinates: latLngToCoord(latLng),
+    },
+    properties: {},
+  };
+}
+
+// ---------------------------------------------------------------------------
+// HTML marker builders
+// ---------------------------------------------------------------------------
+
+function escapeHtml(s) {
+  const div = document.createElement("div");
+  div.textContent = s;
+  return div.innerHTML;
+}
+
+function formatNodeTooltip(properties) {
+  const p = properties || {};
+  const name = p.name || p.reason || p.description || "";
+  if (!name) return "Node";
+  return String(name).trim().slice(0, 80);
+}
+
+function formatNodePopup(properties) {
+  const p = properties || {};
+  const parts = [];
+  ["name", "reason", "description", "note"].forEach((k) => {
+    const v = p[k];
+    if (v != null && String(v).trim() !== "") {
+      let label = k;
+      if (k === "name") label = "שם";
+      else if (k === "description") label = "תיאור";
+      parts.push(
+        `<div class="popup-field"><span class="popup-label">${escapeHtml(label)}:</span> <span class="popup-value">${escapeHtml(String(v))}</span></div>`,
+      );
+    }
+  });
+  if (parts.length === 0) return '<div class="popup-content">—</div>';
+  return '<div class="popup-content">' + parts.join("") + "</div>";
+}
+
+/**
+ * Create a MapLibre Marker element for a node point.
+ * @param {object} maplibregl - MapLibre GL JS namespace (must have Marker + Popup)
+ * @param {[number, number]} latLng - [lat, lng]
+ * @param {object} feature
+ * @param {string} nodeFillHex
+ * @param {string} fullLayerId
+ * @returns {import("maplibre-gl").Marker | null}
+ */
+function createNodeMarker(maplibregl, latLng, feature, nodeFillHex, fullLayerId) {
+  const props = feature.properties || {};
+  const memorialIconUrl = getMemorialIconForFeature(props);
+
+  const lngLat = [latLng[1], latLng[0]]; // [lng, lat] for MapLibre
+
+  let el;
+  if (memorialIconUrl) {
+    const accentHex = sanitizeDisplayColorHex(props.display_color);
+    el = document.createElement("div");
+    if (accentHex) {
+      el.className = "curation-memorial-marker-root";
+      el.innerHTML = `<div class="curation-memorial-marker-shell curation-memorial-marker-accent" style="--memorial-accent:${accentHex}"><img class="curation-memorial-marker-img" src="${memorialIconUrl}" alt="" /></div>`;
+      el.style.cssText = "width:38px;height:38px;";
+    } else {
+      el.className = "curation-memorial-marker-root";
+      el.innerHTML = `<img class="curation-memorial-marker-icon" src="${memorialIconUrl}" alt="" style="width:28px;height:28px;" />`;
+      el.style.cssText = "width:28px;height:28px;";
+    }
+  } else {
+    const pinkOrder = readPinkNodeOrder(props);
+    if (pinkOrder == null) return null;
+    const label = `<span style="font-size:11px;font-weight:700;color:#fff;line-height:1;pointer-events:none;text-shadow:0 1px 2px rgba(0,0,0,0.45)">${pinkOrder}</span>`;
+    el = document.createElement("div");
+    el.className = "pink-line-node-marker";
+    el.innerHTML = `<div class="pink-line-node" style="background:${nodeFillHex};display:flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:50%;">${label}</div>`;
+    el.style.cssText = "width:30px;height:30px;";
+  }
+
+  const marker = new maplibregl.Marker({ element: el })
+    .setLngLat(lngLat);
+
+  // Attach popup
+  const popupContent = memorialIconUrl
+    ? buildMemorialInspectHtml(props)
+    : formatNodePopup(props);
+  const popup = new maplibregl.Popup({ className: "curated-node-popup", offset: 15 })
+    .setHTML(popupContent);
+  marker.setPopup(popup);
+
+  // Tooltip via title attribute on the element
+  const tip = formatNodeTooltip(props);
+  if (tip && el) el.title = tip;
+
+  return marker;
+}
+
+// ---------------------------------------------------------------------------
+// Main loader
+// ---------------------------------------------------------------------------
+
+/**
+ * Generation, style, liveness, and desired-id gate shared by GIS and projection.
+ * `begin` captures the desired ids for this refresh. A later begin, style
+ * invalidation, or dispose makes the previous checker false.
+ *
+ * @param {{ isMapAlive?: () => boolean }} [options]
+ */
+export function createCuratedDisplayGate({ isMapAlive = () => true } = {}) {
+  let refreshGeneration = 0;
+  let styleGeneration = 0;
+  let disposed = false;
+
+  return {
+    begin(desiredIds) {
+      const token = ++refreshGeneration;
+      const styleToken = styleGeneration;
+      const desired = new Set(desiredIds || []);
+      return (fullId) => !disposed
+        && isMapAlive()
+        && token === refreshGeneration
+        && styleToken === styleGeneration
+        && (fullId == null || desired.has(fullId));
+    },
+    invalidateStyle() {
+      styleGeneration += 1;
+    },
+    dispose() {
+      disposed = true;
+      refreshGeneration += 1;
+      styleGeneration += 1;
+    },
+  };
+}
+
+/**
+ * Load a curated layer for MapLibre GIS display.
+ * Mirrors leaflet-curated-layer-loader.js `loadCuratedLayerFromAPI`.
+ *
+ * @param {object} map - MapLibre map instance
+ * @param {string} fullLayerId - e.g. "curated.42"
+ * @param {{ maplibregl?: object; force?: boolean; isCurrent?: () => boolean }} [opts]
+ */
+export async function loadCuratedLayerToMapLibre(map, fullLayerId, opts = {}) {
+  const maplibregl =
+    opts.maplibregl ||
+    (typeof window !== "undefined" && window.maplibregl) ||
+    null;
+  const force = opts && opts.force === true;
+  const fadeMs = typeof opts.fadeMs === "number" && Number.isFinite(opts.fadeMs) ? Math.max(0, opts.fadeMs) : 0;
+  const lifecycleRuntime = fadeMs > 0 || opts.joinBatch === true ? getLayerLifecycleRuntime(map) : null;
+  const requestToken = lifecycleRuntime ? lifecycleRuntime.beginRequest(fullLayerId) : null;
+  const userCurrent = typeof opts.isCurrent === "function" ? opts.isCurrent : () => true;
+  const isCurrent = () => userCurrent()
+    && (requestToken == null || lifecycleRuntime.isRequestCurrent(fullLayerId, requestToken));
+  const teardownCurated = () => {
+    removeCuratedLayersByPrefix(map, fullLayerId);
+    removeCuratedHtmlMarkers(fullLayerId);
+  };
+  const addOwnedLayer = (layerDef) => {
+    if (!lifecycleRuntime) {
+      map.addLayer(layerDef);
+      return;
+    }
+    const { stagedLayerDef } = lifecycleRuntime.stageMapLayer(fullLayerId, layerDef, {
+      onTeardown: teardownCurated,
+    });
+    map.addLayer(stagedLayerDef);
+  };
+  const mountOwnedMarker = (marker) => {
+    if (lifecycleRuntime) {
+      const element = marker.getElement?.();
+      if (element) lifecycleRuntime.registerElement(fullLayerId, element, { onTeardown: teardownCurated });
+    }
+    marker.addTo(map);
+  };
+  const commitReplacement = () => {
+    if (!isCurrent()) return false;
+    if (force && map && fullLayerId) {
+      lifecycleRuntime?.dropChannels(fullLayerId);
+      removeCuratedLayersByPrefix(map, fullLayerId);
+      removeCuratedHtmlMarkers(fullLayerId);
+    }
+    return isCurrent();
+  };
+
+  if (!isCurrent()) return;
+
+  // --- Shared data fetch ---
+  const result = await fetchCuratedLayerData(fullLayerId);
+  if (!isCurrent()) return;
+  if (!result) return;
+  let { geojson, layerData } = result;
+
+  // CRS normalisation — MapLibre expects WGS-84 [lng, lat]
+  const crs = geojson.crs?.properties?.name || "";
+  if (
+    (crs.includes("2039") || crs.includes("ITM")) &&
+    typeof CoordUtils !== "undefined" &&
+    typeof CoordUtils.transformGeojsonToWgs84 === "function"
+  ) {
+    geojson = CoordUtils.transformGeojsonToWgs84(geojson);
+  }
+
+  // --- Shared point / pink-line extraction ---
+  const pointItems = extractPointFeatures(geojson);
+  const detourPointItems = extractPinkDetourPointFeatures(geojson);
+  const userPointsDetour = detourPointItems.map((x) => x.latlng);
+  let routingLatLng = userPointsDetour.slice();
+  if (routingLatLng.length === 0 && pointItems.length > 0) {
+    routingLatLng = pointItems
+      .filter(({ feature }) => !getMemorialIconForFeature(feature.properties || {}))
+      .map((x) => x.latlng);
+  }
+
+  assignPinkNodeDisplayOrders(pointItems.map((item) => item.feature));
+  const { basePaths } = await fetchPinkLinePaths();
+  if (!isCurrent()) return;
+
+  const hasAnyLineGeometryInGeojson = geojson.features.some(
+    (f) =>
+      f.geometry &&
+      (f.geometry.type === "LineString" || f.geometry.type === "MultiLineString"),
+  );
+  const hasRouteUtils = typeof buildIntegratedRoute === "function";
+  const parsedBundle = parseColabRouteGeometryBundle(geojson.colab_route_geometry_bundle);
+  const bundleRenderable = colabBundleHasRenderableGeometry(parsedBundle);
+  const usePinkLineProjection =
+    hasRouteUtils &&
+    (bundleRenderable ||
+      (basePaths.length > 0 &&
+        (routingLatLng.length > 0 || hasAnyLineGeometryInGeojson)));
+
+  const canRunPinkOverlay =
+    usePinkLineProjection && (routingLatLng.length > 0 || bundleRenderable);
+
+  if (canRunPinkOverlay) {
+    const fromGeoColor = resolveFirstDisplayColorFromGeojson(geojson);
+    const submissionHex =
+      fromGeoColor ??
+      getSubmissionDisplayPrimaryForCuratedLayer(fullLayerId, layerData) ??
+      undefined;
+    const baseStyles = routeLineStylesForDisplayColor(null);
+    const proposedTint = routeLineStylesForDisplayColor(submissionHex);
+    const styles = {
+      ...baseStyles,
+      proposedHalo: proposedTint.proposedHalo,
+      proposedLine: proposedTint.proposedLine,
+      ...(proposedTint.proposedSecondary != null
+        ? { proposedSecondary: proposedTint.proposedSecondary }
+        : {}),
+    };
+    const nodeFillHex = fromGeoColor ?? submissionHex ?? styles.proposedLine.color;
+
+    let solid;
+    let removed;
+    let dashed = [];
+    let proposedPathsForOverlay = [];
+    let offroadSegmentsLatLng = [];
+    let offroadJunctionsLatLng = [];
+    let hasStoredPinkRoute = false;
+
+    if (bundleRenderable) {
+      solid = parsedBundle.integratedRoute.solid;
+      removed = parsedBundle.integratedRoute.removed;
+      proposedPathsForOverlay = parsedBundle.detourPaint.road.filter((p) => p.length >= 2);
+      offroadSegmentsLatLng = parsedBundle.detourPaint.offroad.map(({ roadEnd, target }) => [
+        roadEnd,
+        target,
+      ]);
+      hasStoredPinkRoute = true;
+      if (parsedBundle.detourPaint.junctions.length > 0) {
+        offroadJunctionsLatLng = parsedBundle.detourPaint.junctions.filter(
+          (p) => Array.isArray(p) && p.length === 2,
+        );
+      } else {
+        const seen = new Set();
+        offroadJunctionsLatLng = [];
+        for (const { roadEnd } of parsedBundle.detourPaint.offroad) {
+          const key = `${roadEnd[0]},${roadEnd[1]}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          offroadJunctionsLatLng.push(roadEnd);
+        }
+      }
+    } else {
+      const built = buildIntegratedRoute(basePaths, routingLatLng);
+      solid = built.solid;
+      removed = built.removed;
+      dashed = built.dashed;
+
+      const { pathsLatLng } = parsePinkLineRouteFromGeojson(geojson);
+      hasStoredPinkRoute = pathsLatLng.some((p) => p.length >= 2);
+
+      if (!hasStoredPinkRoute) {
+        const isDev =
+          typeof import.meta !== "undefined" &&
+          import.meta.env &&
+          import.meta.env.DEV &&
+          import.meta.env.MODE !== "test";
+        if (isDev && !noStoredPinkRouteLoggedIds.has(fullLayerId)) {
+          noStoredPinkRouteLoggedIds.add(fullLayerId);
+          console.debug(
+            "[CuratedLayerMapLibre] No pink_line_route LineString/MultiLineString; proposed route uses integrated dashed segments.",
+          );
+        }
+      }
+
+      const offroadEnabled = MapProjectionConfig.ENABLE_CURATED_OFFROAD_SPLIT === true;
+      proposedPathsForOverlay = pathsLatLng;
+      if (hasStoredPinkRoute && offroadEnabled) {
+        offroadSegmentsLatLng = findOffroadTwoPointSegments(
+          pathsLatLng,
+          STORED_PINK_ROUTE_OFFROAD_GAP_METERS,
+        );
+        offroadJunctionsLatLng = collectOffroadJunctionLatLngs(offroadSegmentsLatLng);
+        proposedPathsForOverlay = clipProposedPathsLatLngExcludingOffroadGaps(
+          pathsLatLng,
+          STORED_PINK_ROUTE_OFFROAD_GAP_METERS,
+        );
+      }
+    }
+
+    if (basePaths.length > 0) {
+      const clipRemoved =
+        Array.isArray(removed) &&
+        removed.some((p) => Array.isArray(p) && p.length >= 2);
+      if (!isCurrent()) return;
+      await ensurePinkLineBaseLayer(map, {
+        ...(clipRemoved ? { removedPaths: removed } : {}),
+        isCurrent,
+      });
+      if (!isCurrent()) return;
+    }
+
+    const hasDetourPoints =
+      routingLatLng.length > 0 || colabBundleHasDetourPaint(parsedBundle);
+
+    const overlayOps = planPinkCuratedOverlayLayers({
+      hasDetourPoints,
+      hasStoredPinkRoute,
+      includeProposedSecondary: proposedTint.proposedSecondary != null,
+      solid,
+      removed,
+      dashedPlanner: dashed,
+      proposedPathsLatLng: proposedPathsForOverlay,
+      offroadSegmentsLatLng,
+      offroadJunctionsLatLng,
+    });
+
+    // --- Materialize polyline ops: group by styleKey for efficient source/layer creation ---
+    /** @type {Map<string, { features: object[]; styleKey: string }>} */
+    const polylineGroups = new Map();
+    /** @type {Map<string, { features: object[]; styleKey: string }>} */
+    const circleMarkerGroups = new Map();
+
+    for (const op of overlayOps) {
+      if (op.kind === "polyline") {
+        const key = op.styleKey;
+        if (!polylineGroups.has(key)) {
+          polylineGroups.set(key, { features: [], styleKey: key });
+        }
+        polylineGroups.get(key).features.push(makeLineStringFeature(op.latLngs));
+      } else if (op.kind === "circleMarker") {
+        const key = op.styleKey;
+        if (!circleMarkerGroups.has(key)) {
+          circleMarkerGroups.set(key, { features: [], styleKey: key });
+        }
+        circleMarkerGroups.get(key).features.push(makePointFeature(op.latLng));
+      }
+    }
+
+    const registeredLayerIds = [];
+    const registeredSourceIds = [];
+
+    if (!commitReplacement()) return;
+
+    // Add polyline groups as sources + layers in draw order
+    let styleKeyIndex = 0;
+    for (const [styleKey, group] of polylineGroups) {
+      const sourceId = `${fullLayerId}__${styleKey}__src`;
+      const layerId = `${fullLayerId}__${styleKey}__${styleKeyIndex}`;
+      styleKeyIndex++;
+
+      const { paint, layout } = resolveMapLibrePolylineStyle(styleKey, styles);
+      const geojsonData = { type: "FeatureCollection", features: group.features };
+
+      addCuratedGeoJsonSource(map, sourceId, geojsonData);
+      if (!map.getSource(sourceId)) continue;
+      registeredSourceIds.push(sourceId);
+
+      try {
+        addOwnedLayer({
+          id: layerId,
+          type: "line",
+          source: sourceId,
+          layout,
+          paint,
+        });
+        registeredLayerIds.push(layerId);
+      } catch (err) {
+        console.warn(`[maplibre-curated-layer-loader] Failed to add layer ${layerId}`, err);
+      }
+    }
+
+    // Circle marker ops: GeoJSON point source + circle layer (spec parity).
+    let circleStyleIndex = 0;
+    for (const [styleKey, group] of circleMarkerGroups) {
+      const sourceId = `${fullLayerId}__${styleKey}__circle__src`;
+      const layerId = `${fullLayerId}__${styleKey}__circle__${circleStyleIndex}`;
+      circleStyleIndex++;
+
+      addCuratedGeoJsonSource(map, sourceId, {
+        type: "FeatureCollection",
+        features: group.features,
+      });
+      if (!map.getSource(sourceId)) continue;
+      registeredSourceIds.push(sourceId);
+
+      const { paint, layout } = resolveMapLibreCircleStyle(styleKey, styles);
+      try {
+        addOwnedLayer({
+          id: layerId,
+          type: "circle",
+          source: sourceId,
+          layout,
+          paint,
+        });
+        registeredLayerIds.push(layerId);
+      } catch (err) {
+        console.warn(`[maplibre-curated-layer-loader] Failed to add circle layer ${layerId}`, err);
+      }
+    }
+
+    // Node + memorial markers
+    if (maplibregl && pointItems.length > 0) {
+      if (!isCurrent()) return;
+      const markers = htmlMarkersByLayer.get(fullLayerId) || [];
+      for (const { feature, latlng } of pointItems) {
+        if (!isCurrent()) return;
+        const marker = createNodeMarker(maplibregl, latlng, feature, nodeFillHex, fullLayerId);
+        if (!marker) continue;
+        mountOwnedMarker(marker);
+        markers.push(marker);
+      }
+      htmlMarkersByLayer.set(fullLayerId, markers);
+    }
+
+    // Register the logical fullLayerId in layer manager with all added layer ids
+    registerCuratedLayerIds(map, fullLayerId, registeredSourceIds, registeredLayerIds);
+    return;
+  }
+
+  // --- Fallback: pink projection without detour points ---
+  if (usePinkLineProjection && basePaths.length > 0 && routingLatLng.length === 0) {
+    if (!isCurrent()) return;
+    await ensurePinkLineBaseLayer(map, { isCurrent });
+    if (!isCurrent() || !commitReplacement()) return;
+    const layerColor = getCuratedLayerColor(fullLayerId, layerData);
+    const lineFeatures = geojson.features
+      .filter(
+        (f) =>
+          f.geometry &&
+          (f.geometry.type === "LineString" || f.geometry.type === "MultiLineString"),
+      )
+      .flatMap((f) => {
+        if (f.geometry.type === "LineString") {
+          const coords = f.geometry.coordinates;
+          if (coords.length < 2) return [];
+          return [{ type: "Feature", geometry: { type: "LineString", coordinates: coords }, properties: {} }];
+        }
+        return f.geometry.coordinates
+          .filter((line) => line.length >= 2)
+          .map((line) => ({
+            type: "Feature",
+            geometry: { type: "LineString", coordinates: line },
+            properties: {},
+          }));
+      });
+
+    if (lineFeatures.length > 0) {
+      const sourceId = `${fullLayerId}__fallback__src`;
+      const layerId = `${fullLayerId}__fallback__0`;
+      const projectionFallbackStroke = pinkProjectionFallbackLineStyle(layerColor || "#00d4ff");
+      const { paint, layout } = leafletStyleToMapLibre(projectionFallbackStroke);
+      addCuratedGeoJsonSource(map, sourceId, { type: "FeatureCollection", features: lineFeatures });
+      if (map.getSource(sourceId)) {
+        try {
+          addOwnedLayer({
+            id: layerId,
+            type: "line",
+            source: sourceId,
+            layout,
+            paint,
+          });
+          registerCuratedLayerIds(map, fullLayerId, sourceId, [layerId]);
+        } catch (err) {
+          console.warn(`[maplibre-curated-layer-loader] Fallback layer error for ${fullLayerId}`, err);
+        }
+      }
+    }
+    return;
+  }
+
+  // --- Fallback: point-only curated layers ---
+  if (maplibregl && pointItems.length > 0) {
+    if (!commitReplacement()) return;
+    const layerColor = getCuratedLayerColor(fullLayerId, layerData);
+    const markers = [];
+    for (const { feature, latlng } of pointItems) {
+      if (!isCurrent()) return;
+      const marker = createNodeMarker(maplibregl, latlng, feature, layerColor || "#FF69B4", fullLayerId);
+      if (!marker) continue;
+      mountOwnedMarker(marker);
+      markers.push(marker);
+    }
+    if (markers.length > 0) {
+      htmlMarkersByLayer.set(fullLayerId, markers);
+      registerCuratedLayerIds(map, fullLayerId, `${fullLayerId}__src`, []);
+      return;
+    }
+  }
+
+  // --- Final fallback: plain GeoJSON rendered with geometry-appropriate layers ---
+  if (!commitReplacement()) return;
+  const fallbackSourceId = `${fullLayerId}__plain__src`;
+  const fallbackFillLayerId = `${fullLayerId}__plain__fill`;
+  const fallbackLineLayerId = `${fullLayerId}__plain__line`;
+  const fallbackCircleLayerId = `${fullLayerId}__plain__circle`;
+  const fallbackColor =
+    resolveFirstDisplayColorFromGeojson(geojson) ??
+    getCuratedLayerColor(fullLayerId, layerData) ??
+    "#00d4ff";
+  addCuratedGeoJsonSource(map, fallbackSourceId, geojson);
+  if (map.getSource(fallbackSourceId)) {
+    const addedFallbackLayerIds = [];
+    try {
+      addOwnedLayer({
+        id: fallbackFillLayerId,
+        type: "fill",
+        source: fallbackSourceId,
+        filter: ["==", ["geometry-type"], "Polygon"],
+        paint: {
+          "fill-color": fallbackColor,
+          "fill-opacity": 0.4,
+          "fill-outline-color": fallbackColor,
+        },
+      });
+      addedFallbackLayerIds.push(fallbackFillLayerId);
+    } catch (err) {
+      console.warn(`[maplibre-curated-layer-loader] Plain fill layer error for ${fullLayerId}`, err);
+    }
+    try {
+      addOwnedLayer({
+        id: fallbackLineLayerId,
+        type: "line",
+        source: fallbackSourceId,
+        filter: ["==", ["geometry-type"], "LineString"],
+        layout: { "line-cap": "round", "line-join": "round" },
+        paint: {
+          "line-color": fallbackColor,
+          "line-width": 3,
+          "line-opacity": 0.9,
+        },
+      });
+      addedFallbackLayerIds.push(fallbackLineLayerId);
+    } catch (err) {
+      console.warn(`[maplibre-curated-layer-loader] Plain line layer error for ${fullLayerId}`, err);
+    }
+    try {
+      addOwnedLayer({
+        id: fallbackCircleLayerId,
+        type: "circle",
+        source: fallbackSourceId,
+        filter: ["==", ["geometry-type"], "Point"],
+        paint: {
+          "circle-color": fallbackColor,
+          "circle-radius": 5,
+          "circle-stroke-color": "#ffffff",
+          "circle-stroke-width": 1.25,
+          "circle-opacity": 0.9,
+        },
+      });
+      addedFallbackLayerIds.push(fallbackCircleLayerId);
+    } catch (err) {
+      console.warn(`[maplibre-curated-layer-loader] Plain circle layer error for ${fullLayerId}`, err);
+    }
+    if (addedFallbackLayerIds.length > 0) {
+      registerCuratedLayerIds(map, fullLayerId, fallbackSourceId, addedFallbackLayerIds);
+    }
+  }
+}
+
+function collectEnabledCuratedIds(groups) {
+  const ids = [];
+  for (const group of groups || []) {
+    if (!group || !group.id || !group.id.startsWith("curated")) continue;
+    for (const layer of group.layers || []) {
+      if (layer && layer.enabled) ids.push(`${group.id}.${layer.id}`);
+    }
+  }
+  return ids;
+}
+
+function curatedResourceMatches(candidate, logicalId) {
+  return candidate === logicalId || (typeof candidate === "string" && candidate.startsWith(`${logicalId}__`));
+}
+
+function hasMapLibreLayerWithPrefix(targetMap, prefix) {
+  if (!targetMap || !prefix || typeof targetMap.getStyle !== "function") return false;
+  const style = targetMap.getStyle();
+  return (style?.layers || []).some((layer) => curatedResourceMatches(layer?.id, prefix));
+}
+
+function curatedContentMounted(targetMap, fullId) {
+  if (hasMapLibreLayerWithPrefix(targetMap, fullId)) return true;
+  const markers = htmlMarkersByLayer.get(fullId);
+  return Array.isArray(markers) && markers.length > 0;
+}
+
+function subscribeCuratedSourceReady(map, fullId, { ready }) {
+  const sourceIds = Object.keys(map?.getStyle?.()?.sources || {})
+    .filter((sourceId) => curatedResourceMatches(sourceId, fullId));
+  if (sourceIds.length === 0 || typeof map?.isSourceLoaded !== "function") {
+    ready();
+    return undefined;
+  }
+  const allLoaded = () => sourceIds.every((sourceId) => map.isSourceLoaded(sourceId));
+  if (allLoaded()) {
+    ready();
+    return undefined;
+  }
+  const onSourceData = (event) => {
+    if (event?.sourceId && !sourceIds.includes(event.sourceId)) return;
+    if (!allLoaded()) return;
+    map.off?.("sourcedata", onSourceData);
+    ready();
+  };
+  map.on?.("sourcedata", onSourceData);
+  return () => map.off?.("sourcedata", onSourceData);
+}
+
+function armCuratedSourceReadiness(map, fullId, runtime) {
+  runtime?.subscribeMemberReady(fullId, (callbacks) => (
+    subscribeCuratedSourceReady(map, fullId, callbacks)
+  ));
+}
+
+function sameIdSet(left, right) {
+  if (left.size !== right.size) return false;
+  for (const id of left) {
+    if (!right.has(id)) return false;
+  }
+  return true;
+}
+
+function resolveRefreshDuration(layerStyleOptions, fromSlideshowTick) {
+  if (fromSlideshowTick) return 0;
+  return resolveLayerFadeMs(layerStyleOptions);
+}
+
+function withJoinedBatch(layerStyleOptions, durationMs) {
+  if (durationMs <= 0) return layerStyleOptions;
+  return {
+    ...(layerStyleOptions || {}),
+    lifecycle: { ...(layerStyleOptions?.lifecycle || {}), joinBatch: true },
+    transition: { ...(layerStyleOptions?.transition || {}), transitionMs: durationMs },
+  };
+}
+
+function armCuratedMember(map, fullId, runtime) {
+  runtime.stageMapLayer(fullId, {
+    id: `${fullId}__lifecycle`,
+    type: "fill",
+    paint: { "fill-opacity": 1 },
+  }, {
+    onTeardown: () => {
+      removeCuratedLayersByPrefix(map, fullId);
+      removeCuratedHtmlMarkers(fullId);
+    },
+  });
+}
+
+function createCuratedBatchSession(map, displayGate) {
+  let heldChecker = () => true;
+  let activeCuratedIds = new Set();
+
+  const open = ({
+    groups,
+    affectedCuratedFullLayerIds,
+    fromSlideshowTick = false,
+    layerStyleOptions,
+    isCurrent: providedCurrent,
+    reopenGate = false,
+    keepLiveRuntime = false,
+  } = {}) => {
+    const durationMs = resolveRefreshDuration(layerStyleOptions, fromSlideshowTick);
+    const liveFade = durationMs > 0;
+    const joinBatch = layerStyleOptions?.lifecycle?.joinBatch === true;
+    const enabledCuratedIds = new Set(collectEnabledCuratedIds(groups));
+    const previousCuratedIds = new Set(activeCuratedIds);
+    const affectedSet = new Set(
+      (Array.isArray(affectedCuratedFullLayerIds) ? affectedCuratedFullLayerIds : [])
+        .filter((id) => typeof id === "string"),
+    );
+    const contentInvalid = !fromSlideshowTick && (reopenGate === true || affectedSet.size > 0);
+    const sameIds = sameIdSet(previousCuratedIds, enabledCuratedIds);
+    if (displayGate && !fromSlideshowTick && (contentInvalid || !sameIds)) {
+      heldChecker = displayGate.begin([...enabledCuratedIds]);
+    }
+    const gateCheck = heldChecker;
+    const isCurrent = (fullId) => {
+      if (fromSlideshowTick) return typeof providedCurrent !== "function" || providedCurrent(fullId);
+      if (typeof providedCurrent === "function" && !providedCurrent(fullId)) return false;
+      return gateCheck(fullId);
+    };
+    let runtime = null;
+    if (liveFade || joinBatch) {
+      runtime = getLayerLifecycleRuntime(map);
+      if (!joinBatch && reopenGate === true && keepLiveRuntime !== true) {
+        runtime.dispose();
+        runtime = getLayerLifecycleRuntime(map);
+      }
+    }
+    let toRefresh;
+    if (fromSlideshowTick) {
+      toRefresh = [...enabledCuratedIds].filter((id) => !curatedContentMounted(map, id));
+    } else if (reopenGate === true) {
+      toRefresh = [...enabledCuratedIds];
+    } else if (affectedSet.size > 0) {
+      toRefresh = [...enabledCuratedIds].filter((id) => affectedSet.has(id));
+    } else if (liveFade) {
+      toRefresh = [...enabledCuratedIds].filter((id) => !curatedContentMounted(map, id));
+    } else {
+      toRefresh = [...enabledCuratedIds];
+    }
+    const forceIds = new Set();
+    if (fromSlideshowTick) {
+      // Slideshow keeps an already mounted curated layer.
+    } else if (liveFade && (affectedSet.size > 0 || reopenGate === true)) {
+      for (const fullId of toRefresh) forceIds.add(fullId);
+    } else if (!liveFade) {
+      for (const fullId of toRefresh) forceIds.add(fullId);
+    }
+    const pending = runtime?.getPendingBatch?.() || null;
+    const desiredIds = getEnabledMapFullLayerIds(groups);
+    const sameSet = sameIdSet(new Set(runtime?.getDesiredIds() || []), desiredIds)
+      && !contentInvalid && !(toRefresh.length > 0 && !pending);
+    if (runtime) {
+      if (!joinBatch) runtime.setDesiredIds([...desiredIds], { durationMs, sameSet });
+      for (const fullId of toRefresh) armCuratedMember(map, fullId, runtime);
+    }
+    activeCuratedIds = enabledCuratedIds;
+    return {
+      durationMs,
+      liveFade,
+      joinBatch,
+      isCurrent,
+      runtime,
+      toRefresh,
+      forceIds,
+      previousCuratedIds,
+      enabledCuratedIds,
+      affectedSet,
+      joined: withJoinedBatch(layerStyleOptions, durationMs),
+      modelInfo: { durationMs, ...(joinBatch ? { joinBatch: true } : {}), fromSlideshowTick: fromSlideshowTick === true },
+    };
+  };
+
+  return {
+    open,
+    clear() { activeCuratedIds = new Set(); },
+  };
+}
+
+async function loadCuratedMembers(map, plan, resolveMaplibregl, warnLabel) {
+  const { toRefresh, forceIds, isCurrent, runtime, durationMs } = plan;
+  if (toRefresh.length === 0) return;
+  const maplibregl = await resolveMaplibregl();
+  if (!isCurrent()) return;
+  await Promise.all(toRefresh.map(async (fullId) => {
+    if (!isCurrent(fullId)) {
+      return;
+    }
+    try {
+      await loadCuratedLayerToMapLibre(map, fullId, {
+        maplibregl,
+        force: forceIds.has(fullId),
+        fadeMs: durationMs,
+        joinBatch: plan.joinBatch,
+        isCurrent: () => isCurrent(fullId),
+      });
+      if (isCurrent(fullId)) armCuratedSourceReadiness(map, fullId, runtime);
+    } catch (err) {
+      if (!isCurrent(fullId)) return;
+      runtime?.markMemberFailed(fullId);
+      console.warn(warnLabel, err);
+    }
+  }));
+}
+
+function removeImmediateCurated(map, plan, layerStyleOptions) {
+  if (plan.liveFade || plan.joinBatch) return true;
+  for (const fullId of plan.previousCuratedIds) {
+    if (!plan.isCurrent()) return false;
+    if (!plan.enabledCuratedIds.has(fullId)) {
+      removeCuratedLayersByPrefix(map, fullId, layerStyleOptions);
+      removeCuratedHtmlMarkers(fullId);
+    }
+  }
+  for (const fullId of plan.affectedSet) {
+    if (!plan.isCurrent()) return false;
+    if (plan.enabledCuratedIds.has(fullId)) continue;
+    removeCuratedLayersByPrefix(map, fullId, layerStyleOptions);
+    removeCuratedHtmlMarkers(fullId);
+  }
+  return true;
+}
+
+/**
+ * GIS curated refresh used by the live layerGroups subscriber.
+ * Disabled ids are removed immediately when the fade duration is 0.
+ * A live fade keeps outgoing visuals until the shared batch reaches factor 0.
+ */
+export function createGisCuratedRefresh({
+  map,
+  displayGate,
+  getLayerGroups = () => [],
+  displayGroups = (raw) => (Array.isArray(raw) ? raw : Object.values(raw || {})),
+  filterGroups = (groups) => groups,
+  applyLayerGroups = () => {},
+  applyLabelHeading = () => {},
+  nameFieldController = { sync() {} },
+  personVisual = {},
+  syncFlowAnimations = () => {},
+  getNarrativeController = () => null,
+  resolveMaplibregl = async () => null,
+  syncPinkLine = () => {},
+} = {}) {
+  const session = createCuratedBatchSession(map, displayGate);
+  const nameFieldExit = createNameFieldExitGate(nameFieldController);
+
+  const refreshCuratedLayers = async ({
+    affectedCuratedFullLayerIds,
+    groupsOverride,
+    syncFlow = true,
+    isCurrent: providedCurrent,
+    layerStyleOptions,
+    fromSlideshowTick = false,
+    reopenGate = false,
+    keepLiveRuntime = false,
+  } = {}) => {
+    const rawGroups = groupsOverride ?? getLayerGroups();
+    const groupsAsArray = displayGroups(rawGroups);
+    const currentGroups = filterGroups(groupsAsArray);
+    const plan = session.open({
+      groups: currentGroups,
+      affectedCuratedFullLayerIds,
+      fromSlideshowTick,
+      layerStyleOptions,
+      isCurrent: providedCurrent,
+      reopenGate,
+      keepLiveRuntime,
+    });
+    const isCurrent = plan.isCurrent;
+    if (!isCurrent()) return;
+    const held = nameFieldExit.holdUntilHidden(currentGroups, isCurrent);
+    if (held !== true && !await held) return;
+    if (!isCurrent()) return;
+    applyLayerGroups(currentGroups, plan.joined);
+    applyLabelHeading(map);
+    nameFieldController.sync(currentGroups);
+    personVisual.bringToFront?.();
+    if (syncFlow) syncFlowAnimations();
+    if (!removeImmediateCurated(map, plan, layerStyleOptions)) return;
+    if (plan.runtime && !plan.joinBatch) plan.runtime.commitBatch();
+
+    const finish = () => {
+      if (!isCurrent()) return;
+      if (syncFlow) syncFlowAnimations();
+      personVisual.bringToFront?.();
+      syncPinkLine(map, groupsAsArray);
+      if (!isCurrent()) return;
+      getNarrativeController()?.onStyleLoad?.();
+    };
+    if (plan.toRefresh.length === 0) {
+      finish();
+      return;
+    }
+    await loadCuratedMembers(map, plan, resolveMaplibregl, "[map-main] Failed to load curated layer");
+    finish();
+  };
+
+  return {
+    refreshCuratedLayers,
+    clearActiveCuratedIds() {
+      session.clear();
+    },
+  };
+}
+
+/**
+ * Projection curated refresh used by the live layerGroups path.
+ * `applyProjectionRefresh` is the subscriber entry and does not join the
+ * projection queue.
+ */
+export function createProjectionCuratedRefresh({
+  map,
+  displayGate,
+  isRuntimeAlive = () => true,
+  getLayerGroups = () => [],
+  asLayerGroups = (raw) => (Array.isArray(raw) ? raw : Object.values(raw || {})),
+  updateModelVisibility = () => {},
+  syncProjectionLayersWithNarrative = () => {},
+  applyLabelHeading = () => {},
+  nameFieldController = { sync() {} },
+  syncFlowAnimations = () => {},
+  getNarrativeController = () => null,
+  refreshLegend = () => {},
+  raiseHighlight = () => {},
+  resolveMaplibregl = async () => null,
+  syncPinkLine = () => {},
+  shouldSkipLiveRefresh = () => false,
+} = {}) {
+  const session = createCuratedBatchSession(map, displayGate);
+  const nameFieldExit = createNameFieldExitGate(nameFieldController);
+
+  const runProjectionCuratedRefresh = async ({
+    affectedCuratedFullLayerIds,
+    fromSlideshowTick,
+    groupsOverride,
+    syncFlow = true,
+    layerStyleOptions,
+    isCurrent: providedCurrent,
+    reopenGate = false,
+    keepLiveRuntime = false,
+  } = {}) => {
+    if (!isRuntimeAlive()) return;
+    const rawGroups = groupsOverride ?? getLayerGroups();
+    const currentGroups = asLayerGroups(rawGroups);
+    const plan = session.open({
+      groups: currentGroups,
+      affectedCuratedFullLayerIds,
+      fromSlideshowTick,
+      layerStyleOptions,
+      isCurrent: providedCurrent,
+      reopenGate,
+      keepLiveRuntime,
+    });
+    if (!isRuntimeAlive() || !plan.isCurrent()) return;
+
+    const held = nameFieldExit.holdUntilHidden(currentGroups, plan.isCurrent);
+    if (held !== true && !await held) return;
+    if (!isRuntimeAlive() || !plan.isCurrent()) return;
+    updateModelVisibility(rawGroups, plan.modelInfo);
+
+    syncProjectionLayersWithNarrative(map, currentGroups, plan.joined);
+    applyLabelHeading(map);
+    nameFieldController.sync(currentGroups);
+    if (syncFlow) syncFlowAnimations();
+    if (!removeImmediateCurated(map, plan, layerStyleOptions)) return;
+    if (plan.runtime && !plan.joinBatch) plan.runtime.commitBatch();
+
+    const finish = () => {
+      if (!plan.isCurrent()) return;
+      if (syncFlow) syncFlowAnimations();
+      syncPinkLine(map, currentGroups);
+      getNarrativeController()?.onStyleLoad();
+      refreshLegend();
+      raiseHighlight(map);
+    };
+    if (plan.toRefresh.length === 0) {
+      finish();
+      return;
+    }
+    const maplibregl = await resolveMaplibregl();
+    const isCurrent = plan.isCurrent;
+    if (!isRuntimeAlive() || !isCurrent()) return;
+    await Promise.all(plan.toRefresh.map(async (fullId) => {
+      if (!isCurrent(fullId)) {
+        return;
+      }
+      try {
+        await loadCuratedLayerToMapLibre(map, fullId, {
+          maplibregl,
+          force: plan.forceIds.has(fullId),
+          fadeMs: plan.durationMs,
+          joinBatch: plan.joinBatch,
+          isCurrent: () => isCurrent(fullId),
+        });
+      } catch (err) {
+        if (!isCurrent(fullId)) return;
+        plan.runtime?.markMemberFailed(fullId);
+        console.warn(`[projection-main] Failed to load curated layer ${fullId}`, err);
+        return;
+      }
+      if (plan.isCurrent(fullId)) armCuratedSourceReadiness(map, fullId, plan.runtime);
+    }));
+    finish();
+  };
+
+  const applyProjectionRefresh = ({
+    groupsOverride,
+    affectedCuratedFullLayerIds,
+    fromSlideshowTick,
+    syncFlow = true,
+    layerStyleOptions,
+    isCurrent,
+    reopenGate,
+    keepLiveRuntime,
+  } = {}) => {
+    if (!fromSlideshowTick && shouldSkipLiveRefresh()) {
+      return Promise.resolve();
+    }
+    return runProjectionCuratedRefresh({
+      groupsOverride,
+      affectedCuratedFullLayerIds,
+      fromSlideshowTick,
+      syncFlow,
+      layerStyleOptions,
+      isCurrent,
+      reopenGate,
+      keepLiveRuntime,
+    });
+  };
+
+  return { runProjectionCuratedRefresh, applyProjectionRefresh };
+}

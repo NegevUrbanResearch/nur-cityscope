@@ -1,0 +1,155 @@
+.config-content-editor:is(.clock-layout-dialog, .settlement-name-dialog, .road-sign-editor-dialog) {
+  --config-canvas: inherit;
+  --config-surface: inherit;
+  --config-surface-raised: inherit;
+  --config-surface-hover: inherit;
+  --config-text: inherit;
+  --config-muted: inherit;
+  --config-divider: inherit;
+  --config-border: inherit;
+  --config-accent: inherit;
+  --config-accent-ink: inherit;
+  --config-error: inherit;
+  --config-warning: inherit;
+  position: relative;
+  inset: auto;
+  z-index: auto;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  padding: 0;
+  gap: 0;
+  background: transparent;
+  color: var(--config-text);
+}
+.config-content-editor [hidden] { display: none !important; }
+.config-content-editor :is(.clock-layout-body, .settlement-name-body, .road-sign-editor-body) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 352px;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  gap: 12px;
+}
+.config-content-editor :is(.clock-layout-stage, .settlement-name-stage, .road-sign-editor-stage) {
+  align-self: stretch;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  aspect-ratio: auto;
+  border: 1px solid var(--config-divider);
+  border-radius: 12px;
+  background: #080c11;
+}
+.config-content-editor :is(.clock-layout-parameters, .settlement-name-controls, .road-sign-editor-controls) {
+  display: flex;
+  flex-direction: column;
+  align-self: stretch;
+  align-content: start;
+  gap: 8px;
+  min-height: 0;
+  min-width: 0;
+  overflow: visible;
+  padding: 12px;
+  border: 1px solid var(--config-divider);
+  border-radius: 12px;
+  background: var(--config-surface);
+}
+.config-content-editor :is(label, .config-field-label) { min-width: 0; color: var(--config-muted); font-size: 12px; line-height: 1.3; }
+.config-content-editor :is(select, input:not([type='checkbox']):not([type='radio']):not([type='range'])) {
+  min-width: 0;
+  width: 100%;
+  min-height: 44px;
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+  color: var(--config-text);
+  background: var(--config-surface-raised);
+  border: 1px solid var(--config-border);
+  border-radius: 7px;
+}
+.config-content-editor button {
+  min-height: 44px;
+  padding: 6px 12px;
+  border: 1px solid var(--config-border);
+  border-radius: 7px;
+  background: var(--config-surface-raised);
+  color: var(--config-text);
+  font-size: 13px;
+  line-height: 1.2;
+}
+.config-content-editor :is(button, input, select):focus-visible { outline: 2px solid var(--config-accent); outline-offset: 2px; }
+.config-content-editor button:hover { background: var(--config-surface-hover); }
+.config-content-editor :is(.clock-layout-status-actions, .settlement-name-status-actions) {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  margin-top: auto;
+  gap: 6px;
+}
+.config-content-editor :is(.clock-layout-status, .settlement-name-status, .road-sign-editor-status) { min-width: 0; margin: 0; color: var(--config-muted); font-size: 12px; }
+.config-content-editor :is(.clock-layout-autosave-note, .settlement-shared-note, .settlement-connector-note, .road-sign-applied-calibration) {
+  margin: 0;
+  color: var(--config-muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+.config-content-editor .content-editor-pages { display: grid; min-width: 0; gap: 10px; }
+.config-content-editor .content-editor-tabs { display: flex; gap: 3px; padding: 3px; border-radius: 10px; background: var(--config-canvas); }
+.config-content-editor .content-editor-tabs button { flex: 1; min-width: 0; border-color: transparent; background: transparent; color: var(--config-muted); }
+.config-content-editor .content-editor-tabs button[aria-selected='true'] { border-color: var(--config-border); background: var(--config-surface-raised); color: var(--config-text); box-shadow: 0 1px 3px #0003; }
+.config-content-editor .content-editor-page { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; min-width: 0; align-content: start; }
+.config-content-editor .content-editor-page > :is(p, button) { grid-column: 1 / -1; }
+.config-content-editor .content-editor-selection { display: grid; grid-template-columns: minmax(100px, .7fr) minmax(0, 1.3fr); gap: 10px; }
+.config-content-editor .content-editor-selection label { display: grid; gap: 4px; }
+.config-content-editor .clock-layout-fields { display: block; }
+.config-content-editor .clock-layout-field.config-field { display: grid; gap: 4px; }
+.config-content-editor .config-field { margin: 0; min-width: 0; }
+.config-content-editor .config-field-row { min-width: 0; }
+.config-content-editor .config-field-error:empty { display: none; }
+.config-content-editor .clock-layout-show-exhibit { margin-top: 0; }
+.config-content-editor .clock-layout-exhibit-status:empty { display: none; }
+.config-content-editor .settlement-name-field { gap: 4px; }
+.config-content-editor .settlement-name-field:has(select[data-field='lineBreak']) { grid-column: 1 / -1; }
+.config-content-editor .settlement-connector-note { color: var(--config-warning); }
+.config-content-editor .road-sign-actions { flex-wrap: nowrap; }
+.config-content-editor .road-sign-numeric-fields { display: block; }
+.config-content-editor .road-sign-numeric-fields .content-editor-page { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
+.config-content-editor .road-sign-numeric-fields .content-editor-page > .config-field { grid-column: 1 / -1; }
+.config-content-editor .road-sign-slider-adjustment { display: grid; gap: 6px; grid-column: 1 / -1; }
+.config-content-editor .road-sign-slider-adjustment .numeric-sensitivity-group { display: flex; gap: 4px; }
+.config-content-editor .road-sign-slider-adjustment .numeric-step { color: var(--config-muted); font-size: 11px; }
+.config-content-editor .road-sign-slider-adjustment input[type='range'] { width: 100%; min-height: 44px; }
+.config-content-editor select.road-sign-instance-list { display: block; min-height: 44px; max-height: none; overflow: visible; }
+.config-content-editor .content-editor-check { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 44px; padding: 6px 10px; border: 1px solid var(--config-divider); border-radius: 7px; background: var(--config-surface-raised); color: var(--config-text); }
+.config-content-editor .content-editor-check :is(input[type='checkbox'], input[type='radio']) { flex: none; min-height: 20px; width: 20px; height: 20px; margin: 0; accent-color: var(--config-accent); }
+.config-content-editor .road-sign-numeric-fields > .content-editor-check { justify-content: space-between; }
+.config-content-editor .road-sign-coordinate-field .config-field-range-row { display: none; }
+.config-content-editor .nova-explainer-cameras { gap: 3px; padding: 3px; border-radius: 10px; background: var(--config-canvas); }
+.config-content-editor .nova-explainer-cameras button { border-color: transparent; background: transparent; color: var(--config-muted); }
+.config-content-editor .nova-explainer-cameras button[aria-pressed='true'] { border-color: var(--config-border); background: var(--config-surface-raised); color: var(--config-text); }
+.config-content-editor.nova-explainer-dialog .clock-layout-parameters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-content: start; }
+.config-content-editor.nova-explainer-dialog .clock-layout-parameters > :is(.nova-explainer-cameras, .clock-layout-selection, button, p, .clock-layout-status-actions) { grid-column: 1 / -1; }
+.config-content-editor.nova-explainer-dialog .clock-layout-field { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px; }
+.config-content-editor.nova-explainer-dialog .clock-layout-field input { grid-column: 1; }
+.config-content-editor.nova-explainer-dialog .clock-layout-unit { grid-column: 2; grid-row: 2; }
+@media (max-width: 1000px) {
+  .config-content-editor :is(.clock-layout-body, .settlement-name-body, .road-sign-editor-body) { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(140px, 1fr) auto; gap: 10px; }
+  .config-content-editor :is(.clock-layout-parameters, .settlement-name-controls, .road-sign-editor-controls) { padding: 10px 12px; }
+  .config-content-editor .content-editor-page { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .config-content-editor .content-editor-page > :is(p, button) { grid-column: auto; }
+  .config-content-editor .clock-layout-fields .content-editor-page { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .config-content-editor :is(.clock-layout-status-actions, .settlement-name-status-actions) { margin-top: 0; }
+  .config-content-editor .clock-layout-parameters { display: grid; grid-template-columns: minmax(0, 1fr) auto; }
+  .config-content-editor .clock-layout-parameters > :is(.clock-layout-fields, .clock-layout-autosave-note, .clock-layout-warning, .clock-layout-exhibit-status) { grid-column: 1 / -1; }
+  .config-content-editor .clock-layout-parameters .clock-layout-status-actions { grid-column: 2; grid-row: 1; align-self: end; min-height: 44px; }
+  .config-content-editor .clock-layout-parameters .clock-layout-show-exhibit { grid-column: 2; }
+  .config-content-editor .road-sign-editor-controls { display: grid; grid-template-columns: minmax(0, 1fr) auto; }
+  .config-content-editor .road-sign-editor-controls > :is(.road-sign-numeric-fields, .road-sign-editor-warning, .road-sign-capacity-limit) { grid-column: 1 / -1; }
+  .config-content-editor .road-sign-actions { align-self: end; }
+  .config-content-editor .road-sign-numeric-fields > .content-editor-check { width: fit-content; }
+  .config-content-editor .road-sign-numeric-fields .content-editor-page { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .config-content-editor .road-sign-numeric-fields .content-editor-page > .config-field { grid-column: span 2; }
+  .config-content-editor .road-sign-slider-adjustment { grid-column: span 2; }
+}

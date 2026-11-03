@@ -1,0 +1,709 @@
+import { stopNliClock } from "../shared/nli-investigation-clock.js";
+import { getLocale, t } from "./remote-locale.js";
+
+function snapshotFrom(value) {
+  return value?.person_selection || value?.personSelection || value || null;
+}
+
+function revisionOf(snapshot) {
+  const revision = Number(snapshot?.revision);
+  return Number.isFinite(revision) && revision >= 0 ? revision : -1;
+}
+
+function samePerson(snapshot, person) {
+  return !!person && snapshot?.personId === person.pid && snapshot?.datasetVersion === person.datasetVersion;
+}
+
+export async function waitForInvestigationClockIdle(dataContext, {
+  forceStop = false,
+  timeoutMs = 3000,
+  isCancelled = () => false,
+} = {}) {
+  const current = dataContext?.getInvestigationClock?.();
+  if (!forceStop && (!current || current.phase === "idle")) return;
+  if (typeof dataContext?.patchInvestigationClock !== "function") {
+    throw new Error("investigation clock action unavailable");
+  }
+  let resolveIdle;
+  const idle = new Promise((resolve) => { resolveIdle = resolve; });
+  let idleObserved = false;
+  const onClock = (next) => {
+    if (next?.phase !== "idle" || idleObserved || isCancelled()) return;
+    idleObserved = true;
+    resolveIdle(next);
+  };
+  const unsubscribe = dataContext?.subscribe?.("investigationClock", onClock);
+  let timeoutId;
+  const timeout = new Promise((_, reject) => {
+    timeoutId = setTimeout(
+      () => reject(Object.assign(new Error("timed out waiting for investigation clock to become idle"), { code: "PERSON_SELECTION_CLOCK_TIMEOUT" })),
+      timeoutMs,
+    );
+  });
+  try {
+    const stop = Promise.resolve().then(() => dataContext.patchInvestigationClock(stopNliClock(current), {
+      isCurrent: () => !isCancelled(),
+    }));
+    const operation = (async () => {
+      const result = await stop;
+      if (isCancelled()) return;
+      if (result && (result.ok === false || result.stale === true)) {
+        throw result.error || new Error("Investigation clock stop was not acknowledged");
+      }
+      if (result?.ok === true && result.clock?.phase === "idle") onClock(result.clock);
+      if (!idleObserved) await idle;
+    })();
+    await Promise.race([operation, timeout]);
+  } finally {
+    clearTimeout(timeoutId);
+    unsubscribe?.();
+  }
+}
+
+export function createRemotePeopleArchiveController(options = {}) {
+  const {
+    root,
+    input,
+    clear,
+    list,
+    status,
+    navigationSection,
+    dataContext,
+    peopleRuntime,
+    getMode,
+    setMode,
+    renderSuggestions,
+    setStatus,
+    setRootClass,
+    setHidden,
+    syncInputDirection,
+    onModeUiChange,
+    onRefresh,
+    isNarrativeActive = () => false,
+    isConnected = () => true,
+    onStateChange,
+    onArchiveClosed,
+  } = options;
+
+  const state = {
+    destroyed: false,
+    person: { acknowledged: null, pending: null, revision: -1, generation: 0, requestToken: 0 },
+    archive: {
+      phase: "closed",
+      person: null,
+      requestId: null,
+      requestAction: null,
+      lastRequestId: null,
+      lastRequestAction: null,
+      recoverableOpenRequestId: null,
+      closedAppliedRequestId: null,
+      generation: 0,
+      timeoutId: null,
+    },
+  };
+  let pendingSelectionTask = null;
+  let selectionOperations = 0;
+  let archiveOperations = 0;
+  const pendingCancellations = new Set();
+
+  const archiveButton = options.archiveButton === undefined
+    ? (() => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "place-search-archive-button";
+      button.hidden = true;
+      root?.append?.(button);
+      return button;
+    })()
+    : options.archiveButton;
+
+  const missingDialog = document.createElement("dialog");
+  missingDialog.className = "nli-record-dialog";
+  const missingMessage = document.createElement("p");
+  missingMessage.textContent = t("nliRecordMissing");
+  missingDialog.append(missingMessage);
+  const dialogClose = document.createElement("button");
+  dialogClose.type = "button";
+  dialogClose.textContent = t("dialogClose");
+  dialogClose.addEventListener("click", () => missingDialog.close?.());
+  missingDialog.append(dialogClose);
+  root?.append?.(missingDialog);
+
+  const isAlive = (generation = null, kind = null) => {
+    if (state.destroyed) return false;
+    if (generation === null) return true;
+    return kind ? generation === state[kind].generation : generation === state.person.generation;
+  };
+  const transition = (kind, changes = {}) => {
+    Object.assign(state[kind], changes);
+  };
+
+  function setArchiveOpen(open) {
+    transition("archive", { phase: open ? "open" : "closed" });
+    navigationSection?.classList?.toggle?.("is-archive-open", open);
+    syncArchiveButton();
+    if (open) archiveButton?.focus?.();
+  }
+
+  function syncArchiveButton() {
+    const { phase, person } = state.archive;
+    const open = phase === "open";
+    const pending = phase === "opening" || phase === "closing";
+    if (archiveButton) {
+      archiveButton.textContent = t(
+        phase === "closing" ? "nliArchiveClosing" : pending ? "nliArchiveOpening" : (open ? "backToMap" : "openNliRecord"),
+      );
+      const narrativeActive = isNarrativeActive();
+      const connected = isConnected() !== false;
+      archiveButton.hidden = narrativeActive || (open || pending ? false : !(getMode() === "people" && state.person.acknowledged));
+      archiveButton.disabled = narrativeActive || pending || !connected;
+    }
+    void person;
+    onStateChange?.();
+  }
+
+  function clearArchiveTimeout() {
+    if (state.archive.timeoutId !== null) clearTimeout(state.archive.timeoutId);
+    transition("archive", { timeoutId: null });
+  }
+
+  function clearArchiveRecovery() {
+    transition("archive", { recoverableOpenRequestId: null });
+    if (state.archive.requestId === null) clearArchiveTimeout();
+  }
+
+  function cancelArchivePresentation() {
+    clearArchiveTimeout();
+    transition("archive", {
+      phase: "closed",
+      person: null,
+      requestId: null,
+      requestAction: null,
+      recoverableOpenRequestId: null,
+      generation: state.archive.generation + 1,
+    });
+    if (!state.destroyed) {
+      navigationSection?.classList?.toggle?.("is-archive-open", false);
+      syncArchiveButton();
+    }
+  }
+
+  function beginArchiveTimeout(generation, person, requestId) {
+    clearArchiveTimeout();
+    const timeoutMs = Number.isFinite(Number(options.archiveResultTimeoutMs))
+      ? Math.max(0, Number(options.archiveResultTimeoutMs))
+      : 6000;
+    const timeoutId = setTimeout(() => {
+      const requestPending = state.archive.requestId === requestId;
+      const recoveryPending = state.archive.recoverableOpenRequestId === requestId;
+      if (!isAlive(generation, "archive") || (!requestPending && !recoveryPending)) return;
+      const cancel = dataContext?.archiveWindowCommand?.("close", person.pid, person.datasetVersion, requestId);
+      if (cancel && typeof cancel.then === "function") {
+        const cancellation = Promise.resolve(cancel).catch(() => undefined).finally(() => {
+          pendingCancellations.delete(cancellation);
+        });
+        pendingCancellations.add(cancellation);
+      }
+      clearArchiveTimeout();
+      transition("archive", {
+        phase: "closed",
+        person: null,
+        requestId: null,
+        requestAction: null,
+        recoverableOpenRequestId: null,
+        generation: state.archive.generation + 1,
+      });
+      setArchiveOpen(false);
+      setStatus(t("nliArchiveUnavailable"));
+      cancel?.catch?.(() => {});
+    }, timeoutMs);
+    transition("archive", { timeoutId });
+  }
+
+  async function runArchiveCommand(action, person) {
+    if (!isAlive() || !person) return;
+    const requestId = globalThis.crypto?.randomUUID?.() || `archive-${Date.now()}`;
+    const generation = state.archive.generation + 1;
+    transition("archive", {
+      phase: action === "open" ? "opening" : "closing",
+      person,
+      requestId,
+      requestAction: action,
+      lastRequestId: requestId,
+      lastRequestAction: action,
+      recoverableOpenRequestId: null,
+      generation,
+    });
+    syncArchiveButton();
+    beginArchiveTimeout(generation, person, requestId);
+    try {
+      const result = await dataContext?.archiveWindowCommand?.(
+        action,
+        person.pid,
+        person.datasetVersion,
+        requestId,
+      );
+      if (!isAlive(generation, "archive")) return;
+      if (result?.acknowledged !== true) throw new Error("archive command not acknowledged");
+    } catch {
+      if (!isAlive(generation, "archive")) return;
+      clearArchiveTimeout();
+      transition("archive", {
+        phase: "closed",
+        person: null,
+        requestId: null,
+        requestAction: null,
+        recoverableOpenRequestId: null,
+        generation: generation + 1,
+      });
+      syncArchiveButton();
+      setStatus(t("nliArchiveUnavailable"));
+    }
+  }
+
+  archiveButton?.addEventListener("click", () => {
+    if (!isAlive() || isNarrativeActive() || state.archive.phase === "opening" || state.archive.phase === "closing") return;
+    if (state.archive.phase === "open") {
+      void closeArchive();
+      return;
+    }
+    void openArchive();
+  });
+
+  function handleArchiveResult(result = {}) {
+    const archive = state.archive;
+    if (!isAlive()) return;
+    const matchesCurrent = Boolean(archive.requestId && result.requestId === archive.requestId);
+    const matchesLast = Boolean(archive.lastRequestId && result.requestId === archive.lastRequestId);
+    const matchesRecoverableOpen = Boolean(
+      archive.recoverableOpenRequestId && result.requestId === archive.recoverableOpenRequestId,
+    );
+    if ((result.outcome === "unavailable" || result.outcome === "closed") && result.requestId === archive.closedAppliedRequestId) return;
+    if (result.outcome === "closed" && (matchesCurrent || matchesLast)) {
+      if (!samePerson(result, state.person.acknowledged)) return;
+      clearArchiveTimeout();
+      transition("archive", {
+        phase: "closed",
+        person: null,
+        requestId: null,
+        requestAction: null,
+        recoverableOpenRequestId: null,
+        generation: archive.generation + 1,
+        closedAppliedRequestId: result.requestId,
+      });
+      navigationSection?.classList?.toggle?.("is-archive-open", false);
+      setStatus("");
+      syncArchiveButton();
+      if (archive.lastRequestAction === "close") onArchiveClosed?.(result);
+      return;
+    }
+    if (!matchesCurrent) {
+      // Every GIS tab receives the same open command. A tab without a usable
+      // popup can report unavailable before the tab that actually opened the
+      // archive reports success. Let that success settle the same request.
+      if (
+        result.outcome === "navigation_attempted" && matchesLast && matchesRecoverableOpen &&
+        archive.phase === "closed" && result.requestId !== archive.closedAppliedRequestId &&
+        samePerson(result, state.person.acknowledged)
+      ) {
+        clearArchiveTimeout();
+        transition("archive", {
+          phase: "open",
+          person: state.person.acknowledged,
+          requestId: null,
+          requestAction: null,
+          recoverableOpenRequestId: null,
+        });
+        navigationSection?.classList?.toggle?.("is-archive-open", true);
+        archiveButton?.focus?.();
+        setStatus("");
+        syncArchiveButton();
+      }
+      return;
+    }
+    if (!samePerson(result, state.person.acknowledged)) return;
+    const allowOpenRecovery = result.outcome === "unavailable" && archive.requestAction === "open";
+    if (!allowOpenRecovery) clearArchiveTimeout();
+    const generation = archive.generation;
+    if (result.outcome === "navigation_attempted") {
+      transition("archive", {
+        phase: "open",
+        person: state.person.acknowledged,
+        requestId: null,
+        requestAction: null,
+        recoverableOpenRequestId: null,
+      });
+      navigationSection?.classList?.toggle?.("is-archive-open", true);
+      archiveButton?.focus?.();
+      setStatus("");
+    } else {
+      const recoverableOpenRequestId = result.outcome === "unavailable" && archive.requestAction === "open"
+        ? result.requestId
+        : null;
+      transition("archive", {
+        phase: "closed",
+        person: null,
+        requestId: null,
+        requestAction: null,
+        recoverableOpenRequestId,
+        generation: allowOpenRecovery ? generation : generation + 1,
+      });
+      navigationSection?.classList?.toggle?.("is-archive-open", false);
+      setStatus(result.outcome === "closed" ? "" : t("nliArchiveUnavailable"));
+    }
+    syncArchiveButton();
+  }
+
+  async function waitForInvestigationIdle({ forceStop = false, generation } = {}) {
+    const timeoutMs = Number.isFinite(Number(options.personSelectionClockTimeoutMs))
+      ? Math.max(0, Number(options.personSelectionClockTimeoutMs))
+      : 3000;
+    await waitForInvestigationClockIdle(dataContext, {
+      forceStop,
+      timeoutMs,
+      isCancelled: () => !isAlive(generation, "person"),
+    });
+  }
+
+  function isClockActiveConflict(error) {
+    return error?.status === 409 && (
+      error?.details?.reason === "clock_active" ||
+      error?.details?.error === "clock_active" ||
+      error?.details?.error === "person selection is unavailable while the investigation clock is active"
+    );
+  }
+
+  async function performSelectPerson(person) {
+    if (!isAlive() || isNarrativeActive()) {
+      setStatus(t("peopleNarrativeDisabled"));
+      return false;
+    }
+    const generation = state.person.generation + 1;
+    const requestToken = state.person.requestToken + 1;
+    clearArchiveRecovery();
+    transition("archive", { requestAction: null });
+    transition("person", {
+      generation,
+      requestToken,
+      pending: { generation, pid: person.pid, datasetVersion: person.datasetVersion },
+    });
+    setRootClass?.("is-pending", true);
+    let stopFailure = false;
+    let clockRecoveryAttempted = false;
+    const stopAndWaitForIdle = async (forceStop = false) => {
+      if (isAlive(generation)) setStatus(t("peopleSearchStopping"));
+      try {
+        await waitForInvestigationIdle({ forceStop, generation });
+      } catch (error) {
+        stopFailure = true;
+        throw error;
+      }
+    };
+    try {
+      const clock = dataContext?.getInvestigationClock?.();
+      if (clock && clock.phase !== "idle") await stopAndWaitForIdle();
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        if (!isAlive(generation)) return false;
+        setStatus(t("peopleSearchSelecting"));
+        try {
+          const result = await dataContext?.selectPerson?.(person.pid, person.datasetVersion);
+          if (!isAlive(generation)) return false;
+          const resultSnapshot = snapshotFrom(result);
+          const currentSnapshot = snapshotFrom(dataContext?.getPersonSelection?.());
+          const snapshot = [resultSnapshot, currentSnapshot]
+            .filter((candidate) => revisionOf(candidate) >= 0)
+            .reduce((newest, candidate) => !newest || revisionOf(candidate) > revisionOf(newest) ? candidate : newest, null);
+          if (revisionOf(snapshot) === state.person.revision &&
+              samePerson(snapshot, person) && samePerson(snapshot, state.person.acknowledged)) {
+            restoreAcknowledgedQuery();
+            syncArchiveButton();
+            return true;
+          }
+          if (!snapshot || revisionOf(snapshot) <= state.person.revision) throw new Error("selection not acknowledged");
+          await applySnapshot(snapshot);
+          return true;
+        } catch (error) {
+          if (state.destroyed || state.person.requestToken !== requestToken) return false;
+          if (!isAlive(generation)) {
+            setStatus(t("peopleSearchSelectionFailed"));
+            return false;
+          }
+          if (attempt === 0 && !clockRecoveryAttempted && isClockActiveConflict(error)) {
+            clockRecoveryAttempted = true;
+            await stopAndWaitForIdle(true);
+            continue;
+          }
+          throw error;
+        }
+      }
+    } catch {
+      if (isAlive(generation)) {
+        if (state.person.acknowledged && input) {
+          input.value = state.person.acknowledged.name;
+          syncInputDirection?.();
+        }
+        setStatus(t(stopFailure ? "peopleSearchStopFailed" : "peopleSearchSelectionFailed"));
+      }
+    } finally {
+      if (isAlive(generation) && state.person.pending?.generation === generation) {
+        transition("person", { pending: null });
+        setRootClass?.("is-pending", false);
+      }
+    }
+    return false;
+  }
+
+  function selectPerson(person) {
+    selectionOperations += 1;
+    const task = performSelectPerson(person).finally(() => { selectionOperations -= 1; });
+    pendingSelectionTask = task;
+    const clearPending = () => {
+      if (pendingSelectionTask === task) pendingSelectionTask = null;
+    };
+    void task.then(clearPending, clearPending);
+    return task;
+  }
+
+  async function clearPersonSelection() {
+    selectionOperations += 1;
+    try {
+      const pending = pendingSelectionTask;
+      if (pending) await pending.catch(() => false);
+      const baseline = snapshotFrom(dataContext?.getPersonSelection?.());
+      const baselineRevision = Math.max(revisionOf(baseline), state.person.revision);
+      if (!baseline?.personId && !state.person.acknowledged) {
+        cancelArchivePresentation();
+        return true;
+      }
+      try {
+        const result = await dataContext?.clearPerson?.();
+        const snapshot = [snapshotFrom(result), snapshotFrom(dataContext?.getPersonSelection?.())]
+          .filter((candidate) => revisionOf(candidate) >= 0)
+          .sort((a, b) => revisionOf(b) - revisionOf(a))[0];
+        if (!snapshot || snapshot.personId || revisionOf(snapshot) <= baselineRevision) return false;
+        await applySnapshot(snapshot);
+        return state.person.acknowledged === null;
+      } catch {
+        return false;
+      }
+    } finally {
+      selectionOperations -= 1;
+    }
+  }
+
+  async function applySnapshot(snapshot) {
+    if (!isAlive() || revisionOf(snapshot) <= state.person.revision) return;
+    const generation = state.person.generation + 1;
+    const supersededPending = !!state.person.pending;
+    transition("person", { revision: revisionOf(snapshot), generation, pending: null });
+    if (supersededPending) setRootClass?.("is-pending", false);
+    if (!snapshot?.personId || !snapshot.datasetVersion) {
+      transition("person", { acknowledged: null });
+      cancelArchivePresentation();
+      if (getMode() === "people") {
+        if (input) input.value = "";
+        syncInputDirection?.(input);
+        setHidden?.(clear, true);
+        renderSuggestions?.([]);
+      }
+      syncArchiveButton();
+      return;
+    }
+    try {
+      await peopleRuntime.load();
+    } catch {
+      if (supersededPending) setStatus(t("peopleSearchSelectionFailed"));
+      return;
+    }
+    if (!isAlive(generation)) return;
+    const resolved = peopleRuntime.resolve(snapshot.personId, snapshot.datasetVersion, getLocale());
+    if (!resolved || resolved.pid !== snapshot.personId || resolved.datasetVersion !== snapshot.datasetVersion) {
+      if (supersededPending) setStatus(t("peopleSearchSelectionFailed"));
+      return;
+    }
+    transition("person", { acknowledged: resolved });
+    setRootClass?.("is-pending", false);
+    if (getMode() === "people") {
+      if (input) input.value = resolved.name;
+      syncInputDirection?.(input);
+      setHidden?.(clear, false);
+      renderSuggestions?.([]);
+    }
+    setStatus("");
+    syncArchiveButton();
+  }
+
+  function handlePersonSnapshot(snapshot) {
+    if (!isAlive() || revisionOf(snapshot) <= state.person.revision) return;
+    if (state.archive.recoverableOpenRequestId && !samePerson(snapshot, state.person.acknowledged)) {
+      clearArchiveRecovery();
+    }
+    if (state.archive.person && !samePerson(snapshot, state.archive.person)) cancelArchivePresentation();
+    void applySnapshot(snapshot);
+  }
+
+  async function switchMode(nextMode) {
+    const currentMode = getMode();
+    if (!isAlive() || nextMode === currentMode || !["people", "settlements"].includes(nextMode)) return;
+    if (nextMode === "people" && isNarrativeActive()) {
+      setStatus(t("peopleNarrativeDisabled"));
+      onModeUiChange?.();
+      return;
+    }
+    if (nextMode === "settlements" && state.person.acknowledged) {
+      const generation = state.person.generation + 1;
+      const baselineRevision = state.person.revision;
+      transition("person", { generation });
+      setStatus(t("peopleSearchClearing"));
+      try {
+        const result = await dataContext?.clearPerson?.();
+        const snapshot = snapshotFrom(dataContext?.getPersonSelection?.() || result);
+        if (!snapshot || snapshot.personId || revisionOf(snapshot) <= baselineRevision) throw new Error("clear not acknowledged");
+        await applySnapshot(snapshot);
+      } catch {
+        if (isAlive(generation)) setStatus(t("peopleSearchClearFailed"));
+        return;
+      }
+    }
+    if (!isAlive()) return;
+    setMode(nextMode);
+    onModeUiChange?.();
+    if (input) input.value = nextMode === "people" && state.person.acknowledged ? state.person.acknowledged.name : "";
+    syncInputDirection?.(input);
+    setHidden?.(clear, !input?.value);
+    renderSuggestions?.([]);
+    setStatus("");
+    if (input?.value) onRefresh?.("input");
+    syncArchiveButton();
+  }
+
+  function restoreAcknowledgedQuery() {
+    if (!state.person.acknowledged || getMode() !== "people") return false;
+    if (input) input.value = state.person.acknowledged.name;
+    syncInputDirection?.(input);
+    setHidden?.(clear, false);
+    renderSuggestions?.([]);
+    setStatus("");
+    return true;
+  }
+
+  async function openArchive(person = null) {
+    if (!isAlive() || isNarrativeActive()) {
+      if (isNarrativeActive()) setStatus(t("peopleNarrativeDisabled"));
+      return false;
+    }
+    if (state.archive.phase === "opening" || state.archive.phase === "closing") return false;
+    if (person && (
+      !state.person.acknowledged
+      || state.person.acknowledged.pid !== person.pid
+      || state.person.acknowledged.datasetVersion !== person.datasetVersion
+    )) {
+      const selected = await selectPerson(person);
+      if (!selected) return false;
+    }
+    const target = state.person.acknowledged;
+    if (!target) return false;
+    if (!target.hasArchiveRecord) {
+      missingDialog.showModal?.();
+      return false;
+    }
+    await runArchiveCommand("open", target);
+    return true;
+  }
+
+  async function closeArchive() {
+    if (!isAlive() || state.archive.phase === "opening" || state.archive.phase === "closing") return false;
+    if (state.archive.phase !== "open") return false;
+    const person = state.archive.person || state.person.acknowledged;
+    if (!person) return false;
+    await runArchiveCommand("close", person);
+    return true;
+  }
+
+  async function pageArchive(direction) {
+    if (!isAlive() || state.archive.phase !== "open") return false;
+    const person = state.archive.person || state.person.acknowledged;
+    if (!person || (direction !== "up" && direction !== "down")) return false;
+    const send = dataContext?.archiveWindowCommand;
+    if (typeof send !== "function") return false;
+    const requestId = globalThis.crypto?.randomUUID?.() || `archive-${Date.now()}`;
+    archiveOperations += 1;
+    try {
+      await send.call(dataContext,
+        direction === "up" ? "page_up" : "page_down",
+        person.pid,
+        person.datasetVersion,
+        requestId,
+      );
+      return true;
+    } catch {
+      return false;
+    } finally {
+      archiveOperations -= 1;
+    }
+  }
+
+  const personSubscription = dataContext?.subscribe?.("personSelection", handlePersonSnapshot);
+  const archiveResultSubscription = dataContext?.subscribe?.("archiveWindowResult", handleArchiveResult);
+  const narrativeSubscription = dataContext?.subscribe?.("narrativeState", () => {
+    if (isNarrativeActive()) cancelArchivePresentation();
+    onModeUiChange?.();
+    onRefresh?.("narrative");
+    syncArchiveButton();
+  });
+
+  syncArchiveButton();
+
+  return {
+    archiveButton,
+    selectPerson,
+    clearPersonSelection,
+    openArchive,
+    closeArchive,
+    pageArchive,
+    getArchivePhase: () => state.archive.phase,
+    getRefreshRestriction() {
+      if (state.archive.phase !== "closed" || state.archive.recoverableOpenRequestId) return "owned_session";
+      if (selectionOperations > 0 || state.person.pending || archiveOperations > 0 || pendingCancellations.size > 0) return "busy";
+      return null;
+    },
+    getAcknowledgedPerson: () => state.person.acknowledged,
+    switchMode,
+    handlePersonSnapshot,
+    handleArchiveResult,
+    restoreAcknowledgedQuery,
+    syncArchiveButton,
+    shouldSuppressFocus() {
+      const person = state.person.acknowledged;
+      return getMode() === "people" && !!person && String(input?.value || "").trim() === String(person.name || "").trim();
+    },
+    handleLocaleChange() {
+      const old = state.person.acknowledged;
+      if (old) {
+        const localized = peopleRuntime.resolve(old.pid, old.datasetVersion, getLocale());
+        if (localized && localized.pid === old.pid) {
+          transition('person', { acknowledged: localized });
+          if (input && input.value === old.name) { input.value = localized.name; syncInputDirection?.(input); }
+          if (state.archive.person?.pid === old.pid) transition('archive', { person: localized });
+        }
+      }
+      missingMessage.textContent = t("nliRecordMissing");
+      dialogClose.textContent = t("dialogClose");
+      syncArchiveButton();
+    },
+    destroy() {
+      if (state.destroyed) return;
+      state.destroyed = true;
+      clearArchiveTimeout();
+      transition("person", {
+        generation: state.person.generation + 1,
+        pending: null,
+        requestToken: state.person.requestToken + 1,
+      });
+      transition("archive", { generation: state.archive.generation + 1, requestId: null, person: null });
+      personSubscription?.();
+      archiveResultSubscription?.();
+      narrativeSubscription?.();
+    },
+  };
+}
