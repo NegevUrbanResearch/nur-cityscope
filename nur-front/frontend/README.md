@@ -69,7 +69,7 @@ The app uses client-side routing, so all routes serve `index.html` and React Rou
 
 ## Key Features
 
-- **Table Switching**: Use Shift+Z to switch between `idistrict` and `otef` tables
+- **Table Switching**: Use Shift+Z to switch tables. The dashboard uses the `idistrict` table.
 - **Real-time Sync**: WebSocket keeps all connected clients in sync
 - **Presentation Mode**: Automated slide sequencing with pause/play controls
 - **Image Caching**: LRU cache for better performance during presentations

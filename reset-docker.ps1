@@ -42,83 +42,18 @@ Write-Host ""
 Write-Host "Reset complete!" -ForegroundColor Green
 Write-Host ""
 
-# Process layer packs (before starting containers)
-Write-Host "5. Setting up OTEF layer packs..." -ForegroundColor Cyan
-
-$pythonCmd = Get-Command python -ErrorAction SilentlyContinue
-if (-not $pythonCmd) {
-    $pythonCmd = Get-Command python3 -ErrorAction SilentlyContinue
-}
-
-    if ($pythonCmd) {
-    $venvPath = "otef-interactive\scripts\.venv"
-    if (-not (Test-Path $venvPath)) {
-        Write-Host "   Creating Python virtual environment..." -ForegroundColor Gray
-        & $pythonCmd.Name -m venv "$venvPath"
-    }
-
-    # Ensure dependencies are installed (including new requests and tqdm)
-    Write-Host "   Ensuring dependencies are installed..." -ForegroundColor Gray
-    & "$venvPath\Scripts\python" -m pip install -q -r "otef-interactive\scripts\requirements.txt"
-
-    # Fetch source layers if needed
-    Write-Host "   Fetching source layers if needed..." -ForegroundColor Gray
-    & "$venvPath\Scripts\python" "otef-interactive\scripts\fetch_data.py" --output "otef-interactive\public\source"
-
-    $dockerRunning = docker info 2>$null
-    if ($LASTEXITCODE -eq 0) {
-        $manifestPath = "otef-interactive\public\processed\layers\layers-manifest.json"
-        $shouldProcess = $true
-        if (Test-Path $manifestPath) {
-            $manifestTime = (Get-Item $manifestPath).LastWriteTime
-            $sourceDir = "otef-interactive\public\source\layers"
-            $newerFiles = Get-ChildItem -Path $sourceDir -Recurse -File -ErrorAction SilentlyContinue |
-                Where-Object { $_.LastWriteTime -gt $manifestTime }
-            if ($null -eq $newerFiles -or $newerFiles.Count -eq 0) {
-                Write-Host "   Layer packs already processed (manifest up to date), skipping..." -ForegroundColor Gray
-                $shouldProcess = $false
-            }
-        }
-        if ($shouldProcess) {
-            Write-Host "   Processing layer packs (process_layers.py)..." -ForegroundColor Gray
-            & "$venvPath\Scripts\python" "otef-interactive\scripts\process_layers.py" `
-                --source "otef-interactive\public\source\layers" `
-                --output "otef-interactive\public\processed\layers"
-        }
-    } else {
-        Write-Host "   Warning: Docker not running, skipping layer pack processing" -ForegroundColor Yellow
-    }
-} else {
-    Write-Host "   Warning: Python not found, skipping layer pack processing" -ForegroundColor Yellow
-}
-
-# Ensure OTEF frontend dependencies (for tests and dev)
-Write-Host "6. Ensuring OTEF frontend dependencies..." -ForegroundColor Cyan
-$npmCmd = Get-Command npm -ErrorAction SilentlyContinue
-if ($npmCmd) {
-    Write-Host "   Installing OTEF frontend dependencies (npm install)..." -ForegroundColor Gray
-    npm install --prefix "otef-interactive"
-} else {
-    Write-Host "   Warning: npm not found, skipping otef-interactive deps (run 'npm install' in otef-interactive manually)" -ForegroundColor Yellow
-}
-
 # Rebuild and start containers
-Write-Host "7. Rebuilding and starting containers..." -ForegroundColor Cyan
+Write-Host "5. Rebuilding and starting containers..." -ForegroundColor Cyan
 $env:COMPOSE_BAKE = "true"
 docker-compose up --build -d
 
-# Wait for API and seed database (migrate, create_data, import_otef_data)
-Write-Host "8. Waiting for API and seeding database..." -ForegroundColor Cyan
+# Wait for API and seed database (migrate, create_data)
+Write-Host "6. Waiting for API and seeding database..." -ForegroundColor Cyan
 Start-Sleep -Seconds 15
 Write-Host "   Running migrations..." -ForegroundColor Gray
 docker exec nur-api python manage.py migrate
 Write-Host "   Creating data structure (states, indicator data, images)..." -ForegroundColor Gray
 docker exec nur-api python manage.py create_data
-Write-Host "   Importing OTEF data (layer groups, model bounds)..." -ForegroundColor Gray
-docker exec nur-api python manage.py import_otef_data
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "   (OTEF import skipped if files not present)" -ForegroundColor Gray
-}
 
 Write-Host ""
 Write-Host "All done! Containers are running in the background." -ForegroundColor Green
@@ -150,8 +85,6 @@ Write-Host "Local access (localhost):" -ForegroundColor Yellow
 Write-Host "- Dashboard: http://localhost/dashboard/" -ForegroundColor Cyan
 Write-Host "- Projection: http://localhost/projection/" -ForegroundColor Cyan
 Write-Host "- Remote Controller: http://localhost/remote/" -ForegroundColor Cyan
-Write-Host "- OTEF Interactive: http://localhost/otef-interactive/" -ForegroundColor Cyan
-Write-Host "- OTEF Projection: http://localhost/otef-interactive/projection.html" -ForegroundColor Cyan
 Write-Host "- Admin Interface: http://localhost:9900/admin" -ForegroundColor Cyan
 
 if ($localIP) {
@@ -160,8 +93,6 @@ if ($localIP) {
     Write-Host "- Dashboard: http://$localIP/dashboard/" -ForegroundColor Cyan
     Write-Host "- Projection: http://$localIP/projection/" -ForegroundColor Cyan
     Write-Host "- Remote Controller: http://$localIP/remote/" -ForegroundColor Cyan
-    Write-Host "- OTEF Interactive: http://$localIP/otef-interactive/" -ForegroundColor Cyan
-    Write-Host "- OTEF Projection: http://$localIP/otef-interactive/projection.html" -ForegroundColor Cyan
     Write-Host "- Admin Interface: http://$localIP:9900/admin" -ForegroundColor Cyan
 } else {
     Write-Host ""

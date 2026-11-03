@@ -1,4 +1,3 @@
-from django.db import models
 from rest_framework import serializers
 from .models import (
     Table,
@@ -8,18 +7,7 @@ from .models import (
     State,
     DashboardFeedState,
     LayerConfig,
-    GISLayer,
-    OTEFModelConfig,
-    OTEFViewportState,
-    LayerGroup,
-    LayerState,
 )
-from .otef_escape_overlay import normalize_escape_overlay
-from .otef_nli_clock_layout import normalize_nli_clock_layout
-from .otef_legend_settings import normalize_legend_settings
-from .otef_settlement_names import normalize_settlement_name_settings
-from .otef_person_selection import normalize_person_selection
-from .otef_narrative import normalize_narrative_state
 
 
 class TableSerializer(serializers.ModelSerializer):
@@ -68,8 +56,6 @@ class StateSerializer(serializers.ModelSerializer):
 
 
 class IndicatorMediaSerializer(serializers.ModelSerializer):
-    """Serializer for media with URL included"""
-
     url = serializers.SerializerMethodField()
 
     class Meta:
@@ -83,8 +69,6 @@ class IndicatorMediaSerializer(serializers.ModelSerializer):
 
 
 class StateDetailSerializer(serializers.ModelSerializer):
-    """Serializer for state with nested media"""
-
     media = serializers.SerializerMethodField()
 
     class Meta:
@@ -99,7 +83,6 @@ class StateDetailSerializer(serializers.ModelSerializer):
         ]
 
     def get_media(self, obj):
-        # Get media through IndicatorData - requires indicator context
         indicator_data = getattr(obj, "_indicator_data", None)
         if indicator_data:
             media_list = []
@@ -119,8 +102,6 @@ class StateDetailSerializer(serializers.ModelSerializer):
 
 
 class IndicatorDetailSerializer(serializers.ModelSerializer):
-    """Detailed serializer including nested states and media for hierarchy view"""
-
     table_name = serializers.CharField(source="table.name", read_only=True)
     table_display_name = serializers.CharField(
         source="table.display_name", read_only=True
@@ -144,7 +125,6 @@ class IndicatorDetailSerializer(serializers.ModelSerializer):
         ]
 
     def get_states(self, obj):
-        """Get all states linked to this indicator with their media"""
         indicator_data_qs = (
             obj.data.all().select_related("state").prefetch_related("images")
         )
@@ -165,7 +145,6 @@ class IndicatorDetailSerializer(serializers.ModelSerializer):
                     "media": [],
                 }
 
-            # Add media for this indicator data
             for img in data.images.all():
                 states[state_id]["media"].append(
                     {
@@ -203,148 +182,3 @@ class LayerConfigSerializer(serializers.ModelSerializer):
     class Meta:
         model = LayerConfig
         fields = "__all__"
-
-
-class GISLayerSerializer(serializers.ModelSerializer):
-    table_name = serializers.CharField(source="table.name", read_only=True)
-
-    class Meta:
-        model = GISLayer
-        fields = "__all__"
-
-
-class OTEFModelConfigSerializer(serializers.ModelSerializer):
-    table_name = serializers.CharField(source="table.name", read_only=True)
-
-    class Meta:
-        model = OTEFModelConfig
-        fields = "__all__"
-
-
-class OTEFViewportStateSerializer(serializers.ModelSerializer):
-    table_name = serializers.CharField(source="table.name", read_only=True)
-    experience_state = serializers.SerializerMethodField()
-    projection_slideshow = serializers.SerializerMethodField()
-    person_selection = serializers.SerializerMethodField()
-    narrative_state = serializers.SerializerMethodField()
-    escape_overlay = serializers.SerializerMethodField()
-    nli_clock_layout = serializers.SerializerMethodField()
-    legend_settings = serializers.SerializerMethodField()
-    settlement_name_settings = serializers.SerializerMethodField()
-    road_sign_settings = serializers.SerializerMethodField()
-
-    class Meta:
-        model = OTEFViewportState
-        fields = [
-            "id",
-            "table",
-            "table_name",
-            "viewport",
-            "layers",
-            "animations",
-            "basemap",
-            "projection_slideshow",
-            "investigation_clock",
-            "person_selection",
-            "narrative_state",
-            "escape_overlay",
-            "nli_clock_layout",
-            "nli_clock_layout_revision",
-            "legend_settings",
-            "legend_layout_revision",
-            "settlement_name_settings",
-            "settlement_name_revision",
-            "road_sign_settings",
-            "road_sign_revision",
-            "workshop_auto_publish",
-            "workshop_autopublish_started_at",
-            "exhibit_mode",
-            "experience_state",
-            "updated_at",
-        ]
-        read_only_fields = [
-            "id",
-            "updated_at",
-            "table_name",
-            "experience_state",
-            "person_selection",
-            "narrative_state",
-            "escape_overlay",
-            "nli_clock_layout",
-            "nli_clock_layout_revision",
-            "legend_settings",
-            "legend_layout_revision",
-            "settlement_name_settings",
-            "settlement_name_revision",
-            "road_sign_settings",
-            "road_sign_revision",
-            "workshop_autopublish_started_at",
-        ]
-
-    def get_person_selection(self, obj):
-        return normalize_person_selection(obj.person_selection)
-
-    def get_experience_state(self, obj):
-        from .otef_experience import experience_state
-        return experience_state(obj)
-
-    def get_projection_slideshow(self, obj):
-        from .otef_experience import slideshow_command_for_response
-        return slideshow_command_for_response(obj)
-
-    def get_narrative_state(self, obj):
-        return normalize_narrative_state(obj.narrative_state)
-
-    def get_escape_overlay(self, obj):
-        narrative_id = normalize_narrative_state(obj.narrative_state)["id"]
-        return normalize_escape_overlay(obj.escape_overlay, narrative_id)
-
-    def get_nli_clock_layout(self, obj):
-        return normalize_nli_clock_layout(obj.nli_clock_layout)
-
-    def get_legend_settings(self, obj):
-        return normalize_legend_settings(obj.legend_settings)
-
-    def get_settlement_name_settings(self, obj):
-        return normalize_settlement_name_settings(obj.settlement_name_settings)
-
-    def get_road_sign_settings(self, obj):
-        from .otef_road_signs import normalize_road_sign_settings
-
-        return normalize_road_sign_settings(obj.road_sign_settings)
-
-    def validate(self, attrs):
-        initial = self.initial_data if isinstance(getattr(self, "initial_data", None), dict) else {}
-        if {"settlement_name_settings", "settlement_name_revision"} & set(initial):
-            raise serializers.ValidationError("Settlement names must use their versioned command")
-        if {"road_sign_settings", "road_sign_revision"} & set(initial):
-            raise serializers.ValidationError("Road 232 signs must use their versioned command")
-        return attrs
-
-
-class LayerStateSerializer(serializers.ModelSerializer):
-    """Serializer for individual layer visibility state"""
-
-    class Meta:
-        model = LayerState
-        fields = ["id", "layer_id", "enabled", "created_at", "updated_at"]
-        read_only_fields = ["id", "created_at", "updated_at"]
-
-
-class LayerGroupSerializer(serializers.ModelSerializer):
-    """Serializer for layer group with nested layer states"""
-
-    layers = serializers.SerializerMethodField()
-
-    class Meta:
-        model = LayerGroup
-        fields = ["id", "group_id", "enabled", "layers", "created_at", "updated_at"]
-        read_only_fields = ["id", "created_at", "updated_at"]
-
-    def get_layers(self, obj):
-        """Get all layer states for this group"""
-        # Extract group_id from layer_id (format: "group_id.layer_id")
-        layer_states = LayerState.objects.filter(
-            table=obj.table, layer_id__startswith=f"{obj.group_id}."
-        )
-        return LayerStateSerializer(layer_states, many=True).data

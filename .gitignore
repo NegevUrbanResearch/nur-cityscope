@@ -20,8 +20,6 @@ dist/
 downloads/
 eggs/
 .eggs/
-# EXCEPTION: Allow OTEF vendored libraries (MUST come before lib/ ignore)
-!otef-interactive/frontend/lib/
 lib/
 lib64/
 parts/
@@ -113,13 +111,8 @@ drive-download-*.zip
 # Data directories - Ignore all data directories and their contents
 data/
 */data/
-!otef-interactive/frontend/data/
-!otef-interactive/data-source/
 */*/data/
-!otef-interactive/*/data/
-!otef-interactive/*/*/data/
 */*/*/data/
-!otef-interactive/*/*/*/data/
 nur-io/django_api/data/
 nur-io/core/data/
 nur-io/core/external_files/
@@ -143,36 +136,5 @@ calculations/export/*
 *.msi
 *-to-load*
 
-otef-interactive/frontend/data/*.mbtiles
-otef-interactive/playground
-otef-interactive/frontend/runtime/
-
-
-# OTEF source files (ignored, but folder structure preserved with .gitkeep)
-# Ignore all files in source directory, but allow .gitkeep files and popup-config.json
-otef-interactive/public/source/**/*
-!otef-interactive/public/source/
-!otef-interactive/public/source/**/
-!otef-interactive/public/source/.gitkeep
-!otef-interactive/public/source/**/.gitkeep
-!otef-interactive/public/source/popup-config.json
-
-# Processed layers (Heavy files, share via GitHub Releases)
-otef-interactive/public/processed/**/*
-!otef-interactive/public/processed/
-!otef-interactive/public/processed/**/
-!otef-interactive/public/processed/.gitkeep
-!otef-interactive/public/processed/**/.gitkeep
-otef-interactive/public/*.zip
-otef-interactive/public/release-build/
-otef-interactive/public/layer-release-*/
-
 nur-colab-map
 
-# Local TouchDesigner capture evidence; converted browser meshes remain tracked.
-otef-interactive/public/projection-calibration/td-baselines/*-raw.json
-otef-interactive/public/projection-calibration/td-baselines/*-evaluated-mesh.json
-otef-interactive/public/projection-calibration/td-baselines/capture-fingerprints.json
-
-# Local licensed exhibit presentation; never release or commit.
-otef-interactive/public/local/
