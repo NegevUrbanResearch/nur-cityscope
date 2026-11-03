@@ -2,7 +2,7 @@
 
 React dashboard for urban planning visualization with interactive maps and charts.
 
-## Tech Stack
+## Stack
 
 - React 18 + React Router
 - Material UI 7
@@ -42,7 +42,7 @@ npm run build      # Production build
 REACT_APP_MAPBOX_ACCESS_TOKEN=pk.xxx  # Required for maps
 ```
 
-## Project Structure
+## Project structure
 
 ```
 src/
@@ -61,15 +61,10 @@ src/
 └── globals.js           # Shared state variables
 ```
 
-## Build & Deploy
+## Build and deploy
 
 Production builds are created by the `dashboard-builder` Docker service and served via nginx at `/dashboard/`.
 
 The app uses client-side routing, so all routes serve `index.html` and React Router handles navigation.
 
-## Key Features
-
-- **Table Switching**: Use Shift+Z to switch tables. The dashboard uses the `idistrict` table.
-- **Real-time Sync**: WebSocket keeps all connected clients in sync
-- **Presentation Mode**: Automated slide sequencing with pause/play controls
-- **Image Caching**: LRU cache for better performance during presentations
+The dashboard reads the `idistrict` table. Shift+Z opens the table list. Presentation mode and the WebSocket sync live in the dashboard, not on a separate route.

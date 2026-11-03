@@ -114,7 +114,7 @@ class PresentationRemote {
         try {
             const response = await this.apiGet('/api/tables/?is_active=true');
             if (response && Array.isArray(response)) {
-                this.availableTables = response.filter((table) => table.name !== 'otef');
+                this.availableTables = response;
                 // Get table from URL or default to idistrict
                 const urlParams = new URLSearchParams(window.location.search);
                 const urlTable = urlParams.get('table');
