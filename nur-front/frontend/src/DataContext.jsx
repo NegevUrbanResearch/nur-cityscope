@@ -589,7 +589,7 @@ export const DataProvider = ({ children }) => {
       try {
         const response = await api.get("/api/tables/?is_active=true");
         if (response.data && Array.isArray(response.data)) {
-          const tables = response.data.filter((table) => table.name !== "otef");
+          const tables = response.data;
           setAvailableTables(tables);
 
           const urlParams = new URLSearchParams(window.location.search);

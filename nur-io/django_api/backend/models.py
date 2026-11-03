@@ -32,7 +32,7 @@ class Table(models.Model):
     name = models.CharField(
         max_length=100,
         unique=True,
-        help_text="Internal name (e.g., 'otef', 'idistrict')",
+        help_text="Internal name, for example idistrict",
     )
     display_name = models.CharField(
         max_length=255, help_text="Human-readable display name"

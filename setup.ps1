@@ -7,20 +7,6 @@ $SCRIPT_DIR = Split-Path -Parent $MyInvocation.MyCommand.Path
 # Navigate to script directory
 Set-Location $SCRIPT_DIR
 
-# Create necessary migration folders
-Write-Host "Creating required migration folders..." -ForegroundColor Cyan
-New-Item -ItemType Directory -Force -Path "$SCRIPT_DIR\nur-io\core\external_files" | Out-Null
-New-Item -ItemType Directory -Force -Path "$SCRIPT_DIR\nur-io\core\migrations" | Out-Null
-New-Item -ItemType Directory -Force -Path "$SCRIPT_DIR\nur-io\backend\migrations" | Out-Null
-
-# Create empty __init__.py files
-if (-not (Test-Path "$SCRIPT_DIR\nur-io\core\migrations\__init__.py")) {
-    New-Item -ItemType File -Path "$SCRIPT_DIR\nur-io\core\migrations\__init__.py" | Out-Null
-}
-if (-not (Test-Path "$SCRIPT_DIR\nur-io\backend\migrations\__init__.py")) {
-    New-Item -ItemType File -Path "$SCRIPT_DIR\nur-io\backend\migrations\__init__.py" | Out-Null
-}
-
 # Copy logo to required locations
 Write-Host "Ensuring logo files are in place..." -ForegroundColor Cyan
 New-Item -ItemType Directory -Force -Path "$SCRIPT_DIR\nur-io\django_api\media" | Out-Null

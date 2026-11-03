@@ -145,8 +145,7 @@
       const apiEndpoint = "/api/actions/get_image_data/";
       
       // Table management
-      const storedTable = localStorage.getItem('projectionTable');
-      let currentTable = storedTable && storedTable !== 'otef' ? storedTable : 'idistrict';
+      let currentTable = localStorage.getItem('projectionTable') || 'idistrict';
       let availableTables = [];
       const $tableSelect = document.getElementById('tableSelect');
       
@@ -157,7 +156,7 @@
           if (response.ok) {
             const tables = await response.json();
             if (Array.isArray(tables)) {
-              availableTables = tables.filter((table) => table.name !== 'otef');
+              availableTables = tables;
               
               // Populate table selector
               $tableSelect.innerHTML = '';

@@ -9,16 +9,6 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 # Navigate to script directory
 cd "$SCRIPT_DIR" || exit
 
-# Create necessary migration folders
-echo "Creating required migration folders..."
-mkdir -p "$SCRIPT_DIR/nur-io/core/external_files"
-mkdir -p "$SCRIPT_DIR/nur-io/core/migrations"
-mkdir -p "$SCRIPT_DIR/nur-io/backend/migrations"
-
-# Create empty __init__.py files
-touch "$SCRIPT_DIR/nur-io/core/migrations/__init__.py"
-touch "$SCRIPT_DIR/nur-io/backend/migrations/__init__.py"
-
 # Copy logo to required locations
 echo "Ensuring logo files are in place..."
 mkdir -p "$SCRIPT_DIR/nur-io/django_api/media"
@@ -89,7 +79,7 @@ echo ""
 echo "📍 Local access (localhost):"
 echo "- Dashboard: http://localhost/dashboard/"
 echo "- Projection: http://localhost/projection/"
-echo "- Remote Controller: http://localhost/remote/"
+echo "- Remote Controller: http://localhost/remote-controller/"
 echo "- Admin Interface: http://localhost:9900/admin"
 
 if [ -n "$LOCAL_IP" ]; then
@@ -97,7 +87,7 @@ if [ -n "$LOCAL_IP" ]; then
     echo "🌐 Network access (from other devices):"
     echo "- Dashboard: http://$LOCAL_IP/dashboard/"
     echo "- Projection: http://$LOCAL_IP/projection/"
-    echo "- Remote Controller: http://$LOCAL_IP/remote/"
+    echo "- Remote Controller: http://$LOCAL_IP/remote-controller/"
     echo "- Admin Interface: http://$LOCAL_IP:9900/admin"
 else
     echo ""
