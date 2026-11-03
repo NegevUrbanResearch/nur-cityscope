@@ -1,137 +1,96 @@
-# nur-CityScope Backend
+# nur-CityScope backend
 
-Django REST API with WebSocket support for real-time urban planning visualization.
+Django REST API and WebSocket for the iDistrict dashboard, projection display, and remote.
 
-## Tech Stack
+## Stack
 
-- Django 4.2 + Django REST Framework
-- Django Channels + Redis (WebSocket)
+- Django 4.2 and Django REST Framework
+- Django Channels and Redis
 - PostgreSQL
-- Pillow, Pandas, Matplotlib
+- Pillow, Pandas, and Matplotlib
 
-## Project Structure
+## Layout
 
-```
+```text
 django_api/
-├── core/              # Django project settings
-├── backend/           # Main app
-│   ├── models.py      # Database models
-│   ├── views.py       # API endpoints
-│   ├── serializers.py
-│   └── management/commands/
-│       └── create_data.py  # Data loading
-├── websocket_app/     # WebSocket handlers
-├── public/processed/  # Visualization assets
-└── init.sh            # Startup script
+  core/                 project settings
+  backend/
+    models.py
+    views.py
+    serializers.py
+    climate_scenarios.py
+    management/commands/create_data.py
+  websocket_app/        presentation WebSocket
+  public/processed/     visualization files
+  init.sh               container start
 ```
+
+`init.sh` waits for Postgres, runs `migrate`, and ensures the `idistrict` table plus the Mobility and Climate indicators. On the first start it runs `create_data` and creates the admin user `admin` with password `admin123`. It then copies `public/processed/mobility` and `public/processed/climate` into the media volume.
+
+`init.sh` does not run `makemigrations`.
 
 ## Models
 
-- **Table**: Organizes indicators by data source (`otef`, `idistrict`)
-- **Indicator**: Metrics like mobility/climate data (belongs to a Table)
-- **State**: Different scenarios or time periods
-- **IndicatorData**: Links indicators with states
-- **IndicatorImage**: Visualization images/videos
-- **DashboardFeedState**: Chart data
-- **LayerConfig**: Deck.gl layer configs
-- **UserUpload**: User-uploaded content
-- **GISLayer**: GIS data for OTEF module
-- **OTEFModelConfig**: OTEF model configuration
+- **Table** groups indicators. The shipped table name is `idistrict`.
+- **Indicator** is a metric on a table. The categories are `mobility` and `climate`.
+- **State** is a scenario or a time period for an indicator.
+- **IndicatorData** links an indicator to a state.
+- **IndicatorImage** stores the image, video, or HTML map for that pair.
+- **DashboardFeedState** stores chart data.
+- **LayerConfig** stores Deck.gl layer settings.
 
-## API Endpoints
+Queries that select an indicator by `indicator_id` need `?table=idistrict`. The same `indicator_id` can exist on another table.
 
-### Core Resources
-```
+## API
+
+```text
 GET  /api/tables/
-GET  /api/indicators/?table=<table_name>
+GET  /api/indicators/?table=idistrict
 GET  /api/states/
+GET  /api/indicator_data/
+GET  /api/indicator_images/
+POST /api/indicator_images/
 GET  /api/dashboard_feed_state/?dashboard_type=mobility
-GET  /api/user_uploads/
-POST /api/user_uploads/
-```
+GET  /api/layer_config/
 
-### Actions
-```
 GET  /api/actions/get_global_variables/
+GET  /api/actions/get_image_data/?table=idistrict
+GET  /api/actions/get_deckgl_data/
+GET  /api/actions/get_file_hierarchy/
+GET  /api/actions/get_presentation_state/
 POST /api/actions/set_current_indicator/
 POST /api/actions/set_climate_scenario/
 POST /api/actions/set_visualization_mode/
-GET  /api/actions/get_image_data/
-GET  /api/actions/get_deckgl_data/
-GET  /api/actions/get_presentation_state/
 POST /api/actions/set_presentation_state/
-GET  /api/actions/get_otef_layers/?table=otef
 ```
 
-### OTEF Endpoints
-```
-GET  /api/otef_model_config/
-GET  /api/otef_viewport/
-POST /api/otef_viewport/
-```
+The presentation WebSocket is `/ws/presentation/`.
 
-### WebSocket
-```
-/ws/presentation/  # Real-time state sync
-/ws/otef/         # OTEF viewport sync
-```
+The dashboard upload page writes indicators, states, indicator data, and indicator images. It reads the file list from `get_file_hierarchy`.
 
-## Initialization
+Admin is http://localhost:9900/admin.
 
-The `init.sh` script runs automatically when the container starts:
+## Commands
 
-1. Runs database migrations
-2. Creates `otef` and `idistrict` tables
-3. Sets up indicators for `idistrict` table
-4. Loads data from `public/processed/` on first run
-5. Creates default admin user (admin/admin123)
-
-To modify initialization, edit `init.sh` and restart the container.
-
-## Data Loading
-
-**Climate/Mobility data**: The `create_data` command scans `public/processed/` and:
-- Creates Indicator and State records
-- Links images/videos to indicator-state combinations
-- Loads dashboard chart data from CSV files
-
-**OTEF data**: Imported separately via `import_otef_data` command from `public/processed/otef/`
-
-Run manually:
-```bash
-docker-compose exec nur-api python manage.py create_data      # Climate/mobility
-docker-compose exec nur-api python manage.py import_otef_data # OTEF layers
-```
-
-## Development
+Run these inside `nur-api`.
 
 ```bash
-# Shell access
-docker-compose exec nur-api bash
-
-# Migrations
-python manage.py makemigrations
-python manage.py migrate
-
-# Create superuser
-python manage.py createsuperuser
-
-# Watch logs
-docker-compose logs -f nur-api
+docker exec nur-api python manage.py migrate
+docker exec nur-api python manage.py create_data
+docker exec nur-api python manage.py makemigrations
 ```
 
-## Environment Variables
+Run `makemigrations` only after a model change.
 
-| Variable | Description |
-|----------|-------------|
-| `DATABASE_URL` | PostgreSQL connection string |
-| `SECRET_KEY` | Django secret key |
-| `DEBUG` | Debug mode (True/False) |
-| `ALLOWED_HOSTS` | Allowed hostnames |
-| `CORS_ALLOW_ALL_ORIGINS` | CORS configuration |
+## Migrations that must stay
 
-## Important Notes
+Keep `backend/migrations/`. A new database replays every file, including `0037_drop_otef_tables`.
 
-- All indicator queries require a `table` parameter (e.g., `?table=idistrict`)
-- Most existing data is associated with the `idistrict` table
-- OTEF data lives in `public/processed/otef/` and is imported via `import_otef_data` command
+These modules stay because those migrations import them. The list and the reason are in the repository root [AGENTS.md](../AGENTS.md).
+
+- `projection_config_migration.py`
+- `projection_config_schema.py`
+- `projection_warp_schema.py`
+- `projection_baseline_manifest.py`
+- `nli_font_settings.py`
+- `projection_config_defaults` and `projection_presets_defaults` in `models.py`

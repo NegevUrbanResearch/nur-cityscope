@@ -160,7 +160,7 @@
               
               // Populate table selector
               $tableSelect.innerHTML = '';
-              tables.forEach(table => {
+              availableTables.forEach(table => {
                 const option = document.createElement('option');
                 option.value = table.name;
                 option.textContent = table.display_name || table.name;
@@ -171,30 +171,17 @@
               const urlParams = new URLSearchParams(window.location.search);
               const urlTable = urlParams.get('table');
               
-              // If URL has table=otef, redirect to OTEF projection
-              if (urlTable === 'otef') {
-                window.location.href = `/otef-interactive/projection.html?table=otef`;
-                return;
-              }
-              
               // Set current table - use URL param if valid, then saved value, otherwise default
-              if (urlTable && tables.find(t => t.name === urlTable)) {
+              if (urlTable && availableTables.find(t => t.name === urlTable)) {
                 currentTable = urlTable;
               } else {
                 const savedTable = localStorage.getItem('projectionTable');
-                if (savedTable && tables.find(t => t.name === savedTable)) {
+                if (savedTable && availableTables.find(t => t.name === savedTable)) {
                   currentTable = savedTable;
                 } else {
-                  // Set current table to idistrict if available, otherwise first table
-                  const idistrictTable = tables.find(t => t.name === 'idistrict');
-                  currentTable = idistrictTable ? 'idistrict' : (tables[0]?.name || 'idistrict');
+                  const idistrictTable = availableTables.find(t => t.name === 'idistrict');
+                  currentTable = idistrictTable ? 'idistrict' : (availableTables[0]?.name || 'idistrict');
                 }
-              }
-              
-              // If current table is OTEF, redirect immediately
-              if (currentTable === 'otef') {
-                window.location.href = `/otef-interactive/projection.html?table=otef`;
-                return;
               }
               
               localStorage.setItem('projectionTable', currentTable);
@@ -218,12 +205,6 @@
       $tableSelect.addEventListener('change', async (e) => {
         const newTable = e.target.value;
         if (newTable && newTable !== currentTable) {
-          // If switching to OTEF, redirect to OTEF projection page
-          if (newTable === 'otef') {
-            window.location.href = `/otef-interactive/projection.html?table=otef`;
-            return;
-          }
-          // If switching from OTEF to another table, update URL and continue
           currentTable = newTable;
           const url = new URL(window.location.href);
           url.searchParams.set('table', currentTable);
@@ -238,10 +219,7 @@
       // Fetch tables on load, then initialize
       (async () => {
         await fetchTables();
-        // Only update image if we didn't redirect (i.e., table is not OTEF)
-        if (currentTable !== 'otef') {
-          updateImage();
-        }
+        updateImage();
       })();
       
       // WebSocket connection for real-time updates
@@ -354,13 +332,6 @@
 
       // Function to get and update the image
       function updateImage() {
-        // Don't fetch if current table is OTEF (should have redirected)
-        if (currentTable === 'otef') {
-          console.log('⚠️ Attempted to fetch image for OTEF table - redirecting...');
-          window.location.href = `/otef-interactive/projection.html?table=otef`;
-          return;
-        }
-        
         fetch(`${apiEndpoint}?table=${currentTable}`)
           .then((response) => {
             if (!response.ok) {
@@ -460,21 +431,16 @@
         }
       }
 
-      // Auto-reset calibration on page load to fix sideways display
       function autoResetCalibration() {
-        // Only reset if there's problematic saved data
         const savedData = localStorage.getItem("maptastic.layers");
         if (savedData) {
           try {
             const layout = JSON.parse(savedData);
-            // Check if any layer has been rotated 90 degrees (sideways)
             let hasProblematicRotation = false;
 
             for (let i = 0; i < layout.length; i++) {
               const layer = layout[i];
               if (layer.targetPoints && layer.sourcePoints) {
-                // Check if the layer has been rotated 90 degrees
-                // This is a simple heuristic - if the aspect ratio is significantly different
                 const sourceWidth =
                   layer.sourcePoints[1][0] - layer.sourcePoints[0][0];
                 const sourceHeight =
@@ -487,7 +453,6 @@
                 const sourceRatio = sourceWidth / sourceHeight;
                 const targetRatio = targetWidth / targetHeight;
 
-                // If ratios are very different, it might be rotated
                 if (Math.abs(sourceRatio - 1 / targetRatio) < 0.1) {
                   hasProblematicRotation = true;
                   break;
@@ -495,7 +460,6 @@
               }
             }
 
-            // Only reset if we detect problematic rotation
             if (hasProblematicRotation) {
               console.log("Detected sideways rotation, resetting to default");
               localStorage.removeItem("maptastic.layers");
@@ -510,10 +474,8 @@
       // Event listeners for calibration panel
       $toggleConfigBtn.addEventListener("click", toggleConfigMode);
 
-      // Fallback polling - WebSocket handles real-time updates
       setInterval(updateImage, 10000);
 
-      // Auto-reset calibration to fix sideways display
       autoResetCalibration();
 
       // Initial update will be called after fetchTables() completes
@@ -528,13 +490,6 @@
         const nextTable = availableTables[nextIndex];
         
         if (nextTable && nextTable.name !== currentTable) {
-          // If switching to OTEF, redirect to OTEF projection page
-          if (nextTable.name === 'otef') {
-            window.location.href = `/otef-interactive/projection.html?table=otef`;
-            return;
-          }
-          
-          // Update current table
           currentTable = nextTable.name;
           localStorage.setItem('projectionTable', currentTable);
           $tableSelect.value = currentTable;

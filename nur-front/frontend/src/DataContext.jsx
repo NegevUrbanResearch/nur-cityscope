@@ -6,7 +6,7 @@ import React, {
   useCallback,
   useRef,
 } from "react";
-import api from "./api"; // Import the pre-configured api instance
+import api from "./api";
 import isEqual from "lodash/isEqual";
 import { logErrorToBackend } from "./utils/errorLogger";
 
@@ -15,10 +15,8 @@ import globals from "./globals";
 
 const DataContext = createContext();
 
-// Default table name for indicators
 const DEFAULT_TABLE = "idistrict";
 
-// Define indicator configurations for easy addition of new indicators
 const INDICATOR_CONFIG = {
   mobility: {
     id: 1,
@@ -47,10 +45,8 @@ const INDICATOR_CONFIG = {
     tabLabels: ["Emissions", "Green Space", "Radar Analysis", "Sustainability"],
     pieChartLabels: ["Green Space", "Other"],
   },
-  // Add new indicators here following the same pattern
 };
 
-// Climate scenarios configuration
 const CLIMATE_SCENARIOS = {
   dense_highrise: "Dense Highrise",
   existing: "Existing",
@@ -68,15 +64,12 @@ const STATE_CONFIG = {
 
 const APP_ROUTES_CONFIG = {
   default:{displayName:"Default", url:"http://localhost/dashboard/mobility"},
- // app_a: {displayName:"App A", url:"http://localhost/dashboard/mobility"},
 }
 
-// Reverse mapping from ID to indicator type
 const ID_TO_INDICATOR = Object.fromEntries(
   Object.entries(INDICATOR_CONFIG).map(([key, config]) => [config.id, key])
 );
 
-// Helper to get initial indicator from URL
 const getInitialIndicator = () => {
   if (typeof window !== "undefined") {
     const match = window.location.pathname.match(
@@ -88,7 +81,6 @@ const getInitialIndicator = () => {
 };
 
 export const DataProvider = ({ children }) => {
-  // Store the current table name (idistrict, otef, etc.)
   const [currentTable, setCurrentTable] = useState(DEFAULT_TABLE);
   const [availableTables, setAvailableTables] = useState([]);
 
@@ -597,24 +589,17 @@ export const DataProvider = ({ children }) => {
       try {
         const response = await api.get("/api/tables/?is_active=true");
         if (response.data && Array.isArray(response.data)) {
-          setAvailableTables(response.data);
-          
-          // Get table from URL parameter
+          const tables = response.data;
+          setAvailableTables(tables);
+
           const urlParams = new URLSearchParams(window.location.search);
-          const urlTable = urlParams.get('table');
-          
-          // If table is in URL and available, use it
-          if (urlTable && response.data.some(t => t.name === urlTable)) {
-            if (urlTable === 'otef') {
-              // Redirect to OTEF interactive page
-              window.location.href = `/otef-interactive/?table=otef`;
-              return;
-            }
+          const urlTable = urlParams.get("table");
+
+          if (urlTable && tables.some((table) => table.name === urlTable)) {
             setCurrentTable(urlTable);
           } else {
-            // If current table is not in available tables, switch to default
-            const tableExists = response.data.some(t => t.name === currentTable);
-            if (!tableExists && response.data.length > 0) {
+            const tableExists = tables.some((table) => table.name === currentTable);
+            if (!tableExists && tables.length > 0) {
               setCurrentTable(DEFAULT_TABLE);
             }
           }
@@ -629,13 +614,6 @@ export const DataProvider = ({ children }) => {
   // Function to change table
   const changeTable = useCallback(async (tableName) => {
     if (tableName !== currentTable) {
-      // If switching to OTEF, redirect to OTEF interactive page
-      if (tableName === 'otef') {
-        window.location.href = `/otef-interactive/?table=otef`;
-        return;
-      }
-      
-      // If switching from OTEF to another table, update URL and continue
       const url = new URL(window.location.href);
       url.searchParams.set('table', tableName);
       window.history.replaceState({}, '', url);
